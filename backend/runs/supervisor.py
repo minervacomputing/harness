@@ -12,6 +12,7 @@ from uuid import UUID
 import psycopg
 from django.conf import settings
 from django.db import OperationalError, close_old_connections
+from django.db.models import Q
 from django.utils import timezone
 
 from minerva.config import config
@@ -117,11 +118,11 @@ class Supervisor:
         for sandbox in sandboxes:
             with contextlib.suppress(ValueError):
                 run_ids.append(UUID(sandbox.run_id))
+        # A finished run without a handle (the database failed right after the start) has nothing
+        # left to release it, so only active runs and pending releases count as tracked.
+        owned = Q(status__in=Run.ACTIVE) | Q(sandbox_handle__isnull=False, sandbox_released=False)
         tracked = {
-            str(run_id)
-            for run_id in Run.unscoped.filter(pk__in=run_ids, sandbox_released=False).values_list(
-                "id", flat=True
-            )
+            str(run_id) for run_id in Run.unscoped.filter(owned, pk__in=run_ids).values_list("id", flat=True)
         }
         now = timezone.now()
         running_limit = timedelta(seconds=self.cfg.run_timeout_seconds) + ORPHAN_RUNNING_GRACE

@@ -9,6 +9,7 @@ from django.utils import timezone
 from conversations.models import Conversation
 from minerva.config import config
 from runs import services
+from runs.models import Run
 from runs.sandbox.base import SandboxInfo
 from runs.supervisor import QueueListener, Supervisor
 from workspaces.tenancy import workspace_scope
@@ -55,6 +56,28 @@ def test_only_untracked_sandboxes_past_their_grace_period_are_removed(scoped, us
     )
     supervisor_with(provider).collect_orphans()
     assert {handle["id"] for handle in provider.stopped} == {"orphan-exited", "orphan-running", "foreign"}
+
+
+def test_sandboxes_of_finished_runs_without_a_handle_are_removed(scoped, user, agent):
+    """The database can fail between starting a sandbox and saving its handle."""
+    runs = []
+    for _ in range(2):
+        with workspace_scope(scoped.id):
+            conversation = Conversation.objects.create(agent=agent, user=user)
+            _, run = services.start_run(conversation=conversation, user_id=user.id, content="hi")
+        services.finish(run.id, Run.Status.TIMED_OUT)
+        runs.append(run)
+    unsaved, releasing = runs
+    Run.unscoped.filter(pk=releasing.pk).update(sandbox_handle={"id": "releasing"})
+    long_ago = timezone.now() - timedelta(hours=1)
+    provider = FakeProvider(
+        [
+            SandboxInfo(str(unsaved.id), {"id": "unsaved"}, False, long_ago),
+            SandboxInfo(str(releasing.id), {"id": "releasing"}, False, long_ago),
+        ]
+    )
+    supervisor_with(provider).collect_orphans()
+    assert provider.stopped == [{"id": "unsaved"}]
 
 
 class DroppedConnection:

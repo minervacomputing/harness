@@ -45,7 +45,7 @@ This is the first real implementation. It is not a prototype and is built to be 
 
 ## 3. One chat turn, step by step
 
-1. **Browser → web:** the message is stored, and a run is created with status `queued`. The run stores a snapshot of the effective permissions and the tool list.
+1. **Browser → web:** the message is stored, and a run is created with status `queued`. The run stores a snapshot of the effective permissions and the tool list. A database constraint allows one active run per conversation.
 2. **Supervisor:** claims the run (`SKIP LOCKED`, at most 4 at once) and issues a run token. It then starts a container whose only environment variables are `GATEWAY_URL`, `RUN_TOKEN`, and `RUN_ID`.
 3. **Worker → gateway:** it fetches the run spec with `GET /run` and configures DeepSeek Harness. The agent's model points at the gateway relay and its tools at the gateway's MCP endpoint. Shell, terminal, and subprocess plugins are disabled.
 4. **Gateway:**
@@ -53,7 +53,7 @@ This is the first real implementation. It is not a prototype and is built to be 
    - Tool calls go through the permission executor ([section 4](#4-permissions)).
 5. **Worker → gateway:** it posts only `phase`, `completed` (with the final answer), and `failed` events.
 6. **End of the run:** the token is revoked when the run reaches any final state, and the supervisor removes the container.
-7. **Browser:** follows run events through server-sent events, woken by Postgres `NOTIFY`, and resumes after a reconnect from the last sequence number.
+7. **Browser:** follows run events through server-sent events, woken by Postgres `NOTIFY`, and resumes after a reconnect from the last sequence number. Agent text is rendered as Markdown, but images in it are shown as text and never loaded, and a Content Security Policy also blocks remote images. Otherwise, prompt-injected content could send data out through the browser.
 
 Run states: `queued → provisioning → running → completed | failed | cancelled | timed_out`.
 
@@ -71,7 +71,7 @@ effective = provider account ∩ workspace ceiling ∩ user layer ∩ agent laye
 
 In a personal workspace the ceiling is unrestricted and hidden. The UI edits the user layer under **Connections → Choose access**, and each agent can use only the connections selected for it.
 
-**Strict revocation:** changing access cancels the user's active runs, so no run continues with outdated permissions.
+**Strict revocation:** changing access, removing a connection, or changing an agent's connections cancels the affected active runs, so no run continues with outdated permissions.
 
 Every tool call goes through one pipeline:
 
@@ -145,7 +145,7 @@ Other state:
 
 | Check | Result |
 |---|---|
-| Backend tests (`pytest`), including cross-workspace access | 35 pass |
+| Backend tests (`pytest`), including cross-workspace access; needs Postgres running (`make services`) | 39 pass |
 | Ruff lint and format; worker and frontend typechecks; production build | Pass |
 | Sandbox conformance | 11/11 |
 | End-to-end run in the container with the fake model | Pass: tool call, streamed text, stored answer, usage recorded, container removed |

@@ -4,7 +4,7 @@ import pytest
 from django.test import Client
 
 from connectors.base import ScopeItem
-from conversations.models import Conversation
+from conversations.models import Conversation, Message
 from runs import services
 from runs.models import Run
 from workspaces.tenancy import workspace_scope
@@ -70,6 +70,44 @@ def test_chat_message_starts_one_run_at_a_time(api, workspace, scoped, agent):
     detail = api.get(f"{base}/conversations/{conversation['id']}").json()
     assert detail["title"] == "What is due today?"
     assert [m["role"] for m in detail["messages"]] == ["user"]
+
+
+def test_a_run_committed_concurrently_blocks_the_second_message(scoped, user, agent, monkeypatch):
+    """Another request can start a run between this request's check and its insert."""
+    conversation = Conversation.objects.create(agent=agent, user=user)
+    effective_policy = services.effective_policy
+
+    def interleaved(**kwargs):
+        Run.objects.create(
+            user=user,
+            agent=agent,
+            conversation=conversation,
+            permissions=[],
+            tools=[],
+            model_alias="default",
+            max_writes=1,
+            max_model_calls=1,
+        )
+        return effective_policy(**kwargs)
+
+    monkeypatch.setattr("runs.services.effective_policy", interleaved)
+    with pytest.raises(services.RunConflict):
+        services.start_run(conversation=conversation, user_id=user.id, content="second")
+    assert not Message.objects.filter(conversation=conversation).exists()
+
+
+def test_changing_an_agents_connections_stops_its_active_runs(api, workspace, scoped, user, agent):
+    conversation = Conversation.objects.create(agent=agent, user=user)
+    _, run = services.start_run(conversation=conversation, user_id=user.id, content="hi")
+    url = f"/api/workspaces/{workspace.id}/agents/{agent.id}"
+    connection_ids = [str(c.id) for c in agent.connections.all()]
+    renamed = post(api, url, {"name": "Renamed", "connection_ids": connection_ids}, method="put")
+    assert renamed.status_code == 200
+    run.refresh_from_db()
+    assert run.status == Run.Status.QUEUED
+    assert post(api, url, {"name": "Renamed", "connection_ids": []}, method="put").status_code == 200
+    run.refresh_from_db()
+    assert (run.status, run.error_code) == (Run.Status.CANCELLED, "agent_connections_changed")
 
 
 def test_access_settings_are_validated(api, workspace, connection, monkeypatch):

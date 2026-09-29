@@ -5,8 +5,8 @@ from dataclasses import asdict, dataclass
 from datetime import timedelta
 from uuid import UUID
 
+from django.db import IntegrityError, transaction
 from django.db import connection as db
-from django.db import transaction
 from django.utils import timezone
 
 from agents.models import Agent
@@ -19,6 +19,7 @@ from runs.models import Run, RunEvent
 QUEUED_CHANNEL = "minerva_runs_queued"
 EVENTS_CHANNEL = "minerva_run_events"
 HISTORY_LIMIT = 20
+BUSY_MESSAGE = "Wait for the current answer to finish, or stop it."
 
 SAFETY_INSTRUCTIONS = (
     "You are an agent inside Minerva. Use the provided tools for all facts about connected accounts and for "
@@ -60,20 +61,24 @@ def start_run(*, conversation: Conversation, user_id: UUID, content: str) -> tup
     agent = conversation.agent
     with transaction.atomic():
         if Run.objects.filter(conversation=conversation, status__in=Run.ACTIVE).exists():
-            raise RunConflict("Wait for the current answer to finish, or stop it.")
+            raise RunConflict(BUSY_MESSAGE)
         message = Message.objects.create(conversation=conversation, role=Message.Role.USER, content=content)
         policy = effective_policy(user_id=user_id, agent_id=agent.id)
-        run = Run.objects.create(
-            user_id=user_id,
-            agent=agent,
-            conversation=conversation,
-            permissions=policy.to_json(),
-            tools=[asdict(ref) for ref in _tools_for(agent, user_id)],
-            instructions=f"{SAFETY_INSTRUCTIONS}\n\n{agent.instructions}".strip(),
-            model_alias=agent.model_alias,
-            max_writes=cfg.run_max_writes,
-            max_model_calls=cfg.run_max_model_calls,
-        )
+        try:
+            with transaction.atomic():
+                run = Run.objects.create(
+                    user_id=user_id,
+                    agent=agent,
+                    conversation=conversation,
+                    permissions=policy.to_json(),
+                    tools=[asdict(ref) for ref in _tools_for(agent, user_id)],
+                    instructions=f"{SAFETY_INSTRUCTIONS}\n\n{agent.instructions}".strip(),
+                    model_alias=agent.model_alias,
+                    max_writes=cfg.run_max_writes,
+                    max_model_calls=cfg.run_max_model_calls,
+                )
+        except IntegrityError as error:
+            raise RunConflict(BUSY_MESSAGE) from error
         message.run = run
         message.save(update_fields=["run"])
         if not conversation.title:
@@ -141,11 +146,13 @@ def cancel(run: Run) -> bool:
     return finish(run.id, Run.Status.CANCELLED, code="cancelled", message="Stopped.")
 
 
-def revoke_active_runs(*, user_id: UUID | None = None, reason: str) -> int:
+def revoke_active_runs(*, user_id: UUID | None = None, agent_id: UUID | None = None, reason: str) -> int:
     """Strict revocation: when permissions change, active runs stop instead of finishing on old rules."""
     runs = Run.objects.filter(status__in=Run.ACTIVE)
     if user_id is not None:
         runs = runs.filter(user_id=user_id)
+    if agent_id is not None:
+        runs = runs.filter(agent_id=agent_id)
     count = 0
     for run_id in runs.values_list("id", flat=True):
         count += finish(

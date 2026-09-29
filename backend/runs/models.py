@@ -64,6 +64,13 @@ class Run(TenantModel):
     class Meta:
         ordering = ["-created_at"]
         indexes = [models.Index(fields=["status", "created_at"], name="run_status_created")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["conversation"],
+                condition=models.Q(status__in=["queued", "provisioning", "running"]),
+                name="run_one_active_per_conversation",
+            )
+        ]
 
     @property
     def is_active(self) -> bool:

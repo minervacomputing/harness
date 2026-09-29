@@ -80,10 +80,13 @@ def update_agent(request, workspace_id: UUID, agent_id: UUID, payload: AgentIn):
     agent = _editable(request, agent_id)
     connections = _connections(request, payload.connection_ids)
     with transaction.atomic():
+        before = set(agent.connections.values_list("id", flat=True))
         agent.name = payload.name
         agent.instructions = payload.instructions
         agent.save()
         agent.connections.set(connections)
+        if before != {c.id for c in connections}:
+            services.revoke_active_runs(agent_id=agent.id, reason="agent_connections_changed")
     return _out(request, agent)
 
 

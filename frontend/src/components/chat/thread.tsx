@@ -8,7 +8,7 @@ import {
 } from '@assistant-ui/react'
 import { MarkdownTextPrimitive } from '@assistant-ui/react-markdown'
 import { ArrowUpIcon, ChevronRightIcon, SquareIcon, WrenchIcon } from 'lucide-react'
-import type { ReactNode } from 'react'
+import type { ComponentProps, ReactNode } from 'react'
 import remarkGfm from 'remark-gfm'
 import type { ToolCallResult } from '@/components/chat/model'
 import { Button } from '@/components/ui/button'
@@ -67,8 +67,19 @@ function MarkdownText() {
   return (
     <MarkdownTextPrimitive
       remarkPlugins={[remarkGfm]}
+      components={{ img: UnloadedImage }}
       className="prose prose-sm prose-neutral max-w-none prose-pre:bg-muted prose-pre:text-foreground"
     />
+  )
+}
+
+/** Agent text can carry prompt-injected image URLs; fetching one would send data past the sandbox. */
+function UnloadedImage({ src, alt }: ComponentProps<'img'>) {
+  const url = typeof src === 'string' ? src : ''
+  return (
+    <span className="rounded bg-muted px-1 font-mono text-xs text-muted-foreground">
+      [image not loaded{alt ? `: ${alt}` : ''}{url ? ` (${url})` : ''}]
+    </span>
   )
 }
 

@@ -331,7 +331,7 @@ Where the first implementation (2026-09-29) differs from the decisions above. Ea
 
 | Decision | As built | Why |
 |---|---|---|
-| D6 events | The worker sends only `phase`, `completed`, and `failed`. Text deltas come from the gateway's model relay, which parses the upstream stream. | The DeepSeek Harness SDK reports only finished events, not token deltas. The relay is trusted, so the worker cannot forge streamed text. |
+| D6 events | The worker sends only `phase`, `completed`, and `failed`. Text deltas come from the gateway's model relay, which parses the upstream stream. | The DeepSeek Harness SDK reports only finished events, not token deltas. This does not make the text trustworthy: the worker chooses what it sends to the model and reports the final answer itself. All agent text is untrusted, so the chat UI never loads remote images from it. |
 | D6 artifacts | `PUT /artifacts` is not built yet. | Report files come later. |
 | D7 providers | `container` and `local-process` exist. `macos-srt` and `kubernetes` do not. | Docker is enough locally and for self-hosting. The cloud provider comes with deployment. |
 | D7 network | All workers share the internal `minerva-sandbox` network. | Acceptable locally. Use a network per run before strangers share a host. |
