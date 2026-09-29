@@ -11,7 +11,7 @@ from uuid import UUID
 
 import psycopg
 from django.conf import settings
-from django.db import close_old_connections
+from django.db import OperationalError, close_old_connections
 from django.utils import timezone
 
 from minerva.config import config
@@ -25,6 +25,8 @@ POLL_SECONDS = 2.0
 ORPHAN_SWEEP_SECONDS = 30.0
 ORPHAN_EXITED_GRACE = timedelta(seconds=60)
 ORPHAN_RUNNING_GRACE = timedelta(seconds=120)
+RECONNECT_MIN_SECONDS = 1.0
+RECONNECT_MAX_SECONDS = 30.0
 
 
 class Supervisor:
@@ -134,22 +136,76 @@ class Supervisor:
 
 
 def listen_connection() -> psycopg.Connection:
-    conn = psycopg.connect(settings.DIRECT_DATABASE_URL, autocommit=True)
+    conn = psycopg.connect(settings.DIRECT_DATABASE_URL, autocommit=True, connect_timeout=10)
     conn.execute(f"LISTEN {services.QUEUED_CHANNEL}")
     return conn
+
+
+class QueueListener:
+    """Wakes the supervisor early when a run is queued.
+
+    Notifications only shorten the wait; polling alone is correct. So while the database is unreachable
+    the supervisor keeps polling, and the LISTEN connection is re-established with backoff.
+    """
+
+    def __init__(self, connect=listen_connection) -> None:
+        self._connect = connect
+        self.conn: psycopg.Connection | None = None
+        self.backoff = RECONNECT_MIN_SECONDS
+        self._retry_at = 0.0
+
+    def wait(self, timeout: float) -> None:
+        conn = self.conn or self._reconnect()
+        if conn is None:
+            time.sleep(timeout)
+            return
+        try:
+            ready, _, _ = select.select([conn.fileno()], [], [], timeout)
+            if ready:
+                for _ in conn.notifies(timeout=0):
+                    pass
+                time.sleep(0.05)
+        except psycopg.Error, OSError, ValueError:
+            log.warning("Lost the queue notification connection; falling back to polling")
+            self._drop()
+
+    def _reconnect(self) -> psycopg.Connection | None:
+        if time.monotonic() < self._retry_at:
+            return None
+        try:
+            self.conn = self._connect()
+        except psycopg.Error as error:
+            log.warning("Cannot listen for queued runs (%s); retrying in %.0f s", error, self.backoff)
+            self._retry_at = time.monotonic() + self.backoff
+            self.backoff = min(self.backoff * 2, RECONNECT_MAX_SECONDS)
+            return None
+        if self.backoff > RECONNECT_MIN_SECONDS:
+            log.info("Listening for queued runs again")
+        self.backoff = RECONNECT_MIN_SECONDS
+        return self.conn
+
+    def _drop(self) -> None:
+        if self.conn is not None:
+            with contextlib.suppress(Exception):
+                self.conn.close()
+        self.conn = None
 
 
 def serve_forever() -> None:
     supervisor = Supervisor()
     log.info("Supervisor started with the %s sandbox provider", supervisor.provider.name)
-    conn = listen_connection()
+    listener = QueueListener()
+    database_down = False
     while True:
         try:
             supervisor.tick()
+            if database_down:
+                log.info("Database reachable again")
+            database_down = False
+        except OperationalError:
+            if not database_down:
+                log.warning("Database unreachable; the supervisor keeps retrying", exc_info=True)
+            database_down = True
         except Exception:
             log.exception("Supervisor tick failed")
-        ready, _, _ = select.select([conn.fileno()], [], [], POLL_SECONDS)
-        if ready:
-            for _ in conn.notifies(timeout=0):
-                pass
-            time.sleep(0.05)
+        listener.wait(POLL_SECONDS)
