@@ -1,0 +1,32 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Upstream reference checkout (has its own repository)
+/deepseek-harness/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+/backend/staticfiles/
+
+# Node
+node_modules/
+.pnpm-store/
+/worker/.local-home/
+dist/
+*.tsbuildinfo
+.vite/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,218 @@
+import { useForm } from '@tanstack/react-form'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { createFileRoute } from '@tanstack/react-router'
+import { QRCodeSVG } from 'qrcode.react'
+import { useState } from 'react'
+import { TextField } from '@/components/form'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge, ErrorNote, Notice, PageHeader, Spinner } from '@/components/ui/misc'
+import { AuthError, authRequest } from '@/lib/auth'
+
+export const Route = createFileRoute('/w/$workspaceId/account')({
+  component: AccountPage,
+})
+
+class ReauthRequired extends Error {}
+
+/** Account changes return 401 when allauth wants the password confirmed again first. */
+async function accountCall(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown) {
+  const payload = await authRequest(method, path, body)
+  if (payload.status === 401) throw new ReauthRequired('Confirm your password to continue.')
+  if (payload.status === 400 && payload.errors) throw new AuthError(payload.errors)
+  return payload
+}
+
+function AccountPage() {
+  const { user } = Route.useRouteContext()
+  return (
+    <div>
+      <PageHeader title="Account" />
+      <div className="max-w-2xl space-y-6 px-8 py-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Email</CardTitle>
+            <CardDescription>{user.email}</CardDescription>
+          </CardHeader>
+          <CardContent />
+        </Card>
+        <PasswordCard hasPassword={user.has_usable_password} />
+        <TwoFactorCard />
+      </div>
+    </div>
+  )
+}
+
+function Reauthenticate({ onDone }: { onDone: () => void }) {
+  const confirm = useMutation({
+    mutationFn: async (password: string) => {
+      const payload = await authRequest('POST', '/auth/reauthenticate', { password })
+      if (payload.status === 400 && payload.errors) throw new AuthError(payload.errors)
+      if (payload.status !== 200) throw new Error('Could not confirm your password.')
+    },
+    onSuccess: onDone,
+  })
+  const form = useForm({ defaultValues: { password: '' }, onSubmit: ({ value }) => confirm.mutateAsync(value.password) })
+  return (
+    <form className="grid gap-3 rounded-md border p-4" onSubmit={event => { event.preventDefault(); void form.handleSubmit() }}>
+      <p className="text-sm">For your security, confirm your password first.</p>
+      <form.Field name="password">
+        {field => <TextField field={field} label="Current password" type="password" autoComplete="current-password" autoFocus />}
+      </form.Field>
+      {confirm.error && <ErrorNote>{confirm.error.message}</ErrorNote>}
+      <div><Button type="submit" size="sm" disabled={confirm.isPending}>Confirm</Button></div>
+    </form>
+  )
+}
+
+function PasswordCard({ hasPassword }: { hasPassword: boolean }) {
+  const [done, setDone] = useState(false)
+  const change = useMutation({
+    mutationFn: (value: { current_password: string; new_password: string }) =>
+      accountCall('POST', '/account/password/change', hasPassword ? value : { new_password: value.new_password }),
+    onSuccess: () => setDone(true),
+  })
+  const fields = change.error instanceof AuthError ? change.error.fields : {}
+  const form = useForm({
+    defaultValues: { current_password: '', new_password: '' },
+    onSubmit: async ({ value, formApi }) => { await change.mutateAsync(value); formApi.reset() },
+  })
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Password</CardTitle>
+        <CardDescription>Changing your password keeps you signed in here.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form className="grid gap-4" onSubmit={event => { event.preventDefault(); setDone(false); void form.handleSubmit() }}>
+          {hasPassword && (
+            <form.Field name="current_password">
+              {field => <TextField field={field} label="Current password" type="password" autoComplete="current-password" serverError={fields.current_password} />}
+            </form.Field>
+          )}
+          <form.Field name="new_password" validators={{ onBlur: ({ value }) => (value && value.length < 10 ? 'Use at least 10 characters.' : undefined) }}>
+            {field => <TextField field={field} label="New password" type="password" autoComplete="new-password" serverError={fields.new_password} />}
+          </form.Field>
+          {change.error && !Object.keys(fields).length && <ErrorNote>{change.error.message}</ErrorNote>}
+          {done && <Notice>Your password was changed.</Notice>}
+          <div><Button type="submit" size="sm" disabled={change.isPending}>Change password</Button></div>
+        </form>
+      </CardContent>
+    </Card>
+  )
+}
+
+type Authenticator = { type: 'totp' | 'recovery_codes' | 'webauthn' }
+
+function TwoFactorCard() {
+  const queryClient = useQueryClient()
+  const authenticators = useQuery({
+    queryKey: ['auth', 'authenticators'],
+    queryFn: async () => ((await accountCall('GET', '/account/authenticators')).data as unknown as Authenticator[]) ?? [],
+  })
+  const [setup, setSetup] = useState(false)
+  const [needsReauth, setNeedsReauth] = useState(false)
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ['auth', 'authenticators'] })
+  const disable = useMutation({
+    mutationFn: () => accountCall('DELETE', '/account/authenticators/totp'),
+    onSuccess: refresh,
+    onError: error => { if (error instanceof ReauthRequired) setNeedsReauth(true) },
+  })
+
+  const enabled = authenticators.data?.some(a => a.type === 'totp')
+  return (
+    <Card>
+      <CardHeader className="flex-row items-start justify-between gap-4">
+        <div className="space-y-1.5">
+          <CardTitle>Two-factor authentication</CardTitle>
+          <CardDescription>Ask for a code from an authenticator app when you sign in.</CardDescription>
+        </div>
+        {authenticators.data && <Badge variant={enabled ? 'default' : 'outline'}>{enabled ? 'On' : 'Off'}</Badge>}
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {authenticators.isPending && <Spinner />}
+        {needsReauth && <Reauthenticate onDone={() => { setNeedsReauth(false); disable.reset(); disable.mutate() }} />}
+        {enabled && !needsReauth && (
+          <>
+            <RecoveryCodes />
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={disable.isPending}
+              onClick={() => { if (confirm('Turn off two-factor authentication?')) disable.mutate() }}
+            >
+              Turn off
+            </Button>
+          </>
+        )}
+        {authenticators.data && !enabled && !setup && <Button size="sm" onClick={() => setSetup(true)}>Set up</Button>}
+        {!enabled && setup && <TotpSetup onDone={() => { setSetup(false); void refresh() }} />}
+      </CardContent>
+    </Card>
+  )
+}
+
+function TotpSetup({ onDone }: { onDone: () => void }) {
+  const [needsReauth, setNeedsReauth] = useState(false)
+  const secret = useQuery({
+    queryKey: ['auth', 'totp-secret'],
+    queryFn: async () => {
+      const payload = await authRequest('GET', '/account/authenticators/totp')
+      if (payload.status === 401) throw new ReauthRequired('Confirm your password to continue.')
+      return payload.meta as { secret: string; totp_url: string }
+    },
+    retry: false,
+    staleTime: Infinity,
+  })
+  const activate = useMutation({
+    mutationFn: (code: string) => accountCall('POST', '/account/authenticators/totp', { code }),
+    onSuccess: onDone,
+    onError: error => { if (error instanceof ReauthRequired) setNeedsReauth(true) },
+  })
+  const form = useForm({ defaultValues: { code: '' }, onSubmit: ({ value }) => activate.mutateAsync(value.code.trim()) })
+
+  if (secret.error instanceof ReauthRequired) return <Reauthenticate onDone={() => void secret.refetch()} />
+  // Each fetch of the secret replaces it, so after confirming the password the same code is resubmitted.
+  if (needsReauth) {
+    return <Reauthenticate onDone={() => { setNeedsReauth(false); activate.reset(); void form.handleSubmit() }} />
+  }
+  if (secret.isPending) return <Spinner />
+  if (!secret.data?.totp_url) return <ErrorNote>Two-factor setup is not available right now.</ErrorNote>
+  const fields = activate.error instanceof AuthError ? activate.error.fields : {}
+  return (
+    <div className="grid gap-4 rounded-md border p-4 sm:grid-cols-[auto_1fr]">
+      <QRCodeSVG value={secret.data.totp_url} size={144} className="rounded border bg-white p-2" />
+      <form className="grid content-start gap-3" onSubmit={event => { event.preventDefault(); void form.handleSubmit() }}>
+        <p className="text-sm">Scan the code with your authenticator app, or enter this key:</p>
+        <code className="break-all rounded bg-muted px-2 py-1 text-xs">{secret.data.secret}</code>
+        <form.Field name="code">
+          {field => <TextField field={field} label="Code from the app" autoComplete="one-time-code" className="font-mono tracking-widest" serverError={fields.code} />}
+        </form.Field>
+        {activate.error && !fields.code && <ErrorNote>{activate.error.message}</ErrorNote>}
+        <div><Button type="submit" size="sm" disabled={activate.isPending}>Turn on</Button></div>
+      </form>
+    </div>
+  )
+}
+
+function RecoveryCodes() {
+  const [shown, setShown] = useState(false)
+  const codes = useQuery({
+    queryKey: ['auth', 'recovery-codes'],
+    queryFn: async () => (await accountCall('GET', '/account/authenticators/recovery-codes')).data as unknown as { unused_codes: string[] },
+    enabled: shown,
+  })
+  if (!shown) {
+    return <Button variant="outline" size="sm" className="mr-2" onClick={() => setShown(true)}>Show recovery codes</Button>
+  }
+  if (codes.error instanceof ReauthRequired) return <Reauthenticate onDone={() => void codes.refetch()} />
+  if (codes.isPending) return <Spinner />
+  return (
+    <div className="space-y-2">
+      <p className="text-sm text-muted-foreground">Each code works once if you lose your authenticator. Keep them somewhere safe.</p>
+      <div className="grid grid-cols-2 gap-1 rounded-md bg-muted p-3 font-mono text-sm sm:grid-cols-4">
+        {codes.data?.unused_codes.map(code => <span key={code}>{code}</span>)}
+      </div>
+    </div>
+  )
+}

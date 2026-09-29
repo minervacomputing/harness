@@ -1,0 +1,40 @@
+# Local development services. The backend and frontend run on the host (see README).
+name: minerva-dev
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: minerva
+      POSTGRES_PASSWORD: minerva
+      POSTGRES_DB: minerva
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U minerva"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Workers run on the internal `minerva-sandbox` network, which has no route to the
+  # internet or the host. This relay is the only member that can reach the host, and it
+  # forwards exactly one port: the gateway running on the host.
+  gateway-relay:
+    image: alpine/socat:1.8.0.3
+    command: TCP-LISTEN:8001,fork,reuseaddr TCP:host.docker.internal:8001
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      default: {}
+      sandbox:
+        aliases: [gateway]
+
+networks:
+  sandbox:
+    name: minerva-sandbox
+    internal: true
+
+volumes:
+  postgres-data:

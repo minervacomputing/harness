@@ -1,0 +1,24 @@
+{
+  "name": "minerva-worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "packageManager": "pnpm@10.18.1",
+  "scripts": {
+    "start": "node src/main.ts",
+    "probe": "node src/probe.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-llm-pi-ai": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-mcp-client": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-sdk-client": "0.1.7-rc.2",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  },
+  "pnpm": { "onlyBuiltDependencies": ["@deepseek-ai/node-addon-system"] }
+}
