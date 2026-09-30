@@ -18,7 +18,11 @@ export const runSpec = z.object({
   history: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.string() })),
   instructions: z.string(),
   tools: z.array(z.object({ name: z.string(), title: z.string() })),
-  model: z.object({ alias: z.string(), max_output_tokens: z.number().int().positive() }),
+  model: z.object({
+    alias: z.string(),
+    api: z.enum(['responses', 'chat']),
+    max_output_tokens: z.number().int().positive(),
+  }),
   limits: z.object({ deadline: z.string(), max_model_calls: z.number().int() }),
 })
 export type RunSpec = z.infer<typeof runSpec>

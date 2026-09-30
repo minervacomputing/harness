@@ -40,7 +40,7 @@ function profilePatch(spec: RunSpec): unknown[] {
         config: {
           providers: {
             minerva: {
-              api: 'openai-completions',
+              api: spec.model.api === 'chat' ? 'openai-completions' : 'openai-responses',
               baseURL: `${gatewayUrl}/v1`,
               apiKeyEnv: 'MINERVA_RUN_TOKEN',
               models: [{

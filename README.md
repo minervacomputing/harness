@@ -58,6 +58,8 @@ MINERVA_MODEL_API_KEY=sk-...
 MINERVA_MODEL_NAME=gpt-5-mini
 ```
 
+Minerva talks to the model over the Responses API. For a server that only offers Chat Completions, set `MINERVA_MODEL_API=chat`. `MINERVA_MODEL_REASONING_EFFORT` (default `medium`) sets the reasoning effort; leave it empty for a model that does not reason.
+
 To try the app without a key, use the scripted fake model:
 
 ```sh

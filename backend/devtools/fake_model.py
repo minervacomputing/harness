@@ -1,7 +1,8 @@
 """A scripted OpenAI-compatible model for local end-to-end runs without a provider key.
 
 On the first request of a turn it calls one offered tool (preferring `*_list_projects`); once a tool
-result is present it answers in text and quotes the start of that result. Streams like the real API.
+result is present it answers in text and quotes the start of that result. Serves Chat Completions and
+Responses, and streams like the real API. When asked for encrypted reasoning it emits a reasoning item.
 
     uv run python devtools/fake_model.py  # then MINERVA_MODEL_BASE_URL=http://127.0.0.1:9900/v1
 """
@@ -14,14 +15,16 @@ PORT = 9900
 
 
 def plan(body: dict) -> dict:
-    messages = body.get("messages") or []
-    tools = [tool["function"]["name"] for tool in body.get("tools") or []]
-    print(f"model request: {len(messages)} message(s), tools: {', '.join(tools) or 'none'}", flush=True)
+    responses = "input" in body
+    messages = body.get("input" if responses else "messages") or []
+    tools = [tool["name"] if responses else tool["function"]["name"] for tool in body.get("tools") or []]
+    print(f"model request: {len(messages)} item(s), tools: {', '.join(tools) or 'none'}", flush=True)
     last = messages[-1] if messages else {}
-    if tools and last.get("role") != "tool":
+    is_result = last.get("type") == "function_call_output" if responses else last.get("role") == "tool"
+    if tools and not is_result:
         name = next((tool for tool in tools if tool.endswith("list_projects")), tools[0])
         return {"tool": name}
-    result = last.get("content") if last.get("role") == "tool" else None
+    result = last.get("output" if responses else "content") if is_result else None
     if isinstance(result, list):
         result = " ".join(part.get("text", "") for part in result if isinstance(part, dict))
     text = f"This is the fake model. I was offered {len(tools)} tool(s)."
@@ -40,10 +43,68 @@ def chunk(delta: dict, finish: str | None = None) -> dict:
     }
 
 
+def response_items(body: dict, step: dict) -> list[dict]:
+    items = []
+    if "reasoning.encrypted_content" in (body.get("include") or []):
+        items.append({"type": "reasoning", "id": "rs_fake", "summary": [], "encrypted_content": "fake"})
+    if "tool" in step:
+        items.append(
+            {
+                "type": "function_call",
+                "id": "fc_fake",
+                "call_id": "call_1",
+                "name": step["tool"],
+                "arguments": "{}",
+                "status": "completed",
+            }
+        )
+    else:
+        text = {"type": "output_text", "text": step["text"], "annotations": []}
+        items.append(
+            {
+                "type": "message",
+                "id": "msg_fake",
+                "role": "assistant",
+                "status": "completed",
+                "content": [text],
+            }
+        )
+    return items
+
+
+def response_events(items: list[dict], response: dict) -> list[dict]:
+    events = [{"type": "response.created", "response": {**response, "status": "in_progress", "output": []}}]
+    for index, item in enumerate(items):
+        if item["type"] == "message":
+            text = item["content"][0]["text"]
+            opened = {**item, "status": "in_progress", "content": []}
+            events.append({"type": "response.output_item.added", "output_index": index, "item": opened})
+            part = {"type": "output_text", "text": "", "annotations": []}
+            ids = {"item_id": item["id"], "output_index": index, "content_index": 0}
+            events.append({"type": "response.content_part.added", **ids, "part": part})
+            for word in text.split(" "):
+                events.append({"type": "response.output_text.delta", **ids, "delta": word + " "})
+            events.append({"type": "response.output_text.done", **ids, "text": text})
+            events.append({"type": "response.content_part.done", **ids, "part": item["content"][0]})
+        else:
+            opened = {**item, "arguments": ""} if item["type"] == "function_call" else item
+            events.append({"type": "response.output_item.added", "output_index": index, "item": opened})
+            if item["type"] == "function_call":
+                ids = {"item_id": item["id"], "output_index": index}
+                events.append({"type": "response.function_call_arguments.delta", **ids, "delta": "{}"})
+                events.append({"type": "response.function_call_arguments.done", **ids, "arguments": "{}"})
+        events.append({"type": "response.output_item.done", "output_index": index, "item": item})
+    events.append({"type": "response.completed", "response": response})
+    return [{**event, "sequence_number": n} for n, event in enumerate(events)]
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get("content-length") or 0)))
         step = plan(body)
+        if self.path.endswith("/responses"):
+            self.respond(body, step)
+            return
         usage = {"prompt_tokens": 42, "completion_tokens": 7, "total_tokens": 49}
         if not body.get("stream"):
             message = {"role": "assistant", "content": step.get("text")}
@@ -81,6 +142,32 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
             time.sleep(0.03)
         self.wfile.write(b"data: [DONE]\n\n")
+
+    def respond(self, body: dict, step: dict) -> None:
+        response = {
+            "id": "resp_fake",
+            "object": "response",
+            "created_at": int(time.time()),
+            "model": "fake",
+            "status": "completed",
+            "output": response_items(body, step),
+            "usage": {"input_tokens": 42, "output_tokens": 7, "total_tokens": 49},
+        }
+        if not body.get("stream"):
+            data = json.dumps(response).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        self.end_headers()
+        for event in response_events(response["output"], response):
+            self.wfile.write(f"event: {event['type']}\ndata: {json.dumps(event)}\n\n".encode())
+            self.wfile.flush()
+            time.sleep(0.03)
 
     def log_message(self, format, *args):
         pass

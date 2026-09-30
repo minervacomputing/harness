@@ -22,6 +22,8 @@ Configuration is read from the process environment and `.env` at the repository 
 | `MINERVA_MODEL_BASE_URL` | `https://api.openai.com/v1` | Any OpenAI-compatible endpoint |
 | `MINERVA_MODEL_API_KEY` | empty | Use `fake` with the fake model |
 | `MINERVA_MODEL_NAME` | `gpt-5-mini` | |
+| `MINERVA_MODEL_API` | `responses` | `chat` for servers without the Responses API |
+| `MINERVA_MODEL_REASONING_EFFORT` | `medium` | Responses API only; empty for models that do not reason |
 
 **Optional for local development:**
 

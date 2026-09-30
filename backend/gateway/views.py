@@ -15,7 +15,16 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from connectors import registry
 from gateway.auth import run_required
-from models_access.providers import ModelUnavailable, StreamTap, build_payload, route
+from minerva.config import config
+from models_access.providers import (
+    InvalidModelRequest,
+    ModelUnavailable,
+    ResponsesTap,
+    StreamTap,
+    build_payload,
+    build_responses_payload,
+    route,
+)
 from runs import services
 from runs.models import Run, RunEvent
 
@@ -58,7 +67,11 @@ async def run_spec(request: HttpRequest) -> JsonResponse:
             "history": history,
             "instructions": run.instructions,
             "tools": tools,
-            "model": {"alias": run.model_alias, "max_output_tokens": max_output_tokens},
+            "model": {
+                "alias": run.model_alias,
+                "api": config().model_api,
+                "max_output_tokens": max_output_tokens,
+            },
             "limits": {"deadline": run.deadline.isoformat(), "max_model_calls": run.max_model_calls},
         }
     )
@@ -138,26 +151,38 @@ def _settle(run_id, tap: StreamTap) -> None:
 @require_POST
 @run_required
 async def chat_completions(request: HttpRequest):
+    return await _relay(request, "chat")
+
+
+@require_POST
+@run_required
+async def responses(request: HttpRequest):
+    return await _relay(request, "responses")
+
+
+async def _relay(request: HttpRequest, api: str):
     run: Run = request.run  # type: ignore[attr-defined]
     try:
         body = json.loads(request.body)
     except ValueError:
         return _error("Invalid JSON.", 400)
-    if (
-        not isinstance(body, dict)
-        or not isinstance(body.get("messages"), list)
-        or len(body["messages"]) > 500
-    ):
-        return _error("A messages list is required.", 400)
+    if not isinstance(body, dict):
+        return _error("A JSON object is required.", 400)
     try:
         provider, target = route(run.model_alias)
     except ModelUnavailable as error:
         return _error(str(error), 503)
+    # One API per instance, so there is one validated path to the provider.
+    if target.api != api:
+        return _error("This instance does not serve this model API.", 404)
+    try:
+        payload = build_payload(body, target) if api == "chat" else build_responses_payload(body, target)
+    except InvalidModelRequest as error:
+        return _error(str(error), 400)
     if not await sync_to_async(_reserve_model_call)(run.id):
         return _error("This run reached its model request limit.", 429)
 
-    payload = build_payload(body, target)
-    upstream_cm = provider.chat_completions(payload)
+    upstream_cm = provider.chat_completions(payload) if api == "chat" else provider.responses(payload)
     try:
         upstream = await upstream_cm.__aenter__()
     except ModelUnavailable as error:
@@ -169,7 +194,7 @@ async def chat_completions(request: HttpRequest):
         return _error(f"The model provider rejected the request (HTTP {upstream.status}).", 502)
 
     async def relay():
-        tap = StreamTap()
+        tap = StreamTap() if api == "chat" else ResponsesTap()
         last_check = last_flush = time.monotonic()
         try:
             async for chunk in upstream.chunks:

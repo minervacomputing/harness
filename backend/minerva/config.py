@@ -51,6 +51,10 @@ class Config(BaseSettings):
     model_api_key: SecretStr | None = None
     model_name: str = "gpt-5-mini"
     model_max_output_tokens: int = 8192
+    # "chat" for OpenAI-compatible servers without the Responses API.
+    model_api: Literal["responses", "chat"] = "responses"
+    # Responses API only. Empty for models that do not reason.
+    model_reasoning_effort: str = "medium"
 
     todoist_client_id: str | None = None
     todoist_client_secret: SecretStr | None = None

@@ -155,7 +155,7 @@ The effective permissions are computed when a run starts and stored with the run
 |---|---|
 | `GET /run` | Run spec: prompt, allowed conversation history, tool list, model alias, limits, local tool switches |
 | `POST /mcp` | Integration tools (MCP). Each call is authorized by the permission executor (D8) |
-| `POST /v1/chat/completions` | Model relay (OpenAI-compatible, D9) |
+| `POST /v1/responses` or `POST /v1/chat/completions` | Model relay (OpenAI-compatible, D9); an instance serves one of the two |
 | `POST /events` | Batched, sequence-numbered events: phase, assistant text deltas, tool started/finished (allowed or denied), artifact created, completed, failed |
 | `PUT /artifacts/{name}` | Artifact upload. The backend enforces size limits and the "allow report files" permission here, on the trusted side |
 
@@ -223,6 +223,7 @@ class SandboxProvider(Protocol):
 - LiteLLM is pinned by version and hash. We do not run LiteLLM Proxy. In 2026, LiteLLM's PyPI releases 1.82.7 and 1.82.8 shipped a credential stealer after a CI compromise, and the Proxy server had critical vulnerabilities, including one CISA lists as actively exploited. The Proxy's own users, teams, and virtual keys would also duplicate our tenancy.
 - **Keys:** a platform key with a per-workspace quota, and bring-your-own-key per workspace (stored like connection credentials). Self-hosters configure an instance key or bring their own.
 - **Cost accounting:** each model call records tokens and cost against the run and workspace, which feeds quotas now and billing later.
+- **Wire API:** the OpenAI Responses API by default, because current reasoning models only combine reasoning with function tools there. Chat Completions stays available for OpenAI-compatible servers without the Responses API. The gateway rebuilds every request from an allowlist rather than forwarding it: it forces the model, the output cap, `store: false` and the reasoning settings, accepts only function tools and text content, and refuses hosted tools, stored-item references and image or file inputs, because each of those lets the provider fetch or reveal data on the worker's behalf. With `store: false`, reasoning is replayed between tool calls as encrypted content, which the gateway always requests.
 
 ### D10. Frontend and chat
 
