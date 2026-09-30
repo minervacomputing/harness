@@ -62,6 +62,20 @@ Emails (verification and sign-in codes) are printed in the `web` process output.
 
 This project does not use pull requests. Commit directly to `main` (or merge a short-lived branch into it) and push `main`.
 
+## Second opinions with opencode
+
+Use opencode as a read-only subagent for code review, adversarial review, or critiques of plans. Always use the `plan` agent (it does not edit files) with `--auto` (no permission prompts):
+
+```sh
+git diff | opencode run --agent plan --auto "Adversarially review this diff for bugs and security issues."
+opencode run --agent plan --auto -f plan.md "Critique this plan: what is wrong, risky, or missing?"
+```
+
+- Input can be piped on stdin or attached with `-f`.
+- Add `-c` to ask a follow-up in the same session.
+- Its output is advice. Verify each finding before acting on it.
+- Run `git status` afterwards. The `plan` agent should not change anything, but `--auto` approves any shell command that is not explicitly denied.
+
 ## Checks
 
 ```sh
