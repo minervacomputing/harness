@@ -10,8 +10,10 @@ from connections.services import ClientCredentials
 @pytest.fixture
 def token_endpoint(monkeypatch):
     responses: list[dict] = []
+    creds = ClientCredentials("id", "secret", "https://x/cb")
+    monkeypatch.setattr(services, "client_credentials", lambda connector: creds)
     monkeypatch.setattr(
-        services, "client_credentials", lambda connector: ClientCredentials("id", "secret", "https://x/cb")
+        services, "issuing_client", lambda connector, client_id: creds if client_id in (None, "id") else None
     )
     monkeypatch.setattr(
         services.httpx, "post", lambda *args, **kwargs: httpx.Response(200, json=responses.pop(0))

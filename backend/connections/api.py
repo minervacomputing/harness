@@ -5,15 +5,16 @@ from uuid import UUID
 from asgiref.sync import async_to_sync
 from django.db import transaction
 from django.shortcuts import get_object_or_404
-from ninja import Field, Router, Schema, Status
+from ninja import Field, Query, Router, Schema, Status
 from ninja.errors import HttpError
 
 from connections import services
 from connections.models import Connection
 from connectors import registry
-from connectors.base import OperationError, ScopeItem
+from connectors.base import ACCOUNT_KIND, ApiKey, Connector, DiscoveryItem, OperationError
 from permissions.models import Grant, PermissionLayer
-from permissions.services import GrantSpec, InvalidGrants, replace_user_grants, validate_grants
+from permissions.policy import ANY
+from permissions.services import MAX_CHANGES, GrantChange, InvalidGrants, apply_grant_changes, check_changes
 from runs.services import revoke_active_runs
 from workspaces.auth import workspace_member
 
@@ -26,10 +27,19 @@ class ActionOut(Schema):
     requires: str | None
 
 
+class KindOut(Schema):
+    id: str
+    label: str
+    actions: list[str]
+    # Whether one grant can cover every resource of this kind.
+    wildcard: bool
+
+
 class ConnectorOut(Schema):
     slug: str
     name: str
-    scope_label: str
+    auth: Literal["oauth2", "api_key"]
+    kinds: list[KindOut]
     actions: list[ActionOut]
 
 
@@ -47,26 +57,49 @@ class AuthorizeOut(Schema):
     url: str
 
 
-class ResourceAccess(Schema):
+class GrantOut(Schema):
+    kind: str
+    # "*" covers every resource of the kind.
     id: str
-    name: str
+    # The provider's name when the grant was saved; null when unknown.
+    name: str | None
     actions: list[str]
 
 
 class AccessOut(Schema):
     connection: ConnectionOut
-    scope_label: str
+    kinds: list[KindOut]
     actions: list[ActionOut]
-    resources: list[ResourceAccess]
+    grants: list[GrantOut]
 
 
-class ResourceAccessIn(Schema):
+class ResourceOut(Schema):
+    id: str
+    name: str
+    actions: list[str]
+    # Actions allowed through the grant on every resource of this kind.
+    inherited: list[str]
+
+
+class ResourcePageOut(Schema):
+    items: list[ResourceOut]
+    next_cursor: str | None
+
+
+class ResourceQuery(Schema):
+    kind: Annotated[str, Field(min_length=1, max_length=64)]
+    q: Annotated[str | None, Field(max_length=100)] = None
+    cursor: Annotated[str | None, Field(max_length=1000)] = None
+
+
+class ChangeIn(Schema):
+    kind: Annotated[str, Field(min_length=1, max_length=64)]
     id: Annotated[str, Field(min_length=1, max_length=200)]
     actions: Annotated[list[str], Field(max_length=10)]
 
 
-class AccessIn(Schema):
-    resources: Annotated[list[ResourceAccessIn], Field(max_length=500)]
+class AccessChangesIn(Schema):
+    changes: Annotated[list[ChangeIn], Field(min_length=1, max_length=MAX_CHANGES)]
 
 
 def _connection_out(connection: Connection) -> dict:
@@ -88,25 +121,49 @@ def _usable(request, connection_id: UUID) -> Connection:
     return connection
 
 
-def _scope(connection: Connection) -> list[ScopeItem]:
-    async def fetch() -> list[ScopeItem]:
-        async with services.open_client(connection.provider, connection.id) as client:
-            return await registry.get(connection.provider).list_scope(client)
+def _actions(connector: Connector) -> list[dict]:
+    return [{"id": a.id, "label": a.label, "requires": a.requires} for a in connector.actions]
+
+
+def _kinds(connector: Connector) -> list[dict]:
+    return [
+        {"id": k.id, "label": k.label, "actions": list(k.actions), "wildcard": k.wildcard}
+        for k in connector.kinds
+    ]
+
+
+def _provider_call(connection: Connection, call):
+    """Runs `call(connector, client)` against the provider; provider failures become HTTP 502."""
+
+    async def run():
+        async with services.open_client(connection.provider, connection.id) as opened:
+            return await call(registry.get(connection.provider), opened.client)
 
     try:
-        return async_to_sync(fetch)()
+        return async_to_sync(run)()
     except OperationError as error:
         raise HttpError(502, error.message) from error
 
 
-def _actions(slug: str) -> list[dict]:
-    return [{"id": a.id, "label": a.label, "requires": a.requires} for a in registry.get(slug).actions]
+def _user_grants(request, connection: Connection):
+    return Grant.objects.filter(
+        layer__level=PermissionLayer.Level.USER,
+        layer__user=request.user,
+        connection=connection,
+        effect=Grant.Effect.ALLOW,
+    ).order_by("resource_kind", "resource_id")
 
 
 @router.get("/workspaces/{uuid:workspace_id}/connectors", response=list[ConnectorOut])
 def list_connectors(request, workspace_id: UUID):
     return [
-        {"slug": c.slug, "name": c.name, "scope_label": c.scope_label, "actions": _actions(c.slug)}
+        {
+            "slug": c.slug,
+            "name": c.name,
+            "auth": "api_key" if isinstance(c.auth, ApiKey) else "oauth2",
+            "kinds": _kinds(c),
+            "actions": _actions(c),
+        }
         for c in registry.all_connectors()
     ]
 
@@ -144,38 +201,91 @@ def delete_connection(request, workspace_id: UUID, connection_id: UUID):
 
 @router.get("/workspaces/{uuid:workspace_id}/connections/{uuid:connection_id}/access", response=AccessOut)
 def get_access(request, workspace_id: UUID, connection_id: UUID):
+    """What the user allows on this connection. Does not call the provider."""
     connection = _usable(request, connection_id)
     connector = registry.get(connection.provider)
-    items = _scope(connection)
-    grants = Grant.objects.filter(
-        layer__level=PermissionLayer.Level.USER,
-        layer__user=request.user,
-        connection=connection,
-        effect=Grant.Effect.ALLOW,
-        resource_kind=connector.scope_kind,
-    )
-    granted = {grant.resource_id: grant.actions for grant in grants}
     return {
         "connection": _connection_out(connection),
-        "scope_label": connector.scope_label,
-        "actions": _actions(connection.provider),
-        "resources": [{"id": i.id, "name": i.name, "actions": granted.get(i.id, [])} for i in items],
+        "kinds": _kinds(connector),
+        "actions": _actions(connector),
+        "grants": [
+            {
+                "kind": g.resource_kind,
+                "id": g.resource_id,
+                "name": g.resource_name or None,
+                "actions": g.actions,
+            }
+            for g in _user_grants(request, connection)
+            if connector.kind(g.resource_kind) is not None
+        ],
     }
 
 
-@router.put("/workspaces/{uuid:workspace_id}/connections/{uuid:connection_id}/access", response=AccessOut)
-def set_access(request, workspace_id: UUID, connection_id: UUID, payload: AccessIn):
+@router.get(
+    "/workspaces/{uuid:workspace_id}/connections/{uuid:connection_id}/access/resources",
+    response=ResourcePageOut,
+)
+def list_access_resources(request, workspace_id: UUID, connection_id: UUID, query: Query[ResourceQuery]):
+    """One page of resources the connected account can see, with what the user allows on each."""
     connection = _usable(request, connection_id)
     connector = registry.get(connection.provider)
-    specs = [
-        GrantSpec(connection.id, connector.scope_kind, item.id, tuple(item.actions))
-        for item in payload.resources
-        if item.actions
-    ]
-    visible = {item.id for item in _scope(connection)}
+    if connector.kind(query.kind) is None:
+        raise HttpError(422, f"{connector.name} has no resources of type {query.kind!r}.")
+    if query.kind == ACCOUNT_KIND:
+        items, next_cursor = [DiscoveryItem(str(connection.id), connection.label)], None
+    else:
+        page = _provider_call(
+            connection,
+            lambda c, client: c.discover(client, query.kind, query=query.q or None, cursor=query.cursor),
+        )
+        items, next_cursor = page.items, page.next_cursor
+    granted = {
+        g.resource_id: g.actions for g in _user_grants(request, connection).filter(resource_kind=query.kind)
+    }
+    inherited = granted.get(ANY, [])
+    return {
+        "items": [
+            {"id": item.id, "name": item.name, "actions": granted.get(item.id, []), "inherited": inherited}
+            for item in items
+            if item.id != ANY
+        ],
+        "next_cursor": next_cursor,
+    }
+
+
+@router.patch("/workspaces/{uuid:workspace_id}/connections/{uuid:connection_id}/access", response=AccessOut)
+def change_access(request, workspace_id: UUID, connection_id: UUID, payload: AccessChangesIn):
+    """Changes what the user allows on some resources, all or nothing. Revokes the user's active runs."""
+    connection = _usable(request, connection_id)
+    connector = registry.get(connection.provider)
+    changes = [GrantChange(c.kind, c.id, tuple(c.actions)) for c in payload.changes]
     try:
-        validate_grants(specs, user_id=request.user.id, scope={connection.id: visible})
+        check_changes(connector, connection, changes)
     except InvalidGrants as error:
         raise HttpError(422, str(error)) from error
-    replace_user_grants(user_id=request.user.id, connection_id=connection.id, specs=specs)
+    # Only resources the account can see may be allowed; removing a grant never needs the provider.
+    wanted: dict[str, list[str]] = {}
+    for change in changes:
+        if change.actions and change.resource_id != ANY and change.kind != ACCOUNT_KIND:
+            wanted.setdefault(change.kind, []).append(change.resource_id)
+    names: dict[tuple[str, str], str] = {
+        (c.kind, c.resource_id): connection.label for c in changes if c.kind == ACCOUNT_KIND and c.actions
+    }
+    if wanted:
+
+        async def describe(c, client):
+            return {kind: await c.describe(client, kind, ids) for kind, ids in wanted.items()}
+
+        described = _provider_call(connection, describe)
+        for kind, ids in wanted.items():
+            for resource_id in ids:
+                name = described[kind].get(resource_id)
+                if name is None:
+                    label = connector.kind(kind).label.lower()
+                    raise HttpError(422, f"Choose a {label} that the connected account can see.")
+                names[(kind, resource_id)] = name
+    try:
+        apply_grant_changes(user_id=request.user.id, connection=connection, changes=changes, names=names)
+    except InvalidGrants as error:
+        raise HttpError(422, str(error)) from error
     return get_access(request, workspace_id, connection_id)

@@ -2,12 +2,13 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, Prefetch
 
 from connections.models import Connection
 from connectors import registry
+from connectors.base import ACCOUNT_KIND, Connector
 from permissions.models import Grant, PermissionLayer
-from permissions.policy import Layer, Policy
+from permissions.policy import ANY, Layer, Policy
 
 # A missing layer means: ceiling passes everything through, a user allows nothing until they choose,
 # an agent inherits whatever the layers above allow.
@@ -16,6 +17,8 @@ DEFAULT_RESTRICTED = {
     PermissionLayer.Level.USER: True,
     PermissionLayer.Level.AGENT: False,
 }
+MAX_CHANGES = 100
+MAX_GRANTS_PER_CONNECTION = 500
 
 
 class InvalidGrants(ValueError):
@@ -23,9 +26,10 @@ class InvalidGrants(ValueError):
 
 
 @dataclass(frozen=True)
-class GrantSpec:
-    connection_id: UUID
-    resource_kind: str
+class GrantChange:
+    """The actions a user allows on one resource of one connection. No actions removes the grant."""
+
+    kind: str
     resource_id: str
     actions: tuple[str, ...]
 
@@ -34,26 +38,46 @@ def _layer_query(level: str, *, user_id: UUID | None = None, agent_id: UUID | No
     return PermissionLayer.objects.filter(level=level, user_id=user_id, agent_id=agent_id)
 
 
+def _enforceable(grant: Grant) -> bool:
+    """Denies always apply. An allow counts only for a kind the connector still declares, and a wildcard
+    allow only where the kind supports one, so a hand-edited row cannot widen access."""
+    if grant.effect == Grant.Effect.DENY:
+        return True
+    try:
+        kind = registry.get(grant.connection.provider).kind(grant.resource_kind)
+    except LookupError:
+        return False
+    return kind is not None and (grant.resource_id != ANY or kind.wildcard)
+
+
 def _to_layer(name: str, level: str, layer: PermissionLayer | None) -> Layer:
     if layer is None:
         return Layer(name, DEFAULT_RESTRICTED[level], frozenset(), frozenset())
     grants = [
         (str(g.connection_id), g.resource_kind, g.resource_id, g.actions, g.effect)
         for g in layer.grants.all()
+        if _enforceable(g)
     ]
     return Layer.build(name, layer.restricted, grants)
 
 
-def effective_policy(*, user_id: UUID, agent_id: UUID) -> Policy:
-    """Snapshot of every layer that applies to a run by this user with this agent (current workspace)."""
+def effective_policy(*, user_id: UUID, agent_id: UUID, lock: bool = False) -> Policy:
+    """Snapshot of every layer that applies to a run by this user with this agent (current workspace).
+
+    With `lock`, the layers stay locked until the transaction ends, so a grant edit either finishes
+    before the snapshot or sees the new run when it revokes active runs.
+    """
     specs = [
         ("ceiling", PermissionLayer.Level.CEILING, _layer_query(PermissionLayer.Level.CEILING)),
         ("user", PermissionLayer.Level.USER, _layer_query(PermissionLayer.Level.USER, user_id=user_id)),
         ("agent", PermissionLayer.Level.AGENT, _layer_query(PermissionLayer.Level.AGENT, agent_id=agent_id)),
     ]
-    layers = [
-        _to_layer(name, level, query.prefetch_related("grants").first()) for name, level, query in specs
-    ]
+    grants = Prefetch("grants", queryset=Grant.objects.select_related("connection"))
+    layers = []
+    for name, level, query in specs:
+        if lock:
+            query = query.select_for_update(of=("self",))
+        layers.append(_to_layer(name, level, query.prefetch_related(grants).first()))
     return Policy(tuple(layers))
 
 
@@ -67,59 +91,100 @@ def user_layer(user_id: UUID) -> PermissionLayer:
     return layer
 
 
-def validate_grants(specs: list[GrantSpec], *, user_id: UUID, scope: dict[UUID, set[str]]) -> None:
-    """Reject grants the connector cannot enforce, so a saved setting never silently means less.
+def _label(connector: Connector, action_id: str) -> str:
+    action = connector.action(action_id)
+    return action.label if action else action_id
 
-    `scope` maps each connection to the resource ids its account can currently see.
-    """
-    seen: set[tuple[UUID, str, str]] = set()
-    for spec in specs:
-        connection = Connection.objects.filter(pk=spec.connection_id).first()
-        if connection is None or not connection.usable_by(user_id):
-            raise InvalidGrants("Choose one of your active connections.")
-        connector = registry.get(connection.provider)
-        if spec.resource_kind != connector.scope_kind:
-            raise InvalidGrants(f"{connector.name} permissions are set per {connector.scope_label.lower()}.")
-        if spec.resource_id not in scope.get(spec.connection_id, set()):
-            raise InvalidGrants(
-                f"Choose a {connector.scope_label.lower()} that the connected account can see."
-            )
-        key = (spec.connection_id, spec.resource_kind, spec.resource_id)
+
+def check_changes(connector: Connector, connection: Connection, changes: list[GrantChange]) -> None:
+    """Rejects changes the connector cannot enforce, before anything asks the provider about them."""
+    if not changes:
+        raise InvalidGrants("Nothing to change.")
+    if len(changes) > MAX_CHANGES:
+        raise InvalidGrants(f"Change at most {MAX_CHANGES} resources at once.")
+    seen: set[tuple[str, str]] = set()
+    for change in changes:
+        kind = connector.kind(change.kind)
+        if kind is None:
+            raise InvalidGrants(f"{connector.name} has no resources of type {change.kind!r}.")
+        if not change.resource_id or len(change.resource_id) > 200:
+            raise InvalidGrants("Choose a resource.")
+        if change.resource_id == ANY and not kind.wildcard:
+            raise InvalidGrants(f"Permissions for {kind.label.lower()} resources are set one at a time.")
+        if kind.id == ACCOUNT_KIND and change.resource_id != str(connection.pk):
+            raise InvalidGrants("Account permissions apply to the connection itself.")
+        key = (change.kind, change.resource_id)
         if key in seen:
             raise InvalidGrants("Each resource can only be listed once.")
         seen.add(key)
-        for action_id in spec.actions:
-            action = connector.action(action_id)
-            if action is None:
-                raise InvalidGrants(f"{connector.name} does not support the action {action_id!r}.")
-            if action.requires and action.requires not in spec.actions:
-                required = connector.action(action.requires)
-                label = required.label if required else action.requires
-                raise InvalidGrants(f"{action.label} also requires {label}.")
+        for action_id in change.actions:
+            if action_id not in kind.actions:
+                raise InvalidGrants(
+                    f"{connector.name} does not support {action_id!r} on {kind.label.lower()}."
+                )
 
 
-def replace_user_grants(*, user_id: UUID, connection_id: UUID, specs: list[GrantSpec]) -> PermissionLayer:
-    """Replace the user's allow grants for one connection. Active runs in the workspace are revoked."""
+def _check_state(
+    connector: Connector,
+    state: dict[tuple[str, str], set[str]],
+    names: dict[tuple[str, str], str],
+    kinds: set[str],
+) -> None:
+    """Checks the grants as they will be after the change. A requirement may be met by a wildcard grant."""
+    if sum(1 for actions in state.values() if actions) > MAX_GRANTS_PER_CONNECTION:
+        raise InvalidGrants(f"A connection can have at most {MAX_GRANTS_PER_CONNECTION} permissions.")
+    for (kind, resource_id), actions in sorted(state.items()):
+        if kind not in kinds:
+            continue
+        inherited = state.get((kind, ANY), set())
+        for action_id in sorted(actions):
+            required = connector.requires_of(action_id)
+            if required is not None and required not in actions and required not in inherited:
+                name = names.get((kind, resource_id)) or resource_id
+                raise InvalidGrants(
+                    f"{_label(connector, action_id)} on {name} also requires {_label(connector, required)}."
+                )
+
+
+def apply_grant_changes(
+    *, user_id: UUID, connection: Connection, changes: list[GrantChange], names: dict[tuple[str, str], str]
+) -> dict[tuple[str, str], set[str]]:
+    """Applies a set of changes to the user's allow grants on one connection, all or nothing, and revokes
+    the user's active runs. Returns the resulting grants. `names` are provider names for display."""
     from runs.services import revoke_active_runs
 
+    connector = registry.get(connection.provider)
+    check_changes(connector, connection, changes)
     with transaction.atomic():
         layer = user_layer(user_id)
-        PermissionLayer.objects.filter(pk=layer.pk).select_for_update().get()
-        Grant.objects.filter(layer=layer, connection_id=connection_id, effect=Grant.Effect.ALLOW).delete()
-        Grant.objects.bulk_create(
-            [
-                Grant(
+        PermissionLayer.objects.select_for_update().get(pk=layer.pk)
+        rows = {
+            (g.resource_kind, g.resource_id): g
+            for g in Grant.objects.filter(layer=layer, connection=connection, effect=Grant.Effect.ALLOW)
+        }
+        state = {key: set(g.actions) for key, g in rows.items()}
+        stored_names = {key: g.resource_name for key, g in rows.items() if g.resource_name}
+        for change in changes:
+            state[(change.kind, change.resource_id)] = set(change.actions)
+        _check_state(connector, state, {**stored_names, **names}, {change.kind for change in changes})
+        for change in changes:
+            key = (change.kind, change.resource_id)
+            row = rows.get(key)
+            if not change.actions:
+                if row is not None:
+                    row.delete()
+                continue
+            if row is None:
+                row = Grant(
                     workspace_id=layer.workspace_id,
                     layer=layer,
-                    connection_id=spec.connection_id,
-                    resource_kind=spec.resource_kind,
-                    resource_id=spec.resource_id,
-                    actions=sorted(set(spec.actions)),
+                    connection=connection,
+                    resource_kind=change.kind,
+                    resource_id=change.resource_id,
                 )
-                for spec in specs
-                if spec.actions
-            ]
-        )
+            row.actions = sorted(set(change.actions))
+            row.resource_name = names.get(key, row.resource_name)
+            row.save()
         PermissionLayer.objects.filter(pk=layer.pk).update(version=F("version") + 1)
         revoke_active_runs(user_id=user_id, reason="permissions_changed")
-    return layer
+    return {key: actions for key, actions in state.items() if actions}

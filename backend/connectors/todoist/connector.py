@@ -9,14 +9,18 @@ from connectors.base import (
     ActionSpec,
     Binding,
     Connector,
-    OAuthSpec,
+    DiscoveryItem,
+    DiscoveryPage,
+    Enumerate,
+    Need,
+    OAuth2,
     Operation,
     OperationError,
     OperationInput,
     Prepared,
     ProviderOutput,
+    ResourceKind,
     ScopedRecord,
-    ScopeItem,
 )
 from connectors.todoist.client import TodoistClient, TodoistTask
 
@@ -40,12 +44,12 @@ def _task(binding: Binding, task: TodoistTask) -> ScopedRecord:
     )
 
 
-async def _all_projects(client: TodoistClient) -> list[ScopeItem]:
-    items: list[ScopeItem] = []
+async def _all_projects(client: TodoistClient) -> list[DiscoveryItem]:
+    items: list[DiscoveryItem] = []
     cursor: str | None = None
     for _ in range(MAX_PROJECT_PAGES):
         page = await client.projects(cursor)
-        items.extend(ScopeItem(project.id, project.name) for project in page.results)
+        items.extend(DiscoveryItem(project.id, project.name) for project in page.results)
         if not page.next_cursor:
             return items
         cursor = page.next_cursor
@@ -63,7 +67,7 @@ async def _prepare_list_projects(binding: Binding, _: ListProjects) -> Prepared:
             [ScopedRecord(binding.resource(PROJECT, p.id), {"id": p.id, "name": p.name}) for p in projects]
         )
 
-    return Prepared(targets=[], execute=execute)
+    return Prepared([Enumerate(PROJECT, "read")], execute)
 
 
 class ListTasks(OperationInput):
@@ -85,7 +89,7 @@ async def _prepare_list_tasks(binding: Binding, data: ListTasks) -> Prepared:
             tasks = page.results
         return ProviderOutput([_task(binding, task) for task in tasks], page.next_cursor)
 
-    return Prepared(targets=[binding.resource(PROJECT, data.project_id)], execute=execute)
+    return Prepared([Need(binding.resource(PROJECT, data.project_id), "read")], execute)
 
 
 class GetTask(OperationInput):
@@ -98,7 +102,7 @@ async def _prepare_get_task(binding: Binding, data: GetTask) -> Prepared:
     try:
         task = await binding.client.task(data.task_id)
     except OperationError as error:
-        if error.code in {"NOT_FOUND"}:
+        if error.code in {"NOT_FOUND", "PROVIDER_FORBIDDEN"}:
             raise OperationError("POLICY_DENIED", DENIED) from error
         raise
     if task.id != data.task_id:
@@ -107,7 +111,7 @@ async def _prepare_get_task(binding: Binding, data: GetTask) -> Prepared:
     async def execute() -> ProviderOutput:
         return ProviderOutput([_task(binding, task)])
 
-    return Prepared(targets=[binding.resource(PROJECT, task.project_id)], execute=execute)
+    return Prepared([Need(binding.resource(PROJECT, task.project_id), "read")], execute)
 
 
 class CreateTask(OperationInput):
@@ -117,27 +121,26 @@ class CreateTask(OperationInput):
 
 async def _prepare_create_task(binding: Binding, data: CreateTask) -> Prepared:
     async def execute() -> ProviderOutput:
+        # The record carries the project Todoist actually used; the executor filters it by that.
         task = await binding.client.create_task(data.project_id, data.title)
-        if task.project_id != data.project_id:
-            raise RuntimeError("Todoist created the task in an unexpected project.")
         return ProviderOutput([_task(binding, task)])
 
-    return Prepared(targets=[binding.resource(PROJECT, data.project_id)], execute=execute)
+    return Prepared([Need(binding.resource(PROJECT, data.project_id), "create")], execute)
 
 
 class TodoistConnector(Connector):
     slug = "todoist"
     name = "Todoist"
-    scope_kind = PROJECT
-    scope_label = "Project"
+    kinds = (ResourceKind(PROJECT, "Project", ("read", "create"), wildcard=True),)
     actions = (
         ActionSpec("read", "Read tasks"),
         ActionSpec("create", "Create tasks", requires="read"),
     )
-    oauth = OAuthSpec(
+    auth = OAuth2(
+        app="todoist",
         authorize_url="https://app.todoist.com/oauth/authorize",
         token_url="https://api.todoist.com/oauth/access_token",  # noqa: S106
-        scope="data:read_write",
+        scopes=("data:read_write",),
         registration_url="https://api.todoist.com/oauth/register",
     )
 
@@ -147,7 +150,7 @@ class TodoistConnector(Connector):
             title="List projects",
             description="List the Todoist projects you may access.",
             input_model=ListProjects,
-            action="read",
+            needs=((PROJECT, "read"),),
             prepare=_prepare_list_projects,
         ),
         Operation(
@@ -158,7 +161,7 @@ class TodoistConnector(Connector):
                 "To get the next page, repeat the call with identical arguments plus the returned next_cursor."
             ),
             input_model=ListTasks,
-            action="read",
+            needs=((PROJECT, "read"),),
             prepare=_prepare_list_tasks,
             paginated=True,
         ),
@@ -167,7 +170,7 @@ class TodoistConnector(Connector):
             title="Get a task",
             description="Read one task by ID. Its project must be readable for you.",
             input_model=GetTask,
-            action="read",
+            needs=((PROJECT, "read"),),
             prepare=_prepare_get_task,
         ),
         Operation(
@@ -178,7 +181,7 @@ class TodoistConnector(Connector):
                 "Give an explicit project_id and title. The number of creations per run is limited."
             ),
             input_model=CreateTask,
-            action="create",
+            needs=((PROJECT, "create"),),
             prepare=_prepare_create_task,
             mutates=True,
         ),
@@ -193,7 +196,17 @@ class TodoistConnector(Connector):
 
     async def account(self, client: TodoistClient) -> Account:
         user = await client.user()
-        return Account(id=str(user["id"]), label=user.get("full_name") or user.get("email") or "Todoist")
+        return Account(id=user.id, label=user.full_name or user.email or "Todoist")
 
-    async def list_scope(self, client: TodoistClient) -> list[ScopeItem]:
-        return await _all_projects(client)
+    async def discover(
+        self, client: TodoistClient, kind: str, *, query: str | None, cursor: str | None
+    ) -> DiscoveryPage:
+        if query:
+            text = query.casefold()
+            return DiscoveryPage([p for p in await _all_projects(client) if text in p.name.casefold()])
+        page = await client.projects(cursor)
+        return DiscoveryPage([DiscoveryItem(p.id, p.name) for p in page.results], page.next_cursor)
+
+    async def describe(self, client: TodoistClient, kind: str, ids: list[str]) -> dict[str, str]:
+        wanted = set(ids)
+        return {p.id: p.name for p in await _all_projects(client) if p.id in wanted}

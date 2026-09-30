@@ -166,7 +166,12 @@ async def test_mcp_tools_are_authorized_and_recorded(claimed):
     run, _ = claimed
     ctx = SimpleNamespace(request=SimpleNamespace(scope={RUN_SCOPE_KEY: run.id}))
     listed = await list_tools(ctx, None)
-    assert "todoist_create_task" in {tool.name for tool in listed.tools}
+    # Nothing allows creating, so the tool is not offered.
+    assert {tool.name for tool in listed.tools} == {
+        "todoist_list_projects",
+        "todoist_list_tasks",
+        "todoist_get_task",
+    }
 
     allowed = await call_tool(
         ctx, types.CallToolRequestParams(name="todoist_list_tasks", arguments={"project_id": "work"})

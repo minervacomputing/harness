@@ -54,6 +54,8 @@ class Config(BaseSettings):
 
     todoist_client_id: str | None = None
     todoist_client_secret: SecretStr | None = None
+    google_client_id: str | None = None
+    google_client_secret: SecretStr | None = None
 
     sandbox_provider: Literal["container", "local-process"] = "container"
     sandbox_image: str = "minerva-worker:dev"
@@ -68,6 +70,14 @@ class Config(BaseSettings):
     run_timeout_seconds: int = 300
     run_max_writes: int = 3
     run_max_model_calls: int = 30
+
+    def oauth_client(self, app: str) -> tuple[str, str] | None:
+        """The operator's OAuth client for an app (MINERVA_<APP>_CLIENT_ID and _SECRET), if configured."""
+        client_id = getattr(self, f"{app}_client_id", None)
+        secret = getattr(self, f"{app}_client_secret", None)
+        if not client_id or secret is None:
+            return None
+        return client_id, secret.get_secret_value()
 
     @field_validator(
         "allowed_hosts", "csrf_trusted_origins", "gateway_allowed_hosts", "encryption_keys", mode="before"

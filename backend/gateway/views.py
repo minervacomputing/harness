@@ -43,7 +43,7 @@ async def run_spec(request: HttpRequest) -> JsonResponse:
     history = await sync_to_async(services.history)(run)
     tools = []
     for item in run.tools:
-        op = registry.get(item["provider"]).operation(item["operation"])
+        op = registry.resolve(item["provider"], item["operation"], item.get("contract", ""))
         if op is not None:
             tools.append({"name": item["name"], "title": op.title})
     try:

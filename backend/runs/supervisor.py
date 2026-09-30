@@ -40,6 +40,7 @@ class Supervisor:
         close_old_connections()
         self.release_finished()
         self.enforce_deadlines()
+        services.sweep_lost_writes()
         self.reconcile()
         self.start_queued()
         if time.monotonic() - self._last_sweep > ORPHAN_SWEEP_SECONDS:

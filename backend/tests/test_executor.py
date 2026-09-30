@@ -77,6 +77,8 @@ async def test_strict_arguments(agrant, start):
 
 async def test_create_needs_create_permission(agrant, start):
     await agrant(work=["read"])
+    assert "todoist_create_task" not in (await start()).context.tools
+    await agrant(work=["read"], private=["read", "create"])
     executor = await start()
     with pytest.raises(OperationError) as denied:
         await executor.invoke("todoist_create_task", {"project_id": "work", "title": "x"})
@@ -197,7 +199,7 @@ async def test_required_actions_are_enforced_after_layers_intersect(
         )
 
     await sync_to_async(deny_read_in_ceiling)()
-    await agrant(work=["read", "create"])
+    await agrant(work=["read", "create"], private=["read", "create"])
     executor = await start()
     with pytest.raises(OperationError) as denied:
         await executor.invoke("todoist_create_task", {"project_id": "work", "title": "a"})

@@ -3,7 +3,6 @@ import json
 import pytest
 from django.test import Client
 
-from connectors.base import ScopeItem
 from conversations.models import Conversation, Message
 from runs import services
 from runs.models import Run
@@ -56,7 +55,8 @@ def theirs_agent(workspace):
     return Agent.objects.get(workspace=workspace)
 
 
-def test_chat_message_starts_one_run_at_a_time(api, workspace, scoped, agent):
+def test_chat_message_starts_one_run_at_a_time(api, workspace, scoped, agent, grant):
+    grant(work=["read", "create"])
     base = f"/api/workspaces/{workspace.id}"
     conversation = post(api, f"{base}/conversations", {"agent_id": str(agent.id)}).json()
     url = f"{base}/conversations/{conversation['id']}/messages"
@@ -110,22 +110,38 @@ def test_changing_an_agents_connections_stops_its_active_runs(api, workspace, sc
     assert (run.status, run.error_code) == (Run.Status.CANCELLED, "agent_connections_changed")
 
 
-def test_access_settings_are_validated(api, workspace, connection, monkeypatch):
-    monkeypatch.setattr(
-        "connections.api._scope", lambda c: [ScopeItem("work", "Work"), ScopeItem("private", "Private")]
-    )
+def test_access_settings_are_validated(api, workspace, connection, todoist):
     url = f"/api/workspaces/{workspace.id}/connections/{connection.id}/access"
-    assert api.get(url).json()["resources"][0] == {"id": "work", "name": "Work", "actions": []}
-    bad = [
-        {"resources": [{"id": "work", "actions": ["create"]}]},
-        {"resources": [{"id": "elsewhere", "actions": ["read"]}]},
-        {"resources": [{"id": "work", "actions": ["delete"]}]},
+    access = api.get(url).json()
+    assert access["grants"] == []
+    assert access["kinds"] == [
+        {"id": "project", "label": "Project", "actions": ["read", "create"], "wildcard": True}
     ]
-    for body in bad:
-        assert post(api, url, body, method="put").status_code == 422, body
-    saved = post(api, url, {"resources": [{"id": "work", "actions": ["read", "create"]}]}, method="put")
+    assert todoist.calls == []
+    resources = api.get(f"{url}/resources?kind=project").json()
+    assert resources["items"][0] == {"id": "work", "name": "Work", "actions": [], "inherited": []}
+    bad = [
+        [{"kind": "project", "id": "work", "actions": ["create"]}],
+        [{"kind": "project", "id": "elsewhere", "actions": ["read"]}],
+        [{"kind": "project", "id": "work", "actions": ["delete"]}],
+        [{"kind": "task", "id": "work", "actions": ["read"]}],
+        [
+            {"kind": "project", "id": "work", "actions": ["read"]},
+            {"kind": "project", "id": "work", "actions": []},
+        ],
+    ]
+    for changes in bad:
+        assert post(api, url, {"changes": changes}, method="patch").status_code == 422, changes
+    saved = post(
+        api,
+        url,
+        {"changes": [{"kind": "project", "id": "work", "actions": ["read", "create"]}]},
+        method="patch",
+    )
     assert saved.status_code == 200
-    assert saved.json()["resources"][0]["actions"] == ["create", "read"]
+    assert saved.json()["grants"] == [
+        {"kind": "project", "id": "work", "name": "Work", "actions": ["create", "read"]}
+    ]
 
 
 def test_agents_can_only_use_connections_of_their_user(api, workspace, other_user):

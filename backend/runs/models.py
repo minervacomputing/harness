@@ -99,21 +99,33 @@ class RunEvent(TenantModel):
 
 
 class RunWrite(TenantModel):
-    """Deduplicates identical writes within a run and remembers their outcome."""
+    """One write a run sent to a provider. Deduplicates identical writes and remembers their outcome.
+
+    A write is dispatched before its request is sent, then settles as succeeded or uncertain. A write
+    the provider refused is deleted, which returns its quota. Only one write per run is in flight.
+    """
 
     class Status(models.TextChoices):
-        PENDING = "pending"
+        DISPATCHED = "dispatched"
         SUCCEEDED = "succeeded"
         UNCERTAIN = "uncertain"
 
     run = models.ForeignKey(Run, on_delete=models.CASCADE, related_name="writes")
     key = models.CharField(max_length=64)
-    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.DISPATCHED)
     result = models.JSONField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    dispatched_at = models.DateTimeField(null=True, blank=True)
+    # After this a dispatched write that never settled is assumed lost and marked uncertain.
+    deadline_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["run", "key"], name="run_write_key_unique")]
+        constraints = [
+            models.UniqueConstraint(fields=["run", "key"], name="run_write_key_unique"),
+            models.UniqueConstraint(
+                fields=["run"], condition=models.Q(status="dispatched"), name="run_write_one_in_flight"
+            ),
+        ]
 
 
 class RunPageToken(TenantModel):

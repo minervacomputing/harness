@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AuthorizeData, AuthorizeResponses, CancelRunData, CancelRunResponses, CreateAgentData, CreateAgentResponses, CreateConversationData, CreateConversationResponses, DeleteAgentData, DeleteAgentResponses, DeleteConnectionData, DeleteConnectionResponses, DeleteConversationData, DeleteConversationResponses, GetAccessData, GetAccessResponses, GetAgentData, GetAgentResponses, GetConversationData, GetConversationResponses, GetRunData, GetRunResponses, ListAgentsData, ListAgentsResponses, ListConnectionsData, ListConnectionsResponses, ListConnectorsData, ListConnectorsResponses, ListConversationsData, ListConversationsResponses, MeData, MeResponses, PostMessageData, PostMessageResponses, SetAccessData, SetAccessResponses, UpdateAgentData, UpdateAgentResponses } from './types.gen';
+import type { AuthorizeData, AuthorizeResponses, CancelRunData, CancelRunResponses, ChangeAccessData, ChangeAccessResponses, CreateAgentData, CreateAgentResponses, CreateConversationData, CreateConversationResponses, DeleteAgentData, DeleteAgentResponses, DeleteConnectionData, DeleteConnectionResponses, DeleteConversationData, DeleteConversationResponses, GetAccessData, GetAccessResponses, GetAgentData, GetAgentResponses, GetConversationData, GetConversationResponses, GetRunData, GetRunResponses, ListAccessResourcesData, ListAccessResourcesResponses, ListAgentsData, ListAgentsResponses, ListConnectionsData, ListConnectionsResponses, ListConnectorsData, ListConnectorsResponses, ListConversationsData, ListConversationsResponses, MeData, MeResponses, PostMessageData, PostMessageResponses, UpdateAgentData, UpdateAgentResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -140,6 +140,8 @@ export const deleteConnection = <ThrowOnError extends boolean = false>(options: 
 
 /**
  * Get Access
+ *
+ * What the user allows on this connection. Does not call the provider.
  */
 export const getAccess = <ThrowOnError extends boolean = false>(options: Options<GetAccessData, ThrowOnError>): RequestResult<GetAccessResponses, unknown, ThrowOnError> => (options.client ?? client).get<GetAccessResponses, unknown, ThrowOnError>({
     security: [{
@@ -153,9 +155,11 @@ export const getAccess = <ThrowOnError extends boolean = false>(options: Options
 });
 
 /**
- * Set Access
+ * Change Access
+ *
+ * Changes what the user allows on some resources, all or nothing. Revokes the user's active runs.
  */
-export const setAccess = <ThrowOnError extends boolean = false>(options: Options<SetAccessData, ThrowOnError>): RequestResult<SetAccessResponses, unknown, ThrowOnError> => (options.client ?? client).put<SetAccessResponses, unknown, ThrowOnError>({
+export const changeAccess = <ThrowOnError extends boolean = false>(options: Options<ChangeAccessData, ThrowOnError>): RequestResult<ChangeAccessResponses, unknown, ThrowOnError> => (options.client ?? client).patch<ChangeAccessResponses, unknown, ThrowOnError>({
     security: [{
             key: 'WorkspaceMember',
             in: 'cookie',
@@ -168,6 +172,22 @@ export const setAccess = <ThrowOnError extends boolean = false>(options: Options
         'Content-Type': 'application/json',
         ...options.headers
     }
+});
+
+/**
+ * List Access Resources
+ *
+ * One page of resources the connected account can see, with what the user allows on each.
+ */
+export const listAccessResources = <ThrowOnError extends boolean = false>(options: Options<ListAccessResourcesData, ThrowOnError>): RequestResult<ListAccessResourcesResponses, unknown, ThrowOnError> => (options.client ?? client).get<ListAccessResourcesResponses, unknown, ThrowOnError>({
+    security: [{
+            key: 'WorkspaceMember',
+            in: 'cookie',
+            name: 'sessionid',
+            type: 'apiKey'
+        }],
+    url: '/api/workspaces/{workspace_id}/connections/{connection_id}/access/resources',
+    ...options
 });
 
 /**

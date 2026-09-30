@@ -53,6 +53,8 @@ class Grant(TenantModel):
     connection = models.ForeignKey("connections.Connection", on_delete=models.CASCADE, related_name="grants")
     resource_kind = models.CharField(max_length=64)
     resource_id = models.CharField(max_length=200)
+    # The provider's name for the resource when the grant was saved, for display only.
+    resource_name = models.CharField(max_length=300, blank=True, default="")
     actions = models.JSONField(default=list)
     effect = models.CharField(max_length=8, choices=Effect.choices, default=Effect.ALLOW)
 

@@ -1,6 +1,6 @@
 # Minerva — current state
 
-Updated 2026-09-29. This describes the code in this repository. For the reasons behind it, see [ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md). For setup, see [README.md](README.md).
+Updated 2026-09-30. This describes the code in this repository. For the reasons behind it, see [ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md). For setup, see [README.md](README.md).
 
 ## 1. Summary
 
@@ -61,7 +61,7 @@ Stopping a run revokes its token, so every later call from the worker is rejecte
 
 ## 4. Permissions
 
-**A grant is: connection + project + actions.** For Todoist the actions are Read and Create, and Create requires Read.
+**A grant is: connection + resource kind + resource + actions.** A resource may be `*`, meaning every resource of that kind, including new ones. For Todoist the kind is Project, the actions are Read and Create, and Create requires Read. Connector declarations are described in [ARCHITECTURE_DECISIONS.md, D8](ARCHITECTURE_DECISIONS.md#d8-connectors-and-the-permission-executor).
 
 Layers can only narrow, and deny wins:
 
@@ -77,10 +77,12 @@ Every tool call goes through one pipeline:
 
 ```text
 strict argument validation
-  → connector resolves the real project(s) the call touches
+  → provider consent (the connection's OAuth scopes)
+  → connector resolves the real resources the call touches, checked against its declaration
   → permission check
-  → (writes) reserve one of the run's writes
-  → call Todoist
+  → (writes) dispatch one of the run's writes, one at a time
+  → call the provider
+  → (writes) settle: succeeded, not applied (quota returned), or uncertain
   → drop returned records the run may not see
   → return, with an opaque run-bound page token
 ```
@@ -96,8 +98,10 @@ strict argument validation
 
 - **Identical writes** within a run are deduplicated.
 - **Uncertain writes:** if a write's outcome is unknown, for example after a timeout, further writes in that run are paused.
-- **Refused writes:** a write the provider refused outright (401, 404, or 429) does not pause further writes.
-- **Rejected tokens:** if Todoist rejects a token, the connection is marked **Needs reconnecting**. Reconnecting keeps the user's access choices.
+- **Refused writes:** a write the provider refused outright (for example 401, 403, 404, 409, or 429), or one that never reached it, returns its quota and does not pause further writes.
+- **Lost writes:** a write whose gateway process died is marked uncertain by the supervisor.
+- **Rejected tokens:** if the provider rejects a token, the connection is marked **Needs reconnecting**, unless it was reconnected in the meantime. Reconnecting keeps the user's access choices.
+- **Changed tools:** if a deploy changes what a tool means, active runs lose that tool instead of using it under their old grants.
 
 ## 5. Sandbox
 
@@ -134,7 +138,7 @@ Everything is in PostgreSQL. Tenant tables carry a `workspace` key, and scoped m
 | `Agent` | Name, instructions, connections |
 | `Conversation`, `Message` | Chat history |
 | `Run`, `RunEvent` | Status, permission snapshot, token hash, deadline, usage, sandbox handle; ordered events |
-| `RunWrite`, `RunPageToken` | Write deduplication and quota; run-bound page tokens |
+| `RunWrite`, `RunPageToken` | Write state (dispatched, succeeded, uncertain), deduplication, and quota; run-bound page tokens |
 
 Other state:
 
@@ -145,7 +149,7 @@ Other state:
 
 | Check | Result |
 |---|---|
-| Backend tests (`pytest`), including cross-workspace access; needs Postgres running (`make services`) | 39 pass |
+| Backend tests (`pytest`), including cross-workspace access and the connector contract; needs Postgres running (`make services`) | 120 pass (2026-09-30) |
 | Ruff lint and format; worker and frontend typechecks; production build | Pass |
 | Sandbox conformance | 11/11 |
 | End-to-end run in the container with the fake model | Pass: tool call, streamed text, stored answer, usage recorded, container removed |

@@ -1,21 +1,22 @@
 {
   "components": {
     "schemas": {
-      "AccessIn": {
+      "AccessChangesIn": {
         "properties": {
-          "resources": {
+          "changes": {
             "items": {
-              "$ref": "#/components/schemas/ResourceAccessIn"
+              "$ref": "#/components/schemas/ChangeIn"
             },
-            "maxItems": 500,
-            "title": "Resources",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Changes",
             "type": "array"
           }
         },
         "required": [
-          "resources"
+          "changes"
         ],
-        "title": "AccessIn",
+        "title": "AccessChangesIn",
         "type": "object"
       },
       "AccessOut": {
@@ -30,23 +31,26 @@
           "connection": {
             "$ref": "#/components/schemas/ConnectionOut"
           },
-          "resources": {
+          "grants": {
             "items": {
-              "$ref": "#/components/schemas/ResourceAccess"
+              "$ref": "#/components/schemas/GrantOut"
             },
-            "title": "Resources",
+            "title": "Grants",
             "type": "array"
           },
-          "scope_label": {
-            "title": "Scope Label",
-            "type": "string"
+          "kinds": {
+            "items": {
+              "$ref": "#/components/schemas/KindOut"
+            },
+            "title": "Kinds",
+            "type": "array"
           }
         },
         "required": [
           "connection",
-          "scope_label",
+          "kinds",
           "actions",
-          "resources"
+          "grants"
         ],
         "title": "AccessOut",
         "type": "object"
@@ -169,6 +173,37 @@
         "title": "AuthorizeOut",
         "type": "object"
       },
+      "ChangeIn": {
+        "properties": {
+          "actions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Actions",
+            "type": "array"
+          },
+          "id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "actions"
+        ],
+        "title": "ChangeIn",
+        "type": "object"
+      },
       "ConnectionOut": {
         "properties": {
           "created_at": {
@@ -228,12 +263,23 @@
             "title": "Actions",
             "type": "array"
           },
-          "name": {
-            "title": "Name",
+          "auth": {
+            "enum": [
+              "oauth2",
+              "api_key"
+            ],
+            "title": "Auth",
             "type": "string"
           },
-          "scope_label": {
-            "title": "Scope Label",
+          "kinds": {
+            "items": {
+              "$ref": "#/components/schemas/KindOut"
+            },
+            "title": "Kinds",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
             "type": "string"
           },
           "slug": {
@@ -244,7 +290,8 @@
         "required": [
           "slug",
           "name",
-          "scope_label",
+          "auth",
+          "kinds",
           "actions"
         ],
         "title": "ConnectorOut",
@@ -373,6 +420,75 @@
         "title": "EventOut",
         "type": "object"
       },
+      "GrantOut": {
+        "properties": {
+          "actions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Actions",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "name",
+          "actions"
+        ],
+        "title": "GrantOut",
+        "type": "object"
+      },
+      "KindOut": {
+        "properties": {
+          "actions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Actions",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "wildcard": {
+            "title": "Wildcard",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "actions",
+          "wildcard"
+        ],
+        "title": "KindOut",
+        "type": "object"
+      },
       "MeOut": {
         "properties": {
           "user": {
@@ -471,7 +587,7 @@
         "title": "PostedOut",
         "type": "object"
       },
-      "ResourceAccess": {
+      "ResourceOut": {
         "properties": {
           "actions": {
             "items": {
@@ -483,6 +599,13 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "inherited": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Inherited",
+            "type": "array"
           },
           "name": {
             "title": "Name",
@@ -492,33 +615,77 @@
         "required": [
           "id",
           "name",
-          "actions"
+          "actions",
+          "inherited"
         ],
-        "title": "ResourceAccess",
+        "title": "ResourceOut",
         "type": "object"
       },
-      "ResourceAccessIn": {
+      "ResourcePageOut": {
         "properties": {
-          "actions": {
+          "items": {
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/ResourceOut"
             },
-            "maxItems": 10,
-            "title": "Actions",
+            "title": "Items",
             "type": "array"
           },
-          "id": {
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Id",
-            "type": "string"
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
           }
         },
         "required": [
-          "id",
-          "actions"
+          "items",
+          "next_cursor"
         ],
-        "title": "ResourceAccessIn",
+        "title": "ResourcePageOut",
+        "type": "object"
+      },
+      "ResourceQuery": {
+        "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
+          },
+          "kind": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Kind",
+            "type": "string"
+          },
+          "q": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Q"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "ResourceQuery",
         "type": "object"
       },
       "RunOut": {
@@ -1012,6 +1179,7 @@
     },
     "/api/workspaces/{workspace_id}/connections/{connection_id}/access": {
       "get": {
+        "description": "What the user allows on this connection. Does not call the provider.",
         "operationId": "get_access",
         "parameters": [
           {
@@ -1057,8 +1225,9 @@
           "connections"
         ]
       },
-      "put": {
-        "operationId": "set_access",
+      "patch": {
+        "description": "Changes what the user allows on some resources, all or nothing. Revokes the user's active runs.",
+        "operationId": "change_access",
         "parameters": [
           {
             "in": "path",
@@ -1085,7 +1254,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AccessIn"
+                "$ref": "#/components/schemas/AccessChangesIn"
               }
             }
           },
@@ -1108,7 +1277,101 @@
             "WorkspaceMember": []
           }
         ],
-        "summary": "Set Access",
+        "summary": "Change Access",
+        "tags": [
+          "connections"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/connections/{connection_id}/access/resources": {
+      "get": {
+        "description": "One page of resources the connected account can see, with what the user allows on each.",
+        "operationId": "list_access_resources",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1000,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourcePageOut"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "security": [
+          {
+            "WorkspaceMember": []
+          }
+        ],
+        "summary": "List Access Resources",
         "tags": [
           "connections"
         ]

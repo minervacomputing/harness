@@ -10,7 +10,8 @@ from agents.models import Agent
 from connections.models import Connection
 from connectors.todoist.client import TodoistClient
 from connectors.todoist.connector import TodoistConnector
-from permissions.services import GrantSpec, replace_user_grants
+from permissions.models import Grant
+from permissions.services import GrantChange, apply_grant_changes
 from workspaces.tenancy import workspace_scope
 
 PASSWORD = "correct-horse-battery-staple"
@@ -130,9 +131,13 @@ def agent(scoped, connection) -> Agent:
 @pytest.fixture
 def grant(user, connection) -> Callable[..., None]:
     def grant_(**projects: list[str]) -> None:
-        specs = [
-            GrantSpec(connection.id, "project", pid, tuple(actions)) for pid, actions in projects.items()
+        """Replaces the user's grants on the connection; use ** {"*": [...]} for every project."""
+        existing = Grant.objects.filter(layer__user=user, connection=connection, effect=Grant.Effect.ALLOW)
+        changes = [
+            GrantChange(g.resource_kind, g.resource_id, ()) for g in existing if g.resource_id not in projects
         ]
-        replace_user_grants(user_id=user.id, connection_id=connection.id, specs=specs)
+        changes += [GrantChange("project", pid, tuple(actions)) for pid, actions in projects.items()]
+        if changes:
+            apply_grant_changes(user_id=user.id, connection=connection, changes=changes, names={})
 
     return grant_

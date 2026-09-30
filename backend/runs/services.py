@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import secrets
 from dataclasses import asdict, dataclass
 from datetime import timedelta
@@ -10,16 +11,23 @@ from django.db import connection as db
 from django.utils import timezone
 
 from agents.models import Agent
+from connections.models import Connection
 from connectors import registry
+from connectors.base import consent_given
 from conversations.models import Conversation, Message
 from minerva.config import config
-from permissions.services import effective_policy
-from runs.models import Run, RunEvent
+from permissions.policy import Policy
+from permissions.services import effective_policy, user_layer
+from runs.models import Run, RunEvent, RunWrite
+
+log = logging.getLogger(__name__)
 
 QUEUED_CHANNEL = "minerva_runs_queued"
 EVENTS_CHANNEL = "minerva_run_events"
 HISTORY_LIMIT = 20
 BUSY_MESSAGE = "Wait for the current answer to finish, or stop it."
+# A dispatched write that has not settled this long after its deadline is assumed lost.
+LOST_WRITE_GRACE = timedelta(seconds=30)
 
 SAFETY_INSTRUCTIONS = (
     "You are an agent inside Minerva. Use the provided tools for all facts about connected accounts and for "
@@ -35,24 +43,55 @@ class ToolRef:
     connection_id: str
     provider: str
     operation: str
+    # The operation's contract when the run started; a tool whose meaning changed stops working.
+    contract: str = ""
 
 
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def _tools_for(agent: Agent, user_id: UUID) -> list[ToolRef]:
-    """Tool names are namespaced per connection; the server, never the model, picks the connection."""
+def _scopes(connection: Connection) -> frozenset[str] | None:
+    scopes = connection.credentials().get("scopes")
+    return frozenset(scopes) if scopes is not None else None
+
+
+def _tools_for(agent: Agent, user_id: UUID, policy: Policy) -> list[ToolRef]:
+    """Tool names are namespaced per connection; the server, never the model, picks the connection.
+
+    A tool is offered only if the policy could allow each of its needs on some resource and the
+    connection granted the provider scopes it works with. The executor still checks every call.
+    """
     refs: list[ToolRef] = []
     counts: dict[str, int] = {}
     for connection in agent.connections.order_by("created_at"):
         if not connection.usable_by(user_id):
             continue
+        try:
+            connector = registry.get(connection.provider)
+        except LookupError:
+            continue
         counts[connection.provider] = counts.get(connection.provider, 0) + 1
         n = counts[connection.provider]
         alias = connection.provider if n == 1 else f"{connection.provider}{n}"
-        for op in registry.get(connection.provider).operations:
-            refs.append(ToolRef(f"{alias}_{op.name}", str(connection.id), connection.provider, op.name))
+        scopes = _scopes(connection)
+        for op in connector.operations:
+            if not consent_given(op.consent, scopes):
+                continue
+            if not all(
+                policy.permits_any(str(connection.id), kind, action, connector.requires_of)
+                for kind, action in op.needs
+            ):
+                continue
+            refs.append(
+                ToolRef(
+                    f"{alias}_{op.name}",
+                    str(connection.id),
+                    connection.provider,
+                    op.name,
+                    registry.contract(connection.provider, op.name),
+                )
+            )
     return refs
 
 
@@ -63,7 +102,9 @@ def start_run(*, conversation: Conversation, user_id: UUID, content: str) -> tup
         if Run.objects.filter(conversation=conversation, status__in=Run.ACTIVE).exists():
             raise RunConflict(BUSY_MESSAGE)
         message = Message.objects.create(conversation=conversation, role=Message.Role.USER, content=content)
-        policy = effective_policy(user_id=user_id, agent_id=agent.id)
+        # Lock the layers before reading them, so a concurrent grant edit revokes this run.
+        user_layer(user_id)
+        policy = effective_policy(user_id=user_id, agent_id=agent.id, lock=True)
         try:
             with transaction.atomic():
                 run = Run.objects.create(
@@ -71,7 +112,7 @@ def start_run(*, conversation: Conversation, user_id: UUID, content: str) -> tup
                     agent=agent,
                     conversation=conversation,
                     permissions=policy.to_json(),
-                    tools=[asdict(ref) for ref in _tools_for(agent, user_id)],
+                    tools=[asdict(ref) for ref in _tools_for(agent, user_id, policy)],
                     instructions=f"{SAFETY_INSTRUCTIONS}\n\n{agent.instructions}".strip(),
                     model_alias=agent.model_alias,
                     max_writes=cfg.run_max_writes,
@@ -158,6 +199,22 @@ def revoke_active_runs(*, user_id: UUID | None = None, agent_id: UUID | None = N
         count += finish(
             run_id, Run.Status.CANCELLED, code=reason, message="Stopped because permissions changed."
         )
+    return count
+
+
+def sweep_lost_writes() -> int:
+    """Marks writes that never settled (their gateway process died) as uncertain, pausing their runs."""
+    cutoff = timezone.now() - LOST_WRITE_GRACE
+    lost = RunWrite.unscoped.filter(status=RunWrite.Status.DISPATCHED, deadline_at__lt=cutoff)
+    count = 0
+    for run_id in set(lost.values_list("run_id", flat=True)):
+        with transaction.atomic():
+            Run.unscoped.select_for_update().only("id").get(pk=run_id)
+            marked = lost.filter(run_id=run_id).update(status=RunWrite.Status.UNCERTAIN)
+            if marked:
+                Run.unscoped.filter(pk=run_id).update(writes_uncertain=True)
+                log.warning("Run %s: %d write(s) never settled; marked uncertain", run_id, marked)
+            count += marked
     return count
 
 

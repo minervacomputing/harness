@@ -15,6 +15,7 @@ from mcp.server.lowlevel import Server
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.types import Receive, Scope, Send
 
+from connectors import registry
 from connectors.base import OperationError
 from connectors.executor import Executor, RunContext, public_error
 from gateway.auth import authenticate
@@ -24,7 +25,15 @@ from workspaces.tenancy import activate_workspace
 
 log = logging.getLogger(__name__)
 RUN_SCOPE_KEY = "minerva.run_id"
-DENIAL_CODES = {"POLICY_DENIED", "LIMIT_REACHED", "WRITE_UNCERTAIN", "INVALID_CURSOR"}
+DENIAL_CODES = {
+    "POLICY_DENIED",
+    "LIMIT_REACHED",
+    "WRITE_UNCERTAIN",
+    "WRITE_IN_PROGRESS",
+    "INVALID_CURSOR",
+    "CONSENT_REQUIRED",
+    "OPERATION_CHANGED",
+}
 
 
 async def _context(ctx) -> RunContext:
@@ -36,10 +45,12 @@ async def _context(ctx) -> RunContext:
 
 async def list_tools(ctx, params) -> types.ListToolsResult:
     context = await _context(ctx)
-    executor = Executor(context)
     tools = []
-    for name in context.tools:
-        _, op = executor.operation_for(name)
+    for name, ref in context.tools.items():
+        # A tool whose contract changed since the run started is left out; calling it says why.
+        op = registry.resolve(ref.provider, ref.operation, ref.contract)
+        if op is None:
+            continue
         tools.append(
             types.Tool(name=name, title=op.title, description=op.description, input_schema=op.input_schema())
         )

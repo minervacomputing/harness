@@ -205,6 +205,16 @@ class SandboxProvider(Protocol):
 - Todoist can use its REST API through the official Python SDK, or the official Todoist MCP server behind the same connector interface.
 - Every tool call writes an audit record: workspace, user, run, connection, operation, targets, decision, outcome.
 
+**The connector contract** (issue #1, built so that Google Calendar, Google Drive, and GitHub fit without executor changes):
+
+- **Kinds and grants.** A connector declares resource kinds (project, calendar, folder, repository, or `account` for the connection itself) and the actions each supports. A grant names a kind and a resource id. A kind may allow a wildcard grant (`*`, "all calendars, including new ones"); the wildcard is only a grant selector and never a resource id. Allows on kinds or wildcards the connector no longer declares are ignored when a run starts; denies always apply.
+- **Declared needs, checked requirements.** Each operation declares the (kind, action) pairs it can need. `prepare()` returns the requirements of one call: `Need(resource, action)` for a concrete resource, or `Enumerate(kind, action)` for a listing whose records are filtered afterwards. The executor rejects a call whose requirements do not cover exactly the declared needs, and a write that enumerates or names no concrete resource. A mistake in a connector fails closed.
+- **One write per operation.** A mutating operation may send one mutating request, only from `execute()`, and only with time left to finish. The provider client records what happened to it, and the executor judges every write by that record, even when the connector returns normally: not applied (quota returned, retry allowed), applied (recorded as succeeded), or unknown (recorded as uncertain, and further writes in the run pause). A request sent after the executor judged the attempt is refused. A write is dispatched under a row lock with a deadline fixed at dispatch, runs one at a time per run, and a supervisor sweep marks writes whose process died as uncertain.
+- **Contracts.** A run snapshots a fingerprint of each tool's declaration. If a deploy changes what a tool means, the tool disappears from the run and calls fail with `OPERATION_CHANGED` instead of running under the old grants.
+- **Provider consent.** An operation may require provider scopes (Google's granular consent). Tools whose scopes the connection lacks are not offered, and a call made after scopes shrank fails with `CONSENT_REQUIRED`.
+- **Credentials.** OAuth apps are configured per app (`MINERVA_<APP>_CLIENT_ID`/`_SECRET`), and several connectors may share one (Google). Tokens record the client that issued them, which is the only client used to refresh them. A generation counter ensures a rejection of old credentials never marks a freshly reconnected connection as broken. API-key connectors are supported.
+- **Access API.** Settings read grants without calling the provider, list resources a page at a time with search, and apply changes as a batch (`PATCH`). New concrete grants are checked against what the account can see; removals never need the provider.
+
 ### D9. Model access
 
 **Decision.** The gateway exposes an OpenAI-compatible endpoint to the worker and routes requests through our own `ModelProvider` interface. The backend chooses the upstream, model, key, and token caps; the worker cannot.

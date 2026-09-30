@@ -5,13 +5,13 @@ export type ClientOptions = {
 };
 
 /**
- * AccessIn
+ * AccessChangesIn
  */
-export type AccessIn = {
+export type AccessChangesIn = {
     /**
-     * Resources
+     * Changes
      */
-    resources: Array<ResourceAccessIn>;
+    changes: Array<ChangeIn>;
 };
 
 /**
@@ -24,13 +24,13 @@ export type AccessOut = {
     actions: Array<ActionOut>;
     connection: ConnectionOut;
     /**
-     * Resources
+     * Grants
      */
-    resources: Array<ResourceAccess>;
+    grants: Array<GrantOut>;
     /**
-     * Scope Label
+     * Kinds
      */
-    scope_label: string;
+    kinds: Array<KindOut>;
 };
 
 /**
@@ -110,6 +110,24 @@ export type AuthorizeOut = {
 };
 
 /**
+ * ChangeIn
+ */
+export type ChangeIn = {
+    /**
+     * Actions
+     */
+    actions: Array<string>;
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Kind
+     */
+    kind: string;
+};
+
+/**
  * ConnectionOut
  */
 export type ConnectionOut = {
@@ -152,13 +170,17 @@ export type ConnectorOut = {
      */
     actions: Array<ActionOut>;
     /**
+     * Auth
+     */
+    auth: 'oauth2' | 'api_key';
+    /**
+     * Kinds
+     */
+    kinds: Array<KindOut>;
+    /**
      * Name
      */
     name: string;
-    /**
-     * Scope Label
-     */
-    scope_label: string;
     /**
      * Slug
      */
@@ -248,6 +270,50 @@ export type EventOut = {
 };
 
 /**
+ * GrantOut
+ */
+export type GrantOut = {
+    /**
+     * Actions
+     */
+    actions: Array<string>;
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Kind
+     */
+    kind: string;
+    /**
+     * Name
+     */
+    name: string | null;
+};
+
+/**
+ * KindOut
+ */
+export type KindOut = {
+    /**
+     * Actions
+     */
+    actions: Array<string>;
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Label
+     */
+    label: string;
+    /**
+     * Wildcard
+     */
+    wildcard: boolean;
+};
+
+/**
  * MeOut
  */
 export type MeOut = {
@@ -303,9 +369,9 @@ export type PostedOut = {
 };
 
 /**
- * ResourceAccess
+ * ResourceOut
  */
-export type ResourceAccess = {
+export type ResourceOut = {
     /**
      * Actions
      */
@@ -314,6 +380,10 @@ export type ResourceAccess = {
      * Id
      */
     id: string;
+    /**
+     * Inherited
+     */
+    inherited: Array<string>;
     /**
      * Name
      */
@@ -321,17 +391,35 @@ export type ResourceAccess = {
 };
 
 /**
- * ResourceAccessIn
+ * ResourcePageOut
  */
-export type ResourceAccessIn = {
+export type ResourcePageOut = {
     /**
-     * Actions
+     * Items
      */
-    actions: Array<string>;
+    items: Array<ResourceOut>;
     /**
-     * Id
+     * Next Cursor
      */
-    id: string;
+    next_cursor: string | null;
+};
+
+/**
+ * ResourceQuery
+ */
+export type ResourceQuery = {
+    /**
+     * Cursor
+     */
+    cursor?: string | null;
+    /**
+     * Kind
+     */
+    kind: string;
+    /**
+     * Q
+     */
+    q?: string | null;
 };
 
 /**
@@ -616,8 +704,8 @@ export type GetAccessResponses = {
 
 export type GetAccessResponse = GetAccessResponses[keyof GetAccessResponses];
 
-export type SetAccessData = {
-    body: AccessIn;
+export type ChangeAccessData = {
+    body: AccessChangesIn;
     path: {
         /**
          * Workspace Id
@@ -632,14 +720,52 @@ export type SetAccessData = {
     url: '/api/workspaces/{workspace_id}/connections/{connection_id}/access';
 };
 
-export type SetAccessResponses = {
+export type ChangeAccessResponses = {
     /**
      * OK
      */
     200: AccessOut;
 };
 
-export type SetAccessResponse = SetAccessResponses[keyof SetAccessResponses];
+export type ChangeAccessResponse = ChangeAccessResponses[keyof ChangeAccessResponses];
+
+export type ListAccessResourcesData = {
+    body?: never;
+    path: {
+        /**
+         * Workspace Id
+         */
+        workspace_id: string;
+        /**
+         * Connection Id
+         */
+        connection_id: string;
+    };
+    query: {
+        /**
+         * Kind
+         */
+        kind: string;
+        /**
+         * Q
+         */
+        q?: string | null;
+        /**
+         * Cursor
+         */
+        cursor?: string | null;
+    };
+    url: '/api/workspaces/{workspace_id}/connections/{connection_id}/access/resources';
+};
+
+export type ListAccessResourcesResponses = {
+    /**
+     * OK
+     */
+    200: ResourcePageOut;
+};
+
+export type ListAccessResourcesResponse = ListAccessResourcesResponses[keyof ListAccessResourcesResponses];
 
 export type AuthorizeData = {
     body?: never;

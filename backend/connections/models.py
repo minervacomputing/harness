@@ -52,6 +52,8 @@ class Connection(TenantModel):
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.ACTIVE)
     credentials_ciphertext = models.BinaryField()
     credentials_key_version = models.CharField(max_length=32)
+    # Bumped whenever the credentials change, so a failure seen with old credentials cannot mark new ones.
+    credentials_generation = models.PositiveIntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -67,6 +69,8 @@ class Connection(TenantModel):
 
     def set_credentials(self, payload: dict) -> None:
         self.credentials_ciphertext, self.credentials_key_version = crypto.encrypt(payload)
+        if self.credentials_generation is not None and not self._state.adding:
+            self.credentials_generation += 1
 
     def credentials(self) -> dict:
         return crypto.decrypt(self.credentials_ciphertext, self.credentials_key_version)
