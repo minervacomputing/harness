@@ -33,18 +33,10 @@ Configuration is read from the process environment and `.env` at the repository 
 | `MINERVA_DATABASE_URL` | `postgres://minerva:minerva@localhost:5432/minerva` | Matches `compose.yaml` |
 | `MINERVA_TODOIST_CLIENT_ID`, `MINERVA_TODOIST_CLIENT_SECRET` | empty | Empty means Minerva registers its own OAuth client |
 | `MINERVA_GOOGLE_CLIENT_ID`, `MINERVA_GOOGLE_CLIENT_SECRET` | empty | Google Calendar and Drive; unset hides them |
-| `MINERVA_GITHUB_CLIENT_ID`, `MINERVA_GITHUB_CLIENT_SECRET`, `MINERVA_GITHUB_APP_SLUG` | empty | A GitHub App (see below); unset hides GitHub |
+| `MINERVA_GITHUB_CLIENT_ID`, `MINERVA_GITHUB_CLIENT_SECRET`, `MINERVA_GITHUB_APP_SLUG` | empty | A GitHub App; unset hides GitHub |
 | `MINERVA_SANDBOX_PROVIDER` | `container` | `local-process` has no isolation; avoid it |
 | `MINERVA_SANDBOX_IMAGE` | `minerva-worker:dev` | Built by `make worker-image` |
 | `MINERVA_GATEWAY_BIND` | `127.0.0.1` | Linux only: set to `172.17.0.1` |
-
-**GitHub App for local development:** create one at <https://github.com/settings/apps/new> with:
-
-- Callback URL `http://localhost:5173/api/oauth/github/callback`, and "Expire user authorization tokens" on.
-- No webhook (untick Active).
-- Repository permissions: Metadata read, Contents read, Issues read and write, Pull requests read and write. No account permissions.
-
-Put its Client ID and a generated client secret in `MINERVA_GITHUB_CLIENT_ID` and `MINERVA_GITHUB_CLIENT_SECRET`, and its URL name (`github.com/apps/<slug>`) in `MINERVA_GITHUB_APP_SLUG`. Then install the App on the repositories agents may use.
 
 ## Starting the app
 

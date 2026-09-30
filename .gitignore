@@ -30,3 +30,6 @@ dist/
 .idea/
 .vscode/
 *.swp
+
+# Local research notes
+.agents/research/
