@@ -1,16 +1,20 @@
-.PHONY: setup services migrate worker-image sandbox-check dev fake-model test lint api-types
+.PHONY: setup services migrate seed worker-image sandbox-check dev fake-model test lint api-types
 
 setup: services
 	cd backend && uv sync
 	cd worker && pnpm install --frozen-lockfile
 	cd frontend && pnpm install --frozen-lockfile
-	$(MAKE) migrate worker-image
+	$(MAKE) migrate seed worker-image
 
 services:
 	docker compose up -d --wait
 
 migrate:
 	cd backend && uv run python manage.py migrate
+
+# Development accounts with a known password; refuses unless MINERVA_DEBUG=true.
+seed:
+	cd backend && uv run python manage.py seed
 
 worker-image:
 	docker build -t minerva-worker:dev worker
@@ -20,7 +24,7 @@ sandbox-check:
 	cd backend && uv run python manage.py sandbox_check
 
 dev:
-	cd backend && uv run honcho -f ../Procfile -d .. start
+	uv run --project backend honcho -f Procfile start
 
 # A scripted OpenAI-compatible model for trying the app without a provider key.
 fake-model:

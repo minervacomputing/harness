@@ -26,7 +26,10 @@ cd .. && make setup
 1. Starts Postgres and the gateway relay (`compose.yaml`).
 2. Installs the backend, worker, and frontend dependencies.
 3. Runs the database migrations.
-4. Builds the worker image `minerva-worker:dev`.
+4. Seeds development accounts (`make seed`).
+5. Builds the worker image `minerva-worker:dev`.
+
+Sign in as `ada@example.com` or `grace@example.com` with the password `password`. The seed only runs with `MINERVA_DEBUG=true`; run `make seed` again to reset them.
 
 ## Run it
 
