@@ -281,12 +281,15 @@ function KindAccess({ workspaceId, connectionId, kind, actions, grants, current,
   const queryClient = useQueryClient()
   const [draft, setDraft] = useState('')
   const [search, setSearch] = useState('')
+  const request = {
+    path: { workspace_id: workspaceId, connection_id: connectionId },
+    query: { kind: kind.id, q: search || null },
+  }
   const resources = useInfiniteQuery({
-    ...listAccessResourcesInfiniteOptions({
-      path: { workspace_id: workspaceId, connection_id: connectionId },
-      query: { kind: kind.id, q: search || null },
-    }),
-    initialPageParam: null,
+    ...listAccessResourcesInfiniteOptions(request),
+    // The first page carries no cursor. The request itself, not null: the generated query function
+    // reads any object as page options, and null is an object.
+    initialPageParam: request,
     getNextPageParam: page => page.next_cursor,
   })
   useEffect(() => {

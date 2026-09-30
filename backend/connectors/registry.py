@@ -106,9 +106,10 @@ def fingerprint(connector: Connector, op: Operation) -> str:
 
 
 def _declared() -> list[Connector]:
+    from connectors.google_calendar.connector import GoogleCalendarConnector
     from connectors.todoist.connector import TodoistConnector
 
-    return [TodoistConnector()]
+    return [TodoistConnector(), GoogleCalendarConnector()]
 
 
 @cache
