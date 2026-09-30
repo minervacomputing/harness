@@ -60,6 +60,10 @@ class Config(BaseSettings):
     todoist_client_secret: SecretStr | None = None
     google_client_id: str | None = None
     google_client_secret: SecretStr | None = None
+    github_client_id: str | None = None
+    github_client_secret: SecretStr | None = None
+    # The GitHub App's URL name (github.com/apps/<slug>), for the link that installs it on repositories.
+    github_app_slug: str | None = None
 
     sandbox_provider: Literal["container", "local-process"] = "container"
     sandbox_image: str = "minerva-worker:dev"

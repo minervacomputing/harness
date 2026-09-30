@@ -55,6 +55,9 @@ class ConnectionOut(Schema):
     created_at: datetime
     # Actions the user allows that the provider has not given Minerva access for yet.
     consent_needed: list[str]
+    # Where the user manages what the provider lets Minerva reach (GitHub: the App's repositories).
+    manage_url: str | None
+    manage_label: str | None
 
 
 class AuthorizeOut(Schema):
@@ -116,6 +119,7 @@ def _connection_out(connection: Connection, user_id: UUID) -> dict:
     needed = services.consent_needed(
         connector, services.granted_scopes(connection), services.allowed_actions(connection, user_id)
     )
+    manage = connector.manage_link()
     return {
         "id": connection.id,
         "provider": connection.provider,
@@ -125,6 +129,8 @@ def _connection_out(connection: Connection, user_id: UUID) -> dict:
         "personal": connection.owner_id is not None,
         "created_at": connection.created_at,
         "consent_needed": needed,
+        "manage_label": manage[0] if manage else None,
+        "manage_url": manage[1] if manage else None,
     }
 
 

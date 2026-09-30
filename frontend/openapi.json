@@ -227,6 +227,28 @@
             "title": "Label",
             "type": "string"
           },
+          "manage_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manage Label"
+          },
+          "manage_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manage Url"
+          },
           "personal": {
             "title": "Personal",
             "type": "boolean"
@@ -257,7 +279,9 @@
           "status",
           "personal",
           "created_at",
-          "consent_needed"
+          "consent_needed",
+          "manage_url",
+          "manage_label"
         ],
         "title": "ConnectionOut",
         "type": "object"

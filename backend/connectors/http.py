@@ -24,6 +24,7 @@ REFUSED_STATUSES = frozenset({400, 401, 403, 404, 409, 412, 422, 429})
 MIN_WRITE_SECONDS = 2.0
 # Enough of an error response to read the provider's reason.
 MAX_ERROR_BODY = 64 * 1024
+KEPT_ERROR_HEADERS = frozenset({"content-type", "retry-after", "x-ratelimit-remaining", "x-ratelimit-reset"})
 
 
 class Effect(StrEnum):
@@ -109,11 +110,21 @@ class ProviderHTTP:
         return attempt
 
     async def request(
-        self, method: str, path: str, *, mutating: bool | None = None, **kwargs: Any
+        self,
+        method: str,
+        path: str,
+        *,
+        mutating: bool | None = None,
+        redirects: bool = False,
+        **kwargs: Any,
     ) -> httpx.Response:
-        """Send one request. `mutating` defaults by method; reads sent with POST must say so."""
+        """Send one request. `mutating` defaults by method; reads sent with POST must say so. With
+        `redirects`, a redirect is returned for the caller to judge instead of being an error; redirects
+        are never followed automatically."""
         if mutating is None:
             mutating = method.upper() in MUTATING_METHODS
+        if mutating and redirects:
+            raise RuntimeError("A write is never redirected.")
         attempt = self._begin_write() if mutating else None
         if attempt is not None:
             kwargs["timeout"] = httpx.Timeout(min(self.timeout, attempt.deadline - time.monotonic()))
@@ -132,6 +143,8 @@ class ProviderHTTP:
                 attempt.effect = Effect.NOT_APPLIED
             else:
                 attempt.effect = Effect.UNKNOWN
+        if redirects and response.is_redirect:
+            return response
         if not response.is_success:
             raise self._error(response)
         return response
@@ -145,6 +158,21 @@ class ProviderHTTP:
 
     async def download(self, path: str, *, limit: int, **kwargs: Any) -> bytes:
         """A read whose body is streamed and refused once it exceeds `limit` bytes."""
+        response = await self.bounded(
+            path,
+            limit=limit,
+            too_large=OperationError(
+                "FILE_TOO_LARGE", f"This file is larger than Minerva reads ({limit} bytes)."
+            ),
+            **kwargs,
+        )
+        return response.content
+
+    async def bounded(
+        self, path: str, *, limit: int, too_large: OperationError, **kwargs: Any
+    ) -> httpx.Response:
+        """A GET whose body is streamed and refused with `too_large` once it exceeds `limit` bytes. The
+        response returned is read in full."""
         try:
             async with self._http.stream("GET", path, **kwargs) as response:
                 body = bytearray()
@@ -153,19 +181,24 @@ class ProviderHTTP:
                     body.extend(chunk)
                     if len(body) > cap:
                         if response.is_success:
-                            raise OperationError(
-                                "FILE_TOO_LARGE", f"This file is larger than Minerva reads ({limit} bytes)."
-                            )
+                            raise too_large
                         break
         except httpx.HTTPError as error:
             raise OperationError("PROVIDER_UNAVAILABLE", f"{self.provider} could not be reached.") from error
         if not response.is_success:
-            # The body is already decoded, so only its type carries over.
-            headers = {"content-type": response.headers.get("content-type", "")}
+            # The body is already decoded, so only its type and rate limit headers carry over.
+            headers = {k: v for k, v in response.headers.items() if k.lower() in KEPT_ERROR_HEADERS}
             raise self._error(
                 httpx.Response(response.status_code, headers=headers, content=bytes(body[:cap]))
             )
-        return bytes(body)
+        headers = {
+            k: v
+            for k, v in response.headers.items()
+            if k.lower() not in {"content-encoding", "content-length"}
+        }
+        return httpx.Response(
+            response.status_code, headers=headers, content=bytes(body), request=response.request
+        )
 
     def unexpected(self) -> OperationError:
         return OperationError("PROVIDER_FAILED", f"{self.provider} returned an unexpected response.")

@@ -211,6 +211,10 @@ class Connector(ABC):
     async def describe(self, client: Any, kind: str, ids: list[str]) -> dict[str, str]:
         """Names of the given resources. Resources the account cannot see are left out."""
 
+    def manage_link(self) -> tuple[str, str] | None:
+        """A (label, URL) where the user manages what the provider lets Minerva reach, if there is one."""
+        return None
+
     def operation(self, name: str) -> Operation | None:
         return next((op for op in self.operations if op.name == name), None)
 

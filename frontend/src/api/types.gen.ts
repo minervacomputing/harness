@@ -148,6 +148,14 @@ export type ConnectionOut = {
      */
     label: string;
     /**
+     * Manage Label
+     */
+    manage_label: string | null;
+    /**
+     * Manage Url
+     */
+    manage_url: string | null;
+    /**
      * Personal
      */
     personal: boolean;

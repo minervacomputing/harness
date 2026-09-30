@@ -222,6 +222,22 @@ def _scopes(body: dict) -> list[str] | None:
     return sorted(set(scope.replace(",", " ").split())) if isinstance(scope, str) else None
 
 
+# GitHub answers token requests form-encoded unless asked for JSON.
+TOKEN_HEADERS = {"Accept": "application/json"}
+
+
+def _token_body(response: httpx.Response) -> dict | None:
+    """The token response, or None when the provider refused. GitHub reports refusals as HTTP 200 with
+    an `error` field."""
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict) or "error" in body or not isinstance(body.get("access_token"), str):
+        return None
+    return body
+
+
 def _token_payload(body: dict) -> dict:
     payload = {
         "kind": "oauth2",
@@ -248,12 +264,14 @@ def exchange_code(connector: Connector, *, code: str, verifier: str) -> dict:
             "code_verifier": verifier,
             "grant_type": "authorization_code",
         },
+        headers=TOKEN_HEADERS,
         timeout=20,
     )
-    if response.is_error:
+    body = None if response.is_error else _token_body(response)
+    if body is None:
         log.warning("OAuth code exchange for %s failed: HTTP %s", connector.slug, response.status_code)
         raise ConnectionFlowError(f"{connector.name} did not accept the authorization. Please try again.")
-    return {**_token_payload(response.json()), "client_id": creds.client_id}
+    return {**_token_payload(body), "client_id": creds.client_id}
 
 
 def save_connection(
@@ -446,6 +464,14 @@ def _expired() -> OperationError:
     return OperationError("CONNECTION_UNAUTHORIZED", "The connection expired. Reconnect it in Minerva.")
 
 
+def _json_field(response: httpx.Response, field: str) -> str | None:
+    try:
+        value = response.json().get(field)
+    except ValueError, AttributeError:
+        return None
+    return value if isinstance(value, str) else None
+
+
 def _needs_refresh(tokens: dict) -> bool:
     expires_at = tokens.get("expires_at")
     return expires_at is not None and expires_at - time.time() < REFRESH_MARGIN_SECONDS
@@ -469,6 +495,7 @@ def _refresh(connection: Connection, tokens: dict) -> dict | None:
                 "grant_type": "refresh_token",
                 "refresh_token": tokens["refresh_token"],
             },
+            headers=TOKEN_HEADERS,
             timeout=20,
         )
     except httpx.HTTPError as error:
@@ -477,7 +504,16 @@ def _refresh(connection: Connection, tokens: dict) -> dict | None:
         return None
     if response.is_error:
         raise OperationError("PROVIDER_UNAVAILABLE", f"{connector.name} could not refresh the connection.")
-    refreshed = _token_payload(response.json())
+    body = _token_body(response)
+    if body is None:
+        error = _json_field(response, "error")
+        # GitHub's refusal of a refresh token that expired or was revoked; other refusals (such as a
+        # misconfigured client) are the operator's to fix and leave the connection as it is.
+        if error in {"bad_refresh_token", "invalid_grant"}:
+            return None
+        log.warning("Refreshing connection %s failed: %s", connection.pk, error or "unexpected response")
+        raise OperationError("PROVIDER_UNAVAILABLE", f"{connector.name} could not refresh the connection.")
+    refreshed = _token_payload(body)
     # Providers that do not rotate refresh tokens (such as Google) omit them from the response.
     refreshed["refresh_token"] = refreshed["refresh_token"] or tokens["refresh_token"]
     # A refresh that does not mention scopes keeps the ones granted before.

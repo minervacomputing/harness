@@ -138,6 +138,15 @@ function ConnectionCard({ workspaceId, connection, initiallyOpen }: { workspaceI
             </Button>
           </div>
         )}
+        {connection.status === 'active' && connection.manage_url && (
+          <p className="text-xs text-muted-foreground">
+            Minerva sees only what {connection.provider_name} lets it see.{' '}
+            <a className="font-medium text-foreground underline underline-offset-4" href={connection.manage_url} target="_blank" rel="noreferrer">
+              {connection.manage_label ?? `Manage in ${connection.provider_name}`}
+            </a>
+            , then come back and choose access here.
+          </p>
+        )}
         {open && connection.status === 'active'
           ? <AccessEditor workspaceId={workspaceId} connectionId={connection.id} />
           : connection.status === 'active' && <Button variant="outline" size="sm" onClick={() => setOpen(true)}>Choose access</Button>}
