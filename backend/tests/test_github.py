@@ -457,6 +457,9 @@ async def test_rate_limits(start, github, response):
     )
 
 
+FLOW = {"client_id": "id", "verifier": "v"}
+
+
 @pytest.fixture
 def token_endpoint(monkeypatch):
     sent: list[dict] = []
@@ -481,17 +484,17 @@ def test_github_token_responses(token_endpoint):
             200, json={"access_token": "a", "refresh_token": "r", "expires_in": 28800, "scope": ""}
         )
     )
-    tokens = connection_services.exchange_code(connector, code="c", verifier="v")
+    tokens = connection_services.exchange_code(connector, code="c", flow=FLOW)
     assert (tokens["access_token"], tokens["scopes"], tokens["refresh_token"]) == ("a", [], "r")
     assert sent[-1]["headers"]["Accept"] == "application/json"
     # GitHub reports a refused code with HTTP 200.
     for body in ({"error": "bad_verification_code"}, {"token_type": "bearer"}):
         responses.append(httpx.Response(200, json=body))
         with pytest.raises(ConnectionFlowError):
-            connection_services.exchange_code(connector, code="c", verifier="v")
+            connection_services.exchange_code(connector, code="c", flow=FLOW)
     responses.append(httpx.Response(200, text="access_token=a&scope="))
     with pytest.raises(ConnectionFlowError):
-        connection_services.exchange_code(connector, code="c", verifier="v")
+        connection_services.exchange_code(connector, code="c", flow=FLOW)
 
 
 @pytest.fixture

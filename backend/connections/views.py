@@ -45,7 +45,7 @@ def oauth_callback(request: HttpRequest, provider: str) -> HttpResponseRedirect:
                     return _redirect(page, error="This connection belongs to someone else.")
                 if existing is not None and existing.owner_id is None and not membership.is_admin:
                     return _redirect(page, error="Only workspace admins can reconnect shared connections.")
-            tokens = services.exchange_code(connector, code=request.GET["code"], verifier=flow["verifier"])
+            tokens = services.exchange_code(connector, code=request.GET["code"], flow=flow)
             connection = services.save_connection(
                 workspace_id=workspace_id,
                 owner_id=request.user.id,

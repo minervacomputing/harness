@@ -436,7 +436,7 @@ def oauth(monkeypatch, google):
         "client_id": "client",
     }
     monkeypatch.setattr(connection_services, "client_credentials", lambda connector: creds)
-    monkeypatch.setattr(connection_services, "exchange_code", lambda connector, code, verifier: dict(tokens))
+    monkeypatch.setattr(connection_services, "exchange_code", lambda connector, code, flow: dict(tokens))
     monkeypatch.setattr(GoogleCalendarConnector, "client", lambda self, token: google.client())
     return tokens
 

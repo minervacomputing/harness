@@ -142,9 +142,11 @@ def authorization_url(
         "provider": provider,
         "workspace_id": str(workspace_id),
         "connection_id": str(connection.pk) if connection is not None else None,
+        "client_id": creds.client_id,
         "issued_at": time.time(),
     }
     params = {
+        **dict(oauth.authorize_params),
         "client_id": creds.client_id,
         "scope": " ".join(scopes or oauth.scopes),
         "state": state,
@@ -152,7 +154,6 @@ def authorization_url(
         "redirect_uri": creds.redirect_uri,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
-        **dict(oauth.authorize_params),
     }
     if connection is not None and oauth.login_hint:
         params["login_hint"] = connection.external_account_id
@@ -252,16 +253,22 @@ def _token_payload(body: dict) -> dict:
     return payload
 
 
-def exchange_code(connector: Connector, *, code: str, verifier: str) -> dict:
-    creds = client_credentials(connector)
+def exchange_code(connector: Connector, *, code: str, flow: dict) -> dict:
+    """Tokens for an authorization code, redeemed by the client that `flow` sent the user to."""
+    creds = issuing_client(connector, flow.get("client_id"))
+    if creds is None:
+        raise ConnectionFlowError(
+            f"{connector.name} was reconfigured during the authorization. Please try again."
+        )
+    token_url = _oauth(connector).token_url
     response = httpx.post(
-        _oauth(connector).token_url,
+        token_url,
         data={
             "client_id": creds.client_id,
             "client_secret": creds.client_secret,
             "code": code,
             "redirect_uri": creds.redirect_uri,
-            "code_verifier": verifier,
+            "code_verifier": flow["verifier"],
             "grant_type": "authorization_code",
         },
         headers=TOKEN_HEADERS,
@@ -271,7 +278,7 @@ def exchange_code(connector: Connector, *, code: str, verifier: str) -> dict:
     if body is None:
         log.warning("OAuth code exchange for %s failed: HTTP %s", connector.slug, response.status_code)
         raise ConnectionFlowError(f"{connector.name} did not accept the authorization. Please try again.")
-    return {**_token_payload(body), "client_id": creds.client_id}
+    return {**_token_payload(body), "client_id": creds.client_id, "token_url": token_url}
 
 
 def save_connection(
@@ -340,12 +347,13 @@ def _target(connector: Connector, connection_id: UUID, account_id: str) -> Conne
 
 def _keep_refresh_token(previous: dict, tokens: dict) -> dict:
     """Providers may omit the refresh token when the account reconnects. The old one still works if the
-    same client issued it; when the old issuer was not recorded, it may not have been."""
+    same client issued it; when the old issuer was not recorded, it may not have been. It is only ever
+    sent back to the endpoint that issued it."""
     if tokens.get("kind") != "oauth2" or tokens.get("refresh_token") or not previous.get("refresh_token"):
         return tokens
     if previous.get("client_id") is None or previous.get("client_id") != tokens.get("client_id"):
         return tokens
-    return {**tokens, "refresh_token": previous["refresh_token"]}
+    return {**tokens, "refresh_token": previous["refresh_token"], "token_url": previous.get("token_url")}
 
 
 def save_api_key(*, workspace_id: UUID, owner_id: UUID, provider: str, key: str) -> Connection:
@@ -486,9 +494,12 @@ def _refresh(connection: Connection, tokens: dict) -> dict | None:
     if creds is None:
         log.warning("The OAuth client that issued connection %s is no longer configured", connection.pk)
         return None
+    # The endpoint that issued the tokens: a connector that later moves its endpoint keeps working
+    # for connections made before, and a changed declaration cannot redirect their refresh tokens.
+    token_url = tokens.get("token_url") or _oauth(connector).token_url
     try:
         response = httpx.post(
-            _oauth(connector).token_url,
+            token_url,
             data={
                 "client_id": creds.client_id,
                 "client_secret": creds.client_secret,
@@ -520,4 +531,5 @@ def _refresh(connection: Connection, tokens: dict) -> dict | None:
     if refreshed["scopes"] is None:
         refreshed["scopes"] = tokens.get("scopes")
     refreshed["client_id"] = creds.client_id
+    refreshed["token_url"] = token_url
     return refreshed

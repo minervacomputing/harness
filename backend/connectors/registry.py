@@ -11,6 +11,23 @@ from connectors.base import ACCOUNT_KIND, Connector, OAuth2, Operation
 NAME_PATTERN = re.compile(r"^[a-z]+(_[a-z]+)*$")
 MAX_TOOL_NAME = 64
 MAX_ALIAS_SUFFIX = "99"
+# Set by the flow itself; a connector's `authorize_params` must not replace them.
+RESERVED_AUTHORIZE_PARAMS = frozenset(
+    {
+        "client_id",
+        "client_secret",
+        "code",
+        "code_challenge",
+        "code_challenge_method",
+        "grant_type",
+        "login_hint",
+        "redirect_uri",
+        "resource",
+        "response_type",
+        "scope",
+        "state",
+    }
+)
 
 
 class InvalidConnector(Exception):
@@ -49,6 +66,24 @@ def _validate_operation(connector: Connector, op: Operation) -> None:
         raise InvalidConnector(f"{where}: paginated operations take a cursor.")
 
 
+def _validate_auth(connector: Connector) -> None:
+    oauth = connector.auth
+    if not isinstance(oauth, OAuth2):
+        return
+    if not NAME_PATTERN.match(oauth.app):
+        raise InvalidConnector(
+            f"{connector.slug}: OAuth app names are lowercase words joined by underscores."
+        )
+    urls = [oauth.authorize_url, oauth.token_url, oauth.registration_url]
+    if any(url is not None and not url.startswith("https://") for url in urls):
+        raise InvalidConnector(f"{connector.slug}: OAuth endpoints must use HTTPS.")
+    names = [name for name, _ in oauth.authorize_params]
+    if len(set(names)) != len(names) or RESERVED_AUTHORIZE_PARAMS.intersection(names):
+        raise InvalidConnector(
+            f"{connector.slug}: authorize_params repeats or replaces a protocol parameter."
+        )
+
+
 def validate(connectors: list[Connector]) -> None:
     tools: dict[str, str] = {}
     slugs: set[str] = set()
@@ -58,6 +93,7 @@ def validate(connectors: list[Connector]) -> None:
                 f"{connector.slug!r}: slugs are unique lowercase words joined by underscores."
             )
         slugs.add(connector.slug)
+        _validate_auth(connector)
         for action in connector.actions:
             if action.requires is not None and connector.action(action.requires) is None:
                 raise InvalidConnector(f"{connector.slug}: {action.id!r} requires an unknown action.")

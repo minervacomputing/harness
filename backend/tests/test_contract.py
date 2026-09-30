@@ -7,6 +7,8 @@ import json
 import time
 from datetime import timedelta
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -160,6 +162,12 @@ def test_declared_connectors_are_valid():
         variant(kinds=(ResourceKind(FOLDER, "Folder", ("read", "delete")),)),
         variant(kinds=(ResourceKind(ACCOUNT_KIND, "Account", ("read",), wildcard=True),)),
         variant(slug="Mixed"),
+        variant(auth=dataclasses.replace(MixedConnector.auth, app="Mixed")),
+        variant(auth=dataclasses.replace(MixedConnector.auth, token_url="http://mixed.example/token")),
+        variant(auth=dataclasses.replace(MixedConnector.auth, authorize_params=(("redirect_uri", "x"),))),
+        variant(
+            auth=dataclasses.replace(MixedConnector.auth, authorize_params=(("prompt", "a"), ("prompt", "b")))
+        ),
     ],
 )
 def test_invalid_declarations_are_rejected(connector):
@@ -653,6 +661,53 @@ def test_a_refresh_keeps_scopes_unless_the_provider_names_them(mixed, refresh):
     assert connection_services.access_secret(mixed.id).scopes == {"files", "labels"}
 
 
+def test_a_code_is_redeemed_by_the_client_the_flow_started_with(server, monkeypatch):
+    operator = {"client": connection_services.ClientCredentials("one", "s1", "https://x/cb")}
+    monkeypatch.setattr(connection_services, "_configured", lambda connector: operator["client"])
+    sent: list[dict] = []
+    monkeypatch.setattr(
+        connection_services.httpx,
+        "post",
+        lambda url, **k: sent.append({"url": url, **k}) or httpx.Response(200, json={"access_token": "a"}),
+    )
+    session: dict = {}
+    url = connection_services.authorization_url(session, workspace_id=uuid4(), provider="mixed")
+    flow = session[connection_services.SESSION_KEY]
+    assert flow["client_id"] == "one"
+    assert parse_qs(urlparse(url).query)["client_id"] == ["one"]
+    connector = registry.get("mixed")
+    tokens = connection_services.exchange_code(connector, code="c", flow=flow)
+    assert (tokens["client_id"], tokens["token_url"]) == ("one", "https://mixed.example/token")
+    assert (sent[-1]["url"], sent[-1]["data"]["client_id"]) == ("https://mixed.example/token", "one")
+    # The operator replaced the client while the user was at the provider.
+    operator["client"] = connection_services.ClientCredentials("two", "s2", "https://x/cb")
+    with pytest.raises(connection_services.ConnectionFlowError):
+        connection_services.exchange_code(connector, code="c", flow=flow)
+    assert len(sent) == 1
+
+
+def test_a_refresh_goes_to_the_endpoint_that_issued_the_tokens(mixed, refresh, monkeypatch):
+    sent: list[str] = []
+    monkeypatch.setattr(
+        connection_services.httpx,
+        "post",
+        lambda url, **k: (
+            sent.append(url) or httpx.Response(200, json={"access_token": "a2", "expires_in": 60})
+        ),
+    )
+    _expiring(mixed, client_id="id", token_url="https://old.mixed.example/token")
+    connection_services.access_secret(mixed.id)
+    assert sent == ["https://old.mixed.example/token"]
+    mixed.refresh_from_db()
+    assert mixed.credentials()["token_url"] == "https://old.mixed.example/token"
+    # Tokens saved before the endpoint was recorded use the declared one.
+    _expiring(mixed, client_id="id")
+    connection_services.access_secret(mixed.id)
+    assert sent[-1] == "https://mixed.example/token"
+    mixed.refresh_from_db()
+    assert mixed.credentials()["token_url"] == "https://mixed.example/token"
+
+
 def test_a_refresh_needs_the_client_that_issued_the_tokens(mixed, refresh):
     _expiring(mixed, client_id="retired")
     with pytest.raises(OperationError) as expired:
@@ -667,7 +722,13 @@ def test_reconnecting_keeps_a_refresh_token_only_from_the_same_client(scoped, us
     mixed.save()
 
     def reconnect(client_id: str) -> dict:
-        tokens = {"kind": "oauth2", "access_token": "b", "refresh_token": None, "client_id": client_id}
+        tokens = {
+            "kind": "oauth2",
+            "access_token": "b",
+            "refresh_token": None,
+            "client_id": client_id,
+            "token_url": "https://mixed.example/token",
+        }
         connection_services.save_connection(
             workspace_id=scoped.id, owner_id=user.id, provider="mixed", tokens=tokens
         )
@@ -675,6 +736,19 @@ def test_reconnecting_keeps_a_refresh_token_only_from_the_same_client(scoped, us
 
     assert reconnect("id")["refresh_token"] == "r1"
     assert reconnect("other")["refresh_token"] is None
+    # A kept refresh token still goes to the endpoint that issued it.
+    mixed.set_credentials(
+        {
+            "kind": "oauth2",
+            "access_token": "a",
+            "refresh_token": "r1",
+            "client_id": "id",
+            "token_url": "https://old.mixed.example/token",
+        }
+    )
+    mixed.save()
+    kept = reconnect("id")
+    assert (kept["refresh_token"], kept["token_url"]) == ("r1", "https://old.mixed.example/token")
     # Tokens saved before the issuer was recorded may come from another client.
     mixed.set_credentials({"kind": "oauth2", "access_token": "a", "refresh_token": "r1"})
     mixed.save()
