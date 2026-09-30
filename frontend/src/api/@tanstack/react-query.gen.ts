@@ -3,8 +3,8 @@
 import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOptions, type UseMutationOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { authorize, cancelRun, changeAccess, createAgent, createConversation, deleteAgent, deleteConnection, deleteConversation, getAccess, getAgent, getConversation, getRun, listAccessResources, listAgents, listConnections, listConnectors, listConversations, me, type Options, postMessage, reconnect, updateAgent } from '../sdk.gen';
-import type { AuthorizeData, AuthorizeResponse, CancelRunData, CancelRunResponse, ChangeAccessData, ChangeAccessResponse, CreateAgentData, CreateAgentResponse, CreateConversationData, CreateConversationResponse, DeleteAgentData, DeleteAgentResponse, DeleteConnectionData, DeleteConnectionResponse, DeleteConversationData, DeleteConversationResponse, GetAccessData, GetAccessResponse, GetAgentData, GetAgentResponse, GetConversationData, GetConversationResponse, GetRunData, GetRunResponse, ListAccessResourcesData, ListAccessResourcesResponse, ListAgentsData, ListAgentsResponse, ListConnectionsData, ListConnectionsResponse, ListConnectorsData, ListConnectorsResponse, ListConversationsData, ListConversationsResponse, MeData, MeResponse, PostMessageData, PostMessageResponse, ReconnectData, ReconnectResponse, UpdateAgentData, UpdateAgentResponse } from '../types.gen';
+import { authorize, cancelRun, changeAccess, createAgent, createConversation, deleteAgent, deleteConnection, deleteConversation, enable, getAccess, getAgent, getConversation, getRun, listAccessResources, listAgents, listConnections, listConnectors, listConversations, me, type Options, postMessage, reconnect, updateAgent } from '../sdk.gen';
+import type { AuthorizeData, AuthorizeResponse, CancelRunData, CancelRunResponse, ChangeAccessData, ChangeAccessResponse, CreateAgentData, CreateAgentResponse, CreateConversationData, CreateConversationResponse, DeleteAgentData, DeleteAgentResponse, DeleteConnectionData, DeleteConnectionResponse, DeleteConversationData, DeleteConversationResponse, EnableData, EnableResponse, GetAccessData, GetAccessResponse, GetAgentData, GetAgentResponse, GetConversationData, GetConversationResponse, GetRunData, GetRunResponse, ListAccessResourcesData, ListAccessResourcesResponse, ListAgentsData, ListAgentsResponse, ListConnectionsData, ListConnectionsResponse, ListConnectorsData, ListConnectorsResponse, ListConversationsData, ListConversationsResponse, MeData, MeResponse, PostMessageData, PostMessageResponse, ReconnectData, ReconnectResponse, UpdateAgentData, UpdateAgentResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseUrl' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -325,6 +325,25 @@ export const authorizeMutation = (options?: Partial<Options<AuthorizeData>>): Us
     const mutationOptions: UseMutationOptions<AuthorizeResponse, DefaultError, Options<AuthorizeData>> = {
         mutationFn: async (fnOptions) => {
             const { data } = await authorize({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Enable
+ *
+ * Adds a service this instance runs itself (the Web) to the user's connections. Allows nothing yet.
+ */
+export const enableMutation = (options?: Partial<Options<EnableData>>): UseMutationOptions<EnableResponse, DefaultError, Options<EnableData>> => {
+    const mutationOptions: UseMutationOptions<EnableResponse, DefaultError, Options<EnableData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await enable({
                 ...options,
                 ...fnOptions,
                 throwOnError: true

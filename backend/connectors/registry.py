@@ -150,8 +150,15 @@ def _declared() -> list[Connector]:
     from connectors.google_calendar.connector import GoogleCalendarConnector
     from connectors.google_drive.connector import GoogleDriveConnector
     from connectors.todoist.connector import TodoistConnector
+    from connectors.web.connector import WebConnector
 
-    return [TodoistConnector(), GoogleCalendarConnector(), GoogleDriveConnector(), GitHubConnector()]
+    return [
+        TodoistConnector(),
+        GoogleCalendarConnector(),
+        GoogleDriveConnector(),
+        GitHubConnector(),
+        WebConnector(),
+    ]
 
 
 @cache

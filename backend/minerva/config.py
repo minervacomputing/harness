@@ -64,6 +64,8 @@ class Config(BaseSettings):
     github_client_secret: SecretStr | None = None
     # The GitHub App's URL name (github.com/apps/<slug>), for the link that installs it on repositories.
     github_app_slug: str | None = None
+    # Brave Search API key for the Web connector's search; without it, agents can only open pages.
+    brave_search_api_key: SecretStr | None = None
 
     sandbox_provider: Literal["container", "local-process"] = "container"
     sandbox_image: str = "minerva-worker:dev"

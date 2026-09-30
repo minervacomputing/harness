@@ -184,7 +184,7 @@ export type ConnectorOut = {
     /**
      * Auth
      */
-    auth: 'oauth2' | 'api_key';
+    auth: 'oauth2' | 'api_key' | 'builtin';
     /**
      * Kinds
      */
@@ -333,6 +333,14 @@ export type KindOut = {
      * Label
      */
     label: string;
+    /**
+     * Listed
+     */
+    listed: boolean;
+    /**
+     * Note
+     */
+    note: string | null;
     /**
      * Wildcard
      */
@@ -842,6 +850,31 @@ export type AuthorizeResponses = {
 };
 
 export type AuthorizeResponse = AuthorizeResponses[keyof AuthorizeResponses];
+
+export type EnableData = {
+    body?: never;
+    path: {
+        /**
+         * Workspace Id
+         */
+        workspace_id: string;
+        /**
+         * Provider
+         */
+        provider: string;
+    };
+    query?: never;
+    url: '/api/workspaces/{workspace_id}/connections/{provider}/enable';
+};
+
+export type EnableResponses = {
+    /**
+     * OK
+     */
+    200: ConnectionOut;
+};
+
+export type EnableResponse = EnableResponses[keyof EnableResponses];
 
 export type ListConnectorsData = {
     body?: never;

@@ -133,6 +133,8 @@ def test_access_settings_are_validated(api, workspace, connection, todoist):
             "actions": ["read", "create"],
             "wildcard": True,
             "hierarchical": False,
+            "note": None,
+            "listed": True,
         }
     ]
     assert todoist.calls == []

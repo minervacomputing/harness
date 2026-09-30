@@ -12,6 +12,7 @@ dependencies = [
     "httpx>=0.28.1",
     "mcp>=2.2.0",
     "psycopg[binary,pool]>=3.3.6",
+    "publicsuffixlist>=1.0.2.20260925",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
     "uvicorn[standard]>=0.54.0",

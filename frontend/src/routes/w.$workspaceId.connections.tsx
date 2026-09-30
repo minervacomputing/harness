@@ -1,10 +1,11 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import {
   authorizeMutation,
   changeAccessMutation,
   deleteConnectionMutation,
+  enableMutation,
   getAccessOptions,
   getAccessQueryKey,
   listAccessResourcesInfiniteOptions,
@@ -44,6 +45,16 @@ function ConnectionsPage() {
   const connectors = useQuery(listConnectorsOptions({ path }))
   const connections = useQuery(listConnectionsOptions({ path }))
   const authorize = useAuthorize()
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const enable = useMutation({
+    ...enableMutation(),
+    onSuccess: connection => {
+      navigate({ to: '.', search: { connected: connection.id } })
+      queryClient.invalidateQueries({ queryKey: listConnectionsQueryKey({ path }) })
+    },
+  })
+  const added = new Set(connections.data?.map(c => c.provider))
 
   return (
     <div>
@@ -64,7 +75,7 @@ function ConnectionsPage() {
                 <CardHeader>
                   <CardTitle>{connector.name}</CardTitle>
                   <CardDescription>
-                    You choose access per {connector.kinds.map(k => k.label.toLowerCase()).join(' and ')}: {connector.actions.map(a => a.label.toLowerCase()).join(', ')}.
+                    {describeConnector(connector.kinds, connector.actions)}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -75,11 +86,19 @@ function ConnectionsPage() {
                   >
                     Connect {connector.name}
                   </Button>}
+                  {connector.auth === 'builtin' && <Button
+                    variant="outline"
+                    disabled={enable.isPending || added.has(connector.slug)}
+                    onClick={() => enable.mutate({ path: { ...path, provider: connector.slug } })}
+                  >
+                    {added.has(connector.slug) ? 'Added' : `Add ${connector.name}`}
+                  </Button>}
                 </CardContent>
               </Card>
             ))}
           </div>
           {authorize.error && <ErrorNote>{errorMessage(authorize.error)}</ErrorNote>}
+          {enable.error && <ErrorNote>{errorMessage(enable.error)}</ErrorNote>}
         </section>
 
         <section className="space-y-3">
@@ -98,6 +117,15 @@ function ConnectionsPage() {
       </div>
     </div>
   )
+}
+
+// Kinds other than the connection itself are what users pick resources of.
+const ACCOUNT = 'account'
+
+function describeConnector(kinds: KindOut[], actions: ActionOut[]) {
+  const per = kinds.filter(k => k.id !== ACCOUNT).map(k => k.label.toLowerCase())
+  const what = actions.map(a => a.label.toLowerCase()).join(', ')
+  return per.length ? `You choose access per ${per.join(' and ')}: ${what}.` : `You choose whether agents may ${what}.`
 }
 
 const STATUS_LABEL: Record<ConnectionOut['status'], string> = { active: 'Active', error: 'Needs reconnecting', revoked: 'Revoked' }
@@ -327,6 +355,7 @@ function KindAccess({ workspaceId, connectionId, kind, actions, grants, current,
   }, [resources.error, queryClient, workspaceId])
 
   const plural = `${kind.label.toLowerCase()}s`
+  const heading = kind.id === ACCOUNT ? kind.label : `${kind.label}s`
   const all = kind.wildcard ? current(ALL) : new Set<string>()
   const listed = resources.data?.pages.flatMap(page => page.items) ?? []
   const listedIds = new Set(listed.map(r => r.id))
@@ -361,8 +390,10 @@ function KindAccess({ workspaceId, connectionId, kind, actions, grants, current,
     <section className="space-y-2">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h3 className="text-sm font-medium">{kind.label}s</h3>
-          {kind.hierarchical && <p className="text-xs text-muted-foreground">Access to a folder covers everything inside it, even where the boxes below do not show it. A block on a folder wins over access to a folder around it.</p>}
+          <h3 className="text-sm font-medium">{heading}</h3>
+          {kind.note
+            ? <p className="text-xs text-muted-foreground">{kind.note}</p>
+            : kind.hierarchical && <p className="text-xs text-muted-foreground">Access to a folder covers everything inside it, even where the boxes below do not show it. A block on a folder wins over access to a folder around it.</p>}
         </div>
         {kind.wildcard && (
           <form
@@ -372,15 +403,15 @@ function KindAccess({ workspaceId, connectionId, kind, actions, grants, current,
               setSearch(draft.trim())
             }}
           >
-            <Input className="h-8 w-48" placeholder={`Search ${plural}`} value={draft} onChange={event => setDraft(event.target.value)} />
-            <Button type="submit" size="sm" variant="outline">Search</Button>
+            <Input className="h-8 w-48" placeholder={kind.listed ? `Search ${plural}` : `Add a ${kind.label.toLowerCase()}`} value={draft} onChange={event => setDraft(event.target.value)} />
+            <Button type="submit" size="sm" variant="outline">{kind.listed ? 'Search' : 'Find'}</Button>
           </form>
         )}
       </div>
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b text-left text-xs text-muted-foreground">
-            <th className="py-2 font-medium">{kind.label}</th>
+            <th className="py-2 font-medium">{kind.id === ACCOUNT ? '' : kind.label}</th>
             {actions.map(action => <th key={action.id} className="w-28 py-2 font-medium">{action.label}</th>)}
           </tr>
         </thead>
@@ -391,7 +422,7 @@ function KindAccess({ workspaceId, connectionId, kind, actions, grants, current,
       </table>
       {resources.isPending && <Spinner />}
       {resources.error && <ErrorNote>{errorMessage(resources.error, `Could not load your ${plural}.`)}</ErrorNote>}
-      {resources.data && rows.length === 0 && (
+      {resources.data && rows.length === 0 && (kind.listed || search) && (
         <p className="text-sm text-muted-foreground">{search ? `No ${plural} match.` : `No ${plural} found in this account.`}</p>
       )}
       {resources.hasNextPage && (

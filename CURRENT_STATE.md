@@ -16,6 +16,7 @@ This is the first real implementation. It is not a prototype and is built to be 
 - Connecting Google Calendar, then choosing per calendar (or for all calendars) what agents may do: read events and/or create events. Agents can list calendars, list and read events, and create events without guests. Minerva asks Google only for read access at first, and for write access once the user allows creating events (see [section 4](#4-permissions)).
 - Connecting Google Drive, then choosing per folder or file (or for all of Drive) what agents may do: read files and/or create files. Access to a folder covers everything inside it, and a block on a folder wins over access to a folder around it. Agents can list folders, search, read file details, read Google Docs, Sheets, Slides and text files as text, and create text files or Google Docs in a folder. Minerva asks Google for read-only access at first, and for full Drive access once the user allows creating files, because Google's narrower scope cannot add files to folders Minerva did not create.
 - Connecting GitHub through a GitHub App, then choosing per repository (or for all repositories) what agents may do: read code, issues and pull requests, and/or open issues and comment. Agents can list repositories, read a repository's details, list and read issues and pull requests (with comments and diffs, truncated), read text files and list directories, open issues with a title and text only, and comment on issues and pull requests. Minerva sees only the repositories the user installs the App on; the connection card links to GitHub to choose them.
+- Adding the Web, then choosing which sites agents may read (an exact host such as `docs.python.org`, a domain with its subdomains such as `*.python.org`, or every site) and, separately, whether they may search. Agents can search the web through Brave Search (titles, addresses and snippets only) and read pages as text. Minerva fetches pages itself and never opens private networks (see [section 4](#4-permissions)).
 - Creating agents with their own instructions and connections.
 - Chatting with an agent. The answer streams in live, tool calls appear as cards (done, not allowed, failed), and a run can be stopped.
 - Every turn runs in a fresh hardened container, which is removed afterwards.
@@ -64,7 +65,7 @@ Stopping a run revokes its token, so every later call from the worker is rejecte
 
 ## 4. Permissions
 
-**A grant is: connection + resource kind + resource + actions.** A resource may be `*`, meaning every resource of that kind, including new ones. For Todoist the kind is Project, the actions are Read and Create, and Create requires Read. For Google Calendar the kind is Calendar, with Read events and Create events. For Google Drive the kind is File (folders are files), with Read files and Create files; a grant on a folder covers everything inside it. For GitHub the kind is Repository, with Read (code, issues and pull requests) and Create (open issues and comment); grants use GitHub's numeric repository id, so they follow a repository through renames and transfers. Connector declarations are described in [ARCHITECTURE_DECISIONS.md, D8](ARCHITECTURE_DECISIONS.md#d8-connectors-and-the-permission-executor).
+**A grant is: connection + resource kind + resource + actions.** A resource may be `*`, meaning every resource of that kind, including new ones. For Todoist the kind is Project, the actions are Read and Create, and Create requires Read. For Google Calendar the kind is Calendar, with Read events and Create events. For Google Drive the kind is File (folders are files), with Read files and Create files; a grant on a folder covers everything inside it. For GitHub the kind is Repository, with Read (code, issues and pull requests) and Create (open issues and comment); grants use GitHub's numeric repository id, so they follow a repository through renames and transfers. For the Web the kinds are Site, with Read, and the connection itself, with Search: searching sends the query to Brave Search, so it is its own permission. Connector declarations are described in [ARCHITECTURE_DECISIONS.md, D8](ARCHITECTURE_DECISIONS.md#d8-connectors-and-the-permission-executor).
 
 Layers can only narrow, and deny wins:
 
@@ -75,6 +76,8 @@ effective = provider account ∩ workspace ceiling ∩ user layer ∩ agent laye
 In a personal workspace the ceiling is unrestricted and hidden. The UI edits the user layer under **Connections → Choose access**, and each agent can use only the connections selected for it.
 
 **Provider consent:** each tool also needs the provider scopes behind it. A tool whose scopes the connection lacks is not offered. When the user allows an action whose scopes Google has not granted (for example Create events on a connection made with read-only access), the connection card says so and offers **Allow in Google Calendar**. That flow is tied to the connection: it asks Google for the scopes behind every action the user allows (on a shared connection, any member), since stored scopes may be stale after a revocation. Google's incremental authorization keeps earlier grants. The flow hints the same Google account and is rejected if the user signs in to a different account or the connection was removed meanwhile. **Reconnect** uses the same flow. Only the owner can reconnect a personal connection, and only an admin a shared one.
+
+**Web sites:** a site grant is an exact host or `*.domain`, which covers the domain and every subdomain. Patterns stop at the registrable domain (per the Public Suffix List), so `*.org`, `*.co.uk` and `*.github.io` cannot be granted; only `*` allows every site. A block on a domain wins over access to a wider one. Opening an address sends whatever is in it to that site, so the sites an agent may read are also where it could carry data; the settings page says so. The gateway checks the site before it resolves anything, refuses IP addresses and special-use names (`localhost`, `.internal`, `.local`, `.onion`), requires every resolved address to be public, and connects to the checked address with the site's name for TLS, so DNS rebinding cannot redirect the request. Redirects are followed only on the same host and never from https to http; any other redirect is returned to the agent, which must open the new address under that site's permission. Pages are capped at 3 MB (also after decompression) and 25 seconds, no cookies or credentials are sent, and HTML is reduced to text: scripts, frames and images are dropped (images keep only their alt text). Page text is untrusted input to the model; reducing HTML does not neutralize prompt injection.
 
 **Strict revocation:** changing access, removing a connection, or changing an agent's connections cancels the affected active runs, so no run continues with outdated permissions.
 
@@ -154,7 +157,7 @@ Other state:
 
 | Check | Result |
 |---|---|
-| Backend tests (`pytest`), including cross-workspace access and the connector contract; needs Postgres running (`make services`) | 120 pass (2026-09-30) |
+| Backend tests (`pytest`), including cross-workspace access and the connector contract; needs Postgres running (`make services`) | 266 pass (2026-10-01) |
 | Ruff lint and format; worker and frontend typechecks; production build | Pass |
 | Sandbox conformance | 11/11 |
 | End-to-end run in the container with the fake model | Pass: tool call, streamed text, stored answer, usage recorded, container removed |
@@ -183,6 +186,7 @@ Roughly in priority order:
 5. **Teams:** team workspaces, invitations, workspace switcher, ceiling UI, shared connections.
 6. **Login options:** Google and GitHub; passkeys in the UI (the backend already supports WebAuthn).
 7. **Model keys:** bring-your-own key per workspace, and quotas.
+8. **Web:** a per-run or per-workspace cap on searches (each costs the operator money); egress rules for the gateway in deployment (the fetcher already refuses private addresses); continuing a long page refetches it.
 
 ## 9. Technology
 

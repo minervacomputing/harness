@@ -298,7 +298,8 @@
           "auth": {
             "enum": [
               "oauth2",
-              "api_key"
+              "api_key",
+              "builtin"
             ],
             "title": "Auth",
             "type": "string"
@@ -526,6 +527,21 @@
             "title": "Label",
             "type": "string"
           },
+          "listed": {
+            "title": "Listed",
+            "type": "boolean"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
           "wildcard": {
             "title": "Wildcard",
             "type": "boolean"
@@ -536,7 +552,9 @@
           "label",
           "actions",
           "wildcard",
-          "hierarchical"
+          "hierarchical",
+          "note",
+          "listed"
         ],
         "title": "KindOut",
         "type": "object"
@@ -1530,6 +1548,54 @@
           }
         ],
         "summary": "Authorize",
+        "tags": [
+          "connections"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/connections/{provider}/enable": {
+      "post": {
+        "description": "Adds a service this instance runs itself (the Web) to the user's connections. Allows nothing yet.",
+        "operationId": "enable",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "title": "Provider",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionOut"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "security": [
+          {
+            "WorkspaceMember": []
+          }
+        ],
+        "summary": "Enable",
         "tags": [
           "connections"
         ]

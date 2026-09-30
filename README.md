@@ -80,6 +80,12 @@ Click **Connections → Connect Todoist**.
 
 After connecting, choose per project what agents may do, then add the connection to an agent under **Agents**.
 
+## The Web
+
+Click **Connections → Add Web**, then choose which sites agents may read and whether they may search. A site is an exact host (`docs.python.org`) or a domain with its subdomains (`*.python.org`).
+
+Searching uses Brave Search. Set `MINERVA_BRAVE_SEARCH_API_KEY` to a key from <https://brave.com/search/api/>. Without it, agents can only read pages.
+
 ## Sandbox
 
 Every agent turn runs in a fresh, hardened container on the internal `minerva-sandbox` network. It can reach only the gateway, through the `gateway-relay` container.

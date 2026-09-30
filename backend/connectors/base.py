@@ -54,6 +54,10 @@ class ResourceKind:
     # Whether resources nest (folders): a grant on one covers everything inside it. The connector then
     # names each resource's ancestors in `Resource.within`.
     hierarchical: bool = False
+    # Shown with the kind where users choose access, when the generic explanation does not fit.
+    note: str | None = None
+    # Whether discovery lists resources without a search; otherwise users search for each one to add.
+    listed: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,7 +184,13 @@ class ApiKey:
     label: str
 
 
-AuthStrategy = OAuth2 | ApiKey
+@dataclass(frozen=True, slots=True)
+class Builtin:
+    """No provider account: the operator runs the service and holds any keys it needs. A user adds it to
+    their workspace, and the connection stores no credentials."""
+
+
+AuthStrategy = OAuth2 | ApiKey | Builtin
 
 
 class Connector(ABC):
@@ -210,6 +220,12 @@ class Connector(ABC):
     @abstractmethod
     async def describe(self, client: Any, kind: str, ids: list[str]) -> dict[str, str]:
         """Names of the given resources. Resources the account cannot see are left out."""
+
+    def offered(self, op: Operation) -> bool:
+        """Whether this instance can run the operation at all (say, an operator key is configured). Runs
+        are not offered other operations; the operation must still fail safely if it becomes unavailable
+        during a run."""
+        return True
 
     def manage_link(self) -> tuple[str, str] | None:
         """A (label, URL) where the user manages what the provider lets Minerva reach, if there is one."""

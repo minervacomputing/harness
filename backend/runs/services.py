@@ -71,7 +71,7 @@ def _tools_for(agent: Agent, user_id: UUID, policy: Policy) -> list[ToolRef]:
         alias = connection.provider if n == 1 else f"{connection.provider}{n}"
         scopes = granted_scopes(connection)
         for op in connector.operations:
-            if not consent_given(op.consent, scopes):
+            if not connector.offered(op) or not consent_given(op.consent, scopes):
                 continue
             if not all(
                 policy.permits_any(

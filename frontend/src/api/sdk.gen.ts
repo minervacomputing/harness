@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AuthorizeData, AuthorizeResponses, CancelRunData, CancelRunResponses, ChangeAccessData, ChangeAccessResponses, CreateAgentData, CreateAgentResponses, CreateConversationData, CreateConversationResponses, DeleteAgentData, DeleteAgentResponses, DeleteConnectionData, DeleteConnectionResponses, DeleteConversationData, DeleteConversationResponses, GetAccessData, GetAccessResponses, GetAgentData, GetAgentResponses, GetConversationData, GetConversationResponses, GetRunData, GetRunResponses, ListAccessResourcesData, ListAccessResourcesResponses, ListAgentsData, ListAgentsResponses, ListConnectionsData, ListConnectionsResponses, ListConnectorsData, ListConnectorsResponses, ListConversationsData, ListConversationsResponses, MeData, MeResponses, PostMessageData, PostMessageResponses, ReconnectData, ReconnectResponses, UpdateAgentData, UpdateAgentResponses } from './types.gen';
+import type { AuthorizeData, AuthorizeResponses, CancelRunData, CancelRunResponses, ChangeAccessData, ChangeAccessResponses, CreateAgentData, CreateAgentResponses, CreateConversationData, CreateConversationResponses, DeleteAgentData, DeleteAgentResponses, DeleteConnectionData, DeleteConnectionResponses, DeleteConversationData, DeleteConversationResponses, EnableData, EnableResponses, GetAccessData, GetAccessResponses, GetAgentData, GetAgentResponses, GetConversationData, GetConversationResponses, GetRunData, GetRunResponses, ListAccessResourcesData, ListAccessResourcesResponses, ListAgentsData, ListAgentsResponses, ListConnectionsData, ListConnectionsResponses, ListConnectorsData, ListConnectorsResponses, ListConversationsData, ListConversationsResponses, MeData, MeResponses, PostMessageData, PostMessageResponses, ReconnectData, ReconnectResponses, UpdateAgentData, UpdateAgentResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -221,6 +221,22 @@ export const authorize = <ThrowOnError extends boolean = false>(options: Options
             type: 'apiKey'
         }],
     url: '/api/workspaces/{workspace_id}/connections/{provider}/authorize',
+    ...options
+});
+
+/**
+ * Enable
+ *
+ * Adds a service this instance runs itself (the Web) to the user's connections. Allows nothing yet.
+ */
+export const enable = <ThrowOnError extends boolean = false>(options: Options<EnableData, ThrowOnError>): RequestResult<EnableResponses, unknown, ThrowOnError> => (options.client ?? client).post<EnableResponses, unknown, ThrowOnError>({
+    security: [{
+            key: 'WorkspaceMember',
+            in: 'cookie',
+            name: 'sessionid',
+            type: 'apiKey'
+        }],
+    url: '/api/workspaces/{workspace_id}/connections/{provider}/enable',
     ...options
 });
 

@@ -17,7 +17,7 @@ from django.utils import timezone
 
 from connections.models import Connection, OAuthClient
 from connectors import registry
-from connectors.base import ApiKey, Connector, OAuth2, OperationError, consent_given
+from connectors.base import ApiKey, Builtin, Connector, OAuth2, OperationError, consent_given
 from minerva.config import config
 from permissions.models import Grant, PermissionLayer
 
@@ -367,6 +367,25 @@ def save_api_key(*, workspace_id: UUID, owner_id: UUID, provider: str, key: str)
     )
 
 
+def enable_builtin(*, workspace_id: UUID, owner_id: UUID, provider: str) -> Connection:
+    """Adds a built-in service to the user's connections, once per user. Nothing is allowed on it yet."""
+    connector = registry.get(provider)
+    if not isinstance(connector.auth, Builtin):
+        raise ConnectionFlowError(f"{connector.name} is connected through its own sign-in.")
+    lookup = {"workspace_id": workspace_id, "provider": provider, "external_account_id": str(owner_id)}
+    existing = Connection.objects.filter(**lookup).first()
+    if existing is not None:
+        return existing
+    connection = Connection(**lookup, owner_id=owner_id, label=connector.name)
+    connection.set_credentials({"kind": "builtin"})
+    try:
+        with transaction.atomic():
+            connection.save()
+    except IntegrityError:
+        return Connection.objects.get(**lookup)
+    return connection
+
+
 @dataclass(frozen=True)
 class Secret:
     value: str
@@ -376,6 +395,8 @@ class Secret:
 
 
 def _secret(connection: Connection, tokens: dict) -> Secret:
+    if tokens.get("kind") == "builtin":
+        return Secret("", None, connection.credentials_generation)
     if tokens.get("kind") == "api_key":
         return Secret(tokens["key"], None, connection.credentials_generation)
     scopes = tokens.get("scopes")

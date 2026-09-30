@@ -549,6 +549,7 @@ dependencies = [
     { name = "httpx" },
     { name = "mcp" },
     { name = "psycopg", extra = ["binary", "pool"] },
+    { name = "publicsuffixlist" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "uvicorn", extra = ["standard"] },
@@ -573,6 +574,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "mcp", specifier = ">=2.2.0" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.3.6" },
+    { name = "publicsuffixlist", specifier = ">=1.0.2.20260925" },
     { name = "pydantic", specifier = ">=2.13.5" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.54.0" },
@@ -676,6 +678,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/74/5e/c0664b968b102ff68b811d999c728546c48d5c1eec03e3bbaf88c0cb4472/psycopg_pool-3.3.3.tar.gz", hash = "sha256:df87b5d9d0ad7db37f6cdad4fa8ce113d250f5997f6db38e9a99192fb67f9e1d", size = 32006, upload-time = "2026-09-22T15:53:24.947Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5d/b4/452c6607a0f479465cd8a9b0d9956919fcb150050c1f83f9f11e6b8ee8dc/psycopg_pool-3.3.3-py3-none-any.whl", hash = "sha256:9b9cd6a4fcec47a410f7e82d408540e7f77b478509e91b44c1a5457a13e5ff37", size = 40304, upload-time = "2026-09-22T15:53:23.712Z" },
+]
+
+[[package]]
+name = "publicsuffixlist"
+version = "1.0.2.20260925"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f4/7f/3ed941493eb0be191cfafecd4fd1d8a1206b055b88308d50893d60ea460e/publicsuffixlist-1.0.2.20260925.tar.gz", hash = "sha256:2bacd61c8b361ff3faa11f984a3554f2a3047327909467cb9cbd3a129d8065f8", size = 109293, upload-time = "2026-09-25T08:44:22.933Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8f/87/9e56f9cef465ad5a014acbe6b3f2a48b30b2a84f62b10dcfdbdb419bc3cc/publicsuffixlist-1.0.2.20260925-py2.py3-none-any.whl", hash = "sha256:f99c707b3f2fdc386b64e01fc4eca3a12631a677c43b62283aa0255fa7ea0412", size = 108980, upload-time = "2026-09-25T08:44:21.681Z" },
 ]
 
 [[package]]

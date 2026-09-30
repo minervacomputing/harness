@@ -34,6 +34,7 @@ Configuration is read from the process environment and `.env` at the repository 
 | `MINERVA_TODOIST_CLIENT_ID`, `MINERVA_TODOIST_CLIENT_SECRET` | empty | Empty means Minerva registers its own OAuth client |
 | `MINERVA_GOOGLE_CLIENT_ID`, `MINERVA_GOOGLE_CLIENT_SECRET` | empty | Google Calendar and Drive; unset hides them |
 | `MINERVA_GITHUB_CLIENT_ID`, `MINERVA_GITHUB_CLIENT_SECRET`, `MINERVA_GITHUB_APP_SLUG` | empty | A GitHub App; unset hides GitHub |
+| `MINERVA_BRAVE_SEARCH_API_KEY` | empty | Brave Search API key for the Web connector; unset offers only reading pages |
 | `MINERVA_SANDBOX_PROVIDER` | `container` | `local-process` has no isolation; avoid it |
 | `MINERVA_SANDBOX_IMAGE` | `minerva-worker:dev` | Built by `make worker-image` |
 | `MINERVA_GATEWAY_BIND` | `127.0.0.1` | Linux only: set to `172.17.0.1` |

@@ -11,7 +11,7 @@ from ninja.errors import HttpError
 from connections import services
 from connections.models import Connection
 from connectors import registry
-from connectors.base import ACCOUNT_KIND, ApiKey, Connector, DiscoveryItem, OperationError
+from connectors.base import ACCOUNT_KIND, ApiKey, Builtin, Connector, DiscoveryItem, OperationError
 from permissions.models import Grant, PermissionLayer
 from permissions.policy import ANY
 from permissions.services import MAX_CHANGES, GrantChange, InvalidGrants, apply_grant_changes, check_changes
@@ -35,12 +35,17 @@ class KindOut(Schema):
     wildcard: bool
     # Whether a grant on a resource covers everything inside it (folders).
     hierarchical: bool
+    # What to tell the user about choosing access for this kind, when the generic text does not fit.
+    note: str | None
+    # Whether resources are listed without a search; otherwise the user searches for each one to add.
+    listed: bool
 
 
 class ConnectorOut(Schema):
     slug: str
     name: str
-    auth: Literal["oauth2", "api_key"]
+    # "builtin": run by this instance, added without signing in anywhere.
+    auth: Literal["oauth2", "api_key", "builtin"]
     kinds: list[KindOut]
     actions: list[ActionOut]
 
@@ -153,6 +158,8 @@ def _kinds(connector: Connector) -> list[dict]:
             "actions": list(k.actions),
             "wildcard": k.wildcard,
             "hierarchical": k.hierarchical,
+            "note": k.note,
+            "listed": k.listed,
         }
         for k in connector.kinds
     ]
@@ -180,13 +187,19 @@ def _user_grants(request, connection: Connection):
     ).order_by("resource_kind", "resource_id")
 
 
+def _auth(connector: Connector) -> str:
+    if isinstance(connector.auth, Builtin):
+        return "builtin"
+    return "api_key" if isinstance(connector.auth, ApiKey) else "oauth2"
+
+
 @router.get("/workspaces/{uuid:workspace_id}/connectors", response=list[ConnectorOut])
 def list_connectors(request, workspace_id: UUID):
     return [
         {
             "slug": c.slug,
             "name": c.name,
-            "auth": "api_key" if isinstance(c.auth, ApiKey) else "oauth2",
+            "auth": _auth(c),
             "kinds": _kinds(c),
             "actions": _actions(c),
         }
@@ -216,6 +229,22 @@ def authorize(request, workspace_id: UUID, provider: str):
     return {"url": url}
 
 
+@router.post("/workspaces/{uuid:workspace_id}/connections/{provider}/enable", response=ConnectionOut)
+def enable(request, workspace_id: UUID, provider: str):
+    """Adds a service this instance runs itself (the Web) to the user's connections. Allows nothing yet."""
+    try:
+        registry.get(provider)
+    except LookupError:
+        raise HttpError(404, "Unknown provider.") from None
+    try:
+        connection = services.enable_builtin(
+            workspace_id=workspace_id, owner_id=request.user.id, provider=provider
+        )
+    except services.ConnectionFlowError as error:
+        raise HttpError(422, str(error)) from error
+    return _connection_out(connection, request.user.id)
+
+
 @router.post(
     "/workspaces/{uuid:workspace_id}/connections/{uuid:connection_id}/reconnect", response=AuthorizeOut
 )
@@ -225,6 +254,8 @@ def reconnect(request, workspace_id: UUID, connection_id: UUID, payload: Consent
     if connection.owner_id is None and not request.membership.is_admin:
         raise HttpError(403, "Only workspace admins can reconnect shared connections.")
     connector = registry.get(connection.provider)
+    if isinstance(connector.auth, Builtin):
+        raise HttpError(422, f"{connector.name} has no account to reconnect.")
     unknown = [a for a in payload.actions if connector.action(a) is None]
     if unknown:
         raise HttpError(422, f"{connector.name} has no action {unknown[0]!r}.")
