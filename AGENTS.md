@@ -58,6 +58,10 @@ Emails (verification and sign-in codes) are printed in the `web` process output.
 
 **Port in use:** if `web` exits with `Address already in use`, another copy of `make dev` is running. Stop it rather than starting a second one.
 
+## Git
+
+This project does not use pull requests. Commit directly to `main` (or merge a short-lived branch into it) and push `main`.
+
 ## Checks
 
 ```sh
