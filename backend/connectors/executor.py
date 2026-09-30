@@ -22,8 +22,8 @@ from pydantic import ValidationError
 
 from connections.services import open_client
 from connectors import registry
-from connectors.base import DENIED, Binding, Operation, OperationError
-from permissions.policy import Policy
+from connectors.base import DENIED, Binding, Connector, Operation, OperationError
+from permissions.policy import Policy, Resource
 from runs.models import Run, RunPageToken, RunWrite
 from runs.services import ToolRef, is_token_valid
 
@@ -110,15 +110,29 @@ class Executor:
         try:
             result = await self._perform(ref, op, data, tool, query_hash, write_key=write_key)
         except Exception:
-            # Refusals (denied, limit, ended) may be retried; only uncertain outcomes are remembered.
+            # Refusals (denied, limit, ended) may be retried; applied and uncertain writes are remembered,
+            # because `_perform` records them before anything else can fail.
             await RunWrite.unscoped.filter(
                 run_id=self.context.run_id, key=write_key, status=RunWrite.Status.PENDING
             ).adelete()
             raise
-        await RunWrite.unscoped.filter(run_id=self.context.run_id, key=write_key).aupdate(
-            status=RunWrite.Status.SUCCEEDED, result=result
-        )
         return Outcome(result, op.title)
+
+    def _permits(self, connector: Connector, resource: Resource, action_id: str) -> bool:
+        """The action and every action it requires, checked against the intersected layers.
+
+        Requirements are checked here rather than only when grants are saved, because layers can combine
+        into a policy that allows an action without its requirement.
+        """
+        seen: set[str] = set()
+        current: str | None = action_id
+        while current is not None and current not in seen:
+            if not self.context.policy.permits(resource, current):
+                return False
+            seen.add(current)
+            spec = connector.action(current)
+            current = spec.requires if spec else None
+        return True
 
     def _begin_write(self, key: str) -> dict | None:
         run = Run.unscoped.only("writes_uncertain").get(pk=self.context.run_id)
@@ -177,19 +191,21 @@ class Executor:
         *,
         write_key: str | None = None,
     ) -> dict[str, Any]:
+        connector = registry.get(ref.provider)
         async with open_client(ref.provider, UUID(ref.connection_id)) as client:
             binding = Binding(ref.connection_id, client)
             prepared = await op.prepare(binding, data)
             await self._ensure_active()
             for target in prepared.targets:
-                if target.connection_id != ref.connection_id or not self.context.policy.permits(
-                    target, op.action
+                if target.connection_id != ref.connection_id or not self._permits(
+                    connector, target, op.action
                 ):
                     raise OperationError("POLICY_DENIED", DENIED)
             if op.mutates:
                 if not prepared.targets:
                     raise OperationError("POLICY_DENIED", "A write needs an explicitly allowed destination.")
                 await sync_to_async(self._reserve_write)()
+                await self._ensure_active()
             try:
                 output = await prepared.execute()
             except Exception as error:
@@ -204,15 +220,25 @@ class Executor:
                         "The write outcome is unknown. Check the provider; further writes in this run are paused.",
                     ) from error
                 raise
+            items = [
+                record.data
+                for record in output.records
+                if record.resource.connection_id == ref.connection_id
+                and self._permits(connector, record.resource, op.action)
+            ]
+            result: dict[str, Any] = {"items": items, "count": len(items)}
+            if write_key is not None:
+                # The provider applied the write: record it before any later step can fail and drop it.
+                try:
+                    await RunWrite.unscoped.filter(run_id=self.context.run_id, key=write_key).aupdate(
+                        status=RunWrite.Status.SUCCEEDED, result=result
+                    )
+                except Exception:
+                    # Never leave an applied write pending, or `invoke` would delete it and allow a repeat.
+                    await sync_to_async(self._mark_uncertain)(write_key)
+                    raise
             await self._ensure_active()
 
-        items = [
-            record.data
-            for record in output.records
-            if record.resource.connection_id == ref.connection_id
-            and self.context.policy.permits(record.resource, op.action)
-        ]
-        result: dict[str, Any] = {"items": items, "count": len(items)}
         if output.next_cursor and op.paginated:
             result["next_cursor"] = await sync_to_async(self._issue_cursor)(
                 tool, query_hash, output.next_cursor

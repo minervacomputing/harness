@@ -2,11 +2,13 @@ import pytest
 from asgiref.sync import sync_to_async
 
 from connections.models import Connection
+from connectors import executor as executor_module
 from connectors.base import OperationError
 from connectors.executor import Executor, RunContext
 from conversations.models import Conversation
+from permissions.models import Grant, PermissionLayer
 from runs import services
-from runs.models import Run
+from runs.models import Run, RunWrite
 from workspaces.tenancy import workspace_scope
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -143,6 +145,64 @@ async def test_ended_runs_cannot_call_tools(agrant, start):
     with pytest.raises(OperationError) as ended:
         await executor.invoke("todoist_list_projects", {})
     assert ended.value.code == "RUN_ENDED"
+
+
+async def test_write_applied_before_revocation_is_still_recorded(agrant, start, todoist, monkeypatch):
+    await agrant(work=["read", "create"])
+    executor = await start()
+    valid = services.is_token_valid
+    # The run is revoked while the provider applies the write.
+    monkeypatch.setattr(
+        executor_module,
+        "is_token_valid",
+        lambda run_id: valid(run_id) and ("POST", "/tasks") not in todoist.calls,
+    )
+    with pytest.raises(OperationError) as ended:
+        await executor.invoke("todoist_create_task", {"project_id": "work", "title": "a"})
+    assert ended.value.code == "RUN_ENDED"
+    write = await RunWrite.unscoped.aget(run_id=executor.context.run_id)
+    assert write.status == RunWrite.Status.SUCCEEDED
+    assert write.result["count"] == 1
+
+
+async def test_revocation_after_reserving_a_write_stops_the_provider_call(
+    agrant, start, todoist, monkeypatch
+):
+    await agrant(work=["read", "create"])
+    executor = await start()
+    valid = services.is_token_valid
+    monkeypatch.setattr(
+        executor_module,
+        "is_token_valid",
+        lambda run_id: valid(run_id) and Run.unscoped.get(pk=run_id).write_count == 0,
+    )
+    with pytest.raises(OperationError) as ended:
+        await executor.invoke("todoist_create_task", {"project_id": "work", "title": "a"})
+    assert ended.value.code == "RUN_ENDED"
+    assert ("POST", "/tasks") not in todoist.calls
+
+
+async def test_required_actions_are_enforced_after_layers_intersect(
+    scoped, connection, agrant, start, todoist
+):
+    def deny_read_in_ceiling():
+        ceiling = PermissionLayer.objects.get(level=PermissionLayer.Level.CEILING)
+        Grant.objects.create(
+            layer=ceiling,
+            connection=connection,
+            resource_kind="project",
+            resource_id="work",
+            actions=["read"],
+            effect=Grant.Effect.DENY,
+        )
+
+    await sync_to_async(deny_read_in_ceiling)()
+    await agrant(work=["read", "create"])
+    executor = await start()
+    with pytest.raises(OperationError) as denied:
+        await executor.invoke("todoist_create_task", {"project_id": "work", "title": "a"})
+    assert denied.value.code == "POLICY_DENIED"
+    assert ("POST", "/tasks") not in todoist.calls
 
 
 def test_permission_changes_revoke_active_runs(scoped, user, agent, grant):

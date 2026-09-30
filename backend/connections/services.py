@@ -198,6 +198,8 @@ def access_token(connection_id: UUID) -> str:
         return tokens["access_token"]
     with transaction.atomic():
         connection = Connection.unscoped.select_for_update().get(pk=connection_id)
+        if connection.status != Connection.Status.ACTIVE:
+            raise _expired()
         tokens = connection.credentials()
         if not _needs_refresh(tokens):
             return tokens["access_token"]
@@ -264,4 +266,7 @@ def _refresh(connection: Connection, tokens: dict) -> dict | None:
         return None
     if response.is_error:
         raise OperationError("PROVIDER_UNAVAILABLE", f"{connector.name} could not refresh the connection.")
-    return _token_payload(response.json())
+    refreshed = _token_payload(response.json())
+    # Providers that do not rotate refresh tokens (such as Google) omit them from the response.
+    refreshed["refresh_token"] = refreshed["refresh_token"] or tokens["refresh_token"]
+    return refreshed
