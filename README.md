@@ -86,6 +86,12 @@ Create a public integration at <https://www.notion.so/profile/integrations> and 
 
 Click **Connections → Connect Notion** and choose in Notion which pages Minerva may reach. Then choose per page or database what agents may do: read, comment, create pages inside it, and edit it. Each covers the pages inside.
 
+## Linear
+
+Create an OAuth application at <https://linear.app/settings/api/applications> and set `MINERVA_LINEAR_CLIENT_ID` and `MINERVA_LINEAR_CLIENT_SECRET`. The callback URL is `http://localhost:5173/api/oauth/linear/callback`. Leave webhooks off. Without the client, Linear is not offered.
+
+Click **Connections → Connect Linear**, then choose per team what agents may do: read issues, comment, create issues, and edit issues. Each covers the team's sub-teams. Minerva asks Linear only for read access at first, and for the write scopes an action needs once the user allows it.
+
 ## The Web
 
 Click **Connections → Add Web**, then choose which sites agents may read and whether they may search. A site is an exact host (`docs.python.org`) or a domain with its subdomains (`*.python.org`).

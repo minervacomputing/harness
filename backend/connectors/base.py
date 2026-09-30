@@ -172,6 +172,8 @@ class OAuth2:
     authorize_url: str
     token_url: str
     scopes: tuple[str, ...]
+    # How the authorization request joins scopes: RFC 6749 uses spaces; Linear wants commas.
+    scope_separator: str = " "
     # Dynamic client registration, used when the operator configured no client.
     registration_url: str | None = None
     authorize_params: tuple[tuple[str, str], ...] = ()

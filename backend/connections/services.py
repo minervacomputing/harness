@@ -93,7 +93,7 @@ def _register_client(connector: Connector, uri: str) -> OAuthClient:
         json={
             "client_name": "Minerva",
             "redirect_uris": [uri],
-            "scope": " ".join(oauth.scopes),
+            "scope": oauth.scope_separator.join(oauth.scopes),
             "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],
             "token_endpoint_auth_method": "client_secret_post",
@@ -153,7 +153,7 @@ def authorization_url(
         "redirect_uri": creds.redirect_uri,
     }
     # Providers without scopes (Notion) let the user choose what to share on their own consent screen.
-    if scope := " ".join(scopes or oauth.scopes):
+    if scope := oauth.scope_separator.join(scopes or oauth.scopes):
         params["scope"] = scope
     if oauth.pkce:
         params["code_challenge"] = challenge
@@ -222,7 +222,9 @@ def pop_flow(session, *, provider: str, state: str | None) -> dict:
 
 def _scopes(body: dict) -> list[str] | None:
     scope = body.get("scope")
-    # RFC 6749 separates scopes with spaces; GitHub uses commas.
+    # RFC 6749 separates scopes with spaces; GitHub uses commas. Older Linear apps return a list.
+    if isinstance(scope, list) and all(isinstance(item, str) for item in scope):
+        scope = " ".join(scope)
     return sorted(set(scope.replace(",", " ").split())) if isinstance(scope, str) else None
 
 

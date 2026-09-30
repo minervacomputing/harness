@@ -81,10 +81,17 @@ class ProviderHTTP:
         transport: httpx.AsyncBaseTransport | None = None,
         timeout: float = 20.0,
         forbidden: Callable[[str, httpx.Response], OperationError] = default_forbidden,
+        classify: Callable[[str, httpx.Response], OperationError | None] | None = None,
+        judge: Callable[[httpx.Response], Effect | None] | None = None,
     ) -> None:
+        """`classify` names the error for a failed response when its status does not (it returns None to
+        keep the status's meaning). `judge` tells what a response did to a write when its status does not,
+        as with GraphQL, which answers failed writes with 200; it returns None to go by the status."""
         self.provider = provider
         self.timeout = timeout
         self._forbidden = forbidden
+        self._classify = classify
+        self._judge = judge
         self._http = httpx.AsyncClient(
             base_url=base_url,
             headers=headers,
@@ -137,12 +144,15 @@ class ProviderHTTP:
                 attempt.effect = Effect.NOT_APPLIED if refused else Effect.UNKNOWN
             raise OperationError("PROVIDER_UNAVAILABLE", f"{self.provider} could not be reached.") from error
         if attempt is not None:
-            if response.is_success:
+            # Unknown until judged, so a judge that fails leaves nothing claimed.
+            attempt.effect = Effect.UNKNOWN
+            judged = self._judge(response) if self._judge is not None else None
+            if judged is not None:
+                attempt.effect = judged
+            elif response.is_success:
                 attempt.effect = Effect.APPLIED
             elif response.status_code in REFUSED_STATUSES:
                 attempt.effect = Effect.NOT_APPLIED
-            else:
-                attempt.effect = Effect.UNKNOWN
         if redirects and response.is_redirect:
             return response
         if not response.is_success:
@@ -169,12 +179,13 @@ class ProviderHTTP:
         return response.content
 
     async def bounded(
-        self, path: str, *, limit: int, too_large: OperationError, **kwargs: Any
+        self, path: str, *, limit: int, too_large: OperationError, method: str = "GET", **kwargs: Any
     ) -> httpx.Response:
-        """A GET whose body is streamed and refused with `too_large` once it exceeds `limit` bytes. The
-        response returned is read in full."""
+        """A read whose body is streamed and refused with `too_large` once it exceeds `limit` bytes. The
+        response returned is read in full. A read sent with POST (a GraphQL query) passes `method`; it is
+        never accounted as a write, so a write must not be sent this way."""
         try:
-            async with self._http.stream("GET", path, **kwargs) as response:
+            async with self._http.stream(method, path, **kwargs) as response:
                 body = bytearray()
                 cap = limit if response.is_success else MAX_ERROR_BODY
                 async for chunk in response.aiter_bytes():
@@ -204,6 +215,8 @@ class ProviderHTTP:
         return OperationError("PROVIDER_FAILED", f"{self.provider} returned an unexpected response.")
 
     def _error(self, response: httpx.Response) -> OperationError:
+        if self._classify is not None and (named := self._classify(self.provider, response)) is not None:
+            return named
         status = response.status_code
         if status == 401:
             return OperationError(

@@ -67,6 +67,9 @@ class Config(BaseSettings):
     # A Notion public integration. Its capabilities, set in Notion, cap what any agent can do there.
     notion_client_id: str | None = None
     notion_client_secret: SecretStr | None = None
+    # A Linear OAuth application. Empty: Linear is not offered.
+    linear_client_id: str | None = None
+    linear_client_secret: SecretStr | None = None
     # Brave Search API key for the Web connector's search; without it, agents can only open pages.
     brave_search_api_key: SecretStr | None = None
 
