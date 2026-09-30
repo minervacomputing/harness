@@ -51,6 +51,9 @@ class ResourceKind:
     actions: tuple[str, ...]
     # Whether one grant may cover every resource of this kind ("All calendars").
     wildcard: bool = False
+    # Whether resources nest (folders): a grant on one covers everything inside it. The connector then
+    # names each resource's ancestors in `Resource.within`.
+    hierarchical: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +84,8 @@ class ScopedRecord:
 class ProviderOutput:
     records: list[ScopedRecord]
     next_cursor: str | None = None
+    # The provider said it did not search everything it could have.
+    incomplete: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,8 +121,10 @@ class Binding:
     connection_id: str
     client: Any
 
-    def resource(self, kind: str, resource_id: str) -> Resource:
-        return Resource(self.connection_id, kind, resource_id)
+    def resource(
+        self, kind: str, resource_id: str, within: tuple[str, ...] = (), partial: bool = False
+    ) -> Resource:
+        return Resource(self.connection_id, kind, resource_id, within, partial)
 
     def account(self) -> Resource:
         return Resource(self.connection_id, ACCOUNT_KIND, self.connection_id)
@@ -212,6 +219,10 @@ class Connector(ABC):
 
     def kind(self, kind_id: str) -> ResourceKind | None:
         return next((k for k in self.kinds if k.id == kind_id), None)
+
+    def nests(self, kind_id: str) -> bool:
+        kind = self.kind(kind_id)
+        return kind is not None and kind.hierarchical
 
     def requires_of(self, action_id: str) -> str | None:
         spec = self.action(action_id)

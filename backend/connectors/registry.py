@@ -66,7 +66,7 @@ def validate(connectors: list[Connector]) -> None:
         if not kind_ids or len(set(kind_ids)) != len(kind_ids):
             raise InvalidConnector(f"{connector.slug}: kinds must be declared once each.")
         for kind in connector.kinds:
-            if kind.id == ACCOUNT_KIND and kind.wildcard:
+            if kind.id == ACCOUNT_KIND and (kind.wildcard or kind.hierarchical):
                 raise InvalidConnector(f"{connector.slug}: the account kind has one resource.")
             for action_id in kind.actions:
                 if connector.action(action_id) is None:
@@ -96,7 +96,11 @@ def fingerprint(connector: Connector, op: Operation) -> str:
         "paginated": op.paginated,
         "requires": {action: _chain(connector, action) for action in actions},
         "kinds": {
-            kind.id: {"actions": sorted(kind.actions), "wildcard": kind.wildcard}
+            kind.id: {
+                "actions": sorted(kind.actions),
+                "wildcard": kind.wildcard,
+                "hierarchical": kind.hierarchical,
+            }
             for kind in connector.kinds
             if kind.id in kinds
         },
@@ -107,9 +111,10 @@ def fingerprint(connector: Connector, op: Operation) -> str:
 
 def _declared() -> list[Connector]:
     from connectors.google_calendar.connector import GoogleCalendarConnector
+    from connectors.google_drive.connector import GoogleDriveConnector
     from connectors.todoist.connector import TodoistConnector
 
-    return [TodoistConnector(), GoogleCalendarConnector()]
+    return [TodoistConnector(), GoogleCalendarConnector(), GoogleDriveConnector()]
 
 
 @cache

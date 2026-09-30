@@ -14,6 +14,7 @@ This is the first real implementation. It is not a prototype and is built to be 
 - A personal workspace for every user, with a default agent.
 - Connecting Todoist through OAuth, then choosing per project what agents may do: read tasks and/or create tasks.
 - Connecting Google Calendar, then choosing per calendar (or for all calendars) what agents may do: read events and/or create events. Agents can list calendars, list and read events, and create events without guests. Minerva asks Google only for read access at first, and for write access once the user allows creating events (see [section 4](#4-permissions)).
+- Connecting Google Drive, then choosing per folder or file (or for all of Drive) what agents may do: read files and/or create files. Access to a folder covers everything inside it, and a block on a folder wins over access to a folder around it. Agents can list folders, search, read file details, read Google Docs, Sheets, Slides and text files as text, and create text files or Google Docs in a folder. Minerva asks Google for read-only access at first, and for full Drive access once the user allows creating files, because Google's narrower scope cannot add files to folders Minerva did not create.
 - Creating agents with their own instructions and connections.
 - Chatting with an agent. The answer streams in live, tool calls appear as cards (done, not allowed, failed), and a run can be stopped.
 - Every turn runs in a fresh hardened container, which is removed afterwards.
@@ -62,7 +63,7 @@ Stopping a run revokes its token, so every later call from the worker is rejecte
 
 ## 4. Permissions
 
-**A grant is: connection + resource kind + resource + actions.** A resource may be `*`, meaning every resource of that kind, including new ones. For Todoist the kind is Project, the actions are Read and Create, and Create requires Read. For Google Calendar the kind is Calendar, with Read events and Create events. Connector declarations are described in [ARCHITECTURE_DECISIONS.md, D8](ARCHITECTURE_DECISIONS.md#d8-connectors-and-the-permission-executor).
+**A grant is: connection + resource kind + resource + actions.** A resource may be `*`, meaning every resource of that kind, including new ones. For Todoist the kind is Project, the actions are Read and Create, and Create requires Read. For Google Calendar the kind is Calendar, with Read events and Create events. For Google Drive the kind is File (folders are files), with Read files and Create files; a grant on a folder covers everything inside it. Connector declarations are described in [ARCHITECTURE_DECISIONS.md, D8](ARCHITECTURE_DECISIONS.md#d8-connectors-and-the-permission-executor).
 
 Layers can only narrow, and deny wins:
 

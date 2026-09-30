@@ -33,6 +33,8 @@ class KindOut(Schema):
     actions: list[str]
     # Whether one grant can cover every resource of this kind.
     wildcard: bool
+    # Whether a grant on a resource covers everything inside it (folders).
+    hierarchical: bool
 
 
 class ConnectorOut(Schema):
@@ -139,7 +141,13 @@ def _actions(connector: Connector) -> list[dict]:
 
 def _kinds(connector: Connector) -> list[dict]:
     return [
-        {"id": k.id, "label": k.label, "actions": list(k.actions), "wildcard": k.wildcard}
+        {
+            "id": k.id,
+            "label": k.label,
+            "actions": list(k.actions),
+            "wildcard": k.wildcard,
+            "hierarchical": k.hierarchical,
+        }
         for k in connector.kinds
     ]
 

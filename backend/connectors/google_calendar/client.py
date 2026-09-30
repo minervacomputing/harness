@@ -1,60 +1,17 @@
 from typing import Any
-from urllib.parse import quote
 
 import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
 from pydantic.alias_generators import to_camel
 
-from connectors.base import OperationError
-from connectors.http import ProviderHTTP, default_forbidden
+from connectors.google import USERINFO_URL, GoogleUser, forbidden, segment
+from connectors.http import ProviderHTTP
 
 API_URL = "https://www.googleapis.com/calendar/v3"
-USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
-RATE_LIMITED = frozenset({"rateLimitExceeded", "userRateLimitExceeded"})
-# The Calendar API is not enabled in the operator's Google Cloud project.
-NOT_CONFIGURED = frozenset({"accessNotConfigured", "SERVICE_DISABLED"})
-
-
-def _reasons(response: httpx.Response) -> set[str]:
-    try:
-        error = response.json().get("error", {})
-        reasons = {item.get("reason") for item in error.get("errors", [])}
-        reasons |= {item.get("reason") for item in error.get("details", [])}
-    except ValueError, AttributeError, TypeError:
-        return set()
-    return {reason for reason in reasons if isinstance(reason, str)}
-
-
-def _forbidden(provider: str, response: httpx.Response) -> OperationError:
-    """Google reports rate limits, and an API that is not enabled, as 403."""
-    reasons = _reasons(response)
-    if reasons & RATE_LIMITED:
-        return OperationError(
-            "PROVIDER_RATE_LIMITED", f"{provider} is rate limiting requests. Try again later."
-        )
-    if reasons & NOT_CONFIGURED:
-        return OperationError(
-            "PROVIDER_NOT_CONFIGURED",
-            f"The {provider} API is not enabled for this Minerva instance's Google Cloud project. "
-            "Ask the operator to enable it.",
-        )
-    return default_forbidden(provider, response)
-
-
-def segment(value: str) -> str:
-    """One URL path segment. Calendar ids contain `@` and `#`; `/` never passes input validation."""
-    return quote(value, safe="")
 
 
 class Model(BaseModel):
     model_config = ConfigDict(extra="ignore", alias_generator=to_camel, populate_by_name=True)
-
-
-class GoogleUser(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    sub: str
-    email: str | None = None
-    name: str | None = None
 
 
 class GoogleCalendar(Model):
@@ -119,7 +76,7 @@ class GoogleCalendarClient:
             base_url=base_url,
             headers={"Authorization": f"Bearer {access_token}"},
             transport=transport,
-            forbidden=_forbidden,
+            forbidden=forbidden,
         )
 
     async def aclose(self) -> None:

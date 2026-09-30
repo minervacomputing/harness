@@ -351,7 +351,10 @@ function KindAccess({ workspaceId, connectionId, kind, actions, grants, current,
   return (
     <section className="space-y-2">
       <div className="flex items-center justify-between gap-3">
-        <h3 className="text-sm font-medium">{kind.label}s</h3>
+        <div>
+          <h3 className="text-sm font-medium">{kind.label}s</h3>
+          {kind.hierarchical && <p className="text-xs text-muted-foreground">Access to a folder covers everything inside it, even where the boxes below do not show it. A block on a folder wins over access to a folder around it.</p>}
+        </div>
         {kind.wildcard && (
           <form
             className="flex items-center gap-2"

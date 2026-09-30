@@ -314,6 +314,10 @@ export type KindOut = {
      */
     actions: Array<string>;
     /**
+     * Hierarchical
+     */
+    hierarchical: boolean;
+    /**
      * Id
      */
     id: string;

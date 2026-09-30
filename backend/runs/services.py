@@ -74,7 +74,9 @@ def _tools_for(agent: Agent, user_id: UUID, policy: Policy) -> list[ToolRef]:
             if not consent_given(op.consent, scopes):
                 continue
             if not all(
-                policy.permits_any(str(connection.id), kind, action, connector.requires_of)
+                policy.permits_any(
+                    str(connection.id), kind, action, connector.requires_of, connector.nests(kind)
+                )
                 for kind, action in op.needs
             ):
                 continue

@@ -19,7 +19,6 @@ from connectors.base import (
     DiscoveryPage,
     Enumerate,
     Need,
-    OAuth2,
     Operation,
     OperationError,
     OperationInput,
@@ -28,6 +27,7 @@ from connectors.base import (
     ResourceKind,
     ScopedRecord,
 )
+from connectors.google import oauth as google_oauth
 from connectors.google_calendar.client import EventTime, GoogleCalendar, GoogleCalendarClient, GoogleEvent
 
 CALENDAR = "calendar"
@@ -322,21 +322,8 @@ class GoogleCalendarConnector(Connector):
         ActionSpec("read", "Read events"),
         ActionSpec("create", "Create events", requires="read"),
     )
-    auth = OAuth2(
-        app="google",
-        authorize_url="https://accounts.google.com/o/oauth2/v2/auth",
-        token_url="https://oauth2.googleapis.com/token",  # noqa: S106
-        # Reading is enough to connect; writing is asked for once the user allows an agent to write.
-        scopes=("openid", "email", READ_SCOPE),
-        # Google only issues a refresh token for offline access, and only on the consent screen. Earlier
-        # grants are kept when more scopes are requested.
-        authorize_params=(
-            ("access_type", "offline"),
-            ("prompt", "consent"),
-            ("include_granted_scopes", "true"),
-        ),
-        login_hint=True,
-    )
+    # Reading is enough to connect; writing is asked for once the user allows an agent to write.
+    auth = google_oauth(READ_SCOPE)
 
     _operations = (
         Operation(

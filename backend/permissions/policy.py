@@ -17,6 +17,15 @@ class Resource:
     connection_id: str
     kind: str
     id: str
+    # For kinds that nest (folders): the ids of the enclosing resources, nearest first. A grant on any of
+    # them applies to this resource too, and a deny on any of them wins.
+    within: tuple[str, ...] = ()
+    # Whether there may be ancestors beyond `within` that the connector could not see. They could carry a
+    # deny, so any exact deny for the action blocks, and they never help an allow.
+    partial: bool = False
+
+    def ids(self) -> tuple[str, ...]:
+        return (self.id, *self.within)
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,16 +46,20 @@ class Layer:
             target.update((connection_id, kind, resource_id, action) for action in actions)
         return cls(name, restricted, frozenset(allows), frozenset(denies))
 
-    def _matches(self, keys: frozenset[Key], connection_id: str, kind: str, resource_id, action: str) -> bool:
+    def _matches(self, keys: frozenset[Key], connection_id: str, kind: str, ids: tuple, action: str) -> bool:
         if (connection_id, kind, ANY, action) in keys:
             return True
-        return resource_id is not _UNMENTIONED and (connection_id, kind, resource_id, action) in keys
+        return any(item is not _UNMENTIONED and (connection_id, kind, item, action) in keys for item in ids)
 
-    def blocks(self, connection_id: str, kind: str, resource_id, action: str) -> bool:
-        return self._matches(self.denies, connection_id, kind, resource_id, action)
+    def blocks(self, connection_id: str, kind: str, ids: tuple, action: str, partial: bool = False) -> bool:
+        if partial and any(
+            key[0] == connection_id and key[1] == kind and key[3] == action for key in self.denies
+        ):
+            return True
+        return self._matches(self.denies, connection_id, kind, ids, action)
 
-    def passes(self, connection_id: str, kind: str, resource_id, action: str) -> bool:
-        return not self.restricted or self._matches(self.allows, connection_id, kind, resource_id, action)
+    def passes(self, connection_id: str, kind: str, ids: tuple, action: str) -> bool:
+        return not self.restricted or self._matches(self.allows, connection_id, kind, ids, action)
 
 
 def _chain(action: str, requires_of: RequiresOf) -> list[str]:
@@ -68,10 +81,10 @@ class Policy:
 
     layers: tuple[Layer, ...]
 
-    def _permits(self, connection_id: str, kind: str, resource_id, action: str) -> bool:
-        if any(layer.blocks(connection_id, kind, resource_id, action) for layer in self.layers):
+    def _permits(self, connection_id: str, kind: str, ids: tuple, action: str, partial: bool = False) -> bool:
+        if any(layer.blocks(connection_id, kind, ids, action, partial) for layer in self.layers):
             return False
-        return all(layer.passes(connection_id, kind, resource_id, action) for layer in self.layers)
+        return all(layer.passes(connection_id, kind, ids, action) for layer in self.layers)
 
     def permits(self, resource: Resource, action: str, requires_of: RequiresOf = _no_requirements) -> bool:
         """The action and every action it requires, on this one resource.
@@ -79,19 +92,28 @@ class Policy:
         Requirements are checked here rather than only when grants are saved, because layers can combine
         into a policy that allows an action without its requirement.
         """
-        if resource.id == ANY:
+        if ANY in resource.ids():
             raise ValueError("The wildcard selects grants; it is not a resource.")
         return all(
-            self._permits(resource.connection_id, resource.kind, resource.id, item)
+            self._permits(resource.connection_id, resource.kind, resource.ids(), item, resource.partial)
             for item in _chain(action, requires_of)
         )
 
     def permits_any(
-        self, connection_id: str, kind: str, action: str, requires_of: RequiresOf = _no_requirements
+        self,
+        connection_id: str,
+        kind: str,
+        action: str,
+        requires_of: RequiresOf = _no_requirements,
+        hierarchical: bool = False,
     ) -> bool:
-        """Whether some resource of this kind could pass `permits`. Exact for exact and wildcard grants.
+        """Whether some resource of this kind could pass `permits`. Exact for flat kinds.
 
-        Resources no layer mentions all behave alike, so one symbolic candidate stands for them.
+        Resources no layer mentions all behave alike, so one symbolic candidate stands for them. For kinds
+        that nest, one more candidate sits inside every mentioned resource that nothing denies. Any resource
+        that passes has only such ancestors, and more of them can only add allows, so this candidate passes
+        whenever some real one does. It may also pass when no real resource does (the ancestors need not
+        nest), so it may only open reads whose results are then checked one by one.
         """
         mentioned = {
             key[2]
@@ -100,10 +122,16 @@ class Policy:
             if key[0] == connection_id and key[1] == kind and key[2] != ANY
         }
         chain = _chain(action, requires_of)
-        return any(
-            all(self._permits(connection_id, kind, candidate, item) for item in chain)
-            for candidate in (*mentioned, _UNMENTIONED)
-        )
+        candidates: list[tuple] = [(candidate,) for candidate in (*mentioned, _UNMENTIONED)]
+        if hierarchical:
+            denied = {
+                key[2]
+                for layer in self.layers
+                for key in layer.denies
+                if key[0] == connection_id and key[1] == kind and key[3] in chain
+            }
+            candidates.append((_UNMENTIONED, *sorted(mentioned - denied)))
+        return any(all(self._permits(connection_id, kind, ids, item) for item in chain) for ids in candidates)
 
     def to_json(self) -> list[dict]:
         return [

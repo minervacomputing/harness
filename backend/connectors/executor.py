@@ -42,12 +42,13 @@ from connectors.base import (
     consent_given,
 )
 from connectors.http import Effect, write_attempt
-from permissions.policy import ANY, Policy
+from permissions.policy import ANY, Policy, Resource
 from runs.models import Run, RunPageToken, RunWrite
 from runs.services import ToolRef, is_token_valid
 
 log = logging.getLogger(__name__)
 MAX_PAGE_TOKENS = 200
+MAX_ANCESTORS = 64
 # How long one write may take. The run's own deadline shortens it.
 WRITE_WINDOW = timedelta(seconds=60)
 # The provider client enforces the write window; this only stops a connector that ignores it.
@@ -104,6 +105,18 @@ def validation_message(error: ValidationError) -> str:
 def _connector_bug(where: str, problem: str) -> OperationError:
     log.error("Connector contract violation in %s: %s", where, problem)
     return OperationError("CONNECTOR_ERROR", "This operation failed because of an internal error.")
+
+
+def _shape_problem(connector: Connector, resource: Resource) -> str | None:
+    """Why a resource from a connector is malformed, or None."""
+    if not connector.nests(resource.kind):
+        if resource.within or resource.partial:
+            return "ancestors on a kind that does not nest"
+        return None
+    ids = resource.ids()
+    if len(resource.within) > MAX_ANCESTORS or ANY in ids or len(set(ids)) != len(ids):
+        return "malformed ancestors"
+    return None
 
 
 def _known_write(write: RunWrite) -> dict:
@@ -175,6 +188,7 @@ class Executor:
                     resource.connection_id != ref.connection_id
                     or resource.id == ANY
                     or (resource.kind == ACCOUNT_KIND and resource.id != ref.connection_id)
+                    or _shape_problem(connector, resource)
                 ):
                     raise _connector_bug(where, f"invalid resource {resource!r}")
                 concrete = True
@@ -184,7 +198,11 @@ class Executor:
                 if op.mutates:
                     raise _connector_bug(where, "a write cannot enumerate")
                 allowed = policy.permits_any(
-                    ref.connection_id, requirement.kind, requirement.action, connector.requires_of
+                    ref.connection_id,
+                    requirement.kind,
+                    requirement.action,
+                    connector.requires_of,
+                    connector.nests(requirement.kind),
                 )
             else:
                 raise _connector_bug(where, f"unknown requirement {requirement!r}")
@@ -210,12 +228,16 @@ class Executor:
                 resource.connection_id != ref.connection_id
                 or resource.kind not in kinds
                 or resource.id == ANY
+                or _shape_problem(connector, resource)
             ):
                 log.error("Connector %s.%s returned a record with %r", ref.provider, op.name, resource)
                 continue
             if self.context.policy.permits(resource, op.output_action, connector.requires_of):
                 items.append(record.data)
-        return {"items": items, "count": len(items)}
+        result: dict[str, Any] = {"items": items, "count": len(items)}
+        if output.incomplete:
+            result["incomplete"] = True
+        return result
 
     async def _perform(
         self, ref: ToolRef, op: Operation, data: Any, tool: str, query_hash: str, write_key: str | None

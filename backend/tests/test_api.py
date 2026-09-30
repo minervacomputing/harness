@@ -127,7 +127,13 @@ def test_access_settings_are_validated(api, workspace, connection, todoist):
     access = api.get(url).json()
     assert access["grants"] == []
     assert access["kinds"] == [
-        {"id": "project", "label": "Project", "actions": ["read", "create"], "wildcard": True}
+        {
+            "id": "project",
+            "label": "Project",
+            "actions": ["read", "create"],
+            "wildcard": True,
+            "hierarchical": False,
+        }
     ]
     assert todoist.calls == []
     resources = api.get(f"{url}/resources?kind=project").json()

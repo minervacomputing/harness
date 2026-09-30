@@ -22,6 +22,8 @@ MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 REFUSED_STATUSES = frozenset({400, 401, 403, 404, 409, 412, 422, 429})
 # Never start a write that could not finish before its deadline.
 MIN_WRITE_SECONDS = 2.0
+# Enough of an error response to read the provider's reason.
+MAX_ERROR_BODY = 64 * 1024
 
 
 class Effect(StrEnum):
@@ -140,6 +142,30 @@ class ProviderHTTP:
             return response.json()
         except ValueError as error:
             raise self.unexpected() from error
+
+    async def download(self, path: str, *, limit: int, **kwargs: Any) -> bytes:
+        """A read whose body is streamed and refused once it exceeds `limit` bytes."""
+        try:
+            async with self._http.stream("GET", path, **kwargs) as response:
+                body = bytearray()
+                cap = limit if response.is_success else MAX_ERROR_BODY
+                async for chunk in response.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > cap:
+                        if response.is_success:
+                            raise OperationError(
+                                "FILE_TOO_LARGE", f"This file is larger than Minerva reads ({limit} bytes)."
+                            )
+                        break
+        except httpx.HTTPError as error:
+            raise OperationError("PROVIDER_UNAVAILABLE", f"{self.provider} could not be reached.") from error
+        if not response.is_success:
+            # The body is already decoded, so only its type carries over.
+            headers = {"content-type": response.headers.get("content-type", "")}
+            raise self._error(
+                httpx.Response(response.status_code, headers=headers, content=bytes(body[:cap]))
+            )
+        return bytes(body)
 
     def unexpected(self) -> OperationError:
         return OperationError("PROVIDER_FAILED", f"{self.provider} returned an unexpected response.")

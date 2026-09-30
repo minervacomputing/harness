@@ -1,3 +1,5 @@
+import random
+
 import pytest
 
 from permissions.policy import ANY, DENY_ALL, Layer, Policy, Resource
@@ -141,3 +143,93 @@ def test_permits_any_matches_some_concrete_resource(layers, action, expected):
     # permits_any must agree with checking every resource that could matter.
     candidates = [WORK, PRIVATE, NEW]
     assert any(policy.permits(r, action, REQUIRES) for r in candidates) is expected
+
+
+# Folders: "docs" holds "drafts", which holds the file "essay".
+ESSAY = Resource("c1", "project", "essay", within=("drafts", "docs"))
+
+
+def test_a_grant_on_a_folder_covers_what_is_inside_it():
+    policy = Policy((layer("user", True, allows=[("docs", ["read"])]),))
+    assert policy.permits(ESSAY, "read")
+    assert policy.permits(Resource("c1", "project", "drafts", within=("docs",)), "read")
+    assert not policy.permits(Resource("c1", "project", "docs"), "create")
+    assert not policy.permits(Resource("c1", "project", "notes", within=("home",)), "read")
+
+
+def test_a_deny_on_any_enclosing_folder_wins():
+    policy = Policy(
+        (
+            layer("ceiling", False, denies=[("drafts", ["read"])]),
+            layer("user", True, allows=[(ANY, ["read"]), ("essay", ["read"])]),
+        )
+    )
+    assert not policy.permits(ESSAY, "read")
+    assert policy.permits(Resource("c1", "project", "essay", within=("docs",)), "read")
+
+
+def test_partial_ancestry_never_helps_and_fears_every_exact_deny():
+    # The unknown ancestors could be "docs", so an allow on it does not count.
+    unknown = Resource("c1", "project", "essay", within=("drafts",), partial=True)
+    assert not Policy((layer("user", True, allows=[("docs", ["read"])]),)).permits(unknown, "read")
+    # Under a wildcard it is readable, until any exact deny exists: that deny could be on an unknown ancestor.
+    assert Policy((layer("user", True, allows=[(ANY, ["read"])]),)).permits(unknown, "read")
+    guarded = Policy((layer("user", True, allows=[(ANY, ["read"])], denies=[("elsewhere", ["read"])]),))
+    assert not guarded.permits(unknown, "read")
+    assert guarded.permits(ESSAY, "read"), "complete ancestry is judged by its own ids"
+    # Denies for other actions are irrelevant, but a deny on a required action counts.
+    create_denied = Policy(
+        (layer("user", True, allows=[(ANY, ["read", "create"])], denies=[("elsewhere", ["create"])]),)
+    )
+    assert create_denied.permits(unknown, "read")
+    read_denied = Policy(
+        (layer("user", True, allows=[(ANY, ["read", "create"])], denies=[("elsewhere", ["read"])]),)
+    )
+    assert not read_denied.permits(unknown, "create", REQUIRES)
+
+
+def test_the_wildcard_is_never_an_ancestor():
+    with pytest.raises(ValueError):
+        Policy((layer("user", False),)).permits(Resource("c1", "project", "essay", within=(ANY,)), "read")
+
+
+def test_permits_any_sees_allows_on_nested_folders_across_layers():
+    policy = Policy(
+        (
+            layer("ceiling", True, allows=[("docs", ["read"])]),
+            layer("user", True, allows=[("drafts", ["read"])]),
+        )
+    )
+    assert not policy.permits_any("c1", "project", "read"), "flat resources cannot pass both layers"
+    assert policy.permits_any("c1", "project", "read", hierarchical=True)
+    assert policy.permits(ESSAY, "read")
+    denied = Policy((*policy.layers, layer("agent", False, denies=[("docs", ["read"])])))
+    assert not denied.permits_any("c1", "project", "read", hierarchical=True)
+
+
+def test_hierarchical_permits_any_is_exact_over_every_placement():
+    """For any layers, permits_any says yes exactly when some resource, inside any set of mentioned
+    folders, passes. Real trees allow fewer placements, so it may say yes where none does."""
+    rng = random.Random(7)  # noqa: S311
+    ids = ["a", "b", "c"]
+    choices = [*ids, ANY]
+    for _ in range(400):
+        layers = []
+        for name in ("ceiling", "user", "agent"):
+            allows = [
+                (rng.choice(choices), rng.sample(["read", "create"], rng.randint(1, 2)))
+                for _ in range(rng.randint(0, 2))
+            ]
+            denies = [
+                (rng.choice(choices), rng.sample(["read", "create"], 1)) for _ in range(rng.randint(0, 1))
+            ]
+            layers.append(layer(name, rng.random() < 0.7, allows, denies))
+        policy = Policy(tuple(layers))
+        for action in ("read", "create"):
+            placements = [
+                Resource("c1", "project", rid, tuple(w for w in ids if w != rid and mask >> ids.index(w) & 1))
+                for rid in [*ids, "new"]
+                for mask in range(8)
+            ]
+            some = any(policy.permits(r, action, REQUIRES) for r in placements)
+            assert policy.permits_any("c1", "project", action, REQUIRES, hierarchical=True) is some

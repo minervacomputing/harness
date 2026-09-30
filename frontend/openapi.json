@@ -490,6 +490,10 @@
             "title": "Actions",
             "type": "array"
           },
+          "hierarchical": {
+            "title": "Hierarchical",
+            "type": "boolean"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -507,7 +511,8 @@
           "id",
           "label",
           "actions",
-          "wildcard"
+          "wildcard",
+          "hierarchical"
         ],
         "title": "KindOut",
         "type": "object"
