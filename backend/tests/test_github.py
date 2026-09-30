@@ -534,3 +534,13 @@ def test_a_misconfigured_client_keeps_the_connection(github_connection, token_en
     assert connection_services.access_token(github_connection.id) == "new"
     github_connection.refresh_from_db()
     assert github_connection.credentials()["refresh_token"] == "r2"
+
+
+def test_apps_without_an_oauth_client_are_not_offered(api, workspace, monkeypatch):
+    monkeypatch.setattr(config(), "github_client_id", None)
+    listed = api.get(f"/api/workspaces/{workspace.id}/connectors").json()
+    assert "github" not in {c["slug"] for c in listed}
+    monkeypatch.setattr(config(), "github_client_id", "Iv1.x")
+    monkeypatch.setattr(config(), "github_client_secret", config().secret_key)
+    listed = api.get(f"/api/workspaces/{workspace.id}/connectors").json()
+    assert "github" in {c["slug"] for c in listed}

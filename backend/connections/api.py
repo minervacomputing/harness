@@ -191,6 +191,8 @@ def list_connectors(request, workspace_id: UUID):
             "actions": _actions(c),
         }
         for c in registry.all_connectors()
+        # Apps this instance has no OAuth client for cannot be connected.
+        if services.available(c)
     ]
 
 
