@@ -4,7 +4,7 @@ Operational notes for coding agents working in this repository. For background, 
 
 ## Environment
 
-Configuration is read from the process environment and `.env` at the repository root (see `backend/minerva/config.py`). Process environment variables override `.env`, so you can change a value for one run without editing the file.
+Configuration is read from the process environment and `.env` at the repository root (see `backend/minerva/config.py`). Process environment variables override `.env`, except under `make dev`: honcho loads `.env` into every process and its values replace the shell's. To override a value for one run, start honcho without `.env` (see [Starting the app](#starting-the-app)).
 
 `.env` holds secrets. Never print, commit, or copy its values. To check a value, report only whether it is set.
 
@@ -45,11 +45,17 @@ make dev     # web :8000, gateway :8001, supervisor, frontend :5173
 
 Open <http://localhost:5173>. The processes are defined in `Procfile`. `make dev` needs the Compose services (Postgres and the gateway relay); start them with `make services` if they are not running.
 
+**Overriding a value for one run:** `VAR=x make dev` has no effect on a variable that `.env` sets. Run honcho with an empty env file instead. The backend still reads `.env` itself, so only the variables you pass change. `.env` no longer feeds the Procfile, so pass `MINERVA_GATEWAY_BIND` too if you rely on it (Linux).
+
+```sh
+MINERVA_MODEL_NAME=gpt-5-mini uv run --project backend honcho -e /dev/null -f Procfile start
+```
+
 **Without a model key**, run the fake model and point the app at it for this run only:
 
 ```sh
 make fake-model   # separate process, serves 127.0.0.1:9900
-MINERVA_MODEL_BASE_URL=http://127.0.0.1:9900/v1 MINERVA_MODEL_API_KEY=fake make dev
+MINERVA_MODEL_BASE_URL=http://127.0.0.1:9900/v1 MINERVA_MODEL_API_KEY=fake uv run --project backend honcho -e /dev/null -f Procfile start
 ```
 
 **Sign in** with a seed account: `ada@example.com` or `grace@example.com`, password `password`. Run `make seed` to create them or reset them (password, verified email, two-factor removed). Resetting signs out existing sessions. Seeding refuses to run unless `MINERVA_DEBUG=true`.
