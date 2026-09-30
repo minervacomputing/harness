@@ -10,7 +10,7 @@ in connectors; the generic rules live in the executor, which checks every declar
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -177,6 +177,12 @@ class OAuth2:
     authorize_params: tuple[tuple[str, str], ...] = ()
     # Whether the provider accepts `login_hint` with the account id, to preselect the account on reconnect.
     login_hint: bool = False
+    # How the token endpoint authenticates the client: in the form ("post") or with HTTP Basic ("basic").
+    client_auth: Literal["post", "basic"] = "post"
+    # Whether token requests send JSON instead of the form encoding RFC 6749 specifies.
+    json_body: bool = False
+    # Whether the provider takes a PKCE challenge. Without one, the state still binds the flow to the browser.
+    pkce: bool = True
 
 
 @dataclass(frozen=True, slots=True)

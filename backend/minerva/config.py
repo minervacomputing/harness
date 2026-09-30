@@ -64,6 +64,9 @@ class Config(BaseSettings):
     github_client_secret: SecretStr | None = None
     # The GitHub App's URL name (github.com/apps/<slug>), for the link that installs it on repositories.
     github_app_slug: str | None = None
+    # A Notion public integration. Its capabilities, set in Notion, cap what any agent can do there.
+    notion_client_id: str | None = None
+    notion_client_secret: SecretStr | None = None
     # Brave Search API key for the Web connector's search; without it, agents can only open pages.
     brave_search_api_key: SecretStr | None = None
 

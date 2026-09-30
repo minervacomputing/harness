@@ -148,13 +148,16 @@ def authorization_url(
     params = {
         **dict(oauth.authorize_params),
         "client_id": creds.client_id,
-        "scope": " ".join(scopes or oauth.scopes),
         "state": state,
         "response_type": "code",
         "redirect_uri": creds.redirect_uri,
-        "code_challenge": challenge,
-        "code_challenge_method": "S256",
     }
+    # Providers without scopes (Notion) let the user choose what to share on their own consent screen.
+    if scope := " ".join(scopes or oauth.scopes):
+        params["scope"] = scope
+    if oauth.pkce:
+        params["code_challenge"] = challenge
+        params["code_challenge_method"] = "S256"
     if connection is not None and oauth.login_hint:
         params["login_hint"] = connection.external_account_id
     return f"{oauth.authorize_url}?{urlencode(params)}"
@@ -253,6 +256,19 @@ def _token_payload(body: dict) -> dict:
     return payload
 
 
+def _token_request(
+    oauth: OAuth2, token_url: str, creds: ClientCredentials, fields: dict[str, str]
+) -> httpx.Response:
+    """A request to the token endpoint, with the client authenticated the way the provider expects."""
+    auth = None
+    if oauth.client_auth == "basic":
+        auth = httpx.BasicAuth(creds.client_id, creds.client_secret)
+    else:
+        fields = {"client_id": creds.client_id, "client_secret": creds.client_secret, **fields}
+    body: dict[str, Any] = {"json": fields} if oauth.json_body else {"data": fields}
+    return httpx.post(token_url, **body, auth=auth, headers=TOKEN_HEADERS, timeout=20)
+
+
 def exchange_code(connector: Connector, *, code: str, flow: dict) -> dict:
     """Tokens for an authorization code, redeemed by the client that `flow` sent the user to."""
     creds = issuing_client(connector, flow.get("client_id"))
@@ -260,20 +276,12 @@ def exchange_code(connector: Connector, *, code: str, flow: dict) -> dict:
         raise ConnectionFlowError(
             f"{connector.name} was reconfigured during the authorization. Please try again."
         )
-    token_url = _oauth(connector).token_url
-    response = httpx.post(
-        token_url,
-        data={
-            "client_id": creds.client_id,
-            "client_secret": creds.client_secret,
-            "code": code,
-            "redirect_uri": creds.redirect_uri,
-            "code_verifier": flow["verifier"],
-            "grant_type": "authorization_code",
-        },
-        headers=TOKEN_HEADERS,
-        timeout=20,
-    )
+    oauth = _oauth(connector)
+    token_url = oauth.token_url
+    fields = {"code": code, "redirect_uri": creds.redirect_uri, "grant_type": "authorization_code"}
+    if oauth.pkce:
+        fields["code_verifier"] = flow["verifier"]
+    response = _token_request(oauth, token_url, creds, fields)
     body = None if response.is_error else _token_body(response)
     if body is None:
         log.warning("OAuth code exchange for %s failed: HTTP %s", connector.slug, response.status_code)
@@ -519,16 +527,11 @@ def _refresh(connection: Connection, tokens: dict) -> dict | None:
     # for connections made before, and a changed declaration cannot redirect their refresh tokens.
     token_url = tokens.get("token_url") or _oauth(connector).token_url
     try:
-        response = httpx.post(
+        response = _token_request(
+            _oauth(connector),
             token_url,
-            data={
-                "client_id": creds.client_id,
-                "client_secret": creds.client_secret,
-                "grant_type": "refresh_token",
-                "refresh_token": tokens["refresh_token"],
-            },
-            headers=TOKEN_HEADERS,
-            timeout=20,
+            creds,
+            {"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"]},
         )
     except httpx.HTTPError as error:
         raise OperationError("PROVIDER_UNAVAILABLE", f"{connector.name} could not be reached.") from error

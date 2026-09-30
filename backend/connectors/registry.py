@@ -149,6 +149,7 @@ def _declared() -> list[Connector]:
     from connectors.github.connector import GitHubConnector
     from connectors.google_calendar.connector import GoogleCalendarConnector
     from connectors.google_drive.connector import GoogleDriveConnector
+    from connectors.notion.connector import NotionConnector
     from connectors.todoist.connector import TodoistConnector
     from connectors.web.connector import WebConnector
 
@@ -157,6 +158,7 @@ def _declared() -> list[Connector]:
         GoogleCalendarConnector(),
         GoogleDriveConnector(),
         GitHubConnector(),
+        NotionConnector(),
         WebConnector(),
     ]
 
