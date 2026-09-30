@@ -1,4 +1,5 @@
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -10,20 +11,43 @@ from connectors.http import ProviderHTTP, default_forbidden
 API_URL = "https://www.googleapis.com/calendar/v3"
 USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 RATE_LIMITED = frozenset({"rateLimitExceeded", "userRateLimitExceeded"})
+# The Calendar API is not enabled in the operator's Google Cloud project.
+NOT_CONFIGURED = frozenset({"accessNotConfigured", "SERVICE_DISABLED"})
 
 
-def _forbidden(provider: str, response: httpx.Response) -> OperationError:
-    """Google reports rate limits as 403 as well as 429."""
+def _reasons(response: httpx.Response) -> set[str]:
     try:
         error = response.json().get("error", {})
         reasons = {item.get("reason") for item in error.get("errors", [])}
+        reasons |= {item.get("reason") for item in error.get("details", [])}
     except ValueError, AttributeError, TypeError:
-        reasons = set()
+        return set()
+    return {reason for reason in reasons if isinstance(reason, str)}
+
+
+def _forbidden(provider: str, response: httpx.Response) -> OperationError:
+    """Google reports rate limits, and an API that is not enabled, as 403."""
+    reasons = _reasons(response)
     if reasons & RATE_LIMITED:
         return OperationError(
             "PROVIDER_RATE_LIMITED", f"{provider} is rate limiting requests. Try again later."
         )
+    if reasons & NOT_CONFIGURED:
+        return OperationError(
+            "PROVIDER_NOT_CONFIGURED",
+            f"The {provider} API is not enabled for this Minerva instance's Google Cloud project. "
+            "Ask the operator to enable it.",
+        )
     return default_forbidden(provider, response)
+
+
+def segment(value: str) -> str:
+    """One URL path segment. Calendar ids contain `@` and `#`; `/` never passes input validation."""
+    return quote(value, safe="")
+
+
+class Model(BaseModel):
+    model_config = ConfigDict(extra="ignore", alias_generator=to_camel, populate_by_name=True)
 
 
 class GoogleUser(BaseModel):
@@ -33,8 +57,7 @@ class GoogleUser(BaseModel):
     name: str | None = None
 
 
-class GoogleCalendar(BaseModel):
-    model_config = ConfigDict(extra="ignore", alias_generator=to_camel)
+class GoogleCalendar(Model):
     id: str
     summary: str = ""
     summary_override: str | None = None
@@ -47,9 +70,41 @@ class GoogleCalendar(BaseModel):
         return self.summary_override or self.summary or self.id
 
 
-class CalendarPage(BaseModel):
-    model_config = ConfigDict(extra="ignore", alias_generator=to_camel)
+class CalendarPage(Model):
     items: list[GoogleCalendar] = []
+    next_page_token: str | None = None
+
+
+class EventTime(Model):
+    date: str | None = None
+    date_time: str | None = None
+    time_zone: str | None = None
+
+
+class Person(Model):
+    email: str | None = None
+    display_name: str | None = None
+    response_status: str | None = None
+
+
+class GoogleEvent(Model):
+    # Cancelled and private events can carry little more than an id.
+    id: str
+    status: str | None = None
+    summary: str | None = None
+    description: str | None = None
+    location: str | None = None
+    start: EventTime | None = None
+    end: EventTime | None = None
+    organizer: Person | None = None
+    attendees: list[Person] = []
+    attendees_omitted: bool = False
+    html_link: str | None = None
+    recurring_event_id: str | None = None
+
+
+class EventPage(Model):
+    items: list[GoogleEvent] = []
     next_page_token: str | None = None
 
 
@@ -86,3 +141,44 @@ class GoogleCalendarClient:
         if page_token:
             params["pageToken"] = page_token
         return await self._request(CalendarPage, "GET", "/users/me/calendarList", params=params)
+
+    async def calendar(self, calendar_id: str) -> GoogleCalendar:
+        return await self._request(GoogleCalendar, "GET", f"/users/me/calendarList/{segment(calendar_id)}")
+
+    async def events(
+        self,
+        calendar_id: str,
+        *,
+        time_min: str | None,
+        time_max: str | None,
+        query: str | None,
+        limit: int,
+        page_token: str | None,
+    ) -> EventPage:
+        # Recurring events are expanded into instances, so they can be ordered by start time.
+        params: dict[str, Any] = {"singleEvents": "true", "orderBy": "startTime", "maxResults": limit}
+        if time_min:
+            params["timeMin"] = time_min
+        if time_max:
+            params["timeMax"] = time_max
+        if query:
+            params["q"] = query
+        if page_token:
+            params["pageToken"] = page_token
+        return await self._request(
+            EventPage, "GET", f"/calendars/{segment(calendar_id)}/events", params=params
+        )
+
+    async def event(self, calendar_id: str, event_id: str) -> GoogleEvent:
+        path = f"/calendars/{segment(calendar_id)}/events/{segment(event_id)}"
+        return await self._request(GoogleEvent, "GET", path)
+
+    async def create_event(self, calendar_id: str, body: dict[str, Any]) -> GoogleEvent:
+        # Never notify anyone: the event has no attendees, and sendUpdates=none keeps it that way.
+        return await self._request(
+            GoogleEvent,
+            "POST",
+            f"/calendars/{segment(calendar_id)}/events",
+            params={"sendUpdates": "none"},
+            json=body,
+        )

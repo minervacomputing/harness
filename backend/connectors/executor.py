@@ -225,7 +225,8 @@ class Executor:
             if not consent_given(op.consent, opened.scopes):
                 raise OperationError(
                     "CONSENT_REQUIRED",
-                    f"The {connector.name} connection does not allow this yet. Reconnect it in Minerva to grant access.",
+                    f"{connector.name} has not given Minerva access for this yet. "
+                    "The user can allow it on Minerva's connections page.",
                 )
             prepared = await op.prepare(Binding(ref.connection_id, opened.client), data)
             if not prepared.requirements:

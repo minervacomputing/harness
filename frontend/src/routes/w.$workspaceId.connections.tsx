@@ -11,6 +11,7 @@ import {
   listConnectionsOptions,
   listConnectionsQueryKey,
   listConnectorsOptions,
+  reconnectMutation,
 } from '@/api/@tanstack/react-query.gen'
 import type { ActionOut, ChangeIn, ConnectionOut, GrantOut, KindOut } from '@/api/types.gen'
 import { Button } from '@/components/ui/button'
@@ -108,7 +109,14 @@ function ConnectionCard({ workspaceId, connection, initiallyOpen }: { workspaceI
     ...deleteConnectionMutation(),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: listConnectionsQueryKey({ path: { workspace_id: workspaceId } }) }),
   })
-  const reconnect = useAuthorize()
+  const reconnect = useMutation({
+    ...reconnectMutation(),
+    onSuccess: ({ url }) => window.location.assign(url),
+  })
+  const reconnectPath = { workspace_id: workspaceId, connection_id: connection.id }
+  const actionLabels = useQuery({ ...listConnectorsOptions({ path: { workspace_id: workspaceId } }), enabled: connection.consent_needed.length > 0 })
+  const neededLabels = connection.consent_needed.map(id =>
+    actionLabels.data?.find(c => c.slug === connection.provider)?.actions.find(a => a.id === id)?.label.toLowerCase() ?? id)
 
   return (
     <Card>
@@ -119,7 +127,17 @@ function ConnectionCard({ workspaceId, connection, initiallyOpen }: { workspaceI
         </div>
         <Badge variant={connection.status === 'active' ? 'secondary' : 'destructive'}>{STATUS_LABEL[connection.status]}</Badge>
       </CardHeader>
-      <CardContent className="pt-4">
+      <CardContent className="space-y-4 pt-4">
+        {connection.status === 'active' && connection.consent_needed.length > 0 && (
+          <div className="flex flex-wrap items-center gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
+            <span className="text-sm">
+              {connection.provider_name} has not allowed Minerva to {neededLabels.join(', ')} yet, so agents cannot do it.
+            </span>
+            <Button size="sm" disabled={reconnect.isPending} onClick={() => reconnect.mutate({ path: reconnectPath, body: {} })}>
+              Allow in {connection.provider_name}
+            </Button>
+          </div>
+        )}
         {open && connection.status === 'active'
           ? <AccessEditor workspaceId={workspaceId} connectionId={connection.id} />
           : connection.status === 'active' && <Button variant="outline" size="sm" onClick={() => setOpen(true)}>Choose access</Button>}
@@ -129,15 +147,15 @@ function ConnectionCard({ workspaceId, connection, initiallyOpen }: { workspaceI
               variant="outline"
               size="sm"
               disabled={reconnect.isPending}
-              onClick={() => reconnect.mutate({ path: { workspace_id: workspaceId, provider: connection.provider } })}
+              onClick={() => reconnect.mutate({ path: reconnectPath, body: {} })}
             >
               Reconnect
             </Button>
             <span className="text-xs text-muted-foreground">{connection.provider_name} stopped accepting this connection. Your access choices are kept.</span>
           </div>
         )}
-        {reconnect.error && <ErrorNote className="mt-3">{errorMessage(reconnect.error)}</ErrorNote>}
-        {remove.error && <ErrorNote className="mt-3">{errorMessage(remove.error)}</ErrorNote>}
+        {reconnect.error && <ErrorNote>{errorMessage(reconnect.error)}</ErrorNote>}
+        {remove.error && <ErrorNote>{errorMessage(remove.error)}</ErrorNote>}
       </CardContent>
       <CardFooter className="justify-end">
         <Button
@@ -200,6 +218,8 @@ function AccessEditor({ workspaceId, connectionId }: { workspaceId: string; conn
     ...changeAccessMutation(),
     onSuccess: (data, { body }) => {
       queryClient.setQueryData(getAccessQueryKey({ path }), data)
+      // Newly allowed actions can need access the provider has not given yet.
+      queryClient.invalidateQueries({ queryKey: listConnectionsQueryKey({ path: { workspace_id: workspaceId } }) })
       // Keep what the user changed while the save was in flight.
       setEdits(previous => {
         const next = new Map(previous)

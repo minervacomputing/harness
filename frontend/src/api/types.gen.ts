@@ -132,6 +132,10 @@ export type ChangeIn = {
  */
 export type ConnectionOut = {
     /**
+     * Consent Needed
+     */
+    consent_needed: Array<string>;
+    /**
      * Created At
      */
     created_at: string;
@@ -185,6 +189,16 @@ export type ConnectorOut = {
      * Slug
      */
     slug: string;
+};
+
+/**
+ * ConsentIn
+ */
+export type ConsentIn = {
+    /**
+     * Actions
+     */
+    actions?: Array<string>;
 };
 
 /**
@@ -766,6 +780,31 @@ export type ListAccessResourcesResponses = {
 };
 
 export type ListAccessResourcesResponse = ListAccessResourcesResponses[keyof ListAccessResourcesResponses];
+
+export type ReconnectData = {
+    body: ConsentIn;
+    path: {
+        /**
+         * Workspace Id
+         */
+        workspace_id: string;
+        /**
+         * Connection Id
+         */
+        connection_id: string;
+    };
+    query?: never;
+    url: '/api/workspaces/{workspace_id}/connections/{connection_id}/reconnect';
+};
+
+export type ReconnectResponses = {
+    /**
+     * OK
+     */
+    200: AuthorizeOut;
+};
+
+export type ReconnectResponse = ReconnectResponses[keyof ReconnectResponses];
 
 export type AuthorizeData = {
     body?: never;

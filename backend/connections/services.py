@@ -17,8 +17,9 @@ from django.utils import timezone
 
 from connections.models import Connection, OAuthClient
 from connectors import registry
-from connectors.base import ApiKey, Connector, OAuth2, OperationError
+from connectors.base import ApiKey, Connector, OAuth2, OperationError, consent_given
 from minerva.config import config
+from permissions.models import Grant, PermissionLayer
 
 log = logging.getLogger(__name__)
 REFRESH_MARGIN_SECONDS = 120
@@ -119,7 +120,16 @@ def available(connector: Connector) -> bool:
     return connector.auth.registration_url is not None or _configured(connector) is not None
 
 
-def authorization_url(session, *, workspace_id: UUID, provider: str) -> str:
+def authorization_url(
+    session,
+    *,
+    workspace_id: UUID,
+    provider: str,
+    connection: Connection | None = None,
+    scopes: list[str] | None = None,
+) -> str:
+    """Where the user grants access. With `connection`, the flow renews or extends that connection's
+    grant and must end with the same provider account."""
     connector = registry.get(provider)
     oauth = _oauth(connector)
     creds = client_credentials(connector)
@@ -131,21 +141,66 @@ def authorization_url(session, *, workspace_id: UUID, provider: str) -> str:
         "verifier": verifier,
         "provider": provider,
         "workspace_id": str(workspace_id),
+        "connection_id": str(connection.pk) if connection is not None else None,
         "issued_at": time.time(),
     }
-    query = urlencode(
-        {
-            "client_id": creds.client_id,
-            "scope": " ".join(oauth.scopes),
-            "state": state,
-            "response_type": "code",
-            "redirect_uri": creds.redirect_uri,
-            "code_challenge": challenge,
-            "code_challenge_method": "S256",
-            **dict(oauth.authorize_params),
-        }
+    params = {
+        "client_id": creds.client_id,
+        "scope": " ".join(scopes or oauth.scopes),
+        "state": state,
+        "response_type": "code",
+        "redirect_uri": creds.redirect_uri,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        **dict(oauth.authorize_params),
+    }
+    if connection is not None and oauth.login_hint:
+        params["login_hint"] = connection.external_account_id
+    return f"{oauth.authorize_url}?{urlencode(params)}"
+
+
+def granted_scopes(connection: Connection) -> frozenset[str] | None:
+    """The provider scopes the connection's credentials carry; None when unknown."""
+    scopes = connection.credentials().get("scopes")
+    return frozenset(scopes) if scopes is not None else None
+
+
+def allowed_actions(connection: Connection, user_id: UUID | None) -> set[str]:
+    """Every action the user (or, with None, any user) allows on some resource of the connection."""
+    grants = Grant.objects.filter(
+        layer__level=PermissionLayer.Level.USER, connection=connection, effect=Grant.Effect.ALLOW
     )
-    return f"{oauth.authorize_url}?{query}"
+    if user_id is not None:
+        grants = grants.filter(layer__user_id=user_id)
+    grants = grants.values_list("actions", flat=True)
+    return {action for actions in grants for action in actions}
+
+
+def _lacking(connector: Connector, scopes: frozenset[str], actions: set[str]):
+    for op in connector.operations:
+        if op.consent and not consent_given(op.consent, scopes):
+            used = {action for _, action in op.needs} & actions
+            if used:
+                yield op, used
+
+
+def consent_needed(connector: Connector, scopes: frozenset[str] | None, actions: set[str]) -> list[str]:
+    """Allowed actions some operation cannot perform yet because the provider did not grant its scopes.
+    Unknown scopes need nothing: the provider is then the one to refuse."""
+    if scopes is None or not isinstance(connector.auth, OAuth2):
+        return []
+    missing = {action for _, used in _lacking(connector, scopes, actions) for action in used}
+    return [a.id for a in connector.actions if a.id in missing]
+
+
+def requested_scopes(connector: Connector, actions: set[str]) -> list[str]:
+    """The connector's base scopes, plus what the operations behind `actions` need. Stored scopes are not
+    trusted to be current: the user may have revoked access at the provider since."""
+    requested = list(_oauth(connector).scopes)
+    extra: set[str] = set()
+    for op, _ in _lacking(connector, frozenset(), actions):
+        extra |= op.consent[0]
+    return requested + sorted(extra - set(requested))
 
 
 def pop_flow(session, *, provider: str, state: str | None) -> dict:
@@ -201,7 +256,16 @@ def exchange_code(connector: Connector, *, code: str, verifier: str) -> dict:
     return {**_token_payload(response.json()), "client_id": creds.client_id}
 
 
-def save_connection(*, workspace_id: UUID, owner_id: UUID, provider: str, tokens: dict) -> Connection:
+def save_connection(
+    *,
+    workspace_id: UUID,
+    owner_id: UUID,
+    provider: str,
+    tokens: dict,
+    connection_id: UUID | None = None,
+) -> Connection:
+    """Stores the credentials. With `connection_id`, only that connection is updated, and only with
+    credentials for the same provider account."""
     connector = registry.get(provider)
     secret = tokens["key"] if tokens.get("kind") == "api_key" else tokens["access_token"]
 
@@ -217,12 +281,17 @@ def save_connection(*, workspace_id: UUID, owner_id: UUID, provider: str, tokens
     except OperationError as error:
         raise ConnectionFlowError(error.message) from error
     with transaction.atomic():
-        connection = (
-            Connection.objects.select_for_update()
-            .filter(provider=provider, external_account_id=account.id)
-            .first()
-        )
-        if connection is not None and connection.owner_id != owner_id:
+        if connection_id is not None:
+            connection = _target(connector, connection_id, account.id)
+        else:
+            connection = (
+                Connection.objects.select_for_update()
+                .filter(provider=provider, external_account_id=account.id)
+                .first()
+            )
+        # A shared connection (no owner) is only renewed through its own flow, which admins start.
+        shared = connection is not None and connection.owner_id is None and connection_id is not None
+        if connection is not None and connection.owner_id != owner_id and not shared:
             raise ConnectionFlowError("This account is already connected by someone else in this workspace.")
         if connection is None:
             connection = Connection(
@@ -237,6 +306,17 @@ def save_connection(*, workspace_id: UUID, owner_id: UUID, provider: str, tokens
         connection.status = Connection.Status.ACTIVE
         connection.set_credentials(tokens)
         connection.save()
+    return connection
+
+
+def _target(connector: Connector, connection_id: UUID, account_id: str) -> Connection:
+    connection = Connection.objects.select_for_update().filter(pk=connection_id).first()
+    if connection is None or connection.provider != connector.slug:
+        raise ConnectionFlowError(f"This {connector.name} connection was removed. Connect it again.")
+    if connection.external_account_id != account_id:
+        raise ConnectionFlowError(
+            f"You signed in to a different {connector.name} account. Sign in as {connection.label}."
+        )
     return connection
 
 

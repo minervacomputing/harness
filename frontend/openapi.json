@@ -206,6 +206,13 @@
       },
       "ConnectionOut": {
         "properties": {
+          "consent_needed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Consent Needed",
+            "type": "array"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -249,7 +256,8 @@
           "label",
           "status",
           "personal",
-          "created_at"
+          "created_at",
+          "consent_needed"
         ],
         "title": "ConnectionOut",
         "type": "object"
@@ -295,6 +303,21 @@
           "actions"
         ],
         "title": "ConnectorOut",
+        "type": "object"
+      },
+      "ConsentIn": {
+        "properties": {
+          "actions": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Actions",
+            "type": "array"
+          }
+        },
+        "title": "ConsentIn",
         "type": "object"
       },
       "ConversationDetail": {
@@ -1372,6 +1395,65 @@
           }
         ],
         "summary": "List Access Resources",
+        "tags": [
+          "connections"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/connections/{connection_id}/reconnect": {
+      "post": {
+        "description": "Reconnects the account, or grants the provider access that allowed actions still need.",
+        "operationId": "reconnect",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsentIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizeOut"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "security": [
+          {
+            "WorkspaceMember": []
+          }
+        ],
+        "summary": "Reconnect",
         "tags": [
           "connections"
         ]

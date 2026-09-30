@@ -51,10 +51,17 @@ class ConnectionOut(Schema):
     status: Literal[*Connection.Status.values]
     personal: bool
     created_at: datetime
+    # Actions the user allows that the provider has not given Minerva access for yet.
+    consent_needed: list[str]
 
 
 class AuthorizeOut(Schema):
     url: str
+
+
+class ConsentIn(Schema):
+    # Actions to ask the provider for now, in addition to those the user already allows.
+    actions: Annotated[list[str], Field(max_length=10)] = []
 
 
 class GrantOut(Schema):
@@ -102,7 +109,11 @@ class AccessChangesIn(Schema):
     changes: Annotated[list[ChangeIn], Field(min_length=1, max_length=MAX_CHANGES)]
 
 
-def _connection_out(connection: Connection) -> dict:
+def _connection_out(connection: Connection, user_id: UUID) -> dict:
+    connector = registry.get(connection.provider)
+    needed = services.consent_needed(
+        connector, services.granted_scopes(connection), services.allowed_actions(connection, user_id)
+    )
     return {
         "id": connection.id,
         "provider": connection.provider,
@@ -111,6 +122,7 @@ def _connection_out(connection: Connection) -> dict:
         "status": connection.status,
         "personal": connection.owner_id is not None,
         "created_at": connection.created_at,
+        "consent_needed": needed,
     }
 
 
@@ -172,7 +184,7 @@ def list_connectors(request, workspace_id: UUID):
 def list_connections(request, workspace_id: UUID):
     connections = Connection.objects.filter(owner=request.user).order_by("created_at")
     shared = Connection.objects.filter(owner__isnull=True).order_by("created_at")
-    return [_connection_out(c) for c in [*connections, *shared]]
+    return [_connection_out(c, request.user.id) for c in [*connections, *shared]]
 
 
 @router.post("/workspaces/{uuid:workspace_id}/connections/{provider}/authorize", response=AuthorizeOut)
@@ -183,6 +195,34 @@ def authorize(request, workspace_id: UUID, provider: str):
         raise HttpError(404, "Unknown provider.") from None
     try:
         url = services.authorization_url(request.session, workspace_id=workspace_id, provider=provider)
+    except services.ConnectionFlowError as error:
+        raise HttpError(503, str(error)) from error
+    return {"url": url}
+
+
+@router.post(
+    "/workspaces/{uuid:workspace_id}/connections/{uuid:connection_id}/reconnect", response=AuthorizeOut
+)
+def reconnect(request, workspace_id: UUID, connection_id: UUID, payload: ConsentIn):
+    """Reconnects the account, or grants the provider access that allowed actions still need."""
+    connection = _usable(request, connection_id)
+    if connection.owner_id is None and not request.membership.is_admin:
+        raise HttpError(403, "Only workspace admins can reconnect shared connections.")
+    connector = registry.get(connection.provider)
+    unknown = [a for a in payload.actions if connector.action(a) is None]
+    if unknown:
+        raise HttpError(422, f"{connector.name} has no action {unknown[0]!r}.")
+    try:
+        # A shared connection serves every member who allows something on it.
+        allowed = services.allowed_actions(connection, request.user.id if connection.owner_id else None)
+        scopes = services.requested_scopes(connector, allowed | set(payload.actions))
+        url = services.authorization_url(
+            request.session,
+            workspace_id=workspace_id,
+            provider=connection.provider,
+            connection=connection,
+            scopes=scopes,
+        )
     except services.ConnectionFlowError as error:
         raise HttpError(503, str(error)) from error
     return {"url": url}
@@ -205,7 +245,7 @@ def get_access(request, workspace_id: UUID, connection_id: UUID):
     connection = _usable(request, connection_id)
     connector = registry.get(connection.provider)
     return {
-        "connection": _connection_out(connection),
+        "connection": _connection_out(connection, request.user.id),
         "kinds": _kinds(connector),
         "actions": _actions(connector),
         "grants": [

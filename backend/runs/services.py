@@ -11,7 +11,7 @@ from django.db import connection as db
 from django.utils import timezone
 
 from agents.models import Agent
-from connections.models import Connection
+from connections.services import granted_scopes
 from connectors import registry
 from connectors.base import consent_given
 from conversations.models import Conversation, Message
@@ -51,11 +51,6 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def _scopes(connection: Connection) -> frozenset[str] | None:
-    scopes = connection.credentials().get("scopes")
-    return frozenset(scopes) if scopes is not None else None
-
-
 def _tools_for(agent: Agent, user_id: UUID, policy: Policy) -> list[ToolRef]:
     """Tool names are namespaced per connection; the server, never the model, picks the connection.
 
@@ -74,7 +69,7 @@ def _tools_for(agent: Agent, user_id: UUID, policy: Policy) -> list[ToolRef]:
         counts[connection.provider] = counts.get(connection.provider, 0) + 1
         n = counts[connection.provider]
         alias = connection.provider if n == 1 else f"{connection.provider}{n}"
-        scopes = _scopes(connection)
+        scopes = granted_scopes(connection)
         for op in connector.operations:
             if not consent_given(op.consent, scopes):
                 continue
@@ -95,6 +90,12 @@ def _tools_for(agent: Agent, user_id: UUID, policy: Policy) -> list[ToolRef]:
     return refs
 
 
+def _instructions(agent: Agent) -> str:
+    # Models do not know the date, and calendar questions are relative to it.
+    now = timezone.now().strftime("%A, %Y-%m-%d %H:%M UTC")
+    return f"{SAFETY_INSTRUCTIONS}\nThe run started on {now}.\n\n{agent.instructions}".strip()
+
+
 def start_run(*, conversation: Conversation, user_id: UUID, content: str) -> tuple[Message, Run]:
     cfg = config()
     agent = conversation.agent
@@ -113,7 +114,7 @@ def start_run(*, conversation: Conversation, user_id: UUID, content: str) -> tup
                     conversation=conversation,
                     permissions=policy.to_json(),
                     tools=[asdict(ref) for ref in _tools_for(agent, user_id, policy)],
-                    instructions=f"{SAFETY_INSTRUCTIONS}\n\n{agent.instructions}".strip(),
+                    instructions=_instructions(agent),
                     model_alias=agent.model_alias,
                     max_writes=cfg.run_max_writes,
                     max_model_calls=cfg.run_max_model_calls,

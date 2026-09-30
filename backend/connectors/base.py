@@ -123,7 +123,8 @@ class Binding:
         return Resource(self.connection_id, ACCOUNT_KIND, self.connection_id)
 
 
-# Provider scopes an operation works with: any one of these sets, each granted in full.
+# Provider scopes an operation works with: any one of these sets, each granted in full. The first set is
+# the one requested when the user allows what the operation does.
 Consent = tuple[frozenset[str], ...]
 
 
@@ -163,6 +164,8 @@ class OAuth2:
     # Dynamic client registration, used when the operator configured no client.
     registration_url: str | None = None
     authorize_params: tuple[tuple[str, str], ...] = ()
+    # Whether the provider accepts `login_hint` with the account id, to preselect the account on reconnect.
+    login_hint: bool = False
 
 
 @dataclass(frozen=True, slots=True)

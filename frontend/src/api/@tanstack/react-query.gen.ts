@@ -3,8 +3,8 @@
 import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOptions, type UseMutationOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { authorize, cancelRun, changeAccess, createAgent, createConversation, deleteAgent, deleteConnection, deleteConversation, getAccess, getAgent, getConversation, getRun, listAccessResources, listAgents, listConnections, listConnectors, listConversations, me, type Options, postMessage, updateAgent } from '../sdk.gen';
-import type { AuthorizeData, AuthorizeResponse, CancelRunData, CancelRunResponse, ChangeAccessData, ChangeAccessResponse, CreateAgentData, CreateAgentResponse, CreateConversationData, CreateConversationResponse, DeleteAgentData, DeleteAgentResponse, DeleteConnectionData, DeleteConnectionResponse, DeleteConversationData, DeleteConversationResponse, GetAccessData, GetAccessResponse, GetAgentData, GetAgentResponse, GetConversationData, GetConversationResponse, GetRunData, GetRunResponse, ListAccessResourcesData, ListAccessResourcesResponse, ListAgentsData, ListAgentsResponse, ListConnectionsData, ListConnectionsResponse, ListConnectorsData, ListConnectorsResponse, ListConversationsData, ListConversationsResponse, MeData, MeResponse, PostMessageData, PostMessageResponse, UpdateAgentData, UpdateAgentResponse } from '../types.gen';
+import { authorize, cancelRun, changeAccess, createAgent, createConversation, deleteAgent, deleteConnection, deleteConversation, getAccess, getAgent, getConversation, getRun, listAccessResources, listAgents, listConnections, listConnectors, listConversations, me, type Options, postMessage, reconnect, updateAgent } from '../sdk.gen';
+import type { AuthorizeData, AuthorizeResponse, CancelRunData, CancelRunResponse, ChangeAccessData, ChangeAccessResponse, CreateAgentData, CreateAgentResponse, CreateConversationData, CreateConversationResponse, DeleteAgentData, DeleteAgentResponse, DeleteConnectionData, DeleteConnectionResponse, DeleteConversationData, DeleteConversationResponse, GetAccessData, GetAccessResponse, GetAgentData, GetAgentResponse, GetConversationData, GetConversationResponse, GetRunData, GetRunResponse, ListAccessResourcesData, ListAccessResourcesResponse, ListAgentsData, ListAgentsResponse, ListConnectionsData, ListConnectionsResponse, ListConnectorsData, ListConnectorsResponse, ListConversationsData, ListConversationsResponse, MeData, MeResponse, PostMessageData, PostMessageResponse, ReconnectData, ReconnectResponse, UpdateAgentData, UpdateAgentResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseUrl' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -297,6 +297,25 @@ export const listAccessResourcesInfiniteOptions = (options: Options<ListAccessRe
         queryKey: listAccessResourcesInfiniteQueryKey(options)
     });
     return opts as Omit<typeof opts, 'initialData'>;
+};
+
+/**
+ * Reconnect
+ *
+ * Reconnects the account, or grants the provider access that allowed actions still need.
+ */
+export const reconnectMutation = (options?: Partial<Options<ReconnectData>>): UseMutationOptions<ReconnectResponse, DefaultError, Options<ReconnectData>> => {
+    const mutationOptions: UseMutationOptions<ReconnectResponse, DefaultError, Options<ReconnectData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await reconnect({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
 };
 
 /**

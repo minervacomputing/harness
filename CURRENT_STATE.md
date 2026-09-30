@@ -13,6 +13,7 @@ This is the first real implementation. It is not a prototype and is built to be 
 - Sign up with email verification, sign in with a password or an emailed code, reset a password, and use two-factor authentication with an app and recovery codes.
 - A personal workspace for every user, with a default agent.
 - Connecting Todoist through OAuth, then choosing per project what agents may do: read tasks and/or create tasks.
+- Connecting Google Calendar, then choosing per calendar (or for all calendars) what agents may do: read events and/or create events. Agents can list calendars, list and read events, and create events without guests. Minerva asks Google only for read access at first, and for write access once the user allows creating events (see [section 4](#4-permissions)).
 - Creating agents with their own instructions and connections.
 - Chatting with an agent. The answer streams in live, tool calls appear as cards (done, not allowed, failed), and a run can be stopped.
 - Every turn runs in a fresh hardened container, which is removed afterwards.
@@ -61,7 +62,7 @@ Stopping a run revokes its token, so every later call from the worker is rejecte
 
 ## 4. Permissions
 
-**A grant is: connection + resource kind + resource + actions.** A resource may be `*`, meaning every resource of that kind, including new ones. For Todoist the kind is Project, the actions are Read and Create, and Create requires Read. Connector declarations are described in [ARCHITECTURE_DECISIONS.md, D8](ARCHITECTURE_DECISIONS.md#d8-connectors-and-the-permission-executor).
+**A grant is: connection + resource kind + resource + actions.** A resource may be `*`, meaning every resource of that kind, including new ones. For Todoist the kind is Project, the actions are Read and Create, and Create requires Read. For Google Calendar the kind is Calendar, with Read events and Create events. Connector declarations are described in [ARCHITECTURE_DECISIONS.md, D8](ARCHITECTURE_DECISIONS.md#d8-connectors-and-the-permission-executor).
 
 Layers can only narrow, and deny wins:
 
@@ -70,6 +71,8 @@ effective = provider account ∩ workspace ceiling ∩ user layer ∩ agent laye
 ```
 
 In a personal workspace the ceiling is unrestricted and hidden. The UI edits the user layer under **Connections → Choose access**, and each agent can use only the connections selected for it.
+
+**Provider consent:** each tool also needs the provider scopes behind it. A tool whose scopes the connection lacks is not offered. When the user allows an action whose scopes Google has not granted (for example Create events on a connection made with read-only access), the connection card says so and offers **Allow in Google Calendar**. That flow is tied to the connection: it asks Google for the scopes behind every action the user allows (on a shared connection, any member), since stored scopes may be stale after a revocation. Google's incremental authorization keeps earlier grants. The flow hints the same Google account and is rejected if the user signs in to a different account or the connection was removed meanwhile. **Reconnect** uses the same flow. Only the owner can reconnect a personal connection, and only an admin a shared one.
 
 **Strict revocation:** changing access, removing a connection, or changing an agent's connections cancels the affected active runs, so no run continues with outdated permissions.
 
@@ -91,7 +94,7 @@ strict argument validation
 
 | Limit | Value |
 |---|---|
-| Task creations | 3 |
+| Writes (task or event creations) | 3 |
 | Model calls | 30 |
 | Output tokens per call | 8,192 |
 | Wall-clock time | 300 s |
