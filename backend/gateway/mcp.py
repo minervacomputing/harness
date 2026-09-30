@@ -57,6 +57,21 @@ async def list_tools(ctx, params) -> types.ListToolsResult:
     return types.ListToolsResult(tools=tools)
 
 
+def _label(context: RunContext, name: str) -> str:
+    """How the tool is shown in the conversation, for example "Google Calendar: List calendars"."""
+    ref = context.tools.get(name)
+    try:
+        connector = registry.get(ref.provider) if ref else None
+    except LookupError:
+        connector = None
+    op = connector.operation(ref.operation) if connector and ref else None
+    if not (connector and ref and op):
+        return name
+    # A second connection to the same provider is numbered: todoist2_list_tasks.
+    number = ref.name.removesuffix(f"_{ref.operation}").removeprefix(ref.provider)
+    return f"{connector.name}{f' ({number})' if number else ''}: {op.title}"
+
+
 def _summary(arguments: dict[str, Any]) -> dict[str, Any]:
     text = json.dumps(arguments, default=str)
     return arguments if len(text) <= 2000 else {"truncated": text[:2000]}
@@ -65,7 +80,11 @@ def _summary(arguments: dict[str, Any]) -> dict[str, Any]:
 async def call_tool(ctx, params: types.CallToolRequestParams) -> types.CallToolResult:
     context = await _context(ctx)
     arguments = params.arguments or {}
-    event: dict[str, Any] = {"tool": params.name, "arguments": _summary(arguments)}
+    event: dict[str, Any] = {
+        "tool": params.name,
+        "label": _label(context, params.name),
+        "arguments": _summary(arguments),
+    }
     try:
         outcome = await Executor(context).invoke(params.name, arguments)
     except Exception as error:

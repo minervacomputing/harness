@@ -42,9 +42,14 @@ def _out(request, agent: Agent) -> dict:
     }
 
 
-def _connections(request, ids: list[UUID]) -> list[Connection]:
+def _connections(request, ids: list[UUID], kept: set[UUID] | None = None) -> list[Connection]:
+    """Added connections must be usable by the editor. Ones the agent already has may stay as they are,
+    so a connection that needs reconnecting, or belongs to someone else, does not block other changes.
+    Runs leave out connections their user cannot use."""
+    kept = kept or set()
     connections = list(Connection.objects.filter(pk__in=ids))
-    if len(connections) != len(set(ids)) or any(not c.usable_by(request.user.id) for c in connections):
+    added = [c for c in connections if c.id not in kept]
+    if len(connections) != len(set(ids)) or any(not c.usable_by(request.user.id) for c in added):
         raise HttpError(422, "Choose connections you can use.")
     return connections
 
@@ -78,9 +83,11 @@ def get_agent(request, workspace_id: UUID, agent_id: UUID):
 @router.put("/workspaces/{uuid:workspace_id}/agents/{uuid:agent_id}", response=AgentOut)
 def update_agent(request, workspace_id: UUID, agent_id: UUID, payload: AgentIn):
     agent = _editable(request, agent_id)
-    connections = _connections(request, payload.connection_ids)
     with transaction.atomic():
+        # Locked, so a connection another editor just removed is not kept on a stale save.
+        agent = Agent.objects.select_for_update().get(pk=agent.pk)
         before = set(agent.connections.values_list("id", flat=True))
+        connections = _connections(request, payload.connection_ids, before)
         agent.name = payload.name
         agent.instructions = payload.instructions
         agent.save()

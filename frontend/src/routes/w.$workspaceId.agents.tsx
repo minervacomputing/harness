@@ -126,17 +126,24 @@ function AgentForm({ workspaceId, agent, connections, onDone }: {
                     <Link to="/w/$workspaceId/connections" params={{ workspaceId }} className="underline underline-offset-4">Connections</Link>.
                   </p>
                 )}
-                {connections.map(connection => (
-                  <label key={connection.id} className="flex items-center gap-2 text-sm">
-                    <Checkbox
-                      checked={field.state.value.includes(connection.id)}
-                      onCheckedChange={checked => field.handleChange(checked === true
-                        ? [...field.state.value, connection.id]
-                        : field.state.value.filter(id => id !== connection.id))}
-                    />
-                    {connection.provider_name} · {connection.label}
-                  </label>
-                ))}
+                {connections.map(connection => {
+                  const selected = field.state.value.includes(connection.id)
+                  const active = connection.status === 'active'
+                  return (
+                    <label key={connection.id} className="flex items-center gap-2 text-sm">
+                      {/* One that stopped working can stay on the agent, but cannot be added. */}
+                      <Checkbox
+                        checked={selected}
+                        disabled={!active && !selected}
+                        onCheckedChange={checked => field.handleChange(checked === true
+                          ? [...field.state.value, connection.id]
+                          : field.state.value.filter(id => id !== connection.id))}
+                      />
+                      {connection.provider_name} · {connection.label}
+                      {!active && <span className="text-xs text-destructive">Reconnect it under Connections</span>}
+                    </label>
+                  )
+                })}
               </fieldset>
             )}
           </form.Field>

@@ -2,7 +2,7 @@ import type { AppendMessage, ThreadMessageLike } from '@assistant-ui/react'
 import type { ConversationDetail, EventOut, RunOut } from '@/api/types.gen'
 import { ACTIVE_STATUSES } from '@/lib/run-stream'
 
-export type ToolCallResult = { decision: 'allowed' | 'denied' | 'error'; message?: string }
+export type ToolCallResult = { decision: 'allowed' | 'denied' | 'error'; message?: string; label?: string }
 
 type Part =
   | { type: 'text'; text: string }
@@ -24,13 +24,13 @@ function partsFrom(events: EventOut[], { withText }: { withText: boolean }): Par
   const parts: Part[] = []
   for (const event of events) {
     if (event.type === 'tool_call') {
-      const data = event.data as { tool: string; decision: ToolCallResult['decision']; message?: string; arguments?: Record<string, never> }
+      const data = event.data as { tool: string; label?: string; decision: ToolCallResult['decision']; message?: string; arguments?: Record<string, never> }
       parts.push({
         type: 'tool-call',
         toolCallId: `${event.seq}`,
         toolName: data.tool,
         args: data.arguments ?? {},
-        result: { decision: data.decision, message: data.message },
+        result: { decision: data.decision, message: data.message, label: data.label },
         isError: data.decision !== 'allowed',
       })
     } else if (event.type === 'text_delta' && withText) {

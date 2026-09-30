@@ -1,13 +1,20 @@
+import asyncio
 import json
+import time
+from datetime import timedelta
 from types import SimpleNamespace
 
 import httpx
 import mcp_types as types
 import pytest
 from asgiref.sync import sync_to_async
+from django.core.handlers.asgi import ASGIHandler
 from django.test import AsyncClient, override_settings
+from django.utils import timezone
 
 from conversations.models import Conversation, Message
+from gateway import views
+from gateway.body_limit import limit_body
 from gateway.mcp import RUN_SCOPE_KEY, call_tool, list_tools
 from models_access import providers
 from runs import services
@@ -95,11 +102,11 @@ async def test_model_relay_enforces_backend_choices(claimed, monkeypatch):
     def upstream(request: httpx.Request) -> httpx.Response:
         seen.append(json.loads(request.content))
         assert request.headers["Authorization"] == "Bearer platform-key"
-        body = {
-            "choices": [{"message": {"content": "hi"}}],
-            "usage": {"prompt_tokens": 7, "completion_tokens": 3},
-        }
-        return httpx.Response(200, json=body)
+        chunks = [
+            {"choices": [{"delta": {"content": "hi"}}]},
+            {"choices": [], "usage": {"prompt_tokens": 7, "completion_tokens": 3}},
+        ]
+        return _sse(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks)
 
     provider = providers.OpenAICompatibleProvider(
         "https://models.example/v1", "platform-key", transport=httpx.MockTransport(upstream)
@@ -111,6 +118,7 @@ async def test_model_relay_enforces_backend_choices(claimed, monkeypatch):
         "messages": [{"role": "user", "content": "x"}],
         "max_tokens": 99999,
         "user": "x",
+        "stream": True,
     }
     client = AsyncClient()
     response = await client.post(
@@ -164,6 +172,11 @@ async def test_model_relay_streams_text_as_run_events(claimed, monkeypatch):
     assert (stored.input_tokens, stored.output_tokens) == (5, 2)
 
 
+def _sse(events) -> httpx.Response:
+    content = "".join(events).encode()
+    return httpx.Response(200, content=content, headers={"content-type": "text/event-stream"})
+
+
 def _post(token: str, path: str, body: dict):
     return AsyncClient().post(
         path, data=json.dumps(body), content_type="application/json", headers=auth(token)
@@ -197,7 +210,16 @@ def _upstream(monkeypatch, handler, **route) -> None:
 async def test_chat_requests_carry_text_only(claimed, monkeypatch, message):
     run, token = claimed
     _upstream(monkeypatch, lambda request: pytest.fail("reached the provider"), api="chat")
-    assert (await _post(token, "/v1/chat/completions", {"messages": [message]})).status_code == 400
+    body = {"messages": [message], "stream": True}
+    assert (await _post(token, "/v1/chat/completions", body)).status_code == 400
+    assert (await Run.unscoped.aget(pk=run.id)).model_calls == 0
+
+
+async def test_chat_requests_must_stream(claimed, monkeypatch):
+    run, token = claimed
+    _upstream(monkeypatch, lambda request: pytest.fail("reached the provider"), api="chat")
+    body = {"messages": [{"role": "user", "content": "x"}]}
+    assert (await _post(token, "/v1/chat/completions", body)).status_code == 400
     assert (await Run.unscoped.aget(pk=run.id)).model_calls == 0
 
 
@@ -210,7 +232,9 @@ def test_chat_messages_are_rebuilt_from_known_fields():
             {"role": "tool", "tool_call_id": "c1", "content": [{"type": "text", "text": "ok", "cache": 1}]},
         ]
     }
-    payload = providers.build_payload(body, providers.Route("default", "m", 100, api="chat"))
+    payload = providers.build_payload(
+        {**body, "stream": True}, providers.Route("default", "m", 100, api="chat")
+    )
     assert payload["messages"] == [
         {
             "role": "assistant",
@@ -259,11 +283,8 @@ async def test_responses_requests_are_rebuilt_from_what_minerva_allows(claimed, 
     def upstream(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1/responses"
         seen.append(json.loads(request.content))
-        body = {
-            "output": [{"type": "message", "content": [{"type": "output_text", "text": "hi"}]}],
-            "usage": {"input_tokens": 7, "output_tokens": 3},
-        }
-        return httpx.Response(200, json=body)
+        done = {"type": "response.completed", "response": {"usage": {"input_tokens": 7, "output_tokens": 3}}}
+        return _sse([f"data: {json.dumps(done)}\n\n"])
 
     _upstream(monkeypatch, upstream, reasoning_effort="high")
     body = {
@@ -278,6 +299,7 @@ async def test_responses_requests_are_rebuilt_from_what_minerva_allows(claimed, 
         "include": ["file_search_call.results"],
         "reasoning": {"effort": "xhigh"},
         "prompt_cache_key": "session-1",
+        "stream": True,
     }
     response = await _post(token, "/v1/responses", body)
     assert response.status_code == 200
@@ -299,6 +321,7 @@ async def test_responses_requests_are_rebuilt_from_what_minerva_allows(claimed, 
             },
         ],
         "store": False,
+        "stream": True,
         "max_output_tokens": 1000,
         "tools": [{"type": "function", "name": "t", "parameters": {"type": "object"}, "strict": False}],
         "tool_choice": "auto",
@@ -343,12 +366,13 @@ async def test_responses_requests_are_rebuilt_from_what_minerva_allows(claimed, 
         },
         {"max_output_tokens": 8},
         {"stream": "yes"},
+        {"stream": False},
     ],
 )
 async def test_responses_requests_outside_the_allowlist_are_refused(claimed, monkeypatch, change):
     run, token = claimed
     _upstream(monkeypatch, lambda request: pytest.fail("reached the provider"))
-    body = {"input": [{"role": "user", "content": "x"}], **change}
+    body = {"input": [{"role": "user", "content": "x"}], "stream": True, **change}
     assert (await _post(token, "/v1/responses", body)).status_code == 400
     assert (await Run.unscoped.aget(pk=run.id)).model_calls == 0
 
@@ -379,6 +403,315 @@ async def test_responses_stream_publishes_answer_text_but_not_reasoning(claimed,
     assert (stored.input_tokens, stored.output_tokens) == (5, 2)
 
 
+SECRET = "quota of org-123 exceeded"
+
+
+async def test_provider_errors_inside_a_stream_do_not_reach_the_worker(claimed, monkeypatch):
+    run, token = claimed
+    failed = {"code": "server_error", "message": SECRET}
+    events = [
+        {"type": "response.output_text.delta", "delta": "Hi"},
+        {"type": "error", "code": "server_error", "message": SECRET, "param": None, "sequence_number": 2},
+        {
+            "type": "response.failed",
+            "response": {
+                "status": "failed",
+                "error": failed,
+                "usage": {"input_tokens": 5, "output_tokens": 1},
+            },
+        },
+    ]
+    _upstream(
+        monkeypatch, lambda request: _sse(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events)
+    )
+    response = await _post(
+        token, "/v1/responses", {"input": [{"role": "user", "content": "x"}], "stream": True}
+    )
+    relayed = b"".join([chunk async for chunk in response.streaming_content])
+    assert SECRET.encode() not in relayed
+    sent = [json.loads(line[5:]) for line in relayed.splitlines() if line.startswith(b"data:")]
+    assert [e["type"] for e in sent] == ["response.output_text.delta", "error", "response.failed"]
+    assert sent[1]["message"] == sent[2]["response"]["error"]["message"] == providers.StreamTap.ERROR_MESSAGE
+    stored = await Run.unscoped.aget(pk=run.id)
+    assert (stored.input_tokens, stored.output_tokens, stored.unmetered_model_calls) == (5, 1, 0)
+
+
+def test_the_tap_screens_whole_events():
+    tap = providers.StreamTap()
+    error = json.dumps({"error": {"code": "server_error", "message": SECRET}})
+    relayed = tap.feed(f"data: {error}\n\ndata: [DONE]\n\n".encode())
+    assert SECRET.encode() not in relayed and relayed.endswith(b"\n\ndata: [DONE]\n\n")
+    assert tap.error_code == "server_error"
+
+    # Data spread over several lines is one event; it arrives here in pieces.
+    tap = providers.ResponsesTap()
+    event = f'event: error\r\ndata: {{"type": "error",\r\ndata: "message": "{SECRET}"}}\r\n\r\n'.encode()
+    relayed = b"".join(tap.feed(event[i : i + 7]) for i in range(0, len(event), 7)) + tap.finish()
+    assert relayed.startswith(b"event: error\ndata: ") and SECRET.encode() not in relayed
+
+    # Lines may also end with a bare CR, and a stream may open with a byte order mark.
+    for framing in (
+        b'event: error\rdata: {"type": "error", "message": "%s"}\r\r',
+        b'\xef\xbb\xbfdata: {"type": "error", "message": "%s"}\n\n',
+        b'data: {"error": {"message": "%s"}}\r\n\r\n',
+    ):
+        event = framing % SECRET.encode()
+        tap = providers.ResponsesTap()
+        relayed = b"".join(tap.feed(event[i : i + 1]) for i in range(len(event))) + tap.finish()
+        assert SECRET.encode() not in relayed and relayed.endswith(b"\n\n") and tap.error_code
+    # A bare-CR event is complete as soon as its blank line arrives; the LF of a split CRLF is swallowed.
+    tap = providers.ResponsesTap()
+    cr_event = DONE_EVENT.replace(b"\n", b"\r")
+    assert tap.feed(cr_event) == DONE_EVENT and tap.metered
+    assert tap.feed(b"data: x\r") == b"" and tap.feed(b"\n\n") == b"data: x\n\n"
+    tap = providers.ResponsesTap()
+    tap.feed(b"\xef\xbb")
+    tap.feed(b"\xbf" + DONE_EVENT.replace(b"\n", b"\r")[:-1])
+    assert not tap.metered
+    tap.finish()
+    assert (tap.input_tokens, tap.output_tokens) == (5, 2)
+
+    # Usage without counts is not usage.
+    tap = providers.ResponsesTap()
+    tap.feed(b'data: {"type": "response.completed", "response": {"usage": {}}}\n\n')
+    assert not tap.metered
+
+    tap = providers.StreamTap()
+    with pytest.raises(providers.StreamTooLarge):
+        tap.feed(b"data: " + b"x" * providers.StreamTap.MAX_EVENT + b"\n")
+
+
+def _stream(*parts: bytes | asyncio.Event) -> httpx.Response:
+    """A provider stream that waits wherever an event is given."""
+
+    async def content():
+        for part in parts:
+            if isinstance(part, asyncio.Event):
+                await part.wait()
+            else:
+                yield part
+
+    return httpx.Response(200, content=content(), headers={"content-type": "text/event-stream"})
+
+
+TEXT_EVENT = b'data: {"type": "response.output_text.delta", "delta": "Hi"}\n\n'
+DONE_EVENT = b'data: {"type": "response.completed", "response": {"usage": {"input_tokens": 5, "output_tokens": 2}}}\n\n'
+BODY = {"input": [{"role": "user", "content": "x"}], "stream": True}
+
+
+async def test_usage_is_recorded_when_the_worker_hangs_up(claimed, monkeypatch):
+    run, token = claimed
+    provider_done = asyncio.Event()
+    _upstream(monkeypatch, lambda request: _stream(TEXT_EVENT, provider_done, DONE_EVENT))
+    response = await _post(token, "/v1/responses", BODY)
+    assert await anext(aiter(response.streaming_content)) == TEXT_EVENT
+    # The worker reads no further; the provider finishes afterwards.
+    provider_done.set()
+    await asyncio.wait_for(asyncio.gather(*views._calls), 5)
+    stored = await Run.unscoped.aget(pk=run.id)
+    assert (stored.input_tokens, stored.output_tokens, stored.unmetered_model_calls) == (5, 2, 0)
+
+
+async def test_a_stopped_run_ends_a_silent_model_stream(claimed, monkeypatch):
+    run, token = claimed
+    monkeypatch.setattr(views, "REVOCATION_CHECK_SECONDS", 0.05)
+    _upstream(monkeypatch, lambda request: _stream(TEXT_EVENT, asyncio.Event(), DONE_EVENT))
+    response = await _post(token, "/v1/responses", BODY)
+    stream = aiter(response.streaming_content)
+    assert await anext(stream) == TEXT_EVENT
+    await Run.unscoped.filter(pk=run.id).aupdate(status=Run.Status.CANCELLED)
+    assert await asyncio.wait_for(_rest(stream), 5) == b""
+    stored = await Run.unscoped.aget(pk=run.id)
+    assert (stored.input_tokens, stored.unmetered_model_calls) == (0, 1)
+
+
+async def _rest(stream) -> bytes:
+    return b"".join([chunk async for chunk in stream])
+
+
+async def test_model_traffic_is_size_limited(claimed, monkeypatch):
+    run, token = claimed
+    _upstream(monkeypatch, lambda request: _stream(TEXT_EVENT, DONE_EVENT))
+    with override_settings(DATA_UPLOAD_MAX_MEMORY_SIZE=1000):
+        body = {**BODY, "input": [{"role": "user", "content": "x" * 2000}]}
+        assert (await _post(token, "/v1/responses", body)).status_code == 413
+    assert (await Run.unscoped.aget(pk=run.id)).model_calls == 0
+
+    monkeypatch.setattr(views, "MAX_RESPONSE_BYTES", len(TEXT_EVENT) + 1)
+    response = await _post(token, "/v1/responses", BODY)
+    assert await _rest(response.streaming_content) == TEXT_EVENT
+    stored = await Run.unscoped.aget(pk=run.id)
+    assert (stored.model_calls, stored.input_tokens, stored.unmetered_model_calls) == (1, 0, 1)
+
+
+async def test_a_stopped_run_ends_the_wait_for_the_provider(claimed, monkeypatch):
+    run, token = claimed
+    monkeypatch.setattr(views, "REVOCATION_CHECK_SECONDS", 0.05)
+    answered = asyncio.Event()
+
+    async def slow(request: httpx.Request) -> httpx.Response:
+        await answered.wait()
+        return _stream(DONE_EVENT)
+
+    _upstream(monkeypatch, slow)
+    pending = asyncio.create_task(_post(token, "/v1/responses", BODY))
+    await asyncio.sleep(0.1)
+    await Run.unscoped.filter(pk=run.id).aupdate(status=Run.Status.CANCELLED)
+    response = await asyncio.wait_for(pending, 5)
+    assert response.status_code == 401
+    stored = await Run.unscoped.aget(pk=run.id)
+    assert (stored.model_calls, stored.unmetered_model_calls) == (1, 1)
+
+
+async def test_the_gateway_refuses_oversized_bodies_before_reading_them():
+    seen: list[bytes] = []
+
+    async def app(scope, receive, send):
+        while (message := await receive())["type"] == "http.request":
+            seen.append(message["body"])
+            if not message.get("more_body"):
+                break
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    limited = limit_body(app, 10)
+
+    async def call(headers, *bodies):
+        sent: list[dict] = []
+        messages = [{"type": "http.request", "body": b, "more_body": True} for b in bodies]
+        messages.append({"type": "http.disconnect"})
+
+        async def receive():
+            return messages.pop(0)
+
+        async def send(message):
+            sent.append(message)
+
+        await limited({"type": "http", "headers": headers}, receive, send)
+        return sent[0]["status"] if sent else None
+
+    assert await call([(b"content-length", b"11")], b"x" * 11) == 413
+    assert seen == []
+    # Streamed without a length, the body is cut off at the limit and refused; the app answers nothing.
+    assert await call([], b"x" * 6, b"x" * 6) == 413
+    assert seen == [b"x" * 6]
+    assert await call([], b"x" * 6, b"x" * 4) == 200
+
+
+async def test_django_answers_oversized_streamed_bodies_with_413():
+    sent: list[dict] = []
+    messages = [{"type": "http.request", "body": b"x" * 11, "more_body": True}]
+
+    async def receive():
+        return messages.pop(0) if messages else {"type": "http.disconnect"}
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {"type": "http", "method": "POST", "path": "/v1/responses", "headers": [], "query_string": b""}
+    await limit_body(ASGIHandler(), 10)(scope, receive, send)
+    assert [m["type"] for m in sent] == ["http.response.start", "http.response.body"]
+    assert sent[0]["status"] == 413
+
+
+async def test_only_event_streams_are_relayed(claimed, monkeypatch):
+    run, token = claimed
+    error = {"error": {"message": SECRET}}
+    _upstream(monkeypatch, lambda request: httpx.Response(200, json=error))
+    response = await _post(token, "/v1/responses", BODY)
+    assert response.status_code == 502 and SECRET.encode() not in response.content
+    stored = await Run.unscoped.aget(pk=run.id)
+    assert (stored.model_calls, stored.unmetered_model_calls) == (1, 1)
+
+
+class _Body(httpx.AsyncByteStream):
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def __aiter__(self):
+        yield DONE_EVENT
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+async def test_a_response_arriving_as_the_run_ends_is_closed(claimed, monkeypatch):
+    run, token = claimed
+    body = _Body()
+
+    async def answer(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(0.05)
+        return httpx.Response(200, stream=body, headers={"content-type": "text/event-stream"})
+
+    def slow_check(run_id) -> bool:
+        # The provider answers while the run's state is being read.
+        time.sleep(0.3)
+        return False
+
+    _upstream(monkeypatch, answer)
+    provider, _ = views.route("default")
+    # Held here, so only the gateway itself can close the call, not the garbage collector.
+    calls = []
+    responses = provider.responses
+    monkeypatch.setattr(provider, "responses", lambda payload: calls.append(responses(payload)) or calls[-1])
+    monkeypatch.setattr(views, "REVOCATION_CHECK_SECONDS", 0.01)
+    monkeypatch.setattr(views.services, "is_token_valid", slow_check)
+    response = await _post(token, "/v1/responses", BODY)
+    assert response.status_code == 401 and body.closed
+    assert (await Run.unscoped.aget(pk=run.id)).unmetered_model_calls == 1
+
+
+async def test_a_call_that_opens_despite_cancellation_is_closed(claimed):
+    run, _ = claimed
+    closed = asyncio.Event()
+
+    class Upstream:
+        async def __aenter__(self):
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                # Answers anyway, after a moment.
+                await asyncio.sleep(0.05)
+            return object()
+
+        async def __aexit__(self, *args):
+            closed.set()
+
+    cm = Upstream()
+    opening = asyncio.create_task(cm.__aenter__())
+    await asyncio.sleep(0)
+    opening.cancel()
+    await views._abandon(opening, cm, run.id)
+    assert closed.is_set()
+    assert (await Run.unscoped.aget(pk=run.id)).unmetered_model_calls == 1
+
+
+async def test_usage_is_recorded_even_if_closing_the_call_fails(claimed):
+    run, _ = claimed
+
+    class FailingClose:
+        async def __aexit__(self, *args):
+            raise OSError("close failed")
+
+    async def chunks():
+        yield DONE_EVENT
+
+    upstream = providers.UpstreamResponse(200, "text/event-stream", chunks())
+    call = views.ModelCall(run.id, providers.ResponsesTap(), FailingClose(), upstream)
+    await call._run()
+    assert await _rest(call.stream()) == DONE_EVENT
+    stored = await Run.unscoped.aget(pk=run.id)
+    assert (stored.input_tokens, stored.output_tokens, stored.unmetered_model_calls) == (5, 2, 0)
+
+
+def test_no_model_call_is_reserved_for_a_run_past_its_deadline(claimed):
+    run, _ = claimed
+    Run.unscoped.filter(pk=run.id).update(deadline=timezone.now() - timedelta(seconds=1))
+    assert not views._reserve_model_call(run.id)
+    Run.unscoped.filter(pk=run.id).update(deadline=timezone.now() + timedelta(minutes=1))
+    assert views._reserve_model_call(run.id)
+
+
 async def test_mcp_tools_are_authorized_and_recorded(claimed):
     run, _ = claimed
     ctx = SimpleNamespace(request=SimpleNamespace(scope={RUN_SCOPE_KEY: run.id}))
@@ -400,3 +733,4 @@ async def test_mcp_tools_are_authorized_and_recorded(claimed):
     assert denied.is_error
     events = await sync_to_async(list)(RunEvent.unscoped.filter(run=run, type="tool_call").order_by("seq"))
     assert [e.data["decision"] for e in events] == ["allowed", "denied"]
+    assert events[0].data["label"] == "Todoist: List tasks"

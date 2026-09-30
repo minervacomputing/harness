@@ -1,7 +1,6 @@
 """Model access behind one interface. The backend chooses upstream, model, key, and caps; the worker
 only ever names an alias. Other providers (Anthropic SDK, in-process LiteLLM) plug in here."""
 
-import contextlib
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -45,6 +44,8 @@ RESPONSES_FIELDS = {
 }
 MAX_INPUT_ITEMS = 500
 MAX_TOOLS = 128
+# The relay meters usage and screens provider errors event by event, so it relays streams only.
+STREAM_REQUIRED = "Only streamed requests are accepted."
 # The Responses API refuses smaller output caps.
 MIN_RESPONSES_OUTPUT_TOKENS = 16
 
@@ -221,8 +222,9 @@ def build_payload(body: dict[str, Any], target: Route) -> dict[str, Any]:
     payload["model"] = target.model
     payload["n"] = 1
     payload["store"] = False
-    if payload.get("stream"):
-        payload["stream_options"] = {"include_usage": True}
+    if payload.get("stream") is not True:
+        raise InvalidModelRequest(STREAM_REQUIRED)
+    payload["stream_options"] = {"include_usage": True}
     return payload
 
 
@@ -341,6 +343,8 @@ def build_responses_payload(body: dict[str, Any], target: Route) -> dict[str, An
             if not isinstance(body[key], bool):
                 raise InvalidModelRequest(f"{key} must be a boolean.")
             payload[key] = body[key]
+    if payload.get("stream") is not True:
+        raise InvalidModelRequest(STREAM_REQUIRED)
     for key in ("temperature", "top_p"):
         value = body.get(key)
         if value is not None:
@@ -357,69 +361,112 @@ def build_responses_payload(body: dict[str, Any], target: Route) -> dict[str, An
     return payload
 
 
-class StreamTap:
-    """Follows an OpenAI-style response while its bytes pass through unchanged: token usage and the
-    visible assistant text, so the backend can stream progress without trusting the worker for it."""
+class StreamTooLarge(Exception):
+    pass
 
-    MAX_BUFFER = 4_000_000
+
+BOM = b"\xef\xbb\xbf"
+
+
+class StreamTap:
+    """Follows an OpenAI-style event stream as it is relayed: token usage and the visible assistant text,
+    so the backend can stream progress without trusting the worker for it. Events pass through unchanged,
+    except provider errors, whose diagnostics are replaced as they are for non-200 responses."""
+
+    MAX_EVENT = 4_000_000
+    ERROR_MESSAGE = "The model provider reported an error."
 
     def __init__(self) -> None:
         self._partial = b""
-        self._raw = bytearray()
-        self._saw_sse = False
+        self._started = False
+        self._after_cr = False
+        self._event: list[bytes] = []
+        self._event_size = 0
         self._text: list[str] = []
         self.input_tokens = 0
         self.output_tokens = 0
+        self.metered = False
+        self.error_code: str | None = None
 
-    def feed(self, chunk: bytes) -> None:
-        if not self._saw_sse and len(self._raw) < self.MAX_BUFFER:
-            self._raw += chunk
-        self._partial += chunk
-        *lines, self._partial = self._partial.split(b"\n")
+    def feed(self, chunk: bytes) -> bytes:
+        """Returns the events completed by this chunk, as the worker should receive them. Line endings
+        are relayed as LF: event streams may also end lines with CR or CRLF, and a stream may open with a
+        byte order mark, and every form has to be screened alike."""
+        # A CR ends its line at once; an LF right after it, even in the next chunk, is part of that end.
+        if chunk and self._after_cr:
+            chunk, self._after_cr = chunk.removeprefix(b"\n"), False
+        if chunk:
+            self._after_cr = chunk.endswith(b"\r")
+        data = self._partial + chunk
+        if not self._started:
+            if BOM.startswith(data):
+                self._partial = data
+                return b""
+            data, self._started = data.removeprefix(BOM), True
+        *lines, self._partial = data.replace(b"\r\n", b"\n").replace(b"\r", b"\n").split(b"\n")
+        out = []
         for line in lines:
-            self._line(line.strip())
-        if len(self._partial) > self.MAX_BUFFER:
+            self._event.append(line + b"\n")
+            self._event_size += len(line) + 1
+            if not line:
+                out.append(self._flush())
+            elif self._event_size > self.MAX_EVENT:
+                raise StreamTooLarge
+        if self._event_size + len(self._partial) > self.MAX_EVENT:
+            raise StreamTooLarge
+        return b"".join(out)
+
+    def finish(self) -> bytes:
+        if self._partial:
+            self._event.append(self._partial.removeprefix(BOM))
             self._partial = b""
+        return self._flush() if self._event else b""
 
     def take_text(self) -> str:
         text = "".join(self._text)
         self._text.clear()
         return text
 
-    def finish(self) -> None:
-        if self._partial:
-            self._line(self._partial.strip())
-            self._partial = b""
-        if not self._saw_sse and self._raw:
-            with contextlib.suppress(ValueError):
-                self._read(json.loads(self._raw), key="message")
-            self._raw.clear()
-
-    def _line(self, line: bytes) -> None:
-        if not line.startswith(b"data:"):
-            return
-        self._saw_sse = True
-        self._raw.clear()
-        data = line[5:].strip()
-        if data == b"[DONE]":
-            return
+    def _flush(self) -> bytes:
+        lines, self._event, self._event_size = self._event, [], 0
+        # An event's data may span several lines, which clients join with newlines.
+        data = [line.rstrip(b"\n")[5:] for line in lines if line.startswith(b"data:")]
+        if not data:
+            return b"".join(lines)
         try:
-            self._read(json.loads(data), key="delta")
+            body = json.loads(b"\n".join(item.removeprefix(b" ") for item in data))
         except ValueError:
-            return
+            return b"".join(lines)
+        replacement = self._read(body) if isinstance(body, dict) else None
+        if replacement is None:
+            return b"".join(lines)
+        fields = b"".join(line for line in lines if not line.startswith(b"data:") and line.strip())
+        return fields + b"data: " + json.dumps(replacement).encode() + b"\n\n"
 
-    def _read(self, body: Any, *, key: str) -> None:
-        if not isinstance(body, dict):
+    def _usage(self, usage: Any, input_key: str, output_key: str) -> None:
+        if not isinstance(usage, dict):
             return
-        usage = body.get("usage")
-        if isinstance(usage, dict):
-            self.input_tokens = int(usage.get("prompt_tokens") or 0)
-            self.output_tokens = int(usage.get("completion_tokens") or 0)
+        counts = usage.get(input_key), usage.get(output_key)
+        if all(type(count) is int and count >= 0 for count in counts):
+            self.input_tokens, self.output_tokens = counts
+            self.metered = True
+
+    def _error(self, error: Any) -> None:
+        code = error.get("code") if isinstance(error, dict) else None
+        self.error_code = code if isinstance(code, str) else "unknown"
+
+    def _read(self, body: dict) -> dict | None:
+        """Takes what the tap needs from one event. Returns a replacement event, or None to relay it."""
+        if body.get("error") is not None:
+            self._error(body["error"])
+            return {"error": {"message": self.ERROR_MESSAGE}}
+        self._usage(body.get("usage"), "prompt_tokens", "completion_tokens")
         for choice in body.get("choices") or []:
-            part = choice.get(key) if isinstance(choice, dict) else None
-            content = part.get("content") if isinstance(part, dict) else None
+            delta = choice.get("delta") if isinstance(choice, dict) else None
+            content = delta.get("content") if isinstance(delta, dict) else None
             if isinstance(content, str) and content:
                 self._text.append(content)
+        return None
 
 
 class ResponsesTap(StreamTap):
@@ -427,32 +474,25 @@ class ResponsesTap(StreamTap):
 
     TERMINAL = frozenset({"response.completed", "response.incomplete", "response.failed"})
 
-    def _read(self, body: Any, *, key: str) -> None:
-        if not isinstance(body, dict):
-            return
-        if key == "message":
-            self._response(body, text=True)
-            return
+    def _read(self, body: dict) -> dict | None:
         kind = body.get("type")
+        # Screened alike: error events, and bare error envelopes some compatible servers send instead.
+        if kind == "error" or (kind not in self.TERMINAL and body.get("error") is not None):
+            self._error(body if kind == "error" else body["error"])
+            return {
+                "type": "error",
+                "code": "provider_error",
+                "message": self.ERROR_MESSAGE,
+                "param": None,
+                "sequence_number": body.get("sequence_number"),
+            }
         if kind == "response.output_text.delta" and isinstance(body.get("delta"), str) and body["delta"]:
             self._text.append(body["delta"])
         elif kind in self.TERMINAL and isinstance(body.get("response"), dict):
-            self._response(body["response"], text=False)
-
-    def _response(self, response: dict, *, text: bool) -> None:
-        usage = response.get("usage")
-        if isinstance(usage, dict):
-            self.input_tokens = int(usage.get("input_tokens") or 0)
-            self.output_tokens = int(usage.get("output_tokens") or 0)
-        if not text:
-            return
-        for item in response.get("output") or []:
-            if not isinstance(item, dict) or item.get("type") != "message":
-                continue
-            for part in item.get("content") or []:
-                if (
-                    isinstance(part, dict)
-                    and part.get("type") == "output_text"
-                    and isinstance(part.get("text"), str)
-                ):
-                    self._text.append(part["text"])
+            response = body["response"]
+            self._usage(response.get("usage"), "input_tokens", "output_tokens")
+            if response.get("error") is not None:
+                self._error(response["error"])
+                error = {"code": "provider_error", "message": self.ERROR_MESSAGE}
+                return {**body, "response": {**response, "error": error}}
+        return None

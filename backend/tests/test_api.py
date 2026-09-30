@@ -3,6 +3,7 @@ import json
 import pytest
 from django.test import Client
 
+from connections.models import Connection
 from conversations.models import Conversation, Message
 from runs import services
 from runs.models import Run
@@ -108,6 +109,17 @@ def test_changing_an_agents_connections_stops_its_active_runs(api, workspace, sc
     assert post(api, url, {"name": "Renamed", "connection_ids": []}, method="put").status_code == 200
     run.refresh_from_db()
     assert (run.status, run.error_code) == (Run.Status.CANCELLED, "agent_connections_changed")
+
+
+def test_an_agent_keeps_a_connection_that_needs_reconnecting(api, workspace, agent, connection):
+    connection.status = Connection.Status.ERROR
+    connection.save()
+    url = f"/api/workspaces/{workspace.id}/agents/{agent.id}"
+    ids = [str(connection.id)]
+    assert post(api, url, {"name": "Renamed", "connection_ids": ids}, method="put").status_code == 200
+    assert post(api, url, {"name": "Renamed", "connection_ids": []}, method="put").status_code == 200
+    # Adding it back is adding a connection, which must work.
+    assert post(api, url, {"name": "Renamed", "connection_ids": ids}, method="put").status_code == 422
 
 
 def test_access_settings_are_validated(api, workspace, connection, todoist):

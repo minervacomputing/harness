@@ -83,6 +83,7 @@ function UnloadedImage({ src, alt }: ComponentProps<'img'>) {
   )
 }
 
+/** For tool events recorded before the backend sent a label. */
 function describeTool(name: string): string {
   const [alias, ...rest] = name.split('_')
   const provider = alias.replace(/(\d+)$/, ' ($1)')
@@ -104,7 +105,7 @@ const ToolCall: ToolCallMessagePartComponent = ({ toolName, args, result }) => {
       <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 [&::-webkit-details-marker]:hidden">
         <ChevronRightIcon className="size-3.5 text-muted-foreground transition-transform group-open:rotate-90" />
         <WrenchIcon className="size-3.5 text-muted-foreground" />
-        <span className="flex-1 truncate">{describeTool(toolName)}</span>
+        <span className="flex-1 truncate">{outcome?.label ?? describeTool(toolName)}</span>
         {outcome && (
           <Badge variant={outcome.decision === 'allowed' ? 'secondary' : 'destructive'}>{DECISION_LABEL[outcome.decision]}</Badge>
         )}

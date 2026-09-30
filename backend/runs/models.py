@@ -49,6 +49,8 @@ class Run(TenantModel):
     model_calls = models.PositiveIntegerField(default=0)
     input_tokens = models.PositiveBigIntegerField(default=0)
     output_tokens = models.PositiveBigIntegerField(default=0)
+    # Calls whose stream ended before the provider reported usage; their tokens are not counted above.
+    unmetered_model_calls = models.PositiveIntegerField(default=0)
 
     event_seq = models.PositiveIntegerField(default=0)
     worker_seq = models.PositiveIntegerField(default=0)

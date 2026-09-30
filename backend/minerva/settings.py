@@ -53,6 +53,8 @@ if ROLE == "gateway":
         app for app in INSTALLED_APPS if not app.startswith(("allauth", "django.contrib.admin"))
     ]
     ALLOWED_HOSTS = cfg.gateway_allowed_hosts
+    # Model requests carry the whole conversation, including encrypted reasoning.
+    DATA_UPLOAD_MAX_MEMORY_SIZE = 16_000_000
 
 TEMPLATES = [
     {
