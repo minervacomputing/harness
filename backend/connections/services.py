@@ -544,9 +544,9 @@ def _refresh(connection: Connection, tokens: dict) -> dict | None:
     body = _token_body(response)
     if body is None:
         error = _json_field(response, "error")
-        # GitHub's refusal of a refresh token that expired or was revoked; other refusals (such as a
-        # misconfigured client) are the operator's to fix and leave the connection as it is.
-        if error in {"bad_refresh_token", "invalid_grant"}:
+        # GitHub's and Slack's refusals of a refresh token that expired or was revoked; other refusals
+        # (such as a misconfigured client) are the operator's to fix and leave the connection as it is.
+        if error in {"bad_refresh_token", "invalid_grant", "invalid_refresh_token"}:
             return None
         log.warning("Refreshing connection %s failed: %s", connection.pk, error or "unexpected response")
         raise OperationError("PROVIDER_UNAVAILABLE", f"{connector.name} could not refresh the connection.")
