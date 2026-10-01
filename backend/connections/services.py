@@ -181,11 +181,16 @@ def allowed_actions(connection: Connection, user_id: UUID | None) -> set[str]:
 
 
 def _lacking(connector: Connector, scopes: frozenset[str], actions: set[str]):
-    for op in connector.operations:
-        if op.consent and not consent_given(op.consent, scopes):
-            used = {action for _, action in op.needs} & actions
-            if used:
-                yield op, used
+    """Operations the allowed actions make usable (as for offering tools: every action they need is
+    allowed) but the scopes do not cover, each with the actions to blame. An operation that needs several
+    actions is blamed on those no covered operation already performs, when there are any."""
+    usable = [op for op in connector.operations if {a for _, a in op.needs} <= actions]
+    covered = [op for op in usable if not op.consent or consent_given(op.consent, scopes)]
+    served = {action for op in covered for _, action in op.needs}
+    for op in usable:
+        if op not in covered:
+            used = {action for _, action in op.needs}
+            yield op, (used - served) or used
 
 
 def consent_needed(connector: Connector, scopes: frozenset[str] | None, actions: set[str]) -> list[str]:

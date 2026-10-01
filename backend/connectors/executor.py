@@ -229,6 +229,8 @@ class Executor:
                 or resource.kind not in kinds
                 or resource.id == ANY
                 or _shape_problem(connector, resource)
+                # An unrestricted policy passes any action, even one the kind does not have.
+                or op.output_action not in connector.kind(resource.kind).actions
             ):
                 log.error("Connector %s.%s returned a record with %r", ref.provider, op.name, resource)
                 continue

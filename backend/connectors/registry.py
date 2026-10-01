@@ -53,13 +53,20 @@ def _validate_operation(connector: Connector, op: Operation) -> None:
         raise InvalidConnector(f"{where}: the tool name would exceed {MAX_TOOL_NAME} characters.")
     if not op.needs:
         raise InvalidConnector(f"{where}: declares no needs.")
-    for kind_id, action in [*op.needs, *((k, op.output_action) for k, _ in op.needs)]:
+    for kind_id, action in op.needs:
         kind = connector.kind(kind_id)
         if kind is None:
             raise InvalidConnector(f"{where}: unknown kind {kind_id!r}.")
         for item in _chain(connector, action):
             if item not in kind.actions:
                 raise InvalidConnector(f"{where}: {item!r} does not apply to {kind_id!r}.")
+    # Records may be scoped to any kind the operation needs; the output action must apply to one of them,
+    # and records of a kind it does not apply to are dropped.
+    output_chain = _chain(connector, op.output_action)
+    if not any(
+        all(item in connector.kind(kind_id).actions for item in output_chain) for kind_id, _ in op.needs
+    ):
+        raise InvalidConnector(f"{where}: {op.output_action!r} applies to none of its kinds.")
     if op.consent is not None and not isinstance(connector.auth, OAuth2):
         raise InvalidConnector(f"{where}: consent needs an OAuth connector.")
     if op.paginated and "cursor" not in op.input_model.model_fields:
@@ -151,6 +158,7 @@ def _declared() -> list[Connector]:
     from connectors.google_drive.connector import GoogleDriveConnector
     from connectors.linear.connector import LinearConnector
     from connectors.notion.connector import NotionConnector
+    from connectors.outlook.connector import OutlookConnector
     from connectors.slack.connector import SlackConnector
     from connectors.todoist.connector import TodoistConnector
     from connectors.web.connector import WebConnector
@@ -163,6 +171,7 @@ def _declared() -> list[Connector]:
         NotionConnector(),
         LinearConnector(),
         SlackConnector(),
+        OutlookConnector(),
         WebConnector(),
     ]
 

@@ -22,14 +22,21 @@ from connections import services as connection_services
 from connections.models import Connection
 from connectors import executor as executor_module
 from connectors import registry
-from connectors.base import ACCOUNT_KIND, ActionSpec, OperationError, ResourceKind
+from connectors.base import (
+    ACCOUNT_KIND,
+    ActionSpec,
+    OperationError,
+    ProviderOutput,
+    ResourceKind,
+    ScopedRecord,
+)
 from connectors.executor import APPLIED_WITHOUT_RESULT, Executor, RunContext
 from connectors.http import Effect, write_attempt
 from conversations.models import Conversation
 from gateway.mcp import RUN_SCOPE_KEY, list_tools
 from minerva.config import config
 from permissions.models import Grant, PermissionLayer
-from permissions.policy import Policy
+from permissions.policy import Layer, Policy, Resource
 from permissions.services import (
     MAX_GRANTS_PER_CONNECTION,
     GrantChange,
@@ -173,6 +180,27 @@ def test_declared_connectors_are_valid():
 def test_invalid_declarations_are_rejected(connector):
     with pytest.raises(registry.InvalidConnector):
         registry.validate([connector])
+
+
+MIXED_OUTPUT = {"needs": ((FOLDER, "read"), (LABEL, "read")), "output_action": "create"}
+
+
+def test_the_output_action_needs_to_apply_to_only_one_of_the_kinds():
+    registry.validate([variant(changes={"list_folders": MIXED_OUTPUT})])
+
+
+def test_records_of_a_kind_without_the_output_action_are_dropped_even_when_unrestricted():
+    connector = variant(changes={"list_folders": MIXED_OUTPUT})
+    op = connector.operation("list_folders")
+    executor = Executor(SimpleNamespace(policy=Policy((Layer.build("agent", False, []),))))
+    output = ProviderOutput(
+        [
+            ScopedRecord(Resource("c1", FOLDER, "inbox"), {"id": "inbox"}),
+            ScopedRecord(Resource("c1", LABEL, "red"), {"id": "red"}),
+        ]
+    )
+    result = executor._result(connector, op, SimpleNamespace(connection_id="c1", provider="variant"), output)
+    assert [item["id"] for item in result["items"]] == ["inbox"]
 
 
 class KeyedWithConsent(KeyedConnector):

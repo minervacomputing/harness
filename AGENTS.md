@@ -37,6 +37,7 @@ Configuration is read from the process environment and `.env` at the repository 
 | `MINERVA_NOTION_CLIENT_ID`, `MINERVA_NOTION_CLIENT_SECRET` | empty | A Notion public integration; unset hides Notion |
 | `MINERVA_LINEAR_CLIENT_ID`, `MINERVA_LINEAR_CLIENT_SECRET` | empty | A Linear OAuth application; unset hides Linear |
 | `MINERVA_SLACK_CLIENT_ID`, `MINERVA_SLACK_CLIENT_SECRET` | empty | A Slack app with bot scopes; its redirect URL must be HTTPS; unset hides Slack |
+| `MINERVA_MICROSOFT_CLIENT_ID`, `MINERVA_MICROSOFT_CLIENT_SECRET` | empty | A Microsoft Entra app for Outlook (any organization and personal accounts); unset hides Outlook |
 | `MINERVA_BRAVE_SEARCH_API_KEY` | empty | Brave Search API key for the Web connector; unset offers only reading pages |
 | `MINERVA_SANDBOX_PROVIDER` | `container` | `local-process` has no isolation; avoid it |
 | `MINERVA_SANDBOX_IMAGE` | `minerva-worker:dev` | Built by `make worker-image` |
