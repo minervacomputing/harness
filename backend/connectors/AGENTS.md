@@ -33,7 +33,7 @@ A connector turns one provider's API into tools, and the permission executor aut
 
 `registry.validate` checks the declaration on first use:
 
-- Names are lowercase words joined by underscores.
+- Slugs, operation names and OAuth app names are lowercase words joined by underscores. Kind and action ids are not checked.
 - `<slug>99_<operation>` must fit in 64 characters.
 - Slugs, kinds, operations and tool names are unique.
 - Every operation declares needs, on its own kinds, with actions those kinds list.
@@ -43,7 +43,7 @@ A connector turns one provider's API into tools, and the permission executor aut
 - OAuth endpoints use HTTPS, and `authorize_params` cannot replace protocol parameters.
 - The account kind is neither wildcard nor hierarchical.
 
-`registry.fingerprint` defines what a tool means, and runs snapshot it. It covers the input schema, needs, output action, consent, `mutates`, `paginated`, requirement chains, the needed kinds' flags, and `revision`. Descriptions are not part of it. A tool whose fingerprint changed fails in running runs with `OPERATION_CHANGED`.
+`registry.fingerprint` defines what a tool means, and runs snapshot it. It covers the input schema, needs, output action, consent, `mutates`, `paginated`, requirement chains, the needed kinds' flags, and `revision`. Operation descriptions are not part of it, but field descriptions are, through the input schema. A tool whose fingerprint changed fails in running runs with `OPERATION_CHANGED`.
 
 `executor.py` checks each call, in order:
 
@@ -109,7 +109,7 @@ A connector turns one provider's API into tools, and the permission executor aut
 7. `ARCHITECTURE_DECISIONS.md` D8: add the connector to the index of provider notes.
 8. `backend/tests/test_<slug>.py`:
    - Serve a fake provider through `httpx.MockTransport` (like `FakeTodoist` in `conftest.py`) and patch it into `client()`.
-   - Run calls through the `Executor` with the shared fixtures and helpers in `backend/tests`, rather than copying another connector test's setup.
+   - Run calls through the `Executor` with the shared helpers rather than copying another connector test's setup: the `connector_run` fixture (connection, grants, claimed run) and `token_endpoint` fixture (OAuth token requests) in `conftest.py`, and `ceiling`, `refusal`, `replace_grants` and `FLOW` in `tests/connector_runs.py`.
    - Contract behaviour belongs in `test_contract.py`, using the test-only connectors in `fakes.py`.
 9. Frontend: nothing per connector; the settings page and tool cards render from the API. Run `make api-types` only if an API schema changed.
 
