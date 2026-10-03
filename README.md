@@ -80,6 +80,18 @@ Click **Connections → Connect Todoist**.
 
 After connecting, choose per project what agents may do, then add the connection to an agent under **Agents**.
 
+## Google Calendar and Drive
+
+Create an OAuth client of type **Web application** in the Google Cloud console, enable the Google Calendar API and the Google Drive API, and set `MINERVA_GOOGLE_CLIENT_ID` and `MINERVA_GOOGLE_CLIENT_SECRET`. Add the redirect URIs `http://localhost:5173/api/oauth/google_calendar/callback` and `http://localhost:5173/api/oauth/google_drive/callback`. Without the client, neither is offered.
+
+Click **Connections → Connect Google Calendar** (or Drive), then choose per calendar, or per file or folder, what agents may do. Minerva asks Google only for read access at first, and for write scopes once the user allows creating.
+
+## GitHub
+
+Create a GitHub App at <https://github.com/settings/apps> and set `MINERVA_GITHUB_CLIENT_ID`, `MINERVA_GITHUB_CLIENT_SECRET` and `MINERVA_GITHUB_APP_SLUG` (the App's URL name, `github.com/apps/<slug>`). The callback URL is `http://localhost:5173/api/oauth/github/callback`; keep user authorization tokens expiring. Give it the repository permissions Metadata (read), Contents (read), Issues (read and write) and Pull requests (read and write). Without the client, GitHub is not offered.
+
+Click **Connections → Connect GitHub**, install the App on the repositories Minerva may see (the connection card links there), then choose per repository what agents may do.
+
 ## Notion
 
 Create a public integration at <https://www.notion.so/profile/integrations> and set `MINERVA_NOTION_CLIENT_ID` and `MINERVA_NOTION_CLIENT_SECRET`. The redirect URL is `http://localhost:5173/api/oauth/notion/callback`. Give it the capabilities Read content, Update content, Insert content, Read comments and Insert comments, and no user information. Without the client, Notion is not offered.
