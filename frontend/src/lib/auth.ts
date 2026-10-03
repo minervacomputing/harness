@@ -49,6 +49,16 @@ export async function authRequest(method: 'GET' | 'POST' | 'PUT' | 'DELETE', pat
   return { ...payload, status: response.status }
 }
 
+export class ReauthRequired extends Error {}
+
+/** Account changes return 401 when allauth wants the password confirmed again first. */
+export async function accountCall(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown) {
+  const payload = await authRequest(method, path, body)
+  if (payload.status === 401) throw new ReauthRequired('Confirm your password to continue.')
+  if (payload.status === 400 && payload.errors) throw new AuthError(payload.errors)
+  return payload
+}
+
 export function toAuthState(payload: AuthPayload): AuthState | null {
   if (payload.status === 200 && payload.meta?.is_authenticated && payload.data?.user) {
     return { kind: 'authenticated', user: payload.data.user }
