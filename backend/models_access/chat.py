@@ -103,7 +103,7 @@ def _tool_choice(choice: Any) -> Any:
 
 def _response_format(value: Any) -> dict[str, Any]:
     kind = value.get("type") if isinstance(value, dict) else None
-    if kind in {"text", "json_object"}:
+    if isinstance(kind, str) and kind in {"text", "json_object"}:
         return {"type": kind}
     schema = value.get("json_schema") if kind == "json_schema" else None
     if not isinstance(schema, dict):

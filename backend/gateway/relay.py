@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import math
 import time
 from collections.abc import AsyncIterator
 
@@ -181,10 +182,22 @@ async def responses(request: HttpRequest):
     return await _relay(request, "responses")
 
 
+def _finite(value: str) -> float:
+    # Python reads 1e400 as infinity, which the provider request cannot carry.
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(value)
+    return number
+
+
+def _not_a_number(value: str) -> float:
+    raise ValueError(value)
+
+
 async def _relay(request: HttpRequest, api: str):
     run: Run = request.run  # type: ignore[attr-defined]
     try:
-        body = json.loads(request.body)
+        body = json.loads(request.body, parse_float=_finite, parse_constant=_not_a_number)
     except RequestDataTooBig:
         return error_response("The request is too large.", 413)
     except ValueError:

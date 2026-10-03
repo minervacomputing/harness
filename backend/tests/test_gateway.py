@@ -246,6 +246,19 @@ async def test_refused_chat_requests_reserve_nothing_and_reach_no_provider(claim
     assert (await Run.unscoped.aget(pk=run.id)).model_calls == 0
 
 
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", "1e400"])
+async def test_chat_requests_with_numbers_json_cannot_carry_are_refused(claimed, monkeypatch, number):
+    run, token = claimed
+    _upstream(monkeypatch, lambda request: pytest.fail("reached the provider"), api="chat")
+    body = json.dumps({"messages": [{"role": "user", "content": "x"}], "stream": True, "temperature": 0})
+    body = body.replace('"temperature": 0', f'"temperature": {number}')
+    response = await AsyncClient().post(
+        "/v1/chat/completions", data=body, content_type="application/json", headers=auth(token)
+    )
+    assert response.status_code == 400
+    assert (await Run.unscoped.aget(pk=run.id)).model_calls == 0
+
+
 async def test_each_instance_serves_one_model_api(claimed, monkeypatch):
     _, token = claimed
     _upstream(monkeypatch, lambda request: pytest.fail("reached the provider"), api="responses")

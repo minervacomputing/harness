@@ -150,6 +150,8 @@ CHAT_REFUSALS = [
     {"response_format": {"type": "json_schema", "json_schema": {"name": "s", "schema": "{}"}}},
     {"response_format": {"type": "grammar", "grammar": "x"}},
     {"response_format": "json_object"},
+    {"response_format": {"type": []}},
+    {"response_format": {"type": {}}},
     {"stop": ["a", "b", "c", "d", "e"]},
     {"stop": [1]},
     {"stop": 1},
