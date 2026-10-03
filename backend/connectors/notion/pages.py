@@ -93,10 +93,7 @@ class Tree:
         return found
 
     async def _block_parent(self, block_id: str) -> Parent | None:
-        async def fetch(object_id: str) -> Any:
-            return await self.client.block(object_id)
-
-        block = await self._lookup(self._blocks, fetch, block_id)
+        block = await self._lookup(self._blocks, self.client.block, block_id)
         return block.parent if block is not None else None
 
     def remember(self, page: Page) -> None:
