@@ -8,18 +8,12 @@ import httpx
 import pytest
 from asgiref.sync import sync_to_async
 
-from agents.models import Agent
 from connections.models import Connection
 from connectors.base import OperationError
-from connectors.executor import Executor, RunContext
 from connectors.google_drive import connector as drive_module
 from connectors.google_drive.client import FOLDER, SHORTCUT, GoogleDriveClient, quoted
 from connectors.google_drive.connector import FULL_SCOPE, GOOGLE_DOC, READ_SCOPE, GoogleDriveConnector
-from conversations.models import Conversation
 from permissions.models import Grant, PermissionLayer
-from permissions.services import GrantChange, apply_grant_changes
-from runs import services
-from workspaces.tenancy import workspace_scope
 
 ROOT = "root0"
 
@@ -190,30 +184,17 @@ WRITE_SCOPES = [*BASE_SCOPES, FULL_SCOPE]
 
 
 @pytest.fixture
-def start(scoped, user, google, monkeypatch):
+def start(connector_run, google, monkeypatch):
     """Starts a run for an agent with the user's Drive connection, holding `scopes` and `grants`."""
     monkeypatch.setattr(GoogleDriveConnector, "client", lambda self, token: google.client())
 
-    def start_(scopes: list[str], grants: dict[str, tuple[str, ...]]) -> Executor:
-        with workspace_scope(scoped.id):
-            connection = Connection.objects.filter(provider="google_drive").first() or Connection(
-                provider="google_drive", owner=user, label="ada@example.com", external_account_id="108"
-            )
-            connection.set_credentials({"kind": "oauth2", "access_token": "t", "scopes": scopes})
-            connection.save()
-            Grant.objects.filter(connection=connection, layer__level=PermissionLayer.Level.USER).delete()
-            changes = [GrantChange("file", fid, actions) for fid, actions in grants.items()]
-            if changes:
-                apply_grant_changes(user_id=user.id, connection=connection, changes=changes, names={})
-            agent = Agent.objects.get()
-            agent.connections.set([connection])
-            conversation = Conversation.objects.create(agent=agent, user=user)
-            _, run = services.start_run(conversation=conversation, user_id=user.id, content="hi")
-        services.claim_queued(10)
-        run.refresh_from_db()
-        return Executor(RunContext.from_run(run))
+    def start_(scopes: list[str], grants: dict[str, tuple[str, ...]]):
+        files = {("file", fid): actions for fid, actions in grants.items()}
+        return connector_run(
+            "google_drive", files, scopes=scopes, label="ada@example.com", external_account_id="108"
+        )
 
-    return sync_to_async(start_)
+    return start_
 
 
 def _ceiling(resource_id: str, effect: str, actions=("read",), restricted: bool | None = None):

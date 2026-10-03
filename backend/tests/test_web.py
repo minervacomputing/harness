@@ -8,21 +8,17 @@ import httpx
 import pytest
 from asgiref.sync import sync_to_async
 
-from agents.models import Agent
 from connections import services as connection_services
 from connections.models import Connection
 from connectors.base import ACCOUNT_KIND, OperationError
-from connectors.executor import Executor, RunContext
+from connectors.executor import Executor
 from connectors.web import sites
 from connectors.web.connector import WebClient, WebConnector
 from connectors.web.fetch import MAX_BODY, Fetcher, Moved, Page, public_address
 from connectors.web.markdown import html_to_text
 from connectors.web.search import BraveSearch
-from conversations.models import Conversation
 from minerva.config import config
 from permissions.models import Grant, PermissionLayer
-from permissions.services import GrantChange, apply_grant_changes
-from runs import services
 from workspaces.tenancy import workspace_scope
 
 PUBLIC = "93.184.215.14"
@@ -379,8 +375,9 @@ def brave() -> FakeBrave:
 
 
 @pytest.fixture
-def start(scoped, user, net, brave, monkeypatch):
-    """Starts a run for an agent with the user's Web connection, holding `grants` ((kind, id) → actions)."""
+def start(connector_run, net, brave, monkeypatch):
+    """Starts a run for an agent with the user's Web connection, holding `grants` ((kind, id) → actions);
+    returns its executor and the names of the tools it was offered."""
     monkeypatch.setattr(config(), "brave_search_api_key", config().secret_key)
 
     def client(self, secret):
@@ -390,28 +387,11 @@ def start(scoped, user, net, brave, monkeypatch):
 
     monkeypatch.setattr(WebConnector, "client", client)
 
-    def start_(grants: dict[tuple[str, str], tuple[str, ...]]) -> tuple[Executor, list[str]]:
-        with workspace_scope(scoped.id):
-            connection = connection_services.enable_builtin(
-                workspace_id=scoped.id, owner_id=user.id, provider="web"
-            )
-            Grant.objects.filter(connection=connection, layer__level=PermissionLayer.Level.USER).delete()
-            # The account resource is the connection itself.
-            changes = [
-                GrantChange(kind, str(connection.id) if kind == ACCOUNT_KIND else rid, actions)
-                for (kind, rid), actions in grants.items()
-            ]
-            if changes:
-                apply_grant_changes(user_id=user.id, connection=connection, changes=changes, names={})
-            agent = Agent.objects.get()
-            agent.connections.set([connection])
-            conversation = Conversation.objects.create(agent=agent, user=user)
-            _, run = services.start_run(conversation=conversation, user_id=user.id, content="hi")
-        services.claim_queued(10)
-        run.refresh_from_db()
-        return Executor(RunContext.from_run(run)), [tool["name"] for tool in run.tools]
+    async def start_(grants: dict[tuple[str, str], tuple[str, ...]]) -> tuple[Executor, list[str]]:
+        executor = await connector_run("web", grants)
+        return executor, list(executor.context.tools)
 
-    return sync_to_async(start_)
+    return start_
 
 
 def _ceiling_deny(resource_id: str):

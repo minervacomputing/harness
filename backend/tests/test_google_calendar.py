@@ -8,12 +8,10 @@ import pytest
 from asgiref.sync import sync_to_async
 from django.test import Client
 
-from agents.models import Agent
 from connections import oauth as connection_oauth
 from connections.models import Connection
 from connections.oauth import ClientCredentials
 from connectors.base import OperationError
-from connectors.executor import Executor, RunContext
 from connectors.google_calendar import connector as calendar_module
 from connectors.google_calendar.client import GoogleCalendarClient
 from connectors.google_calendar.connector import (
@@ -22,12 +20,9 @@ from connectors.google_calendar.connector import (
     READ_SCOPE,
     GoogleCalendarConnector,
 )
-from conversations.models import Conversation
 from permissions.models import Grant, PermissionLayer
 from permissions.services import GrantChange, apply_grant_changes
-from runs import services
 from workspaces.models import Membership
-from workspaces.tenancy import workspace_scope
 
 PRIMARY = "ada@example.com"
 UNIVERSITY = "uni@group.calendar.google.com"
@@ -182,30 +177,17 @@ BASE_SCOPES = ["openid", "email", READ_SCOPE]
 
 
 @pytest.fixture
-def start(scoped, user, google, monkeypatch):
+def start(connector_run, google, monkeypatch):
     """Starts a run for an agent with the user's calendar connection, holding `scopes` and `grants`."""
     monkeypatch.setattr(GoogleCalendarConnector, "client", lambda self, token: google.client())
 
-    def start_(scopes: list[str], grants: dict[str, tuple[str, ...]]) -> Executor:
-        with workspace_scope(scoped.id):
-            connection = Connection.objects.filter(provider="google_calendar").first() or Connection(
-                provider="google_calendar", owner=user, label=PRIMARY, external_account_id="108"
-            )
-            connection.set_credentials({"kind": "oauth2", "access_token": "t", "scopes": scopes})
-            connection.save()
-            Grant.objects.filter(connection=connection, layer__level=PermissionLayer.Level.USER).delete()
-            changes = [GrantChange("calendar", cid, actions) for cid, actions in grants.items()]
-            if changes:
-                apply_grant_changes(user_id=user.id, connection=connection, changes=changes, names={})
-            agent = Agent.objects.get()
-            agent.connections.set([connection])
-            conversation = Conversation.objects.create(agent=agent, user=user)
-            _, run = services.start_run(conversation=conversation, user_id=user.id, content="hi")
-        services.claim_queued(10)
-        run.refresh_from_db()
-        return Executor(RunContext.from_run(run))
+    def start_(scopes: list[str], grants: dict[str, tuple[str, ...]]):
+        calendars = {("calendar", cid): actions for cid, actions in grants.items()}
+        return connector_run(
+            "google_calendar", calendars, scopes=scopes, label=PRIMARY, external_account_id="108"
+        )
 
-    return sync_to_async(start_)
+    return start_
 
 
 READS = {PRIMARY: ("read",), UNIVERSITY: ("read",)}

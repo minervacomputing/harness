@@ -6,25 +6,17 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from asgiref.sync import sync_to_async
 
-from agents.models import Agent
 from connections import credentials as connection_credentials
 from connections import oauth as connection_oauth
 from connections.models import Connection
 from connections.oauth import ClientCredentials, ConnectionFlowError
 from connectors import registry
 from connectors.base import OperationError
-from connectors.executor import Executor, RunContext
 from connectors.http import Effect
 from connectors.slack import mrkdwn as text
 from connectors.slack.client import SlackClient, judge
 from connectors.slack.connector import SlackConnector
-from conversations.models import Conversation
-from permissions.models import Grant, PermissionLayer
-from permissions.services import GrantChange, apply_grant_changes
-from runs import services
-from workspaces.tenancy import workspace_scope
 
 SECRET = "SECRET plans"
 GENERAL, RANDOM, PRIVATE, HIDDEN, PARTNER, OLD = (
@@ -231,33 +223,23 @@ def slack() -> FakeSlack:
 
 
 @pytest.fixture
-def start(scoped, user, slack, monkeypatch):
+def start(connector_run, slack, monkeypatch):
     """Starts a run for an agent with the user's Slack connection, holding `grants` on channels."""
     monkeypatch.setattr(SlackConnector, "client", lambda self, token: slack.client())
+    scopes = ["channels:read", "groups:read", "channels:history", "groups:history", "users:read"]
 
-    def start_(grants: dict[str, tuple[str, ...]]) -> Executor:
-        with workspace_scope(scoped.id):
-            connection = Connection.objects.filter(provider="slack").first() or Connection(
-                provider="slack", owner=user, label="Acme", external_account_id="T0ACME:U0BOT"
-            )
-            scopes = ["channels:read", "groups:read", "channels:history", "groups:history", "users:read"]
-            connection.set_credentials(
-                {"kind": "oauth2", "access_token": "xoxb-t", "scopes": [*scopes, "chat:write"]}
-            )
-            connection.save()
-            Grant.objects.filter(connection=connection, layer__level=PermissionLayer.Level.USER).delete()
-            changes = [GrantChange("channel", channel, actions) for channel, actions in grants.items()]
-            if changes:
-                apply_grant_changes(user_id=user.id, connection=connection, changes=changes, names={})
-            agent = Agent.objects.get()
-            agent.connections.set([connection])
-            conversation = Conversation.objects.create(agent=agent, user=user)
-            _, run = services.start_run(conversation=conversation, user_id=user.id, content="hi")
-        services.claim_queued(10)
-        run.refresh_from_db()
-        return Executor(RunContext.from_run(run))
+    def start_(grants: dict[str, tuple[str, ...]]):
+        channels = {("channel", channel): actions for channel, actions in grants.items()}
+        return connector_run(
+            "slack",
+            channels,
+            scopes=[*scopes, "chat:write"],
+            access_token="xoxb-t",
+            label="Acme",
+            external_account_id="T0ACME:U0BOT",
+        )
 
-    return sync_to_async(start_)
+    return start_
 
 
 async def _refused(executor, tool, args) -> str:

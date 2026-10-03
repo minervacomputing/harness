@@ -3,11 +3,17 @@ from collections.abc import Callable
 
 import httpx
 import pytest
+from asgiref.sync import sync_to_async
+from connector_runs import claimed_run, replace_grants
 from django.test import Client
 
 from accounts.models import User
 from agents.models import Agent
+from connections import services as connection_services
 from connections.models import Connection
+from connectors import registry
+from connectors.base import Builtin
+from connectors.executor import Executor
 from connectors.todoist.client import TodoistClient
 from connectors.todoist.connector import TodoistConnector
 from permissions.models import Grant
@@ -141,3 +147,35 @@ def grant(user, connection) -> Callable[..., None]:
             apply_grant_changes(user_id=user.id, connection=connection, changes=changes, names={})
 
     return grant_
+
+
+@pytest.fixture
+def connector_run(scoped, user):
+    """Starts and claims a run for the workspace's agent with only the user's `provider` connection.
+
+    `await connector_run(provider, grants, scopes=..., label=..., external_account_id=...)` creates the
+    connection from the account fields the first time and stores an OAuth token holding `scopes` (a
+    built-in connector's connection is enabled instead), then replaces the user's grants on it with
+    `grants` ({(kind, id): actions}).
+    """
+
+    def start(provider: str, grants: dict, *, scopes=(), access_token="t", **account) -> Executor:  # noqa: S107
+        with workspace_scope(scoped.id):
+            if isinstance(registry.get(provider).auth, Builtin):
+                connection = connection_services.enable_builtin(
+                    workspace_id=scoped.id, owner_id=user.id, provider=provider
+                )
+            else:
+                connection = Connection.objects.filter(provider=provider).first() or Connection(
+                    provider=provider, owner=user, **account
+                )
+                connection.set_credentials(
+                    {"kind": "oauth2", "access_token": access_token, "scopes": list(scopes)}
+                )
+                connection.save()
+            replace_grants(user, connection, grants)
+            agent = Agent.objects.get()
+            agent.connections.set([connection])
+        return claimed_run(scoped, user)
+
+    return sync_to_async(start)

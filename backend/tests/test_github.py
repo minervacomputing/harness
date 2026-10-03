@@ -8,24 +8,19 @@ import httpx
 import pytest
 from asgiref.sync import sync_to_async
 
-from agents.models import Agent
 from connections import credentials as connection_credentials
 from connections import oauth as connection_oauth
 from connections.models import Connection
 from connections.oauth import ClientCredentials, ConnectionFlowError
 from connectors import registry
 from connectors.base import OperationError
-from connectors.executor import Executor, RunContext
+from connectors.executor import Executor
 from connectors.github import client as client_module
 from connectors.github import connector as github_module
 from connectors.github.client import API_URL, GitHubClient
 from connectors.github.connector import GitHubConnector
-from conversations.models import Conversation
 from minerva.config import config
 from permissions.models import Grant, PermissionLayer
-from permissions.services import GrantChange, apply_grant_changes
-from runs import services
-from workspaces.tenancy import workspace_scope
 
 
 def _repo(repo_id, full_name, private=False):
@@ -169,30 +164,15 @@ def github() -> FakeGitHub:
 
 
 @pytest.fixture
-def start(scoped, user, github, monkeypatch):
+def start(connector_run, github, monkeypatch):
     """Starts a run for an agent with the user's GitHub connection and `grants` (repository id → actions)."""
     monkeypatch.setattr(GitHubConnector, "client", lambda self, token: github.client())
 
-    def start_(grants: dict[str, tuple[str, ...]]) -> Executor:
-        with workspace_scope(scoped.id):
-            connection = Connection.objects.filter(provider="github").first() or Connection(
-                provider="github", owner=user, label="ada", external_account_id="42"
-            )
-            connection.set_credentials({"kind": "oauth2", "access_token": "t", "scopes": []})
-            connection.save()
-            Grant.objects.filter(connection=connection, layer__level=PermissionLayer.Level.USER).delete()
-            changes = [GrantChange("repository", rid, actions) for rid, actions in grants.items()]
-            if changes:
-                apply_grant_changes(user_id=user.id, connection=connection, changes=changes, names={})
-            agent = Agent.objects.get()
-            agent.connections.set([connection])
-            conversation = Conversation.objects.create(agent=agent, user=user)
-            _, run = services.start_run(conversation=conversation, user_id=user.id, content="hi")
-        services.claim_queued(10)
-        run.refresh_from_db()
-        return Executor(RunContext.from_run(run))
+    def start_(grants: dict[str, tuple[str, ...]]):
+        repositories = {("repository", rid): actions for rid, actions in grants.items()}
+        return connector_run("github", repositories, label="ada", external_account_id="42")
 
-    return sync_to_async(start_)
+    return start_
 
 
 def _deny(repo_id: str, actions=("read", "create")):

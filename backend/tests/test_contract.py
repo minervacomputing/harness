@@ -13,6 +13,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from asgiref.sync import sync_to_async
+from connector_runs import claimed_run, replace_grants
 from django.utils import timezone
 from fakes import FOLDER, LABEL, FakeServer, KeyedConnector, MixedConnector
 from pydantic import SecretStr
@@ -32,7 +33,7 @@ from connectors.base import (
     ResourceKind,
     ScopedRecord,
 )
-from connectors.executor import APPLIED_WITHOUT_RESULT, Executor, RunContext
+from connectors.executor import APPLIED_WITHOUT_RESULT, Executor
 from connectors.http import Effect, write_attempt
 from conversations.models import Conversation
 from gateway.mcp import RUN_SCOPE_KEY, list_tools
@@ -74,13 +75,6 @@ def mixed(scoped, user, server) -> Connection:
     return connection
 
 
-def _set_grants(user, connection, grants: dict[tuple[str, str], list[str]]) -> None:
-    Grant.objects.filter(layer=user_layer(user.id), connection=connection).delete()
-    changes = [GrantChange(kind, rid, tuple(actions)) for (kind, rid), actions in grants.items()]
-    if changes:
-        apply_grant_changes(user_id=user.id, connection=connection, changes=changes, names={})
-
-
 @pytest.fixture
 def start(scoped, user, mixed):
     """Sets the user's grants on the mixed connection, starts and claims a run; returns an executor.
@@ -96,12 +90,8 @@ def start(scoped, user, mixed):
         with workspace_scope(scoped.id):
             agent = Agent.objects.get()
             agent.connections.set([connection])
-            _set_grants(user, connection, normalized)
-            conversation = Conversation.objects.create(agent=agent, user=user)
-            _, run = services.start_run(conversation=conversation, user_id=user.id, content="hi")
-        services.claim_queued(10)
-        run.refresh_from_db()
-        return Executor(RunContext.from_run(run))
+            replace_grants(user, connection, normalized)
+        return claimed_run(scoped, user)
 
     return sync_to_async(start_)
 
@@ -480,7 +470,7 @@ async def test_tools_are_offered_only_when_some_resource_could_allow_them(start)
 def test_a_wildcard_on_a_kind_without_wildcards_is_ignored(scoped, user, mixed):
     agent = Agent.objects.get()
     agent.connections.set([mixed])
-    _set_grants(user, mixed, {(FOLDER, "inbox"): ["read"]})
+    replace_grants(user, mixed, {(FOLDER, "inbox"): ["read"]})
     # Only a hand edit can store this; the API rejects it.
     Grant.objects.create(
         layer=user_layer(user.id), connection=mixed, resource_kind=LABEL, resource_id="*", actions=["read"]
@@ -549,7 +539,7 @@ def test_a_run_started_during_a_grant_edit_sees_the_edit(scoped, user, mixed, se
 
     agent = Agent.objects.get()
     agent.connections.set([mixed])
-    _set_grants(user, mixed, {(FOLDER, "inbox"): ["read"]})
+    replace_grants(user, mixed, {(FOLDER, "inbox"): ["read"]})
     locked = threading.Event()
 
     def edit():

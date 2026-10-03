@@ -8,22 +8,16 @@ import httpx
 import pytest
 from asgiref.sync import sync_to_async
 
-from agents.models import Agent
 from connections import credentials as connection_credentials
 from connections import oauth as connection_oauth
 from connections.models import Connection
 from connections.oauth import ClientCredentials
 from connectors import registry
 from connectors.base import OperationError
-from connectors.executor import Executor, RunContext
 from connectors.outlook import addresses
 from connectors.outlook.client import GraphClient, classify, next_cursor, page_param
 from connectors.outlook.connector import OutlookConnector
-from conversations.models import Conversation
 from permissions.models import Grant, PermissionLayer
-from permissions.services import GrantChange, apply_grant_changes
-from runs import services
-from workspaces.tenancy import workspace_scope
 
 SECRET = "SECRET merger"
 ROOT, INBOX, PROJECTS, PRIVATE, SENT, DRAFTS = (
@@ -201,30 +195,16 @@ SCOPES = ["Mail.Read", "Mail.Send", "User.Read", "email", "openid", "profile"]
 
 
 @pytest.fixture
-def start(scoped, user, graph, monkeypatch):
+def start(connector_run, graph, monkeypatch):
     """Starts a run for an agent with the user's Outlook connection, holding `grants` keyed by kind and id."""
     monkeypatch.setattr(OutlookConnector, "client", lambda self, token: graph.client())
 
-    def start_(grants: dict[tuple[str, str], tuple[str, ...]], scopes: list[str] = SCOPES) -> Executor:
-        with workspace_scope(scoped.id):
-            connection = Connection.objects.filter(provider="outlook").first() or Connection(
-                provider="outlook", owner=user, label="me@contoso.com", external_account_id=graph.user["id"]
-            )
-            connection.set_credentials({"kind": "oauth2", "access_token": "t", "scopes": scopes})
-            connection.save()
-            Grant.objects.filter(connection=connection, layer__level=PermissionLayer.Level.USER).delete()
-            changes = [GrantChange(kind, resource, actions) for (kind, resource), actions in grants.items()]
-            if changes:
-                apply_grant_changes(user_id=user.id, connection=connection, changes=changes, names={})
-            agent = Agent.objects.get()
-            agent.connections.set([connection])
-            conversation = Conversation.objects.create(agent=agent, user=user)
-            _, run = services.start_run(conversation=conversation, user_id=user.id, content="hi")
-        services.claim_queued(10)
-        run.refresh_from_db()
-        return Executor(RunContext.from_run(run))
+    def start_(grants: dict[tuple[str, str], tuple[str, ...]], scopes: list[str] = SCOPES):
+        return connector_run(
+            "outlook", grants, scopes=scopes, label="me@contoso.com", external_account_id=graph.user["id"]
+        )
 
-    return sync_to_async(start_)
+    return start_
 
 
 def _deny(kind: str, resource: str, actions: tuple[str, ...]):

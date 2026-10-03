@@ -7,24 +7,18 @@ import httpx
 import pytest
 from asgiref.sync import sync_to_async
 
-from agents.models import Agent
 from connections import oauth as connection_oauth
 from connections.models import Connection
 from connections.oauth import ClientCredentials
 from connectors import registry
 from connectors.base import OperationError
-from connectors.executor import Executor, RunContext
 from connectors.notion import markdown as page_text
 from connectors.notion import pages
 from connectors.notion.client import NotionClient
 from connectors.notion.connector import NotionConnector
 from connectors.notion.pages import canonical
 from connectors.notion.properties import check_filter, readable, writable
-from conversations.models import Conversation
 from permissions.models import Grant, PermissionLayer
-from permissions.services import GrantChange, apply_grant_changes
-from runs import services
-from workspaces.tenancy import workspace_scope
 
 NAMES = [
     "workspace",
@@ -330,30 +324,15 @@ def notion() -> FakeNotion:
 
 
 @pytest.fixture
-def start(scoped, user, notion, monkeypatch):
+def start(connector_run, notion, monkeypatch):
     """Starts a run for an agent with the user's Notion connection, holding `grants`."""
     monkeypatch.setattr(NotionConnector, "client", lambda self, token: notion.client())
 
-    def start_(grants: dict[str, tuple[str, ...]]) -> Executor:
-        with workspace_scope(scoped.id):
-            connection = Connection.objects.filter(provider="notion").first() or Connection(
-                provider="notion", owner=user, label="Acme", external_account_id=ID["workspace"]
-            )
-            connection.set_credentials({"kind": "oauth2", "access_token": "t", "scopes": []})
-            connection.save()
-            Grant.objects.filter(connection=connection, layer__level=PermissionLayer.Level.USER).delete()
-            changes = [GrantChange("page", ID.get(name, name), actions) for name, actions in grants.items()]
-            if changes:
-                apply_grant_changes(user_id=user.id, connection=connection, changes=changes, names={})
-            agent = Agent.objects.get()
-            agent.connections.set([connection])
-            conversation = Conversation.objects.create(agent=agent, user=user)
-            _, run = services.start_run(conversation=conversation, user_id=user.id, content="hi")
-        services.claim_queued(10)
-        run.refresh_from_db()
-        return Executor(RunContext.from_run(run))
+    def start_(grants: dict[str, tuple[str, ...]]):
+        pages = {("page", ID.get(name, name)): actions for name, actions in grants.items()}
+        return connector_run("notion", pages, label="Acme", external_account_id=ID["workspace"])
 
-    return sync_to_async(start_)
+    return start_
 
 
 def _ceiling(name: str, effect: str, actions=("read",)):

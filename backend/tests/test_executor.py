@@ -1,10 +1,10 @@
 import pytest
 from asgiref.sync import sync_to_async
+from connector_runs import claimed_run
 
 from connections.models import Connection
 from connectors import executor as executor_module
 from connectors.base import OperationError
-from connectors.executor import Executor, RunContext
 from conversations.models import Conversation
 from permissions.models import Grant, PermissionLayer
 from runs import services
@@ -17,16 +17,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 @pytest.fixture
 def start(scoped, user, agent, todoist):
     """Start and claim a run with the grants in place at that moment; returns an executor."""
-
-    def start_() -> Executor:
-        with workspace_scope(scoped.id):
-            conversation = Conversation.objects.create(agent=agent, user=user)
-            _, run = services.start_run(conversation=conversation, user_id=user.id, content="hi")
-        services.claim_queued(10)
-        run.refresh_from_db()
-        return Executor(RunContext.from_run(run))
-
-    return sync_to_async(start_)
+    return sync_to_async(lambda: claimed_run(scoped, user))
 
 
 @pytest.fixture
