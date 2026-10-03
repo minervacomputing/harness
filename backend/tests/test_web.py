@@ -19,6 +19,7 @@ from connectors.web.markdown import html_to_text
 from connectors.web.search import BraveSearch
 from minerva.config import config
 from permissions.models import Grant
+from runs.models import Run
 from workspaces.tenancy import workspace_scope
 
 PUBLIC = "93.184.215.14"
@@ -389,7 +390,8 @@ def start(connector_run, net, brave, monkeypatch):
 
     async def start_(grants: dict[tuple[str, str], tuple[str, ...]]) -> tuple[Executor, list[str]]:
         executor = await connector_run("web", grants)
-        return executor, list(executor.context.tools)
+        run = await Run.unscoped.aget(pk=executor.context.run_id)
+        return executor, [tool["name"] for tool in run.tools]
 
     return start_
 
