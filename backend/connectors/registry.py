@@ -159,6 +159,7 @@ def _declared() -> list[Connector]:
     from connectors.google_calendar.connector import GoogleCalendarConnector
     from connectors.google_drive.connector import GoogleDriveConnector
     from connectors.hubspot.connector import HubSpotConnector
+    from connectors.intercom.connector import IntercomConnector
     from connectors.jira.connector import JiraConnector
     from connectors.linear.connector import LinearConnector
     from connectors.notion.connector import NotionConnector
@@ -188,6 +189,7 @@ def _declared() -> list[Connector]:
         HubSpotConnector(),
         JiraConnector(),
         ConfluenceConnector(),
+        IntercomConnector(),
         WebConnector(),
     ]
 

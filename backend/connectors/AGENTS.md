@@ -126,8 +126,9 @@ A connector turns one provider's API into tools, and the permission executor aut
 | Account-level action (`ACCOUNT_KIND`) | `web` (search) |
 | GraphQL: reads via `bounded` POST, writes judged from the body | `linear` |
 | Failures answered with HTTP 200 (`judge`, `classify`) | `linear`, `slack` |
-| Errors named from the response body (`classify`) | `outlook` |
+| Errors named from the response body (`classify`) | `outlook`, `intercom` |
 | Built-in service, `offered()` | `web` |
+| Flat kind whose objects move between resources, read again on every call; OAuth without scopes | `intercom` (conversations in team inboxes) |
 | Unlisted kind (`listed=False`) | `web` (sites), `outlook` (recipients) |
 | `manage_link()` | `github` |
 | API key auth, a key replaced for the same account | `stripe` |

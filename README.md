@@ -162,6 +162,12 @@ Create another **OAuth 2.0 integration** in the Atlassian developer console (<ht
 
 Click **Connections → Connect Confluence** and pick the sites to allow on Atlassian's consent screen. Then choose per site or per space what agents may do: read pages, comment on them and create them. Agents act as you: watchers are notified, and a space's automation rules may act on what they change.
 
+## Intercom
+
+Create an app in Intercom's Developer Hub (<https://app.intercom.com/a/apps/_/developer-hub>). Under **Authentication**, turn on **Use OAuth**, add the redirect URL `{site_url}/api/oauth/intercom/callback`, and give the permissions **Read admins**, **Read conversations** and **Write conversations**. Set `MINERVA_INTERCOM_CLIENT_ID` and `MINERVA_INTERCOM_CLIENT_SECRET` from **Basic information**. The app works in its own workspace at once; other workspaces can install it only once Intercom has reviewed it. Without the client, Intercom is not offered. Intercom accepts only HTTPS redirect URLs, so locally Minerva needs an HTTPS tunnel, set up as for [Slack](#slack).
+
+Click **Connections → Connect Intercom** and authorize the app for your workspace. Then choose per team inbox, or for conversations no team is assigned to, what agents may do: read conversations, add internal notes and reply to customers. Agents act as you; replies reach the customer by email or the Messenger. Conversations move between inboxes when they are reassigned, so one reassigned at the moment an agent writes can receive the write. To revoke access, remove the app from the workspace in Intercom's app settings.
+
 ## The Web
 
 Click **Connections → Add Web**, then choose which sites agents may read and whether they may search. A site is an exact host (`docs.python.org`) or a domain with its subdomains (`*.python.org`).
