@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button'
 import { ErrorNote, Spinner, Status, type StatusTone } from '@/components/ui/misc'
 import { cn } from '@/lib/utils'
 
-export function Thread({ empty, disabledReason }: { empty?: ReactNode; disabledReason?: string }) {
+export function Thread({ empty }: { empty?: ReactNode }) {
   return (
     <ThreadPrimitive.Root className="flex h-full flex-col">
       <ThreadPrimitive.Viewport className="flex flex-1 flex-col overflow-y-auto px-6">
@@ -24,7 +24,7 @@ export function Thread({ empty, disabledReason }: { empty?: ReactNode; disabledR
           <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />
         </div>
         <ThreadPrimitive.ViewportFooter className="sticky bottom-0 mx-auto w-full max-w-3xl bg-background pb-5">
-          <Composer disabledReason={disabledReason} />
+          <Composer />
         </ThreadPrimitive.ViewportFooter>
       </ThreadPrimitive.Viewport>
     </ThreadPrimitive.Root>
@@ -134,14 +134,14 @@ export const ToolCall: ToolCallMessagePartComponent = ({ toolName, args, result 
   )
 }
 
-function Composer({ disabledReason }: { disabledReason?: string }) {
+function Composer() {
   return (
     <div className="space-y-1.5">
       <ComposerPrimitive.Root className="flex items-end gap-2 border border-border-strong bg-card p-2 shadow-(--inset-well) focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/25">
         <ComposerPrimitive.Input
           autoFocus
           rows={1}
-          placeholder={disabledReason ?? 'Message your agent'}
+          placeholder="Message your agent"
           className="max-h-48 min-h-9 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-faint"
         />
         <AuiIf condition={s => !s.thread.isRunning}>

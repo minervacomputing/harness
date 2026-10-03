@@ -200,9 +200,8 @@ function ConnectionCard({ workspaceId, connection, initiallyOpen }: { workspaceI
       </CardContent>
       <CardFooter className="justify-end">
         <Button
-          variant="ghost"
+          variant="ghost-destructive"
           size="sm"
-          className="text-destructive"
           disabled={remove.isPending}
           onClick={() => {
             if (confirm(`Remove ${connection.provider_name}? Agents lose access to it immediately.`)) {

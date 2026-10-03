@@ -14,7 +14,7 @@ export function AgentHint({ workspaceId, agent }: { workspaceId: string; agent: 
       </p>
       {!agent.connection_ids.length && (
         <Notice className="mx-auto max-w-md text-left">
-          Connect Todoist under{' '}
+          Connect an app under{' '}
           <Link to="/w/$workspaceId/connections" params={{ workspaceId }} className="underline underline-offset-4">Connections</Link>
           , choose what it may access, then add the connection to this agent under{' '}
           <Link to="/w/$workspaceId/agents" params={{ workspaceId }} className="underline underline-offset-4">Agents</Link>.

@@ -154,9 +154,8 @@ function AgentForm({ workspaceId, agent, connections, onDone }: {
             {agent && (
               <Button
                 type="button"
-                variant="ghost"
+                variant="ghost-destructive"
                 size="sm"
-                className="text-destructive"
                 disabled={remove.isPending}
                 onClick={async () => {
                   if (!confirm(`Delete ${agent.name}? Its conversations are deleted too.`)) return
