@@ -136,7 +136,7 @@ def _connection_out(connection: Connection, user_id: UUID) -> dict:
     return {
         "id": connection.id,
         "provider": connection.provider,
-        "provider_name": registry.get(connection.provider).name,
+        "provider_name": connector.name,
         "label": connection.label,
         "status": connection.status,
         "personal": connection.owner_id is not None,
@@ -145,6 +145,13 @@ def _connection_out(connection: Connection, user_id: UUID) -> dict:
         "manage_label": manage[0] if manage else None,
         "manage_url": manage[1] if manage else None,
     }
+
+
+def _connector_or_404(provider: str) -> Connector:
+    try:
+        return registry.get(provider)
+    except LookupError:
+        raise HttpError(404, "Unknown provider.") from None
 
 
 def _usable(request, connection_id: UUID) -> Connection:
@@ -217,10 +224,7 @@ def list_connections(request, workspace_id: UUID):
 
 @router.post("/workspaces/{uuid:workspace_id}/connections/{provider}/authorize", response=AuthorizeOut)
 def authorize(request, workspace_id: UUID, provider: str):
-    try:
-        registry.get(provider)
-    except LookupError:
-        raise HttpError(404, "Unknown provider.") from None
+    _connector_or_404(provider)
     try:
         url = oauth.authorization_url(request.session, workspace_id=workspace_id, provider=provider)
     except oauth.ConnectionFlowError as error:
@@ -231,10 +235,7 @@ def authorize(request, workspace_id: UUID, provider: str):
 @router.post("/workspaces/{uuid:workspace_id}/connections/{provider}/enable", response=ConnectionOut)
 def enable(request, workspace_id: UUID, provider: str):
     """Adds a service this instance runs itself (the Web) to the user's connections. Allows nothing yet."""
-    try:
-        registry.get(provider)
-    except LookupError:
-        raise HttpError(404, "Unknown provider.") from None
+    _connector_or_404(provider)
     try:
         connection = services.enable_builtin(
             workspace_id=workspace_id, owner_id=request.user.id, provider=provider
