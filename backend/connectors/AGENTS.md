@@ -77,7 +77,7 @@ A connector turns one provider's API into tools, and the permission executor aut
 - **Records name the resource the provider used.** For example, a created task carries the project Todoist actually put it in.
 - **Hide other objects in text.** Text read from the provider must not reveal objects the agent may not read (titles in links, mentions, quoted content). Text written must not mention, notify, embed or link beyond the grant. See `notion/markdown.py`, `linear/markdown.py` and `slack/mrkdwn.py`.
 - **Shared text helpers.** Use `text.py`:
-  - the field validators `no_controls`, `no_controls_or_del` and `single_line`;
+  - the field validators: `single_line` for names, titles, paths and queries, and `plain_text` for bodies and markdown (it also allows tab and newlines). Give new free-text fields one of the two;
   - `decoded`, which undoes encodings before an address is checked;
   - `truncate`, for long fields, which are then flagged as `<field>_truncated`.
 - **Limits.**

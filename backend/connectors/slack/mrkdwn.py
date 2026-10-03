@@ -14,7 +14,7 @@ next to the post.
 import re
 from urllib.parse import urlsplit
 
-from connectors.text import CONTROL, decoded
+from connectors.text import decoded, plain_text
 
 # A control sequence with a label; the label may hold anything but angle brackets.
 _LABELLED = re.compile(r"<([^<>|]*)\|([^<>]*)>")
@@ -45,8 +45,7 @@ def redact(text: str | None) -> str | None:
 
 def check_written(text: str) -> str:
     """Refuses text that would do more than add words to a channel. Used as a field validator."""
-    if CONTROL.search(text):
-        raise ValueError("must not contain control characters")
+    plain_text(text)
     if _SLACK_NAME.search(decoded(text)):
         raise ValueError(
             "must not link to Slack: Slack would show the linked message, which may be in another channel"

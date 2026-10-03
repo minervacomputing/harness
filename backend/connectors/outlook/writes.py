@@ -26,16 +26,10 @@ from connectors.outlook.mailbox import (
     confirm_message,
     locate,
 )
-from connectors.text import no_controls_or_del
+from connectors.text import plain_text, single_line
 
 MAX_RECIPIENTS = 10
 MAX_BODY = 20_000
-
-
-def _plain_text(value: str) -> str:
-    if any((ord(c) < 0x20 and c not in "\n\t") or ord(c) == 0x7F for c in value):
-        raise ValueError("must not contain control characters other than newlines and tabs")
-    return value
 
 
 Address = Annotated[
@@ -44,7 +38,7 @@ Address = Annotated[
 Body = Annotated[
     str,
     Field(min_length=1, max_length=MAX_BODY, description="Plain text; sent as it is, not as HTML."),
-    AfterValidator(_plain_text),
+    AfterValidator(plain_text),
 ]
 
 
@@ -69,7 +63,7 @@ class SendMessage(OperationInput):
     to: Annotated[list[Address], Field(min_length=1, max_length=MAX_RECIPIENTS)]
     cc: Annotated[list[Address], Field(max_length=MAX_RECIPIENTS)] = []
     bcc: Annotated[list[Address], Field(max_length=MAX_RECIPIENTS)] = []
-    subject: Annotated[str, Field(min_length=1, max_length=255), AfterValidator(no_controls_or_del)]
+    subject: Annotated[str, Field(min_length=1, max_length=255), AfterValidator(single_line)]
     body: Body
 
     @model_validator(mode="after")

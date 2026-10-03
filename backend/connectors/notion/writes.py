@@ -31,24 +31,18 @@ from connectors.notion.pages import (
     page_resource,
 )
 from connectors.notion.properties import readable, writable
-from connectors.text import no_controls
+from connectors.text import plain_text, single_line
 
 MAX_MARKDOWN = 100_000
 MAX_COMMENT = 2000
 MAX_PROPERTIES = 50
 
 
-def _no_nul(value: str) -> str:
-    if "\x00" in value:
-        raise ValueError("must not contain NUL characters")
-    return value
-
-
-Title = Annotated[str, Field(min_length=1, max_length=2000), AfterValidator(no_controls)]
+Title = Annotated[str, Field(min_length=1, max_length=2000), AfterValidator(single_line)]
 Markdown = Annotated[
     str,
     Field(min_length=1, max_length=MAX_MARKDOWN, description="Notion-flavored markdown."),
-    AfterValidator(_no_nul),
+    AfterValidator(plain_text),
     AfterValidator(page_text.check_written),
 ]
 Properties = Annotated[
@@ -206,7 +200,7 @@ class Edit(OperationInput):
     new: Annotated[
         str,
         Field(max_length=MAX_MARKDOWN, description="Its replacement, in Notion-flavored markdown."),
-        AfterValidator(_no_nul),
+        AfterValidator(plain_text),
         AfterValidator(page_text.check_written),
     ]
 
@@ -308,7 +302,7 @@ class AddComment(OperationInput):
     text: Annotated[
         str,
         Field(min_length=1, max_length=MAX_COMMENT, description="Inline Notion-flavored markdown."),
-        AfterValidator(_no_nul),
+        AfterValidator(plain_text),
         AfterValidator(page_text.check_written),
     ]
 

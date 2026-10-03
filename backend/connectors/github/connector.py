@@ -59,7 +59,7 @@ from connectors.github.client import (
     Pull,
     Repository,
 )
-from connectors.text import CONTROL, single_line, truncate
+from connectors.text import plain_text, single_line, truncate
 from minerva.config import config
 
 REPOSITORY = "repository"
@@ -75,12 +75,6 @@ MAX_DISCOVERY_PAGES = 10
 MAX_DESCRIBE_CONCURRENCY = 8
 
 
-def _clean_text(value: str) -> str:
-    if CONTROL.search(value):
-        raise ValueError("must not contain control characters")
-    return value
-
-
 def _repository_name(value: str) -> str:
     if value.partition("/")[2] in {".", ".."}:
         raise ValueError('must be "owner/name"')
@@ -90,8 +84,8 @@ def _repository_name(value: str) -> str:
 def _path(value: str) -> str:
     if value == "":
         return value
-    parts = value.split("/")
-    if any(part in {"", ".", ".."} for part in parts) or CONTROL.search(value) or "\n" in value:
+    single_line(value)
+    if any(part in {"", ".", ".."} for part in value.split("/")):
         raise ValueError('must be a path inside the repository, like "docs/intro.md", or "" for the top')
     return value
 
@@ -596,7 +590,7 @@ WRITE_WARNING = (
 class CreateIssue(OperationInput):
     repository: RepositoryName
     title: Annotated[str, Field(min_length=1, max_length=256), AfterValidator(single_line)]
-    body: Annotated[str, Field(max_length=MAX_BODY), AfterValidator(_clean_text)] | None = None
+    body: Annotated[str, Field(max_length=MAX_BODY), AfterValidator(plain_text)] | None = None
 
 
 async def _prepare_create_issue(binding: Binding, data: CreateIssue) -> Prepared:
@@ -626,7 +620,7 @@ CREATE_ISSUE = Operation(
 class AddComment(OperationInput):
     repository: RepositoryName
     number: Annotated[int, Field(ge=1, le=10**9, description="The issue or pull request number.")]
-    body: Annotated[str, Field(min_length=1, max_length=MAX_BODY), AfterValidator(_clean_text)]
+    body: Annotated[str, Field(min_length=1, max_length=MAX_BODY), AfterValidator(plain_text)]
 
 
 async def _prepare_add_comment(binding: Binding, data: AddComment) -> Prepared:

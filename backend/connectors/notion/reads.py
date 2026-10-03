@@ -32,7 +32,7 @@ from connectors.notion.pages import (
     parent_id,
 )
 from connectors.notion.properties import check_filter, mentions_hidden, readable, schema
-from connectors.text import no_controls
+from connectors.text import single_line
 
 Cursor = Annotated[str, Field(max_length=1000)]
 
@@ -64,7 +64,7 @@ def _database_record(resource: Resource, database: Database, **extra: Any) -> Sc
 
 
 class Search(OperationInput):
-    text: Annotated[str, Field(max_length=200), AfterValidator(no_controls)] | None = None
+    text: Annotated[str, Field(max_length=200), AfterValidator(single_line)] | None = None
     limit: Annotated[int, Field(ge=1, le=50)] = 20
     cursor: Cursor | None = None
 

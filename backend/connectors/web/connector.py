@@ -35,7 +35,7 @@ from connectors.base import (
     ResourceKind,
     ScopedRecord,
 )
-from connectors.text import no_controls_or_del
+from connectors.text import single_line
 from connectors.web import sites
 from connectors.web.fetch import Fetcher, Moved
 from connectors.web.markdown import html_to_text
@@ -68,7 +68,7 @@ class Search(OperationInput):
     freshness: Literal["day", "week", "month", "year"] | None = None
     cursor: Annotated[str, Field(max_length=300)] | None = None
 
-    _plain_query = field_validator("query")(no_controls_or_del)
+    _plain_query = field_validator("query")(single_line)
 
 
 FRESHNESS = {"day": "pd", "week": "pw", "month": "pm", "year": "py"}

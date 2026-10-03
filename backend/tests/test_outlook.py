@@ -673,7 +673,7 @@ async def test_sending_needs_every_recipient(start, graph):
                 "to": ["Grace@Example.com"],
                 "cc": ["ada@partner.org"],
                 "subject": "Plans",
-                "body": "Hi <b>Grace</b>\n\tthanks",
+                "body": "Hi <b>Grace</b>\r\n\tthanks",
             },
         )
     )
@@ -688,7 +688,7 @@ async def test_sending_needs_every_recipient(start, graph):
     assert path == "/me/sendMail" and payload["saveToSentItems"] is True
     assert payload["message"] == {
         "subject": "Plans",
-        "body": {"contentType": "Text", "content": "Hi <b>Grace</b>\n\tthanks"},
+        "body": {"contentType": "Text", "content": "Hi <b>Grace</b>\r\n\tthanks"},
         "toRecipients": [{"emailAddress": {"address": "grace@example.com"}}],
         "ccRecipients": [{"emailAddress": {"address": "ada@partner.org"}}],
         "bccRecipients": [],

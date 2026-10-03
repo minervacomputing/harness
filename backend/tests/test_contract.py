@@ -24,7 +24,7 @@ from connections import oauth as connection_oauth
 from connections import services as connection_services
 from connections.models import Connection
 from connectors import executor as executor_module
-from connectors import registry
+from connectors import registry, text
 from connectors.base import (
     ACCOUNT_KIND,
     ActionSpec,
@@ -133,6 +133,21 @@ class Variant(MixedConnector):
 
 def variant(name="variant", **attrs) -> MixedConnector:
     return type(name, (Variant,), attrs)(FakeServer())
+
+
+def test_free_text_validators_draw_one_line_for_control_characters():
+    for code in range(0x80):
+        char = chr(code)
+        control = code < 0x20 or code == 0x7F
+        for check, allowed in (
+            (text.single_line, not control),
+            (text.plain_text, not control or char in "\t\n\r"),
+        ):
+            if allowed:
+                assert check(f"a{char}b") == f"a{char}b"
+            else:
+                with pytest.raises(ValueError):
+                    check(f"a{char}b")
 
 
 def test_declared_connectors_are_valid():

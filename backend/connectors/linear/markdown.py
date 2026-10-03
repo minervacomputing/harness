@@ -15,7 +15,7 @@ another site, nor use HTML that loads or links anything.
 
 import re
 
-from connectors.text import decoded
+from connectors.text import decoded, plain_text
 
 MAX_ISSUE_LINKS = 10
 
@@ -79,8 +79,7 @@ def redact(text: str | None) -> str | None:
 
 def check_written(text: str) -> str:
     """Refuses text that would do more than add words to Linear. Used as a field validator."""
-    if "\x00" in text:
-        raise ValueError("must not contain NUL characters")
+    plain_text(text)
     rest = _IMAGE.sub("", text)
     if len(_ANY_LINEAR.findall(decoded(rest))) > len(_ANY_LINEAR.findall(rest)):
         raise ValueError("must not write Linear addresses in an encoded form")

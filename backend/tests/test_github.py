@@ -344,6 +344,8 @@ async def test_reading_files(start, github):
         {"path": "/etc/passwd"},
         {"path": "a//b"},
         {"path": "a/./b"},
+        {"path": "a\tb"},
+        {"path": "a\rb"},
         {"path": "README.md", "ref": "../../x"},
         {"path": "README.md", "ref": "-flag"},
         {"repository": "acme/.."},

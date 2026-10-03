@@ -35,7 +35,7 @@ from connectors.base import (
 )
 from connectors.google import oauth as google_oauth
 from connectors.google_drive.client import FOLDER, SHORTCUT, DriveFile, GoogleDriveClient, quoted
-from connectors.text import no_controls
+from connectors.text import single_line
 
 FILE = "file"
 READ_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
@@ -276,7 +276,7 @@ LIST_FOLDER = Operation(
 
 
 class SearchFiles(OperationInput):
-    text: Annotated[str, Field(min_length=1, max_length=200), AfterValidator(no_controls)]
+    text: Annotated[str, Field(min_length=1, max_length=200), AfterValidator(single_line)]
     limit: Annotated[int, Field(ge=1, le=50)] = 20
     cursor: Cursor | None = None
 
@@ -411,7 +411,7 @@ READ_FILE = Operation(
 
 class CreateFile(OperationInput):
     folder_id: FolderId
-    name: Annotated[str, Field(min_length=1, max_length=200), AfterValidator(no_controls)]
+    name: Annotated[str, Field(min_length=1, max_length=200), AfterValidator(single_line)]
     content: Annotated[str, Field(max_length=MAX_UPLOAD_BYTES), AfterValidator(_upload_size)]
     as_document: Annotated[
         bool, Field(description="Convert the text into a Google Doc instead of a plain text file.")
