@@ -1,7 +1,7 @@
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict
 
 from connectors.http import ProviderHTTP
 
@@ -61,37 +61,30 @@ class TodoistClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
-    async def _request[M: BaseModel](self, model: type[M], method: str, path: str, **kwargs: Any) -> M:
-        data = await self._http.json(method, path, **kwargs)
-        try:
-            return model.model_validate(data)
-        except ValidationError as error:
-            raise self._http.unexpected() from error
-
     async def user(self) -> TodoistUser:
-        return await self._request(TodoistUser, "GET", "/user")
+        return await self._http.parsed(TodoistUser, "GET", "/user")
 
     async def projects(self, cursor: str | None = None, limit: int = 200) -> Page[TodoistProject]:
         params: dict[str, Any] = {"limit": limit}
         if cursor:
             params["cursor"] = cursor
-        return await self._request(Page[TodoistProject], "GET", "/projects", params=params)
+        return await self._http.parsed(Page[TodoistProject], "GET", "/projects", params=params)
 
     async def tasks(self, project_id: str, *, cursor: str | None, limit: int) -> Page[TodoistTask]:
         params: dict[str, Any] = {"project_id": project_id, "limit": limit}
         if cursor:
             params["cursor"] = cursor
-        return await self._request(Page[TodoistTask], "GET", "/tasks", params=params)
+        return await self._http.parsed(Page[TodoistTask], "GET", "/tasks", params=params)
 
     async def filter_tasks(self, query: str, *, cursor: str | None, limit: int) -> Page[TodoistTask]:
         params: dict[str, Any] = {"query": query, "limit": limit}
         if cursor:
             params["cursor"] = cursor
-        return await self._request(Page[TodoistTask], "GET", "/tasks/filter", params=params)
+        return await self._http.parsed(Page[TodoistTask], "GET", "/tasks/filter", params=params)
 
     async def task(self, task_id: str) -> TodoistTask:
-        return await self._request(TodoistTask, "GET", f"/tasks/{task_id}")
+        return await self._http.parsed(TodoistTask, "GET", f"/tasks/{task_id}")
 
     async def create_task(self, project_id: str, content: str) -> TodoistTask:
         payload = {"project_id": project_id, "content": content}
-        return await self._request(TodoistTask, "POST", "/tasks", json=payload)
+        return await self._http.parsed(TodoistTask, "POST", "/tasks", json=payload)

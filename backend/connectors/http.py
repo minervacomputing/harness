@@ -14,6 +14,7 @@ from enum import StrEnum
 from typing import Any
 
 import httpx
+from pydantic import BaseModel, ValidationError
 
 from connectors.base import OperationError
 
@@ -164,6 +165,14 @@ class ProviderHTTP:
         try:
             return response.json()
         except ValueError as error:
+            raise self.unexpected() from error
+
+    async def parsed[M: BaseModel](self, model: type[M], method: str, path: str, **kwargs: Any) -> M:
+        """A JSON response read as `model`; one that does not fit is an unexpected response."""
+        data = await self.json(method, path, **kwargs)
+        try:
+            return model.model_validate(data)
+        except ValidationError as error:
             raise self.unexpected() from error
 
     async def download(self, path: str, *, limit: int, **kwargs: Any) -> bytes:

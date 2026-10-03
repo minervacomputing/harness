@@ -3,7 +3,7 @@ import secrets
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
 from connectors.base import OperationError
@@ -103,22 +103,15 @@ class GoogleDriveClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
-    async def _request[M: BaseModel](self, model: type[M], method: str, path: str, **kwargs: Any) -> M:
-        data = await self._http.json(method, path, **kwargs)
-        try:
-            return model.model_validate(data)
-        except ValidationError as error:
-            raise self._http.unexpected() from error
-
     async def user(self) -> GoogleUser:
-        return await self._request(GoogleUser, "GET", USERINFO_URL)
+        return await self._http.parsed(GoogleUser, "GET", USERINFO_URL)
 
     async def root_id(self) -> str:
-        return (await self._request(RootId, "GET", "/files/root", params={"fields": "id"})).id
+        return (await self._http.parsed(RootId, "GET", "/files/root", params={"fields": "id"})).id
 
     async def file(self, file_id: str) -> DriveFile:
         params = {**ALL_DRIVES, "fields": FILE_FIELDS}
-        return await self._request(DriveFile, "GET", f"/files/{segment(file_id)}", params=params)
+        return await self._http.parsed(DriveFile, "GET", f"/files/{segment(file_id)}", params=params)
 
     async def files(
         self,
@@ -145,16 +138,16 @@ class GoogleDriveClient:
             params["orderBy"] = order_by
         if page_token:
             params["pageToken"] = page_token
-        return await self._request(FilePage, "GET", "/files", params=params)
+        return await self._http.parsed(FilePage, "GET", "/files", params=params)
 
     async def drives(self, page_token: str | None) -> DrivePage:
         params: dict[str, Any] = {"pageSize": 100}
         if page_token:
             params["pageToken"] = page_token
-        return await self._request(DrivePage, "GET", "/drives", params=params)
+        return await self._http.parsed(DrivePage, "GET", "/drives", params=params)
 
     async def drive(self, drive_id: str) -> SharedDrive:
-        return await self._request(SharedDrive, "GET", f"/drives/{segment(drive_id)}")
+        return await self._http.parsed(SharedDrive, "GET", f"/drives/{segment(drive_id)}")
 
     async def export(self, file_id: str, mime_type: str, *, limit: int) -> bytes:
         return await self._http.download(
@@ -180,7 +173,7 @@ class GoogleDriveClient:
                 f"\r\n--{boundary}--".encode(),
             ]
         )
-        return await self._request(
+        return await self._http.parsed(
             DriveFile,
             "POST",
             self._upload_url,

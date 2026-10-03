@@ -205,27 +205,20 @@ class NotionClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
-    async def _request[M: BaseModel](self, model: type[M], method: str, path: str, **kwargs: Any) -> M:
-        data = await self._http.json(method, path, **kwargs)
-        try:
-            return model.model_validate(data)
-        except ValidationError as error:
-            raise self._http.unexpected() from error
-
     async def me(self) -> BotUser:
-        return await self._request(BotUser, "GET", "/users/me")
+        return await self._http.parsed(BotUser, "GET", "/users/me")
 
     async def page(self, page_id: str) -> Page:
-        return await self._request(Page, "GET", f"/pages/{page_id}")
+        return await self._http.parsed(Page, "GET", f"/pages/{page_id}")
 
     async def database(self, database_id: str) -> Database:
-        return await self._request(Database, "GET", f"/databases/{database_id}")
+        return await self._http.parsed(Database, "GET", f"/databases/{database_id}")
 
     async def data_source(self, data_source_id: str) -> DataSource:
-        return await self._request(DataSource, "GET", f"/data_sources/{data_source_id}")
+        return await self._http.parsed(DataSource, "GET", f"/data_sources/{data_source_id}")
 
     async def block(self, block_id: str) -> Block:
-        return await self._request(Block, "GET", f"/blocks/{block_id}")
+        return await self._http.parsed(Block, "GET", f"/blocks/{block_id}")
 
     async def markdown(self, page_id: str) -> PageMarkdown:
         response = await self._http.bounded(
@@ -248,7 +241,7 @@ class NotionClient:
             body["start_cursor"] = cursor
         if only:
             body["filter"] = {"property": "object", "value": only}
-        return await self._request(SearchPage, "POST", "/search", json=body, mutating=False)
+        return await self._http.parsed(SearchPage, "POST", "/search", json=body, mutating=False)
 
     async def query(
         self,
@@ -266,7 +259,7 @@ class NotionClient:
             body["filter"] = filter
         if sorts:
             body["sorts"] = sorts
-        return await self._request(
+        return await self._http.parsed(
             SearchPage, "POST", f"/data_sources/{data_source_id}/query", json=body, mutating=False
         )
 
@@ -274,18 +267,18 @@ class NotionClient:
         params = {"block_id": block_id, "page_size": "100"}
         if cursor:
             params["start_cursor"] = cursor
-        return await self._request(CommentPage, "GET", "/comments", params=params)
+        return await self._http.parsed(CommentPage, "GET", "/comments", params=params)
 
     # Writes: each operation sends exactly one.
 
     async def create_page(self, body: dict[str, Any]) -> Page:
-        return await self._request(Page, "POST", "/pages", json=body)
+        return await self._http.parsed(Page, "POST", "/pages", json=body)
 
     async def update_page(self, page_id: str, body: dict[str, Any]) -> Page:
-        return await self._request(Page, "PATCH", f"/pages/{page_id}", json=body)
+        return await self._http.parsed(Page, "PATCH", f"/pages/{page_id}", json=body)
 
     async def update_markdown(self, page_id: str, body: dict[str, Any]) -> PageMarkdown:
-        return await self._request(PageMarkdown, "PATCH", f"/pages/{page_id}/markdown", json=body)
+        return await self._http.parsed(PageMarkdown, "PATCH", f"/pages/{page_id}/markdown", json=body)
 
     async def add_comment(self, body: dict[str, Any]) -> Comment:
-        return await self._request(Comment, "POST", "/comments", json=body)
+        return await self._http.parsed(Comment, "POST", "/comments", json=body)

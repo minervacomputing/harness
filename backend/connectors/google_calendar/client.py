@@ -1,7 +1,7 @@
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
 from connectors.google import USERINFO_URL, GoogleUser, forbidden, segment
@@ -82,25 +82,20 @@ class GoogleCalendarClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
-    async def _request[M: BaseModel](self, model: type[M], method: str, path: str, **kwargs: Any) -> M:
-        data = await self._http.json(method, path, **kwargs)
-        try:
-            return model.model_validate(data)
-        except ValidationError as error:
-            raise self._http.unexpected() from error
-
     async def user(self) -> GoogleUser:
-        return await self._request(GoogleUser, "GET", USERINFO_URL)
+        return await self._http.parsed(GoogleUser, "GET", USERINFO_URL)
 
     async def calendars(self, page_token: str | None = None) -> CalendarPage:
         # Calendars shown only as free/busy cannot be read, so they are never offered.
         params: dict[str, Any] = {"minAccessRole": "reader", "maxResults": 250}
         if page_token:
             params["pageToken"] = page_token
-        return await self._request(CalendarPage, "GET", "/users/me/calendarList", params=params)
+        return await self._http.parsed(CalendarPage, "GET", "/users/me/calendarList", params=params)
 
     async def calendar(self, calendar_id: str) -> GoogleCalendar:
-        return await self._request(GoogleCalendar, "GET", f"/users/me/calendarList/{segment(calendar_id)}")
+        return await self._http.parsed(
+            GoogleCalendar, "GET", f"/users/me/calendarList/{segment(calendar_id)}"
+        )
 
     async def events(
         self,
@@ -122,17 +117,17 @@ class GoogleCalendarClient:
             params["q"] = query
         if page_token:
             params["pageToken"] = page_token
-        return await self._request(
+        return await self._http.parsed(
             EventPage, "GET", f"/calendars/{segment(calendar_id)}/events", params=params
         )
 
     async def event(self, calendar_id: str, event_id: str) -> GoogleEvent:
         path = f"/calendars/{segment(calendar_id)}/events/{segment(event_id)}"
-        return await self._request(GoogleEvent, "GET", path)
+        return await self._http.parsed(GoogleEvent, "GET", path)
 
     async def create_event(self, calendar_id: str, body: dict[str, Any]) -> GoogleEvent:
         # Never notify anyone: the event has no attendees, and sendUpdates=none keeps it that way.
-        return await self._request(
+        return await self._http.parsed(
             GoogleEvent,
             "POST",
             f"/calendars/{segment(calendar_id)}/events",
