@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from connector_runs import ceiling, refusal
+from connector_runs import FLOW, ceiling, refusal
 
 from connections import credentials as connection_credentials
 from connections import oauth as connection_oauth
@@ -376,22 +376,6 @@ def test_outlook_scopes_follow_the_allowed_actions(monkeypatch):
     assert needed(connector, frozenset({"Mail.ReadBasic"}), {"read"}) == ["read"]
 
 
-@pytest.fixture
-def token_endpoint(monkeypatch):
-    sent: list[dict] = []
-    responses: list[httpx.Response] = []
-    creds = ClientCredentials("id", "secret", "https://x/cb")
-    monkeypatch.setattr(connection_oauth, "client_credentials", lambda connector: creds)
-    monkeypatch.setattr(connection_oauth, "issuing_client", lambda connector, client_id: creds)
-
-    def post(url, **kwargs):
-        sent.append({"url": url, **kwargs})
-        return responses.pop(0)
-
-    monkeypatch.setattr(connection_oauth.httpx, "post", post)
-    return sent, responses
-
-
 def test_outlook_tokens_carry_their_scopes(token_endpoint):
     sent, responses = token_endpoint
     responses.append(
@@ -406,9 +390,7 @@ def test_outlook_tokens_carry_their_scopes(token_endpoint):
             },
         )
     )
-    tokens = connection_oauth.exchange_code(
-        registry.get("outlook"), code="c", flow={"client_id": "id", "verifier": "v"}
-    )
+    tokens = connection_oauth.exchange_code(registry.get("outlook"), code="c", flow=FLOW)
     assert tokens["scopes"] == ["Mail.Read", "Mail.Send", "User.Read", "email", "openid", "profile"]
     assert tokens["expires_at"] > time.time()
     [request] = sent

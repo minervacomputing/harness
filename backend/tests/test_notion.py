@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from connector_runs import ceiling, refusal
+from connector_runs import FLOW, ceiling, refusal
 
 from connections import oauth as connection_oauth
 from connections.oauth import ClientCredentials
@@ -546,25 +546,6 @@ async def test_account_discovery_and_names(notion):
     assert bad.value.code == "INVALID_CURSOR"
     names = await connector.describe(client, "page", [ID["home"], ID["projects"], ID["ghost"], "*"])
     assert names == {ID["home"]: "Home", ID["projects"]: "Projects (database)"}
-
-
-FLOW = {"client_id": "id", "verifier": "v"}
-
-
-@pytest.fixture
-def token_endpoint(monkeypatch):
-    sent: list[dict] = []
-    responses: list[httpx.Response] = []
-    creds = ClientCredentials("id", "secret", "https://x/cb")
-    monkeypatch.setattr(connection_oauth, "client_credentials", lambda connector: creds)
-    monkeypatch.setattr(connection_oauth, "issuing_client", lambda connector, client_id: creds)
-
-    def post(url, **kwargs):
-        sent.append({"url": url, **kwargs})
-        return responses.pop(0)
-
-    monkeypatch.setattr(connection_oauth.httpx, "post", post)
-    return sent, responses
 
 
 def test_notion_token_requests_use_basic_auth_and_json(token_endpoint):

@@ -1,5 +1,5 @@
-"""Helpers for connector tests: grants, ceilings, claimed runs and refusals. The `connector_run` fixture in conftest.py
-is built on them."""
+"""Helpers for connector tests: grants, ceilings, claimed runs and refusals. The `connector_run` and
+`token_endpoint` fixtures are in conftest.py."""
 
 import pytest
 from asgiref.sync import sync_to_async
@@ -13,6 +13,9 @@ from permissions.models import Grant, PermissionLayer
 from permissions.services import GrantChange, apply_grant_changes, user_layer
 from runs import services
 from workspaces.tenancy import workspace_scope
+
+# The state of a flow started with the `token_endpoint` fixture's client.
+FLOW = {"client_id": "id", "verifier": "v"}
 
 
 def replace_grants(user, connection: Connection, grants: dict[tuple[str, str], tuple[str, ...]]) -> None:

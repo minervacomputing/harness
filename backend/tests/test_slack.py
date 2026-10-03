@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from connector_runs import refusal
+from connector_runs import FLOW, refusal
 
 from connections import credentials as connection_credentials
 from connections import oauth as connection_oauth
@@ -352,25 +352,6 @@ async def test_only_workspace_bot_installs_connect(slack, change):
     with pytest.raises(OperationError) as refused:
         await SlackConnector().account(slack.client())
     assert refused.value.code == "UNSUPPORTED_ACCOUNT"
-
-
-FLOW = {"client_id": "id", "verifier": "v"}
-
-
-@pytest.fixture
-def token_endpoint(monkeypatch):
-    sent: list[dict] = []
-    responses: list[httpx.Response] = []
-    creds = ClientCredentials("id", "secret", "https://x/cb")
-    monkeypatch.setattr(connection_oauth, "client_credentials", lambda connector: creds)
-    monkeypatch.setattr(connection_oauth, "issuing_client", lambda connector, client_id: creds)
-
-    def post(url, **kwargs):
-        sent.append({"url": url, **kwargs})
-        return responses.pop(0)
-
-    monkeypatch.setattr(connection_oauth.httpx, "post", post)
-    return sent, responses
 
 
 def test_slack_tokens_carry_their_scopes(token_endpoint):

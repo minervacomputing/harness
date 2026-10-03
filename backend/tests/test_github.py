@@ -6,12 +6,12 @@ import time
 
 import httpx
 import pytest
-from connector_runs import ceiling, refusal
+from connector_runs import FLOW, ceiling, refusal
 
 from connections import credentials as connection_credentials
 from connections import oauth as connection_oauth
 from connections.models import Connection
-from connections.oauth import ClientCredentials, ConnectionFlowError
+from connections.oauth import ConnectionFlowError
 from connectors import registry
 from connectors.base import OperationError
 from connectors.github import client as client_module
@@ -412,25 +412,6 @@ async def test_rate_limits(start, github, response):
         await refusal(executor, "github_get_repository", {"repository": "acme/app"})
         == "PROVIDER_RATE_LIMITED"
     )
-
-
-FLOW = {"client_id": "id", "verifier": "v"}
-
-
-@pytest.fixture
-def token_endpoint(monkeypatch):
-    sent: list[dict] = []
-    responses: list[httpx.Response] = []
-    creds = ClientCredentials("id", "secret", "https://x/cb")
-    monkeypatch.setattr(connection_oauth, "client_credentials", lambda connector: creds)
-    monkeypatch.setattr(connection_oauth, "issuing_client", lambda connector, client_id: creds)
-
-    def post(url, **kwargs):
-        sent.append({"url": url, **kwargs})
-        return responses.pop(0)
-
-    monkeypatch.setattr(connection_oauth.httpx, "post", post)
-    return sent, responses
 
 
 def test_github_token_responses(token_endpoint):

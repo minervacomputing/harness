@@ -9,8 +9,10 @@ from django.test import Client
 
 from accounts.models import User
 from agents.models import Agent
+from connections import oauth as connection_oauth
 from connections import services as connection_services
 from connections.models import Connection
+from connections.oauth import ClientCredentials
 from connectors import registry
 from connectors.base import Builtin
 from connectors.executor import Executor
@@ -179,3 +181,28 @@ def connector_run(scoped, user):
         return claimed_run(scoped, user)
 
     return sync_to_async(start)
+
+
+@pytest.fixture
+def token_endpoint(monkeypatch):
+    """Every connector's token endpoint, as client "id" (see connector_runs.FLOW).
+
+    Returns (sent, responses): each POST is recorded in `sent` and answered with the next of `responses`.
+    Tokens recorded as issued by another client have no client to refresh them.
+    """
+    sent: list[dict] = []
+    responses: list[httpx.Response] = []
+    creds = ClientCredentials("id", "secret", "https://x/cb")
+    monkeypatch.setattr(connection_oauth, "client_credentials", lambda connector: creds)
+    monkeypatch.setattr(
+        connection_oauth,
+        "issuing_client",
+        lambda connector, client_id: creds if client_id in (None, "id") else None,
+    )
+
+    def post(url, **kwargs):
+        sent.append({"url": url, **kwargs})
+        return responses.pop(0)
+
+    monkeypatch.setattr(connection_oauth.httpx, "post", post)
+    return sent, responses
