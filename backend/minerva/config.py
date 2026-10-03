@@ -88,6 +88,9 @@ class Config(BaseSettings):
     # An Intercom app with OAuth, from Intercom's Developer Hub. Empty: Intercom is not offered.
     intercom_client_id: str | None = None
     intercom_client_secret: SecretStr | None = None
+    # A Xero web app (OAuth 2.0 auth code), from developer.xero.com. Empty: Xero is not offered.
+    xero_client_id: str | None = None
+    xero_client_secret: SecretStr | None = None
     # Brave Search API key for the Web connector's search; without it, agents can only open pages.
     brave_search_api_key: SecretStr | None = None
 

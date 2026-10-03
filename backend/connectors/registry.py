@@ -171,6 +171,7 @@ def _declared() -> list[Connector]:
     from connectors.teams.connector import TeamsConnector
     from connectors.todoist.connector import TodoistConnector
     from connectors.web.connector import WebConnector
+    from connectors.xero.connector import XeroConnector
 
     return [
         TodoistConnector(),
@@ -190,6 +191,7 @@ def _declared() -> list[Connector]:
         JiraConnector(),
         ConfluenceConnector(),
         IntercomConnector(),
+        XeroConnector(),
         WebConnector(),
     ]
 

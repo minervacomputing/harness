@@ -168,6 +168,12 @@ Create an app in Intercom's Developer Hub (<https://app.intercom.com/a/apps/_/de
 
 Click **Connections → Connect Intercom** and authorize the app for your workspace. Then choose per team inbox, or for conversations no team is assigned to, what agents may do: read conversations, add internal notes and reply to customers. Agents act as you; replies reach the customer by email or the Messenger. Conversations move between inboxes when they are reassigned, so one reassigned at the moment an agent writes can receive the write. To revoke access, remove the app from the workspace in Intercom's app settings.
 
+## Xero
+
+Create an app at <https://developer.xero.com/app/manage> as a **Web app** (authorization code flow), with the redirect URI `{site_url}/api/oauth/xero/callback`. Xero takes HTTPS redirect URIs, and `http://localhost` ones for testing. Set `MINERVA_XERO_CLIENT_ID` and `MINERVA_XERO_CLIENT_SECRET` from the app's **Configuration** page. Minerva asks for Xero's granular scopes: `accounting.invoices.read`, `accounting.contacts.read` and `accounting.settings.read` to read, and `accounting.invoices` once you allow drafting. Without the client, Xero is not offered.
+
+Click **Connections → Connect Xero**, sign in and pick the organisations Minerva may reach. Then choose per organisation (or for all of them, including ones added later) what agents may do: read invoices, bills and contacts, create draft sales invoices, and create draft bills. Drafts are never sent, approved or paid: a person approves them in Xero. To add an organisation, connect again and pick it; to remove one, disconnect it in Xero under **Settings → Connected apps**. Your role in each organisation still applies.
+
 ## The Web
 
 Click **Connections → Add Web**, then choose which sites agents may read and whether they may search. A site is an exact host (`docs.python.org`) or a domain with its subdomains (`*.python.org`).
