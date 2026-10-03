@@ -132,4 +132,5 @@ A connector turns one provider's API into tools, and the permission executor aut
 | `manage_link()` | `github` |
 | API key auth, a key replaced for the same account | `stripe` |
 | Amount limits as a hierarchical kind | `stripe` (`money`) |
+| Grants on collections only (merged records), search results read again | `hubspot` |
 | Split into `reads`/`writes` and a shared module | `notion`, `linear`, `outlook` |

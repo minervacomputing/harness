@@ -76,6 +76,9 @@ class Config(BaseSettings):
     # A Microsoft Entra app registration (Outlook). Empty: Outlook is not offered.
     microsoft_client_id: str | None = None
     microsoft_client_secret: SecretStr | None = None
+    # A HubSpot public app (developer platform). Empty: HubSpot is not offered.
+    hubspot_client_id: str | None = None
+    hubspot_client_secret: SecretStr | None = None
     # Brave Search API key for the Web connector's search; without it, agents can only open pages.
     brave_search_api_key: SecretStr | None = None
 

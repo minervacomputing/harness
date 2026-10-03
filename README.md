@@ -126,6 +126,12 @@ Stripe connects with a restricted key, which each user creates; no operator setu
 
 Click **Connections → Stripe**, paste the key (it is checked with Stripe, stored encrypted and never shown again), then choose per customer (or for every customer) what agents may do: read, refund payments, and credit balances. Each refund or credit also needs its amount allowed: "Up to" a limit in a currency, or the whole currency. A workspace ceiling can deny "More than" a limit. **Replace key** swaps in a new key for the same account.
 
+## HubSpot
+
+Create a public app on HubSpot's developer platform: with the HubSpot CLI, run `hs project create` (an app with OAuth authentication and marketplace distribution), then in `app-hsmeta.json` set `auth.redirectUrls` to `{site_url}/api/oauth/hubspot/callback` (for example `http://localhost:5173/api/oauth/hubspot/callback`) and `auth.requiredScopes` to `oauth`, `crm.objects.contacts.read`, `crm.objects.contacts.write`, `crm.objects.companies.read`, `crm.objects.deals.read` and `crm.objects.deals.write`, with no optional scopes. Run `hs project upload`, and set `MINERVA_HUBSPOT_CLIENT_ID` and `MINERVA_HUBSPOT_CLIENT_SECRET` from the app's **Auth** page. The app does not need to be listed in HubSpot's marketplace. Without the client, HubSpot is not offered.
+
+Click **Connections → Connect HubSpot**; only a Super Admin of the HubSpot account (or a user with Marketplace Access) can install the app. Then choose what agents may do with all contacts, all companies, all deals, or the deals of one pipeline: read, create contacts and deals, edit them, and log notes. Companies are never created or edited, but notes can be logged on them. HubSpot gives the app the same access whoever installed it, so Minerva's grants are the only limit within those scopes.
+
 ## The Web
 
 Click **Connections → Add Web**, then choose which sites agents may read and whether they may search. A site is an exact host (`docs.python.org`) or a domain with its subdomains (`*.python.org`).

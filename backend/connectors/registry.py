@@ -157,6 +157,7 @@ def _declared() -> list[Connector]:
     from connectors.gmail.connector import GmailConnector
     from connectors.google_calendar.connector import GoogleCalendarConnector
     from connectors.google_drive.connector import GoogleDriveConnector
+    from connectors.hubspot.connector import HubSpotConnector
     from connectors.linear.connector import LinearConnector
     from connectors.notion.connector import NotionConnector
     from connectors.outlook.connector import OutlookConnector
@@ -176,6 +177,7 @@ def _declared() -> list[Connector]:
         OutlookConnector(),
         GmailConnector(),
         StripeConnector(),
+        HubSpotConnector(),
         WebConnector(),
     ]
 

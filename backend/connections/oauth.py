@@ -211,8 +211,9 @@ def pop_flow(session, *, provider: str, state: str | None) -> dict:
 
 
 def _scopes(body: dict) -> list[str] | None:
-    scope = body.get("scope")
-    # RFC 6749 separates scopes with spaces; GitHub uses commas. Older Linear apps return a list.
+    # HubSpot names the field `scopes`.
+    scope = body.get("scope", body.get("scopes"))
+    # RFC 6749 separates scopes with spaces; GitHub uses commas. Older Linear apps and HubSpot return a list.
     if isinstance(scope, list) and all(isinstance(item, str) for item in scope):
         scope = " ".join(scope)
     return sorted(set(scope.replace(",", " ").split())) if isinstance(scope, str) else None
