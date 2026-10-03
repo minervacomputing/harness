@@ -15,7 +15,7 @@ from django.utils import timezone
 from conversations.models import Conversation, Message
 from gateway import relay
 from gateway.body_limit import limit_body
-from gateway.mcp import RUN_SCOPE_KEY, call_tool, list_tools
+from gateway.mcp import RUN_SCOPE_KEY, call_tool, list_tools, mcp_app
 from models_access.chat import build_chat_payload
 from models_access.taps import ResponsesTap, StreamTap, StreamTooLarge
 from models_access.upstream import OpenAICompatibleProvider, Route, UpstreamResponse
@@ -760,6 +760,32 @@ async def test_django_answers_oversized_streamed_bodies_with_413():
     await limit_body(ASGIHandler(), 10)(scope, receive, send)
     assert [m["type"] for m in sent] == ["http.response.start", "http.response.body"]
     assert sent[0]["status"] == 413
+
+
+async def test_raw_asgi_refusals_are_json_errors():
+    async def answer(app, headers):
+        sent: list[dict] = []
+
+        async def receive():
+            return {"type": "http.request", "body": b"x" * 11}
+
+        async def send(message):
+            sent.append(message)
+
+        scope = {"type": "http", "method": "POST", "path": "/mcp", "headers": headers, "query_string": b""}
+        await app(scope, receive, send)
+        return sent
+
+    def expected(status, body):
+        headers = [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]
+        return [
+            {"type": "http.response.start", "status": status, "headers": headers},
+            {"type": "http.response.body", "body": body},
+        ]
+
+    too_large = await answer(limit_body(None, 10), [(b"content-length", b"11")])
+    assert too_large == expected(413, b'{"error": {"message": "The request is too large."}}')
+    assert await answer(mcp_app, []) == expected(401, b'{"error": {"message": "Inactive run credential."}}')
 
 
 async def test_only_event_streams_are_relayed(claimed, monkeypatch):

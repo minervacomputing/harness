@@ -18,6 +18,7 @@ from starlette.types import Receive, Scope, Send
 from connectors import registry
 from connectors.base import OperationError
 from connectors.executor import Executor, RunContext, public_error
+from gateway.asgi_json import send_error
 from gateway.auth import authenticate
 from runs import services
 from runs.models import Run, RunEvent
@@ -133,12 +134,4 @@ async def mcp_app(scope: Scope, receive: Receive, send: Send) -> None:
 
 
 async def _unauthorized(send: Send) -> None:
-    body = json.dumps({"error": {"message": "Inactive run credential."}}).encode()
-    await send(
-        {
-            "type": "http.response.start",
-            "status": 401,
-            "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
-        }
-    )
-    await send({"type": "http.response.body", "body": body})
+    await send_error(send, 401, "Inactive run credential.")

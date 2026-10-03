@@ -1,17 +1,13 @@
 """Refuses oversized request bodies before Django reads them. Django's ASGI handler buffers the whole body,
 unauthenticated, before any view or limit setting sees it."""
 
-import json
-
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-TOO_LARGE = json.dumps({"error": {"message": "The request is too large."}}).encode()
+from gateway.asgi_json import send_error
 
 
 async def _refuse(send: Send) -> None:
-    headers = [(b"content-type", b"application/json"), (b"content-length", str(len(TOO_LARGE)).encode())]
-    await send({"type": "http.response.start", "status": 413, "headers": headers})
-    await send({"type": "http.response.body", "body": TOO_LARGE})
+    await send_error(send, 413, "The request is too large.")
 
 
 def limit_body(app: ASGIApp, max_bytes: int) -> ASGIApp:
