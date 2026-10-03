@@ -69,7 +69,21 @@ Stopping a run revokes its token, so every later call from the worker is rejecte
 
 ## 4. Permissions
 
-**A grant is: connection + resource kind + resource + actions.** A resource may be `*`, meaning every resource of that kind, including new ones. For Todoist the kind is Project, the actions are Read and Create, and Create requires Read. For Google Calendar the kind is Calendar, with Read events and Create events. For Google Drive the kind is File (folders are files), with Read files and Create files; a grant on a folder covers everything inside it. For GitHub the kind is Repository, with Read (code, issues and pull requests) and Create (open issues and comment); grants use GitHub's numeric repository id, so they follow a repository through renames and transfers. For Notion the kind is Page or database, with Read, Comment, Create (pages inside it) and Edit, each requiring Read; a grant covers the pages inside, and a page whose place Notion does not show is blocked by any block on that action. For Linear the kind is Team, with Read, Comment, Create and Edit, each requiring Read; a grant covers the team's sub-teams, grants use Linear's team id, and tools name teams by key and issues by identifier. For Slack the kind is Channel, with Read, Reply (in threads) and Post (to the channel), each requiring Read; grants use Slack's channel id, and tools take a channel's name or id. For Outlook the kinds are Folder, with Read, and Recipient, with Send: Microsoft's read permission covers the whole mailbox, so the folder limits are Minerva's; a folder grant covers its subfolders and uses Graph's immutable folder id, and a recipient grant is an address or `*@domain` (that domain only, never a public suffix). For the Web the kinds are Site, with Read, and the connection itself, with Search: searching sends the query to Brave Search, so it is its own permission. Connector declarations are described in [ARCHITECTURE_DECISIONS.md, D8](ARCHITECTURE_DECISIONS.md#d8-connectors-and-the-permission-executor).
+**A grant is: connection + resource kind + resource + actions.** A resource may be `*`, meaning every resource of that kind, including new ones. Every action besides Read also requires Read on the same resource, except Outlook's Send and the Web's Search, which apply to their own kinds.
+
+| Connector | Kind (resource id) | Actions | Notes |
+|---|---|---|---|
+| Todoist | Project | Read, Create | |
+| Google Calendar | Calendar | Read events, Create events | |
+| Google Drive | File; folders are files | Read files, Create files | A folder grant covers everything inside it. |
+| GitHub | Repository (numeric id) | Read (code, issues, pull requests), Create (open issues, comment) | The id follows a repository through renames and transfers. |
+| Notion | Page or database | Read, Comment, Create (pages inside), Edit | A grant covers the pages inside; a page whose place Notion does not show is blocked by any block on that action. |
+| Linear | Team (team id) | Read, Comment, Create, Edit | A grant covers sub-teams; tools name teams by key and issues by identifier. |
+| Slack | Channel (channel id) | Read, Reply (in threads), Post | Tools take a channel's name or id. |
+| Outlook | Folder (immutable Graph id); Recipient | Folder: Read. Recipient: Send | Microsoft's read permission covers the whole mailbox, so folder limits are Minerva's; a folder grant covers subfolders. A recipient is an address or `*@domain` (that domain only, never a public suffix). |
+| Web | Site; the connection itself | Site: Read. Connection: Search | Searching sends the query to Brave Search, so it is its own permission. |
+
+Connector declarations are described in [ARCHITECTURE_DECISIONS.md, D8](ARCHITECTURE_DECISIONS.md#d8-connectors-and-the-permission-executor).
 
 Layers can only narrow, and deny wins:
 
