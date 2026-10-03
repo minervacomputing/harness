@@ -13,9 +13,16 @@ from connections.credentials import open_client
 from connections.models import Connection
 from connectors import registry
 from connectors.base import ACCOUNT_KIND, ApiKey, Builtin, Connector, DiscoveryItem, OperationError
-from permissions.models import Grant, PermissionLayer
 from permissions.policy import ANY
-from permissions.services import MAX_CHANGES, GrantChange, InvalidGrants, apply_grant_changes, check_changes
+from permissions.services import (
+    MAX_CHANGES,
+    GrantChange,
+    InvalidGrants,
+    allowed_actions,
+    apply_grant_changes,
+    check_changes,
+    user_grants,
+)
 from runs.services import revoke_active_runs
 from workspaces.auth import workspace_member
 
@@ -123,7 +130,7 @@ class AccessChangesIn(Schema):
 def _connection_out(connection: Connection, user_id: UUID) -> dict:
     connector = registry.get(connection.provider)
     needed = oauth.consent_needed(
-        connector, oauth.granted_scopes(connection), services.allowed_actions(connection, user_id)
+        connector, oauth.granted_scopes(connection), allowed_actions(connection, user_id)
     )
     manage = connector.manage_link()
     return {
@@ -177,15 +184,6 @@ def _provider_call(connection: Connection, call):
         return async_to_sync(run)()
     except OperationError as error:
         raise HttpError(502, error.message) from error
-
-
-def _user_grants(request, connection: Connection):
-    return Grant.objects.filter(
-        layer__level=PermissionLayer.Level.USER,
-        layer__user=request.user,
-        connection=connection,
-        effect=Grant.Effect.ALLOW,
-    ).order_by("resource_kind", "resource_id")
 
 
 def _auth(connector: Connector) -> str:
@@ -262,7 +260,7 @@ def reconnect(request, workspace_id: UUID, connection_id: UUID, payload: Consent
         raise HttpError(422, f"{connector.name} has no action {unknown[0]!r}.")
     try:
         # A shared connection serves every member who allows something on it.
-        allowed = services.allowed_actions(connection, request.user.id if connection.owner_id else None)
+        allowed = allowed_actions(connection, request.user.id if connection.owner_id else None)
         scopes = oauth.requested_scopes(connector, allowed | set(payload.actions))
         url = oauth.authorization_url(
             request.session,
@@ -303,7 +301,7 @@ def get_access(request, workspace_id: UUID, connection_id: UUID):
                 "name": g.resource_name or None,
                 "actions": g.actions,
             }
-            for g in _user_grants(request, connection)
+            for g in user_grants(connection, request.user.id)
             if connector.kind(g.resource_kind) is not None
         ],
     }
@@ -328,7 +326,8 @@ def list_access_resources(request, workspace_id: UUID, connection_id: UUID, quer
         )
         items, next_cursor = page.items, page.next_cursor
     granted = {
-        g.resource_id: g.actions for g in _user_grants(request, connection).filter(resource_kind=query.kind)
+        g.resource_id: g.actions
+        for g in user_grants(connection, request.user.id).filter(resource_kind=query.kind)
     }
     inherited = granted.get(ANY, [])
     return {

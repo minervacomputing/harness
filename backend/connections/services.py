@@ -9,18 +9,6 @@ from connections.models import Connection
 from connections.oauth import ConnectionFlowError
 from connectors import registry
 from connectors.base import ApiKey, Builtin, Connector, OperationError
-from permissions.models import Grant, PermissionLayer
-
-
-def allowed_actions(connection: Connection, user_id: UUID | None) -> set[str]:
-    """Every action the user (or, with None, any user) allows on some resource of the connection."""
-    grants = Grant.objects.filter(
-        layer__level=PermissionLayer.Level.USER, connection=connection, effect=Grant.Effect.ALLOW
-    )
-    if user_id is not None:
-        grants = grants.filter(layer__user_id=user_id)
-    grants = grants.values_list("actions", flat=True)
-    return {action for actions in grants for action in actions}
 
 
 def save_connection(

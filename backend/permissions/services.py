@@ -91,6 +91,22 @@ def user_layer(user_id: UUID) -> PermissionLayer:
     return layer
 
 
+def user_grants(connection: Connection, user_id: UUID | None):
+    """The allow grants users set on the connection: one user's, or with None, every user's."""
+    grants = Grant.objects.filter(
+        layer__level=PermissionLayer.Level.USER, connection=connection, effect=Grant.Effect.ALLOW
+    )
+    if user_id is not None:
+        grants = grants.filter(layer__user_id=user_id)
+    return grants.order_by("resource_kind", "resource_id")
+
+
+def allowed_actions(connection: Connection, user_id: UUID | None) -> set[str]:
+    """Every action the user (or, with None, any user) allows on some resource of the connection."""
+    grants = user_grants(connection, user_id).values_list("actions", flat=True)
+    return {action for actions in grants for action in actions}
+
+
 def _label(connector: Connector, action_id: str) -> str:
     action = connector.action(action_id)
     return action.label if action else action_id
