@@ -195,6 +195,8 @@ class OAuth2:
 @dataclass(frozen=True, slots=True)
 class ApiKey:
     label: str
+    # Where and how to create the key, shown where users paste it.
+    hint: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

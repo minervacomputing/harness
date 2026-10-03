@@ -132,6 +132,10 @@ export type ChangeIn = {
  */
 export type ConnectionOut = {
     /**
+     * Auth
+     */
+    auth: 'oauth2' | 'api_key' | 'builtin';
+    /**
      * Consent Needed
      */
     consent_needed: Array<string>;
@@ -185,6 +189,14 @@ export type ConnectorOut = {
      * Auth
      */
     auth: 'oauth2' | 'api_key' | 'builtin';
+    /**
+     * Key Hint
+     */
+    key_hint: string | null;
+    /**
+     * Key Label
+     */
+    key_label: string | null;
     /**
      * Kinds
      */
@@ -311,6 +323,16 @@ export type GrantOut = {
      * Name
      */
     name: string | null;
+};
+
+/**
+ * KeyIn
+ */
+export type KeyIn = {
+    /**
+     * Key
+     */
+    key: string;
 };
 
 /**
@@ -801,6 +823,31 @@ export type ListAccessResourcesResponses = {
 
 export type ListAccessResourcesResponse = ListAccessResourcesResponses[keyof ListAccessResourcesResponses];
 
+export type ReplaceKeyData = {
+    body: KeyIn;
+    path: {
+        /**
+         * Workspace Id
+         */
+        workspace_id: string;
+        /**
+         * Connection Id
+         */
+        connection_id: string;
+    };
+    query?: never;
+    url: '/api/workspaces/{workspace_id}/connections/{connection_id}/key';
+};
+
+export type ReplaceKeyResponses = {
+    /**
+     * OK
+     */
+    200: ConnectionOut;
+};
+
+export type ReplaceKeyResponse = ReplaceKeyResponses[keyof ReplaceKeyResponses];
+
 export type ReconnectData = {
     body: ConsentIn;
     path: {
@@ -875,6 +922,31 @@ export type EnableResponses = {
 };
 
 export type EnableResponse = EnableResponses[keyof EnableResponses];
+
+export type ConnectKeyData = {
+    body: KeyIn;
+    path: {
+        /**
+         * Workspace Id
+         */
+        workspace_id: string;
+        /**
+         * Provider
+         */
+        provider: string;
+    };
+    query?: never;
+    url: '/api/workspaces/{workspace_id}/connections/{provider}/key';
+};
+
+export type ConnectKeyResponses = {
+    /**
+     * OK
+     */
+    200: ConnectionOut;
+};
+
+export type ConnectKeyResponse = ConnectKeyResponses[keyof ConnectKeyResponses];
 
 export type ListConnectorsData = {
     body?: never;

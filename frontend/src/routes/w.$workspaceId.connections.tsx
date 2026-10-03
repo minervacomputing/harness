@@ -3,16 +3,19 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import {
   authorizeMutation,
+  connectKeyMutation,
   deleteConnectionMutation,
   enableMutation,
   listConnectionsOptions,
   listConnectorsOptions,
   reconnectMutation,
+  replaceKeyMutation,
 } from '@/api/@tanstack/react-query.gen'
 import type { ActionOut, ConnectionOut, KindOut } from '@/api/types.gen'
 import { AccessEditor, ACCOUNT, invalidateConnections } from '@/components/connections/access-editor'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { Alert, ErrorNote, Notice, PageHeader, Spinner, Status, type StatusTone } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
 
@@ -44,6 +47,13 @@ function ConnectionsPage() {
   const queryClient = useQueryClient()
   const enable = useMutation({
     ...enableMutation(),
+    onSuccess: connection => {
+      navigate({ to: '.', search: { connected: connection.id } })
+      invalidateConnections(queryClient, workspaceId)
+    },
+  })
+  const connectKey = useMutation({
+    ...connectKeyMutation(),
     onSuccess: connection => {
       navigate({ to: '.', search: { connected: connection.id } })
       invalidateConnections(queryClient, workspaceId)
@@ -88,12 +98,23 @@ function ConnectionsPage() {
                   >
                     {added.has(connector.slug) ? 'Added' : `Add ${connector.name}`}
                   </Button>}
+                  {connector.auth === 'api_key' && <KeyForm
+                    label={connector.key_label ?? 'API key'}
+                    hint={connector.key_hint}
+                    submit={`Connect ${connector.name}`}
+                    pending={connectKey.isPending && connectKey.variables?.path.provider === connector.slug}
+                    onSubmit={(key, done) => connectKey.mutate(
+                      { path: { ...path, provider: connector.slug }, body: { key } },
+                      { onSuccess: done },
+                    )}
+                  />}
                 </CardContent>
               </Card>
             ))}
           </div>
           {authorize.error && <ErrorNote>{errorMessage(authorize.error)}</ErrorNote>}
           {enable.error && <ErrorNote>{errorMessage(enable.error)}</ErrorNote>}
+          {connectKey.error && <ErrorNote>{errorMessage(connectKey.error)}</ErrorNote>}
         </section>
 
         <section className="space-y-3">
@@ -111,6 +132,40 @@ function ConnectionsPage() {
         </section>
       </div>
     </div>
+  )
+}
+
+/** A field for an API key. The key is cleared once it is accepted, and never shown again. */
+function KeyForm({ label, hint, submit, pending, onSubmit }: {
+  label: string
+  hint?: string | null
+  submit: string
+  pending: boolean
+  onSubmit: (key: string, done: () => void) => void
+}) {
+  const [key, setKey] = useState('')
+  return (
+    <form
+      className="space-y-2"
+      onSubmit={event => {
+        event.preventDefault()
+        if (key.trim()) onSubmit(key.trim(), () => setKey(''))
+      }}
+    >
+      <div className="flex gap-2">
+        <Input
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          aria-label={label}
+          placeholder={label}
+          value={key}
+          onChange={event => setKey(event.target.value)}
+        />
+        <Button type="submit" variant="outline" disabled={pending || !key.trim()}>{submit}</Button>
+      </div>
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+    </form>
   )
 }
 
@@ -134,6 +189,12 @@ function ConnectionCard({ workspaceId, connection, initiallyOpen }: { workspaceI
     ...reconnectMutation(),
     onSuccess: ({ url }) => window.location.assign(url),
   })
+  const replaceKey = useMutation({
+    ...replaceKeyMutation(),
+    onSuccess: () => invalidateConnections(queryClient, workspaceId),
+  })
+  const [replacing, setReplacing] = useState(false)
+  const keyed = connection.auth === 'api_key'
   const reconnectPath = { workspace_id: workspaceId, connection_id: connection.id }
   const actionLabels = useQuery({ ...listConnectorsOptions({ path: { workspace_id: workspaceId } }), enabled: connection.consent_needed.length > 0 })
   const neededLabels = connection.consent_needed.map(id =>
@@ -173,7 +234,26 @@ function ConnectionCard({ workspaceId, connection, initiallyOpen }: { workspaceI
         {open && connection.status === 'active'
           ? <AccessEditor workspaceId={workspaceId} connectionId={connection.id} />
           : connection.status === 'active' && <Button variant="outline" size="sm" onClick={() => setOpen(true)}>Choose access</Button>}
-        {connection.status !== 'active' && (
+        {keyed && (connection.status !== 'active' || replacing) && (
+          <div className="space-y-2">
+            {connection.status !== 'active' && (
+              <p className="text-xs text-muted-foreground">{connection.provider_name} stopped accepting this key. Paste a new key for the same account; your access choices are kept.</p>
+            )}
+            <KeyForm
+              label="New key"
+              submit="Replace key"
+              pending={replaceKey.isPending}
+              onSubmit={(key, done) => replaceKey.mutate(
+                { path: reconnectPath, body: { key } },
+                { onSuccess: () => { done(); setReplacing(false) } },
+              )}
+            />
+          </div>
+        )}
+        {keyed && connection.status === 'active' && !replacing && (
+          <Button variant="ghost" size="sm" onClick={() => setReplacing(true)}>Replace key</Button>
+        )}
+        {!keyed && connection.status !== 'active' && (
           <div className="flex items-center gap-3">
             <Button
               variant="outline"
@@ -187,6 +267,7 @@ function ConnectionCard({ workspaceId, connection, initiallyOpen }: { workspaceI
           </div>
         )}
         {reconnect.error && <ErrorNote>{errorMessage(reconnect.error)}</ErrorNote>}
+        {replaceKey.error && <ErrorNote>{errorMessage(replaceKey.error)}</ErrorNote>}
         {remove.error && <ErrorNote>{errorMessage(remove.error)}</ErrorNote>}
       </CardContent>
       <CardFooter className="justify-end">

@@ -56,12 +56,16 @@ class ConnectorOut(Schema):
     auth: Literal["oauth2", "api_key", "builtin"]
     kinds: list[KindOut]
     actions: list[ActionOut]
+    # For "api_key": what the key is called, and where and how to create one.
+    key_label: str | None
+    key_hint: str | None
 
 
 class ConnectionOut(Schema):
     id: UUID
     provider: str
     provider_name: str
+    auth: Literal["oauth2", "api_key", "builtin"]
     label: str
     status: Literal[*Connection.Status.values]
     personal: bool
@@ -75,6 +79,10 @@ class ConnectionOut(Schema):
 
 class AuthorizeOut(Schema):
     url: str
+
+
+class KeyIn(Schema):
+    key: Annotated[str, Field(min_length=1, max_length=500)]
 
 
 class ConsentIn(Schema):
@@ -137,6 +145,7 @@ def _connection_out(connection: Connection, user_id: UUID) -> dict:
         "id": connection.id,
         "provider": connection.provider,
         "provider_name": connector.name,
+        "auth": _auth(connector),
         "label": connection.label,
         "status": connection.status,
         "personal": connection.owner_id is not None,
@@ -208,6 +217,8 @@ def list_connectors(request, workspace_id: UUID):
             "auth": _auth(c),
             "kinds": _kinds(c),
             "actions": _actions(c),
+            "key_label": c.auth.label if isinstance(c.auth, ApiKey) else None,
+            "key_hint": c.auth.hint if isinstance(c.auth, ApiKey) else None,
         }
         for c in registry.all_connectors()
         # Apps this instance has no OAuth client for cannot be connected.
@@ -239,6 +250,39 @@ def enable(request, workspace_id: UUID, provider: str):
     try:
         connection = services.enable_builtin(
             workspace_id=workspace_id, owner_id=request.user.id, provider=provider
+        )
+    except oauth.ConnectionFlowError as error:
+        raise HttpError(422, str(error)) from error
+    return _connection_out(connection, request.user.id)
+
+
+# Registered before connect_key, whose {provider} would otherwise match the connection id.
+@router.put("/workspaces/{uuid:workspace_id}/connections/{uuid:connection_id}/key", response=ConnectionOut)
+def replace_key(request, workspace_id: UUID, connection_id: UUID, payload: KeyIn):
+    """Replaces the key of an API key connection with another key for the same account."""
+    connection = _usable(request, connection_id)
+    if connection.owner_id is None and not request.membership.is_admin:
+        raise HttpError(403, "Only workspace admins can replace the key of shared connections.")
+    try:
+        connection = services.save_api_key(
+            workspace_id=workspace_id,
+            owner_id=request.user.id,
+            provider=connection.provider,
+            key=payload.key,
+            connection_id=connection.id,
+        )
+    except oauth.ConnectionFlowError as error:
+        raise HttpError(422, str(error)) from error
+    return _connection_out(connection, request.user.id)
+
+
+@router.post("/workspaces/{uuid:workspace_id}/connections/{provider}/key", response=ConnectionOut)
+def connect_key(request, workspace_id: UUID, provider: str, payload: KeyIn):
+    """Connects an account with an API key. The key is checked with the provider and never returned."""
+    _connector_or_404(provider)
+    try:
+        connection = services.save_api_key(
+            workspace_id=workspace_id, owner_id=request.user.id, provider=provider, key=payload.key
         )
     except oauth.ConnectionFlowError as error:
         raise HttpError(422, str(error)) from error

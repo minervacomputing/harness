@@ -14,7 +14,7 @@ from connections import services as connection_services
 from connections.models import Connection
 from connections.oauth import ClientCredentials
 from connectors import registry
-from connectors.base import Builtin
+from connectors.base import ApiKey, Builtin
 from connectors.executor import Executor
 from connectors.todoist.client import TodoistClient
 from connectors.todoist.connector import TodoistConnector
@@ -156,14 +156,15 @@ def connector_run(scoped, user):
     """Starts and claims a run for the workspace's agent with only the user's `provider` connection.
 
     `await connector_run(provider, grants, scopes=..., label=..., external_account_id=...)` creates the
-    connection from the account fields the first time and stores an OAuth token holding `scopes` (a
-    built-in connector's connection is enabled instead), then replaces the user's grants on it with
-    `grants` ({(kind, id): actions}).
+    connection from the account fields the first time and stores an OAuth token holding `scopes`, or
+    `access_token` as the key of an API key connector (a built-in connector's connection is enabled
+    instead), then replaces the user's grants on it with `grants` ({(kind, id): actions}).
     """
 
     def start(provider: str, grants: dict, *, scopes=(), access_token="t", **account) -> Executor:  # noqa: S107
+        auth = registry.get(provider).auth
         with workspace_scope(scoped.id):
-            if isinstance(registry.get(provider).auth, Builtin):
+            if isinstance(auth, Builtin):
                 connection = connection_services.enable_builtin(
                     workspace_id=scoped.id, owner_id=user.id, provider=provider
                 )
@@ -172,7 +173,9 @@ def connector_run(scoped, user):
                     provider=provider, owner=user, **account
                 )
                 connection.set_credentials(
-                    {"kind": "oauth2", "access_token": access_token, "scopes": list(scopes)}
+                    {"kind": "api_key", "key": access_token}
+                    if isinstance(auth, ApiKey)
+                    else {"kind": "oauth2", "access_token": access_token, "scopes": list(scopes)}
                 )
                 connection.save()
             replace_grants(user, connection, grants)

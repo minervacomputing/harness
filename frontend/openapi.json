@@ -206,6 +206,15 @@
       },
       "ConnectionOut": {
         "properties": {
+          "auth": {
+            "enum": [
+              "oauth2",
+              "api_key",
+              "builtin"
+            ],
+            "title": "Auth",
+            "type": "string"
+          },
           "consent_needed": {
             "items": {
               "type": "string"
@@ -275,6 +284,7 @@
           "id",
           "provider",
           "provider_name",
+          "auth",
           "label",
           "status",
           "personal",
@@ -304,6 +314,28 @@
             "title": "Auth",
             "type": "string"
           },
+          "key_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key Hint"
+          },
+          "key_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key Label"
+          },
           "kinds": {
             "items": {
               "$ref": "#/components/schemas/KindOut"
@@ -325,7 +357,9 @@
           "name",
           "auth",
           "kinds",
-          "actions"
+          "actions",
+          "key_label",
+          "key_hint"
         ],
         "title": "ConnectorOut",
         "type": "object"
@@ -504,6 +538,21 @@
           "actions"
         ],
         "title": "GrantOut",
+        "type": "object"
+      },
+      "KeyIn": {
+        "properties": {
+          "key": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "KeyIn",
         "type": "object"
       },
       "KindOut": {
@@ -1447,6 +1496,65 @@
         ]
       }
     },
+    "/api/workspaces/{workspace_id}/connections/{connection_id}/key": {
+      "put": {
+        "description": "Replaces the key of an API key connection with another key for the same account.",
+        "operationId": "replace_key",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeyIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionOut"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "security": [
+          {
+            "WorkspaceMember": []
+          }
+        ],
+        "summary": "Replace Key",
+        "tags": [
+          "connections"
+        ]
+      }
+    },
     "/api/workspaces/{workspace_id}/connections/{connection_id}/reconnect": {
       "post": {
         "description": "Reconnects the account, or grants the provider access that allowed actions still need.",
@@ -1596,6 +1704,64 @@
           }
         ],
         "summary": "Enable",
+        "tags": [
+          "connections"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/connections/{provider}/key": {
+      "post": {
+        "description": "Connects an account with an API key. The key is checked with the provider and never returned.",
+        "operationId": "connect_key",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "title": "Provider",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeyIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionOut"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "security": [
+          {
+            "WorkspaceMember": []
+          }
+        ],
+        "summary": "Connect Key",
         "tags": [
           "connections"
         ]

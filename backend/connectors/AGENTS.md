@@ -25,7 +25,7 @@ A connector turns one provider's API into tools, and the permission executor aut
 - **Errors.** Raise `OperationError(code, message)`: only its message reaches the model or the UI. Any other exception is logged, and the model sees a generic failure. `denied()` is the policy refusal (`POLICY_DENIED`), also used for what Minerva will not reveal.
 - **Auth.** There are three kinds:
   - `OAuth2`: `app`, endpoints, base `scopes`, `scope_separator`, `registration_url` (dynamic client registration), `authorize_params`, `login_hint`, `client_auth` (`post` or `basic`), `json_body` and `pkce`. `app` names the operator's client (`MINERVA_<APP>_CLIENT_ID`/`_SECRET`), and connectors may share one.
-  - `ApiKey(label)`.
+  - `ApiKey(label, hint)`: users paste a key, which `account()` checks; a replacement key must be for the same account.
   - `Builtin()` for a service the instance runs itself.
 - **Optional hooks.** `offered(op)` withholds operations this instance cannot serve, such as when an operator key is missing. `manage_link()` gives a (label, URL) where the user manages what the provider lets Minerva reach.
 
@@ -130,5 +130,6 @@ A connector turns one provider's API into tools, and the permission executor aut
 | Built-in service, `offered()` | `web` |
 | Unlisted kind (`listed=False`) | `web` (sites), `outlook` (recipients) |
 | `manage_link()` | `github` |
-| API key auth | `KeyedConnector` in `backend/tests/fakes.py` (no production connector yet) |
+| API key auth, a key replaced for the same account | `stripe` |
+| Amount limits as a hierarchical kind | `stripe` (`money`) |
 | Split into `reads`/`writes` and a shared module | `notion`, `linear`, `outlook` |

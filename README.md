@@ -120,6 +120,12 @@ Register an app in the Microsoft Entra admin center (<https://entra.microsoft.co
 
 Click **Connections → Connect Outlook**, then choose per folder what agents may read, and which addresses or domains they may send mail to. Access to a folder covers its subfolders. Minerva asks Microsoft only for read access at first, and for `Mail.Send` once the user allows sending.
 
+## Stripe
+
+Stripe connects with a restricted key, which each user creates; no operator setup is needed. In the Stripe Dashboard, open **Developers → API keys → Create restricted key** and give it only these permissions: **Customers: Write** (read customers and add balance credits), **Charges: Read**, **Refunds: Write**, **Invoices: Read** and **Subscriptions: Read**. Minerva also reads the account (`GET /v1/account`) to name the connection; if Stripe refuses that, also allow reading the account's details. Secret keys (`sk_`) are refused, since they can do anything in the account. A test key and a live key of one account are two connections.
+
+Click **Connections → Stripe**, paste the key (it is checked with Stripe, stored encrypted and never shown again), then choose per customer (or for every customer) what agents may do: read, refund payments, and credit balances. Each refund or credit also needs its amount allowed: "Up to" a limit in a currency, or the whole currency. A workspace ceiling can deny "More than" a limit. **Replace key** swaps in a new key for the same account.
+
 ## The Web
 
 Click **Connections → Add Web**, then choose which sites agents may read and whether they may search. A site is an exact host (`docs.python.org`) or a domain with its subdomains (`*.python.org`).

@@ -3,8 +3,8 @@
 import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOptions, type UseMutationOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { authorize, cancelRun, changeAccess, createAgent, createConversation, deleteAgent, deleteConnection, deleteConversation, enable, getAccess, getAgent, getConversation, getRun, listAccessResources, listAgents, listConnections, listConnectors, listConversations, me, type Options, postMessage, reconnect, updateAgent } from '../sdk.gen';
-import type { AuthorizeData, AuthorizeResponse, CancelRunData, CancelRunResponse, ChangeAccessData, ChangeAccessResponse, CreateAgentData, CreateAgentResponse, CreateConversationData, CreateConversationResponse, DeleteAgentData, DeleteAgentResponse, DeleteConnectionData, DeleteConnectionResponse, DeleteConversationData, DeleteConversationResponse, EnableData, EnableResponse, GetAccessData, GetAccessResponse, GetAgentData, GetAgentResponse, GetConversationData, GetConversationResponse, GetRunData, GetRunResponse, ListAccessResourcesData, ListAccessResourcesResponse, ListAgentsData, ListAgentsResponse, ListConnectionsData, ListConnectionsResponse, ListConnectorsData, ListConnectorsResponse, ListConversationsData, ListConversationsResponse, MeData, MeResponse, PostMessageData, PostMessageResponse, ReconnectData, ReconnectResponse, UpdateAgentData, UpdateAgentResponse } from '../types.gen';
+import { authorize, cancelRun, changeAccess, connectKey, createAgent, createConversation, deleteAgent, deleteConnection, deleteConversation, enable, getAccess, getAgent, getConversation, getRun, listAccessResources, listAgents, listConnections, listConnectors, listConversations, me, type Options, postMessage, reconnect, replaceKey, updateAgent } from '../sdk.gen';
+import type { AuthorizeData, AuthorizeResponse, CancelRunData, CancelRunResponse, ChangeAccessData, ChangeAccessResponse, ConnectKeyData, ConnectKeyResponse, CreateAgentData, CreateAgentResponse, CreateConversationData, CreateConversationResponse, DeleteAgentData, DeleteAgentResponse, DeleteConnectionData, DeleteConnectionResponse, DeleteConversationData, DeleteConversationResponse, EnableData, EnableResponse, GetAccessData, GetAccessResponse, GetAgentData, GetAgentResponse, GetConversationData, GetConversationResponse, GetRunData, GetRunResponse, ListAccessResourcesData, ListAccessResourcesResponse, ListAgentsData, ListAgentsResponse, ListConnectionsData, ListConnectionsResponse, ListConnectorsData, ListConnectorsResponse, ListConversationsData, ListConversationsResponse, MeData, MeResponse, PostMessageData, PostMessageResponse, ReconnectData, ReconnectResponse, ReplaceKeyData, ReplaceKeyResponse, UpdateAgentData, UpdateAgentResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseUrl' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -300,6 +300,25 @@ export const listAccessResourcesInfiniteOptions = (options: Options<ListAccessRe
 };
 
 /**
+ * Replace Key
+ *
+ * Replaces the key of an API key connection with another key for the same account.
+ */
+export const replaceKeyMutation = (options?: Partial<Options<ReplaceKeyData>>): UseMutationOptions<ReplaceKeyResponse, DefaultError, Options<ReplaceKeyData>> => {
+    const mutationOptions: UseMutationOptions<ReplaceKeyResponse, DefaultError, Options<ReplaceKeyData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await replaceKey({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
  * Reconnect
  *
  * Reconnects the account, or grants the provider access that allowed actions still need.
@@ -344,6 +363,25 @@ export const enableMutation = (options?: Partial<Options<EnableData>>): UseMutat
     const mutationOptions: UseMutationOptions<EnableResponse, DefaultError, Options<EnableData>> = {
         mutationFn: async (fnOptions) => {
             const { data } = await enable({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Connect Key
+ *
+ * Connects an account with an API key. The key is checked with the provider and never returned.
+ */
+export const connectKeyMutation = (options?: Partial<Options<ConnectKeyData>>): UseMutationOptions<ConnectKeyResponse, DefaultError, Options<ConnectKeyData>> => {
+    const mutationOptions: UseMutationOptions<ConnectKeyResponse, DefaultError, Options<ConnectKeyData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await connectKey({
                 ...options,
                 ...fnOptions,
                 throwOnError: true

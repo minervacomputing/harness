@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AuthorizeData, AuthorizeResponses, CancelRunData, CancelRunResponses, ChangeAccessData, ChangeAccessResponses, CreateAgentData, CreateAgentResponses, CreateConversationData, CreateConversationResponses, DeleteAgentData, DeleteAgentResponses, DeleteConnectionData, DeleteConnectionResponses, DeleteConversationData, DeleteConversationResponses, EnableData, EnableResponses, GetAccessData, GetAccessResponses, GetAgentData, GetAgentResponses, GetConversationData, GetConversationResponses, GetRunData, GetRunResponses, ListAccessResourcesData, ListAccessResourcesResponses, ListAgentsData, ListAgentsResponses, ListConnectionsData, ListConnectionsResponses, ListConnectorsData, ListConnectorsResponses, ListConversationsData, ListConversationsResponses, MeData, MeResponses, PostMessageData, PostMessageResponses, ReconnectData, ReconnectResponses, UpdateAgentData, UpdateAgentResponses } from './types.gen';
+import type { AuthorizeData, AuthorizeResponses, CancelRunData, CancelRunResponses, ChangeAccessData, ChangeAccessResponses, ConnectKeyData, ConnectKeyResponses, CreateAgentData, CreateAgentResponses, CreateConversationData, CreateConversationResponses, DeleteAgentData, DeleteAgentResponses, DeleteConnectionData, DeleteConnectionResponses, DeleteConversationData, DeleteConversationResponses, EnableData, EnableResponses, GetAccessData, GetAccessResponses, GetAgentData, GetAgentResponses, GetConversationData, GetConversationResponses, GetRunData, GetRunResponses, ListAccessResourcesData, ListAccessResourcesResponses, ListAgentsData, ListAgentsResponses, ListConnectionsData, ListConnectionsResponses, ListConnectorsData, ListConnectorsResponses, ListConversationsData, ListConversationsResponses, MeData, MeResponses, PostMessageData, PostMessageResponses, ReconnectData, ReconnectResponses, ReplaceKeyData, ReplaceKeyResponses, UpdateAgentData, UpdateAgentResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -191,6 +191,26 @@ export const listAccessResources = <ThrowOnError extends boolean = false>(option
 });
 
 /**
+ * Replace Key
+ *
+ * Replaces the key of an API key connection with another key for the same account.
+ */
+export const replaceKey = <ThrowOnError extends boolean = false>(options: Options<ReplaceKeyData, ThrowOnError>): RequestResult<ReplaceKeyResponses, unknown, ThrowOnError> => (options.client ?? client).put<ReplaceKeyResponses, unknown, ThrowOnError>({
+    security: [{
+            key: 'WorkspaceMember',
+            in: 'cookie',
+            name: 'sessionid',
+            type: 'apiKey'
+        }],
+    url: '/api/workspaces/{workspace_id}/connections/{connection_id}/key',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
  * Reconnect
  *
  * Reconnects the account, or grants the provider access that allowed actions still need.
@@ -238,6 +258,26 @@ export const enable = <ThrowOnError extends boolean = false>(options: Options<En
         }],
     url: '/api/workspaces/{workspace_id}/connections/{provider}/enable',
     ...options
+});
+
+/**
+ * Connect Key
+ *
+ * Connects an account with an API key. The key is checked with the provider and never returned.
+ */
+export const connectKey = <ThrowOnError extends boolean = false>(options: Options<ConnectKeyData, ThrowOnError>): RequestResult<ConnectKeyResponses, unknown, ThrowOnError> => (options.client ?? client).post<ConnectKeyResponses, unknown, ThrowOnError>({
+    security: [{
+            key: 'WorkspaceMember',
+            in: 'cookie',
+            name: 'sessionid',
+            type: 'apiKey'
+        }],
+    url: '/api/workspaces/{workspace_id}/connections/{provider}/key',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
 });
 
 /**

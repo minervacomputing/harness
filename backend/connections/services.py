@@ -69,6 +69,10 @@ def _target(connector: Connector, connection_id: UUID, account_id: str) -> Conne
     if connection is None or connection.provider != connector.slug:
         raise ConnectionFlowError(f"This {connector.name} connection was removed. Connect it again.")
     if connection.external_account_id != account_id:
+        if isinstance(connector.auth, ApiKey):
+            raise ConnectionFlowError(
+                f"This key is for a different {connector.name} account. Use a key for {connection.label}."
+            )
         raise ConnectionFlowError(
             f"You signed in to a different {connector.name} account. Sign in as {connection.label}."
         )
@@ -86,7 +90,10 @@ def _keep_refresh_token(previous: dict, tokens: dict) -> dict:
     return {**tokens, "refresh_token": previous["refresh_token"], "token_url": previous.get("token_url")}
 
 
-def save_api_key(*, workspace_id: UUID, owner_id: UUID, provider: str, key: str) -> Connection:
+def save_api_key(
+    *, workspace_id: UUID, owner_id: UUID, provider: str, key: str, connection_id: UUID | None = None
+) -> Connection:
+    """With `connection_id`, replaces that connection's key with one for the same account."""
     if not isinstance(registry.get(provider).auth, ApiKey):
         raise ConnectionFlowError("This provider does not connect with a key.")
     return save_connection(
@@ -94,6 +101,7 @@ def save_api_key(*, workspace_id: UUID, owner_id: UUID, provider: str, key: str)
         owner_id=owner_id,
         provider=provider,
         tokens={"kind": "api_key", "key": key},
+        connection_id=connection_id,
     )
 
 
