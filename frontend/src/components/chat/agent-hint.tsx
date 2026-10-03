@@ -9,7 +9,7 @@ export function AgentHint({ workspaceId, agent }: { workspaceId: string; agent: 
       <h2 className="text-xl font-medium tracking-[-0.015em]">{agent.name}</h2>
       <p className="text-sm text-muted-foreground">
         {agent.connection_ids.length
-          ? 'Ask about your tasks and projects. The agent works only within the access you grant.'
+          ? 'Ask about anything in its connected apps. The agent works only within the access you grant.'
           : 'This agent has no connected apps yet, so it can only chat.'}
       </p>
       {!agent.connection_ids.length && (

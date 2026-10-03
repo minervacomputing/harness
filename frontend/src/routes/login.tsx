@@ -52,7 +52,7 @@ function LoginPage() {
         )}
         <ErrorNote>{step.error && !Object.keys(fields).length ? step.error.message : null}</ErrorNote>
         <SubmitButton form={form}>
-              {mode === 'password' ? 'Sign in' : 'Email me a code'}
+          {mode === 'password' ? 'Sign in' : 'Email me a code'}
         </SubmitButton>
         <div className="flex justify-between text-sm">
           <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => { step.reset(); setMode(mode === 'password' ? 'code' : 'password') }}>
