@@ -246,6 +246,152 @@ def test_chat_messages_are_rebuilt_from_known_fields():
     ]
 
 
+CHAT_ROUTE = providers.Route("default", "m", 100, api="chat")
+
+
+def test_chat_requests_as_the_worker_sends_them_are_rebuilt():
+    """The shape pi-ai's openai-completions adapter sends to a custom OpenAI-compatible endpoint."""
+    tool = {
+        "type": "function",
+        "function": {"name": "t", "description": "A tool", "parameters": {"type": "object"}, "strict": False},
+    }
+    call = {"id": "c1", "type": "function", "function": {"name": "t", "arguments": "{}"}}
+    messages = [
+        {"role": "system", "content": "Be brief."},
+        {"role": "user", "content": "x"},
+        {
+            "role": "assistant",
+            "content": None,
+            "reasoning_content": "because",
+            "reasoning_details": [{"type": "reasoning.encrypted", "data": "sealed"}],
+            "tool_calls": [call],
+        },
+        {"role": "tool", "content": "ok", "tool_call_id": "c1"},
+    ]
+    body = {
+        "model": "gpt-expensive",
+        "messages": messages,
+        "stream": True,
+        "stream_options": {"include_usage": False},
+        "store": True,
+        "max_completion_tokens": 50,
+        "tools": [tool],
+        "prompt_cache_key": "session-1",
+        "priority": 1,
+    }
+    assert providers.build_payload(body, CHAT_ROUTE) == {
+        "model": "m",
+        "messages": messages,
+        "n": 1,
+        "store": False,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+        "max_completion_tokens": 50,
+        "tools": [tool],
+    }
+    # Sent when the history has tool calls but no tools are active.
+    assert providers.build_payload({**body, "tools": []}, CHAT_ROUTE)["tools"] == []
+
+
+def test_chat_options_are_rebuilt_from_known_keys():
+    body = {
+        "messages": [{"role": "user", "content": "x"}],
+        "stream": True,
+        "tools": [{"type": "function", "function": {"name": "t", "x": 1}, "x": 1}],
+        "tool_choice": {"type": "function", "function": {"name": "t", "x": 1}},
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": "s", "schema": {"type": "object"}, "strict": True, "x": 1},
+        },
+        "stop": ["a", "b"],
+        "parallel_tool_calls": False,
+        "temperature": 0,
+        "top_p": 0.5,
+        "seed": 7,
+        "reasoning_effort": "low",
+        "logit_bias": {"1": 100},
+    }
+    payload = providers.build_payload(body, CHAT_ROUTE)
+    assert {key: payload[key] for key in body.keys() - {"messages", "logit_bias"}} == {
+        "stream": True,
+        "tools": [{"type": "function", "function": {"name": "t"}}],
+        "tool_choice": {"type": "function", "function": {"name": "t"}},
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": "s", "schema": {"type": "object"}, "strict": True},
+        },
+        "stop": ["a", "b"],
+        "parallel_tool_calls": False,
+        "temperature": 0,
+        "top_p": 0.5,
+        "seed": 7,
+        "reasoning_effort": "low",
+    }
+    assert "logit_bias" not in payload
+    # Null means unset, as in the Responses builder.
+    nulls = dict.fromkeys(body.keys() - {"messages", "stream"})
+    assert providers.build_payload({**body, **nulls}, CHAT_ROUTE).keys() == {
+        "model",
+        "messages",
+        "n",
+        "store",
+        "stream",
+        "stream_options",
+        "max_completion_tokens",
+    }
+    for value in ("auto", "none", "required"):
+        assert providers.build_payload({**body, "tool_choice": value}, CHAT_ROUTE)["tool_choice"] == value
+    for value in ({"type": "text", "x": 1}, {"type": "json_object"}):
+        rebuilt = providers.build_payload({**body, "response_format": value}, CHAT_ROUTE)
+        assert rebuilt["response_format"] == {"type": value["type"]}
+    assert providers.build_payload({**body, "stop": "END"}, CHAT_ROUTE)["stop"] == "END"
+
+
+CHAT_REFUSALS = [
+    {"tools": [{"type": "custom", "custom": {"name": "t"}}]},
+    {"tools": [{"type": "function", "name": "t", "parameters": {}}]},
+    {"tools": [{"type": "function", "function": {"name": 1}}]},
+    {"tools": [{"type": "function", "function": {"name": "t", "parameters": "{}"}}]},
+    {"tools": [{"type": "function", "function": {"name": "t", "strict": "yes"}}]},
+    {"tools": [{"type": "function", "function": {"name": "t"}}] * 129},
+    {"tools": {"type": "function", "function": {"name": "t"}}},
+    {"tool_choice": "any"},
+    {"tool_choice": {"type": "function", "name": "t"}},
+    {"tool_choice": {"type": "allowed_tools", "allowed_tools": {"mode": "auto", "tools": []}}},
+    {"response_format": {"type": "json_schema", "json_schema": {"schema": {}}}},
+    {"response_format": {"type": "json_schema", "json_schema": {"name": "s", "schema": "{}"}}},
+    {"response_format": {"type": "grammar", "grammar": "x"}},
+    {"response_format": "json_object"},
+    {"stop": ["a", "b", "c", "d", "e"]},
+    {"stop": [1]},
+    {"stop": 1},
+    {"temperature": True},
+    {"temperature": "0.5"},
+    {"top_p": [1]},
+    {"seed": 1.5},
+    {"seed": False},
+    {"parallel_tool_calls": 1},
+    {"reasoning_effort": {"effort": "high"}},
+    {"stream": "yes"},
+]
+
+
+@pytest.mark.parametrize("change", CHAT_REFUSALS)
+def test_chat_requests_outside_the_allowlist_are_refused(change):
+    body = {"messages": [{"role": "user", "content": "x"}], "stream": True, **change}
+    with pytest.raises(providers.InvalidModelRequest):
+        providers.build_payload(body, CHAT_ROUTE)
+
+
+@pytest.mark.parametrize("change", CHAT_REFUSALS[::4])
+async def test_refused_chat_requests_reserve_nothing_and_reach_no_provider(claimed, monkeypatch, change):
+    run, token = claimed
+    _upstream(monkeypatch, lambda request: pytest.fail("reached the provider"), api="chat")
+    body = {"messages": [{"role": "user", "content": "x"}], "stream": True, **change}
+    assert (await _post(token, "/v1/chat/completions", body)).status_code == 400
+    assert (await Run.unscoped.aget(pk=run.id)).model_calls == 0
+
+
 async def test_each_instance_serves_one_model_api(claimed, monkeypatch):
     _, token = claimed
     _upstream(monkeypatch, lambda request: pytest.fail("reached the provider"), api="responses")

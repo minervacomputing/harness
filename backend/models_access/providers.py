@@ -11,39 +11,10 @@ import httpx
 
 from minerva.config import config
 
-# Chat Completions fields the worker may set. Everything else (model, n, store, user, metadata, ...) is ours.
-ALLOWED_FIELDS = {
-    "messages",
-    "tools",
-    "tool_choice",
-    "parallel_tool_calls",
-    "stream",
-    "temperature",
-    "top_p",
-    "stop",
-    "response_format",
-    "reasoning_effort",
-    "max_completion_tokens",
-    "max_tokens",
-    "seed",
-}
-
-
-# Responses fields the worker may set. Server-side state (previous_response_id, conversation, background,
-# stored prompts), billing (service_tier), and reasoning are ours.
-RESPONSES_FIELDS = {
-    "input",
-    "tools",
-    "tool_choice",
-    "parallel_tool_calls",
-    "stream",
-    "temperature",
-    "top_p",
-    "max_output_tokens",
-    "prompt_cache_key",
-}
 MAX_INPUT_ITEMS = 500
 MAX_TOOLS = 128
+# The Chat Completions limit.
+MAX_STOP_SEQUENCES = 4
 # The relay meters usage and screens provider errors event by event, so it relays streams only.
 STREAM_REQUIRED = "Only streamed requests are accepted."
 # The Responses API refuses smaller output caps.
@@ -211,20 +182,86 @@ def _chat_message(message: Any) -> dict[str, Any]:
     return out
 
 
+def _function_of(item: Any) -> Any:
+    """The `function` a chat tool or tool choice nests, if it is a function one."""
+    return item.get("function") if isinstance(item, dict) and item.get("type") == "function" else None
+
+
+def _chat_tool(tool: Any) -> dict[str, Any]:
+    # Custom (grammar) tools and anything else are refused, as for Responses.
+    function = _function_of(tool)
+    if not isinstance(function, dict):
+        raise InvalidModelRequest("Only function tools are accepted.")
+    out: dict[str, Any] = {"name": _text(function.get("name"), "Tool name")}
+    _copy_strings(function, out, "description")
+    if function.get("parameters") is not None:
+        if not isinstance(function["parameters"], dict):
+            raise InvalidModelRequest("Tool parameters must be an object.")
+        out["parameters"] = function["parameters"]
+    _copy_typed(function, out, (bool,), "a boolean", "strict")
+    return {"type": "function", "function": out}
+
+
+def _chat_tool_choice(choice: Any) -> Any:
+    if isinstance(choice, str) and choice in {"auto", "none", "required"}:
+        return choice
+    function = _function_of(choice)
+    if isinstance(function, dict):
+        return {"type": "function", "function": {"name": _text(function.get("name"), "Tool name")}}
+    raise InvalidModelRequest("Unsupported tool_choice.")
+
+
+def _response_format(value: Any) -> dict[str, Any]:
+    kind = value.get("type") if isinstance(value, dict) else None
+    if kind in {"text", "json_object"}:
+        return {"type": kind}
+    schema = value.get("json_schema") if kind == "json_schema" else None
+    if not isinstance(schema, dict):
+        raise InvalidModelRequest("Unsupported response_format.")
+    out: dict[str, Any] = {"name": _text(schema.get("name"), "Schema name")}
+    _copy_strings(schema, out, "description")
+    if schema.get("schema") is not None:
+        if not isinstance(schema["schema"], dict):
+            raise InvalidModelRequest("The response schema must be an object.")
+        out["schema"] = schema["schema"]
+    _copy_typed(schema, out, (bool,), "a boolean", "strict")
+    return {"type": kind, "json_schema": out}
+
+
+def _stop(value: Any) -> str | list[str]:
+    if isinstance(value, str):
+        return value
+    return [_text(item, "A stop sequence") for item in _items(value, "stop", MAX_STOP_SEQUENCES)]
+
+
 def build_payload(body: dict[str, Any], target: Route) -> dict[str, Any]:
-    """A Chat Completions request as the gateway will send it."""
-    messages = [_chat_message(m) for m in _items(body.get("messages"), "messages", MAX_INPUT_ITEMS)]
-    payload = {key: value for key, value in body.items() if key in ALLOWED_FIELDS}
-    requested = payload.pop("max_completion_tokens", None) or payload.pop("max_tokens", None)
-    payload.pop("max_tokens", None)
-    payload["max_completion_tokens"] = _capped(requested, target.max_output_tokens)
-    payload["messages"] = messages
-    payload["model"] = target.model
-    payload["n"] = 1
-    payload["store"] = False
-    if payload.get("stream") is not True:
+    """A Chat Completions request as the gateway will send it: rebuilt from validated parts, as for
+    Responses. Choices (n), storage, users and metadata, and the model are ours; unknown fields are dropped."""
+    if body.get("stream") is not True:
         raise InvalidModelRequest(STREAM_REQUIRED)
-    payload["stream_options"] = {"include_usage": True}
+    requested = body.get("max_completion_tokens") or body.get("max_tokens")
+    payload: dict[str, Any] = {
+        "model": target.model,
+        "messages": [_chat_message(m) for m in _items(body.get("messages"), "messages", MAX_INPUT_ITEMS)],
+        "n": 1,
+        "store": False,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+        "max_completion_tokens": _capped(requested, target.max_output_tokens),
+    }
+    if body.get("tools") is not None:
+        # Kept even when empty: some compatible servers want `tools` whenever the history has tool calls.
+        payload["tools"] = [_chat_tool(tool) for tool in _items(body["tools"], "tools", MAX_TOOLS)]
+    if body.get("tool_choice") is not None:
+        payload["tool_choice"] = _chat_tool_choice(body["tool_choice"])
+    if body.get("response_format") is not None:
+        payload["response_format"] = _response_format(body["response_format"])
+    if body.get("stop") is not None:
+        payload["stop"] = _stop(body["stop"])
+    _copy_typed(body, payload, (bool,), "a boolean", "parallel_tool_calls")
+    _copy_typed(body, payload, (int, float), "a number", "temperature", "top_p")
+    _copy_typed(body, payload, (int,), "an integer", "seed")
+    _copy_typed(body, payload, (str,), "a string", "reasoning_effort")
     return payload
 
 
@@ -245,6 +282,17 @@ def _copy_strings(item: dict[str, Any], out: dict[str, Any], *keys: str) -> dict
         if item.get(key) is not None:
             out[key] = _text(item[key], key)
     return out
+
+
+def _copy_typed(item: dict[str, Any], out: dict[str, Any], kinds: tuple[type, ...], what: str, *keys: str):
+    """Copies optional scalars; a missing or null one is left out. Types are matched exactly because bool
+    is an int in Python, and `true` is not a temperature."""
+    for key in keys:
+        value = item.get(key)
+        if value is not None:
+            if type(value) not in kinds:
+                raise InvalidModelRequest(f"{key} must be {what}.")
+            out[key] = value
 
 
 def _input_item(item: Any) -> dict[str, Any]:
@@ -324,7 +372,9 @@ def _tool_choice(choice: Any) -> Any:
 
 
 def build_responses_payload(body: dict[str, Any], target: Route) -> dict[str, Any]:
-    """A Responses request as the gateway will send it: rebuilt from validated parts, never passed through."""
+    """A Responses request as the gateway will send it: rebuilt from validated parts, never passed through.
+    Server-side state (previous_response_id, conversation, background, stored prompts), billing
+    (service_tier) and reasoning are ours."""
     payload: dict[str, Any] = {
         "model": target.model,
         "input": [_input_item(item) for item in _items(body.get("input"), "input", MAX_INPUT_ITEMS)],
@@ -338,19 +388,10 @@ def build_responses_payload(body: dict[str, Any], target: Route) -> dict[str, An
         payload["tools"] = [_function_tool(tool) for tool in _items(body["tools"], "tools", MAX_TOOLS)]
     if body.get("tool_choice") is not None:
         payload["tool_choice"] = _tool_choice(body["tool_choice"])
-    for key in ("parallel_tool_calls", "stream"):
-        if body.get(key) is not None:
-            if not isinstance(body[key], bool):
-                raise InvalidModelRequest(f"{key} must be a boolean.")
-            payload[key] = body[key]
+    _copy_typed(body, payload, (bool,), "a boolean", "parallel_tool_calls", "stream")
     if payload.get("stream") is not True:
         raise InvalidModelRequest(STREAM_REQUIRED)
-    for key in ("temperature", "top_p"):
-        value = body.get(key)
-        if value is not None:
-            if type(value) not in {int, float}:
-                raise InvalidModelRequest(f"{key} must be a number.")
-            payload[key] = value
+    _copy_typed(body, payload, (int, float), "a number", "temperature", "top_p")
     key = body.get("prompt_cache_key")
     if isinstance(key, str) and 0 < len(key) <= 64:
         payload["prompt_cache_key"] = key
