@@ -637,22 +637,6 @@ def test_a_connection_has_a_limited_number_of_grants(api, workspace, user, mixed
 # Credentials
 
 
-@pytest.fixture
-def refresh(monkeypatch):
-    """Token responses for refreshes, issued by client "id"."""
-    responses: list[dict] = []
-    creds = connection_oauth.ClientCredentials("id", "secret", "https://x/cb")
-    monkeypatch.setattr(
-        connection_oauth,
-        "issuing_client",
-        lambda c, client_id: creds if client_id in (None, "id") else None,
-    )
-    monkeypatch.setattr(
-        connection_oauth.httpx, "post", lambda *a, **k: httpx.Response(200, json=responses.pop(0))
-    )
-    return responses
-
-
 def _expiring(connection: Connection, **tokens) -> None:
     connection.set_credentials(
         {
@@ -666,18 +650,21 @@ def _expiring(connection: Connection, **tokens) -> None:
     connection.save()
 
 
-def test_a_refresh_keeps_scopes_unless_the_provider_names_them(mixed, refresh):
+def test_a_refresh_keeps_scopes_unless_the_provider_names_them(mixed, token_endpoint):
+    _, responses = token_endpoint
     _expiring(mixed, scopes=["files", "labels"], client_id="id")
-    refresh.append({"access_token": "a2", "expires_in": 3600})
+    responses.append(httpx.Response(200, json={"access_token": "a2", "expires_in": 3600}))
     assert connection_credentials.access_secret(mixed.id).scopes == {"files", "labels"}
     mixed.refresh_from_db()
     assert mixed.credentials()["client_id"] == "id"
     _expiring(mixed, scopes=["files", "labels"])
-    refresh.append({"access_token": "a3", "expires_in": 3600, "scope": "files"})
+    responses.append(httpx.Response(200, json={"access_token": "a3", "expires_in": 3600, "scope": "files"}))
     assert connection_credentials.access_secret(mixed.id).scopes == {"files"}
     # GitHub separates scopes with commas.
     _expiring(mixed)
-    refresh.append({"access_token": "a4", "expires_in": 3600, "scope": "files,labels"})
+    responses.append(
+        httpx.Response(200, json={"access_token": "a4", "expires_in": 3600, "scope": "files,labels"})
+    )
     assert connection_credentials.access_secret(mixed.id).scopes == {"files", "labels"}
 
 
@@ -706,29 +693,23 @@ def test_a_code_is_redeemed_by_the_client_the_flow_started_with(server, monkeypa
     assert len(sent) == 1
 
 
-def test_a_refresh_goes_to_the_endpoint_that_issued_the_tokens(mixed, refresh, monkeypatch):
-    sent: list[str] = []
-    monkeypatch.setattr(
-        connection_oauth.httpx,
-        "post",
-        lambda url, **k: (
-            sent.append(url) or httpx.Response(200, json={"access_token": "a2", "expires_in": 60})
-        ),
-    )
+def test_a_refresh_goes_to_the_endpoint_that_issued_the_tokens(mixed, token_endpoint):
+    sent, responses = token_endpoint
+    responses += [httpx.Response(200, json={"access_token": "a2", "expires_in": 60}) for _ in range(2)]
     _expiring(mixed, client_id="id", token_url="https://old.mixed.example/token")
     connection_credentials.access_secret(mixed.id)
-    assert sent == ["https://old.mixed.example/token"]
+    assert [request["url"] for request in sent] == ["https://old.mixed.example/token"]
     mixed.refresh_from_db()
     assert mixed.credentials()["token_url"] == "https://old.mixed.example/token"
     # Tokens saved before the endpoint was recorded use the declared one.
     _expiring(mixed, client_id="id")
     connection_credentials.access_secret(mixed.id)
-    assert sent[-1] == "https://mixed.example/token"
+    assert sent[-1]["url"] == "https://mixed.example/token"
     mixed.refresh_from_db()
     assert mixed.credentials()["token_url"] == "https://mixed.example/token"
 
 
-def test_a_refresh_needs_the_client_that_issued_the_tokens(mixed, refresh):
+def test_a_refresh_needs_the_client_that_issued_the_tokens(mixed, token_endpoint):
     _expiring(mixed, client_id="retired")
     with pytest.raises(OperationError) as expired:
         connection_credentials.access_secret(mixed.id)
