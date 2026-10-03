@@ -1,5 +1,6 @@
 import { useNavigate } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
+import { Logo } from '@/components/brand/logo'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { type AuthState, pendingPath } from '@/lib/auth'
 
@@ -10,12 +11,12 @@ export function AuthLayout({ title, description, children, footer }: {
   footer?: ReactNode
 }) {
   return (
-    <div className="flex min-h-svh flex-col items-center justify-center bg-muted/40 p-6">
-      <div className="w-full max-w-sm space-y-4">
-        <p className="text-center text-sm font-semibold tracking-wide">Minerva</p>
+    <div className="flex min-h-svh flex-col items-center justify-center bg-background p-6">
+      <div className="w-full max-w-sm space-y-6">
+        <div className="flex justify-center"><Logo height={44} /></div>
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">{title}</CardTitle>
+            <CardTitle className="text-lg font-medium tracking-[-0.015em]">{title}</CardTitle>
             {description && <CardDescription>{description}</CardDescription>}
           </CardHeader>
           <CardContent>{children}</CardContent>

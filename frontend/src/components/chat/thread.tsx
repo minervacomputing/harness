@@ -12,7 +12,8 @@ import type { ComponentProps, ReactNode } from 'react'
 import remarkGfm from 'remark-gfm'
 import type { ToolCallResult } from '@/components/chat/model'
 import { Button } from '@/components/ui/button'
-import { Badge, ErrorNote, Spinner } from '@/components/ui/misc'
+import { ErrorNote, Spinner, Status, type StatusTone } from '@/components/ui/misc'
+import { cn } from '@/lib/utils'
 
 export function Thread({ empty, disabledReason }: { empty?: ReactNode; disabledReason?: string }) {
   return (
@@ -33,7 +34,7 @@ export function Thread({ empty, disabledReason }: { empty?: ReactNode; disabledR
 function UserMessage() {
   return (
     <MessagePrimitive.Root className="flex justify-end">
-      <div className="max-w-[80%] whitespace-pre-wrap rounded-lg bg-muted px-4 py-2.5 text-sm">
+      <div className="max-w-[80%] border bg-secondary px-3.5 py-2.5 text-sm whitespace-pre-wrap">
         <MessagePrimitive.Parts />
       </div>
     </MessagePrimitive.Root>
@@ -68,7 +69,7 @@ function MarkdownText() {
     <MarkdownTextPrimitive
       remarkPlugins={[remarkGfm]}
       components={{ img: UnloadedImage }}
-      className="prose prose-sm prose-neutral max-w-none prose-pre:bg-muted prose-pre:text-foreground"
+      className="prose prose-sm prose-minerva max-w-none [overflow-wrap:anywhere]"
     />
   )
 }
@@ -77,7 +78,7 @@ function MarkdownText() {
 function UnloadedImage({ src, alt }: ComponentProps<'img'>) {
   const url = typeof src === 'string' ? src : ''
   return (
-    <span className="rounded bg-muted px-1 font-mono text-xs text-muted-foreground">
+    <span className="border bg-secondary px-1 font-mono text-xs text-muted-foreground">
       [image not loaded{alt ? `: ${alt}` : ''}{url ? ` (${url})` : ''}]
     </span>
   )
@@ -97,23 +98,36 @@ const DECISION_LABEL: Record<ToolCallResult['decision'], string> = {
   error: 'Failed',
 }
 
-const ToolCall: ToolCallMessagePartComponent = ({ toolName, args, result }) => {
+const DECISION_TONE: Record<ToolCallResult['decision'], StatusTone> = {
+  allowed: 'success',
+  denied: 'warning',
+  error: 'danger',
+}
+
+const DECISION_ICON: Record<ToolCallResult['decision'], string> = {
+  allowed: 'text-success',
+  denied: 'text-warning',
+  error: 'text-destructive',
+}
+
+/** Tool cards show state in the icon colour and a status word, never a side stripe. */
+export const ToolCall: ToolCallMessagePartComponent = ({ toolName, args, result }) => {
   const outcome = result as ToolCallResult | undefined
   const hasArgs = args && Object.keys(args).length > 0
   return (
-    <details className="group rounded-md border text-sm">
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 [&::-webkit-details-marker]:hidden">
+    <details className="group border bg-card text-sm">
+      <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3 py-2 [&::-webkit-details-marker]:hidden">
         <ChevronRightIcon className="size-3.5 text-muted-foreground transition-transform group-open:rotate-90" />
-        <WrenchIcon className="size-3.5 text-muted-foreground" />
-        <span className="flex-1 truncate">{outcome?.label ?? describeTool(toolName)}</span>
-        {outcome && (
-          <Badge variant={outcome.decision === 'allowed' ? 'secondary' : 'destructive'}>{DECISION_LABEL[outcome.decision]}</Badge>
-        )}
+        <WrenchIcon className={cn('size-3.5', outcome ? DECISION_ICON[outcome.decision] : 'text-info')} />
+        <span className="flex-1 truncate font-mono text-[12.5px]">{outcome?.label ?? describeTool(toolName)}</span>
+        {outcome
+          ? <Status tone={DECISION_TONE[outcome.decision]}>{DECISION_LABEL[outcome.decision]}</Status>
+          : <Status tone="info" live>Running</Status>}
       </summary>
       <div className="space-y-2 border-t px-3 py-2 text-xs text-muted-foreground">
-        {outcome?.message && <p>{outcome.message}</p>}
+        {outcome?.message && <p className="text-foreground">{outcome.message}</p>}
         {hasArgs
-          ? <pre className="overflow-x-auto rounded bg-muted p-2 font-mono">{JSON.stringify(args, null, 2)}</pre>
+          ? <pre className="overflow-x-auto border bg-secondary p-2 font-mono">{JSON.stringify(args, null, 2)}</pre>
           : <p>No arguments.</p>}
       </div>
     </details>
@@ -123,12 +137,12 @@ const ToolCall: ToolCallMessagePartComponent = ({ toolName, args, result }) => {
 function Composer({ disabledReason }: { disabledReason?: string }) {
   return (
     <div className="space-y-1.5">
-      <ComposerPrimitive.Root className="flex items-end gap-2 rounded-lg border bg-background p-2 shadow-xs focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
+      <ComposerPrimitive.Root className="flex items-end gap-2 border border-border-strong bg-card p-2 shadow-(--inset-well) focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/25">
         <ComposerPrimitive.Input
           autoFocus
           rows={1}
           placeholder={disabledReason ?? 'Message your agent'}
-          className="max-h-48 min-h-9 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-muted-foreground"
+          className="max-h-48 min-h-9 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-faint"
         />
         <AuiIf condition={s => !s.thread.isRunning}>
           <ComposerPrimitive.Send asChild>

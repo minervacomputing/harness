@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Minerva Logo</title>
+<script>
+  try { const t = localStorage.getItem('mv-theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Archivo:wdth,wght@125,800&display=swap" rel="stylesheet">
+<style>
+:root { --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif; --font-mono: "IBM Plex Mono", ui-monospace, monospace; --navy: #15216a; }
+:root[data-theme="light"] {
+  --bg: #f4f5f9; --surface: #fff; --surface-2: #eaedf5; --border: #dbe0ec; --border-strong: #aab3c9;
+  --fg: #0d1430; --muted: #465172; --faint: #5f6987; --logo: var(--navy); --grid: rgba(43,68,214,.18); --grid-key: rgba(198,58,58,.7);
+}
+:root[data-theme="dark"] {
+  --bg: #090d18; --surface: #0e1423; --surface-2: #141c30; --border: #1b2540; --border-strong: #33436b;
+  --fg: #e1e7f8; --muted: #9ba6c8; --faint: #7885ac; --logo: #e1e7f8; --grid: rgba(123,145,255,.22); --grid-key: rgba(255,107,107,.75);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+.label { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .1em; font-size: 11px; font-weight: 500; color: var(--muted); }
+.h { font-weight: 500; letter-spacing: -0.015em; line-height: 1.1; }
+.rule { height: 1px; background: var(--border-strong); }
+kbd { font-family: var(--font-mono); font-size: 11px; padding: 1px 5px; border: 1px solid var(--border-strong); border-bottom-width: 2px; color: var(--muted); background: var(--surface); }
+
+.bar { position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 10px 24px;
+  background: color-mix(in oklab, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+.bar .spacer { flex: 1; }
+.brand { font-weight: 600; display: flex; gap: 10px; align-items: baseline; }
+.segmented { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--border); background: var(--surface-2); }
+.segmented button { padding: 4px 10px; font-size: 12px; color: var(--muted); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .1em; }
+.segmented button.on { background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--border); }
+.hint { font-size: 11px; color: var(--faint); }
+
+main { max-width: 1240px; margin: 0 auto; padding: 32px 24px 80px; display: grid; gap: 40px; }
+.intro { display: grid; grid-template-columns: 1.1fr 1fr; gap: 32px; }
+.intro h1 { font-size: 40px; margin: 6px 0 12px; }
+.intro p { font-size: 16px; color: var(--muted); max-width: 52ch; }
+.intro p + p { margin-top: 10px; }
+.checks { list-style: none; border-top: 1px solid var(--border); }
+.checks li { display: flex; gap: 14px; padding: 9px 12px; border-bottom: 1px solid var(--border); font-size: 15px; }
+.checks .n { font-family: var(--font-mono); font-size: 12px; color: var(--faint); padding-top: 2px; }
+
+.logo { display: grid; gap: 16px; }
+.logo .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+.logo .head h2 { font-size: 24px; }
+.logo .head .spacer { flex: 1; }
+.top { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); border: 1px solid var(--border-strong); background: var(--surface); }
+.stage { position: relative; display: grid; place-items: center; min-height: 300px; padding: 48px 40px; color: var(--logo); border-right: 1px solid var(--border-strong); }
+.stage svg { width: 100%; max-width: 100%; min-width: 0; max-height: 180px; overflow: visible; }
+.stage .tag { position: absolute; left: 12px; top: 10px; }
+.notes { padding: 20px; display: grid; gap: 16px; align-content: start; }
+.notes p { font-size: 14px; }
+.notes .k { display: block; margin-bottom: 4px; }
+
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--border-strong); border-top: 0; background: var(--surface); }
+.tile { position: relative; display: grid; place-items: center; min-width: 0; min-height: 150px; padding: 36px 20px 20px; border-right: 1px solid var(--border-strong); }
+.tile:last-child { border-right: 0; }
+.tile .tag { position: absolute; left: 12px; top: 10px; }
+.tile svg { overflow: visible; max-width: 100%; }
+.tile.paper { background: #fff; color: #000; }
+.tile.paper .tag { color: #555; }
+.tile.paper svg { filter: url(#fax); }
+.sizes { display: grid; gap: 14px; justify-items: start; color: var(--logo); }
+.sizes > div { display: flex; align-items: center; gap: 12px; }
+.sizes .px { font-family: var(--font-mono); font-size: 11px; color: var(--faint); width: 34px; flex: none; }
+.tab { display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 10px; background: var(--surface-2); border: 1px solid var(--border); border-bottom: 0; font-size: 12px; margin-top: 4px; }
+.tab svg { color: var(--logo); flex: none; }
+
+.grid-lines { display: none; }
+body.show-grid .grid-lines { display: inline; }
+
+@media (max-width: 900px) {
+  .intro, .top { grid-template-columns: 1fr; }
+  .stage { border-right: 0; border-bottom: 1px solid var(--border-strong); }
+  .tiles { grid-template-columns: 1fr; }
+  .tile { border-right: 0; border-bottom: 1px solid var(--border-strong); }
+  .tile:last-child { border-bottom: 0; }
+}
+@media (max-width: 640px) {
+  main { padding: 20px 16px 60px; }
+  .bar { padding: 10px 16px; }
+  .hint { display: none; }
+  .intro h1 { font-size: 32px; }
+  .stage { padding: 40px 20px; min-height: 200px; }
+}
+</style>
+</head>
+<body>
+
+<!-- one-colour "fax" test: hard threshold after a slight blur -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <filter id="fax"><feGaussianBlur stdDeviation="0.6"/><feComponentTransfer><feFuncA type="discrete" tableValues="0 1"/></feComponentTransfer></filter>
+</svg>
+
+<header class="bar">
+  <div class="brand">Minerva <span class="label">Logo</span></div>
+  <div class="spacer"></div>
+  <div class="segmented" id="grid"><button data-g="off" class="on">Clean</button><button data-g="on">Grid</button></div>
+  <div class="segmented" id="theme"><button data-t="light">Light</button><button data-t="dark">Dark</button></div>
+  <span class="hint"><kbd>G</kbd> grid · <kbd>T</kbd> theme</span>
+</header>
+
+<main>
+  <section class="intro">
+    <div>
+      <div class="label">Final</div>
+      <h1 class="h">The ruled owl</h1>
+      <p>A round owl in front of a navy disc crossed by ledger rules. A thin gap cuts the owl free of the disc and stops the rules. The name is set in Archivo Expanded ExtraBold capitals.</p>
+      <p>It is always one colour: navy on light surfaces and near-white on dark ones. Switch on <b>Grid</b> to see the construction.</p>
+    </div>
+    <div>
+      <div class="label" style="margin-bottom:10px">What the logo must survive</div>
+      <ul class="checks">
+        <li><span class="n">01</span><span>One colour and a bad photocopy.</span></li>
+        <li><span class="n">02</span><span>16 pixels: a browser tab and the sidebar.</span></li>
+        <li><span class="n">03</span><span>No effects. No gradients, glow, dither or shadow.</span></li>
+        <li><span class="n">04</span><span>Explained in one sentence.</span></li>
+        <li><span class="n">05</span><span>Corporate before clever: it signs contracts, not commits.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="logo" id="logo"></section>
+</main>
+
+<script>
+/* ---------- construction: a 100-unit square, circles and arcs ---------- */
+const circ = (cx, cy, r) => `M${cx - r} ${cy}A${r} ${r} 0 1 0 ${cx + r} ${cy}A${r} ${r} 0 1 0 ${cx - r} ${cy}Z`;
+let uid = 0;
+const DISC = circ(50, 50, 50);
+
+/* ---------- the name: Archivo Expanded ExtraBold, cap height 34 on baseline 70 ---------- */
+const NAME = { family: 'Archivo', weight: 800, stretch: 125, track: 0.03, text: 'MINERVA', h: 34 };
+const meter = document.createElement('canvas').getContext('2d');
+const probe = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+probe.style.cssText = 'position:absolute;width:0;height:0;visibility:hidden';
+document.body.appendChild(probe);
+function nameArt(f = NAME) {
+  meter.font = `${f.weight} 100px "${f.family}"`;
+  const size = (f.h / (meter.measureText('H').actualBoundingBoxAscent / 100)).toFixed(2);
+  const style = `font-family:'${f.family}';font-weight:${f.weight};font-stretch:${f.stretch}%;letter-spacing:${f.track}em;`;
+  const body = `<text x="0" y="70" font-size="${size}" style="${style}">${f.text}</text>`;
+  probe.innerHTML = body;
+  // SVG letter-spacing also follows the last letter; take it off so the lockup ends at the ink.
+  const w = probe.firstChild.getComputedTextLength() - f.track * size;
+  return { w, h: 100, body };
+}
+
+function lockup(m, n, gap = 26) {
+  return { w: m.w + gap + n.w, h: 100, body: `${m.body}<g transform="translate(${m.w + gap} 0)">${n.body}</g>`, guides: m.guides };
+}
+
+function gridLines(a) {
+  let g = '';
+  for (let x = 0; x <= a.w; x += 10) g += `<line x1="${x}" y1="-8" x2="${x}" y2="${a.h + 8}"/>`;
+  for (let y = 0; y <= a.h; y += 10) g += `<line x1="-8" y1="${y}" x2="${a.w + 8}" y2="${y}"/>`;
+  const key = [0, 100].map(y => `<line x1="-16" y1="${y}" x2="${a.w + 16}" y2="${y}"/>`).join('');
+  const rings = (a.guides || []).map(([cx, cy, r]) => `<circle cx="${cx}" cy="${cy}" r="${r}"/>`).join('');
+  return `<g class="grid-lines" fill="none" stroke-width="1" vector-effect="non-scaling-stroke">
+    <g stroke="var(--grid)" style="vector-effect:non-scaling-stroke">${g}</g><g stroke="var(--grid-key)">${key}${rings}</g></g>`;
+}
+
+function svg(a, { height, grid = false, pad = 2 } = {}) {
+  const size = height ? `height="${height}" width="${(height * (a.w + 2 * pad) / (a.h + 2 * pad)).toFixed(1)}"` : '';
+  return `<svg viewBox="${-pad} ${-pad} ${a.w + 2 * pad} ${a.h + 2 * pad}" ${size} fill="currentColor" fill-rule="evenodd" aria-hidden="true">${grid ? gridLines(a) : ''}${a.body}</svg>`;
+}
+
+/* ---------- the owl, redrawn from sketch ruled-2 ---------- */
+const raw = (body, guides = [], w = 100, h = 100) => ({ w, h, body, guides });
+// Symmetric about x = 50. Tufts, crown, cheeks and body, open at the bottom; the disc clips it.
+const OWL = 'M50 22.6Q42 22.6 35 27.1L18.8 21.2L18.8 25Q19 31 24 34.7C19 40 18.5 52 22.5 59C17.5 64 16.5 72 17.6 77C18.5 83 21 88.5 24 93L30 108H70L76 93C79 88.5 81.5 83 82.4 77C83.5 72 82.5 64 77.5 59C81.5 52 81 40 76 34.7Q81 31 81.2 25L81.2 21.2L65 27.1Q58 22.6 50 22.6Z';
+// Facial disc: two touching circles and a V that ends in a point on the centre line.
+const FACIAL = [circ(38, 47, 12), circ(62, 47, 12), 'M26 47C26 54 34 58 40 61C45 63.5 48 65.5 50 68.8C52 65.5 55 63.5 60 61C66 58 74 54 74 47Z'];
+const EYES = `${circ(38, 47, 5)} ${circ(62, 47, 5)}`;
+const BEAK = 'M50 63.8C46.5 59.5 45.5 56.5 45.5 54C45.5 51.3 47.5 49.4 50 49.4C52.5 49.4 54.5 51.3 54.5 54C54.5 56.5 53.5 59.5 50 63.8Z';
+const OWL_GUIDES = [[50, 50, 50], [38, 47, 12], [62, 47, 12], [38, 47, 5], [62, 47, 5]];
+
+// Ledger rules across the disc: 2 units thick, every 8 units, from y 8 to 80. They cut the disc, never the owl.
+const RULES = [8, 16, 24, 32, 40, 48, 56, 64, 72, 80].map(y => `M-20 ${y}H120V${y + 2}H-20Z`);
+
+function owlMark({ disc = true, gap = 2, rules = false } = {}) {
+  const clip = 'k' + (++uid), cut = 'k' + (++uid), face = 'k' + (++uid);
+  const area = 'maskUnits="userSpaceOnUse" x="-20" y="-20" width="140" height="140"';
+  const white = '<rect x="-20" y="-20" width="140" height="140" fill="#fff"/>';
+  let body = `<clipPath id="${clip}"><path d="${DISC}"/></clipPath>` +
+    `<mask id="${face}" ${area}>${white}${FACIAL.map(d => `<path d="${d}" fill="#000"/>`).join('')}</mask>`;
+  // The disc loses the owl plus a gap all round, so the owl reads against it in one colour.
+  if (disc) body += `<mask id="${cut}" ${area}>${white}<path d="${OWL}" fill="#000" stroke="#000" stroke-width="${gap * 2}" stroke-linejoin="round"/>` +
+    (rules ? RULES.map(d => `<path d="${d}" fill="#000"/>`).join('') : '') + `</mask>` +
+    `<path d="${DISC}" mask="url(#${cut})"/>`;
+  body += `<g clip-path="url(#${clip})"><path d="${OWL}" mask="url(#${face})"/></g><path d="${EYES} ${BEAK}"/>`;
+  return body;
+}
+// The owl without its disc, cropped to its own bounds and scaled to the 100-unit height.
+function owlAlone() {
+  const x0 = 17.4, y0 = 21, w = 65.2, h = 79, k = 100 / h;
+  return raw(`<g transform="scale(${k}) translate(${-x0} ${-y0})">${owlMark({ disc: false })}</g>`, [], w * k, 100);
+}
+
+// One logo, drawn three ways by size: the 2-unit rules turn grey under about 32px, and the gap blurs at 16px.
+const MARK = {
+  ruled: () => raw(owlMark({ rules: true }), OWL_GUIDES), // 40px and up
+  plain: () => raw(owlMark()),                            // 20 to 32px, and poor print
+  owl: owlAlone,                                          // 16px
+};
+const markAt = px => px >= 40 ? MARK.ruled() : px > 16 ? MARK.plain() : MARK.owl();
+const lockupAt = px => lockup(markAt(px), nameArt());
+
+const SOURCE_RULED = 'data:image/jpeg;base64,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'; // owl-gen/r1/ruled-2.png, 240px
+
+function render() {
+  const grid = document.body.classList.contains('show-grid');
+  document.getElementById('logo').innerHTML = `
+    <div class="top">
+      <div class="stage"><span class="label tag">Primary</span>${svg(lockupAt(100), { grid, pad: 18 })}</div>
+      <div class="notes">
+        <p><span class="label k">Idea</span>A round owl standing in front of ledger lines. The gap around it cuts the owl free of the disc, so the whole logo works in one colour.</p>
+        <p><span class="label k">Construction</span>A 100-unit disc. Ten rules 2 units thick, every 8 units from y 8 to 80. The face is two touching circles of radius 12 over a V; eyes radius 5; a gap of 2 units. Name at cap height 34, 26 units from the disc.</p>
+        <p><span class="label k">Small sizes</span>From 40px up the disc carries its rules. From 32px down to 20px the rules drop out and the disc is solid. At 16px only the owl stays.</p>
+        <p><span class="label k">Source sketch</span><img src="${SOURCE_RULED}" alt="" width="120" height="120" style="display:block;border:1px solid var(--border)"></p>
+      </div>
+    </div>
+    <div class="tiles">
+      <div class="tile paper"><span class="label tag">One colour · copier</span>${svg(lockupAt(22), { height: 22 })}</div>
+      <div class="tile"><span class="label tag">Small</span><div class="sizes">
+        ${[40, 28, 20].map(s => `<div><span class="px">${s}px</span>${svg(lockupAt(s), { height: s })}</div>`).join('')}</div></div>
+      <div class="tile"><span class="label tag">Icon</span><div class="sizes">
+        <div>${[64, 32, 16].map(s => svg(markAt(s), { height: s, pad: 0 })).join('')}</div>
+        <div class="tab">${svg(markAt(16), { height: 16, pad: 0 })}Minerva · Weekly planning</div></div></div>
+    </div>`;
+}
+
+/* ---------- controls ---------- */
+const store = { set(k, v) { try { localStorage.setItem(k, v) } catch {} }, get(k) { try { return localStorage.getItem(k) } catch { return null } } };
+function setTheme(t) { document.documentElement.dataset.theme = t; store.set('mv-theme', t); document.querySelectorAll('[data-t]').forEach(b => b.classList.toggle('on', b.dataset.t === t)); }
+function setGrid(on) { document.body.classList.toggle('show-grid', on); store.set('mv-logo-grid', on ? '1' : ''); document.querySelectorAll('[data-g]').forEach(b => b.classList.toggle('on', (b.dataset.g === 'on') === on)); render(); }
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-t]'); if (t) setTheme(t.dataset.t);
+  const g = e.target.closest('[data-g]'); if (g) setGrid(g.dataset.g === 'on');
+});
+document.addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey) return;
+  if (e.key === 't') setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+  if (e.key === 'g') setGrid(!document.body.classList.contains('show-grid'));
+});
+setTheme(document.documentElement.dataset.theme || 'light');
+setGrid(store.get('mv-logo-grid') === '1');
+// The name is measured in its own face; draw again once it is in.
+document.fonts.load(`${NAME.weight} 40px "${NAME.family}"`).then(render);
+</script>
+</body>
+</html>

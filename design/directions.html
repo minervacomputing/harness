@@ -1,0 +1,701 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Minerva Ledger</title>
+<script>
+  try { const t = localStorage.getItem('mv-theme'); if (t) document.documentElement.dataset.theme = t; else if (matchMedia('(prefers-color-scheme: light)').matches) document.documentElement.dataset.theme = 'light'; } catch {}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* =====================================================================
+   Tokens · Ledger
+   Text tokens are chosen by measured contrast: fg ≥ 13:1, muted ≥ 6.5:1,
+   faint ≥ 4.5:1 (WCAG AA) on every surface they sit on.
+   ===================================================================== */
+:root {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --radius: 0px;
+  --btn-h: 34px;
+  --input-h: 36px;
+  --row-py: 6px;
+  --icon-stroke: 1.5;
+}
+:root[data-theme="dark"] {
+  --bg: #090d18; --surface: #0e1423; --surface-2: #141c30; --sidebar: #070a13; --hero-bg: #04060d;
+  --border: #1b2540; --border-strong: #33436b;
+  --fg: #e1e7f8; --muted: #9ba6c8; --faint: #7885ac;
+  --primary: #7b91ff; --primary-fg: #060a16;
+  --accent: #7b91ff; --accent-fg: #060a16; --highlight: #7b91ff; --highlight-fg: #060a16;
+  --success: #4fd1a1; --warning: #f0b75a; --danger: #ff6b6b;
+  --owl: #6a82ff; --owl-filter: drop-shadow(0 0 3px rgba(106,130,255,.65));
+  --focus-ring: 0 0 0 3px color-mix(in oklab, var(--accent) 25%, transparent), 0 0 14px color-mix(in oklab, var(--accent) 35%, transparent);
+}
+:root[data-theme="light"] {
+  --bg: #f4f5f9; --surface: #fff; --surface-2: #eaedf5; --sidebar: #eceff6; --hero-bg: #0b1024;
+  --border: #dbe0ec; --border-strong: #aab3c9;
+  --fg: #0d1430; --muted: #465172; --faint: #5f6987;
+  --primary: #15216a; --primary-fg: #fff;
+  --accent: #2b44d6; --accent-fg: #fff; --highlight: #15216a; --highlight-fg: #fff;
+  --success: #138a5e; --warning: #a86a00; --danger: #c63a3a;
+  --owl: #15216a; --owl-filter: none;
+  --focus-ring: 0 0 0 3px color-mix(in oklab, var(--accent) 22%, transparent);
+}
+:root { --accent-soft: color-mix(in oklab, var(--accent) 14%, transparent); }
+
+/* The brand surface is dark in both themes and carries its own text palette. */
+.hero {
+  --bg: var(--hero-bg);
+  --fg: #f3f6ff; --muted: #c3cdee; --faint: #a3b0d8;
+  --border: #1f2a48; --border-strong: #3a4a75; --surface: #0e1423; --surface-2: #18213a;
+  --primary: #8ea0ff; --primary-fg: #060a16; --accent: #8ea0ff;
+  --owl: #6a82ff; --dither: #5c78ff;
+  --owl-filter: drop-shadow(0 0 3px rgba(106,130,255,.65));
+  --field-filter: drop-shadow(0 0 2px rgba(92,120,255,.7));
+  --scan: repeating-linear-gradient(0deg, rgba(0,0,0,.35) 0 1px, transparent 1px 3px);
+}
+
+/* =====================================================================
+   Base
+   ===================================================================== */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { min-height: 100vh; background: var(--bg); color: var(--fg); font-family: var(--font-sans); font-size: 14px; line-height: 1.5;
+  -webkit-font-smoothing: antialiased; font-variant-numeric: tabular-nums; transition: background .2s; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+.mono { font-family: var(--font-mono); }
+.muted { color: var(--muted); }
+.faint { color: var(--faint); }
+.label { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .1em; font-size: 11px; font-weight: 500; color: var(--muted); }
+.h { font-family: var(--font-sans); font-weight: 500; letter-spacing: -0.015em; line-height: 1.1; }
+.rule { height: 1px; background: var(--border-strong); }
+.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: var(--icon-stroke); stroke-linecap: round; stroke-linejoin: round; }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes blink { 50% { opacity: .25; } }
+
+.card { background: var(--surface); border: 1px solid var(--border-strong); }
+
+/* buttons: label and icon are the only flex children, so content stays centred */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: var(--btn-h); padding: 0 14px;
+  font-family: var(--font-sans); font-size: 13px; font-weight: 500; white-space: nowrap;
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--fg);
+  transition: background .12s, border-color .12s; }
+.btn:hover { background: var(--surface-2); }
+.btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.btn.primary { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+.btn.primary:hover { background: color-mix(in oklab, var(--primary) 88%, var(--bg)); }
+.btn.highlight { background: var(--highlight); color: var(--highlight-fg); border-color: var(--highlight); }
+.btn.ghost { background: transparent; border-color: transparent; }
+.btn.ghost:hover { background: var(--surface-2); }
+.btn.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+.btn.danger-ghost { background: transparent; border-color: transparent; color: var(--danger); }
+.btn.link { background: none; border: 0; padding: 0; height: auto; color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.btn.sm { height: calc(var(--btn-h) - 6px); padding: 0 10px; font-size: 12px; }
+.btn.icon { width: var(--btn-h); padding: 0; }
+.btn.icon.sm { width: calc(var(--btn-h) - 6px); }
+.btn[disabled] { opacity: .45; pointer-events: none; }
+
+/* inputs */
+.field { display: grid; gap: 6px; }
+.input { height: var(--input-h); width: 100%; padding: 0 12px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--fg);
+  font: inherit; transition: border-color .12s, box-shadow .12s; }
+.input::placeholder { color: var(--faint); }
+.input:focus, .input.is-focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
+.input.is-error { border-color: var(--danger); }
+.help { font-size: 12px; color: var(--muted); }
+.help.err { color: var(--danger); }
+.select { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; }
+
+/* switch */
+.switch { position: relative; width: 36px; height: 20px; background: var(--border-strong); flex: none; transition: background .15s; cursor: pointer; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; background: #fff; transition: transform .15s; }
+.switch.on { background: var(--accent); }
+.switch.on::after { transform: translateX(16px); }
+
+/* checkbox */
+.check { width: 16px; height: 16px; border: 1px solid var(--border-strong); background: var(--surface); display: inline-grid; place-items: center; flex: none; cursor: pointer; }
+.check svg { width: 12px; height: 12px; stroke: var(--accent-fg); stroke-width: 2.5; fill: none; opacity: 0; }
+.check.on { background: var(--accent); border-color: var(--accent); }
+.check.on svg { opacity: 1; }
+.check.deny { background: transparent; border-color: var(--danger); }
+.check.deny svg { stroke: var(--danger); opacity: 1; }
+.check.inherit { background: var(--accent-soft); border-color: transparent; }
+.check.inherit svg { stroke: var(--accent); opacity: 1; }
+
+/* radio */
+.radio { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--border-strong); display: inline-grid; place-items: center; flex: none; }
+.radio.on::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+
+/* stepped slider */
+.slider { position: relative; height: 22px; margin: 0 8px; cursor: pointer; }
+.slider .track { position: absolute; left: 0; right: 0; top: 9px; height: 4px; background: var(--border-strong); }
+.slider .fill { position: absolute; left: 0; top: 9px; height: 4px; background: var(--accent); transition: width .15s; }
+.slider .stop { position: absolute; top: 7px; width: 8px; height: 8px; margin-left: -4px; background: var(--fg); }
+.slider .stop.lit { background: var(--accent); }
+.slider .thumb { position: absolute; top: 0; width: 22px; height: 22px; margin-left: -11px; background: #fff; border: 1px solid rgba(0,0,0,.12); box-shadow: 0 1px 4px rgba(0,0,0,.3); transition: left .15s; }
+.slider-caption { font-size: 13px; margin-top: 10px; }
+
+/* status: a dot and a word */
+.badge { --c: var(--faint); display: inline-flex; align-items: center; gap: 7px; height: 20px; font-size: 13px; white-space: nowrap; color: var(--fg); }
+.badge::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 1px color-mix(in oklab, var(--fg) 70%, transparent); }
+.badge.ok { --c: var(--success); } .badge.warn { --c: var(--warning); } .badge.bad { --c: var(--danger); } .badge.info { --c: var(--accent); }
+.badge.live::before { animation: blink 1.2s infinite; }
+:root[data-theme="dark"] .badge.live::before { box-shadow: 0 0 0 1px var(--fg), 0 0 8px var(--c); }
+
+/* alerts */
+.alert { --c: var(--accent); display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px;
+  border: 1px solid color-mix(in oklab, var(--c) 35%, var(--border)); background: color-mix(in oklab, var(--c) 7%, var(--surface)); font-size: 13px; }
+.alert .i { color: var(--c); margin-top: 2px; }
+.alert.warn { --c: var(--warning); }
+
+kbd { font-family: var(--font-mono); font-size: 11px; padding: 1px 5px; border: 1px solid var(--border-strong); border-bottom-width: 2px; color: var(--muted); background: var(--surface); }
+
+/* tabs */
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); }
+.tab { padding: 8px 12px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .1em; font-size: 12px; }
+.tab.on { color: var(--fg); border-bottom-color: var(--fg); }
+
+.segmented { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--border); background: var(--surface-2); }
+.segmented button { padding: 4px 10px; font-size: 12px; color: var(--muted); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .1em; }
+.segmented button.on { background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--border); }
+
+.progress { height: 6px; background: var(--surface-2); overflow: hidden; border: 1px solid var(--border); }
+.progress > div { height: 100%; background: var(--accent); }
+
+/* tables: ruled, sentence-case bold heads */
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table th { text-align: left; padding: 7px 12px; border-bottom: 1px solid var(--border-strong); font-weight: 600; color: var(--fg); white-space: nowrap; }
+.table td { padding: var(--row-py) 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.table tr:last-child td { border-bottom: 0; }
+.table .c { text-align: center; }
+.table tbody tr:hover td { background: color-mix(in oklab, var(--surface-2) 60%, transparent); }
+.table .num { text-align: right; font-family: var(--font-mono); }
+
+/* tool call cards: status by icon and meta colour, never a side stripe */
+.tool { --c: var(--success); display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px; align-items: center; padding: 8px 12px;
+  border: 1px solid var(--border-strong); background: var(--surface); font-size: 13px; }
+.tool:is(.deny, .fail, .run, .ask) .meta { color: var(--c); }
+.tool > .i { color: var(--c); }
+.tool .name { font-family: var(--font-mono); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool .name b { font-weight: 500; }
+.tool .name span { color: var(--faint); }
+.tool .meta { font-family: var(--font-mono); font-size: 11.5px; color: var(--faint); white-space: nowrap; }
+.tool .body { grid-column: 2 / -1; color: var(--muted); font-size: 13px; }
+.tool .actions { grid-column: 2 / -1; display: flex; gap: 8px; margin-top: 6px; }
+.tool.deny { --c: var(--danger); } .tool.fail { --c: var(--warning); } .tool.run { --c: var(--accent); } .tool.ask { --c: var(--highlight); }
+
+/* =====================================================================
+   Brand moment. Text sits on solid navy; the dither lives in its own
+   panel and never runs behind text, at any width.
+   ===================================================================== */
+.hero-frame { container-type: inline-size; }
+.hero { display: grid; grid-template-columns: minmax(0, 11fr) minmax(0, 9fr); min-height: 300px; overflow: hidden;
+  border: 1px solid var(--border-strong); background: var(--hero-bg); color: var(--fg); }
+.hero .content { padding: 40px; display: grid; gap: 14px; align-content: center; max-width: 620px; }
+.hero .label { color: var(--faint); }
+.hero h3 { font-size: 34px; }
+.hero h3 span { color: var(--muted); }
+.hero p { color: var(--muted); font-size: 15px; max-width: 48ch; }
+.hero .acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.hero .art { position: relative; min-height: 200px; }
+.hero .art canvas.field { position: absolute; inset: 0; width: 100%; height: 100%; filter: var(--field-filter); }
+.hero .art::after { content: ""; position: absolute; inset: 0; background: var(--scan); pointer-events: none; z-index: 2; }
+.hero .owl-big { position: absolute; z-index: 1; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 180px; height: 180px; filter: var(--owl-filter); }
+@container (max-width: 760px) {
+  .hero { grid-template-columns: 1fr; }
+  .hero .art { order: -1; min-height: 150px; }
+  .hero .owl-big { left: auto; right: 24px; transform: translateY(-50%); width: 112px; height: 112px; }
+  .hero .content { padding: 4px 24px 28px; }
+  .hero h3 { font-size: 26px; }
+}
+
+/* =====================================================================
+   Page layout
+   ===================================================================== */
+.bar { position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 10px 24px;
+  background: color-mix(in oklab, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+.bar .spacer { flex: 1; }
+.hint { font-size: 11px; color: var(--faint); }
+
+main { max-width: 1240px; margin: 0 auto; padding: 32px 24px 80px; display: grid; gap: 36px; }
+.sec-head { display: grid; gap: 10px; margin-bottom: 16px; }
+.sec-head .row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.sec-head h2 { font-size: 18px; }
+
+.intro { display: grid; grid-template-columns: 1.1fr 1fr; gap: 32px; }
+.intro h1 { font-size: 44px; margin: 6px 0 10px; }
+.intro .tagline { font-size: 17px; color: var(--muted); max-width: 46ch; }
+.meta-row { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-top: 20px; font-size: 13px; }
+.meta-row div { display: grid; gap: 2px; }
+.principles { list-style: none; border-top: 1px solid var(--border); }
+.principles li { display: flex; gap: 14px; padding: 9px 12px; border-bottom: 1px solid var(--border); font-size: 15px; }
+.principles li .n { font-family: var(--font-mono); font-size: 12px; color: var(--faint); padding-top: 2px; }
+.watch { margin-top: 14px; }
+.swatches { display: flex; height: 18px; margin-top: 18px; }
+.swatches span { flex: 1; }
+.typescale { display: grid; gap: 6px; margin-top: 18px; }
+.typescale > div { display: flex; align-items: baseline; gap: 16px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+.typescale .k { width: 74px; flex: none; }
+
+.contrast .sample { display: inline-block; padding: 1px 8px; border: 1px solid var(--border); }
+.contrast .pass { color: var(--success); }
+.contrast .fail { color: var(--danger); }
+
+/* app mock */
+.app { display: grid; grid-template-columns: 228px 1fr; height: 720px; border: 1px solid var(--border-strong); overflow: hidden; background: var(--bg); }
+.side { background: var(--sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 12px; gap: 14px; min-width: 0; }
+.ws { display: flex; align-items: center; gap: 10px; padding: 6px; }
+.ws .name { font-weight: 600; font-size: 13px; line-height: 1.2; }
+.ws .sub { font-size: 11px; color: var(--faint); }
+.nav { display: grid; gap: 1px; }
+.nav a { display: flex; align-items: center; gap: 10px; padding: 7px 8px; color: var(--muted); text-decoration: none; font-size: 13px; }
+.nav a:hover, .nav a.on { background: var(--surface-2); color: var(--fg); }
+.nav a .count { margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--faint); }
+.recent { display: grid; gap: 1px; }
+.recent a { padding: 5px 8px; font-size: 13px; color: var(--muted); text-decoration: none; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.recent a.on { color: var(--fg); }
+.me { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 8px 6px 2px; border-top: 1px solid var(--border); font-size: 13px; }
+.avatar { width: 26px; height: 26px; background: var(--surface-2); border: 1px solid var(--border-strong); display: grid; place-items: center; font-size: 11px; font-weight: 600; font-family: var(--font-mono); }
+
+.main { display: flex; flex-direction: column; min-width: 0; }
+.topbar { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--border); }
+.topbar .title { font-weight: 600; font-size: 14px; }
+.topbar .spacer { flex: 1; }
+.thread { flex: 1; min-height: 0; overflow: auto; padding: 24px 20px; display: grid; gap: 14px; align-content: start; }
+.thread > * { max-width: 720px; width: 100%; margin: 0 auto; }
+.msg-user { justify-self: end; margin-left: auto; margin-right: 0; max-width: 520px; padding: 10px 14px; background: var(--surface-2); border: 1px solid var(--border); font-size: 14px; }
+.msg-agent { font-size: 14px; display: grid; gap: 10px; }
+.msg-agent .who { display: flex; align-items: center; gap: 8px; }
+.msg-agent .table { border: 1px solid var(--border-strong); }
+.msg-agent code { font-family: var(--font-mono); font-size: 12.5px; padding: 1px 4px; background: var(--surface-2); }
+.tools { display: grid; gap: 6px; }
+.composer-wrap { padding: 12px 20px 18px; }
+.composer { max-width: 720px; margin: 0 auto; border: 1px solid var(--border-strong); background: var(--surface); padding: 14px 14px 10px; display: grid; gap: 14px; }
+.composer textarea { border: 0; outline: 0; resize: none; background: transparent; color: var(--fg); font: inherit; font-size: 15px; height: 24px; }
+.composer textarea::placeholder { color: var(--faint); }
+.composer .row { display: flex; align-items: center; gap: 4px; }
+.composer .row .spacer { flex: 1; }
+.composer .pick { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.composer .pick:hover { background: var(--surface-2); color: var(--fg); }
+.composer .pick .i { width: 14px; height: 14px; }
+.composer .send { width: 30px; height: 30px; }
+
+/* two-up */
+.two { display: grid; grid-template-columns: 1.15fr 1fr; gap: 24px; align-items: start; }
+.panel-h { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border-strong); }
+.panel-h .t { font-weight: 600; }
+.panel-h .spacer { flex: 1; }
+.panel-b { padding: 16px; display: grid; gap: 18px; }
+.res { display: flex; align-items: center; gap: 8px; }
+.res .key { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); border: 1px solid var(--border); padding: 0 5px; }
+.sub-arrow { color: var(--faint); font-family: var(--font-mono); padding-left: 6px; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); padding: 10px 16px; border-top: 1px solid var(--border); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.comp-group { display: grid; gap: 10px; }
+.comp-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.comp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.ctrl { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+
+@media (max-width: 900px) {
+  .intro, .two { grid-template-columns: 1fr; }
+  .app { grid-template-columns: 1fr; height: auto; }
+  .side { display: none; }
+  .thread { max-height: 640px; }
+}
+@media (max-width: 640px) {
+  main { padding: 20px 16px 60px; }
+  .bar { padding: 10px 16px; }
+  .hint { display: none; }
+  .intro h1 { font-size: 34px; }
+  .comp-grid { grid-template-columns: 1fr; }
+  .table th, .table td { padding-left: 8px; padding-right: 8px; }
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="i-bot" viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M12 8V4M8 14h.01M16 14h.01"/></symbol>
+  <symbol id="i-plug" viewBox="0 0 24 24"><path d="M12 22v-5M9 8V2M15 8V2M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8z"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 21h20z"/><path d="M12 10v4M12 17h.01"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-loader" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
+  <symbol id="i-hand" viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-4 0M14 10V4a2 2 0 0 0-4 0v2M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.9-6-2.4l-3.6-3.6a2 2 0 0 1 2.8-2.8L7 15"/></symbol>
+  <symbol id="i-tick" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+</svg>
+
+<header class="bar">
+  <div class="brand"><canvas class="owl" data-grid="16" style="width:24px;height:24px"></canvas>Minerva <span class="label">Ledger · design direction</span></div>
+  <div class="spacer"></div>
+  <div class="segmented" id="theme"><button data-t="light">Light</button><button data-t="dark">Dark</button></div>
+  <span class="hint"><kbd>T</kbd> theme</span>
+</header>
+
+<main>
+
+  <section class="intro">
+    <div>
+      <div class="label">Direction E</div>
+      <h1 class="h">Ledger</h1>
+      <p class="tagline">Owl-blue colour, Plex type and a dither field for brand moments, on a square, ruled structure with plain status.</p>
+      <div class="meta-row">
+        <div><span class="label">Type</span><span>IBM Plex Sans · IBM Plex Mono</span></div>
+        <div><span class="label">Borrows from</span><span>the owl logo, U.S. Graphics</span></div>
+      </div>
+      <div class="swatches" id="swatches"></div>
+      <div class="typescale">
+        <div><span class="label k">Display</span><span class="h" style="font-size:32px">Governed agents</span></div>
+        <div><span class="label k">Title</span><span class="h" style="font-size:20px">Choose what agents may do</span></div>
+        <div><span class="label k">Body</span><span>Agents never receive your credentials.</span></div>
+        <div><span class="label k">Small</span><span class="muted" style="font-size:12px">Updated 3 min ago by Ada Lovelace</span></div>
+        <div><span class="label k">Mono</span><span class="mono" style="font-size:13px">run_7f3a · linear.create_issue · 0.84s</span></div>
+      </div>
+    </div>
+    <div>
+      <div class="label" style="margin-bottom:10px">Principles</div>
+      <ul class="principles">
+        <li><span class="n">01</span><span>Owl-blue neutrals and Plex type. Texture only in brand moments.</span></li>
+        <li><span class="n">02</span><span>Square corners and visible edges. Buttons stay flat, with no shadows.</span></li>
+        <li><span class="n">03</span><span>Status is a dot and a word. No pills, no coloured stripes.</span></li>
+        <li><span class="n">04</span><span>Dense, ruled tables with sentence-case headers and tabular numbers.</span></li>
+        <li><span class="n">05</span><span>Text never sits on texture. Every text colour meets WCAG AA on its surface.</span></li>
+      </ul>
+      <div class="alert warn watch"><svg class="i"><use href="#i-alert"/></svg><div><b>Watch out:</b> square corners and strong edges can feel stiff in long forms. Watch inputs and dialogs.</div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><div class="row"><h2 class="h">Brand moment</h2><span class="label">Empty state · dither field · owl placeholder</span></div><div class="rule"></div></div>
+    <div class="hero-frame">
+      <div class="hero">
+        <div class="content">
+          <span class="label">Acme Operations · Workspace</span>
+          <h3 class="h">Good morning, Ada. <span>Your agents can reach 6 apps.</span></h3>
+          <p>Every action is checked against the access you chose. Agents never hold your keys.</p>
+          <div class="acts"><button class="btn primary">New chat</button><button class="btn">Review access</button></div>
+        </div>
+        <div class="art"><canvas class="field"></canvas><canvas class="owl owl-big" data-grid="44"></canvas></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="contrast">
+    <div class="sec-head"><div class="row"><h2 class="h">Text contrast</h2><span class="label">Measured live · AA needs 4.5:1</span></div><div class="rule"></div></div>
+    <div class="card" style="overflow-x:auto"><table class="table" id="contrast"></table></div>
+  </section>
+
+  <section>
+    <div class="sec-head"><div class="row"><h2 class="h">Chat</h2><span class="label">Sidebar · thread · tool calls · composer</span></div><div class="rule"></div></div>
+    <div class="app">
+      <aside class="side">
+        <div class="ws"><canvas class="owl" data-grid="16" style="width:28px;height:28px"></canvas><div><div class="name">Acme Operations</div><div class="sub">Team · 14 members</div></div><svg class="i faint" style="margin-left:auto;width:14px"><use href="#i-chev"/></svg></div>
+        <button class="btn sm" style="justify-content:flex-start"><svg class="i"><use href="#i-plus"/></svg>New chat<span style="margin-left:auto"><kbd>⌘K</kbd></span></button>
+        <nav class="nav">
+          <a href="#" class="on"><svg class="i"><use href="#i-chat"/></svg>Chats</a>
+          <a href="#"><svg class="i"><use href="#i-bot"/></svg>Agents<span class="count">3</span></a>
+          <a href="#"><svg class="i"><use href="#i-plug"/></svg>Connections<span class="count">6</span></a>
+          <a href="#"><svg class="i"><use href="#i-shield"/></svg>Activity</a>
+          <a href="#"><svg class="i"><use href="#i-user"/></svg>Account</a>
+        </nav>
+        <div class="label" style="padding:0 8px">Recent</div>
+        <div class="recent">
+          <a href="#" class="on">Weekly planning</a>
+          <a href="#">Summarise #ops-incidents</a>
+          <a href="#">Q4 board deck outline</a>
+          <a href="#">Reply to vendor contract email</a>
+          <a href="#">Triage ENG backlog</a>
+        </div>
+        <div class="me"><div class="avatar">AL</div><div><div>Ada Lovelace</div><div class="faint" style="font-size:11px">ada@acme.com</div></div></div>
+      </aside>
+      <div class="main">
+        <div class="topbar">
+          <span class="title">Weekly planning</span>
+          <span class="badge info live">Running</span>
+          <span class="spacer"></span>
+          <span class="mono faint" style="font-size:12px">run_7f3a</span>
+          <button class="btn sm">Stop</button>
+        </div>
+        <div class="thread">
+          <div class="msg-user">Check what's due this week in Linear and block time in my work calendar for the top three.</div>
+          <div class="tools">
+            <div class="tool"><svg class="i"><use href="#i-check"/></svg><div class="name"><b>linear.list_issues</b> <span>team=OPS due&lt;=2026-10-09</span></div><div class="meta">12 results · 0.8s</div></div>
+            <div class="tool"><svg class="i"><use href="#i-check"/></svg><div class="name"><b>google_calendar.list_events</b> <span>calendar=Work 7d</span></div><div class="meta">23 events · 0.4s</div></div>
+            <div class="tool deny"><svg class="i"><use href="#i-ban"/></svg><div class="name"><b>google_calendar.create_event</b> <span>calendar=Work</span></div><div class="meta">not allowed</div>
+              <div class="body">Creating events in <b>Work</b> is not allowed for this agent.</div>
+              <div class="actions"><button class="btn sm">Change access</button><button class="btn sm ghost">Details</button></div></div>
+            <div class="tool fail"><svg class="i"><use href="#i-alert"/></svg><div class="name"><b>todoist.create_task</b> <span>project=Inbox</span></div><div class="meta">failed · 503</div></div>
+            <div class="tool run"><svg class="i spin"><use href="#i-loader"/></svg><div class="name"><b>google_calendar.create_event</b> <span>calendar=Focus</span></div><div class="meta">running…</div></div>
+          </div>
+          <div class="msg-agent">
+            <div class="who"><canvas class="owl" data-grid="16" style="width:20px;height:20px"></canvas><b>Planner</b><span class="faint mono" style="font-size:12px">gpt-5-mini</span></div>
+            <p>Three issues are due this week. I couldn't add events to <b>Work</b>, so I'm blocking time in <code>Focus</code> instead:</p>
+            <table class="table">
+              <thead><tr><th>Issue</th><th>Title</th><th>Due</th><th>Block</th></tr></thead>
+              <tbody>
+                <tr><td class="mono">OPS-412</td><td>Renew SOC 2 evidence collection</td><td>Tue 6</td><td class="mono">09:00–11:00</td></tr>
+                <tr><td class="mono">OPS-398</td><td>Vendor offboarding checklist</td><td>Wed 7</td><td class="mono">14:00–15:30</td></tr>
+                <tr><td class="mono">OPS-421</td><td>Q4 access review</td><td>Fri 9</td><td class="mono">10:00–12:00</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="composer-wrap">
+          <div class="composer">
+            <textarea placeholder="Ask anything, / for commands, @ for context…"></textarea>
+            <div class="row">
+              <button class="btn ghost icon sm"><svg class="i"><use href="#i-plus"/></svg></button>
+              <span class="pick"><svg class="i"><use href="#i-bot"/></svg>Planner<svg class="i"><use href="#i-chev"/></svg></span>
+              <span class="pick">gpt-5-mini<svg class="i"><use href="#i-chev"/></svg></span>
+              <span class="pick">Medium<svg class="i"><use href="#i-chev"/></svg></span>
+              <span class="spacer"></span>
+              <button class="btn primary icon send"><svg class="i"><use href="#i-up"/></svg></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="two">
+    <div>
+      <div class="sec-head"><div class="row"><h2 class="h">Access</h2><span class="label">Dense table · checkboxes · states</span></div><div class="rule"></div></div>
+      <div class="card">
+        <div class="panel-h">
+          <span class="t">Linear</span><span class="badge ok">Connected</span><span class="mono faint" style="font-size:12px">acme.linear.app</span>
+          <span class="spacer"></span>
+          <button class="btn sm ghost">Reconnect</button><button class="btn sm danger-ghost">Disconnect</button>
+        </div>
+        <table class="table" id="access">
+          <thead><tr><th>Team</th><th class="c">Read</th><th class="c">Comment</th><th class="c">Create</th><th class="c">Edit</th></tr></thead>
+          <tbody>
+            <tr><td><div class="res"><span class="key">*</span>All teams</div></td><td class="c">C</td><td class="c">C</td><td class="c">_</td><td class="c">_</td></tr>
+            <tr><td><div class="res"><span class="key">OPS</span>Operations</div></td><td class="c">I</td><td class="c">I</td><td class="c">C</td><td class="c">_</td></tr>
+            <tr><td><div class="res"><span class="key">ENG</span>Engineering</div></td><td class="c">I</td><td class="c">I</td><td class="c">_</td><td class="c">_</td></tr>
+            <tr><td><div class="res"><span class="sub-arrow">└</span><span class="key">PLT</span>Platform</div></td><td class="c">X</td><td class="c">X</td><td class="c">X</td><td class="c">X</td></tr>
+            <tr><td><div class="res"><span class="key">FIN</span>Finance</div></td><td class="c">I</td><td class="c">I</td><td class="c">_</td><td class="c">_</td></tr>
+          </tbody>
+        </table>
+        <div class="legend"><span><i class="check on"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></i>Allowed</span><span><i class="check inherit"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></i>From “All teams”</span><span><i class="check deny"><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></i>Blocked (wins)</span></div>
+      </div>
+      <div class="alert" style="margin-top:12px"><svg class="i"><use href="#i-info"/></svg><div>A block on a sub-team wins over access to the team around it.</div></div>
+    </div>
+
+    <div>
+      <div class="sec-head"><div class="row"><h2 class="h">Components</h2><span class="label">shadcn primitives, restyled</span></div><div class="rule"></div></div>
+      <div class="card panel-b">
+        <div class="comp-group"><span class="label">Buttons</span>
+          <div class="comp-row"><button class="btn primary">Save access</button><button class="btn">Cancel</button><button class="btn ghost">Ghost</button><button class="btn link">Learn more</button></div>
+          <div class="comp-row"><button class="btn highlight"><svg class="i"><use href="#i-hand"/></svg>Approve</button><button class="btn danger">Disconnect</button><button class="btn sm">Small</button><button class="btn icon sm"><svg class="i"><use href="#i-search"/></svg></button><button class="btn primary icon"><svg class="i"><use href="#i-up"/></svg></button><button class="btn" disabled>Disabled</button></div>
+        </div>
+        <div class="comp-grid">
+          <label class="field"><span class="label">Agent name</span><input class="input" value="Planner"></label>
+          <label class="field"><span class="label">Model</span><div class="input select"><span>gpt-5-mini</span><svg class="i faint"><use href="#i-chev"/></svg></div></label>
+          <label class="field"><span class="label">Search</span><input class="input is-focus" placeholder="Filter teams…"></label>
+          <label class="field"><span class="label">Domain</span><input class="input is-error" value="*.com"><span class="help err">Public suffixes can't be granted.</span></label>
+        </div>
+        <div class="comp-grid">
+          <div class="comp-group"><span class="label">Controls</span>
+            <div class="ctrl"><span class="switch on" data-toggle></span>Ask before sending mail</div>
+            <div class="ctrl"><span class="switch" data-toggle></span>Allow web search</div>
+            <div class="ctrl"><span class="check on" data-toggle><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>Read events</div>
+            <div class="ctrl"><span class="radio on"></span>Every calendar <span class="radio" style="margin-left:10px"></span>Selected</div>
+          </div>
+          <div class="comp-group"><span class="label">Status</span>
+            <div class="comp-row"><span class="badge ok">Connected</span><span class="badge warn">Needs reauth</span></div>
+            <div class="comp-row"><span class="badge bad">Blocked</span><span class="badge info live">Running</span><span class="badge">Draft</span></div>
+            <div class="progress" style="margin-top:4px"><div style="width:62%"></div></div>
+            <span class="help mono">Run budget · 62% of 15 min</span>
+          </div>
+        </div>
+        <div class="comp-group"><span class="label">Activity detail</span>
+          <div class="slider" id="slider"><div class="track"></div><div class="fill"></div></div>
+          <div class="slider-caption"><b id="slider-name"></b> <span class="muted" id="slider-desc"></span></div>
+        </div>
+        <div class="tabs"><button class="tab on">Overview</button><button class="tab">Access</button><button class="tab">Activity</button></div>
+        <div class="tool ask"><svg class="i"><use href="#i-hand"/></svg><div class="name"><b>outlook.send_mail</b> <span>to=legal@vendor.io</span></div><div class="meta">needs you</div>
+          <div class="body">Planner wants to email a recipient you haven't allowed yet.</div>
+          <div class="actions"><button class="btn sm highlight">Allow once</button><button class="btn sm">Deny</button></div></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const SLIDER = [['Hidden', 'Show only the answer.'], ['Minimal', 'One line per tool call.'], ['Compact', 'Group all activity with details collapsed.'], ['Detailed', 'Show arguments and results.'], ['Raw', 'Show every event as it arrives.']];
+const store = { get(k) { try { return localStorage.getItem(k) } catch { return null } }, set(k, v) { try { localStorage.setItem(k, v) } catch {} } };
+const root = document.documentElement;
+const state = { step: 2 };
+
+/* ---------- dithering ---------- */
+const B8 = [0,32,8,40,2,34,10,42,48,16,56,24,50,18,58,26,12,44,4,36,14,46,6,38,60,28,52,20,62,30,54,22,3,35,11,43,1,33,9,41,51,19,59,27,49,17,57,25,15,47,7,39,13,45,5,37,63,31,55,23,61,29,53,21];
+const bayer = (x, y) => (B8[(y & 7) * 8 + (x & 7)] + 0.5) / 64;
+const hash = (x, y) => { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); };
+const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+
+function owlField(nx, ny) {
+  const x = nx * 2 - 1, y = ny * 2 - 1;
+  // ear tufts
+  for (const s of [-1, 1]) {
+    const dx = x - s * 0.42;
+    if (y < -0.45 && y > -0.98 && Math.abs(dx) < (y + 0.98) * 0.42 && s * dx > -0.12) return 0.7;
+  }
+  const e = (x / 0.66) ** 2 + ((y - 0.08) / 0.88) ** 2;
+  if (e > 1) return 0;
+  let v = 0.32 + 0.3 * (1 - ny);
+  // facial discs
+  for (const s of [-1, 1]) {
+    const r = Math.hypot(x - s * 0.27, y + 0.24);
+    if (r < 0.3) v = 0.82;
+    if (r < 0.17) v = 1;
+    if (r < 0.085) return 0;
+  }
+  // beak
+  if (y > -0.12 && y < 0.12 && Math.abs(x) < 0.07 * (1 - (y + 0.12) / 0.24)) return 0.05;
+  // belly chevrons
+  if (y > 0.25 && ((y * 7 + Math.abs(x) * 2.5) % 1) < 0.28) v *= 0.35;
+  // wing edge shading
+  v *= 1 - 0.55 * smooth(0.6, 1, e);
+  return v;
+}
+
+// The field fills only the art panel. Beside the text it fades out toward the
+// text column; stacked above the text it fades out toward the bottom.
+function heroField(nx, ny, w, h) {
+  const aspect = w / h, stacked = aspect > 2.6;
+  const cx = stacked ? 0.8 : 0.5;
+  const u = (nx - cx) * aspect * 0.5 + (ny - 0.5) * 0.6;
+  const band = Math.exp(-(u * u) / 0.035);
+  const glow = Math.exp(-(((nx - cx) * aspect) ** 2 + ((ny - 0.5) * 1.3) ** 2) / 0.8);
+  const v = 0.6 * band + 0.45 * glow + (hash(Math.floor(nx * 140), Math.floor(ny * 60)) - 0.5) * 0.35;
+  return v * (stacked ? smooth(1, 0.55, ny) * smooth(0, 0.3, nx) : smooth(0, 0.4, nx));
+}
+
+const cssVar = (el, name) => getComputedStyle(el).getPropertyValue(name).trim();
+
+function draw(canvas) {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (!w || !h) return;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  if (canvas.classList.contains('owl')) {
+    ctx.fillStyle = cssVar(canvas, '--owl');
+    const n = +canvas.dataset.grid || 16, cell = w / n;
+    const gap = n > 24 ? Math.max(0.5, cell * 0.12) : 0;
+    for (let gy = 0; gy < n; gy++) for (let gx = 0; gx < n; gx++) {
+      const v = owlField((gx + 0.5) / n, (gy + 0.5) / n);
+      if (v > bayer(gx, gy)) ctx.fillRect(gx * cell, gy * cell, cell - gap, cell - gap);
+    }
+    return;
+  }
+
+  ctx.fillStyle = cssVar(canvas, '--dither');
+  const cell = 4, cols = Math.ceil(w / cell), rows = Math.ceil(h / cell);
+  for (let gy = 0; gy < rows; gy++) for (let gx = 0; gx < cols; gx++) {
+    const v = Math.max(0, Math.min(1, heroField(gx / cols, gy / rows, w, h)));
+    if (v <= bayer(gx, gy)) continue;
+    ctx.globalAlpha = 0.35 + 0.65 * v;
+    ctx.fillRect(gx * cell, gy * cell, cell - 1, cell - 1);
+  }
+  ctx.globalAlpha = 1;
+}
+const drawAll = () => requestAnimationFrame(() => document.querySelectorAll('canvas').forEach(draw));
+
+/* ---------- contrast ---------- */
+function lum(hex) {
+  let h = hex.replace('#', ''); if (h.length === 3) h = [...h].map(x => x + x).join('');
+  const c = h.match(/../g).map(x => parseInt(x, 16) / 255).map(x => x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+}
+const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+
+function renderContrast() {
+  const hero = document.querySelector('.hero');
+  const surfaces = [['Page', root, '--bg'], ['Card', root, '--surface'], ['Raised', root, '--surface-2'], ['Brand', hero, '--hero-bg']];
+  const texts = [['Text', '--fg'], ['Muted', '--muted'], ['Faint', '--faint']];
+  let html = '<thead><tr><th>Token</th>' + surfaces.map(s => `<th>${s[0]}</th>`).join('') + '</tr></thead><tbody>';
+  for (const [name, v] of texts) {
+    html += `<tr><td><span class="mono" style="white-space:nowrap">${v}</span></td>`;
+    for (const [, el, bgVar] of surfaces) {
+      const fg = cssVar(el, v), bg = cssVar(el, bgVar), r = ratio(fg, bg);
+      html += `<td><span class="sample" style="background:${bg};color:${fg}">${name}</span> <span class="mono ${r >= 4.5 ? 'pass' : 'fail'}">${r.toFixed(1)}</span></td>`;
+    }
+    html += '</tr>';
+  }
+  document.getElementById('contrast').innerHTML = html + '</tbody>';
+}
+
+/* ---------- rendering ---------- */
+function renderSlider() {
+  const el = document.getElementById('slider');
+  el.querySelectorAll('.stop,.thumb').forEach(n => n.remove());
+  const pct = i => (i / (SLIDER.length - 1)) * 100;
+  SLIDER.forEach((_, i) => {
+    const s = document.createElement('span');
+    s.className = 'stop' + (i <= state.step ? ' lit' : '');
+    s.style.left = pct(i) + '%';
+    el.appendChild(s);
+  });
+  const t = document.createElement('span'); t.className = 'thumb'; t.style.left = pct(state.step) + '%'; el.appendChild(t);
+  el.querySelector('.fill').style.width = pct(state.step) + '%';
+  document.getElementById('slider-name').textContent = SLIDER[state.step][0] + ':';
+  document.getElementById('slider-desc').textContent = SLIDER[state.step][1];
+}
+
+function renderAccess() {
+  const tick = '<svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>', cross = '<svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+  document.querySelectorAll('#access td.c').forEach(td => {
+    const k = td.textContent.trim();
+    const cls = { C: 'check on', I: 'check inherit', X: 'check deny', _: 'check' }[k];
+    if (cls) td.innerHTML = `<span class="${cls}" data-toggle>${k === 'X' ? cross : tick}</span>`;
+  });
+}
+
+function setTheme(t) {
+  root.dataset.theme = t;
+  store.set('mv-theme', t);
+  document.querySelectorAll('#theme button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+  document.getElementById('swatches').innerHTML = ['--fg', '--muted', '--faint', '--border-strong', '--surface-2', '--bg', '--owl', '--accent', '--primary', '--success', '--warning', '--danger']
+    .map(v => `<span title="${v}" style="background:var(${v})"></span>`).join('');
+  renderContrast();
+  drawAll();
+}
+
+/* ---------- events ---------- */
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-t]'); if (t) { setTheme(t.dataset.t); return; }
+  const tg = e.target.closest('[data-toggle]'); if (tg) { tg.classList.toggle('on'); return; }
+  const tab = e.target.closest('.tab'); if (tab) { tab.parentElement.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === tab)); return; }
+  const sl = e.target.closest('#slider');
+  if (sl) { const r = sl.getBoundingClientRect(); state.step = Math.max(0, Math.min(SLIDER.length - 1, Math.round(((e.clientX - r.left) / r.width) * (SLIDER.length - 1)))); renderSlider(); }
+});
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input, textarea') || e.metaKey || e.ctrlKey) return;
+  if (e.key === 't') setTheme(root.dataset.theme === 'dark' ? 'light' : 'dark');
+});
+let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(drawAll, 120); });
+
+renderAccess();
+renderSlider();
+setTheme(root.dataset.theme || 'dark');
+</script>
+</body>
+</html>

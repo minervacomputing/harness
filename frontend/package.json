@@ -14,6 +14,8 @@
   "dependencies": {
     "@assistant-ui/react": "^0.15.22",
     "@assistant-ui/react-markdown": "^0.14.17",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/ibm-plex-sans": "^5.3.0",
     "@tailwindcss/vite": "^4.3.3",
     "@tanstack/react-form": "^1.33.5",
     "@tanstack/react-query": "^5.104.0",

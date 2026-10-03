@@ -18,7 +18,8 @@ import type { ActionOut, ChangeIn, ConnectionOut, GrantOut, KindOut } from '@/ap
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Badge, Checkbox, ErrorNote, Notice, PageHeader, Spinner } from '@/components/ui/misc'
+import { Alert, Checkbox, ErrorNote, Notice, PageHeader, Spinner, Status, type StatusTone } from '@/components/ui/misc'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { errorMessage } from '@/lib/http'
 
 type Search = { connected?: string; error?: string }
@@ -129,6 +130,7 @@ function describeConnector(kinds: KindOut[], actions: ActionOut[]) {
 }
 
 const STATUS_LABEL: Record<ConnectionOut['status'], string> = { active: 'Active', error: 'Needs reconnecting', revoked: 'Revoked' }
+const STATUS_TONE: Record<ConnectionOut['status'], StatusTone> = { active: 'success', error: 'warning', revoked: 'danger' }
 
 function ConnectionCard({ workspaceId, connection, initiallyOpen }: { workspaceId: string; connection: ConnectionOut; initiallyOpen: boolean }) {
   const [open, setOpen] = useState(initiallyOpen)
@@ -153,18 +155,20 @@ function ConnectionCard({ workspaceId, connection, initiallyOpen }: { workspaceI
           <CardTitle>{connection.provider_name}</CardTitle>
           <CardDescription>{connection.label}{connection.personal ? '' : ' · shared with the workspace'}</CardDescription>
         </div>
-        <Badge variant={connection.status === 'active' ? 'secondary' : 'destructive'}>{STATUS_LABEL[connection.status]}</Badge>
+        <Status tone={STATUS_TONE[connection.status]}>{STATUS_LABEL[connection.status]}</Status>
       </CardHeader>
       <CardContent className="space-y-4 pt-4">
         {connection.status === 'active' && connection.consent_needed.length > 0 && (
-          <div className="flex flex-wrap items-center gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
-            <span className="text-sm">
-              {connection.provider_name} has not allowed Minerva to {neededLabels.join(', ')} yet, so agents cannot do it.
-            </span>
-            <Button size="sm" disabled={reconnect.isPending} onClick={() => reconnect.mutate({ path: reconnectPath, body: {} })}>
-              Allow in {connection.provider_name}
-            </Button>
-          </div>
+          <Alert tone="warning">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="flex-1">
+                {connection.provider_name} has not allowed Minerva to {neededLabels.join(', ')} yet, so agents cannot do it.
+              </span>
+              <Button size="sm" disabled={reconnect.isPending} onClick={() => reconnect.mutate({ path: reconnectPath, body: {} })}>
+                Allow in {connection.provider_name}
+              </Button>
+            </div>
+          </Alert>
         )}
         {connection.status === 'active' && connection.manage_url && (
           <p className="text-xs text-muted-foreground">
@@ -366,12 +370,12 @@ function KindAccess({ workspaceId, connectionId, kind, actions, grants, current,
   const row = (id: string, name: string, inherited: Set<string>) => {
     const own = current(id)
     return (
-      <tr key={id} className="border-b last:border-0">
-        <td className="py-2 pr-4">{name}</td>
+      <TableRow key={id}>
+        <TableCell>{name}</TableCell>
         {actions.map(action => {
           const fromAll = inherited.has(action.id) && !own.has(action.id)
           return (
-            <td key={action.id} className="py-2">
+            <TableCell key={action.id}>
               <Checkbox
                 aria-label={`${action.label} ${name}`}
                 title={fromAll ? `Allowed for all ${plural}` : undefined}
@@ -379,10 +383,10 @@ function KindAccess({ workspaceId, connectionId, kind, actions, grants, current,
                 disabled={fromAll}
                 onCheckedChange={checked => onChange(id, toggle(actions, own, action.id, checked === true))}
               />
-            </td>
+            </TableCell>
           )
         })}
-      </tr>
+      </TableRow>
     )
   }
 
@@ -408,18 +412,18 @@ function KindAccess({ workspaceId, connectionId, kind, actions, grants, current,
           </form>
         )}
       </div>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b text-left text-xs text-muted-foreground">
-            <th className="py-2 font-medium">{kind.id === ACCOUNT ? '' : kind.label}</th>
-            {actions.map(action => <th key={action.id} className="w-28 py-2 font-medium">{action.label}</th>)}
-          </tr>
-        </thead>
-        <tbody>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>{kind.id === ACCOUNT ? '' : kind.label}</TableHead>
+            {actions.map(action => <TableHead key={action.id} className="w-28">{action.label}</TableHead>)}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {kind.wildcard && row(ALL, `All ${plural}, including new ones`, new Set())}
           {rows.map(resource => row(resource.id, resource.name, all))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
       {resources.isPending && <Spinner />}
       {resources.error && <ErrorNote>{errorMessage(resources.error, `Could not load your ${plural}.`)}</ErrorNote>}
       {resources.data && rows.length === 0 && (kind.listed || search) && (

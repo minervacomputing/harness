@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as VerifyEmailRouteImport } from './routes/verify-email'
+import { Route as DevComponentsRouteImport } from './routes/dev.components'
 import { Route as LoginCodeRouteImport } from './routes/login_.code'
 import { Route as LoginMfaRouteImport } from './routes/login_.mfa'
 import { Route as WWorkspaceIdRouteImport } from './routes/w.$workspaceId'
@@ -48,6 +49,11 @@ const SignupRoute = SignupRouteImport.update({
 const VerifyEmailRoute = VerifyEmailRouteImport.update({
   id: '/verify-email',
   path: '/verify-email',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DevComponentsRoute = DevComponentsRouteImport.update({
+  id: '/dev/components',
+  path: '/dev/components',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginCodeRoute = LoginCodeRouteImport.update({
@@ -108,6 +114,7 @@ export interface FileRoutesByFullPath {
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/verify-email': typeof VerifyEmailRoute
+  '/dev/components': typeof DevComponentsRoute
   '/login/code': typeof LoginCodeRoute
   '/login/mfa': typeof LoginMfaRoute
   '/w/$workspaceId': typeof WWorkspaceIdRouteWithChildren
@@ -125,6 +132,7 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/verify-email': typeof VerifyEmailRoute
+  '/dev/components': typeof DevComponentsRoute
   '/login/code': typeof LoginCodeRoute
   '/login/mfa': typeof LoginMfaRoute
   '/w/$workspaceId/account': typeof WWorkspaceIdAccountRoute
@@ -141,6 +149,7 @@ export interface FileRoutesById {
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/verify-email': typeof VerifyEmailRoute
+  '/dev/components': typeof DevComponentsRoute
   '/login_/code': typeof LoginCodeRoute
   '/login_/mfa': typeof LoginMfaRoute
   '/w/$workspaceId': typeof WWorkspaceIdRouteWithChildren
@@ -160,6 +169,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/signup'
     | '/verify-email'
+    | '/dev/components'
     | '/login/code'
     | '/login/mfa'
     | '/w/$workspaceId'
@@ -177,6 +187,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/signup'
     | '/verify-email'
+    | '/dev/components'
     | '/login/code'
     | '/login/mfa'
     | '/w/$workspaceId/account'
@@ -192,6 +203,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/signup'
     | '/verify-email'
+    | '/dev/components'
     | '/login_/code'
     | '/login_/mfa'
     | '/w/$workspaceId'
@@ -210,6 +222,7 @@ export interface RootRouteChildren {
   ResetPasswordRoute: typeof ResetPasswordRoute
   SignupRoute: typeof SignupRoute
   VerifyEmailRoute: typeof VerifyEmailRoute
+  DevComponentsRoute: typeof DevComponentsRoute
   LoginCodeRoute: typeof LoginCodeRoute
   LoginMfaRoute: typeof LoginMfaRoute
   WWorkspaceIdRoute: typeof WWorkspaceIdRouteWithChildren
@@ -250,6 +263,13 @@ declare module '@tanstack/react-router' {
       path: '/verify-email'
       fullPath: '/verify-email'
       preLoaderRoute: typeof VerifyEmailRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dev/components': {
+      id: '/dev/components'
+      path: '/dev/components'
+      fullPath: '/dev/components'
+      preLoaderRoute: typeof DevComponentsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login_/code': {
@@ -364,6 +384,7 @@ const rootRouteChildren: RootRouteChildren = {
   ResetPasswordRoute: ResetPasswordRoute,
   SignupRoute: SignupRoute,
   VerifyEmailRoute: VerifyEmailRoute,
+  DevComponentsRoute: DevComponentsRoute,
   LoginCodeRoute: LoginCodeRoute,
   LoginMfaRoute: LoginMfaRoute,
   WWorkspaceIdRoute: WWorkspaceIdRouteWithChildren,

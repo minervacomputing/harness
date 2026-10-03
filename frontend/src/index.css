@@ -1,36 +1,113 @@
 @import "tailwindcss";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-sans/700.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
 @plugin "@tailwindcss/typography";
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:where(.dark, .dark *):not(:where(.light, .light *)));
 
-:root {
-  --radius: 0.5rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+/*
+ * Ledger: the Minerva design system. Square corners, ruled structure, IBM Plex,
+ * navy brand. Every text colour keeps at least 4.5:1 on its surface.
+ * The design skill (.agents/skills/minerva-design) explains how to use these.
+ */
+:root,
+.light {
+  --background: #f4f5f9;
+  --foreground: #0d1430;
+  --card: #ffffff;
+  --card-foreground: #0d1430;
+  --popover: #ffffff;
+  --popover-foreground: #0d1430;
+  --primary: #15216a;
+  --primary-foreground: #ffffff;
+  --secondary: #eaedf5;
+  --secondary-foreground: #0d1430;
+  --muted: #eaedf5;
+  --muted-foreground: #465172;
+  --faint: #5f6987;
+  --accent: #eaedf5;
+  --accent-foreground: #0d1430;
+  --border: #dbe0ec;
+  --border-strong: #aab3c9;
+  --input: #aab3c9;
+  --ring: #2b44d6;
+  --info: #2b44d6;
+  --info-foreground: #ffffff;
+  --success: #138a5e;
+  --warning: #a86a00;
+  --destructive: #c63a3a;
+  --destructive-foreground: #ffffff;
+  --sidebar: #eceff6;
+  --logo: #15216a;
+  /* Button depth: a lit top edge, a shaded bottom edge and a small soft shadow. */
+  --raise-solid: inset 0 1px 0 rgb(255 255 255 / 0.18), inset 0 -1px 0 rgb(0 0 0 / 0.24), 0 1px 2px rgb(13 20 48 / 0.2), 0 2px 5px -2px rgb(13 20 48 / 0.18);
+  --raise-surface: inset 0 -1px 0 rgb(13 20 48 / 0.07), 0 1px 2px rgb(13 20 48 / 0.08), 0 2px 5px -2px rgb(13 20 48 / 0.08);
+  --press-solid: inset 0 1px 3px rgb(0 0 0 / 0.3);
+  --press-surface: inset 0 1px 3px rgb(13 20 48 / 0.12);
+  --sheen: linear-gradient(rgb(255 255 255 / 0.1), rgb(255 255 255 / 0));
+  /* Controls you slide are raised; things that hold a value are set slightly into the page. */
+  --raise-knob: inset 0 -1px 0 rgb(13 20 48 / 0.14), 0 1px 2px rgb(13 20 48 / 0.3);
+  --inset-well: inset 0 1px 2px rgb(13 20 48 / 0.07);
+  --inset-track: inset 0 1px 2px rgb(13 20 48 / 0.14);
+  /* Menus, popovers and dialogs: they float above the page. */
+  --raise-float: 0 1px 3px rgb(13 20 48 / 0.08), 0 6px 16px -4px rgb(13 20 48 / 0.16);
+  color-scheme: light;
+}
+
+.dark {
+  --background: #090d18;
+  --foreground: #e1e7f8;
+  --card: #0e1423;
+  --card-foreground: #e1e7f8;
+  --popover: #0e1423;
+  --popover-foreground: #e1e7f8;
+  --primary: #7b91ff;
+  --primary-foreground: #060a16;
+  --secondary: #141c30;
+  --secondary-foreground: #e1e7f8;
+  --muted: #141c30;
+  --muted-foreground: #9ba6c8;
+  --faint: #7885ac;
+  --accent: #141c30;
+  --accent-foreground: #e1e7f8;
+  --border: #1b2540;
+  --border-strong: #33436b;
+  --input: #33436b;
+  --ring: #7b91ff;
+  --info: #7b91ff;
+  --info-foreground: #060a16;
+  --success: #4fd1a1;
+  --warning: #f0b75a;
+  --destructive: #ff6b6b;
+  --destructive-foreground: #060a16;
+  --sidebar: #070a13;
+  --logo: #e1e7f8;
+  --raise-solid: inset 0 1px 0 rgb(255 255 255 / 0.32), inset 0 -1px 0 rgb(0 0 0 / 0.22), 0 1px 2px rgb(0 0 0 / 0.5), 0 2px 6px -2px rgb(0 0 0 / 0.45);
+  --raise-surface: inset 0 1px 0 rgb(255 255 255 / 0.05), inset 0 -1px 0 rgb(0 0 0 / 0.25), 0 1px 2px rgb(0 0 0 / 0.45), 0 2px 6px -2px rgb(0 0 0 / 0.35);
+  --press-solid: inset 0 1px 3px rgb(0 0 0 / 0.35);
+  --press-surface: inset 0 1px 3px rgb(0 0 0 / 0.4);
+  --sheen: linear-gradient(rgb(255 255 255 / 0.14), rgb(255 255 255 / 0));
+  --raise-knob: inset 0 -1px 0 rgb(13 20 48 / 0.18), 0 1px 2px rgb(0 0 0 / 0.6);
+  --inset-well: inset 0 1px 2px rgb(0 0 0 / 0.35);
+  --inset-track: inset 0 1px 3px rgb(0 0 0 / 0.5);
+  --raise-float: 0 1px 3px rgb(0 0 0 / 0.4), 0 8px 20px -4px rgb(0 0 0 / 0.6);
+  color-scheme: dark;
 }
 
 @theme inline {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  /* Square corners everywhere. rounded-full stays for status dots and radios. */
+  --radius-xs: 0px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -43,12 +120,21 @@
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-faint: var(--faint);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-logo: var(--logo);
 }
 
 @layer base {
@@ -56,6 +142,41 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground antialiased;
+    @apply bg-background font-sans text-foreground antialiased;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
   }
+}
+
+@utility label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+/* Agent replies: typography plugin coloured from the tokens, so both themes follow. */
+@utility prose-minerva {
+  --tw-prose-body: var(--foreground);
+  --tw-prose-headings: var(--foreground);
+  --tw-prose-lead: var(--muted-foreground);
+  --tw-prose-links: var(--info);
+  --tw-prose-bold: var(--foreground);
+  --tw-prose-counters: var(--muted-foreground);
+  --tw-prose-bullets: var(--border-strong);
+  --tw-prose-hr: var(--border);
+  --tw-prose-quotes: var(--foreground);
+  --tw-prose-quote-borders: var(--border-strong);
+  --tw-prose-captions: var(--muted-foreground);
+  --tw-prose-kbd: var(--foreground);
+  --tw-prose-kbd-shadows: var(--border-strong);
+  --tw-prose-code: var(--foreground);
+  --tw-prose-pre-code: var(--foreground);
+  --tw-prose-pre-bg: var(--secondary);
+  --tw-prose-th-borders: var(--border-strong);
+  --tw-prose-td-borders: var(--border);
+  & :where(pre) { border-radius: 0; border: 1px solid var(--border); }
+  & :where(h1, h2, h3, h4) { font-weight: 500; letter-spacing: -0.015em; }
 }

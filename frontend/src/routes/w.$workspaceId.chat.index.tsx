@@ -11,6 +11,7 @@ import { createConversation, postMessage } from '@/api/sdk.gen'
 import { AgentHint } from '@/components/chat/agent-hint'
 import { type ChatMessage, messageText, pendingMessages, toThreadMessage } from '@/components/chat/model'
 import { Thread } from '@/components/chat/thread'
+import { Select } from '@/components/ui/input'
 import { ErrorNote } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
 
@@ -59,14 +60,10 @@ function NewChat() {
       <div className="flex h-full flex-col">
         {agents.data && agents.data.length > 1 && (
           <div className="flex items-center gap-2 border-b px-6 py-2 text-sm">
-            <span className="text-muted-foreground">Agent</span>
-            <select
-              className="rounded-md border bg-background px-2 py-1"
-              value={agent?.id}
-              onChange={event => setAgentId(event.target.value)}
-            >
+            <span className="label">Agent</span>
+            <Select value={agent?.id} onChange={event => setAgentId(event.target.value)} aria-label="Agent">
               {agents.data.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
+            </Select>
           </div>
         )}
         {start.error && <ErrorNote className="mx-6 mt-4">{errorMessage(start.error)}</ErrorNote>}

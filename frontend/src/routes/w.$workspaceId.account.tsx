@@ -6,7 +6,7 @@ import { useState } from 'react'
 import { TextField } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge, ErrorNote, Notice, PageHeader, Spinner } from '@/components/ui/misc'
+import { ErrorNote, Notice, PageHeader, Spinner, Status } from '@/components/ui/misc'
 import { AuthError, authRequest } from '@/lib/auth'
 
 export const Route = createFileRoute('/w/$workspaceId/account')({
@@ -54,7 +54,7 @@ function Reauthenticate({ onDone }: { onDone: () => void }) {
   })
   const form = useForm({ defaultValues: { password: '' }, onSubmit: ({ value }) => confirm.mutateAsync(value.password) })
   return (
-    <form className="grid gap-3 rounded-md border p-4" onSubmit={event => { event.preventDefault(); void form.handleSubmit() }}>
+    <form className="grid gap-3 border p-4" onSubmit={event => { event.preventDefault(); void form.handleSubmit() }}>
       <p className="text-sm">For your security, confirm your password first.</p>
       <form.Field name="password">
         {field => <TextField field={field} label="Current password" type="password" autoComplete="current-password" autoFocus />}
@@ -127,7 +127,7 @@ function TwoFactorCard() {
           <CardTitle>Two-factor authentication</CardTitle>
           <CardDescription>Ask for a code from an authenticator app when you sign in.</CardDescription>
         </div>
-        {authenticators.data && <Badge variant={enabled ? 'default' : 'outline'}>{enabled ? 'On' : 'Off'}</Badge>}
+        {authenticators.data && <Status tone={enabled ? 'success' : 'neutral'}>{enabled ? 'On' : 'Off'}</Status>}
       </CardHeader>
       <CardContent className="space-y-4">
         {authenticators.isPending && <Spinner />}
@@ -180,11 +180,11 @@ function TotpSetup({ onDone }: { onDone: () => void }) {
   if (!secret.data?.totp_url) return <ErrorNote>Two-factor setup is not available right now.</ErrorNote>
   const fields = activate.error instanceof AuthError ? activate.error.fields : {}
   return (
-    <div className="grid gap-4 rounded-md border p-4 sm:grid-cols-[auto_1fr]">
-      <QRCodeSVG value={secret.data.totp_url} size={144} className="rounded border bg-white p-2" />
+    <div className="grid gap-4 border p-4 sm:grid-cols-[auto_1fr]">
+      <QRCodeSVG value={secret.data.totp_url} size={144} className="border bg-white p-2" />
       <form className="grid content-start gap-3" onSubmit={event => { event.preventDefault(); void form.handleSubmit() }}>
         <p className="text-sm">Scan the code with your authenticator app, or enter this key:</p>
-        <code className="break-all rounded bg-muted px-2 py-1 text-xs">{secret.data.secret}</code>
+        <code className="break-all border bg-secondary px-2 py-1 font-mono text-xs">{secret.data.secret}</code>
         <form.Field name="code">
           {field => <TextField field={field} label="Code from the app" autoComplete="one-time-code" className="font-mono tracking-widest" serverError={fields.code} />}
         </form.Field>
@@ -210,7 +210,7 @@ function RecoveryCodes() {
   return (
     <div className="space-y-2">
       <p className="text-sm text-muted-foreground">Each code works once if you lose your authenticator. Keep them somewhere safe.</p>
-      <div className="grid grid-cols-2 gap-1 rounded-md bg-muted p-3 font-mono text-sm sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-1 border bg-secondary p-3 font-mono text-sm sm:grid-cols-4">
         {codes.data?.unused_codes.map(code => <span key={code}>{code}</span>)}
       </div>
     </div>

@@ -35,7 +35,7 @@ function ChatLayout() {
     <div className="flex h-full">
       <div className="flex w-64 shrink-0 flex-col border-r">
         <div className="p-3">
-          <Button variant="outline" className="w-full justify-start" asChild>
+          <Button variant="outline" className="w-full" asChild>
             <Link to="/w/$workspaceId/chat" params={{ workspaceId }} activeOptions={{ exact: true }}>
               <PlusIcon /> New chat
             </Link>
@@ -50,8 +50,8 @@ function ChatLayout() {
             <div
               key={conversation.id}
               className={cn(
-                'group flex items-center rounded-md hover:bg-accent',
-                conversation.id === active && 'bg-accent',
+                'group flex items-center hover:bg-secondary',
+                conversation.id === active && 'bg-secondary',
               )}
             >
               <Link
@@ -60,7 +60,7 @@ function ChatLayout() {
                 className="min-w-0 flex-1 px-3 py-2"
               >
                 <p className="truncate text-sm">{conversation.title || 'New conversation'}</p>
-                <p className="text-xs text-muted-foreground">{dateFormat.format(new Date(conversation.updated_at))}</p>
+                <p className="font-mono text-[11px] text-muted-foreground">{dateFormat.format(new Date(conversation.updated_at))}</p>
               </Link>
               <Button
                 variant="ghost"
