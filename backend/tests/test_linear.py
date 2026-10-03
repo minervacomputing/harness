@@ -16,8 +16,8 @@ from connectors import registry
 from connectors.base import OperationError
 from connectors.executor import Executor, RunContext
 from connectors.http import Effect
-from connectors.linear import connector as linear_module
 from connectors.linear import markdown as text
+from connectors.linear import teams
 from connectors.linear.client import MAX_ISSUE_DEPTH, MAX_TEAM_DEPTH, LinearClient, TeamRef, judge
 from connectors.linear.connector import LinearConnector
 from conversations.models import Conversation
@@ -593,9 +593,9 @@ def test_team_chains_beyond_the_limit_are_partial():
             team = TeamRef(id=str(UUID(int=n + 1)), parent=team)
         return team
 
-    within, partial = linear_module._ancestry(chain(MAX_TEAM_DEPTH))
+    within, partial = teams._ancestry(chain(MAX_TEAM_DEPTH))
     assert len(within) == MAX_TEAM_DEPTH and not partial
-    within, partial = linear_module._ancestry(chain(MAX_TEAM_DEPTH + 1))
+    within, partial = teams._ancestry(chain(MAX_TEAM_DEPTH + 1))
     assert len(within) == MAX_TEAM_DEPTH and partial
 
 

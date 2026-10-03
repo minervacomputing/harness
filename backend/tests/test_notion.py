@@ -14,10 +14,11 @@ from connections.oauth import ClientCredentials
 from connectors import registry
 from connectors.base import OperationError
 from connectors.executor import Executor, RunContext
-from connectors.notion import connector as notion_module
 from connectors.notion import markdown as page_text
+from connectors.notion import pages
 from connectors.notion.client import NotionClient
-from connectors.notion.connector import NotionConnector, canonical
+from connectors.notion.connector import NotionConnector
+from connectors.notion.pages import canonical
 from connectors.notion.properties import check_filter, readable, writable
 from conversations.models import Conversation
 from permissions.models import Grant, PermissionLayer
@@ -393,14 +394,14 @@ def test_ids_are_canonical_and_links_are_parsed():
         f"https://notion.so/Plan-{plain}?pvs=4",
         f"https://acme.notion.site/{plain}",
     ):
-        assert notion_module._object_id(value) == canonical(plain)
+        assert pages._object_id(value) == canonical(plain)
     for value in (
         "https://evil.example/" + plain,
         "http://www.notion.so/" + plain,
         "https://www.notion.so/x",
     ):
         with pytest.raises(ValueError):
-            notion_module._object_id(value)
+            pages._object_id(value)
 
 
 def test_markdown_hides_other_pages():
@@ -697,7 +698,7 @@ async def test_search_is_filtered_by_where_pages_sit(start, notion):
 
 @pytest.mark.django_db(transaction=True)
 async def test_too_many_lookups_leave_ancestry_partial(start, monkeypatch):
-    monkeypatch.setattr(notion_module, "MAX_LOOKUPS", 0)
+    monkeypatch.setattr(pages, "MAX_LOOKUPS", 0)
     executor = await start({"home": ("read",)})
     # Private sits directly in Home, which needs no lookup; in_column needs its blocks looked up.
     names = _names(await executor.invoke("notion_search", {"text": ""}))
