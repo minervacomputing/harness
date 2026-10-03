@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from connector_runs import refusal
 
 from connections import credentials as connection_credentials
 from connections import oauth as connection_oauth
@@ -242,12 +243,6 @@ def start(connector_run, slack, monkeypatch):
     return start_
 
 
-async def _refused(executor, tool, args) -> str:
-    with pytest.raises(OperationError) as caught:
-        await executor.invoke(tool, args)
-    return caught.value.code
-
-
 def _items(outcome) -> list[dict]:
     return outcome.result["items"]
 
@@ -441,11 +436,11 @@ async def test_channels_without_a_grant_or_out_of_reach_look_alike(start, slack)
 
     slack.ops.clear()
     for channel in ("#random", "#hidden", PRIVATE, HIDDEN, "#nope", "C0NOPE0000", "private", "D0DIRECT01"):
-        assert await _refused(executor, "slack_read_channel", {"channel": channel}) == "POLICY_DENIED"
+        assert await refusal(executor, "slack_read_channel", {"channel": channel}) == "POLICY_DENIED"
     # Nothing but where the channel is was asked for.
     assert set(slack.names()) <= {"conversations.list", "conversations.info"}
     for channel in ("a.b", "general channel", "<#C0GENERAL1>", "#"):
-        assert await _refused(executor, "slack_read_channel", {"channel": channel}) == "INVALID_ARGUMENTS"
+        assert await refusal(executor, "slack_read_channel", {"channel": channel}) == "INVALID_ARGUMENTS"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -456,8 +451,8 @@ async def test_a_wildcard_reaches_only_channels_the_app_is_in(start, slack):
     assert [c["shared_with_other_organizations"] for c in channels] == [False, False, True]
     [secret] = _items(await executor.invoke("slack_read_channel", {"channel": "#private"}))
     assert secret["text"] == SECRET
-    assert await _refused(executor, "slack_read_channel", {"channel": "#random"}) == "NOT_IN_CHANNEL"
-    assert await _refused(executor, "slack_read_channel", {"channel": "#hidden"}) == "POLICY_DENIED"
+    assert await refusal(executor, "slack_read_channel", {"channel": "#random"}) == "NOT_IN_CHANNEL"
+    assert await refusal(executor, "slack_read_channel", {"channel": "#hidden"}) == "POLICY_DENIED"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -518,16 +513,16 @@ async def test_posting_and_replying(start, slack):
     )
     # Replying is its own action.
     reply = {"channel": "#general", "thread": THREAD, "text": "ok"}
-    assert await _refused(executor, "slack_reply", reply) == "POLICY_DENIED"
+    assert await refusal(executor, "slack_reply", reply) == "POLICY_DENIED"
     assert (
-        await _refused(executor, "slack_post_message", {"channel": "#partner", "text": "x"})
+        await refusal(executor, "slack_post_message", {"channel": "#partner", "text": "x"})
         == "EXTERNAL_CHANNEL"
     )
     assert (
-        await _refused(executor, "slack_post_message", {"channel": "#old", "text": "x"}) == "CHANNEL_ARCHIVED"
+        await refusal(executor, "slack_post_message", {"channel": "#old", "text": "x"}) == "CHANNEL_ARCHIVED"
     )
     assert (
-        await _refused(
+        await refusal(
             executor, "slack_post_message", {"channel": "#general", "text": "https://acme.slack.com/x"}
         )
         == "INVALID_ARGUMENTS"
@@ -544,13 +539,13 @@ async def test_posting_and_replying(start, slack):
     assert sent["thread_ts"] == THREAD and sent["reply_broadcast"] is False
     # No channel allows posting, so the tool is not offered.
     assert (
-        await _refused(executor, "slack_post_message", {"channel": "#general", "text": "x"})
+        await refusal(executor, "slack_post_message", {"channel": "#general", "text": "x"})
         == "UNKNOWN_OPERATION"
     )
     elsewhere = {"channel": "#general", "thread": "1727780000.000900", "text": "x"}
-    assert await _refused(executor, "slack_reply", elsewhere) == "INVALID_ARGUMENTS"
+    assert await refusal(executor, "slack_reply", elsewhere) == "INVALID_ARGUMENTS"
     assert (
-        await _refused(
+        await refusal(
             executor, "slack_reply", {"channel": "#random", "thread": "1727780000.000700", "text": "x"}
         )
         == "NOT_IN_CHANNEL"
@@ -577,13 +572,13 @@ async def test_a_channel_that_changed_before_the_write_is_refused(start, slack):
         slack.hook = hook
 
     changed_after_resolving(is_ext_shared=True)
-    assert await _refused(executor, "slack_reply", args) == "EXTERNAL_CHANNEL"
+    assert await refusal(executor, "slack_reply", args) == "EXTERNAL_CHANNEL"
     changed_after_resolving(is_pending_ext_shared=True)
-    assert await _refused(executor, "slack_reply", {**args, "text": "y"}) == "EXTERNAL_CHANNEL"
+    assert await refusal(executor, "slack_reply", {**args, "text": "y"}) == "EXTERNAL_CHANNEL"
     changed_after_resolving(id="C0OTHER000")
-    assert await _refused(executor, "slack_reply", {**args, "text": "z"}) == "CHANNEL_MOVED"
+    assert await refusal(executor, "slack_reply", {**args, "text": "z"}) == "CHANNEL_MOVED"
     changed_after_resolving(is_member=False)
-    assert await _refused(executor, "slack_reply", {**args, "text": "w"}) == "NOT_IN_CHANNEL"
+    assert await refusal(executor, "slack_reply", {**args, "text": "w"}) == "NOT_IN_CHANNEL"
     assert slack.writes == []
 
 
@@ -598,18 +593,18 @@ async def test_write_outcomes_follow_what_slack_confirmed(start, slack):
         )
 
     answer({"ok": False, "error": "ratelimited"}, 429)
-    assert await _refused(executor, "slack_post_message", {**args, "text": "a"}) == "PROVIDER_RATE_LIMITED"
+    assert await refusal(executor, "slack_post_message", {**args, "text": "a"}) == "PROVIDER_RATE_LIMITED"
     answer({"ok": False, "error": "restricted_action"})
-    assert await _refused(executor, "slack_post_message", {**args, "text": "b"}) == "PROVIDER_FORBIDDEN"
+    assert await refusal(executor, "slack_post_message", {**args, "text": "b"}) == "PROVIDER_FORBIDDEN"
     # Confirmed without the message: applied, with nothing more to show.
     answer({"ok": True})
     [written] = _items(await executor.invoke("slack_post_message", {**args, "text": "c"}))
     assert written["written"] is True and written["ts"] is None
     # An error after the post may have gone through: unknown, and further writes pause.
     answer({"ok": False, "error": "internal_error"})
-    assert await _refused(executor, "slack_post_message", {**args, "text": "d"}) == "WRITE_UNCERTAIN"
+    assert await refusal(executor, "slack_post_message", {**args, "text": "d"}) == "WRITE_UNCERTAIN"
     slack.hook = None
-    assert await _refused(executor, "slack_post_message", {**args, "text": "e"}) == "WRITE_UNCERTAIN"
+    assert await refusal(executor, "slack_post_message", {**args, "text": "e"}) == "WRITE_UNCERTAIN"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -620,18 +615,18 @@ async def test_reads_with_errors_or_too_much_data_are_refused(start, slack):
         if method == "conversations.history"
         else None
     )
-    assert await _refused(executor, "slack_read_channel", {"channel": GENERAL}) == "PROVIDER_FORBIDDEN"
+    assert await refusal(executor, "slack_read_channel", {"channel": GENERAL}) == "PROVIDER_FORBIDDEN"
     huge = {"ok": True, "messages": [{"ts": THREAD, "text": "x" * (5 * 1024 * 1024)}]}
     slack.hook = lambda method, params: (
         httpx.Response(200, json=huge) if method == "conversations.history" else None
     )
-    assert await _refused(executor, "slack_read_channel", {"channel": GENERAL}) == "RESPONSE_TOO_LARGE"
+    assert await refusal(executor, "slack_read_channel", {"channel": GENERAL}) == "RESPONSE_TOO_LARGE"
     slack.hook = lambda method, params: (
         httpx.Response(200, json={"ok": False, "error": "token_revoked"})
         if method == "conversations.info"
         else None
     )
-    assert await _refused(executor, "slack_read_channel", {"channel": GENERAL}) == "CONNECTION_UNAUTHORIZED"
+    assert await refusal(executor, "slack_read_channel", {"channel": GENERAL}) == "CONNECTION_UNAUTHORIZED"
 
 
 def test_a_refused_slack_refresh_needs_reconnecting(scoped, user, token_endpoint):
@@ -656,6 +651,6 @@ async def test_a_name_scan_cut_short_reveals_nothing(start, slack, monkeypatch):
     executor = await start({"*": ("read",)})
     # #general and #random are on the pages read, #private is not; all are refused alike.
     for channel in ("#general", "#random", "#private", "#nope"):
-        assert await _refused(executor, "slack_read_channel", {"channel": channel}) == "PROVIDER_LIMIT"
+        assert await refusal(executor, "slack_read_channel", {"channel": channel}) == "PROVIDER_LIMIT"
     [general] = _items(await executor.invoke("slack_read_channel", {"channel": GENERAL, "limit": 1}))
     assert general["ts"] == "1727780100.000200"

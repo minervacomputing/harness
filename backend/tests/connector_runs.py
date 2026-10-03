@@ -1,11 +1,12 @@
-"""Helpers for connector tests: grants, ceilings and claimed runs. The `connector_run` fixture in conftest.py
+"""Helpers for connector tests: grants, ceilings, claimed runs and refusals. The `connector_run` fixture in conftest.py
 is built on them."""
 
+import pytest
 from asgiref.sync import sync_to_async
 
 from agents.models import Agent
 from connections.models import Connection
-from connectors.base import ACCOUNT_KIND
+from connectors.base import ACCOUNT_KIND, OperationError
 from connectors.executor import Executor, RunContext
 from conversations.models import Conversation
 from permissions.models import Grant, PermissionLayer
@@ -59,3 +60,10 @@ async def ceiling(
         )
 
     await sync_to_async(create)()
+
+
+async def refusal(executor: Executor, tool: str, args: dict) -> str:
+    """The error code the tool call fails with."""
+    with pytest.raises(OperationError) as caught:
+        await executor.invoke(tool, args)
+    return caught.value.code

@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from connector_runs import ceiling
+from connector_runs import ceiling, refusal
 
 from connections import oauth as connection_oauth
 from connections.oauth import ClientCredentials
@@ -338,12 +338,6 @@ def _names(outcome) -> list[str]:
     return [NAME.get(item["id"], item["id"]) for item in outcome.result["items"]]
 
 
-async def _refused(executor, tool, args) -> str:
-    with pytest.raises(OperationError) as caught:
-        await executor.invoke(tool, args)
-    return caught.value.code
-
-
 # Ids and links
 
 
@@ -623,10 +617,10 @@ async def test_a_grant_on_a_page_covers_what_is_inside_it(start, notion):
     assert outcome.result["items"][0]["text"] == "Top secret"
     # The orphan's parent cannot be seen; a missing page looks like one without a grant.
     for page_id in (ID["orphan"], ID["ghost"]):
-        assert await _refused(executor, "notion_get_page", {"page_id": page_id}) == "POLICY_DENIED"
+        assert await refusal(executor, "notion_get_page", {"page_id": page_id}) == "POLICY_DENIED"
 
     executor = await start({"private": ("read",)})
-    assert await _refused(executor, "notion_read_page", {"page_id": ID["home"]}) == "POLICY_DENIED"
+    assert await refusal(executor, "notion_read_page", {"page_id": ID["home"]}) == "POLICY_DENIED"
     assert not [r for r in notion.requests if r.url.path.endswith(f"{ID['home']}/markdown")]
 
 
@@ -642,7 +636,7 @@ async def test_reading_hides_titles_and_synced_content(start, notion):
         await executor.invoke("notion_read_page", {"page_id": ID["home"], "offset": 2, "max_chars": 4})
     ).result["items"]
     assert (part["text"], part["truncated"]) == ("Home", True)
-    assert await _refused(executor, "notion_read_page", {"page_id": ID["projects"]}) == "NOT_FOUND"
+    assert await refusal(executor, "notion_read_page", {"page_id": ID["projects"]}) == "NOT_FOUND"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -693,12 +687,10 @@ async def test_databases_show_only_readable_properties(start, notion):
 
     before = len(notion.requests)
     hidden = {"property": "Budget", "formula": {"number": {"greater_than": 10}}}
-    code = await _refused(
-        executor, "notion_query_database", {"database_id": ID["projects"], "filter": hidden}
-    )
+    code = await refusal(executor, "notion_query_database", {"database_id": ID["projects"], "filter": hidden})
     assert code == "INVALID_ARGUMENTS"
     assert not [r for r in notion.requests[before:] if r.url.path.endswith("/query")]
-    assert await _refused(executor, "notion_get_page", {"page_id": ID["home"]}) == "POLICY_DENIED"
+    assert await refusal(executor, "notion_get_page", {"page_id": ID["home"]}) == "POLICY_DENIED"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -741,7 +733,7 @@ async def test_linked_databases_are_not_queried(start, notion):
     executor = await start({"linked": ("read",)})
     [database] = (await executor.invoke("notion_get_database", {"database_id": ID["linked"]})).result["items"]
     assert database["data_sources"] == [{"id": ID["source"], "linked_from_elsewhere": True}]
-    code = await _refused(executor, "notion_query_database", {"database_id": ID["linked"]})
+    code = await refusal(executor, "notion_query_database", {"database_id": ID["linked"]})
     assert code == "UNSUPPORTED_DATABASE"
     assert not [r for r in notion.requests if r.url.path.endswith("/query")]
 
@@ -790,7 +782,7 @@ async def test_creating_pages_and_rows(start, notion):
         {"database_id": ID["projects"], "properties": {"Status": "New option"}},
         {"database_id": ID["projects"], "properties": {"Name": "x"}, "markdown": "![a](https://e.x/p)"},
     ):
-        assert await _refused(executor, "notion_create_database_row", args) == "INVALID_ARGUMENTS"
+        assert await refusal(executor, "notion_create_database_row", args) == "INVALID_ARGUMENTS"
     for args in (
         {
             "parent_page_id": ID["private"],
@@ -801,11 +793,11 @@ async def test_creating_pages_and_rows(start, notion):
         {"parent_page_id": "not an id", "title": "x"},
         {"parent_page_id": f"https://evil.example/{ID['home'].replace('-', '')}", "title": "x"},
     ):
-        assert await _refused(executor, "notion_create_page", args) == "INVALID_ARGUMENTS"
+        assert await refusal(executor, "notion_create_page", args) == "INVALID_ARGUMENTS"
     assert len(notion.writes) == writes
 
     executor = await start({"private": ("read", "create")})
-    code = await _refused(executor, "notion_create_page", {"parent_page_id": ID["home"], "title": "x"})
+    code = await refusal(executor, "notion_create_page", {"parent_page_id": ID["home"], "title": "x"})
     assert code == "POLICY_DENIED"
 
 
@@ -821,7 +813,7 @@ async def test_updating_properties(start, notion):
         f"/v1/pages/{ID['row1']}",
         {"properties": {"Status": {"status": {"name": "Done"}}}},
     )
-    code = await _refused(
+    code = await refusal(
         executor, "notion_update_page_properties", {"page_id": ID["row1"], "properties": {"Budget": 5}}
     )
     assert code == "INVALID_ARGUMENTS"
@@ -830,7 +822,7 @@ async def test_updating_properties(start, notion):
     await executor.invoke(
         "notion_update_page_properties", {"page_id": ID["private"], "properties": {"title": "Plans"}}
     )
-    code = await _refused(
+    code = await refusal(
         executor,
         "notion_update_page_properties",
         {"page_id": ID["private"], "properties": {"Status": "Done"}},
@@ -862,9 +854,9 @@ async def test_editing_page_text(start, notion):
 
     writes = len(notion.writes)
     for edits in ([{"old": "Private plans", "new": "x"}], [{"old": "Repeated", "new": "x"}]):
-        code = await _refused(executor, "notion_edit_page", {"page_id": ID["home"], "edits": edits})
+        code = await refusal(executor, "notion_edit_page", {"page_id": ID["home"], "edits": edits})
         assert code == "EDIT_NOT_APPLIED"
-    code = await _refused(
+    code = await refusal(
         executor, "notion_edit_page", {"page_id": ID["synced"], "edits": [{"old": "Before", "new": "x"}]}
     )
     assert code == "UNSUPPORTED_PAGE"
@@ -879,7 +871,7 @@ async def test_an_edit_notion_refuses_is_reported(start, notion):
         if request.method == "PATCH"
         else None
     )
-    code = await _refused(
+    code = await refusal(
         executor, "notion_edit_page", {"page_id": ID["home"], "edits": [{"old": "Intro", "new": "x"}]}
     )
     assert code == "EDIT_NOT_APPLIED"
@@ -916,7 +908,7 @@ async def test_a_page_moved_while_the_call_runs_is_refused(start, notion, tool, 
     await ceiling("notion", "page", ID["private"], Grant.Effect.DENY, actions=("read", "create", "edit"))
     executor = await start({"*": ("read", "create", "edit")})
     _move_on_second_fetch(notion, moved, "private")
-    assert await _refused(executor, tool, args) == "PAGE_MOVED"
+    assert await refusal(executor, tool, args) == "PAGE_MOVED"
     assert not [r for r in notion.requests if r.url.path.endswith(("/markdown", "/query"))]
     assert notion.writes == []
 
@@ -927,7 +919,7 @@ async def test_cycles_are_partial(start, notion):
     await start({})
     await ceiling("notion", "page", ID["private"], Grant.Effect.DENY)
     executor = await start({"*": ("read",)})
-    assert await _refused(executor, "notion_get_page", {"page_id": ID["in_column"]}) == "POLICY_DENIED"
+    assert await refusal(executor, "notion_get_page", {"page_id": ID["in_column"]}) == "POLICY_DENIED"
     assert _names(await executor.invoke("notion_get_page", {"page_id": ID["row1"]})) == ["row1"]
 
 

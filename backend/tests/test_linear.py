@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from connector_runs import ceiling
+from connector_runs import ceiling, refusal
 
 from connections import oauth as connection_oauth
 from connections.oauth import ClientCredentials
@@ -443,12 +443,6 @@ def start(connector_run, linear, monkeypatch):
     return start_
 
 
-async def _refused(executor, tool, args) -> str:
-    with pytest.raises(OperationError) as caught:
-        await executor.invoke(tool, args)
-    return caught.value.code
-
-
 def _items(outcome) -> list[dict]:
     return outcome.result["items"]
 
@@ -666,14 +660,14 @@ async def test_a_grant_on_a_team_covers_its_sub_teams(start, linear):
     linear.ops.clear()
     # Teams without a grant, teams the account cannot see, and missing issues look alike.
     for args in ({"issue": "OPS-1"}, {"issue": "SEC-1"}, {"issue": "ENG-999"}, {"issue": str(uuid4())}):
-        assert await _refused(executor, "linear_get_issue", args) == "POLICY_DENIED"
+        assert await refusal(executor, "linear_get_issue", args) == "POLICY_DENIED"
     for team in ("OPS", "sec", "NOPE", ID["sec"]):
-        assert await _refused(executor, "linear_list_issues", {"team": team}) == "POLICY_DENIED"
+        assert await refusal(executor, "linear_list_issues", {"team": team}) == "POLICY_DENIED"
     # Nothing but where the issue or team sits was asked for.
     assert set(linear.names()) <= {"IssuePlace", "TeamByKey", "Team"}
 
     executor = await start({"web": ("read",)})
-    assert await _refused(executor, "linear_get_team", {"team": "ENG"}) == "POLICY_DENIED"
+    assert await refusal(executor, "linear_get_team", {"team": "ENG"}) == "POLICY_DENIED"
     assert [item["key"] for item in _items(await executor.invoke("linear_list_teams", {}))] == ["WEB"]
 
 
@@ -682,7 +676,7 @@ async def test_a_deny_on_a_sub_team_holds(start, linear):
     await start({})
     await ceiling("linear", "team", ID["web"], Grant.Effect.DENY)
     executor = await start({"eng": ("read",)})
-    assert await _refused(executor, "linear_get_issue", {"issue": "WEB-1"}) == "POLICY_DENIED"
+    assert await refusal(executor, "linear_get_issue", {"issue": "WEB-1"}) == "POLICY_DENIED"
     assert [item["key"] for item in _items(await executor.invoke("linear_list_teams", {}))] == ["ENG"]
     assert _items(await executor.invoke("linear_get_issue", {"issue": "ENG-1"}))
 
@@ -695,7 +689,7 @@ async def test_cycles_are_partial(start, linear):
     executor = await start({"*": ("read",)})
     # A chain Linear cannot show in full could lead anywhere, the denied team included.
     for team in ("ENG", "WEB", "OPS"):
-        assert await _refused(executor, "linear_get_team", {"team": team}) == "POLICY_DENIED"
+        assert await refusal(executor, "linear_get_team", {"team": team}) == "POLICY_DENIED"
     assert _items(await executor.invoke("linear_get_team", {"team": "DES"}))
 
 
@@ -757,8 +751,7 @@ async def test_listing_and_searching_issues(start, linear):
         _identifiers(await executor.invoke("linear_search_issues", {"team": "ENG", "query": "secret"})) == []
     )
     assert (
-        await _refused(executor, "linear_search_issues", {"team": "OPS", "query": "secret"})
-        == "POLICY_DENIED"
+        await refusal(executor, "linear_search_issues", {"team": "OPS", "query": "secret"}) == "POLICY_DENIED"
     )
 
 
@@ -825,7 +818,7 @@ async def test_creating_issues(start, linear):
     ]
     for extra, code in refusals:
         args = {"team": "ENG", "title": "x", **extra}
-        assert await _refused(executor, "linear_create_issue", args) == code, extra
+        assert await refusal(executor, "linear_create_issue", args) == code, extra
     assert len(linear.writes) == 1
     # Refused messages are the same whatever the linked issue is.
     messages = set()
@@ -838,7 +831,7 @@ async def test_creating_issues(start, linear):
         messages.add(caught.value.message)
     assert len(messages) == 1
 
-    assert await _refused(executor, "linear_create_issue", {"team": "OPS", "title": "x"}) == "POLICY_DENIED"
+    assert await refusal(executor, "linear_create_issue", {"team": "OPS", "title": "x"}) == "POLICY_DENIED"
     executor = await start({"eng": ("read",)})
     assert "linear_create_issue" not in executor.context.tools
 
@@ -861,10 +854,10 @@ async def test_commenting(start, linear):
     ]
     for reply_to in (ID["c4"], ID["gone"], "c1"):
         args = {"issue": "ENG-1", "body": "x", "reply_to": reply_to}
-        assert await _refused(executor, "linear_add_comment", args) == "INVALID_ARGUMENTS"
+        assert await refusal(executor, "linear_add_comment", args) == "INVALID_ARGUMENTS"
     args = {"issue": "ENG-1", "body": "cc https://linear.app/acme/issue/OPS-2"}
-    assert await _refused(executor, "linear_add_comment", args) == "LINK_NOT_ALLOWED"
-    assert await _refused(executor, "linear_add_comment", {"issue": "OPS-1", "body": "x"}) == "POLICY_DENIED"
+    assert await refusal(executor, "linear_add_comment", args) == "LINK_NOT_ALLOWED"
+    assert await refusal(executor, "linear_add_comment", {"issue": "OPS-1", "body": "x"}) == "POLICY_DENIED"
     assert len(linear.writes) == 2
 
 
@@ -915,11 +908,11 @@ async def test_updating_issues(start, linear):
     # Linear could close OPS-1 when its sub-issue ENG-3 closes, or reopen it.
     for state in ("Done", "Todo"):
         args = {"issue": "ENG-3", "state": state}
-        assert await _refused(executor, "linear_update_issue", args) == "STATUS_CHANGE_REFUSED"
+        assert await refusal(executor, "linear_update_issue", args) == "STATUS_CHANGE_REFUSED"
     # Closing ENG-1 would close its open sub-issue OPS-2.
     for state in ("Done", "Canceled"):
         args = {"issue": "ENG-1", "state": state}
-        assert await _refused(executor, "linear_update_issue", args) == "STATUS_CHANGE_REFUSED"
+        assert await refusal(executor, "linear_update_issue", args) == "STATUS_CHANGE_REFUSED"
     assert len(linear.writes) == writes
     await executor.invoke("linear_update_issue", {"issue": "ENG-1", "state": "In Progress"})
     linear.issues["OPS-2"]["state"] = "completed"
@@ -933,10 +926,8 @@ async def test_updating_issues(start, linear):
         {"issue": "ENG-1", "due_date": "2026-10-10", "clear_due_date": True},
         {"issue": "ENG-1", "add_labels": ["Bug"], "remove_labels": ["bug"]},
     ):
-        assert await _refused(executor, "linear_update_issue", args) == "INVALID_ARGUMENTS"
-    assert (
-        await _refused(executor, "linear_update_issue", {"issue": "OPS-1", "title": "x"}) == "POLICY_DENIED"
-    )
+        assert await refusal(executor, "linear_update_issue", args) == "INVALID_ARGUMENTS"
+    assert await refusal(executor, "linear_update_issue", {"issue": "OPS-1", "title": "x"}) == "POLICY_DENIED"
 
 
 def _move(linear, before: str, change) -> None:
@@ -989,7 +980,7 @@ async def test_an_issue_or_team_moved_while_the_call_runs_is_refused(start, line
         linear.hook = hook
     else:
         _move(linear, before, change)
-    assert await _refused(executor, tool, args) == code
+    assert await refusal(executor, tool, args) == code
     assert linear.writes == []
 
 
@@ -1005,12 +996,12 @@ async def test_write_outcomes_follow_what_linear_confirmed(start, linear):
     limited = {"message": "x", "extensions": {"type": "Ratelimited", "code": "RATELIMITED"}}
     answer({"data": None, "errors": [limited]}, 400)
     assert (
-        await _refused(executor, "linear_create_issue", {"team": "ENG", "title": "a"})
+        await refusal(executor, "linear_create_issue", {"team": "ENG", "title": "a"})
         == "PROVIDER_RATE_LIMITED"
     )
     answer({"errors": [{"message": "bad", "extensions": {"type": "graphql error"}}]}, 400)
     assert (
-        await _refused(executor, "linear_create_issue", {"team": "ENG", "title": "b"}) == "PROVIDER_REJECTED"
+        await refusal(executor, "linear_create_issue", {"team": "ENG", "title": "b"}) == "PROVIDER_REJECTED"
     )
     # Confirmed without the issue: applied, with nothing more to show.
     answer({"data": {"issueCreate": {"success": True, "issue": None}}})
@@ -1018,9 +1009,9 @@ async def test_write_outcomes_follow_what_linear_confirmed(start, linear):
     assert written == {"written": True}
     # An error after the mutation may have run: unknown, and further writes pause.
     answer({"data": None, "errors": [{"message": "boom", "extensions": {"type": "internal error"}}]})
-    assert await _refused(executor, "linear_create_issue", {"team": "ENG", "title": "d"}) == "WRITE_UNCERTAIN"
+    assert await refusal(executor, "linear_create_issue", {"team": "ENG", "title": "d"}) == "WRITE_UNCERTAIN"
     linear.hook = None
-    assert await _refused(executor, "linear_create_issue", {"team": "ENG", "title": "e"}) == "WRITE_UNCERTAIN"
+    assert await refusal(executor, "linear_create_issue", {"team": "ENG", "title": "e"}) == "WRITE_UNCERTAIN"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -1032,7 +1023,7 @@ async def test_reads_with_errors_or_too_much_data_are_refused(start, linear):
         if name == "Issue"
         else None
     )
-    assert await _refused(executor, "linear_get_issue", {"issue": "ENG-1"}) == "PROVIDER_FORBIDDEN"
+    assert await refusal(executor, "linear_get_issue", {"issue": "ENG-1"}) == "PROVIDER_FORBIDDEN"
     huge = {"data": {"issue": {"description": "x" * (5 * 1024 * 1024)}}}
     linear.hook = lambda name, variables: httpx.Response(200, json=huge) if name == "Issue" else None
-    assert await _refused(executor, "linear_get_issue", {"issue": "ENG-1"}) == "RESPONSE_TOO_LARGE"
+    assert await refusal(executor, "linear_get_issue", {"issue": "ENG-1"}) == "RESPONSE_TOO_LARGE"

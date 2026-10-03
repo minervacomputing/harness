@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from connector_runs import ceiling
+from connector_runs import ceiling, refusal
 
 from connections import credentials as connection_credentials
 from connections import oauth as connection_oauth
@@ -205,12 +205,6 @@ def start(connector_run, graph, monkeypatch):
         )
 
     return start_
-
-
-async def _refused(executor, tool, args) -> str:
-    with pytest.raises(OperationError) as caught:
-        await executor.invoke(tool, args)
-    return caught.value.code
 
 
 def _items(outcome) -> list[dict]:
@@ -446,13 +440,13 @@ async def test_folders_without_a_grant_or_out_of_reach_look_alike(start, graph):
 
     graph.requests.clear()
     for name in (INBOX, PRIVATE, "inbox", "Inbox", "sentitems", SEARCH, ROOT, HIDDEN_ROOT, "NOSUCHFOLDER"):
-        assert await _refused(executor, "outlook_list_messages", {"folder": name}) == "POLICY_DENIED"
+        assert await refusal(executor, "outlook_list_messages", {"folder": name}) == "POLICY_DENIED"
     for message in (FROM_GRACE, FROM_PRIVATE, "NOSUCHMESSAGE"):
-        assert await _refused(executor, "outlook_read_message", {"message": message}) == "POLICY_DENIED"
+        assert await refusal(executor, "outlook_read_message", {"message": message}) == "POLICY_DENIED"
     # Nothing but where the folder or message is was asked for.
     assert not any(path.endswith(("/messages", "/attachments")) for path in graph.paths())
     for name in ("Projects", "inbox/projects", "../me", "short"):
-        assert await _refused(executor, "outlook_list_messages", {"folder": name}) == "INVALID_ARGUMENTS"
+        assert await refusal(executor, "outlook_list_messages", {"folder": name}) == "INVALID_ARGUMENTS"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -462,8 +456,8 @@ async def test_a_grant_on_a_folder_covers_its_subfolders_and_a_deny_holds(start,
     executor = await start(folder(INBOX))
     assert _ids(await executor.invoke("outlook_list_messages", {"folder": "inbox"})) == [FROM_GRACE, LEGACY]
     assert _ids(await executor.invoke("outlook_list_messages", {"folder": PROJECTS})) == [FROM_LIST]
-    assert await _refused(executor, "outlook_list_messages", {"folder": PRIVATE}) == "POLICY_DENIED"
-    assert await _refused(executor, "outlook_read_message", {"message": FROM_PRIVATE}) == "POLICY_DENIED"
+    assert await refusal(executor, "outlook_list_messages", {"folder": PRIVATE}) == "POLICY_DENIED"
+    assert await refusal(executor, "outlook_read_message", {"message": FROM_PRIVATE}) == "POLICY_DENIED"
     children = _items(await executor.invoke("outlook_list_folders", {"parent": "inbox"}))
     assert [(c["id"], c["name"], c["parent_id"]) for c in children] == [(PROJECTS, "Projects", INBOX)]
     assert _ids(await executor.invoke("outlook_list_folders", {})) == [INBOX]
@@ -474,13 +468,13 @@ async def test_folders_outside_the_mailbox_tree_are_refused_even_with_every_fold
     executor = await start(folder("*"))
     assert _ids(await executor.invoke("outlook_list_folders", {})) == [INBOX, SENT, DRAFTS]
     for name in (SEARCH, ROOT, HIDDEN_ROOT):
-        assert await _refused(executor, "outlook_list_messages", {"folder": name}) == "POLICY_DENIED"
-        assert await _refused(executor, "outlook_list_folders", {"parent": name}) == "POLICY_DENIED"
+        assert await refusal(executor, "outlook_list_messages", {"folder": name}) == "POLICY_DENIED"
+        assert await refusal(executor, "outlook_list_folders", {"parent": name}) == "POLICY_DENIED"
 
     # A folder whose chain loops never reaches the root.
     graph.folders[PROJECTS]["parentFolderId"] = PRIVATE
     graph.folders[PRIVATE]["parentFolderId"] = PROJECTS
-    assert await _refused(executor, "outlook_list_messages", {"folder": PROJECTS}) == "POLICY_DENIED"
+    assert await refusal(executor, "outlook_list_messages", {"folder": PROJECTS}) == "POLICY_DENIED"
 
 
 SEARCH_IN_INBOX, HIDDEN, HIDDEN_CHILD, HIDDEN_MAIL = (
@@ -505,9 +499,9 @@ async def test_search_and_hidden_folders_are_refused_wherever_they_sit(start, gr
     executor = await start(folder(INBOX))
 
     for name in (SEARCH_IN_INBOX, HIDDEN, HIDDEN_CHILD):
-        assert await _refused(executor, "outlook_list_messages", {"folder": name}) == "POLICY_DENIED"
-        assert await _refused(executor, "outlook_list_folders", {"parent": name}) == "POLICY_DENIED"
-    assert await _refused(executor, "outlook_read_message", {"message": HIDDEN_MAIL}) == "POLICY_DENIED"
+        assert await refusal(executor, "outlook_list_messages", {"folder": name}) == "POLICY_DENIED"
+        assert await refusal(executor, "outlook_list_folders", {"parent": name}) == "POLICY_DENIED"
+    assert await refusal(executor, "outlook_read_message", {"message": HIDDEN_MAIL}) == "POLICY_DENIED"
     children = _items(await executor.invoke("outlook_list_folders", {"parent": INBOX}))
     assert [c["id"] for c in children] == [PROJECTS, PRIVATE] and SECRET not in json.dumps(children)
 
@@ -581,7 +575,7 @@ async def test_filters_and_search(start, graph):
         {"after": "yesterday"},
         {"after": "2026-09-01T00:00:00Z' or true"},
     ):
-        assert await _refused(executor, "outlook_list_messages", {"folder": INBOX, **args}) == (
+        assert await refusal(executor, "outlook_list_messages", {"folder": INBOX, **args}) == (
             "INVALID_ARGUMENTS"
         )
 
@@ -606,7 +600,7 @@ async def test_pages_follow_graphs_links_only_through_their_parameters(start, gr
         return None
 
     graph.hook = hook
-    assert await _refused(executor, "outlook_list_messages", {"folder": INBOX}) == "PROVIDER_LIMIT"
+    assert await refusal(executor, "outlook_list_messages", {"folder": INBOX}) == "PROVIDER_LIMIT"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -652,14 +646,14 @@ async def test_mail_moved_while_the_call_runs_is_refused(start, graph):
 
     # The message moved to a folder without a grant.
     moved_after_resolving(graph.messages[FROM_GRACE], parentFolderId=PRIVATE)
-    assert await _refused(executor, "outlook_read_message", {"message": FROM_GRACE}) == "MAIL_MOVED"
+    assert await refusal(executor, "outlook_read_message", {"message": FROM_GRACE}) == "MAIL_MOVED"
     # The folder moved out from under the granted one.
     moved_after_resolving(graph.folders[PROJECTS], parentFolderId=SENT)
-    assert await _refused(executor, "outlook_list_messages", {"folder": PROJECTS}) == "MAIL_MOVED"
+    assert await refusal(executor, "outlook_list_messages", {"folder": PROJECTS}) == "MAIL_MOVED"
     moved_after_resolving(graph.folders[PROJECTS], parentFolderId=SENT)
-    assert await _refused(executor, "outlook_read_message", {"message": FROM_LIST}) == "MAIL_MOVED"
+    assert await refusal(executor, "outlook_read_message", {"message": FROM_LIST}) == "MAIL_MOVED"
     moved_after_resolving(graph.folders[PROJECTS], parentFolderId=SENT)
-    assert await _refused(executor, "outlook_list_folders", {"parent": PROJECTS}) == "MAIL_MOVED"
+    assert await refusal(executor, "outlook_list_folders", {"parent": PROJECTS}) == "MAIL_MOVED"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -670,18 +664,18 @@ async def test_reads_with_errors_or_too_much_data_are_refused(start, graph):
         if path.endswith("/messages")
         else None
     )
-    assert await _refused(executor, "outlook_list_messages", {"folder": INBOX}) == "RESPONSE_TOO_LARGE"
+    assert await refusal(executor, "outlook_list_messages", {"folder": INBOX}) == "RESPONSE_TOO_LARGE"
     graph.hook = lambda method, path, params: httpx.Response(
         404, json={"error": {"code": "MailboxNotEnabledForRESTAPI"}}
     )
-    assert await _refused(executor, "outlook_read_message", {"message": FROM_GRACE}) == "UNSUPPORTED_ACCOUNT"
+    assert await refusal(executor, "outlook_read_message", {"message": FROM_GRACE}) == "UNSUPPORTED_ACCOUNT"
     graph.hook = lambda method, path, params: httpx.Response(503, headers={"Retry-After": "5"})
-    assert await _refused(executor, "outlook_list_messages", {"folder": INBOX}) == "PROVIDER_RATE_LIMITED"
+    assert await refusal(executor, "outlook_list_messages", {"folder": INBOX}) == "PROVIDER_RATE_LIMITED"
     # Last: the connection is then marked as needing reconnecting.
     graph.hook = lambda method, path, params: httpx.Response(
         401, json={"error": {"code": "InvalidAuthenticationToken"}}
     )
-    assert await _refused(executor, "outlook_list_messages", {"folder": INBOX}) == "CONNECTION_UNAUTHORIZED"
+    assert await refusal(executor, "outlook_list_messages", {"folder": INBOX}) == "CONNECTION_UNAUTHORIZED"
 
 
 # Sending
@@ -724,7 +718,7 @@ async def test_sending_needs_every_recipient(start, graph):
         {"cc": ["grace@mail.example.com"]},
         {"to": ["grace@example.com.evil.org"]},
     ):
-        assert await _refused(executor, "outlook_send_message", {**send, **change}) == "POLICY_DENIED"
+        assert await refusal(executor, "outlook_send_message", {**send, **change}) == "POLICY_DENIED"
     for change in (
         {"cc": ["Grace@example.com"]},
         {"to": []},
@@ -734,7 +728,7 @@ async def test_sending_needs_every_recipient(start, graph):
         {"body": "bell\x07"},
         {"from": "ceo@example.com"},
     ):
-        assert await _refused(executor, "outlook_send_message", {**send, **change}) == "INVALID_ARGUMENTS"
+        assert await refusal(executor, "outlook_send_message", {**send, **change}) == "INVALID_ARGUMENTS"
     assert len(graph.writes) == 1
 
 
@@ -751,14 +745,14 @@ async def test_write_outcomes_follow_graphs_status(start, graph):
         )
 
     answer(400)
-    assert await _refused(executor, "outlook_send_message", send) == "PROVIDER_REJECTED"
+    assert await refusal(executor, "outlook_send_message", send) == "PROVIDER_REJECTED"
     answer(403)
-    assert await _refused(executor, "outlook_send_message", {**send, "body": "y"}) == "PROVIDER_FORBIDDEN"
+    assert await refusal(executor, "outlook_send_message", {**send, "body": "y"}) == "PROVIDER_FORBIDDEN"
     # A refusal before sending leaves writes open; an error that may follow a send pauses them.
     answer(500)
-    assert await _refused(executor, "outlook_send_message", {**send, "body": "z"}) == "WRITE_UNCERTAIN"
+    assert await refusal(executor, "outlook_send_message", {**send, "body": "z"}) == "WRITE_UNCERTAIN"
     graph.hook = None
-    assert await _refused(executor, "outlook_send_message", {**send, "body": "w"}) == "WRITE_UNCERTAIN"
+    assert await refusal(executor, "outlook_send_message", {**send, "body": "w"}) == "WRITE_UNCERTAIN"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -777,18 +771,18 @@ async def test_replying_goes_to_exactly_the_authorized_addresses(start, graph):
         }
     }
     # Replies go to the reply-to address, not the sender.
-    assert await _refused(executor, "outlook_reply", {"message": FROM_LIST, "body": "x"}) == "POLICY_DENIED"
+    assert await refusal(executor, "outlook_reply", {"message": FROM_LIST, "body": "x"}) == "POLICY_DENIED"
 
     graph.writes.clear()
     executor = await start({**folder(PROJECTS), **recipient("ada@partner.org")})
-    assert await _refused(executor, "outlook_reply", {"message": FROM_LIST, "body": "x"}) == "POLICY_DENIED"
+    assert await refusal(executor, "outlook_reply", {"message": FROM_LIST, "body": "x"}) == "POLICY_DENIED"
     executor = await start({**folder(PROJECTS), **recipient("*@partner.org")})
     [replied] = _items(await executor.invoke("outlook_reply", {"message": FROM_LIST, "body": "x"}))
     assert replied["to"] == ["list@partner.org"]
     # Sending alone does not let an agent reply to mail it may not read.
     executor = await start({**folder(SENT), **recipient("*")})
     for message in (FROM_GRACE, FROM_PRIVATE, "NOSUCHMESSAGE"):
-        assert await _refused(executor, "outlook_reply", {"message": message, "body": "x"}) == "POLICY_DENIED"
+        assert await refusal(executor, "outlook_reply", {"message": message, "body": "x"}) == "POLICY_DENIED"
     assert len(graph.writes) == 1
 
 
@@ -796,19 +790,19 @@ async def test_replying_goes_to_exactly_the_authorized_addresses(start, graph):
 async def test_replies_whose_recipients_are_unclear_are_refused(start, graph):
     executor = await start({**folder("*"), **recipient("grace@example.com"), **recipient("*@contoso.com")})
     # An address Minerva cannot read is refused like one without a grant...
-    assert await _refused(executor, "outlook_reply", {"message": LEGACY, "body": "x"}) == "POLICY_DENIED"
+    assert await refusal(executor, "outlook_reply", {"message": LEGACY, "body": "x"}) == "POLICY_DENIED"
     executor = await start({**folder("*"), **recipient("*")})
     # ...and, with every recipient allowed, refused for what it is.
     assert (
-        await _refused(executor, "outlook_reply", {"message": LEGACY, "body": "x"}) == "UNSUPPORTED_RECIPIENT"
+        await refusal(executor, "outlook_reply", {"message": LEGACY, "body": "x"}) == "UNSUPPORTED_RECIPIENT"
     )
-    assert await _refused(executor, "outlook_reply", {"message": DRAFT, "body": "x"}) == "UNSUPPORTED_MESSAGE"
+    assert await refusal(executor, "outlook_reply", {"message": DRAFT, "body": "x"}) == "UNSUPPORTED_MESSAGE"
     assert (
-        await _refused(executor, "outlook_reply", {"message": FROM_ME, "body": "x"}) == "UNSUPPORTED_MESSAGE"
+        await refusal(executor, "outlook_reply", {"message": FROM_ME, "body": "x"}) == "UNSUPPORTED_MESSAGE"
     )
     graph.messages[FROM_ME]["from"] = _person("ME@contoso.onmicrosoft.com")
     assert (
-        await _refused(executor, "outlook_reply", {"message": FROM_ME, "body": "x"}) == "UNSUPPORTED_MESSAGE"
+        await refusal(executor, "outlook_reply", {"message": FROM_ME, "body": "x"}) == "UNSUPPORTED_MESSAGE"
     )
 
     def changed_after_resolving(**change):
@@ -825,12 +819,10 @@ async def test_replies_whose_recipients_are_unclear_are_refused(start, graph):
         graph.hook = hook
 
     changed_after_resolving(replyTo=[_person("attacker@evil.org")])
-    assert (
-        await _refused(executor, "outlook_reply", {"message": FROM_GRACE, "body": "x"}) == "MESSAGE_CHANGED"
-    )
+    assert await refusal(executor, "outlook_reply", {"message": FROM_GRACE, "body": "x"}) == "MESSAGE_CHANGED"
     changed_after_resolving(isDraft=True)
     assert (
-        await _refused(executor, "outlook_reply", {"message": FROM_GRACE, "body": "x"})
+        await refusal(executor, "outlook_reply", {"message": FROM_GRACE, "body": "x"})
         == "UNSUPPORTED_MESSAGE"
     )
     assert graph.writes == []
@@ -842,7 +834,7 @@ async def test_replies_to_the_accounts_own_mail_are_refused_however_it_was_sent(
 
     def refused_reply(**change) -> str:
         graph.messages[FROM_GRACE] = {**graph.messages[FROM_GRACE], **change}
-        return _refused(executor, "outlook_reply", {"message": FROM_GRACE, "body": "x"})
+        return refusal(executor, "outlook_reply", {"message": FROM_GRACE, "body": "x"})
 
     original = graph.messages[FROM_GRACE]
     # From one of the account's aliases.
@@ -880,5 +872,5 @@ async def test_a_reply_confirms_its_message_last_before_writing(start, graph):
         return None
 
     graph.hook = hook
-    assert await _refused(executor, "outlook_reply", {"message": FROM_GRACE, "body": "x"}) == "MAIL_MOVED"
+    assert await refusal(executor, "outlook_reply", {"message": FROM_GRACE, "body": "x"}) == "MAIL_MOVED"
     assert graph.writes == []

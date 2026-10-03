@@ -6,7 +6,7 @@ import time
 
 import httpx
 import pytest
-from connector_runs import ceiling
+from connector_runs import ceiling, refusal
 
 from connections import credentials as connection_credentials
 from connections import oauth as connection_oauth
@@ -14,7 +14,6 @@ from connections.models import Connection
 from connections.oauth import ClientCredentials, ConnectionFlowError
 from connectors import registry
 from connectors.base import OperationError
-from connectors.executor import Executor
 from connectors.github import client as client_module
 from connectors.github import connector as github_module
 from connectors.github.client import API_URL, GitHubClient
@@ -175,12 +174,6 @@ def start(connector_run, github, monkeypatch):
     return start_
 
 
-async def _refused(executor: Executor, tool: str, args: dict) -> str:
-    with pytest.raises(OperationError) as caught:
-        await executor.invoke(tool, args)
-    return caught.value.code
-
-
 async def test_account_discovery_and_names(github):
     connector = GitHubConnector()
     client = github.client()
@@ -243,7 +236,7 @@ async def test_repositories_are_listed_and_read_by_grant(start, github):
     assert outcome.result["items"][0]["default_branch"] == "main"
     assert github.requests[-1].url.path == "/repositories/1"
     for name in ("acme/secret", "acme/missing"):
-        assert await _refused(executor, "github_get_repository", {"repository": name}) == "POLICY_DENIED"
+        assert await refusal(executor, "github_get_repository", {"repository": name}) == "POLICY_DENIED"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -253,7 +246,7 @@ async def test_a_deny_on_one_repository_wins_over_the_wildcard(start):
     executor = await start({"*": ("read",)})
     outcome = await executor.invoke("github_list_repositories", {})
     assert [item["id"] for item in outcome.result["items"]] == [1]
-    assert await _refused(executor, "github_list_issues", {"repository": "acme/secret"}) == "POLICY_DENIED"
+    assert await refusal(executor, "github_list_issues", {"repository": "acme/secret"}) == "POLICY_DENIED"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -268,13 +261,12 @@ async def test_a_renamed_repository_is_authorized_by_its_id(start, github):
         f"{API_URL}/users/3",
     ):
         github.renamed["ada/old-notes"] = location
-        code = await _refused(executor, "github_get_repository", {"repository": "ada/old-notes"})
+        code = await refusal(executor, "github_get_repository", {"repository": "ada/old-notes"})
         assert code == "PROVIDER_FAILED"
     github.renamed["ada/old-notes"] = f"{API_URL}/repositories/3"
     github.repos[3]["id"] = 1
     assert (
-        await _refused(executor, "github_get_repository", {"repository": "ada/old-notes"})
-        == "PROVIDER_FAILED"
+        await refusal(executor, "github_get_repository", {"repository": "ada/old-notes"}) == "PROVIDER_FAILED"
     )
 
 
@@ -295,7 +287,7 @@ async def test_issues_skip_pull_requests_and_page_through_github_cursors(start, 
     assert (github.requests[-1].url.params["page"], github.requests[-1].url.params["after"]) == ("2", "Y3Vy=")
     assert "next_cursor" not in second.result
     monkeypatch.setattr(client_module, "MAX_PAGE_RESPONSE", 1000)
-    assert await _refused(executor, "github_list_issues", {"repository": "acme/app"}) == "PROVIDER_LIMIT"
+    assert await refusal(executor, "github_list_issues", {"repository": "acme/app"}) == "PROVIDER_LIMIT"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -307,9 +299,7 @@ async def test_reading_an_issue_and_a_pull_request(start, github, monkeypatch):
     assert (len(issue["body"]), issue["body_truncated"]) == (20_000, True)
     assert [c["body"] for c in issue["comment_list"]] == ["Same here", "+1"]
     assert issue["comments_truncated"] is False
-    assert (
-        await _refused(executor, "github_get_issue", {"repository": "acme/app", "number": 9}) == "NOT_FOUND"
-    )
+    assert await refusal(executor, "github_get_issue", {"repository": "acme/app", "number": 9}) == "NOT_FOUND"
 
     monkeypatch.setattr(github_module, "MAX_PATCH_CHARS", 40)
     [pull] = (
@@ -347,7 +337,7 @@ async def test_reading_files(start, github):
         ("vendor", "UNSUPPORTED_FILE"),
         ("missing.txt", "NOT_FOUND"),
     ):
-        assert await _refused(executor, "github_read_file", {"repository": "acme/app", "path": path}) == code
+        assert await refusal(executor, "github_read_file", {"repository": "acme/app", "path": path}) == code
     sent = len(github.requests)
     for args in (
         {"path": "../other/x"},
@@ -359,7 +349,7 @@ async def test_reading_files(start, github):
         {"repository": "acme/.."},
         {"repository": "acme/app/extra"},
     ):
-        code = await _refused(executor, "github_read_file", {"repository": "acme/app", **args})
+        code = await refusal(executor, "github_read_file", {"repository": "acme/app", **args})
         assert code == "INVALID_ARGUMENTS", args
     assert len(github.requests) == sent
 
@@ -382,10 +372,10 @@ async def test_writing_needs_create_and_sends_one_request(start, github):
     assert (outcome.result["items"][0]["id"], outcome.result["items"][0]["number"]) == (99, 3)
     assert github.posts[-1].url.path == "/repositories/1/issues/3/comments"
 
-    assert await _refused(executor, "github_create_issue", {"repository": "ada/notes", "title": "x"}) == (
+    assert await refusal(executor, "github_create_issue", {"repository": "ada/notes", "title": "x"}) == (
         "POLICY_DENIED"
     )
-    code = await _refused(executor, "github_create_issue", {"repository": "acme/app", "title": "two\nlines"})
+    code = await refusal(executor, "github_create_issue", {"repository": "acme/app", "title": "two\nlines"})
     assert code == "INVALID_ARGUMENTS"
     assert len(github.posts) == 2
 
@@ -419,7 +409,7 @@ async def test_rate_limits(start, github, response):
     executor = await start({"*": ("read",)})
     github.error = response
     assert (
-        await _refused(executor, "github_get_repository", {"repository": "acme/app"})
+        await refusal(executor, "github_get_repository", {"repository": "acme/app"})
         == "PROVIDER_RATE_LIMITED"
     )
 
