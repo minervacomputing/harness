@@ -37,12 +37,6 @@ def _moved() -> OperationError:
     return OperationError("MAIL_MOVED", "This folder or message moved while Minerva was using it. Try again.")
 
 
-def no_controls(value: str) -> str:
-    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
-        raise ValueError("must not contain control characters")
-    return value
-
-
 def _folder_ref(value: str) -> str:
     if value.lower() in WELL_KNOWN:
         return value.lower()

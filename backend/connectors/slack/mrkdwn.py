@@ -13,9 +13,8 @@ the content of a linked message, which could be in a channel the agent may not r
 import re
 from urllib.parse import urlsplit
 
-from connectors.text import decoded
+from connectors.text import CONTROL, decoded
 
-CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 # A control sequence with a label; the label may hold anything but angle brackets.
 _LABELLED = re.compile(r"<([^<>|]*)\|([^<>]*)>")
 # Slack's hosts, GovSlack's included, and its own URI scheme (slack://channel?id=...).

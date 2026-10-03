@@ -31,9 +31,9 @@ from connectors.linear.teams import (
     resolve_issue,
     resolve_team,
     same_place,
-    single_line,
     state_data,
 )
+from connectors.text import single_line
 
 MAX_TITLE = 255
 MAX_DESCRIPTION = 50_000

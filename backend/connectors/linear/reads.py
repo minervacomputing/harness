@@ -29,12 +29,11 @@ from connectors.linear.teams import (
     resolve_issue,
     resolve_team,
     same_place,
-    single_line,
     state_data,
     team_moved,
     team_resource,
 )
-from connectors.text import truncate
+from connectors.text import single_line, truncate
 
 MAX_READ_DESCRIPTION = 20_000
 MAX_READ_COMMENT = 4_000

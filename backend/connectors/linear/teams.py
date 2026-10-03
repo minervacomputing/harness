@@ -16,7 +16,6 @@ HIDDEN = frozenset({"NOT_FOUND", "PROVIDER_FORBIDDEN", "PROVIDER_REJECTED"})
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _TEAM_KEY = re.compile(r"^[A-Z0-9]{1,10}$")
 _CURSOR = re.compile(r"^[\x21-\x7e]{1,500}$")
-CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
 def _team_name(value: str) -> str:
@@ -33,12 +32,6 @@ def _issue_name(value: str) -> str:
     if text.IDENTIFIER.match(value):
         return value.upper()
     raise ValueError('must be an issue identifier such as "ENG-123", or an issue id')
-
-
-def single_line(value: str) -> str:
-    if CONTROL.search(value) or "\n" in value or "\r" in value:
-        raise ValueError("must be a single line without control characters")
-    return value
 
 
 TeamName = Annotated[

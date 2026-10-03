@@ -44,7 +44,7 @@ from connectors.github.client import (
     Pull,
     Repository,
 )
-from connectors.text import truncate
+from connectors.text import CONTROL, single_line, truncate
 from minerva.config import config
 
 REPOSITORY = "repository"
@@ -58,13 +58,6 @@ MAX_DIRECTORY_ENTRIES = 1000
 MAX_INSTALLATION_PAGES = 5
 MAX_DISCOVERY_PAGES = 10
 MAX_DESCRIBE_CONCURRENCY = 8
-CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
-
-
-def _no_controls(value: str) -> str:
-    if CONTROL.search(value) or "\n" in value or "\r" in value:
-        raise ValueError("must be a single line without control characters")
-    return value
 
 
 def _clean_text(value: str) -> str:
@@ -587,7 +580,7 @@ WRITE_WARNING = (
 
 class CreateIssue(OperationInput):
     repository: RepositoryName
-    title: Annotated[str, Field(min_length=1, max_length=256), AfterValidator(_no_controls)]
+    title: Annotated[str, Field(min_length=1, max_length=256), AfterValidator(single_line)]
     body: Annotated[str, Field(max_length=MAX_BODY), AfterValidator(_clean_text)] | None = None
 
 

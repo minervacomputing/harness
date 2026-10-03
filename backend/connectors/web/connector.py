@@ -30,6 +30,7 @@ from connectors.base import (
     ResourceKind,
     ScopedRecord,
 )
+from connectors.text import no_controls_or_del
 from connectors.web import sites
 from connectors.web.fetch import Fetcher, Moved
 from connectors.web.markdown import html_to_text
@@ -50,12 +51,6 @@ class WebClient:
             await self.search.aclose()
 
 
-def _no_controls(value: str) -> str:
-    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
-        raise ValueError("must not contain control characters")
-    return value
-
-
 def _site(binding: Binding, host: str):
     return binding.resource(SITE, host, within=sites.ancestors(host))
 
@@ -68,7 +63,7 @@ class Search(OperationInput):
     freshness: Literal["day", "week", "month", "year"] | None = None
     cursor: Annotated[str, Field(max_length=300)] | None = None
 
-    _plain_query = field_validator("query")(_no_controls)
+    _plain_query = field_validator("query")(no_controls_or_del)
 
 
 FRESHNESS = {"day": "pd", "week": "pw", "month": "pm", "year": "py"}

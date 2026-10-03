@@ -25,8 +25,8 @@ from connectors.outlook.mailbox import (
     Tree,
     confirm_message,
     locate,
-    no_controls,
 )
+from connectors.text import no_controls_or_del
 
 MAX_RECIPIENTS = 10
 MAX_BODY = 20_000
@@ -69,7 +69,7 @@ class SendMessage(OperationInput):
     to: Annotated[list[Address], Field(min_length=1, max_length=MAX_RECIPIENTS)]
     cc: Annotated[list[Address], Field(max_length=MAX_RECIPIENTS)] = []
     bcc: Annotated[list[Address], Field(max_length=MAX_RECIPIENTS)] = []
-    subject: Annotated[str, Field(min_length=1, max_length=255), AfterValidator(no_controls)]
+    subject: Annotated[str, Field(min_length=1, max_length=255), AfterValidator(no_controls_or_del)]
     body: Body
 
     @model_validator(mode="after")

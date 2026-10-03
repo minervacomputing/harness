@@ -24,8 +24,8 @@ from connectors.outlook.mailbox import (
     Tree,
     confirm_message,
     locate,
-    no_controls,
 )
+from connectors.text import no_controls_or_del
 
 MAX_ATTACHMENTS = 20
 # Before any mail: the lower bound that lets a filter on time precede `isRead` (Graph requires properties
@@ -34,7 +34,7 @@ EPOCH = "1900-01-01T00:00:00Z"
 
 
 def _search_text(value: str) -> str:
-    no_controls(value)
+    no_controls_or_del(value)
     if '"' in value or "\\" in value:
         raise ValueError("must not contain double quotes or backslashes")
     return value
