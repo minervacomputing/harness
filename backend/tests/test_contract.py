@@ -18,6 +18,8 @@ from fakes import FOLDER, LABEL, FakeServer, KeyedConnector, MixedConnector
 from pydantic import SecretStr
 
 from agents.models import Agent
+from connections import credentials as connection_credentials
+from connections import oauth as connection_oauth
 from connections import services as connection_services
 from connections.models import Connection
 from connectors import executor as executor_module
@@ -432,12 +434,12 @@ async def test_a_rejection_of_replaced_credentials_does_not_mark_the_connection(
         connection.save()
 
     with pytest.raises(OperationError):
-        async with connection_services.open_client("mixed", mixed.pk):
+        async with connection_credentials.open_client("mixed", mixed.pk):
             await sync_to_async(replace_credentials)()
             raise OperationError("CONNECTION_UNAUTHORIZED", "stale")
     assert (await Connection.unscoped.aget(pk=mixed.pk)).status == Connection.Status.ACTIVE
     with pytest.raises(OperationError):
-        async with connection_services.open_client("mixed", mixed.pk):
+        async with connection_credentials.open_client("mixed", mixed.pk):
             try:
                 raise OperationError("CONNECTION_UNAUTHORIZED", "current")
             except OperationError as error:
@@ -511,7 +513,7 @@ def test_api_key_connections_act_on_their_account(scoped, user, server):
     )
     assert connection.label == "Fake account"
     assert connection.credentials() == {"kind": "api_key", "key": "secret-key"}
-    with pytest.raises(connection_services.ConnectionFlowError):
+    with pytest.raises(connection_oauth.ConnectionFlowError):
         connection_services.save_api_key(workspace_id=scoped.id, owner_id=user.id, provider="mixed", key="k")
     with pytest.raises(InvalidGrants):
         apply_grant_changes(
@@ -649,14 +651,14 @@ def test_a_connection_has_a_limited_number_of_grants(api, workspace, user, mixed
 def refresh(monkeypatch):
     """Token responses for refreshes, issued by client "id"."""
     responses: list[dict] = []
-    creds = connection_services.ClientCredentials("id", "secret", "https://x/cb")
+    creds = connection_oauth.ClientCredentials("id", "secret", "https://x/cb")
     monkeypatch.setattr(
-        connection_services,
+        connection_oauth,
         "issuing_client",
         lambda c, client_id: creds if client_id in (None, "id") else None,
     )
     monkeypatch.setattr(
-        connection_services.httpx, "post", lambda *a, **k: httpx.Response(200, json=responses.pop(0))
+        connection_oauth.httpx, "post", lambda *a, **k: httpx.Response(200, json=responses.pop(0))
     )
     return responses
 
@@ -677,60 +679,60 @@ def _expiring(connection: Connection, **tokens) -> None:
 def test_a_refresh_keeps_scopes_unless_the_provider_names_them(mixed, refresh):
     _expiring(mixed, scopes=["files", "labels"], client_id="id")
     refresh.append({"access_token": "a2", "expires_in": 3600})
-    assert connection_services.access_secret(mixed.id).scopes == {"files", "labels"}
+    assert connection_credentials.access_secret(mixed.id).scopes == {"files", "labels"}
     mixed.refresh_from_db()
     assert mixed.credentials()["client_id"] == "id"
     _expiring(mixed, scopes=["files", "labels"])
     refresh.append({"access_token": "a3", "expires_in": 3600, "scope": "files"})
-    assert connection_services.access_secret(mixed.id).scopes == {"files"}
+    assert connection_credentials.access_secret(mixed.id).scopes == {"files"}
     # GitHub separates scopes with commas.
     _expiring(mixed)
     refresh.append({"access_token": "a4", "expires_in": 3600, "scope": "files,labels"})
-    assert connection_services.access_secret(mixed.id).scopes == {"files", "labels"}
+    assert connection_credentials.access_secret(mixed.id).scopes == {"files", "labels"}
 
 
 def test_a_code_is_redeemed_by_the_client_the_flow_started_with(server, monkeypatch):
-    operator = {"client": connection_services.ClientCredentials("one", "s1", "https://x/cb")}
-    monkeypatch.setattr(connection_services, "_configured", lambda connector: operator["client"])
+    operator = {"client": connection_oauth.ClientCredentials("one", "s1", "https://x/cb")}
+    monkeypatch.setattr(connection_oauth, "_configured", lambda connector: operator["client"])
     sent: list[dict] = []
     monkeypatch.setattr(
-        connection_services.httpx,
+        connection_oauth.httpx,
         "post",
         lambda url, **k: sent.append({"url": url, **k}) or httpx.Response(200, json={"access_token": "a"}),
     )
     session: dict = {}
-    url = connection_services.authorization_url(session, workspace_id=uuid4(), provider="mixed")
-    flow = session[connection_services.SESSION_KEY]
+    url = connection_oauth.authorization_url(session, workspace_id=uuid4(), provider="mixed")
+    flow = session[connection_oauth.SESSION_KEY]
     assert flow["client_id"] == "one"
     assert parse_qs(urlparse(url).query)["client_id"] == ["one"]
     connector = registry.get("mixed")
-    tokens = connection_services.exchange_code(connector, code="c", flow=flow)
+    tokens = connection_oauth.exchange_code(connector, code="c", flow=flow)
     assert (tokens["client_id"], tokens["token_url"]) == ("one", "https://mixed.example/token")
     assert (sent[-1]["url"], sent[-1]["data"]["client_id"]) == ("https://mixed.example/token", "one")
     # The operator replaced the client while the user was at the provider.
-    operator["client"] = connection_services.ClientCredentials("two", "s2", "https://x/cb")
-    with pytest.raises(connection_services.ConnectionFlowError):
-        connection_services.exchange_code(connector, code="c", flow=flow)
+    operator["client"] = connection_oauth.ClientCredentials("two", "s2", "https://x/cb")
+    with pytest.raises(connection_oauth.ConnectionFlowError):
+        connection_oauth.exchange_code(connector, code="c", flow=flow)
     assert len(sent) == 1
 
 
 def test_a_refresh_goes_to_the_endpoint_that_issued_the_tokens(mixed, refresh, monkeypatch):
     sent: list[str] = []
     monkeypatch.setattr(
-        connection_services.httpx,
+        connection_oauth.httpx,
         "post",
         lambda url, **k: (
             sent.append(url) or httpx.Response(200, json={"access_token": "a2", "expires_in": 60})
         ),
     )
     _expiring(mixed, client_id="id", token_url="https://old.mixed.example/token")
-    connection_services.access_secret(mixed.id)
+    connection_credentials.access_secret(mixed.id)
     assert sent == ["https://old.mixed.example/token"]
     mixed.refresh_from_db()
     assert mixed.credentials()["token_url"] == "https://old.mixed.example/token"
     # Tokens saved before the endpoint was recorded use the declared one.
     _expiring(mixed, client_id="id")
-    connection_services.access_secret(mixed.id)
+    connection_credentials.access_secret(mixed.id)
     assert sent[-1] == "https://mixed.example/token"
     mixed.refresh_from_db()
     assert mixed.credentials()["token_url"] == "https://mixed.example/token"
@@ -739,7 +741,7 @@ def test_a_refresh_goes_to_the_endpoint_that_issued_the_tokens(mixed, refresh, m
 def test_a_refresh_needs_the_client_that_issued_the_tokens(mixed, refresh):
     _expiring(mixed, client_id="retired")
     with pytest.raises(OperationError) as expired:
-        connection_services.access_secret(mixed.id)
+        connection_credentials.access_secret(mixed.id)
     assert expired.value.code == "CONNECTION_UNAUTHORIZED"
     mixed.refresh_from_db()
     assert mixed.status == Connection.Status.ERROR

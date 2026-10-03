@@ -9,9 +9,9 @@ from asgiref.sync import sync_to_async
 from django.test import Client
 
 from agents.models import Agent
-from connections import services as connection_services
+from connections import oauth as connection_oauth
 from connections.models import Connection
-from connections.services import ClientCredentials
+from connections.oauth import ClientCredentials
 from connectors.base import OperationError
 from connectors.executor import Executor, RunContext
 from connectors.google_calendar import connector as calendar_module
@@ -435,8 +435,8 @@ def oauth(monkeypatch, google):
         "scopes": BASE_SCOPES,
         "client_id": "client",
     }
-    monkeypatch.setattr(connection_services, "client_credentials", lambda connector: creds)
-    monkeypatch.setattr(connection_services, "exchange_code", lambda connector, code, flow: dict(tokens))
+    monkeypatch.setattr(connection_oauth, "client_credentials", lambda connector: creds)
+    monkeypatch.setattr(connection_oauth, "exchange_code", lambda connector, code, flow: dict(tokens))
     monkeypatch.setattr(GoogleCalendarConnector, "client", lambda self, token: google.client())
     return tokens
 

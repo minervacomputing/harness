@@ -9,9 +9,10 @@ import pytest
 from asgiref.sync import sync_to_async
 
 from agents.models import Agent
-from connections import services as connection_services
+from connections import credentials as connection_credentials
+from connections import oauth as connection_oauth
 from connections.models import Connection
-from connections.services import ClientCredentials
+from connections.oauth import ClientCredentials
 from connectors import registry
 from connectors.base import OperationError
 from connectors.executor import Executor, RunContext
@@ -393,22 +394,20 @@ async def test_account_discovery_and_names(graph):
 def test_outlook_scopes_follow_the_allowed_actions(monkeypatch):
     connector = registry.get("outlook")
     monkeypatch.setattr(
-        connection_services,
+        connection_oauth,
         "client_credentials",
         lambda connector: ClientCredentials("id", "s", "https://x/cb"),
     )
     base = ["offline_access", "User.Read", "Mail.Read"]
-    assert connection_services.requested_scopes(connector, {"read"}) == base
-    requested = connection_services.requested_scopes(connector, {"read", "send"})
+    assert connection_oauth.requested_scopes(connector, {"read"}) == base
+    requested = connection_oauth.requested_scopes(connector, {"read", "send"})
     assert requested == [*base, "Mail.Send"]
-    url = connection_services.authorization_url(
-        {}, workspace_id=uuid4(), provider="outlook", scopes=requested
-    )
+    url = connection_oauth.authorization_url({}, workspace_id=uuid4(), provider="outlook", scopes=requested)
     params = httpx.URL(url).params
     assert url.startswith("https://login.microsoftonline.com/common/oauth2/v2.0/authorize?")
     assert params["scope"] == " ".join(requested)
     assert params["prompt"] == "select_account" and params["code_challenge_method"] == "S256"
-    needed = connection_services.consent_needed
+    needed = connection_oauth.consent_needed
     assert needed(connector, frozenset({"User.Read", "Mail.Read"}), {"read", "send"}) == ["send"]
     # Microsoft may report scopes with Graph's URL in front, and in lowercase.
     granted = frozenset({"https://graph.microsoft.com/mail.read", "https://graph.microsoft.com/Mail.Send"})
@@ -422,14 +421,14 @@ def token_endpoint(monkeypatch):
     sent: list[dict] = []
     responses: list[httpx.Response] = []
     creds = ClientCredentials("id", "secret", "https://x/cb")
-    monkeypatch.setattr(connection_services, "client_credentials", lambda connector: creds)
-    monkeypatch.setattr(connection_services, "issuing_client", lambda connector, client_id: creds)
+    monkeypatch.setattr(connection_oauth, "client_credentials", lambda connector: creds)
+    monkeypatch.setattr(connection_oauth, "issuing_client", lambda connector, client_id: creds)
 
     def post(url, **kwargs):
         sent.append({"url": url, **kwargs})
         return responses.pop(0)
 
-    monkeypatch.setattr(connection_services.httpx, "post", post)
+    monkeypatch.setattr(connection_oauth.httpx, "post", post)
     return sent, responses
 
 
@@ -447,7 +446,7 @@ def test_outlook_tokens_carry_their_scopes(token_endpoint):
             },
         )
     )
-    tokens = connection_services.exchange_code(
+    tokens = connection_oauth.exchange_code(
         registry.get("outlook"), code="c", flow={"client_id": "id", "verifier": "v"}
     )
     assert tokens["scopes"] == ["Mail.Read", "Mail.Send", "User.Read", "email", "openid", "profile"]
@@ -465,7 +464,7 @@ def test_a_refused_outlook_refresh_needs_reconnecting(scoped, user, token_endpoi
     connection.save()
     responses.append(httpx.Response(400, json={"error": "invalid_grant", "error_description": "AADSTS70043"}))
     with pytest.raises(OperationError) as caught:
-        connection_services.access_token(connection.id)
+        connection_credentials.access_secret(connection.id)
     assert caught.value.code == "CONNECTION_UNAUTHORIZED"
 
 

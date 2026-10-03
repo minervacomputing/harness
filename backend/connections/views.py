@@ -4,7 +4,7 @@ from uuid import UUID
 from django.http import HttpRequest, HttpResponseRedirect
 from django.views.decorators.http import require_GET
 
-from connections import services
+from connections import oauth, services
 from connections.models import Connection
 from connectors import registry
 from minerva.config import config
@@ -26,8 +26,8 @@ def oauth_callback(request: HttpRequest, provider: str) -> HttpResponseRedirect:
     except LookupError:
         return _redirect("/")
     try:
-        flow = services.pop_flow(request.session, provider=provider, state=request.GET.get("state"))
-    except services.ConnectionFlowError as error:
+        flow = oauth.pop_flow(request.session, provider=provider, state=request.GET.get("state"))
+    except oauth.ConnectionFlowError as error:
         return _redirect("/", error=str(error))
     workspace_id = UUID(flow["workspace_id"])
     page = f"/w/{workspace_id}/connections"
@@ -45,7 +45,7 @@ def oauth_callback(request: HttpRequest, provider: str) -> HttpResponseRedirect:
                     return _redirect(page, error="This connection belongs to someone else.")
                 if existing is not None and existing.owner_id is None and not membership.is_admin:
                     return _redirect(page, error="Only workspace admins can reconnect shared connections.")
-            tokens = services.exchange_code(connector, code=request.GET["code"], flow=flow)
+            tokens = oauth.exchange_code(connector, code=request.GET["code"], flow=flow)
             connection = services.save_connection(
                 workspace_id=workspace_id,
                 owner_id=request.user.id,
@@ -53,6 +53,6 @@ def oauth_callback(request: HttpRequest, provider: str) -> HttpResponseRedirect:
                 tokens=tokens,
                 connection_id=target,
             )
-    except services.ConnectionFlowError as error:
+    except oauth.ConnectionFlowError as error:
         return _redirect(page, error=str(error))
     return _redirect(page, connected=str(connection.id))

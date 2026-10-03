@@ -9,9 +9,9 @@ import pytest
 from asgiref.sync import sync_to_async
 
 from agents.models import Agent
-from connections import services as connection_services
+from connections import oauth as connection_oauth
 from connections.models import Connection
-from connections.services import ClientCredentials
+from connections.oauth import ClientCredentials
 from connectors import registry
 from connectors.base import OperationError
 from connectors.executor import Executor, RunContext
@@ -631,14 +631,14 @@ def token_endpoint(monkeypatch):
     sent: list[dict] = []
     responses: list[httpx.Response] = []
     creds = ClientCredentials("id", "secret", "https://x/cb")
-    monkeypatch.setattr(connection_services, "client_credentials", lambda connector: creds)
-    monkeypatch.setattr(connection_services, "issuing_client", lambda connector, client_id: creds)
+    monkeypatch.setattr(connection_oauth, "client_credentials", lambda connector: creds)
+    monkeypatch.setattr(connection_oauth, "issuing_client", lambda connector, client_id: creds)
 
     def post(url, **kwargs):
         sent.append({"url": url, **kwargs})
         return responses.pop(0)
 
-    monkeypatch.setattr(connection_services.httpx, "post", post)
+    monkeypatch.setattr(connection_oauth.httpx, "post", post)
     return sent, responses
 
 
@@ -648,33 +648,33 @@ def test_linear_tokens_carry_their_scopes(token_endpoint):
     responses.append(
         httpx.Response(200, json={"access_token": "a", "token_type": "Bearer", "scope": ["read", "write"]})
     )
-    tokens = connection_services.exchange_code(connector, code="c", flow=FLOW)
+    tokens = connection_oauth.exchange_code(connector, code="c", flow=FLOW)
     assert tokens["access_token"] == "a" and tokens["scopes"] == ["read", "write"]
     [request] = sent
     assert request["url"] == "https://api.linear.app/oauth/token"
     assert request["data"]["client_secret"] == "secret" and request["data"]["code_verifier"] == "v"
     responses.append(httpx.Response(200, json={"access_token": "b", "scope": "read,issues:create"}))
-    tokens = connection_services.exchange_code(connector, code="c", flow=FLOW)
+    tokens = connection_oauth.exchange_code(connector, code="c", flow=FLOW)
     assert tokens["scopes"] == ["issues:create", "read"]
 
 
 def test_linear_scopes_follow_the_allowed_actions(monkeypatch):
     connector = registry.get("linear")
     monkeypatch.setattr(
-        connection_services,
+        connection_oauth,
         "client_credentials",
         lambda connector: ClientCredentials("id", "s", "https://x/cb"),
     )
-    requested = connection_services.requested_scopes(connector, {"read", "create", "comment"})
+    requested = connection_oauth.requested_scopes(connector, {"read", "create", "comment"})
     assert requested == ["read", "comments:create", "issues:create"]
-    url = connection_services.authorization_url({}, workspace_id=uuid4(), provider="linear", scopes=requested)
+    url = connection_oauth.authorization_url({}, workspace_id=uuid4(), provider="linear", scopes=requested)
     params = httpx.URL(url).params
     assert url.startswith("https://linear.app/oauth/authorize?")
     assert params["scope"] == "read,comments:create,issues:create"
     assert params["code_challenge_method"] == "S256"
-    assert connection_services.requested_scopes(connector, {"read"}) == ["read"]
-    assert "write" in connection_services.requested_scopes(connector, {"read", "edit"})
-    needed = connection_services.consent_needed
+    assert connection_oauth.requested_scopes(connector, {"read"}) == ["read"]
+    assert "write" in connection_oauth.requested_scopes(connector, {"read", "edit"})
+    needed = connection_oauth.consent_needed
     assert needed(connector, frozenset({"read", "write"}), {"read", "create", "comment", "edit"}) == []
     assert needed(connector, frozenset({"read", "issues:create"}), {"read", "create", "comment", "edit"}) == [
         "comment",

@@ -8,7 +8,8 @@ from django.shortcuts import get_object_or_404
 from ninja import Field, Query, Router, Schema, Status
 from ninja.errors import HttpError
 
-from connections import services
+from connections import oauth, services
+from connections.credentials import open_client
 from connections.models import Connection
 from connectors import registry
 from connectors.base import ACCOUNT_KIND, ApiKey, Builtin, Connector, DiscoveryItem, OperationError
@@ -121,8 +122,8 @@ class AccessChangesIn(Schema):
 
 def _connection_out(connection: Connection, user_id: UUID) -> dict:
     connector = registry.get(connection.provider)
-    needed = services.consent_needed(
-        connector, services.granted_scopes(connection), services.allowed_actions(connection, user_id)
+    needed = oauth.consent_needed(
+        connector, oauth.granted_scopes(connection), services.allowed_actions(connection, user_id)
     )
     manage = connector.manage_link()
     return {
@@ -169,7 +170,7 @@ def _provider_call(connection: Connection, call):
     """Runs `call(connector, client)` against the provider; provider failures become HTTP 502."""
 
     async def run():
-        async with services.open_client(connection.provider, connection.id) as opened:
+        async with open_client(connection.provider, connection.id) as opened:
             return await call(registry.get(connection.provider), opened.client)
 
     try:
@@ -205,7 +206,7 @@ def list_connectors(request, workspace_id: UUID):
         }
         for c in registry.all_connectors()
         # Apps this instance has no OAuth client for cannot be connected.
-        if services.available(c)
+        if oauth.available(c)
     ]
 
 
@@ -223,8 +224,8 @@ def authorize(request, workspace_id: UUID, provider: str):
     except LookupError:
         raise HttpError(404, "Unknown provider.") from None
     try:
-        url = services.authorization_url(request.session, workspace_id=workspace_id, provider=provider)
-    except services.ConnectionFlowError as error:
+        url = oauth.authorization_url(request.session, workspace_id=workspace_id, provider=provider)
+    except oauth.ConnectionFlowError as error:
         raise HttpError(503, str(error)) from error
     return {"url": url}
 
@@ -240,7 +241,7 @@ def enable(request, workspace_id: UUID, provider: str):
         connection = services.enable_builtin(
             workspace_id=workspace_id, owner_id=request.user.id, provider=provider
         )
-    except services.ConnectionFlowError as error:
+    except oauth.ConnectionFlowError as error:
         raise HttpError(422, str(error)) from error
     return _connection_out(connection, request.user.id)
 
@@ -262,15 +263,15 @@ def reconnect(request, workspace_id: UUID, connection_id: UUID, payload: Consent
     try:
         # A shared connection serves every member who allows something on it.
         allowed = services.allowed_actions(connection, request.user.id if connection.owner_id else None)
-        scopes = services.requested_scopes(connector, allowed | set(payload.actions))
-        url = services.authorization_url(
+        scopes = oauth.requested_scopes(connector, allowed | set(payload.actions))
+        url = oauth.authorization_url(
             request.session,
             workspace_id=workspace_id,
             provider=connection.provider,
             connection=connection,
             scopes=scopes,
         )
-    except services.ConnectionFlowError as error:
+    except oauth.ConnectionFlowError as error:
         raise HttpError(503, str(error)) from error
     return {"url": url}
 

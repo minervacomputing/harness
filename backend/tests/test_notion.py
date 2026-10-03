@@ -8,9 +8,9 @@ import pytest
 from asgiref.sync import sync_to_async
 
 from agents.models import Agent
-from connections import services as connection_services
+from connections import oauth as connection_oauth
 from connections.models import Connection
-from connections.services import ClientCredentials
+from connections.oauth import ClientCredentials
 from connectors import registry
 from connectors.base import OperationError
 from connectors.executor import Executor, RunContext
@@ -597,14 +597,14 @@ def token_endpoint(monkeypatch):
     sent: list[dict] = []
     responses: list[httpx.Response] = []
     creds = ClientCredentials("id", "secret", "https://x/cb")
-    monkeypatch.setattr(connection_services, "client_credentials", lambda connector: creds)
-    monkeypatch.setattr(connection_services, "issuing_client", lambda connector, client_id: creds)
+    monkeypatch.setattr(connection_oauth, "client_credentials", lambda connector: creds)
+    monkeypatch.setattr(connection_oauth, "issuing_client", lambda connector, client_id: creds)
 
     def post(url, **kwargs):
         sent.append({"url": url, **kwargs})
         return responses.pop(0)
 
-    monkeypatch.setattr(connection_services.httpx, "post", post)
+    monkeypatch.setattr(connection_oauth.httpx, "post", post)
     return sent, responses
 
 
@@ -612,7 +612,7 @@ def test_notion_token_requests_use_basic_auth_and_json(token_endpoint):
     sent, responses = token_endpoint
     connector = registry.get("notion")
     responses.append(httpx.Response(200, json={"access_token": "a", "refresh_token": "r", "bot_id": "b"}))
-    tokens = connection_services.exchange_code(connector, code="c", flow=FLOW)
+    tokens = connection_oauth.exchange_code(connector, code="c", flow=FLOW)
     assert (tokens["access_token"], tokens["refresh_token"]) == ("a", "r")
     [request] = sent
     assert request["url"] == "https://api.notion.com/v1/oauth/token"
@@ -630,12 +630,12 @@ def test_notion_token_requests_use_basic_auth_and_json(token_endpoint):
 
 def test_notion_authorization_url_has_no_scope_or_pkce(monkeypatch):
     monkeypatch.setattr(
-        connection_services,
+        connection_oauth,
         "client_credentials",
         lambda connector: ClientCredentials("id", "s", "https://x/cb"),
     )
     session: dict = {}
-    url = connection_services.authorization_url(session, workspace_id=uuid4(), provider="notion")
+    url = connection_oauth.authorization_url(session, workspace_id=uuid4(), provider="notion")
     params = httpx.URL(url).params
     assert url.startswith("https://api.notion.com/v1/oauth/authorize?")
     assert params["owner"] == "user" and params["response_type"] == "code"

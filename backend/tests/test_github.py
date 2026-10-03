@@ -9,9 +9,10 @@ import pytest
 from asgiref.sync import sync_to_async
 
 from agents.models import Agent
-from connections import services as connection_services
+from connections import credentials as connection_credentials
+from connections import oauth as connection_oauth
 from connections.models import Connection
-from connections.services import ClientCredentials, ConnectionFlowError
+from connections.oauth import ClientCredentials, ConnectionFlowError
 from connectors import registry
 from connectors.base import OperationError
 from connectors.executor import Executor, RunContext
@@ -261,10 +262,10 @@ def test_the_install_link_needs_a_valid_slug(monkeypatch):
 def test_github_is_offered_only_when_configured(monkeypatch):
     connector = registry.get("github")
     monkeypatch.setattr(config(), "github_client_id", None)
-    assert not connection_services.available(connector)
+    assert not connection_oauth.available(connector)
     monkeypatch.setattr(config(), "github_client_id", "Iv1.x")
     monkeypatch.setattr(config(), "github_client_secret", config().secret_key)
-    assert connection_services.available(connector)
+    assert connection_oauth.available(connector)
 
 
 @pytest.mark.django_db(transaction=True)
@@ -465,14 +466,14 @@ def token_endpoint(monkeypatch):
     sent: list[dict] = []
     responses: list[httpx.Response] = []
     creds = ClientCredentials("id", "secret", "https://x/cb")
-    monkeypatch.setattr(connection_services, "client_credentials", lambda connector: creds)
-    monkeypatch.setattr(connection_services, "issuing_client", lambda connector, client_id: creds)
+    monkeypatch.setattr(connection_oauth, "client_credentials", lambda connector: creds)
+    monkeypatch.setattr(connection_oauth, "issuing_client", lambda connector, client_id: creds)
 
     def post(url, **kwargs):
         sent.append({"url": url, **kwargs})
         return responses.pop(0)
 
-    monkeypatch.setattr(connection_services.httpx, "post", post)
+    monkeypatch.setattr(connection_oauth.httpx, "post", post)
     return sent, responses
 
 
@@ -484,17 +485,17 @@ def test_github_token_responses(token_endpoint):
             200, json={"access_token": "a", "refresh_token": "r", "expires_in": 28800, "scope": ""}
         )
     )
-    tokens = connection_services.exchange_code(connector, code="c", flow=FLOW)
+    tokens = connection_oauth.exchange_code(connector, code="c", flow=FLOW)
     assert (tokens["access_token"], tokens["scopes"], tokens["refresh_token"]) == ("a", [], "r")
     assert sent[-1]["headers"]["Accept"] == "application/json"
     # GitHub reports a refused code with HTTP 200.
     for body in ({"error": "bad_verification_code"}, {"token_type": "bearer"}):
         responses.append(httpx.Response(200, json=body))
         with pytest.raises(ConnectionFlowError):
-            connection_services.exchange_code(connector, code="c", flow=FLOW)
+            connection_oauth.exchange_code(connector, code="c", flow=FLOW)
     responses.append(httpx.Response(200, text="access_token=a&scope="))
     with pytest.raises(ConnectionFlowError):
-        connection_services.exchange_code(connector, code="c", flow=FLOW)
+        connection_oauth.exchange_code(connector, code="c", flow=FLOW)
 
 
 @pytest.fixture
@@ -517,7 +518,7 @@ def test_a_refused_github_refresh_needs_reconnecting(github_connection, token_en
     sent, responses = token_endpoint
     responses.append(httpx.Response(200, json={"error": "bad_refresh_token"}))
     with pytest.raises(OperationError) as caught:
-        connection_services.access_token(github_connection.id)
+        connection_credentials.access_secret(github_connection.id)
     assert caught.value.code == "CONNECTION_UNAUTHORIZED"
     assert sent[-1]["headers"]["Accept"] == "application/json"
 
@@ -526,7 +527,7 @@ def test_a_misconfigured_client_keeps_the_connection(github_connection, token_en
     _, responses = token_endpoint
     responses.append(httpx.Response(200, json={"error": "incorrect_client_credentials"}))
     with pytest.raises(OperationError) as caught:
-        connection_services.access_token(github_connection.id)
+        connection_credentials.access_secret(github_connection.id)
     assert caught.value.code == "PROVIDER_UNAVAILABLE"
     github_connection.refresh_from_db()
     assert github_connection.credentials()["refresh_token"] == "r1"
@@ -534,7 +535,7 @@ def test_a_misconfigured_client_keeps_the_connection(github_connection, token_en
     responses.append(
         httpx.Response(200, json={"access_token": "new", "refresh_token": "r2", "expires_in": 28800})
     )
-    assert connection_services.access_token(github_connection.id) == "new"
+    assert connection_credentials.access_secret(github_connection.id).value == "new"
     github_connection.refresh_from_db()
     assert github_connection.credentials()["refresh_token"] == "r2"
 

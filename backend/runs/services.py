@@ -11,7 +11,7 @@ from django.db import connection as db
 from django.utils import timezone
 
 from agents.models import Agent
-from connections.services import granted_scopes
+from connections.oauth import granted_scopes
 from connectors import registry
 from connectors.base import consent_given
 from conversations.models import Conversation, Message

@@ -9,9 +9,10 @@ import pytest
 from asgiref.sync import sync_to_async
 
 from agents.models import Agent
-from connections import services as connection_services
+from connections import credentials as connection_credentials
+from connections import oauth as connection_oauth
 from connections.models import Connection
-from connections.services import ClientCredentials, ConnectionFlowError
+from connections.oauth import ClientCredentials, ConnectionFlowError
 from connectors import registry
 from connectors.base import OperationError
 from connectors.executor import Executor, RunContext
@@ -384,14 +385,14 @@ def token_endpoint(monkeypatch):
     sent: list[dict] = []
     responses: list[httpx.Response] = []
     creds = ClientCredentials("id", "secret", "https://x/cb")
-    monkeypatch.setattr(connection_services, "client_credentials", lambda connector: creds)
-    monkeypatch.setattr(connection_services, "issuing_client", lambda connector, client_id: creds)
+    monkeypatch.setattr(connection_oauth, "client_credentials", lambda connector: creds)
+    monkeypatch.setattr(connection_oauth, "issuing_client", lambda connector, client_id: creds)
 
     def post(url, **kwargs):
         sent.append({"url": url, **kwargs})
         return responses.pop(0)
 
-    monkeypatch.setattr(connection_services.httpx, "post", post)
+    monkeypatch.setattr(connection_oauth.httpx, "post", post)
     return sent, responses
 
 
@@ -410,7 +411,7 @@ def test_slack_tokens_carry_their_scopes(token_endpoint):
             },
         )
     )
-    tokens = connection_services.exchange_code(connector, code="c", flow=FLOW)
+    tokens = connection_oauth.exchange_code(connector, code="c", flow=FLOW)
     assert tokens["access_token"] == "xoxb-a" and tokens["scopes"] == ["channels:read", "chat:write"]
     assert "expires_at" not in tokens
     [request] = sent
@@ -420,26 +421,26 @@ def test_slack_tokens_carry_their_scopes(token_endpoint):
     # Slack reports refusals with HTTP 200.
     responses.append(httpx.Response(200, json={"ok": False, "error": "invalid_code"}))
     with pytest.raises(ConnectionFlowError):
-        connection_services.exchange_code(connector, code="c", flow=FLOW)
+        connection_oauth.exchange_code(connector, code="c", flow=FLOW)
 
 
 def test_slack_scopes_follow_the_allowed_actions(monkeypatch):
     connector = registry.get("slack")
     monkeypatch.setattr(
-        connection_services,
+        connection_oauth,
         "client_credentials",
         lambda connector: ClientCredentials("id", "s", "https://x/cb"),
     )
     base = ["channels:read", "groups:read", "channels:history", "groups:history", "users:read"]
-    assert connection_services.requested_scopes(connector, {"read"}) == base
-    requested = connection_services.requested_scopes(connector, {"read", "reply"})
+    assert connection_oauth.requested_scopes(connector, {"read"}) == base
+    requested = connection_oauth.requested_scopes(connector, {"read", "reply"})
     assert requested == [*base, "chat:write"]
-    url = connection_services.authorization_url({}, workspace_id=uuid4(), provider="slack", scopes=requested)
+    url = connection_oauth.authorization_url({}, workspace_id=uuid4(), provider="slack", scopes=requested)
     params = httpx.URL(url).params
     assert url.startswith("https://slack.com/oauth/v2/authorize?")
     assert params["scope"] == ",".join(requested)
     assert "code_challenge" not in params
-    needed = connection_services.consent_needed
+    needed = connection_oauth.consent_needed
     assert needed(connector, frozenset(base), {"read", "reply", "post"}) == ["reply", "post"]
     assert needed(connector, frozenset([*base, "chat:write"]), {"read", "reply", "post"}) == []
 
@@ -660,7 +661,7 @@ def test_a_refused_slack_refresh_needs_reconnecting(scoped, user, token_endpoint
     # Slack refuses with HTTP 200.
     responses.append(httpx.Response(200, json={"ok": False, "error": "invalid_refresh_token"}))
     with pytest.raises(OperationError) as caught:
-        connection_services.access_token(connection.id)
+        connection_credentials.access_secret(connection.id)
     assert caught.value.code == "CONNECTION_UNAUTHORIZED"
 
 

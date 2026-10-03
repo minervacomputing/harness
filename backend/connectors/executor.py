@@ -26,7 +26,7 @@ from django.db.models import F
 from django.utils import timezone
 from pydantic import ValidationError
 
-from connections.services import open_client
+from connections.credentials import open_client
 from connectors import registry
 from connectors.base import (
     ACCOUNT_KIND,
