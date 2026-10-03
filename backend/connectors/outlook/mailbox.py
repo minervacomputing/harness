@@ -4,7 +4,7 @@ from typing import Annotated
 
 from pydantic import AfterValidator, Field
 
-from connectors.base import DENIED, Binding, OperationError, Resource
+from connectors.base import Binding, OperationError, Resource, denied
 from connectors.outlook.client import ID, Folder, GraphClient, Message
 
 FOLDER = "folder"
@@ -31,10 +31,6 @@ MAX_LOOKUPS = 60
 CONNECTION_ERRORS = frozenset(
     {"CONNECTION_UNAUTHORIZED", "PROVIDER_RATE_LIMITED", "PROVIDER_UNAVAILABLE", "UNSUPPORTED_ACCOUNT"}
 )
-
-
-def _denied() -> OperationError:
-    return OperationError("POLICY_DENIED", DENIED)
 
 
 def _moved() -> OperationError:
@@ -152,9 +148,9 @@ class Tree:
         except OperationError as error:
             if error.code in CONNECTION_ERRORS:
                 raise
-            raise _denied() from None
+            raise denied() from None
         if within is None or (name not in WELL_KNOWN and folder.id != name):
-            raise _denied()
+            raise denied()
         self._folders[folder.id] = folder
         return binding.resource(FOLDER, folder.id, within), folder
 
@@ -182,9 +178,9 @@ async def locate(binding: Binding, tree: Tree, message_id: str, fields: str) -> 
     except OperationError as error:
         if error.code in CONNECTION_ERRORS:
             raise
-        raise _denied() from None
+        raise denied() from None
     if message.id != message_id or not message.parent_folder_id or not ID.match(message.parent_folder_id):
-        raise _denied()
+        raise denied()
     resource, _ = await tree.resolve(binding, message.parent_folder_id)
     return message, resource
 

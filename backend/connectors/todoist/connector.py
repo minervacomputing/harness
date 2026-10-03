@@ -4,7 +4,6 @@ from typing import Annotated
 from pydantic import Field
 
 from connectors.base import (
-    DENIED,
     Account,
     ActionSpec,
     Binding,
@@ -21,6 +20,7 @@ from connectors.base import (
     ProviderOutput,
     ResourceKind,
     ScopedRecord,
+    denied,
 )
 from connectors.todoist.client import TodoistClient, TodoistTask
 
@@ -127,10 +127,10 @@ async def _prepare_get_task(binding: Binding, data: GetTask) -> Prepared:
         task = await binding.client.task(data.task_id)
     except OperationError as error:
         if error.code in {"NOT_FOUND", "PROVIDER_FORBIDDEN"}:
-            raise OperationError("POLICY_DENIED", DENIED) from error
+            raise denied() from error
         raise
     if task.id != data.task_id:
-        raise OperationError("POLICY_DENIED", DENIED)
+        raise denied()
 
     async def execute() -> ProviderOutput:
         return ProviderOutput([_task(binding, task)])

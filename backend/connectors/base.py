@@ -32,6 +32,11 @@ class OperationError(Exception):
 DENIED = "This resource or action is not available under the current permissions."
 
 
+def denied() -> OperationError:
+    """The refusal of a call the policy does not allow, or of one naming something Minerva will not reveal."""
+    return OperationError("POLICY_DENIED", DENIED)
+
+
 class OperationInput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
 

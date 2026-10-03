@@ -5,7 +5,7 @@ from typing import Annotated
 
 from pydantic import AfterValidator, Field
 
-from connectors.base import DENIED, Binding, OperationError, Resource
+from connectors.base import Binding, OperationError, Resource, denied
 from connectors.linear import markdown as text
 from connectors.linear.client import MAX_TEAM_DEPTH, LinearClient, PageInfo, State, Team, TeamRef
 
@@ -51,10 +51,6 @@ IssueName = Annotated[
     Field(min_length=1, max_length=36, description='An issue identifier such as "ENG-123", or an issue id.'),
     AfterValidator(_issue_name),
 ]
-
-
-def _denied() -> OperationError:
-    return OperationError("POLICY_DENIED", DENIED)
 
 
 def issue_moved() -> OperationError:
@@ -108,10 +104,10 @@ async def resolve_team(binding: Binding, name: str) -> Resource:
             team = found[0] if len(found) == 1 else None
     except OperationError as error:
         if error.code in HIDDEN:
-            raise _denied() from None
+            raise denied() from None
         raise
     if team is None:
-        raise _denied()
+        raise denied()
     return team_resource(binding, team)
 
 
@@ -122,11 +118,11 @@ async def resolve_issue(binding: Binding, name: str) -> tuple[str, Resource]:
         place = await client.issue_place(name)
     except OperationError as error:
         if error.code in HIDDEN:
-            raise _denied() from None
+            raise denied() from None
         raise
     issue_id = place.id.lower()
     if not UUID.match(issue_id) or (UUID.match(name) and issue_id != name):
-        raise _denied()
+        raise denied()
     return issue_id, team_resource(binding, place.team)
 
 

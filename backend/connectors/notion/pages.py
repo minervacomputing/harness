@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 
 from pydantic import AfterValidator, Field
 
-from connectors.base import DENIED, Binding, OperationError, Resource, ScopedRecord
+from connectors.base import Binding, OperationError, Resource, ScopedRecord, denied
 from connectors.notion.client import Comment, Database, DataSource, NotionClient, Page, Parent, text_of
 
 PAGE = "page"
@@ -46,12 +46,6 @@ def _object_id(value: str) -> str:
     raise ValueError("must be a Notion id, or a link to a Notion page or database")
 
 
-def no_controls(value: str) -> str:
-    if any(ord(c) < 32 for c in value):
-        raise ValueError("must not contain control characters")
-    return value
-
-
 def json_size(value: Any) -> Any:
     if len(json.dumps(value)) > MAX_FILTER:
         raise ValueError(f"must be at most {MAX_FILTER} characters as JSON")
@@ -63,10 +57,6 @@ ObjectId = Annotated[
     Field(min_length=32, max_length=300, description="A Notion id, or a link to the page or database."),
     AfterValidator(_object_id),
 ]
-
-
-def _denied() -> OperationError:
-    return OperationError("POLICY_DENIED", DENIED)
 
 
 def moved() -> OperationError:
@@ -119,14 +109,14 @@ class Tree:
             page = await self.client.page(page_id)
         except OperationError as error:
             if error.code == "NOT_FOUND":
-                raise _denied() from None
+                raise denied() from None
             if error.code == "PROVIDER_REJECTED":
                 raise OperationError(
                     "NOT_FOUND", "There is no page with this id. Databases have their own tools."
                 ) from None
             raise
         if canonical(page.id) != page_id:
-            raise _denied()
+            raise denied()
         self._pages[page_id] = page
         return page
 
@@ -135,14 +125,14 @@ class Tree:
             database = await self.client.database(database_id)
         except OperationError as error:
             if error.code == "NOT_FOUND":
-                raise _denied() from None
+                raise denied() from None
             if error.code == "PROVIDER_REJECTED":
                 raise OperationError(
                     "NOT_FOUND", "There is no database with this id. Pages have their own tools."
                 ) from None
             raise
         if canonical(database.id) != database_id:
-            raise _denied()
+            raise denied()
         self._databases[database_id] = database
         return database
 

@@ -21,7 +21,6 @@ from typing import Annotated, Any
 from pydantic import AfterValidator, Field
 
 from connectors.base import (
-    DENIED,
     Account,
     ActionSpec,
     Binding,
@@ -39,9 +38,11 @@ from connectors.base import (
     Resource,
     ResourceKind,
     ScopedRecord,
+    denied,
 )
 from connectors.slack import mrkdwn as text
 from connectors.slack.client import Channel, Message, SlackClient
+from connectors.text import truncate
 
 CHANNEL = "channel"
 MAX_TEXT = 4_000
@@ -113,10 +114,6 @@ WrittenText = Annotated[
 ]
 
 
-def _denied() -> OperationError:
-    return OperationError("POLICY_DENIED", DENIED)
-
-
 def _gone() -> OperationError:
     return OperationError(
         "CHANNEL_MOVED", "This channel changed in Slack while Minerva was using it, or the app lost access."
@@ -133,12 +130,6 @@ def _next(cursor: str | None) -> str | None:
     if cursor is not None and not _CURSOR.match(cursor):
         raise OperationError("PROVIDER_LIMIT", "Slack returned a page token Minerva cannot use.")
     return cursor
-
-
-def _truncated(value: str | None, limit: int) -> tuple[str | None, bool]:
-    if value is None or len(value) <= limit:
-        return value, False
-    return value[:limit], True
 
 
 async def _by_name(client: SlackClient, name: str) -> Channel | None:
@@ -169,10 +160,10 @@ async def _resolve(binding: Binding, name: str) -> Resource:
                 channel = None
     except OperationError as error:
         if error.code in HIDDEN:
-            raise _denied() from None
+            raise denied() from None
         raise
     if channel is None or not channel.is_conversation_channel or not _CHANNEL_ID.match(channel.id):
-        raise _denied()
+        raise denied()
     return binding.resource(CHANNEL, channel.id)
 
 
@@ -210,7 +201,7 @@ def _time(ts: str | None) -> str | None:
 
 def _topic(channel: Channel, field: str) -> str | None:
     value = getattr(channel, field)
-    shown, _ = _truncated(text.redact(value.value) if value else None, MAX_TOPIC)
+    shown, _ = truncate(text.redact(value.value) if value else None, MAX_TOPIC)
     return shown or None
 
 
@@ -252,7 +243,7 @@ async def _people(client: SlackClient, messages: list[Message]) -> dict[str, str
 
 
 def _message(message: Message, people: dict[str, str]) -> dict[str, Any]:
-    body, truncated = _truncated(text.redact(message.text), MAX_READ_TEXT)
+    body, truncated = truncate(text.redact(message.text), MAX_READ_TEXT)
     mentioned = {user_id: people[user_id] for user_id in _MENTION.findall(message.text) if user_id in people}
     record: dict[str, Any] = {
         "ts": message.ts,

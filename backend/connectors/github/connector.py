@@ -16,7 +16,6 @@ from typing import Annotated, Any
 from pydantic import AfterValidator, Field
 
 from connectors.base import (
-    DENIED,
     Account,
     ActionSpec,
     Binding,
@@ -34,6 +33,7 @@ from connectors.base import (
     Resource,
     ResourceKind,
     ScopedRecord,
+    denied,
 )
 from connectors.github.client import (
     MAX_INLINE_FILE,
@@ -44,6 +44,7 @@ from connectors.github.client import (
     Pull,
     Repository,
 )
+from connectors.text import truncate
 from minerva.config import config
 
 REPOSITORY = "repository"
@@ -108,10 +109,6 @@ Cursor = Annotated[str, Field(max_length=1000)]
 State = Annotated[str, Field(pattern=r"^(open|closed|all)$")]
 
 
-def _denied() -> OperationError:
-    return OperationError("POLICY_DENIED", DENIED)
-
-
 async def _resolve(binding: Binding, repository: str) -> Resource:
     """The repository a call names, as the resource that is authorized. Repositories the account cannot
     see are refused like repositories without a grant."""
@@ -121,15 +118,9 @@ async def _resolve(binding: Binding, repository: str) -> Resource:
         found = await client.find(owner, name)
     except OperationError as error:
         if error.code == "NOT_FOUND":
-            raise _denied() from None
+            raise denied() from None
         raise
     return binding.resource(REPOSITORY, str(found.id))
-
-
-def _truncated(text: str | None, limit: int) -> tuple[str | None, bool]:
-    if text is None or len(text) <= limit:
-        return text, False
-    return text[:limit], True
 
 
 def _repository(repository: Repository) -> dict[str, Any]:
@@ -162,12 +153,12 @@ def _issue(issue: Issue, *, body: bool = False) -> dict[str, Any]:
         "url": issue.html_url,
     }
     if body:
-        data["body"], data["body_truncated"] = _truncated(issue.body, MAX_BODY)
+        data["body"], data["body_truncated"] = truncate(issue.body, MAX_BODY)
     return data
 
 
 def _comment(comment: Comment) -> dict[str, Any]:
-    text, truncated = _truncated(comment.body, MAX_COMMENT_BODY)
+    text, truncated = truncate(comment.body, MAX_COMMENT_BODY)
     return {
         "id": comment.id,
         "author": comment.user.login if comment.user else None,
@@ -192,7 +183,7 @@ def _pull(pull: Pull, *, body: bool = False) -> dict[str, Any]:
         "url": pull.html_url,
     }
     if body:
-        data["body"], data["body_truncated"] = _truncated(pull.body, MAX_BODY)
+        data["body"], data["body_truncated"] = truncate(pull.body, MAX_BODY)
         data |= {
             "changed_files": pull.changed_files,
             "additions": pull.additions,
@@ -468,7 +459,7 @@ async def _prepare_get_pull_request(binding: Binding, data: GetPullRequest) -> P
             patch = file.patch
             patch_truncated = False
             if patch is not None:
-                patch, patch_truncated = _truncated(patch, max(budget, 0))
+                patch, patch_truncated = truncate(patch, max(budget, 0))
                 budget -= len(patch or "")
             listed.append(
                 {

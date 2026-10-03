@@ -15,7 +15,6 @@ from typing import Annotated, Any
 from pydantic import AfterValidator, Field
 
 from connectors.base import (
-    DENIED,
     Account,
     ActionSpec,
     Binding,
@@ -32,9 +31,11 @@ from connectors.base import (
     Resource,
     ResourceKind,
     ScopedRecord,
+    denied,
 )
 from connectors.google import oauth as google_oauth
 from connectors.google_drive.client import FOLDER, SHORTCUT, DriveFile, GoogleDriveClient, quoted
+from connectors.text import no_controls
 
 FILE = "file"
 READ_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
@@ -79,12 +80,6 @@ TEXT_TYPES = frozenset(
 )
 
 
-def _no_controls(value: str) -> str:
-    if any(ord(c) < 32 for c in value):
-        raise ValueError("must not contain control characters")
-    return value
-
-
 def _upload_size(value: str) -> str:
     if len(value.encode()) > MAX_UPLOAD_BYTES:
         raise ValueError(f"must be at most {MAX_UPLOAD_BYTES} bytes as UTF-8")
@@ -102,10 +97,6 @@ FolderId = Annotated[
     ),
 ]
 Cursor = Annotated[str, Field(max_length=1000)]
-
-
-def _denied() -> OperationError:
-    return OperationError("POLICY_DENIED", DENIED)
 
 
 def _moved() -> OperationError:
@@ -134,7 +125,7 @@ class Tree:
             file = await self.client.file(file_id)
         except OperationError as error:
             if error.code == "NOT_FOUND":
-                raise _denied() from None
+                raise denied() from None
             raise
         self._files[file.id] = file
         return file
@@ -285,7 +276,7 @@ LIST_FOLDER = Operation(
 
 
 class SearchFiles(OperationInput):
-    text: Annotated[str, Field(min_length=1, max_length=200), AfterValidator(_no_controls)]
+    text: Annotated[str, Field(min_length=1, max_length=200), AfterValidator(no_controls)]
     limit: Annotated[int, Field(ge=1, le=50)] = 20
     cursor: Cursor | None = None
 
@@ -420,7 +411,7 @@ READ_FILE = Operation(
 
 class CreateFile(OperationInput):
     folder_id: FolderId
-    name: Annotated[str, Field(min_length=1, max_length=200), AfterValidator(_no_controls)]
+    name: Annotated[str, Field(min_length=1, max_length=200), AfterValidator(no_controls)]
     content: Annotated[str, Field(max_length=MAX_UPLOAD_BYTES), AfterValidator(_upload_size)]
     as_document: Annotated[
         bool, Field(description="Convert the text into a Google Doc instead of a plain text file.")

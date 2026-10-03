@@ -13,10 +13,9 @@ may not show images from anywhere but Linear's own uploads, since a reader's bro
 another site, nor use HTML that loads or links anything.
 """
 
-import html
 import re
-import unicodedata
-from urllib.parse import unquote
+
+from connectors.text import decoded
 
 MAX_ISSUE_LINKS = 10
 
@@ -55,15 +54,6 @@ _LINK_ATTRIBUTE = re.compile(r"\b(?:src|url|href|data|srcset|poster|action|backg
 _LOADING_TAGS = frozenset({"img", "image", "iframe", "embed", "object", "video", "audio", "source", "link"})
 
 
-def _decoded(text: str) -> str:
-    """The text with the encodings a browser or markdown renderer undoes in an address, undone."""
-    for _ in range(3):
-        text = unicodedata.normalize("NFKC", html.unescape(unquote(text)))
-        text = "".join(c for c in text if unicodedata.category(c) != "Cf")
-        text = re.sub(r"[\u3002\uff0e\uff61]", ".", text).replace("\\", "")
-    return text
-
-
 def _short(match: re.Match[str]) -> str:
     workspace, kind, rest = match[1], match[2], match[3] or ""
     end = _TRAILING.search(rest)
@@ -92,7 +82,7 @@ def check_written(text: str) -> str:
     if "\x00" in text:
         raise ValueError("must not contain NUL characters")
     rest = _IMAGE.sub("", text)
-    if len(_ANY_LINEAR.findall(_decoded(rest))) > len(_ANY_LINEAR.findall(rest)):
+    if len(_ANY_LINEAR.findall(decoded(rest))) > len(_ANY_LINEAR.findall(rest)):
         raise ValueError("must not write Linear addresses in an encoded form")
     if "![" in rest:
         raise ValueError("may show only images uploaded to Linear (https://uploads.linear.app/...)")

@@ -34,18 +34,13 @@ from connectors.linear.teams import (
     team_moved,
     team_resource,
 )
+from connectors.text import truncate
 
 MAX_READ_DESCRIPTION = 20_000
 MAX_READ_COMMENT = 4_000
 MAX_COMMENTS = 30
 MAX_SEARCH_WORDS = 8
 Cursor = Annotated[str, Field(max_length=500)]
-
-
-def _truncated(value: str | None, limit: int) -> tuple[str | None, bool]:
-    if value is None or len(value) <= limit:
-        return value, False
-    return value[:limit], True
 
 
 def _team_data(resource: Resource, team: Team) -> dict[str, Any]:
@@ -270,7 +265,7 @@ async def _prepare_get_issue(binding: Binding, data: IssueInput) -> Prepared:
         issue = await binding.client.issue(issue_id, comments=MAX_COMMENTS)
         if issue.id.lower() != issue_id or not same_place(binding, resource, issue.team):
             raise issue_moved()
-        description, description_truncated = _truncated(text.redact(issue.description), MAX_READ_DESCRIPTION)
+        description, description_truncated = truncate(text.redact(issue.description), MAX_READ_DESCRIPTION)
         parent: dict[str, Any] | None = None
         if issue.parent is not None:
             parent = (
@@ -283,7 +278,7 @@ async def _prepare_get_issue(binding: Binding, data: IssueInput) -> Prepared:
         for comment in sorted(issue.comments.nodes, key=lambda c: c.created_at or ""):
             if comment.hide_in_linear:
                 continue
-            body, body_truncated = _truncated(text.redact(comment.body), MAX_READ_COMMENT)
+            body, body_truncated = truncate(text.redact(comment.body), MAX_READ_COMMENT)
             comments.append(
                 {
                     "id": comment.id,

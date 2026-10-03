@@ -27,11 +27,11 @@ from connectors.notion.pages import (
     database_resource,
     json_size,
     moved,
-    no_controls,
     page_record,
     page_resource,
 )
 from connectors.notion.properties import readable, writable
+from connectors.text import no_controls
 
 MAX_MARKDOWN = 100_000
 MAX_COMMENT = 2000

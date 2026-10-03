@@ -27,12 +27,12 @@ from connectors.notion.pages import (
     data_source,
     database_resource,
     json_size,
-    no_controls,
     page_record,
     page_resource,
     parent_id,
 )
 from connectors.notion.properties import check_filter, mentions_hidden, readable, schema
+from connectors.text import no_controls
 
 Cursor = Annotated[str, Field(max_length=1000)]
 

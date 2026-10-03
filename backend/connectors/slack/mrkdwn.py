@@ -10,10 +10,10 @@ group, and no link with a label that hides where it goes. Text may not link to S
 the content of a linked message, which could be in a channel the agent may not read, next to the post.
 """
 
-import html
 import re
-import unicodedata
-from urllib.parse import unquote, urlsplit
+from urllib.parse import urlsplit
+
+from connectors.text import decoded
 
 CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 # A control sequence with a label; the label may hold anything but angle brackets.
@@ -21,15 +21,6 @@ _LABELLED = re.compile(r"<([^<>|]*)\|([^<>]*)>")
 # Slack's hosts, GovSlack's included, and its own URI scheme (slack://channel?id=...).
 _SLACK_HOST = re.compile(r"(?:^|\.)slack(?:-files|-gov|-files-gov)?\.com$", re.IGNORECASE)
 _SLACK_NAME = re.compile(r"slack(?:-files|-gov|-files-gov)?\.com|slack:/", re.IGNORECASE)
-
-
-def _decoded(text: str) -> str:
-    """The text with the encodings a browser or Slack undoes in an address, undone."""
-    for _ in range(3):
-        text = unicodedata.normalize("NFKC", html.unescape(unquote(text)))
-        text = "".join(c for c in text if unicodedata.category(c) != "Cf")
-        text = re.sub("[\u3002\uff0e\uff61]", ".", text).replace("\\", "")
-    return text
 
 
 def _to_slack(target: str) -> bool:
@@ -42,7 +33,7 @@ def _to_slack(target: str) -> bool:
         host = parts.hostname or ""
     except ValueError:
         return True
-    return bool(_SLACK_HOST.search(host)) or bool(_SLACK_NAME.search(_decoded(target)))
+    return bool(_SLACK_HOST.search(host)) or bool(_SLACK_NAME.search(decoded(target)))
 
 
 def redact(text: str | None) -> str | None:
@@ -56,7 +47,7 @@ def check_written(text: str) -> str:
     """Refuses text that would do more than add words to a channel. Used as a field validator."""
     if CONTROL.search(text):
         raise ValueError("must not contain control characters")
-    if _SLACK_NAME.search(_decoded(text)):
+    if _SLACK_NAME.search(decoded(text)):
         raise ValueError(
             "must not link to Slack: Slack would show the linked message, which may be in another channel"
         )

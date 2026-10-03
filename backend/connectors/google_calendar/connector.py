@@ -10,7 +10,6 @@ from zoneinfo import available_timezones
 from pydantic import AfterValidator, Field, model_validator
 
 from connectors.base import (
-    DENIED,
     Account,
     ActionSpec,
     Binding,
@@ -26,6 +25,7 @@ from connectors.base import (
     ProviderOutput,
     ResourceKind,
     ScopedRecord,
+    denied,
 )
 from connectors.google import oauth as google_oauth
 from connectors.google_calendar.client import EventTime, GoogleCalendar, GoogleCalendarClient, GoogleEvent
@@ -115,7 +115,7 @@ async def _calendar_id(client: GoogleCalendarClient, calendar_id: str) -> str:
         calendar = await client.calendar(calendar_id)
     except OperationError as error:
         if error.code == "NOT_FOUND":
-            raise OperationError("POLICY_DENIED", DENIED) from None
+            raise denied() from None
         raise
     if calendar.id == PRIMARY:
         raise OperationError("PROVIDER_FAILED", "Google Calendar returned an unexpected response.")
