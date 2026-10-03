@@ -174,6 +174,12 @@ Create an app at <https://developer.xero.com/app/manage> as a **Web app** (autho
 
 Click **Connections → Connect Xero**, sign in and pick the organisations Minerva may reach. Then choose per organisation (or for all of them, including ones added later) what agents may do: read invoices, bills and contacts, create draft sales invoices, and create draft bills. Drafts are never sent, approved or paid: a person approves them in Xero. To add an organisation, connect again and pick it; to remove one, disconnect it in Xero under **Settings → Connected apps**. Your role in each organisation still applies.
 
+## Sentry
+
+Create an OAuth application on sentry.io under **Settings → Account → API → Applications** (<https://sentry.io/settings/account/api/applications/>), with the redirect URI `{site_url}/api/oauth/sentry/callback`. Set `MINERVA_SENTRY_CLIENT_ID` and `MINERVA_SENTRY_CLIENT_SECRET` from the application's page. Minerva asks for `org:read`, `project:read` and `event:read`, and only reads. Only sentry.io is supported, not self-hosted Sentry. Without the client, Sentry is not offered.
+
+Click **Connections → Connect Sentry** and pick the organisation on Sentry's consent screen; a connection reaches that one organisation, so connect again for another. Then choose per project (or for all of them, including ones added later) whether agents may read its issues and events. Agents see stack traces with the source lines around them, but not local variables, request headers or bodies, the user or breadcrumbs. Messages, exception values, source lines, transaction names and request paths are shown as your application sent them. Your team memberships still apply: Sentry shows only the projects you can see. To revoke access, remove the application under **Settings → Account → API → Authorized Applications**.
+
 ## The Web
 
 Click **Connections → Add Web**, then choose which sites agents may read and whether they may search. A site is an exact host (`docs.python.org`) or a domain with its subdomains (`*.python.org`).

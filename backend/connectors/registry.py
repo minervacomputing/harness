@@ -166,6 +166,7 @@ def _declared() -> list[Connector]:
     from connectors.onedrive.connector import OneDriveConnector
     from connectors.outlook.connector import OutlookConnector
     from connectors.outlook_calendar.connector import OutlookCalendarConnector
+    from connectors.sentry.connector import SentryConnector
     from connectors.slack.connector import SlackConnector
     from connectors.stripe.connector import StripeConnector
     from connectors.teams.connector import TeamsConnector
@@ -192,6 +193,7 @@ def _declared() -> list[Connector]:
         ConfluenceConnector(),
         IntercomConnector(),
         XeroConnector(),
+        SentryConnector(),
         WebConnector(),
     ]
 
