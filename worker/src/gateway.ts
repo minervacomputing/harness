@@ -34,6 +34,9 @@ export async function fetchRunSpec(): Promise<RunSpec> {
   return runSpec.parse(await response.json())
 }
 
+/** The gateway refused worker events outright; sending them again cannot help. */
+class GatewayRejected extends Error {}
+
 type WorkerEvent = { seq: number; type: 'phase' | 'completed' | 'failed'; text: string }
 
 /** Delivers events in order, at least once. The gateway ignores sequence numbers it has already seen. */
@@ -87,9 +90,9 @@ export class EventSink {
           return
         }
         if (response.ok) return
-        if (response.status < 500) throw new Error(`The gateway rejected worker events (HTTP ${response.status}).`)
+        if (response.status < 500) throw new GatewayRejected(`The gateway rejected worker events (HTTP ${response.status}).`)
       } catch (error) {
-        if (error instanceof Error && error.message.startsWith('The gateway rejected')) throw error
+        if (error instanceof GatewayRejected) throw error
       }
       await new Promise(resolve => setTimeout(resolve, 250 * 2 ** attempt))
     }
