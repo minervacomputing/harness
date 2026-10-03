@@ -154,6 +154,7 @@ def fingerprint(connector: Connector, op: Operation) -> str:
 
 def _declared() -> list[Connector]:
     from connectors.github.connector import GitHubConnector
+    from connectors.gmail.connector import GmailConnector
     from connectors.google_calendar.connector import GoogleCalendarConnector
     from connectors.google_drive.connector import GoogleDriveConnector
     from connectors.linear.connector import LinearConnector
@@ -172,6 +173,7 @@ def _declared() -> list[Connector]:
         LinearConnector(),
         SlackConnector(),
         OutlookConnector(),
+        GmailConnector(),
         WebConnector(),
     ]
 

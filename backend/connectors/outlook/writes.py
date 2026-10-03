@@ -4,6 +4,7 @@ from typing import Annotated, Any
 
 from pydantic import AfterValidator, Field, model_validator
 
+from connectors import addresses
 from connectors.base import (
     Binding,
     Need,
@@ -15,7 +16,6 @@ from connectors.base import (
     Resource,
     ScopedRecord,
 )
-from connectors.outlook import addresses
 from connectors.outlook.client import REPLY_FIELDS, GraphClient, Message, Recipient, User
 from connectors.outlook.mailbox import (
     FOLDER,

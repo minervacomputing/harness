@@ -16,7 +16,7 @@ message is authorized on the folder it lives in, and a listing leaves out any me
 in the folder listed.
 
 Sending is allowed per recipient address, or per domain: recipients are a second hierarchical kind (see
-`addresses`). Every address a message goes to, To, Cc and Bcc, is a need. A reply goes to the addresses
+`connectors.addresses`). Every address a message goes to, To, Cc and Bcc, is a need. A reply goes to the addresses
 the original asks replies to go to (`replyTo`), or else to its sender, as Graph would choose, and needs
 Read on the original's folder and Send on each of them. Minerva names those addresses itself in the reply,
 with empty Cc and Bcc, and refuses replies when an address cannot be parsed, when the addresses changed
@@ -33,6 +33,7 @@ consent, folder and message ids, where folders sit) is in `mailbox`.
 
 import asyncio
 
+from connectors import addresses
 from connectors.base import (
     Account,
     ActionSpec,
@@ -43,7 +44,6 @@ from connectors.base import (
     OperationError,
     ResourceKind,
 )
-from connectors.outlook import addresses
 from connectors.outlook.client import ID, GraphClient
 from connectors.outlook.mailbox import CONNECTION_ERRORS, FOLDER, RECIPIENT, ROOT, Tree
 from connectors.outlook.reads import LIST_FOLDERS, LIST_MESSAGES, READ_MESSAGE

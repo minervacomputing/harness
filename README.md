@@ -80,11 +80,13 @@ Click **Connections → Connect Todoist**.
 
 After connecting, choose per project what agents may do, then add the connection to an agent under **Agents**.
 
-## Google Calendar and Drive
+## Google Calendar, Drive and Gmail
 
-Create an OAuth client of type **Web application** in the Google Cloud console, enable the Google Calendar API and the Google Drive API, and set `MINERVA_GOOGLE_CLIENT_ID` and `MINERVA_GOOGLE_CLIENT_SECRET`. Add the redirect URIs `http://localhost:5173/api/oauth/google_calendar/callback` and `http://localhost:5173/api/oauth/google_drive/callback`. Without the client, neither is offered.
+Create an OAuth client of type **Web application** in the Google Cloud console, enable the Google Calendar API, the Google Drive API and the Gmail API, and set `MINERVA_GOOGLE_CLIENT_ID` and `MINERVA_GOOGLE_CLIENT_SECRET`. Add the redirect URIs `http://localhost:5173/api/oauth/google_calendar/callback`, `http://localhost:5173/api/oauth/google_drive/callback` and `http://localhost:5173/api/oauth/gmail/callback`. Without the client, none of them is offered.
 
-Click **Connections → Connect Google Calendar** (or Drive), then choose per calendar, or per file or folder, what agents may do. Minerva asks Google only for read access at first, and for write scopes once the user allows creating.
+Click **Connections → Connect Google Calendar** (or Drive, or Gmail), then choose per calendar, per file or folder, or per label what agents may do. Minerva asks Google only for read access at first, and for write scopes once the user allows creating.
+
+Gmail's scopes are restricted: until the app is verified by Google, only test users listed on the OAuth consent screen can connect, and their tokens expire after seven days. Gmail asks for `gmail.readonly` at first, `gmail.send` once the user allows sending, and `gmail.compose` once they allow drafts.
 
 ## GitHub
 
