@@ -21,25 +21,25 @@ The system is built on shadcn-style components in `frontend/src/components/ui/`,
 
 ## Tokens
 
-Use colours only by token name (for example `bg-card`, `text-muted-foreground`, `border-border-strong`). Never hard-code a hex value or a Tailwind palette colour such as `amber-500` or `red-600` in a component. Tokens switch with the theme.
+The light and dark values live in `frontend/src/index.css`. Use colours only by token name (for example `bg-card`, `text-muted-foreground`, `border-border-strong`). Never hard-code a hex value or a Tailwind palette colour such as `amber-500` or `red-600` in a component. Tokens switch with the theme.
 
-| Token | Light | Dark | Use |
-|---|---|---|---|
-| `background` | `#f4f5f9` | `#090d18` | Page |
-| `card` / `popover` | `#ffffff` | `#0e1423` | Raised surfaces, inputs, cards |
-| `secondary` / `muted` / `accent` | `#eaedf5` | `#141c30` | Hover fills, user messages, code blocks, tags |
-| `sidebar` | `#eceff6` | `#070a13` | App sidebar |
-| `foreground` | `#0d1430` | `#e1e7f8` | Body text and headings |
-| `muted-foreground` | `#465172` | `#9ba6c8` | Secondary text, descriptions |
-| `faint` | `#5f6987` | `#7885ac` | Placeholders, neutral status dot |
-| `border` | `#dbe0ec` | `#1b2540` | Hairline rules between rows and sections |
-| `border-strong` / `input` | `#aab3c9` | `#33436b` | Card and field outlines, table head rule |
-| `primary` | `#15216a` | `#7b91ff` | Primary button |
-| `info` / `ring` | `#2b44d6` | `#7b91ff` | Links, focus rings, checked controls, running state |
-| `success` | `#138a5e` | `#4fd1a1` | Done, active |
-| `warning` | `#a86a00` | `#f0b75a` | Needs attention, not allowed |
-| `destructive` | `#c63a3a` | `#ff6b6b` | Errors, deleting |
-| `logo` | `#15216a` | `#e1e7f8` | The logo (`text-logo`) |
+| Token | Use |
+|---|---|
+| `background` | Page |
+| `card` / `popover` | Raised surfaces, inputs, cards |
+| `secondary` / `muted` / `accent` | Hover fills, user messages, code blocks, tags |
+| `sidebar` | App sidebar |
+| `foreground` | Body text and headings |
+| `muted-foreground` | Secondary text, descriptions |
+| `faint` | Placeholders, neutral status dot |
+| `border` | Hairline rules between rows and sections |
+| `border-strong` / `input` | Card and field outlines, table head rule |
+| `primary` | Primary button |
+| `info` / `ring` | Links, focus rings, checked controls, running state |
+| `success` | Done, active |
+| `warning` | Needs attention, not allowed |
+| `destructive` | Errors, deleting |
+| `logo` | The logo (`text-logo`) |
 
 Each colour that fills a surface has a matching `-foreground` token for text on it.
 
