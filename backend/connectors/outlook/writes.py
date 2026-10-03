@@ -16,7 +16,8 @@ from connectors.base import (
     Resource,
     ScopedRecord,
 )
-from connectors.outlook.client import REPLY_FIELDS, GraphClient, Message, Recipient, User
+from connectors.microsoft import User
+from connectors.outlook.client import REPLY_FIELDS, GraphClient, Message, Recipient
 from connectors.outlook.mailbox import (
     FOLDER,
     RECIPIENT,

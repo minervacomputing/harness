@@ -1,9 +1,7 @@
 """Outlook mail, through Microsoft Graph. Folders are read per folder; mail is sent per recipient.
 
-Minerva connects with delegated permissions through one Entra app for work, school and personal accounts
-(the `common` endpoint). The base scopes are `offline_access User.Read Mail.Read`; sending asks for
-`Mail.Send`. Granted scopes are accepted in short, URI-prefixed or lowercase form, since Microsoft reports
-them inconsistently (see `mailbox`).
+Minerva connects through the Entra app the Microsoft connectors share (see `connectors.microsoft`). The
+base scopes are `offline_access User.Read Mail.Read`; sending asks for `Mail.Send`.
 
 Microsoft's read permission covers the whole mailbox, so the folder limits are Minerva's. Folders are one
 hierarchical kind keyed by immutable folder ids (see `client`), and a grant on a folder covers its
@@ -40,11 +38,11 @@ from connectors.base import (
     Connector,
     DiscoveryItem,
     DiscoveryPage,
-    OAuth2,
     OperationError,
     ResourceKind,
 )
-from connectors.outlook.client import ID, GraphClient
+from connectors.microsoft import ID, oauth
+from connectors.outlook.client import GraphClient
 from connectors.outlook.mailbox import CONNECTION_ERRORS, FOLDER, RECIPIENT, ROOT, Tree
 from connectors.outlook.reads import LIST_FOLDERS, LIST_MESSAGES, READ_MESSAGE
 from connectors.outlook.writes import REPLY, SEND_MESSAGE
@@ -88,13 +86,7 @@ class OutlookConnector(Connector):
         ActionSpec("send", "Send mail"),
     )
     # Reading is enough to connect; sending is asked for once the user allows it.
-    auth = OAuth2(
-        app="microsoft",
-        authorize_url="https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
-        token_url="https://login.microsoftonline.com/common/oauth2/v2.0/token",  # noqa: S106
-        scopes=("offline_access", "User.Read", "Mail.Read"),
-        authorize_params=(("prompt", "select_account"),),
-    )
+    auth = oauth("Mail.Read")
 
     operations = (LIST_FOLDERS, LIST_MESSAGES, READ_MESSAGE, SEND_MESSAGE, REPLY)
 

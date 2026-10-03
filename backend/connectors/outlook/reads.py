@@ -15,7 +15,8 @@ from connectors.base import (
     ProviderOutput,
     ScopedRecord,
 )
-from connectors.outlook.client import FULL_FIELDS, ID, Folder, GraphClient, Message, Recipient
+from connectors.microsoft import ID
+from connectors.outlook.client import FULL_FIELDS, Folder, GraphClient, Message, Recipient
 from connectors.outlook.mailbox import (
     FOLDER,
     READ_CONSENT,

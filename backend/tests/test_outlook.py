@@ -14,7 +14,8 @@ from connections.models import Connection
 from connections.oauth import ClientCredentials
 from connectors import addresses, registry
 from connectors.base import OperationError
-from connectors.outlook.client import GraphClient, classify, next_cursor, page_param
+from connectors.microsoft import classify, next_cursor, page_param
+from connectors.outlook.client import GraphClient
 from connectors.outlook.connector import OutlookConnector
 from permissions.models import Grant
 

@@ -5,23 +5,13 @@ from typing import Annotated
 from pydantic import AfterValidator, Field
 
 from connectors.base import Binding, OperationError, Resource, denied
-from connectors.outlook.client import ID, Folder, GraphClient, Message
+from connectors.microsoft import ID, consent
+from connectors.outlook.client import Folder, GraphClient, Message
 
 FOLDER = "folder"
 RECIPIENT = "recipient"
-GRAPH = "https://graph.microsoft.com"
-
-
-def _consent(*scopes: str) -> tuple[frozenset[str], ...]:
-    """Any of these Graph scopes, the first as requested. Microsoft reports granted scopes in their short
-    form, or prefixed with Graph's URL, and not always in the case they were requested in."""
-    spellings = [form for scope in scopes for form in (scope, f"{GRAPH}/{scope}")]
-    spellings += [form.lower() for form in spellings]
-    return tuple(frozenset({form}) for form in dict.fromkeys(spellings))
-
-
-READ_CONSENT = _consent("Mail.Read", "Mail.ReadWrite")
-SEND_CONSENT = _consent("Mail.Send")
+READ_CONSENT = consent("Mail.Read", "Mail.ReadWrite")
+SEND_CONSENT = consent("Mail.Send")
 
 ROOT = "msgfolderroot"
 WELL_KNOWN = ("inbox", "sentitems", "drafts", "archive", "deleteditems", "junkemail")

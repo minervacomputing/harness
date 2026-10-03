@@ -118,7 +118,7 @@ A connector turns one provider's API into tools, and the permission executor aut
 | Shape | Read |
 |---|---|
 | The smallest whole connector, flat kind, dynamic client registration | `todoist` |
-| Provider consent per operation, a shared OAuth app | `google_calendar`, `google/__init__.py` |
+| Provider consent per operation, a shared OAuth app | `google_calendar`, `google/__init__.py`, `microsoft/__init__.py` |
 | Hierarchical kind with ancestry resolved and re-checked | `google_drive`, `notion`, `linear` (teams), `outlook` (folders) |
 | Flat kind keyed by an id resolved from a name | `github`, `slack` |
 | A redirect judged by hand (`redirects=True`) | `github` (renamed repositories) |
