@@ -119,7 +119,7 @@ A connector turns one provider's API into tools, and the permission executor aut
 |---|---|
 | The smallest whole connector, flat kind, dynamic client registration | `todoist` |
 | Provider consent per operation, a shared OAuth app | `google_calendar`, `google/__init__.py`, `microsoft/__init__.py` |
-| Hierarchical kind with ancestry resolved and re-checked | `google_drive`, `onedrive`, `notion`, `linear` (teams), `outlook` (folders), `teams` (channels in teams) |
+| Hierarchical kind with ancestry resolved and re-checked | `google_drive`, `onedrive`, `notion`, `linear` (teams), `outlook` (folders), `teams` (channels in teams), `jira` (projects in sites) |
 | Flat kind keyed by an id resolved from a name | `github`, `slack` |
 | A redirect judged by hand (`redirects=True`) | `github` (renamed repositories) |
 | Several kinds in one operation | `outlook` (reply: folder and recipients) |
@@ -135,3 +135,4 @@ A connector turns one provider's API into tools, and the permission executor aut
 | Grants on collections only (merged records), search results read again | `hubspot` |
 | Split into `reads`/`writes` and a shared module | `notion`, `linear`, `outlook` |
 | Several connectors on one provider's app, sharing a client base | `outlook`, `outlook_calendar`, `onedrive`, `teams` (`microsoft/__init__.py`) |
+| One token reaching several sites, a separate app per connector | `jira` (`atlassian/__init__.py`) |

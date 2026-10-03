@@ -158,6 +158,9 @@ def _refresh(connection: Connection, tokens: dict) -> dict | None:
         raise OperationError("PROVIDER_UNAVAILABLE", f"{connector.name} could not be reached.") from error
     if response.status_code in {400, 401}:
         return None
+    # Atlassian refuses a refresh token that expired or was revoked with 403.
+    if response.status_code == 403 and _json_field(response, "error") == "invalid_grant":
+        return None
     if response.is_error:
         raise OperationError("PROVIDER_UNAVAILABLE", f"{connector.name} could not refresh the connection.")
     body = oauth._token_body(response)

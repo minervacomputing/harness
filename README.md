@@ -150,6 +150,12 @@ Create a public app on HubSpot's developer platform: with the HubSpot CLI, run `
 
 Click **Connections → Connect HubSpot**; only a Super Admin of the HubSpot account (or a user with Marketplace Access) can install the app. Then choose what agents may do with all contacts, all companies, all deals, or the deals of one pipeline: read, create contacts and deals, edit them, and log notes. Companies are never created or edited, but notes can be logged on them. HubSpot gives the app the same access whoever installed it, so Minerva's grants are the only limit within those scopes.
 
+## Jira
+
+Create an **OAuth 2.0 integration** in the Atlassian developer console (<https://developer.atlassian.com/console/myapps/>). Under **Permissions**, add the **User identity API** with `read:me`, and the **Jira API** with the classic scopes `read:jira-work` and `write:jira-work`. Under **Authorization**, set the callback URL to `{site_url}/api/oauth/jira/callback` (for example `http://localhost:5173/api/oauth/jira/callback`). Atlassian allows one callback URL per app, so Jira needs an app of its own. Set `MINERVA_JIRA_CLIENT_ID` and `MINERVA_JIRA_CLIENT_SECRET` from **Settings**. The app works for its developer at once; to let others connect, open **Distribution** and share it. Without the client, Jira is not offered.
+
+Click **Connections → Connect Jira** and pick the sites to allow on Atlassian's consent screen. Then choose per site or per project what agents may do: read issues, comment, create issues and change their status. Agents act as you: watchers are notified, and a project's automation rules may act on what they change.
+
 ## The Web
 
 Click **Connections → Add Web**, then choose which sites agents may read and whether they may search. A site is an exact host (`docs.python.org`) or a domain with its subdomains (`*.python.org`).
