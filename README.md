@@ -156,6 +156,12 @@ Create an **OAuth 2.0 integration** in the Atlassian developer console (<https:/
 
 Click **Connections → Connect Jira** and pick the sites to allow on Atlassian's consent screen. Then choose per site or per project what agents may do: read issues, comment, create issues and change their status. Agents act as you: watchers are notified, and a project's automation rules may act on what they change.
 
+## Confluence
+
+Create another **OAuth 2.0 integration** in the Atlassian developer console (<https://developer.atlassian.com/console/myapps/>); Atlassian allows one callback URL per app, so Confluence cannot share Jira's. Under **Permissions**, add the **User identity API** with `read:me`, and the **Confluence API** with the granular scopes `read:space:confluence`, `read:page:confluence`, `read:comment:confluence`, `read:content-details:confluence`, `write:comment:confluence` and `write:page:confluence`. Under **Authorization**, set the callback URL to `{site_url}/api/oauth/confluence/callback`. Set `MINERVA_CONFLUENCE_CLIENT_ID` and `MINERVA_CONFLUENCE_CLIENT_SECRET` from **Settings**, and open **Distribution** to let others connect. Without the client, Confluence is not offered.
+
+Click **Connections → Connect Confluence** and pick the sites to allow on Atlassian's consent screen. Then choose per site or per space what agents may do: read pages, comment on them and create them. Agents act as you: watchers are notified, and a space's automation rules may act on what they change.
+
 ## The Web
 
 Click **Connections → Add Web**, then choose which sites agents may read and whether they may search. A site is an exact host (`docs.python.org`) or a domain with its subdomains (`*.python.org`).

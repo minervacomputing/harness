@@ -153,6 +153,7 @@ def fingerprint(connector: Connector, op: Operation) -> str:
 
 
 def _declared() -> list[Connector]:
+    from connectors.confluence.connector import ConfluenceConnector
     from connectors.github.connector import GitHubConnector
     from connectors.gmail.connector import GmailConnector
     from connectors.google_calendar.connector import GoogleCalendarConnector
@@ -186,6 +187,7 @@ def _declared() -> list[Connector]:
         StripeConnector(),
         HubSpotConnector(),
         JiraConnector(),
+        ConfluenceConnector(),
         WebConnector(),
     ]
 

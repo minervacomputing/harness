@@ -82,6 +82,9 @@ class Config(BaseSettings):
     # An Atlassian OAuth 2.0 (3LO) app for Jira. Empty: Jira is not offered.
     jira_client_id: str | None = None
     jira_client_secret: SecretStr | None = None
+    # An Atlassian OAuth 2.0 (3LO) app for Confluence. Empty: Confluence is not offered.
+    confluence_client_id: str | None = None
+    confluence_client_secret: SecretStr | None = None
     # Brave Search API key for the Web connector's search; without it, agents can only open pages.
     brave_search_api_key: SecretStr | None = None
 
