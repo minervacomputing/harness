@@ -132,6 +132,12 @@ OneDrive and SharePoint use the Entra app from [Outlook](#outlook). Add another 
 
 Click **Connections → Connect OneDrive and SharePoint**, then choose per library, folder or file (or for everything) whether agents may read files and create them. The choices offered are the account's own OneDrive and the document libraries of the SharePoint sites it follows; searching finds folders and files anywhere the account can open, shared ones included. Access to a folder or library covers everything inside it. Minerva asks Microsoft for read access at first (`Sites.Read.All` lists followed sites), and for `Files.ReadWrite.All` once the user allows creating files.
 
+## Microsoft Teams
+
+Microsoft Teams uses the Entra app from [Outlook](#outlook). Add another **Web** redirect URI, `{site_url}/api/oauth/teams/callback`, and the delegated permissions `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Read.All` and `ChannelMessage.Send`. `ChannelMessage.Read.All` needs a tenant administrator's consent (**Grant admin consent** on the app's **API permissions** page, in each organization whose users connect); without it, users can list teams and channels and post, but agents cannot read messages. Only work and school accounts can connect.
+
+Click **Connections → Connect Microsoft Teams**, then choose per team or channel (or for everything) whether agents may read messages, reply in threads, and start threads. Access to a team covers all its channels, including private channels the account is in and channels added later. Agents post as the signed-in user. Minerva asks Microsoft for the permissions to list teams and channels at first, and for `ChannelMessage.Read.All` and `ChannelMessage.Send` once the user allows reading and writing.
+
 ## Stripe
 
 Stripe connects with a restricted key, which each user creates; no operator setup is needed. In the Stripe Dashboard, open **Developers → API keys → Create restricted key** and give it only these permissions: **Customers: Write** (read customers and add balance credits), **Charges: Read**, **Refunds: Write**, **Invoices: Read** and **Subscriptions: Read**. Minerva also reads the account (`GET /v1/account`) to name the connection; if Stripe refuses that, also allow reading the account's details. Secret keys (`sk_`) are refused, since they can do anything in the account. A test key and a live key of one account are two connections.

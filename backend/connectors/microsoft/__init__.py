@@ -51,6 +51,14 @@ def consent(*scopes: str) -> tuple[frozenset[str], ...]:
     return tuple(frozenset({form}) for form in dict.fromkeys(spellings))
 
 
+def consent_all(*scopes: str) -> tuple[frozenset[str], ...]:
+    """All of these Graph scopes together, each in any of the spellings `consent` accepts."""
+    options = [frozenset()]
+    for scope in scopes:
+        options = [option | spelling for option in options for spelling in consent(scope)]
+    return tuple(options)
+
+
 def segment(value: str) -> str:
     return quote(value, safe="")
 
