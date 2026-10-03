@@ -22,8 +22,12 @@ async def authenticate(header: str | None) -> Run | None:
     return await sync_to_async(run_for_token)(token)
 
 
+def error_response(message: str, status: int) -> JsonResponse:
+    return JsonResponse({"error": {"message": message}}, status=status)
+
+
 def unauthorized() -> JsonResponse:
-    return JsonResponse({"error": {"message": "Inactive run credential."}}, status=401)
+    return error_response("Inactive run credential.", 401)
 
 
 def run_required(view):

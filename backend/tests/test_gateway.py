@@ -13,7 +13,7 @@ from django.test import AsyncClient, override_settings
 from django.utils import timezone
 
 from conversations.models import Conversation, Message
-from gateway import views
+from gateway import relay
 from gateway.body_limit import limit_body
 from gateway.mcp import RUN_SCOPE_KEY, call_tool, list_tools
 from models_access.chat import build_chat_payload
@@ -655,14 +655,14 @@ async def test_usage_is_recorded_when_the_worker_hangs_up(claimed, monkeypatch):
     assert await anext(aiter(response.streaming_content)) == TEXT_EVENT
     # The worker reads no further; the provider finishes afterwards.
     provider_done.set()
-    await asyncio.wait_for(asyncio.gather(*views._calls), 5)
+    await asyncio.wait_for(asyncio.gather(*relay._calls), 5)
     stored = await Run.unscoped.aget(pk=run.id)
     assert (stored.input_tokens, stored.output_tokens, stored.unmetered_model_calls) == (5, 2, 0)
 
 
 async def test_a_stopped_run_ends_a_silent_model_stream(claimed, monkeypatch):
     run, token = claimed
-    monkeypatch.setattr(views, "REVOCATION_CHECK_SECONDS", 0.05)
+    monkeypatch.setattr(relay, "REVOCATION_CHECK_SECONDS", 0.05)
     _upstream(monkeypatch, lambda request: _stream(TEXT_EVENT, asyncio.Event(), DONE_EVENT))
     response = await _post(token, "/v1/responses", BODY)
     stream = aiter(response.streaming_content)
@@ -685,7 +685,7 @@ async def test_model_traffic_is_size_limited(claimed, monkeypatch):
         assert (await _post(token, "/v1/responses", body)).status_code == 413
     assert (await Run.unscoped.aget(pk=run.id)).model_calls == 0
 
-    monkeypatch.setattr(views, "MAX_RESPONSE_BYTES", len(TEXT_EVENT) + 1)
+    monkeypatch.setattr(relay, "MAX_RESPONSE_BYTES", len(TEXT_EVENT) + 1)
     response = await _post(token, "/v1/responses", BODY)
     assert await _rest(response.streaming_content) == TEXT_EVENT
     stored = await Run.unscoped.aget(pk=run.id)
@@ -694,7 +694,7 @@ async def test_model_traffic_is_size_limited(claimed, monkeypatch):
 
 async def test_a_stopped_run_ends_the_wait_for_the_provider(claimed, monkeypatch):
     run, token = claimed
-    monkeypatch.setattr(views, "REVOCATION_CHECK_SECONDS", 0.05)
+    monkeypatch.setattr(relay, "REVOCATION_CHECK_SECONDS", 0.05)
     answered = asyncio.Event()
 
     async def slow(request: httpx.Request) -> httpx.Response:
@@ -801,8 +801,8 @@ async def test_a_response_arriving_as_the_run_ends_is_closed(claimed, monkeypatc
     calls = []
     responses = provider.responses
     monkeypatch.setattr(provider, "responses", lambda payload: calls.append(responses(payload)) or calls[-1])
-    monkeypatch.setattr(views, "REVOCATION_CHECK_SECONDS", 0.01)
-    monkeypatch.setattr(views.services, "is_token_valid", slow_check)
+    monkeypatch.setattr(relay, "REVOCATION_CHECK_SECONDS", 0.01)
+    monkeypatch.setattr(relay.services, "is_token_valid", slow_check)
     response = await _post(token, "/v1/responses", BODY)
     assert response.status_code == 401 and body.closed
     assert (await Run.unscoped.aget(pk=run.id)).unmetered_model_calls == 1
@@ -828,7 +828,7 @@ async def test_a_call_that_opens_despite_cancellation_is_closed(claimed):
     opening = asyncio.create_task(cm.__aenter__())
     await asyncio.sleep(0)
     opening.cancel()
-    await views._abandon(opening, cm, run.id)
+    await relay._abandon(opening, cm, run.id)
     assert closed.is_set()
     assert (await Run.unscoped.aget(pk=run.id)).unmetered_model_calls == 1
 
@@ -844,7 +844,7 @@ async def test_usage_is_recorded_even_if_closing_the_call_fails(claimed):
         yield DONE_EVENT
 
     upstream = UpstreamResponse(200, "text/event-stream", chunks())
-    call = views.ModelCall(run.id, ResponsesTap(), FailingClose(), upstream)
+    call = relay.ModelCall(run.id, ResponsesTap(), FailingClose(), upstream)
     await call._run()
     assert await _rest(call.stream()) == DONE_EVENT
     stored = await Run.unscoped.aget(pk=run.id)
@@ -854,9 +854,9 @@ async def test_usage_is_recorded_even_if_closing_the_call_fails(claimed):
 def test_no_model_call_is_reserved_for_a_run_past_its_deadline(claimed):
     run, _ = claimed
     Run.unscoped.filter(pk=run.id).update(deadline=timezone.now() - timedelta(seconds=1))
-    assert not views._reserve_model_call(run.id)
+    assert not relay._reserve_model_call(run.id)
     Run.unscoped.filter(pk=run.id).update(deadline=timezone.now() + timedelta(minutes=1))
-    assert views._reserve_model_call(run.id)
+    assert relay._reserve_model_call(run.id)
 
 
 async def test_mcp_tools_are_authorized_and_recorded(claimed):
