@@ -1,4 +1,4 @@
-import { createFileRoute, Link, redirect } from '@tanstack/react-router'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useState } from 'react'
 import { AuthLayout, useContinueAuth } from '@/components/auth-layout'
 import { CodeForm } from '@/components/code-form'
@@ -24,7 +24,7 @@ function VerifyEmailPage() {
     <AuthLayout
       title="Check your email"
       description="We sent you a verification code. Enter it to finish creating your account."
-      footer={<Link to="/login" className="hover:text-foreground">Back to sign in</Link>}
+      back
     >
       <CodeForm
         label="Verification code"

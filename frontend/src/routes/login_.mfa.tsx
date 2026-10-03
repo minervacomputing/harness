@@ -1,4 +1,4 @@
-import { createFileRoute, Link, redirect } from '@tanstack/react-router'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 import { AuthLayout, useContinueAuth } from '@/components/auth-layout'
 import { CodeForm } from '@/components/code-form'
 import { auth, useAuthStep } from '@/lib/auth'
@@ -21,7 +21,7 @@ function MfaPage() {
     <AuthLayout
       title="Two-factor authentication"
       description="Enter the code from your authenticator app, or one of your recovery codes."
-      footer={<Link to="/login" className="hover:text-foreground">Back to sign in</Link>}
+      back
     >
       <CodeForm
         label="Code"

@@ -10,7 +10,7 @@ import {
   reconnectMutation,
 } from '@/api/@tanstack/react-query.gen'
 import type { ActionOut, ConnectionOut, KindOut } from '@/api/types.gen'
-import { ACCOUNT, AccessEditor, invalidateConnections } from '@/components/connections/access-editor'
+import { AccessEditor, ACCOUNT, invalidateConnections } from '@/components/connections/access-editor'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, ErrorNote, Notice, PageHeader, Spinner, Status, type StatusTone } from '@/components/ui/misc'

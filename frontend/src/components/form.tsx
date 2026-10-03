@@ -1,5 +1,6 @@
-import type { AnyFieldApi } from '@tanstack/react-form'
-import type { ComponentProps } from 'react'
+import { type AnyFieldApi, type AnyFormApi, useStore } from '@tanstack/react-form'
+import type { ComponentProps, FormEvent } from 'react'
+import { Button } from '@/components/ui/button'
 import { Input, Label, Textarea } from '@/components/ui/input'
 
 type FieldProps = {
@@ -50,4 +51,18 @@ export function TextAreaField({ field, label, hint, serverError, ...props }: Fie
       {error ? <p className="text-xs text-destructive">{error}</p> : hint && <p className="text-xs text-muted-foreground">{hint}</p>}
     </div>
   )
+}
+
+/** The `onSubmit` of a `<form>` that hands submission to a TanStack form instead of the browser. */
+export function submitForm(form: AnyFormApi) {
+  return (event: FormEvent) => {
+    event.preventDefault()
+    void form.handleSubmit()
+  }
+}
+
+/** A submit button that is disabled while the form submits. */
+export function SubmitButton({ form, ...props }: { form: AnyFormApi } & Omit<ComponentProps<typeof Button>, 'type' | 'disabled' | 'form'>) {
+  const submitting = useStore(form.store, state => state.isSubmitting)
+  return <Button type="submit" disabled={submitting} {...props} />
 }

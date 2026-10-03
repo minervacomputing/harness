@@ -2,10 +2,9 @@ import { useForm } from '@tanstack/react-form'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { AuthLayout, useContinueAuth } from '@/components/auth-layout'
-import { TextField } from '@/components/form'
-import { Button } from '@/components/ui/button'
+import { SubmitButton, submitForm, TextField } from '@/components/form'
 import { ErrorNote } from '@/components/ui/misc'
-import { auth, AuthError, useAuthStep } from '@/lib/auth'
+import { auth, fieldErrors, useAuthStep } from '@/lib/auth'
 import { redirectIfSignedIn, validateNext } from '@/lib/guards'
 
 export const Route = createFileRoute('/login')({
@@ -21,7 +20,7 @@ function LoginPage() {
   const login = useAuthStep(auth.login)
   const requestCode = useAuthStep(auth.requestLoginCode)
   const step = mode === 'password' ? login : requestCode
-  const fields = step.error instanceof AuthError ? step.error.fields : {}
+  const fields = fieldErrors(step.error)
 
   const form = useForm({
     defaultValues: { email: '', password: '' },
@@ -41,7 +40,7 @@ function LoginPage() {
     >
       <form
         className="grid gap-4"
-        onSubmit={event => { event.preventDefault(); void form.handleSubmit() }}
+        onSubmit={submitForm(form)}
       >
         <form.Field name="email" validators={{ onBlur: ({ value }) => (!value.includes('@') ? 'Enter your email address.' : undefined) }}>
           {field => <TextField field={field} label="Email" type="email" autoComplete="email" autoFocus serverError={fields.email} />}
@@ -52,13 +51,9 @@ function LoginPage() {
           </form.Field>
         )}
         <ErrorNote>{step.error && !Object.keys(fields).length ? step.error.message : null}</ErrorNote>
-        <form.Subscribe selector={state => state.isSubmitting}>
-          {submitting => (
-            <Button type="submit" disabled={submitting}>
+        <SubmitButton form={form}>
               {mode === 'password' ? 'Sign in' : 'Email me a code'}
-            </Button>
-          )}
-        </form.Subscribe>
+        </SubmitButton>
         <div className="flex justify-between text-sm">
           <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => { step.reset(); setMode(mode === 'password' ? 'code' : 'password') }}>
             {mode === 'password' ? 'Sign in with a code' : 'Sign in with a password'}

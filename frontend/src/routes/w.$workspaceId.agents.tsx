@@ -12,7 +12,7 @@ import {
   updateAgentMutation,
 } from '@/api/@tanstack/react-query.gen'
 import type { AgentOut, ConnectionOut } from '@/api/types.gen'
-import { TextAreaField, TextField } from '@/components/form'
+import { SubmitButton, submitForm, TextAreaField, TextField } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge, Checkbox, ErrorNote, PageHeader, Spinner } from '@/components/ui/misc'
@@ -99,7 +99,7 @@ function AgentForm({ workspaceId, agent, connections, onDone }: {
 
   return (
     <Card>
-      <form onSubmit={event => { event.preventDefault(); void form.handleSubmit() }}>
+      <form onSubmit={submitForm(form)}>
         <CardHeader><CardTitle>{agent ? 'Edit agent' : 'New agent'}</CardTitle></CardHeader>
         <CardContent className="grid gap-4">
           <form.Field name="name" validators={{ onBlur: ({ value }) => (!value.trim() ? 'Give the agent a name.' : undefined) }}>
@@ -169,9 +169,7 @@ function AgentForm({ workspaceId, agent, connections, onDone }: {
           </div>
           <div className="flex gap-2">
             <Button type="button" variant="ghost" size="sm" onClick={onDone}>Cancel</Button>
-            <form.Subscribe selector={s => s.isSubmitting}>
-              {submitting => <Button type="submit" size="sm" disabled={submitting}>{agent ? 'Save' : 'Create agent'}</Button>}
-            </form.Subscribe>
+            <SubmitButton form={form} size="sm">{agent ? 'Save' : 'Create agent'}</SubmitButton>
           </div>
         </CardFooter>
       </form>

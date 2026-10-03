@@ -1,11 +1,10 @@
 import { useForm } from '@tanstack/react-form'
 import { useQuery } from '@tanstack/react-query'
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { AuthLayout, useContinueAuth } from '@/components/auth-layout'
-import { TextField } from '@/components/form'
-import { Button } from '@/components/ui/button'
+import { SubmitButton, submitForm, TextField } from '@/components/form'
 import { ErrorNote } from '@/components/ui/misc'
-import { auth, AuthError, authQuery, useAuthStep } from '@/lib/auth'
+import { auth, authQuery, fieldErrors, useAuthStep } from '@/lib/auth'
 import { redirectIfSignedIn } from '@/lib/guards'
 
 export const Route = createFileRoute('/reset-password')({
@@ -22,7 +21,7 @@ function ResetPasswordPage() {
       description={awaitingCode
         ? 'If an account exists for that address, we emailed it a reset code.'
         : 'Enter your email and we will send you a reset code.'}
-      footer={<Link to="/login" className="hover:text-foreground">Back to sign in</Link>}
+      back
     >
       {awaitingCode ? <ChooseNewPassword /> : <RequestReset />}
     </AuthLayout>
@@ -31,20 +30,18 @@ function ResetPasswordPage() {
 
 function RequestReset() {
   const request = useAuthStep(auth.requestPasswordReset)
-  const fields = request.error instanceof AuthError ? request.error.fields : {}
+  const fields = fieldErrors(request.error)
   const form = useForm({
     defaultValues: { email: '' },
     onSubmit: async ({ value }) => { await request.mutateAsync(value) },
   })
   return (
-    <form className="grid gap-4" onSubmit={event => { event.preventDefault(); void form.handleSubmit() }}>
+    <form className="grid gap-4" onSubmit={submitForm(form)}>
       <form.Field name="email">
         {field => <TextField field={field} label="Email" type="email" autoComplete="email" autoFocus serverError={fields.email} />}
       </form.Field>
       <ErrorNote>{request.error && !fields.email ? request.error.message : null}</ErrorNote>
-      <form.Subscribe selector={s => s.isSubmitting}>
-        {submitting => <Button type="submit" disabled={submitting}>Send reset code</Button>}
-      </form.Subscribe>
+      <SubmitButton form={form}>Send reset code</SubmitButton>
     </form>
   )
 }
@@ -52,7 +49,7 @@ function RequestReset() {
 function ChooseNewPassword() {
   const continueAuth = useContinueAuth()
   const reset = useAuthStep(auth.resetPassword)
-  const fields = reset.error instanceof AuthError ? reset.error.fields : {}
+  const fields = fieldErrors(reset.error)
   const form = useForm({
     defaultValues: { key: '', password: '' },
     onSubmit: async ({ value }) => {
@@ -61,7 +58,7 @@ function ChooseNewPassword() {
     },
   })
   return (
-    <form className="grid gap-4" onSubmit={event => { event.preventDefault(); void form.handleSubmit() }}>
+    <form className="grid gap-4" onSubmit={submitForm(form)}>
       <form.Field name="key">
         {field => <TextField field={field} label="Reset code" autoComplete="one-time-code" autoFocus className="font-mono tracking-widest" serverError={fields.key} />}
       </form.Field>
@@ -69,9 +66,7 @@ function ChooseNewPassword() {
         {field => <TextField field={field} label="New password" type="password" autoComplete="new-password" serverError={fields.password} />}
       </form.Field>
       <ErrorNote>{reset.error && !fields.key && !fields.password ? reset.error.message : null}</ErrorNote>
-      <form.Subscribe selector={s => s.isSubmitting}>
-        {submitting => <Button type="submit" disabled={submitting}>Set new password</Button>}
-      </form.Subscribe>
+      <SubmitButton form={form}>Set new password</SubmitButton>
     </form>
   )
 }

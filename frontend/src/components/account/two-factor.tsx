@@ -3,11 +3,11 @@ import { useForm } from '@tanstack/react-form'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { QRCodeSVG } from 'qrcode.react'
 import { useState } from 'react'
-import { TextField } from '@/components/form'
+import { submitForm, TextField } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ErrorNote, Spinner, Status } from '@/components/ui/misc'
-import { AuthError, ReauthRequired, accountCall, authRequest } from '@/lib/auth'
+import { accountCall, AuthError, authRequest, fieldErrors, ReauthRequired } from '@/lib/auth'
 
 type Authenticator = { type: 'totp' | 'recovery_codes' | 'webauthn' }
 
@@ -81,11 +81,11 @@ function TotpSetup({ onDone }: { onDone: () => void }) {
   }
   if (secret.isPending) return <Spinner />
   if (!secret.data?.totp_url) return <ErrorNote>Two-factor setup is not available right now.</ErrorNote>
-  const fields = activate.error instanceof AuthError ? activate.error.fields : {}
+  const fields = fieldErrors(activate.error)
   return (
     <div className="grid gap-4 border p-4 sm:grid-cols-[auto_1fr]">
       <QRCodeSVG value={secret.data.totp_url} size={144} className="border bg-white p-2" />
-      <form className="grid content-start gap-3" onSubmit={event => { event.preventDefault(); void form.handleSubmit() }}>
+      <form className="grid content-start gap-3" onSubmit={submitForm(form)}>
         <p className="text-sm">Scan the code with your authenticator app, or enter this key:</p>
         <code className="break-all border bg-secondary px-2 py-1 font-mono text-xs">{secret.data.secret}</code>
         <form.Field name="code">
@@ -131,7 +131,7 @@ function Reauthenticate({ onDone }: { onDone: () => void }) {
   })
   const form = useForm({ defaultValues: { password: '' }, onSubmit: ({ value }) => confirm.mutateAsync(value.password) })
   return (
-    <form className="grid gap-3 border p-4" onSubmit={event => { event.preventDefault(); void form.handleSubmit() }}>
+    <form className="grid gap-3 border p-4" onSubmit={submitForm(form)}>
       <p className="text-sm">For your security, confirm your password first.</p>
       <form.Field name="password">
         {field => <TextField field={field} label="Current password" type="password" autoComplete="current-password" autoFocus />}

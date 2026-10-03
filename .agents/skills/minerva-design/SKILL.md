@@ -110,6 +110,7 @@ All components are in `frontend/src/components/ui/` unless noted otherwise.
 | `Tabs`, `TabsList`, `TabsTrigger`, `TabsContent` | `tabs.tsx` | Mono uppercase 12px; the active tab has a 2px foreground underline |
 | `Segmented`, `SegmentedItem` | `tabs.tsx` | Compact switch between two to four views; the selected item is raised in an inset track |
 | `Table` and parts | `table.tsx` | Head cells are weight 600 on a `border-strong` rule; rows have hairlines and no zebra stripes. Right-align numbers and set them in mono. |
+| `TextField`, `TextAreaField`, `SubmitButton` | `components/form.tsx` | Fields for a TanStack form: label, input and the field or server error under it. `SubmitButton` is disabled while the form submits; pair it with `<form onSubmit={submitForm(form)}>`. |
 | `Logo`, `LogoMark` | `components/brand/logo.tsx` | See [Logo](#logo) |
 | `ToolCall` | `components/chat/thread.tsx` | Tool card: wrench icon in the tone colour, name in mono, `Status` on the right. No side stripe. |
 

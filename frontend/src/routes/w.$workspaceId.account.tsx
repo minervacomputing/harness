@@ -7,7 +7,7 @@ import { TextField } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ErrorNote, Notice, PageHeader } from '@/components/ui/misc'
-import { AuthError, accountCall } from '@/lib/auth'
+import { accountCall, fieldErrors } from '@/lib/auth'
 
 export const Route = createFileRoute('/w/$workspaceId/account')({
   component: AccountPage,
@@ -40,7 +40,7 @@ function PasswordCard({ hasPassword }: { hasPassword: boolean }) {
       accountCall('POST', '/account/password/change', hasPassword ? value : { new_password: value.new_password }),
     onSuccess: () => setDone(true),
   })
-  const fields = change.error instanceof AuthError ? change.error.fields : {}
+  const fields = fieldErrors(change.error)
   const form = useForm({
     defaultValues: { current_password: '', new_password: '' },
     onSubmit: async ({ value, formApi }) => { await change.mutateAsync(value); formApi.reset() },

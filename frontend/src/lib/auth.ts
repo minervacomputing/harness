@@ -33,6 +33,11 @@ export class AuthError extends Error {
   }
 }
 
+/** Field errors of a failed auth step by field name, or none when it failed for another reason. */
+export function fieldErrors(error: unknown): Record<string, string> {
+  return error instanceof AuthError ? error.fields : {}
+}
+
 export async function authRequest(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown, headers: Record<string, string> = {}): Promise<AuthPayload> {
   if (method !== 'GET') await ensureCsrf()
   const response = await fetch(`${BASE}${path}`, {

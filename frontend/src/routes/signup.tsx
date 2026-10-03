@@ -1,10 +1,9 @@
 import { useForm } from '@tanstack/react-form'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { AuthLayout, useContinueAuth } from '@/components/auth-layout'
-import { TextField } from '@/components/form'
-import { Button } from '@/components/ui/button'
+import { SubmitButton, submitForm, TextField } from '@/components/form'
 import { ErrorNote } from '@/components/ui/misc'
-import { auth, AuthError, useAuthStep } from '@/lib/auth'
+import { auth, fieldErrors, useAuthStep } from '@/lib/auth'
 import { redirectIfSignedIn, validateNext } from '@/lib/guards'
 
 export const Route = createFileRoute('/signup')({
@@ -17,7 +16,7 @@ function SignupPage() {
   const { next } = Route.useSearch()
   const continueAuth = useContinueAuth()
   const signup = useAuthStep(auth.signup)
-  const fields = signup.error instanceof AuthError ? signup.error.fields : {}
+  const fields = fieldErrors(signup.error)
 
   const form = useForm({
     defaultValues: { email: '', password: '' },
@@ -30,7 +29,7 @@ function SignupPage() {
       description="You get a personal workspace with one assistant to start."
       footer={<>Already have an account? <Link to="/login" search={{ next }} className="text-foreground underline-offset-4 hover:underline">Sign in</Link></>}
     >
-      <form className="grid gap-4" onSubmit={event => { event.preventDefault(); void form.handleSubmit() }}>
+      <form className="grid gap-4" onSubmit={submitForm(form)}>
         <form.Field name="email" validators={{ onBlur: ({ value }) => (!value.includes('@') ? 'Enter your email address.' : undefined) }}>
           {field => <TextField field={field} label="Email" type="email" autoComplete="email" autoFocus serverError={fields.email} />}
         </form.Field>
@@ -38,9 +37,7 @@ function SignupPage() {
           {field => <TextField field={field} label="Password" type="password" autoComplete="new-password" serverError={fields.password} />}
         </form.Field>
         <ErrorNote>{signup.error && !Object.keys(fields).length ? signup.error.message : null}</ErrorNote>
-        <form.Subscribe selector={state => state.isSubmitting}>
-          {submitting => <Button type="submit" disabled={submitting}>Create account</Button>}
-        </form.Subscribe>
+        <SubmitButton form={form}>Create account</SubmitButton>
       </form>
     </AuthLayout>
   )

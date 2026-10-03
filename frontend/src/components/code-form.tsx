@@ -1,9 +1,8 @@
 import { useForm } from '@tanstack/react-form'
 import type { ReactNode } from 'react'
-import { TextField } from '@/components/form'
-import { Button } from '@/components/ui/button'
+import { SubmitButton, submitForm, TextField } from '@/components/form'
 import { ErrorNote } from '@/components/ui/misc'
-import { AuthError } from '@/lib/auth'
+import { fieldErrors } from '@/lib/auth'
 
 /** One code input with submit, shared by email verification, sign-in codes, and two-factor codes. */
 export function CodeForm({ label, submitLabel, onSubmit, error, extra }: {
@@ -13,13 +12,13 @@ export function CodeForm({ label, submitLabel, onSubmit, error, extra }: {
   error: Error | null
   extra?: ReactNode
 }) {
-  const fields = error instanceof AuthError ? error.fields : {}
+  const fields = fieldErrors(error)
   const form = useForm({
     defaultValues: { code: '' },
     onSubmit: async ({ value }) => { await onSubmit(value.code.trim()) },
   })
   return (
-    <form className="grid gap-4" onSubmit={event => { event.preventDefault(); void form.handleSubmit() }}>
+    <form className="grid gap-4" onSubmit={submitForm(form)}>
       <form.Field name="code">
         {field => (
           <TextField
@@ -34,9 +33,7 @@ export function CodeForm({ label, submitLabel, onSubmit, error, extra }: {
         )}
       </form.Field>
       <ErrorNote>{error && !fields.code && !fields.key ? error.message : null}</ErrorNote>
-      <form.Subscribe selector={state => state.isSubmitting}>
-        {submitting => <Button type="submit" disabled={submitting}>{submitLabel}</Button>}
-      </form.Subscribe>
+      <SubmitButton form={form}>{submitLabel}</SubmitButton>
       {extra}
     </form>
   )
