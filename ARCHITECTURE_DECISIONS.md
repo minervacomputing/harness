@@ -1,6 +1,6 @@
 # Minerva — target architecture decisions
 
-Status: accepted, 2026-09-29, and implemented in this repository. The earlier `todoist-mvp/` prototype has been removed; its ideas were ported. [CURRENT_STATE.md](CURRENT_STATE.md) describes what is built, and [section 9](#9-implementation-notes) lists where the implementation differs from these decisions.
+Status: accepted, 2026-09-29, and implemented in this repository. The earlier `todoist-mvp/` prototype has been removed; its ideas were ported. [CURRENT_STATE.md](CURRENT_STATE.md) describes what is built, and [section 6](#6-implementation-notes) lists where the implementation differs from these decisions.
 
 ## Summary
 
@@ -277,7 +277,52 @@ class SandboxProvider(Protocol):
 - Audit records exist for tool calls, permission changes, connection changes, and admin actions from day one.
 - Content fetched from providers is treated as untrusted data in prompts; tool denials are returned as plain results, never as instructions.
 
-## 4. Initial data model
+## 4. What to build when
+
+**Foundations from day one**, even where no screen shows them yet: `Workspace` and `Membership` with roles, the `workspace` foreign key on every tenant table, permission layers, audit records, run tokens bound to workspace/user/run, the `SandboxProvider` and `ModelProvider` interfaces, and the cross-workspace access tests.
+
+1. **Personal cloud beta and self-hosting.** Sign-up and login (email, Google, GitHub, MFA, passkeys), automatic personal workspace, chat with assistant-ui, agents with permission settings, Todoist plus one more connector through personal OAuth, platform key with a small free quota and bring-your-own-key, the `kubernetes` provider with gVisor or Kata in the cloud, Docker Compose for self-hosting.
+2. **Teams.** Team workspaces, invitations, admin and member roles, the workspace ceiling UI, shared connections, audit viewer, per-workspace billing.
+3. **Enterprise.** WorkOS SSO and Directory Sync, groups, approvals and the two-person rule, retention policies, support-access controls, per-process database roles, dedicated single-tenant deployments.
+
+## 5. Open questions
+
+- **Cloud sandbox runtime:** GKE Sandbox (gVisor) or Kata on another Kubernetes/OpenShift platform. Needs a spike measuring startup time and the conformance suite.
+- **Self-hosted sandbox runner:** its API and how it avoids exposing the Docker socket.
+- **Task library:** confirm the `django-tasks` database backend versus Procrastinate.
+- **Second connector:** another task provider (tests shared normalization) or a knowledge source such as Confluence (tests hierarchy and source permissions).
+- **Free tier:** quota size, bring-your-own-key terms, abuse limits.
+- **History after revocation:** which earlier messages and artifacts may enter a new run after permissions narrow.
+- **Cloud login:** allauth only, or WorkOS AuthKit from day one.
+
+Resolved: the first worker image keeps DeepSeek Harness (D6).
+
+## 6. Implementation notes
+
+Where the first implementation (2026-09-29) differs from the decisions above. Each note is either a deliberate simplification or a detail the decisions left open.
+
+| Decision | As built | Why |
+|---|---|---|
+| D6 events | The worker sends only `phase`, `completed`, and `failed`. Text deltas come from the gateway's model relay, which parses the upstream stream. | The DeepSeek Harness SDK reports only finished events, not token deltas. This does not make the text trustworthy: the worker chooses what it sends to the model and reports the final answer itself. All agent text is untrusted, so the chat UI never loads remote images from it. |
+| D6 artifacts | `PUT /artifacts` is not built yet. | Report files come later. |
+| D7 providers | `container` and `local-process` exist. `macos-srt` and `kubernetes` do not. | Docker is enough locally and for self-hosting. The cloud provider comes with deployment. |
+| D7 network | All workers share the internal `minerva-sandbox` network. | Acceptable locally. Use a network per run before strangers share a host. |
+| D8 OAuth | Plain httpx instead of Authlib. Todoist clients are registered automatically through dynamic client registration unless a client ID and secret are configured. | The flow is small, and registration removes a setup step. |
+| D8 Todoist | Our own httpx client for Todoist API v1, with responses validated by Pydantic. | No SDK dependency, and full control over errors and pagination. |
+| D8, D13 audit | No audit table yet. Run events record every tool call and its decision. | Deferred until teams need an audit viewer. |
+| D11 tasks | No task queue yet. The supervisor also does the background work: deadlines, reconciliation, and orphan sandbox cleanup. | No other background job exists yet. |
+| D12 packaging | Local development only: Compose for Postgres and the sandbox network, and honcho for the process roles. | Production images and manifests come with the cloud alpha. |
+
+Two runtime details:
+
+- **Native addons:** the worker image sets `NARB_DISABLE_NATIVE_CACHE=1`, so DeepSeek Harness loads its native addons from `/app` instead of copying them to `/tmp`, which does not allow executables.
+- **Pinned TypeScript:** the frontend stays on TypeScript 5.9 because the Hey API generator does not run on TypeScript 7.
+
+## Appendix: planning notes (historical)
+
+Written before the first implementation and kept for context. The code and [CURRENT_STATE.md](CURRENT_STATE.md) are authoritative where they differ.
+
+### A1. Initial data model
 
 | Table | Key fields |
 |---|---|
@@ -296,15 +341,7 @@ class SandboxProvider(Protocol):
 | `AuditRecord` | workspace, actor (user, run, or staff), action, targets, decision, outcome, time |
 | `ModelKey` | workspace (null for platform), provider, encrypted key, key version |
 
-## 5. What to build when
-
-**Foundations from day one**, even where no screen shows them yet: `Workspace` and `Membership` with roles, the `workspace` foreign key on every tenant table, permission layers, audit records, run tokens bound to workspace/user/run, the `SandboxProvider` and `ModelProvider` interfaces, and the cross-workspace access tests.
-
-1. **Personal cloud beta and self-hosting.** Sign-up and login (email, Google, GitHub, MFA, passkeys), automatic personal workspace, chat with assistant-ui, agents with permission settings, Todoist plus one more connector through personal OAuth, platform key with a small free quota and bring-your-own-key, the `kubernetes` provider with gVisor or Kata in the cloud, Docker Compose for self-hosting.
-2. **Teams.** Team workspaces, invitations, admin and member roles, the workspace ceiling UI, shared connections, audit viewer, per-workspace billing.
-3. **Enterprise.** WorkOS SSO and Directory Sync, groups, approvals and the two-person rule, retention policies, support-access controls, per-process database roles, dedicated single-tenant deployments.
-
-## 6. Proposed repository layout
+### A2. Proposed repository layout
 
 ```text
 backend/            Django project
@@ -325,43 +362,10 @@ worker/             TypeScript DSH worker image
 deploy/             Docker Compose, Kubernetes manifests, sandbox runner
 ```
 
-## 7. What carries over from the prototype
+### A3. What carries over from the prototype
 
 - The permission pipeline and its guardrails: strict validation, resolving real targets before authorizing, result filtering, write quotas reserved before the provider call, deduplication, pausing after an uncertain write, run-bound page tokens, revocation.
 - Grants of "connection + resource + actions", with unsupported restrictions rejected.
 - Per-run tokens and failing closed when a sandbox cannot start.
 - The sandbox probe, which becomes the provider conformance suite.
 - The DSH worker bridge, adapted to the HTTP contract.
-
-## 8. Open questions
-
-- **Cloud sandbox runtime:** GKE Sandbox (gVisor) or Kata on another Kubernetes/OpenShift platform. Needs a spike measuring startup time and the conformance suite.
-- **Self-hosted sandbox runner:** its API and how it avoids exposing the Docker socket.
-- **Task library:** confirm the `django-tasks` database backend versus Procrastinate.
-- **Second connector:** another task provider (tests shared normalization) or a knowledge source such as Confluence (tests hierarchy and source permissions).
-- **Free tier:** quota size, bring-your-own-key terms, abuse limits.
-- **History after revocation:** which earlier messages and artifacts may enter a new run after permissions narrow.
-- **Cloud login:** allauth only, or WorkOS AuthKit from day one.
-
-Resolved: the first worker image keeps DeepSeek Harness (D6).
-
-## 9. Implementation notes
-
-Where the first implementation (2026-09-29) differs from the decisions above. Each note is either a deliberate simplification or a detail the decisions left open.
-
-| Decision | As built | Why |
-|---|---|---|
-| D6 events | The worker sends only `phase`, `completed`, and `failed`. Text deltas come from the gateway's model relay, which parses the upstream stream. | The DeepSeek Harness SDK reports only finished events, not token deltas. This does not make the text trustworthy: the worker chooses what it sends to the model and reports the final answer itself. All agent text is untrusted, so the chat UI never loads remote images from it. |
-| D6 artifacts | `PUT /artifacts` is not built yet. | Report files come later. |
-| D7 providers | `container` and `local-process` exist. `macos-srt` and `kubernetes` do not. | Docker is enough locally and for self-hosting. The cloud provider comes with deployment. |
-| D7 network | All workers share the internal `minerva-sandbox` network. | Acceptable locally. Use a network per run before strangers share a host. |
-| D8 OAuth | Plain httpx instead of Authlib. Todoist clients are registered automatically through dynamic client registration unless a client ID and secret are configured. | The flow is small, and registration removes a setup step. |
-| D8 Todoist | Our own httpx client for Todoist API v1, with responses validated by Pydantic. | No SDK dependency, and full control over errors and pagination. |
-| D8, D13 audit | No audit table yet. Run events record every tool call and its decision. | Deferred until teams need an audit viewer. |
-| D11 tasks | No task queue yet. The supervisor also does the background work: deadlines, reconciliation, and orphan sandbox cleanup. | No other background job exists yet. |
-| D12 packaging | Local development only: Compose for Postgres and the sandbox network, and honcho for the process roles. | Production images and manifests come with the cloud alpha. |
-
-Two runtime details:
-
-- **Native addons:** the worker image sets `NARB_DISABLE_NATIVE_CACHE=1`, so DeepSeek Harness loads its native addons from `/app` instead of copying them to `/tmp`, which does not allow executables.
-- **Pinned TypeScript:** the frontend stays on TypeScript 5.9 because the Hey API generator does not run on TypeScript 7.
