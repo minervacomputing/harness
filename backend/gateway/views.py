@@ -18,17 +18,12 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from connectors import registry
 from gateway.auth import run_required
 from minerva.config import config
-from models_access.providers import (
-    InvalidModelRequest,
-    ModelUnavailable,
-    ResponsesTap,
-    StreamTap,
-    StreamTooLarge,
-    UpstreamResponse,
-    build_payload,
-    build_responses_payload,
-    route,
-)
+from models_access import upstream
+from models_access.chat import build_chat_payload
+from models_access.responses import build_responses_payload
+from models_access.taps import ResponsesTap, StreamTap, StreamTooLarge
+from models_access.upstream import ModelUnavailable, UpstreamResponse
+from models_access.validate import InvalidModelRequest
 from runs import services
 from runs.models import Run, RunEvent
 
@@ -62,7 +57,7 @@ async def run_spec(request: HttpRequest) -> JsonResponse:
         if op is not None:
             tools.append({"name": item["name"], "title": op.title})
     try:
-        _, target = route(run.model_alias)
+        _, target = upstream.route(run.model_alias)
         max_output_tokens = target.max_output_tokens
     except ModelUnavailable:
         max_output_tokens = 4096
@@ -293,14 +288,14 @@ async def _relay(request: HttpRequest, api: str):
     if not isinstance(body, dict):
         return _error("A JSON object is required.", 400)
     try:
-        provider, target = route(run.model_alias)
+        provider, target = upstream.route(run.model_alias)
     except ModelUnavailable as error:
         return _error(str(error), 503)
     # One API per instance, so there is one validated path to the provider.
     if target.api != api:
         return _error("This instance does not serve this model API.", 404)
     try:
-        payload = build_payload(body, target) if api == "chat" else build_responses_payload(body, target)
+        payload = build_chat_payload(body, target) if api == "chat" else build_responses_payload(body, target)
     except InvalidModelRequest as error:
         return _error(str(error), 400)
     if not await sync_to_async(_reserve_model_call)(run.id):
@@ -320,24 +315,24 @@ async def _relay(request: HttpRequest, api: str):
         await _abandon(opening, upstream_cm, run.id)
         return _error("This run has ended.", 401)
     try:
-        upstream = opening.result()
+        reply = opening.result()
     except ModelUnavailable as error:
         return _error(str(error), 502)
-    if upstream.status != 200:
+    if reply.status != 200:
         await _close(upstream_cm, run.id)
         # Provider diagnostics stay private; nothing from the upstream body reaches the worker.
-        log.warning("Model provider returned HTTP %s for run %s", upstream.status, run.id)
-        return _error(f"The model provider rejected the request (HTTP {upstream.status}).", 502)
-    if upstream.content_type.split(";")[0].strip().lower() != "text/event-stream":
+        log.warning("Model provider returned HTTP %s for run %s", reply.status, run.id)
+        return _error(f"The model provider rejected the request (HTTP {reply.status}).", 502)
+    if reply.content_type.split(";")[0].strip().lower() != "text/event-stream":
         # Only streams are requested, and only event streams are screened. The provider answered, so the
         # call counts, unmetered.
         await _close(upstream_cm, run.id)
         await sync_to_async(_settle)(run.id, StreamTap())
-        log.warning("Model provider answered %s for run %s", upstream.content_type, run.id)
+        log.warning("Model provider answered %s for run %s", reply.content_type, run.id)
         return _error("The model provider returned an unexpected response.", 502)
 
-    call = ModelCall(run.id, StreamTap() if api == "chat" else ResponsesTap(), upstream_cm, upstream)
+    call = ModelCall(run.id, StreamTap() if api == "chat" else ResponsesTap(), upstream_cm, reply)
     call.start()
-    response = StreamingHttpResponse(call.stream(), content_type=upstream.content_type)
+    response = StreamingHttpResponse(call.stream(), content_type=reply.content_type)
     response["Cache-Control"] = "no-store"
     return response
