@@ -666,7 +666,7 @@ class OutlookConnector(Connector):
         authorize_params=(("prompt", "select_account"),),
     )
 
-    _operations = (
+    operations = (
         Operation(
             name="list_folders",
             title="List mail folders",
@@ -735,10 +735,6 @@ class OutlookConnector(Connector):
             mutates=True,
         ),
     )
-
-    @property
-    def operations(self) -> tuple[Operation, ...]:
-        return self._operations
 
     def client(self, access_token: str) -> GraphClient:
         return GraphClient(access_token)

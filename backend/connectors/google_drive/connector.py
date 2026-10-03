@@ -428,7 +428,7 @@ class GoogleDriveConnector(Connector):
     # Reading is enough to connect; the scope for creating files is asked for once the user allows it.
     auth = google_oauth(READ_SCOPE)
 
-    _operations = (
+    operations = (
         Operation(
             name="list_folder",
             title="List a folder",
@@ -494,10 +494,6 @@ class GoogleDriveConnector(Connector):
             mutates=True,
         ),
     )
-
-    @property
-    def operations(self) -> tuple[Operation, ...]:
-        return self._operations
 
     def client(self, access_token: str) -> GoogleDriveClient:
         return GoogleDriveClient(access_token)

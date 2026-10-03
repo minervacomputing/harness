@@ -555,7 +555,7 @@ class GitHubConnector(Connector):
         scopes=(),
     )
 
-    _operations = (
+    operations = (
         Operation(
             name="list_repositories",
             title="List repositories",
@@ -656,10 +656,6 @@ class GitHubConnector(Connector):
             mutates=True,
         ),
     )
-
-    @property
-    def operations(self) -> tuple[Operation, ...]:
-        return self._operations
 
     def client(self, access_token: str) -> GitHubClient:
         return GitHubClient(access_token)

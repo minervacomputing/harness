@@ -144,7 +144,7 @@ class TodoistConnector(Connector):
         registration_url="https://api.todoist.com/oauth/register",
     )
 
-    _operations = (
+    operations = (
         Operation(
             name="list_projects",
             title="List projects",
@@ -186,10 +186,6 @@ class TodoistConnector(Connector):
             mutates=True,
         ),
     )
-
-    @property
-    def operations(self) -> tuple[Operation, ...]:
-        return self._operations
 
     def client(self, access_token: str) -> TodoistClient:
         return TodoistClient(access_token)

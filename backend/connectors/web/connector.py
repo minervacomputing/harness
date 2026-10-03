@@ -200,7 +200,7 @@ class WebConnector(Connector):
     )
     auth = Builtin()
 
-    _operations = (
+    operations = (
         Operation(
             name="search",
             title="Search the web",
@@ -227,10 +227,6 @@ class WebConnector(Connector):
             prepare=_prepare_read_page,
         ),
     )
-
-    @property
-    def operations(self) -> tuple[Operation, ...]:
-        return self._operations
 
     def offered(self, op: Operation) -> bool:
         return op.name != "search" or config().brave_search_api_key is not None

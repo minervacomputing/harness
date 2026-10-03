@@ -805,7 +805,7 @@ class NotionConnector(Connector):
         pkce=False,
     )
 
-    _operations = (
+    operations = (
         Operation(
             name="search",
             title="Search pages",
@@ -953,10 +953,6 @@ class NotionConnector(Connector):
             mutates=True,
         ),
     )
-
-    @property
-    def operations(self) -> tuple[Operation, ...]:
-        return self._operations
 
     def client(self, access_token: str) -> NotionClient:
         return NotionClient(access_token)

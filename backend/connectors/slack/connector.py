@@ -451,7 +451,7 @@ class SlackConnector(Connector):
         pkce=False,
     )
 
-    _operations = (
+    operations = (
         Operation(
             name="list_channels",
             title="List channels",
@@ -513,10 +513,6 @@ class SlackConnector(Connector):
             mutates=True,
         ),
     )
-
-    @property
-    def operations(self) -> tuple[Operation, ...]:
-        return self._operations
 
     def client(self, access_token: str) -> SlackClient:
         return SlackClient(access_token)

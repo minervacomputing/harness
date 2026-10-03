@@ -842,7 +842,7 @@ class LinearConnector(Connector):
         pkce=True,
     )
 
-    _operations = (
+    operations = (
         Operation(
             name="list_teams",
             title="List teams",
@@ -946,10 +946,6 @@ class LinearConnector(Connector):
             mutates=True,
         ),
     )
-
-    @property
-    def operations(self) -> tuple[Operation, ...]:
-        return self._operations
 
     def client(self, access_token: str) -> LinearClient:
         return LinearClient(access_token)

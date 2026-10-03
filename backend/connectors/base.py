@@ -207,10 +207,7 @@ class Connector(ABC):
     kinds: ClassVar[tuple[ResourceKind, ...]]
     actions: ClassVar[tuple[ActionSpec, ...]]
     auth: ClassVar[AuthStrategy]
-
-    @property
-    @abstractmethod
-    def operations(self) -> tuple[Operation, ...]: ...
+    operations: ClassVar[tuple[Operation, ...]]
 
     @abstractmethod
     def client(self, secret: str) -> Any:

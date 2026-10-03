@@ -325,7 +325,7 @@ class GoogleCalendarConnector(Connector):
     # Reading is enough to connect; writing is asked for once the user allows an agent to write.
     auth = google_oauth(READ_SCOPE)
 
-    _operations = (
+    operations = (
         Operation(
             name="list_calendars",
             title="List calendars",
@@ -374,10 +374,6 @@ class GoogleCalendarConnector(Connector):
             mutates=True,
         ),
     )
-
-    @property
-    def operations(self) -> tuple[Operation, ...]:
-        return self._operations
 
     def client(self, access_token: str) -> GoogleCalendarClient:
         return GoogleCalendarClient(access_token)
