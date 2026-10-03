@@ -10,6 +10,7 @@ error texts never reach the model.
 """
 
 import re
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import parse_qs, quote, urlsplit
 
@@ -54,7 +55,7 @@ def segment(value: str) -> str:
     return quote(value, safe="")
 
 
-def _code(response: httpx.Response) -> str | None:
+def error_code(response: httpx.Response) -> str | None:
     try:
         code = response.json().get("error", {}).get("code")
     except ValueError, AttributeError:
@@ -63,7 +64,7 @@ def _code(response: httpx.Response) -> str | None:
 
 
 def classify(provider: str, response: httpx.Response) -> OperationError | None:
-    if _code(response) in UNSUPPORTED_MAILBOX:
+    if error_code(response) in UNSUPPORTED_MAILBOX:
         return OperationError(
             "UNSUPPORTED_ACCOUNT",
             f"This account has no mailbox {provider} lets Minerva use (for example, it is hosted on an "
@@ -126,6 +127,7 @@ class Graph:
         *,
         base_url: str = API_URL,
         transport: httpx.AsyncBaseTransport | None = None,
+        classify: Callable[[str, httpx.Response], OperationError | None] = classify,
     ):
         self.provider = provider
         self._http = ProviderHTTP(

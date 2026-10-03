@@ -160,6 +160,7 @@ def _declared() -> list[Connector]:
     from connectors.hubspot.connector import HubSpotConnector
     from connectors.linear.connector import LinearConnector
     from connectors.notion.connector import NotionConnector
+    from connectors.onedrive.connector import OneDriveConnector
     from connectors.outlook.connector import OutlookConnector
     from connectors.outlook_calendar.connector import OutlookCalendarConnector
     from connectors.slack.connector import SlackConnector
@@ -177,6 +178,7 @@ def _declared() -> list[Connector]:
         SlackConnector(),
         OutlookConnector(),
         OutlookCalendarConnector(),
+        OneDriveConnector(),
         GmailConnector(),
         StripeConnector(),
         HubSpotConnector(),
