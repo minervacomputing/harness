@@ -1,10 +1,25 @@
 """GitHub, through a GitHub App acting for the user. Resources are repositories, by GitHub's numeric id.
 
-What a token can reach is the intersection of the App's permissions, the repositories the App is installed
-on, and the user's own access (plus public repositories, which anyone may read). Minerva's grants narrow
-that further. Tools name repositories as "owner/name"; the name is resolved to the id once, the id is what
-is authorized, and every later request addresses the repository by id, so a rename or a new repository
-taking the name cannot redirect a call. Grants follow a repository through renames and transfers.
+Tokens are user-to-server tokens, which expire and rotate. The App has no scopes: what a token can reach
+is the intersection of the App's permissions, the repositories the App is installed on, and the user's own
+access (plus public repositories, which anyone may read). The connector therefore declares no consent, and
+the user picks repositories twice: on GitHub (the installation, linked from `manage_link`) and in Minerva
+(grants), which narrow that further.
+
+Tools name repositories as "owner/name"; the name is resolved to the id once, before authorization, the
+id is what is authorized, and every later request addresses `/repositories/<id>/...`, so a rename or a new
+repository taking the name cannot redirect a call. A renamed or transferred repository answers with a
+redirect, which is followed only to `/repositories/<id>` on the API host. A repository the account cannot
+see is refused like one without a grant. Grants follow a repository through renames and transfers.
+
+Listing pages are read with a byte limit. The executor still returns a continuation token when every
+record of a provider page was filtered out, so a model can tell that hidden repositories exist, but not
+which.
+
+GitHub's token endpoint answers form-encoded unless asked for JSON, and reports refusals as HTTP 200 with
+an `error` field. Token requests (connections/oauth.py) therefore ask for JSON; a refused refresh
+(`bad_refresh_token`) marks the connection for reconnecting, while other refusals, such as a misconfigured
+client, leave it unchanged (connections/credentials.py).
 """
 
 import asyncio

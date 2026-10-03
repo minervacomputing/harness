@@ -1,17 +1,29 @@
 """Linear. Resources are teams; what is allowed on a team also covers its sub-teams.
 
-Every issue belongs to one team, and everything about an issue is authorized on that team. Tools name
-teams by key ("ENG") and issues by identifier ("ENG-123"); a name is resolved to the team once, before
-authorization, and nothing that depends on what a call wants to read or write is looked up until the call
-is authorized. Just before content is read or written, the issue and its team's chain of parent teams are
-resolved again: a call whose issue or team moved in between is refused.
+Teams are one hierarchical kind (Linear has sub-teams), keyed by Linear's team id. Every issue belongs to
+one team, and everything about an issue is authorized on that team. Tools name teams by key ("ENG") and
+issues by identifier ("ENG-123"); a name is resolved to the team once, before authorization, and a team or
+issue the account cannot see is refused like one without a grant. Nothing that depends on what a call
+wants to read or write is looked up until the call is authorized. Just before content is read or written,
+the issue and its team's chain of parent teams are resolved again: a call whose issue or team moved in
+between is refused (`ISSUE_MOVED`, `TEAM_MOVED`).
 
 Text agents read hides the titles of other issues, which Linear writes into links (see `markdown`), and
-related issues in other teams are shown only as existing. Text agents write may mention only issues in
-the same team. Linear itself closes related issues in some cases (a parent whose sub-issues are all done,
-the open sub-issues of a closed parent), so a status change that could reach an issue in another team is
-refused. What stays outside Minerva's reach: other Linear automations (triage rules, integrations), which
-may act on an issue an agent changed, and teams the connected account cannot see at all.
+related issues in other teams are shown only as existing. Search matches titles only: Linear's text search
+also matches descriptions, so which issues matched would reveal words of other teams' titles held in their
+links. Text agents write may mention only issues in the same team of the connected workspace, checked
+after authorization. New issues skip the team's default template, which could add content Minerva did not
+check.
+
+Linear itself closes related issues in some cases (a parent whose sub-issues are all done, the open
+sub-issues of a closed parent), so a status change that could reach an issue in another team is refused:
+any status change when a parent issue at any level is in another team, and closing when an open sub-issue
+within three levels is in another team or sub-issues go deeper. What stays outside Minerva's reach: other
+Linear automations (triage rules, integrations), which may act on an issue an agent changed, and teams the
+connected account cannot see at all.
+
+Linear takes comma-separated scopes (`scope_separator=","`). The base scope is `read`; writes ask for
+`issues:create`, `comments:create` or `write`, any of which older tokens may already cover.
 
 This module assembles the connector. The operations are in `reads` and `writes`; what they share (team
 and issue names, where teams sit, page tokens) is in `teams`.

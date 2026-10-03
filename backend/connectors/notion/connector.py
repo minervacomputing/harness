@@ -1,15 +1,25 @@
 """Notion. Resources are pages and databases; what is allowed on one covers everything inside it.
 
-Notion itself decides which pages Minerva's integration can reach: the user picks them when connecting.
-Within those, each call resolves where the pages it touches sit (their chain of parent pages and databases,
-through any blocks in between) and hands that to the policy. Ancestry that cannot be resolved completely
-(a parent Notion does not show, a limit reached) is marked partial, and the policy then treats it
-conservatively. Ancestry is resolved again just before content is read or written: a call whose page moved
-in between is refused.
+Minerva connects as a public integration (`owner=user`). Notion itself decides which pages the integration
+can reach: the user picks them when connecting. Notion has no scopes, so the connector declares no
+consent. Notion's token endpoint takes HTTP Basic client authentication with a JSON body and no PKCE
+(`client_auth="basic"`, `json_body=True`, `pkce=False`). The workspace id is the account id.
+
+Pages and databases are one hierarchical kind, keyed by Notion's id; tools also accept links, which are
+reduced to the id before authorization. Each call resolves where the pages it touches sit (their chain of
+parent pages and databases, through any blocks in between such as columns, and from a database row
+through its data source to its database, up to the workspace) and hands that to the policy. Ancestry that
+cannot be resolved completely (a parent Notion does not show, a limit reached) is marked partial, and the
+policy then treats it conservatively. Ancestry is resolved again just before content is read or written:
+a call whose page moved in between is refused (`PAGE_MOVED`). Rows of a linked database belong to the
+database they come from, which grants on this one do not cover, so they are refused.
 
 Page text hides what belongs to other pages (see `markdown`), and database rows show only their own values
-(see `properties`). What stays outside Minerva's reach: Notion automations, which may act on a row or page
-an agent changed, and the integration's own capabilities, which the operator sets in Notion.
+(see `properties`). Database filters and sorts may use only the properties agents are shown, since
+filtering on a hidden value reveals it, and a row is dropped when a text property they use mentions another
+page, since Notion matches the mention's title. What stays outside Minerva's reach: Notion automations,
+which may act on a row or page an agent changed, and the integration's own capabilities, which the
+operator sets in Notion.
 
 This module assembles the connector. The operations are in `reads` and `writes`; what they share (ids,
 where pages and databases sit, how they are shown) is in `pages`.

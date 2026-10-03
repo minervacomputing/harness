@@ -2,9 +2,14 @@
 
 Opening an address sends whatever is in it to that site, so the sites an agent may read are also where
 it could carry data out. Access is per exact host or per domain with its subdomains, never wider than a
-registrable domain unless the user allows every site. Searching sends the query to the search provider,
-so it is its own permission on the connection. Search results carry addresses and snippets only; reading
-a result is a separate call that needs the site's permission.
+registrable domain unless the user allows every site. Sites are a hierarchical kind whose ids are
+canonical host names or `*.domain` patterns (see `sites`). Reading a page only parses the address before
+authorization; resolving and fetching happen after it (see `fetch`).
+
+Searching sends the query to the search provider, so it is a need on the account resource, its own
+permission on the connection. Search results carry addresses and snippets only; reading a result is a
+separate call that needs the site's permission. The instance provides the service (`Builtin` auth), and
+without a Brave Search key the connector withholds search (`offered`).
 """
 
 import asyncio

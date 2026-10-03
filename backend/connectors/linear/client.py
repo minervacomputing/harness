@@ -3,7 +3,8 @@
 GraphQL answers with 200 even when a request failed, and reports why in `errors`. Reads fail closed: a
 response with any error is refused as a whole, so partial data is never used. A write counts as applied
 only when Linear confirms it (`success: true`), and as not applied only when Linear refused the request
-before running it; anything else leaves its outcome unknown, which pauses further writes.
+before running it (a malformed request, or only rate limit and authentication errors); anything else
+leaves its outcome unknown, which pauses further writes. Read responses are streamed with a byte limit.
 """
 
 from typing import Any

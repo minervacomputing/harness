@@ -3,8 +3,9 @@
 A site resource is one host name, canonical: lowercase ASCII (IDNA), no trailing dot, no port. Grants use
 either an exact host (`docs.python.org`) or a domain with everything under it (`*.python.org`, which also
 covers `python.org` itself). A host's ancestors are those `*.` patterns from the host itself up to its
-registrable domain, so no grant can span a public suffix: `*.org`, `*.co.uk` and `*.github.io` do not
-exist, since sites under them belong to unrelated owners.
+registrable domain (the Public Suffix List, through `publicsuffixlist`, MPL-2.0), so no grant can span a
+public suffix: `*.org`, `*.co.uk` and `*.github.io` do not exist, since sites under them belong to
+unrelated owners.
 
 Only names under a known public suffix are sites. IP addresses, single-label names and special-use
 names (`localhost`, `.internal`, `.local`, `.arpa`, `.onion`, ...) are refused before anything resolves

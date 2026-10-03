@@ -1,10 +1,10 @@
 """Microsoft Graph, for the signed-in user's mailbox.
 
-Every request asks for immutable ids, so a message keeps its id when it moves within the mailbox and a
-move shows only as a new parent folder. Writes are judged by status: Graph accepts mail with 202, refuses
-before sending with 4xx, and leaves the outcome unknown otherwise. A 202 means accepted, not delivered:
-delivery is asynchronous, and a bounce arrives later as mail. Graph's own error texts never reach the
-model.
+Every request asks for immutable ids (`Prefer: IdType="ImmutableId"`), so a message keeps its id when it
+moves within the mailbox and a move shows only as a new parent folder. Writes are judged by status: Graph
+accepts mail with 202, refuses before sending with 4xx, and leaves the outcome unknown otherwise. A 202
+means accepted, not delivered: delivery is asynchronous, and a bounce arrives later as mail. Graph's own
+error texts never reach the model.
 
 Graph pages with an `@odata.nextLink` URL. Minerva never requests that URL: it takes only the paging
 parameter out of it (`$skip` or `$skiptoken`), checks it, and rebuilds the request itself.

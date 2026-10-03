@@ -1,19 +1,28 @@
 """Outlook mail, through Microsoft Graph. Folders are read per folder; mail is sent per recipient.
 
-Microsoft's read permission covers the whole mailbox, so the folder limits are Minerva's. A grant on a
-folder covers its subfolders. Each call resolves where a folder sits (its chain of parent folders up to
-the top of the mailbox's folders) before authorization, and again just before it reads or replies: a
-call whose folder moved in between is refused. Folders outside that tree (Exchange's system folders) are
-refused, and so are search folders, which collect mail from other folders, and hidden folders, wherever
-they sit and for everything below them. A listing leaves out any message that does not live in the folder
-listed.
+Minerva connects with delegated permissions through one Entra app for work, school and personal accounts
+(the `common` endpoint). The base scopes are `offline_access User.Read Mail.Read`; sending asks for
+`Mail.Send`. Granted scopes are accepted in short, URI-prefixed or lowercase form, since Microsoft reports
+them inconsistently (see `mailbox`).
 
-Sending is allowed per recipient address, or per domain (see `addresses`). Every address a message goes
-to, Cc and Bcc included, needs a grant. A reply goes to the addresses the original asks replies to go to,
-or else to its sender, and needs a grant for each of them and permission to read the original's folder.
-Minerva names those addresses itself in the reply, and refuses replies to drafts and to the account's own
-messages (sent from any of its addresses, sent by it for someone else, or kept in Sent Items), whose
-recipients Graph would work out differently.
+Microsoft's read permission covers the whole mailbox, so the folder limits are Minerva's. Folders are one
+hierarchical kind keyed by immutable folder ids (see `client`), and a grant on a folder covers its
+subfolders. Each call resolves where a folder sits (its chain of parent folders up to the top of the
+mailbox's folders, `msgfolderroot`) before authorization, and again just before it reads or replies: a
+call whose folder moved in between is refused (`MAIL_MOVED`). Folders outside that tree (Exchange's
+system folders) are refused, and so are search folders, which collect mail from other folders and can sit
+anywhere, and hidden folders, wherever they sit and for everything below them; listings leave them out. A
+message is authorized on the folder it lives in, and a listing leaves out any message that does not live
+in the folder listed.
+
+Sending is allowed per recipient address, or per domain: recipients are a second hierarchical kind (see
+`addresses`). Every address a message goes to, To, Cc and Bcc, is a need. A reply goes to the addresses
+the original asks replies to go to (`replyTo`), or else to its sender, as Graph would choose, and needs
+Read on the original's folder and Send on each of them. Minerva names those addresses itself in the reply,
+with empty Cc and Bcc, and refuses replies when an address cannot be parsed, when the addresses changed
+since authorization, to drafts, and to the account's own messages (sent from any of its addresses, its
+mail, sign-in name or SMTP proxy addresses, as sender or as the on-behalf-of sender, or kept in Sent
+Items), whose recipients Graph would work out differently.
 
 Mail is sent as plain text, from the connected account, and saved to Sent Items. Not supported: drafts,
 attachments, forwarding, reply-all, moving, deleting or flagging mail, and shared mailboxes.

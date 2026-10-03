@@ -3,7 +3,8 @@
 Notion's page markdown names other pages: child pages and databases with their titles, mentions with the
 mentioned page's title, links whose address carries the page's title, and synced blocks with content that
 lives on another page. The agent may not be allowed to read those, so their titles and synced content are
-hidden when a page is read, and Notion links are shortened to the page's id.
+hidden when a page is read, and Notion links are shortened to the page's id. Hiding fails closed: synced
+content is hidden up to the last closing tag, and a title tag left open hides the rest of the page.
 
 Edits are made so their outcome depends only on the text the agent was shown: an edit is widened to whole
 lines that hold nothing hidden, until it matches exactly once. Such text can only match where the agent

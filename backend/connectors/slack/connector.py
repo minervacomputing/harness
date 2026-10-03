@@ -1,16 +1,25 @@
 """Slack. Resources are channels; Minerva acts as the operator's Slack app, with its bot token.
 
-The app reaches only the channels it has been added to in Slack, so a channel needs both a grant in
-Minerva and the app as a member: two consents, one of them visible to everyone in the channel. Tools name
-channels by id or by name; a name is resolved to the channel once, before authorization, and a channel the
-app cannot see is refused like a channel without a grant.
+Only bot tokens (`xoxb-`) are accepted: user tokens and organization-wide installs are refused, and the
+account is the app's bot user in one workspace (`team_id:user_id`). Slack takes comma-separated scopes and
+HTTP Basic client authentication without PKCE (Slack treats PKCE apps as public clients); writes ask for
+`chat:write`.
 
-Text agents read hides the names of channels that links in it point to (see `mrkdwn`), and leaves out
-attachments, which can quote messages from other channels. Text agents write is escaped, so it cannot
+The app reaches only the channels it has been added to in Slack, so a channel needs both a grant in
+Minerva and the app as a member: two consents, one of them visible to everyone in the channel. Channels
+(public and private, never direct messages) are one flat kind with a wildcard, keyed by Slack's channel
+id. Tools name channels by id or by name; a name is resolved to the channel once, before authorization,
+and a channel the app cannot see (or a name that is missing or ambiguous) is refused like a channel
+without a grant. Reading a channel the app is not in answers `NOT_IN_CHANNEL` only after authorization.
+
+Text agents read hides the names of channels that links in it point to (see `mrkdwn`), leaves out
+attachments, which can quote messages from other channels, and shows only the metadata of files. Text
+agents write is escaped and sent with `parse=none`, `link_names=false` and unfurling off, so it cannot
 mention anyone or notify a channel, and it may not link to Slack. Replying in a thread and posting to the
-channel are separate actions. Posts to channels shared with other organizations are refused. What stays
-outside Minerva's reach: Slack workflows and other apps that react to messages, and who joins a channel
-after it was granted.
+channel are separate actions, with different reach. Every write first confirms the channel again: the same
+id, the app a member, not archived, and not shared with another organization. What stays outside
+Minerva's reach: Slack workflows and other apps that react to messages, and who joins a channel after it
+was granted.
 """
 
 import asyncio

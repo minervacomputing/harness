@@ -6,8 +6,9 @@ drops the label of every link to a channel or to Slack itself; the agent still s
 
 Written text is sent as words only. `&`, `<` and `>` are escaped, so text cannot form a control sequence:
 no `<!channel>`, `<!here>` or `<!everyone>` that notifies a whole channel, no mention of a person or user
-group, and no link with a label that hides where it goes. Text may not link to Slack at all: Slack shows
-the content of a linked message, which could be in a channel the agent may not read, next to the post.
+group, and no link with a label that hides where it goes. Text may not link to Slack at all, in any
+encoding: Slack shows the content of a linked message, which could be in a channel the agent may not read,
+next to the post.
 """
 
 import re
