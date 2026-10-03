@@ -268,6 +268,22 @@ async def _prepare_list_folder(binding: Binding, data: ListFolder) -> Prepared:
     return Prepared([Need(resource, "read")], execute)
 
 
+LIST_FOLDER = Operation(
+    name="list_folder",
+    title="List a folder",
+    description=(
+        'List the files and folders inside one Google Drive folder. Use "root" for My Drive. '
+        "To get the next page, repeat the call with identical arguments plus the returned "
+        "next_cursor. Items you may not read are left out."
+    ),
+    input_model=ListFolder,
+    needs=((FILE, "read"),),
+    prepare=_prepare_list_folder,
+    consent=READ_CONSENT,
+    paginated=True,
+)
+
+
 class SearchFiles(OperationInput):
     text: Annotated[str, Field(min_length=1, max_length=200), AfterValidator(_no_controls)]
     limit: Annotated[int, Field(ge=1, le=50)] = 20
@@ -299,6 +315,22 @@ async def _prepare_search_files(binding: Binding, data: SearchFiles) -> Prepared
     return Prepared([Enumerate(FILE, "read")], execute)
 
 
+SEARCH_FILES = Operation(
+    name="search_files",
+    title="Search files",
+    description=(
+        "Search Google Drive by words: Google matches names that contain words starting with the "
+        "text, and content that contains its words. Only files you may read are returned. "
+        "incomplete: true means Google did not search every shared drive."
+    ),
+    input_model=SearchFiles,
+    needs=((FILE, "read"),),
+    prepare=_prepare_search_files,
+    consent=READ_CONSENT,
+    paginated=True,
+)
+
+
 class GetFile(OperationInput):
     file_id: FileId
 
@@ -312,6 +344,17 @@ async def _prepare_get_file(binding: Binding, data: GetFile) -> Prepared:
         return ProviderOutput([_record(resource, file)])
 
     return Prepared([Need(resource, "read")], execute)
+
+
+GET_FILE = Operation(
+    name="get_file",
+    title="Get file details",
+    description="Read the details of one Google Drive file or folder by id.",
+    input_model=GetFile,
+    needs=((FILE, "read"),),
+    prepare=_prepare_get_file,
+    consent=READ_CONSENT,
+)
 
 
 class ReadFile(OperationInput):
@@ -360,6 +403,21 @@ async def _prepare_read_file(binding: Binding, data: ReadFile) -> Prepared:
     return Prepared([Need(resource, "read")], execute)
 
 
+READ_FILE = Operation(
+    name="read_file",
+    title="Read a file",
+    description=(
+        "Read the text of one Google Drive file: Google Docs and Slides as plain text, the first "
+        "sheet of Google Sheets as CSV, and text files. Other types (PDF, images) are not "
+        "supported. Long text is cut at max_chars and marked truncated."
+    ),
+    input_model=ReadFile,
+    needs=((FILE, "read"),),
+    prepare=_prepare_read_file,
+    consent=READ_CONSENT,
+)
+
+
 class CreateFile(OperationInput):
     folder_id: FolderId
     name: Annotated[str, Field(min_length=1, max_length=200), AfterValidator(_no_controls)]
@@ -392,6 +450,22 @@ async def _prepare_create_file(binding: Binding, data: CreateFile) -> Prepared:
         )
 
     return Prepared([Need(resource, "create")], execute)
+
+
+CREATE_FILE = Operation(
+    name="create_file",
+    title="Create a file",
+    description=(
+        "Create one text file, or a Google Doc with as_document, in a folder where you have "
+        'create permission. Use "root" for My Drive. Everyone who can see the folder can see the '
+        "file. The number of writes per run is limited."
+    ),
+    input_model=CreateFile,
+    needs=((FILE, "create"),),
+    prepare=_prepare_create_file,
+    consent=CREATE_CONSENT,
+    mutates=True,
+)
 
 
 def _discovery_state(cursor: str) -> dict[str, Any]:
@@ -428,72 +502,7 @@ class GoogleDriveConnector(Connector):
     # Reading is enough to connect; the scope for creating files is asked for once the user allows it.
     auth = google_oauth(READ_SCOPE)
 
-    operations = (
-        Operation(
-            name="list_folder",
-            title="List a folder",
-            description=(
-                'List the files and folders inside one Google Drive folder. Use "root" for My Drive. '
-                "To get the next page, repeat the call with identical arguments plus the returned "
-                "next_cursor. Items you may not read are left out."
-            ),
-            input_model=ListFolder,
-            needs=((FILE, "read"),),
-            prepare=_prepare_list_folder,
-            consent=READ_CONSENT,
-            paginated=True,
-        ),
-        Operation(
-            name="search_files",
-            title="Search files",
-            description=(
-                "Search Google Drive by words: Google matches names that contain words starting with the "
-                "text, and content that contains its words. Only files you may read are returned. "
-                "incomplete: true means Google did not search every shared drive."
-            ),
-            input_model=SearchFiles,
-            needs=((FILE, "read"),),
-            prepare=_prepare_search_files,
-            consent=READ_CONSENT,
-            paginated=True,
-        ),
-        Operation(
-            name="get_file",
-            title="Get file details",
-            description="Read the details of one Google Drive file or folder by id.",
-            input_model=GetFile,
-            needs=((FILE, "read"),),
-            prepare=_prepare_get_file,
-            consent=READ_CONSENT,
-        ),
-        Operation(
-            name="read_file",
-            title="Read a file",
-            description=(
-                "Read the text of one Google Drive file: Google Docs and Slides as plain text, the first "
-                "sheet of Google Sheets as CSV, and text files. Other types (PDF, images) are not "
-                "supported. Long text is cut at max_chars and marked truncated."
-            ),
-            input_model=ReadFile,
-            needs=((FILE, "read"),),
-            prepare=_prepare_read_file,
-            consent=READ_CONSENT,
-        ),
-        Operation(
-            name="create_file",
-            title="Create a file",
-            description=(
-                "Create one text file, or a Google Doc with as_document, in a folder where you have "
-                'create permission. Use "root" for My Drive. Everyone who can see the folder can see the '
-                "file. The number of writes per run is limited."
-            ),
-            input_model=CreateFile,
-            needs=((FILE, "create"),),
-            prepare=_prepare_create_file,
-            consent=CREATE_CONSENT,
-            mutates=True,
-        ),
-    )
+    operations = (LIST_FOLDER, SEARCH_FILES, GET_FILE, READ_FILE, CREATE_FILE)
 
     def client(self, access_token: str) -> GoogleDriveClient:
         return GoogleDriveClient(access_token)

@@ -184,6 +184,17 @@ async def _prepare_list_calendars(binding: Binding, _: ListCalendars) -> Prepare
     return Prepared([Enumerate(CALENDAR, "read")], execute)
 
 
+LIST_CALENDARS = Operation(
+    name="list_calendars",
+    title="List calendars",
+    description="List the Google calendars you may read.",
+    input_model=ListCalendars,
+    needs=((CALENDAR, "read"),),
+    prepare=_prepare_list_calendars,
+    consent=READ_CONSENT,
+)
+
+
 class ListEvents(OperationInput):
     calendar_id: CalendarId
     time_min: Annotated[DateTime | None, Field(description="Only events that end after this time.")] = None
@@ -246,6 +257,23 @@ async def _prepare_list_events(binding: Binding, data: ListEvents) -> Prepared:
     return Prepared([Need(binding.resource(CALENDAR, calendar_id), "read")], execute)
 
 
+LIST_EVENTS = Operation(
+    name="list_events",
+    title="List events",
+    description=(
+        "List events in one calendar you may read, ordered by start time, with recurring events "
+        "expanded. Without time_min or time_max, lists events from now on. Times are RFC 3339 with "
+        "an offset. To get the next page, repeat the call with identical arguments plus the "
+        "returned next_cursor."
+    ),
+    input_model=ListEvents,
+    needs=((CALENDAR, "read"),),
+    prepare=_prepare_list_events,
+    consent=READ_CONSENT,
+    paginated=True,
+)
+
+
 class GetEvent(OperationInput):
     calendar_id: CalendarId
     event_id: EventId
@@ -259,6 +287,17 @@ async def _prepare_get_event(binding: Binding, data: GetEvent) -> Prepared:
         return ProviderOutput([_event(binding, calendar_id, await client.event(calendar_id, data.event_id))])
 
     return Prepared([Need(binding.resource(CALENDAR, calendar_id), "read")], execute)
+
+
+GET_EVENT = Operation(
+    name="get_event",
+    title="Get an event",
+    description="Read one event by calendar and event id.",
+    input_model=GetEvent,
+    needs=((CALENDAR, "read"),),
+    prepare=_prepare_get_event,
+    consent=READ_CONSENT,
+)
 
 
 class CreateEvent(OperationInput):
@@ -314,6 +353,22 @@ async def _prepare_create_event(binding: Binding, data: CreateEvent) -> Prepared
     return Prepared([Need(binding.resource(CALENDAR, calendar_id), "create")], execute)
 
 
+CREATE_EVENT = Operation(
+    name="create_event",
+    title="Create an event",
+    description=(
+        "Create one event in a calendar where you have create permission. The event has no guests, "
+        "so no invitations are sent, but everyone who can see the calendar can see the event. "
+        "The number of writes per run is limited."
+    ),
+    input_model=CreateEvent,
+    needs=((CALENDAR, "create"),),
+    prepare=_prepare_create_event,
+    consent=WRITE_CONSENT,
+    mutates=True,
+)
+
+
 class GoogleCalendarConnector(Connector):
     slug = "google_calendar"
     name = "Google Calendar"
@@ -325,55 +380,7 @@ class GoogleCalendarConnector(Connector):
     # Reading is enough to connect; writing is asked for once the user allows an agent to write.
     auth = google_oauth(READ_SCOPE)
 
-    operations = (
-        Operation(
-            name="list_calendars",
-            title="List calendars",
-            description="List the Google calendars you may read.",
-            input_model=ListCalendars,
-            needs=((CALENDAR, "read"),),
-            prepare=_prepare_list_calendars,
-            consent=READ_CONSENT,
-        ),
-        Operation(
-            name="list_events",
-            title="List events",
-            description=(
-                "List events in one calendar you may read, ordered by start time, with recurring events "
-                "expanded. Without time_min or time_max, lists events from now on. Times are RFC 3339 with "
-                "an offset. To get the next page, repeat the call with identical arguments plus the "
-                "returned next_cursor."
-            ),
-            input_model=ListEvents,
-            needs=((CALENDAR, "read"),),
-            prepare=_prepare_list_events,
-            consent=READ_CONSENT,
-            paginated=True,
-        ),
-        Operation(
-            name="get_event",
-            title="Get an event",
-            description="Read one event by calendar and event id.",
-            input_model=GetEvent,
-            needs=((CALENDAR, "read"),),
-            prepare=_prepare_get_event,
-            consent=READ_CONSENT,
-        ),
-        Operation(
-            name="create_event",
-            title="Create an event",
-            description=(
-                "Create one event in a calendar where you have create permission. The event has no guests, "
-                "so no invitations are sent, but everyone who can see the calendar can see the event. "
-                "The number of writes per run is limited."
-            ),
-            input_model=CreateEvent,
-            needs=((CALENDAR, "create"),),
-            prepare=_prepare_create_event,
-            consent=WRITE_CONSENT,
-            mutates=True,
-        ),
-    )
+    operations = (LIST_CALENDARS, LIST_EVENTS, GET_EVENT, CREATE_EVENT)
 
     def client(self, access_token: str) -> GoogleCalendarClient:
         return GoogleCalendarClient(access_token)

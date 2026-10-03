@@ -317,6 +317,20 @@ async def _prepare_list_teams(binding: Binding, data: ListTeams) -> Prepared:
     return Prepared([Enumerate(TEAM, "read")], execute)
 
 
+LIST_TEAMS = Operation(
+    name="list_teams",
+    title="List teams",
+    description=(
+        "List the Linear teams you may read, with their keys. To get the next page, repeat the call "
+        "with identical arguments plus the returned next_cursor."
+    ),
+    input_model=ListTeams,
+    needs=((TEAM, "read"),),
+    prepare=_prepare_list_teams,
+    paginated=True,
+)
+
+
 class TeamInput(OperationInput):
     team: TeamName
 
@@ -348,6 +362,19 @@ async def _prepare_get_team(binding: Binding, data: TeamInput) -> Prepared:
         return ProviderOutput([ScopedRecord(resource, record)])
 
     return Prepared([Need(resource, "read")], execute)
+
+
+GET_TEAM = Operation(
+    name="get_team",
+    title="Get a team",
+    description=(
+        "Read a Linear team: its statuses, the labels its issues can have, and its members. Use these "
+        "names when creating or updating issues."
+    ),
+    input_model=TeamInput,
+    needs=((TEAM, "read"),),
+    prepare=_prepare_get_team,
+)
 
 
 class ListIssues(OperationInput):
@@ -397,6 +424,21 @@ async def _prepare_list_issues(binding: Binding, data: ListIssues) -> Prepared:
     return Prepared([Need(resource, "read")], execute)
 
 
+LIST_ISSUES = Operation(
+    name="list_issues",
+    title="List issues",
+    description=(
+        "List a team's issues, most recently updated first; open ones by default. Sub-teams' issues "
+        "are not included. To get the next page, repeat the call with identical arguments plus the "
+        "returned next_cursor."
+    ),
+    input_model=ListIssues,
+    needs=((TEAM, "read"),),
+    prepare=_prepare_list_issues,
+    paginated=True,
+)
+
+
 class SearchIssues(OperationInput):
     team: TeamName
     query: Annotated[
@@ -421,6 +463,27 @@ async def _prepare_search_issues(binding: Binding, data: SearchIssues) -> Prepar
         return await _issue_page(binding, resource, conditions, data.limit, data.cursor)
 
     return Prepared([Need(resource, "read")], execute)
+
+
+SEARCH_ISSUES = Operation(
+    name="search_issues",
+    title="Search issues",
+    description=(
+        "Find one team's issues whose title contains every word of the query (descriptions and "
+        "comments are not searched). To get the next page, repeat the call with identical "
+        "arguments plus the returned next_cursor."
+    ),
+    input_model=SearchIssues,
+    needs=((TEAM, "read"),),
+    prepare=_prepare_search_issues,
+    paginated=True,
+)
+
+
+READ_NOTE = (
+    "Links to other Linear objects appear without their titles, and related issues in other teams only as "
+    "existing."
+)
 
 
 class IssueInput(OperationInput):
@@ -492,6 +555,31 @@ async def _prepare_get_issue(binding: Binding, data: IssueInput) -> Prepared:
         return ProviderOutput([ScopedRecord(resource, record)])
 
     return Prepared([Need(resource, "read")], execute)
+
+
+GET_ISSUE = Operation(
+    name="get_issue",
+    title="Read an issue",
+    description=("Read one Linear issue with its description, sub-issues and first comments. " + READ_NOTE),
+    input_model=IssueInput,
+    needs=((TEAM, "read"),),
+    prepare=_prepare_get_issue,
+)
+
+
+WRITE_NOTE = (
+    "Everyone who can see the team sees what you write; subscribers are notified, assignees are notified, "
+    "and the team's automations in Linear may make further changes. The number of writes per run is limited."
+)
+TEXT_NOTE = (
+    "Text is Markdown. It may link to Linear only with addresses of issues in the same team "
+    "(https://linear.app/<workspace>/issue/<ID>), which Linear shows as mentions, and show images only "
+    "from Linear's uploads."
+)
+
+CREATE_CONSENT = (frozenset({"issues:create"}), frozenset({"write"}))
+COMMENT_CONSENT = (frozenset({"comments:create"}), frozenset({"write"}))
+EDIT_CONSENT = (frozenset({"write"}),)
 
 
 def _link_refused() -> OperationError:
@@ -622,6 +710,21 @@ async def _prepare_create_issue(binding: Binding, data: CreateIssue) -> Prepared
     return Prepared([Need(resource, "create")], execute)
 
 
+CREATE_ISSUE = Operation(
+    name="create_issue",
+    title="Create an issue",
+    description=(
+        "Create an issue in a team where you have create permission. Status, labels and assignee are "
+        "names from get_team. " + TEXT_NOTE + " " + WRITE_NOTE
+    ),
+    input_model=CreateIssue,
+    needs=((TEAM, "create"),),
+    prepare=_prepare_create_issue,
+    consent=CREATE_CONSENT,
+    mutates=True,
+)
+
+
 class AddComment(OperationInput):
     issue: IssueName
     body: Annotated[
@@ -674,6 +777,21 @@ async def _prepare_add_comment(binding: Binding, data: AddComment) -> Prepared:
         return ProviderOutput([ScopedRecord(resource, record)])
 
     return Prepared([Need(resource, "comment")], execute)
+
+
+ADD_COMMENT = Operation(
+    name="add_comment",
+    title="Comment on an issue",
+    description=(
+        "Comment on an issue in a team where you have comment permission, optionally replying to one "
+        "of its comments. " + TEXT_NOTE + " " + WRITE_NOTE
+    ),
+    input_model=AddComment,
+    needs=((TEAM, "comment"),),
+    prepare=_prepare_add_comment,
+    consent=COMMENT_CONSENT,
+    mutates=True,
+)
 
 
 class UpdateIssue(OperationInput):
@@ -790,23 +908,23 @@ async def _prepare_update_issue(binding: Binding, data: UpdateIssue) -> Prepared
     return Prepared([Need(resource, "edit")], execute)
 
 
-WRITE_NOTE = (
-    "Everyone who can see the team sees what you write; subscribers are notified, assignees are notified, "
-    "and the team's automations in Linear may make further changes. The number of writes per run is limited."
+UPDATE_ISSUE = Operation(
+    name="update_issue",
+    title="Update an issue",
+    description=(
+        "Change an issue's title, description, status, priority, labels, assignee or due date, in a "
+        "team where you have edit permission. Issues cannot be moved to another team or parent. A "
+        "status change is refused when Linear could then close related issues in other teams. "
+        + TEXT_NOTE
+        + " "
+        + WRITE_NOTE
+    ),
+    input_model=UpdateIssue,
+    needs=((TEAM, "edit"),),
+    prepare=_prepare_update_issue,
+    consent=EDIT_CONSENT,
+    mutates=True,
 )
-TEXT_NOTE = (
-    "Text is Markdown. It may link to Linear only with addresses of issues in the same team "
-    "(https://linear.app/<workspace>/issue/<ID>), which Linear shows as mentions, and show images only "
-    "from Linear's uploads."
-)
-READ_NOTE = (
-    "Links to other Linear objects appear without their titles, and related issues in other teams only as "
-    "existing."
-)
-
-CREATE_CONSENT = (frozenset({"issues:create"}), frozenset({"write"}))
-COMMENT_CONSENT = (frozenset({"comments:create"}), frozenset({"write"}))
-EDIT_CONSENT = (frozenset({"write"}),)
 
 
 class LinearConnector(Connector):
@@ -843,108 +961,14 @@ class LinearConnector(Connector):
     )
 
     operations = (
-        Operation(
-            name="list_teams",
-            title="List teams",
-            description=(
-                "List the Linear teams you may read, with their keys. To get the next page, repeat the call "
-                "with identical arguments plus the returned next_cursor."
-            ),
-            input_model=ListTeams,
-            needs=((TEAM, "read"),),
-            prepare=_prepare_list_teams,
-            paginated=True,
-        ),
-        Operation(
-            name="get_team",
-            title="Get a team",
-            description=(
-                "Read a Linear team: its statuses, the labels its issues can have, and its members. Use these "
-                "names when creating or updating issues."
-            ),
-            input_model=TeamInput,
-            needs=((TEAM, "read"),),
-            prepare=_prepare_get_team,
-        ),
-        Operation(
-            name="list_issues",
-            title="List issues",
-            description=(
-                "List a team's issues, most recently updated first; open ones by default. Sub-teams' issues "
-                "are not included. To get the next page, repeat the call with identical arguments plus the "
-                "returned next_cursor."
-            ),
-            input_model=ListIssues,
-            needs=((TEAM, "read"),),
-            prepare=_prepare_list_issues,
-            paginated=True,
-        ),
-        Operation(
-            name="search_issues",
-            title="Search issues",
-            description=(
-                "Find one team's issues whose title contains every word of the query (descriptions and "
-                "comments are not searched). To get the next page, repeat the call with identical "
-                "arguments plus the returned next_cursor."
-            ),
-            input_model=SearchIssues,
-            needs=((TEAM, "read"),),
-            prepare=_prepare_search_issues,
-            paginated=True,
-        ),
-        Operation(
-            name="get_issue",
-            title="Read an issue",
-            description=(
-                "Read one Linear issue with its description, sub-issues and first comments. " + READ_NOTE
-            ),
-            input_model=IssueInput,
-            needs=((TEAM, "read"),),
-            prepare=_prepare_get_issue,
-        ),
-        Operation(
-            name="create_issue",
-            title="Create an issue",
-            description=(
-                "Create an issue in a team where you have create permission. Status, labels and assignee are "
-                "names from get_team. " + TEXT_NOTE + " " + WRITE_NOTE
-            ),
-            input_model=CreateIssue,
-            needs=((TEAM, "create"),),
-            prepare=_prepare_create_issue,
-            consent=CREATE_CONSENT,
-            mutates=True,
-        ),
-        Operation(
-            name="add_comment",
-            title="Comment on an issue",
-            description=(
-                "Comment on an issue in a team where you have comment permission, optionally replying to one "
-                "of its comments. " + TEXT_NOTE + " " + WRITE_NOTE
-            ),
-            input_model=AddComment,
-            needs=((TEAM, "comment"),),
-            prepare=_prepare_add_comment,
-            consent=COMMENT_CONSENT,
-            mutates=True,
-        ),
-        Operation(
-            name="update_issue",
-            title="Update an issue",
-            description=(
-                "Change an issue's title, description, status, priority, labels, assignee or due date, in a "
-                "team where you have edit permission. Issues cannot be moved to another team or parent. A "
-                "status change is refused when Linear could then close related issues in other teams. "
-                + TEXT_NOTE
-                + " "
-                + WRITE_NOTE
-            ),
-            input_model=UpdateIssue,
-            needs=((TEAM, "edit"),),
-            prepare=_prepare_update_issue,
-            consent=EDIT_CONSENT,
-            mutates=True,
-        ),
+        LIST_TEAMS,
+        GET_TEAM,
+        LIST_ISSUES,
+        SEARCH_ISSUES,
+        GET_ISSUE,
+        CREATE_ISSUE,
+        ADD_COMMENT,
+        UPDATE_ISSUE,
     )
 
     def client(self, access_token: str) -> LinearClient:

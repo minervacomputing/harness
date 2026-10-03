@@ -307,6 +307,26 @@ async def _prepare_list_channels(binding: Binding, data: ListChannels) -> Prepar
     return Prepared([Enumerate(CHANNEL, "read")], execute)
 
 
+LIST_CHANNELS = Operation(
+    name="list_channels",
+    title="List channels",
+    description=(
+        "List the Slack channels the app is in that you may read. To get the next page, repeat the "
+        "call with identical arguments plus the returned next_cursor."
+    ),
+    input_model=ListChannels,
+    needs=((CHANNEL, "read"),),
+    prepare=_prepare_list_channels,
+    paginated=True,
+)
+
+
+READ_NOTE = (
+    "Links to channels appear without the channel's name, and attachments (link previews, messages shared "
+    "from other channels) are left out."
+)
+
+
 class ReadChannel(OperationInput):
     channel: ChannelName
     limit: Annotated[int, Field(ge=1, le=100)] = 20
@@ -331,6 +351,21 @@ async def _prepare_read_channel(binding: Binding, data: ReadChannel) -> Prepared
     return Prepared([Need(resource, "read")], execute)
 
 
+READ_CHANNEL = Operation(
+    name="read_channel",
+    title="Read a channel",
+    description=(
+        "Read a channel's messages, newest first, optionally between two times. Replies in threads "
+        "are not included; read_thread reads them. To get the next page, repeat the call with "
+        "identical arguments plus the returned next_cursor. " + READ_NOTE
+    ),
+    input_model=ReadChannel,
+    needs=((CHANNEL, "read"),),
+    prepare=_prepare_read_channel,
+    paginated=True,
+)
+
+
 class ReadThread(OperationInput):
     channel: ChannelName
     thread: Annotated[Ts, Field(description="The ts of the thread's first message, or of any reply in it.")]
@@ -348,6 +383,28 @@ async def _prepare_read_thread(binding: Binding, data: ReadThread) -> Prepared:
         return ProviderOutput(await _messages(binding, resource, messages), _next(cursor))
 
     return Prepared([Need(resource, "read")], execute)
+
+
+READ_THREAD = Operation(
+    name="read_thread",
+    title="Read a thread",
+    description=(
+        "Read a thread in a channel, its first message first. To get the next page, repeat the call "
+        "with identical arguments plus the returned next_cursor. " + READ_NOTE
+    ),
+    input_model=ReadThread,
+    needs=((CHANNEL, "read"),),
+    prepare=_prepare_read_thread,
+    paginated=True,
+)
+
+
+WRITE_NOTE = (
+    "Text is shown literally: it cannot mention people or notify the channel, and may not link to Slack. "
+    "Everyone in the channel sees it, posted as the Minerva app. The number of writes per run is limited."
+)
+
+POST_CONSENT = (frozenset({"chat:write"}),)
 
 
 def _posted(resource: Resource, ts: str | None, thread_ts: str | None) -> dict[str, Any]:
@@ -370,6 +427,18 @@ async def _prepare_post_message(binding: Binding, data: PostMessage) -> Prepared
         return ProviderOutput([ScopedRecord(resource, _posted(resource, ts, None))])
 
     return Prepared([Need(resource, "post")], execute)
+
+
+POST_MESSAGE = Operation(
+    name="post_message",
+    title="Post to a channel",
+    description="Post a new message to a channel where you have post permission. " + WRITE_NOTE,
+    input_model=PostMessage,
+    needs=((CHANNEL, "post"),),
+    prepare=_prepare_post_message,
+    consent=POST_CONSENT,
+    mutates=True,
+)
 
 
 class Reply(OperationInput):
@@ -408,15 +477,19 @@ async def _prepare_reply(binding: Binding, data: Reply) -> Prepared:
     return Prepared([Need(resource, "reply")], execute)
 
 
-READ_NOTE = (
-    "Links to channels appear without the channel's name, and attachments (link previews, messages shared "
-    "from other channels) are left out."
+REPLY = Operation(
+    name="reply",
+    title="Reply in a thread",
+    description=(
+        "Reply in a thread of a channel where you have reply permission; the reply is not sent to "
+        "the channel itself. " + WRITE_NOTE
+    ),
+    input_model=Reply,
+    needs=((CHANNEL, "reply"),),
+    prepare=_prepare_reply,
+    consent=POST_CONSENT,
+    mutates=True,
 )
-WRITE_NOTE = (
-    "Text is shown literally: it cannot mention people or notify the channel, and may not link to Slack. "
-    "Everyone in the channel sees it, posted as the Minerva app. The number of writes per run is limited."
-)
-POST_CONSENT = (frozenset({"chat:write"}),)
 
 
 class SlackConnector(Connector):
@@ -451,68 +524,7 @@ class SlackConnector(Connector):
         pkce=False,
     )
 
-    operations = (
-        Operation(
-            name="list_channels",
-            title="List channels",
-            description=(
-                "List the Slack channels the app is in that you may read. To get the next page, repeat the "
-                "call with identical arguments plus the returned next_cursor."
-            ),
-            input_model=ListChannels,
-            needs=((CHANNEL, "read"),),
-            prepare=_prepare_list_channels,
-            paginated=True,
-        ),
-        Operation(
-            name="read_channel",
-            title="Read a channel",
-            description=(
-                "Read a channel's messages, newest first, optionally between two times. Replies in threads "
-                "are not included; read_thread reads them. To get the next page, repeat the call with "
-                "identical arguments plus the returned next_cursor. " + READ_NOTE
-            ),
-            input_model=ReadChannel,
-            needs=((CHANNEL, "read"),),
-            prepare=_prepare_read_channel,
-            paginated=True,
-        ),
-        Operation(
-            name="read_thread",
-            title="Read a thread",
-            description=(
-                "Read a thread in a channel, its first message first. To get the next page, repeat the call "
-                "with identical arguments plus the returned next_cursor. " + READ_NOTE
-            ),
-            input_model=ReadThread,
-            needs=((CHANNEL, "read"),),
-            prepare=_prepare_read_thread,
-            paginated=True,
-        ),
-        Operation(
-            name="post_message",
-            title="Post to a channel",
-            description="Post a new message to a channel where you have post permission. " + WRITE_NOTE,
-            input_model=PostMessage,
-            needs=((CHANNEL, "post"),),
-            prepare=_prepare_post_message,
-            consent=POST_CONSENT,
-            mutates=True,
-        ),
-        Operation(
-            name="reply",
-            title="Reply in a thread",
-            description=(
-                "Reply in a thread of a channel where you have reply permission; the reply is not sent to "
-                "the channel itself. " + WRITE_NOTE
-            ),
-            input_model=Reply,
-            needs=((CHANNEL, "reply"),),
-            prepare=_prepare_reply,
-            consent=POST_CONSENT,
-            mutates=True,
-        ),
-    )
+    operations = (LIST_CHANNELS, READ_CHANNEL, READ_THREAD, POST_MESSAGE, REPLY)
 
     def client(self, access_token: str) -> SlackClient:
         return SlackClient(access_token)

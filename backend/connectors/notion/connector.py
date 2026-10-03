@@ -397,6 +397,21 @@ async def _prepare_search(binding: Binding, data: Search) -> Prepared:
     return Prepared([Enumerate(PAGE, "read")], execute)
 
 
+SEARCH = Operation(
+    name="search",
+    title="Search pages",
+    description=(
+        "Search the Notion pages and databases you may read, by title. Without text, lists recently "
+        "edited ones. To get the next page, repeat the call with identical arguments plus the "
+        "returned next_cursor. incomplete: true means Notion did not search everything."
+    ),
+    input_model=Search,
+    needs=((PAGE, "read"),),
+    prepare=_prepare_search,
+    paginated=True,
+)
+
+
 class PageInput(OperationInput):
     page_id: ObjectId
 
@@ -421,6 +436,22 @@ async def _prepare_get_page(binding: Binding, data: PageInput) -> Prepared:
         return ProviderOutput([_page_record(resource, page, properties=readable(page.properties))])
 
     return Prepared([Need(resource, "read")], execute)
+
+
+GET_PAGE = Operation(
+    name="get_page",
+    title="Get page details",
+    description="Read the title, properties and place of one Notion page by id or link.",
+    input_model=PageInput,
+    needs=((PAGE, "read"),),
+    prepare=_prepare_get_page,
+)
+
+
+READ_TEXT_NOTE = (
+    "Links to child pages and databases, and mentions of pages, appear without their titles (use get_page "
+    "or get_database to see one you may read). Content synced from other pages is hidden."
+)
 
 
 class ReadPage(OperationInput):
@@ -455,6 +486,19 @@ async def _prepare_read_page(binding: Binding, data: ReadPage) -> Prepared:
     return Prepared([Need(resource, "read")], execute)
 
 
+READ_PAGE = Operation(
+    name="read_page",
+    title="Read a page",
+    description=(
+        "Read the content of one Notion page as Notion-flavored markdown, with its properties. Long "
+        "pages are cut at max_chars and marked truncated; continue with offset. " + READ_TEXT_NOTE
+    ),
+    input_model=ReadPage,
+    needs=((PAGE, "read"),),
+    prepare=_prepare_read_page,
+)
+
+
 class DatabaseInput(OperationInput):
     database_id: ObjectId
 
@@ -477,6 +521,19 @@ async def _prepare_get_database(binding: Binding, data: DatabaseInput) -> Prepar
         return ProviderOutput([_database_record(resource, database, data_sources=sources)])
 
     return Prepared([Need(resource, "read")], execute)
+
+
+GET_DATABASE = Operation(
+    name="get_database",
+    title="Get a database",
+    description=(
+        "Read a Notion database: its data sources and their properties, with the options of select "
+        "and status properties. Properties marked hidden are never shown or used by Minerva."
+    ),
+    input_model=DatabaseInput,
+    needs=((PAGE, "read"),),
+    prepare=_prepare_get_database,
+)
 
 
 class QueryDatabase(OperationInput):
@@ -538,6 +595,22 @@ async def _prepare_query_database(binding: Binding, data: QueryDatabase) -> Prep
     return Prepared([Need(resource, "read")], execute)
 
 
+QUERY_DATABASE = Operation(
+    name="query_database",
+    title="Query a database",
+    description=(
+        "List rows of a Notion database, optionally with a Notion filter and sorts on properties "
+        "that are not hidden. A database with several data sources needs data_source_id. Rows you "
+        "may not read are left out. To get the next page, repeat the call with identical arguments "
+        "plus the returned next_cursor."
+    ),
+    input_model=QueryDatabase,
+    needs=((PAGE, "read"),),
+    prepare=_prepare_query_database,
+    paginated=True,
+)
+
+
 class ListComments(OperationInput):
     page_id: ObjectId
     cursor: Cursor | None = None
@@ -567,6 +640,26 @@ async def _prepare_list_comments(binding: Binding, data: ListComments) -> Prepar
         return ProviderOutput(records, _next_cursor(found.next_cursor, found.has_more))
 
     return Prepared([Need(resource, "read")], execute)
+
+
+LIST_COMMENTS = Operation(
+    name="list_comments",
+    title="List comments",
+    description=(
+        "List the open comments on a Notion page itself (not comments on text inside it). To get "
+        "the next page, repeat the call with identical arguments plus the returned next_cursor."
+    ),
+    input_model=ListComments,
+    needs=((PAGE, "read"),),
+    prepare=_prepare_list_comments,
+    paginated=True,
+)
+
+
+WRITE_TEXT_NOTE = (
+    "Text is Notion-flavored markdown without images, embeds, media, child page or database tags, synced "
+    "blocks, or mentions of people. The number of writes per run is limited."
+)
 
 
 def _title(value: str) -> dict[str, Any]:
@@ -600,6 +693,20 @@ async def _prepare_create_page(binding: Binding, data: CreatePage) -> Prepared:
     return Prepared([Need(resource, "create")], execute)
 
 
+CREATE_PAGE = Operation(
+    name="create_page",
+    title="Create a page",
+    description=(
+        "Create a Notion page inside a page where you have create permission, with a title and "
+        "optional content. Everyone who can see the parent page can see it. " + WRITE_TEXT_NOTE
+    ),
+    input_model=CreatePage,
+    needs=((PAGE, "create"),),
+    prepare=_prepare_create_page,
+    mutates=True,
+)
+
+
 class CreateRow(OperationInput):
     database_id: ObjectId
     data_source_id: ObjectId | None = None
@@ -626,6 +733,23 @@ async def _prepare_create_row(binding: Binding, data: CreateRow) -> Prepared:
         return ProviderOutput([_page_record(row, created, properties=readable(created.properties))])
 
     return Prepared([Need(resource, "create")], execute)
+
+
+CREATE_DATABASE_ROW = Operation(
+    name="create_database_row",
+    title="Add a database row",
+    description=(
+        "Add a row to a Notion database where you have create permission. properties maps property "
+        'names to values: text, numbers, true/false, dates ("2026-10-01" or {"start", "end"}), and '
+        "existing select, multi-select and status options (see get_database). Relations, people, "
+        "files and computed properties cannot be set. Notion automations on the database may make "
+        "further changes. " + WRITE_TEXT_NOTE
+    ),
+    input_model=CreateRow,
+    needs=((PAGE, "create"),),
+    prepare=_prepare_create_row,
+    mutates=True,
+)
 
 
 class UpdateProperties(OperationInput):
@@ -656,6 +780,21 @@ async def _prepare_update_properties(binding: Binding, data: UpdateProperties) -
         return ProviderOutput([_page_record(resource, updated, properties=readable(updated.properties))])
 
     return Prepared([Need(resource, "edit")], execute)
+
+
+UPDATE_PAGE_PROPERTIES = Operation(
+    name="update_page_properties",
+    title="Update page properties",
+    description=(
+        "Change properties of a Notion page where you have edit permission, with values as for "
+        "create_database_row. A page outside a database has only its title. Notion automations may "
+        "make further changes. The number of writes per run is limited."
+    ),
+    input_model=UpdateProperties,
+    needs=((PAGE, "edit"),),
+    prepare=_prepare_update_properties,
+    mutates=True,
+)
 
 
 class Edit(OperationInput):
@@ -711,6 +850,22 @@ async def _prepare_edit_page(binding: Binding, data: EditPage) -> Prepared:
     return Prepared([Need(resource, "edit")], execute)
 
 
+EDIT_PAGE = Operation(
+    name="edit_page",
+    title="Edit a page",
+    description=(
+        "Replace text in a Notion page where you have edit permission. Each old text must appear "
+        "exactly once in the page as read_page shows it; lines linking to child pages, databases or "
+        "mentioned pages cannot be edited, and nothing can be deleted along with child pages. "
+        + WRITE_TEXT_NOTE
+    ),
+    input_model=EditPage,
+    needs=((PAGE, "edit"),),
+    prepare=_prepare_edit_page,
+    mutates=True,
+)
+
+
 class AppendToPage(OperationInput):
     page_id: ObjectId
     markdown: Markdown
@@ -731,6 +886,19 @@ async def _prepare_append(binding: Binding, data: AppendToPage) -> Prepared:
         return ProviderOutput([_page_record(resource, page)])
 
     return Prepared([Need(resource, "edit")], execute)
+
+
+APPEND_TO_PAGE = Operation(
+    name="append_to_page",
+    title="Append to a page",
+    description=(
+        "Add content at the end of a Notion page where you have edit permission. " + WRITE_TEXT_NOTE
+    ),
+    input_model=AppendToPage,
+    needs=((PAGE, "edit"),),
+    prepare=_prepare_append,
+    mutates=True,
+)
 
 
 class AddComment(OperationInput):
@@ -754,20 +922,24 @@ async def _prepare_add_comment(binding: Binding, data: AddComment) -> Prepared:
     return Prepared([Need(resource, "comment")], execute)
 
 
+ADD_COMMENT = Operation(
+    name="add_comment",
+    title="Add a comment",
+    description=(
+        "Comment on a Notion page where you have comment permission. People following the page may "
+        "be notified. " + WRITE_TEXT_NOTE
+    ),
+    input_model=AddComment,
+    needs=((PAGE, "comment"),),
+    prepare=_prepare_add_comment,
+    mutates=True,
+)
+
+
 def _discovery_cursor(cursor: str | None) -> str | None:
     if cursor is not None and not _CURSOR.match(cursor):
         raise OperationError("INVALID_CURSOR", "This page token is invalid.")
     return cursor
-
-
-READ_TEXT_NOTE = (
-    "Links to child pages and databases, and mentions of pages, appear without their titles (use get_page "
-    "or get_database to see one you may read). Content synced from other pages is hidden."
-)
-WRITE_TEXT_NOTE = (
-    "Text is Notion-flavored markdown without images, embeds, media, child page or database tags, synced "
-    "blocks, or mentions of people. The number of writes per run is limited."
-)
 
 
 class NotionConnector(Connector):
@@ -806,152 +978,18 @@ class NotionConnector(Connector):
     )
 
     operations = (
-        Operation(
-            name="search",
-            title="Search pages",
-            description=(
-                "Search the Notion pages and databases you may read, by title. Without text, lists recently "
-                "edited ones. To get the next page, repeat the call with identical arguments plus the "
-                "returned next_cursor. incomplete: true means Notion did not search everything."
-            ),
-            input_model=Search,
-            needs=((PAGE, "read"),),
-            prepare=_prepare_search,
-            paginated=True,
-        ),
-        Operation(
-            name="get_page",
-            title="Get page details",
-            description="Read the title, properties and place of one Notion page by id or link.",
-            input_model=PageInput,
-            needs=((PAGE, "read"),),
-            prepare=_prepare_get_page,
-        ),
-        Operation(
-            name="read_page",
-            title="Read a page",
-            description=(
-                "Read the content of one Notion page as Notion-flavored markdown, with its properties. Long "
-                "pages are cut at max_chars and marked truncated; continue with offset. " + READ_TEXT_NOTE
-            ),
-            input_model=ReadPage,
-            needs=((PAGE, "read"),),
-            prepare=_prepare_read_page,
-        ),
-        Operation(
-            name="get_database",
-            title="Get a database",
-            description=(
-                "Read a Notion database: its data sources and their properties, with the options of select "
-                "and status properties. Properties marked hidden are never shown or used by Minerva."
-            ),
-            input_model=DatabaseInput,
-            needs=((PAGE, "read"),),
-            prepare=_prepare_get_database,
-        ),
-        Operation(
-            name="query_database",
-            title="Query a database",
-            description=(
-                "List rows of a Notion database, optionally with a Notion filter and sorts on properties "
-                "that are not hidden. A database with several data sources needs data_source_id. Rows you "
-                "may not read are left out. To get the next page, repeat the call with identical arguments "
-                "plus the returned next_cursor."
-            ),
-            input_model=QueryDatabase,
-            needs=((PAGE, "read"),),
-            prepare=_prepare_query_database,
-            paginated=True,
-        ),
-        Operation(
-            name="list_comments",
-            title="List comments",
-            description=(
-                "List the open comments on a Notion page itself (not comments on text inside it). To get "
-                "the next page, repeat the call with identical arguments plus the returned next_cursor."
-            ),
-            input_model=ListComments,
-            needs=((PAGE, "read"),),
-            prepare=_prepare_list_comments,
-            paginated=True,
-        ),
-        Operation(
-            name="create_page",
-            title="Create a page",
-            description=(
-                "Create a Notion page inside a page where you have create permission, with a title and "
-                "optional content. Everyone who can see the parent page can see it. " + WRITE_TEXT_NOTE
-            ),
-            input_model=CreatePage,
-            needs=((PAGE, "create"),),
-            prepare=_prepare_create_page,
-            mutates=True,
-        ),
-        Operation(
-            name="create_database_row",
-            title="Add a database row",
-            description=(
-                "Add a row to a Notion database where you have create permission. properties maps property "
-                'names to values: text, numbers, true/false, dates ("2026-10-01" or {"start", "end"}), and '
-                "existing select, multi-select and status options (see get_database). Relations, people, "
-                "files and computed properties cannot be set. Notion automations on the database may make "
-                "further changes. " + WRITE_TEXT_NOTE
-            ),
-            input_model=CreateRow,
-            needs=((PAGE, "create"),),
-            prepare=_prepare_create_row,
-            mutates=True,
-        ),
-        Operation(
-            name="update_page_properties",
-            title="Update page properties",
-            description=(
-                "Change properties of a Notion page where you have edit permission, with values as for "
-                "create_database_row. A page outside a database has only its title. Notion automations may "
-                "make further changes. The number of writes per run is limited."
-            ),
-            input_model=UpdateProperties,
-            needs=((PAGE, "edit"),),
-            prepare=_prepare_update_properties,
-            mutates=True,
-        ),
-        Operation(
-            name="edit_page",
-            title="Edit a page",
-            description=(
-                "Replace text in a Notion page where you have edit permission. Each old text must appear "
-                "exactly once in the page as read_page shows it; lines linking to child pages, databases or "
-                "mentioned pages cannot be edited, and nothing can be deleted along with child pages. "
-                + WRITE_TEXT_NOTE
-            ),
-            input_model=EditPage,
-            needs=((PAGE, "edit"),),
-            prepare=_prepare_edit_page,
-            mutates=True,
-        ),
-        Operation(
-            name="append_to_page",
-            title="Append to a page",
-            description=(
-                "Add content at the end of a Notion page where you have edit permission. " + WRITE_TEXT_NOTE
-            ),
-            input_model=AppendToPage,
-            needs=((PAGE, "edit"),),
-            prepare=_prepare_append,
-            mutates=True,
-        ),
-        Operation(
-            name="add_comment",
-            title="Add a comment",
-            description=(
-                "Comment on a Notion page where you have comment permission. People following the page may "
-                "be notified. " + WRITE_TEXT_NOTE
-            ),
-            input_model=AddComment,
-            needs=((PAGE, "comment"),),
-            prepare=_prepare_add_comment,
-            mutates=True,
-        ),
+        SEARCH,
+        GET_PAGE,
+        READ_PAGE,
+        GET_DATABASE,
+        QUERY_DATABASE,
+        LIST_COMMENTS,
+        CREATE_PAGE,
+        CREATE_DATABASE_ROW,
+        UPDATE_PAGE_PROPERTIES,
+        EDIT_PAGE,
+        APPEND_TO_PAGE,
+        ADD_COMMENT,
     )
 
     def client(self, access_token: str) -> NotionClient:

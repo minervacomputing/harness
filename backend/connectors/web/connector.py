@@ -115,6 +115,21 @@ async def _prepare_search(binding: Binding, data: Search) -> Prepared:
     return Prepared([Need(account, "search")], execute)
 
 
+SEARCH = Operation(
+    name="search",
+    title="Search the web",
+    description=(
+        "Search the web. Returns titles, addresses and short snippets, not page contents. To get "
+        "more results, repeat the call with identical arguments plus the returned next_cursor."
+    ),
+    input_model=Search,
+    needs=((ACCOUNT_KIND, "search"),),
+    output_action="search",
+    prepare=_prepare_search,
+    paginated=True,
+)
+
+
 class ReadPage(OperationInput):
     url: Annotated[str, Field(min_length=1, max_length=sites.MAX_URL)]
     max_chars: Annotated[int, Field(ge=500, le=100_000)] = 20_000
@@ -170,6 +185,20 @@ async def _prepare_read_page(binding: Binding, data: ReadPage) -> Prepared:
     return Prepared([Need(_site(binding, target.host), "read")], execute)
 
 
+READ_PAGE = Operation(
+    name="read_page",
+    title="Read a web page",
+    description=(
+        "Open a web page (http or https) and read it as text. Only sites you may read can be "
+        "opened. A page that moves to another site returns redirect_to instead of content. Long "
+        "pages are cut at max_chars; continue with offset set to the returned next_offset."
+    ),
+    input_model=ReadPage,
+    needs=((SITE, "read"),),
+    prepare=_prepare_read_page,
+)
+
+
 class WebConnector(Connector):
     slug = "web"
     name = "Web"
@@ -200,33 +229,7 @@ class WebConnector(Connector):
     )
     auth = Builtin()
 
-    operations = (
-        Operation(
-            name="search",
-            title="Search the web",
-            description=(
-                "Search the web. Returns titles, addresses and short snippets, not page contents. To get "
-                "more results, repeat the call with identical arguments plus the returned next_cursor."
-            ),
-            input_model=Search,
-            needs=((ACCOUNT_KIND, "search"),),
-            output_action="search",
-            prepare=_prepare_search,
-            paginated=True,
-        ),
-        Operation(
-            name="read_page",
-            title="Read a web page",
-            description=(
-                "Open a web page (http or https) and read it as text. Only sites you may read can be "
-                "opened. A page that moves to another site returns redirect_to instead of content. Long "
-                "pages are cut at max_chars; continue with offset set to the returned next_offset."
-            ),
-            input_model=ReadPage,
-            needs=((SITE, "read"),),
-            prepare=_prepare_read_page,
-        ),
-    )
+    operations = (SEARCH, READ_PAGE)
 
     def offered(self, op: Operation) -> bool:
         return op.name != "search" or config().brave_search_api_key is not None

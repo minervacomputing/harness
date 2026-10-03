@@ -294,6 +294,20 @@ async def _prepare_list_repositories(binding: Binding, data: ListRepositories) -
     return Prepared([Enumerate(REPOSITORY, "read")], execute)
 
 
+LIST_REPOSITORIES = Operation(
+    name="list_repositories",
+    title="List repositories",
+    description=(
+        "List the GitHub repositories you may read. To get the next page, repeat the call with "
+        "identical arguments plus the returned next_cursor."
+    ),
+    input_model=ListRepositories,
+    needs=((REPOSITORY, "read"),),
+    prepare=_prepare_list_repositories,
+    paginated=True,
+)
+
+
 class GetRepository(OperationInput):
     repository: RepositoryName
 
@@ -306,6 +320,16 @@ async def _prepare_get_repository(binding: Binding, data: GetRepository) -> Prep
         return ProviderOutput([ScopedRecord(resource, _repository(fresh))])
 
     return Prepared([Need(resource, "read")], execute)
+
+
+GET_REPOSITORY = Operation(
+    name="get_repository",
+    title="Get a repository",
+    description="Read a repository's details, such as its default branch and description.",
+    input_model=GetRepository,
+    needs=((REPOSITORY, "read"),),
+    prepare=_prepare_get_repository,
+)
 
 
 class ListIssues(OperationInput):
@@ -336,6 +360,20 @@ async def _prepare_list_issues(binding: Binding, data: ListIssues) -> Prepared:
     return Prepared([Need(resource, "read")], execute)
 
 
+LIST_ISSUES = Operation(
+    name="list_issues",
+    title="List issues",
+    description=(
+        "List issues in a repository, most recently updated first, without pull requests. To get "
+        "the next page, repeat the call with identical arguments plus the returned next_cursor."
+    ),
+    input_model=ListIssues,
+    needs=((REPOSITORY, "read"),),
+    prepare=_prepare_list_issues,
+    paginated=True,
+)
+
+
 class GetIssue(OperationInput):
     repository: RepositoryName
     number: Number
@@ -358,6 +396,18 @@ async def _prepare_get_issue(binding: Binding, data: GetIssue) -> Prepared:
         return ProviderOutput([ScopedRecord(resource, record)])
 
     return Prepared([Need(resource, "read")], execute)
+
+
+GET_ISSUE = Operation(
+    name="get_issue",
+    title="Read an issue",
+    description=(
+        f"Read an issue or pull request conversation: its text and its first {MAX_COMMENTS} comments."
+    ),
+    input_model=GetIssue,
+    needs=((REPOSITORY, "read"),),
+    prepare=_prepare_get_issue,
+)
 
 
 class ListPullRequests(OperationInput):
@@ -384,6 +434,20 @@ async def _prepare_list_pull_requests(binding: Binding, data: ListPullRequests) 
         )
 
     return Prepared([Need(resource, "read")], execute)
+
+
+LIST_PULL_REQUESTS = Operation(
+    name="list_pull_requests",
+    title="List pull requests",
+    description=(
+        "List pull requests in a repository, most recently updated first. To get the next page, "
+        "repeat the call with identical arguments plus the returned next_cursor."
+    ),
+    input_model=ListPullRequests,
+    needs=((REPOSITORY, "read"),),
+    prepare=_prepare_list_pull_requests,
+    paginated=True,
+)
 
 
 class GetPullRequest(OperationInput):
@@ -425,6 +489,19 @@ async def _prepare_get_pull_request(binding: Binding, data: GetPullRequest) -> P
         return ProviderOutput([ScopedRecord(resource, record)])
 
     return Prepared([Need(resource, "read")], execute)
+
+
+GET_PULL_REQUEST = Operation(
+    name="get_pull_request",
+    title="Read a pull request",
+    description=(
+        f"Read a pull request with its first {MAX_PULL_FILES} changed files and their diffs "
+        f"(at most {MAX_PATCH_CHARS} characters of diff in total). Use get_issue for its comments."
+    ),
+    input_model=GetPullRequest,
+    needs=((REPOSITORY, "read"),),
+    prepare=_prepare_get_pull_request,
+)
 
 
 class ReadFile(OperationInput):
@@ -501,6 +578,22 @@ async def _prepare_read_file(binding: Binding, data: ReadFile) -> Prepared:
     return Prepared([Need(resource, "read")], execute)
 
 
+READ_FILE = Operation(
+    name="read_file",
+    title="Read a file",
+    description=("Read a text file from a repository, or list a directory. Files up to 1 MB can be read."),
+    input_model=ReadFile,
+    needs=((REPOSITORY, "read"),),
+    prepare=_prepare_read_file,
+)
+
+
+WRITE_WARNING = (
+    "Everyone who can see the repository sees what you write; mentions notify people, subscribers are "
+    "notified, and the repository's automation may run. The number of writes per run is limited."
+)
+
+
 class CreateIssue(OperationInput):
     repository: RepositoryName
     title: Annotated[str, Field(min_length=1, max_length=256), AfterValidator(_no_controls)]
@@ -515,6 +608,20 @@ async def _prepare_create_issue(binding: Binding, data: CreateIssue) -> Prepared
         return ProviderOutput([ScopedRecord(resource, _issue(issue))])
 
     return Prepared([Need(resource, "create")], execute)
+
+
+CREATE_ISSUE = Operation(
+    name="create_issue",
+    title="Open an issue",
+    description=(
+        "Open an issue with a title and text in a repository where you have create permission. "
+        + WRITE_WARNING
+    ),
+    input_model=CreateIssue,
+    needs=((REPOSITORY, "create"),),
+    prepare=_prepare_create_issue,
+    mutates=True,
+)
 
 
 class AddComment(OperationInput):
@@ -533,9 +640,17 @@ async def _prepare_add_comment(binding: Binding, data: AddComment) -> Prepared:
     return Prepared([Need(resource, "create")], execute)
 
 
-WRITE_WARNING = (
-    "Everyone who can see the repository sees what you write; mentions notify people, subscribers are "
-    "notified, and the repository's automation may run. The number of writes per run is limited."
+ADD_COMMENT = Operation(
+    name="add_comment",
+    title="Comment",
+    description=(
+        "Comment on an issue or pull request in a repository where you have create permission. "
+        + WRITE_WARNING
+    ),
+    input_model=AddComment,
+    needs=((REPOSITORY, "create"),),
+    prepare=_prepare_add_comment,
+    mutates=True,
 )
 
 
@@ -556,105 +671,15 @@ class GitHubConnector(Connector):
     )
 
     operations = (
-        Operation(
-            name="list_repositories",
-            title="List repositories",
-            description=(
-                "List the GitHub repositories you may read. To get the next page, repeat the call with "
-                "identical arguments plus the returned next_cursor."
-            ),
-            input_model=ListRepositories,
-            needs=((REPOSITORY, "read"),),
-            prepare=_prepare_list_repositories,
-            paginated=True,
-        ),
-        Operation(
-            name="get_repository",
-            title="Get a repository",
-            description="Read a repository's details, such as its default branch and description.",
-            input_model=GetRepository,
-            needs=((REPOSITORY, "read"),),
-            prepare=_prepare_get_repository,
-        ),
-        Operation(
-            name="list_issues",
-            title="List issues",
-            description=(
-                "List issues in a repository, most recently updated first, without pull requests. To get "
-                "the next page, repeat the call with identical arguments plus the returned next_cursor."
-            ),
-            input_model=ListIssues,
-            needs=((REPOSITORY, "read"),),
-            prepare=_prepare_list_issues,
-            paginated=True,
-        ),
-        Operation(
-            name="get_issue",
-            title="Read an issue",
-            description=(
-                f"Read an issue or pull request conversation: its text and its first {MAX_COMMENTS} comments."
-            ),
-            input_model=GetIssue,
-            needs=((REPOSITORY, "read"),),
-            prepare=_prepare_get_issue,
-        ),
-        Operation(
-            name="list_pull_requests",
-            title="List pull requests",
-            description=(
-                "List pull requests in a repository, most recently updated first. To get the next page, "
-                "repeat the call with identical arguments plus the returned next_cursor."
-            ),
-            input_model=ListPullRequests,
-            needs=((REPOSITORY, "read"),),
-            prepare=_prepare_list_pull_requests,
-            paginated=True,
-        ),
-        Operation(
-            name="get_pull_request",
-            title="Read a pull request",
-            description=(
-                f"Read a pull request with its first {MAX_PULL_FILES} changed files and their diffs "
-                f"(at most {MAX_PATCH_CHARS} characters of diff in total). Use get_issue for its comments."
-            ),
-            input_model=GetPullRequest,
-            needs=((REPOSITORY, "read"),),
-            prepare=_prepare_get_pull_request,
-        ),
-        Operation(
-            name="read_file",
-            title="Read a file",
-            description=(
-                "Read a text file from a repository, or list a directory. Files up to 1 MB can be read."
-            ),
-            input_model=ReadFile,
-            needs=((REPOSITORY, "read"),),
-            prepare=_prepare_read_file,
-        ),
-        Operation(
-            name="create_issue",
-            title="Open an issue",
-            description=(
-                "Open an issue with a title and text in a repository where you have create permission. "
-                + WRITE_WARNING
-            ),
-            input_model=CreateIssue,
-            needs=((REPOSITORY, "create"),),
-            prepare=_prepare_create_issue,
-            mutates=True,
-        ),
-        Operation(
-            name="add_comment",
-            title="Comment",
-            description=(
-                "Comment on an issue or pull request in a repository where you have create permission. "
-                + WRITE_WARNING
-            ),
-            input_model=AddComment,
-            needs=((REPOSITORY, "create"),),
-            prepare=_prepare_add_comment,
-            mutates=True,
-        ),
+        LIST_REPOSITORIES,
+        GET_REPOSITORY,
+        LIST_ISSUES,
+        GET_ISSUE,
+        LIST_PULL_REQUESTS,
+        GET_PULL_REQUEST,
+        READ_FILE,
+        CREATE_ISSUE,
+        ADD_COMMENT,
     )
 
     def client(self, access_token: str) -> GitHubClient:

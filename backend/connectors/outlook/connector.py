@@ -384,6 +384,21 @@ async def _prepare_list_folders(binding: Binding, data: ListFolders) -> Prepared
     return Prepared([Need(resource, "read")], children)
 
 
+LIST_FOLDERS = Operation(
+    name="list_folders",
+    title="List mail folders",
+    description=(
+        "List mail folders you may read: the top-level folders, or the subfolders of parent. To get "
+        "the next page, repeat the call with identical arguments plus the returned next_cursor."
+    ),
+    input_model=ListFolders,
+    needs=((FOLDER, "read"),),
+    prepare=_prepare_list_folders,
+    consent=READ_CONSENT,
+    paginated=True,
+)
+
+
 class ListMessages(OperationInput):
     folder: FolderRef
     limit: Annotated[int, Field(ge=1, le=50)] = 20
@@ -440,6 +455,22 @@ async def _prepare_list_messages(binding: Binding, data: ListMessages) -> Prepar
     return Prepared([Need(resource, "read")], execute)
 
 
+LIST_MESSAGES = Operation(
+    name="list_messages",
+    title="List messages",
+    description=(
+        "List the messages in one folder, newest first, with a short preview of each. Filter by "
+        "unread_only and received time, or search with query. To get the next page, repeat the "
+        "call with identical arguments plus the returned next_cursor."
+    ),
+    input_model=ListMessages,
+    needs=((FOLDER, "read"),),
+    prepare=_prepare_list_messages,
+    consent=READ_CONSENT,
+    paginated=True,
+)
+
+
 class ReadMessage(OperationInput):
     message: MessageId
     max_chars: Annotated[int, Field(ge=500, le=50_000)] = 20_000
@@ -477,6 +508,27 @@ async def _prepare_read_message(binding: Binding, data: ReadMessage) -> Prepared
         return ProviderOutput([ScopedRecord(resource, record)])
 
     return Prepared([Need(resource, "read")], execute)
+
+
+READ_MESSAGE = Operation(
+    name="read_message",
+    title="Read a message",
+    description=(
+        "Read one message as plain text, with its recipients and the names of its attachments "
+        "(attachments themselves cannot be read). Long bodies are cut at max_chars; continue with "
+        "offset set to the returned next_offset. Reading does not mark the message as read."
+    ),
+    input_model=ReadMessage,
+    needs=((FOLDER, "read"),),
+    prepare=_prepare_read_message,
+    consent=READ_CONSENT,
+)
+
+
+WRITE_NOTE = (
+    "Mail is sent as plain text from the connected account and saved to Sent Items. Outlook accepts it "
+    "before delivering it; a bounce arrives later as mail. The number of writes per run is limited."
+)
 
 
 def _recipient(binding: Binding, address: str) -> Resource:
@@ -525,6 +577,19 @@ async def _prepare_send_message(binding: Binding, data: SendMessage) -> Prepared
         return ProviderOutput([ScopedRecord(_recipient(binding, data.to[0]), record)])
 
     return Prepared([Need(_recipient(binding, address), "send") for address in everyone], execute)
+
+
+SEND_MESSAGE = Operation(
+    name="send_message",
+    title="Send mail",
+    description=("Send a new message. Every address in to, cc and bcc needs send permission. " + WRITE_NOTE),
+    input_model=SendMessage,
+    needs=((RECIPIENT, "send"),),
+    output_action="send",
+    prepare=_prepare_send_message,
+    consent=SEND_CONSENT,
+    mutates=True,
+)
 
 
 def _reply_targets(message: Message) -> list[str]:
@@ -618,9 +683,19 @@ async def _prepare_reply(binding: Binding, data: Reply) -> Prepared:
     )
 
 
-WRITE_NOTE = (
-    "Mail is sent as plain text from the connected account and saved to Sent Items. Outlook accepts it "
-    "before delivering it; a bounce arrives later as mail. The number of writes per run is limited."
+REPLY = Operation(
+    name="reply",
+    title="Reply to a message",
+    description=(
+        "Reply to a message you may read. The reply goes to the addresses the message asks replies "
+        "to go to, or else to its sender, and each needs send permission; nobody else is copied. "
+        + WRITE_NOTE
+    ),
+    input_model=Reply,
+    needs=((FOLDER, "read"), (RECIPIENT, "send")),
+    prepare=_prepare_reply,
+    consent=SEND_CONSENT,
+    mutates=True,
 )
 
 
@@ -666,75 +741,7 @@ class OutlookConnector(Connector):
         authorize_params=(("prompt", "select_account"),),
     )
 
-    operations = (
-        Operation(
-            name="list_folders",
-            title="List mail folders",
-            description=(
-                "List mail folders you may read: the top-level folders, or the subfolders of parent. To get "
-                "the next page, repeat the call with identical arguments plus the returned next_cursor."
-            ),
-            input_model=ListFolders,
-            needs=((FOLDER, "read"),),
-            prepare=_prepare_list_folders,
-            consent=READ_CONSENT,
-            paginated=True,
-        ),
-        Operation(
-            name="list_messages",
-            title="List messages",
-            description=(
-                "List the messages in one folder, newest first, with a short preview of each. Filter by "
-                "unread_only and received time, or search with query. To get the next page, repeat the "
-                "call with identical arguments plus the returned next_cursor."
-            ),
-            input_model=ListMessages,
-            needs=((FOLDER, "read"),),
-            prepare=_prepare_list_messages,
-            consent=READ_CONSENT,
-            paginated=True,
-        ),
-        Operation(
-            name="read_message",
-            title="Read a message",
-            description=(
-                "Read one message as plain text, with its recipients and the names of its attachments "
-                "(attachments themselves cannot be read). Long bodies are cut at max_chars; continue with "
-                "offset set to the returned next_offset. Reading does not mark the message as read."
-            ),
-            input_model=ReadMessage,
-            needs=((FOLDER, "read"),),
-            prepare=_prepare_read_message,
-            consent=READ_CONSENT,
-        ),
-        Operation(
-            name="send_message",
-            title="Send mail",
-            description=(
-                "Send a new message. Every address in to, cc and bcc needs send permission. " + WRITE_NOTE
-            ),
-            input_model=SendMessage,
-            needs=((RECIPIENT, "send"),),
-            output_action="send",
-            prepare=_prepare_send_message,
-            consent=SEND_CONSENT,
-            mutates=True,
-        ),
-        Operation(
-            name="reply",
-            title="Reply to a message",
-            description=(
-                "Reply to a message you may read. The reply goes to the addresses the message asks replies "
-                "to go to, or else to its sender, and each needs send permission; nobody else is copied. "
-                + WRITE_NOTE
-            ),
-            input_model=Reply,
-            needs=((FOLDER, "read"), (RECIPIENT, "send")),
-            prepare=_prepare_reply,
-            consent=SEND_CONSENT,
-            mutates=True,
-        ),
-    )
+    operations = (LIST_FOLDERS, LIST_MESSAGES, READ_MESSAGE, SEND_MESSAGE, REPLY)
 
     def client(self, access_token: str) -> GraphClient:
         return GraphClient(access_token)

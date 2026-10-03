@@ -70,6 +70,16 @@ async def _prepare_list_projects(binding: Binding, _: ListProjects) -> Prepared:
     return Prepared([Enumerate(PROJECT, "read")], execute)
 
 
+LIST_PROJECTS = Operation(
+    name="list_projects",
+    title="List projects",
+    description="List the Todoist projects you may access.",
+    input_model=ListProjects,
+    needs=((PROJECT, "read"),),
+    prepare=_prepare_list_projects,
+)
+
+
 class ListTasks(OperationInput):
     project_id: ObjectId
     search: Annotated[str, Field(min_length=1, max_length=200)] | None = None
@@ -90,6 +100,20 @@ async def _prepare_list_tasks(binding: Binding, data: ListTasks) -> Prepared:
         return ProviderOutput([_task(binding, task) for task in tasks], page.next_cursor)
 
     return Prepared([Need(binding.resource(PROJECT, data.project_id), "read")], execute)
+
+
+LIST_TASKS = Operation(
+    name="list_tasks",
+    title="List tasks",
+    description=(
+        "List active tasks in one project you may read. Optionally filter by search text. "
+        "To get the next page, repeat the call with identical arguments plus the returned next_cursor."
+    ),
+    input_model=ListTasks,
+    needs=((PROJECT, "read"),),
+    prepare=_prepare_list_tasks,
+    paginated=True,
+)
 
 
 class GetTask(OperationInput):
@@ -114,6 +138,16 @@ async def _prepare_get_task(binding: Binding, data: GetTask) -> Prepared:
     return Prepared([Need(binding.resource(PROJECT, task.project_id), "read")], execute)
 
 
+GET_TASK = Operation(
+    name="get_task",
+    title="Get a task",
+    description="Read one task by ID. Its project must be readable for you.",
+    input_model=GetTask,
+    needs=((PROJECT, "read"),),
+    prepare=_prepare_get_task,
+)
+
+
 class CreateTask(OperationInput):
     project_id: ObjectId
     title: Annotated[str, Field(min_length=1, max_length=300)]
@@ -126,6 +160,20 @@ async def _prepare_create_task(binding: Binding, data: CreateTask) -> Prepared:
         return ProviderOutput([_task(binding, task)])
 
     return Prepared([Need(binding.resource(PROJECT, data.project_id), "create")], execute)
+
+
+CREATE_TASK = Operation(
+    name="create_task",
+    title="Create a task",
+    description=(
+        "Create one task in a project where you have create permission. "
+        "Give an explicit project_id and title. The number of creations per run is limited."
+    ),
+    input_model=CreateTask,
+    needs=((PROJECT, "create"),),
+    prepare=_prepare_create_task,
+    mutates=True,
+)
 
 
 class TodoistConnector(Connector):
@@ -144,48 +192,7 @@ class TodoistConnector(Connector):
         registration_url="https://api.todoist.com/oauth/register",
     )
 
-    operations = (
-        Operation(
-            name="list_projects",
-            title="List projects",
-            description="List the Todoist projects you may access.",
-            input_model=ListProjects,
-            needs=((PROJECT, "read"),),
-            prepare=_prepare_list_projects,
-        ),
-        Operation(
-            name="list_tasks",
-            title="List tasks",
-            description=(
-                "List active tasks in one project you may read. Optionally filter by search text. "
-                "To get the next page, repeat the call with identical arguments plus the returned next_cursor."
-            ),
-            input_model=ListTasks,
-            needs=((PROJECT, "read"),),
-            prepare=_prepare_list_tasks,
-            paginated=True,
-        ),
-        Operation(
-            name="get_task",
-            title="Get a task",
-            description="Read one task by ID. Its project must be readable for you.",
-            input_model=GetTask,
-            needs=((PROJECT, "read"),),
-            prepare=_prepare_get_task,
-        ),
-        Operation(
-            name="create_task",
-            title="Create a task",
-            description=(
-                "Create one task in a project where you have create permission. "
-                "Give an explicit project_id and title. The number of creations per run is limited."
-            ),
-            input_model=CreateTask,
-            needs=((PROJECT, "create"),),
-            prepare=_prepare_create_task,
-            mutates=True,
-        ),
-    )
+    operations = (LIST_PROJECTS, LIST_TASKS, GET_TASK, CREATE_TASK)
 
     def client(self, access_token: str) -> TodoistClient:
         return TodoistClient(access_token)
