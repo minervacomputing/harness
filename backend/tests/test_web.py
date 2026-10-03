@@ -6,7 +6,7 @@ import time
 
 import httpx
 import pytest
-from asgiref.sync import sync_to_async
+from connector_runs import ceiling
 
 from connections import services as connection_services
 from connections.models import Connection
@@ -18,7 +18,7 @@ from connectors.web.fetch import MAX_BODY, Fetcher, Moved, Page, public_address
 from connectors.web.markdown import html_to_text
 from connectors.web.search import BraveSearch
 from minerva.config import config
-from permissions.models import Grant, PermissionLayer
+from permissions.models import Grant
 from workspaces.tenancy import workspace_scope
 
 PUBLIC = "93.184.215.14"
@@ -394,20 +394,6 @@ def start(connector_run, net, brave, monkeypatch):
     return start_
 
 
-def _ceiling_deny(resource_id: str):
-    def create() -> None:
-        Grant.objects.create(
-            layer=PermissionLayer.unscoped.get(level=PermissionLayer.Level.CEILING),
-            connection=Connection.unscoped.get(provider="web"),
-            resource_kind="site",
-            resource_id=resource_id,
-            actions=["read"],
-            effect=Grant.Effect.DENY,
-        )
-
-    return sync_to_async(create)
-
-
 @pytest.mark.django_db(transaction=True)
 async def test_a_domain_grant_covers_its_subdomains_and_nothing_else(start, net):
     for host in ("python.org", "docs.python.org", "evil.example.org"):
@@ -435,7 +421,7 @@ async def test_a_block_on_a_subdomain_wins(start, net):
     net.site("docs.python.org")
     net.page("docs.python.org", "/", _html("<p>docs</p>"))
     await start({})
-    await _ceiling_deny("*.docs.python.org")()
+    await ceiling("web", "site", "*.docs.python.org", Grant.Effect.DENY)
     executor, _ = await start({("site", "*"): ("read",)})
     assert (
         await _acode(executor.invoke("web_read_page", {"url": "https://docs.python.org/"})) == "POLICY_DENIED"

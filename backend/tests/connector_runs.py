@@ -1,12 +1,14 @@
-"""Helpers for connector tests: grants and claimed runs. The `connector_run` fixture in conftest.py
+"""Helpers for connector tests: grants, ceilings and claimed runs. The `connector_run` fixture in conftest.py
 is built on them."""
+
+from asgiref.sync import sync_to_async
 
 from agents.models import Agent
 from connections.models import Connection
 from connectors.base import ACCOUNT_KIND
 from connectors.executor import Executor, RunContext
 from conversations.models import Conversation
-from permissions.models import Grant
+from permissions.models import Grant, PermissionLayer
 from permissions.services import GrantChange, apply_grant_changes, user_layer
 from runs import services
 from workspaces.tenancy import workspace_scope
@@ -34,3 +36,26 @@ def claimed_run(workspace, user) -> Executor:
     services.claim_queued(10)
     run.refresh_from_db()
     return Executor(RunContext.from_run(run))
+
+
+async def ceiling(
+    provider: str, kind: str, resource_id: str, effect: str, actions=("read",), restricted=None
+):
+    """Adds a grant to the workspace ceiling on the `provider` connection; `restricted`, when given, also
+    sets whether the ceiling allows only what it lists."""
+
+    def create() -> None:
+        layer = PermissionLayer.unscoped.get(level=PermissionLayer.Level.CEILING)
+        if restricted is not None:
+            layer.restricted = restricted
+            layer.save()
+        Grant.objects.create(
+            layer=layer,
+            connection=Connection.unscoped.get(provider=provider),
+            resource_kind=kind,
+            resource_id=resource_id,
+            actions=list(actions),
+            effect=effect,
+        )
+
+    await sync_to_async(create)()

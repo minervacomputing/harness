@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from asgiref.sync import sync_to_async
+from connector_runs import ceiling
 
 from connections import credentials as connection_credentials
 from connections import oauth as connection_oauth
@@ -17,7 +17,7 @@ from connectors.base import OperationError
 from connectors.outlook import addresses
 from connectors.outlook.client import GraphClient, classify, next_cursor, page_param
 from connectors.outlook.connector import OutlookConnector
-from permissions.models import Grant, PermissionLayer
+from permissions.models import Grant
 
 SECRET = "SECRET merger"
 ROOT, INBOX, PROJECTS, PRIVATE, SENT, DRAFTS = (
@@ -205,20 +205,6 @@ def start(connector_run, graph, monkeypatch):
         )
 
     return start_
-
-
-def _deny(kind: str, resource: str, actions: tuple[str, ...]):
-    def create() -> None:
-        Grant.objects.create(
-            layer=PermissionLayer.unscoped.get(level=PermissionLayer.Level.CEILING),
-            connection=Connection.unscoped.get(provider="outlook"),
-            resource_kind=kind,
-            resource_id=resource,
-            actions=list(actions),
-            effect=Grant.Effect.DENY,
-        )
-
-    return sync_to_async(create)
 
 
 async def _refused(executor, tool, args) -> str:
@@ -472,7 +458,7 @@ async def test_folders_without_a_grant_or_out_of_reach_look_alike(start, graph):
 @pytest.mark.django_db(transaction=True)
 async def test_a_grant_on_a_folder_covers_its_subfolders_and_a_deny_holds(start, graph):
     await start({})
-    await _deny("folder", PRIVATE, ("read",))()
+    await ceiling("outlook", "folder", PRIVATE, Grant.Effect.DENY)
     executor = await start(folder(INBOX))
     assert _ids(await executor.invoke("outlook_list_messages", {"folder": "inbox"})) == [FROM_GRACE, LEGACY]
     assert _ids(await executor.invoke("outlook_list_messages", {"folder": PROJECTS})) == [FROM_LIST]

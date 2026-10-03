@@ -1,12 +1,12 @@
 import pytest
 from asgiref.sync import sync_to_async
-from connector_runs import claimed_run
+from connector_runs import ceiling, claimed_run
 
 from connections.models import Connection
 from connectors import executor as executor_module
 from connectors.base import OperationError
 from conversations.models import Conversation
-from permissions.models import Grant, PermissionLayer
+from permissions.models import Grant
 from runs import services
 from runs.models import Run, RunWrite
 from workspaces.tenancy import workspace_scope
@@ -178,18 +178,7 @@ async def test_revocation_after_reserving_a_write_stops_the_provider_call(
 async def test_required_actions_are_enforced_after_layers_intersect(
     scoped, connection, agrant, start, todoist
 ):
-    def deny_read_in_ceiling():
-        ceiling = PermissionLayer.objects.get(level=PermissionLayer.Level.CEILING)
-        Grant.objects.create(
-            layer=ceiling,
-            connection=connection,
-            resource_kind="project",
-            resource_id="work",
-            actions=["read"],
-            effect=Grant.Effect.DENY,
-        )
-
-    await sync_to_async(deny_read_in_ceiling)()
+    await ceiling("todoist", "project", "work", Grant.Effect.DENY)
     await agrant(work=["read", "create"], private=["read", "create"])
     executor = await start()
     with pytest.raises(OperationError) as denied:

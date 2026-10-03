@@ -6,10 +6,9 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from asgiref.sync import sync_to_async
+from connector_runs import ceiling
 
 from connections import oauth as connection_oauth
-from connections.models import Connection
 from connections.oauth import ClientCredentials
 from connectors import registry
 from connectors.base import OperationError
@@ -18,7 +17,7 @@ from connectors.linear import markdown as text
 from connectors.linear import teams
 from connectors.linear.client import MAX_ISSUE_DEPTH, MAX_TEAM_DEPTH, LinearClient, TeamRef, judge
 from connectors.linear.connector import LinearConnector
-from permissions.models import Grant, PermissionLayer
+from permissions.models import Grant
 
 TEAMS = {
     "eng": {"key": "ENG", "name": "Engineering", "parent": None},
@@ -444,20 +443,6 @@ def start(connector_run, linear, monkeypatch):
     return start_
 
 
-def _ceiling(name: str, effect: str, actions=("read",)):
-    def create() -> None:
-        Grant.objects.create(
-            layer=PermissionLayer.unscoped.get(level=PermissionLayer.Level.CEILING),
-            connection=Connection.unscoped.get(provider="linear"),
-            resource_kind="team",
-            resource_id=ID[name],
-            actions=list(actions),
-            effect=effect,
-        )
-
-    return sync_to_async(create)
-
-
 async def _refused(executor, tool, args) -> str:
     with pytest.raises(OperationError) as caught:
         await executor.invoke(tool, args)
@@ -695,7 +680,7 @@ async def test_a_grant_on_a_team_covers_its_sub_teams(start, linear):
 @pytest.mark.django_db(transaction=True)
 async def test_a_deny_on_a_sub_team_holds(start, linear):
     await start({})
-    await _ceiling("web", Grant.Effect.DENY)()
+    await ceiling("linear", "team", ID["web"], Grant.Effect.DENY)
     executor = await start({"eng": ("read",)})
     assert await _refused(executor, "linear_get_issue", {"issue": "WEB-1"}) == "POLICY_DENIED"
     assert [item["key"] for item in _items(await executor.invoke("linear_list_teams", {}))] == ["ENG"]
@@ -706,7 +691,7 @@ async def test_a_deny_on_a_sub_team_holds(start, linear):
 async def test_cycles_are_partial(start, linear):
     linear.teams["eng"]["parent"] = "web"
     await start({})
-    await _ceiling("ops", Grant.Effect.DENY)()
+    await ceiling("linear", "team", ID["ops"], Grant.Effect.DENY)
     executor = await start({"*": ("read",)})
     # A chain Linear cannot show in full could lead anywhere, the denied team included.
     for team in ("ENG", "WEB", "OPS"):

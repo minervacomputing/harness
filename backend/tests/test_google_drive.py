@@ -6,14 +6,13 @@ from email import message_from_bytes
 
 import httpx
 import pytest
-from asgiref.sync import sync_to_async
+from connector_runs import ceiling
 
-from connections.models import Connection
 from connectors.base import OperationError
 from connectors.google_drive import connector as drive_module
 from connectors.google_drive.client import FOLDER, SHORTCUT, GoogleDriveClient, quoted
 from connectors.google_drive.connector import FULL_SCOPE, GOOGLE_DOC, READ_SCOPE, GoogleDriveConnector
-from permissions.models import Grant, PermissionLayer
+from permissions.models import Grant
 
 ROOT = "root0"
 
@@ -197,24 +196,6 @@ def start(connector_run, google, monkeypatch):
     return start_
 
 
-def _ceiling(resource_id: str, effect: str, actions=("read",), restricted: bool | None = None):
-    def create() -> None:
-        layer = PermissionLayer.unscoped.get(level=PermissionLayer.Level.CEILING)
-        if restricted is not None:
-            layer.restricted = restricted
-            layer.save()
-        Grant.objects.create(
-            layer=layer,
-            connection=Connection.unscoped.get(provider="google_drive"),
-            resource_kind="file",
-            resource_id=resource_id,
-            actions=list(actions),
-            effect=effect,
-        )
-
-    return sync_to_async(create)
-
-
 def _ids(outcome) -> list[str]:
     return [item["id"] for item in outcome.result["items"]]
 
@@ -240,7 +221,7 @@ async def test_a_grant_on_a_folder_covers_everything_inside_it(start, google):
 @pytest.mark.django_db(transaction=True)
 async def test_root_names_my_drive_and_a_deny_on_a_subfolder_hides_it(start, google):
     await start(BASE_SCOPES, {})
-    await _ceiling("drafts", Grant.Effect.DENY)()
+    await ceiling("google_drive", "file", "drafts", Grant.Effect.DENY)
     executor = await start(BASE_SCOPES, {"*": ("read",)})
     outcome = await executor.invoke("google_drive_list_folder", {"folder_id": "root"})
     assert _ids(outcome) == ["docs", "photo", "private"]
@@ -268,7 +249,7 @@ async def test_search_results_are_filtered_by_where_they_sit(start, google):
         "allDrives"
     ]
 
-    await _ceiling("private", Grant.Effect.DENY)()
+    await ceiling("google_drive", "file", "private", Grant.Effect.DENY)
     executor = await start(BASE_SCOPES, {"*": ("read",)})
     outcome = await executor.invoke("google_drive_search_files", {"text": "essay"})
     # With an exact deny somewhere, files with unknown folders might be inside it, so they are left out.
@@ -294,7 +275,7 @@ async def test_too_many_folder_lookups_leave_ancestry_partial(start, monkeypatch
 @pytest.mark.django_db(transaction=True)
 async def test_nested_grants_on_two_layers_offer_the_tools(start):
     await start(BASE_SCOPES, {})
-    await _ceiling("docs", Grant.Effect.ALLOW, restricted=True)()
+    await ceiling("google_drive", "file", "docs", Grant.Effect.ALLOW, restricted=True)
     executor = await start(BASE_SCOPES, {"drafts": ("read",)})
     assert "google_drive_search_files" in executor.context.tools
     assert _ids(await executor.invoke("google_drive_list_folder", {"folder_id": "drafts"})) == ["essay"]
@@ -429,7 +410,7 @@ def _move_on_second_fetch(google, file_id, parent):
 )
 async def test_a_file_moved_while_the_call_runs_is_refused(start, google, tool, args):
     await start(WRITE_SCOPES, {})
-    await _ceiling("private", Grant.Effect.DENY, actions=("read", "create"))()
+    await ceiling("google_drive", "file", "private", Grant.Effect.DENY, actions=("read", "create"))
     executor = await start(WRITE_SCOPES, {"*": ("read", "create")})
     moved = args.get("file_id") or args["folder_id"]
     _move_on_second_fetch(google, moved, "private")
@@ -450,7 +431,7 @@ async def test_cycles_and_deep_trees_are_partial(start, google, monkeypatch):
     google.contents["looped"] = "essay"
     executor = await start(BASE_SCOPES, {"*": ("read",)})
     assert "looped" in _ids(await executor.invoke("google_drive_search_files", {"text": "looped"}))
-    await _ceiling("elsewhere", Grant.Effect.DENY)()
+    await ceiling("google_drive", "file", "elsewhere", Grant.Effect.DENY)
     executor = await start(BASE_SCOPES, {"*": ("read",)})
     # The loop never reaches My Drive, so any exact deny might be above it.
     assert _ids(await executor.invoke("google_drive_search_files", {"text": "looped"})) == []

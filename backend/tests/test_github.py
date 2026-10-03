@@ -6,7 +6,7 @@ import time
 
 import httpx
 import pytest
-from asgiref.sync import sync_to_async
+from connector_runs import ceiling
 
 from connections import credentials as connection_credentials
 from connections import oauth as connection_oauth
@@ -20,7 +20,7 @@ from connectors.github import connector as github_module
 from connectors.github.client import API_URL, GitHubClient
 from connectors.github.connector import GitHubConnector
 from minerva.config import config
-from permissions.models import Grant, PermissionLayer
+from permissions.models import Grant
 
 
 def _repo(repo_id, full_name, private=False):
@@ -175,20 +175,6 @@ def start(connector_run, github, monkeypatch):
     return start_
 
 
-def _deny(repo_id: str, actions=("read", "create")):
-    def create() -> None:
-        Grant.objects.create(
-            layer=PermissionLayer.unscoped.get(level=PermissionLayer.Level.CEILING),
-            connection=Connection.unscoped.get(provider="github"),
-            resource_kind="repository",
-            resource_id=repo_id,
-            actions=list(actions),
-            effect=Grant.Effect.DENY,
-        )
-
-    return sync_to_async(create)
-
-
 async def _refused(executor: Executor, tool: str, args: dict) -> str:
     with pytest.raises(OperationError) as caught:
         await executor.invoke(tool, args)
@@ -263,7 +249,7 @@ async def test_repositories_are_listed_and_read_by_grant(start, github):
 @pytest.mark.django_db(transaction=True)
 async def test_a_deny_on_one_repository_wins_over_the_wildcard(start):
     await start({})
-    await _deny("2")()
+    await ceiling("github", "repository", "2", Grant.Effect.DENY, ("read", "create"))
     executor = await start({"*": ("read",)})
     outcome = await executor.invoke("github_list_repositories", {})
     assert [item["id"] for item in outcome.result["items"]] == [1]

@@ -5,10 +5,9 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from asgiref.sync import sync_to_async
+from connector_runs import ceiling
 
 from connections import oauth as connection_oauth
-from connections.models import Connection
 from connections.oauth import ClientCredentials
 from connectors import registry
 from connectors.base import OperationError
@@ -18,7 +17,7 @@ from connectors.notion.client import NotionClient
 from connectors.notion.connector import NotionConnector
 from connectors.notion.pages import canonical
 from connectors.notion.properties import check_filter, readable, writable
-from permissions.models import Grant, PermissionLayer
+from permissions.models import Grant
 
 NAMES = [
     "workspace",
@@ -333,20 +332,6 @@ def start(connector_run, notion, monkeypatch):
         return connector_run("notion", pages, label="Acme", external_account_id=ID["workspace"])
 
     return start_
-
-
-def _ceiling(name: str, effect: str, actions=("read",)):
-    def create() -> None:
-        Grant.objects.create(
-            layer=PermissionLayer.unscoped.get(level=PermissionLayer.Level.CEILING),
-            connection=Connection.unscoped.get(provider="notion"),
-            resource_kind="page",
-            resource_id=ID[name],
-            actions=list(actions),
-            effect=effect,
-        )
-
-    return sync_to_async(create)
 
 
 def _names(outcome) -> list[str]:
@@ -666,7 +651,7 @@ async def test_search_is_filtered_by_where_pages_sit(start, notion):
     assert set(_names(await executor.invoke("notion_search", {"text": "launch"}))) == {"row1", "row2"}
     assert _names(await executor.invoke("notion_search", {"text": "home"})) == []
 
-    await _ceiling("row2", Grant.Effect.DENY)()
+    await ceiling("notion", "page", ID["row2"], Grant.Effect.DENY)
     executor = await start({"*": ("read",)})
     outcome = await executor.invoke("notion_search", {"text": ""})
     # The orphan might sit under the denied row, so it is left out too.
@@ -719,7 +704,7 @@ async def test_databases_show_only_readable_properties(start, notion):
 @pytest.mark.django_db(transaction=True)
 async def test_a_deny_on_a_row_hides_it_and_stray_rows_are_dropped(start, notion):
     await start({})
-    await _ceiling("row2", Grant.Effect.DENY)()
+    await ceiling("notion", "page", ID["row2"], Grant.Effect.DENY)
     other = {"type": "data_source_id", "data_source_id": ID["ghost"], "database_id": ID["ghost"]}
     notion.pages[ID["stray"]] = _page("stray", other, "Stray")
     # A row of this data source that Notion places in another database: the source was moved.
@@ -928,7 +913,7 @@ def _move_on_second_fetch(notion, name, parent):
 )
 async def test_a_page_moved_while_the_call_runs_is_refused(start, notion, tool, args, moved):
     await start({})
-    await _ceiling("private", Grant.Effect.DENY, actions=("read", "create", "edit"))()
+    await ceiling("notion", "page", ID["private"], Grant.Effect.DENY, actions=("read", "create", "edit"))
     executor = await start({"*": ("read", "create", "edit")})
     _move_on_second_fetch(notion, moved, "private")
     assert await _refused(executor, tool, args) == "PAGE_MOVED"
@@ -940,7 +925,7 @@ async def test_a_page_moved_while_the_call_runs_is_refused(start, notion, tool, 
 async def test_cycles_are_partial(start, notion):
     notion.blocks[ID["column"]]["parent"] = {"type": "block_id", "block_id": ID["column"]}
     await start({})
-    await _ceiling("private", Grant.Effect.DENY)()
+    await ceiling("notion", "page", ID["private"], Grant.Effect.DENY)
     executor = await start({"*": ("read",)})
     assert await _refused(executor, "notion_get_page", {"page_id": ID["in_column"]}) == "POLICY_DENIED"
     assert _names(await executor.invoke("notion_get_page", {"page_id": ID["row1"]})) == ["row1"]
