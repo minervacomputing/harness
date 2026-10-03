@@ -71,15 +71,14 @@ def _conversation(request, conversation_id: UUID) -> Conversation:
     return get_object_or_404(Conversation, pk=conversation_id, user=request.user)
 
 
-def _run_out(run: Run, *, with_events: bool = True) -> dict:
-    events = list(run.events.all()) if with_events else []
+def _run_out(run: Run) -> dict:
     return {
         "id": run.id,
         "status": run.status,
         "error_message": run.error_message,
         "created_at": run.created_at,
         "finished_at": run.finished_at,
-        "events": [{"seq": e.seq, "type": e.type, "data": e.data} for e in events],
+        "events": [{"seq": e.seq, "type": e.type, "data": e.data} for e in run.events.all()],
     }
 
 

@@ -1,5 +1,4 @@
 import hashlib
-import json
 import logging
 import secrets
 from dataclasses import asdict, dataclass
@@ -271,7 +270,3 @@ def history(run: Run) -> list[dict]:
 def current_prompt(run: Run) -> str:
     message = Message.unscoped.filter(run=run, role=Message.Role.USER).first()
     return message.content if message else ""
-
-
-def dumps(data: object) -> str:
-    return json.dumps(data, separators=(",", ":"), sort_keys=True, default=str)
