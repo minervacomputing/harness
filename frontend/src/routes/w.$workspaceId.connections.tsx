@@ -13,12 +13,13 @@ import {
   reconnectMutation,
   replaceKeyMutation,
 } from '@/api/@tanstack/react-query.gen'
-import type { ActionOut, AllowedOut, ConnectionOut, ConnectorOut, KindOut } from '@/api/types.gen'
+import type { ActionOut, ConnectionOut, ConnectorOut, KindOut } from '@/api/types.gen'
 import { AccessEditor, ACCOUNT, invalidateConnections, refreshResources } from '@/components/connections/access-editor'
 import { AppIcon } from '@/components/connections/app-icon'
+import { type Setup, setupOf, summarize } from '@/components/connections/summary'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Alert, ErrorNote, Notice, PageHeader, Spinner, Status, type StatusTone } from '@/components/ui/misc'
+import { Alert, ErrorNote, Notice, PageHeader, Spinner, Status } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
 import { cn } from '@/lib/utils'
 
@@ -66,35 +67,6 @@ function useOpenConnections(workspaceId: string, initiallyOpen?: string) {
   return [open, toggle] as const
 }
 
-type Setup = { tone: StatusTone; label: string; attention: boolean }
-
-/** Whether a connection works, and whether the user still has something to do before agents can use it. */
-function setupOf(connection: ConnectionOut): Setup {
-  if (connection.status === 'error') return { tone: 'warning', label: 'Needs reconnecting', attention: true }
-  if (connection.status === 'revoked') return { tone: 'danger', label: 'Revoked', attention: true }
-  if (connection.consent_needed.length > 0) return { tone: 'warning', label: 'Needs permission', attention: true }
-  if (connection.allowed.length === 0) return { tone: 'neutral', label: 'Not set up', attention: true }
-  return { tone: 'success', label: 'Active', attention: false }
-}
-
-/** "Read files and create files in My Drive · Read mail in all labels", from what the user allows. */
-function summarize(allowed: AllowedOut[]) {
-  if (allowed.length === 0) return 'Nothing allowed yet, so agents cannot use it.'
-  const scope = (a: AllowedOut) => {
-    if (a.kind === ACCOUNT) return ''
-    if (a.all) return ` in all ${a.kind_label.toLowerCase()}s`
-    const more = a.count - a.names.length
-    return ` in ${a.names.join(', ')}${more > 0 ? ` and ${more} more` : ''}`
-  }
-  const groups: { labels: string[]; scope: string }[] = []
-  for (const a of allowed) {
-    const last = groups.at(-1)
-    if (last && last.scope === scope(a)) last.labels.push(a.action_label.toLowerCase())
-    else groups.push({ labels: [a.action_label], scope: scope(a) })
-  }
-  return groups.map(g => `${g.labels.join(', ').replace(/, ([^,]*)$/, ' and $1')}${g.scope}`).join(' · ')
-}
-
 function useAuthorize() {
   return useMutation({
     ...authorizeMutation(),
@@ -138,7 +110,7 @@ function ConnectionsPage() {
         title="Connections"
         description="Connect your apps, then choose exactly what your agents may see and do in them. Agents never receive your credentials."
       />
-      <div className="max-w-3xl space-y-10 px-8 py-6">
+      <div className="max-w-3xl space-y-10 px-4 md:px-8 py-6">
         {(search.error || search.connected) && (
           <div className="space-y-3">
             {search.error && <ErrorNote>{search.error}</ErrorNote>}

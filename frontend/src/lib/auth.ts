@@ -3,6 +3,7 @@
  * Sessions are cookie-based; every response reports the current auth state, which we keep in one query.
  */
 import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from '@tanstack/react-router'
 import { csrfToken, ensureCsrf } from '@/lib/http'
 
 const BASE = '/api/auth/browser/v1'
@@ -130,4 +131,15 @@ export const auth = {
   requestPasswordReset: (v: { email: string }) => authRequest('POST', '/auth/password/request', v),
   resetPassword: (v: { key: string; password: string }) => authRequest('POST', '/auth/password/reset', v),
   logout: () => authRequest('DELETE', '/auth/session'),
+}
+
+/** Signs out, forgets everything cached for the account, and goes to the sign-in page. */
+export function useSignOut() {
+  const queryClient = useQueryClient()
+  const navigate = useNavigate()
+  return async () => {
+    await auth.logout()
+    queryClient.clear()
+    await navigate({ to: '/login' })
+  }
 }

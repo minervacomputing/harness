@@ -3,15 +3,15 @@ import { useForm } from '@tanstack/react-form'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { QRCodeSVG } from 'qrcode.react'
 import { useState } from 'react'
+import { Setting } from '@/components/account/setting'
 import { submitForm, TextField } from '@/components/form'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ErrorNote, Spinner, Status } from '@/components/ui/misc'
 import { accountCall, AuthError, authRequest, fieldErrors, ReauthRequired } from '@/lib/auth'
 
 type Authenticator = { type: 'totp' | 'recovery_codes' | 'webauthn' }
 
-export function TwoFactorCard() {
+export function TwoFactorSetting() {
   const queryClient = useQueryClient()
   const authenticators = useQuery({
     queryKey: ['auth', 'authenticators'],
@@ -26,22 +26,20 @@ export function TwoFactorCard() {
     onError: error => { if (error instanceof ReauthRequired) setNeedsReauth(true) },
   })
 
+  const loaded = !!authenticators.data
   const enabled = authenticators.data?.some(a => a.type === 'totp')
   return (
-    <Card>
-      <CardHeader className="flex-row items-start justify-between gap-4">
-        <div className="space-y-1.5">
-          <CardTitle>Two-factor authentication</CardTitle>
-          <CardDescription>Ask for a code from an authenticator app when you sign in.</CardDescription>
-        </div>
-        {authenticators.data && <Status tone={enabled ? 'success' : 'neutral'}>{enabled ? 'On' : 'Off'}</Status>}
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {authenticators.isPending && <Spinner />}
-        {needsReauth && <Reauthenticate onDone={() => { setNeedsReauth(false); disable.reset(); disable.mutate() }} />}
-        {enabled && !needsReauth && (
-          <>
-            <RecoveryCodes />
+    <Setting
+      title="Two-factor authentication"
+      description="Ask for a code from an authenticator app when you sign in."
+      action={(
+        <>
+          {authenticators.isPending && <Spinner />}
+          {loaded && <Status tone={enabled ? 'success' : 'neutral'}>{enabled ? 'On' : 'Off'}</Status>}
+          {loaded && !enabled && (setup
+            ? <Button variant="ghost" size="sm" onClick={() => setSetup(false)}>Cancel</Button>
+            : <Button variant="outline" size="sm" onClick={() => setSetup(true)}>Set up</Button>)}
+          {enabled && !needsReauth && (
             <Button
               variant="outline"
               size="sm"
@@ -50,12 +48,16 @@ export function TwoFactorCard() {
             >
               Turn off
             </Button>
-          </>
-        )}
-        {authenticators.data && !enabled && !setup && <Button size="sm" onClick={() => setSetup(true)}>Set up</Button>}
-        {!enabled && setup && <TotpSetup onDone={() => { setSetup(false); void refresh() }} />}
-      </CardContent>
-    </Card>
+          )}
+        </>
+      )}
+    >
+      {authenticators.error && <ErrorNote>{authenticators.error.message}</ErrorNote>}
+      {disable.error && !(disable.error instanceof ReauthRequired) && <ErrorNote>{disable.error.message}</ErrorNote>}
+      {needsReauth && <Reauthenticate onDone={() => { setNeedsReauth(false); disable.reset(); disable.mutate() }} />}
+      {enabled && !needsReauth && <RecoveryCodes />}
+      {!enabled && setup && <TotpSetup onDone={() => { setSetup(false); void refresh() }} />}
+    </Setting>
   )
 }
 
@@ -106,7 +108,7 @@ function RecoveryCodes() {
     enabled: shown,
   })
   if (!shown) {
-    return <Button variant="outline" size="sm" className="mr-2" onClick={() => setShown(true)}>Show recovery codes</Button>
+    return <Button variant="outline" size="sm" onClick={() => setShown(true)}>Show recovery codes</Button>
   }
   if (codes.error instanceof ReauthRequired) return <Reauthenticate onDone={() => void codes.refetch()} />
   if (codes.isPending) return <Spinner />

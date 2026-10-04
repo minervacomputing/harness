@@ -7,15 +7,18 @@ import {
   getConversationOptions,
   getConversationQueryKey,
   listAgentsOptions,
+  listConnectionsOptions,
   listConversationsQueryKey,
   postMessageMutation,
 } from '@/api/@tanstack/react-query.gen'
-import { AgentHint } from '@/components/chat/agent-hint'
+import { AppIcons, connectionsOf } from '@/components/agents/agent-apps'
+import { AgentIntro } from '@/components/chat/agent-intro'
 import { buildMessages, messageText, pendingMessages, toThreadMessage } from '@/components/chat/model'
 import { Thread } from '@/components/chat/thread'
 import { ErrorNote, Spinner } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
 import { ACTIVE_STATUSES, useRunEvents } from '@/lib/run-stream'
+import { useDocumentTitle } from '@/lib/title'
 
 export const Route = createFileRoute('/w/$workspaceId/chat/$conversationId')({
   loader: ({ context, params }) => context.queryClient.ensureQueryData(
@@ -31,7 +34,10 @@ function ConversationPage() {
   const path = { workspace_id: workspaceId, conversation_id: conversationId }
   const conversation = useQuery(getConversationOptions({ path }))
   const agents = useQuery(listAgentsOptions({ path: { workspace_id: workspaceId } }))
+  const connections = useQuery(listConnectionsOptions({ path: { workspace_id: workspaceId } }))
   const agent = agents.data?.find(a => a.id === conversation.data?.agent_id)
+  const title = conversation.data?.title || 'New conversation'
+  useDocumentTitle(title)
 
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: getConversationQueryKey({ path }) })
@@ -68,9 +74,18 @@ function ConversationPage() {
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <div className="flex h-full flex-col">
-        {error && <ErrorNote className="mx-6 mt-4">{errorMessage(error)}</ErrorNote>}
+        <header className="flex min-h-12 shrink-0 items-center gap-4 border-b px-4 py-2 md:px-6">
+          <h1 className="min-w-0 flex-1 truncate text-sm font-medium" title={title}>{title}</h1>
+          {agent && (
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span className="truncate text-[13px] text-muted-foreground">{agent.name}</span>
+              <AppIcons connections={connectionsOf(agent, connections.data)} size="xs" className="hidden sm:flex" />
+            </div>
+          )}
+        </header>
+        {error && <ErrorNote className="mx-4 mt-4 md:mx-6">{errorMessage(error)}</ErrorNote>}
         <div className="min-h-0 flex-1">
-          <Thread empty={<AgentHint workspaceId={workspaceId} agent={agent} />} />
+          <Thread empty={<AgentIntro workspaceId={workspaceId} agents={agents.data} agent={agent} />} />
         </div>
       </div>
     </AssistantRuntimeProvider>

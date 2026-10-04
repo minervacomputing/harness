@@ -3,6 +3,7 @@ import { Checkbox as CheckboxPrimitive, RadioGroup as RadioGroupPrimitive, Switc
 import { CheckIcon, CircleAlertIcon, InfoIcon, LoaderCircleIcon, TriangleAlertIcon } from 'lucide-react'
 import type { ComponentProps, ReactNode } from 'react'
 import { cn } from '@/lib/utils'
+import { useDocumentTitle } from '@/lib/title'
 
 /** A small square tag for names and counts. Use Status for state. */
 const badgeVariants = cva('inline-flex h-5 items-center gap-1 border px-1.5 font-mono text-[11.5px] whitespace-nowrap', {
@@ -145,8 +146,9 @@ export function Spinner({ className }: { className?: string }) {
 }
 
 export function PageHeader({ title, description, actions }: { title: string; description?: ReactNode; actions?: ReactNode }) {
+  useDocumentTitle(title)
   return (
-    <div className="flex flex-wrap items-start justify-between gap-4 border-b px-8 py-6">
+    <div className="flex flex-wrap items-start justify-between gap-4 border-b px-4 py-6 md:px-8">
       <div className="space-y-1.5">
         <h1 className="text-2xl font-medium tracking-[-0.015em]">{title}</h1>
         {description && <p className="max-w-2xl text-sm text-muted-foreground">{description}</p>}

@@ -14,6 +14,7 @@ const GLYPHS: Record<string, LucideIcon> = {
 }
 
 const SIZES = {
+  xs: { tile: 'size-5', mark: 'size-3' },
   sm: { tile: 'size-7', mark: 'size-3.5' },
   md: { tile: 'size-9', mark: 'size-[18px]' },
 } as const

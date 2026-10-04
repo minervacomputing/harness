@@ -70,7 +70,7 @@ Disabled buttons drop their shadow, and a checked checkbox is flat.
 - Light and dark are both first-class. The `.dark` class on `<html>` switches the tokens, and a `.light` class resets them inside a dark page (the components page uses this to show both themes side by side).
 - The `dark:` variant exists but should rarely be needed, because tokens already switch.
 - The choice is stored in `localStorage` under `minerva-theme` (`light`, `dark`, or absent for system). `index.html` applies it before first paint, and `src/lib/theme.ts` (`useTheme`, `setTheme`) keeps it in step. Change both together.
-- `ThemeToggle` (`src/components/theme-toggle.tsx`) sits in the sidebar footer.
+- `ThemeToggle` (`src/components/theme-toggle.tsx`) sits on the Account page under Appearance (`labelled` adds the words to the icons).
 
 ## Typography
 
@@ -116,9 +116,12 @@ All components are in `frontend/src/components/ui/` unless noted otherwise.
 
 **Layout patterns:**
 
-- The sidebar uses `bg-sidebar`. Nav links are `px-2 py-[7px] text-[13px]`, muted, and turn `bg-secondary text-foreground` on hover and when active.
+- The sidebar uses `bg-sidebar`, 256px wide: logo and workspace, the nav (New chat, Agents, Connections), the conversations grouped by recency, and a footer with the account link and sign out. Nav links are `px-2 py-[7px] text-[13px]`, muted, and turn `bg-secondary text-foreground` on hover and when active. A count of connections that need the user sits on Connections as a `Status`.
+- Below `md` (768px) the sidebar is a drawer (radix `Dialog`) opened from a top bar with the menu, the logo and New chat.
 - The user message in chat is `border bg-secondary`. The composer is `border-border-strong bg-card`.
-- Pages use `PageHeader`, then content padded with `px-8`.
+- Pages use `PageHeader` (which also names the browser tab, through `useDocumentTitle` in `src/lib/title.ts`), then content padded with `px-4 md:px-8`.
+- Lists of things (connections, agents, settings) are ruled rows in one `border-border-strong bg-card` box with hairlines between rows: name and a muted line of detail on the left, status and actions on the right. Editing opens below the row, inside the box.
+- `AppIcon` (`components/connections/app-icon.tsx`) marks an app wherever one is named. Sizes `xs` (20px, inline in headers and rows), `sm` (28px) and `md` (36px).
 
 When you need a new primitive, add it to `components/ui/` following these rules, then add it to the components page.
 

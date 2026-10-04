@@ -18,7 +18,7 @@ import { cn } from '@/lib/utils'
 export function Thread({ empty }: { empty?: ReactNode }) {
   return (
     <ThreadPrimitive.Root className="flex h-full flex-col">
-      <ThreadPrimitive.Viewport className="flex flex-1 flex-col overflow-y-auto px-6">
+      <ThreadPrimitive.Viewport className="flex flex-1 flex-col overflow-y-auto px-4 md:px-6">
         <div className="mx-auto w-full max-w-3xl flex-1 space-y-6 py-8">
           <ThreadPrimitive.Empty>{empty}</ThreadPrimitive.Empty>
           <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />

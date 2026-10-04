@@ -131,6 +131,9 @@ function Catalogue() {
         <Row className="gap-3">
           {['google_drive', 'github', 'slack'].map(slug => <AppIcon key={slug} slug={slug} size="sm" />)}
         </Row>
+        <Row className="gap-1">
+          {['google_drive', 'github', 'slack'].map(slug => <AppIcon key={slug} slug={slug} size="xs" />)}
+        </Row>
       </Section>
 
       <Section title="Colour" note="Tokens from src/index.css. Use them by name; never hard-code a colour.">
