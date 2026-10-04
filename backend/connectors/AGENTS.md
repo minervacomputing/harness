@@ -10,6 +10,7 @@ A connector turns one provider's API into tools, and the permission executor aut
   - `hierarchical` means resources carry their ancestors, and a grant covers what is inside.
   - `note` is shown where users choose access.
   - `listed=False` makes the settings page search instead of list.
+  - **Browsing.** A connector lists the hierarchical kinds users browse as a tree in `browsable` (a ClassVar, not part of the tool fingerprint), and implements `children(client, kind, parent, cursor=)`. `parent=None` returns the top level. Items that can hold others set `expandable`. Validate the parent with the provider, and bind cursors to the parent they were issued for. Search still uses `discover`. Example: `google_drive`.
   - `ACCOUNT_KIND` (`"account"`) is the connection itself. Its one resource id is the connection id (`binding.account()`).
 - **Actions.** `ActionSpec(id, label, requires)`. `requires` names an action that must also be allowed on the same resource (create requires read).
 - **Operations.** `Operation(name, title, description, input_model, prepare, needs, ...)`:

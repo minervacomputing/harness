@@ -69,6 +69,8 @@ class ResourceKind:
 class DiscoveryItem:
     id: str
     name: str
+    # Whether `children` may list resources inside this one (a folder; it may turn out empty).
+    expandable: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +217,8 @@ class Connector(ABC):
     actions: ClassVar[tuple[ActionSpec, ...]]
     auth: ClassVar[AuthStrategy]
     operations: ClassVar[tuple[Operation, ...]]
+    # Hierarchical kinds users browse as a tree with `children`, rather than as one flat list.
+    browsable: ClassVar[frozenset[str]] = frozenset()
 
     @abstractmethod
     def client(self, secret: str) -> Any:
@@ -228,6 +232,13 @@ class Connector(ABC):
         self, client: Any, kind: str, *, query: str | None, cursor: str | None
     ) -> DiscoveryPage:
         """One page of resources of `kind` the account can see, for choosing what to grant."""
+
+    async def children(
+        self, client: Any, kind: str, parent: str | None, *, cursor: str | None
+    ) -> DiscoveryPage:
+        """One page of the resources directly inside `parent`, or of the top-level ones when it is None.
+        Only called for kinds in `browsable`. `parent` is user input: check it as strictly as a tool would."""
+        raise NotImplementedError
 
     @abstractmethod
     async def describe(self, client: Any, kind: str, ids: list[str]) -> dict[str, str]:

@@ -478,6 +478,28 @@ def _discovery_cursor(phase: str, page: str | None) -> str:
     return json.dumps({"phase": phase, "page": _next_cursor(page)})
 
 
+def _browse_state(cursor: str, parent: str | None) -> dict[str, Any]:
+    """A browsing cursor, valid only for the parent it was issued for."""
+    try:
+        state = json.loads(cursor)
+    except ValueError:
+        state = None
+    phases = ("drives", "shared") if parent is None else ("folders",)
+    if (
+        not isinstance(state, dict)
+        or set(state) != {"phase", "page", "parent"}
+        or state["phase"] not in phases
+        or state["parent"] != parent
+        or not isinstance(state["page"], str | None)
+    ):
+        raise OperationError("INVALID_CURSOR", "This page token is invalid.")
+    return state
+
+
+def _browse_cursor(phase: str, page: str | None, parent: str | None) -> str:
+    return json.dumps({"phase": phase, "page": _next_cursor(page), "parent": parent})
+
+
 def _item(file: DriveFile) -> DiscoveryItem:
     return DiscoveryItem(file.id, f"{file.name}/" if file.is_folder else file.name)
 
@@ -494,6 +516,7 @@ class GoogleDriveConnector(Connector):
     auth = google_oauth(READ_SCOPE)
 
     operations = (LIST_FOLDER, SEARCH_FILES, GET_FILE, READ_FILE, CREATE_FILE)
+    browsable = frozenset({FILE})
 
     def client(self, access_token: str) -> GoogleDriveClient:
         return GoogleDriveClient(access_token)
@@ -540,6 +563,57 @@ class GoogleDriveConnector(Connector):
         items.extend(_item(f) for f in page.files)
         next_cursor = _discovery_cursor("folders", page.next_page_token) if page.next_page_token else None
         return DiscoveryPage(items, next_cursor)
+
+    async def children(
+        self, client: GoogleDriveClient, kind: str, parent: str | None, *, cursor: str | None
+    ) -> DiscoveryPage:
+        """Folders only: My Drive, shared drives and folders shared with the account at the top, then the
+        folders inside each. Files are found by searching."""
+        state = _browse_state(cursor, parent) if cursor else None
+        if parent is None:
+            items: list[DiscoveryItem] = []
+            if state is None:
+                items.append(DiscoveryItem(await client.root_id(), "My Drive", expandable=True))
+                state = {"phase": "drives", "page": None}
+            if state["phase"] == "drives":
+                drives = await client.drives(state["page"])
+                items.extend(
+                    DiscoveryItem(d.id, f"{d.name} (shared drive)", expandable=True) for d in drives.drives
+                )
+                phase, token = (
+                    ("drives", drives.next_page_token) if drives.next_page_token else ("shared", None)
+                )
+                return DiscoveryPage(items, _browse_cursor(phase, token, None))
+            page = await client.files(
+                f"sharedWithMe = true and mimeType = {quoted(FOLDER)} and trashed = false",
+                limit=100,
+                page_token=state["page"],
+                order_by="name",
+            )
+            items.extend(
+                DiscoveryItem(f.id, f"{f.name}/ (shared with you)", expandable=True) for f in page.files
+            )
+            token = page.next_page_token
+            return DiscoveryPage(items, _browse_cursor("shared", token, None) if token else None)
+        folder = await client.file(parent)
+        if not folder.is_folder:
+            raise OperationError("UNSUPPORTED_FILE", "This is not a folder.")
+        if folder.capabilities and folder.capabilities.can_list_children is False:
+            raise OperationError(
+                "PROVIDER_FORBIDDEN", "Google Drive does not let this account list this folder."
+            )
+        page = await client.files(
+            f"{quoted(folder.id)} in parents and mimeType = {quoted(FOLDER)} and trashed = false",
+            limit=100,
+            page_token=state["page"] if state else None,
+            drive_id=folder.drive_id,
+            order_by="name",
+        )
+        token = page.next_page_token
+        return DiscoveryPage(
+            [DiscoveryItem(f.id, _item(f).name, expandable=True) for f in page.files],
+            _browse_cursor("folders", token, parent) if token else None,
+        )
 
     async def describe(self, client: GoogleDriveClient, kind: str, ids: list[str]) -> dict[str, str]:
         root = await client.root_id()

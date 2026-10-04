@@ -13,6 +13,7 @@ from connections.credentials import open_client
 from connections.models import Connection
 from connectors import registry
 from connectors.base import ACCOUNT_KIND, ApiKey, Builtin, Connector, DiscoveryItem, OperationError
+from permissions.models import Grant
 from permissions.policy import ANY
 from permissions.services import (
     MAX_CHANGES,
@@ -47,6 +48,8 @@ class KindOut(Schema):
     note: str | None
     # Whether resources are listed without a search; otherwise the user searches for each one to add.
     listed: bool
+    # Whether resources are browsed as a tree: top-level ones first, then what is inside each.
+    browsable: bool
 
 
 class ConnectorOut(Schema):
@@ -59,6 +62,21 @@ class ConnectorOut(Schema):
     # For "api_key": what the key is called, and where and how to create one.
     key_label: str | None
     key_hint: str | None
+
+
+class AllowedOut(Schema):
+    """One action the user allows on the connection, and where."""
+
+    kind: str
+    kind_label: str
+    action: str
+    action_label: str
+    # Allowed on every resource of the kind, including new ones.
+    all: bool
+    # Resources it is allowed on, besides `all`.
+    count: int
+    # Names of a few of them, as saved with the grant.
+    names: list[str]
 
 
 class ConnectionOut(Schema):
@@ -75,6 +93,8 @@ class ConnectionOut(Schema):
     # Where the user manages what the provider lets Minerva reach (GitHub: the App's repositories).
     manage_url: str | None
     manage_label: str | None
+    # What the user allows agents to do here; empty until they choose.
+    allowed: list[AllowedOut]
 
 
 class AuthorizeOut(Schema):
@@ -112,6 +132,8 @@ class ResourceOut(Schema):
     actions: list[str]
     # Actions allowed through the grant on every resource of this kind.
     inherited: list[str]
+    # Whether browsing with this resource as the parent may list resources inside it.
+    expandable: bool
 
 
 class ResourcePageOut(Schema):
@@ -123,6 +145,9 @@ class ResourceQuery(Schema):
     kind: Annotated[str, Field(min_length=1, max_length=64)]
     q: Annotated[str | None, Field(max_length=100)] = None
     cursor: Annotated[str | None, Field(max_length=1000)] = None
+    # Lists what is directly inside this resource, for kinds that are browsed. Without `q` and `parent`,
+    # such kinds list their top-level resources.
+    parent: Annotated[str | None, Field(min_length=1, max_length=200)] = None
 
 
 class ChangeIn(Schema):
@@ -135,11 +160,39 @@ class AccessChangesIn(Schema):
     changes: Annotated[list[ChangeIn], Field(min_length=1, max_length=MAX_CHANGES)]
 
 
+# Names of resources shown per allowed action in a connection's summary.
+SUMMARY_NAMES = 3
+
+
+def _allowed(connector: Connector, grants: list[Grant]) -> list[dict]:
+    """The user's grants by action, in the connector's order of kinds and actions."""
+    allowed = []
+    for kind in connector.kinds:
+        for action_id in kind.actions:
+            on = [g for g in grants if g.resource_kind == kind.id and action_id in g.actions]
+            if not on:
+                continue
+            some = [g for g in on if g.resource_id != ANY]
+            action = connector.action(action_id)
+            allowed.append(
+                {
+                    "kind": kind.id,
+                    "kind_label": kind.label,
+                    "action": action_id,
+                    "action_label": action.label if action else action_id,
+                    "all": len(some) < len(on),
+                    "count": len(some),
+                    "names": [g.resource_name or g.resource_id for g in some[:SUMMARY_NAMES]],
+                }
+            )
+    return allowed
+
+
 def _connection_out(connection: Connection, user_id: UUID) -> dict:
     connector = registry.get(connection.provider)
-    needed = oauth.consent_needed(
-        connector, oauth.granted_scopes(connection), allowed_actions(connection, user_id)
-    )
+    grants = list(user_grants(connection, user_id))
+    actions = {action for g in grants for action in g.actions}
+    needed = oauth.consent_needed(connector, oauth.granted_scopes(connection), actions)
     manage = connector.manage_link()
     return {
         "id": connection.id,
@@ -153,6 +206,7 @@ def _connection_out(connection: Connection, user_id: UUID) -> dict:
         "consent_needed": needed,
         "manage_label": manage[0] if manage else None,
         "manage_url": manage[1] if manage else None,
+        "allowed": _allowed(connector, grants),
     }
 
 
@@ -184,6 +238,7 @@ def _kinds(connector: Connector) -> list[dict]:
             "hierarchical": k.hierarchical,
             "note": k.note,
             "listed": k.listed,
+            "browsable": k.id in connector.browsable,
         }
         for k in connector.kinds
     ]
@@ -362,8 +417,17 @@ def list_access_resources(request, workspace_id: UUID, connection_id: UUID, quer
     connector = registry.get(connection.provider)
     if connector.kind(query.kind) is None:
         raise HttpError(422, f"{connector.name} has no resources of type {query.kind!r}.")
+    browse = query.kind in connector.browsable and not query.q
+    if query.parent is not None and not browse:
+        raise HttpError(422, "Only resources that nest can be browsed, and not while searching.")
     if query.kind == ACCOUNT_KIND:
         items, next_cursor = [DiscoveryItem(str(connection.id), connection.label)], None
+    elif browse:
+        page = _provider_call(
+            connection,
+            lambda c, client: c.children(client, query.kind, query.parent, cursor=query.cursor),
+        )
+        items, next_cursor = page.items, page.next_cursor
     else:
         page = _provider_call(
             connection,
@@ -377,7 +441,13 @@ def list_access_resources(request, workspace_id: UUID, connection_id: UUID, quer
     inherited = granted.get(ANY, [])
     return {
         "items": [
-            {"id": item.id, "name": item.name, "actions": granted.get(item.id, []), "inherited": inherited}
+            {
+                "id": item.id,
+                "name": item.name,
+                "actions": granted.get(item.id, []),
+                "inherited": inherited,
+                "expandable": browse and item.expandable,
+            }
             for item in items
             if item.id != ANY
         ],

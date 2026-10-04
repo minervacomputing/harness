@@ -100,6 +100,42 @@ export type AgentOut = {
 };
 
 /**
+ * AllowedOut
+ *
+ * One action the user allows on the connection, and where.
+ */
+export type AllowedOut = {
+    /**
+     * Action
+     */
+    action: string;
+    /**
+     * Action Label
+     */
+    action_label: string;
+    /**
+     * All
+     */
+    all: boolean;
+    /**
+     * Count
+     */
+    count: number;
+    /**
+     * Kind
+     */
+    kind: string;
+    /**
+     * Kind Label
+     */
+    kind_label: string;
+    /**
+     * Names
+     */
+    names: Array<string>;
+};
+
+/**
  * AuthorizeOut
  */
 export type AuthorizeOut = {
@@ -131,6 +167,10 @@ export type ChangeIn = {
  * ConnectionOut
  */
 export type ConnectionOut = {
+    /**
+     * Allowed
+     */
+    allowed: Array<AllowedOut>;
     /**
      * Auth
      */
@@ -344,6 +384,10 @@ export type KindOut = {
      */
     actions: Array<string>;
     /**
+     * Browsable
+     */
+    browsable: boolean;
+    /**
      * Hierarchical
      */
     hierarchical: boolean;
@@ -433,6 +477,10 @@ export type ResourceOut = {
      */
     actions: Array<string>;
     /**
+     * Expandable
+     */
+    expandable: boolean;
+    /**
      * Id
      */
     id: string;
@@ -472,6 +520,10 @@ export type ResourceQuery = {
      * Kind
      */
     kind: string;
+    /**
+     * Parent
+     */
+    parent?: string | null;
     /**
      * Q
      */
@@ -810,6 +862,10 @@ export type ListAccessResourcesData = {
          * Cursor
          */
         cursor?: string | null;
+        /**
+         * Parent
+         */
+        parent?: string | null;
     };
     url: '/api/workspaces/{workspace_id}/connections/{connection_id}/access/resources';
 };

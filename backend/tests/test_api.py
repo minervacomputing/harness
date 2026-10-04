@@ -135,11 +135,20 @@ def test_access_settings_are_validated(api, workspace, connection, todoist):
             "hierarchical": False,
             "note": None,
             "listed": True,
+            "browsable": False,
         }
     ]
     assert todoist.calls == []
     resources = api.get(f"{url}/resources?kind=project").json()
-    assert resources["items"][0] == {"id": "work", "name": "Work", "actions": [], "inherited": []}
+    assert resources["items"][0] == {
+        "id": "work",
+        "name": "Work",
+        "actions": [],
+        "inherited": [],
+        "expandable": False,
+    }
+    # Projects do not nest, so there is nothing to browse into.
+    assert api.get(f"{url}/resources?kind=project&parent=work").status_code == 422
     bad = [
         [{"kind": "project", "id": "work", "actions": ["create"]}],
         [{"kind": "project", "id": "elsewhere", "actions": ["read"]}],
@@ -161,6 +170,36 @@ def test_access_settings_are_validated(api, workspace, connection, todoist):
     assert saved.status_code == 200
     assert saved.json()["grants"] == [
         {"kind": "project", "id": "work", "name": "Work", "actions": ["create", "read"]}
+    ]
+
+
+def test_connections_summarize_what_the_user_allows(api, workspace, connection, todoist):
+    url = f"/api/workspaces/{workspace.id}/connections"
+    assert api.get(url).json()[0]["allowed"] == []
+    changes = [
+        {"kind": "project", "id": "*", "actions": ["read"]},
+        {"kind": "project", "id": "work", "actions": ["read", "create"]},
+    ]
+    assert post(api, f"{url}/{connection.id}/access", {"changes": changes}, method="patch").status_code == 200
+    assert api.get(url).json()[0]["allowed"] == [
+        {
+            "kind": "project",
+            "kind_label": "Project",
+            "action": "read",
+            "action_label": "Read tasks",
+            "all": True,
+            "count": 1,
+            "names": ["Work"],
+        },
+        {
+            "kind": "project",
+            "kind_label": "Project",
+            "action": "create",
+            "action_label": "Create tasks",
+            "all": False,
+            "count": 1,
+            "names": ["Work"],
+        },
     ]
 
 

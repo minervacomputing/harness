@@ -160,6 +160,53 @@
         "title": "AgentOut",
         "type": "object"
       },
+      "AllowedOut": {
+        "description": "One action the user allows on the connection, and where.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "action_label": {
+            "title": "Action Label",
+            "type": "string"
+          },
+          "all": {
+            "title": "All",
+            "type": "boolean"
+          },
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "kind_label": {
+            "title": "Kind Label",
+            "type": "string"
+          },
+          "names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Names",
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "kind_label",
+          "action",
+          "action_label",
+          "all",
+          "count",
+          "names"
+        ],
+        "title": "AllowedOut",
+        "type": "object"
+      },
       "AuthorizeOut": {
         "properties": {
           "url": {
@@ -206,6 +253,13 @@
       },
       "ConnectionOut": {
         "properties": {
+          "allowed": {
+            "items": {
+              "$ref": "#/components/schemas/AllowedOut"
+            },
+            "title": "Allowed",
+            "type": "array"
+          },
           "auth": {
             "enum": [
               "oauth2",
@@ -291,7 +345,8 @@
           "created_at",
           "consent_needed",
           "manage_url",
-          "manage_label"
+          "manage_label",
+          "allowed"
         ],
         "title": "ConnectionOut",
         "type": "object"
@@ -564,6 +619,10 @@
             "title": "Actions",
             "type": "array"
           },
+          "browsable": {
+            "title": "Browsable",
+            "type": "boolean"
+          },
           "hierarchical": {
             "title": "Hierarchical",
             "type": "boolean"
@@ -603,7 +662,8 @@
           "wildcard",
           "hierarchical",
           "note",
-          "listed"
+          "listed",
+          "browsable"
         ],
         "title": "KindOut",
         "type": "object"
@@ -715,6 +775,10 @@
             "title": "Actions",
             "type": "array"
           },
+          "expandable": {
+            "title": "Expandable",
+            "type": "boolean"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -735,7 +799,8 @@
           "id",
           "name",
           "actions",
-          "inherited"
+          "inherited",
+          "expandable"
         ],
         "title": "ResourceOut",
         "type": "object"
@@ -787,6 +852,19 @@
             "minLength": 1,
             "title": "Kind",
             "type": "string"
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent"
           },
           "q": {
             "anyOf": [
@@ -1470,6 +1548,24 @@
                 }
               ],
               "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "parent",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Parent"
             }
           }
         ],

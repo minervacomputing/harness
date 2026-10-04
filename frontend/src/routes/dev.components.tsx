@@ -3,6 +3,7 @@ import { ArrowUpIcon, PlusIcon, SearchIcon, TrashIcon } from 'lucide-react'
 import { type ComponentProps, type ReactNode, useState } from 'react'
 import { Logo, LogoMark } from '@/components/brand/logo'
 import { ToolCall } from '@/components/chat/thread'
+import { AppIcon } from '@/components/connections/app-icon'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
@@ -118,6 +119,17 @@ function Catalogue() {
               <span className="font-mono text-[11px] text-muted-foreground">{size}</span>
             </div>
           ))}
+        </Row>
+      </Section>
+
+      <Section title="App icons" note="Monochrome marks in a square tile, in the foreground colour. Apps without a mark get a plain glyph.">
+        <Row className="gap-3">
+          {['google_drive', 'gmail', 'github', 'notion', 'linear', 'todoist', 'slack', 'outlook', 'web', 'unknown'].map(slug => (
+            <AppIcon key={slug} slug={slug} />
+          ))}
+        </Row>
+        <Row className="gap-3">
+          {['google_drive', 'github', 'slack'].map(slug => <AppIcon key={slug} slug={slug} size="sm" />)}
         </Row>
       </Section>
 

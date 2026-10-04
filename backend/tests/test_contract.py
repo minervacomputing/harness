@@ -590,7 +590,13 @@ def test_access_settings_understand_wildcards(api, workspace, mixed, server):
     url = f"/api/workspaces/{workspace.id}/connections/{mixed.id}/access"
     assert _patch(api, url, {"kind": FOLDER, "id": "*", "actions": ["read"]}).status_code == 200
     resources = api.get(f"{url}/resources?kind={FOLDER}").json()["items"]
-    assert resources[0] == {"id": "inbox", "name": "Inbox", "actions": [], "inherited": ["read"]}
+    assert resources[0] == {
+        "id": "inbox",
+        "name": "Inbox",
+        "actions": [],
+        "inherited": ["read"],
+        "expandable": False,
+    }
 
     # Create on one folder relies on the wildcard read, so the read cannot be removed underneath it.
     saved = _patch(api, url, {"kind": FOLDER, "id": "archive", "actions": ["create"]})
@@ -621,7 +627,9 @@ def test_account_access_needs_no_provider_call(api, scoped, user, server):
     url = f"/api/workspaces/{workspace.id}/connections/{keyed.id}/access"
     calls = len(server.calls)
     resources = api.get(f"{url}/resources?kind={ACCOUNT_KIND}").json()["items"]
-    assert resources == [{"id": str(keyed.id), "name": "Fake account", "actions": [], "inherited": []}]
+    assert resources == [
+        {"id": str(keyed.id), "name": "Fake account", "actions": [], "inherited": [], "expandable": False}
+    ]
     saved = _patch(api, url, {"kind": ACCOUNT_KIND, "id": str(keyed.id), "actions": ["read"]})
     assert saved.json()["grants"] == [
         {"kind": ACCOUNT_KIND, "id": str(keyed.id), "name": "Fake account", "actions": ["read"]}

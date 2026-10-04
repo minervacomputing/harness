@@ -8,6 +8,7 @@ import httpx
 import pytest
 from connector_runs import ceiling
 
+from connections.models import Connection
 from connectors.base import OperationError
 from connectors.google_drive import connector as drive_module
 from connectors.google_drive.client import FOLDER, SHORTCUT, GoogleDriveClient, quoted
@@ -30,8 +31,8 @@ class FakeDrive:
     """Google Drive API v3 and the OpenID userinfo endpoint, served through httpx.MockTransport.
 
     My Drive: docs/ (drafts/ (essay), notes.txt, shortcut to essay, multi), photo.png, private/ (diary).
-    Shared with the account without its folder: shared. In a folder it cannot see: orphan. Shared drive
-    "Team": plan.
+    Shared with the account without its folder: shared, and the folder club/. In a folder it cannot see:
+    orphan. Shared drive "Team": plan, minutes/.
     """
 
     def __init__(self) -> None:
@@ -53,6 +54,8 @@ class FakeDrive:
                 _file("orphan", "Orphan essay", doc, ["ghost"]),
                 _file("team", "Drive", FOLDER, driveId="team"),
                 _file("plan", "Plan", doc, ["team"], driveId="team"),
+                _file("minutes", "Minutes", FOLDER, ["team"], driveId="team"),
+                _file("club", "Club", FOLDER, sharedWithMe=True),
             ]
         }
         self.contents = {
@@ -79,6 +82,10 @@ class FakeDrive:
         files = [f for f in self.files.values() if f["id"] not in {ROOT, "team"}]
         if m := re.fullmatch(rf"{literal} in parents and trashed = false", q):
             return [f for f in files if text(m) in f.get("parents", [])]
+        if m := re.fullmatch(rf"{literal} in parents and mimeType = {literal} and trashed = false", q):
+            return [f for f in files if text(m) in f.get("parents", []) and f["mimeType"] == text(m, 2)]
+        if m := re.fullmatch(rf"sharedWithMe = true and mimeType = {literal} and trashed = false", q):
+            return [f for f in files if f.get("sharedWithMe") and f["mimeType"] == text(m)]
         if m := re.fullmatch(
             rf"\(name contains {literal} or fullText contains {literal}\) and trashed = false", q
         ):
@@ -166,7 +173,7 @@ async def test_discovery_offers_my_drive_shared_drives_then_folders(google):
     first = await connector.discover(client, "file", query=None, cursor=None)
     assert [(i.id, i.name) for i in first.items] == [(ROOT, "My Drive"), ("team", "Team (shared drive)")]
     second = await connector.discover(client, "file", query=None, cursor=first.next_cursor)
-    assert [i.name for i in second.items] == ["Docs/", "Drafts/", "Private/"]
+    assert [i.name for i in second.items] == ["Docs/", "Drafts/", "Private/", "Minutes/", "Club/"]
     assert second.next_cursor is None
     found = await connector.discover(client, "file", query="essay", cursor=None)
     assert {i.id for i in found.items} == {"essay", "short", "shared", "orphan"}
@@ -176,6 +183,58 @@ async def test_discovery_offers_my_drive_shared_drives_then_folders(google):
         assert bad.value.code == "INVALID_CURSOR"
     names = await connector.describe(client, "file", [ROOT, "team", "drafts", "gone"])
     assert names == {ROOT: "My Drive", "team": "Team (shared drive)", "drafts": "Drafts/"}
+
+
+async def test_browsing_lists_top_level_folders_then_what_is_inside(google):
+    connector = GoogleDriveConnector()
+    client = google.client()
+    first = await connector.children(client, "file", None, cursor=None)
+    assert [(i.id, i.name, i.expandable) for i in first.items] == [
+        (ROOT, "My Drive", True),
+        ("team", "Team (shared drive)", True),
+    ]
+    second = await connector.children(client, "file", None, cursor=first.next_cursor)
+    assert [(i.id, i.name) for i in second.items] == [("club", "Club/ (shared with you)")]
+    assert second.next_cursor is None
+    inside = await connector.children(client, "file", ROOT, cursor=None)
+    assert [i.name for i in inside.items] == ["Docs/", "Private/"]
+    assert [i.name for i in (await connector.children(client, "file", "docs", cursor=None)).items] == [
+        "Drafts/"
+    ]
+    team = await connector.children(client, "file", "team", cursor=None)
+    assert [i.name for i in team.items] == ["Minutes/"]
+    shared_drive_listing = google.requests[-1].url.params
+    assert (shared_drive_listing["corpora"], shared_drive_listing["driveId"]) == ("drive", "team")
+    with pytest.raises(OperationError) as not_folder:
+        await connector.children(client, "file", "essay", cursor=None)
+    assert not_folder.value.code == "UNSUPPORTED_FILE"
+    # A cursor is only valid for the parent it was issued for.
+    issued = json.dumps({"phase": "folders", "page": "p-1", "parent": "docs"})
+    for parent, cursor in ((ROOT, issued), (None, issued), ("docs", first.next_cursor)):
+        with pytest.raises(OperationError) as bad:
+            await connector.children(client, "file", parent, cursor=cursor)
+        assert bad.value.code == "INVALID_CURSOR"
+
+
+def test_the_settings_page_browses_drive_folders(api, scoped, user, google, monkeypatch):
+    monkeypatch.setattr(GoogleDriveConnector, "client", lambda self, token: google.client())
+    connection = Connection(provider="google_drive", owner=user, label="Ada", external_account_id="108")
+    connection.set_credentials({"access_token": "token"})
+    connection.save()
+    url = f"/api/workspaces/{scoped.id}/connections/{connection.id}/access"
+    assert api.get(url).json()["kinds"][0]["browsable"] is True
+    top = api.get(f"{url}/resources?kind=file").json()
+    assert [(i["name"], i["expandable"]) for i in top["items"]] == [
+        ("My Drive", True),
+        ("Team (shared drive)", True),
+    ]
+    inside = api.get(f"{url}/resources?kind=file&parent={ROOT}").json()
+    assert [i["name"] for i in inside["items"]] == ["Docs/", "Private/"]
+    # Searching stays flat, and lists files too.
+    found = api.get(f"{url}/resources?kind=file&q=essay").json()
+    assert {i["id"] for i in found["items"]} == {"essay", "short", "shared", "orphan"}
+    assert not any(i["expandable"] for i in found["items"])
+    assert api.get(f"{url}/resources?kind=file&q=essay&parent={ROOT}").status_code == 422
 
 
 BASE_SCOPES = ["openid", "email", READ_SCOPE]

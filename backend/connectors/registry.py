@@ -108,6 +108,8 @@ def validate(connectors: list[Connector]) -> None:
         kind_ids = [kind.id for kind in connector.kinds]
         if not kind_ids or len(set(kind_ids)) != len(kind_ids):
             raise InvalidConnector(f"{connector.slug}: kinds must be declared once each.")
+        if any(not connector.nests(kind_id) for kind_id in connector.browsable):
+            raise InvalidConnector(f"{connector.slug}: only hierarchical kinds can be browsed.")
         for kind in connector.kinds:
             if kind.id == ACCOUNT_KIND and (kind.wildcard or kind.hierarchical):
                 raise InvalidConnector(f"{connector.slug}: the account kind has one resource.")
