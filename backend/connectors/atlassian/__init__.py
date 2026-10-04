@@ -26,8 +26,8 @@ API_URL = "https://api.atlassian.com"
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_SITES = 50
 # Cloud ids are UUIDs; Minerva keeps them in lower case.
-CLOUD_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-_SITE_URL = re.compile(r"^https://[a-z0-9-]+(?:\.[a-z0-9-]+)+$")
+CLOUD_ID = re.compile(r"\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
+_SITE_URL = re.compile(r"\Ahttps://[a-z0-9-]+(?:\.[a-z0-9-]+)+\Z")
 
 
 def oauth(app: str, *scopes: str) -> OAuth2:

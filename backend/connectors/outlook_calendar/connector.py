@@ -86,8 +86,10 @@ Asia/Tokyo Asia/Seoul Australia/Adelaide Australia/Darwin Australia/Brisbane Aus
 Pacific/Port_Moresby Australia/Hobart Asia/Yakutsk Pacific/Guadalcanal Asia/Vladivostok Pacific/Auckland
 Etc/GMT-12 Pacific/Fiji Asia/Magadan Pacific/Tongatapu Pacific/Apia Pacific/Kiritimati
 """.split()  # noqa: SIM905
-DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-DATE_TIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]([01]\d|2[0-3]):[0-5]\d)$")
+DATE = re.compile(r"\A\d{4}-\d{2}-\d{2}\Z")
+DATE_TIME = re.compile(
+    r"\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]([01]\d|2[0-3]):[0-5]\d)\Z"
+)
 # Times are converted and windows widened here, so years stay well inside what Python's dates hold.
 YEARS = range(1900, 3000)
 ZONES = frozenset({"UTC", *(zone for zone in _DOCUMENTED_ZONES if zone in available_timezones())})

@@ -18,8 +18,8 @@ from connectors.http import ProviderHTTP
 
 API_URL = "https://gmail.googleapis.com/gmail/v1/users/me"
 # Message, thread and label ids. Gmail's message and thread ids are hex; user label ids are `Label_<n>`.
-ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-PAGE_TOKEN = re.compile(r"^[A-Za-z0-9_-]{1,200}$")
+ID = re.compile(r"\A[A-Za-z0-9_-]{1,64}\Z")
+PAGE_TOKEN = re.compile(r"\A[A-Za-z0-9_-]{1,200}\Z")
 MAX_MESSAGE_BYTES = 8 * 1024 * 1024
 MAX_THREAD_BYTES = 16 * 1024 * 1024
 SUMMARY_HEADERS = ("From", "To", "Cc", "Subject", "Date")

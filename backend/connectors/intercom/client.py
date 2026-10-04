@@ -17,11 +17,11 @@ from connectors.http import ProviderHTTP
 API_URL = "https://api.intercom.io"
 VERSION = "2.16"
 # Conversation, team and admin ids are positive integers; leading zeros are refused, so each has one spelling.
-ID = re.compile(r"^[1-9][0-9]{0,19}$")
+ID = re.compile(r"\A[1-9][0-9]{0,19}\Z")
 MAX_RESPONSE = 4 * 1024 * 1024
 MAX_TEAMS = 500
 # Intercom's cursors are opaque; they are checked, never followed as addresses.
-_CURSOR = re.compile(r"^[\x21-\x7e]{1,900}$")
+_CURSOR = re.compile(r"\A[\x21-\x7e]{1,900}\Z")
 
 
 class Model(BaseModel):

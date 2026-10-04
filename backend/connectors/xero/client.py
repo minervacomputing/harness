@@ -31,12 +31,12 @@ MAX_MESSAGES = 5
 MAX_MESSAGE = 300
 MAX_PAGE = 100_000
 # Xero's ids are UUIDs; Minerva keeps them in lower case.
-UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+UUID = re.compile(r"\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 ZERO_UUID = "00000000-0000-0000-0000-000000000000"
-_PAGE = re.compile(r"^[1-9][0-9]{0,5}$")
+_PAGE = re.compile(r"\A[1-9][0-9]{0,5}\Z")
 # Xero's JSON dates: /Date(1518685950940+0000)/, milliseconds since the epoch and an offset.
-_JSON_DATE = re.compile(r"^/Date\((-?\d{1,15})([+-]\d{4})?\)/$")
-_DATE_STRING = re.compile(r"^(\d{4}-\d{2}-\d{2})(T[0-9:.]+)?$")
+_JSON_DATE = re.compile(r"\A/Date\((-?\d{1,15})([+-]\d{4})?\)/\Z")
+_DATE_STRING = re.compile(r"\A(\d{4}-\d{2}-\d{2})(T[0-9:.]+)?\Z")
 
 
 def uuid(value: str | None) -> str | None:

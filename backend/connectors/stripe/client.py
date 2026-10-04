@@ -18,13 +18,13 @@ from connectors.http import ProviderHTTP
 API_URL = "https://api.stripe.com/v1"
 API_VERSION = "2025-08-27.basil"
 # A restricted key; secret keys (sk_) are refused, since they can do anything in the account.
-KEY = re.compile(r"^rk_(test|live)_[A-Za-z0-9]{10,250}$")
+KEY = re.compile(r"\Ark_(test|live)_[A-Za-z0-9]{10,250}\Z")
 # Stripe object ids: a short prefix, an underscore and letters and digits.
-OBJECT_ID = re.compile(r"^[a-z]{2,8}_[A-Za-z0-9]{1,100}$")
-CUSTOMER_ID = re.compile(r"^cus_[A-Za-z0-9]{1,100}$")
-CHARGE_ID = re.compile(r"^(ch|py)_[A-Za-z0-9]{1,100}$")
-SEARCH_PAGE = re.compile(r"^[A-Za-z0-9_=+/:.-]{1,500}$")
-_CODE = re.compile(r"^[a-z0-9_]{1,64}$")
+OBJECT_ID = re.compile(r"\A[a-z]{2,8}_[A-Za-z0-9]{1,100}\Z")
+CUSTOMER_ID = re.compile(r"\Acus_[A-Za-z0-9]{1,100}\Z")
+CHARGE_ID = re.compile(r"\A(ch|py)_[A-Za-z0-9]{1,100}\Z")
+SEARCH_PAGE = re.compile(r"\A[A-Za-z0-9_=+/:.-]{1,500}\Z")
+_CODE = re.compile(r"\A[a-z0-9_]{1,64}\Z")
 MAX_RESPONSE = 4 * 1024 * 1024
 
 # Refusals of a write that say what to change, by Stripe's error code.

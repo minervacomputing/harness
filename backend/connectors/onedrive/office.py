@@ -29,7 +29,7 @@ MAX_SHARED_STRINGS = 1_000_000
 MAX_SLIDES = 1000
 MAX_COLUMNS = 200
 CHUNK = 64 * 1024
-_CELL = re.compile(r"^([A-Z]{1,3})\d+$")
+_CELL = re.compile(r"\A([A-Z]{1,3})\d+\Z")
 
 Start = Callable[[str, dict[str, str]], None]
 End = Callable[[str], None]

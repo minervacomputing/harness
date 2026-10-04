@@ -20,11 +20,11 @@ VERSION = "2026-09"
 OBJECTS = f"/crm/objects/{VERSION}"
 PIPELINES = f"/crm/pipelines/{VERSION}/deals"
 # Record ids are positive integers; leading zeros are refused, so one record has one spelling.
-RECORD_ID = re.compile(r"^[1-9][0-9]{0,19}$")
+RECORD_ID = re.compile(r"\A[1-9][0-9]{0,19}\Z")
 # Pipeline and stage ids: "default", built-in names such as "closedwon", or numbers.
-PIPELINE_ID = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
+PIPELINE_ID = re.compile(r"\A[A-Za-z0-9_-]{1,100}\Z")
 # Search pages are numbered by offset; HubSpot returns at most 10,000 results for a search.
-SEARCH_AFTER = re.compile(r"^(0|[1-9][0-9]{0,4})$")
+SEARCH_AFTER = re.compile(r"\A(0|[1-9][0-9]{0,4})\Z")
 MAX_SEARCH_RESULTS = 10_000
 MAX_RESPONSE = 4 * 1024 * 1024
 MAX_PIPELINES = 100

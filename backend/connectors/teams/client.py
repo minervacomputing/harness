@@ -18,7 +18,7 @@ from connectors.microsoft import Graph, Model, segment
 CHANNEL_FIELDS = "id,displayName,description,membershipType,webUrl"
 MAX_PAGES = 10
 # What the run's page token table stores, less the prefix.
-_TOKEN = re.compile(r"^[\x21-\x7e]{1,990}$")
+_TOKEN = re.compile(r"\A[\x21-\x7e]{1,990}\Z")
 PREFIX = "t:"
 
 

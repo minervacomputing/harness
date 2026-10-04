@@ -51,7 +51,7 @@ from connectors.confluence.writes import ADD_COMMENT, CREATE_PAGE
 DISCOVERY_PAGE = 50
 MAX_DESCRIBE = BATCH_LIMIT
 
-_CURSOR = re.compile(r"^(\d{1,2}):([\x21-\x7e]{0,990})$")
+_CURSOR = re.compile(r"\A(\d{1,2}):([\x21-\x7e]{0,990})\Z")
 
 
 def _space_name(site: Site, space: Space, sites: list[Site]) -> str:

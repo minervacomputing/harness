@@ -34,7 +34,7 @@ MAX_FILENAME = 200
 MAX_REFERENCES = 20
 # A Message-ID or a reference to one: angle brackets around two runs of printable ASCII, without spaces or
 # angle brackets, joined by one @.
-MESSAGE_ID = re.compile(r"^<[!-;=?A-~]{1,200}@[!-;=?A-~]{1,200}>$")
+MESSAGE_ID = re.compile(r"\A<[!-;=?A-~]{1,200}@[!-;=?A-~]{1,200}>\Z")
 _SPACE = re.compile(r"\s+")
 
 

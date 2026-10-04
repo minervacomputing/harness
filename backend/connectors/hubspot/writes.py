@@ -59,7 +59,7 @@ DEAL_TO_COMPANY = 341
 NOTE_TO_CONTACT = 202
 NOTE_TO_COMPANY = 190
 NOTE_TO_DEAL = 214
-_AMOUNT = re.compile(r"^[0-9]{1,13}(\.[0-9]{1,2})?$")
+_AMOUNT = re.compile(r"\A[0-9]{1,13}(\.[0-9]{1,2})?\Z")
 
 
 def _text(max_length: int, description: str):

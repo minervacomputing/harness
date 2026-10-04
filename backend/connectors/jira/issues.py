@@ -12,9 +12,9 @@ from connectors.jira.client import Issue, JiraClient, Project
 PROJECT = "project"
 HIDDEN = frozenset({"NOT_FOUND", "PROVIDER_FORBIDDEN"})
 
-ID = re.compile(r"^\d{1,18}$")
-_PROJECT_KEY = re.compile(r"^[A-Z][A-Z0-9_]{0,254}$")
-_ISSUE_KEY = re.compile(r"^[A-Z][A-Z0-9_]{0,254}-\d{1,9}$")
+ID = re.compile(r"\A\d{1,18}\Z")
+_PROJECT_KEY = re.compile(r"\A[A-Z][A-Z0-9_]{0,254}\Z")
+_ISSUE_KEY = re.compile(r"\A[A-Z][A-Z0-9_]{0,254}-\d{1,9}\Z")
 
 
 def _site_id(value: str) -> str:

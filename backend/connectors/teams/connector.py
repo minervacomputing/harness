@@ -66,10 +66,10 @@ CONCURRENCY = 8
 HIDDEN = frozenset({"NOT_FOUND", "PROVIDER_FORBIDDEN"})
 WRITABLE = frozenset({"standard", "private"})
 
-_GUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-_CHANNEL_ID = re.compile(r"^19:[A-Za-z0-9._=+-]{1,200}@thread\.[a-z0-9]{1,20}$")
-_MESSAGE_ID = re.compile(r"^\d{1,20}$")
-_OFFSET = re.compile(r"^\d{1,4}$")
+_GUID = re.compile(r"\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
+_CHANNEL_ID = re.compile(r"\A19:[A-Za-z0-9._=+-]{1,200}@thread\.[a-z0-9]{1,20}\Z")
+_MESSAGE_ID = re.compile(r"\A\d{1,20}\Z")
+_OFFSET = re.compile(r"\A\d{1,4}\Z")
 
 
 def _team_id(value: str) -> str:

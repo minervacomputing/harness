@@ -13,9 +13,9 @@ TEAM = "team"
 CLOSED = ("completed", "canceled")
 HIDDEN = frozenset({"NOT_FOUND", "PROVIDER_FORBIDDEN", "PROVIDER_REJECTED"})
 
-UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-_TEAM_KEY = re.compile(r"^[A-Z0-9]{1,10}$")
-_CURSOR = re.compile(r"^[\x21-\x7e]{1,500}$")
+UUID = re.compile(r"\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
+_TEAM_KEY = re.compile(r"\A[A-Z0-9]{1,10}\Z")
+_CURSOR = re.compile(r"\A[\x21-\x7e]{1,500}\Z")
 
 
 def _team_name(value: str) -> str:

@@ -26,9 +26,9 @@ API_URL = f"{GRAPH}/v1.0"
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 IMMUTABLE_IDS = 'IdType="ImmutableId"'
 # Graph's ids are URL-safe base64.
-ID = re.compile(r"^[A-Za-z0-9=_-]{10,512}$")
-_SKIP = re.compile(r"^\d{1,6}$")
-_SKIPTOKEN = re.compile(r"^[A-Za-z0-9._~=+/%:-]{1,880}$")
+ID = re.compile(r"\A[A-Za-z0-9=_-]{10,512}\Z")
+_SKIP = re.compile(r"\A\d{1,6}\Z")
+_SKIPTOKEN = re.compile(r"\A[A-Za-z0-9._~=+/%:-]{1,880}\Z")
 # The mailbox exists but Graph cannot reach it: on-premises Exchange, or an inactive account.
 UNSUPPORTED_MAILBOX = frozenset({"MailboxNotEnabledForRESTAPI", "MailboxNotSupportedForRESTAPI"})
 

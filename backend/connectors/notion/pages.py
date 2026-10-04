@@ -16,7 +16,7 @@ MAX_HOPS = 64
 MAX_LOOKUPS = 150
 MAX_FILTER = 8000
 
-_UUID = re.compile(r"^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$", re.IGNORECASE)
+_UUID = re.compile(r"\A[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}\Z", re.IGNORECASE)
 _LINK_ID = re.compile(r"([0-9a-f]{32})$", re.IGNORECASE)
 
 

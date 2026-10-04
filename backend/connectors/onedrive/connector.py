@@ -69,7 +69,7 @@ MAX_SITE_LIBRARIES = 20
 MAX_TEXT_BYTES = 2 * 1024 * 1024
 MAX_OFFICE_BYTES = 10 * 1024 * 1024
 MAX_UPLOAD_BYTES = 1024 * 1024
-PERSONAL_DRIVE = re.compile(r"^[0-9A-Fa-f]{16}$")
+PERSONAL_DRIVE = re.compile(r"\A[0-9A-Fa-f]{16}\Z")
 DRIVE_PART = r"[A-Za-z0-9!_=-]{1,200}"
 ITEM_PART = r"[A-Za-z0-9!_.=-]{1,200}"
 ITEM_ID = re.compile(rf"^({DRIVE_PART}):({ITEM_PART})$")

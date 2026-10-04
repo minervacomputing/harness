@@ -30,7 +30,7 @@ MAX_URL = 2000
 # Resolvable only inside some network, or not through public DNS at all.
 REFUSED_SUFFIXES = ("arpa", "onion")
 DEFAULT_PORTS = {"http": 80, "https": 443}
-_LABEL = re.compile(r"^(?!-)[a-z0-9-]{1,63}(?<!-)$")
+_LABEL = re.compile(r"\A(?!-)[a-z0-9-]{1,63}(?<!-)\Z")
 # Characters kept as they are in a path or query; everything else is percent-encoded.
 _URL_SAFE = "/?:@!$&'()*+,;=-._~%[]"
 

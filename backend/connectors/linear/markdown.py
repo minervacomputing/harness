@@ -36,7 +36,7 @@ _LABELLED_LINK = re.compile(
     re.IGNORECASE,
 )
 _OWN_ID = re.compile(r"-([0-9a-f]{8,})$", re.IGNORECASE)
-IDENTIFIER = re.compile(r"^[A-Za-z0-9]{1,10}-\d{1,9}$")
+IDENTIFIER = re.compile(r"\A[A-Za-z0-9]{1,10}-\d{1,9}\Z")
 
 # An issue address as agents may write it: workspace, identifier and optionally the title part.
 _ISSUE_LINK = re.compile(

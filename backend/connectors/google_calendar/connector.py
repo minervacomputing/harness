@@ -43,8 +43,8 @@ MAX_ATTENDEES = 50
 READ_CONSENT = (frozenset({READ_SCOPE}), frozenset({FULL_SCOPE}))
 WRITE_CONSENT = (frozenset({READ_SCOPE, EVENTS_SCOPE}), frozenset({FULL_SCOPE}))
 
-DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-DATE_TIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:\d{2})$")
+DATE = re.compile(r"\A\d{4}-\d{2}-\d{2}\Z")
+DATE_TIME = re.compile(r"\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:\d{2})\Z")
 
 
 def _not_dots(value: str) -> str:

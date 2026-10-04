@@ -26,7 +26,7 @@ MAX_LOCAL = 64
 # What a reply would go to when Minerva cannot name it as an address. No grant names it, since it is not an
 # address; only allowing every recipient covers it, and then the reply is refused anyway.
 UNSUPPORTED = "unsupported"
-_LOCAL = re.compile(r"^[a-z0-9_%+'-]+(\.[a-z0-9_%+'-]+)*$")
+_LOCAL = re.compile(r"\A[a-z0-9_%+'-]+(\.[a-z0-9_%+'-]+)*\Z")
 
 
 def _invalid() -> OperationError:

@@ -65,13 +65,13 @@ HIDDEN = frozenset(
     {"NOT_FOUND", "PROVIDER_FORBIDDEN", "PROVIDER_REJECTED", "NOT_IN_CHANNEL", "CHANNEL_ARCHIVED"}
 )
 
-_CHANNEL_ID = re.compile(r"^[CG][A-Z0-9]{8,20}$")
+_CHANNEL_ID = re.compile(r"\A[CG][A-Z0-9]{8,20}\Z")
 # Slack channel names: lowercase, no spaces or periods, at most 80 characters.
-_CHANNEL_NAME = re.compile(r"^[^\s#<>|@,.&A-Z]{1,80}$")
-_TS = re.compile(r"^\d{9,10}\.\d{6}$")
-_USER_ID = re.compile(r"^[UWB][A-Z0-9]{2,20}$")
+_CHANNEL_NAME = re.compile(r"\A[^\s#<>|@,.&A-Z]{1,80}\Z")
+_TS = re.compile(r"\A\d{9,10}\.\d{6}\Z")
+_USER_ID = re.compile(r"\A[UWB][A-Z0-9]{2,20}\Z")
 _MENTION = re.compile(r"<@([UW][A-Z0-9]{2,20})(?:\|[^<>]*)?>")
-_CURSOR = re.compile(r"^[A-Za-z0-9=+/_-]{1,500}$")
+_CURSOR = re.compile(r"\A[A-Za-z0-9=+/_-]{1,500}\Z")
 
 
 def _channel_name(value: str) -> str:

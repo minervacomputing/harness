@@ -50,7 +50,7 @@ DISCOVERY_PAGE = 50
 MAX_DESCRIBE = 100
 CONCURRENCY = 8
 
-_CURSOR = re.compile(r"^(\d{1,2}):(\d{1,6})$")
+_CURSOR = re.compile(r"\A(\d{1,2}):(\d{1,6})\Z")
 
 
 def _project_name(site: Site, project: Project, sites: list[Site]) -> str:

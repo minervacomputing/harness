@@ -51,9 +51,9 @@ THREE_DECIMAL = frozenset({"bhd", "jod", "kwd", "omr", "tnd"})
 LADDER = (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000)
 # Stripe's largest amount: eight digits in the smallest unit.
 MAX_MINOR = 99_999_999
-CURRENCY = re.compile(r"^[a-z]{3}$")
-_TIER = re.compile(r"^([a-z]{3})(<=|>)([1-9][0-9]{0,8})$")
-_DECIMAL = re.compile(r"^[0-9]{1,12}(\.[0-9]{1,3})?$")
+CURRENCY = re.compile(r"\A[a-z]{3}\Z")
+_TIER = re.compile(r"\A([a-z]{3})(<=|>)([1-9][0-9]{0,8})\Z")
+_DECIMAL = re.compile(r"\A[0-9]{1,12}(\.[0-9]{1,3})?\Z")
 
 
 def exponent(currency: str) -> int:

@@ -12,11 +12,11 @@ from connectors.confluence.client import ConfluenceClient, Page, Space
 SPACE = "space"
 HIDDEN = frozenset({"NOT_FOUND", "PROVIDER_FORBIDDEN"})
 
-ID = re.compile(r"^\d{1,18}$")
+ID = re.compile(r"\A\d{1,18}\Z")
 # Ids as calls give them: written as Confluence writes them, so another spelling cannot tell an existing
 # space from a missing one.
-CANONICAL_ID = re.compile(r"^[1-9]\d{0,17}$")
-SPACE_KEY = re.compile(r"^~?[A-Za-z0-9_:-]{1,255}$")
+CANONICAL_ID = re.compile(r"\A[1-9]\d{0,17}\Z")
+SPACE_KEY = re.compile(r"\A~?[A-Za-z0-9_:-]{1,255}\Z")
 
 
 def _site_id(value: str) -> str:

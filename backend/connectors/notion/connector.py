@@ -53,7 +53,7 @@ from connectors.notion.writes import (
 )
 
 DESCRIBE_CONCURRENCY = 8
-_CURSOR = re.compile(r"^[A-Za-z0-9_=-]{1,300}$")
+_CURSOR = re.compile(r"\A[A-Za-z0-9_=-]{1,300}\Z")
 
 
 def _discovery_cursor(cursor: str | None) -> str | None:

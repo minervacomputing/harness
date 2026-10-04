@@ -67,7 +67,7 @@ def _decimal(pattern: str, *, positive: bool = False, most: Decimal | None = Non
 Quantity = Annotated[
     str,
     Field(min_length=1, max_length=15, description="A decimal string, more than 0, up to 4 decimal places."),
-    AfterValidator(_decimal(r"^[0-9]{1,9}(\.[0-9]{1,4})?$", positive=True)),
+    AfterValidator(_decimal(r"\A[0-9]{1,9}(\.[0-9]{1,4})?\Z", positive=True)),
 ]
 UnitAmount = Annotated[
     str,
@@ -76,12 +76,12 @@ UnitAmount = Annotated[
         max_length=16,
         description="A decimal string, up to 4 decimal places; negative for a discount line.",
     ),
-    AfterValidator(_decimal(r"^-?[0-9]{1,10}(\.[0-9]{1,4})?$")),
+    AfterValidator(_decimal(r"\A-?[0-9]{1,10}(\.[0-9]{1,4})?\Z")),
 ]
 DiscountRate = Annotated[
     str,
     Field(min_length=1, max_length=6, description="A percentage, 0 to 100, as a decimal string."),
-    AfterValidator(_decimal(r"^[0-9]{1,3}(\.[0-9]{1,2})?$", most=Decimal(100))),
+    AfterValidator(_decimal(r"\A[0-9]{1,3}(\.[0-9]{1,2})?\Z", most=Decimal(100))),
 ]
 Code = Annotated[str, Field(min_length=1, max_length=50), AfterValidator(single_line)]
 Description = Annotated[str, Field(min_length=1, max_length=4000), AfterValidator(plain_text)]

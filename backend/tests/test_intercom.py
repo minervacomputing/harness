@@ -282,6 +282,12 @@ async def test_inboxes_are_the_teams_and_no_team(intercom):
     assert await connector.describe(client, "inbox", ["x"]) == {}
 
 
+async def test_ids_with_a_final_newline_are_refused(intercom):
+    intercom.teams[1]["id"] = BILLING + "\n"
+    page = await IntercomConnector().discover(intercom.client(), "inbox", query=None, cursor=None)
+    assert [i.id for i in page.items] == [SUPPORT, "none"]
+
+
 def test_intercom_has_no_scopes_to_ask_for():
     connector = registry.get("intercom")
     assert connector.auth.scopes == () and connector.auth.pkce is False

@@ -8,7 +8,7 @@ from functools import cache
 from connectors.base import ACCOUNT_KIND, Connector, OAuth2, Operation
 
 # No digits: a second connection of a provider gets a numeric suffix (todoist2), which then cannot collide.
-NAME_PATTERN = re.compile(r"^[a-z]+(_[a-z]+)*$")
+NAME_PATTERN = re.compile(r"\A[a-z]+(_[a-z]+)*\Z")
 MAX_TOOL_NAME = 64
 MAX_ALIAS_SUFFIX = "99"
 # Set by the flow itself; a connector's `authorize_params` must not replace them.

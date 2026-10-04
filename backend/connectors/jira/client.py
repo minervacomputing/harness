@@ -15,7 +15,7 @@ from connectors.base import OperationError
 
 MAX_PAGES = 10
 BULK_LIMIT = 100
-_TOKEN = re.compile(r"^[\x21-\x7e]{1,990}$")
+_TOKEN = re.compile(r"\A[\x21-\x7e]{1,990}\Z")
 PREFIX = "t:"
 
 
