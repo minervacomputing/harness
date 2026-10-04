@@ -106,7 +106,7 @@ function Catalogue() {
   const [checked, setChecked] = useState(true)
   return (
     <div>
-      <Section title="Logo" note="Ruled mark from 40px, solid mark from 20 to 32px, the owl alone at 16px. The colour follows the logo token.">
+      <Section title="Logo" note="The owl, with the wordmark or alone, at every size. The colour follows the logo token.">
         <Row className="gap-8">
           <Logo height={64} />
           <Logo height={32} />

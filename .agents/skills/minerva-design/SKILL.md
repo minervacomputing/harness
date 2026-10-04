@@ -12,7 +12,7 @@ The system is built on shadcn-style components in `frontend/src/components/ui/`,
 ## Principles
 
 1. **Ruled, not boxed in ornament.** Structure comes from 1px rules and borders. Only controls get depth, and only from the depth tokens (see [Depth](#depth)). There are no other shadows, gradients or glows.
-2. **Square corners.** Every radius token is 0. Only round things are round: status dots, radio buttons and the logo disc (`rounded-full`).
+2. **Square corners.** Every radius token is 0. Only round things are round: status dots and radio buttons (`rounded-full`).
 3. **High contrast.** Every text colour keeps at least 4.5:1 against its surface in both themes. Do not lower opacity on text to make it quieter. Use `text-muted-foreground` or `text-faint` instead.
 4. **State is a dot and a word.** Show status with `<Status tone="…">Word</Status>`. Never colour a whole row or card, and **never use a coloured left border (side stripe) as a highlight**, anywhere.
 5. **Centred buttons.** Button content is always centred. Do not add pseudo-elements to buttons, and do not left-align button labels (no `justify-start`).
@@ -127,17 +127,11 @@ When you need a new primitive, add it to `components/ui/` following these rules,
 
 ## Logo
 
-The logo is an owl on a navy disc. White horizontal rules cross the disc, and a white gap separates the owl from them. The wordmark is MINERVA in Archivo Expanded ExtraBold (Archivo at width 125, weight 800, tracked +0.03em), converted to outlines.
+The logo is a barn owl sitting on a branch, its back half turned to us and its head looking back over its shoulder. It is one navy shape with no background: the face, the eyes and the gaps between the wing feathers are cut out. The same owl is used at every size. The wordmark is MINERVA in Archivo Expanded ExtraBold (Archivo at width 125, weight 800, tracked +0.03em), converted to outlines, to the right of the owl.
 
 There is no reversed tile or coloured icon background. On dark surfaces, the logo simply takes the light `logo` token.
 
-**Form by rendered size** (the components choose it automatically):
-
-- 40px and up: the ruled mark.
-- 20 to 32px: the solid mark (the rules disappear).
-- 16px and under: the owl alone.
-
-**In the app:** `<Logo height={24} />` renders the lockup, and `<LogoMark size={32} />` renders the mark. Both use `currentColor` with `text-logo` by default. Never inline other copies of the paths.
+**In the app:** `<Logo height={24} />` renders the lockup (`height` is the owl's height), and `<LogoMark size={32} />` renders the owl centred in a square. Both use `currentColor` with `text-logo` by default. Never inline other copies of the paths.
 
 **Files:**
 
@@ -145,14 +139,15 @@ There is no reversed tile or coloured icon background. On dark surfaces, the log
 - `frontend/public/favicon.svg`, `favicon.ico` and `apple-touch-icon.png` are the favicons.
 - `../branding/` (outside the repo, in the parent `minerva` folder) holds every exported file: SVG logos in navy, black and white, icons, PNGs, the Archivo font and a README with usage rules.
 
-**Regenerating** after changing the geometry in `design/logo/build.py`. Run from the repo root:
+**Regenerating.** The owl was drawn by an image model; the drawing is `../branding/source/owl.png`. Run from the repo root:
 
 ```sh
+uv run --with potracer --with numpy python design/logo/trace.py ../branding/source/owl.png
 uv run --with fonttools --with skia-pathops --with uharfbuzz python design/logo/build.py "../branding/fonts/Archivo[wdth,wght].ttf"
 python3 design/logo/export.py ../branding
 ```
 
-`build.py` flattens the mark with boolean path operations into `design/logo/geometry.json`. `export.py` writes `../branding/`, `logo-paths.ts` and the favicons in `frontend/public/`. `design/logos.html` is the logo presentation page.
+`trace.py` traces the drawing into `design/logo/owl.svg`; only rerun it when the drawing changes. `build.py` scales the owl, sets the name beside it and flattens both into `design/logo/geometry.json`. `export.py` writes `../branding/`, `logo-paths.ts`, the favicons in `frontend/public/`, and the landing page's logo and favicons in `../landing-page/`.
 
 ## The components page
 
@@ -163,7 +158,7 @@ python3 design/logo/export.py ../branding
 ## Don'ts
 
 - No coloured left borders or side stripes for emphasis.
-- No `rounded-*` classes other than `rounded-full` for dots, radios and the logo disc.
+- No `rounded-*` classes other than `rounded-full` for dots and radios.
 - No shadows, gradients or glows outside the [depth](#depth) tokens, and no depth on things that cannot be clicked.
 - No hard-coded colours (`#hex`, `amber-*`, `red-*`, `slate-*`) in components.
 - No dither or texture behind text.
