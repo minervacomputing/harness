@@ -64,6 +64,10 @@ MINERVA_MODEL_BASE_URL=http://127.0.0.1:9900/v1 MINERVA_MODEL_API_KEY=fake uv ru
 
 Emails (verification and sign-in codes) are printed in the `web` process output.
 
+**Demo data:** `make seed-demo` (re)creates `demo@example.com` (password `password`) with ten connections, grants, three agents and sample conversations. The connections hold placeholder credentials, so they list in the app but cannot reach a provider, and the conversations were never run. Like `make seed`, it needs `MINERVA_DEBUG=true`.
+
+**README screenshots:** `make screenshots` runs `make seed-demo`, then `docs/screenshots/capture.mjs`, which signs in as the demo account and writes `docs/images/chat.png`, `injection.png` and `connections.png`. It needs `make dev` running, Google Chrome and ImageMagick (`magick`). After a UI change that shows in these pages, run it and check the images before committing them. To change what they show, edit the data in `backend/accounts/management/commands/seed_demo.py`.
+
 **Port in use:** if `web` exits with `Address already in use`, another copy of `make dev` is running. Stop it rather than starting a second one.
 
 ## Git
