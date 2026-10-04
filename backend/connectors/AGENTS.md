@@ -101,7 +101,7 @@ A connector turns one provider's API into tools, and the permission executor aut
 2. `registry._declared()`: import the connector and list it.
 3. `backend/minerva/config.py`: add `<app>_client_id: str | None` and `<app>_client_secret: SecretStr | None`, with a one-line comment. `oauth_client(app)` reads them by name. Without them, the connector is not offered, unless it has `registration_url`. An operator key follows `brave_search_api_key`.
 4. `.env.example`, and the environment table in the root `AGENTS.md`.
-5. `README.md`: add a `## <Provider>` section covering:
+5. `docs/connectors.md`: add a `## <Provider>` section covering:
    - where to register the app;
    - the callback URL, `{site_url}/api/oauth/<slug>/callback`;
    - the permissions or scopes to give;

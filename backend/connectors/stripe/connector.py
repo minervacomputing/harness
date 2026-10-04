@@ -2,10 +2,11 @@
 refund payments and credit customer balances, each within amount caps users choose.
 
 Users connect with a restricted key (`rk_live_` or `rk_test_`) they create in Stripe with only the
-permissions Minerva's operations use (README), so Stripe limits the key as well as Minerva. Secret keys are
-refused, since they can do anything in the account. The connection is the Stripe account in the key's mode:
-a test key and a live key of one account are two connections, and a key never replaces one of the other
-mode. Minerva reads the account (`GET /v1/account`) to name it, and to suggest its default currency.
+permissions Minerva's operations use (docs/connectors.md), so Stripe limits the key as well as Minerva.
+Secret keys are refused, since they can do anything in the account. The connection is the Stripe account in
+the key's mode: a test key and a live key of one account are two connections, and a key never replaces one
+of the other mode. Minerva reads the account (`GET /v1/account`) to name it, and to suggest its default
+currency.
 
 Customers are one hierarchical kind; a customer's payments, invoices and subscriptions sit inside it (see
 `scope`). Listings are filtered per object after Stripe has listed them, so a page can come back with
