@@ -3,7 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { listConnectionsOptions } from '@/api/@tanstack/react-query.gen'
 import type { AgentOut } from '@/api/types.gen'
-import { AppList, connectionsOf } from '@/components/agents/agent-apps'
+import { AppIcons, AttentionList, connectionsOf } from '@/components/agents/agent-apps'
+import { setupOf } from '@/components/connections/summary'
 import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/input'
 import { ErrorNote, Notice, Spinner } from '@/components/ui/misc'
@@ -39,6 +40,8 @@ export function AgentIntro({ workspaceId, agents, agent, unknown = false, onChoo
   }
 
   const apps = agent ? connectionsOf(agent, connections.data) : []
+  const blocked = apps.filter(connection => setupOf(connection).attention)
+  const ready = apps.filter(connection => !setupOf(connection).attention)
   const picker = onChoose && (agents.length > 1 || unknown)
   return (
     <div className="mx-auto max-w-xl space-y-5 py-16 text-center">
@@ -54,12 +57,22 @@ export function AgentIntro({ workspaceId, agents, agent, unknown = false, onChoo
       {unknown && <Notice className="text-left">The agent in this link no longer exists. Choose another one to start chatting.</Notice>}
       {agent && (agent.connection_ids.length ? (
         <>
-          <p className="text-sm text-muted-foreground">
-            Ask about anything in its connected apps. It works only within the access you grant.
-          </p>
           {connections.isPending && <Spinner className="mx-auto" />}
           {connections.error && <ErrorNote className="text-left">{errorMessage(connections.error, 'Could not load its apps.')}</ErrorNote>}
-          <AppList connections={apps} className="justify-center" />
+          {blocked.length > 0 && (
+            <section aria-labelledby="agent-attention" className="mx-auto max-w-md space-y-2 text-left">
+              <h2 id="agent-attention" className="label">Needs your attention</h2>
+              <AttentionList workspaceId={workspaceId} connections={blocked} />
+            </section>
+          )}
+          {ready.length > 0 && <AppIcons connections={ready} max={Infinity} className="flex-wrap justify-center gap-2" />}
+          {connections.data && (
+            <p className="text-sm text-muted-foreground">
+              {ready.length
+                ? 'Ask about anything in these apps. It works only within the access you grant.'
+                : 'Its apps can be used once they are fixed. Until then it can only chat.'}
+            </p>
+          )}
         </>
       ) : (
         <>

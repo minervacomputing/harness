@@ -23,12 +23,14 @@ import { Alert, ErrorNote, Notice, PageHeader, Spinner, Status } from '@/compone
 import { errorMessage } from '@/lib/http'
 import { cn } from '@/lib/utils'
 
-type Search = { connected?: string; error?: string }
+/** `connected` arrives after connecting an app; `open` comes from links elsewhere that point at one. */
+type Search = { connected?: string; error?: string; open?: string }
 
 export const Route = createFileRoute('/w/$workspaceId/connections')({
   validateSearch: (search: Record<string, unknown>): Search => ({
     connected: typeof search.connected === 'string' ? search.connected : undefined,
     error: typeof search.error === 'string' ? search.error : undefined,
+    open: typeof search.open === 'string' ? search.open : undefined,
   }),
   component: ConnectionsPage,
 })
@@ -80,15 +82,21 @@ function ConnectionsPage() {
   const path = { workspace_id: workspaceId }
   const connectors = useQuery(listConnectorsOptions({ path }))
   const connections = useQuery(listConnectionsOptions({ path }))
-  const [open, toggle] = useOpenConnections(workspaceId, search.connected)
+  const shown = search.connected ?? search.open
+  const [open, toggle] = useOpenConnections(workspaceId, shown)
   // An open connection stays in the section it was opened in, so saving does not move it from under the user.
   const pinned = useRef(new Map<string, boolean>())
 
+  // Once per link, so saving or refetching later does not pull the page back. Focus follows for the keyboard.
+  const scrolledTo = useRef<string>(undefined)
   useEffect(() => {
-    if (search.connected && connections.data) {
-      document.getElementById(`connection-${search.connected}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-    }
-  }, [search.connected, connections.data])
+    if (!shown || scrolledTo.current === shown || !connections.data) return
+    const row = document.getElementById(`connection-${shown}`)
+    if (!row) return
+    scrolledTo.current = shown
+    row.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    row.querySelector('button')?.focus({ preventScroll: true })
+  }, [shown, connections.data])
 
   const rows = (connections.data ?? []).map(connection => {
     const setup = setupOf(connection)
