@@ -150,12 +150,13 @@ It starts the worker image with a probe and verifies 11 properties, including a 
 | `make test` | Backend tests, then worker and frontend typechecks |
 | `make lint` | Ruff lint and format check |
 | `make api-types` | Regenerates the frontend API client from the backend's OpenAPI schema; run it after changing a backend API schema |
+| `make screenshots` | Seeds `demo@example.com` with sample data (`make seed-demo`) and recaptures the images in this README; needs `make dev`, Google Chrome and ImageMagick |
 
 ```text
 backend/     Django project (web, gateway and supervisor roles) and the connectors
 worker/      TypeScript worker image around DeepSeek Harness
 frontend/    React app (Vite, TanStack, assistant-ui)
-docs/        Connector setup and images
+docs/        Connector setup, images and the script that captures them
 compose.yaml Postgres and the sandbox network for development
 ```
 

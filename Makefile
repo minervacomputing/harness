@@ -1,4 +1,4 @@
-.PHONY: setup services migrate seed worker-image sandbox-check dev fake-model test lint api-types
+.PHONY: setup services migrate seed seed-demo screenshots worker-image sandbox-check dev fake-model test lint api-types
 
 setup: services
 	cd backend && uv sync
@@ -15,6 +15,14 @@ migrate:
 # Development accounts with a known password; refuses unless MINERVA_DEBUG=true.
 seed:
 	cd backend && uv run python manage.py seed
+
+# demo@example.com with sample connections and conversations, for the README screenshots.
+seed-demo:
+	cd backend && uv run python manage.py seed_demo
+
+# Recaptures docs/images from the demo account. Needs make dev running, Google Chrome and ImageMagick.
+screenshots: seed-demo
+	cd docs/screenshots && pnpm install --frozen-lockfile --ignore-workspace && pnpm capture
 
 worker-image:
 	docker build -t minerva-worker:dev worker
