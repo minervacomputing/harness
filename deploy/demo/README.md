@@ -28,7 +28,7 @@ Keep `.env.demo` at the repository root. It is gitignored. `deploy.sh` installs 
 | `CLOUDFLARE_TUNNEL_TOKEN` | From the tunnel's page in Cloudflare Zero Trust |
 | `MINERVA_SECRET_KEY`, `MINERVA_ENCRYPTION_KEYS` | Run `cd backend && uv run python manage.py generate_secrets`. Use new values for the demo, not your local ones. |
 | `MINERVA_MODEL_*` | The model provider (see AGENTS.md) |
-| `MINERVA_EMAIL_BACKEND`, `MINERVA_EMAIL_OPTIONS`, `MINERVA_EMAIL_FROM` | Without them, verification codes only appear in the `web` logs |
+| `MINERVA_EMAIL_BACKEND`, `MINERVA_EMAIL_OPTIONS`, `MINERVA_EMAIL_FROM` | Without them, verification codes only appear in the `web` logs. Many VPS hosts block outgoing ports 25, 465 and 587 on new servers; if sign-in codes fail with an SMTP timeout, use the provider's alternative port (often 2525, with `"use_tls": true`). |
 | Connector clients | Optional. Their redirect URLs use `https://demo.minervacomputing.com/api/oauth/<provider>/callback`. |
 | `MINERVA_TURNSTILE_SITE_KEY`, `MINERVA_TURNSTILE_SECRET_KEY` | The Turnstile widget for `demo.minervacomputing.com`. Without them the demo refuses every sign-in. |
 | `MINERVA_GOOGLE_LOGIN_CLIENT_ID`, `MINERVA_GOOGLE_LOGIN_CLIENT_SECRET` | Optional: "Continue with Google". A separate OAuth client from the Google connector's. Redirect URI `https://demo.minervacomputing.com/api/accounts/google/login/callback/` |
