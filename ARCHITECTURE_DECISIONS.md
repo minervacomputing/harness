@@ -311,6 +311,7 @@ Where the first implementation (2026-09-29) differs from the decisions above. Ea
 
 Two runtime details:
 
+- **Code mode:** an agent can let its model write scripts that call the gateway's tools (pi-codemode's QuickJS sandbox inside the worker). The script runs on the untrusted side, so it gets nothing the model does not already have: each call is a normal gateway call, checked, counted against the run's tool-call limit and recorded. A script can start calls without awaiting them and call in a loop far faster than a model can, so the worker also bounds what it holds for them and stops a script that keeps making calls it has to refuse; the gateway's limits stay the enforcement, these only protect the worker and spare the gateway hopeless requests. The run snapshots the setting, so changing it applies from the next turn.
 - **Worker state:** the worker keeps pi-durable's storage in memory, so a turn is not durable yet: if its worker dies, the run fails. Earlier messages come from the run spec and are added as conversation entries before the turn starts.
 - **Pinned TypeScript:** the frontend stays on TypeScript 5.9 because the Hey API generator does not run on TypeScript 7.
 

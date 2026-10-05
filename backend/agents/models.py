@@ -10,6 +10,8 @@ class Agent(TenantModel):
     instructions = models.TextField(blank=True, max_length=8000)
     connections = models.ManyToManyField("connections.Connection", blank=True, related_name="agents")
     model_alias = models.CharField(max_length=64, default="default")
+    # Lets the model write a script that calls several tools in one step; each call is still checked by the gateway.
+    code_mode = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

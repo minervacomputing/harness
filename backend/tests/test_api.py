@@ -112,6 +112,28 @@ def test_changing_an_agents_connections_stops_its_active_runs(api, workspace, sc
     assert (run.status, run.error_code) == (Run.Status.CANCELLED, "agent_connections_changed")
 
 
+def test_code_mode_is_saved_on_the_agent_and_applies_from_its_next_run(api, workspace, scoped, user, agent):
+    created = post(api, f"/api/workspaces/{workspace.id}/agents", {"name": "Scripted", "code_mode": True})
+    assert (created.status_code, created.json()["code_mode"]) == (201, True)
+    _, active = services.start_run(
+        conversation=Conversation.objects.create(agent=agent, user=user), user_id=user.id, content="hi"
+    )
+    url = f"/api/workspaces/{workspace.id}/agents/{agent.id}"
+    connection_ids = [str(c.id) for c in agent.connections.all()]
+    updated = post(
+        api, url, {"name": agent.name, "connection_ids": connection_ids, "code_mode": True}, method="put"
+    )
+    assert updated.json()["code_mode"] is True
+    assert api.get(url).json()["code_mode"] is True
+    active.refresh_from_db()
+    assert (active.status, active.code_mode) == (Run.Status.QUEUED, False)
+    agent.refresh_from_db()
+    _, later = services.start_run(
+        conversation=Conversation.objects.create(agent=agent, user=user), user_id=user.id, content="hi"
+    )
+    assert later.code_mode is True
+
+
 def test_an_agent_keeps_a_connection_that_needs_reconnecting(api, workspace, agent, connection):
     connection.status = Connection.Status.ERROR
     connection.save()

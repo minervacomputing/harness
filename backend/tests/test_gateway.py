@@ -59,6 +59,7 @@ async def test_run_spec_requires_the_run_token(claimed):
     assert spec["prompt"] == "List my tasks"
     assert spec["model"]["api"] in {"responses", "chat"}
     assert "todoist_list_tasks" in {tool["name"] for tool in spec["tools"]}
+    assert spec["code_mode"] is False
     assert (await Run.unscoped.aget(pk=run.id)).status == Run.Status.RUNNING
 
 

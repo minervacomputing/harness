@@ -1,7 +1,8 @@
 """A scripted OpenAI-compatible model for local end-to-end runs without a provider key.
 
 On the first request of a turn it calls one offered tool (preferring `*_list_projects`); once a tool
-result is present it answers in text and quotes the start of that result. Serves Chat Completions and
+result is present it answers in text and quotes the start of that result. A message that starts with
+`run_script:` makes it call the code-mode tool with the rest of the message as the script. Serves Chat Completions and
 Responses, and streams like the real API. When asked for encrypted reasoning it emits a reasoning item.
 
     uv run python devtools/fake_model.py  # then MINERVA_MODEL_BASE_URL=http://127.0.0.1:9900/v1
@@ -14,6 +15,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 PORT = 9900
 
 
+SCRIPT_PREFIX = "run_script:"
+
+
+def text_of(message: dict) -> str:
+    content = message.get("content")
+    if isinstance(content, list):
+        return " ".join(part.get("text", "") for part in content if isinstance(part, dict))
+    return content if isinstance(content, str) else ""
+
+
 def plan(body: dict) -> dict:
     responses = "input" in body
     messages = body.get("input" if responses else "messages") or []
@@ -21,6 +32,9 @@ def plan(body: dict) -> dict:
     print(f"model request: {len(messages)} item(s), tools: {', '.join(tools) or 'none'}", flush=True)
     last = messages[-1] if messages else {}
     is_result = last.get("type") == "function_call_output" if responses else last.get("role") == "tool"
+    prompt = next((text_of(m) for m in reversed(messages) if m.get("role") == "user"), "")
+    if "run_script" in tools and not is_result and prompt.startswith(SCRIPT_PREFIX):
+        return {"tool": "run_script", "arguments": json.dumps({"code": prompt.removeprefix(SCRIPT_PREFIX)})}
     if tools and not is_result:
         name = next((tool for tool in tools if tool.endswith("list_projects")), tools[0])
         return {"tool": name}
@@ -54,7 +68,7 @@ def response_items(body: dict, step: dict) -> list[dict]:
                 "id": "fc_fake",
                 "call_id": "call_1",
                 "name": step["tool"],
-                "arguments": "{}",
+                "arguments": step.get("arguments", "{}"),
                 "status": "completed",
             }
         )
@@ -91,8 +105,11 @@ def response_events(items: list[dict], response: dict) -> list[dict]:
             events.append({"type": "response.output_item.added", "output_index": index, "item": opened})
             if item["type"] == "function_call":
                 ids = {"item_id": item["id"], "output_index": index}
-                events.append({"type": "response.function_call_arguments.delta", **ids, "delta": "{}"})
-                events.append({"type": "response.function_call_arguments.done", **ids, "arguments": "{}"})
+                arguments = item["arguments"]
+                events.append({"type": "response.function_call_arguments.delta", **ids, "delta": arguments})
+                events.append(
+                    {"type": "response.function_call_arguments.done", **ids, "arguments": arguments}
+                )
         events.append({"type": "response.output_item.done", "output_index": index, "item": item})
     events.append({"type": "response.completed", "response": response})
     return [{**event, "sequence_number": n} for n, event in enumerate(events)]
@@ -113,7 +130,7 @@ class Handler(BaseHTTPRequestHandler):
                     {
                         "id": "call_1",
                         "type": "function",
-                        "function": {"name": step["tool"], "arguments": "{}"},
+                        "function": {"name": step["tool"], "arguments": step.get("arguments", "{}")},
                     }
                 ]
             payload = {"id": "chatcmpl-fake", "object": "chat.completion", "model": "fake", "usage": usage}
@@ -128,7 +145,7 @@ class Handler(BaseHTTPRequestHandler):
         events = [chunk({"role": "assistant", "content": ""})]
         if "tool" in step:
             call = {"index": 0, "id": "call_1", "type": "function"}
-            call["function"] = {"name": step["tool"], "arguments": "{}"}
+            call["function"] = {"name": step["tool"], "arguments": step.get("arguments", "{}")}
             events += [chunk({"tool_calls": [call]}), chunk({}, "tool_calls")]
         else:
             events += [chunk({"content": word + " "}) for word in step["text"].split(" ")]

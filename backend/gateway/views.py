@@ -51,6 +51,7 @@ async def run_spec(request: HttpRequest) -> JsonResponse:
             "history": history,
             "instructions": run.instructions,
             "tools": tools,
+            "code_mode": run.code_mode,
             "model": {
                 "alias": run.model_alias,
                 "api": config().model_api,
