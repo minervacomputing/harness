@@ -4,19 +4,33 @@ import { Logo } from '@/components/brand/logo'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { type AuthState, pendingPath } from '@/lib/auth'
 
-export function AuthLayout({ title, description, children, footer, back }: {
+export function AuthLayout({ title, description, children, footer, back, backdrop }: {
   title: string
   description?: ReactNode
   children: ReactNode
   footer?: ReactNode
   /** Use a link back to the sign-in page as the footer. */
   back?: boolean
+  /**
+   * Screenshots of the app, blurred behind the card: `narrow` below the md breakpoint, `wide` above it.
+   * Inverted in dark mode, so light screenshots serve both.
+   */
+  backdrop?: { wide: string, narrow: string }
 }) {
   return (
-    <div className="flex min-h-svh flex-col items-center justify-center bg-background p-6">
-      <div className="w-full max-w-sm space-y-6">
+    <div className="relative flex min-h-svh flex-col items-center justify-center bg-background p-6">
+      {backdrop && (
+        <div aria-hidden className="pointer-events-none fixed inset-0 overflow-hidden">
+          <picture>
+            <source media="(max-width: 767px)" srcSet={backdrop.narrow} />
+            <img src={backdrop.wide} alt="" className="size-full scale-110 object-cover object-top blur-[5px] md:object-[60%_center] dark:invert dark:hue-rotate-180" />
+          </picture>
+          <div className="absolute inset-0 bg-background/45" />
+        </div>
+      )}
+      <div className="relative w-full max-w-sm space-y-6">
         <div className="flex justify-center"><Logo height={44} /></div>
-        <Card>
+        <Card className={backdrop ? 'shadow-2xl' : undefined}>
           <CardHeader>
             <CardTitle className="text-lg font-medium tracking-[-0.015em]">{title}</CardTitle>
             {description && <CardDescription>{description}</CardDescription>}
@@ -24,7 +38,7 @@ export function AuthLayout({ title, description, children, footer, back }: {
           <CardContent>{children}</CardContent>
         </Card>
         {(back || footer) && (
-          <div className="text-center text-sm text-muted-foreground">
+          <div className={backdrop ? 'text-center text-sm text-foreground/80' : 'text-center text-sm text-muted-foreground'}>
             {back ? <Link to="/login" className="hover:text-foreground">Back to sign in</Link> : footer}
           </div>
         )}

@@ -2,6 +2,8 @@ import { useForm } from '@tanstack/react-form'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useRef, useState } from 'react'
+import backdropWide from '@/assets/demo-backdrop.webp'
+import backdropNarrow from '@/assets/demo-backdrop-mobile.webp'
 import { demoEmail, demoGate } from '@/api/sdk.gen'
 import { AuthLayout, useContinueAuth } from '@/components/auth-layout'
 import { SubmitButton, submitForm, TextField } from '@/components/form'
@@ -124,14 +126,14 @@ function DemoPage() {
 
   return (
     <AuthLayout
-      title="Try Minerva"
+      title="Minerva Demo Account"
       description={(
         <>
-          Chat with the assistant of Fernhill Labs, a made-up startup. It works in their Gmail, Calendar, Stripe,
-          GitHub, Linear and Notion, but only within the access its owner allowed. Sign in so we can keep the demo
-          safe from bots.
+          Here you can try out a preconfigured Minerva agent. It is connected to the Gmail, Calendar, Stripe,
+          GitHub, Linear and Notion of a made-up startup. Sign in so we can keep the demo safe from bots.
         </>
       )}
+      backdrop={{ wide: backdropWide, narrow: backdropNarrow }}
       footer={(
         <>
           Your chats are private and deleted after a day.{' '}
