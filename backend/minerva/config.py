@@ -110,6 +110,10 @@ class Config(BaseSettings):
     run_timeout_seconds: int = 300
     run_max_writes: int = 3
     run_max_model_calls: int = 30
+    # Tool calls per run, including ones the permissions deny.
+    run_max_tool_calls: int = 100
+    # Tool calls of one run that execute at once (per gateway process); the rest wait their turn.
+    run_tool_concurrency: Annotated[int, Field(gt=0)] = 4
 
     # Public demo: visitors pass a Turnstile check, sign in, and chat in one shared, locked workspace.
     demo: bool = False

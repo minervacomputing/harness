@@ -119,6 +119,7 @@ def start_run(*, conversation: Conversation, user_id: UUID, content: str) -> tup
                     model_alias=agent.model_alias,
                     max_writes=cfg.run_max_writes,
                     max_model_calls=cfg.run_max_model_calls,
+                    max_tool_calls=cfg.run_max_tool_calls,
                 )
         except IntegrityError as error:
             raise RunConflict(BUSY_MESSAGE) from error

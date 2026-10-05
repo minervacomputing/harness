@@ -141,10 +141,13 @@ strict argument validation
 |---|---|
 | Writes (task or event creations) | 3 |
 | Model calls | 30 |
+| Tool calls (denied ones included) | 100 |
+| Tool calls executing at once | 4 (per gateway process; the rest wait) |
 | Output tokens per call | 8,192 |
 | Wall-clock time | 300 s |
 
 - **Identical writes** within a run are deduplicated.
+- **Tool-call limit:** calls past it are refused, and only the first refusal is recorded in the conversation.
 - **Uncertain writes:** if a write's outcome is unknown, for example after a timeout, further writes in that run are paused.
 - **Refused writes:** a write the provider refused outright (for example 401, 403, 404, 409, or 429), or one that never reached it, returns its quota and does not pause further writes.
 - **Lost writes:** a write whose gateway process died is marked uncertain by the supervisor.

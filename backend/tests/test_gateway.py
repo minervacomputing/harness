@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -9,11 +10,14 @@ import mcp_types as types
 import pytest
 from asgiref.sync import sync_to_async
 from django.core.handlers.asgi import ASGIHandler
+from django.db import connection, transaction
 from django.test import AsyncClient, override_settings
 from django.utils import timezone
 
+from connectors.base import OperationError
+from connectors.executor import Executor
 from conversations.models import Conversation, Message
-from gateway import relay
+from gateway import mcp, relay
 from gateway.body_limit import limit_body
 from gateway.mcp import RUN_SCOPE_KEY, call_tool, list_tools, mcp_app
 from models_access.taps import ResponsesTap, StreamTap
@@ -727,3 +731,155 @@ async def test_mcp_tools_are_authorized_and_recorded(claimed):
     events = await sync_to_async(list)(RunEvent.unscoped.filter(run=run, type="tool_call").order_by("seq"))
     assert [e.data["decision"] for e in events] == ["allowed", "denied"]
     assert events[0].data["label"] == "Todoist: List tasks"
+
+
+def _mcp_ctx(run) -> SimpleNamespace:
+    return SimpleNamespace(request=SimpleNamespace(scope={RUN_SCOPE_KEY: run.id}))
+
+
+def _list_tasks() -> types.CallToolRequestParams:
+    return types.CallToolRequestParams(name="todoist_list_tasks", arguments={"project_id": "work"})
+
+
+async def test_tool_calls_stop_at_the_run_limit_and_the_refusal_is_recorded_once(claimed):
+    run, _ = claimed
+    await Run.unscoped.filter(pk=run.id).aupdate(max_tool_calls=2)
+    results = [await call_tool(_mcp_ctx(run), _list_tasks()) for _ in range(4)]
+    assert [r.is_error for r in results] == [False, False, True, True]
+    assert results[2].content[0].text == "This run has reached its limit of 2 tool calls."
+    events = await sync_to_async(list)(RunEvent.unscoped.filter(run=run, type="tool_call").order_by("seq"))
+    assert [(e.data["decision"], e.data.get("code")) for e in events] == [
+        ("allowed", None),
+        ("allowed", None),
+        ("denied", "LIMIT_REACHED"),
+    ]
+    # Refusals after the first write nothing.
+    assert (await Run.unscoped.aget(pk=run.id)).tool_calls == 3
+
+
+async def test_a_limit_refusal_that_cannot_be_recorded_is_not_counted(claimed, monkeypatch):
+    run, _ = claimed
+    await Run.unscoped.filter(pk=run.id).aupdate(max_tool_calls=1, tool_calls=1)
+    append_event = services.append_event
+    failures = [RuntimeError("database unavailable")]
+
+    def flaky_append_event(*args):
+        if failures:
+            raise failures.pop()
+        return append_event(*args)
+
+    monkeypatch.setattr(services, "append_event", flaky_append_event)
+    first = await call_tool(_mcp_ctx(run), _list_tasks())
+    second = await call_tool(_mcp_ctx(run), _list_tasks())
+    assert first.is_error and second.is_error
+    assert second.content[0].text == "This run has reached its limit of 1 tool calls."
+    refusals = RunEvent.unscoped.filter(run=run, type="tool_call", data__code="LIMIT_REACHED")
+    assert await refusals.acount() == 1
+    assert (await Run.unscoped.aget(pk=run.id)).tool_calls == 2
+
+
+async def test_concurrent_tool_calls_cannot_share_the_last_one(claimed, todoist):
+    run, _ = claimed
+    await Run.unscoped.filter(pk=run.id).aupdate(max_tool_calls=3, tool_calls=2)
+    results = await asyncio.gather(*(call_tool(_mcp_ctx(run), _list_tasks()) for _ in range(5)))
+    assert sum(not r.is_error for r in results) == 1
+    assert len(todoist.calls) == 1
+    refusals = RunEvent.unscoped.filter(run=run, type="tool_call", data__code="LIMIT_REACHED")
+    assert await refusals.acount() == 1
+
+
+def test_a_reservation_waiting_on_another_connection_cannot_take_the_same_last_call(claimed):
+    run, _ = claimed
+    Run.unscoped.filter(pk=run.id).update(max_tool_calls=1)
+    event = {"tool": "todoist_list_tasks", "label": "Todoist: List tasks", "arguments": {}}
+
+    def reserve_elsewhere():
+        try:
+            return mcp._reserve_tool_call(run.id, event)
+        finally:
+            connection.close()
+
+    with ThreadPoolExecutor(1) as pool:
+        with transaction.atomic():
+            mcp._reserve_tool_call(run.id, event)
+            other = pool.submit(reserve_elsewhere)
+            # The other connection waits for this transaction's row lock, then sees its count.
+            _wait_for_a_lock_waiter()
+            assert not other.done()
+        with pytest.raises(mcp.ToolLimitReached):
+            other.result(timeout=10)
+    assert Run.unscoped.get(pk=run.id).tool_calls == 2
+
+
+def _wait_for_a_lock_waiter() -> None:
+    give_up = time.monotonic() + 10
+    with connection.cursor() as cursor:
+        while time.monotonic() < give_up:
+            cursor.execute(
+                "SELECT count(*) FROM pg_locks WHERE pg_backend_pid() = ANY(pg_blocking_pids(pid))"
+            )
+            if cursor.fetchone()[0]:
+                return
+            time.sleep(0.01)
+    raise AssertionError("No other connection waited for a lock held by this one.")
+
+
+async def test_tool_calls_of_one_run_wait_for_a_free_slot(claimed, monkeypatch):
+    run, _ = claimed
+    monkeypatch.setattr(mcp, "config", lambda: SimpleNamespace(run_tool_concurrency=2))
+    running = peak = 0
+
+    async def invoke(self, tool, raw):
+        nonlocal running, peak
+        running += 1
+        peak = max(peak, running)
+        await asyncio.sleep(0.05)
+        running -= 1
+        raise OperationError("FAILED", "Done.")
+
+    monkeypatch.setattr(Executor, "invoke", invoke)
+    await asyncio.gather(*(call_tool(_mcp_ctx(run), _list_tasks()) for _ in range(5)))
+    assert peak == 2
+    assert run.id not in mcp._slots
+
+
+async def test_a_call_waiting_for_a_slot_when_the_run_stops_does_nothing(claimed, todoist, monkeypatch):
+    run, _ = claimed
+    monkeypatch.setattr(mcp, "config", lambda: SimpleNamespace(run_tool_concurrency=1))
+    loop = asyncio.get_running_loop()
+    admitted = asyncio.Event()
+    reserve = mcp._reserve_tool_call
+
+    def reserve_and_tell(run_id, event):
+        deadline = reserve(run_id, event)
+        loop.call_soon_threadsafe(admitted.set)
+        return deadline
+
+    monkeypatch.setattr(mcp, "_reserve_tool_call", reserve_and_tell)
+    deadline = (await Run.unscoped.aget(pk=run.id)).deadline
+    async with mcp._slot(run.id, deadline):
+        waiting = asyncio.create_task(call_tool(_mcp_ctx(run), _list_tasks()))
+        await admitted.wait()
+        await sync_to_async(services.finish)(run.id, Run.Status.CANCELLED)
+        assert not waiting.done()
+    result = await waiting
+    assert result.is_error and result.content[0].text == "This run is no longer active."
+    assert todoist.calls == []
+
+
+async def test_a_call_waiting_for_a_slot_gives_up_at_the_deadline(claimed, monkeypatch):
+    run, _ = claimed
+    monkeypatch.setattr(mcp, "config", lambda: SimpleNamespace(run_tool_concurrency=1))
+    deadline = timezone.now() + timedelta(seconds=0.2)
+    await Run.unscoped.filter(pk=run.id).aupdate(deadline=deadline)
+    async with mcp._slot(run.id, deadline):
+        result = await call_tool(_mcp_ctx(run), _list_tasks())
+    assert result.is_error and result.content[0].text == "This run is no longer active."
+
+
+async def test_tool_calls_of_an_ended_run_are_not_counted(claimed):
+    run, _ = claimed
+    await sync_to_async(services.finish)(run.id, Run.Status.CANCELLED)
+    result = await call_tool(_mcp_ctx(run), _list_tasks())
+    assert result.is_error and result.content[0].text == "This run is no longer active."
+    assert (await Run.unscoped.aget(pk=run.id)).tool_calls == 0

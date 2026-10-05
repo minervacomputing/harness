@@ -5,12 +5,21 @@ run's snapshot, and every call goes through the permission executor. Tool events
 the trusted side, rather than trusting the worker to report them.
 """
 
+import asyncio
 import json
 import logging
+import weakref
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 import mcp_types as types
 from asgiref.sync import sync_to_async
+from django.db import connection as db
+from django.db import transaction
+from django.utils import timezone
 from mcp.server.lowlevel import Server
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.types import Receive, Scope, Send
@@ -20,6 +29,7 @@ from connectors.base import OperationError
 from connectors.executor import Executor, RunContext, public_error
 from gateway.asgi_json import send_error
 from gateway.auth import authenticate
+from minerva.config import config
 from runs import services
 from runs.models import Run, RunEvent
 from workspaces.tenancy import activate_workspace
@@ -35,6 +45,9 @@ DENIAL_CODES = {
     "CONSENT_REQUIRED",
     "OPERATION_CHANGED",
 }
+RUN_ENDED = "This run is no longer active."
+# Semaphores of runs with calls in flight; a run's entry goes away with its last call.
+_slots: weakref.WeakValueDictionary[UUID, asyncio.Semaphore] = weakref.WeakValueDictionary()
 
 
 async def _context(ctx) -> RunContext:
@@ -78,6 +91,61 @@ def _summary(arguments: dict[str, Any]) -> dict[str, Any]:
     return arguments if len(text) <= 2000 else {"truncated": text[:2000]}
 
 
+class ToolLimitReached(OperationError):
+    def __init__(self, limit: int) -> None:
+        super().__init__("LIMIT_REACHED", f"This run has reached its limit of {limit} tool calls.")
+
+
+def _reserve_tool_call(run_id: UUID, event: dict[str, Any]) -> datetime:
+    """Counts the call and returns the run's deadline. One statement, so concurrent calls cannot both take
+    the last one. The count stops one past the limit: the call that crosses it records its refusal in the
+    same transaction, and later ones are refused without writing anything, so a worker that keeps calling
+    cannot flood the conversation or the database."""
+    active = [status.value for status in Run.TOKEN_VALID]
+    with transaction.atomic(), db.cursor() as cursor:
+        cursor.execute(
+            "UPDATE runs_run SET tool_calls = tool_calls + 1"
+            " WHERE id = %s AND status = ANY(%s) AND deadline > now() AND tool_calls <= max_tool_calls"
+            " RETURNING tool_calls, max_tool_calls, deadline",
+            [run_id, active],
+        )
+        reserved = cursor.fetchone()
+        if reserved is None:
+            cursor.execute(
+                "SELECT max_tool_calls FROM runs_run WHERE id = %s AND status = ANY(%s) AND deadline > now()",
+                [run_id, active],
+            )
+            refused = cursor.fetchone()
+            if refused is None:
+                raise OperationError("RUN_ENDED", RUN_ENDED)
+            raise ToolLimitReached(refused[0])
+        count, limit, deadline = reserved
+        if count <= limit:
+            return deadline
+        refusal = ToolLimitReached(limit)
+        denial = {"decision": "denied", "code": refusal.code, "message": refusal.message}
+        services.append_event(run_id, RunEvent.Type.TOOL_CALL, {**event, **denial})
+    raise refusal
+
+
+@asynccontextmanager
+async def _slot(run_id: UUID, deadline: datetime) -> AsyncIterator[None]:
+    """Waits until fewer than run_tool_concurrency of the run's calls execute. The limit holds per gateway
+    process; there is one in development and in the demo. The count limit holds across processes."""
+    semaphore = _slots.get(run_id)
+    if semaphore is None:
+        semaphore = _slots[run_id] = asyncio.Semaphore(config().run_tool_concurrency)
+    try:
+        async with asyncio.timeout((deadline - timezone.now()).total_seconds()):
+            await semaphore.acquire()
+    except TimeoutError:
+        raise OperationError("RUN_ENDED", RUN_ENDED) from None
+    try:
+        yield
+    finally:
+        semaphore.release()
+
+
 async def call_tool(ctx, params: types.CallToolRequestParams) -> types.CallToolResult:
     context = await _context(ctx)
     arguments = params.arguments or {}
@@ -87,7 +155,10 @@ async def call_tool(ctx, params: types.CallToolRequestParams) -> types.CallToolR
         "arguments": _summary(arguments),
     }
     try:
-        outcome = await Executor(context).invoke(params.name, arguments)
+        deadline = await sync_to_async(_reserve_tool_call)(context.run_id, event)
+        # A call that waited past a revocation is refused by the executor before it does anything.
+        async with _slot(context.run_id, deadline):
+            outcome = await Executor(context).invoke(params.name, arguments)
     except Exception as error:
         if not isinstance(error, OperationError):
             log.exception("Tool %s failed for run %s", params.name, context.run_id)
@@ -95,7 +166,9 @@ async def call_tool(ctx, params: types.CallToolRequestParams) -> types.CallToolR
         code = error.code if isinstance(error, OperationError) else "FAILED"
         decision = "denied" if code in DENIAL_CODES else "error"
         event.update(decision=decision, code=code, message=message)
-        await _record(context, event)
+        # Refusals past the tool-call limit are recorded once, when the limit is crossed.
+        if not isinstance(error, ToolLimitReached):
+            await _record(context, event)
         return types.CallToolResult(content=[types.TextContent(type="text", text=message)], is_error=True)
     event.update(decision="allowed", title=outcome.title, count=outcome.result.get("count"))
     await _record(context, event)

@@ -47,6 +47,9 @@ class Run(TenantModel):
     writes_uncertain = models.BooleanField(default=False)
     max_model_calls = models.PositiveIntegerField()
     model_calls = models.PositiveIntegerField(default=0)
+    max_tool_calls = models.PositiveIntegerField()
+    # Counts calls past the limit too, so only the first refused one is recorded.
+    tool_calls = models.PositiveIntegerField(default=0)
     input_tokens = models.PositiveBigIntegerField(default=0)
     output_tokens = models.PositiveBigIntegerField(default=0)
     # Calls whose stream ended before the provider reported usage; their tokens are not counted above.
