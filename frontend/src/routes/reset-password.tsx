@@ -5,10 +5,13 @@ import { AuthLayout, useContinueAuth } from '@/components/auth-layout'
 import { SubmitButton, submitForm, TextField } from '@/components/form'
 import { ErrorNote } from '@/components/ui/misc'
 import { auth, authQuery, fieldErrors, useAuthStep } from '@/lib/auth'
-import { redirectIfSignedIn } from '@/lib/guards'
+import { redirectIfSignedIn, redirectOnDemo } from '@/lib/guards'
 
 export const Route = createFileRoute('/reset-password')({
-  beforeLoad: ({ context }) => redirectIfSignedIn(context.queryClient),
+  beforeLoad: async ({ context }) => {
+    await redirectIfSignedIn(context.queryClient)
+    await redirectOnDemo(context.queryClient)
+  },
   component: ResetPasswordPage,
 })
 

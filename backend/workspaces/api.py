@@ -4,6 +4,8 @@ from uuid import UUID
 from ninja import Router, Schema
 from ninja.security import django_auth
 
+from demo import services as demo
+from minerva.config import config
 from workspaces.models import Membership, Workspace
 
 router = Router(tags=["account"])
@@ -23,9 +25,20 @@ class UserOut(Schema):
     is_staff: bool
 
 
+class DemoOut(Schema):
+    """Present on a public demo instance. `visitor` is false for the people who run the demo."""
+
+    visitor: bool
+    turns_per_day: int
+    turns_left: int
+    chat_retention_hours: int
+    suggestions: list[str]
+
+
 class MeOut(Schema):
     user: UserOut
     workspaces: list[WorkspaceOut]
+    demo: DemoOut | None
 
 
 @router.get("/me", response=MeOut, auth=django_auth)
@@ -41,4 +54,19 @@ def me(request):
             {"id": m.workspace.id, "name": m.workspace.name, "kind": m.workspace.kind, "role": m.role}
             for m in memberships
         ],
+        "demo": _demo(request.user),
+    }
+
+
+def _demo(user) -> dict | None:
+    site = demo.site()
+    if site is None:
+        return None
+    usage = demo.usage(user)
+    return {
+        "visitor": demo.is_visitor(user),
+        "turns_per_day": usage.turns_per_day,
+        "turns_left": usage.turns_left,
+        "chat_retention_hours": config().demo_chat_retention_hours,
+        "suggestions": site.suggestions,
     }

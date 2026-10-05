@@ -2,12 +2,14 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
+from django.db import transaction
 from django.shortcuts import get_object_or_404
 from ninja import Field, Router, Schema, Status
 from ninja.errors import HttpError
 
 from agents.models import Agent
 from conversations.models import Conversation, Message
+from demo import services as demo
 from runs import services
 from runs.models import Run, RunEvent
 from workspaces.auth import workspace_member
@@ -90,7 +92,14 @@ def list_conversations(request, workspace_id: UUID):
 @router.post("/workspaces/{uuid:workspace_id}/conversations", response={201: ConversationOut})
 def create_conversation(request, workspace_id: UUID, payload: ConversationIn):
     agent = get_object_or_404(Agent, pk=payload.agent_id)
-    return Status(201, Conversation.objects.create(agent=agent, user=request.user))
+    with transaction.atomic():
+        if demo.is_visitor(request.user):
+            try:
+                demo.check_new_conversation(request.user)
+            except demo.DemoLimit as error:
+                raise HttpError(error.status, error.message) from error
+        conversation = Conversation.objects.create(agent=agent, user=request.user)
+    return Status(201, conversation)
 
 
 @router.get(
@@ -124,11 +133,17 @@ def delete_conversation(request, workspace_id: UUID, conversation_id: UUID):
 def post_message(request, workspace_id: UUID, conversation_id: UUID, payload: MessageIn):
     conversation = _conversation(request, conversation_id)
     try:
-        message, run = services.start_run(
-            conversation=conversation, user_id=request.user.id, content=payload.content
-        )
+        with transaction.atomic():
+            # A demo visitor's turn is counted with the run, so a refused run costs nothing.
+            if demo.is_visitor(request.user):
+                demo.reserve_turn(request.user)
+            message, run = services.start_run(
+                conversation=conversation, user_id=request.user.id, content=payload.content
+            )
     except services.RunConflict as error:
         raise HttpError(409, str(error)) from error
+    except demo.DemoLimit as error:
+        raise HttpError(error.status, error.message) from error
     return Status(201, {"message": message, "run": _run_out(run)})
 
 

@@ -11,6 +11,7 @@ import { setupOf } from '@/components/connections/summary'
 import { Button } from '@/components/ui/button'
 import { Status } from '@/components/ui/misc'
 import { authQuery, type AuthUser, useSignOut } from '@/lib/auth'
+import { useDemo } from '@/lib/demo'
 import { requireSignedIn } from '@/lib/guards'
 
 export const Route = createFileRoute('/w/$workspaceId')({
@@ -87,9 +88,12 @@ function AppShell() {
       <aside className="hidden w-64 shrink-0 flex-col border-r bg-sidebar md:flex">
         <Sidebar workspace={workspace} user={user} />
       </aside>
-      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto">
-        <Outlet />
-      </main>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <DemoBanner />
+        <main className="min-h-0 flex-1 overflow-y-auto">
+          <Outlet />
+        </main>
+      </div>
     </div>
   )
 }
@@ -143,5 +147,21 @@ function Attention({ workspaceId }: { workspaceId: string }) {
       {setups.length}
       <span className="sr-only"> need attention</span>
     </Status>
+  )
+}
+
+/** For demo visitors: what this workspace is, and how much of today's allowance is left. */
+function DemoBanner() {
+  const demo = useDemo()
+  if (!demo?.visitor) return null
+  return (
+    <p className="shrink-0 border-b bg-secondary px-4 py-2 text-[13px] text-muted-foreground md:px-8">
+      <span className="font-medium text-foreground">Demo workspace.</span>{' '}
+      Fernhill Labs and its data are made up. You can look around and chat, but not change the setup.{' '}
+      <span className="font-mono text-[12px] whitespace-nowrap text-foreground">
+        {demo.turns_left}/{demo.turns_per_day} messages left today
+      </span>
+      {' '}· chats are deleted after {demo.chat_retention_hours} hours
+    </p>
   )
 }

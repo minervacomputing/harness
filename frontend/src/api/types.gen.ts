@@ -324,6 +324,62 @@ export type ConversationOut = {
 };
 
 /**
+ * DemoConfigOut
+ */
+export type DemoConfigOut = {
+    /**
+     * Enabled
+     */
+    enabled: boolean;
+    /**
+     * Providers
+     */
+    providers: Array<string>;
+    /**
+     * Turnstile Site Key
+     */
+    turnstile_site_key: string | null;
+};
+
+/**
+ * DemoOut
+ *
+ * Present on a public demo instance. `visitor` is false for the people who run the demo.
+ */
+export type DemoOut = {
+    /**
+     * Chat Retention Hours
+     */
+    chat_retention_hours: number;
+    /**
+     * Suggestions
+     */
+    suggestions: Array<string>;
+    /**
+     * Turns Left
+     */
+    turns_left: number;
+    /**
+     * Turns Per Day
+     */
+    turns_per_day: number;
+    /**
+     * Visitor
+     */
+    visitor: boolean;
+};
+
+/**
+ * EmailIn
+ */
+export type EmailIn = {
+    /**
+     * Email
+     */
+    email: string;
+};
+
+/**
  * EventOut
  */
 export type EventOut = {
@@ -341,6 +397,20 @@ export type EventOut = {
      * Type
      */
     type: 'status' | 'phase' | 'text_delta' | 'tool_call' | 'message';
+};
+
+/**
+ * GateIn
+ */
+export type GateIn = {
+    /**
+     * Newsletter
+     */
+    newsletter: boolean;
+    /**
+     * Token
+     */
+    token: string;
 };
 
 /**
@@ -417,6 +487,7 @@ export type KindOut = {
  * MeOut
  */
 export type MeOut = {
+    demo: DemoOut | null;
     user: UserOut;
     /**
      * Workspaces
@@ -603,6 +674,54 @@ export type WorkspaceOut = {
      */
     role: 'owner' | 'admin' | 'member';
 };
+
+export type DemoConfigData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/demo/config';
+};
+
+export type DemoConfigResponses = {
+    /**
+     * OK
+     */
+    200: DemoConfigOut;
+};
+
+export type DemoConfigResponse = DemoConfigResponses[keyof DemoConfigResponses];
+
+export type DemoEmailData = {
+    body: EmailIn;
+    path?: never;
+    query?: never;
+    url: '/api/demo/email';
+};
+
+export type DemoEmailResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DemoEmailResponse = DemoEmailResponses[keyof DemoEmailResponses];
+
+export type DemoGateData = {
+    body: GateIn;
+    path?: never;
+    query?: never;
+    url: '/api/demo/gate';
+};
+
+export type DemoGateResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DemoGateResponse = DemoGateResponses[keyof DemoGateResponses];
 
 export type MeData = {
     body?: never;

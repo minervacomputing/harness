@@ -25,6 +25,9 @@ INSTALLED_APPS = [
     "allauth.account",
     "allauth.headless",
     "allauth.mfa",
+    "allauth.socialaccount",
+    "allauth.socialaccount.providers.google",
+    "allauth.socialaccount.providers.apple",
     "accounts",
     "workspaces",
     "connections",
@@ -33,6 +36,7 @@ INSTALLED_APPS = [
     "conversations",
     "runs",
     "gateway",
+    "demo",
 ]
 
 MIDDLEWARE = [
@@ -45,6 +49,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "allauth.account.middleware.AccountMiddleware",
+    "demo.middleware.DemoMiddleware",
 ]
 if ROLE == "gateway":
     # Workers authenticate with run tokens only: no sessions, cookies, CSRF, login, or admin here.
@@ -108,7 +113,38 @@ HEADLESS_FRONTEND_URLS = {
     "account_reset_password": f"{cfg.site_url}/reset-password",
     "account_reset_password_from_key": f"{cfg.site_url}/reset-password",
     "account_signup": f"{cfg.site_url}/signup",
+    "socialaccount_login_error": f"{cfg.site_url}/demo",
 }
+# Sign in with Google or Apple, offered only where configured (the public demo). A provider-verified
+# email signs in to the account that has it.
+SOCIALACCOUNT_ADAPTER = "accounts.adapter.SocialAccountAdapter"
+SOCIALACCOUNT_EMAIL_AUTHENTICATION = True
+SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = True
+SOCIALACCOUNT_STORE_TOKENS = False
+SOCIALACCOUNT_PROVIDERS: dict = {}
+if cfg.google_login_client_id and cfg.google_login_client_secret:
+    SOCIALACCOUNT_PROVIDERS["google"] = {
+        "APPS": [
+            {
+                "client_id": cfg.google_login_client_id,
+                "secret": cfg.google_login_client_secret.get_secret_value(),
+            }
+        ],
+        "SCOPE": ["openid", "email", "profile"],
+    }
+if cfg.apple_client_id and cfg.apple_team_id and cfg.apple_key_id and cfg.apple_private_key_file:
+    # allauth's names: `secret` is the key ID and `key` the team ID.
+    SOCIALACCOUNT_PROVIDERS["apple"] = {
+        "APPS": [
+            {
+                "client_id": cfg.apple_client_id,
+                "secret": cfg.apple_key_id,
+                "key": cfg.apple_team_id,
+                "settings": {"certificate_key": cfg.apple_private_key_file.read_text()},
+            }
+        ]
+    }
+
 MFA_SUPPORTED_TYPES = ["totp", "recovery_codes", "webauthn"]
 MFA_PASSKEY_LOGIN_ENABLED = True
 

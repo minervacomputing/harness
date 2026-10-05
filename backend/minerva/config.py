@@ -111,6 +111,34 @@ class Config(BaseSettings):
     run_max_writes: int = 3
     run_max_model_calls: int = 30
 
+    # Public demo: visitors pass a Turnstile check, sign in, and chat in one shared, locked workspace.
+    demo: bool = False
+    demo_turns_per_day: int = 20
+    # Turns across all visitors per UTC day, so cheap identities cannot run up the model bill.
+    demo_turns_global_per_day: int = 2000
+    # Active runs across the whole instance before visitors are told to wait.
+    demo_max_active_runs: int = 12
+    # Chats are deleted this long after they were started.
+    demo_chat_retention_hours: int = 24
+    demo_max_conversations: int = 30
+    # How long a passed Turnstile check admits a browser, and how many sign-in attempts it covers.
+    demo_gate_minutes: int = 20
+    demo_gate_uses: int = 5
+    turnstile_site_key: str | None = None
+    turnstile_secret_key: SecretStr | None = None
+    # Sign in with Google (a separate OAuth client from the Google connector's).
+    google_login_client_id: str | None = None
+    google_login_client_secret: SecretStr | None = None
+    # Sign in with Apple: the Services ID, the team, and the Sign in with Apple key (.p8 file).
+    apple_client_id: str | None = None
+    apple_team_id: str | None = None
+    apple_key_id: str | None = None
+    apple_private_key_file: Path | None = None
+    # Bento, for adding demo visitors who opted in to the newsletter.
+    bento_site_uuid: str | None = None
+    bento_publishable_key: str | None = None
+    bento_secret_key: SecretStr | None = None
+
     def oauth_client(self, app: str) -> tuple[str, str] | None:
         """The operator's OAuth client for an app (MINERVA_<APP>_CLIENT_ID and _SECRET), if configured."""
         client_id = getattr(self, f"{app}_client_id", None)

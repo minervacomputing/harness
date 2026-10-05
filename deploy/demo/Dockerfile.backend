@@ -1,0 +1,30 @@
+# Minerva backend: one image for the web, gateway, supervisor, migrate and cleanup roles.
+# Build context: backend/ (see compose.yaml).
+FROM ghcr.io/astral-sh/uv:0.12.23 AS uv
+
+FROM python:3.14-slim-trixie AS build
+COPY --from=uv /uv /usr/local/bin/uv
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_PROJECT_ENVIRONMENT=/app/backend/.venv
+WORKDIR /app/backend
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project
+COPY . .
+
+FROM python:3.14-slim-trixie
+# config.py treats parents[2] of backend/minerva/config.py as the repository root, so the code lives
+# at /app/backend. There is no .env in the image: configuration comes from the container environment.
+ENV PATH=/app/backend/.venv/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DJANGO_SETTINGS_MODULE=minerva.settings
+RUN groupadd --system --gid 10001 minerva \
+    && useradd --system --uid 10001 --gid minerva --home-dir /app --no-create-home minerva
+WORKDIR /app/backend
+COPY --from=build --chown=root:root /app/backend /app/backend
+USER 10001:10001
+EXPOSE 8000 8001
+CMD ["uvicorn", "minerva.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--lifespan", "off"]

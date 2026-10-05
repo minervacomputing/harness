@@ -1,0 +1,56 @@
+# Serves the React app and proxies /api to the web role. TLS ends at Cloudflare; cloudflared reaches
+# this server over plain HTTP on the internal Compose network, and no port is published on the host.
+{
+	admin off
+	auto_https off
+	# Open event streams never end by themselves; do not wait for them on reload or shutdown.
+	grace_period 5s
+	servers {
+		# Only cloudflared (a private address on the Compose network) connects here. Trust the client
+		# address Cloudflare reports, so {client_ip} is the visitor, not the tunnel.
+		trusted_proxies static private_ranges
+		client_ip_headers Cf-Connecting-IP
+	}
+}
+
+:80 {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		Cross-Origin-Opener-Policy "same-origin"
+		# index.html carries its own img-src policy and an inline theme script, so no script-src here.
+		Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; object-src 'none'"
+		-Server
+	}
+
+	handle /api/* {
+		reverse_proxy web:8000 {
+			# Run updates are server-sent events (/api/workspaces/<id>/runs/<id>/stream): never buffer.
+			flush_interval -1
+			# Django and uvicorn trust these. Overwrite them, so a visitor cannot supply their own.
+			header_up X-Forwarded-Proto https
+			header_up X-Forwarded-For {client_ip}
+			header_up X-Real-IP {client_ip}
+		}
+	}
+
+	# Hashed build output: cache for a year, and 404 (not the app shell) for a missing file.
+	handle /assets/* {
+		root * /srv
+		encode zstd gzip
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
+	# Everything else is the single-page app: a file from the build, or index.html for client routes.
+	handle {
+		root * /srv
+		encode zstd gzip
+		header Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+}

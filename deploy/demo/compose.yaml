@@ -1,0 +1,187 @@
+# Public demo at https://demo.minervacomputing.com on one VPS behind a Cloudflare Tunnel.
+# Run from /opt/minerva (see deploy.sh and README.md):
+#   docker compose -f src/deploy/demo/compose.yaml --env-file .env up -d --build
+# Nothing is published on the host. cloudflared dials out to Cloudflare and forwards to proxy:80.
+name: minerva-demo
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+# One backend image for every role. Only `migrate` builds it; the others use the built image.
+x-backend: &backend
+  image: minerva-backend:demo
+  pull_policy: never
+  env_file:
+    - path: ${MINERVA_ENV_FILE:-/opt/minerva/.env}
+  # These win over the env file.
+  environment: &backend-env
+    MINERVA_DEBUG: "false"
+    MINERVA_DATABASE_URL: postgres://minerva:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/minerva
+    MINERVA_ALLOWED_HOSTS: demo.minervacomputing.com,web,localhost
+    MINERVA_SITE_URL: https://demo.minervacomputing.com
+    MINERVA_CSRF_TRUSTED_ORIGINS: https://demo.minervacomputing.com
+    MINERVA_SANDBOX_PROVIDER: container
+    MINERVA_SANDBOX_IMAGE: minerva-worker:demo
+    MINERVA_SANDBOX_NETWORK: minerva-sandbox
+    MINERVA_SANDBOX_RUNTIME: runsc
+    # An address, not the `gateway` name: under gVisor, workers cannot use Docker's embedded DNS
+    # (google/gvisor#7469). The relay holds this fixed address on the sandbox network.
+    MINERVA_SANDBOX_GATEWAY_URL: http://10.231.0.10:8001
+    MINERVA_GATEWAY_ALLOWED_HOSTS: 10.231.0.10,gateway,localhost
+    MINERVA_MAX_CONCURRENT_RUNS: "6"
+    MINERVA_DEMO: "true"
+    # Visitors are told the demo is busy before runs would queue behind the six workers.
+    MINERVA_DEMO_MAX_ACTIVE_RUNS: "6"
+    MINERVA_RUN_TIMEOUT_SECONDS: "180"
+    MINERVA_RUN_MAX_MODEL_CALLS: "16"
+  # Files the env file points at, such as MINERVA_APPLE_PRIVATE_KEY_FILE=/run/secrets/minerva/apple.p8.
+  volumes:
+    - /opt/minerva/secrets:/run/secrets/minerva:ro
+  restart: unless-stopped
+  logging: *logging
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: minerva
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: minerva
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U minerva -d minerva"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+    logging: *logging
+
+  migrate:
+    <<: *backend
+    build:
+      context: ../../backend
+      dockerfile: ../deploy/demo/Dockerfile.backend
+    pull_policy: missing
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    <<: *backend
+    # Two processes: each holds its own LISTEN connection for run streams; sessions live in Postgres.
+    # A short graceful timeout, because open event streams never finish on their own.
+    command:
+      - uvicorn
+      - minerva.asgi:application
+      - --host=0.0.0.0
+      - --port=8000
+      - --workers=2
+      - --lifespan=off
+      - --proxy-headers
+      - --forwarded-allow-ips=*
+      - --no-server-header
+      - --timeout-graceful-shutdown=5
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  # Worker-facing API. One process: runs are short and the MCP endpoint is stateless, but there is no
+  # need for more on one host.
+  gateway:
+    <<: *backend
+    environment:
+      <<: *backend-env
+      MINERVA_ROLE: gateway
+    command:
+      - uvicorn
+      - gateway.asgi:application
+      - --host=0.0.0.0
+      - --port=8001
+      - --no-server-header
+      - --timeout-graceful-shutdown=5
+    networks:
+      default:
+        # The relay forwards here. A distinct name, because the relay itself answers to `gateway`
+        # on the sandbox network.
+        aliases: [gateway-upstream]
+
+  # Starts and removes worker containers through the host's Docker daemon. Access to the socket is
+  # root-equivalent on the host; this container holds it only through the socket's group.
+  supervisor:
+    <<: *backend
+    command: ["python", "manage.py", "supervisor"]
+    group_add:
+      - ${DOCKER_GID:?set DOCKER_GID to the group id of /var/run/docker.sock}
+    volumes:
+      - /opt/minerva/secrets:/run/secrets/minerva:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  # Workers run on the internal `minerva-sandbox` network, which has no route to the internet or the
+  # host. This relay is its only other member, and it forwards exactly one port: the gateway.
+  gateway-relay:
+    image: alpine/socat:1.8.0.3
+    command: TCP-LISTEN:8001,fork,reuseaddr TCP:gateway-upstream:8001
+    restart: unless-stopped
+    logging: *logging
+    depends_on: [gateway]
+    networks:
+      default: {}
+      sandbox:
+        ipv4_address: 10.231.0.10
+        aliases: [gateway]
+
+  # Deletes visitors' idle chats and adds newsletter opt-ins to Bento every 15 minutes.
+  cleanup:
+    <<: *backend
+    init: true
+    command: ["sh", "-c", "while true; do python manage.py demo_cleanup || echo 'demo_cleanup failed' >&2; sleep 900; done"]
+
+  proxy:
+    image: minerva-proxy:demo
+    build:
+      context: ../../frontend
+      dockerfile: ../deploy/demo/Dockerfile.frontend
+      additional_contexts:
+        deploy: .
+    restart: unless-stopped
+    logging: *logging
+    depends_on:
+      web:
+        condition: service_healthy
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.9.3
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN}
+    restart: unless-stopped
+    logging: *logging
+    depends_on: [proxy]
+
+networks:
+  default: {}
+  # Created here, under a fixed name, so the supervisor finds it on the host daemon.
+  sandbox:
+    name: minerva-sandbox
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.231.0.0/24
+          # Workers get addresses from the upper half; the relay's fixed address stays outside it.
+          ip_range: 10.231.0.128/25
+          gateway: 10.231.0.1
+
+volumes:
+  postgres-data:

@@ -9,6 +9,7 @@ import { ThemeToggle } from '@/components/theme-toggle'
 import { Button } from '@/components/ui/button'
 import { Alert, ErrorNote, PageHeader } from '@/components/ui/misc'
 import { accountCall, authQuery, fieldErrors, useSignOut } from '@/lib/auth'
+import { useDemo } from '@/lib/demo'
 
 export const Route = createFileRoute('/w/$workspaceId/account')({
   component: AccountPage,
@@ -20,14 +21,24 @@ function AccountPage() {
   const { data: state } = useQuery(authQuery)
   const user = state?.kind === 'authenticated' ? state.user : context.user
   const signOut = useSignOut()
+  const demo = useDemo()
   return (
     <div>
       <PageHeader title="Account" />
       <div className="max-w-3xl px-4 py-6 md:px-8">
         <SettingsList>
           <Setting title="Email" description={<span className="font-mono text-[12px] text-foreground">{user.email}</span>} />
-          <PasswordSetting hasPassword={user.has_usable_password} />
-          <TwoFactorSetting />
+          {demo?.visitor ? (
+            <Setting
+              title="Demo account"
+              description={`You sign in with a code sent to this address. Your chats are private and deleted after ${demo.chat_retention_hours} hours.`}
+            />
+          ) : (
+            <>
+              <PasswordSetting hasPassword={user.has_usable_password} />
+              <TwoFactorSetting />
+            </>
+          )}
           <Setting title="Appearance" description="Light, dark, or the same as your system." action={<ThemeToggle labelled />} />
           <Setting
             title="Sign out"

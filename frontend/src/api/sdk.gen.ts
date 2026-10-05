@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AuthorizeData, AuthorizeResponses, CancelRunData, CancelRunResponses, ChangeAccessData, ChangeAccessResponses, ConnectKeyData, ConnectKeyResponses, CreateAgentData, CreateAgentResponses, CreateConversationData, CreateConversationResponses, DeleteAgentData, DeleteAgentResponses, DeleteConnectionData, DeleteConnectionResponses, DeleteConversationData, DeleteConversationResponses, EnableData, EnableResponses, GetAccessData, GetAccessResponses, GetAgentData, GetAgentResponses, GetConversationData, GetConversationResponses, GetRunData, GetRunResponses, ListAccessResourcesData, ListAccessResourcesResponses, ListAgentsData, ListAgentsResponses, ListConnectionsData, ListConnectionsResponses, ListConnectorsData, ListConnectorsResponses, ListConversationsData, ListConversationsResponses, MeData, MeResponses, PostMessageData, PostMessageResponses, ReconnectData, ReconnectResponses, ReplaceKeyData, ReplaceKeyResponses, UpdateAgentData, UpdateAgentResponses } from './types.gen';
+import type { AuthorizeData, AuthorizeResponses, CancelRunData, CancelRunResponses, ChangeAccessData, ChangeAccessResponses, ConnectKeyData, ConnectKeyResponses, CreateAgentData, CreateAgentResponses, CreateConversationData, CreateConversationResponses, DeleteAgentData, DeleteAgentResponses, DeleteConnectionData, DeleteConnectionResponses, DeleteConversationData, DeleteConversationResponses, DemoConfigData, DemoConfigResponses, DemoEmailData, DemoEmailResponses, DemoGateData, DemoGateResponses, EnableData, EnableResponses, GetAccessData, GetAccessResponses, GetAgentData, GetAgentResponses, GetConversationData, GetConversationResponses, GetRunData, GetRunResponses, ListAccessResourcesData, ListAccessResourcesResponses, ListAgentsData, ListAgentsResponses, ListConnectionsData, ListConnectionsResponses, ListConnectorsData, ListConnectorsResponses, ListConversationsData, ListConversationsResponses, MeData, MeResponses, PostMessageData, PostMessageResponses, ReconnectData, ReconnectResponses, ReplaceKeyData, ReplaceKeyResponses, UpdateAgentData, UpdateAgentResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -17,6 +17,51 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
      */
     meta?: keyof ClientMeta extends never ? Record<string, unknown> : ClientMeta;
 };
+
+/**
+ * Demo Config
+ */
+export const demoConfig = <ThrowOnError extends boolean = false>(options?: Options<DemoConfigData, ThrowOnError>): RequestResult<DemoConfigResponses, unknown, ThrowOnError> => (options?.client ?? client).get<DemoConfigResponses, unknown, ThrowOnError>({ url: '/api/demo/config', ...options });
+
+/**
+ * Demo Email
+ *
+ * Creates a passwordless account for the address if there is none, so a sign-in code can be sent.
+ *
+ * Answers the same whether or not the account existed.
+ */
+export const demoEmail = <ThrowOnError extends boolean = false>(options: Options<DemoEmailData, ThrowOnError>): RequestResult<DemoEmailResponses, unknown, ThrowOnError> => (options.client ?? client).post<DemoEmailResponses, unknown, ThrowOnError>({
+    security: [{
+            in: 'cookie',
+            name: 'csrftoken',
+            type: 'apiKey'
+        }],
+    url: '/api/demo/email',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Demo Gate
+ *
+ * Admits this browser to sign in after a Turnstile check, and remembers the newsletter choice.
+ */
+export const demoGate = <ThrowOnError extends boolean = false>(options: Options<DemoGateData, ThrowOnError>): RequestResult<DemoGateResponses, unknown, ThrowOnError> => (options.client ?? client).post<DemoGateResponses, unknown, ThrowOnError>({
+    security: [{
+            in: 'cookie',
+            name: 'csrftoken',
+            type: 'apiKey'
+        }],
+    url: '/api/demo/gate',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
 
 /**
  * Me

@@ -4,7 +4,18 @@
     {
       "name": "minerva",
       "runtimeExecutable": "make",
-      "runtimeArgs": ["dev"],
+      "runtimeArgs": [
+        "dev"
+      ],
+      "port": 5173
+    },
+    {
+      "name": "minerva-demo",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "MINERVA_DEMO=true MINERVA_DEBUG=true MINERVA_DATABASE_URL=postgres://minerva:minerva@localhost:5432/minerva_demo exec uv run --project backend honcho -e /dev/null -f Procfile start"
+      ],
       "port": 5173
     }
   ]

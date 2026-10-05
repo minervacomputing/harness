@@ -8,6 +8,7 @@ from agents.api import router as agents_router
 from connections.api import router as connections_router
 from connections.views import oauth_callback
 from conversations.api import router as conversations_router
+from demo.api import router as demo_router
 from runs.stream import run_stream
 from workspaces.api import router as workspaces_router
 
@@ -22,11 +23,15 @@ api.add_router("/", workspaces_router)
 api.add_router("/", connections_router)
 api.add_router("/", agents_router)
 api.add_router("/", conversations_router)
+api.add_router("/", demo_router)
 
 urlpatterns = [
     path("api/health", lambda request: JsonResponse({"ok": True})),
     path("api/csrf", ensure_csrf_cookie(lambda request: HttpResponse(status=204))),
     path("api/auth/", include("allauth.headless.urls")),
+    # Sign in with Google and Apple: only the providers' callbacks (HEADLESS_ONLY), e.g.
+    # /api/accounts/google/login/callback/. The demo middleware refuses every other path here.
+    path("api/accounts/", include("allauth.urls")),
     path("api/oauth/<slug:provider>/callback", oauth_callback),
     path("api/workspaces/<uuid:workspace_id>/runs/<uuid:run_id>/stream", run_stream),
     path("api/", api.urls),

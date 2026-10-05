@@ -74,6 +74,15 @@ Emails (verification and sign-in codes) are printed in the `web` process output.
 
 This project does not use pull requests. Commit directly to `main` (or merge a short-lived branch into it) and push `main`.
 
+**This repository is public** (`github.com/minervacomputing/harness`). Everything you commit is published, history included. Never commit:
+
+- secrets (they belong in `.env`, `.env.demo` or `.env.demo.d/`, all gitignored);
+- personal data: real people's email addresses, phone numbers, or names other than the author credit in the README;
+- server details: IP addresses, provider hostnames, SSH users;
+- account identifiers: cloud project IDs, OAuth client IDs, Stripe account IDs, Apple team and key IDs, Cloudflare account, zone and tunnel IDs.
+
+Use reserved `.example` domains and placeholders in docs, tests and seed data. Notes for the operator that need real identifiers, such as prompts for browser agents, go in `deploy/demo/private/`, which is gitignored. Check the staged diff for these before every commit.
+
 ## Second opinions with opencode
 
 Use opencode as a read-only subagent for code review, adversarial review, or critiques of plans. Always use the `plan` agent (it does not edit files) with `--auto` (no permission prompts):

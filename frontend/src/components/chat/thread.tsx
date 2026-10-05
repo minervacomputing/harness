@@ -13,6 +13,7 @@ import remarkGfm from 'remark-gfm'
 import type { ToolCallResult } from '@/components/chat/model'
 import { Button } from '@/components/ui/button'
 import { ErrorNote, Spinner, Status, type StatusTone } from '@/components/ui/misc'
+import { useDemoVisitor } from '@/lib/demo'
 import { cn } from '@/lib/utils'
 
 export function Thread({ empty }: { empty?: ReactNode }) {
@@ -135,6 +136,7 @@ export const ToolCall: ToolCallMessagePartComponent = ({ toolName, args, result 
 }
 
 function Composer() {
+  const visitor = useDemoVisitor()
   return (
     <div className="space-y-1.5">
       <ComposerPrimitive.Root className="flex items-end gap-2 border border-border-strong bg-card p-2 shadow-(--inset-well) focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/25">
@@ -156,7 +158,7 @@ function Composer() {
         </AuiIf>
       </ComposerPrimitive.Root>
       <p className="text-center text-xs text-muted-foreground">
-        Agents only reach what you allow under Connections.
+        {visitor ? 'The agent only reaches what the owner allowed under Connections.' : 'Agents only reach what you allow under Connections.'}
       </p>
     </div>
   )

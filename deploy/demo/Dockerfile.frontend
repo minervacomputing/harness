@@ -1,0 +1,14 @@
+# Minerva frontend: the Vite build of frontend/, served by Caddy, which also proxies /api to the web role.
+# Build context: frontend/, plus deploy/demo/ as the named context `deploy` (see compose.yaml).
+FROM node:24-slim AS build
+WORKDIR /app
+RUN corepack enable
+COPY package.json pnpm-lock.yaml ./
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
+COPY . .
+RUN pnpm build
+
+FROM caddy:2.11-alpine
+COPY --from=build /app/dist /srv
+COPY --from=deploy Caddyfile /etc/caddy/Caddyfile

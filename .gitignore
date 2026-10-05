@@ -33,3 +33,6 @@ dist/
 
 # Local research notes
 .agents/research/
+
+# Local operator notes (account names, project IDs); never committed
+/deploy/demo/private/

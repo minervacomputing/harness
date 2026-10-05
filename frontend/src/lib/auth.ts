@@ -110,6 +110,8 @@ export function useAuthStep<Vars>(step: (vars: Vars) => Promise<AuthPayload>) {
         await queryClient.invalidateQueries({ queryKey: ['auth'] })
         return queryClient.fetchQuery(authQuery)
       }
+      // The public demo refuses some steps with a message meant for the visitor.
+      if (payload.status === 403 && payload.errors?.length) throw new AuthError(payload.errors)
       if (payload.status >= 500 || payload.status === 403 || payload.status === 429) {
         throw new AuthError([{ message: payload.status === 429 ? 'Too many attempts. Wait a moment and try again.' : 'The server could not complete this step.', code: 'server' }])
       }

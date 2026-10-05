@@ -20,6 +20,7 @@ import { type Setup, setupOf, summarize } from '@/components/connections/summary
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Alert, ErrorNote, Notice, PageHeader, Spinner, Status } from '@/components/ui/misc'
+import { useDemoVisitor } from '@/lib/demo'
 import { errorMessage } from '@/lib/http'
 import { cn } from '@/lib/utils'
 
@@ -82,6 +83,7 @@ function ConnectionsPage() {
   const path = { workspace_id: workspaceId }
   const connectors = useQuery(listConnectorsOptions({ path }))
   const connections = useQuery(listConnectionsOptions({ path }))
+  const visitor = useDemoVisitor()
   const shown = search.connected ?? search.open
   const [open, toggle] = useOpenConnections(workspaceId, shown)
   // An open connection stays in the section it was opened in, so saving does not move it from under the user.
@@ -116,7 +118,9 @@ function ConnectionsPage() {
     <div>
       <PageHeader
         title="Connections"
-        description="Connect your apps, then choose exactly what your agents may see and do in them. Agents never receive your credentials."
+        description={visitor
+          ? 'The apps this workspace has connected, and exactly what its agent may see and do in each. Open one to see the details. Agents never receive the credentials.'
+          : 'Connect your apps, then choose exactly what your agents may see and do in them. Agents never receive your credentials.'}
       />
       <div className="max-w-3xl space-y-10 px-4 md:px-8 py-6">
         {(search.error || search.connected) && (
@@ -153,13 +157,13 @@ function ConnectionsPage() {
           </div>
         )}
 
-        <AddApps
+        {!visitor && <AddApps
           workspaceId={workspaceId}
           connectors={connectors.data}
           pending={connectors.isPending}
           connections={connections.data ?? []}
           firstTime={connections.data?.length === 0}
-        />
+        />}
       </div>
     </div>
   )
@@ -351,6 +355,7 @@ function ConnectionRow({ workspaceId, connection, setup, open, onToggle, first, 
   last: boolean
 }) {
   const queryClient = useQueryClient()
+  const visitor = useDemoVisitor()
   // Once opened, the panel stays mounted while closed, so unsaved choices survive closing it.
   const [mounted, setMounted] = useState(open)
   useEffect(() => {
@@ -394,7 +399,7 @@ function ConnectionRow({ workspaceId, connection, setup, open, onToggle, first, 
       </button>
       {mounted && (
         <div id={panelId} hidden={!open} className="border-t px-4 pt-4 pb-3">
-          <ConnectionPanel workspaceId={workspaceId} connection={connection} />
+          {visitor ? <AllowedList connection={connection} /> : <ConnectionPanel workspaceId={workspaceId} connection={connection} />}
         </div>
       )}
     </div>
@@ -495,6 +500,42 @@ function ConnectionPanel({ workspaceId, connection }: { workspaceId: string; con
           Remove connection
         </Button>
       </div>
+    </div>
+  )
+}
+
+/** For demo visitors, who cannot change access: what the agent may do, one line per action. */
+function AllowedList({ connection }: { connection: ConnectionOut }) {
+  return (
+    <div className="space-y-3">
+      {connection.allowed.length > 0 && (
+        <table className="w-full border border-border-strong text-[13px]">
+          <thead className="bg-secondary text-left">
+            <tr>
+              <th className="label border-b px-3 py-2 font-normal">The agent may</th>
+              <th className="label border-b px-3 py-2 font-normal">Where</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {connection.allowed.map(a => (
+              <tr key={`${a.kind}:${a.action}`}>
+                <td className="px-3 py-2 font-medium">{a.action_label}</td>
+                <td className="px-3 py-2 text-muted-foreground">
+                  {a.kind === ACCOUNT
+                    ? 'The whole account'
+                    : a.all
+                      ? `All ${a.kind_label.toLowerCase()}s`
+                      : `${a.names.join(', ')}${a.count > a.names.length ? ` and ${a.count - a.names.length} more` : ''}`}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <p className="text-xs text-muted-foreground">
+        Everything else in {connection.provider_name} is off limits to the agent. In your own workspace, you choose
+        this per app, folder, project or label.
+      </p>
     </div>
   )
 }

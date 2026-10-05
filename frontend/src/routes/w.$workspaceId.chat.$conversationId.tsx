@@ -9,6 +9,7 @@ import {
   listAgentsOptions,
   listConnectionsOptions,
   listConversationsQueryKey,
+  meQueryKey,
   postMessageMutation,
 } from '@/api/@tanstack/react-query.gen'
 import { AppIcons, connectionsOf } from '@/components/agents/agent-apps'
@@ -49,7 +50,14 @@ function ConversationPage() {
   const events = useRunEvents(workspaceId, liveRun, () => { void refresh() })
   const settled = events.some(e => e.type === 'status' && !ACTIVE_STATUSES.has(e.data.status as never))
 
-  const post = useMutation({ ...postMessageMutation(), onSuccess: refresh })
+  const post = useMutation({
+    ...postMessageMutation(),
+    onSuccess: async () => {
+      await refresh()
+      // A demo visitor's allowance of messages changed.
+      void queryClient.invalidateQueries({ queryKey: meQueryKey() })
+    },
+  })
   const cancel = useMutation({ ...cancelRunMutation(), onSuccess: refresh })
 
   const messages = useMemo(() => {

@@ -526,6 +526,89 @@
         "title": "ConversationOut",
         "type": "object"
       },
+      "DemoConfigOut": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "providers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Providers",
+            "type": "array"
+          },
+          "turnstile_site_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turnstile Site Key"
+          }
+        },
+        "required": [
+          "enabled",
+          "turnstile_site_key",
+          "providers"
+        ],
+        "title": "DemoConfigOut",
+        "type": "object"
+      },
+      "DemoOut": {
+        "description": "Present on a public demo instance. `visitor` is false for the people who run the demo.",
+        "properties": {
+          "chat_retention_hours": {
+            "title": "Chat Retention Hours",
+            "type": "integer"
+          },
+          "suggestions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Suggestions",
+            "type": "array"
+          },
+          "turns_left": {
+            "title": "Turns Left",
+            "type": "integer"
+          },
+          "turns_per_day": {
+            "title": "Turns Per Day",
+            "type": "integer"
+          },
+          "visitor": {
+            "title": "Visitor",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "visitor",
+          "turns_per_day",
+          "turns_left",
+          "chat_retention_hours",
+          "suggestions"
+        ],
+        "title": "DemoOut",
+        "type": "object"
+      },
+      "EmailIn": {
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "EmailIn",
+        "type": "object"
+      },
       "EventOut": {
         "properties": {
           "data": {
@@ -555,6 +638,24 @@
           "data"
         ],
         "title": "EventOut",
+        "type": "object"
+      },
+      "GateIn": {
+        "properties": {
+          "newsletter": {
+            "title": "Newsletter",
+            "type": "boolean"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "newsletter"
+        ],
+        "title": "GateIn",
         "type": "object"
       },
       "GrantOut": {
@@ -670,6 +771,16 @@
       },
       "MeOut": {
         "properties": {
+          "demo": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DemoOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "user": {
             "$ref": "#/components/schemas/UserOut"
           },
@@ -683,7 +794,8 @@
         },
         "required": [
           "user",
-          "workspaces"
+          "workspaces",
+          "demo"
         ],
         "title": "MeOut",
         "type": "object"
@@ -1014,6 +1126,11 @@
       }
     },
     "securitySchemes": {
+      "CsrfChecked": {
+        "in": "cookie",
+        "name": "csrftoken",
+        "type": "apiKey"
+      },
       "SessionAuth": {
         "in": "cookie",
         "name": "sessionid",
@@ -1033,6 +1150,90 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/demo/config": {
+      "get": {
+        "operationId": "demo_config",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemoConfigOut"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Demo Config",
+        "tags": [
+          "demo"
+        ]
+      }
+    },
+    "/api/demo/email": {
+      "post": {
+        "description": "Creates a passwordless account for the address if there is none, so a sign-in code can be sent.\n\nAnswers the same whether or not the account existed.",
+        "operationId": "demo_email",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "security": [
+          {
+            "CsrfChecked": []
+          }
+        ],
+        "summary": "Demo Email",
+        "tags": [
+          "demo"
+        ]
+      }
+    },
+    "/api/demo/gate": {
+      "post": {
+        "description": "Admits this browser to sign in after a Turnstile check, and remembers the newsletter choice.",
+        "operationId": "demo_gate",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "security": [
+          {
+            "CsrfChecked": []
+          }
+        ],
+        "summary": "Demo Gate",
+        "tags": [
+          "demo"
+        ]
+      }
+    },
     "/api/me": {
       "get": {
         "operationId": "me",

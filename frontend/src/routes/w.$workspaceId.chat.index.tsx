@@ -5,13 +5,15 @@ import {
   getConversationQueryKey,
   listAgentsOptions,
   listConversationsQueryKey,
+  meQueryKey,
 } from '@/api/@tanstack/react-query.gen'
-import { createConversation, postMessage } from '@/api/sdk.gen'
+import { createConversation, deleteConversation, postMessage } from '@/api/sdk.gen'
 import { AgentIntro } from '@/components/chat/agent-intro'
 import { type ChatMessage, messageText, pendingMessages, toThreadMessage } from '@/components/chat/model'
 import { Thread } from '@/components/chat/thread'
 import { ErrorNote } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
+import { useDemo } from '@/lib/demo'
 import { useDocumentTitle } from '@/lib/title'
 
 export const Route = createFileRoute('/w/$workspaceId/chat/')({
@@ -28,6 +30,7 @@ function NewChat() {
   const queryClient = useQueryClient()
   useDocumentTitle('New chat')
   const agents = useQuery(listAgentsOptions({ path: { workspace_id: workspaceId } }))
+  const suggestions = useDemo()?.suggestions ?? []
   // An agent named in the link that no longer exists is not swapped for another one silently.
   const agent = wanted ? agents.data?.find(a => a.id === wanted) : agents.data?.[0]
   const choose = (agentId: string) => navigate({ to: '/w/$workspaceId/chat', params: { workspaceId }, search: { agent: agentId }, replace: true })
@@ -37,7 +40,16 @@ function NewChat() {
       if (!agent) throw new Error('Create an agent first.')
       const path = { workspace_id: workspaceId }
       const { data: conversation } = await createConversation({ path, body: { agent_id: agent.id }, throwOnError: true })
-      await postMessage({ path: { ...path, conversation_id: conversation.id }, body: { content }, throwOnError: true })
+      const chat = { ...path, conversation_id: conversation.id }
+      const posted = await postMessage({ path: chat, body: { content } })
+        .finally(() => void queryClient.invalidateQueries({ queryKey: meQueryKey() }))
+      if (posted.error) {
+        // Refused (for example over the demo's daily allowance): do not leave an empty chat behind. Other
+        // failures may have started the run, so the chat stays.
+        const status = posted.response?.status ?? 0
+        if ((status >= 400 && status < 500) || status === 503) await deleteConversation({ path: chat })
+        throw posted.error
+      }
       await queryClient.invalidateQueries({ queryKey: listConversationsQueryKey({ path }) })
       await queryClient.invalidateQueries({ queryKey: getConversationQueryKey({ path: { ...path, conversation_id: conversation.id } }) })
       return conversation
@@ -70,13 +82,34 @@ function NewChat() {
         <div className="min-h-0 flex-1">
           <Thread
             empty={(
-              <AgentIntro
-                workspaceId={workspaceId}
-                agents={agents.data}
-                agent={agent}
-                unknown={!!wanted && !!agents.data && !agent}
-                onChoose={choose}
-              />
+              <>
+                <AgentIntro
+                  workspaceId={workspaceId}
+                  agents={agents.data}
+                  agent={agent}
+                  unknown={!!wanted && !!agents.data && !agent}
+                  onChoose={choose}
+                />
+                {agent && suggestions.length > 0 && (
+                  <section aria-labelledby="suggestions" className="mx-auto -mt-8 max-w-xl space-y-2 px-4 pb-8">
+                    <h2 id="suggestions" className="label text-center">Try asking</h2>
+                    <ul className="divide-y divide-border border border-border-strong bg-card">
+                      {suggestions.map(text => (
+                        <li key={text}>
+                          <button
+                            type="button"
+                            disabled={start.isPending}
+                            onClick={() => start.mutate(text)}
+                            className="w-full px-4 py-2.5 text-left text-[13px] outline-none hover:bg-secondary/60 focus-visible:ring-[3px] focus-visible:ring-ring/25 focus-visible:ring-inset disabled:opacity-45"
+                          >
+                            {text}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
+              </>
             )}
           />
         </div>

@@ -1,6 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { redirect } from '@tanstack/react-router'
 import { authQuery } from '@/lib/auth'
+import { demoConfigQuery } from '@/lib/demo'
 
 export type NextSearch = { next?: string }
 
@@ -18,4 +19,10 @@ export async function requireSignedIn(queryClient: QueryClient, next: string) {
   const state = await queryClient.ensureQueryData(authQuery)
   if (state.kind !== 'authenticated') throw redirect({ to: '/login', search: { next } })
   return state.user
+}
+
+/** On the public demo, every way in (sign-in, sign-up, password reset) goes through the demo page. */
+export async function redirectOnDemo(queryClient: QueryClient) {
+  const demo = await queryClient.ensureQueryData(demoConfigQuery).catch(() => null)
+  if (demo?.enabled) throw redirect({ to: '/demo' })
 }

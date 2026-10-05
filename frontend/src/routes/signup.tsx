@@ -4,11 +4,14 @@ import { AuthLayout, useContinueAuth } from '@/components/auth-layout'
 import { SubmitButton, submitForm, TextField } from '@/components/form'
 import { ErrorNote } from '@/components/ui/misc'
 import { auth, fieldErrors, useAuthStep } from '@/lib/auth'
-import { redirectIfSignedIn, validateNext } from '@/lib/guards'
+import { redirectIfSignedIn, redirectOnDemo, validateNext } from '@/lib/guards'
 
 export const Route = createFileRoute('/signup')({
   validateSearch: validateNext,
-  beforeLoad: ({ context }) => redirectIfSignedIn(context.queryClient),
+  beforeLoad: async ({ context }) => {
+    await redirectIfSignedIn(context.queryClient)
+    await redirectOnDemo(context.queryClient)
+  },
   component: SignupPage,
 })
 

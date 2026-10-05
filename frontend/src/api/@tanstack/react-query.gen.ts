@@ -3,8 +3,8 @@
 import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOptions, type UseMutationOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { authorize, cancelRun, changeAccess, connectKey, createAgent, createConversation, deleteAgent, deleteConnection, deleteConversation, enable, getAccess, getAgent, getConversation, getRun, listAccessResources, listAgents, listConnections, listConnectors, listConversations, me, type Options, postMessage, reconnect, replaceKey, updateAgent } from '../sdk.gen';
-import type { AuthorizeData, AuthorizeResponse, CancelRunData, CancelRunResponse, ChangeAccessData, ChangeAccessResponse, ConnectKeyData, ConnectKeyResponse, CreateAgentData, CreateAgentResponse, CreateConversationData, CreateConversationResponse, DeleteAgentData, DeleteAgentResponse, DeleteConnectionData, DeleteConnectionResponse, DeleteConversationData, DeleteConversationResponse, EnableData, EnableResponse, GetAccessData, GetAccessResponse, GetAgentData, GetAgentResponse, GetConversationData, GetConversationResponse, GetRunData, GetRunResponse, ListAccessResourcesData, ListAccessResourcesResponse, ListAgentsData, ListAgentsResponse, ListConnectionsData, ListConnectionsResponse, ListConnectorsData, ListConnectorsResponse, ListConversationsData, ListConversationsResponse, MeData, MeResponse, PostMessageData, PostMessageResponse, ReconnectData, ReconnectResponse, ReplaceKeyData, ReplaceKeyResponse, UpdateAgentData, UpdateAgentResponse } from '../types.gen';
+import { authorize, cancelRun, changeAccess, connectKey, createAgent, createConversation, deleteAgent, deleteConnection, deleteConversation, demoConfig, demoEmail, demoGate, enable, getAccess, getAgent, getConversation, getRun, listAccessResources, listAgents, listConnections, listConnectors, listConversations, me, type Options, postMessage, reconnect, replaceKey, updateAgent } from '../sdk.gen';
+import type { AuthorizeData, AuthorizeResponse, CancelRunData, CancelRunResponse, ChangeAccessData, ChangeAccessResponse, ConnectKeyData, ConnectKeyResponse, CreateAgentData, CreateAgentResponse, CreateConversationData, CreateConversationResponse, DeleteAgentData, DeleteAgentResponse, DeleteConnectionData, DeleteConnectionResponse, DeleteConversationData, DeleteConversationResponse, DemoConfigData, DemoConfigResponse, DemoEmailData, DemoEmailResponse, DemoGateData, DemoGateResponse, EnableData, EnableResponse, GetAccessData, GetAccessResponse, GetAgentData, GetAgentResponse, GetConversationData, GetConversationResponse, GetRunData, GetRunResponse, ListAccessResourcesData, ListAccessResourcesResponse, ListAgentsData, ListAgentsResponse, ListConnectionsData, ListConnectionsResponse, ListConnectorsData, ListConnectorsResponse, ListConversationsData, ListConversationsResponse, MeData, MeResponse, PostMessageData, PostMessageResponse, ReconnectData, ReconnectResponse, ReplaceKeyData, ReplaceKeyResponse, UpdateAgentData, UpdateAgentResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseUrl' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -37,6 +37,64 @@ const createQueryKey = <TOptions extends Options>(id: string, options?: TOptions
         params.query = options.query;
     }
     return [params];
+};
+
+export const demoConfigQueryKey = (options?: Options<DemoConfigData>) => createQueryKey('demoConfig', options);
+
+/**
+ * Demo Config
+ */
+export const demoConfigOptions = (options?: Options<DemoConfigData>) => queryOptions<DemoConfigResponse, DefaultError, DemoConfigResponse, ReturnType<typeof demoConfigQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await demoConfig({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: demoConfigQueryKey(options)
+});
+
+/**
+ * Demo Email
+ *
+ * Creates a passwordless account for the address if there is none, so a sign-in code can be sent.
+ *
+ * Answers the same whether or not the account existed.
+ */
+export const demoEmailMutation = (options?: Partial<Options<DemoEmailData>>): UseMutationOptions<DemoEmailResponse, DefaultError, Options<DemoEmailData>> => {
+    const mutationOptions: UseMutationOptions<DemoEmailResponse, DefaultError, Options<DemoEmailData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await demoEmail({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Demo Gate
+ *
+ * Admits this browser to sign in after a Turnstile check, and remembers the newsletter choice.
+ */
+export const demoGateMutation = (options?: Partial<Options<DemoGateData>>): UseMutationOptions<DemoGateResponse, DefaultError, Options<DemoGateData>> => {
+    const mutationOptions: UseMutationOptions<DemoGateResponse, DefaultError, Options<DemoGateData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await demoGate({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
 };
 
 export const meQueryKey = (options?: Options<MeData>) => createQueryKey('me', options);
