@@ -23,7 +23,7 @@ export function AuthLayout({ title, description, children, footer, back, backdro
         <div aria-hidden className="pointer-events-none fixed inset-0 overflow-hidden">
           <picture>
             <source media="(max-width: 767px)" srcSet={backdrop.narrow} />
-            <img src={backdrop.wide} alt="" className="size-full scale-110 object-cover object-top blur-[5px] md:object-[60%_center] dark:invert dark:hue-rotate-180" />
+            <img src={backdrop.wide} alt="" className="size-full scale-[1.02] object-cover object-top blur-[5px] md:origin-top-left md:object-left-top dark:invert dark:hue-rotate-180" />
           </picture>
           <div className="absolute inset-0 bg-background/45" />
         </div>
