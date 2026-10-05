@@ -1,6 +1,7 @@
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
+import { BotIcon } from 'lucide-react'
 import { useMemo } from 'react'
 import {
   cancelRunMutation,
@@ -86,7 +87,9 @@ function ConversationPage() {
           <h1 className="min-w-0 flex-1 truncate text-sm font-medium" title={title}>{title}</h1>
           {agent && (
             <div className="flex min-w-0 items-center gap-2.5">
-              <span className="truncate text-[13px] text-muted-foreground">{agent.name}</span>
+              <span className="flex min-w-0 items-center gap-1.5 text-[13px] text-muted-foreground" title="Agent">
+                <BotIcon className="size-3.5 shrink-0" /><span className="truncate">{agent.name}</span>
+              </span>
               <AppIcons connections={connectionsOf(agent, connections.data)} size="xs" className="hidden sm:flex" />
             </div>
           )}

@@ -1,6 +1,7 @@
 /** What a chat with no messages yet shows: who the agent is and what it can reach. */
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
+import { BotIcon } from 'lucide-react'
 import { listConnectionsOptions } from '@/api/@tanstack/react-query.gen'
 import type { AgentOut } from '@/api/types.gen'
 import { AppIcons, AttentionList, connectionsOf } from '@/components/agents/agent-apps'
@@ -55,7 +56,15 @@ export function AgentIntro({ workspaceId, agents, agent, unknown = false, onChoo
             {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
           </Select>
         </div>
-      ) : agent && <h2 className={HEADING}>{agent.name}</h2>}
+      ) : agent && (
+        // Labelled as the agent, so its name is not taken for the product's or the workspace's.
+        <div className="space-y-1.5">
+          <p className="label">Agent</p>
+          <h2 className="inline-flex items-center gap-2 text-base font-medium">
+            <BotIcon className="size-4 text-muted-foreground" />{agent.name}
+          </h2>
+        </div>
+      )}
       {unknown && <Notice className="text-left">The agent in this link no longer exists. Choose another one to start chatting.</Notice>}
       {agent && (agent.connection_ids.length ? (
         <>
