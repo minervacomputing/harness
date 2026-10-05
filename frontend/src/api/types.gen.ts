@@ -352,6 +352,10 @@ export type DemoOut = {
      */
     chat_retention_hours: number;
     /**
+     * Featured Suggestion
+     */
+    featured_suggestion: string | null;
+    /**
      * Suggestions
      */
     suggestions: Array<string>;

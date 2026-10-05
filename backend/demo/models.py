@@ -10,6 +10,8 @@ class DemoSite(UUIDModel):
     workspace = models.OneToOneField("workspaces.Workspace", on_delete=models.PROTECT)
     # Shown on the new-chat screen.
     suggestions = models.JSONField(default=list, blank=True)
+    # Shown above the suggestions, set apart: a request that Minerva refuses.
+    featured_suggestion = models.CharField(max_length=500, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self) -> str:

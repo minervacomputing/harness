@@ -566,6 +566,17 @@
             "title": "Chat Retention Hours",
             "type": "integer"
           },
+          "featured_suggestion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Featured Suggestion"
+          },
           "suggestions": {
             "items": {
               "type": "string"
@@ -591,7 +602,8 @@
           "turns_per_day",
           "turns_left",
           "chat_retention_hours",
-          "suggestions"
+          "suggestions",
+          "featured_suggestion"
         ],
         "title": "DemoOut",
         "type": "object"

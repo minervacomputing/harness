@@ -33,6 +33,8 @@ class DemoOut(Schema):
     turns_left: int
     chat_retention_hours: int
     suggestions: list[str]
+    # Shown above the others, set apart: a request Minerva refuses.
+    featured_suggestion: str | None
 
 
 class MeOut(Schema):
@@ -69,4 +71,5 @@ def _demo(user) -> dict | None:
         "turns_left": usage.turns_left,
         "chat_retention_hours": config().demo_chat_retention_hours,
         "suggestions": site.suggestions,
+        "featured_suggestion": site.featured_suggestion or None,
     }

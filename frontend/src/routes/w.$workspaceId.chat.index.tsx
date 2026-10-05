@@ -1,6 +1,7 @@
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { ShieldBanIcon } from 'lucide-react'
 import {
   getConversationQueryKey,
   listAgentsOptions,
@@ -30,7 +31,9 @@ function NewChat() {
   const queryClient = useQueryClient()
   useDocumentTitle('New chat')
   const agents = useQuery(listAgentsOptions({ path: { workspace_id: workspaceId } }))
-  const suggestions = useDemo()?.suggestions ?? []
+  const demo = useDemo()
+  const suggestions = demo?.suggestions ?? []
+  const featured = demo?.featured_suggestion
   // An agent named in the link that no longer exists is not swapped for another one silently.
   const agent = wanted ? agents.data?.find(a => a.id === wanted) : agents.data?.[0]
   const choose = (agentId: string) => navigate({ to: '/w/$workspaceId/chat', params: { workspaceId }, search: { agent: agentId }, replace: true })
@@ -90,23 +93,39 @@ function NewChat() {
                   unknown={!!wanted && !!agents.data && !agent}
                   onChoose={choose}
                 />
-                {agent && suggestions.length > 0 && (
+                {agent && (featured || suggestions.length > 0) && (
                   <section aria-labelledby="suggestions" className="mx-auto -mt-8 max-w-xl space-y-2 px-4 pb-8">
                     <h2 id="suggestions" className="label text-center">Try asking</h2>
-                    <ul className="divide-y divide-border border border-border-strong bg-card">
-                      {suggestions.map(text => (
-                        <li key={text}>
-                          <button
-                            type="button"
-                            disabled={start.isPending}
-                            onClick={() => start.mutate(text)}
-                            className="w-full px-4 py-2.5 text-left text-[13px] outline-none hover:bg-secondary/60 focus-visible:ring-[3px] focus-visible:ring-ring/25 focus-visible:ring-inset disabled:opacity-45"
-                          >
-                            {text}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
+                    {featured && (
+                      <button
+                        type="button"
+                        disabled={start.isPending}
+                        onClick={() => start.mutate(featured)}
+                        className="flex w-full items-start gap-3 border border-warning/45 bg-warning/8 px-4 py-3 text-left outline-none hover:bg-warning/14 focus-visible:ring-[3px] focus-visible:ring-ring/25 disabled:opacity-45"
+                      >
+                        <ShieldBanIcon className="mt-0.5 size-4 shrink-0 text-warning" />
+                        <span className="space-y-0.5">
+                          <span className="block text-[11px] font-semibold tracking-wide text-warning uppercase">Watch Minerva block an action</span>
+                          <span className="block text-[13px]">{featured}</span>
+                        </span>
+                      </button>
+                    )}
+                    {suggestions.length > 0 && (
+                      <ul className="divide-y divide-border border border-border-strong bg-card">
+                        {suggestions.map(text => (
+                          <li key={text}>
+                            <button
+                              type="button"
+                              disabled={start.isPending}
+                              onClick={() => start.mutate(text)}
+                              className="w-full px-4 py-2.5 text-left text-[13px] outline-none hover:bg-secondary/60 focus-visible:ring-[3px] focus-visible:ring-ring/25 focus-visible:ring-inset disabled:opacity-45"
+                            >
+                              {text}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </section>
                 )}
               </>

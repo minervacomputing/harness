@@ -29,7 +29,11 @@ class Command(BaseCommand):
             site = DemoSite.objects.select_related("workspace").first()
             if site is None:
                 workspace = Workspace.objects.create(kind=Workspace.Kind.TEAM, name=name)
-                site = DemoSite.objects.create(workspace=workspace, suggestions=story.SUGGESTIONS)
+                site = DemoSite.objects.create(
+                    workspace=workspace,
+                    suggestions=story.SUGGESTIONS,
+                    featured_suggestion=story.FEATURED_SUGGESTION,
+                )
                 with workspace_scope(workspace.id):
                     # Restricted from the start: until `demo_sync`, visitors may do nothing.
                     PermissionLayer.objects.create(level=PermissionLayer.Level.CEILING, restricted=True)
@@ -56,7 +60,8 @@ class Command(BaseCommand):
                     agent.save(update_fields=["name", "instructions", "updated_at"])
             if reset_story:
                 site.suggestions = story.SUGGESTIONS
-                site.save(update_fields=["suggestions"])
+                site.featured_suggestion = story.FEATURED_SUGGESTION
+                site.save(update_fields=["suggestions", "featured_suggestion"])
         self.stdout.write(
             f"Demo workspace {workspace.name} ({workspace.id}), owner {user.email}, agent {agent.name}.\n"
             "Next: sign in as the owner, connect the apps, choose what to allow, then run demo_sync."
