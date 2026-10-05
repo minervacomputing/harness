@@ -14,6 +14,7 @@ products by id, prices by lookup key, customers by email, and the rest by `metad
 import calendar
 import sys
 from datetime import UTC, datetime
+from urllib.parse import urlencode
 
 import _common as c
 import story
@@ -68,7 +69,10 @@ class Stripe:
         if method == "GET":
             r = self.http.get(path, params=form(params or {}))
         else:
-            r = self.http.request(method, path, data=form(params or {}), headers=headers)
+            # httpx's data= takes a dict only; a list of pairs has to be encoded by hand.
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+            body = urlencode(form(params or {}))
+            r = self.http.request(method, path, content=body, headers=headers)
         body = r.json()
         if r.status_code >= 400:
             raise StripeError(r.status_code, body.get("error", {}))
