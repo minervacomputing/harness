@@ -24,6 +24,7 @@ function LoginCodePage() {
       back
     >
       <CodeForm
+        numeric
         label="Sign-in code"
         submitLabel="Sign in"
         error={confirm.error}

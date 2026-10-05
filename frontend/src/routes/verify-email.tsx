@@ -27,6 +27,7 @@ function VerifyEmailPage() {
       back
     >
       <CodeForm
+        numeric
         label="Verification code"
         submitLabel="Verify email"
         error={verify.error}

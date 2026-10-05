@@ -63,7 +63,7 @@ function ChooseNewPassword() {
   return (
     <form className="grid gap-4" onSubmit={submitForm(form)}>
       <form.Field name="key">
-        {field => <TextField field={field} label="Reset code" autoComplete="one-time-code" autoFocus className="font-mono tracking-widest" serverError={fields.key} />}
+        {field => <TextField field={field} label="Reset code" autoComplete="one-time-code" inputMode="numeric" autoFocus className="font-mono tracking-widest" serverError={fields.key} />}
       </form.Field>
       <form.Field name="password" validators={{ onBlur: ({ value }) => (value.length < 10 ? 'Use at least 10 characters.' : undefined) }}>
         {field => <TextField field={field} label="New password" type="password" autoComplete="new-password" serverError={fields.password} />}
