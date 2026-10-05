@@ -58,7 +58,8 @@ fi
 runsc install
 systemctl enable docker
 systemctl restart docker
-docker info --format '{{json .Runtimes}}' | grep -q runsc || { echo "runsc is not registered with Docker." >&2; exit 1; }
+# No grep -q after a pipe: it exits early, the writer gets SIGPIPE, and pipefail fails the check.
+docker info --format '{{json .Runtimes}}' | grep runsc >/dev/null || { echo "runsc is not registered with Docker." >&2; exit 1; }
 docker run --rm --runtime=runsc hello-world >/dev/null && echo "gVisor runtime works."
 
 echo "== Firewall: SSH only"
@@ -82,7 +83,7 @@ PermitRootLogin prohibit-password
 EOF
 sshd -t
 systemctl reload ssh
-sshd -T | grep -qx 'passwordauthentication no' || { echo "Password logins are still allowed." >&2; exit 1; }
+sshd -T | grep -x 'passwordauthentication no' >/dev/null || { echo "Password logins are still allowed." >&2; exit 1; }
 
 echo "== Swap"
 if [[ -z "$(swapon --show --noheadings)" ]]; then
