@@ -51,7 +51,11 @@ echo "== Installing .env.demo.d/ as /opt/minerva/secrets"
 # backend runs as uid 10001.
 ssh "$REMOTE" 'install -d -m 750 -o root -g 10001 /opt/minerva/secrets'
 if [[ -d .env.demo.d ]]; then
-  rsync -a --delete --chmod=D750,F440 --chown=root:10001 .env.demo.d/ "$REMOTE:/opt/minerva/secrets/"
+  # macOS ships openrsync, which has no --chmod or --chown, so the modes are set afterwards.
+  rsync -rt --delete .env.demo.d/ "$REMOTE:/opt/minerva/secrets/"
+  ssh "$REMOTE" 'chown -R root:10001 /opt/minerva/secrets \
+    && find /opt/minerva/secrets -type d -exec chmod 750 {} + \
+    && find /opt/minerva/secrets -type f -exec chmod 440 {} +'
 fi
 
 echo "== Building and starting"
