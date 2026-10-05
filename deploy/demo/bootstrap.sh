@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time setup of a fresh Ubuntu 24.04 VPS for the Minerva demo. Run as root; safe to run again.
+# One-time setup of a fresh Debian 13 or Ubuntu 24.04 VPS for the Minerva demo. Run as root; safe to run again.
 #   scp deploy/demo/bootstrap.sh root@$DEMO_HOST: && ssh root@$DEMO_HOST bash bootstrap.sh
 set -euo pipefail
 
@@ -25,12 +25,12 @@ systemctl enable --now unattended-upgrades
 
 echo "== Docker Engine (download.docker.com)"
 install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-chmod a+r /etc/apt/keyrings/docker.asc
 . /etc/os-release
+curl -fsSL "https://download.docker.com/linux/$ID/gpg" -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
 cat > /etc/apt/sources.list.d/docker.sources <<EOF
 Types: deb
-URIs: https://download.docker.com/linux/ubuntu
+URIs: https://download.docker.com/linux/$ID
 Suites: ${UBUNTU_CODENAME:-$VERSION_CODENAME}
 Components: stable
 Signed-By: /etc/apt/keyrings/docker.asc

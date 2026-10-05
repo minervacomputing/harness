@@ -1,6 +1,6 @@
 # Demo deployment
 
-The public demo at <https://demo.minervacomputing.com> runs on one Ubuntu 24.04 VPS. A Cloudflare Tunnel brings traffic in, so the server opens no inbound ports except SSH.
+The public demo at <https://demo.minervacomputing.com> runs on one Debian 13 VPS (Ubuntu 24.04 works too). A Cloudflare Tunnel brings traffic in, so the server opens no inbound ports except SSH.
 
 ```text
 Cloudflare ─ tunnel ─ cloudflared ─ proxy (Caddy: SPA, /api → web:8000)
