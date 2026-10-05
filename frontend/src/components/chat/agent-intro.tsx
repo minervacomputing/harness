@@ -57,13 +57,10 @@ export function AgentIntro({ workspaceId, agents, agent, unknown = false, onChoo
           </Select>
         </div>
       ) : agent && (
-        // Labelled as the agent, so its name is not taken for the product's or the workspace's.
-        <div className="space-y-1.5">
-          <p className="label">Agent</p>
-          <h2 className="inline-flex items-center gap-2 text-base font-medium">
-            <BotIcon className="size-4 text-muted-foreground" />{agent.name}
-          </h2>
-        </div>
+        // The Agents icon marks it as the agent's name, not the product's or the workspace's.
+        <h2 className="inline-flex items-center gap-2 text-base font-medium">
+          <BotIcon className="size-4 text-muted-foreground" />{agent.name}
+        </h2>
       )}
       {unknown && <Notice className="text-left">The agent in this link no longer exists. Choose another one to start chatting.</Notice>}
       {agent && (agent.connection_ids.length ? (
