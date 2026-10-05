@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import httpx
 import mcp_types as types
 import pytest
-from asgiref.sync import sync_to_async
+from asgiref.sync import async_to_sync, sync_to_async
 from django.core.handlers.asgi import ASGIHandler
 from django.db import connection, transaction
 from django.test import AsyncClient, override_settings
@@ -731,6 +731,21 @@ async def test_mcp_tools_are_authorized_and_recorded(claimed):
     events = await sync_to_async(list)(RunEvent.unscoped.filter(run=run, type="tool_call").order_by("seq"))
     assert [e.data["decision"] for e in events] == ["allowed", "denied"]
     assert events[0].data["label"] == "Todoist: List tasks"
+
+
+def test_listed_tools_say_whether_they_only_read(scoped, user, agent, grant, todoist):
+    grant(work=["read", "create"])
+    with workspace_scope(scoped.id):
+        conversation = Conversation.objects.create(agent=agent, user=user)
+        services.start_run(conversation=conversation, user_id=user.id, content="Add a task")
+    [(run, _)] = services.claim_queued(1)
+    listed = async_to_sync(list_tools)(_mcp_ctx(run), None)
+    assert {tool.name: tool.annotations.read_only_hint for tool in listed.tools} == {
+        "todoist_list_projects": True,
+        "todoist_list_tasks": True,
+        "todoist_get_task": True,
+        "todoist_create_task": False,
+    }
 
 
 def _mcp_ctx(run) -> SimpleNamespace:

@@ -23,7 +23,11 @@ export const runSpec = z.object({
     api: z.enum(['responses', 'chat']),
     max_output_tokens: z.number().int().positive(),
   }),
-  limits: z.object({ deadline: z.string(), max_model_calls: z.number().int() }),
+  limits: z.object({
+    deadline: z.string(),
+    max_model_calls: z.number().int(),
+    max_tool_calls: z.number().int().optional(),
+  }),
 })
 export type RunSpec = z.infer<typeof runSpec>
 

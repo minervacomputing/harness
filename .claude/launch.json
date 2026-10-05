@@ -17,6 +17,23 @@
         "MINERVA_DEMO=true MINERVA_DEBUG=true MINERVA_DATABASE_URL=postgres://minerva:minerva@localhost:5432/minerva_demo exec uv run --project backend honcho -e /dev/null -f Procfile start"
       ],
       "port": 5173
+    },
+    {
+      "name": "fake-model",
+      "runtimeExecutable": "make",
+      "runtimeArgs": [
+        "fake-model"
+      ],
+      "port": 9900
+    },
+    {
+      "name": "minerva-fake-model",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "MINERVA_MODEL_BASE_URL=http://127.0.0.1:9900/v1 MINERVA_MODEL_API_KEY=fake exec uv run --project backend honcho -e /dev/null -f Procfile start"
+      ],
+      "port": 5173
     }
   ]
 }

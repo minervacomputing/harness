@@ -1,82 +1,31 @@
 /**
- * Minerva run worker. Runs one agent turn with DeepSeek Harness inside the sandbox.
+ * Minerva run worker. Runs one agent turn with pi-durable inside the sandbox.
  *
  * The worker holds a single run token and makes outbound calls to the gateway only:
  * `GET /run` for the turn, `/v1` for model calls, `/mcp` for tools, `POST /events` for progress.
  * It never sees provider keys, connection credentials, or anything outside its own run.
  */
-import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client'
-import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
-import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
-import { authHeader, EventSink, fetchRunSpec, gatewayUrl, RunRevoked, type RunSpec } from './gateway.ts'
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
+import type { AssistantMessage, Model, TSchema } from '@earendil-works/pi-ai'
+import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
+import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy'
+import { createModels, createProvider } from '@earendil-works/pi-ai/models'
+import {
+  AssistantEntry, createRegistry, defineExtension, Harness, MemoryStorage, UserEntry, watchEvents,
+  type AgentEventStream, type Conversation, type ToolRegistration,
+} from '@earendil-works/pi-durable'
+import { McpClient, StreamableHttpTransport, toLlmContent, type Tool as McpTool } from '@earendil-works/pi-mcp'
+import { authHeader, env, EventSink, fetchRunSpec, gatewayUrl, RunRevoked, type RunSpec } from './gateway.ts'
 
-const PROFILE = 'sdk-minimal'
-const DISABLED_PLUGINS = [
-  'persistent-bash', 'persistent-pwsh', 'pty', 'terminal-bash', 'terminal-pwsh',
-  'llm-deepseek', 'subprocess', 'sandbox', 'mcp-resources',
-]
+const PROVIDER = 'minerva'
+const CONTEXT_WINDOW = 128000
+// The newest earlier messages are replayed until this many characters (about a quarter of the context window).
+const HISTORY_BUDGET = 120000
+const MESSAGE_LIMIT = 30000
+// The gateway sizes tool results and pages long ones, so the harness must not cut them and drop their paging fields.
+const TOOL_RESULT_BYTES = 1024 * 1024
 
-function composePrompt(spec: RunSpec): string {
-  if (!spec.history.length) return spec.prompt
-  const earlier = spec.history
-    .map(message => `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.content}`)
-    .join('\n\n')
-  return `Earlier in this conversation:\n\n${earlier}\n\nCurrent message from the user:\n\n${spec.prompt}`
-}
-
-function profilePatch(spec: RunSpec): unknown[] {
-  const rows: unknown[] = DISABLED_PLUGINS.map(id => ({ id, disabled: true }))
-  rows.push({
-    id: 'system-prompt',
-    config: { includeHarnessIdentity: false, includeRuntimeContext: false, personaPrefix: spec.instructions },
-  })
-  rows.push({
-    insert: [
-      {
-        id: 'minerva-model',
-        name: '@deepseek-ai/dsh-llm-pi-ai',
-        config: {
-          providers: {
-            minerva: {
-              api: spec.model.api === 'chat' ? 'openai-completions' : 'openai-responses',
-              baseURL: `${gatewayUrl}/v1`,
-              apiKeyEnv: 'MINERVA_RUN_TOKEN',
-              models: [{
-                id: spec.model.alias, contextWindow: 128000,
-                maxTokens: spec.model.max_output_tokens, input: ['text'],
-              }],
-            },
-          },
-        },
-      },
-      {
-        id: 'minerva-tools',
-        name: '@deepseek-ai/dsh-mcp-client',
-        config: {
-          serverName: 'minerva',
-          transport: 'streamable-http',
-          url: `${gatewayUrl}/mcp`,
-          headers: { Authorization: authHeader },
-          failOnStartupError: true,
-        },
-      },
-    ],
-  })
-  return rows
-}
-
-/** The published profile resolves bare plugin names next to itself; point it at the installed bundle. */
-async function prepareHome(home: string): Promise<void> {
-  const require = createRequire(import.meta.url)
-  const sdkRequire = createRequire(require.resolve('@deepseek-ai/dsh-sdk-client'))
-  const cliRequire = createRequire(sdkRequire.resolve('@deepseek-ai/dsh/package.json'))
-  const bundleRoot = dirname(dirname(cliRequire.resolve('@deepseek-ai/dsh-sdk-minimal')))
-  const profileDirectory = join(home, 'profiles', PROFILE)
-  await mkdir(profileDirectory, { recursive: true })
-  await symlink(resolve(bundleRoot, '../..'), join(profileDirectory, 'node_modules'))
-}
+const context = BACKGROUND_CONTEXT
 
 function describeError(error: unknown): string {
   if (!(error instanceof Error)) return 'Unknown worker error'
@@ -84,13 +33,131 @@ function describeError(error: unknown): string {
   return `${error.name}: ${error.message}${cause}`.slice(0, 2000)
 }
 
-let harness: DeepSeekHarness | null = null
+function minervaModel(spec: RunSpec): Model<'openai-responses'> | Model<'openai-completions'> {
+  // The relay sets reasoning effort itself, so pi-ai sends no reasoning options and puts instructions in a system message.
+  const common = {
+    id: spec.model.alias,
+    name: spec.model.alias,
+    provider: PROVIDER,
+    baseUrl: `${gatewayUrl}/v1`,
+    input: ['text' as const],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    reasoning: false,
+    contextWindow: CONTEXT_WINDOW,
+    maxTokens: spec.model.max_output_tokens,
+  }
+  if (spec.model.api === 'chat') {
+    return {
+      ...common,
+      api: 'openai-completions',
+      compat: {
+        supportsStore: false,
+        supportsDeveloperRole: false,
+        supportsStrictMode: false,
+        maxTokensField: 'max_completion_tokens',
+        supportsMidConvoSystemMessages: false,
+      },
+    }
+  }
+  return {
+    ...common,
+    api: 'openai-responses',
+    compat: {
+      supportsStrictMode: false,
+      supportsAdditionalTools: false,
+      supportsToolSearch: false,
+      supportsMidConvoSystemMessages: false,
+      supportsLongCacheRetention: false,
+    },
+  }
+}
+
+function remainingMs(spec: RunSpec): number {
+  const deadline = Date.parse(spec.limits.deadline)
+  return Number.isNaN(deadline) ? 60000 : Math.max(1000, deadline - Date.now())
+}
+
+/** A gateway tool. Writes run one at a time: the gateway refuses a second write while one is in progress. */
+function gatewayTool(client: McpClient, tool: McpTool, spec: RunSpec): ToolRegistration {
+  return {
+    name: tool.name,
+    description: tool.description ?? tool.title ?? tool.name,
+    parameters: { ...tool.inputSchema, type: 'object', properties: tool.inputSchema.properties ?? {} } as unknown as TSchema,
+    executionMode: tool.annotations?.readOnlyHint === true ? 'parallel' : 'sequential',
+    outputLimits: { maxBytes: TOOL_RESULT_BYTES, maxLines: Number.MAX_SAFE_INTEGER },
+    async execute(args, _api, callContext) {
+      const result = await client.callTool(tool.name, args as Record<string, unknown>, {
+        signal: callContext.abortSignal,
+        timeoutMs: remainingMs(spec),
+      })
+      const content = toLlmContent(result).map(block => (
+        block.type === 'text' ? block : { type: 'text' as const, text: `[${block.type} content omitted]` }
+      ))
+      return { content, isError: result.isError === true }
+    },
+  }
+}
+
+function clip(text: string): string {
+  if (text.length <= MESSAGE_LIMIT) return text
+  return `${text.slice(0, MESSAGE_LIMIT)}\n\n[The rest of this message was left out.]`
+}
+
+/** The newest earlier messages that fit the budget, oldest first. */
+function recentHistory(spec: RunSpec): RunSpec['history'] {
+  const kept: RunSpec['history'] = []
+  let used = 0
+  for (const message of [...spec.history].reverse()) {
+    const content = clip(message.content)
+    if (used + content.length > HISTORY_BUDGET) break
+    used += content.length
+    kept.unshift({ role: message.role, content })
+  }
+  return kept
+}
+
+function earlierAnswer(spec: RunSpec, text: string, timestamp: number): AssistantMessage {
+  return {
+    role: 'assistant',
+    content: [{ type: 'text', text }],
+    api: spec.model.api === 'chat' ? 'openai-completions' : 'openai-responses',
+    provider: PROVIDER,
+    model: spec.model.alias,
+    usage: {
+      input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: 'stop',
+    timestamp,
+  }
+}
+
+function answerText(message: unknown): string {
+  if (typeof message !== 'object' || message === null || (message as { role?: unknown }).role !== 'assistant') return ''
+  return (message as AssistantMessage).content
+    .flatMap(block => (block.type === 'text' ? [block.text] : []))
+    .join('')
+    .trim()
+}
+
+let mcp: McpClient | null = null
+let harness: Harness | null = null
+let root: Conversation | null = null
+let events: AgentEventStream | null = null
 let closing = false
+
+async function close(): Promise<void> {
+  await events?.stop().catch(() => {})
+  await root?.abort(context).catch(() => {})
+  await harness?.close(context).catch(() => {})
+  await mcp?.close().catch(() => {})
+}
 
 async function shutdown(code: number): Promise<never> {
   if (!closing) {
     closing = true
-    await harness?.close().catch(() => {})
+    // A tool call that ignores cancellation must not keep the process alive.
+    await Promise.race([close(), new Promise(resolve => setTimeout(resolve, 5000))])
   }
   process.exit(code)
 }
@@ -102,46 +169,78 @@ const sink = new EventSink(() => { void shutdown(0) })
 
 try {
   const spec = await fetchRunSpec()
-  const root = process.env.MINERVA_WORKDIR || await mkdtemp(join(tmpdir(), 'minerva-run-'))
-  const workspace = join(root, 'workspace')
-  const home = join(root, 'dsh-home')
-  const patch = join(root, 'profile.patch.json')
-  await mkdir(workspace, { recursive: true })
-  await prepareHome(home)
-  await writeFile(patch, JSON.stringify(profilePatch(spec)), { mode: 0o600 })
-
   sink.phase('Starting the agent')
-  harness = new DeepSeekHarness({
-    profile: PROFILE,
-    patches: [patch],
-    dshHome: home,
-    cwd: workspace,
-    processCwd: workspace,
-    provider: 'minerva',
-    model: spec.model.alias,
-    maxTokens: spec.model.max_output_tokens,
-    env: {
-      PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
-      HOME: root,
-      TMPDIR: tmpdir(),
-      LANG: 'C.UTF-8',
-      NODE_ENV: 'production',
-      ...(process.env.NARB_DISABLE_NATIVE_CACHE && { NARB_DISABLE_NATIVE_CACHE: process.env.NARB_DISABLE_NATIVE_CACHE }),
-      MINERVA_RUN_TOKEN: process.env.RUN_TOKEN ?? '',
+
+  const models = createModels()
+  models.setProvider(createProvider({
+    id: PROVIDER,
+    baseUrl: `${gatewayUrl}/v1`,
+    auth: { apiKey: { name: 'Minerva run token', resolve: async () => ({ auth: { apiKey: env.RUN_TOKEN } }) } },
+    models: [minervaModel(spec)],
+    api: spec.model.api === 'chat' ? openAICompletionsApi() : openAIResponsesApi(),
+  }))
+
+  mcp = new McpClient({ name: 'minerva-worker', version: '1', requestTimeoutMs: remainingMs(spec) })
+  await mcp.connect(new StreamableHttpTransport({
+    url: `${gatewayUrl}/mcp`,
+    headers: { Authorization: authHeader },
+    openGetStream: false,
+  }))
+  const client = mcp
+  const tools = (await client.listTools()).map(tool => gatewayTool(client, tool, spec))
+
+  const registry = createRegistry()
+  registry.install(defineExtension({ name: 'minerva', tools }))
+
+  harness = await Harness.open(new MemoryStorage(), {
+    models,
+    registry,
+    settings: {
+      // The relay's refusal at the model-call limit is final, so a failed model call ends the turn.
+      retry: { enabled: false },
+      // The relay streams every model call into the chat, so a summary must not run beside the answer.
+      // Compaction still runs when the context is nearly full.
+      compaction: { backgroundTokens: 0 },
     },
-    initializeTimeoutMs: 45000,
+    onReport: error => { process.stderr.write(`${describeError(error)}\n`) },
+  }, context)
+
+  const history = recentHistory(spec)
+  root = await harness.root(context, {
+    agent: { model: { provider: PROVIDER, modelId: spec.model.alias }, instructions: spec.instructions || null },
+    async init(tx, conversationId) {
+      const timestamp = Date.now()
+      for (const message of history) {
+        if (message.role === 'user') {
+          await tx.appendEntry(UserEntry, conversationId, { model: [{ role: 'user', content: message.content, timestamp }] })
+        } else {
+          await tx.appendEntry(AssistantEntry, conversationId, { model: [earlierAnswer(spec, message.content, timestamp)] })
+        }
+      }
+    },
   })
+
+  const running = new Set<string>()
+  events = await watchEvents(harness, root.id, context)
+  events.start(async batch => {
+    for (const event of batch) {
+      if (event.type === 'tool_execution_start') running.add(event.toolCallId)
+      else if (event.type === 'tool_execution_end') running.delete(event.toolCallId)
+      else if (event.type !== 'turn_start') continue
+      sink.phase(running.size ? 'Using tools' : 'Thinking')
+    }
+  })
+
   sink.phase('Thinking')
-  const result = await harness.run(composePrompt(spec), {
-    onNotification(notification) {
-      if (notification.method !== 'session.event') return
-      const params = notification.params as Record<string, unknown>
-      const event = (typeof params.event === 'object' && params.event !== null ? params.event : params) as { type?: string }
-      if (event.type === 'tool/call') sink.phase('Using tools')
-      if (event.type === 'tool/result') sink.phase('Thinking')
-    },
-  })
-  const response = result.finalResponse.trim()
+  const submission = await root.submit({ type: 'input', content: spec.prompt }, context)
+  const settled = await submission.wait(context)
+  if (settled.status === 'unanswered') {
+    const detail = typeof settled.detail === 'string' ? `: ${settled.detail}` : ''
+    throw new Error(`The model turn ended without an answer (${settled.reason}${detail}).`)
+  }
+  const answerId = settled.answer
+  const answer = answerId && await root.commit(tx => tx.entry(AssistantEntry, answerId), context)
+  const response = answer ? answerText(answer.model?.[0]) : ''
   if (!response) throw new Error('The model turn ended without a response.')
   await sink.completed(response)
   await shutdown(0)

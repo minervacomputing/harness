@@ -24,7 +24,7 @@ Status: accepted, 2026-09-29, and implemented in this repository. The earlier `t
 - **First offering:** a hosted cloud product for individuals experimenting with governed agents. It must also be self-hostable on a laptop or VPS.
 - **Later:** team workspaces, then enterprise features (SSO, provisioning, approvals, dedicated deployments). The first implementation must extend to these without a rewrite.
 - **Carried invariant:** the agent never holds credentials and never decides its own permissions. An agent run has no access to the control API.
-- **Replaceability:** the agent harness (DeepSeek Harness today) and the sandbox technology must be replaceable without changing the backend.
+- **Replaceability:** the agent harness (pi-durable today) and the sandbox technology must be replaceable without changing the backend.
 - **Stack preference:** opinionated frameworks and mature libraries over hand-assembled infrastructure.
 
 ## 2. System overview
@@ -43,7 +43,7 @@ Status: accepted, 2026-09-29, and implemented in this repository. The earlier `t
                ▼                               ▼                               ▼
           PostgreSQL                 ┌──── Sandbox (any shape) ────┐   Provider APIs (Todoist, …)
                                      │ worker image                │   Model APIs (OpenAI, Anthropic, …)
-                                     │   harness adapter (DSH)     │
+                                     │   pi-durable agent          │
                                      └──────────────┬──────────────┘
                                                     │ outbound HTTPS only, per-run token
                                                     └──────────► gateway
@@ -165,7 +165,7 @@ The effective permissions are computed when a run starts and stored with the run
 
 **Run lifecycle.** `queued → provisioning → running → completed | failed | cancelled | timed_out`. Events are stored in order, so the browser can reconnect and replay.
 
-**Harness independence.** The worker image translates the run spec into its harness's configuration. Replacing DeepSeek Harness means building a new worker image; the backend does not change. The first worker image is the prototype's TypeScript DSH bridge, rewritten to use this contract instead of stdio.
+**Harness independence.** The worker image translates the run spec into its harness's configuration. Replacing the harness means building a new worker image; the backend does not change. The first worker image was the prototype's TypeScript DeepSeek Harness bridge, rewritten to use this contract instead of stdio. Since 2026-10-05 the worker runs pi-durable.
 
 ### D7. Sandbox providers
 
@@ -291,7 +291,7 @@ class SandboxProvider(Protocol):
 - **History after revocation:** which earlier messages and artifacts may enter a new run after permissions narrow.
 - **Cloud login:** allauth only, or WorkOS AuthKit from day one.
 
-Resolved: the first worker image keeps DeepSeek Harness (D6).
+Resolved: the first worker image kept DeepSeek Harness (D6). It was replaced by pi-durable on 2026-10-05.
 
 ## 6. Implementation notes
 
@@ -299,7 +299,7 @@ Where the first implementation (2026-09-29) differs from the decisions above. Ea
 
 | Decision | As built | Why |
 |---|---|---|
-| D6 events | The worker sends only `phase`, `completed`, and `failed`. Text deltas come from the gateway's model relay, which parses the upstream stream. | The DeepSeek Harness SDK reports only finished events, not token deltas. This does not make the text trustworthy: the worker chooses what it sends to the model and reports the final answer itself. All agent text is untrusted, so the chat UI never loads remote images from it. |
+| D6 events | The worker sends only `phase`, `completed`, and `failed`. Text deltas come from the gateway's model relay, which parses the upstream stream. | The relay already reads the upstream stream, so the worker does not repeat it. This does not make the text trustworthy: the worker chooses what it sends to the model and reports the final answer itself. All agent text is untrusted, so the chat UI never loads remote images from it. |
 | D6 artifacts | `PUT /artifacts` is not built yet. | Report files come later. |
 | D7 providers | `container` and `local-process` exist. `macos-srt` and `kubernetes` do not. | Docker is enough locally and for self-hosting. The cloud provider comes with deployment. |
 | D7 network | All workers share the internal `minerva-sandbox` network. | Acceptable locally. Use a network per run before strangers share a host. |
@@ -311,7 +311,7 @@ Where the first implementation (2026-09-29) differs from the decisions above. Ea
 
 Two runtime details:
 
-- **Native addons:** the worker image sets `NARB_DISABLE_NATIVE_CACHE=1`, so DeepSeek Harness loads its native addons from `/app` instead of copying them to `/tmp`, which does not allow executables.
+- **Worker state:** the worker keeps pi-durable's storage in memory, so a turn is not durable yet: if its worker dies, the run fails. Earlier messages come from the run spec and are added as conversation entries before the turn starts.
 - **Pinned TypeScript:** the frontend stays on TypeScript 5.9 because the Hey API generator does not run on TypeScript 7.
 
 ## Appendix: planning notes (historical)

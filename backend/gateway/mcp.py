@@ -66,7 +66,14 @@ async def list_tools(ctx, params) -> types.ListToolsResult:
         if op is None:
             continue
         tools.append(
-            types.Tool(name=name, title=op.title, description=op.description, input_schema=op.input_schema())
+            types.Tool(
+                name=name,
+                title=op.title,
+                description=op.description,
+                input_schema=op.input_schema(),
+                # The worker runs writes one at a time; a second write in the same window would be refused.
+                annotations=types.ToolAnnotations(read_only_hint=not op.mutates),
+            )
         )
     return types.ListToolsResult(tools=tools)
 

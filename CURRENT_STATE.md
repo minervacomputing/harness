@@ -51,7 +51,7 @@ This is the first real implementation. It is not a prototype and is built to be 
 └───────┬───────────────────────────────┬───────────────────────────────┬───────┘
         ▼                               ▼                               ▼
    PostgreSQL                 Sandbox container (per turn)      Todoist API, model API
-                              worker: DeepSeek Harness          (keys live only here)
+                              worker: pi-durable                (keys live only here)
                                  │ outbound HTTP only, per-run token
                                  └──────────────► gateway
 ```
@@ -66,7 +66,7 @@ This is the first real implementation. It is not a prototype and is built to be 
 
 1. **Browser → web:** the message is stored, and a run is created with status `queued`. The run stores a snapshot of the effective permissions and the tool list. A database constraint allows one active run per conversation.
 2. **Supervisor:** claims the run (`SKIP LOCKED`, at most 4 at once) and issues a run token. It then starts a container whose only environment variables are `GATEWAY_URL`, `RUN_TOKEN`, and `RUN_ID`.
-3. **Worker → gateway:** it fetches the run spec with `GET /run` and configures DeepSeek Harness. The agent's model points at the gateway relay and its tools at the gateway's MCP endpoint. Shell, terminal, and subprocess plugins are disabled.
+3. **Worker → gateway:** it fetches the run spec with `GET /run` and starts a pi-durable agent. The agent's model points at the gateway relay and its only tools are the gateway's MCP tools: it has no shell, file or subprocess tools. Tools the gateway marks read-only run in parallel; a round that includes a write runs its calls one at a time. The newest earlier messages that fit in about 120,000 characters are replayed in order, each cut at 30,000. Tool results reach the model whole up to 1 MB, since the gateway already pages long ones; a larger result is cut and marked as cut. Older context is summarized only when the context is nearly full or overflows, and that summary briefly shows in the streamed text. The agent's state lives in memory, so a turn whose worker dies fails rather than resumes.
 4. **Gateway:**
    - Model calls go to the configured upstream. The relay parses the stream and publishes text deltas as run events every 0.25 s.
    - Tool calls go through the permission executor ([section 4](#4-permissions)).
@@ -252,7 +252,7 @@ Roughly in priority order:
 |---|---|
 | Backend | Python 3.14, Django 6.1, Django Ninja, Pydantic, django-allauth (headless, MFA), MCP SDK 2.2, httpx, psycopg 3, uvicorn |
 | Database | PostgreSQL 18 (Compose locally) |
-| Worker | Node 24, TypeScript, DeepSeek Harness 0.1.7-rc.2 (SDK client, pi-ai model adapter, MCP client), zod |
+| Worker | Node 24, TypeScript, pi-durable 1.0.3 (agent loop), pi-ai (model adapter), pi-mcp (MCP client), zod |
 | Frontend | React 19, Vite 8, TanStack Router/Query/Form, assistant-ui 0.15, Tailwind 4, Radix, Hey API client generated from OpenAPI |
 | Tooling | uv, pnpm, Ruff, pytest, honcho |
 

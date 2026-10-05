@@ -11,14 +11,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@deepseek-ai/dsh-llm-pi-ai": "0.1.7-rc.2",
-    "@deepseek-ai/dsh-mcp-client": "0.1.7-rc.2",
-    "@deepseek-ai/dsh-sdk-client": "0.1.7-rc.2",
+    "@earendil-works/chord": "1.0.3",
+    "@earendil-works/pi-ai": "1.0.3",
+    "@earendil-works/pi-durable": "1.0.3",
+    "@earendil-works/pi-mcp": "1.0.3",
     "zod": "4.3.6"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0"
-  },
-  "pnpm": { "onlyBuiltDependencies": ["@deepseek-ai/node-addon-system"] }
+  }
 }

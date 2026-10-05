@@ -153,7 +153,7 @@ It starts the worker image with a probe and verifies 11 properties, including a 
 
 ```text
 backend/     Django project (web, gateway and supervisor roles) and the connectors
-worker/      TypeScript worker image around DeepSeek Harness
+worker/      TypeScript worker image around pi-durable
 frontend/    React app (Vite, TanStack, assistant-ui)
 docs/        Connector setup and images
 compose.yaml Postgres and the sandbox network for development
