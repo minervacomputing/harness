@@ -29,6 +29,8 @@ MAX_HOST = 198
 MAX_URL = 2000
 # Resolvable only inside some network, or not through public DNS at all.
 REFUSED_SUFFIXES = ("arpa", "onion")
+# Reserved for documentation (RFC 2606): no name under it is delegated, so nothing there resolves or receives mail.
+RESERVED_SUFFIX = "example"
 DEFAULT_PORTS = {"http": 80, "https": 443}
 _LABEL = re.compile(r"\A(?!-)[a-z0-9-]{1,63}(?<!-)\Z")
 # Characters kept as they are in a path or query; everything else is percent-encoded.
@@ -45,8 +47,8 @@ def _invalid_host() -> OperationError:
     return OperationError("INVALID_URL", "Use a web address with a public domain name, such as example.com.")
 
 
-def canonical_host(raw: str) -> str:
-    """The canonical host name, or INVALID_URL."""
+def canonical_host(raw: str, *, reserved: bool = False) -> str:
+    """The canonical host name, or INVALID_URL. With `reserved`, names under .example are accepted too."""
     text = raw.strip().rstrip(".")
     if not text or len(text) > 253:
         raise _invalid_host()
@@ -68,10 +70,14 @@ def canonical_host(raw: str) -> str:
         # Numeric last labels are how odd IPv4 spellings (127.1, 0x7f.1) look.
         or labels[-1].isdigit()
         or any(host == s or host.endswith(f".{s}") for s in REFUSED_SUFFIXES)
-        or _psl().publicsuffix(host) is None
+        or (_psl().publicsuffix(host) is None and not (reserved and is_reserved(host)))
     ):
         raise _invalid_host()
     return host
+
+
+def is_reserved(host: str) -> bool:
+    return host.endswith(f".{RESERVED_SUFFIX}")
 
 
 def registrable(host: str) -> str | None:

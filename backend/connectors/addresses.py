@@ -5,6 +5,9 @@ exact address (`ada@example.com`) or everyone at one domain (`*@example.com`), w
 ancestor. A domain pattern never spans a public suffix, and does not cover subdomains: `*@example.com`
 does not include `ada@mail.example.com`.
 
+Addresses under `.example`, which RFC 2606 reserves for documentation, are accepted too: mail to them can
+never be delivered, and tests and the demo's story use them for people the agent writes to.
+
 Addresses are lowercased on purpose. Most mail systems ignore case in the local part; a grant that told
 `Ada@` from `ada@` would only invite mistakes. Local parts are a strict subset of what RFC 5321 allows: no
 quoted strings, comments or non-ASCII characters, which are rare and easy to make look like another
@@ -35,10 +38,10 @@ def _invalid() -> OperationError:
 
 def _domain(raw: str) -> str:
     try:
-        host = sites.canonical_host(raw)
+        host = sites.canonical_host(raw, reserved=True)
     except OperationError:
         raise _invalid() from None
-    if sites.registrable(host) is None:
+    if sites.registrable(host) is None and not sites.is_reserved(host):
         raise _invalid()
     return host
 

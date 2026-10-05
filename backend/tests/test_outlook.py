@@ -232,6 +232,7 @@ def recipient(resource: str, actions=("send",)):
         ("Ada@Example.COM", "ada@example.com"),
         (" ada.lovelace+notes@mail.example.com ", "ada.lovelace+notes@mail.example.com"),
         ("o'brien@bücher.de", "o'brien@xn--bcher-kva.de"),
+        ("Giulia@TrattoriaRossa.example", "giulia@trattoriarossa.example"),
     ],
 )
 def test_addresses_are_canonical(raw, canonical):
@@ -256,6 +257,8 @@ def test_addresses_are_canonical(raw, canonical):
         "ada@127.0.0.1",
         "ada@co.uk",
         "ada@com",
+        "ada@example",
+        "ada@site.invalid",
         "Ada <ada@example.com>",
         "ädä@example.com",
         "ada@exa\nmple.com",
@@ -273,6 +276,10 @@ def test_address_patterns_cover_one_domain():
     assert addresses.choices("Ada@Example.com") == ["ada@example.com", "*@example.com"]
     assert addresses.choices("example.com") == addresses.choices("@example.com") == ["*@example.com"]
     assert addresses.choices("*@Example.com") == ["*@example.com"]
+    assert addresses.choices("giulia@trattoriarossa.example") == [
+        "giulia@trattoriarossa.example",
+        "*@trattoriarossa.example",
+    ]
     assert addresses.name("*@example.com") == "Everyone at example.com"
     for resource in ("*@co.uk", "*@*.example.com", "*@Example.com", "Ada@example.com", "*", "unsupported"):
         assert not addresses.valid_id(resource)

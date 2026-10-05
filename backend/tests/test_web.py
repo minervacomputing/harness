@@ -48,6 +48,7 @@ def test_hosts_are_canonical_public_names():
         "intranet",
         "printer.local",
         "db.internal",
+        "site.example",
         "1.0.0.10.in-addr.arpa",
         "abc.onion",
         "127.0.0.1",
