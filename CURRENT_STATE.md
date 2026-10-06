@@ -163,6 +163,7 @@ strict argument validation
 | Tool calls (denied ones included) | 100 |
 | Tool calls executing at once | 4 (per gateway process; the rest wait) |
 | Requests in flight to the gateway | 16 per run token (per gateway process; more are refused with 429) |
+| Run token checks queued or running | 128 (per gateway process, for all runs; more requests are refused with 503) |
 | Output tokens per call | 8,192 |
 | Wall-clock time | 300 s |
 
@@ -172,6 +173,7 @@ strict argument validation
 - **Refused writes:** a write the provider refused outright (for example 401, 403, 404, 409, or 429), or one that never reached it, returns its quota and does not pause further writes.
 - **Lost writes:** a write whose gateway process died is marked uncertain by the supervisor.
 - **Rejected tokens:** if the provider rejects a token, the connection is marked **Needs reconnecting**, unless it was reconnected in the meantime. Reconnecting keeps the user's access choices.
+- **Requests without a run token:** a request without an active run's token, or with an invented one, is refused with 401 before Django or the MCP server reads its body, so a worker cannot make the gateway hold large uploads without one. Tokens are checked one at a time on one database connection per gateway process, so a worker sending invented tokens quickly can get other runs' requests refused with 503 too, and a query that stalls on that connection holds up every check until it ends.
 - **Requests in flight:** a response holds its request's place until the worker has read nearly all of it, so a worker cannot pin many large responses (run specs, saved state) in gateway memory by not reading them.
 - **Changed tools:** if a deploy changes what a tool means, active runs lose that tool instead of using it under their old grants.
 

@@ -1,5 +1,5 @@
-"""Refuses oversized request bodies before Django reads them. Django's ASGI handler buffers the whole body,
-unauthenticated, before any view or limit setting sees it."""
+"""Refuses oversized request bodies before Django reads them. Django's ASGI handler buffers the whole body
+before any view or limit setting sees it."""
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 

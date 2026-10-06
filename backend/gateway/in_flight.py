@@ -25,8 +25,7 @@ def limit_in_flight(app: ASGIApp, max_requests: int) -> ASGIApp:
             return
         token = bearer(headers[0].decode("latin-1")) if headers else None
         if token is None:
-            # Every endpoint refuses these without a database query, though Django reads the body (within the
-            # body limit) first.
+            # require_run refuses these at once.
             await app(scope, receive, send)
             return
         # The token as authentication reads it, so spelling the header differently gains no slots.

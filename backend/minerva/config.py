@@ -116,6 +116,9 @@ class Config(BaseSettings):
     run_tool_concurrency: Annotated[int, Field(gt=0)] = 4
     # Requests one run token can have in flight at once (per gateway process); more are refused with 429.
     run_max_requests_in_flight: Annotated[int, Field(gt=0)] = 16
+    # Run token checks queued or running (per gateway process); a request that would add one is refused with
+    # 503. Well above what the concurrent runs can send at once.
+    gateway_max_unauthenticated_in_flight: Annotated[int, Field(gt=0)] = 128
 
     # Public demo: visitors pass a Turnstile check, sign in, and chat in one shared, locked workspace.
     demo: bool = False

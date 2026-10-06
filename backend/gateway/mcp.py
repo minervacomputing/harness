@@ -1,8 +1,8 @@
 """Integration tools for the worker over MCP (streamable HTTP, stateless, JSON responses).
 
-Each request is a POST, authenticated by the run token before it reaches the MCP server. Tools come from the
-run's snapshot, and every call goes through the permission executor. Tool events are recorded here, on
-the trusted side, rather than trusting the worker to report them.
+Each request is a POST, authenticated by the run token (gateway.auth.require_run) before it reaches the MCP
+server. Tools come from the run's snapshot, and every call goes through the permission executor. Tool events
+are recorded here, on the trusted side, rather than trusting the worker to report them.
 """
 
 import asyncio
@@ -23,22 +23,20 @@ from django.utils import timezone
 from django.utils.crypto import salted_hmac
 from mcp.server.lowlevel import Server
 from mcp.server.transport_security import TransportSecuritySettings
+from starlette.applications import Starlette
 from starlette.types import Receive, Scope, Send
 
 from connectors import registry
 from connectors.base import OperationError
 from connectors.executor import RESULT_SCHEMA, Executor, RunContext, public_error
 from gateway.asgi_json import send_error
-from gateway.auth import authenticate
+from gateway.auth import ATTEMPT_SCOPE_KEY, INACTIVE, RUN_SCOPE_KEY
 from minerva.config import config
 from runs import services
 from runs.models import Run, RunEvent
 from workspaces.tenancy import activate_workspace
 
 log = logging.getLogger(__name__)
-RUN_SCOPE_KEY = "minerva.run_id"
-# The attempt current when the request was authenticated; the run may move on while the request runs.
-ATTEMPT_SCOPE_KEY = "minerva.attempt"
 DENIAL_CODES = {
     "POLICY_DENIED",
     "LIMIT_REACHED",
@@ -211,14 +209,21 @@ async def _record(context: RunContext, event: dict[str, Any]) -> None:
 
 
 server = Server("minerva-gateway", version="0.1.0", on_list_tools=list_tools, on_call_tool=call_tool)
-_starlette = server.streamable_http_app(
-    streamable_http_path="/mcp",
-    json_response=True,
-    stateless_http=True,
-    # The run token authenticates every request; host/origin checks add nothing for non-browser workers.
-    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
-    max_request_body_size=512 * 1024,
-)
+
+
+def _streamable_app() -> Starlette:
+    """The server over HTTP. Its lifespan runs once, so serving again needs a new app."""
+    return server.streamable_http_app(
+        streamable_http_path="/mcp",
+        json_response=True,
+        stateless_http=True,
+        # The run token authenticates every request; host/origin checks add nothing for non-browser workers.
+        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+        max_request_body_size=512 * 1024,
+    )
+
+
+_starlette = _streamable_app()
 
 
 async def mcp_app(scope: Scope, receive: Receive, send: Send) -> None:
@@ -231,13 +236,8 @@ async def mcp_app(scope: Scope, receive: Receive, send: Send) -> None:
     if scope["method"] != "POST":
         await send_error(send, 405, "Send MCP requests with POST.", headers=[(b"allow", b"POST")])
         return
-    headers = {key.decode("latin-1"): value.decode("latin-1") for key, value in scope.get("headers", [])}
-    run = await authenticate(headers.get("authorization"))
-    if run is None:
-        await _unauthorized(send)
+    # require_run checked the token before anything read the body; mounted without it, refuse.
+    if RUN_SCOPE_KEY not in scope or ATTEMPT_SCOPE_KEY not in scope:
+        await send_error(send, 401, INACTIVE)
         return
-    await _starlette({**scope, RUN_SCOPE_KEY: run.id, ATTEMPT_SCOPE_KEY: run.attempt}, receive, send)
-
-
-async def _unauthorized(send: Send) -> None:
-    await send_error(send, 401, "Inactive run credential.")
+    await _starlette(scope, receive, send)

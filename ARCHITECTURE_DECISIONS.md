@@ -155,13 +155,13 @@ The effective permissions are computed when a run starts and stored with the run
 | Endpoint | Purpose |
 |---|---|
 | `GET /run` | Run spec: prompt, allowed conversation history, tool list, model alias, limits, local tool switches |
-| `POST /mcp` | Integration tools (MCP). Each call is authorized by the permission executor (D8). Stateless, with JSON answers; other methods get 405 before the token is checked, since a GET would open a stream that outlives the token |
+| `POST /mcp` | Integration tools (MCP). Each call is authorized by the permission executor (D8). Stateless, with JSON answers; other methods get 405, since a GET would open a stream that outlives the token |
 | `POST /v1/responses` or `POST /v1/chat/completions` | Model relay (OpenAI-compatible, D9); an instance serves one of the two |
 | `POST /events` | Batched, sequence-numbered events: phase, assistant text deltas, tool started/finished (allowed or denied), artifact created, completed, failed |
 | `PUT /artifacts/{name}` | Artifact upload. The backend enforces size limits and the "allow report files" permission here, on the trusted side |
 | `GET /journal`, `GET /journal/{seq}`, `PUT /journal/{seq}` | The worker's saved state (D14): opaque commits, appended in order and read back by a worker that resumes the run |
 
-**Run tokens.** The token is random, stored only as a hash, and bound to one run (and so to its workspace, user, agent, and effective permissions) and to one attempt of it (D14). It expires at the run's deadline and is revoked on any terminal state. One token can have at most 16 requests in flight (per gateway process); more are refused with 429 before their body is read, and a response holds its place until the worker has read nearly all of it.
+**Run tokens.** The token is random, stored only as a hash, and bound to one run (and so to its workspace, user, agent, and effective permissions) and to one attempt of it (D14). It expires at the run's deadline and is revoked on any terminal state. Every request's token is checked before Django or the MCP server reads its body, since Django's handler buffers a whole body before any view runs: a request without a token, or with one that is not an active run's current token, is refused with 401. The checks share one database connection per gateway process and run one at a time; while 128 are queued or running, further requests are refused with 503 without one. A token is checked once, when its request arrives, so the views check the run again once they have the body, and tool calls when they run: the run may have ended or been restarted in the meantime. One token can have at most 16 requests in flight (per gateway process); more are refused with 429 before their body is read, and a response holds its place until the worker has read nearly all of it.
 
 **Cancellation.** Stopping a run revokes its token, so every further call returns 401 and the worker has nothing left to do. The sandbox provider's `stop` is resource cleanup; security never depends on the kill succeeding. As in the prototype, a provider write already in flight may still complete; stopping means "no further effects", not rollback.
 
