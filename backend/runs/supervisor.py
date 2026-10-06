@@ -53,21 +53,30 @@ class Supervisor:
         if capacity <= 0:
             return
         for run, token in services.claim_queued(capacity):
-            env = {"GATEWAY_URL": self.cfg.sandbox_gateway_url, "RUN_TOKEN": token, "RUN_ID": str(run.id)}
-            try:
-                handle = self.provider.start(run.id, self.cfg.sandbox_image, env, Limits())
-            except SandboxError as error:
-                # Fail closed: there is no unsandboxed fallback.
-                log.error("Sandbox start failed for run %s: %s", run.id, error)
-                services.finish(
-                    run.id,
-                    Run.Status.FAILED,
-                    code="sandbox_failed",
-                    message="The isolated worker could not start.",
-                )
-                continue
-            Run.unscoped.filter(pk=run.pk).update(sandbox_handle=handle)
-            log.info("Started run %s in %s", run.id, self.provider.name)
+            self._start(run, token)
+
+    def _start(self, run: Run, token: str) -> None:
+        """Starts the worker of the run's current attempt."""
+        env = {"GATEWAY_URL": self.cfg.sandbox_gateway_url, "RUN_TOKEN": token, "RUN_ID": str(run.id)}
+        try:
+            handle = self.provider.start(run.id, self.cfg.sandbox_image, env, Limits(), attempt=run.attempt)
+        except SandboxError as error:
+            # Fail closed: there is no unsandboxed fallback.
+            log.error("Sandbox start failed for run %s: %s", run.id, error)
+            services.finish(
+                run.id,
+                Run.Status.FAILED,
+                code="sandbox_failed",
+                message="The isolated worker could not start.",
+                attempt=run.attempt,
+            )
+            return
+        if not Run.unscoped.filter(pk=run.pk, attempt=run.attempt).update(sandbox_handle=handle):
+            # Another attempt took over meanwhile; this worker's token is already invalid.
+            with contextlib.suppress(SandboxError):
+                self.provider.stop(handle)
+            return
+        log.info("Started run %s (attempt %d) in %s", run.id, run.attempt, self.provider.name)
 
     def enforce_deadlines(self) -> None:
         now = timezone.now()
@@ -75,25 +84,46 @@ class Supervisor:
             "id", flat=True
         ):
             services.finish(run_id, Run.Status.TIMED_OUT, code="timed_out", message="The run took too long.")
-        # The deadline is set at claim time, so "claimed more than PROVISIONING_TIMEOUT ago" is:
-        claimed_before = now + timedelta(seconds=self.cfg.run_timeout_seconds) - PROVISIONING_TIMEOUT
-        silent = Run.unscoped.filter(status=Run.Status.PROVISIONING, deadline__lt=claimed_before)
-        for run_id in silent.values_list("id", flat=True):
+        silent = Run.unscoped.filter(
+            status=Run.Status.PROVISIONING, attempt_started_at__lt=now - PROVISIONING_TIMEOUT
+        )
+        for run_id, attempt in silent.values_list("id", "attempt"):
             services.finish(
-                run_id, Run.Status.FAILED, code="worker_silent", message="The worker did not start."
+                run_id,
+                Run.Status.FAILED,
+                code="worker_silent",
+                message="The worker did not start.",
+                attempt=attempt,
+                from_status=Run.Status.PROVISIONING,
             )
 
     def reconcile(self) -> None:
+        """A worker that ended without finishing its run (it crashed, or was killed for using too much memory)
+        is replaced by a new one that resumes the run from its saved state."""
         for run in Run.unscoped.filter(status__in=Run.TOKEN_VALID, sandbox_handle__isnull=False):
             status = self.provider.status(run.sandbox_handle)
-            if status.state in {"exited", "missing"}:
+            if status.state not in {"exited", "missing"}:
+                continue
+            restarted = services.restart(run.id, run.attempt)
+            if restarted is services.Restart.WAIT:
+                continue
+            if restarted is services.Restart.REFUSED:
                 log.warning("Worker for run %s ended without a result (%s)", run.id, status)
                 services.finish(
                     run.id,
                     Run.Status.FAILED,
                     code="worker_exited",
                     message="The worker stopped unexpectedly.",
+                    attempt=run.attempt,
                 )
+                continue
+            log.warning("Worker for run %s ended without a result (%s); restarting it", run.id, status)
+            self._start(*restarted)
+            try:
+                self.provider.stop(run.sandbox_handle)
+            except SandboxError:
+                # It has exited. Once the run ends, no run tracks it and the orphan sweep removes it.
+                log.warning("Could not remove the exited sandbox of run %s", run.id, exc_info=True)
 
     def release_finished(self) -> None:
         finished = Run.unscoped.exclude(status__in=Run.ACTIVE).filter(

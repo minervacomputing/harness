@@ -3,6 +3,7 @@ import logging
 import secrets
 from dataclasses import asdict, dataclass
 from datetime import timedelta
+from enum import Enum
 from uuid import UUID
 
 from django.db import IntegrityError, transaction
@@ -27,6 +28,10 @@ HISTORY_LIMIT = 20
 BUSY_MESSAGE = "Wait for the current answer to finish, or stop it."
 # A dispatched write that has not settled this long after its deadline is assumed lost.
 LOST_WRITE_GRACE = timedelta(seconds=30)
+# A run whose worker died is resumed by a new worker at most this many times, and only with this much time
+# left: the new worker has to load the run's state and ask the model again.
+MAX_RESTARTS = 2
+RESTART_MIN_REMAINING = timedelta(seconds=30)
 
 SAFETY_INSTRUCTIONS = (
     "You are an agent inside Minerva. Use the provided tools for all facts about connected accounts and for "
@@ -163,13 +168,22 @@ def _notify(channel: str, payload: str) -> None:
 
 
 def finish(
-    run_id: UUID, status: str, *, code: str = "", message: str = "", attempt: int | None = None
+    run_id: UUID,
+    status: str,
+    *,
+    code: str = "",
+    message: str = "",
+    attempt: int | None = None,
+    from_status: str | None = None,
 ) -> bool:
     """Move an active run to a terminal state exactly once, and drop its saved state. Returns False if it
-    already ended, or if `attempt` is given and is no longer the run's current one."""
+    already ended, if `attempt` is given and is no longer the run's current one, or if `from_status` is given
+    and the run has moved on from it."""
     runs = Run.unscoped.filter(pk=run_id, status__in=Run.ACTIVE)
     if attempt is not None:
         runs = runs.filter(attempt=attempt)
+    if from_status is not None:
+        runs = runs.filter(status=from_status)
     with transaction.atomic():
         updated = runs.update(
             status=status, error_code=code, error_message=message[:500], finished_at=timezone.now()
@@ -247,14 +261,66 @@ def claim_queued(limit: int) -> list[tuple[Run, str]]:
         )
         for run in runs:
             token = secrets.token_urlsafe(32)
+            now = timezone.now()
             run.status = Run.Status.PROVISIONING
             run.token_hash = hash_token(token)
-            run.deadline = timezone.now() + timedelta(seconds=cfg.run_timeout_seconds)
+            run.deadline = now + timedelta(seconds=cfg.run_timeout_seconds)
+            run.attempt_started_at = now
             run.sandbox_provider = cfg.sandbox_provider
-            run.save(update_fields=["status", "token_hash", "deadline", "sandbox_provider"])
+            run.save(
+                update_fields=["status", "token_hash", "deadline", "attempt_started_at", "sandbox_provider"]
+            )
             append_event(run.id, RunEvent.Type.STATUS, {"status": run.status})
             claimed.append((run, token))
     return claimed
+
+
+class Restart(Enum):
+    # A write the dead worker claimed has not settled yet; try again later.
+    WAIT = "wait"
+    # No restarts or too little time left, or the run already ended or moved on.
+    REFUSED = "refused"
+
+
+def restart(run_id: UUID, attempt: int) -> tuple[Run, str] | Restart:
+    """Supervisor: a new attempt takes over a run whose worker died, with a new token; returns the run and the
+    raw token. The dead attempt's requests are fenced by its attempt number. While one of its writes is still
+    dispatched the restart waits, so the write is carried out and recorded before the new worker can see the
+    run; the lock is the one a write is claimed under (Executor._dispatch)."""
+    with transaction.atomic():
+        run = Run.unscoped.select_for_update().filter(pk=run_id).first()
+        now = timezone.now()
+        if (
+            run is None
+            or run.status not in Run.TOKEN_VALID
+            or run.attempt != attempt
+            or run.attempt > MAX_RESTARTS
+            or run.deadline is None
+            or run.deadline - now < RESTART_MIN_REMAINING
+        ):
+            return Restart.REFUSED
+        if RunWrite.unscoped.filter(run_id=run_id, status=RunWrite.Status.DISPATCHED).exists():
+            return Restart.WAIT
+        token = secrets.token_urlsafe(32)
+        run.attempt += 1
+        run.attempt_started_at = now
+        run.status = Run.Status.PROVISIONING
+        run.token_hash = hash_token(token)
+        # The new worker numbers its events from 1.
+        run.worker_seq = 0
+        run.sandbox_handle = None
+        run.save(
+            update_fields=[
+                "attempt",
+                "attempt_started_at",
+                "status",
+                "token_hash",
+                "worker_seq",
+                "sandbox_handle",
+            ]
+        )
+        append_event(run.id, RunEvent.Type.STATUS, {"status": run.status, "attempt": run.attempt})
+    return run, token
 
 
 def run_for_token(token: str) -> Run | None:

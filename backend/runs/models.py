@@ -61,6 +61,8 @@ class Run(TenantModel):
     # A worker that takes over after its predecessor died starts a new attempt. Requests authenticated
     # under an earlier attempt can no longer change the run.
     attempt = models.PositiveIntegerField(default=1)
+    # When the current attempt was claimed or restarted. Its worker must ask for the run spec soon after.
+    attempt_started_at = models.DateTimeField(null=True, blank=True)
     # The worker's saved state (RunCommit): the last commit's sequence number and the bytes stored.
     journal_seq = models.PositiveIntegerField(default=0)
     journal_bytes = models.PositiveBigIntegerField(default=0)

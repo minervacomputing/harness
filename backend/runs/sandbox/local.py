@@ -23,7 +23,14 @@ class LocalProcessProvider:
         self._children: dict[int, tuple[str, datetime, subprocess.Popen]] = {}
 
     def start(
-        self, run_id: UUID, image: str, env: dict[str, str], limits: Limits, command: list[str] | None = None
+        self,
+        run_id: UUID,
+        image: str,
+        env: dict[str, str],
+        limits: Limits,
+        command: list[str] | None = None,
+        *,
+        attempt: int = 1,
     ) -> dict:
         if not self.allowed:
             raise SandboxError("The local-process sandbox is disabled; it provides no isolation.")

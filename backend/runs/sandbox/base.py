@@ -39,12 +39,20 @@ class SandboxProvider(Protocol):
     """Starts one worker per run. Its single security duty: the worker can reach the gateway and nothing
     else, with no host credentials and no readable host secrets. `env` holds only GATEWAY_URL, RUN_TOKEN,
     and RUN_ID. Security never depends on `stop` succeeding; revoking the run token ends all access.
-    `command` overrides the image entrypoint; only the sandbox conformance check uses it."""
+    `attempt` tells apart the workers of a run that was restarted. `command` overrides the image
+    entrypoint; only the sandbox conformance check uses it."""
 
     name: str
 
     def start(
-        self, run_id: UUID, image: str, env: dict[str, str], limits: Limits, command: list[str] | None = None
+        self,
+        run_id: UUID,
+        image: str,
+        env: dict[str, str],
+        limits: Limits,
+        command: list[str] | None = None,
+        *,
+        attempt: int = 1,
     ) -> dict: ...
 
     def stop(self, handle: dict) -> None: ...

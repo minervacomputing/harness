@@ -12,6 +12,7 @@ from docker.errors import DockerException, NotFound
 from runs.sandbox.base import Limits, SandboxError, SandboxInfo, SandboxStatus
 
 LABEL = "minerva.run"
+ATTEMPT_LABEL = "minerva.attempt"
 
 
 def _parse_time(value: str | None) -> datetime | None:
@@ -43,7 +44,14 @@ class ContainerProvider:
         return self._client
 
     def start(
-        self, run_id: UUID, image: str, env: dict[str, str], limits: Limits, command: list[str] | None = None
+        self,
+        run_id: UUID,
+        image: str,
+        env: dict[str, str],
+        limits: Limits,
+        command: list[str] | None = None,
+        *,
+        attempt: int = 1,
     ) -> dict:
         try:
             network = self.client.networks.get(self.network)
@@ -57,8 +65,8 @@ class ContainerProvider:
                 command=command,
                 entrypoint=["node"] if command else None,
                 detach=True,
-                name=f"minerva-run-{run_id}",
-                labels={LABEL: str(run_id)},
+                name=f"minerva-run-{run_id}-{attempt}",
+                labels={LABEL: str(run_id), ATTEMPT_LABEL: str(attempt)},
                 environment=env,
                 network=self.network,
                 runtime=self.runtime,
@@ -85,13 +93,11 @@ class ContainerProvider:
 
     def stop(self, handle: dict) -> None:
         try:
-            container = self.client.containers.get(handle["container_id"])
+            self.client.containers.get(handle["container_id"]).remove(force=True)
         except NotFound:
             return
-        try:
-            container.remove(force=True)
-        except NotFound:
-            return
+        except DockerException as error:
+            raise SandboxError("The worker container could not be removed.") from error
 
     def sandboxes(self) -> list[SandboxInfo]:
         try:

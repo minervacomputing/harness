@@ -108,5 +108,7 @@ def read(run_id: UUID, attempt: int, seq: int) -> bytes | None:
         return decrypt_bytes(*row)
     except CredentialKeyError:
         log.exception("Run %s: saved state could not be decrypted", run_id)
-        services.finish(run_id, Run.Status.FAILED, code="state_unreadable", message=UNREADABLE)
+        services.finish(
+            run_id, Run.Status.FAILED, code="state_unreadable", message=UNREADABLE, attempt=attempt
+        )
         raise Inactive from None

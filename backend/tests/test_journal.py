@@ -9,6 +9,7 @@ from django.test import AsyncClient
 
 from accounts.models import User
 from agents.models import Agent
+from connections.crypto import CredentialKeyError
 from conversations.models import Conversation
 from runs import journal, services
 from runs.models import Run, RunCommit
@@ -84,6 +85,20 @@ async def test_state_that_cannot_be_decrypted_fails_the_run(claimed):
     assert (await get(token, 1)).status_code == 401
     stored = await Run.unscoped.aget(pk=run.id)
     assert (stored.status, stored.error_code) == (Run.Status.FAILED, "state_unreadable")
+
+
+async def test_state_an_earlier_attempt_cannot_decrypt_does_not_fail_the_run(claimed, monkeypatch):
+    run, token = claimed
+    assert (await put(token, 1, commit())).status_code == 200
+
+    def replaced_meanwhile(*args):
+        Run.unscoped.filter(pk=run.id).update(attempt=2)
+        raise CredentialKeyError("removed")
+
+    monkeypatch.setattr(journal, "decrypt_bytes", replaced_meanwhile)
+    with pytest.raises(journal.Inactive):
+        await sync_to_async(journal.read)(run.id, 1, 1)
+    assert (await Run.unscoped.aget(pk=run.id)).status == Run.Status.PROVISIONING
 
 
 async def test_a_deleted_run_is_inactive(claimed):
