@@ -13,6 +13,7 @@ Status: accepted, 2026-09-29, and implemented in this repository. The earlier `t
 | Permissions | Layers that can only narrow: source account ∩ workspace ceiling ∩ user ∩ agent/run |
 | Login | django-allauth now; WorkOS SSO and Directory Sync later for enterprise workspaces; our tables stay the source of truth |
 | Agent worker | Separate image; talks to the backend only through outbound HTTPS calls to the gateway with a per-run token |
+| Durable turns | The worker's state is saved behind the gateway; a new worker resumes a turn whose worker died, and reads replay but writes never do |
 | Sandbox | `SandboxProvider` interface with local, macOS, container, and Kubernetes/OpenShift implementations |
 | Models | Our own `ModelProvider` interface in the gateway; LiteLLM library optional, pinned by hash; no LiteLLM Proxy |
 | Chat UI | React + Vite single-page app built on assistant-ui; conversations stored in our database |
@@ -158,12 +159,13 @@ The effective permissions are computed when a run starts and stored with the run
 | `POST /v1/responses` or `POST /v1/chat/completions` | Model relay (OpenAI-compatible, D9); an instance serves one of the two |
 | `POST /events` | Batched, sequence-numbered events: phase, assistant text deltas, tool started/finished (allowed or denied), artifact created, completed, failed |
 | `PUT /artifacts/{name}` | Artifact upload. The backend enforces size limits and the "allow report files" permission here, on the trusted side |
+| `GET /journal`, `GET /journal/{seq}`, `PUT /journal/{seq}` | The worker's saved state (D14): opaque commits, appended in order and read back by a worker that resumes the run |
 
-**Run tokens.** The token is random, stored only as a hash, and bound to one run (and so to its workspace, user, agent, and effective permissions). It expires at the run's deadline and is revoked on any terminal state. One token can have at most 16 requests in flight (per gateway process); more are refused with 429 before their body is read, and a response holds its place until the worker has read nearly all of it.
+**Run tokens.** The token is random, stored only as a hash, and bound to one run (and so to its workspace, user, agent, and effective permissions) and to one attempt of it (D14). It expires at the run's deadline and is revoked on any terminal state. One token can have at most 16 requests in flight (per gateway process); more are refused with 429 before their body is read, and a response holds its place until the worker has read nearly all of it.
 
 **Cancellation.** Stopping a run revokes its token, so every further call returns 401 and the worker has nothing left to do. The sandbox provider's `stop` is resource cleanup; security never depends on the kill succeeding. As in the prototype, a provider write already in flight may still complete; stopping means "no further effects", not rollback.
 
-**Run lifecycle.** `queued → provisioning → running → completed | failed | cancelled | timed_out`. Events are stored in order, so the browser can reconnect and replay.
+**Run lifecycle.** `queued → provisioning → running → completed | failed | cancelled | timed_out`. A restart (D14) takes a run back to `provisioning` under its next attempt. Events are stored in order, so the browser can reconnect and replay.
 
 **Harness independence.** The worker image translates the run spec into its harness's configuration. Replacing the harness means building a new worker image; the backend does not change. The first worker image was the prototype's TypeScript DeepSeek Harness bridge, rewritten to use this contract instead of stdio. Since 2026-10-05 the worker runs pi-durable.
 
@@ -273,6 +275,20 @@ class SandboxProvider(Protocol):
 - Audit records exist for tool calls, permission changes, connection changes, and admin actions from day one.
 - Content fetched from providers is treated as untrusted data in prompts; tool denials are returned as plain results, never as instructions.
 
+### D14. Durable turns
+
+**Decision.** A turn survives its worker dying (a crash, or a kill for using too much memory). The worker's agent state is kept on the trusted side, behind the gateway, and the supervisor starts a new worker that resumes the same turn. An interrupted write never runs again, and the chat shows one turn.
+
+- **State behind the gateway.** pi-durable saves each change to the agent's state as a commit. The worker sends it to the gateway (`PUT /journal/{seq}`) and lets it take effect only once the gateway has stored it, so the gateway holds everything a resuming worker could know. Commits are opaque to the backend: stored encrypted as sent, never parsed, capped at 8 MiB each and 32 MiB or 5,000 per run, and deleted when the run ends.
+- **Saved state is untrusted.** A compromised worker can write anything into it, so it never becomes a record: messages and run events stay the trusted history, and the next turn starts from stored messages, as before. A resuming worker takes its agent settings, tools and limits from `GET /run`, not from the saved state, and the gateway checks every call as it would any other.
+- **Attempts.** A restart moves the run to its next attempt and issues a new token. Every gateway endpoint refuses work from any attempt but the current one: tool and model calls, events, saved state, and finishing the run. A write the old attempt had already claimed is still carried out, and the restart waits until it is settled (succeeded, not applied, or uncertain), so the new worker sees how it ended.
+- **Only reads replay.** pi-durable runs an interrupted read again. An interrupted write or script never runs again, because whether it happened is unknown: the model is told it was interrupted. The same write asked for again (same tool, same arguments) is answered from the run's record of writes and marked as a repeat, so it is not sent to the provider twice; a write whose outcome is uncertain still pauses the run's further writes. Writes are deliberately not marked safe to replay on the strength of that record: after an interruption, the model decides whether to try again, and can check first.
+- **Limits.** At most two restarts per run, and none with less than 30 seconds left before the deadline. Each attempt gets its own container, and its own 90 seconds to ask for the run spec. The deadline stays the run's, and its tool-call and model-call limits count across attempts.
+- **Events across workers.** Run events stay one ordered stream per run. A restart appends a status event naming the attempt. From that event on, the chat drops the text the old worker streamed, and it shows a write's card once even when the new worker asks for the write again.
+- **Versions.** pi-durable is pinned, and each commit names its layout (`pi-durable@1.0.3/1`); a worker refuses saved state in any other layout rather than misreading it. The adapter is a `MemoryStorage` subclass, checked by pi-durable's storage conformance suite in the worker tests.
+
+**Not yet:** a turn that waits for an approval without a container, turns longer than their deadline, steers and follow-ups (a session per conversation rather than per turn), and background subagents.
+
 ## 4. What to build when
 
 **Foundations from day one**, even where no screen shows them yet: `Workspace` and `Membership` with roles, the `workspace` foreign key on every tenant table, permission layers, audit records, run tokens bound to workspace/user/run, the `SandboxProvider` and `ModelProvider` interfaces, and the cross-workspace access tests.
@@ -309,10 +325,10 @@ Where the first implementation (2026-09-29) differs from the decisions above. Ea
 | D11 tasks | No task queue yet. The supervisor also does the background work: deadlines, reconciliation, and orphan sandbox cleanup. | No other background job exists yet. |
 | D12 packaging | Local development only: Compose for Postgres and the sandbox network, and honcho for the process roles. | Production images and manifests come with the cloud alpha. |
 
-Two runtime details:
+Runtime details:
 
 - **Code mode:** whenever a run has tools, its model can also write scripts that call them (pi-codemode's QuickJS sandbox inside the worker). It is not a setting: the direct tools stay available, so a model that writes poor scripts can still call them one at a time. The script runs on the untrusted side, so it gets nothing the model does not already have: each call is a normal gateway call, checked, counted against the run's tool-call limit and recorded. A script can start calls without awaiting them and call in a loop far faster than a model can, so the worker also bounds what it holds for them and stops a script that keeps making calls it has to refuse; the gateway's limits stay the enforcement, these only protect the worker and spare the gateway hopeless requests.
-- **Worker state:** the worker keeps pi-durable's storage in memory, so a turn is not durable yet: if its worker dies, the run fails. Earlier messages come from the run spec and are added as conversation entries before the turn starts.
+- **Worker state:** pi-durable's storage is held in memory, and each commit is saved in the gateway journal before it takes effect (D14). One pi session lasts one turn: earlier messages come from the run spec and are added as conversation entries when the session is created, so a resumed turn keeps the ones it started with. The values a script `store()`s are saved with the turn when the script succeeds, up to 1 MiB.
 - **Pinned TypeScript:** the frontend stays on TypeScript 5.9 because the Hey API generator does not run on TypeScript 7.
 
 ## Appendix: planning notes (historical)

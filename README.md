@@ -54,6 +54,8 @@ Each answer runs in a fresh container, which is removed when the answer is finis
 - write access only to its scratch folder;
 - no admin rights, and no secrets in its environment.
 
+If the container dies mid-answer, for example by running out of memory, a new one picks the answer up from its last saved step (up to twice per answer). The agent's progress is saved behind the gateway, not in the container. A read that was cut off runs again. A write that was cut off does not: the agent is told, and asking for the same write again gets the first one's outcome rather than sending it twice.
+
 ### When an agent is tricked
 
 Prompt injection is not prevented, but it is contained. An email that asks the agent to send your invoices to a stranger fails at the gateway, since the address is not on the recipient list. A web page that asks it to upload its keys finds no keys, and no internet to upload them to.
