@@ -2,7 +2,8 @@
 
 On the first request of a turn it calls one offered tool (preferring `*_list_projects`); once a tool
 result is present it answers in text and quotes the start of that result. A message that starts with
-`run_script:` makes it call the code-mode tool with the rest of the message as the script. Serves Chat Completions and
+`run_script:` makes it call the code-mode tool with the rest of the message as the script. A message that starts with
+`slow:` makes it stream one event per second, which leaves time to stop a worker mid-answer. Serves Chat Completions and
 Responses, and streams like the real API. When asked for encrypted reasoning it emits a reasoning item.
 
     uv run python devtools/fake_model.py  # then MINERVA_MODEL_BASE_URL=http://127.0.0.1:9900/v1
@@ -16,6 +17,7 @@ PORT = 9900
 
 
 SCRIPT_PREFIX = "run_script:"
+SLOW_PREFIX = "slow:"
 
 
 def text_of(message: dict) -> str:
@@ -33,6 +35,11 @@ def plan(body: dict) -> dict:
     last = messages[-1] if messages else {}
     is_result = last.get("type") == "function_call_output" if responses else last.get("role") == "tool"
     prompt = next((text_of(m) for m in reversed(messages) if m.get("role") == "user"), "")
+    pace = 1.0 if prompt.startswith(SLOW_PREFIX) else 0.03
+    return {**choose(tools, responses, last, is_result, prompt), "pace": pace}
+
+
+def choose(tools: list[str], responses: bool, last: dict, is_result: bool, prompt: str) -> dict:
     if "run_script" in tools and not is_result and prompt.startswith(SCRIPT_PREFIX):
         return {"tool": "run_script", "arguments": json.dumps({"code": prompt.removeprefix(SCRIPT_PREFIX)})}
     if tools and not is_result:
@@ -157,7 +164,7 @@ class Handler(BaseHTTPRequestHandler):
         for event in events:
             self.wfile.write(f"data: {json.dumps(event)}\n\n".encode())
             self.wfile.flush()
-            time.sleep(0.03)
+            time.sleep(step["pace"])
         self.wfile.write(b"data: [DONE]\n\n")
 
     def respond(self, body: dict, step: dict) -> None:
@@ -184,7 +191,7 @@ class Handler(BaseHTTPRequestHandler):
         for event in response_events(response["output"], response):
             self.wfile.write(f"event: {event['type']}\ndata: {json.dumps(event)}\n\n".encode())
             self.wfile.flush()
-            time.sleep(0.03)
+            time.sleep(step["pace"])
 
     def log_message(self, format, *args):
         pass
