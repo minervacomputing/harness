@@ -64,10 +64,13 @@ export function useTurnstile(siteKey: string | null | undefined) {
     loadTurnstile().then(
       () => {
         if (cancelled || !ref.current || !window.turnstile) return
+        // The flexible widget is at least 300px wide and would push the form past the card on narrow
+        // phones. The element is hidden until the widget fills it, so measure its parent.
+        const width = (ref.current.parentElement ?? ref.current).clientWidth
         widget.current = window.turnstile.render(ref.current, {
           sitekey: siteKey,
           action: 'demo',
-          size: 'flexible',
+          size: width < 300 ? 'compact' : 'flexible',
           theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light',
           callback: (value: string) => { setToken(value); setError(null) },
           'expired-callback': () => setToken(null),
