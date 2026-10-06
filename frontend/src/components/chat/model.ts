@@ -19,12 +19,27 @@ const STARTING: Record<string, string> = {
   provisioning: 'Starting the agent',
 }
 
-/** Text and tool calls in the order the run produced them. */
+/** A status event that starts a new attempt: the run's worker died and another took over the turn. */
+function isRestart(event: EventOut): boolean {
+  return event.type === 'status' && event.data.attempt != null
+}
+
+/**
+ * Text and tool calls in the order the run produced them. Text streamed before a restart is dropped: the new worker
+ * answers again, and the finished turn shows only its final answer. A write the new worker asked for again was not
+ * carried out again, so its repeat is not shown next to the card of the write.
+ */
 function partsFrom(events: EventOut[], { withText }: { withText: boolean }): Part[] {
-  const parts: Part[] = []
+  let parts: Part[] = []
+  const writes = new Set<string>()
   for (const event of events) {
-    if (event.type === 'tool_call') {
-      const data = event.data as { tool: string; label?: string; decision: ToolCallResult['decision']; message?: string; arguments?: Record<string, never> }
+    if (isRestart(event)) {
+      parts = parts.filter(part => part.type !== 'text')
+    } else if (event.type === 'tool_call') {
+      const data = event.data as { tool: string; label?: string; decision: ToolCallResult['decision']; message?: string; arguments?: Record<string, never>; repeat?: boolean; write?: string }
+      // The write's own event may be missing, if its worker died before the gateway recorded it.
+      if (data.repeat && data.write && writes.has(data.write)) continue
+      if (data.decision === 'allowed' && data.write) writes.add(data.write)
       parts.push({
         type: 'tool-call',
         toolCallId: `${event.seq}`,
@@ -48,8 +63,11 @@ function latestStatus(events: EventOut[]): RunOut['status'] | undefined {
 }
 
 function phaseOf(run: RunOut, events: EventOut[]): string {
+  const status = events.findLastIndex(e => e.type === 'status')
+  if (run.status === 'provisioning' && status >= 0 && isRestart(events[status])) return 'Restarting the agent'
   if (STARTING[run.status]) return STARTING[run.status]
-  const phase = events.findLast(e => e.type === 'phase')
+  // An earlier attempt's phase no longer applies.
+  const phase = events.slice(status + 1).findLast(e => e.type === 'phase')
   return String(phase?.data.text ?? 'Thinking')
 }
 
