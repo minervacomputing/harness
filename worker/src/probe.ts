@@ -8,7 +8,7 @@
  * `{"listening": true}`, and waits to be stopped. `--peer <id>` runs the checks and also tries to reach it.
  */
 import { lookup } from 'node:dns/promises'
-import { chmod, rename, unlink, writeFile } from 'node:fs/promises'
+import { chmod, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { connect, createServer, type NetConnectOpts } from 'node:net'
 import { networkInterfaces } from 'node:os'
 import { dirname } from 'node:path'
@@ -43,14 +43,27 @@ async function fails(action: () => Promise<unknown>): Promise<boolean> {
   try { await action(); return false } catch { return true }
 }
 
-/** Fails because the mount is read-only: not because the file is missing, nor only for lack of permission. */
-async function readOnly(action: () => Promise<unknown>): Promise<boolean> {
+async function errorCode(action: () => Promise<unknown>): Promise<string | undefined> {
   try {
     await action()
-    return false
+    return undefined
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EROFS'
+    return (error as NodeJS.ErrnoException).code ?? 'unknown'
   }
+}
+
+/** Refused by the file system, not failed because the file is missing. */
+async function refused(action: () => Promise<unknown>): Promise<boolean> {
+  return ['EROFS', 'EACCES', 'EPERM'].includes(await errorCode(action) ?? '')
+}
+
+/**
+ * Refused because the mount is read-only. Only meaningful for a file the worker owns: gVisor checks permissions
+ * first, so where the worker lacks them it reports EACCES even on a read-only mount.
+ */
+async function readOnlyOwned(path: string, action: () => Promise<unknown>): Promise<boolean> {
+  const owner = await stat(path).then(info => info.uid, () => undefined)
+  return owner === process.getuid?.() && await errorCode(action) === 'EROFS'
 }
 
 function listen(path: string | { host: string, port: number }): Promise<boolean> {
@@ -61,14 +74,6 @@ function listen(path: string | { host: string, port: number }): Promise<boolean>
   })
 }
 
-/** The error a listen fails with, or undefined if it succeeds. */
-function listenError(path: string): Promise<string | undefined> {
-  return new Promise(resolve => {
-    const server = createServer(socket => socket.destroy())
-    server.once('error', error => resolve((error as NodeJS.ErrnoException).code ?? 'unknown'))
-    server.listen(path, () => { server.close(); resolve(undefined) })
-  })
-}
 
 async function listenForPeer(name: string): Promise<void> {
   const listening = await listen(peerSocket(name)) && await listen({ host: '127.0.0.1', port: PEER_PORT })
@@ -86,11 +91,12 @@ async function gatewayDirectoryReadOnly(url: string): Promise<boolean> {
   if (!isSocketUrl(url)) return false
   const socket = url.slice('unix:'.length)
   const directory = dirname(socket)
-  return await readOnly(() => writeFile(`${directory}/probe.txt`, 'no'))
-    && await listenError(`${directory}/probe.sock`) === 'EROFS'
-    && await readOnly(() => unlink(socket))
-    && await readOnly(() => rename(socket, `${directory}/moved.sock`))
-    && await readOnly(() => chmod(socket, 0o777))
+  // The socket belongs to the worker's user, so only a read-only mount stops the chmod.
+  return await readOnlyOwned(socket, () => chmod(socket, 0o777))
+    && await refused(() => writeFile(`${directory}/probe.txt`, 'no'))
+    && !(await listen(`${directory}/probe.sock`))
+    && await refused(() => unlink(socket))
+    && await refused(() => rename(socket, `${directory}/moved.sock`))
 }
 
 async function runChecks(peer: string | undefined): Promise<void> {
@@ -102,7 +108,8 @@ async function runChecks(peer: string | undefined): Promise<void> {
     .filter(name => SECRET_NAME.test(name))
     .every(name => name === 'RUN_TOKEN')
   checks.workspaceWritable = !(await fails(() => writeFile('/workspace/probe.txt', 'ok')))
-  checks.rootFilesystemReadOnly = await readOnly(() => writeFile('/app/probe.txt', 'no'))
+  // The image's home for the worker's user, which a writable root file system would let it write to.
+  checks.rootFilesystemReadOnly = await readOnlyOwned('/home/node', () => writeFile('/home/node/probe.txt', 'no'))
   checks.gatewayReachable = await fetch(`${gateway}/run`, { headers: { Authorization: 'Bearer probe-invalid-token' } })
     .then(response => response.status === 401, () => false)
   checks.gatewayDirectoryReadOnly = await gatewayDirectoryReadOnly(url)
