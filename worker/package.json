@@ -8,7 +8,8 @@
   "scripts": {
     "start": "node src/main.ts",
     "probe": "node src/probe.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts"
   },
   "dependencies": {
     "@earendil-works/chord": "1.0.3",

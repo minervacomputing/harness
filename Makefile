@@ -40,7 +40,7 @@ fake-model:
 
 test:
 	cd backend && uv run pytest -q
-	cd worker && pnpm typecheck
+	cd worker && pnpm typecheck && pnpm test
 	cd frontend && pnpm typecheck
 
 lint:
