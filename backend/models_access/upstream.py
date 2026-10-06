@@ -23,6 +23,8 @@ class Route:
     api: str = "responses"
     # None when the model does not reason: the gateway then asks for no reasoning.
     reasoning_effort: str | None = None
+    # A summary of the reasoning to stream, or None for none. Only asked for with a reasoning effort.
+    reasoning_summary: str | None = None
 
 
 @dataclass
@@ -91,5 +93,6 @@ def route(alias: str) -> tuple[ModelProvider, Route]:
         cfg.model_max_output_tokens,
         cfg.model_api,
         cfg.model_reasoning_effort or None,
+        cfg.model_reasoning_summary or None,
     )
     return provider, target

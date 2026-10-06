@@ -57,6 +57,9 @@ class Config(BaseSettings):
     model_api: Literal["responses", "chat"] = "responses"
     # Responses API only. Empty for models that do not reason.
     model_reasoning_effort: str = "medium"
+    # Responses API only: the reasoning summary shown in the chat. Empty asks for none, for providers that refuse
+    # it (OpenAI may require a verified organization). Reasoning a server streams unasked is shown either way.
+    model_reasoning_summary: Literal["", "auto", "concise", "detailed"] = "auto"
 
     todoist_client_id: str | None = None
     todoist_client_secret: SecretStr | None = None

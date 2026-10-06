@@ -400,7 +400,7 @@ export type EventOut = {
     /**
      * Type
      */
-    type: 'status' | 'phase' | 'text_delta' | 'tool_call' | 'message';
+    type: 'status' | 'phase' | 'text_delta' | 'reasoning_delta' | 'tool_call' | 'message';
 };
 
 /**

@@ -119,7 +119,7 @@ MINERVA_MODEL_API_KEY=sk-...
 MINERVA_MODEL_NAME=gpt-5-mini
 ```
 
-Minerva uses the Responses API. For a server that offers only Chat Completions, set `MINERVA_MODEL_API=chat`. `MINERVA_MODEL_REASONING_EFFORT` (default `medium`) sets the reasoning effort; leave it empty for a model that does not reason.
+Minerva uses the Responses API. For a server that offers only Chat Completions, set `MINERVA_MODEL_API=chat`. `MINERVA_MODEL_REASONING_EFFORT` (default `medium`) sets the reasoning effort; leave it empty for a model that does not reason. The chat shows the model's reasoning summary, which `MINERVA_MODEL_REASONING_SUMMARY` asks for (`auto`, `concise` or `detailed`; empty for none). OpenAI may refuse summaries for an organization it has not verified; Minerva then retries without one and logs a warning. The setting only controls what Minerva asks for: reasoning that a server streams anyway, such as `reasoning_content` over Chat Completions, is shown too.
 
 To try the app without a key, run the scripted fake model:
 

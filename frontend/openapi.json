@@ -637,6 +637,7 @@
               "status",
               "phase",
               "text_delta",
+              "reasoning_delta",
               "tool_call",
               "message"
             ],

@@ -9,11 +9,13 @@ class StreamTooLarge(Exception):
 
 
 BOM = b"\xef\xbb\xbf"
+# Where OpenAI-compatible chat servers stream reasoning (DeepSeek, vLLM, OpenRouter, ...).
+REASONING_KEYS = ("reasoning_content", "reasoning", "reasoning_text")
 
 
 class StreamTap:
-    """Follows an OpenAI-style event stream as it is relayed: token usage and the visible assistant text,
-    so the backend can stream progress without trusting the worker for it. Events pass through unchanged,
+    """Follows an OpenAI-style event stream as it is relayed: token usage, and the assistant's text and reasoning
+    in the order they arrive, so the backend can stream progress without trusting the worker for it. Events pass through unchanged,
     except provider errors, whose diagnostics are replaced as they are for non-200 responses."""
 
     MAX_EVENT = 4_000_000
@@ -25,7 +27,8 @@ class StreamTap:
         self._after_cr = False
         self._event: list[bytes] = []
         self._event_size = 0
-        self._text: list[str] = []
+        # [kind, text] pairs, kind "text" or "reasoning"; adjacent text of one kind is joined.
+        self._segments: list[list[str]] = []
         self.input_tokens = 0
         self.output_tokens = 0
         self.metered = False
@@ -65,10 +68,19 @@ class StreamTap:
             self._partial = b""
         return self._flush() if self._event else b""
 
-    def take_text(self) -> str:
-        text = "".join(self._text)
-        self._text.clear()
-        return text
+    def take(self) -> list[tuple[str, str]]:
+        """The text and reasoning read since the last call, in order."""
+        segments = [(kind, text) for kind, text in self._segments]
+        self._segments.clear()
+        return segments
+
+    def _add(self, kind: str, text: str) -> None:
+        if not text:
+            return
+        if self._segments and self._segments[-1][0] == kind:
+            self._segments[-1][1] += text
+        else:
+            self._segments.append([kind, text])
 
     def _flush(self) -> bytes:
         lines, self._event, self._event_size = self._event, [], 0
@@ -106,16 +118,27 @@ class StreamTap:
         self._usage(body.get("usage"), "prompt_tokens", "completion_tokens")
         for choice in body.get("choices") or []:
             delta = choice.get("delta") if isinstance(choice, dict) else None
-            content = delta.get("content") if isinstance(delta, dict) else None
-            if isinstance(content, str) and content:
-                self._text.append(content)
+            if not isinstance(delta, dict):
+                continue
+            # Servers that stream reasoning name it differently.
+            reasoning = next((delta[key] for key in REASONING_KEYS if isinstance(delta.get(key), str)), "")
+            self._add("reasoning", reasoning)
+            content = delta.get("content")
+            if isinstance(content, str):
+                self._add("text", content)
         return None
 
 
 class ResponsesTap(StreamTap):
-    """StreamTap for the Responses API: visible text is output_text only, never reasoning summaries."""
+    """StreamTap for the Responses API: text is output_text; reasoning is the reasoning summary, or the reasoning
+    text that some compatible servers stream instead. Encrypted reasoning is never read."""
 
     TERMINAL = frozenset({"response.completed", "response.incomplete", "response.failed"})
+    REASONING = frozenset({"response.reasoning_summary_text.delta", "response.reasoning_text.delta"})
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._reasoning_part: tuple | None = None
 
     def _read(self, body: dict) -> dict | None:
         kind = body.get("type")
@@ -129,8 +152,15 @@ class ResponsesTap(StreamTap):
                 "param": None,
                 "sequence_number": body.get("sequence_number"),
             }
-        if kind == "response.output_text.delta" and isinstance(body.get("delta"), str) and body["delta"]:
-            self._text.append(body["delta"])
+        if kind == "response.output_text.delta" and isinstance(body.get("delta"), str):
+            self._add("text", body["delta"])
+        elif kind in self.REASONING and isinstance(body.get("delta"), str) and body["delta"]:
+            # A summary comes in parts, each a paragraph of its own.
+            part = (body.get("item_id"), body.get("summary_index"), body.get("content_index"))
+            if self._reasoning_part is not None and part != self._reasoning_part:
+                self._add("reasoning", "\n\n")
+            self._reasoning_part = part
+            self._add("reasoning", body["delta"])
         elif kind in self.TERMINAL and isinstance(body.get("response"), dict):
             response = body["response"]
             self._usage(response.get("usage"), "input_tokens", "output_tokens")

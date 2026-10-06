@@ -103,6 +103,7 @@ class RunEvent(TenantModel):
         STATUS = "status"
         PHASE = "phase"
         TEXT_DELTA = "text_delta"
+        REASONING_DELTA = "reasoning_delta"
         TOOL_CALL = "tool_call"
         MESSAGE = "message"
 

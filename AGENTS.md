@@ -24,6 +24,7 @@ Configuration is read from the process environment and `.env` at the repository 
 | `MINERVA_MODEL_NAME` | `gpt-5-mini` | |
 | `MINERVA_MODEL_API` | `responses` | `chat` for servers without the Responses API |
 | `MINERVA_MODEL_REASONING_EFFORT` | `medium` | Responses API only; empty for models that do not reason |
+| `MINERVA_MODEL_REASONING_SUMMARY` | `auto` | Responses API only: the reasoning shown in the chat (`auto`, `concise`, `detailed`); empty for none |
 
 **Optional for local development:**
 

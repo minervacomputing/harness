@@ -179,7 +179,8 @@ async def test_model_relay_enforces_backend_choices(claimed, monkeypatch):
 async def test_model_relay_streams_text_as_run_events(claimed, monkeypatch):
     run, token = claimed
     chunks = [
-        {"choices": [{"delta": {"role": "assistant", "content": "Hel"}}]},
+        {"choices": [{"delta": {"role": "assistant", "reasoning_content": "Hm"}}]},
+        {"choices": [{"delta": {"content": "Hel"}}]},
         {"choices": [{"delta": {"content": "lo"}}]},
         {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": "{}"}}]}}]},
         {"choices": [], "usage": {"prompt_tokens": 5, "completion_tokens": 2}},
@@ -203,6 +204,8 @@ async def test_model_relay_streams_text_as_run_events(claimed, monkeypatch):
     assert relayed == sse.encode()
     deltas = [e.data["text"] async for e in RunEvent.unscoped.filter(run=run, type="text_delta")]
     assert "".join(deltas) == "Hello"
+    reasoning = [e.data["text"] async for e in RunEvent.unscoped.filter(run=run, type="reasoning_delta")]
+    assert reasoning == ["Hm"]
     stored = await Run.unscoped.aget(pk=run.id)
     assert (stored.input_tokens, stored.output_tokens) == (5, 2)
 
@@ -333,7 +336,7 @@ async def test_responses_requests_are_rebuilt_from_what_minerva_allows(claimed, 
         done = {"type": "response.completed", "response": {"usage": {"input_tokens": 7, "output_tokens": 3}}}
         return _sse([f"data: {json.dumps(done)}\n\n"])
 
-    _upstream(monkeypatch, upstream, reasoning_effort="high")
+    _upstream(monkeypatch, upstream, reasoning_effort="high", reasoning_summary="auto")
     body = {
         "model": "gpt-expensive",
         "input": RESPONSES_INPUT,
@@ -373,7 +376,7 @@ async def test_responses_requests_are_rebuilt_from_what_minerva_allows(claimed, 
         "tools": [{"type": "function", "name": "t", "parameters": {"type": "object"}, "strict": False}],
         "tool_choice": "auto",
         "prompt_cache_key": "session-1",
-        "reasoning": {"effort": "high"},
+        "reasoning": {"effort": "high", "summary": "auto"},
         "include": ["reasoning.encrypted_content"],
     }
     stored = await Run.unscoped.aget(pk=run.id)
@@ -424,11 +427,14 @@ async def test_responses_requests_outside_the_allowlist_are_refused(claimed, mon
     assert (await Run.unscoped.aget(pk=run.id)).model_calls == 0
 
 
-async def test_responses_stream_publishes_answer_text_but_not_reasoning(claimed, monkeypatch):
+async def test_responses_stream_publishes_reasoning_apart_from_text(claimed, monkeypatch):
     run, token = claimed
+    summary = {"type": "response.reasoning_summary_text.delta", "item_id": "rs_1"}
     events = [
         {"type": "response.created", "response": {"status": "in_progress"}},
-        {"type": "response.reasoning_summary_text.delta", "delta": "thinking about secrets"},
+        {**summary, "summary_index": 0, "delta": "Looking at "},
+        {**summary, "summary_index": 0, "delta": "the list."},
+        {**summary, "summary_index": 1, "delta": "Then the answer."},
         {"type": "response.output_text.delta", "delta": "Hel"},
         {"type": "response.output_text.delta", "delta": "lo"},
         {"type": "response.function_call_arguments.delta", "delta": "{}"},
@@ -444,10 +450,94 @@ async def test_responses_stream_publishes_answer_text_but_not_reasoning(claimed,
     response = await _post(token, "/v1/responses", body)
     relayed = b"".join([chunk async for chunk in response.streaming_content])
     assert relayed == sse.encode()
-    deltas = [e.data["text"] async for e in RunEvent.unscoped.filter(run=run, type="text_delta")]
-    assert "".join(deltas) == "Hello"
+    published = [
+        (e.type, e.data)
+        async for e in RunEvent.unscoped.filter(run=run, type__in=["text_delta", "reasoning_delta"]).order_by(
+            "seq"
+        )
+    ]
+    assert [(kind, data["text"]) for kind, data in published] == [
+        ("reasoning_delta", "Looking at the list.\n\nThen the answer."),
+        ("text_delta", "Hello"),
+    ]
+    # Both name the same model call.
+    assert len({data["call"] for _, data in published}) == 1
     stored = await Run.unscoped.aget(pk=run.id)
     assert (stored.input_tokens, stored.output_tokens) == (5, 2)
+
+
+async def test_a_refused_reasoning_summary_is_dropped(claimed, monkeypatch):
+    run, token = claimed
+    monkeypatch.setattr(relay, "_summary_refused", False)
+    seen: list[dict] = []
+    done = {"type": "response.completed", "response": {"usage": {"input_tokens": 1, "output_tokens": 1}}}
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content)["reasoning"])
+        if "summary" in seen[-1]:
+            return httpx.Response(
+                400, json={"error": {"message": "Verify your organization to generate reasoning summaries."}}
+            )
+        return _sse([f"data: {json.dumps(done)}\n\n"])
+
+    _upstream(monkeypatch, upstream, reasoning_effort="low", reasoning_summary="auto")
+    body = {"input": [{"role": "user", "content": "x"}], "stream": True}
+    for _ in range(2):
+        response = await _post(token, "/v1/responses", body)
+        assert response.status_code == 200
+        b"".join([chunk async for chunk in response.streaming_content])
+    # Asked again without it, and not asked for it again.
+    assert seen == [{"effort": "low", "summary": "auto"}, {"effort": "low"}, {"effort": "low"}]
+    assert (await Run.unscoped.aget(pk=run.id)).model_calls == 2
+
+
+async def test_a_refusal_for_another_reason_keeps_the_summary(claimed, monkeypatch):
+    _, token = claimed
+    monkeypatch.setattr(relay, "_summary_refused", False)
+    seen: list[dict] = []
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content)["reasoning"])
+        return httpx.Response(400, json={"error": {"message": "context too long"}})
+
+    _upstream(monkeypatch, upstream, reasoning_effort="low", reasoning_summary="auto")
+    response = await _post(
+        token, "/v1/responses", {"input": [{"role": "user", "content": "x"}], "stream": True}
+    )
+    assert response.status_code == 502
+    assert seen == [{"effort": "low", "summary": "auto"}]
+    assert relay._summary_refused is False
+
+
+async def test_a_refusal_whose_reading_is_cancelled_is_closed(claimed, monkeypatch):
+    run, _ = claimed
+    monkeypatch.setattr(relay, "_summary_refused", False)
+    reading, closed = asyncio.Event(), asyncio.Event()
+
+    async def chunks():
+        reading.set()
+        await asyncio.sleep(10)
+        yield b""
+
+    class Upstream:
+        async def __aenter__(self):
+            return UpstreamResponse(400, "application/json", chunks())
+
+        async def __aexit__(self, *args):
+            closed.set()
+
+    class Provider:
+        def responses(self, payload):
+            return Upstream()
+
+    payload = {"input": [], "reasoning": {"effort": "low", "summary": "auto"}}
+    call = asyncio.create_task(relay._call(run, "responses", Provider(), payload, relay._Place(run.id)))
+    await reading.wait()
+    # The worker hangs up while the refusal is read.
+    call.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await call
+    assert closed.is_set()
 
 
 SECRET = "quota of org-123 exceeded"

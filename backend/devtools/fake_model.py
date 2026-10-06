@@ -3,8 +3,10 @@
 On the first request of a turn it calls one offered tool (preferring `*_list_projects`); once a tool
 result is present it answers in text and quotes the start of that result. A message that starts with
 `run_script:` makes it call the code-mode tool with the rest of the message as the script. A message that starts with
-`slow:` makes it stream one event per second, which leaves time to stop a worker mid-answer. Serves Chat Completions and
-Responses, and streams like the real API. When asked for encrypted reasoning it emits a reasoning item.
+`slow:` makes it stream one event per second, which leaves time to stop a worker mid-answer. A message that starts with
+`multi:` makes it call three tools that need no arguments, one after another, before it answers. It says a sentence before each tool call.
+Serves Chat Completions and Responses, and streams like the real API. When asked for encrypted reasoning it emits a
+reasoning item, with a summary when one is asked for; over Chat Completions it streams `reasoning_content`.
 
     uv run python devtools/fake_model.py  # then MINERVA_MODEL_BASE_URL=http://127.0.0.1:9900/v1
 """
@@ -18,6 +20,7 @@ PORT = 9900
 
 SCRIPT_PREFIX = "run_script:"
 SLOW_PREFIX = "slow:"
+MULTI_PREFIX = "multi:"
 
 
 def text_of(message: dict) -> str:
@@ -30,21 +33,42 @@ def text_of(message: dict) -> str:
 def plan(body: dict) -> dict:
     responses = "input" in body
     messages = body.get("input" if responses else "messages") or []
-    tools = [tool["name"] if responses else tool["function"]["name"] for tool in body.get("tools") or []]
+    specs = [tool if responses else tool["function"] for tool in body.get("tools") or []]
+    tools = [spec["name"] for spec in specs]
+    # Tools the fake can call with no arguments; the worker refuses a call that lacks a required one.
+    free = [spec["name"] for spec in specs if not (spec.get("parameters") or {}).get("required")]
     print(f"model request: {len(messages)} item(s), tools: {', '.join(tools) or 'none'}", flush=True)
     last = messages[-1] if messages else {}
     is_result = last.get("type") == "function_call_output" if responses else last.get("role") == "tool"
+    turn = messages[
+        next((i for i in range(len(messages) - 1, -1, -1) if messages[i].get("role") == "user"), 0) :
+    ]
+    results = sum(
+        1 for m in turn if (m.get("type") == "function_call_output" if responses else m.get("role") == "tool")
+    )
     prompt = next((text_of(m) for m in reversed(messages) if m.get("role") == "user"), "")
     pace = 1.0 if prompt.startswith(SLOW_PREFIX) else 0.03
-    return {**choose(tools, responses, last, is_result, prompt), "pace": pace}
+    step = choose(tools, free, responses, last, is_result, prompt, results)
+    return {**step, "pace": pace, "thought": thought(step, results), "call": f"call_{results + 1}"}
 
 
-def choose(tools: list[str], responses: bool, last: dict, is_result: bool, prompt: str) -> dict:
+def thought(step: dict, results: int) -> str:
+    if "tool" in step:
+        return f"The user wants something from their apps. Step {results + 1}: I will call {step['tool']}."
+    return "I have what I need. I will answer briefly."
+
+
+def choose(
+    tools: list[str], free: list[str], responses: bool, last: dict, is_result: bool, prompt: str, results: int
+) -> dict:
     if "run_script" in tools and not is_result and prompt.startswith(SCRIPT_PREFIX):
         return {"tool": "run_script", "arguments": json.dumps({"code": prompt.removeprefix(SCRIPT_PREFIX)})}
+    if tools and prompt.startswith(MULTI_PREFIX) and results < 3:
+        name = (free or tools)[results % len(free or tools)]
+        return {"tool": name, "say": f"Now {name}."}
     if tools and not is_result:
         name = next((tool for tool in tools if tool.endswith("list_projects")), tools[0])
-        return {"tool": name}
+        return {"tool": name, "say": "Let me look that up."}
     result = last.get("output" if responses else "content") if is_result else None
     if isinstance(result, list):
         result = " ".join(part.get("text", "") for part in result if isinstance(part, dict))
@@ -64,32 +88,32 @@ def chunk(delta: dict, finish: str | None = None) -> dict:
     }
 
 
+def message_item(text: str, id: str = "msg_fake") -> dict:
+    content = [{"type": "output_text", "text": text, "annotations": []}]
+    return {"type": "message", "id": id, "role": "assistant", "status": "completed", "content": content}
+
+
 def response_items(body: dict, step: dict) -> list[dict]:
     items = []
     if "reasoning.encrypted_content" in (body.get("include") or []):
-        items.append({"type": "reasoning", "id": "rs_fake", "summary": [], "encrypted_content": "fake"})
+        asked = (body.get("reasoning") or {}).get("summary")
+        summary = [{"type": "summary_text", "text": step["thought"]}] if asked else []
+        items.append({"type": "reasoning", "id": "rs_fake", "summary": summary, "encrypted_content": "fake"})
+    if "say" in step:
+        items.append(message_item(step["say"], "msg_say"))
     if "tool" in step:
         items.append(
             {
                 "type": "function_call",
-                "id": "fc_fake",
-                "call_id": "call_1",
+                "id": f"fc_{step['call']}",
+                "call_id": step["call"],
                 "name": step["tool"],
                 "arguments": step.get("arguments", "{}"),
                 "status": "completed",
             }
         )
     else:
-        text = {"type": "output_text", "text": step["text"], "annotations": []}
-        items.append(
-            {
-                "type": "message",
-                "id": "msg_fake",
-                "role": "assistant",
-                "status": "completed",
-                "content": [text],
-            }
-        )
+        items.append(message_item(step["text"]))
     return items
 
 
@@ -107,6 +131,23 @@ def response_events(items: list[dict], response: dict) -> list[dict]:
                 events.append({"type": "response.output_text.delta", **ids, "delta": word + " "})
             events.append({"type": "response.output_text.done", **ids, "text": text})
             events.append({"type": "response.content_part.done", **ids, "part": item["content"][0]})
+        elif item["type"] == "reasoning" and item["summary"]:
+            text = item["summary"][0]["text"]
+            events.append(
+                {"type": "response.output_item.added", "output_index": index, "item": {**item, "summary": []}}
+            )
+            ids = {"item_id": item["id"], "output_index": index, "summary_index": 0}
+            events.append(
+                {
+                    "type": "response.reasoning_summary_part.added",
+                    **ids,
+                    "part": {"type": "summary_text", "text": ""},
+                }
+            )
+            for word in text.split(" "):
+                events.append({"type": "response.reasoning_summary_text.delta", **ids, "delta": word + " "})
+            events.append({"type": "response.reasoning_summary_text.done", **ids, "text": text})
+            events.append({"type": "response.reasoning_summary_part.done", **ids, "part": item["summary"][0]})
         else:
             opened = {**item, "arguments": ""} if item["type"] == "function_call" else item
             events.append({"type": "response.output_item.added", "output_index": index, "item": opened})
@@ -135,7 +176,7 @@ class Handler(BaseHTTPRequestHandler):
             if "tool" in step:
                 message["tool_calls"] = [
                     {
-                        "id": "call_1",
+                        "id": step["call"],
                         "type": "function",
                         "function": {"name": step["tool"], "arguments": step.get("arguments", "{}")},
                     }
@@ -150,8 +191,11 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(data)
             return
         events = [chunk({"role": "assistant", "content": ""})]
+        events += [chunk({"reasoning_content": word + " "}) for word in step["thought"].split(" ")]
+        if "say" in step:
+            events += [chunk({"content": word + " "}) for word in step["say"].split(" ")]
         if "tool" in step:
-            call = {"index": 0, "id": "call_1", "type": "function"}
+            call = {"index": 0, "id": step["call"], "type": "function"}
             call["function"] = {"name": step["tool"], "arguments": step.get("arguments", "{}")}
             events += [chunk({"tool_calls": [call]}), chunk({}, "tool_calls")]
         else:

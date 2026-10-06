@@ -198,11 +198,11 @@ def test_a_replaced_attempt_cannot_make_a_model_call_or_stream_text(claimed):
     run, _ = claimed
     replace(run)
     assert not relay._count_model_call(run.id, 1)
-    relay._publish_text(run.id, 1, "stale")
+    relay._publish(run.id, 1, "c1", [("reasoning", "stale"), ("text", "stale")])
     assert Run.unscoped.get(pk=run.id).model_calls == 0
-    assert not RunEvent.unscoped.filter(run=run, type="text_delta").exists()
+    assert not RunEvent.unscoped.filter(run=run, type__in=["text_delta", "reasoning_delta"]).exists()
     assert relay._count_model_call(run.id, 2)
-    relay._publish_text(run.id, 2, "current")
+    relay._publish(run.id, 2, "c2", [("text", "current")])
     texts = RunEvent.unscoped.filter(run=run, type="text_delta").values_list("data__text", flat=True)
     assert list(texts) == ["current"]
 

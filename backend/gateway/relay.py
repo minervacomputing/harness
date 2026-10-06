@@ -4,10 +4,12 @@ import asyncio
 import json
 import logging
 import math
+import secrets
 import time
 from collections import Counter
 from collections.abc import AsyncIterator
 
+import httpx
 from asgiref.sync import sync_to_async
 from django.core.exceptions import RequestDataTooBig
 from django.db.models import F
@@ -40,15 +42,19 @@ def _count_model_call(run_id, attempt: int) -> bool:
     return bool(current.update(model_calls=F("model_calls") + 1))
 
 
-def _publish_text(run_id, attempt: int, text: str) -> None:
+DELTA_TYPES = {"text": RunEvent.Type.TEXT_DELTA, "reasoning": RunEvent.Type.REASONING_DELTA}
+
+
+def _publish(run_id, attempt: int, call: str, segments: list[tuple[str, str]]) -> None:
     """Streaming progress comes from the trusted relay, not the worker. The final message still
-    comes from the worker's completion, which replaces the draft. A replaced attempt's text is dropped."""
-    if text:
-        services.append_event(run_id, RunEvent.Type.TEXT_DELTA, {"text": text}, attempt=attempt)
+    comes from the worker's completion, which replaces the draft. A replaced attempt's text is dropped.
+    `call` tells apart the text of model calls that stream at the same time."""
+    for kind, text in segments:
+        services.append_event(run_id, DELTA_TYPES[kind], {"text": text, "call": call}, attempt=attempt)
 
 
-def _settle(run_id, attempt: int, tap: StreamTap) -> None:
-    _publish_text(run_id, attempt, tap.take_text())
+def _settle(run_id, attempt: int, tap: StreamTap, call: str = "") -> None:
+    _publish(run_id, attempt, call, tap.take())
     Run.unscoped.filter(pk=run_id).update(
         input_tokens=F("input_tokens") + tap.input_tokens,
         output_tokens=F("output_tokens") + tap.output_tokens,
@@ -134,6 +140,7 @@ class ModelCall:
         self._upstream = upstream
         self._queue: asyncio.Queue[bytes | None] = asyncio.Queue()
         self._delivering = True
+        self.call = secrets.token_hex(4)
 
     def start(self) -> None:
         task = asyncio.create_task(self._run())
@@ -188,7 +195,7 @@ class ModelCall:
             # Provider diagnostics stay private, as for non-200 responses.
             log.warning("Model provider reported %s for run %s", self.tap.error_code, self.run_id)
         try:
-            await sync_to_async(_settle)(self.run_id, self.attempt, self.tap)
+            await sync_to_async(_settle)(self.run_id, self.attempt, self.tap, self.call)
         except Exception:
             log.exception("Could not record the model call for run %s", self.run_id)
 
@@ -202,7 +209,7 @@ class ModelCall:
             self._send(self.tap.feed(chunk))
             if time.monotonic() - last_flush > TEXT_FLUSH_SECONDS:
                 last_flush = time.monotonic()
-                await sync_to_async(_publish_text)(self.run_id, self.attempt, self.tap.take_text())
+                await sync_to_async(_publish)(self.run_id, self.attempt, self.call, self.tap.take())
         self._send(self.tap.finish())
 
 
@@ -261,25 +268,69 @@ async def _relay(request: HttpRequest, api: str):
             place.release()
 
 
+# Set once the provider has refused a request for a reasoning summary that it took without one (OpenAI asks some
+# organizations to verify first). Later calls of this process then ask for none.
+_summary_refused = False
+
+
+def _without_summary(payload: dict) -> dict:
+    reasoning = {key: value for key, value in payload["reasoning"].items() if key != "summary"}
+    return {**payload, "reasoning": reasoning}
+
+
+async def _names_summary(reply) -> bool:
+    """Whether a refusal's body mentions the reasoning summary. Only its start is read, and only for this."""
+    body = b""
+    try:
+        async with asyncio.timeout(10):
+            async for chunk in reply.chunks:
+                body += chunk
+                if len(body) >= 16_384:
+                    break
+    except TimeoutError, httpx.HTTPError:
+        return False
+    return b"summar" in body.lower()
+
+
 async def _call(run: Run, api: str, provider, payload: dict, place: _Place):
+    global _summary_refused
     if not await sync_to_async(_count_model_call)(run.id, run.attempt):
         return error_response("This run has ended.", 401)
+    asks_summary = "summary" in payload.get("reasoning", {})
+    if asks_summary and _summary_refused:
+        payload, asks_summary = _without_summary(payload), False
 
-    upstream_cm = provider.chat_completions(payload) if api == "chat" else provider.responses(payload)
-    opening = asyncio.create_task(upstream_cm.__aenter__())
-    try:
-        opened = await _until_run_ends(run.id, run.attempt, opening)
-    except asyncio.CancelledError:
-        # The worker hung up before the provider answered.
-        await _abandon(opening, upstream_cm, run.id, run.attempt)
-        raise
-    if not opened:
-        await _abandon(opening, upstream_cm, run.id, run.attempt)
-        return error_response("This run has ended.", 401)
-    try:
-        reply = opening.result()
-    except ModelUnavailable as error:
-        return error_response(str(error), 502)
+    retried = False
+    while True:
+        upstream_cm = provider.chat_completions(payload) if api == "chat" else provider.responses(payload)
+        opening = asyncio.create_task(upstream_cm.__aenter__())
+        try:
+            opened = await _until_run_ends(run.id, run.attempt, opening)
+        except asyncio.CancelledError:
+            # The worker hung up before the provider answered.
+            await _abandon(opening, upstream_cm, run.id, run.attempt)
+            raise
+        if not opened:
+            await _abandon(opening, upstream_cm, run.id, run.attempt)
+            return error_response("This run has ended.", 401)
+        try:
+            reply = opening.result()
+        except ModelUnavailable as error:
+            return error_response(str(error), 502)
+        try:
+            refused_summary = reply.status == 400 and asks_summary and await _names_summary(reply)
+        except asyncio.CancelledError:
+            # The worker hung up while the refusal was read.
+            await _close(upstream_cm, run.id)
+            raise
+        if refused_summary:
+            # Asked once more without the summary; if that is accepted, the summary was the problem.
+            await _close(upstream_cm, run.id)
+            if not await sync_to_async(services.is_current)(run.id, run.attempt):
+                return error_response("This run has ended.", 401)
+            payload, asks_summary, retried = _without_summary(payload), False, True
+            continue
+        break
     if reply.status != 200:
         await _close(upstream_cm, run.id)
         # Provider diagnostics stay private; nothing from the upstream body reaches the worker.
@@ -292,6 +343,12 @@ async def _call(run: Run, api: str, provider, payload: dict, place: _Place):
         await sync_to_async(_settle)(run.id, run.attempt, StreamTap())
         log.warning("Model provider answered %s for run %s", reply.content_type, run.id)
         return error_response("The model provider returned an unexpected response.", 502)
+
+    if retried and not _summary_refused:
+        _summary_refused = True
+        log.warning(
+            "The model provider refused a reasoning summary; set MINERVA_MODEL_REASONING_SUMMARY empty"
+        )
 
     call = ModelCall(
         run.id, run.attempt, StreamTap() if api == "chat" else ResponsesTap(), upstream_cm, reply, place

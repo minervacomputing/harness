@@ -134,5 +134,7 @@ def build_responses_payload(body: dict[str, Any], target: Route) -> dict[str, An
     if target.reasoning_effort:
         # Without storage, reasoning survives between tool calls only as encrypted content.
         payload["reasoning"] = {"effort": target.reasoning_effort}
+        if target.reasoning_summary:
+            payload["reasoning"]["summary"] = target.reasoning_summary
         payload["include"] = ["reasoning.encrypted_content"]
     return payload

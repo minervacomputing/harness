@@ -180,3 +180,13 @@
   & :where(pre) { border-radius: 0; border: 1px solid var(--border); }
   & :where(h1, h2, h3, h4) { font-weight: 500; letter-spacing: -0.015em; }
 }
+
+/* The agent's reasoning: quieter than its replies. A second class, so it wins over prose-minerva. */
+@utility prose-quiet {
+  &.prose-minerva {
+    --tw-prose-body: var(--muted-foreground);
+    --tw-prose-headings: var(--muted-foreground);
+    --tw-prose-bold: var(--muted-foreground);
+    --tw-prose-quotes: var(--muted-foreground);
+  }
+}

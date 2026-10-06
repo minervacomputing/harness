@@ -2,7 +2,7 @@ import { createFileRoute, notFound } from '@tanstack/react-router'
 import { ArrowUpIcon, PlusIcon, SearchIcon, TrashIcon } from 'lucide-react'
 import { type ComponentProps, type ReactNode, useState } from 'react'
 import { Logo, LogoMark } from '@/components/brand/logo'
-import { ToolCall } from '@/components/chat/thread'
+import { ToolCall, WorkGroup } from '@/components/chat/thread'
 import { AppIcon } from '@/components/connections/app-icon'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { Button } from '@/components/ui/button'
@@ -100,6 +100,13 @@ const COLOURS = [
 ] as const
 
 const TOOL = ToolCall as unknown as (props: Partial<ComponentProps<typeof ToolCall>>) => ReactNode
+
+function Work({ defaultOpen = false, ...props }: Omit<ComponentProps<typeof WorkGroup>, 'open' | 'onOpenChange'> & { defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return <WorkGroup {...props} open={open} onOpenChange={setOpen} />
+}
+
+const QUIET = 'prose prose-sm prose-minerva prose-quiet max-w-none'
 
 function Catalogue() {
   const [tab, setTab] = useState('all')
@@ -318,11 +325,22 @@ function Catalogue() {
         </Table>
       </Section>
 
-      <Section title="Chat" note="Tool cards show state in the icon colour and a status word.">
+      <Section title="Chat" note="Tool cards show state in the icon colour and a status word. The agent's work (reasoning, tool calls and what it wrote between them) folds into one row; a call our policies refused stays a card of its own.">
         <div className="grid max-w-3xl gap-4">
           <div className="flex justify-end">
             <div className="max-w-[80%] border bg-secondary px-3.5 py-2.5 text-sm">What is due this week?</div>
           </div>
+          <Work tools={3} failed={1} apps={['Todoist', 'GitHub']}>{null}</Work>
+          <Work tools={2} failed={0} apps={['Todoist']} defaultOpen>
+            <div className={QUIET}><p>The user wants this week's tasks. I will list them, then check open issues.</p></div>
+            <TOOL toolName="todoist_list_tasks" args={{ filter: 'due before: next monday' }} result={{ decision: 'allowed', label: 'Todoist: list tasks' }} />
+            <div className="prose prose-sm prose-minerva max-w-none"><p>Three tasks are due. Adding the reminder now.</p></div>
+            <TOOL toolName="todoist_create_task" args={{}} result={{ decision: 'error', label: 'Todoist: create task' }} />
+          </Work>
+          <Work tools={0} failed={0} apps={[]} live defaultOpen>
+            <div className={QUIET}><p><strong>Checking the calendar.</strong> The offsite may clash with the board meeting.</p></div>
+          </Work>
+          <Work tools={0} failed={0} apps={[]}>{null}</Work>
           <TOOL toolName="todoist_list_tasks" args={{ filter: 'due before: next monday' }} result={{ decision: 'allowed', label: 'Todoist: list tasks' }} />
           <TOOL toolName="todoist_delete_task" args={{ id: '8812' }} result={{ decision: 'denied', label: 'Todoist: delete task', message: 'This connection does not allow deleting tasks.' }} />
           <TOOL toolName="todoist_create_task" args={{}} result={{ decision: 'error', label: 'Todoist: create task' }} />

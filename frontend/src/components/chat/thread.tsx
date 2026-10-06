@@ -7,10 +7,10 @@ import {
   useAuiState,
 } from '@assistant-ui/react'
 import { MarkdownTextPrimitive } from '@assistant-ui/react-markdown'
-import { ArrowUpIcon, ChevronRightIcon, SquareIcon, WrenchIcon } from 'lucide-react'
-import type { ComponentProps, ReactNode } from 'react'
+import { ArrowUpIcon, BrainIcon, ChevronRightIcon, SquareIcon, WrenchIcon } from 'lucide-react'
+import { type ComponentProps, type ReactNode, useId, useState } from 'react'
 import remarkGfm from 'remark-gfm'
-import type { ToolCallResult } from '@/components/chat/model'
+import { NARRATION, type ToolCallResult } from '@/components/chat/model'
 import { Button } from '@/components/ui/button'
 import { ErrorNote, Spinner, Status, type StatusTone } from '@/components/ui/misc'
 import { useDemoVisitor } from '@/lib/demo'
@@ -44,35 +44,124 @@ function UserMessage() {
   )
 }
 
+type GroupBy = ComponentProps<typeof MessagePrimitive.GroupedParts>['groupBy']
+
+const WORK = ['group-work'] as const
+
+/**
+ * The agent's work (reasoning, tool calls and what it wrote between them) folds into one row per stretch. A call our
+ * policies refused stays a card of its own, between the stretches; so does the answer.
+ */
+const groupWork: GroupBy = part => {
+  if (part.type === 'reasoning') return WORK
+  if (part.type === 'tool-call') return (part.result as ToolCallResult | undefined)?.decision === 'denied' ? null : WORK
+  if (part.type === 'text' && part.parentId === NARRATION) return WORK
+  return null
+}
+
 function AssistantMessage() {
-  const custom = useAuiState(s => s.message.metadata.custom) as { phase?: string; failure?: boolean }
-  const running = useAuiState(s => s.message.status?.type === 'running')
-  if (custom.failure) {
-    return (
-      <MessagePrimitive.Root>
-        <ErrorNote><MessagePrimitive.Parts /></ErrorNote>
-      </MessagePrimitive.Root>
-    )
-  }
+  const custom = useAuiState(s => s.message.metadata.custom) as { phase?: string; failure?: string }
   return (
     <MessagePrimitive.Root className="space-y-3">
-      <MessagePrimitive.Parts components={{ Text: MarkdownText, tools: { Fallback: ToolCall } }} />
-      {running && (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Spinner className="size-3.5" />
-          {custom.phase ?? 'Thinking'}
-        </div>
-      )}
+      <MessagePrimitive.GroupedParts groupBy={groupWork} indicator={custom.failure ? 'never' : 'always'}>
+        {({ part, children }) => {
+          switch (part.type) {
+            case 'group-work':
+              return <Work indices={part.indices}>{children}</Work>
+            case 'text':
+              return <MarkdownText />
+            case 'reasoning':
+              return <MarkdownText quiet />
+            case 'tool-call':
+              return <ToolCall {...part} />
+            case 'indicator':
+              return (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Spinner className="size-3.5" />
+                  {custom.phase ?? 'Thinking'}
+                </div>
+              )
+            default:
+              return null
+          }
+        }}
+      </MessagePrimitive.GroupedParts>
+      {custom.failure && <ErrorNote>{custom.failure}</ErrorNote>}
     </MessagePrimitive.Root>
   )
 }
 
-function MarkdownText() {
+/**
+ * A stretch of work, summarised from its parts. Open while the agent is still in it, unless the user closed it: until
+ * something other than text follows it, since text only joins the stretch once a later tool call has finished.
+ */
+function Work({ indices, children }: { indices: readonly number[]; children: ReactNode }) {
+  const parts = useAuiState(s => s.message.parts)
+  const live = useAuiState(s => s.message.status?.type === 'running' && s.message.parts.slice((indices.at(-1) ?? 0) + 1).every(part => part.type === 'text'))
+  const [chosen, setChosen] = useState<boolean | null>(null)
+  const items = indices.map(i => parts[i])
+  const tools = items.flatMap(part => (part?.type === 'tool-call' ? [part.result as ToolCallResult | undefined] : []))
+  // A lone tool call needs no summary.
+  if (items.length === 1 && tools.length === 1) return children
+  const apps = [...new Set(items.flatMap(part => (part?.type === 'tool-call' ? [appOf(part.toolName, part.result as ToolCallResult | undefined)] : [])))]
+  return (
+    <WorkGroup
+      tools={tools.length}
+      failed={tools.filter(tool => tool?.decision === 'error').length}
+      apps={apps}
+      live={live}
+      open={chosen ?? live}
+      onOpenChange={setChosen}
+    >
+      {children}
+    </WorkGroup>
+  )
+}
+
+function appOf(toolName: string, result: ToolCallResult | undefined): string {
+  const label = result?.label ?? describeTool(toolName)
+  return label.split(':')[0]
+}
+
+/** A disclosure, not `<details>`: the tool cards inside use the `group-open` variant for their own chevrons. */
+export function WorkGroup({ tools, failed, apps, live, open, onOpenChange, children }: {
+  tools: number
+  failed: number
+  apps: string[]
+  live?: boolean
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  children: ReactNode
+}) {
+  const id = useId()
+  const title = tools > 0 ? `Used ${tools} ${tools === 1 ? 'tool' : 'tools'}` : live ? 'Thinking' : 'Thought'
+  const Icon = tools > 0 ? WrenchIcon : BrainIcon
+  return (
+    <div className="border bg-card text-sm">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => onOpenChange(!open)}
+        className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-2 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/25"
+      >
+        <ChevronRightIcon className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')} />
+        <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="shrink-0">{title}</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-muted-foreground">{apps.join(', ')}</span>
+        {failed > 0 && <Status tone="danger">{failed} failed</Status>}
+      </button>
+      {open && <div id={id} className="space-y-2 border-t p-2">{children}</div>}
+    </div>
+  )
+}
+
+function MarkdownText({ quiet }: { quiet?: boolean }) {
   return (
     <MarkdownTextPrimitive
       remarkPlugins={[remarkGfm]}
       components={{ img: UnloadedImage }}
-      className="prose prose-sm prose-minerva max-w-none [overflow-wrap:anywhere]"
+      className={cn('prose prose-sm prose-minerva max-w-none [overflow-wrap:anywhere]', quiet && 'prose-quiet')}
     />
   )
 }
