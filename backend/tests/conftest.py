@@ -5,7 +5,7 @@ import httpx
 import pytest
 from asgiref.sync import sync_to_async
 from connector_runs import claimed_run, replace_grants
-from django.test import Client
+from django.test import Client, override_settings
 
 from accounts.models import User
 from agents.models import Agent
@@ -18,8 +18,10 @@ from connectors.base import ApiKey, Builtin
 from connectors.executor import Executor
 from connectors.todoist.client import TodoistClient
 from connectors.todoist.connector import TodoistConnector
+from conversations.models import Conversation
 from permissions.models import Grant
 from permissions.services import GrantChange, apply_grant_changes
+from runs import services
 from workspaces.tenancy import workspace_scope
 
 PASSWORD = "correct-horse-battery-staple"
@@ -184,6 +186,23 @@ def connector_run(scoped, user):
         return claimed_run(scoped, user)
 
     return sync_to_async(start)
+
+
+@pytest.fixture
+def gateway_urls():
+    with override_settings(ROOT_URLCONF="gateway.urls"):
+        yield
+
+
+@pytest.fixture
+def claimed(scoped, user, agent, grant, todoist):
+    """A claimed run and its raw token, as the supervisor would hand them to a sandbox."""
+    grant(work=["read"])
+    with workspace_scope(scoped.id):
+        conversation = Conversation.objects.create(agent=agent, user=user)
+        services.start_run(conversation=conversation, user_id=user.id, content="List my tasks")
+    [(run, token)] = services.claim_queued(1)
+    return run, token
 
 
 @pytest.fixture

@@ -58,6 +58,13 @@ class Run(TenantModel):
     event_seq = models.PositiveIntegerField(default=0)
     worker_seq = models.PositiveIntegerField(default=0)
 
+    # A worker that takes over after its predecessor died starts a new attempt. Requests authenticated
+    # under an earlier attempt can no longer change the run.
+    attempt = models.PositiveIntegerField(default=1)
+    # The worker's saved state (RunCommit): the last commit's sequence number and the bytes stored.
+    journal_seq = models.PositiveIntegerField(default=0)
+    journal_bytes = models.PositiveBigIntegerField(default=0)
+
     sandbox_provider = models.CharField(max_length=32, blank=True)
     sandbox_handle = models.JSONField(null=True, blank=True)
     sandbox_released = models.BooleanField(default=False)
@@ -131,6 +138,28 @@ class RunWrite(TenantModel):
                 fields=["run"], condition=models.Q(status="dispatched"), name="run_write_one_in_flight"
             ),
         ]
+
+
+class RunCommit(TenantModel):
+    """One commit of the worker's pi-durable journal, so that a new worker can resume the run.
+
+    Only the worker writes it and only the same run's next worker reads it back: opaque, untrusted state,
+    stored encrypted and deleted when the run ends. Nothing in it is shown to users or trusted by the
+    backend.
+    """
+
+    run = models.ForeignKey(Run, on_delete=models.CASCADE, related_name="commits")
+    seq = models.PositiveIntegerField()
+    attempt = models.PositiveIntegerField()
+    data = models.BinaryField()
+    key_version = models.CharField(max_length=32)
+    # Plaintext bytes, and their sha256, which tells a retried commit from a conflicting one.
+    size = models.PositiveIntegerField()
+    digest = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["run", "seq"], name="run_commit_seq_unique")]
 
 
 class RunPageToken(TenantModel):

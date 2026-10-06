@@ -1,21 +1,24 @@
-"""Worker-facing endpoints: the run spec and the worker's own events. The worker only makes outbound calls
-here, authenticated by its run token. The model relay is in gateway.relay, tools in gateway.mcp."""
+"""Worker-facing endpoints: the run spec, the worker's own events and its saved state. The worker only makes
+outbound calls here, authenticated by its run token. The model relay is in gateway.relay, tools in
+gateway.mcp."""
 
 import logging
 from typing import Annotated, Literal
 
 from asgiref.sync import sync_to_async
-from django.http import HttpRequest, JsonResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.utils import timezone
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from connectors import registry
-from gateway.auth import error_response, run_required
+from gateway.auth import error_response, run_required, unauthorized
 from minerva.config import config
 from models_access import upstream
 from models_access.upstream import ModelUnavailable
+from runs import journal as journal_store
 from runs import services
+from runs.journal import Appended
 from runs.models import Run, RunEvent
 
 log = logging.getLogger(__name__)
@@ -111,3 +114,39 @@ async def events(request: HttpRequest) -> JsonResponse:
         return error_response("Invalid event batch.", 400)
     await sync_to_async(_apply_events)(request.run, batch.events)  # type: ignore[attr-defined]
     return JsonResponse({"accepted": True})
+
+
+@require_GET
+@run_required
+async def journal(request: HttpRequest) -> JsonResponse:
+    run: Run = request.run  # type: ignore[attr-defined]
+    try:
+        seq = await sync_to_async(journal_store.last)(run.id, run.attempt)
+    except journal_store.Inactive:
+        return unauthorized()
+    return JsonResponse({"seq": seq})
+
+
+@require_http_methods(["GET", "PUT"])
+@run_required
+async def journal_commit(request: HttpRequest, seq: int) -> HttpResponse:
+    """GET returns commit `seq` as stored; PUT stores it. The body is opaque and is never parsed."""
+    run: Run = request.run  # type: ignore[attr-defined]
+    try:
+        if request.method == "GET":
+            data = await sync_to_async(journal_store.read)(run.id, run.attempt, seq)
+            if data is None:
+                return error_response("There is no such commit.", 404)
+            return HttpResponse(data, content_type="application/octet-stream")
+        appended = await sync_to_async(journal_store.append)(run.id, run.attempt, seq, request.body)
+    except journal_store.Inactive:
+        return unauthorized()
+    match appended:
+        case Appended.STORED | Appended.DUPLICATE:
+            return JsonResponse({"seq": seq})
+        case Appended.CONFLICT:
+            return error_response("This commit does not follow the saved state.", 409)
+        case Appended.TOO_LARGE:
+            return error_response(journal_store.TOO_LARGE, 413)
+        case Appended.EMPTY:
+            return error_response("A commit cannot be empty.", 400)

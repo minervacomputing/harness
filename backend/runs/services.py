@@ -17,7 +17,7 @@ from conversations.models import Conversation, Message
 from minerva.config import config
 from permissions.policy import Policy
 from permissions.services import effective_policy, user_layer
-from runs.models import Run, RunEvent, RunWrite
+from runs.models import Run, RunCommit, RunEvent, RunWrite
 
 log = logging.getLogger(__name__)
 
@@ -157,12 +157,14 @@ def _notify(channel: str, payload: str) -> None:
 
 
 def finish(run_id: UUID, status: str, *, code: str = "", message: str = "") -> bool:
-    """Move an active run to a terminal state exactly once. Returns False if it already ended."""
+    """Move an active run to a terminal state exactly once, and drop its saved state. Returns False if it
+    already ended."""
     with transaction.atomic():
         updated = Run.unscoped.filter(pk=run_id, status__in=Run.ACTIVE).update(
             status=status, error_code=code, error_message=message[:500], finished_at=timezone.now()
         )
         if updated:
+            RunCommit.unscoped.filter(run_id=run_id).delete()
             data = {"status": status}
             if message:
                 data["message"] = message[:500]

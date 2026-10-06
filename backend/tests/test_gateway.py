@@ -30,23 +30,6 @@ from workspaces.tenancy import workspace_scope
 pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.usefixtures("gateway_urls")]
 
 
-@pytest.fixture
-def gateway_urls():
-    with override_settings(ROOT_URLCONF="gateway.urls"):
-        yield
-
-
-@pytest.fixture
-def claimed(scoped, user, agent, grant, todoist):
-    """A claimed run and its raw token, as the supervisor would hand them to a sandbox."""
-    grant(work=["read"])
-    with workspace_scope(scoped.id):
-        conversation = Conversation.objects.create(agent=agent, user=user)
-        services.start_run(conversation=conversation, user_id=user.id, content="List my tasks")
-    [(run, token)] = services.claim_queued(1)
-    return run, token
-
-
 def auth(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
