@@ -50,7 +50,6 @@ from connectors.hubspot.scope import (
 )
 from connectors.text import plain_text, single_line
 
-WRITE_NOTE = "The number of writes per run is limited."
 MAX_ASSOCIATIONS = 10
 MAX_NOTE = 5000
 # HubSpot's own association types between a new record and an existing one.
@@ -153,7 +152,7 @@ CREATE_CONTACT = Operation(
     title="Create a contact",
     description=(
         "Create a contact. Email addresses are unique: search_contacts finds an existing one. HubSpot may "
-        f"also create and associate a company from the email address's domain. {WRITE_NOTE}"
+        "also create and associate a company from the email address's domain."
     ),
     input_model=CreateContact,
     needs=((RECORD, "create"),),
@@ -192,7 +191,7 @@ async def _prepare_update_contact(binding: Binding, data: UpdateContact) -> Prep
 UPDATE_CONTACT = Operation(
     name="update_contact",
     title="Update a contact",
-    description=f"Change a contact's email address, name, phone, company name or job title. {WRITE_NOTE}",
+    description="Change a contact's email address, name, phone, company name or job title.",
     input_model=UpdateContact,
     needs=((RECORD, "edit"),),
     prepare=_prepare_update_contact,
@@ -267,7 +266,7 @@ CREATE_DEAL = Operation(
     title="Create a deal",
     description=(
         "Create a deal in a pipeline and stage from list_pipelines, optionally associated with contacts "
-        f"and companies. HubSpot workflows may act on new deals. {WRITE_NOTE}"
+        "and companies. HubSpot workflows may act on new deals."
     ),
     input_model=CreateDeal,
     needs=((RECORD, "read"), (RECORD, "create")),
@@ -337,7 +336,7 @@ UPDATE_DEAL = Operation(
     title="Update a deal",
     description=(
         "Change a deal's name, stage, amount or close date. The stage must be in the deal's own pipeline; "
-        f"deals cannot be moved to another pipeline. HubSpot workflows may act on stage changes. {WRITE_NOTE}"
+        "deals cannot be moved to another pipeline. HubSpot workflows may act on stage changes."
     ),
     input_model=UpdateDeal,
     needs=((RECORD, "edit"),),
@@ -404,8 +403,7 @@ ADD_NOTE = Operation(
     name="add_note",
     title="Log a note",
     description=(
-        "Log a plain-text note on one contact, company or deal; it shows in the record's activity "
-        f"timeline. {WRITE_NOTE}"
+        "Log a plain-text note on one contact, company or deal; it shows in the record's activity timeline."
     ),
     input_model=AddNote,
     needs=((RECORD, "note"),),

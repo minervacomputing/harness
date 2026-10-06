@@ -57,7 +57,7 @@ A connector turns one provider's API into tools, and the permission executor aut
    - a pair is not in `needs`, or a declared need is not covered;
    - a write enumerates, or names no concrete resource.
 3. It drops records on another connection, of a kind outside `needs`, malformed, or whose kind lacks `output_action`. It then drops the records the policy does not allow.
-4. Writes run one at a time per run. A run has a write quota, and identical arguments are deduplicated. The outcome is judged from the write attempt that `http.py` records, not from the connector's return value. An unknown outcome pauses later writes (`WRITE_UNCERTAIN`).
+4. Writes run one at a time per run. Identical arguments are deduplicated. The outcome is judged from the write attempt that `http.py` records, not from the connector's return value. An unknown outcome pauses later writes (`WRITE_UNCERTAIN`).
 5. Provider cursors become run-bound tokens. A token is valid only with the same other arguments.
 
 `ProviderHTTP` (in `http.py`) maps provider responses to owned errors:
@@ -87,7 +87,6 @@ A connector turns one provider's API into tools, and the permission executor aut
   - Cursors that fail validation are refused with `INVALID_CURSOR`.
 - **Descriptions.**
   - Paginated operations end with "To get the next page, repeat the call with identical arguments plus the returned next_cursor."
-  - Writes say that their number per run is limited.
 - **Testability.** Clients take a `transport` argument so tests can pass an `httpx.MockTransport`.
 - **Layout and design notes.** Provider-specific design notes go in the module docstrings; D8 indexes them. Large connectors split into:
   - `connector.py`, which assembles the connector;

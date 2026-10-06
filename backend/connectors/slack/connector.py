@@ -401,7 +401,7 @@ READ_THREAD = Operation(
 
 WRITE_NOTE = (
     "Text is shown literally: it cannot mention people or notify the channel, and may not link to Slack. "
-    "Everyone in the channel sees it, posted as the Minerva app. The number of writes per run is limited."
+    "Everyone in the channel sees it, posted as the Minerva app."
 )
 
 POST_CONSENT = (frozenset({"chat:write"}),)

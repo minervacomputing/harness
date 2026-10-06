@@ -49,12 +49,9 @@ Body = Annotated[
 
 SEND_NOTE = (
     "Mail is sent as plain text from the account's default address and kept in Sent. Gmail accepts it "
-    "before delivering it; a bounce arrives later as mail. The number of writes per run is limited."
+    "before delivering it; a bounce arrives later as mail."
 )
-DRAFT_NOTE = (
-    "The draft is saved in Drafts for the user to review and send; nothing is sent. The number of writes "
-    "per run is limited."
-)
+DRAFT_NOTE = "The draft is saved in Drafts for the user to review and send; nothing is sent."
 
 
 def _recipient(binding: Binding, address: str) -> Resource:

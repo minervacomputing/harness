@@ -18,7 +18,6 @@ from uuid import UUID
 import mcp_types as types
 from asgiref.sync import sync_to_async
 from django.db import connection as db
-from django.db import transaction
 from django.utils import timezone
 from django.utils.crypto import salted_hmac
 from mcp.server.lowlevel import Server
@@ -106,56 +105,33 @@ def _write_id(context: RunContext, write_key: str) -> str:
     return salted_hmac("minerva.gateway.write", f"{context.run_id}:{write_key}").hexdigest()[:32]
 
 
-class ToolLimitReached(OperationError):
-    def __init__(self, limit: int) -> None:
-        super().__init__("LIMIT_REACHED", f"This run has reached its limit of {limit} tool calls.")
-
-
-def _reserve_tool_call(context: RunContext, event: dict[str, Any]) -> datetime:
-    """Counts the call and returns the run's deadline. One statement, so concurrent calls cannot both take
-    the last one. The count stops one past the limit: the call that crosses it records its refusal in the
-    same transaction, and later ones are refused without writing anything, so a worker that keeps calling
-    cannot flood the conversation or the database. A replaced attempt's calls are refused as if the run had
-    ended."""
-    run_id = context.run_id
-    params = [run_id, context.attempt, [status.value for status in Run.TOKEN_VALID]]
-    with transaction.atomic(), db.cursor() as cursor:
+def _count_tool_call(context: RunContext) -> datetime | None:
+    """Counts the call and returns the run's deadline (None: it has none). A replaced attempt's calls are
+    refused as if the run had ended."""
+    params = [context.run_id, context.attempt, [status.value for status in Run.TOKEN_VALID]]
+    with db.cursor() as cursor:
         cursor.execute(
             "UPDATE runs_run SET tool_calls = tool_calls + 1"
-            " WHERE id = %s AND attempt = %s AND status = ANY(%s) AND deadline > now()"
-            " AND tool_calls <= max_tool_calls"
-            " RETURNING tool_calls, max_tool_calls, deadline",
+            " WHERE id = %s AND attempt = %s AND status = ANY(%s) AND (deadline IS NULL OR deadline > now())"
+            " RETURNING deadline",
             params,
         )
-        reserved = cursor.fetchone()
-        if reserved is None:
-            cursor.execute(
-                "SELECT max_tool_calls FROM runs_run"
-                " WHERE id = %s AND attempt = %s AND status = ANY(%s) AND deadline > now()",
-                params,
-            )
-            refused = cursor.fetchone()
-            if refused is None:
-                raise OperationError("RUN_ENDED", RUN_ENDED)
-            raise ToolLimitReached(refused[0])
-        count, limit, deadline = reserved
-        if count <= limit:
-            return deadline
-        refusal = ToolLimitReached(limit)
-        denial = {"decision": "denied", "code": refusal.code, "message": refusal.message}
-        services.append_event(run_id, RunEvent.Type.TOOL_CALL, {**event, **denial})
-    raise refusal
+        counted = cursor.fetchone()
+    if counted is None:
+        raise OperationError("RUN_ENDED", RUN_ENDED)
+    return counted[0]
 
 
 @asynccontextmanager
-async def _slot(run_id: UUID, deadline: datetime) -> AsyncIterator[None]:
-    """Waits until fewer than run_tool_concurrency of the run's calls execute. The limit holds per gateway
-    process; there is one in development and in the demo. The count limit holds across processes."""
+async def _slot(run_id: UUID, deadline: datetime | None) -> AsyncIterator[None]:
+    """Waits until fewer than run_tool_concurrency of the run's calls execute, or the run's deadline. The limit
+    holds per gateway process; there is one in development and in the demo."""
     semaphore = _slots.get(run_id)
     if semaphore is None:
         semaphore = _slots[run_id] = asyncio.Semaphore(config().run_tool_concurrency)
     try:
-        async with asyncio.timeout((deadline - timezone.now()).total_seconds()):
+        timeout = (deadline - timezone.now()).total_seconds() if deadline is not None else None
+        async with asyncio.timeout(timeout):
             await semaphore.acquire()
     except TimeoutError:
         raise OperationError("RUN_ENDED", RUN_ENDED) from None
@@ -168,13 +144,15 @@ async def _slot(run_id: UUID, deadline: datetime) -> AsyncIterator[None]:
 async def call_tool(ctx, params: types.CallToolRequestParams) -> types.CallToolResult:
     context = await _context(ctx)
     arguments = params.arguments or {}
+    # Tool names are at most 64 characters, so a longer one is unknown, and only its start is recorded.
+    shown = params.name[:64]
     event: dict[str, Any] = {
-        "tool": params.name,
-        "label": _label(context, params.name),
+        "tool": shown,
+        "label": _label(context, shown),
         "arguments": _summary(arguments),
     }
     try:
-        deadline = await sync_to_async(_reserve_tool_call)(context, event)
+        deadline = await sync_to_async(_count_tool_call)(context)
         # A call that waited past a revocation is refused by the executor before it does anything.
         async with _slot(context.run_id, deadline):
             outcome = await Executor(context).invoke(params.name, arguments)
@@ -185,9 +163,8 @@ async def call_tool(ctx, params: types.CallToolRequestParams) -> types.CallToolR
         code = error.code if isinstance(error, OperationError) else "FAILED"
         decision = "denied" if code in DENIAL_CODES else "error"
         event.update(decision=decision, code=code, message=message)
-        # Refusals past the tool-call limit are recorded once, when the limit is crossed. A call refused
-        # because the run ended, or its attempt was replaced, is not shown.
-        if not isinstance(error, ToolLimitReached) and code != "RUN_ENDED":
+        # A call refused because the run ended, or its attempt was replaced, is not shown.
+        if code != "RUN_ENDED":
             await _record(context, event)
         return types.CallToolResult(content=[types.TextContent(type="text", text=message)], is_error=True)
     event.update(decision="allowed", title=outcome.title, count=outcome.result.get("count"))

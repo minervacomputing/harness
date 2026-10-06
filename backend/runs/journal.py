@@ -47,8 +47,7 @@ def _current_run(run_id: UUID, attempt: int, *fields: str, select_for_update: bo
         run is None
         or run.attempt != attempt
         or run.status not in Run.TOKEN_VALID
-        or run.deadline is None
-        or run.deadline <= timezone.now()
+        or run.expired(timezone.now())
     ):
         raise Inactive
     return run

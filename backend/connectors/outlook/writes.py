@@ -45,7 +45,7 @@ Body = Annotated[
 
 WRITE_NOTE = (
     "Mail is sent as plain text from the connected account and saved to Sent Items. Outlook accepts it "
-    "before delivering it; a bounce arrives later as mail. The number of writes per run is limited."
+    "before delivering it; a bounce arrives later as mail."
 )
 
 

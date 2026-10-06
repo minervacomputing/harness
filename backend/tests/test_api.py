@@ -86,9 +86,6 @@ def test_a_run_committed_concurrently_blocks_the_second_message(scoped, user, ag
             permissions=[],
             tools=[],
             model_alias="default",
-            max_writes=1,
-            max_model_calls=1,
-            max_tool_calls=1,
         )
         return effective_policy(**kwargs)
 

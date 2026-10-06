@@ -358,8 +358,7 @@ CREATE_EVENT = Operation(
     title="Create an event",
     description=(
         "Create one event in a calendar where you have create permission. The event has no guests, "
-        "so no invitations are sent, but everyone who can see the calendar can see the event. "
-        "The number of writes per run is limited."
+        "so no invitations are sent, but everyone who can see the calendar can see the event."
     ),
     input_model=CreateEvent,
     needs=((CALENDAR, "create"),),

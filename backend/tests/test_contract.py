@@ -330,15 +330,14 @@ async def test_wildcard_grants_cover_resources_the_user_never_listed(start, serv
         (httpx.ConnectError, "PROVIDER_UNAVAILABLE"),
     ],
 )
-async def test_a_refused_write_returns_its_quota_and_can_be_retried(start, server, response, code):
+async def test_a_refused_write_is_forgotten_and_can_be_retried(start, server, response, code):
     executor = await start({"inbox": ["read"], "archive": ["read", "create"]})
     server.write_responses = [response]
     assert (await _error(executor.invoke(COPY, copy()))).code == code
-    run = await _run(executor)
-    assert (run.write_count, run.writes_uncertain) == (0, False)
+    assert not (await _run(executor)).writes_uncertain
     assert await _writes(executor) == []
     assert (await executor.invoke(COPY, copy())).result["count"] == 1
-    assert (await _run(executor)).write_count == 1
+    assert [w.status for w in await _writes(executor)] == [RunWrite.Status.SUCCEEDED]
 
 
 @pytest.mark.parametrize("response", [500, 502, 418, httpx.ReadTimeout])
@@ -346,8 +345,7 @@ async def test_a_write_with_an_unknown_outcome_pauses_writes(start, server, resp
     executor = await start({"inbox": ["read"], "archive": ["read", "create"]})
     server.write_responses = [response]
     assert (await _error(executor.invoke(COPY, copy()))).code == "WRITE_UNCERTAIN"
-    run = await _run(executor)
-    assert (run.write_count, run.writes_uncertain) == (1, True)
+    assert (await _run(executor)).writes_uncertain
     assert [w.status for w in await _writes(executor)] == [RunWrite.Status.UNCERTAIN]
     assert (await _error(executor.invoke(COPY, copy()))).code == "WRITE_UNCERTAIN"
     assert (await _error(executor.invoke(COPY, copy(name="b")))).code == "WRITE_UNCERTAIN"
@@ -364,13 +362,12 @@ async def test_a_connector_cannot_hide_an_unknown_write_outcome(start, server, r
 
 
 @pytest.mark.parametrize("mode", ["swallow-errors", "no-write"])
-async def test_a_write_that_sent_nothing_or_was_refused_returns_its_quota(start, server, mode):
+async def test_a_write_that_sent_nothing_or_was_refused_is_forgotten(start, server, mode):
     server.mode = mode
     executor = await start({"inbox": ["read"], "archive": ["read", "create"]})
     server.write_responses = [409]
     assert (await executor.invoke(COPY, copy())).result["count"] == 0
-    run = await _run(executor)
-    assert (run.write_count, run.writes_uncertain) == (0, False)
+    assert not (await _run(executor)).writes_uncertain
     assert await _writes(executor) == []
 
 
@@ -379,8 +376,8 @@ async def test_a_write_applied_without_a_readable_result_counts_and_is_remembere
     server.write_responses = ["bad-json"]
     assert (await executor.invoke(COPY, copy())).result == APPLIED_WITHOUT_RESULT
     assert (await executor.invoke(COPY, copy())).result == APPLIED_WITHOUT_RESULT
-    run = await _run(executor)
-    assert (run.write_count, run.writes_uncertain) == (1, False)
+    assert not (await _run(executor)).writes_uncertain
+    assert [w.status for w in await _writes(executor)] == [RunWrite.Status.SUCCEEDED]
     assert _posts(server) == 1
     assert (await executor.invoke(COPY, copy(name="b"))).result["count"] == 1
 
@@ -406,7 +403,7 @@ async def test_a_write_is_not_sent_without_time_to_finish(start, server):
     )
     assert (await _error(executor.invoke(COPY, copy()))).code == "TIMED_OUT"
     assert _posts(server) == 0
-    assert (await _run(executor)).write_count == 0
+    assert await _writes(executor) == []
 
 
 async def test_time_spent_after_dispatch_counts_against_the_write(start, server, monkeypatch):
@@ -458,7 +455,7 @@ async def test_a_rejected_token_marks_the_connection_but_a_forbidden_request_doe
     server.write_responses = [401]
     assert (await _error(executor.invoke(COPY, copy()))).code == "CONNECTION_UNAUTHORIZED"
     assert (await Connection.unscoped.aget(pk=mixed.pk)).status == Connection.Status.ERROR
-    assert (await _run(executor)).write_count == 0
+    assert await _writes(executor) == []
 
 
 async def test_a_rejection_of_replaced_credentials_does_not_mark_the_connection(mixed, server):

@@ -56,11 +56,7 @@ async def run_spec(request: HttpRequest) -> JsonResponse:
                 "api": config().model_api,
                 "max_output_tokens": max_output_tokens,
             },
-            "limits": {
-                "deadline": run.deadline.isoformat(),
-                "max_model_calls": run.max_model_calls,
-                "max_tool_calls": run.max_tool_calls,
-            },
+            "limits": {"deadline": run.deadline.isoformat() if run.deadline is not None else None},
         }
     )
 

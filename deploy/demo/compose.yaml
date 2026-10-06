@@ -36,7 +36,6 @@ x-backend: &backend
     # Visitors are told the demo is busy before runs would queue behind the six workers.
     MINERVA_DEMO_MAX_ACTIVE_RUNS: "6"
     MINERVA_RUN_TIMEOUT_SECONDS: "180"
-    MINERVA_RUN_MAX_MODEL_CALLS: "16"
   # Files the env file points at, such as MINERVA_APPLE_PRIVATE_KEY_FILE=/run/secrets/minerva/apple.p8.
   volumes:
     - /opt/minerva/secrets:/run/secrets/minerva:ro

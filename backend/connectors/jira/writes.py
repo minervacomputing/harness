@@ -60,8 +60,7 @@ CommentText = Annotated[
 
 WRITE_NOTE = (
     "Everyone who can browse the project sees what you write, posted as the signed-in user; watchers are "
-    "notified, and the project's automation rules in Jira may make further changes. The number of writes "
-    "per run is limited."
+    "notified, and the project's automation rules in Jira may make further changes."
 )
 
 

@@ -643,7 +643,7 @@ CREATE_FILE = Operation(
     description=(
         'Create one text file in a folder or library where you have create permission. Use "root" for '
         "your own OneDrive. An existing file is never replaced: if the name is taken, the call fails. "
-        "Everyone who can open the folder can open the file. The number of writes per run is limited."
+        "Everyone who can open the folder can open the file."
     ),
     input_model=CreateFile,
     needs=((ITEM, "create"),),

@@ -858,7 +858,7 @@ async def test_a_draft_needs_an_active_contact_in_the_organisation(start, xero):
 
 
 @pytest.mark.django_db(transaction=True)
-async def test_refused_drafts_are_not_counted_and_odd_answers_are_shown_as_they_are(start, xero):
+async def test_refused_drafts_pause_nothing_and_odd_answers_are_shown_as_they_are(start, xero):
     _only_acme(xero)
     executor = await start({ACME: ("read", "draft_sales")})
 
@@ -919,9 +919,9 @@ async def test_refused_drafts_are_not_counted_and_odd_answers_are_shown_as_they_
     outcome = await executor.invoke("xero_create_draft_invoice", draft(5))
     assert outcome.result["outcome"] == "applied_without_result"
 
-    # Three writes were applied, the run's limit; the two refusals were not counted, and nothing paused.
+    # The two refusals paused nothing.
     xero.hook = None
-    assert await refusal(executor, "xero_create_draft_invoice", draft(6)) == "LIMIT_REACHED"
+    assert _items(await executor.invoke("xero_create_draft_invoice", draft(6)))
 
 
 def test_amounts_are_checked_decimals():

@@ -9,8 +9,9 @@ class Run(TenantModel):
 
     queued → provisioning → running → completed | failed | cancelled | timed_out
 
-    The run token is valid only while the status is active and the deadline has not passed, so every
-    terminal transition revokes it. Permissions and tools are snapshotted when the run is created.
+    The run token is valid only while the status is active and the deadline, if the run has one, has not
+    passed, so every terminal transition revokes it. Permissions and tools are snapshotted when the run is
+    created.
     """
 
     class Status(models.TextChoices):
@@ -40,15 +41,11 @@ class Run(TenantModel):
     model_alias = models.CharField(max_length=64)
 
     token_hash = models.CharField(max_length=64, null=True, blank=True, unique=True)
+    # Set when the run is claimed, if the instance limits a turn's time (Config.run_time_limit); None: none.
     deadline = models.DateTimeField(null=True, blank=True)
 
-    max_writes = models.PositiveIntegerField()
-    write_count = models.PositiveIntegerField(default=0)
     writes_uncertain = models.BooleanField(default=False)
-    max_model_calls = models.PositiveIntegerField()
     model_calls = models.PositiveIntegerField(default=0)
-    max_tool_calls = models.PositiveIntegerField()
-    # Counts calls past the limit too, so only the first refused one is recorded.
     tool_calls = models.PositiveIntegerField(default=0)
     input_tokens = models.PositiveBigIntegerField(default=0)
     output_tokens = models.PositiveBigIntegerField(default=0)
@@ -90,6 +87,14 @@ class Run(TenantModel):
     def is_active(self) -> bool:
         return self.status in self.ACTIVE
 
+    @staticmethod
+    def unexpired(now) -> models.Q:
+        """Runs whose deadline, if they have one, is after `now`."""
+        return models.Q(deadline__isnull=True) | models.Q(deadline__gt=now)
+
+    def expired(self, now) -> bool:
+        return self.deadline is not None and self.deadline <= now
+
 
 class RunEvent(TenantModel):
     """Append-only, ordered run events. The browser replays them from any sequence number."""
@@ -116,7 +121,7 @@ class RunWrite(TenantModel):
     """One write a run sent to a provider. Deduplicates identical writes and remembers their outcome.
 
     A write is dispatched before its request is sent, then settles as succeeded or uncertain. A write
-    the provider refused is deleted, which returns its quota. Only one write per run is in flight.
+    the provider refused is deleted, so it can be tried again. Only one write per run is in flight.
     """
 
     class Status(models.TextChoices):

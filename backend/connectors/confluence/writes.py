@@ -61,8 +61,7 @@ CommentText = Annotated[
 
 WRITE_NOTE = (
     "Everyone who can view the space sees what you write, posted as the signed-in user; watchers are "
-    "notified, and the space's automation rules in Confluence may make further changes. The number of writes "
-    "per run is limited."
+    "notified, and the space's automation rules in Confluence may make further changes."
 )
 
 

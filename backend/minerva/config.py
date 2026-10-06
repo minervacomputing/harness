@@ -14,6 +14,8 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 Csv = Annotated[list[str], NoDecode]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+# The public demo's wall-clock limit on a turn when run_timeout_seconds is unset.
+DEMO_RUN_TIMEOUT_SECONDS = 300
 
 
 class Config(BaseSettings):
@@ -107,11 +109,9 @@ class Config(BaseSettings):
     sandbox_allow_unisolated: bool = False
     max_concurrent_runs: int = 4
 
-    run_timeout_seconds: int = 300
-    run_max_writes: int = 3
-    run_max_model_calls: int = 30
-    # Tool calls per run, including ones the permissions deny.
-    run_max_tool_calls: int = 100
+    # Wall-clock limit on one turn. Unset, a turn runs until it ends or is stopped; the public demo, whose
+    # visitors chat on the operator's model key, then uses DEMO_RUN_TIMEOUT_SECONDS (see run_time_limit).
+    run_timeout_seconds: Annotated[int, Field(gt=0)] | None = None
     # Tool calls of one run that execute at once (per gateway process); the rest wait their turn.
     run_tool_concurrency: Annotated[int, Field(gt=0)] = 4
     # Requests one run token can have in flight at once (per gateway process); more are refused with 429.
@@ -147,6 +147,13 @@ class Config(BaseSettings):
     bento_site_uuid: str | None = None
     bento_publishable_key: str | None = None
     bento_secret_key: SecretStr | None = None
+
+    @property
+    def run_time_limit(self) -> int | None:
+        """Seconds a turn may run, or None for no limit."""
+        if self.run_timeout_seconds is None and self.demo:
+            return DEMO_RUN_TIMEOUT_SECONDS
+        return self.run_timeout_seconds
 
     def oauth_client(self, app: str) -> tuple[str, str] | None:
         """The operator's OAuth client for an app (MINERVA_<APP>_CLIENT_ID and _SECRET), if configured."""

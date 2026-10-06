@@ -161,7 +161,6 @@ def test_a_replaced_attempt_cannot_reserve_a_write(writer):
     with pytest.raises(OperationError) as ended:
         executor._dispatch("key")
     assert ended.value.code == "RUN_ENDED"
-    assert Run.unscoped.get(pk=writer.id).write_count == 0
     assert not RunWrite.unscoped.filter(run=writer).exists()
 
 
@@ -195,14 +194,14 @@ async def test_a_write_in_flight_when_its_attempt_is_replaced_is_recorded_and_no
     assert events[0]["write"] == events[1]["write"] != write.key
 
 
-def test_a_replaced_attempt_cannot_reserve_a_model_call_or_stream_text(claimed):
+def test_a_replaced_attempt_cannot_make_a_model_call_or_stream_text(claimed):
     run, _ = claimed
     replace(run)
-    assert not relay._reserve_model_call(run.id, 1)
+    assert not relay._count_model_call(run.id, 1)
     relay._publish_text(run.id, 1, "stale")
     assert Run.unscoped.get(pk=run.id).model_calls == 0
     assert not RunEvent.unscoped.filter(run=run, type="text_delta").exists()
-    assert relay._reserve_model_call(run.id, 2)
+    assert relay._count_model_call(run.id, 2)
     relay._publish_text(run.id, 2, "current")
     texts = RunEvent.unscoped.filter(run=run, type="text_delta").values_list("data__text", flat=True)
     assert list(texts) == ["current"]

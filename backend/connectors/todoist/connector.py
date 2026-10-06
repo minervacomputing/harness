@@ -167,7 +167,7 @@ CREATE_TASK = Operation(
     title="Create a task",
     description=(
         "Create one task in a project where you have create permission. "
-        "Give an explicit project_id and title. The number of creations per run is limited."
+        "Give an explicit project_id and title."
     ),
     input_model=CreateTask,
     needs=((PROJECT, "create"),),

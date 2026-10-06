@@ -46,7 +46,7 @@ const SCRIPT_ARGS_BYTES = 256 * 1024
 const SCRIPT_REFUSALS = 100
 // The gateway relay refuses a model request that offers more tools than this.
 const MODEL_TOOLS_MAX = 128
-// Longer than any run, so pi-durable saves an answer only once it is complete, not while it streams in.
+// Longer than a turn runs in practice, so pi-durable saves an answer only once it is complete, not while it streams in.
 const NEVER_MS = 2_000_000_000
 
 const context = BACKGROUND_CONTEXT
@@ -96,7 +96,11 @@ function minervaModel(spec: RunSpec): Model<'openai-responses'> | Model<'openai-
   }
 }
 
+// How long one call may take when the turn has no deadline, so a call that hangs still gives up.
+const CALL_TIMEOUT_MS = 10 * 60 * 1000
+
 function remainingMs(spec: RunSpec): number {
+  if (spec.limits.deadline === null) return CALL_TIMEOUT_MS
   const deadline = Date.parse(spec.limits.deadline)
   return Number.isNaN(deadline) ? 60000 : Math.max(1000, deadline - Date.now())
 }
@@ -184,17 +188,11 @@ type GatewayCalls = ReturnType<typeof gatewayCalls>
 function gatewayCalls() {
   const atOnce = limiter(GATEWAY_CALLS_AT_ONCE)
   const writes = serial()
-  let sent = 0
   return {
-    /** Calls sent so far. The gateway counts every one. */
-    get sent() {
-      return sent
-    },
     /** `check` runs just before the call is sent and can throw to drop it. */
     send<T>(write: boolean, call: () => Promise<T>, check = () => {}): Promise<T> {
       const start = () => atOnce(() => {
         check()
-        sent++
         return call()
       })
       return write ? writes(start) : start()
@@ -208,7 +206,7 @@ type ScriptCalls = ReturnType<typeof scriptCalls>
  * Admits the tool calls of this turn's scripts. Calls that cannot succeed are refused before they reach the gateway,
  * and a script that keeps making them is stopped.
  */
-function scriptCalls(limit: number | undefined, gateway: GatewayCalls) {
+function scriptCalls(gateway: GatewayCalls) {
   let open = 0
   let refused = 0
   let script: AbortController | undefined
@@ -220,27 +218,19 @@ function scriptCalls(limit: number | undefined, gateway: GatewayCalls) {
     }
     throw new Error(message)
   }
-  function checkLimit() {
-    // Past the limit the gateway refuses every call; one more reaches it so that it records the refusal.
-    if (limit !== undefined && gateway.sent > limit) refuse(`This run has reached its limit of ${limit} tool calls.`)
-  }
   return {
     begin(controller: AbortController) {
       script = controller
       refused = 0
     },
     async run<T>(args: unknown, write: boolean, signal: AbortSignal, call: () => Promise<T>): Promise<T> {
-      checkLimit()
       if (open >= SCRIPT_CALLS_OPEN) refuse(`At most ${SCRIPT_CALLS_OPEN} tool calls can wait at once. Await some before starting more.`)
       const json = args === undefined ? '' : toJson(args)
       if (json === undefined) refuse('Tool arguments could not be converted to JSON.')
       if (Buffer.byteLength(json) > SCRIPT_ARGS_BYTES) refuse(`Tool arguments are limited to ${SCRIPT_ARGS_BYTES / 1024} KB of JSON.`)
       open++
       // The gateway runs a call to its end even when the script stops waiting for it, so the call keeps its place until then.
-      const settled = gateway.send(write, call, () => {
-        signal.throwIfAborted()
-        checkLimit()
-      }).finally(() => { open-- })
+      const settled = gateway.send(write, call, () => signal.throwIfAborted()).finally(() => { open-- })
       return await untilAborted(settled, signal)
     },
   }
@@ -282,8 +272,7 @@ function scriptDeclarations(tools: McpTool[]): string {
 
 /** Runs a model-written script that calls the gateway tools. Each call is still checked and counted by the gateway. */
 function scriptRunner(client: McpClient, tools: McpTool[], spec: RunSpec, gateway: GatewayCalls): ToolRegistration {
-  const limit = spec.limits.max_tool_calls
-  const calls = scriptCalls(limit, gateway)
+  const calls = scriptCalls(gateway)
   const callable = tools.map(tool => scriptTool(client, tool, spec, calls))
   const description = [
     'Run JavaScript that calls the tools declared below and returns a compact result.',
@@ -293,7 +282,7 @@ function scriptRunner(client: McpClient, tools: McpTool[], spec: RunSpec, gatewa
     'Await every call, for example with `await Promise.all(...)`: calls still running when the script ends are cancelled. A script that fails or stops does not undo the writes it made.',
     'Only what the script prints with `text(value)` or `console.log()`, and the value it returns, reach you. Tool results the script does not print do not.',
     '`count` is the number of items in that result, after leaving out what this run may not see, not a total. While a result has `next_cursor`, more items may follow, even after an empty page: call again with the same arguments plus `cursor: next_cursor`. `incomplete: true` means a provider or connector limit left something out; say so with any total. Item fields depend on the tool and are not declared. Rather than spending a script on looking at them, read the fields you expect, treat a missing one as unknown rather than empty, and also return the keys of one item, so a wrong guess shows in the same result.',
-    `Each call is checked like a direct call${limit ? ` and counts toward this turn's limit of ${limit} tool calls` : ''}. Up to ${GATEWAY_CALLS_AT_ONCE} calls run at once, writes run one at a time, and at most ${SCRIPT_CALLS_OPEN} can wait, so start larger batches in parts.`,
+    `Each call is checked like a direct call. Up to ${GATEWAY_CALLS_AT_ONCE} calls run at once, writes run one at a time, and at most ${SCRIPT_CALLS_OPEN} can wait, so start larger batches in parts.`,
     `A script stops after ${SCRIPT_TIMEOUT_MS / 1000} seconds, or sooner when the turn runs out of time. \`store(key, value)\` and \`load(key)\` keep JSON values between scripts in this turn, up to ${STORE_BYTES / 1024 / 1024} MiB in all.`,
     '',
     '```js',
@@ -477,7 +466,7 @@ try {
     models,
     registry,
     settings: {
-      // The relay's refusal at the model-call limit is final, so a failed model call ends the turn.
+      // A failed model call ends the turn.
       retry: { enabled: false },
       // The relay streams every model call into the chat, so a summary must not run beside the answer.
       // Compaction still runs when the context is nearly full.

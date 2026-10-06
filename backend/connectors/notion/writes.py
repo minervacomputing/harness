@@ -54,7 +54,7 @@ Properties = Annotated[
 
 WRITE_TEXT_NOTE = (
     "Text is Notion-flavored markdown without images, embeds, media, child page or database tags, synced "
-    "blocks, or mentions of people. The number of writes per run is limited."
+    "blocks, or mentions of people."
 )
 
 
@@ -184,7 +184,7 @@ UPDATE_PAGE_PROPERTIES = Operation(
     description=(
         "Change properties of a Notion page where you have edit permission, with values as for "
         "create_database_row. A page outside a database has only its title. Notion automations may "
-        "make further changes. The number of writes per run is limited."
+        "make further changes."
     ),
     input_model=UpdateProperties,
     needs=((PAGE, "edit"),),

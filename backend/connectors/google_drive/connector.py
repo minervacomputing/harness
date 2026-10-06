@@ -449,7 +449,7 @@ CREATE_FILE = Operation(
     description=(
         "Create one text file, or a Google Doc with as_document, in a folder where you have "
         'create permission. Use "root" for My Drive. Everyone who can see the folder can see the '
-        "file. The number of writes per run is limited."
+        "file."
     ),
     input_model=CreateFile,
     needs=((FILE, "create"),),

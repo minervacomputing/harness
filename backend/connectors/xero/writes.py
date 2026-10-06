@@ -230,8 +230,8 @@ def _prepare(kind: Literal["sales", "bill"], action: str):
 
 
 WRITE_NOTE = (
-    "Xero neither sends drafts nor posts them to the accounts; a person reviews and approves them in Xero. The "
-    "number of writes per run is limited, and a draft is not deduplicated across runs."
+    "Xero neither sends drafts nor posts them to the accounts; a person reviews and approves them in Xero. A "
+    "draft is not deduplicated across runs."
 )
 
 CREATE_DRAFT_INVOICE = Operation(

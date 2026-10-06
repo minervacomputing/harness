@@ -1,10 +1,10 @@
 """The permission executor: every tool call from an agent goes through this one pipeline.
 
 strict validation → provider consent → resolve what the call touches → check effective permissions →
-dispatch the write (quota, deduplication) → call the provider → settle the write → drop records the run
+dispatch the write (one at a time, deduplication) → call the provider → settle the write → drop records the run
 may not see → return results with run-bound page tokens.
 
-Run state (write quota, deduplication, uncertain writes, page tokens) lives in the database, so any
+Run state (writes in flight, deduplication, uncertain writes, page tokens) lives in the database, so any
 gateway process can serve any call. Revocation is checked around every await and when a write is
 dispatched.
 """
@@ -22,7 +22,6 @@ from uuid import UUID
 
 from asgiref.sync import sync_to_async
 from django.db import transaction
-from django.db.models import F
 from django.utils import timezone
 from pydantic import ValidationError
 
@@ -377,30 +376,23 @@ class Executor:
         with transaction.atomic():
             run = (
                 Run.unscoped.select_for_update()
-                .only("status", "deadline", "attempt", "writes_uncertain", "write_count", "max_writes")
+                .only("status", "deadline", "attempt", "writes_uncertain")
                 .get(pk=self.context.run_id)
             )
             now = timezone.now()
             clock = time.monotonic()
-            if (
-                run.status not in Run.TOKEN_VALID
-                or run.deadline is None
-                or run.deadline <= now
-                or run.attempt != self.context.attempt
-            ):
+            if run.status not in Run.TOKEN_VALID or run.expired(now) or run.attempt != self.context.attempt:
                 raise OperationError("RUN_ENDED", "This run is no longer active.")
             known = RunWrite.unscoped.filter(run_id=run.pk, key=key).first()
             if known is not None:
                 return Dispatch(_known_write(known))
             if run.writes_uncertain:
                 raise OperationError("WRITE_UNCERTAIN", PAUSED)
-            if run.write_count >= run.max_writes:
-                raise OperationError(
-                    "LIMIT_REACHED", f"This run has reached its limit of {run.max_writes} writes."
-                )
             if RunWrite.unscoped.filter(run_id=run.pk, status=RunWrite.Status.DISPATCHED).exists():
                 raise OperationError("WRITE_IN_PROGRESS", "Another write in this run is still in progress.")
-            deadline_at = min(now + WRITE_WINDOW, run.deadline)
+            deadline_at = now + WRITE_WINDOW
+            if run.deadline is not None:
+                deadline_at = min(deadline_at, run.deadline)
             RunWrite.unscoped.create(
                 workspace_id=self.context.workspace_id,
                 run_id=run.pk,
@@ -409,20 +401,17 @@ class Executor:
                 dispatched_at=now,
                 deadline_at=deadline_at,
             )
-            Run.unscoped.filter(pk=run.pk).update(write_count=F("write_count") + 1)
         return Dispatch(None, clock + (deadline_at - now).total_seconds())
 
     def _settle(self, key: str, status: str | None, result: dict | None = None) -> None:
-        """Records how a dispatched write ended; None means it was not applied, which returns its quota."""
+        """Records how a dispatched write ended; None means it was not applied, so it can be tried again."""
         with transaction.atomic():
             Run.unscoped.select_for_update().only("id").get(pk=self.context.run_id)
             write = RunWrite.unscoped.filter(
                 run_id=self.context.run_id, key=key, status=RunWrite.Status.DISPATCHED
             )
             if status is None:
-                deleted, _ = write.delete()
-                if deleted:
-                    Run.unscoped.filter(pk=self.context.run_id).update(write_count=F("write_count") - 1)
+                write.delete()
             elif status == RunWrite.Status.SUCCEEDED:
                 write.update(status=status, result=result)
             else:

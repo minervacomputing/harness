@@ -245,9 +245,6 @@ def seed() -> Workspace:
                     permissions=[],
                     tools=[],
                     model_alias="default",
-                    max_writes=20,
-                    max_model_calls=40,
-                    max_tool_calls=100,
                 )
                 m = Message.objects.create(conversation=conv, role="user", content=prompt, run=run)
                 a = Message.objects.create(conversation=conv, role="assistant", content=answer, run=run)

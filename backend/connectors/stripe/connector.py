@@ -16,7 +16,7 @@ Amounts are a second hierarchical kind, `amount`, whose resources users choose a
 per currency (see `money`): allowing "Up to 50.00 USD" lets each refund or credit be at most that, and a
 workspace ceiling that denies "More than 500.00 USD" refuses larger ones whatever members allow. A refund
 or credit needs its action on both the customer and the amount. Caps are per call: Minerva keeps no budget
-across calls, so a run can move at most its write limit times the cap, and separate runs add up.
+across calls, so each refund or credit is capped but their number is not, in a run or across runs.
 """
 
 import asyncio

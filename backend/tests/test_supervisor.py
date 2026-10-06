@@ -267,6 +267,15 @@ def test_a_dead_worker_fails_the_run_once_it_cannot_be_restarted(dead, reason):
     assert (stored.status, stored.error_code) == (Run.Status.FAILED, "worker_exited")
 
 
+def test_a_run_without_a_deadline_is_restarted(dead):
+    run, _, provider = dead
+    Run.unscoped.filter(pk=run.id).update(deadline=None)
+    supervisor_with(provider).reconcile()
+    assert len(provider.started) == 1
+    stored = Run.unscoped.get(pk=run.id)
+    assert (stored.attempt, stored.deadline) == (2, None)
+
+
 def test_only_the_current_attempt_of_an_active_run_is_restarted(claimed):
     run, _ = claimed
     assert services.restart(run.id, 2) is services.Restart.REFUSED

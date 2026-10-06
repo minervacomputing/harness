@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import time
+from collections import Counter
 from collections.abc import AsyncIterator
 
 from asgiref.sync import sync_to_async
@@ -31,11 +32,12 @@ TEXT_FLUSH_SECONDS = 0.25
 MAX_RESPONSE_BYTES = 32_000_000
 
 
-def _reserve_model_call(run_id, attempt: int) -> bool:
+def _count_model_call(run_id, attempt: int) -> bool:
+    """Counts the call while the attempt is current; False if the run ended or moved on."""
     current = Run.unscoped.filter(
-        pk=run_id, attempt=attempt, status__in=Run.TOKEN_VALID, deadline__gt=timezone.now()
+        Run.unexpired(timezone.now()), pk=run_id, attempt=attempt, status__in=Run.TOKEN_VALID
     )
-    return bool(current.filter(model_calls__lt=F("max_model_calls")).update(model_calls=F("model_calls") + 1))
+    return bool(current.update(model_calls=F("model_calls") + 1))
 
 
 def _publish_text(run_id, attempt: int, text: str) -> None:
@@ -56,6 +58,28 @@ def _settle(run_id, attempt: int, tap: StreamTap) -> None:
 
 # Relays still reading from the provider. Tasks are held here so they are not collected mid-call.
 _calls: set[asyncio.Task] = set()
+# How many of them each run has. A worker that hangs up frees its place among the requests in flight while the
+# call goes on, so this is what bounds a run's calls to the provider (per gateway process).
+_reading: Counter = Counter()
+MAX_READING_PER_RUN = 4
+
+
+class _Place:
+    """A call's place among its run's calls to the provider, taken before the call is counted and kept until
+    the provider is done with it, whether or not the worker still listens."""
+
+    def __init__(self, run_id):
+        self.run_id = run_id
+        self.handed_over = False
+        self._held = True
+        _reading[run_id] += 1
+
+    def release(self) -> None:
+        if self._held:
+            self._held = False
+            _reading[self.run_id] -= 1
+            if not _reading[self.run_id]:
+                del _reading[self.run_id]
 
 
 async def _until_run_ends(run_id, attempt: int, task: asyncio.Task) -> bool:
@@ -99,8 +123,11 @@ class ModelCall:
     is recorded even if the worker hangs up early. Only the run ending cuts the stream short; the call
     then counts as unmetered."""
 
-    def __init__(self, run_id, attempt: int, tap: StreamTap, upstream_cm, upstream: UpstreamResponse):
+    def __init__(
+        self, run_id, attempt: int, tap: StreamTap, upstream_cm, upstream: UpstreamResponse, place: _Place
+    ):
         self.run_id = run_id
+        self._place = place
         self.attempt = attempt
         self.tap = tap
         self._upstream_cm = upstream_cm
@@ -111,7 +138,12 @@ class ModelCall:
     def start(self) -> None:
         task = asyncio.create_task(self._run())
         _calls.add(task)
-        task.add_done_callback(_calls.discard)
+        self._place.handed_over = True
+        task.add_done_callback(self._done)
+
+    def _done(self, task: asyncio.Task) -> None:
+        _calls.discard(task)
+        self._place.release()
 
     async def stream(self) -> AsyncIterator[bytes]:
         """What the worker receives."""
@@ -219,10 +251,19 @@ async def _relay(request: HttpRequest, api: str):
         payload = build_chat_payload(body, target) if api == "chat" else build_responses_payload(body, target)
     except InvalidModelRequest as error:
         return error_response(str(error), 400)
-    if not await sync_to_async(_reserve_model_call)(run.id, run.attempt):
-        if not await sync_to_async(services.is_current)(run.id, run.attempt):
-            return error_response("This run has ended.", 401)
-        return error_response("This run reached its model request limit.", 429)
+    if _reading[run.id] >= MAX_READING_PER_RUN:
+        return error_response("Too many of this run's model calls are still running.", 429)
+    place = _Place(run.id)
+    try:
+        return await _call(run, api, provider, payload, place)
+    finally:
+        if not place.handed_over:
+            place.release()
+
+
+async def _call(run: Run, api: str, provider, payload: dict, place: _Place):
+    if not await sync_to_async(_count_model_call)(run.id, run.attempt):
+        return error_response("This run has ended.", 401)
 
     upstream_cm = provider.chat_completions(payload) if api == "chat" else provider.responses(payload)
     opening = asyncio.create_task(upstream_cm.__aenter__())
@@ -253,7 +294,7 @@ async def _relay(request: HttpRequest, api: str):
         return error_response("The model provider returned an unexpected response.", 502)
 
     call = ModelCall(
-        run.id, run.attempt, StreamTap() if api == "chat" else ResponsesTap(), upstream_cm, reply
+        run.id, run.attempt, StreamTap() if api == "chat" else ResponsesTap(), upstream_cm, reply, place
     )
     call.start()
     response = StreamingHttpResponse(call.stream(), content_type=reply.content_type)

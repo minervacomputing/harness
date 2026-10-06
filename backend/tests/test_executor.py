@@ -78,18 +78,17 @@ async def test_create_needs_create_permission(agrant, start):
     assert denied.value.code == "POLICY_DENIED"
 
 
-async def test_write_limit_and_deduplication(agrant, start, todoist):
+async def test_writes_are_deduplicated_but_not_limited_in_number(agrant, start, todoist):
     await agrant(work=["read", "create"])
     executor = await start()
+    await Run.unscoped.filter(pk=executor.context.run_id).aupdate(deadline=None)
     first = await executor.invoke("todoist_create_task", {"project_id": "work", "title": "a"})
     again = await executor.invoke("todoist_create_task", {"project_id": "work", "title": "a"})
     assert first.result == again.result
     assert todoist.calls.count(("POST", "/tasks")) == 1
-    await executor.invoke("todoist_create_task", {"project_id": "work", "title": "b"})
-    await executor.invoke("todoist_create_task", {"project_id": "work", "title": "c"})
-    with pytest.raises(OperationError) as limited:
-        await executor.invoke("todoist_create_task", {"project_id": "work", "title": "d"})
-    assert limited.value.code == "LIMIT_REACHED"
+    for title in "bcdefghij":
+        await executor.invoke("todoist_create_task", {"project_id": "work", "title": title})
+    assert todoist.calls.count(("POST", "/tasks")) == 10
 
 
 async def test_uncertain_write_pauses_further_writes(agrant, start, todoist):
@@ -170,7 +169,9 @@ async def test_revocation_after_reserving_a_write_stops_the_provider_call(
     monkeypatch.setattr(
         executor_module,
         "is_current",
-        lambda run_id, attempt: current(run_id, attempt) and Run.unscoped.get(pk=run_id).write_count == 0,
+        lambda run_id, attempt: (
+            current(run_id, attempt) and not RunWrite.unscoped.filter(run_id=run_id).exists()
+        ),
     )
     with pytest.raises(OperationError) as ended:
         await executor.invoke("todoist_create_task", {"project_id": "work", "title": "a"})

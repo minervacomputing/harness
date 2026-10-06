@@ -122,8 +122,7 @@ ADD_NOTE = Operation(
     title="Add an internal note",
     description=(
         "Add an internal note to an Intercom conversation in an inbox where you have note permission. Notes are "
-        "seen by teammates only, posted as the connected teammate. The number of writes per run is limited. "
-        + RACE_NOTE
+        "seen by teammates only, posted as the connected teammate. " + RACE_NOTE
     ),
     input_model=AddNote,
     needs=((INBOX, "note"),),
@@ -138,7 +137,7 @@ REPLY = Operation(
     description=(
         "Reply to the customer in an Intercom conversation in an inbox where you have reply permission. The "
         "customer receives it by email or in the Messenger, sent as the connected teammate; replying can reopen "
-        "the conversation. The number of writes per run is limited. " + RACE_NOTE
+        "the conversation. " + RACE_NOTE
     ),
     input_model=Reply,
     needs=((INBOX, "reply"),),

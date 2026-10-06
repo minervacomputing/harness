@@ -82,7 +82,7 @@ LabelNames = Annotated[
 
 WRITE_NOTE = (
     "Everyone who can see the team sees what you write; subscribers are notified, assignees are notified, "
-    "and the team's automations in Linear may make further changes. The number of writes per run is limited."
+    "and the team's automations in Linear may make further changes."
 )
 TEXT_NOTE = (
     "Text is Markdown. It may link to Linear only with addresses of issues in the same team "

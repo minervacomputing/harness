@@ -36,8 +36,6 @@ from connectors.stripe.scope import (
 )
 from connectors.text import single_line
 
-WRITE_NOTE = "The number of writes per run is limited."
-
 
 class Money(OperationInput):
     amount: Amount
@@ -142,7 +140,7 @@ REFUND_PAYMENT = Operation(
     description=(
         "Refund part or all of a payment to the card or account it came from. Give the amount and the "
         "payment's currency; the refund goes through at once, and Stripe reports when it reaches the "
-        f"customer. Disputed payments cannot be refunded. {WRITE_NOTE}"
+        "customer. Disputed payments cannot be refunded."
     ),
     input_model=RefundPayment,
     needs=((CUSTOMER, "read"), (CUSTOMER, "refund"), (AMOUNT, "refund")),
@@ -227,7 +225,7 @@ CREDIT_CUSTOMER = Operation(
     description=(
         "Add credit to a customer's balance, which Stripe takes off their next invoices. Nothing is paid "
         "out, and the customer is not notified. Give the amount in the customer's currency and a "
-        f"description of why. {WRITE_NOTE}"
+        "description of why."
     ),
     input_model=CreditCustomer,
     needs=((CUSTOMER, "read"), (CUSTOMER, "credit"), (AMOUNT, "credit")),

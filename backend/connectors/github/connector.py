@@ -583,7 +583,7 @@ READ_FILE = Operation(
 
 WRITE_WARNING = (
     "Everyone who can see the repository sees what you write; mentions notify people, subscribers are "
-    "notified, and the repository's automation may run. The number of writes per run is limited."
+    "notified, and the repository's automation may run."
 )
 
 

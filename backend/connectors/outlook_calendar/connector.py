@@ -429,7 +429,7 @@ CREATE_EVENT = Operation(
     description=(
         "Create one event in a calendar where you have create permission. The event has no attendees, "
         "so no invitations are sent, but everyone who can see the calendar can see the event. All-day "
-        "events need the calendar owner's time zone. The number of writes per run is limited."
+        "events need the calendar owner's time zone."
     ),
     input_model=CreateEvent,
     needs=((CALENDAR, "create"),),

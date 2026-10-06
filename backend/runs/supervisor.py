@@ -156,7 +156,7 @@ class Supervisor:
             str(run_id) for run_id in Run.unscoped.filter(owned, pk__in=run_ids).values_list("id", flat=True)
         }
         now = timezone.now()
-        running_limit = timedelta(seconds=self.cfg.run_timeout_seconds) + ORPHAN_RUNNING_GRACE
+        running_limit = timedelta(seconds=self.cfg.run_time_limit or 0) + ORPHAN_RUNNING_GRACE
         for sandbox in sandboxes:
             if sandbox.run_id in tracked:
                 continue

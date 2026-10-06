@@ -103,7 +103,6 @@ def _instructions(agent: Agent) -> str:
 
 
 def start_run(*, conversation: Conversation, user_id: UUID, content: str) -> tuple[Message, Run]:
-    cfg = config()
     agent = conversation.agent
     with transaction.atomic():
         if Run.objects.filter(conversation=conversation, status__in=Run.ACTIVE).exists():
@@ -122,9 +121,6 @@ def start_run(*, conversation: Conversation, user_id: UUID, content: str) -> tup
                     tools=[asdict(ref) for ref in _tools_for(agent, user_id, policy)],
                     instructions=_instructions(agent),
                     model_alias=agent.model_alias,
-                    max_writes=cfg.run_max_writes,
-                    max_model_calls=cfg.run_max_model_calls,
-                    max_tool_calls=cfg.run_max_tool_calls,
                 )
         except IntegrityError as error:
             raise RunConflict(BUSY_MESSAGE) from error
@@ -148,7 +144,7 @@ def append_event(run_id: UUID, type_: str, data: dict, *, attempt: int | None = 
     query = "UPDATE runs_run SET event_seq = event_seq + 1 WHERE id = %s"
     params: list = [run_id]
     if attempt is not None:
-        query += " AND attempt = %s AND status = ANY(%s) AND deadline > now()"
+        query += " AND attempt = %s AND status = ANY(%s) AND (deadline IS NULL OR deadline > now())"
         params += [attempt, [status.value for status in Run.TOKEN_VALID]]
     with transaction.atomic():
         with db.cursor() as cursor:
@@ -264,7 +260,8 @@ def claim_queued(limit: int) -> list[tuple[Run, str]]:
             now = timezone.now()
             run.status = Run.Status.PROVISIONING
             run.token_hash = hash_token(token)
-            run.deadline = now + timedelta(seconds=cfg.run_timeout_seconds)
+            limit = cfg.run_time_limit
+            run.deadline = now + timedelta(seconds=limit) if limit is not None else None
             run.attempt_started_at = now
             run.sandbox_provider = cfg.sandbox_provider
             run.save(
@@ -295,8 +292,7 @@ def restart(run_id: UUID, attempt: int) -> tuple[Run, str] | Restart:
             or run.status not in Run.TOKEN_VALID
             or run.attempt != attempt
             or run.attempt > MAX_RESTARTS
-            or run.deadline is None
-            or run.deadline - now < RESTART_MIN_REMAINING
+            or (run.deadline is not None and run.deadline - now < RESTART_MIN_REMAINING)
         ):
             return Restart.REFUSED
         if RunWrite.unscoped.filter(run_id=run_id, status=RunWrite.Status.DISPATCHED).exists():
@@ -325,25 +321,20 @@ def restart(run_id: UUID, attempt: int) -> tuple[Run, str] | Restart:
 
 def run_for_token(token: str) -> Run | None:
     run = Run.unscoped.filter(token_hash=hash_token(token)).first()
-    if (
-        run is None
-        or run.status not in Run.TOKEN_VALID
-        or run.deadline is None
-        or run.deadline <= timezone.now()
-    ):
+    if run is None or run.status not in Run.TOKEN_VALID or run.expired(timezone.now()):
         return None
     return run
 
 
 def is_token_valid(run_id: UUID) -> bool:
-    return Run.unscoped.filter(pk=run_id, status__in=Run.TOKEN_VALID, deadline__gt=timezone.now()).exists()
+    return Run.unscoped.filter(Run.unexpired(timezone.now()), pk=run_id, status__in=Run.TOKEN_VALID).exists()
 
 
 def is_current(run_id: UUID, attempt: int) -> bool:
     """Whether `attempt` is the run's current one and the run can still act. Work a worker starts needs
     this; an earlier attempt's worker may still be connected after its replacement took over."""
     return Run.unscoped.filter(
-        pk=run_id, attempt=attempt, status__in=Run.TOKEN_VALID, deadline__gt=timezone.now()
+        Run.unexpired(timezone.now()), pk=run_id, attempt=attempt, status__in=Run.TOKEN_VALID
     ).exists()
 
 

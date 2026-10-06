@@ -1,11 +1,13 @@
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 
 import pytest
 from asgiref.sync import sync_to_async
 from django.db import connection
 from django.test import AsyncClient
+from django.utils import timezone
 
 from accounts.models import User
 from agents.models import Agent
@@ -223,7 +225,7 @@ async def test_ending_the_run_drops_its_saved_state(claimed):
 
 async def test_a_run_past_its_deadline_cannot_append(claimed):
     run, _ = claimed
-    await Run.unscoped.filter(pk=run.id).aupdate(deadline=run.deadline.replace(year=2000))
+    await Run.unscoped.filter(pk=run.id).aupdate(deadline=timezone.now() - timedelta(seconds=1))
     with pytest.raises(journal.Inactive):
         await sync_to_async(journal.append)(run.id, 1, 1, commit())
     with pytest.raises(journal.Inactive):

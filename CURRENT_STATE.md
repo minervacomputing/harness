@@ -66,7 +66,7 @@ This is the first real implementation. It is not a prototype and is built to be 
 
 1. **Browser → web:** the message is stored, and a run is created with status `queued`. The run stores a snapshot of the effective permissions and the tool list. A database constraint allows one active run per conversation.
 2. **Supervisor:** claims the run (`SKIP LOCKED`, at most 4 at once) and issues a run token. It then starts a container whose only environment variables are `GATEWAY_URL`, `RUN_TOKEN`, and `RUN_ID`.
-3. **Worker → gateway:** it fetches the run spec with `GET /run` and starts a pi-durable agent. The agent's model points at the gateway relay and its only tools are the gateway's MCP tools: it has no shell, file or subprocess tools. Tools the gateway marks read-only run in parallel; a round that includes a write runs its calls one at a time. The newest earlier messages that fit in about 120,000 characters are replayed in order, each cut at 30,000. Tool results reach the model whole up to 1 MB, since the gateway already pages long ones; a larger result is cut and marked as cut. Older context is summarized only when the context is nearly full or overflows, and that summary briefly shows in the streamed text. pi-durable saves the agent's state through the gateway as the turn goes, so a new worker can resume it (see [When a worker dies](#when-a-worker-dies)). When the run has tools (and fewer than the relay's limit of 128), the agent also gets a `run_script` tool: the script runs in a QuickJS sandbox (pi-codemode, in a worker thread, 64 MB of memory, at most 120 seconds) with no network, files or timers, and can only call the same gateway tools. Its description says when a script is worth it (reads that page through long lists, repeat across many resources, or count, filter or total results) and how results page. The gateway declares the result every successful call returns (`items`, `count`, and `next_cursor`, `incomplete` or `outcome` when present) as its output schema, so scripts see one shared `Result` type; item fields are not declared. A refused or failed call rejects inside the script with the gateway's message, and only what the script prints or returns reaches the model. The worker sends direct and scripted calls through one queue: at most 4 at once, writes one at a time. The worker refuses a scripted call itself once the turn's limit is spent (direct calls count too), when 100 calls are already waiting, or when its arguments exceed 256 KB of JSON, and it stops a script after 100 such refusals. Calls still unfinished when a script ends are cancelled and reported to the model, since a cancelled write may already have happened; the gateway still finishes a call it has started, so that call keeps its place in the queue until the gateway answers or the turn runs out of time. The worker's notes (a failure, cancelled calls) come before the script's output, so cutting a long result cannot drop them. Values a script keeps with `store()` are saved with the turn when the script succeeds, up to 1 MiB.
+3. **Worker → gateway:** it fetches the run spec with `GET /run` and starts a pi-durable agent. The agent's model points at the gateway relay and its only tools are the gateway's MCP tools: it has no shell, file or subprocess tools. Tools the gateway marks read-only run in parallel; a round that includes a write runs its calls one at a time. The newest earlier messages that fit in about 120,000 characters are replayed in order, each cut at 30,000. Tool results reach the model whole up to 1 MB, since the gateway already pages long ones; a larger result is cut and marked as cut. Older context is summarized only when the context is nearly full or overflows, and that summary briefly shows in the streamed text. pi-durable saves the agent's state through the gateway as the turn goes, so a new worker can resume it (see [When a worker dies](#when-a-worker-dies)). When the run has tools (and fewer than the relay's limit of 128), the agent also gets a `run_script` tool: the script runs in a QuickJS sandbox (pi-codemode, in a worker thread, 64 MB of memory, at most 120 seconds) with no network, files or timers, and can only call the same gateway tools. Its description says when a script is worth it (reads that page through long lists, repeat across many resources, or count, filter or total results) and how results page. The gateway declares the result every successful call returns (`items`, `count`, and `next_cursor`, `incomplete` or `outcome` when present) as its output schema, so scripts see one shared `Result` type; item fields are not declared. A refused or failed call rejects inside the script with the gateway's message, and only what the script prints or returns reaches the model. The worker sends direct and scripted calls through one queue: at most 4 at once, writes one at a time. The worker refuses a scripted call itself when 100 calls are already waiting, or when its arguments exceed 256 KB of JSON, and it stops a script after 100 such refusals. Calls still unfinished when a script ends are cancelled and reported to the model, since a cancelled write may already have happened; the gateway still finishes a call it has started, so that call keeps its place in the queue until the gateway answers (or the turn runs out of time, on an instance that limits it). The worker's notes (a failure, cancelled calls) come before the script's output, so cutting a long result cannot drop them. Values a script keeps with `store()` are saved with the turn when the script succeeds, up to 1 MiB.
 4. **Gateway:**
    - Model calls go to the configured upstream. The relay parses the stream and publishes text deltas as run events every 0.25 s.
    - Tool calls go through the permission executor ([section 4](#4-permissions)).
@@ -80,20 +80,20 @@ Stopping a run revokes its token, so every later call from the worker is rejecte
 
 ### When a worker dies
 
-If a worker exits before its run ends (it crashed, or was killed for using too much memory), the supervisor starts a new one for the same run: at most twice per run, and only while at least 30 seconds are left before the deadline. The restart:
+If a worker exits before its run ends (it crashed, or was killed for using too much memory), the supervisor starts a new one for the same run: at most twice per run, and, if the run has a deadline, only while at least 30 seconds are left before it. The restart:
 
 - Moves the run to its next **attempt** and gives it a new token. Every gateway request is checked against the attempt its token was issued for, so the old worker, if it is somehow still connected, can no longer call tools or the model, post events, save state, or finish the run. A write it had already started is still carried out, and the restart waits until the write is settled (succeeded, not applied, or uncertain), so the new worker sees how it ended.
 - Gives the new worker its own container and its own 90 seconds to ask for the run spec.
 - Posts a status event naming the attempt. The chat then drops the text the old worker streamed and shows "Restarting the agent".
 
-The new worker loads the saved state (`GET /journal`, then `GET /journal/{seq}` for each commit), takes its agent settings, tools and limits from `GET /run` as a first worker would, and resumes the turn:
+The new worker loads the saved state (`GET /journal`, then `GET /journal/{seq}` for each commit), takes its agent settings, tools and deadline from `GET /run` as a first worker would, and resumes the turn:
 
 - A read that was interrupted runs again.
 - A write or script that was interrupted does not, because whether it happened is unknown. The model is told it was interrupted and can check before trying again.
 - If the model asks again for the same write (same tool, same arguments), the gateway answers from its record instead of repeating it, as it does within one worker, and the chat shows the write's card once. A write whose outcome is uncertain still pauses the run's further writes.
 - A worker that cannot reach the gateway to load the saved state, or cannot save a change to it, exits and leaves the turn to the next attempt. Other failures, such as not reaching the gateway's tools, fail the run as before.
 
-If a worker dies after the run's second restart, or with less than 30 seconds left, the run fails with "The worker stopped unexpectedly."
+If a worker dies after the run's second restart, or with less than 30 seconds left before its deadline, the run fails with "The worker stopped unexpectedly."
 
 The saved state comes from an untrusted worker. The gateway stores it encrypted and never reads it, refuses it from any attempt but the current one, caps it at 8 MiB per commit and 32 MiB or 5,000 commits per run, and deletes it when the run ends. Stored messages and run events stay the record of a turn: the next turn starts from the stored messages, never from saved state.
 
@@ -147,30 +147,29 @@ strict argument validation
   → provider consent (the connection's OAuth scopes)
   → connector resolves the real resources the call touches, checked against its declaration
   → permission check
-  → (writes) dispatch one of the run's writes, one at a time
+  → (writes) dispatch the write, one at a time per run
   → call the provider
-  → (writes) settle: succeeded, not applied (quota returned), or uncertain
+  → (writes) settle: succeeded, not applied (forgotten, so it can be tried again), or uncertain
   → drop returned records the run may not see
   → return, with an opaque run-bound page token
 ```
 
-**Guardrails per run:**
+**Guardrails per run:** a turn has no limit on its writes, model calls or tool calls, so an agent can work on one prompt for as long as it needs. What is limited is how fast it goes:
 
 | Limit | Value |
 |---|---|
-| Writes (task or event creations) | 3 |
-| Model calls | 30 |
-| Tool calls (denied ones included) | 100 |
+| Writes executing at once | 1 |
 | Tool calls executing at once | 4 (per gateway process; the rest wait) |
 | Requests in flight to the gateway | 16 per run token (per gateway process; more are refused with 429) |
 | Run token checks queued or running | 128 (per gateway process, for all runs; more requests are refused with 503) |
+| Model calls reading from the provider | 4, counting calls the worker hung up on (per gateway process; more are refused with 429) |
 | Output tokens per call | 8,192 |
-| Wall-clock time | 300 s |
+| Wall-clock time | None by default (`MINERVA_RUN_TIMEOUT_SECONDS`); 300 s in the public demo unless set |
 
 - **Identical writes** within a run are deduplicated.
-- **Tool-call limit:** calls past it are refused, and only the first refusal is recorded in the conversation.
+- **No deadline:** a turn without one runs until it ends, the user stops it, or its worker fails for good. The worker gives up on a tool call after 10 minutes, and the relay drops a model answer that goes quiet for 120 seconds; the gateway itself does not bound how long a read takes, beyond each provider request's own timeouts.
 - **Uncertain writes:** if a write's outcome is unknown, for example after a timeout, further writes in that run are paused.
-- **Refused writes:** a write the provider refused outright (for example 401, 403, 404, 409, or 429), or one that never reached it, returns its quota and does not pause further writes.
+- **Refused writes:** a write the provider refused outright (for example 401, 403, 404, 409, or 429), or one that never reached it, is forgotten, so it can be tried again, and does not pause further writes.
 - **Lost writes:** a write whose gateway process died is marked uncertain by the supervisor.
 - **Rejected tokens:** if the provider rejects a token, the connection is marked **Needs reconnecting**, unless it was reconnected in the meantime. Reconnecting keeps the user's access choices.
 - **Requests without a run token:** a request without an active run's token, or with an invented one, is refused with 401 before Django or the MCP server reads its body, so a worker cannot make the gateway hold large uploads without one. Tokens are checked one at a time on one database connection per gateway process, so a worker sending invented tokens quickly can get other runs' requests refused with 503 too, and a query that stalls on that connection holds up every check until it ends.
@@ -213,7 +212,7 @@ Everything is in PostgreSQL. Tenant tables carry a `workspace` key, and scoped m
 | `Conversation`, `Message` | Chat history |
 | `Run`, `RunEvent` | Status, attempt, permission snapshot, token hash, deadline, usage, sandbox handle; ordered events |
 | `RunCommit` | A running turn's saved agent state: the worker's commits, encrypted and never read by the backend; deleted when the run ends |
-| `RunWrite`, `RunPageToken` | Write state (dispatched, succeeded, uncertain), deduplication, and quota; run-bound page tokens |
+| `RunWrite`, `RunPageToken` | Write state (dispatched, succeeded, uncertain) and deduplication; run-bound page tokens |
 
 Other state:
 
@@ -252,7 +251,8 @@ Roughly in priority order:
    - SMTP email.
 3. **Durable turns:** a turn survives its worker dying, and no more than that:
    - A model or tool call cut off by a dropped connection still fails the turn or the call, rather than leaving it to a new worker. A resumed worker that cannot connect to the gateway's tools fails the run.
-   - A turn cannot wait for an approval or outlive its deadline: there is no parked state without a container yet.
+   - A turn cannot wait for an approval: there is no parked state without a container yet. A turn without a deadline holds its container and a slot among the instance's concurrent runs until it ends or is stopped.
+   - A long turn is bounded by what it stores rather than by a count: its saved state is capped at 32 MiB or 5,000 commits, and it is issued at most 200 page tokens (`LIMIT_REACHED` after that). Its run events, which the conversation loads whole, and `RunWrite` records grow with it.
    - Each turn is its own pi session, so there are no steers, follow-ups or background subagents.
    - Restarts are counted whatever the cause, so a worker that the same input crashes every time spends both restarts before the run fails.
    - `RunWrite.result` (a write's answer, kept so that a repeated write is answered from it) is stored unencrypted, and it and `RunPageToken` have no retention period.
@@ -268,7 +268,7 @@ Roughly in priority order:
 12. **Slack:** no direct messages, search, file contents, reactions, edits or deletes; people mentioned by name in plain text stay text; who joins a channel after it was granted, and Slack workflows or other apps that react to a post, are outside Minerva's control; a channel resolved by name scans at most 2,000 channels.
 13. **Outlook:** no drafts, attachments, forwarding, reply-all, moving, deleting or flagging, and no shared or delegated mailboxes; Graph accepts mail before delivering it, so a bounce arrives later as mail; an address grant cannot see distribution lists, aliases or forwarding rules that pass mail on; mail can move between Minerva's last check and the write; and an alias Graph does not report (personal Microsoft accounts may report none) is not recognized as the account's own, and neither is mail the account sent as another mailbox (Send As, which Graph shows only as that mailbox), so a reply to such mail is refused only when it sits in Sent Items.
 14. **Gmail:** no attachments, forwarding, reply-all, labelling, archiving, deleting or sending drafts; Gmail searches the whole mailbox before Minerva filters the results, so an agent can learn whether mail it may not read matches a search, and with Gmail's search terms test what that mail says, without seeing it; a conversation is read from its last 25 messages, readable or not; Gmail accepts mail before delivering it, so a bounce arrives later as mail; an address grant cannot see mailing lists, aliases or forwarding that pass mail on; labels can change between Minerva's last check and the write; and until the operator's Google app is verified, only its test users can connect and must reconnect every seven days.
-15. **Stripe:** amount limits apply to each refund or credit on its own, and Minerva keeps no budget across calls, so a run can move up to its write limit times the cap and separate runs add up; listings are filtered after Stripe has listed them, so a page can hold fewer objects than asked for; a lookup of customers by email returns only its first page, so it does not hint at hidden customers with the address; customer search in the settings page uses Stripe's search, which can lag new customers by about a minute; a key's own Stripe permissions are not read, so a missing one shows up as a refused call.
+15. **Stripe:** amount limits apply to each refund or credit on its own, and Minerva keeps no budget across calls, so the cap bounds each refund or credit, not how many a run makes, and separate runs add up; listings are filtered after Stripe has listed them, so a page can hold fewer objects than asked for; a lookup of customers by email returns only its first page, so it does not hint at hidden customers with the address; customer search in the settings page uses Stripe's search, which can lag new customers by about a minute; a key's own Stripe permissions are not read, so a missing one shows up as a refused call.
 16. **HubSpot:** tokens carry the app's scopes, not the HubSpot permissions of the user who installed it; HubSpot's automations (workflows, creating companies from contacts' email domains) may act on what an agent changes; search lags behind changes by a few seconds and stops at 10,000 results (then marked incomplete); a deal search across pipelines narrowed by words, stage or association needs Read on all deals, since HubSpot pages results before Minerva filters them (a block on one pipeline then hides its deals, but where allowed deals land can still tell that hidden ones match); an unnarrowed search still pages when every deal on a page was filtered out, so an agent can learn that hidden deals exist, but not which; a deal can change between Minerva's last check and the write.
 17. **Outlook Calendar:** events are read only through a calendar's listing, never by id (Graph does not show which calendar an event id is in); events cannot be changed, deleted or answered, and created events have no attendees, recurrence or online meeting; group calendars are not listed; all-day events need the calendar owner's time zone, among the IANA names Graph accepts. Graph reports all-day events at midnight UTC without the owner's zone, and is reported to give a calendar in a zone ahead of UTC the day before; listed all-day dates have not been checked against a live account.
 18. **OneDrive and SharePoint:** no PDFs, images, legacy Office formats (.doc, .xls, .ppt) or OneNote; Excel is read from its first sheet as stored values (no formulas evaluated, dates as numbers); Office files are unpacked in Minerva's own process, under size and entry limits rather than isolation; files cannot be replaced, edited, moved, renamed, shared or deleted, and only text files are created; SharePoint sites cannot be granted as a whole, and libraries of sites the account does not follow are reached only through search or a folder's id; Microsoft Search sees what the whole account can open before Minerva filters the results, so an agent can learn that hidden files match a search when a page comes back short; an item can move between Minerva's last check and the call. Download hosts, paging tokens and the Search API's answers have not been checked against a live account.

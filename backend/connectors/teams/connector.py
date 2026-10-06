@@ -422,8 +422,7 @@ READ_THREAD = Operation(
 
 WRITE_NOTE = (
     "Text is shown literally: it cannot format, mention anyone, or link to Teams. Everyone in the channel "
-    "sees it, posted as the signed-in user. Shared channels are refused. The number of writes per run is "
-    "limited."
+    "sees it, posted as the signed-in user. Shared channels are refused."
 )
 
 
