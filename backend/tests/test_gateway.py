@@ -6,6 +6,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 import httpx
+import jsonschema
 import mcp_types as types
 import pytest
 from asgiref.sync import async_to_sync, sync_to_async
@@ -15,7 +16,7 @@ from django.test import AsyncClient, override_settings
 from django.utils import timezone
 
 from connectors.base import OperationError
-from connectors.executor import Executor
+from connectors.executor import RESULT_SCHEMA, Executor
 from conversations.models import Conversation, Message
 from gateway import mcp, relay
 from gateway.body_limit import limit_body
@@ -720,11 +721,14 @@ async def test_mcp_tools_are_authorized_and_recorded(claimed):
         "todoist_list_tasks",
         "todoist_get_task",
     }
+    # Scripts get typed results from it.
+    assert all(tool.output_schema == RESULT_SCHEMA for tool in listed.tools)
 
     allowed = await call_tool(
         ctx, types.CallToolRequestParams(name="todoist_list_tasks", arguments={"project_id": "work"})
     )
     assert not allowed.is_error and allowed.structured_content["count"] == 1
+    jsonschema.validate(allowed.structured_content, RESULT_SCHEMA)
     denied = await call_tool(
         ctx, types.CallToolRequestParams(name="todoist_list_tasks", arguments={"project_id": "private"})
     )

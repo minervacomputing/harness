@@ -54,6 +54,34 @@ WRITE_WINDOW = timedelta(seconds=60)
 # The provider client enforces the write window; this only stops a connector that ignores it.
 BACKSTOP_SECONDS = 5.0
 APPLIED_WITHOUT_RESULT = {"items": [], "count": 0, "outcome": "applied_without_result"}
+# What every operation returns; the gateway declares it to the worker as each tool's output schema.
+RESULT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {"type": "object"},
+            "description": "Records this run may see. Their fields depend on the tool.",
+        },
+        "count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The number of items in this result, not a total across pages.",
+        },
+        "incomplete": {"const": True, "description": "A provider or connector limit left something out."},
+        "next_cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "More items may follow: repeat the call with the same arguments and this as cursor.",
+        },
+        "outcome": {
+            "const": "applied_without_result",
+            "description": "The write took effect, but its result could not be read back.",
+        },
+    },
+    "required": ["items", "count"],
+    "additionalProperties": False,
+}
 PAUSED = "A previous write has an unknown outcome. Further writes in this run are paused."
 
 

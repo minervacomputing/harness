@@ -1,3 +1,4 @@
+import jsonschema
 import pytest
 from asgiref.sync import sync_to_async
 from connector_runs import ceiling, claimed_run
@@ -5,6 +6,7 @@ from connector_runs import ceiling, claimed_run
 from connections.models import Connection
 from connectors import executor as executor_module
 from connectors.base import OperationError
+from connectors.executor import RESULT_SCHEMA
 from conversations.models import Conversation
 from permissions.models import Grant
 from runs import services
@@ -124,6 +126,7 @@ async def test_page_tokens_are_opaque_and_bound_to_the_query(agrant, start, todo
     page = await executor.invoke("todoist_list_tasks", {"project_id": "work", "limit": 2})
     token = page.result["next_cursor"]
     assert token not in {"2", ""}
+    jsonschema.validate(page.result, RESULT_SCHEMA)
     nxt = await executor.invoke("todoist_list_tasks", {"project_id": "work", "limit": 2, "cursor": token})
     assert nxt.result["count"] == 2
     with pytest.raises(OperationError) as replay:

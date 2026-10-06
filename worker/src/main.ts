@@ -10,7 +10,9 @@ import type { AssistantMessage, Model, TSchema } from '@earendil-works/pi-ai'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy'
 import { createModels, createProvider } from '@earendil-works/pi-ai/models'
-import { CodemodeSandbox, renderDeclarations, type CodemodeJsonSchema, type CodemodeTool } from '@earendil-works/pi-codemode'
+import {
+  CodemodeSandbox, DEFAULT_INPUT_SCHEMA_MAX_CHARS, schemaToType, toCodemodeIdentifier, type CodemodeJsonSchema, type CodemodeTool,
+} from '@earendil-works/pi-codemode'
 import {
   AssistantEntry, createRegistry, defineExtension, Harness, MemoryStorage, UserEntry, watchEvents,
   type AgentEventStream, type Conversation, type ToolRegistration,
@@ -240,7 +242,7 @@ function scriptTool(client: McpClient, tool: McpTool, spec: RunSpec, calls: Scri
   return {
     name: tool.name,
     inputSchema: tool.inputSchema as CodemodeJsonSchema,
-    outputSchema: { type: 'object' },
+    outputSchema: (tool.outputSchema ?? { type: 'object' }) as CodemodeJsonSchema,
     async execute(args, { signal }) {
       const result = await calls.run(args, tool.annotations?.readOnlyHint !== true, signal, () => (
         client.callTool(tool.name, (args ?? {}) as Record<string, unknown>, { timeoutMs: remainingMs(spec) })
@@ -252,6 +254,23 @@ function scriptTool(client: McpClient, tool: McpTool, spec: RunSpec, calls: Scri
   }
 }
 
+/**
+ * The tools as scripts see them. The gateway gives every tool the same result schema, so it is declared once as
+ * `Result` instead of in each signature; only schemas with identical JSON share it.
+ */
+function scriptDeclarations(tools: McpTool[]): string {
+  const shared = tools.find(tool => tool.outputSchema)?.outputSchema
+  const members = tools.map(tool => {
+    const input = schemaToType(tool.inputSchema, { maxChars: DEFAULT_INPUT_SCHEMA_MAX_CHARS })
+    const output = shared && JSON.stringify(tool.outputSchema) === JSON.stringify(shared)
+      ? 'Result'
+      : tool.outputSchema ? schemaToType(tool.outputSchema) : 'unknown'
+    return `  ${toCodemodeIdentifier(tool.name)}(args: ${input}): Promise<${output}>;`
+  })
+  const declared = `declare const tools: {\n${members.join('\n')}\n};`
+  return shared ? `type Result = ${schemaToType(shared)};\n\n${declared}` : declared
+}
+
 /** Runs a model-written script that calls the gateway tools. Each call is still checked and counted by the gateway. */
 function scriptRunner(client: McpClient, tools: McpTool[], spec: RunSpec, gateway: GatewayCalls): ToolRegistration {
   const limit = spec.limits.max_tool_calls
@@ -260,16 +279,31 @@ function scriptRunner(client: McpClient, tools: McpTool[], spec: RunSpec, gatewa
   // Values the scripts of this turn keep with store().
   const store: Record<string, unknown> = {}
   const description = [
-    'Run JavaScript that calls several tools in one step: to make independent reads at once, chain calls, or filter long results.',
+    'Run JavaScript that calls the tools declared below and returns a compact result.',
+    'Prefer it for reads that page through long lists, repeat across many resources (each repository, calendar or database), or count, filter or total results. Start such reads inside the script, so their raw results never enter the conversation, and print only what the answer needs. Where you can, do the whole read in one script: list what you need, read each item and compute the answer. Call tools directly for one or two small reads whose results you want to see.',
     'The code is the body of an async function in a sandbox, so top-level await and return work. There is no network, file system, timers or modules.',
     'Call tools as `await tools.<name>(args)`. A call resolves to the object the tool returns and rejects with an Error when it fails or is refused.',
     'Await every call, for example with `await Promise.all(...)`: calls still running when the script ends are cancelled. A script that fails or stops does not undo the writes it made.',
     'Only what the script prints with `text(value)` or `console.log()`, and the value it returns, reach you. Tool results the script does not print do not.',
+    '`count` is the number of items in that result, after leaving out what this run may not see, not a total. While a result has `next_cursor`, more items may follow, even after an empty page: call again with the same arguments plus `cursor: next_cursor`. `incomplete: true` means a provider or connector limit left something out; say so with any total. Item fields depend on the tool and are not declared. Rather than spending a script on looking at them, read the fields you expect, treat a missing one as unknown rather than empty, and also return the keys of one item, so a wrong guess shows in the same result.',
     `Each call is checked like a direct call${limit ? ` and counts toward this turn's limit of ${limit} tool calls` : ''}. Up to ${GATEWAY_CALLS_AT_ONCE} calls run at once, writes run one at a time, and at most ${SCRIPT_CALLS_OPEN} can wait, so start larger batches in parts.`,
     `A script stops after ${SCRIPT_TIMEOUT_MS / 1000} seconds, or sooner when the turn runs out of time. \`store(key, value)\` and \`load(key)\` keep JSON values between scripts in this turn.`,
     '',
+    '```js',
+    '// Totals every page of a list; list_things stands for any tool with a cursor argument.',
+    'const args = { /* the arguments of the list you want */ }',
+    'let total = 0, incomplete = false, cursor',
+    'do {',
+    '  const page = await tools.list_things({ ...args, cursor })',
+    '  total += page.count',
+    '  if (page.incomplete) incomplete = true',
+    '  cursor = page.next_cursor',
+    '} while (cursor)',
+    'return { total, incomplete }',
+    '```',
+    '',
     '```ts',
-    renderDeclarations({ tools: callable }),
+    scriptDeclarations(tools),
     '```',
   ].join('\n')
   return {

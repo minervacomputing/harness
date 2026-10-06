@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
 import httpx
+import jsonschema
 import pytest
 from asgiref.sync import sync_to_async
 from connector_runs import claimed_run, replace_grants
@@ -33,7 +34,7 @@ from connectors.base import (
     ResourceKind,
     ScopedRecord,
 )
-from connectors.executor import APPLIED_WITHOUT_RESULT, Executor
+from connectors.executor import APPLIED_WITHOUT_RESULT, RESULT_SCHEMA, Executor
 from connectors.http import Effect, write_attempt
 from conversations.models import Conversation
 from gateway.mcp import RUN_SCOPE_KEY, list_tools
@@ -208,6 +209,34 @@ def test_records_of_a_kind_without_the_output_action_are_dropped_even_when_unres
     )
     result = executor._result(connector, op, SimpleNamespace(connection_id="c1", provider="variant"), output)
     assert [item["id"] for item in result["items"]] == ["inbox"]
+
+
+def test_results_match_the_schema_the_gateway_declares():
+    connector = variant()
+    op = connector.operation("list_folders")
+    unrestricted = Executor(SimpleNamespace(policy=Policy((Layer.build("agent", False, []),))))
+    nothing_granted = Executor(SimpleNamespace(policy=Policy((Layer.build("agent", True, []),))))
+    records = [ScopedRecord(Resource("c1", FOLDER, "inbox"), {"id": "inbox"})]
+    ref = SimpleNamespace(connection_id="c1", provider="variant")
+    cases = [
+        (unrestricted, ProviderOutput(records), {"items": [{"id": "inbox"}], "count": 1}),
+        (
+            unrestricted,
+            ProviderOutput(records, incomplete=True),
+            {"items": [{"id": "inbox"}], "count": 1, "incomplete": True},
+        ),
+        # count is what is left after the policy, so a page can be empty while the provider had records.
+        (nothing_granted, ProviderOutput(records), {"items": [], "count": 0}),
+    ]
+    for executor, output, expected in cases:
+        result = executor._result(connector, op, ref, output)
+        assert result == expected
+        jsonschema.validate(result, RESULT_SCHEMA)
+    # Paginated operations add the run-bound cursor afterwards, even to an empty page.
+    jsonschema.validate({"items": [], "count": 0, "next_cursor": "token"}, RESULT_SCHEMA)
+    jsonschema.validate(APPLIED_WITHOUT_RESULT, RESULT_SCHEMA)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({"items": [], "count": 0, "total": 3}, RESULT_SCHEMA)
 
 
 class KeyedWithConsent(KeyedConnector):

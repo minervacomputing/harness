@@ -26,7 +26,7 @@ from starlette.types import Receive, Scope, Send
 
 from connectors import registry
 from connectors.base import OperationError
-from connectors.executor import Executor, RunContext, public_error
+from connectors.executor import RESULT_SCHEMA, Executor, RunContext, public_error
 from gateway.asgi_json import send_error
 from gateway.auth import authenticate
 from minerva.config import config
@@ -71,6 +71,7 @@ async def list_tools(ctx, params) -> types.ListToolsResult:
                 title=op.title,
                 description=op.description,
                 input_schema=op.input_schema(),
+                output_schema=RESULT_SCHEMA,
                 # The worker runs writes one at a time; a second write in the same window would be refused.
                 annotations=types.ToolAnnotations(read_only_hint=not op.mutates),
             )
