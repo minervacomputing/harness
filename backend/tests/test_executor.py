@@ -166,11 +166,11 @@ async def test_revocation_after_reserving_a_write_stops_the_provider_call(
 ):
     await agrant(work=["read", "create"])
     executor = await start()
-    valid = services.is_token_valid
+    current = services.is_current
     monkeypatch.setattr(
         executor_module,
-        "is_token_valid",
-        lambda run_id: valid(run_id) and Run.unscoped.get(pk=run_id).write_count == 0,
+        "is_current",
+        lambda run_id, attempt: current(run_id, attempt) and Run.unscoped.get(pk=run_id).write_count == 0,
     )
     with pytest.raises(OperationError) as ended:
         await executor.invoke("todoist_create_task", {"project_id": "work", "title": "a"})

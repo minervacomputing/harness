@@ -16,11 +16,11 @@ from django.test import AsyncClient, override_settings
 from django.utils import timezone
 
 from connectors.base import OperationError
-from connectors.executor import RESULT_SCHEMA, Executor
+from connectors.executor import RESULT_SCHEMA, Executor, RunContext
 from conversations.models import Conversation, Message
-from gateway import mcp, relay
+from gateway import mcp, relay, views
 from gateway.body_limit import limit_body
-from gateway.mcp import RUN_SCOPE_KEY, call_tool, list_tools, mcp_app
+from gateway.mcp import ATTEMPT_SCOPE_KEY, RUN_SCOPE_KEY, call_tool, list_tools, mcp_app
 from models_access.taps import ResponsesTap, StreamTap
 from models_access.upstream import OpenAICompatibleProvider, Route, UpstreamResponse
 from runs import services
@@ -83,6 +83,23 @@ async def test_replayed_worker_events_are_ignored(claimed):
     for _ in range(2):
         await client.post("/events", data=batch, content_type="application/json", headers=auth(token))
     assert await RunEvent.unscoped.filter(run=run, type="phase").acount() == 1
+
+
+def test_a_worker_event_whose_effect_failed_is_heard_again(claimed, monkeypatch):
+    run, _ = claimed
+    complete = services.complete
+
+    def fails_once(*args, **kwargs):
+        monkeypatch.setattr(services, "complete", complete)
+        raise RuntimeError("database went away")
+
+    monkeypatch.setattr(services, "complete", fails_once)
+    batch = [views.WorkerEvent(seq=1, type="completed", text="Hello")]
+    with pytest.raises(RuntimeError):
+        views._apply_events(run, batch)
+    assert Run.unscoped.get(pk=run.id).worker_seq == 0
+    views._apply_events(run, batch)
+    assert Run.unscoped.get(pk=run.id).status == Run.Status.COMPLETED
 
 
 async def test_model_relay_enforces_backend_choices(claimed, monkeypatch):
@@ -626,7 +643,7 @@ async def test_a_response_arriving_as_the_run_ends_is_closed(claimed, monkeypatc
         await asyncio.sleep(0.05)
         return httpx.Response(200, stream=body, headers={"content-type": "text/event-stream"})
 
-    def slow_check(run_id) -> bool:
+    def slow_check(run_id, attempt) -> bool:
         # The provider answers while the run's state is being read.
         time.sleep(0.3)
         return False
@@ -637,7 +654,7 @@ async def test_a_response_arriving_as_the_run_ends_is_closed(claimed, monkeypatc
     responses = provider.responses
     monkeypatch.setattr(provider, "responses", lambda payload: calls.append(responses(payload)) or calls[-1])
     monkeypatch.setattr(relay, "REVOCATION_CHECK_SECONDS", 0.01)
-    monkeypatch.setattr(relay.services, "is_token_valid", slow_check)
+    monkeypatch.setattr(relay.services, "is_current", slow_check)
     response = await _post(token, "/v1/responses", BODY)
     assert response.status_code == 401 and body.closed
     assert (await Run.unscoped.aget(pk=run.id)).unmetered_model_calls == 1
@@ -663,7 +680,7 @@ async def test_a_call_that_opens_despite_cancellation_is_closed(claimed):
     opening = asyncio.create_task(cm.__aenter__())
     await asyncio.sleep(0)
     opening.cancel()
-    await relay._abandon(opening, cm, run.id)
+    await relay._abandon(opening, cm, run.id, run.attempt)
     assert closed.is_set()
     assert (await Run.unscoped.aget(pk=run.id)).unmetered_model_calls == 1
 
@@ -679,7 +696,7 @@ async def test_usage_is_recorded_even_if_closing_the_call_fails(claimed):
         yield DONE_EVENT
 
     upstream = UpstreamResponse(200, "text/event-stream", chunks())
-    call = relay.ModelCall(run.id, ResponsesTap(), FailingClose(), upstream)
+    call = relay.ModelCall(run.id, run.attempt, ResponsesTap(), FailingClose(), upstream)
     await call._run()
     assert await _rest(call.stream()) == DONE_EVENT
     stored = await Run.unscoped.aget(pk=run.id)
@@ -689,14 +706,16 @@ async def test_usage_is_recorded_even_if_closing_the_call_fails(claimed):
 def test_no_model_call_is_reserved_for_a_run_past_its_deadline(claimed):
     run, _ = claimed
     Run.unscoped.filter(pk=run.id).update(deadline=timezone.now() - timedelta(seconds=1))
-    assert not relay._reserve_model_call(run.id)
+    assert not relay._reserve_model_call(run.id, run.attempt)
     Run.unscoped.filter(pk=run.id).update(deadline=timezone.now() + timedelta(minutes=1))
-    assert relay._reserve_model_call(run.id)
+    assert relay._reserve_model_call(run.id, run.attempt)
 
 
 async def test_mcp_tools_are_authorized_and_recorded(claimed):
     run, _ = claimed
-    ctx = SimpleNamespace(request=SimpleNamespace(scope={RUN_SCOPE_KEY: run.id}))
+    ctx = SimpleNamespace(
+        request=SimpleNamespace(scope={RUN_SCOPE_KEY: run.id, ATTEMPT_SCOPE_KEY: run.attempt})
+    )
     listed = await list_tools(ctx, None)
     # Nothing allows creating, so the tool is not offered.
     assert {tool.name for tool in listed.tools} == {
@@ -737,7 +756,9 @@ def test_listed_tools_say_whether_they_only_read(scoped, user, agent, grant, tod
 
 
 def _mcp_ctx(run) -> SimpleNamespace:
-    return SimpleNamespace(request=SimpleNamespace(scope={RUN_SCOPE_KEY: run.id}))
+    return SimpleNamespace(
+        request=SimpleNamespace(scope={RUN_SCOPE_KEY: run.id, ATTEMPT_SCOPE_KEY: run.attempt})
+    )
 
 
 def _list_tasks() -> types.CallToolRequestParams:
@@ -798,13 +819,13 @@ def test_a_reservation_waiting_on_another_connection_cannot_take_the_same_last_c
 
     def reserve_elsewhere():
         try:
-            return mcp._reserve_tool_call(run.id, event)
+            return mcp._reserve_tool_call(RunContext.from_run(run), event)
         finally:
             connection.close()
 
     with ThreadPoolExecutor(1) as pool:
         with transaction.atomic():
-            mcp._reserve_tool_call(run.id, event)
+            mcp._reserve_tool_call(RunContext.from_run(run), event)
             other = pool.submit(reserve_elsewhere)
             # The other connection waits for this transaction's row lock, then sees its count.
             _wait_for_a_lock_waiter()
@@ -853,8 +874,8 @@ async def test_a_call_waiting_for_a_slot_when_the_run_stops_does_nothing(claimed
     admitted = asyncio.Event()
     reserve = mcp._reserve_tool_call
 
-    def reserve_and_tell(run_id, event):
-        deadline = reserve(run_id, event)
+    def reserve_and_tell(context, event):
+        deadline = reserve(context, event)
         loop.call_soon_threadsafe(admitted.set)
         return deadline
 

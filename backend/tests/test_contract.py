@@ -37,7 +37,7 @@ from connectors.base import (
 from connectors.executor import APPLIED_WITHOUT_RESULT, RESULT_SCHEMA, Executor
 from connectors.http import Effect, write_attempt
 from conversations.models import Conversation
-from gateway.mcp import RUN_SCOPE_KEY, list_tools
+from gateway.mcp import ATTEMPT_SCOPE_KEY, RUN_SCOPE_KEY, list_tools
 from minerva.config import config
 from permissions.models import Grant, PermissionLayer
 from permissions.policy import Layer, Policy, Resource
@@ -414,15 +414,15 @@ async def test_time_spent_after_dispatch_counts_against_the_write(start, server,
     await Run.unscoped.filter(pk=executor.context.run_id).aupdate(
         deadline=timezone.now() + timedelta(seconds=3)
     )
-    valid = executor_module.is_token_valid
+    current = executor_module.is_current
 
-    def slow_valid(run_id):
+    def slow_current(run_id, attempt):
         # Slow only once the write is dispatched.
         if RunWrite.unscoped.filter(run_id=run_id).exists():
             time.sleep(1.5)
-        return valid(run_id)
+        return current(run_id, attempt)
 
-    monkeypatch.setattr(executor_module, "is_token_valid", slow_valid)
+    monkeypatch.setattr(executor_module, "is_current", slow_current)
     assert (await _error(executor.invoke(COPY, copy()))).code == "TIMED_OUT"
     assert _posts(server) == 0
 
@@ -534,7 +534,9 @@ async def test_a_tool_whose_contract_changed_stops_working(start, server):
 
     run = await _run(executor)
     await Run.unscoped.filter(pk=run.pk).aupdate(tools=[{**t, "contract": ""} for t in run.tools])
-    ctx = SimpleNamespace(request=SimpleNamespace(scope={RUN_SCOPE_KEY: run.pk}))
+    ctx = SimpleNamespace(
+        request=SimpleNamespace(scope={RUN_SCOPE_KEY: run.pk, ATTEMPT_SCOPE_KEY: run.attempt})
+    )
     assert (await list_tools(ctx, None)).tools == []
 
 

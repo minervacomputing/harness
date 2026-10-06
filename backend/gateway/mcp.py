@@ -36,6 +36,8 @@ from workspaces.tenancy import activate_workspace
 
 log = logging.getLogger(__name__)
 RUN_SCOPE_KEY = "minerva.run_id"
+# The attempt current when the request was authenticated; the run may move on while the request runs.
+ATTEMPT_SCOPE_KEY = "minerva.attempt"
 DENIAL_CODES = {
     "POLICY_DENIED",
     "LIMIT_REACHED",
@@ -51,10 +53,10 @@ _slots: weakref.WeakValueDictionary[UUID, asyncio.Semaphore] = weakref.WeakValue
 
 
 async def _context(ctx) -> RunContext:
-    run_id = ctx.request.scope[RUN_SCOPE_KEY]
-    run = await Run.unscoped.aget(pk=run_id)
+    scope = ctx.request.scope
+    run = await Run.unscoped.aget(pk=scope[RUN_SCOPE_KEY])
     activate_workspace(run.workspace_id)
-    return RunContext.from_run(run)
+    return RunContext.from_run(run, attempt=scope[ATTEMPT_SCOPE_KEY])
 
 
 async def list_tools(ctx, params) -> types.ListToolsResult:
@@ -104,24 +106,28 @@ class ToolLimitReached(OperationError):
         super().__init__("LIMIT_REACHED", f"This run has reached its limit of {limit} tool calls.")
 
 
-def _reserve_tool_call(run_id: UUID, event: dict[str, Any]) -> datetime:
+def _reserve_tool_call(context: RunContext, event: dict[str, Any]) -> datetime:
     """Counts the call and returns the run's deadline. One statement, so concurrent calls cannot both take
     the last one. The count stops one past the limit: the call that crosses it records its refusal in the
     same transaction, and later ones are refused without writing anything, so a worker that keeps calling
-    cannot flood the conversation or the database."""
-    active = [status.value for status in Run.TOKEN_VALID]
+    cannot flood the conversation or the database. A replaced attempt's calls are refused as if the run had
+    ended."""
+    run_id = context.run_id
+    params = [run_id, context.attempt, [status.value for status in Run.TOKEN_VALID]]
     with transaction.atomic(), db.cursor() as cursor:
         cursor.execute(
             "UPDATE runs_run SET tool_calls = tool_calls + 1"
-            " WHERE id = %s AND status = ANY(%s) AND deadline > now() AND tool_calls <= max_tool_calls"
+            " WHERE id = %s AND attempt = %s AND status = ANY(%s) AND deadline > now()"
+            " AND tool_calls <= max_tool_calls"
             " RETURNING tool_calls, max_tool_calls, deadline",
-            [run_id, active],
+            params,
         )
         reserved = cursor.fetchone()
         if reserved is None:
             cursor.execute(
-                "SELECT max_tool_calls FROM runs_run WHERE id = %s AND status = ANY(%s) AND deadline > now()",
-                [run_id, active],
+                "SELECT max_tool_calls FROM runs_run"
+                " WHERE id = %s AND attempt = %s AND status = ANY(%s) AND deadline > now()",
+                params,
             )
             refused = cursor.fetchone()
             if refused is None:
@@ -163,7 +169,7 @@ async def call_tool(ctx, params: types.CallToolRequestParams) -> types.CallToolR
         "arguments": _summary(arguments),
     }
     try:
-        deadline = await sync_to_async(_reserve_tool_call)(context.run_id, event)
+        deadline = await sync_to_async(_reserve_tool_call)(context, event)
         # A call that waited past a revocation is refused by the executor before it does anything.
         async with _slot(context.run_id, deadline):
             outcome = await Executor(context).invoke(params.name, arguments)
@@ -174,11 +180,14 @@ async def call_tool(ctx, params: types.CallToolRequestParams) -> types.CallToolR
         code = error.code if isinstance(error, OperationError) else "FAILED"
         decision = "denied" if code in DENIAL_CODES else "error"
         event.update(decision=decision, code=code, message=message)
-        # Refusals past the tool-call limit are recorded once, when the limit is crossed.
-        if not isinstance(error, ToolLimitReached):
+        # Refusals past the tool-call limit are recorded once, when the limit is crossed. A call refused
+        # because the run ended, or its attempt was replaced, is not shown.
+        if not isinstance(error, ToolLimitReached) and code != "RUN_ENDED":
             await _record(context, event)
         return types.CallToolResult(content=[types.TextContent(type="text", text=message)], is_error=True)
     event.update(decision="allowed", title=outcome.title, count=outcome.result.get("count"))
+    if outcome.repeat:
+        event["repeat"] = True
     await _record(context, event)
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=json.dumps(outcome.result, default=str))],
@@ -187,6 +196,7 @@ async def call_tool(ctx, params: types.CallToolRequestParams) -> types.CallToolR
 
 
 async def _record(context: RunContext, event: dict[str, Any]) -> None:
+    """Records a call that started under a replaced attempt too: what it did is still part of the run."""
     if await sync_to_async(services.is_token_valid)(context.run_id):
         await sync_to_async(services.append_event)(context.run_id, RunEvent.Type.TOOL_CALL, event)
 
@@ -211,7 +221,7 @@ async def mcp_app(scope: Scope, receive: Receive, send: Send) -> None:
     if run is None:
         await _unauthorized(send)
         return
-    await _starlette({**scope, RUN_SCOPE_KEY: run.id}, receive, send)
+    await _starlette({**scope, RUN_SCOPE_KEY: run.id, ATTEMPT_SCOPE_KEY: run.attempt}, receive, send)
 
 
 async def _unauthorized(send: Send) -> None:

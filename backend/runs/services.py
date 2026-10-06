@@ -137,15 +137,21 @@ class RunConflict(Exception):
     pass
 
 
-def append_event(run_id: UUID, type_: str, data: dict) -> int:
-    """Append an ordered event and wake live streams. Safe under concurrent writers."""
+def append_event(run_id: UUID, type_: str, data: dict, *, attempt: int | None = None) -> int | None:
+    """Append an ordered event and wake live streams. Safe under concurrent writers. With `attempt`, the
+    event is appended only while that attempt is current and can act (see is_current); None otherwise."""
+    query = "UPDATE runs_run SET event_seq = event_seq + 1 WHERE id = %s"
+    params: list = [run_id]
+    if attempt is not None:
+        query += " AND attempt = %s AND status = ANY(%s) AND deadline > now()"
+        params += [attempt, [status.value for status in Run.TOKEN_VALID]]
     with transaction.atomic():
         with db.cursor() as cursor:
-            cursor.execute(
-                "UPDATE runs_run SET event_seq = event_seq + 1 WHERE id = %s RETURNING event_seq, workspace_id",
-                [run_id],
-            )
-            seq, workspace_id = cursor.fetchone()
+            cursor.execute(query + " RETURNING event_seq, workspace_id", params)
+            row = cursor.fetchone()
+        if row is None:
+            return None
+        seq, workspace_id = row
         RunEvent.unscoped.create(workspace_id=workspace_id, run_id=run_id, seq=seq, type=type_, data=data)
         _notify(EVENTS_CHANNEL, f"{run_id}:{seq}")
     return seq
@@ -156,11 +162,16 @@ def _notify(channel: str, payload: str) -> None:
         cursor.execute("SELECT pg_notify(%s, %s)", [channel, payload])
 
 
-def finish(run_id: UUID, status: str, *, code: str = "", message: str = "") -> bool:
+def finish(
+    run_id: UUID, status: str, *, code: str = "", message: str = "", attempt: int | None = None
+) -> bool:
     """Move an active run to a terminal state exactly once, and drop its saved state. Returns False if it
-    already ended."""
+    already ended, or if `attempt` is given and is no longer the run's current one."""
+    runs = Run.unscoped.filter(pk=run_id, status__in=Run.ACTIVE)
+    if attempt is not None:
+        runs = runs.filter(attempt=attempt)
     with transaction.atomic():
-        updated = Run.unscoped.filter(pk=run_id, status__in=Run.ACTIVE).update(
+        updated = runs.update(
             status=status, error_code=code, error_message=message[:500], finished_at=timezone.now()
         )
         if updated:
@@ -172,10 +183,11 @@ def finish(run_id: UUID, status: str, *, code: str = "", message: str = "") -> b
     return bool(updated)
 
 
-def complete(run_id: UUID, response: str) -> bool:
+def complete(run_id: UUID, response: str, *, attempt: int) -> bool:
+    """Records the worker's answer and finishes the run, if `attempt` is still the run's current one."""
     with transaction.atomic():
         run = Run.unscoped.select_for_update().get(pk=run_id)
-        if run.status not in Run.TOKEN_VALID:
+        if run.status not in Run.TOKEN_VALID or run.attempt != attempt:
             return False
         message = Message.unscoped.create(
             workspace_id=run.workspace_id,
@@ -185,7 +197,7 @@ def complete(run_id: UUID, response: str) -> bool:
             run=run,
         )
         append_event(run_id, RunEvent.Type.MESSAGE, {"id": str(message.id), "content": response})
-        return finish(run_id, Run.Status.COMPLETED)
+        return finish(run_id, Run.Status.COMPLETED, attempt=attempt)
 
 
 def cancel(run: Run) -> bool:
@@ -259,6 +271,14 @@ def run_for_token(token: str) -> Run | None:
 
 def is_token_valid(run_id: UUID) -> bool:
     return Run.unscoped.filter(pk=run_id, status__in=Run.TOKEN_VALID, deadline__gt=timezone.now()).exists()
+
+
+def is_current(run_id: UUID, attempt: int) -> bool:
+    """Whether `attempt` is the run's current one and the run can still act. Work a worker starts needs
+    this; an earlier attempt's worker may still be connected after its replacement took over."""
+    return Run.unscoped.filter(
+        pk=run_id, attempt=attempt, status__in=Run.TOKEN_VALID, deadline__gt=timezone.now()
+    ).exists()
 
 
 def history(run: Run) -> list[dict]:

@@ -44,7 +44,7 @@ from connectors.base import (
 from connectors.http import Effect, write_attempt
 from permissions.policy import ANY, Policy, Resource
 from runs.models import Run, RunPageToken, RunWrite
-from runs.services import ToolRef, is_token_valid
+from runs.services import ToolRef, is_current, is_token_valid
 
 log = logging.getLogger(__name__)
 MAX_PAGE_TOKENS = 200
@@ -91,14 +91,17 @@ class RunContext:
     workspace_id: UUID
     policy: Policy
     tools: dict[str, ToolRef]
+    # The attempt whose worker made the call. Work starts only while it is the run's current one.
+    attempt: int
 
     @classmethod
-    def from_run(cls, run: Run) -> RunContext:
+    def from_run(cls, run: Run, attempt: int | None = None) -> RunContext:
         return cls(
             run_id=run.id,
             workspace_id=run.workspace_id,
             policy=Policy.from_json(run.permissions),
             tools={item["name"]: ToolRef(**item) for item in run.tools},
+            attempt=run.attempt if attempt is None else attempt,
         )
 
 
@@ -106,6 +109,8 @@ class RunContext:
 class Outcome:
     result: dict[str, Any]
     title: str
+    # An identical write this run made earlier answered the call; nothing was sent.
+    repeat: bool = False
 
 
 @dataclass(frozen=True)
@@ -162,7 +167,14 @@ class Executor:
     def __init__(self, context: RunContext) -> None:
         self.context = context
 
+    async def _ensure_current(self) -> None:
+        """Before work starts: the run can still act and the calling attempt has not been replaced."""
+        if not await sync_to_async(is_current)(self.context.run_id, self.context.attempt):
+            raise OperationError("RUN_ENDED", "This run is no longer active.")
+
     async def _ensure_active(self) -> None:
+        """After work finished: the run can still act. A replaced attempt still gets its answer, so that a
+        write it made is recorded."""
         if not await sync_to_async(is_token_valid)(self.context.run_id):
             raise OperationError("RUN_ENDED", "This run is no longer active.")
 
@@ -179,8 +191,8 @@ class Executor:
         return ref, op
 
     async def invoke(self, tool: str, raw: Any) -> Outcome:
+        await self._ensure_current()
         ref, op = self.operation_for(tool)
-        await self._ensure_active()
         try:
             data = op.input_model.model_validate(raw if raw is not None else {})
         except ValidationError as error:
@@ -196,8 +208,9 @@ class Executor:
         if write_key is not None:
             known = await RunWrite.unscoped.filter(run_id=self.context.run_id, key=write_key).afirst()
             if known is not None:
-                return Outcome(_known_write(known), op.title)
-        return Outcome(await self._perform(ref, op, data, tool, query_hash, write_key), op.title)
+                return Outcome(_known_write(known), op.title, repeat=True)
+        result, repeat = await self._perform(ref, op, data, tool, query_hash, write_key)
+        return Outcome(result, op.title, repeat=repeat)
 
     def _authorize(
         self, connector: Connector, op: Operation, ref: ToolRef, requirements: list[Requirement]
@@ -271,7 +284,8 @@ class Executor:
 
     async def _perform(
         self, ref: ToolRef, op: Operation, data: Any, tool: str, query_hash: str, write_key: str | None
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], bool]:
+        """The result, and whether an identical earlier write answered the call."""
         connector = registry.get(ref.provider)
         async with open_client(ref.provider, UUID(ref.connection_id)) as opened:
             if not consent_given(op.consent, opened.scopes):
@@ -284,28 +298,30 @@ class Executor:
             if not prepared.requirements:
                 raise _connector_bug(f"{ref.provider}.{op.name}", "no requirements")
             self._authorize(connector, op, ref, prepared.requirements)
-            await self._ensure_active()
+            await self._ensure_current()
+            repeat = False
             if write_key is None:
                 output = await prepared.execute()
                 result = self._result(connector, op, ref, output)
             else:
                 output = None
-                result = await self._write(connector, op, ref, write_key, prepared.execute)
+                result, repeat = await self._write(connector, op, ref, write_key, prepared.execute)
             await self._ensure_active()
 
         if output is not None and output.next_cursor and op.paginated:
             result["next_cursor"] = await sync_to_async(self._issue_cursor)(
                 tool, query_hash, output.next_cursor
             )
-        return result
+        return result, repeat
 
     async def _write(
         self, connector: Connector, op: Operation, ref: ToolRef, key: str, execute
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], bool]:
+        """The write's result, and whether an identical earlier write answered it."""
         dispatch = await sync_to_async(self._dispatch)(key)
         if dispatch.cached is not None:
-            return dispatch.cached
-        if not await sync_to_async(is_token_valid)(self.context.run_id):
+            return dispatch.cached, True
+        if not await sync_to_async(is_current)(self.context.run_id, self.context.attempt):
             await asyncio.shield(sync_to_async(self._settle)(key, None))
             raise OperationError("RUN_ENDED", "This run is no longer active.")
         with write_attempt(dispatch.deadline) as attempt:
@@ -331,7 +347,7 @@ class Executor:
                     )
                     if not isinstance(error, Exception):
                         raise
-                    return dict(APPLIED_WITHOUT_RESULT)
+                    return dict(APPLIED_WITHOUT_RESULT), False
                 log.warning("Write outcome unknown in run %s: %r", self.context.run_id, error)
                 await asyncio.shield(sync_to_async(self._settle)(key, RunWrite.Status.UNCERTAIN))
                 if not isinstance(error, Exception):
@@ -343,9 +359,9 @@ class Executor:
         if attempt.outcome() == Effect.NOT_APPLIED:
             # The connector sent nothing, or handled a refusal itself.
             await asyncio.shield(sync_to_async(self._settle)(key, None))
-            return result
+            return result, False
         await asyncio.shield(sync_to_async(self._settle)(key, RunWrite.Status.SUCCEEDED, result))
-        return result
+        return result, False
 
     @staticmethod
     def _loop_time(deadline: float) -> float:
@@ -353,16 +369,23 @@ class Executor:
         return asyncio.get_running_loop().time() + (deadline - time.monotonic())
 
     def _dispatch(self, key: str) -> Dispatch:
-        """Claims the write before anything is sent. Locks the run first, like every write transition."""
+        """Claims the write before anything is sent. Locks the run first, like every write transition. This is
+        where a write starts: one claimed here is carried out even if its attempt is replaced meanwhile, and a
+        run restarts only once none of its writes is still dispatched (services.restart)."""
         with transaction.atomic():
             run = (
                 Run.unscoped.select_for_update()
-                .only("status", "deadline", "writes_uncertain", "write_count", "max_writes")
+                .only("status", "deadline", "attempt", "writes_uncertain", "write_count", "max_writes")
                 .get(pk=self.context.run_id)
             )
             now = timezone.now()
             clock = time.monotonic()
-            if run.status not in Run.TOKEN_VALID or run.deadline is None or run.deadline <= now:
+            if (
+                run.status not in Run.TOKEN_VALID
+                or run.deadline is None
+                or run.deadline <= now
+                or run.attempt != self.context.attempt
+            ):
                 raise OperationError("RUN_ENDED", "This run is no longer active.")
             known = RunWrite.unscoped.filter(run_id=run.pk, key=key).first()
             if known is not None:

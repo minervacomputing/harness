@@ -6,6 +6,9 @@ import logging
 from typing import Annotated, Literal
 
 from asgiref.sync import sync_to_async
+from django.db import transaction
+from django.db.models import F
+from django.db.models.functions import Coalesce
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -28,13 +31,7 @@ log = logging.getLogger(__name__)
 @run_required
 async def run_spec(request: HttpRequest) -> JsonResponse:
     run: Run = request.run  # type: ignore[attr-defined]
-    started = await Run.unscoped.filter(pk=run.pk, status=Run.Status.PROVISIONING).aupdate(
-        status=Run.Status.RUNNING, started_at=timezone.now()
-    )
-    if started:
-        await sync_to_async(services.append_event)(
-            run.id, RunEvent.Type.STATUS, {"status": Run.Status.RUNNING}
-        )
+    await sync_to_async(_start)(run.id, run.attempt)
     prompt = await sync_to_async(services.current_prompt)(run)
     history = await sync_to_async(services.history)(run)
     tools = []
@@ -68,6 +65,17 @@ async def run_spec(request: HttpRequest) -> JsonResponse:
     )
 
 
+def _start(run_id, attempt: int) -> None:
+    """The attempt's worker asked for its spec, so it is running. A run that restarts keeps its first start
+    time."""
+    with transaction.atomic():
+        started = Run.unscoped.filter(pk=run_id, attempt=attempt, status=Run.Status.PROVISIONING).update(
+            status=Run.Status.RUNNING, started_at=Coalesce(F("started_at"), timezone.now())
+        )
+        if started:
+            services.append_event(run_id, RunEvent.Type.STATUS, {"status": Run.Status.RUNNING})
+
+
 class WorkerEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
     seq: Annotated[int, Field(ge=1)]
@@ -80,29 +88,41 @@ class WorkerEvents(BaseModel):
     events: Annotated[list[WorkerEvent], Field(max_length=100)]
 
 
-def _accept_worker_seq(run_id, seq: int) -> bool:
-    return bool(Run.unscoped.filter(pk=run_id, worker_seq__lt=seq).update(worker_seq=seq))
+def _accept_worker_seq(run_id, attempt: int, seq: int) -> bool:
+    """Each attempt's worker numbers its events from 1; the count restarts with the attempt."""
+    runs = Run.unscoped.filter(pk=run_id, attempt=attempt, worker_seq__lt=seq)
+    return bool(runs.update(worker_seq=seq))
 
 
 def _apply_events(run: Run, events: list[WorkerEvent]) -> None:
+    """Only the attempt that authenticated the request is heard; an earlier attempt's events are dropped. An
+    event is accepted together with its effect, so a worker that retries after a failure is heard again."""
     for event in sorted(events, key=lambda item: item.seq):
-        if not _accept_worker_seq(run.id, event.seq):
-            continue
-        if not services.is_token_valid(run.id):
-            return
-        match event.type:
-            case "phase":
-                services.append_event(run.id, RunEvent.Type.PHASE, {"text": event.text[:300]})
-            case "completed":
-                services.complete(run.id, event.text)
-            case "failed":
-                log.info("Worker reported failure for run %s: %s", run.id, event.text[:500])
-                services.finish(
-                    run.id,
-                    Run.Status.FAILED,
-                    code="worker_failed",
-                    message="The agent could not finish this run. Try again.",
-                )
+        with transaction.atomic():
+            if not _accept_worker_seq(run.id, run.attempt, event.seq):
+                continue
+            if not services.is_current(run.id, run.attempt):
+                return
+            _apply_event(run, event)
+
+
+def _apply_event(run: Run, event: WorkerEvent) -> None:
+    match event.type:
+        case "phase":
+            services.append_event(
+                run.id, RunEvent.Type.PHASE, {"text": event.text[:300]}, attempt=run.attempt
+            )
+        case "completed":
+            services.complete(run.id, event.text, attempt=run.attempt)
+        case "failed":
+            log.info("Worker reported failure for run %s: %s", run.id, event.text[:500])
+            services.finish(
+                run.id,
+                Run.Status.FAILED,
+                code="worker_failed",
+                message="The agent could not finish this run. Try again.",
+                attempt=run.attempt,
+            )
 
 
 @require_POST

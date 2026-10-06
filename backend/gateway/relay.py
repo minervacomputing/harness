@@ -31,20 +31,22 @@ TEXT_FLUSH_SECONDS = 0.25
 MAX_RESPONSE_BYTES = 32_000_000
 
 
-def _reserve_model_call(run_id) -> bool:
-    active = Run.unscoped.filter(pk=run_id, status__in=Run.TOKEN_VALID, deadline__gt=timezone.now())
-    return bool(active.filter(model_calls__lt=F("max_model_calls")).update(model_calls=F("model_calls") + 1))
+def _reserve_model_call(run_id, attempt: int) -> bool:
+    current = Run.unscoped.filter(
+        pk=run_id, attempt=attempt, status__in=Run.TOKEN_VALID, deadline__gt=timezone.now()
+    )
+    return bool(current.filter(model_calls__lt=F("max_model_calls")).update(model_calls=F("model_calls") + 1))
 
 
-def _publish_text(run_id, text: str) -> None:
+def _publish_text(run_id, attempt: int, text: str) -> None:
     """Streaming progress comes from the trusted relay, not the worker. The final message still
-    comes from the worker's completion, which replaces the draft."""
-    if text and services.is_token_valid(run_id):
-        services.append_event(run_id, RunEvent.Type.TEXT_DELTA, {"text": text})
+    comes from the worker's completion, which replaces the draft. A replaced attempt's text is dropped."""
+    if text:
+        services.append_event(run_id, RunEvent.Type.TEXT_DELTA, {"text": text}, attempt=attempt)
 
 
-def _settle(run_id, tap: StreamTap) -> None:
-    _publish_text(run_id, tap.take_text())
+def _settle(run_id, attempt: int, tap: StreamTap) -> None:
+    _publish_text(run_id, attempt, tap.take_text())
     Run.unscoped.filter(pk=run_id).update(
         input_tokens=F("input_tokens") + tap.input_tokens,
         output_tokens=F("output_tokens") + tap.output_tokens,
@@ -56,13 +58,14 @@ def _settle(run_id, tap: StreamTap) -> None:
 _calls: set[asyncio.Task] = set()
 
 
-async def _until_run_ends(run_id, task: asyncio.Task) -> bool:
-    """Waits for the task. If the run ends first (stopped, finished, or past its deadline), cancels the
-    task and returns False. Checked on a timer, so a run ends even while the provider is silent."""
+async def _until_run_ends(run_id, attempt: int, task: asyncio.Task) -> bool:
+    """Waits for the task. If the run ends first (stopped, finished, or past its deadline), or a new attempt
+    replaces this one, cancels the task and returns False. Checked on a timer, so a run ends even while the
+    provider is silent."""
     try:
         while not task.done():
             await asyncio.wait({task}, timeout=REVOCATION_CHECK_SECONDS)
-            if not task.done() and not await sync_to_async(services.is_token_valid)(run_id):
+            if not task.done() and not await sync_to_async(services.is_current)(run_id, attempt):
                 task.cancel()
                 await asyncio.wait({task})
                 return False
@@ -79,7 +82,7 @@ async def _close(upstream_cm, run_id) -> None:
         log.exception("Could not close the model call for run %s", run_id)
 
 
-async def _abandon(opening: asyncio.Task, upstream_cm, run_id) -> None:
+async def _abandon(opening: asyncio.Task, upstream_cm, run_id, attempt: int) -> None:
     """The call is given up before it is relayed. The provider may have answered meanwhile; if so, its
     response is closed. What had started is not metered."""
     try:
@@ -88,7 +91,7 @@ async def _abandon(opening: asyncio.Task, upstream_cm, run_id) -> None:
         if not opening.cancelled() and opening.exception() is None:
             await _close(upstream_cm, run_id)
     finally:
-        await sync_to_async(_settle)(run_id, StreamTap())
+        await sync_to_async(_settle)(run_id, attempt, StreamTap())
 
 
 class ModelCall:
@@ -96,8 +99,9 @@ class ModelCall:
     is recorded even if the worker hangs up early. Only the run ending cuts the stream short; the call
     then counts as unmetered."""
 
-    def __init__(self, run_id, tap: StreamTap, upstream_cm, upstream: UpstreamResponse):
+    def __init__(self, run_id, attempt: int, tap: StreamTap, upstream_cm, upstream: UpstreamResponse):
         self.run_id = run_id
+        self.attempt = attempt
         self.tap = tap
         self._upstream_cm = upstream_cm
         self._upstream = upstream
@@ -130,7 +134,7 @@ class ModelCall:
     async def _run(self) -> None:
         reading = asyncio.create_task(self._read())
         try:
-            if await _until_run_ends(self.run_id, reading):
+            if await _until_run_ends(self.run_id, self.attempt, reading):
                 reading.result()
             else:
                 self._drop()
@@ -152,7 +156,7 @@ class ModelCall:
             # Provider diagnostics stay private, as for non-200 responses.
             log.warning("Model provider reported %s for run %s", self.tap.error_code, self.run_id)
         try:
-            await sync_to_async(_settle)(self.run_id, self.tap)
+            await sync_to_async(_settle)(self.run_id, self.attempt, self.tap)
         except Exception:
             log.exception("Could not record the model call for run %s", self.run_id)
 
@@ -166,7 +170,7 @@ class ModelCall:
             self._send(self.tap.feed(chunk))
             if time.monotonic() - last_flush > TEXT_FLUSH_SECONDS:
                 last_flush = time.monotonic()
-                await sync_to_async(_publish_text)(self.run_id, self.tap.take_text())
+                await sync_to_async(_publish_text)(self.run_id, self.attempt, self.tap.take_text())
         self._send(self.tap.finish())
 
 
@@ -215,21 +219,21 @@ async def _relay(request: HttpRequest, api: str):
         payload = build_chat_payload(body, target) if api == "chat" else build_responses_payload(body, target)
     except InvalidModelRequest as error:
         return error_response(str(error), 400)
-    if not await sync_to_async(_reserve_model_call)(run.id):
-        if not await sync_to_async(services.is_token_valid)(run.id):
+    if not await sync_to_async(_reserve_model_call)(run.id, run.attempt):
+        if not await sync_to_async(services.is_current)(run.id, run.attempt):
             return error_response("This run has ended.", 401)
         return error_response("This run reached its model request limit.", 429)
 
     upstream_cm = provider.chat_completions(payload) if api == "chat" else provider.responses(payload)
     opening = asyncio.create_task(upstream_cm.__aenter__())
     try:
-        opened = await _until_run_ends(run.id, opening)
+        opened = await _until_run_ends(run.id, run.attempt, opening)
     except asyncio.CancelledError:
         # The worker hung up before the provider answered.
-        await _abandon(opening, upstream_cm, run.id)
+        await _abandon(opening, upstream_cm, run.id, run.attempt)
         raise
     if not opened:
-        await _abandon(opening, upstream_cm, run.id)
+        await _abandon(opening, upstream_cm, run.id, run.attempt)
         return error_response("This run has ended.", 401)
     try:
         reply = opening.result()
@@ -244,11 +248,13 @@ async def _relay(request: HttpRequest, api: str):
         # Only streams are requested, and only event streams are screened. The provider answered, so the
         # call counts, unmetered.
         await _close(upstream_cm, run.id)
-        await sync_to_async(_settle)(run.id, StreamTap())
+        await sync_to_async(_settle)(run.id, run.attempt, StreamTap())
         log.warning("Model provider answered %s for run %s", reply.content_type, run.id)
         return error_response("The model provider returned an unexpected response.", 502)
 
-    call = ModelCall(run.id, StreamTap() if api == "chat" else ResponsesTap(), upstream_cm, reply)
+    call = ModelCall(
+        run.id, run.attempt, StreamTap() if api == "chat" else ResponsesTap(), upstream_cm, reply
+    )
     call.start()
     response = StreamingHttpResponse(call.stream(), content_type=reply.content_type)
     response["Cache-Control"] = "no-store"
