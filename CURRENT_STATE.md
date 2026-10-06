@@ -188,7 +188,7 @@ The `container` provider (Docker or Podman) runs each worker with:
 - One way out: the `minerva-gateway-socket` volume, mounted read-only at `/run/minerva/gateway`. It holds a Unix socket owned by the worker's user, and the `gateway-socket` container (socat) forwards each connection to it to the gateway port. Inside the worker, a bridge listens on an ephemeral loopback port and pipes each connection to the socket, so the worker's HTTP clients work unchanged; it never reconnects or replays. The provider creates the container, checks that Docker reports no network and exactly that mount, read-only, and only then starts it.
 - Optional gVisor. It refuses connections to a socket the host mounts in unless started with `--host-uds=open`, so register a runtime for that (`runsc install --runtime=runsc-minerva -- --host-uds=open`) and set `MINERVA_SANDBOX_RUNTIME=runsc-minerva`. The demo does.
 
-`make sandbox-check` runs the conformance probe inside the real image, next to a second worker that listens on an abstract socket and on a loopback port. On 2026-10-06 all 14 checks passed locally with runc:
+`make sandbox-check` runs the conformance probe inside the real image, next to a second worker that listens on an abstract socket and on a loopback port. On 2026-10-06 all 14 checks passed, locally with runc and on the demo with gVisor (`runsc-minerva`):
 
 - Non-root user.
 - Only the run token in the environment.
@@ -230,7 +230,7 @@ Other state:
 | Backend tests (`pytest`), including cross-workspace access and the connector contract; needs Postgres running (`make services`) | 837 pass (2026-10-06) |
 | Worker tests, including pi-durable's storage conformance suite run on the journal adapter (against a fake gateway), and resuming a turn after each kind of interruption | 73 pass (2026-10-06) |
 | Ruff lint and format; worker and frontend typechecks; production build | Pass |
-| Sandbox conformance | 14/14 (2026-10-06, runc) |
+| Sandbox conformance | 14/14 (2026-10-06, runc locally and gVisor on the demo) |
 | End-to-end run in the container with the fake model | Pass: tool call, streamed text, stored answer, usage recorded, container removed |
 | Worker killed mid-turn (`docker kill`), in the container with the fake model (2026-10-06) | Pass: killed while streaming its answer after a read, the turn resumed as attempt 2 without running the read again and showed one tool card and one answer; killed during a script, the script did not run again and the model was told; killed three times, the run failed after its second restart. Saved state deleted and containers removed each time |
 | Browser walkthrough | Pass: sign-up, email verification, chat streaming, tool-call card, connection status and reconnect prompt, agent create and validation, two-factor setup with re-authentication |
