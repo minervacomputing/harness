@@ -159,7 +159,7 @@ The effective permissions are computed when a run starts and stored with the run
 | `POST /events` | Batched, sequence-numbered events: phase, assistant text deltas, tool started/finished (allowed or denied), artifact created, completed, failed |
 | `PUT /artifacts/{name}` | Artifact upload. The backend enforces size limits and the "allow report files" permission here, on the trusted side |
 
-**Run tokens.** The token is random, stored only as a hash, and bound to one run (and so to its workspace, user, agent, and effective permissions). It expires at the run's deadline and is revoked on any terminal state.
+**Run tokens.** The token is random, stored only as a hash, and bound to one run (and so to its workspace, user, agent, and effective permissions). It expires at the run's deadline and is revoked on any terminal state. One token can have at most 16 requests in flight (per gateway process); more are refused with 429 before their body is read, and a response holds its place until the worker has read nearly all of it.
 
 **Cancellation.** Stopping a run revokes its token, so every further call returns 401 and the worker has nothing left to do. The sandbox provider's `stop` is resource cleanup; security never depends on the kill succeeding. As in the prototype, a provider write already in flight may still complete; stopping means "no further effects", not rollback.
 
