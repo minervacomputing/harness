@@ -29,6 +29,8 @@ export class JournalRevoked extends Error {}
 export class StateTooLarge extends Error {}
 /** The saved state cannot be loaded. */
 export class StateUnreadable extends Error {}
+/** The gateway could not be reached, even after retrying. */
+export class GatewayUnreachable extends Error {}
 /** The gateway refused a request; sending it again cannot help. */
 export class JournalRefused extends Error {
   readonly status: number
@@ -104,7 +106,7 @@ export class GatewayJournal implements Journal {
         if (error instanceof JournalRevoked || error instanceof StateTooLarge || error instanceof JournalRefused) throw error
         failure = error
       }
-      if (attempt >= this.delays.length) throw new Error('The gateway could not be reached to save or load the run.', { cause: failure })
+      if (attempt >= this.delays.length) throw new GatewayUnreachable('The gateway could not be reached to save or load the run.', { cause: failure })
       await new Promise(resolve => setTimeout(resolve, this.delays[attempt]))
     }
   }
@@ -119,7 +121,11 @@ function isWrite(write: unknown): write is StorageWrite {
   if (typeof write !== 'object' || write === null) return false
   const { type } = write as { type?: unknown }
   const fields = typeof type === 'string' && Object.hasOwn(WRITE_FIELDS, type) ? WRITE_FIELDS[type] : undefined
-  return fields !== undefined && fields.every(field => (write as Record<string, unknown>)[field] != null)
+  if (fields === undefined || !fields.every(field => (write as Record<string, unknown>)[field] != null)) return false
+  // Ids are minted after the highest one loaded.
+  const { value, record, id } = write as { value?: { id?: unknown }, record?: { id?: unknown }, id?: unknown }
+  const recordId = value ? value.id : record ? record.id : id
+  return Number.isSafeInteger(recordId) && (recordId as number) > 0
 }
 
 const encoder = new TextEncoder()

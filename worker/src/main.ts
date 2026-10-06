@@ -2,8 +2,11 @@
  * Minerva run worker. Runs one agent turn with pi-durable inside the sandbox.
  *
  * The worker holds a single run token and makes outbound calls to the gateway only:
- * `GET /run` for the turn, `/v1` for model calls, `/mcp` for tools, `POST /events` for progress.
- * It never sees provider keys, connection credentials, or anything outside its own run.
+ * `GET /run` for the turn, `/v1` for model calls, `/mcp` for tools, `POST /events` for progress, and `/journal` for
+ * the turn's saved state. It never sees provider keys, connection credentials, or anything outside its own run.
+ *
+ * When a worker dies, the backend starts another for the same run, which loads the saved state and resumes the turn.
+ * An interrupted read runs again; an interrupted write or script does not, and the model is told so.
  */
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import type { AssistantMessage, Model, TSchema } from '@earendil-works/pi-ai'
@@ -14,11 +17,13 @@ import {
   CodemodeSandbox, DEFAULT_INPUT_SCHEMA_MAX_CHARS, schemaToType, toCodemodeIdentifier, type CodemodeJsonSchema, type CodemodeTool,
 } from '@earendil-works/pi-codemode'
 import {
-  AssistantEntry, createRegistry, defineExtension, Harness, MemoryStorage, UserEntry, watchEvents,
+  AssistantEntry, createRegistry, defineExtension, Harness, UserEntry, watchEvents,
   type AgentEventStream, type Conversation, type ToolRegistration,
 } from '@earendil-works/pi-durable'
 import { McpClient, StreamableHttpTransport, toLlmContent, type Tool as McpTool } from '@earendil-works/pi-mcp'
 import { authHeader, env, EventSink, fetchRunSpec, gatewayUrl, RunRevoked, type RunSpec } from './gateway.ts'
+import { loadStore, saveStore, STORE_BYTES } from './script-store.ts'
+import { GatewayJournal, GatewayStorage, GatewayUnreachable, JournalRevoked } from './storage.ts'
 
 const PROVIDER = 'minerva'
 const CONTEXT_WINDOW = 128000
@@ -41,6 +46,8 @@ const SCRIPT_ARGS_BYTES = 256 * 1024
 const SCRIPT_REFUSALS = 100
 // The gateway relay refuses a model request that offers more tools than this.
 const MODEL_TOOLS_MAX = 128
+// Longer than any run, so pi-durable saves an answer only once it is complete, not while it streams in.
+const NEVER_MS = 2_000_000_000
 
 const context = BACKGROUND_CONTEXT
 
@@ -102,6 +109,8 @@ function gatewayTool(client: McpClient, tool: McpTool, spec: RunSpec, gateway: G
     description: tool.description ?? tool.title ?? tool.name,
     parameters: { ...tool.inputSchema, type: 'object', properties: tool.inputSchema.properties ?? {} } as unknown as TSchema,
     executionMode: write ? 'sequential' : 'parallel',
+    // A worker that resumes the turn runs an interrupted read again, but never a write whose outcome is unknown.
+    replay: write ? 'unsafe' : 'safe',
     outputLimits: TOOL_RESULT_LIMITS,
     async execute(args, _api, callContext) {
       const signal = callContext.abortSignal
@@ -276,8 +285,6 @@ function scriptRunner(client: McpClient, tools: McpTool[], spec: RunSpec, gatewa
   const limit = spec.limits.max_tool_calls
   const calls = scriptCalls(limit, gateway)
   const callable = tools.map(tool => scriptTool(client, tool, spec, calls))
-  // Values the scripts of this turn keep with store().
-  const store: Record<string, unknown> = {}
   const description = [
     'Run JavaScript that calls the tools declared below and returns a compact result.',
     'Prefer it for reads that page through long lists, repeat across many resources (each repository, calendar or database), or count, filter or total results. Start such reads inside the script, so their raw results never enter the conversation, and print only what the answer needs. Where you can, do the whole read in one script: list what you need, read each item and compute the answer. Call tools directly for one or two small reads whose results you want to see.',
@@ -287,7 +294,7 @@ function scriptRunner(client: McpClient, tools: McpTool[], spec: RunSpec, gatewa
     'Only what the script prints with `text(value)` or `console.log()`, and the value it returns, reach you. Tool results the script does not print do not.',
     '`count` is the number of items in that result, after leaving out what this run may not see, not a total. While a result has `next_cursor`, more items may follow, even after an empty page: call again with the same arguments plus `cursor: next_cursor`. `incomplete: true` means a provider or connector limit left something out; say so with any total. Item fields depend on the tool and are not declared. Rather than spending a script on looking at them, read the fields you expect, treat a missing one as unknown rather than empty, and also return the keys of one item, so a wrong guess shows in the same result.',
     `Each call is checked like a direct call${limit ? ` and counts toward this turn's limit of ${limit} tool calls` : ''}. Up to ${GATEWAY_CALLS_AT_ONCE} calls run at once, writes run one at a time, and at most ${SCRIPT_CALLS_OPEN} can wait, so start larger batches in parts.`,
-    `A script stops after ${SCRIPT_TIMEOUT_MS / 1000} seconds, or sooner when the turn runs out of time. \`store(key, value)\` and \`load(key)\` keep JSON values between scripts in this turn.`,
+    `A script stops after ${SCRIPT_TIMEOUT_MS / 1000} seconds, or sooner when the turn runs out of time. \`store(key, value)\` and \`load(key)\` keep JSON values between scripts in this turn, up to ${STORE_BYTES / 1024 / 1024} MiB in all.`,
     '',
     '```js',
     '// Totals every page of a list; list_things stands for any tool with a cursor argument.',
@@ -315,8 +322,11 @@ function scriptRunner(client: McpClient, tools: McpTool[], spec: RunSpec, gatewa
       required: ['code'],
     } as unknown as TSchema,
     executionMode: 'sequential',
+    // A script may have made writes before it was interrupted.
+    replay: 'unsafe',
     outputLimits: TOOL_RESULT_LIMITS,
-    async execute(args, _api, callContext) {
+    async execute(args, api, callContext) {
+      const store = await loadStore(api, callContext)
       const sandbox = new CodemodeSandbox({ tools: callable, memoryLimitBytes: SCRIPT_MEMORY_BYTES })
       const script = new AbortController()
       calls.begin(script)
@@ -335,13 +345,8 @@ function scriptRunner(client: McpClient, tools: McpTool[], spec: RunSpec, gatewa
         }
         let value: string | undefined
         if (result.ok) {
-          // The store is written as JSON for every later script, so a value that cannot be is not kept.
-          if (toJson(result.storeWrites.set) === undefined) {
-            notes.push('What the script passed to `store()` was not kept: a value could not be converted to JSON.')
-          } else {
-            for (const key of result.storeWrites.delete) delete store[key]
-            Object.assign(store, result.storeWrites.set)
-          }
+          const unkept = await saveStore(api, result.storeWrites, callContext)
+          if (unkept) notes.push(unkept)
           if (result.value !== undefined) {
             value = typeof result.value === 'string' ? result.value : toJson(result.value) ?? '[The returned value could not be converted to JSON.]'
           }
@@ -404,22 +409,23 @@ let mcp: McpClient | null = null
 let harness: Harness | null = null
 let root: Conversation | null = null
 let events: AgentEventStream | null = null
-let closing = false
+let exiting: Promise<never> | null = null
 
+/** Stops without aborting the turn, so that what was saved stays as it was for a worker that resumes it. */
 async function close(): Promise<void> {
   await events?.stop().catch(() => {})
-  await root?.abort(context).catch(() => {})
   await harness?.close(context).catch(() => {})
   await mcp?.close().catch(() => {})
 }
 
-async function shutdown(code: number): Promise<never> {
-  if (!closing) {
-    closing = true
+/** Exits with the first code asked for. */
+function shutdown(code: number): Promise<never> {
+  exiting ??= (async () => {
     // A tool call that ignores cancellation must not keep the process alive.
     await Promise.race([close(), new Promise(resolve => setTimeout(resolve, 5000))])
-  }
-  process.exit(code)
+    process.exit(code)
+  })()
+  return exiting
 }
 
 process.on('SIGTERM', () => { void shutdown(143) })
@@ -429,7 +435,18 @@ const sink = new EventSink(() => { void shutdown(0) })
 
 try {
   const spec = await fetchRunSpec()
-  sink.phase('Starting the agent')
+  const storage = await GatewayStorage.load(new GatewayJournal(gatewayUrl, authHeader), error => {
+    // Whether the gateway saved the commit is unknown, so this worker stops without failing the run. The next
+    // worker resumes from what was saved; a run whose state grew too large was failed by the gateway.
+    process.stderr.write(`${describeError(error)}\n`)
+    void shutdown(error instanceof JournalRevoked ? 0 : 1)
+  }).catch(async (error: unknown) => {
+    // The next worker tries again. Saved state that cannot be loaded fails the run instead.
+    if (!(error instanceof GatewayUnreachable)) throw error
+    process.stderr.write(`${describeError(error)}\n`)
+    return shutdown(1)
+  })
+  sink.phase(storage.loaded ? 'Resuming the agent' : 'Starting the agent')
 
   const models = createModels()
   models.setProvider(createProvider({
@@ -456,7 +473,7 @@ try {
   const registry = createRegistry()
   registry.install(defineExtension({ name: 'minerva', tools }))
 
-  harness = await Harness.open(new MemoryStorage(), {
+  harness = await Harness.open(storage, {
     models,
     registry,
     settings: {
@@ -465,13 +482,16 @@ try {
       // The relay streams every model call into the chat, so a summary must not run beside the answer.
       // Compaction still runs when the context is nearly full.
       compaction: { backgroundTokens: 0 },
+      // Each save is a request to the gateway. The relay streams the answer into the chat itself.
+      progress: { partialIntervalMs: NEVER_MS, outputIntervalMs: NEVER_MS },
     },
     onReport: error => { process.stderr.write(`${describeError(error)}\n`) },
   }, context)
 
   const history = recentHistory(spec)
+  const agent = { model: { provider: PROVIDER, modelId: spec.model.alias }, instructions: spec.instructions || null }
   root = await harness.root(context, {
-    agent: { model: { provider: PROVIDER, modelId: spec.model.alias }, instructions: spec.instructions || null },
+    agent,
     async init(tx, conversationId) {
       const timestamp = Date.now()
       for (const message of history) {
@@ -483,6 +503,8 @@ try {
       }
     },
   })
+  // A resumed turn keeps its saved history, but its agent comes from the spec, as for a new one.
+  if (storage.loaded) await root.configure({ ...agent, thinkingLevel: null, extensions: null, tools: null, cwd: null }, context)
 
   const running = new Map<string, string>()
   events = await watchEvents(harness, root.id, context)
@@ -497,7 +519,8 @@ try {
   })
 
   sink.phase('Thinking')
-  const submission = await root.submit({ type: 'input', content: spec.prompt }, context)
+  // A worker that resumes the turn gets the submission the first one made.
+  const submission = await root.submit({ type: 'input', content: spec.prompt, requestId: `run:${spec.run_id}` }, context)
   const settled = await submission.wait(context)
   if (settled.status === 'unanswered') {
     const detail = typeof settled.detail === 'string' ? `: ${settled.detail}` : ''
@@ -510,7 +533,9 @@ try {
   await sink.completed(response)
   await shutdown(0)
 } catch (error) {
-  if (error instanceof RunRevoked || sink.revoked) await shutdown(0)
+  // Already stopping, for example because a commit could not be saved: the next worker resumes the turn.
+  if (exiting) await exiting
+  if (error instanceof RunRevoked || error instanceof JournalRevoked || sink.revoked) await shutdown(0)
   // Logged for operators through the sandbox logs; the gateway shows users a generic message.
   process.stderr.write(`${describeError(error)}\n`)
   await sink.failed(describeError(error)).catch(() => {})

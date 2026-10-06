@@ -4,8 +4,9 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { ROOT_CONVERSATION_ID, StorageRejected, type Storage, type StorageWrite } from '@earendil-works/pi-durable'
 import { createStorageConformance, type StorageConformanceAssertions } from '@earendil-works/pi-durable/testing'
 import {
-  FORMAT, GatewayJournal, GatewayStorage, JournalRefused, JournalRevoked, StateTooLarge, StateUnreadable, type Journal,
+  FORMAT, GatewayJournal, GatewayStorage, GatewayUnreachable, JournalRefused, JournalRevoked, StateTooLarge, StateUnreadable,
 } from '../src/storage.ts'
+import { FakeJournal } from './journal.ts'
 
 const context = BACKGROUND_CONTEXT
 const encoder = new TextEncoder()
@@ -41,29 +42,6 @@ const assertions: StorageConformanceAssertions = {
     assert.ok(error instanceof Error && error.message.includes(messageIncludes), `Expected an error including "${messageIncludes}", got ${String(error)}`)
     return true
   }),
-}
-
-/** The gateway's journal, as the backend keeps it: commits in order, the same commit again is harmless. */
-class FakeJournal implements Journal {
-  readonly commits: Uint8Array[] = []
-  writes = 0
-
-  async last(): Promise<number> {
-    return this.commits.length
-  }
-
-  async read(seq: number): Promise<Uint8Array> {
-    const body = this.commits[seq - 1]
-    if (!body) throw new JournalRefused(404)
-    return body
-  }
-
-  async write(seq: number, body: Uint8Array): Promise<void> {
-    this.writes++
-    if (seq <= this.commits.length && Buffer.from(this.commits[seq - 1]).equals(body)) return
-    if (seq !== this.commits.length + 1) throw new JournalRefused(409)
-    this.commits.push(body)
-  }
 }
 
 /** Everything a storage holds, as JSON, which is how it is saved. Ids minted but never committed are not saved. */
@@ -194,6 +172,9 @@ describe('GatewayStorage', () => {
       body({ format: FORMAT }),
       body({ format: FORMAT, writes: [{ type: 'nonsense', value: { id: 2 } }] }),
       body({ format: FORMAT, writes: [{ type: 'entry' }] }),
+      body({ format: FORMAT, writes: [{ type: 'conversation', value: {} }] }),
+      body({ format: FORMAT, writes: [{ type: 'document.retire', id: 'x' }] }),
+      body({ format: FORMAT, writes: [{ type: 'task', value: { id: 1.5 } }] }),
       body({ format: FORMAT, writes: [null] }),
       encoder.encode('{not json'),
       new Uint8Array([0xff, 0xfe]),
@@ -316,7 +297,7 @@ describe('GatewayJournal', () => {
 
   test('gives up after its retries', async () => {
     const { journal, requests } = gateway([500, 500, 500, 500, 500])
-    await assert.rejects(journal.write(1, new Uint8Array([1])), /could not be reached/)
+    await assert.rejects(journal.write(1, new Uint8Array([1])), GatewayUnreachable)
     assert.equal(requests.length, 4)
   })
 
