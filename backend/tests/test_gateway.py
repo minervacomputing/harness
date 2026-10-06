@@ -614,6 +614,55 @@ async def test_raw_asgi_refusals_are_json_errors():
     assert await answer(mcp_app, []) == expected(401, b'{"error": {"message": "Inactive run credential."}}')
 
 
+async def test_mcp_refuses_methods_other_than_post_before_authenticating(claimed, monkeypatch):
+    """The token is checked only when a request opens, and a GET would open a stream that outlives the run."""
+    run, token = claimed
+    authenticated, served = [], []
+    real_authenticate = mcp.authenticate
+
+    async def authenticate(header):
+        authenticated.append(header)
+        return await real_authenticate(header)
+
+    async def starlette(scope, receive, send):
+        served.append(scope)
+
+    monkeypatch.setattr(mcp, "authenticate", authenticate)
+    monkeypatch.setattr(mcp, "_starlette", starlette)
+
+    async def answer(method, credential=f"Bearer {token}"):
+        sent: list[dict] = []
+
+        async def receive():
+            raise AssertionError("The body was read.")
+
+        async def send(message):
+            sent.append(message)
+
+        headers = [(b"authorization", credential.encode()), (b"accept", b"text/event-stream")]
+        await mcp_app({"type": "http", "method": method, "path": "/mcp", "headers": headers}, receive, send)
+        return sent
+
+    body = b'{"error": {"message": "Send MCP requests with POST."}}'
+    headers = [
+        (b"content-type", b"application/json"),
+        (b"content-length", str(len(body)).encode()),
+        (b"allow", b"POST"),
+    ]
+    refused = [
+        {"type": "http.response.start", "status": 405, "headers": headers},
+        {"type": "http.response.body", "body": body},
+    ]
+    for method in ("GET", "DELETE", "PUT", "HEAD", "OPTIONS"):
+        assert await answer(method) == refused
+    assert await answer("GET", credential="Bearer wrong") == refused
+    assert authenticated == [] and served == []
+    await answer("POST")
+    assert len(authenticated) == 1 and [scope[RUN_SCOPE_KEY] for scope in served] == [run.id]
+    # The one method whose answer is a stream, even with JSON responses.
+    assert mcp.server.get_request_handler("subscriptions/listen") is None
+
+
 async def test_only_event_streams_are_relayed(claimed, monkeypatch):
     run, token = claimed
     error = {"error": {"message": SECRET}}

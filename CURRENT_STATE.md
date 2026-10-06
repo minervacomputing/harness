@@ -76,7 +76,7 @@ This is the first real implementation. It is not a prototype and is built to be 
 
 Run states: `queued → provisioning → running → completed | failed | cancelled | timed_out`. A restart takes a run back to `provisioning`.
 
-Stopping a run revokes its token, so every later call from the worker is rejected. A Todoist write that is already in flight may still complete.
+Stopping a run revokes its token, so every later call from the worker is rejected. A Todoist write that is already in flight may still complete. The token is checked when a request opens, so the MCP endpoint takes only POST: a GET would open a stream for server messages that stays up after the run ends, and is refused with 405.
 
 ### When a worker dies
 

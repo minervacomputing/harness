@@ -155,7 +155,7 @@ The effective permissions are computed when a run starts and stored with the run
 | Endpoint | Purpose |
 |---|---|
 | `GET /run` | Run spec: prompt, allowed conversation history, tool list, model alias, limits, local tool switches |
-| `POST /mcp` | Integration tools (MCP). Each call is authorized by the permission executor (D8) |
+| `POST /mcp` | Integration tools (MCP). Each call is authorized by the permission executor (D8). Stateless, with JSON answers; other methods get 405 before the token is checked, since a GET would open a stream that outlives the token |
 | `POST /v1/responses` or `POST /v1/chat/completions` | Model relay (OpenAI-compatible, D9); an instance serves one of the two |
 | `POST /events` | Batched, sequence-numbered events: phase, assistant text deltas, tool started/finished (allowed or denied), artifact created, completed, failed |
 | `PUT /artifacts/{name}` | Artifact upload. The backend enforces size limits and the "allow report files" permission here, on the trusted side |

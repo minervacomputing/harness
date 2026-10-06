@@ -1,6 +1,6 @@
 """Integration tools for the worker over MCP (streamable HTTP, stateless, JSON responses).
 
-Each request is authenticated by the run token before it reaches the MCP server. Tools come from the
+Each request is a POST, authenticated by the run token before it reaches the MCP server. Tools come from the
 run's snapshot, and every call goes through the permission executor. Tool events are recorded here, on
 the trusted side, rather than trusting the worker to report them.
 """
@@ -224,6 +224,12 @@ _starlette = server.streamable_http_app(
 async def mcp_app(scope: Scope, receive: Receive, send: Send) -> None:
     if scope["type"] == "lifespan":
         await _starlette(scope, receive, send)
+        return
+    # The token is checked only when a request opens, and a GET would open a stream for server messages that stays up
+    # after the run ends. A stateless server has no session to DELETE either. POSTs are answered with JSON: the server
+    # offers no subscriptions/listen, the one method whose answer is a stream.
+    if scope["method"] != "POST":
+        await send_error(send, 405, "Send MCP requests with POST.", headers=[(b"allow", b"POST")])
         return
     headers = {key.decode("latin-1"): value.decode("latin-1") for key, value in scope.get("headers", [])}
     run = await authenticate(headers.get("authorization"))
