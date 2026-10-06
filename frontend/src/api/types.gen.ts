@@ -56,10 +56,6 @@ export type ActionOut = {
  */
 export type AgentIn = {
     /**
-     * Code Mode
-     */
-    code_mode?: boolean;
-    /**
      * Connection Ids
      */
     connection_ids?: Array<string>;
@@ -81,10 +77,6 @@ export type AgentOut = {
      * Can Edit
      */
     can_edit: boolean;
-    /**
-     * Code Mode
-     */
-    code_mode: boolean;
     /**
      * Connection Ids
      */

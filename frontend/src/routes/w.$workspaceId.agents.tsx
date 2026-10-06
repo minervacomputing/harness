@@ -135,7 +135,6 @@ function AgentForm({ workspaceId, agent, connections, onDone }: {
       name: agent?.name ?? '',
       instructions: agent?.instructions ?? '',
       connection_ids: agent?.connection_ids ?? [],
-      code_mode: agent?.code_mode ?? false,
     },
     onSubmit: async ({ value }) => {
       if (agent) await update.mutateAsync({ path: { ...path, agent_id: agent.id }, body: value })
@@ -188,24 +187,6 @@ function AgentForm({ workspaceId, agent, connections, onDone }: {
               <Link to="/w/$workspaceId/connections" params={{ workspaceId }} className="underline underline-offset-4">Connections</Link>.
             </p>
           </fieldset>
-        )}
-      </form.Field>
-      <form.Field name="code_mode">
-        {field => (
-          <label className="flex cursor-pointer items-start gap-3">
-            <Checkbox
-              className="mt-0.5"
-              checked={field.state.value}
-              onCheckedChange={checked => field.handleChange(checked === true)}
-            />
-            <span className="grid gap-1">
-              <span className="text-[13px] font-medium">Code mode</span>
-              <span className="text-xs text-muted-foreground">
-                Lets the agent write a short script that calls several tools in one step.
-                Each call is still checked against what its connection allows.
-              </span>
-            </span>
-          </label>
         )}
       </form.Field>
       {error && <ErrorNote>{errorMessage(error)}</ErrorNote>}

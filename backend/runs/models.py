@@ -38,7 +38,6 @@ class Run(TenantModel):
     tools = models.JSONField()
     instructions = models.TextField(blank=True)
     model_alias = models.CharField(max_length=64)
-    code_mode = models.BooleanField(default=False)
 
     token_hash = models.CharField(max_length=64, null=True, blank=True, unique=True)
     deadline = models.DateTimeField(null=True, blank=True)

@@ -37,6 +37,8 @@ const SCRIPT_CALLS_OPEN = 100
 const SCRIPT_ARGS_BYTES = 256 * 1024
 // Calls the worker refuses itself, before the script is stopped.
 const SCRIPT_REFUSALS = 100
+// The gateway relay refuses a model request that offers more tools than this.
+const MODEL_TOOLS_MAX = 128
 
 const context = BACKGROUND_CONTEXT
 
@@ -414,7 +416,8 @@ try {
   const listed = await client.listTools()
   const gateway = gatewayCalls()
   const tools = listed.map(tool => gatewayTool(client, tool, spec, gateway))
-  if (spec.code_mode) tools.push(scriptRunner(client, listed, spec, gateway))
+  // Scripts call the gateway's tools, so a run without any gets none; one with a full list keeps its direct tools.
+  if (listed.length && listed.length < MODEL_TOOLS_MAX) tools.push(scriptRunner(client, listed, spec, gateway))
 
   const registry = createRegistry()
   registry.install(defineExtension({ name: 'minerva', tools }))

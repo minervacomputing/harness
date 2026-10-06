@@ -87,11 +87,6 @@
       },
       "AgentIn": {
         "properties": {
-          "code_mode": {
-            "default": false,
-            "title": "Code Mode",
-            "type": "boolean"
-          },
           "connection_ids": {
             "default": [],
             "items": {
@@ -127,10 +122,6 @@
             "title": "Can Edit",
             "type": "boolean"
           },
-          "code_mode": {
-            "title": "Code Mode",
-            "type": "boolean"
-          },
           "connection_ids": {
             "items": {
               "format": "uuid",
@@ -163,7 +154,6 @@
           "name",
           "instructions",
           "connection_ids",
-          "code_mode",
           "can_edit",
           "created_at"
         ],

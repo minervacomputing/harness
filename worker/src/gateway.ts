@@ -18,7 +18,6 @@ export const runSpec = z.object({
   history: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.string() })),
   instructions: z.string(),
   tools: z.array(z.object({ name: z.string(), title: z.string() })),
-  code_mode: z.boolean().default(false),
   model: z.object({
     alias: z.string(),
     api: z.enum(['responses', 'chat']),

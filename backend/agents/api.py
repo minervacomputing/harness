@@ -21,7 +21,6 @@ class AgentOut(Schema):
     name: str
     instructions: str
     connection_ids: list[UUID]
-    code_mode: bool
     can_edit: bool
     created_at: datetime
 
@@ -30,7 +29,6 @@ class AgentIn(Schema):
     name: Annotated[str, Field(min_length=1, max_length=120)]
     instructions: Annotated[str, Field(max_length=8000)] = ""
     connection_ids: Annotated[list[UUID], Field(max_length=20)] = []
-    code_mode: bool = False
 
 
 def _out(request, agent: Agent) -> dict:
@@ -39,7 +37,6 @@ def _out(request, agent: Agent) -> dict:
         "name": agent.name,
         "instructions": agent.instructions,
         "connection_ids": [c.id for c in agent.connections.all()],
-        "code_mode": agent.code_mode,
         "can_edit": agent.owner_id == request.user.id or request.membership.is_admin,
         "created_at": agent.created_at,
     }
@@ -77,7 +74,6 @@ def create_agent(request, workspace_id: UUID, payload: AgentIn):
             owner=request.user,
             name=payload.name,
             instructions=payload.instructions,
-            code_mode=payload.code_mode,
         )
         agent.connections.set(connections)
     return Status(201, _out(request, agent))
@@ -98,7 +94,6 @@ def update_agent(request, workspace_id: UUID, agent_id: UUID, payload: AgentIn):
         connections = _connections(request, payload.connection_ids, before)
         agent.name = payload.name
         agent.instructions = payload.instructions
-        agent.code_mode = payload.code_mode
         agent.save()
         agent.connections.set(connections)
         if before != {c.id for c in connections}:

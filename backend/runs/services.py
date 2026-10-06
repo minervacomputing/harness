@@ -117,7 +117,6 @@ def start_run(*, conversation: Conversation, user_id: UUID, content: str) -> tup
                     tools=[asdict(ref) for ref in _tools_for(agent, user_id, policy)],
                     instructions=_instructions(agent),
                     model_alias=agent.model_alias,
-                    code_mode=agent.code_mode,
                     max_writes=cfg.run_max_writes,
                     max_model_calls=cfg.run_max_model_calls,
                     max_tool_calls=cfg.run_max_tool_calls,
