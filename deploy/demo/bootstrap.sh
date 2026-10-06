@@ -56,11 +56,14 @@ if [[ ! -f /etc/docker/daemon.json ]]; then
 EOF
 fi
 runsc install
+# Workers use this one: without --host-uds=open, gVisor refuses connections to the gateway socket
+# that the host mounts into them.
+runsc install --runtime=runsc-minerva -- --host-uds=open
 systemctl enable docker
 systemctl restart docker
 # No grep -q after a pipe: it exits early, the writer gets SIGPIPE, and pipefail fails the check.
-docker info --format '{{json .Runtimes}}' | grep runsc >/dev/null || { echo "runsc is not registered with Docker." >&2; exit 1; }
-docker run --rm --runtime=runsc hello-world >/dev/null && echo "gVisor runtime works."
+docker info --format '{{json .Runtimes}}' | grep runsc-minerva >/dev/null || { echo "runsc-minerva is not registered with Docker." >&2; exit 1; }
+docker run --rm --runtime=runsc-minerva hello-world >/dev/null && echo "gVisor runtime works."
 
 echo "== Firewall: SSH only"
 ufw default deny incoming

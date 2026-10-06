@@ -186,12 +186,13 @@ class SandboxProvider(Protocol):
 |---|---|
 | `local-process` | Development only; no isolation; refuses to start unless explicitly enabled |
 | `macos-srt` | Mac development via the Anthropic Sandbox Runtime `srt` CLI (Seatbelt + proxy), as in the prototype |
-| `container` | Self-hosting on Linux: Docker or Podman, optionally with gVisor |
+| `container` | Self-hosting on Linux: Docker or Podman, optionally with gVisor. Workers have no network; a read-only volume holds a Unix socket to the gateway |
 | `kubernetes` | Cloud and OpenShift: a Pod or Job per run, a runtime class for gVisor or Kata (GKE Sandbox is gVisor; OpenShift sandboxed containers are Kata), and NetworkPolicy/EgressFirewall allowing only the gateway |
 
 **Consequences.**
 
-- The prototype's sandbox probe becomes a **conformance test suite** every provider must pass: no provider credentials, write access limited to its workspace, gateway reachable, internet and other local services blocked (IPv4, IPv6, DNS, cloud metadata).
+- Every provider gives a worker exactly one channel, to the gateway, and lets it reach no other worker. The provider decides the form of that channel and passes it to the worker as `GATEWAY_URL`: an http(s) URL, or `unix:<path>` for a socket.
+- The prototype's sandbox probe becomes a **conformance test suite** every provider must pass: no provider credentials, write access limited to its workspace, gateway reachable, internet, other local services and other workers blocked (IPv4, IPv6, DNS, cloud metadata).
 - The cloud requires gVisor or Kata from the first beta, because strangers' agent runs share infrastructure.
 - Self-hosting with containers needs care: giving the backend the Docker socket is root-equivalent on the host. Use a small separate sandbox runner process with a narrow API, or rootless Podman.
 
@@ -318,12 +319,12 @@ Where the first implementation (2026-09-29) differs from the decisions above. Ea
 | D6 events | The worker sends only `phase`, `completed`, and `failed`. Text deltas come from the gateway's model relay, which parses the upstream stream. | The relay already reads the upstream stream, so the worker does not repeat it. This does not make the text trustworthy: the worker chooses what it sends to the model and reports the final answer itself. All agent text is untrusted, so the chat UI never loads remote images from it. |
 | D6 artifacts | `PUT /artifacts` is not built yet. | Report files come later. |
 | D7 providers | `container` and `local-process` exist. `macos-srt` and `kubernetes` do not. | Docker is enough locally and for self-hosting. The cloud provider comes with deployment. |
-| D7 network | All workers share the internal `minerva-sandbox` network. | Acceptable locally. Use a network per run before strangers share a host. |
+| D7 network | Container workers have no network. A read-only volume holds a Unix socket, and a socat container forwards each connection on it to the gateway port; a loopback bridge in the worker keeps its HTTP clients unchanged. Under gVisor this needs a runtime registered with `--host-uds=open`. | A network shared by workers let them reach each other, and a network per run costs a bridge and an address range per turn. With no network there is nothing to share, under runc and gVisor alike. |
 | D8 OAuth | Plain httpx instead of Authlib. Todoist clients are registered automatically through dynamic client registration unless a client ID and secret are configured. | The flow is small, and registration removes a setup step. |
 | D8 Todoist | Our own httpx client for Todoist API v1, with responses validated by Pydantic. | No SDK dependency, and full control over errors and pagination. |
 | D8, D13 audit | No audit table yet. Run events record every tool call and its decision. | Deferred until teams need an audit viewer. |
 | D11 tasks | No task queue yet. The supervisor also does the background work: deadlines, reconciliation, and orphan sandbox cleanup. | No other background job exists yet. |
-| D12 packaging | Local development only: Compose for Postgres and the sandbox network, and honcho for the process roles. | Production images and manifests come with the cloud alpha. |
+| D12 packaging | Local development only: Compose for Postgres and the gateway socket relay, and honcho for the process roles. | Production images and manifests come with the cloud alpha. |
 
 Runtime details:
 

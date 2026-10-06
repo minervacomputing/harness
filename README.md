@@ -96,7 +96,7 @@ make dev
 
 Open <http://localhost:5173> and sign in as `ada@example.com` with the password `password`.
 
-`make setup` starts Postgres and the gateway relay (`compose.yaml`), installs dependencies, runs migrations, seeds two accounts (`ada@` and `grace@example.com`; this needs `MINERVA_DEBUG=true`, and `make seed` resets them) and builds the worker image `minerva-worker:dev`.
+`make setup` starts Postgres and the gateway socket relay (`compose.yaml`), installs dependencies, runs migrations, seeds two accounts (`ada@` and `grace@example.com`; this needs `MINERVA_DEBUG=true`, and `make seed` resets them) and builds the worker image `minerva-worker:dev`.
 
 `make dev` starts four processes:
 
@@ -134,16 +134,16 @@ The fake model calls a list-projects tool when tools are offered, then answers w
 
 ### Sandbox
 
-Every agent turn runs in a hardened container on the internal `minerva-sandbox` network, which reaches only the gateway, through the `gateway-relay` container. To check isolation while `make dev` is running:
+Every agent turn runs in a hardened container with no network. Its only way out is a Unix socket, mounted read-only, that the `gateway-socket` container forwards to the gateway. To check isolation while `make dev` is running:
 
 ```sh
 make sandbox-check
 ```
 
-It starts the worker image with a probe and verifies 11 properties, including a non-root user, no secrets in the environment, a read-only filesystem, and blocked internet, DNS, cloud metadata, host and database access.
+It starts the worker image with a probe and verifies 14 properties, including a non-root user, no secrets in the environment, a read-only filesystem, only a loopback interface, and blocked internet, DNS, cloud metadata, host, database and other-worker access.
 
 - **Linux:** the relay reaches the host through the Docker bridge, so set `MINERVA_GATEWAY_BIND=172.17.0.1`.
-- **gVisor:** set `MINERVA_SANDBOX_RUNTIME=runsc`.
+- **gVisor:** register a runtime that lets workers connect to the socket, `sudo runsc install --runtime=runsc-minerva -- --host-uds=open`, restart Docker, and set `MINERVA_SANDBOX_RUNTIME=runsc-minerva`.
 
 ### Development
 
@@ -158,7 +158,7 @@ backend/     Django project (web, gateway and supervisor roles) and the connecto
 worker/      TypeScript worker image around pi-durable
 frontend/    React app (Vite, TanStack, assistant-ui)
 docs/        Connector setup and images
-compose.yaml Postgres and the sandbox network for development
+compose.yaml Postgres and the gateway socket relay for development
 ```
 
 ## Status

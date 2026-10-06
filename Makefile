@@ -7,7 +7,7 @@ setup: services
 	$(MAKE) migrate seed worker-image
 
 services:
-	docker compose up -d --wait
+	docker compose up -d --wait --remove-orphans
 
 migrate:
 	cd backend && uv run python manage.py migrate

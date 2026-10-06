@@ -1,13 +1,15 @@
 import { z } from 'zod'
+import { gatewayBaseUrl, isSocketUrl } from './transport.ts'
 
 /** The only process environment the backend provides. Everything else comes from the gateway. */
 export const env = z.object({
-  GATEWAY_URL: z.url(),
+  // An http(s) URL, or unix:<path> for a worker without a network (see transport.ts).
+  GATEWAY_URL: z.union([z.url({ protocol: /^https?$/ }), z.string().refine(isSocketUrl)]),
   RUN_TOKEN: z.string().min(20),
   RUN_ID: z.string().min(1),
 }).parse(process.env)
 
-export const gatewayUrl = env.GATEWAY_URL.replace(/\/$/, '')
+export const gatewayUrl = await gatewayBaseUrl(env.GATEWAY_URL)
 export const authHeader = `Bearer ${env.RUN_TOKEN}`
 
 export class RunRevoked extends Error {}

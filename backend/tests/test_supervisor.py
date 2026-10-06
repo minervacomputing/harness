@@ -22,6 +22,7 @@ pytestmark = pytest.mark.django_db
 
 class FakeProvider:
     name = "fake"
+    gateway_url = "unix:/run/fake/gateway.sock"
 
     def __init__(self, sandboxes: list[SandboxInfo] | None = None) -> None:
         self.items = sandboxes or []
@@ -156,6 +157,8 @@ def test_a_dead_worker_is_replaced_by_one_that_resumes_the_run(dead):
     [started] = provider.started
     assert started["attempt"] == 2
     assert started["env"]["RUN_ID"] == str(run.id)
+    # The provider says how its workers reach the gateway.
+    assert started["env"]["GATEWAY_URL"] == provider.gateway_url
     assert provider.stopped == [{"id": "first"}]
     stored = Run.unscoped.get(pk=run.id)
     assert (stored.attempt, stored.status, stored.worker_seq) == (2, Run.Status.PROVISIONING, 0)

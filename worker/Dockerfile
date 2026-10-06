@@ -1,5 +1,5 @@
 # Minerva run worker. Built as minerva-worker:<tag> and started by the supervisor's container provider
-# with a read-only root filesystem, no capabilities, and an internal-only network.
+# with a read-only root filesystem, no capabilities, and no network: only a Unix socket to the gateway.
 FROM node:24-slim AS deps
 WORKDIR /app
 RUN corepack enable

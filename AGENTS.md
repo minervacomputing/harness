@@ -34,6 +34,8 @@ Configuration is read from the process environment and `.env` at the repository 
 | Connector clients and keys (`MINERVA_<APP>_CLIENT_ID`, …) | empty | Unset hides that connector (Todoist registers its own client). Each is listed in `.env.example`; setup is in [docs/connectors.md](docs/connectors.md). |
 | `MINERVA_SANDBOX_PROVIDER` | `container` | `local-process` has no isolation; avoid it |
 | `MINERVA_SANDBOX_IMAGE` | `minerva-worker:dev` | Built by `make worker-image` |
+| `MINERVA_SANDBOX_GATEWAY_VOLUME` | `minerva-gateway-socket` | Holds the workers' socket to the gateway; created by `make services` |
+| `MINERVA_SANDBOX_RUNTIME` | empty | gVisor needs a runtime registered with `--host-uds=open`, such as `runsc-minerva` |
 | `MINERVA_GATEWAY_BIND` | `127.0.0.1` | Linux only: set to `172.17.0.1` |
 
 ## Starting the app
@@ -45,7 +47,7 @@ make setup   # first time only: services, dependencies, migrations, seed account
 make dev     # web :8000, gateway :8001, supervisor, frontend :5173
 ```
 
-Open <http://localhost:5173>. The processes are defined in `Procfile`. `make dev` needs the Compose services (Postgres and the gateway relay); start them with `make services` if they are not running.
+Open <http://localhost:5173>. The processes are defined in `Procfile`. `make dev` needs the Compose services (Postgres and the gateway socket relay); start them with `make services` if they are not running.
 
 **Overriding a value for one run:** `VAR=x make dev` has no effect on a variable that `.env` sets. Run honcho with an empty env file instead. The backend still reads `.env` itself, so only the variables you pass change. `.env` no longer feeds the Procfile, so pass `MINERVA_GATEWAY_BIND` too if you rely on it (Linux).
 

@@ -18,23 +18,33 @@ services:
       timeout: 3s
       retries: 30
 
-  # Workers run on the internal `minerva-sandbox` network, which has no route to the
-  # internet or the host. This relay is the only member that can reach the host, and it
-  # forwards exactly one port: the gateway running on the host.
-  gateway-relay:
+  # Workers have no network. Their one way out is this relay's Unix socket, in a volume they mount
+  # read-only, and it forwards to one port: the gateway running on the host.
+  gateway-socket:
     image: alpine/socat:1.8.0.3
-    command: TCP-LISTEN:8001,fork,reuseaddr TCP:host.docker.internal:8001
+    command:
+      - UNIX-LISTEN:/run/minerva/gateway/gateway.sock,fork,unlink-early,user=1000,group=1000,mode=600,max-children=128
+      - TCP:host.docker.internal:8001
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    networks:
-      default: {}
-      sandbox:
-        aliases: [gateway]
-
-networks:
-  sandbox:
-    name: minerva-sandbox
-    internal: true
+    volumes:
+      - gateway-socket:/run/minerva/gateway
+    read_only: true
+    cap_drop: [ALL]
+    # To hand the socket to the workers' user, then set its mode.
+    cap_add: [CHOWN, FOWNER]
+    security_opt: [no-new-privileges]
+    mem_limit: 128m
+    pids_limit: 256
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /run/minerva/gateway/gateway.sock"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
 
 volumes:
   postgres-data:
+  # Created here, under a fixed name, so the supervisor finds it. It holds only the gateway socket.
+  gateway-socket:
+    name: minerva-gateway-socket

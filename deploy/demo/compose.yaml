@@ -25,12 +25,10 @@ x-backend: &backend
     MINERVA_CSRF_TRUSTED_ORIGINS: https://demo.minervacomputing.com
     MINERVA_SANDBOX_PROVIDER: container
     MINERVA_SANDBOX_IMAGE: minerva-worker:demo
-    MINERVA_SANDBOX_NETWORK: minerva-sandbox
-    MINERVA_SANDBOX_RUNTIME: runsc
-    # An address, not the `gateway` name: under gVisor, workers cannot use Docker's embedded DNS
-    # (google/gvisor#7469). The relay holds this fixed address on the sandbox network.
-    MINERVA_SANDBOX_GATEWAY_URL: http://10.231.0.10:8001
-    MINERVA_GATEWAY_ALLOWED_HOSTS: 10.231.0.10,gateway,localhost
+    # runsc with --host-uds=open, so that workers can connect to the gateway socket (bootstrap.sh).
+    MINERVA_SANDBOX_RUNTIME: runsc-minerva
+    # Workers reach the gateway through a loopback port inside their own container.
+    MINERVA_GATEWAY_ALLOWED_HOSTS: 127.0.0.1,gateway,localhost
     MINERVA_MAX_CONCURRENT_RUNS: "6"
     MINERVA_DEMO: "true"
     # Visitors are told the demo is busy before runs would queue behind the six workers.
@@ -110,11 +108,6 @@ services:
       - --port=8001
       - --no-server-header
       - --timeout-graceful-shutdown=5
-    networks:
-      default:
-        # The relay forwards here. A distinct name, because the relay itself answers to `gateway`
-        # on the sandbox network.
-        aliases: [gateway-upstream]
 
   # Starts and removes worker containers through the host's Docker daemon. Access to the socket is
   # root-equivalent on the host; this container holds it only through the socket's group.
@@ -126,20 +119,42 @@ services:
     volumes:
       - /opt/minerva/secrets:/run/secrets/minerva:ro
       - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      gateway-socket:
+        condition: service_healthy
 
-  # Workers run on the internal `minerva-sandbox` network, which has no route to the internet or the
-  # host. This relay is its only other member, and it forwards exactly one port: the gateway.
-  gateway-relay:
+  # Workers have no network. Each mounts this volume read-only, and the socket in it is their only
+  # way out: every connection to it is forwarded to the gateway port, and nowhere else.
+  gateway-socket:
     image: alpine/socat:1.8.0.3
-    command: TCP-LISTEN:8001,fork,reuseaddr TCP:gateway-upstream:8001
+    command:
+      - UNIX-LISTEN:/run/minerva/gateway/gateway.sock,fork,unlink-early,user=1000,group=1000,mode=600,max-children=128
+      - TCP:gateway:8001
+    volumes:
+      - gateway-socket:/run/minerva/gateway
+    read_only: true
+    cap_drop: [ALL]
+    # To hand the socket to the workers' user, then set its mode.
+    cap_add: [CHOWN, FOWNER]
+    security_opt: [no-new-privileges]
+    mem_limit: 128m
+    pids_limit: 256
     restart: unless-stopped
     logging: *logging
     depends_on: [gateway]
-    networks:
-      default: {}
-      sandbox:
-        ipv4_address: 10.231.0.10
-        aliases: [gateway]
+    # The socket exists and the gateway answers upstream. The check cannot use the socket itself: only the
+    # workers' user may connect to it.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          test -S /run/minerva/gateway/gateway.sock &&
+          printf 'GET /run HTTP/1.0\r\nHost: gateway\r\n\r\n' | socat -T5 - TCP:gateway:8001 | grep -q '^HTTP/1.1 401'
+      interval: 5s
+      timeout: 3s
+      retries: 12
 
   # Deletes visitors' idle chats and adds newsletter opt-ins to Bento every 15 minutes.
   cleanup:
@@ -169,18 +184,8 @@ services:
     logging: *logging
     depends_on: [proxy]
 
-networks:
-  default: {}
-  # Created here, under a fixed name, so the supervisor finds it on the host daemon.
-  sandbox:
-    name: minerva-sandbox
-    internal: true
-    ipam:
-      config:
-        - subnet: 10.231.0.0/24
-          # Workers get addresses from the upper half; the relay's fixed address stays outside it.
-          ip_range: 10.231.0.128/25
-          gateway: 10.231.0.1
-
 volumes:
   postgres-data:
+  # Under a fixed name, so the supervisor finds it on the host daemon.
+  gateway-socket:
+    name: minerva-gateway-socket

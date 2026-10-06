@@ -57,7 +57,7 @@ class Supervisor:
 
     def _start(self, run: Run, token: str) -> None:
         """Starts the worker of the run's current attempt."""
-        env = {"GATEWAY_URL": self.cfg.sandbox_gateway_url, "RUN_TOKEN": token, "RUN_ID": str(run.id)}
+        env = {"GATEWAY_URL": self.provider.gateway_url, "RUN_TOKEN": token, "RUN_ID": str(run.id)}
         try:
             handle = self.provider.start(run.id, self.cfg.sandbox_image, env, Limits(), attempt=run.attempt)
         except SandboxError as error:

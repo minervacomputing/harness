@@ -101,11 +101,14 @@ class Config(BaseSettings):
 
     sandbox_provider: Literal["container", "local-process"] = "container"
     sandbox_image: str = "minerva-worker:dev"
-    sandbox_network: str = "minerva-sandbox"
-    # Optional OCI runtime for workers, e.g. "runsc" for gVisor.
+    # The Docker volume holding the gateway socket, the one thing a container worker can reach. The socket relay
+    # (compose.yaml) creates it; workers mount it read-only and have no network.
+    sandbox_gateway_volume: Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")] = (
+        "minerva-gateway-socket"
+    )
+    # Optional OCI runtime for workers. Under gVisor it must allow connecting to host sockets: `runsc install
+    # --runtime=runsc-minerva -- --host-uds=open`, then "runsc-minerva" here.
     sandbox_runtime: str | None = None
-    # The gateway URL as seen from inside a sandbox.
-    sandbox_gateway_url: str = "http://gateway:8001"
     sandbox_allow_unisolated: bool = False
     max_concurrent_runs: int = 4
 

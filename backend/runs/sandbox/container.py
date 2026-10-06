@@ -1,18 +1,24 @@
-"""Docker/Podman provider. Workers join an internal network whose only other member is the gateway
-(or a relay to it), run as an unprivileged user on a read-only root filesystem, and get no capabilities.
+"""Docker/Podman provider. Workers have no network: their only way out is the gateway socket, in a volume they
+mount read-only. They run as an unprivileged user on a read-only root filesystem, and get no capabilities.
 
-Set `MINERVA_SANDBOX_RUNTIME=runsc` to run workers under gVisor where it is installed."""
+To run workers under gVisor, register a runtime that may connect to host sockets (`runsc install
+--runtime=runsc-minerva -- --host-uds=open`) and set `MINERVA_SANDBOX_RUNTIME=runsc-minerva`. That runtime lets a
+worker connect to any host socket it can see, so the gateway volume must hold nothing else."""
 
+import contextlib
 from datetime import UTC, datetime
 from uuid import UUID
 
 import docker
 from docker.errors import DockerException, NotFound
+from docker.types import Mount
 
 from runs.sandbox.base import Limits, SandboxError, SandboxInfo, SandboxStatus
 
 LABEL = "minerva.run"
 ATTEMPT_LABEL = "minerva.attempt"
+GATEWAY_DIRECTORY = "/run/minerva/gateway"
+GATEWAY_URL = f"unix:{GATEWAY_DIRECTORY}/gateway.sock"
 
 
 def _parse_time(value: str | None) -> datetime | None:
@@ -28,9 +34,10 @@ def _parse_time(value: str | None) -> datetime | None:
 
 class ContainerProvider:
     name = "container"
+    gateway_url = GATEWAY_URL
 
-    def __init__(self, *, network: str, runtime: str | None = None) -> None:
-        self.network = network
+    def __init__(self, *, gateway_volume: str, runtime: str | None = None) -> None:
+        self.gateway_volume = gateway_volume
         self.runtime = runtime
         self._client: docker.DockerClient | None = None
 
@@ -53,22 +60,19 @@ class ContainerProvider:
         *,
         attempt: int = 1,
     ) -> dict:
+        self._check_gateway_volume()
         try:
-            network = self.client.networks.get(self.network)
-        except NotFound as error:
-            raise SandboxError(f"Sandbox network {self.network!r} does not exist.") from error
-        if not network.attrs.get("Internal"):
-            raise SandboxError(f"Sandbox network {self.network!r} must be internal (no external route).")
-        try:
-            container = self.client.containers.run(
+            container = self.client.containers.create(
                 image,
                 command=command,
                 entrypoint=["node"] if command else None,
-                detach=True,
                 name=f"minerva-run-{run_id}-{attempt}",
                 labels={LABEL: str(run_id), ATTEMPT_LABEL: str(attempt)},
-                environment=env,
-                network=self.network,
+                # The worker reaches the gateway the one way this provider offers, whatever the caller passed.
+                environment={**env, "GATEWAY_URL": GATEWAY_URL},
+                network_mode="none",
+                # The directory, not the socket file: a relay that restarts makes a new socket, which workers see.
+                mounts=[Mount(GATEWAY_DIRECTORY, self.gateway_volume, read_only=True, no_copy=True)],
                 runtime=self.runtime,
                 user="1000:1000",
                 read_only=True,
@@ -88,8 +92,47 @@ class ContainerProvider:
                 auto_remove=False,
             )
         except DockerException as error:
+            raise SandboxError("The worker container could not be created.") from error
+        handle = {"container_id": container.id}
+        try:
+            self._check_isolation(container)
+            container.start()
+        except (DockerException, SandboxError) as error:
+            # A container left behind is removed later by the supervisor's sweep of untracked sandboxes.
+            with contextlib.suppress(SandboxError):
+                self.stop(handle)
+            if isinstance(error, SandboxError):
+                raise
             raise SandboxError("The worker container could not start.") from error
-        return {"container_id": container.id}
+        return handle
+
+    def _check_gateway_volume(self) -> None:
+        try:
+            volume = self.client.volumes.get(self.gateway_volume)
+        except NotFound as error:
+            raise SandboxError(
+                f"The gateway socket volume {self.gateway_volume!r} does not exist."
+            ) from error
+        except DockerException as error:
+            raise SandboxError("The container runtime is not reachable.") from error
+        # A volume driver could put anything behind the mount; a local volume holds what the relay put there.
+        if volume.attrs.get("Driver") != "local":
+            raise SandboxError(
+                f"The gateway socket volume {self.gateway_volume!r} must use the local driver."
+            )
+
+    def _check_isolation(self, container) -> None:
+        """Refuses, before it starts, a worker that Docker created with a network or another mount than asked for."""
+        attrs = container.attrs
+        mounts = [
+            (mount.get("Type"), mount.get("Name"), mount.get("Destination"), mount.get("RW"))
+            for mount in attrs.get("Mounts") or []
+        ]
+        isolated = attrs.get("HostConfig", {}).get("NetworkMode") == "none" and mounts == [
+            ("volume", self.gateway_volume, GATEWAY_DIRECTORY, False)
+        ]
+        if not isolated:
+            raise SandboxError("The worker container did not start isolated.")
 
     def stop(self, handle: dict) -> None:
         try:

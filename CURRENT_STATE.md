@@ -184,20 +184,24 @@ The `container` provider (Docker or Podman) runs each worker with:
 - A 256 MB writable `/workspace` and a 64 MB `/tmp`, which does not allow executables.
 - Non-root user 1000, all capabilities dropped, `no-new-privileges`, and no shared IPC.
 - 1 GB memory, 1 CPU, and 256 processes.
-- The internal `minerva-sandbox` network, whose only exit is a relay to the gateway port. The provider refuses to start if that network is not internal.
-- Optional gVisor (`MINERVA_SANDBOX_RUNTIME=runsc`).
+- No network (`network_mode: none`): only a loopback interface, which no other worker shares.
+- One way out: the `minerva-gateway-socket` volume, mounted read-only at `/run/minerva/gateway`. It holds a Unix socket owned by the worker's user, and the `gateway-socket` container (socat) forwards each connection to it to the gateway port. Inside the worker, a bridge listens on an ephemeral loopback port and pipes each connection to the socket, so the worker's HTTP clients work unchanged; it never reconnects or replays. The provider creates the container, checks that Docker reports no network and exactly that mount, read-only, and only then starts it.
+- Optional gVisor. It refuses connections to a socket the host mounts in unless started with `--host-uds=open`, so register a runtime for that (`runsc install --runtime=runsc-minerva -- --host-uds=open`) and set `MINERVA_SANDBOX_RUNTIME=runsc-minerva`. The demo does.
 
-`make sandbox-check` runs the conformance probe inside the real image. On 2026-10-06 all 11 checks passed:
+`make sandbox-check` runs the conformance probe inside the real image, next to a second worker that listens on an abstract socket and on a loopback port. On 2026-10-06 all 14 checks passed locally with runc:
 
 - Non-root user.
 - Only the run token in the environment.
 - Workspace writable, root filesystem read-only.
-- Gateway reachable.
-- Blocked: IPv4 internet, IPv6 internet, cloud metadata, public DNS, host, and database.
+- Gateway reachable through the socket, and the socket's directory read-only (no new files or sockets, no unlinking, renaming or chmod of the socket).
+- Only a loopback interface.
+- Blocked: IPv4 internet, IPv6 internet, cloud metadata, public DNS, host, database, and the other worker.
+
+Restarting `gateway-socket` replaces the socket; running workers connect to the new one, and requests open at that moment fail like any dropped connection.
+
+**Known weakness:** workers share the relay, which serves at most 128 connections at once and drops none for being idle (a model answer or tool call can be quiet for minutes). A compromised worker could hold every slot open without a token, and other workers could not reach the gateway until it is stopped. This affects availability only. A relay per run, or limits per connecting worker, would remove it.
 
 The `local-process` provider exists for development. It has no isolation and refuses to start unless explicitly enabled.
-
-**Known weakness:** workers share one network, so two concurrent workers can reach each other.
 
 ## 6. Where state lives
 
@@ -226,7 +230,7 @@ Other state:
 | Backend tests (`pytest`), including cross-workspace access and the connector contract; needs Postgres running (`make services`) | 837 pass (2026-10-06) |
 | Worker tests, including pi-durable's storage conformance suite run on the journal adapter (against a fake gateway), and resuming a turn after each kind of interruption | 73 pass (2026-10-06) |
 | Ruff lint and format; worker and frontend typechecks; production build | Pass |
-| Sandbox conformance | 11/11 |
+| Sandbox conformance | 14/14 (2026-10-06, runc) |
 | End-to-end run in the container with the fake model | Pass: tool call, streamed text, stored answer, usage recorded, container removed |
 | Worker killed mid-turn (`docker kill`), in the container with the fake model (2026-10-06) | Pass: killed while streaming its answer after a read, the turn resumed as attempt 2 without running the read again and showed one tool card and one answer; killed during a script, the script did not run again and the model was told; killed three times, the run failed after its second restart. Saved state deleted and containers removed each time |
 | Browser walkthrough | Pass: sign-up, email verification, chat streaming, tool-call card, connection status and reconnect prompt, agent create and validation, two-factor setup with re-authentication |
@@ -245,7 +249,6 @@ Roughly in priority order:
 1. **Live check:** a real model key and a real Todoist account.
 2. **Cloud alpha:**
    - A production backend image with the web, gateway, and supervisor roles.
-   - A worker network per run.
    - A deployment target with gVisor or Kata.
    - PlanetScale Postgres.
    - SMTP email.

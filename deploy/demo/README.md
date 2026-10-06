@@ -5,7 +5,8 @@ The public demo at <https://demo.minervacomputing.com> runs on one Debian 13 VPS
 ```text
 Cloudflare ─ tunnel ─ cloudflared ─ proxy (Caddy: SPA, /api → web:8000)
                                      web, gateway, supervisor, cleanup ─ postgres
-supervisor ─ /var/run/docker.sock ─ worker containers (gVisor) on minerva-sandbox ─ gateway-relay ─ gateway:8001
+supervisor ─ /var/run/docker.sock ─ worker containers (gVisor, no network)
+worker ─ gateway.sock (read-only volume) ─ gateway-socket ─ gateway:8001
 ```
 
 | File | Purpose |
@@ -52,7 +53,7 @@ ssh root@$DEMO_HOST bash bootstrap.sh
 deploy/demo/deploy.sh
 ```
 
-`bootstrap.sh` can be run again safely. It checks gVisor by running `hello-world` under `runsc`.
+`bootstrap.sh` can be run again safely. It registers gVisor twice: `runsc`, and `runsc-minerva`, which workers use and which adds `--host-uds=open` so that they can connect to the gateway socket. It checks the latter by running `hello-world` under it.
 
 Then create the demo workspace and its owner, sign in as the owner at `/demo` with an email code, connect the apps, set what the agent may do under Connections, and publish that to visitors:
 

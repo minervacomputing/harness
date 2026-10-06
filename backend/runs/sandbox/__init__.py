@@ -12,7 +12,7 @@ def provider() -> SandboxProvider:
     if cfg.sandbox_provider == "container":
         from runs.sandbox.container import ContainerProvider
 
-        return ContainerProvider(network=cfg.sandbox_network, runtime=cfg.sandbox_runtime)
+        return ContainerProvider(gateway_volume=cfg.sandbox_gateway_volume, runtime=cfg.sandbox_runtime)
     from runs.sandbox.local import LocalProcessProvider
 
     return LocalProcessProvider(allowed=cfg.sandbox_allow_unisolated, gateway_url="http://127.0.0.1:8001")
