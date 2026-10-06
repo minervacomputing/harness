@@ -192,6 +192,7 @@ async def test_a_write_in_flight_when_its_attempt_is_replaced_is_recorded_and_no
         ("allowed", None),
         ("allowed", True),
     ]
+    assert events[0]["write"] == events[1]["write"] != write.key
 
 
 def test_a_replaced_attempt_cannot_reserve_a_model_call_or_stream_text(claimed):

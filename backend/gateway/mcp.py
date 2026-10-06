@@ -20,6 +20,7 @@ from asgiref.sync import sync_to_async
 from django.db import connection as db
 from django.db import transaction
 from django.utils import timezone
+from django.utils.crypto import salted_hmac
 from mcp.server.lowlevel import Server
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.types import Receive, Scope, Send
@@ -99,6 +100,12 @@ def _label(context: RunContext, name: str) -> str:
 def _summary(arguments: dict[str, Any]) -> dict[str, Any]:
     text = json.dumps(arguments, default=str)
     return arguments if len(text) <= 2000 else {"truncated": text[:2000]}
+
+
+def _write_id(context: RunContext, write_key: str) -> str:
+    """Lets the chat match a repeated write to the write's own card, whose arguments may be shown cut short. Keyed, so
+    it tells nothing about the arguments, and differs between runs."""
+    return salted_hmac("minerva.gateway.write", f"{context.run_id}:{write_key}").hexdigest()[:32]
 
 
 class ToolLimitReached(OperationError):
@@ -186,6 +193,8 @@ async def call_tool(ctx, params: types.CallToolRequestParams) -> types.CallToolR
             await _record(context, event)
         return types.CallToolResult(content=[types.TextContent(type="text", text=message)], is_error=True)
     event.update(decision="allowed", title=outcome.title, count=outcome.result.get("count"))
+    if outcome.write_key:
+        event["write"] = _write_id(context, outcome.write_key)
     if outcome.repeat:
         event["repeat"] = True
     await _record(context, event)

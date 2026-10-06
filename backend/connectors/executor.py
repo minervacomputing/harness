@@ -111,6 +111,8 @@ class Outcome:
     title: str
     # An identical write this run made earlier answered the call; nothing was sent.
     repeat: bool = False
+    # Set for a write: identical writes of a run share it.
+    write_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -208,9 +210,9 @@ class Executor:
         if write_key is not None:
             known = await RunWrite.unscoped.filter(run_id=self.context.run_id, key=write_key).afirst()
             if known is not None:
-                return Outcome(_known_write(known), op.title, repeat=True)
+                return Outcome(_known_write(known), op.title, repeat=True, write_key=write_key)
         result, repeat = await self._perform(ref, op, data, tool, query_hash, write_key)
-        return Outcome(result, op.title, repeat=repeat)
+        return Outcome(result, op.title, repeat=repeat, write_key=write_key)
 
     def _authorize(
         self, connector: Connector, op: Operation, ref: ToolRef, requirements: list[Requirement]
