@@ -7,11 +7,12 @@ worker connect to any host socket it can see, so the gateway volume must hold no
 
 import contextlib
 from datetime import UTC, datetime
+from pathlib import PurePosixPath
 from uuid import UUID
 
 import docker
 from docker.errors import DockerException, NotFound
-from docker.types import Mount
+from docker.types import Mount, Ulimit
 
 from runs.sandbox.base import Limits, SandboxError, SandboxInfo, SandboxStatus
 
@@ -19,6 +20,9 @@ LABEL = "minerva.run"
 ATTEMPT_LABEL = "minerva.attempt"
 GATEWAY_DIRECTORY = "/run/minerva/gateway"
 GATEWAY_URL = f"unix:{GATEWAY_DIRECTORY}/gateway.sock"
+# Under gVisor each process in the sandbox also costs about two host processes, and the sandbox itself about 34.
+GVISOR_HOST_PIDS_BASE = 64
+GVISOR_HOST_PIDS_PER_PROCESS = 3
 
 
 def _parse_time(value: str | None) -> datetime | None:
@@ -40,6 +44,7 @@ class ContainerProvider:
         self.gateway_volume = gateway_volume
         self.runtime = runtime
         self._client: docker.DockerClient | None = None
+        self._resolved: tuple[str | None, bool] | None = None
 
     @property
     def client(self) -> docker.DockerClient:
@@ -61,6 +66,8 @@ class ContainerProvider:
         attempt: int = 1,
     ) -> dict:
         self._check_gateway_volume()
+        runtime, gvisor = self._runtime()
+        process_limits = self._process_limits(limits, gvisor=gvisor)
         try:
             container = self.client.containers.create(
                 image,
@@ -73,7 +80,7 @@ class ContainerProvider:
                 network_mode="none",
                 # The directory, not the socket file: a relay that restarts makes a new socket, which workers see.
                 mounts=[Mount(GATEWAY_DIRECTORY, self.gateway_volume, read_only=True, no_copy=True)],
-                runtime=self.runtime,
+                runtime=runtime,
                 user="1000:1000",
                 read_only=True,
                 tmpfs={
@@ -83,7 +90,7 @@ class ContainerProvider:
                 working_dir="/workspace",
                 cap_drop=["ALL"],
                 security_opt=["no-new-privileges"],
-                pids_limit=limits.pids,
+                **process_limits,
                 mem_limit=f"{limits.memory_mb}m",
                 memswap_limit=f"{limits.memory_mb}m",
                 nano_cpus=int(limits.cpus * 1e9),
@@ -120,6 +127,37 @@ class ContainerProvider:
             raise SandboxError(
                 f"The gateway socket volume {self.gateway_volume!r} must use the local driver."
             )
+
+    def _process_limits(self, limits: Limits, *, gvisor: bool) -> dict:
+        """Under runc, Docker's pids limit makes a fork past it fail with EAGAIN. Under gVisor every process in the
+        sandbox also costs host processes, so a fork loop would reach that limit on the host side first and end the
+        whole sandbox. There the limit is RLIMIT_NPROC, which gVisor counts per sandbox, with room above it on the
+        host. Not under runc, where RLIMIT_NPROC counts every process of the worker's uid on the host."""
+        if not gvisor:
+            return {"pids_limit": limits.pids}
+        return {
+            "pids_limit": GVISOR_HOST_PIDS_BASE + GVISOR_HOST_PIDS_PER_PROCESS * limits.pids,
+            "ulimits": [Ulimit(name="nproc", soft=limits.pids, hard=limits.pids)],
+        }
+
+    def _runtime(self) -> tuple[str | None, bool]:
+        """The runtime workers run under, and whether it is gVisor. Without a configured runtime it is Docker's
+        default when the first worker starts, named on every container after that, so that the limits keep matching
+        the runtime. gVisor is its containerd shim by name, or a runtime whose binary is runsc (as `runsc install`
+        registers it). Docker does not report which shim an alias stands for, so an alias for gVisor's shim is not
+        recognised."""
+        if self._resolved is None:
+            try:
+                info = self.client.info()
+            except DockerException as error:
+                raise SandboxError("The container runtime is not reachable.") from error
+            name = self.runtime or info.get("DefaultRuntime") or None
+            entry = (info.get("Runtimes") or {}).get(name or "") or {}
+            gvisor = (name or "").startswith("io.containerd.runsc.") or PurePosixPath(
+                entry.get("path") or ""
+            ).name == "runsc"
+            self._resolved = (name, gvisor)
+        return self._resolved
 
     def _check_isolation(self, container) -> None:
         """Refuses, before it starts, a worker that Docker created with a network or another mount than asked for."""

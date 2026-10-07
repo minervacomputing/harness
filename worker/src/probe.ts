@@ -6,19 +6,28 @@
  * `--listen <id>` starts the other worker of the isolation check instead: it listens where a second worker
  * sharing its network namespace could reach it, checks that it can reach itself there, prints
  * `{"listening": true}`, and waits to be stopped. `--peer <id>` runs the checks and also tries to reach it.
+ * `--processes <n>` is the process limit the sandbox was started with, which the fork check expects.
  */
+import { type ChildProcess, spawn } from 'node:child_process'
 import { lookup } from 'node:dns/promises'
 import { chmod, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { connect, createServer, type NetConnectOpts } from 'node:net'
 import { networkInterfaces } from 'node:os'
 import { dirname } from 'node:path'
+import { parseArgs } from 'node:util'
 import { gatewayBaseUrl, isSocketUrl } from './transport.ts'
 
 const SECRET_NAME = /KEY|SECRET|PASSWORD|CREDENTIAL|DATABASE|TOKEN/i
 const PEER_PORT = 47000
 // Longer than sandbox_check waits for both workers together, which checks that this one is still running.
 const LISTEN_SECONDS = 300
-const [mode, id] = process.argv.slice(2)
+// More processes than the sandbox may run, so a missing limit fails the check rather than passing it.
+const FORK_ATTEMPTS = 2048
+// The worker's own threads and init also count towards the process limit: 12 under runc.
+const FORK_BASELINE_MAX = 32
+const { values: args } = parseArgs({
+  options: { listen: { type: 'string' }, peer: { type: 'string' }, processes: { type: 'string' } },
+})
 
 function peerSocket(name: string): string {
   // Abstract sockets belong to a network namespace, so only a worker sharing one could reach this.
@@ -87,6 +96,48 @@ async function listenForPeer(name: string): Promise<void> {
   setTimeout(() => process.exit(0), LISTEN_SECONDS * 1000).unref()
 }
 
+/** Undefined once the process has started, else why it could not. */
+function startError(child: ChildProcess): Promise<string | undefined> {
+  return new Promise(resolve => {
+    child.once('spawn', () => resolve(undefined))
+    child.once('error', error => resolve((error as NodeJS.ErrnoException).code ?? 'unknown'))
+  })
+}
+
+function exited(child: ChildProcess): Promise<number | null> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(child.exitCode)
+  return new Promise(resolve => child.once('exit', code => resolve(code)))
+}
+
+async function stopped(child: ChildProcess): Promise<void> {
+  const exit = exited(child)
+  child.kill('SIGKILL')
+  await exit
+}
+
+/**
+ * Starts processes until the sandbox refuses one with EAGAIN, which must happen within FORK_BASELINE_MAX of `limit`,
+ * or another limit refused it. Once they have ended, a process must start and exit normally again. Under gVisor a
+ * limit enforced only on the host ends the whole sandbox instead, and then this prints nothing.
+ */
+async function forkLimitHolds(limit: number): Promise<boolean> {
+  if (!(limit > 0)) return false
+  const children: ChildProcess[] = []
+  let error: string | undefined
+  try {
+    while (error === undefined && children.length < FORK_ATTEMPTS) {
+      const child = spawn('sleep', ['600'], { stdio: 'ignore' })
+      error = await startError(child)
+      if (error === undefined) children.push(child)
+    }
+  } finally {
+    await Promise.all(children.map(stopped))
+  }
+  if (error !== 'EAGAIN' || children.length < limit - FORK_BASELINE_MAX || children.length >= limit) return false
+  const after = spawn('true', { stdio: 'ignore' })
+  return await startError(after) === undefined && await exited(after) === 0
+}
+
 async function gatewayDirectoryReadOnly(url: string): Promise<boolean> {
   if (!isSocketUrl(url)) return false
   const socket = url.slice('unix:'.length)
@@ -99,7 +150,7 @@ async function gatewayDirectoryReadOnly(url: string): Promise<boolean> {
     && await refused(() => rename(socket, `${directory}/moved.sock`))
 }
 
-async function runChecks(peer: string | undefined): Promise<void> {
+async function runChecks(peer: string | undefined, processes: string | undefined): Promise<void> {
   const url = process.env.GATEWAY_URL ?? ''
   const gateway = await gatewayBaseUrl(url)
   const checks: Record<string, boolean> = {}
@@ -124,10 +175,12 @@ async function runChecks(peer: string | undefined): Promise<void> {
   checks.otherWorkersUnreachable = peer !== undefined
     && !(await reachable({ path: peerSocket(peer) }))
     && await unreachable('127.0.0.1', PEER_PORT)
+  // Last, since it briefly leaves no room for other processes.
+  checks.forkLimitHolds = await forkLimitHolds(Number(processes))
   console.log(JSON.stringify(checks))
   // Idle connections through the bridge would keep the process alive until the gateway closes them.
   process.exit(0)
 }
 
-if (mode === '--listen' && id) await listenForPeer(id)
-else await runChecks(mode === '--peer' ? id : undefined)
+if (args.listen) await listenForPeer(args.listen)
+else await runChecks(args.peer, args.processes)
