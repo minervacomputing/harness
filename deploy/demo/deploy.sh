@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Ships the current commit to the demo VPS and (re)starts the stack. Run from the repository root:
 #   deploy/demo/deploy.sh
-# Refuses to run with uncommitted or untracked changes, so what runs is always a commit; its id is
-# written to /opt/minerva/REVISION.
+# Refuses to run on any branch but `demo` (main is the product, see AGENTS.md), or with uncommitted or
+# untracked changes, so what runs is always a commit of the demo branch; its id is written to
+# /opt/minerva/REVISION.
 # Reads DEMO_HOST from the environment or from .env.demo, which is also installed as /opt/minerva/.env.
 set -euo pipefail
 
@@ -18,6 +19,12 @@ if [[ -z "$DEMO_HOST" ]]; then
   exit 1
 fi
 REMOTE="root@$DEMO_HOST"
+
+HEAD_REF="$(git symbolic-ref --quiet HEAD || true)"
+if [[ "$HEAD_REF" != refs/heads/demo ]]; then
+  echo "The demo is deployed from the demo branch only, not ${HEAD_REF:-a detached HEAD} (see AGENTS.md, Git)." >&2
+  exit 1
+fi
 
 if [[ -n "$(git status --porcelain)" ]]; then
   echo "Commit or stash these changes first; only commits are deployed:" >&2

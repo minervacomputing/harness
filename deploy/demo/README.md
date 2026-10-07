@@ -15,7 +15,7 @@ worker ─ gateway.sock (read-only volume) ─ gateway-socket ─ gateway:8001
 | `Dockerfile.backend` | One image for web, gateway, supervisor, migrate and cleanup |
 | `Dockerfile.frontend`, `Caddyfile` | The Vite build served by Caddy, which also proxies `/api` |
 | `bootstrap.sh` | One-time server setup: Docker, gVisor, firewall, SSH by key only, unattended upgrades, swap |
-| `deploy.sh` | Syncs the working tree and restarts the stack |
+| `deploy.sh` | Deploys the `demo` branch's current commit and restarts the stack |
 | `manage.sh` | Runs `manage.py` in the web container |
 
 ## Configuration: `.env.demo`
@@ -69,7 +69,7 @@ deploy/demo/manage.sh demo_sync      # again after every change to the owner's c
 deploy/demo/deploy.sh
 ```
 
-It deploys the current commit and refuses to run while there are uncommitted or untracked changes. The deployed commit is written to `/opt/minerva/REVISION` (`ssh root@$DEMO_HOST cat /opt/minerva/REVISION`). It then rebuilds the worker image (`minerva-worker:demo`) and runs `docker compose up -d --build`. The one-shot `migrate` service runs before web, gateway, supervisor and cleanup start.
+The demo runs from the `demo` branch, which takes bug fixes and small changes only; `main` is the product (see the Git section of [AGENTS.md](../../AGENTS.md)). `deploy.sh` deploys the current commit, and refuses to run on any other branch or while there are uncommitted or untracked changes. The deployed commit is written to `/opt/minerva/REVISION` (`ssh root@$DEMO_HOST cat /opt/minerva/REVISION`). It then rebuilds the worker image (`minerva-worker:demo`) and runs `docker compose up -d --build`. The one-shot `migrate` service runs before web, gateway, supervisor and cleanup start.
 
 ## On the server
 

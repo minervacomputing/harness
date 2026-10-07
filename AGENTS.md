@@ -77,6 +77,12 @@ Emails (verification and sign-in codes) are printed in the `web` process output.
 
 This project does not use pull requests. Commit directly to `main` (or merge a short-lived branch into it) and push `main`.
 
+`main` is the product. The public demo runs from the `demo` branch, which takes bug fixes and small changes only, never new features:
+
+- A fix that both need is committed on `main` first, then copied onto `demo` with `git cherry-pick -x`.
+- A change only the demo needs (demo settings, `backend/demo/`, `deploy/demo/`) is committed on `demo` only.
+- `main` is never merged into `demo`. Deploy the demo only from `demo`.
+
 **This repository is public** (`github.com/minervacomputing/harness`). Everything you commit is published, history included. Never commit:
 
 - secrets (they belong in `.env`, `.env.demo` or `.env.demo.d/`, all gitignored);
