@@ -6,6 +6,9 @@
 # Upstream reference checkout (has its own repository)
 /deepseek-harness/
 
+# Agent files kept on local disk (MINERVA_FILES_DIR)
+/data/
+
 # Python
 __pycache__/
 *.py[cod]

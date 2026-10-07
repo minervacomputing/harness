@@ -46,7 +46,12 @@ What changes:
 
 ### 2. Store
 
-A new Django app, `backend/files/`.
+Done 2026-10-07, in `backend/files/`. It differs from the outline below in these ways:
+
+- Versions also keep a `digest` of their canonical entries, so an identical manifest is recognised without comparing them.
+- Objects are tracked rather than listed. A `LooseObject` row is written before each object and claimed (deleted) in the transaction that records its blob; deleting a blob row, by any path, queues its object as loose and subtracts its size from the workspace counter (a database trigger). The sweep deletes loose objects that are due, twice, a day apart. `manage.py files_reconcile` corrects the counters and, with `--storage`, deletes objects that no row names and that are over a day old.
+- Blob identity and version contents cannot change (database triggers), and blob rows cannot be deleted through the ORM.
+- The S3 backend is tested against moto, not MinIO.
 
 - **Models.**
   - `Blob(workspace, sha256, size, storage_key, created_at, last_used_at)`, unique on (workspace, sha256).

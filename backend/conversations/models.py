@@ -8,6 +8,10 @@ class Conversation(TenantModel):
     agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, related_name="conversations")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="conversations")
     title = models.CharField(max_length=200, blank=True)
+    # The conversation's files: the version the last turn produced. Null until it has any.
+    folder = models.ForeignKey(
+        "files.FolderVersion", null=True, blank=True, on_delete=models.RESTRICT, related_name="+"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

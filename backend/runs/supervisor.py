@@ -5,16 +5,18 @@ reconciles runs whose sandbox disappeared. Several supervisors can run at once (
 import contextlib
 import logging
 import select
+import threading
 import time
 from datetime import timedelta
 from uuid import UUID
 
 import psycopg
 from django.conf import settings
-from django.db import OperationalError, close_old_connections
+from django.db import OperationalError, close_old_connections, connections
 from django.db.models import Q
 from django.utils import timezone
 
+from files import sweep as files_sweep
 from minerva.config import config
 from runs import services
 from runs.models import Run
@@ -24,6 +26,7 @@ log = logging.getLogger("minerva.supervisor")
 PROVISIONING_TIMEOUT = timedelta(seconds=90)
 POLL_SECONDS = 2.0
 ORPHAN_SWEEP_SECONDS = 30.0
+FILES_SWEEP_SECONDS = 60.0
 ORPHAN_EXITED_GRACE = timedelta(seconds=60)
 ORPHAN_RUNNING_GRACE = timedelta(seconds=120)
 RECONNECT_MIN_SECONDS = 1.0
@@ -35,6 +38,8 @@ class Supervisor:
         self.cfg = config()
         self.provider = provider()
         self._last_sweep = 0.0
+        self._files_sweep: threading.Thread | None = None
+        self._last_files_sweep = 0.0
 
     def tick(self) -> None:
         close_old_connections()
@@ -46,6 +51,18 @@ class Supervisor:
         if time.monotonic() - self._last_sweep > ORPHAN_SWEEP_SECONDS:
             self._last_sweep = time.monotonic()
             self.collect_orphans()
+        self.start_files_sweep()
+
+    def start_files_sweep(self) -> None:
+        """Collects unused agent files in a background thread, one sweep at a time, so storage latency never
+        delays claims or deadlines."""
+        if self._files_sweep is not None and self._files_sweep.is_alive():
+            return
+        if time.monotonic() - self._last_files_sweep < FILES_SWEEP_SECONDS:
+            return
+        self._last_files_sweep = time.monotonic()
+        self._files_sweep = threading.Thread(target=sweep_files, name="files-sweep", daemon=True)
+        self._files_sweep.start()
 
     def start_queued(self) -> None:
         active = Run.unscoped.filter(status__in=Run.TOKEN_VALID).count()
@@ -165,6 +182,20 @@ class Supervisor:
                 log.info("Removing untracked sandbox for run %s", sandbox.run_id)
                 with contextlib.suppress(SandboxError):
                     self.provider.stop(sandbox.handle)
+
+
+def sweep_files() -> None:
+    try:
+        removed = files_sweep.sweep()
+        if any(removed.values()):
+            log.info("Files sweep removed %s", removed)
+    except OperationalError:
+        log.warning("Files sweep: database unreachable", exc_info=True)
+    except Exception:
+        log.exception("Files sweep failed")
+    finally:
+        # The thread's own connections.
+        connections.close_all()
 
 
 def listen_connection() -> psycopg.Connection:
