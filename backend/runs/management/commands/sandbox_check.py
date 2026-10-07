@@ -34,7 +34,10 @@ CHECKS = {
     "hostUnreachable",
     "databaseUnreachable",
     "otherWorkersUnreachable",
+    "forkLimitHolds",
 }
+# What real runs get, so the probe checks their process limit.
+LIMITS = Limits()
 LISTEN_TIMEOUT = 60
 PROBE_TIMEOUT = 90
 
@@ -64,7 +67,9 @@ class Command(BaseCommand):
             listener = self._start(sandbox, cfg.sandbox_image, [PROBE, "--listen", peer])
             handles.append(listener)
             self._wait_listening(sandbox, listener)
-            probe = self._start(sandbox, cfg.sandbox_image, [PROBE, "--peer", peer])
+            probe = self._start(
+                sandbox, cfg.sandbox_image, [PROBE, "--peer", peer, "--processes", str(LIMITS.pids)]
+            )
             handles.append(probe)
             status = self._wait_exit(sandbox, probe)
             output = sandbox.logs(probe)
@@ -102,7 +107,7 @@ class Command(BaseCommand):
         run_id = uuid.uuid4()
         env = {"RUN_TOKEN": f"probe-{secrets.token_urlsafe(24)}", "RUN_ID": str(run_id)}
         try:
-            return sandbox.start(run_id, image, env, Limits(), command=command)
+            return sandbox.start(run_id, image, env, LIMITS, command=command)
         except SandboxError as error:
             raise CommandError(str(error)) from error
 

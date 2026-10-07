@@ -1,7 +1,7 @@
 import uuid
 
 import pytest
-from docker.errors import NotFound
+from docker.errors import DockerException, NotFound
 
 from runs.sandbox.base import Limits, SandboxError
 from runs.sandbox.container import GATEWAY_DIRECTORY, GATEWAY_URL, ContainerProvider
@@ -63,6 +63,17 @@ class FakeClient:
         self.volumes = FakeVolumes(self)
         self.extra_mounts: list[dict] = []
         self.network_mode: str | None = None
+        self.runtimes = {
+            "runc": {"path": "runc"},
+            "runsc-minerva": {"path": "/usr/local/bin/runsc", "runtimeArgs": ["--host-uds=open"]},
+        }
+        self.default_runtime = "runc"
+        self.info_error: Exception | None = None
+
+    def info(self) -> dict:
+        if self.info_error:
+            raise self.info_error
+        return {"Runtimes": self.runtimes, "DefaultRuntime": self.default_runtime}
 
     def attrs_for(self, kwargs: dict) -> dict:
         mounts = [
@@ -164,3 +175,50 @@ def test_a_writable_gateway_mount_is_refused(provider, client):
     with pytest.raises(SandboxError, match="isolated"):
         start(provider)
     assert not client.created[0].started
+
+
+def test_under_gvisor_forks_are_limited_inside_the_sandbox_with_room_on_the_host(provider, client):
+    start(provider)
+    kwargs = client.created[0].kwargs
+    (ulimit,) = kwargs["ulimits"]
+    assert (ulimit.name, ulimit.soft, ulimit.hard) == ("nproc", 256, 256)
+    assert kwargs["pids_limit"] == 64 + 3 * 256
+
+
+def gvisor_detected(client, runtime: str | None) -> bool:
+    sandbox = ContainerProvider(gateway_volume=VOLUME, runtime=runtime)
+    sandbox._client = client  # type: ignore[assignment]
+    start(sandbox)
+    return "ulimits" in client.created[-1].kwargs
+
+
+def test_gvisor_named_by_its_containerd_shim_is_recognised(client):
+    assert gvisor_detected(client, "io.containerd.runsc.v1")
+
+
+def test_gvisor_as_dockers_default_runtime_is_recognised(client):
+    client.default_runtime = "runsc-minerva"
+    assert gvisor_detected(client, None)
+
+
+def test_dockers_default_runtime_is_pinned_so_the_limits_keep_matching_it(client):
+    sandbox = ContainerProvider(gateway_volume=VOLUME)
+    sandbox._client = client  # type: ignore[assignment]
+    start(sandbox)
+    client.default_runtime = "runsc-minerva"
+    start(sandbox)
+    assert [c.kwargs["runtime"] for c in client.created] == ["runc", "runc"]
+    assert all("ulimits" not in c.kwargs for c in client.created)
+
+
+def test_an_unreachable_docker_refuses_to_start_the_worker(client):
+    client.info_error = DockerException("down")
+    with pytest.raises(SandboxError, match="not reachable"):
+        gvisor_detected(client, "runsc-minerva")
+    assert not client.created
+
+
+@pytest.mark.parametrize("runtime", [None, "runc", "unknown"])
+def test_other_runtimes_get_only_the_pids_limit(client, runtime):
+    assert not gvisor_detected(client, runtime)
+    assert client.created[0].kwargs["pids_limit"] == 256
