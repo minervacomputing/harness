@@ -8,6 +8,7 @@ dependencies = [
     "django>=6.1.1",
     "django-allauth[mfa]>=65.19.5",
     "django-ninja>=1.7.1",
+    "django-storages[s3]>=1.14.6",
     "docker>=7.2.0",
     "httpx>=0.28.1",
     "mcp>=2.2.0",
@@ -24,6 +25,7 @@ package = false
 [dependency-groups]
 dev = [
     "honcho>=2.0.0",
+    "moto[s3]>=5.2.3",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-django>=4.14.0",

@@ -27,6 +27,20 @@ from workspaces.tenancy import workspace_scope
 PASSWORD = "correct-horse-battery-staple"
 
 
+@pytest.fixture(autouse=True)
+def files_storage(settings, tmp_path):
+    """Agent files go to a directory of the test's own, never to the configured storage."""
+    location = tmp_path / "files"
+    settings.STORAGES = {
+        **settings.STORAGES,
+        "files": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+            "OPTIONS": {"location": location, "allow_overwrite": True},
+        },
+    }
+    return location
+
+
 @pytest.fixture
 def make_user(db) -> Callable[[str], User]:
     def make(email: str) -> User:

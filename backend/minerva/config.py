@@ -126,6 +126,24 @@ class Config(BaseSettings):
     # 503. Well above what the concurrent runs can send at once.
     gateway_max_unauthenticated_in_flight: Annotated[int, Field(gt=0)] = 128
 
+    # Agent files. Blobs are kept in this directory, or in an S3-compatible bucket when one is set.
+    files_dir: Path = REPO_ROOT / "data" / "files"
+    files_s3_bucket: str | None = None
+    files_s3_endpoint_url: str | None = None
+    files_s3_region: str | None = None
+    # Unset: boto3's own credential chain (environment, instance role).
+    files_s3_access_key_id: str | None = None
+    files_s3_secret_access_key: SecretStr | None = None
+    files_s3_addressing_style: Literal["auto", "virtual", "path"] = "auto"
+    # A conversation's folder: bytes as tmpfs charges them (whole 4 KiB pages per file), and entries (files and
+    # directories, each an inode).
+    files_folder_bytes: Annotated[int, Field(gt=0)] = 256 * 2**20
+    files_folder_entries: Annotated[int, Field(gt=0)] = 10_000
+    # Bytes one run may upload; unset: four times the folder size.
+    files_run_upload_bytes: Annotated[int, Field(gt=0)] | None = None
+    # Bytes of all blobs in a workspace; unset: no limit.
+    files_workspace_bytes: Annotated[int, Field(gt=0)] | None = None
+
     # Public demo: visitors pass a Turnstile check, sign in, and chat in one shared, locked workspace.
     demo: bool = False
     demo_turns_per_day: int = 20

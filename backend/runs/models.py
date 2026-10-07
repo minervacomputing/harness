@@ -64,6 +64,19 @@ class Run(TenantModel):
     journal_seq = models.PositiveIntegerField(default=0)
     journal_bytes = models.PositiveBigIntegerField(default=0)
 
+    # The folder: the version the run started from, its last accepted checkpoint, and the version it produced.
+    base_version = models.ForeignKey(
+        "files.FolderVersion", null=True, blank=True, on_delete=models.RESTRICT, related_name="+"
+    )
+    checkpoint = models.ForeignKey(
+        "files.FolderVersion", null=True, blank=True, on_delete=models.RESTRICT, related_name="+"
+    )
+    result_version = models.ForeignKey(
+        "files.FolderVersion", null=True, blank=True, on_delete=models.RESTRICT, related_name="+"
+    )
+    # Bytes uploaded to the blob store, including contents the store already had (files.store.charge_run_upload).
+    uploaded_bytes = models.PositiveBigIntegerField(default=0)
+
     sandbox_provider = models.CharField(max_length=32, blank=True)
     sandbox_handle = models.JSONField(null=True, blank=True)
     sandbox_released = models.BooleanField(default=False)

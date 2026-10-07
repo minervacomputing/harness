@@ -21,6 +21,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.postgres",
     "allauth",
     "allauth.account",
     "allauth.headless",
@@ -35,6 +36,7 @@ INSTALLED_APPS = [
     "agents",
     "conversations",
     "runs",
+    "files",
     "gateway",
     "demo",
 ]
@@ -169,6 +171,48 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# Agent files (files.store). Keys are random and never reused, so nothing is overwritten or renamed.
+if cfg.files_s3_bucket:
+    from botocore.config import Config as BotoConfig
+
+    FILES_STORAGE = {
+        "BACKEND": "storages.backends.s3.S3Storage",
+        "OPTIONS": {
+            "bucket_name": cfg.files_s3_bucket,
+            "endpoint_url": cfg.files_s3_endpoint_url,
+            "region_name": cfg.files_s3_region,
+            "access_key": cfg.files_s3_access_key_id,
+            "secret_key": (
+                cfg.files_s3_secret_access_key.get_secret_value() if cfg.files_s3_secret_access_key else None
+            ),
+            "default_acl": None,
+            "file_overwrite": True,
+            # Bounded, so a stalled request cannot hold up an upload or the sweep for long.
+            "client_config": BotoConfig(
+                s3={"addressing_style": cfg.files_s3_addressing_style},
+                signature_version="s3v4",
+                connect_timeout=10,
+                read_timeout=60,
+                retries={"max_attempts": 3, "mode": "standard"},
+            ),
+        },
+    }
+else:
+    FILES_STORAGE = {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "OPTIONS": {
+            "location": cfg.files_dir,
+            "allow_overwrite": True,
+            "file_permissions_mode": 0o600,
+            "directory_permissions_mode": 0o700,
+        },
+    }
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    "files": FILES_STORAGE,
+}
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 LOGGING = {
