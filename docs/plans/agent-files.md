@@ -99,6 +99,13 @@ Done 2026-10-07, in `backend/files/`. It differs from the outline below in these
 
 ### 3. Gateway and run services
 
+Done 2026-10-07 (`backend/files/runs.py`, `backend/gateway/files.py`), apart from attachments, which move to step 6 with the uploads they come from. Until then a run's base version is the conversation's folder as it is. Differences from the outline below:
+
+- `GET /run` also returns the folder's version id, which is the parent of the attempt's first checkpoint.
+- Refusals carry `{"error": {"code", "message"}}`, with `limit` for `quota`. Status codes: `stale` 401, `conflict` 409, `invalid_manifest` 400, `unknown_blob` 403, `quota` 413. An upload over the folder size is refused with `quota` before its body is read, since no file can be larger than its folder.
+- `GET /blobs/{sha256}` answers 404 both for a blob that does not exist and for one the run may not read.
+- `start_run()` reads the conversation's folder after inserting the run, which waits for a run that is ending, so it sees that run's published folder.
+
 - **Run spec.** `GET /run` gains:
   - `folder`: the version to hydrate, that is the run's last checkpoint if it has one, otherwise its base version, with its entries;
   - the folder's limits (bytes, entries);
@@ -225,6 +232,7 @@ Done 2026-10-07, in `backend/files/`. It differs from the outline below in these
   - Per-file limit (50 MB) and at most 10 files per message.
   - The media type is sniffed from the content, never taken from the browser.
   - An upload not attached to a message within a day is deleted.
+- **Attachments** (moved from step 3). `start_run()` takes upload ids and builds the base version: the conversation's folder plus the attachments at the folder root, with a numbered name when one exists (`report (2).pdf`). It refuses the message, before any run starts, if the base version would exceed the folder's limits, and records which paths the message added. Unattached uploads name their blobs for the sweep.
 - **Messages.** `post_message` accepts `attachments: [upload id]`. The run's payload lists the paths each message added and each turn's changes (added, modified, deleted, and warnings), computed from its base and result versions.
 - **Files.**
   - `GET /api/workspaces/{ws}/conversations/{id}/files?version=` lists a version, the current one by default.

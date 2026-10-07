@@ -63,12 +63,12 @@ def test_a_run_has_a_deadline_only_if_the_instance_limits_turns(
     [(run, token)] = services.claim_queued(1)
     spec = Client().get("/run", headers=auth(token)).json()
     if seconds is None:
-        assert run.deadline is None and spec["limits"] == {"deadline": None}
+        assert run.deadline is None and spec["limits"]["deadline"] is None
     else:
         assert (
             before + timedelta(seconds=seconds) <= run.deadline <= timezone.now() + timedelta(seconds=seconds)
         )
-        assert spec["limits"] == {"deadline": run.deadline.isoformat()}
+        assert spec["limits"]["deadline"] == run.deadline.isoformat()
     assert services.is_token_valid(run.id) and services.run_for_token(token).id == run.id
 
 

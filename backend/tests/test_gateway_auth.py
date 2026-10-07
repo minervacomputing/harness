@@ -5,13 +5,11 @@ from contextlib import asynccontextmanager
 
 import pytest
 from asgiref.sync import sync_to_async
-from django.core.handlers.asgi import ASGIHandler
 from django.db import OperationalError, connection
 from django.utils import timezone
 
 from gateway import auth, mcp
 from gateway.auth import ATTEMPT_SCOPE_KEY, RUN_SCOPE_KEY, require_run
-from gateway.body_limit import limit_body
 from runs import services
 from runs.models import Run, RunCommit
 
@@ -113,21 +111,6 @@ def lookups(monkeypatch) -> list[str]:
 
     monkeypatch.setattr(auth, "run_for_token", run_for_token)
     return looked_up
-
-
-@pytest.fixture
-def application(settings, monkeypatch):
-    """The gateway's entry point, with Django's handler rebuilt with the gateway's middleware."""
-    # Importing the entry point marks the process as the gateway; the settings are loaded already.
-    monkeypatch.setenv("MINERVA_ROLE", "gateway")
-    from gateway import asgi
-
-    settings.MIDDLEWARE = [
-        "django.middleware.security.SecurityMiddleware",
-        "workspaces.tenancy.TenantScopeMiddleware",
-    ]
-    monkeypatch.setattr(asgi, "django_app", limit_body(ASGIHandler(), settings.DATA_UPLOAD_MAX_MEMORY_SIZE))
-    return asgi.application
 
 
 @pytest.mark.parametrize(

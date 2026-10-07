@@ -5,6 +5,7 @@ import httpx
 import pytest
 from asgiref.sync import sync_to_async
 from connector_runs import claimed_run, replace_grants
+from django.core.handlers.asgi import ASGIHandler
 from django.test import Client, override_settings
 
 from accounts.models import User
@@ -19,6 +20,7 @@ from connectors.executor import Executor
 from connectors.todoist.client import TodoistClient
 from connectors.todoist.connector import TodoistConnector
 from conversations.models import Conversation
+from gateway.body_limit import limit_body
 from permissions.models import Grant
 from permissions.services import GrantChange, apply_grant_changes
 from runs import services
@@ -206,6 +208,21 @@ def connector_run(scoped, user):
 def gateway_urls():
     with override_settings(ROOT_URLCONF="gateway.urls"):
         yield
+
+
+@pytest.fixture
+def application(settings, monkeypatch):
+    """The gateway's entry point, with Django's handler rebuilt with the gateway's middleware."""
+    # Importing the entry point marks the process as the gateway; the settings are loaded already.
+    monkeypatch.setenv("MINERVA_ROLE", "gateway")
+    from gateway import asgi
+
+    settings.MIDDLEWARE = [
+        "django.middleware.security.SecurityMiddleware",
+        "workspaces.tenancy.TenantScopeMiddleware",
+    ]
+    monkeypatch.setattr(asgi, "django_app", limit_body(ASGIHandler(), settings.DATA_UPLOAD_MAX_MEMORY_SIZE))
+    return asgi.application
 
 
 @pytest.fixture

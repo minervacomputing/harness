@@ -14,6 +14,7 @@ from minerva.config import config
 django_app = limit_body(get_asgi_application(), settings.DATA_UPLOAD_MAX_MEMORY_SIZE)
 
 from gateway.auth import require_run  # noqa: E402
+from gateway.files import put_blob  # noqa: E402
 from gateway.in_flight import limit_in_flight  # noqa: E402
 from gateway.mcp import mcp_app  # noqa: E402
 
@@ -21,6 +22,9 @@ from gateway.mcp import mcp_app  # noqa: E402
 async def route(scope, receive, send) -> None:
     if scope["type"] == "lifespan" or (scope["type"] == "http" and scope["path"] == "/mcp"):
         await mcp_app(scope, receive, send)
+    elif scope["type"] == "http" and scope["method"] == "PUT" and scope["path"].startswith("/blobs/"):
+        # Streamed to disk, never buffered by Django.
+        await put_blob(scope, receive, send)
     else:
         await django_app(scope, receive, send)
 

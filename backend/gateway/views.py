@@ -15,6 +15,8 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from connectors import registry
+from files import limits as file_limits
+from files import runs as folder
 from gateway.auth import error_response, run_required, unauthorized
 from minerva.config import config
 from models_access import upstream
@@ -25,6 +27,8 @@ from runs.journal import Appended
 from runs.models import Run, RunEvent
 
 log = logging.getLogger(__name__)
+# Tools the worker runs in the sandbox's folder. Every run has all of them for now.
+LOCAL_TOOLS = ["read", "write", "edit", "bash"]
 
 
 @require_GET
@@ -34,6 +38,7 @@ async def run_spec(request: HttpRequest) -> JsonResponse:
     await sync_to_async(_start)(run.id, run.attempt)
     prompt = await sync_to_async(services.current_prompt)(run)
     history = await sync_to_async(services.history)(run)
+    version = await sync_to_async(folder.hydrate_version)(run)
     tools = []
     for item in run.tools:
         op = registry.resolve(item["provider"], item["operation"], item.get("contract", ""))
@@ -56,7 +61,15 @@ async def run_spec(request: HttpRequest) -> JsonResponse:
                 "api": config().model_api,
                 "max_output_tokens": max_output_tokens,
             },
-            "limits": {"deadline": run.deadline.isoformat() if run.deadline is not None else None},
+            "limits": {
+                "deadline": run.deadline.isoformat() if run.deadline is not None else None,
+                "folder_bytes": file_limits.folder_bytes(),
+                "folder_entries": file_limits.folder_entries(),
+            },
+            # The version to hydrate: the run's last checkpoint, else the one it started from. Its id is the
+            # parent of the attempt's first checkpoint.
+            "folder": {"version": str(version.id) if version else None, **folder.wire_entries(version)},
+            "local_tools": LOCAL_TOOLS,
         }
     )
 

@@ -15,6 +15,7 @@ from connections.oauth import granted_scopes
 from connectors import registry
 from connectors.base import consent_given
 from conversations.models import Conversation, Message
+from files import runs as folder
 from minerva.config import config
 from permissions.policy import Policy
 from permissions.services import effective_policy, user_layer
@@ -124,6 +125,11 @@ def start_run(*, conversation: Conversation, user_id: UUID, content: str) -> tup
                 )
         except IntegrityError as error:
             raise RunConflict(BUSY_MESSAGE) from error
+        # Read after the run exists, which waited for any run that was ending: its folder is published.
+        run.base_version_id = (
+            Conversation.unscoped.filter(pk=conversation.pk).values_list("folder_id", flat=True).get()
+        )
+        run.save(update_fields=["base_version"])
         message.run = run
         message.save(update_fields=["run"])
         if not conversation.title:
@@ -172,9 +178,9 @@ def finish(
     attempt: int | None = None,
     from_status: str | None = None,
 ) -> bool:
-    """Move an active run to a terminal state exactly once, and drop its saved state. Returns False if it
-    already ended, if `attempt` is given and is no longer the run's current one, or if `from_status` is given
-    and the run has moved on from it."""
+    """Move an active run to a terminal state exactly once, publish its folder, and drop its saved state.
+    Returns False if it already ended, if `attempt` is given and is no longer the run's current one, or if
+    `from_status` is given and the run has moved on from it."""
     runs = Run.unscoped.filter(pk=run_id, status__in=Run.ACTIVE)
     if attempt is not None:
         runs = runs.filter(attempt=attempt)
@@ -185,6 +191,8 @@ def finish(
             status=status, error_code=code, error_message=message[:500], finished_at=timezone.now()
         )
         if updated:
+            # The update holds the run's lock, which checkpoints take too: this is the run's last one.
+            folder.publish(run_id)
             RunCommit.unscoped.filter(run_id=run_id).delete()
             data = {"status": status}
             if message:
