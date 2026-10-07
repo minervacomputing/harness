@@ -1,6 +1,6 @@
 # Agent notes
 
-Operational notes for coding agents working in this repository. For background, read [README.md](README.md), [CURRENT_STATE.md](CURRENT_STATE.md), and [ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md).
+Operational notes for coding agents working in this repository. For background, read [README.md](README.md) and [ARCHITECTURE.md](ARCHITECTURE.md). Work in progress is planned in [docs/plans/](docs/plans/).
 
 ## Environment
 

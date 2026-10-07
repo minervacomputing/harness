@@ -13,8 +13,7 @@
 <p align="center">
   <a href="https://minervacomputing.com">Website</a> ·
   <a href="#quick-start">Quick start</a> ·
-  <a href="CURRENT_STATE.md">Current state</a> ·
-  <a href="ARCHITECTURE_DECISIONS.md">Architecture</a> ·
+  <a href="ARCHITECTURE.md">Architecture</a> ·
   <a href="LICENSE">MIT license</a>
 </p>
 
@@ -163,7 +162,7 @@ compose.yaml Postgres and the gateway socket relay for development
 
 ## Status
 
-Minerva is early. The permissions, the sandbox and the connectors work against live accounts. [CURRENT_STATE.md](CURRENT_STATE.md) lists what exists today, and [ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md) explains why it is built this way.
+Minerva is early. The permissions, the sandbox and the connectors work against live accounts. [ARCHITECTURE.md](ARCHITECTURE.md) describes how it is built and why, what works today, and what is next.
 
 **Available now:** agents with their own instructions and connections, chat that shows every tool call, 20 connectors with resource-level permissions, a sealed container per answer, two-factor sign-in, and self-hosting.
 

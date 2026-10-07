@@ -1,6 +1,6 @@
 # Writing a connector
 
-A connector turns one provider's API into tools, and the permission executor authorizes every call to them. Read `base.py` (the contract) and `http.py` (provider HTTP and write accounting) first. Their docstrings and comments are the reference; this guide does not repeat them. The reasons are in [ARCHITECTURE_DECISIONS.md, D8](../../ARCHITECTURE_DECISIONS.md#d8-connectors-and-the-permission-executor).
+A connector turns one provider's API into tools, and the permission executor authorizes every call to them. Read `base.py` (the contract) and `http.py` (provider HTTP and write accounting) first. Their docstrings and comments are the reference; this guide does not repeat them. The reasons are in [ARCHITECTURE.md](../../ARCHITECTURE.md#4-connectors), sections 3 and 4.
 
 ## The contract in brief
 
@@ -88,7 +88,7 @@ A connector turns one provider's API into tools, and the permission executor aut
 - **Descriptions.**
   - Paginated operations end with "To get the next page, repeat the call with identical arguments plus the returned next_cursor."
 - **Testability.** Clients take a `transport` argument so tests can pass an `httpx.MockTransport`.
-- **Layout and design notes.** Provider-specific design notes go in the module docstrings; D8 indexes them. Large connectors split into:
+- **Layout and design notes.** Provider-specific design notes go in the module docstrings. Large connectors split into:
   - `connector.py`, which assembles the connector;
   - `reads.py` and `writes.py`, which hold the operations;
   - a shared module (`pages`, `teams`, `mailbox`);
@@ -100,18 +100,16 @@ A connector turns one provider's API into tools, and the permission executor aut
 2. `registry._declared()`: import the connector and list it.
 3. `backend/minerva/config.py`: add `<app>_client_id: str | None` and `<app>_client_secret: SecretStr | None`, with a one-line comment. `oauth_client(app)` reads them by name. Without them, the connector is not offered, unless it has `registration_url`. An operator key follows `brave_search_api_key`.
 4. `.env.example`, and the environment table in the root `AGENTS.md`.
-5. `docs/connectors.md`: add a `## <Provider>` section covering:
-   - where to register the app;
-   - the callback URL, `{site_url}/api/oauth/<slug>/callback`;
-   - the permissions or scopes to give;
-   - what users then choose in Minerva.
-6. `CURRENT_STATE.md`: a "What works" bullet in §1, and a row in the §4 table (kind and resource id, actions, notes).
-7. `ARCHITECTURE_DECISIONS.md` D8: add the connector to the index of provider notes.
-8. `backend/tests/test_<slug>.py`:
+5. `docs/connectors.md`:
+   - a row in the Permissions table (kind and resource id, actions, notes);
+   - a `## <Provider>` section covering where to register the app, the callback URL (`{site_url}/api/oauth/<slug>/callback`), the permissions or scopes to give, and what users then choose in Minerva;
+   - after the setup, **Agents can:**, **Hidden or refused:** and **Limits:**, including what is not yet checked against a live account.
+6. The connector count in `ARCHITECTURE.md` (section 10) and `README.md`.
+7. `backend/tests/test_<slug>.py`:
    - Serve a fake provider through `httpx.MockTransport` (like `FakeTodoist` in `conftest.py`) and patch it into `client()`.
    - Run calls through the `Executor` with the shared helpers rather than copying another connector test's setup: the `connector_run` fixture (connection, grants, claimed run) and `token_endpoint` fixture (OAuth token requests) in `conftest.py`, and `ceiling`, `refusal`, `replace_grants` and `FLOW` in `tests/connector_runs.py`.
    - Contract behaviour belongs in `test_contract.py`, using the test-only connectors in `fakes.py`.
-9. Frontend: nothing per connector; the settings page and tool cards render from the API. Run `make api-types` only if an API schema changed.
+8. Frontend: nothing per connector; the settings page and tool cards render from the API. Run `make api-types` only if an API schema changed.
 
 ## Which connector to read
 
