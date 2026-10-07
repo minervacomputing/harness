@@ -140,7 +140,7 @@ Every agent turn runs in a hardened container with no network. Its only way out 
 make sandbox-check
 ```
 
-It starts the worker image with a probe and verifies 14 properties, including a non-root user, no secrets in the environment, a read-only filesystem, only a loopback interface, and blocked internet, DNS, cloud metadata, host, database and other-worker access.
+It starts the worker image with a probe and verifies 15 properties, including a non-root user, no secrets in the environment, a read-only filesystem, only a loopback interface, blocked internet, DNS, cloud metadata, host, database and other-worker access, and a process limit that refuses further forks.
 
 - **Linux:** the relay reaches the host through the Docker bridge, so set `MINERVA_GATEWAY_BIND=172.17.0.1`.
 - **gVisor:** register a runtime that lets workers connect to the socket, `sudo runsc install --runtime=runsc-minerva -- --host-uds=open`, restart Docker, and set `MINERVA_SANDBOX_RUNTIME=runsc-minerva`.
