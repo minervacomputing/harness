@@ -42,7 +42,7 @@ What changes:
 
 - The scan (step 4) enforces the entry limit: it stops after the limit's entries plus one and fails the turn, so a runaway folder costs at most the scan of 10,001 entries. The checkpoint's own check stays.
 - `/workspace` is mounted with `exec` (step 5). `nr_inodes` stays, for runc.
-- Under gVisor, the container provider sets `RLIMIT_NPROC` to the process limit and the host limit to at least 64 + 3 × that. Not under runc, where `RLIMIT_NPROC` counts every process of uid 1000 on the host. This also fixes today's workers, so it can land before the rest.
+- Done 2026-10-07: under gVisor, the container provider sets `RLIMIT_NPROC` to the process limit and the host limit to 64 + 3 × that (not under runc, where `RLIMIT_NPROC` counts every process of uid 1000 on the host), and `make sandbox-check` checks that a fork past the limit fails with `EAGAIN` and that the sandbox recovers. Not yet run under gVisor.
 
 ### 2. Store
 
@@ -206,11 +206,9 @@ A new Django app, `backend/files/`.
     - since the size charges what the gateway counts, a folder that fits the sandbox passes the checkpoint's size check, apart from hard links and sparse files.
   - `/tmp` grows to 256 MB for pi's output spill files and Python's temporary files.
   - Memory limit = base + both tmpfs sizes, since tmpfs pages count as memory.
-  - Under gVisor, `RLIMIT_NPROC` = the process limit, and the host's pids limit at least 64 + 3 × that (step 1).
 - **gVisor by default.** The container provider refuses to start workers without `MINERVA_SANDBOX_RUNTIME` unless `MINERVA_SANDBOX_ALLOW_RUNC=true`. Local development on Docker Desktop sets it; `make setup` writes it into a new `.env`.
 - **`make sandbox-check`:**
   - `/workspace` is writable and executable, and fails with `ENOSPC` at its size limit (and at its entry limit under runc);
-  - a fork loop fails with `EAGAIN` and the worker survives;
   - `/tmp` is not executable;
   - a process started by `bash` does not have `RUN_TOKEN` in its environment.
 
