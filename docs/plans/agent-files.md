@@ -105,8 +105,10 @@ Done 2026-10-07 (`backend/files/runs.py`, `backend/gateway/files.py`), apart fro
 - Refusals carry `{"error": {"code", "message"}}`, with `limit` for `quota`. Status codes: `stale` 401, `conflict` 409, `invalid_manifest` 400, `unknown_blob` 403, `quota` 413. An upload over the folder size is refused with `quota` before its body is read, since no file can be larger than its folder.
 - `GET /blobs/{sha256}` answers 404 both for a blob that does not exist and for one the run may not read.
 - What a run may read is checked against its uploads, its base version and its last checkpoint only: anything in an earlier checkpoint was in one of them. The arrays are compared in the database, never loaded.
+- A run keeps only its last checkpoint. Each accepted checkpoint takes the run's base version as its parent and deletes the one it replaces, in its own transaction, so a run that checkpoints small changes in a loop cannot fill the database with whole manifests. The sweep still deletes checkpoints left by finished runs.
 - An upload is checked (attempt and budget) before its body is read and again before anything is written to storage. Bytes received for an upload that is not stored (a wrong hash or length, a disconnect) still count against the run's budget.
-- Blob transfers run on a pool of their own (16 threads per gateway process), and a run has at most 4 at once per process; more are answered 429.
+- Blob transfers run on a pool of their own (16 threads per gateway process), and a run has at most 4 at once per process; more are answered 429. A transfer keeps its place until the blob I/O it started has finished, since a cancelled request does not stop its thread; only then is an upload's temporary file removed and, if it was not stored, its bytes charged.
+- Downloads from an S3 bucket stream the object's body: django-storages' `S3File` would download the whole object into memory on its first read.
 - `start_run()` reads the conversation's folder after inserting the run, which waits for a run that is ending, so it sees that run's published folder.
 
 - **Run spec.** `GET /run` gains:
@@ -172,7 +174,7 @@ Done 2026-10-07 (`backend/files/runs.py`, `backend/gateway/files.py`), apart fro
      1. close the gate;
      2. kill every other process of the worker's user (`kill(-1, SIGKILL)`), and repeat until `/proc` shows only the worker and init; if that takes more than a few seconds, end the attempt;
      3. scan with `lstat`, hashing only entries whose metadata changed;
-     4. upload missing blobs, a few at once;
+     4. upload missing blobs, at most 4 at once (the gateway answers 429 beyond that);
      5. `PUT /checkpoint`, unless nothing changed;
      6. open the gate and release the waiting results.
   4. The wrapper respects `runtime.signal`, so a stopped turn does not hang on a checkpoint.
@@ -182,6 +184,7 @@ Done 2026-10-07 (`backend/files/runs.py`, `backend/gateway/files.py`), apart fro
   - The turn's last checkpoint lists what was skipped as warnings, so the chat can show what was not kept.
   - It counts entries as the gateway does and stops after the entry limit plus one, failing the turn as for `quota`, since gVisor does not limit them (step 1). It reads directories incrementally (`opendir`), so a directory with a million entries is not read whole.
   - It measures the folder as the gateway does. Hard links count once per name and sparse files at their full size, so these are the only way a folder that fits the sandbox can exceed the limit.
+- **Checkpoint size.** The gateway accepts a `PUT /checkpoint` body of up to 16 MB. A manifest at the limits fits in about 11 MB, unless its paths are full of characters that JSON escapes (`"` and `\`). The worker checks the body's size before sending it and fails the turn as for `quota` when it is over.
 - **Failures.**
   - A failed checkpoint first marks the journal's storage as failed, the way a failed journal write does (`storage.ts`). The call's result, and anything after it, is then never recorded. Only after that does the wrapper settle, and `onFatal` ends the attempt.
   - Output the call streamed earlier may already be in the journal. The next attempt reports the call as interrupted.
@@ -294,5 +297,6 @@ All are settings.
 - Encryption of blobs beyond the storage's own.
 - Whether a per-agent switch for commands (`bash`) is needed at launch.
 - The blob sweep probes every blob older than an hour, named or not, on each pass; at scale it needs a cursor or a candidate marker set when versions are deleted.
+- Each checkpoint writes a whole manifest (about 11 MB at the entry and path limits) and deletes the one before, so a large folder checkpointed at every quiet moment means a lot of WAL and vacuum work. Storing a checkpoint as changes to its parent, or a minimum interval between checkpoints, would reduce it.
 - Whether paths with format characters (bidi overrides, zero-width) should be refused, or only escaped where the app shows them.
 - What happens to files written from a connector's data after access to it is removed (see "History after revocation" in ARCHITECTURE.md's open questions).

@@ -21,6 +21,7 @@ from files_support import (
     wait_until_blocked,
 )
 from moto import mock_aws
+from storages.backends.s3 import S3File
 
 from conversations.models import Conversation
 from files import reconcile, store, sweep
@@ -218,6 +219,7 @@ def test_a_sweep_whose_lease_ran_out_leaves_the_row_alone():
 def test_a_loose_row_for_an_object_a_blob_names_does_not_delete_it(tmp_path, files_storage, workspace):
     blob = put(tmp_path, workspace.id, b"hello")
     LooseObject.objects.create(key=blob.storage_key, delete_after=timezone.now())
+    make_due()
     sweep.sweep()
     assert stored_keys(files_storage) == [blob.storage_key]
     assert not LooseObject.objects.exists()
@@ -296,3 +298,13 @@ def test_s3_storage(tmp_path, workspace, s3, monkeypatch):
     sweep.sweep()
     assert keys() == []
     assert LooseObject.objects.get().deletions == 1
+
+
+def test_s3_downloads_stream(tmp_path, workspace, s3):
+    data = os.urandom(3 * 1024 * 1024)
+    blob = put(tmp_path, workspace.id, data)
+    with store.open_blob(blob) as stored:
+        # The response body, read as it arrives: an S3File downloads the whole object on its first read.
+        assert not isinstance(stored, S3File)
+        assert stored.read(1024) == data[:1024]
+        assert stored.read() == data[1024:]

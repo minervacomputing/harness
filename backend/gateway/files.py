@@ -4,6 +4,9 @@
 buffers its body: it streams to a temporary file while hashing, and the file is removed however the request ends.
 The bytes are received and hashed even when the store already has the blob, since only that shows the run has the
 contents. `GET /blobs/{sha256}` and `PUT /checkpoint` are Django views.
+
+Each upload or download is a _Transfer, which holds one of the run's places until the blob I/O it started has
+finished: cancelling an await (a client that leaves, a shutdown) does not stop a thread.
 """
 
 import asyncio
@@ -11,9 +14,11 @@ import contextlib
 import functools
 import hashlib
 import json
+import logging
 import os
 import re
 import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID
 
@@ -49,7 +54,10 @@ CHECKPOINT_STATUS = {
 # transfers at once in each process, so one run cannot take every thread.
 BLOB_IO = ThreadPoolExecutor(max_workers=16, thread_name_prefix="blob-io")
 TRANSFERS_PER_RUN = 4
+# Places taken per run. Only the event loop changes it.
 _transfers: dict[UUID, int] = {}
+
+log = logging.getLogger("minerva.files")
 
 
 class _Inactive(Exception):
@@ -60,8 +68,89 @@ class _Busy(Exception):
     pass
 
 
-async def _io(fn, *args):
-    return await asyncio.get_running_loop().run_in_executor(BLOB_IO, functools.partial(fn, *args))
+class _Transfer:
+    """One upload or download of a run, holding one of its places in this process.
+
+    Its jobs run on the blob I/O threads. The place is given back only once the transfer has ended and every job
+    has finished, then its cleanup: a thread keeps running when the await on it is cancelled, so giving the place
+    back earlier would let a run that keeps leaving occupy every thread. The jobs settle on their threads, so the
+    cleanup does not depend on the loop; at shutdown it is best effort.
+    """
+
+    def __init__(self, run_id: UUID) -> None:
+        count = _transfers.get(run_id, 0)
+        if count >= TRANSFERS_PER_RUN:
+            raise _Busy
+        _transfers[run_id] = count + 1
+        self.run_id = run_id
+        self.loop = asyncio.get_running_loop()
+        self.released = self.loop.create_future()
+        self.lock = threading.Lock()
+        self.running = 0
+        self.ended = False
+        self.cleanup = None
+
+    async def io(self, fn, *args):
+        with self.lock:
+            if self.ended:
+                raise RuntimeError("The transfer has ended.")
+            self.running += 1
+        try:
+            job = BLOB_IO.submit(fn, *args)
+        except BaseException:
+            self._settled(None)
+            raise
+        # Settles on the job's thread when it finishes, or here if it is cancelled before it starts.
+        job.add_done_callback(self._settled)
+        return await asyncio.wrap_future(job)
+
+    def end(self, cleanup=None) -> None:
+        """Ends the transfer, from any thread. `cleanup` runs on a blob I/O thread once every job has finished,
+        then the place is given back. Only the first call counts."""
+        with self.lock:
+            if self.ended:
+                return
+            self.ended, self.cleanup = True, cleanup
+            idle = self.running == 0
+        if idle:
+            self._close()
+
+    async def finish(self, cleanup=None) -> None:
+        """Ends the transfer and waits until its place is given back. Cancelling the wait does not stop that."""
+        self.end(cleanup)
+        await asyncio.shield(self.released)
+
+    def _settled(self, _job) -> None:
+        with self.lock:
+            self.running -= 1
+            idle = self.ended and self.running == 0
+        if idle:
+            self._close()
+
+    def _close(self) -> None:
+        try:
+            BLOB_IO.submit(self._clean_up)
+        except RuntimeError:
+            # The executor is shutting down.
+            self._clean_up()
+
+    def _clean_up(self) -> None:
+        try:
+            if self.cleanup is not None:
+                self.cleanup()
+        except Exception:
+            log.warning("Blob transfer cleanup failed", exc_info=True)
+        finally:
+            with contextlib.suppress(RuntimeError):
+                # The loop has closed: the process is ending.
+                self.loop.call_soon_threadsafe(self._release)
+
+    def _release(self) -> None:
+        if _transfers[self.run_id] > 1:
+            _transfers[self.run_id] -= 1
+        else:
+            del _transfers[self.run_id]
+        self.released.set_result(None)
 
 
 def _closing_connection(fn):
@@ -75,20 +164,6 @@ def _closing_connection(fn):
             connection.close()
 
     return wrapper
-
-
-def _acquire(run_id: UUID) -> None:
-    count = _transfers.get(run_id, 0)
-    if count >= TRANSFERS_PER_RUN:
-        raise _Busy
-    _transfers[run_id] = count + 1
-
-
-def _release(run_id: UUID) -> None:
-    if _transfers[run_id] > 1:
-        _transfers[run_id] -= 1
-    else:
-        del _transfers[run_id]
 
 
 async def _send_json(send: Send, status: int, body: dict) -> None:
@@ -127,69 +202,102 @@ async def put_blob(scope: Scope, receive: Receive, send: Send) -> None:
 
     run_id, attempt = scope[RUN_SCOPE_KEY], scope[ATTEMPT_SCOPE_KEY]
     try:
-        _acquire(run_id)
+        transfer = _Transfer(run_id)
     except _Busy:
         await send_error(send, 429, "This run has too many transfers in flight.")
         return
+    staged = _Staged()
     try:
-        await _receive_blob(run_id, attempt, sha256, size, receive, send)
+        await _receive_blob(transfer, staged, run_id, attempt, sha256, size, receive, send)
     finally:
-        _release(run_id)
+        await transfer.finish(functools.partial(_discard, staged, run_id, attempt))
 
 
-async def _receive_blob(run_id: UUID, attempt: int, sha256: str, size: int, receive: Receive, send: Send):
+class _Staged:
+    """An upload's temporary file. The blob I/O jobs that act on it set its fields, so an await cancelled while
+    one runs loses nothing that the cleanup (_discard) needs."""
+
+    def __init__(self) -> None:
+        self.path: str | None = None
+        self.file = None
+        self.received = 0
+        self.stored = False
+
+    def open(self) -> None:
+        descriptor, self.path = tempfile.mkstemp("", "minerva-blob-")
+        self.file = os.fdopen(descriptor, "wb")
+
+
+async def _receive_blob(
+    transfer: _Transfer,
+    staged: _Staged,
+    run_id: UUID,
+    attempt: int,
+    sha256: str,
+    size: int,
+    receive: Receive,
+    send: Send,
+):
     # Checked before the body is read, and again before anything is written to storage.
     try:
-        await _io(_admit, run_id, attempt, size)
+        await transfer.io(_admit, run_id, attempt, size)
     except _Inactive:
         await send_error(send, 401, INACTIVE)
         return
     except QuotaExceeded as error:
         await _quota(send, error.limit)
         return
-    descriptor, path = await _io(tempfile.mkstemp, "", "minerva-blob-")
-    received = 0
-    stored = False
+    await transfer.io(staged.open)
+    digest = hashlib.sha256()
+    while True:
+        message = await receive()
+        if message["type"] == "http.disconnect":
+            return
+        body = message.get("body", b"")
+        staged.received += len(body)
+        if staged.received > size:
+            await send_error(send, 400, "The body is longer than its Content-Length.")
+            return
+        if body:
+            await transfer.io(_write, staged.file, digest, body)
+        if not message.get("more_body"):
+            break
+    if staged.received != size:
+        await send_error(send, 400, "The body is shorter than its Content-Length.")
+        return
+    if digest.hexdigest() != sha256:
+        await send_error(send, 400, "The contents do not match the hash.")
+        return
     try:
-        with os.fdopen(descriptor, "wb") as file:
-            digest = hashlib.sha256()
-            while True:
-                message = await receive()
-                if message["type"] == "http.disconnect":
-                    return
-                body = message.get("body", b"")
-                received += len(body)
-                if received > size:
-                    await send_error(send, 400, "The body is longer than its Content-Length.")
-                    return
-                if body:
-                    await _io(_write, file, digest, body)
-                if not message.get("more_body"):
-                    break
-        if received != size:
-            await send_error(send, 400, "The body is shorter than its Content-Length.")
-            return
-        if digest.hexdigest() != sha256:
-            await send_error(send, 400, "The contents do not match the hash.")
-            return
-        try:
-            blob = await _io(_record, run_id, attempt, sha256, size, path)
-        except _Inactive:
-            await send_error(send, 401, INACTIVE)
-            return
-        except QuotaExceeded as error:
-            await _quota(send, error.limit)
-            return
-        stored = True
-        await _send_json(send, 200, {"sha256": blob.sha256, "size": blob.size})
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(path)
-        if received and not stored:
+        blob = await transfer.io(_record, run_id, attempt, sha256, size, staged)
+    except _Inactive:
+        await send_error(send, 401, INACTIVE)
+        return
+    except QuotaExceeded as error:
+        await _quota(send, error.limit)
+        return
+    await _send_json(send, 200, {"sha256": blob.sha256, "size": blob.size})
+
+
+@_closing_connection
+def _discard(staged: _Staged, run_id: UUID, attempt: int) -> None:
+    """An upload's cleanup, once its other jobs have finished: whether it was stored is what _record did. Each step
+    runs even if one before it fails."""
+    try:
+        if staged.received and not staged.stored:
             # Bytes the gateway received count against the run's budget even when nothing was stored, so a run
-            # cannot make it receive and hash without end.
-            with contextlib.suppress(Exception):
-                await _io(_charge_refused, run_id, attempt, received)
+            # cannot make it receive and hash without end. A commit that failed but took effect is charged twice.
+            Run.unscoped.filter(pk=run_id, attempt=attempt).update(
+                uploaded_bytes=F("uploaded_bytes") + staged.received
+            )
+    finally:
+        try:
+            if staged.file is not None:
+                staged.file.close()
+        finally:
+            if staged.path is not None:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(staged.path)
 
 
 def _write(file, digest, body: bytes) -> None:
@@ -220,12 +328,7 @@ _admit = _closing_connection(_check)
 
 
 @_closing_connection
-def _charge_refused(run_id: UUID, attempt: int, received: int) -> None:
-    Run.unscoped.filter(pk=run_id, attempt=attempt).update(uploaded_bytes=F("uploaded_bytes") + received)
-
-
-@_closing_connection
-def _record(run_id: UUID, attempt: int, sha256: str, size: int, path: str):
+def _record(run_id: UUID, attempt: int, sha256: str, size: int, staged: _Staged):
     """Charges the upload to the run, records the blob (charged to the workspace if new) and grants it to the
     run, while the attempt is current."""
 
@@ -238,9 +341,12 @@ def _record(run_id: UUID, attempt: int, sha256: str, size: int, path: str):
         store.grant(run, blob)
         return blob
 
+    staged.file.close()
     _check(run_id, attempt, size)
     workspace_id = Run.unscoped.filter(pk=run_id).values_list("workspace_id", flat=True).get()
-    return store.store_blob(workspace_id, sha256, size, path, transact)
+    blob = store.store_blob(workspace_id, sha256, size, staged.path, transact)
+    staged.stored = True
+    return blob
 
 
 @require_GET
@@ -254,36 +360,45 @@ async def get_blob(request: HttpRequest, sha256: str):
         # The same answer whether the blob does not exist or the run may not read it.
         return error_response("Not found.", 404)
     try:
-        _acquire(run.id)
+        transfer = _Transfer(run.id)
     except _Busy:
         return error_response("This run has too many transfers in flight.", 429)
+    download = _Download(transfer)
     try:
-        stream = await _io(store.open_blob, blob)
+        await transfer.io(download.open, blob)
+        response = StreamingHttpResponse(download, content_type="application/octet-stream")
+        response["Content-Length"] = str(blob.size)
     except BaseException:
-        _release(run.id)
+        download.close()
         raise
-    response = StreamingHttpResponse(_Download(stream, run.id), content_type="application/octet-stream")
-    response["Content-Length"] = str(blob.size)
     return response
 
 
 class _Download:
     """A blob's contents, read chunk by chunk on the blob I/O threads (Django buffers a synchronous iterator
-    whole under ASGI). Django calls close() however the response ends, even if it was never read."""
+    whole under ASGI). The transfer ends when the iteration does, or when Django closes the response, which it
+    does when the client leaves, even if it was never read."""
 
-    def __init__(self, stream, run_id: UUID) -> None:
-        self.stream, self.run_id, self.closed = stream, run_id, False
-        self.loop = asyncio.get_running_loop()
+    def __init__(self, transfer: _Transfer) -> None:
+        self.transfer = transfer
+        self.stream = None
+
+    def open(self, blob) -> None:
+        self.stream = store.open_blob(blob)
 
     async def __aiter__(self):
-        while chunk := await _io(self.stream.read, CHUNK_BYTES):
-            yield chunk
+        try:
+            while chunk := await self.transfer.io(self.stream.read, CHUNK_BYTES):
+                yield chunk
+        finally:
+            self.close()
 
     def close(self) -> None:
-        if not self.closed:
-            self.closed = True
-            # Django calls this from a thread of its own; the counts belong to the loop.
-            self.loop.call_soon_threadsafe(_release, self.run_id)
+        # From any thread; the stream is closed once a read still running has finished.
+        self.transfer.end(self._close_stream)
+
+    def _close_stream(self) -> None:
+        if self.stream is not None:
             self.stream.close()
 
 

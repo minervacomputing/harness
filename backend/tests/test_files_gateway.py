@@ -1,16 +1,19 @@
 import asyncio
+import io
 import json
 import tempfile
+import threading
 
 import pytest
 from asgiref.sync import async_to_sync, sync_to_async
 from django.db import transaction
 from django.test import AsyncClient, Client
 from files_support import Background, conversation_in, put, run_in, sha, stored_keys, wait_until_blocked
-from test_gateway_auth import Upload, bearer
+from test_gateway_auth import CHUNK, Upload, bearer
 
 from conversations.models import Conversation
 from files import runs as folder
+from files import store
 from files.models import Blob, FolderVersion, RunBlob
 from gateway import files
 from minerva.config import config
@@ -43,6 +46,15 @@ async def read_all(response) -> bytes:
 
 def reload(run: Run) -> Run:
     return Run.unscoped.get(pk=run.pk)
+
+
+async def until(condition) -> None:
+    """Waits up to five seconds for something a blob I/O thread does."""
+    for _ in range(500):
+        if condition():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("Timed out.")
 
 
 @pytest.fixture
@@ -191,8 +203,119 @@ async def test_a_run_has_a_few_transfers_at_once(application, claimed, temp_dir)
     assert files._transfers == {run.id: 1}
     assert len(await read_all(response)) == 200_000
     await sync_to_async(response.close)()
-    await asyncio.sleep(0)
+    await until(lambda: files._transfers == {})
+
+
+async def test_a_cancelled_upload_keeps_its_place_until_its_write_has_finished(
+    application, claimed, temp_dir, monkeypatch
+):
+    run, token = claimed
+    writing, release = [], threading.Event()
+    write = files._write
+
+    def slow_write(*args):
+        writing.append(True)
+        release.wait(10)
+        write(*args)
+
+    monkeypatch.setattr(files, "_write", slow_write)
+    data = b"x" * 200_000
+    tasks = []
+    for count in range(1, files.TRANSFERS_PER_RUN + 1):
+        tasks.append(Upload(bearer(token), path=f"/blobs/{sha(data)}", body=data).start(application))
+        await until(lambda count=count: len(writing) == count)
+    for task in tasks:
+        task.cancel()
+    await asyncio.sleep(0.05)
+    # The threads still write, so the run's places stay taken.
+    assert files._transfers == {run.id: files.TRANSFERS_PER_RUN}
+    assert (await upload(application, token, b"hello")).status == 429
+
+    release.set()
+    results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 10)
+    assert all(isinstance(result, asyncio.CancelledError) for result in results)
     assert files._transfers == {}
+    assert list(temp_dir.iterdir()) == []
+    assert not await Blob.unscoped.aexists()
+    # Each upload's first chunk was received, and charged once.
+    assert (await Run.unscoped.aget(pk=run.id)).uploaded_bytes == files.TRANSFERS_PER_RUN * CHUNK
+
+
+async def test_an_upload_cancelled_while_it_is_recorded_is_charged_once(
+    application, claimed, temp_dir, monkeypatch
+):
+    run, token = claimed
+    recording, release = threading.Event(), threading.Event()
+    store_blob = store.store_blob
+
+    def slow_store_blob(*args):
+        recording.set()
+        release.wait(10)
+        return store_blob(*args)
+
+    monkeypatch.setattr(store, "store_blob", slow_store_blob)
+    task = Upload(bearer(token), path=f"/blobs/{sha(b'hello')}", body=b"hello").start(application)
+    await until(recording.is_set)
+    task.cancel()
+    await asyncio.sleep(0.05)
+    assert files._transfers == {run.id: 1}
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 10)
+    assert files._transfers == {}
+    assert list(temp_dir.iterdir()) == []
+    # Stored, and charged as stored only.
+    assert await RunBlob.unscoped.filter(run_id=run.id, blob__sha256=sha(b"hello")).aexists()
+    assert (await Run.unscoped.aget(pk=run.id)).uploaded_bytes == 5
+
+
+def test_an_uploads_cleanup_takes_every_step_when_one_fails(claimed, temp_dir):
+    run, _token = claimed
+    staged = files._Staged()
+    staged.open()
+    staged.received = 5
+    opened = staged.file
+
+    class Full:
+        def close(self):
+            opened.close()
+            raise OSError("No space left on device.")
+
+    staged.file = Full()
+    with pytest.raises(OSError):
+        files._discard(staged, run.id, run.attempt)
+    assert list(temp_dir.iterdir()) == []
+    assert reload(run).uploaded_bytes == 5
+
+
+async def test_a_download_closed_while_reading_keeps_its_place_until_the_read_has_finished(
+    application, claimed, temp_dir, monkeypatch
+):
+    run, token = claimed
+    assert (await upload(application, token, b"hello")).status == 200
+    reading, release = threading.Event(), threading.Event()
+
+    class Slow(io.BytesIO):
+        def read(self, size=-1):
+            reading.set()
+            release.wait(10)
+            return super().read(size)
+
+    stream = Slow(b"hello")
+    monkeypatch.setattr(store, "open_blob", lambda blob: stream)
+    response = await AsyncClient().get(f"/blobs/{sha(b'hello')}", headers=auth(token))
+    reader = asyncio.ensure_future(anext(aiter(response.streaming_content)))
+    await until(reading.is_set)
+    reader.cancel()
+    await sync_to_async(response.close)()
+    await asyncio.sleep(0.05)
+    assert files._transfers == {run.id: 1}
+    assert not stream.closed
+
+    release.set()
+    await until(lambda: files._transfers == {})
+    assert stream.closed
 
 
 async def test_an_upload_streaming_when_the_attempt_changed_is_refused(application, claimed, temp_dir):
@@ -259,7 +382,9 @@ async def test_checkpoints_build_on_each_other(application, claimed):
     )
     assert status == 200
     second = await FolderVersion.unscoped.aget(pk=body["version"])
-    assert second.parent_id == first.id
+    # A run keeps only its last checkpoint, built on its base version (none here).
+    assert second.parent_id is None
+    assert not await FolderVersion.unscoped.filter(pk=first.id).aexists()
     assert second.entries["files"]["dir/b.py"] == {
         "sha256": sha(b"two"),
         "size": 3,
@@ -331,6 +456,36 @@ def test_an_earlier_attempt_cannot_checkpoint(claimed, tmp_path):
     assert refused.value.code == "stale"
     # The new attempt hydrates the checkpoint and builds on it.
     assert folder.checkpoint(run.id, 2, reload(run).checkpoint_id, {"files": [], "dirs": []}) is not None
+
+
+def test_a_run_keeps_only_its_last_checkpoint(claimed, tmp_path, user):
+    run, token = claimed
+    put(tmp_path, run.workspace_id, b"one", run=run)
+    _, body = put_checkpoint(token, None, entry("a", b"one"))
+    services.complete(run.id, "Done.", attempt=1)
+    base = body["version"]
+    conversation = Conversation.unscoped.get(pk=run.conversation_id)
+    services.start_run(conversation=conversation, user_id=user.id, content="Again")
+    [(second, token)] = services.claim_queued(1)
+    put(tmp_path, run.workspace_id, b"two", run=second)
+
+    parent = base
+    for entries in ([entry("a", b"one"), entry("b", b"two")], [entry("b", b"two")], [entry("a", b"one")]):
+        status, body = put_checkpoint(token, parent, *entries)
+        assert status == 200
+        parent = body["version"]
+    [last] = FolderVersion.unscoped.filter(run=second)
+    assert (str(last.id), last.kind, str(last.parent_id)) == (parent, "checkpoint", base)
+    # What the replaced checkpoints held stays readable: it is the base version's, or uploaded by the run.
+    assert folder.unreadable(reload(second), {sha(b"one"), sha(b"two")}) == []
+    assert put_checkpoint(token, parent, entry("b", b"two"))[0] == 200
+
+    # A new attempt starts from the last one.
+    _, token = services.restart(second.id, 1)
+    spec = Client().get("/run", headers=auth(token)).json()
+    assert spec["folder"]["version"] == str(reload(second).checkpoint_id)
+    assert [file["path"] for file in spec["folder"]["files"]] == ["b"]
+    assert FolderVersion.unscoped.filter(run=second).count() == 1
 
 
 # Ending and starting runs

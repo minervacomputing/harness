@@ -28,6 +28,7 @@ from django.core.files import File
 from django.core.files.storage import FileSystemStorage, Storage, storages
 from django.db import IntegrityError, connection, transaction
 from django.db.models import DateTimeField, F, Func
+from storages.backends.s3 import S3File
 
 from conversations.models import Conversation
 from files import limits
@@ -68,7 +69,13 @@ def storage() -> Storage:
 
 
 def open_blob(blob: Blob) -> IO[bytes]:
-    return storage().open(blob.storage_key, "rb")
+    """A blob's contents, to read in chunks."""
+    file = storage().open(blob.storage_key, "rb")
+    if isinstance(file, S3File):
+        # An S3File's first read downloads the whole object into memory, so its body is streamed instead. Blobs
+        # are stored as they are, without compression or per-object parameters.
+        return file.obj.get()["Body"]
+    return file
 
 
 def delete_object(key: str) -> None:

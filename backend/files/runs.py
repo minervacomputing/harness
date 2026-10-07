@@ -1,16 +1,19 @@
 """A run's folder: the version it hydrates, the blobs it may read, its checkpoints, and the version it publishes
 when it ends.
 
-A run may read the blobs of its base version and of its own checkpoints, and the blobs it uploaded (RunBlob).
+A run may read the blobs of its base version and of its last checkpoint, and the blobs it uploaded (RunBlob).
 Knowing a hash is not enough: a blob of another conversation in the same workspace stays out of reach.
 
 Checkpoints and the end of a run (runs.services.finish) both take the run's row lock, so no checkpoint is
-accepted after the run ended, and the version a run publishes is its last accepted checkpoint.
+accepted after the run ended, and the version a run publishes is its last accepted checkpoint. A run keeps only that
+one: each checkpoint deletes the one it replaces.
 """
 
 from uuid import UUID
 
 from django.db import connection, transaction
+from django.db.models import Subquery
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from conversations.models import Conversation
@@ -46,9 +49,10 @@ class CheckpointRefused(Exception):
 
 
 def hydrate_version(run: Run) -> FolderVersion | None:
-    """The version a new attempt starts from: its last checkpoint, else its base version."""
-    version_id = run.checkpoint_id or run.base_version_id
-    return FolderVersion.unscoped.get(pk=version_id) if version_id else None
+    """The version a new attempt starts from: its last checkpoint, else its base version. In one statement, since a
+    checkpoint deletes the one it replaces."""
+    current = Run.unscoped.filter(pk=run.pk).values(version=Coalesce("checkpoint_id", "base_version_id"))
+    return FolderVersion.unscoped.filter(pk=Subquery(current[:1])).first()
 
 
 def wire_entries(version: FolderVersion | None) -> dict:
@@ -135,6 +139,12 @@ def checkpoint(run_id: UUID, attempt: int, parent_id: UUID | None, data: object)
         except store.UnknownBlob:
             raise CheckpointRefused("unknown_blob", "A blob is no longer in the store.") from None
         Run.unscoped.filter(pk=run_id).update(checkpoint=version)
+        if current is not None and current.kind == FolderVersion.Kind.CHECKPOINT and current.run_id == run.pk:
+            # A run keeps only its last checkpoint, since each holds a whole manifest. Nothing needs the one it
+            # replaces: what the run may read is its base version, its last checkpoint and its uploads, and every
+            # blob of an earlier checkpoint is in its base version or uploaded (granted until the run ends).
+            FolderVersion.unscoped.filter(pk=version.pk).update(parent_id=run.base_version_id)
+            FolderVersion.unscoped.filter(pk=current.pk).delete()
     return version
 
 
@@ -161,7 +171,7 @@ def publish(run_id: UUID) -> None:
     if version_id is None:
         return
     if run.checkpoint_id is not None:
-        # The turn's version builds on the turn's start, so its other checkpoints can be deleted.
+        # The turn's version builds on the turn's start.
         FolderVersion.unscoped.filter(pk=run.checkpoint_id).update(
             kind=FolderVersion.Kind.TURN, parent_id=run.base_version_id
         )
