@@ -3,13 +3,13 @@ import time
 
 from django.core.management.base import BaseCommand, CommandError
 
-from demo import bento, services
+from demo import newsletter, services
 
 log = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
-    help = "Deletes visitors' idle conversations and adds newsletter opt-ins to Bento."
+    help = "Deletes visitors' idle conversations and syncs newsletter opt-ins to Buttondown or Bento."
 
     def add_arguments(self, parser) -> None:
         parser.add_argument("--every", type=int, default=0, help="Repeat every N seconds (0: run once).")
@@ -20,8 +20,8 @@ class Command(BaseCommand):
         while True:
             try:
                 deleted = services.cleanup(services.site())
-                synced = bento.sync_leads()
-                self.stdout.write(f"Deleted {deleted} conversations, synced {synced} leads to Bento.")
+                synced = newsletter.sync_leads()
+                self.stdout.write(f"Deleted {deleted} conversations, synced {synced} newsletter leads.")
             except Exception:
                 if not every:
                     raise

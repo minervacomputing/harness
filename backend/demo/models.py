@@ -51,7 +51,9 @@ class DemoLead(UUIDModel):
     source = models.CharField(max_length=32)
     created_at = models.DateTimeField(auto_now_add=True)
     last_seen_at = models.DateTimeField(auto_now=True)
-    synced_to_bento_at = models.DateTimeField(null=True, blank=True)
+    # The newsletter provider the address was last added to ("bento" or "buttondown"), and when.
+    synced_to = models.CharField(max_length=16, blank=True)
+    synced_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self) -> str:
         return self.email

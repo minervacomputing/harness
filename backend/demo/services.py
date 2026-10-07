@@ -141,7 +141,7 @@ def record_lead(user: User, *, source: str, newsletter: bool | None) -> None:
         email=user.email, defaults={"source": source, "newsletter": bool(newsletter)}
     )
     if not created:
-        # The latest choice wins; bento.sync_leads unsubscribes someone who unticks the box later.
+        # The latest choice wins; newsletter.sync_leads unsubscribes someone who unticks the box later.
         if newsletter is not None:
             lead.newsletter = newsletter
         lead.save(update_fields=["newsletter", "last_seen_at"])

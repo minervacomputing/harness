@@ -1,6 +1,8 @@
 import json
 from datetime import timedelta
+from urllib.parse import unquote
 
+import httpx
 import pytest
 from django.core.management import call_command
 from django.test import Client
@@ -11,7 +13,7 @@ from accounts.models import User
 from agents.models import Agent
 from connections.models import Connection
 from conversations.models import Conversation
-from demo import bento, turnstile
+from demo import bento, buttondown, newsletter, turnstile
 from demo import services as demo
 from demo.models import DemoLead, DemoSite, DemoUsage
 from minerva.config import config
@@ -306,15 +308,187 @@ def test_bento_gets_opt_ins_and_later_withdrawals_only(db, monkeypatch):
     )
     DemoLead.objects.create(email="in@example.com", source="email", newsletter=True)
     DemoLead.objects.create(email="out@example.com", source="email", newsletter=False)
-    assert bento.sync_leads() == 1
+    assert newsletter.sync_leads() == 1
     assert sent == [(bento.API_URL, {"subscribers": [{"email": "in@example.com", "tags": bento.TAGS}]})]
+    assert DemoLead.objects.get(email="in@example.com").synced_to == "bento"
     sent.clear()
     DemoLead.objects.filter(email="in@example.com").update(newsletter=False)
-    assert bento.sync_leads() == 1
+    assert newsletter.sync_leads() == 1
     assert sent == [
         (bento.COMMANDS_URL, {"command": [{"command": "unsubscribe", "email": "in@example.com"}]})
     ]
-    assert bento.sync_leads() == 0
+    assert newsletter.sync_leads() == 0
+
+
+def configure_both_providers(monkeypatch):
+    monkeypatch.setattr(config(), "buttondown_api_key", SecretStr("bd"))
+    monkeypatch.setattr(config(), "bento_site_uuid", "site")
+    monkeypatch.setattr(config(), "bento_publishable_key", "pk")
+    monkeypatch.setattr(config(), "bento_secret_key", SecretStr("sk"))
+
+
+def test_buttondown_gets_opt_ins_and_withdrawals_and_retries_only_errors_worth_it(db, monkeypatch):
+    # Buttondown wins while Bento is configured too.
+    configure_both_providers(monkeypatch)
+    sent = []
+    replies = {
+        "known@example.com": (400, {"code": "email_already_exists"}),
+        "busy@example.com": (429, {}),
+    }
+    # Subscribers Buttondown cannot unsubscribe, by type.
+    types = {"pending@example.com": "unactivated", "left@example.com": "unsubscribed"}
+
+    def request(method, url, headers, json, **_):
+        assert headers["Authorization"] == "Token bd"
+        assert "X-Buttondown-Collision-Behavior" not in headers
+        sent.append((method, url, json))
+        email = json["email_address"] if method == "POST" else unquote(url.rsplit("/", 1)[1])
+        if email in types:
+            if method == "PATCH":
+                return httpx.Response(400, json={"code": "subscriber_type_invalid"})
+            if method == "GET":
+                return httpx.Response(200, json={"type": types[email]})
+            return httpx.Response(204)
+        status, body = replies.get(email, (201, {}))
+        return httpx.Response(status, json=body)
+
+    def bento_post(url, json, **_):
+        sent.append(("bento", url, json))
+        return httpx.Response(200)
+
+    def bento_unsubscribe(email):
+        return ("bento", bento.COMMANDS_URL, {"command": [{"command": "unsubscribe", "email": email}]})
+
+    monkeypatch.setattr(buttondown.httpx, "request", request)
+    monkeypatch.setattr(bento.httpx, "post", bento_post)
+    # Added to Bento before the switch: moved to Buttondown now.
+    DemoLead.objects.create(email="old+demo@example.com", source="email", newsletter=True, synced_to="bento")
+    DemoLead.objects.create(email="known@example.com", source="email", newsletter=True)
+    DemoLead.objects.create(email="busy@example.com", source="email", newsletter=True)
+    DemoLead.objects.create(email="out@example.com", source="email", newsletter=False)
+    # Withdrawn after it was added to Bento: unsubscribed there while Bento's keys are set.
+    DemoLead.objects.create(email="gone@example.com", source="email", newsletter=False, synced_to="bento")
+    # A moving address leaves Bento before it is added to Buttondown. An address Buttondown already has counts as
+    # done; a rate limit stops the run until the next one.
+    assert newsletter.sync_leads() == 3
+    assert sent == [
+        bento_unsubscribe("gone@example.com"),
+        bento_unsubscribe("old+demo@example.com"),
+        *[
+            (
+                "POST",
+                buttondown.API_URL,
+                {"email_address": email, "type": "regular", "metadata": {"demo": True}},
+            )
+            for email in ["old+demo@example.com", "known@example.com", "busy@example.com"]
+        ],
+    ]
+    assert set(DemoLead.objects.filter(synced_to="buttondown").values_list("email", flat=True)) == {
+        "old+demo@example.com",
+        "known@example.com",
+    }
+    assert DemoLead.objects.get(email="gone@example.com").synced_to == ""
+    # A refusal Buttondown does not list as final may be ours to fix, so the address waits for the next run.
+    replies["busy@example.com"] = (400, {"code": "metadata_invalid"})
+    assert newsletter.sync_leads() == 0
+    del replies["busy@example.com"]
+    assert newsletter.sync_leads() == 1
+    sent.clear()
+    # Withdrawals: done once Buttondown has unsubscribed the address. One it cannot unsubscribe gets no newsletters
+    # and is left as it is, unless it has not confirmed yet (here, a waitlist sign-up) and still could: that one is
+    # deleted.
+    for email in ["pending@example.com", "left@example.com"]:
+        DemoLead.objects.create(email=email, source="email", newsletter=False, synced_to="buttondown")
+    DemoLead.objects.filter(email="old+demo@example.com").update(newsletter=False)
+    assert newsletter.sync_leads() == 3
+    assert sent == [
+        ("PATCH", f"{buttondown.API_URL}/old%2Bdemo%40example.com", {"type": "unsubscribed"}),
+        ("PATCH", f"{buttondown.API_URL}/pending%40example.com", {"type": "unsubscribed"}),
+        ("GET", f"{buttondown.API_URL}/pending%40example.com", None),
+        ("DELETE", f"{buttondown.API_URL}/pending%40example.com", None),
+        ("PATCH", f"{buttondown.API_URL}/left%40example.com", {"type": "unsubscribed"}),
+        ("GET", f"{buttondown.API_URL}/left%40example.com", None),
+    ]
+    assert not DemoLead.objects.filter(newsletter=False).exclude(synced_to="").exists()
+    # Any other refusal keeps the withdrawal queued.
+    DemoLead.objects.filter(email="known@example.com").update(newsletter=False)
+    replies["known@example.com"] = (400, {"code": "metadata_invalid"})
+    assert newsletter.sync_leads() == 0
+    assert DemoLead.objects.get(email="known@example.com").synced_to == "buttondown"
+    del replies["known@example.com"]
+    assert newsletter.sync_leads() == 1
+    assert newsletter.sync_leads() == 0
+
+
+def bento_fails_with_a_status(url, json, **_):
+    return httpx.Response(500)
+
+
+def bento_is_unreachable(url, json, **_):
+    raise httpx.ConnectTimeout("timed out")
+
+
+@pytest.mark.parametrize("bento_post", [bento_fails_with_a_status, bento_is_unreachable])
+def test_a_failing_provider_holds_up_only_its_own_withdrawals_and_moves(db, monkeypatch, bento_post):
+    configure_both_providers(monkeypatch)
+    sent = []
+
+    def request(method, url, json, **_):
+        sent.append((method, json["email_address"] if method == "POST" else unquote(url.rsplit("/", 1)[1])))
+        return httpx.Response(201 if method == "POST" else 200, json={})
+
+    monkeypatch.setattr(buttondown.httpx, "request", request)
+    monkeypatch.setattr(bento.httpx, "post", bento_post)
+    DemoLead.objects.create(
+        email="stuck-out@example.com", source="email", newsletter=False, synced_to="bento"
+    )
+    DemoLead.objects.create(email="stuck-in@example.com", source="email", newsletter=True, synced_to="bento")
+    DemoLead.objects.create(email="out@example.com", source="email", newsletter=False, synced_to="buttondown")
+    DemoLead.objects.create(email="new@example.com", source="email", newsletter=True)
+    assert newsletter.sync_leads() == 2
+    assert sent == [("PATCH", "out@example.com"), ("POST", "new@example.com")]
+    assert DemoLead.objects.filter(synced_to="bento").count() == 2
+
+
+def test_withdrawals_survive_the_visitor_changing_their_mind_meanwhile(db, monkeypatch):
+    monkeypatch.setattr(config(), "buttondown_api_key", SecretStr("bd"))
+    sent = []
+    types = {}
+
+    def request(method, url, json, **_):
+        email = json["email_address"] if method == "POST" else unquote(url.rsplit("/", 1)[1])
+        sent.append((method, email))
+        if method == "PATCH" and email == "back@example.com":
+            # Ticks the box again while the withdrawal is under way.
+            DemoLead.objects.filter(email=email).update(newsletter=True)
+        if method == "PATCH" and email in types:
+            # Unconfirmed when the update is refused, then confirms before Buttondown is asked again.
+            types[email] = "regular"
+            return httpx.Response(400, json={"code": "subscriber_type_invalid"})
+        if method == "GET":
+            return httpx.Response(200, json={"type": types[email]})
+        return httpx.Response(201 if method == "POST" else 200, json={})
+
+    monkeypatch.setattr(buttondown.httpx, "request", request)
+    DemoLead.objects.create(
+        email="back@example.com", source="email", newsletter=False, synced_to="buttondown"
+    )
+    # Buttondown no longer has the address, so the next run adds it again.
+    assert newsletter.sync_leads() == 2
+    assert sent == [("PATCH", "back@example.com"), ("POST", "back@example.com")]
+    assert DemoLead.objects.get().synced_to == "buttondown"
+    DemoLead.objects.all().delete()
+    sent.clear()
+    types["late@example.com"] = "unactivated"
+    DemoLead.objects.create(
+        email="late@example.com", source="email", newsletter=False, synced_to="buttondown"
+    )
+    # Confirmed after the refusal: still queued, and unsubscribed on the next run.
+    assert newsletter.sync_leads() == 0
+    assert sent == [("PATCH", "late@example.com"), ("GET", "late@example.com")]
+    del types["late@example.com"]
+    assert newsletter.sync_leads() == 1
+    assert DemoLead.objects.get().synced_to == ""
 
 
 def test_cleanup_deletes_old_visitor_conversations_only(shared, site, owner, visitor):

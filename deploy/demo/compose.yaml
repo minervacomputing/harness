@@ -156,7 +156,7 @@ services:
       timeout: 3s
       retries: 12
 
-  # Deletes visitors' idle chats and adds newsletter opt-ins to Bento every 15 minutes.
+  # Deletes visitors' idle chats and syncs newsletter opt-ins to Buttondown or Bento every 15 minutes.
   cleanup:
     <<: *backend
     init: true

@@ -149,7 +149,8 @@ class Config(BaseSettings):
     apple_team_id: str | None = None
     apple_key_id: str | None = None
     apple_private_key_file: Path | None = None
-    # Bento, for adding demo visitors who opted in to the newsletter.
+    # The newsletter that demo visitors who opted in are added to: Buttondown when its key is set, else Bento.
+    buttondown_api_key: SecretStr | None = None
     bento_site_uuid: str | None = None
     bento_publishable_key: str | None = None
     bento_secret_key: SecretStr | None = None
