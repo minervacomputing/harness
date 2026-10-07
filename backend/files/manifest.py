@@ -24,7 +24,7 @@ FILE_MODES = (0o644, 0o755)
 MAX_MTIME = 253_402_300_799_999
 PAGE_BYTES = 4096
 
-_SHA256 = re.compile(r"[0-9a-f]{64}")
+SHA256 = re.compile(r"[0-9a-f]{64}")
 _FILE_KEYS = {"path", "sha256", "mode", "mtime"}
 
 
@@ -69,7 +69,7 @@ def parse(data: object, *, max_entries: int) -> Manifest:
             raise InvalidManifest("A file entry has exactly path, sha256, mode and mtime.")
         path = _check_path(item["path"])
         sha256, mode, mtime = item["sha256"], item["mode"], item["mtime"]
-        if not isinstance(sha256, str) or not _SHA256.fullmatch(sha256):
+        if not isinstance(sha256, str) or not SHA256.fullmatch(sha256):
             raise InvalidManifest(f"{path!r}: sha256 is 64 lowercase hex digits.")
         if not _is_int(mode) or mode not in FILE_MODES:
             raise InvalidManifest(f"{path!r}: mode is 0644 or 0755.")
@@ -94,15 +94,14 @@ def parse(data: object, *, max_entries: int) -> Manifest:
             parent = path[:end]
             if parent in implied:
                 break
+            if parent in files:
+                raise InvalidManifest(f"{parent!r} is both a file and a directory.")
+            if parent in dirs:
+                raise InvalidManifest(f"{parent!r} is listed as an empty directory but has entries.")
             implied.add(parent)
-            if len(files) + len(dirs | implied) > max_entries:
+            if len(files) + len(dirs) + len(implied) > max_entries:
                 raise QuotaExceeded("folder_entries")
             end = path.rfind("/", 0, end)
-    for parent in implied:
-        if parent in files:
-            raise InvalidManifest(f"{parent!r} is both a file and a directory.")
-        if parent in dirs:
-            raise InvalidManifest(f"{parent!r} is listed as an empty directory but has entries.")
     entry_count = len(files) + len(dirs) + len(implied)
     if entry_count > max_entries:
         raise QuotaExceeded("folder_entries")

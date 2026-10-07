@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from files import manifest
@@ -104,3 +106,11 @@ def test_the_digest_ignores_order_and_the_size_rounds_up_to_pages():
     assert manifest.digest(entries) == manifest.digest(manifest.stored_entries(second, sizes))
     assert entries["files"]["b"] == {"sha256": B, "size": 4097, "mode": 0o644, "mtime": 0}
     assert manifest.folder_bytes([0, 1, 4096, 4097]) == 0 + 4096 + 4096 + 8192
+
+
+def test_a_manifest_at_the_entry_limit_is_checked_quickly():
+    # Each file in its own directory: about 10,000 entries, every one an implied directory or a file.
+    files = [file(f"d{i}/f") for i in range(4999)]
+    started = time.perf_counter()
+    assert parse({"files": files, "dirs": []}, max_entries=10_000).entry_count == 9998
+    assert time.perf_counter() - started < 0.2

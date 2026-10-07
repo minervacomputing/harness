@@ -74,11 +74,16 @@ def test_workspaces_do_not_share_contents(tmp_path, files_storage, workspace, ot
     assert counted(workspace) == counted(other_user.personal_workspace) == 5
 
 
-def test_store_blob_refuses_a_transaction_and_a_wrong_size(tmp_path, files_storage, workspace):
+def test_store_blob_refuses_a_transaction_a_wrong_size_and_a_malformed_hash(
+    tmp_path, files_storage, workspace
+):
     with transaction.atomic(), pytest.raises(RuntimeError):
         put(tmp_path, workspace.id, b"hello")
     with pytest.raises(ValueError):
         store.store_blob(workspace.id, sha(b"hello"), 4, upload(tmp_path, b"hello"), lambda record: record())
+    for bad in ("../" + sha(b"hello")[3:], sha(b"hello").upper()):
+        with pytest.raises(ValueError):
+            store.store_blob(workspace.id, bad, 5, upload(tmp_path, b"hello"), lambda record: record())
     assert stored_keys(files_storage) == []
     assert loose_keys() == []
 
@@ -90,6 +95,7 @@ def test_a_failed_upload_deletes_its_object(tmp_path, files_storage, workspace):
     with pytest.raises(LookupError):
         store.store_blob(workspace.id, sha(b"hello"), 5, upload(tmp_path, b"hello"), transact)
     assert stored_keys(files_storage) == []
+    assert list((files_storage / "blobs" / str(workspace.id)).iterdir()) == []
     assert loose_keys() == []
     assert not Blob.unscoped.exists()
 

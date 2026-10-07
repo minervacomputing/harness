@@ -38,11 +38,14 @@ def test_an_unused_blob_is_deleted_and_its_object_deleted_twice(tmp_path, files_
     assert not Blob.unscoped.exists()
     assert counted(workspace) == 0
     assert stored_keys(files_storage) == []
+    # Its directory held only it.
+    assert list((files_storage / "blobs" / str(workspace.id)).iterdir()) == []
     loose = LooseObject.objects.get()
     assert (loose.key, loose.leases, loose.deletions) == (blob.storage_key, 1, 1)
     assert loose.delete_after > timezone.now() + timedelta(hours=23)
 
     # A write still in flight could have recreated it: it is deleted once more a day later.
+    (files_storage / blob.storage_key).parent.mkdir()
     (files_storage / blob.storage_key).write_bytes(b"late")
     assert sweep.sweep()["loose"] == 0
     make_due()

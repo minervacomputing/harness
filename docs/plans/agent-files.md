@@ -282,4 +282,6 @@ All are settings.
 - Free-tier quotas, and holding folders larger than memory allows (a disk-backed folder is provider-specific: Docker volumes have no size limit without XFS project quotas, and Kubernetes evicts a pod over an `emptyDir` limit instead of failing writes).
 - Encryption of blobs beyond the storage's own.
 - Whether a per-agent switch for commands (`bash`) is needed at launch.
+- The blob sweep probes every blob older than an hour, named or not, on each pass; at scale it needs a cursor or a candidate marker set when versions are deleted.
+- Whether paths with format characters (bidi overrides, zero-width) should be refused, or only escaped where the app shows them.
 - What happens to files written from a connector's data after access to it is removed (see "History after revocation" in ARCHITECTURE.md's open questions).

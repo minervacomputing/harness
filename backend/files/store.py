@@ -16,6 +16,7 @@ Blob rows and the objects behind them never change. Anything that starts to refe
 lock while it does (or a KEY SHARE lock on a version naming it), which is what the sweep relies on.
 """
 
+import contextlib
 import logging
 import os
 import secrets
@@ -24,14 +25,14 @@ from typing import IO
 from uuid import UUID
 
 from django.core.files import File
-from django.core.files.storage import Storage, storages
+from django.core.files.storage import FileSystemStorage, Storage, storages
 from django.db import IntegrityError, connection, transaction
 from django.db.models import DateTimeField, F, Func
 
 from conversations.models import Conversation
 from files import limits
 from files.limits import QuotaExceeded
-from files.manifest import Manifest, digest, folder_bytes, stored_entries
+from files.manifest import SHA256, Manifest, digest, folder_bytes, stored_entries
 from files.models import Blob, FolderVersion, RunBlob
 from runs.models import Run
 from workspaces.tenancy import CrossTenantReference
@@ -70,6 +71,15 @@ def open_blob(blob: Blob) -> IO[bytes]:
     return storage().open(blob.storage_key, "rb")
 
 
+def delete_object(key: str) -> None:
+    """Deletes an object, and on a local disk its directory, which held only it (keys are never reused)."""
+    store = storage()
+    store.delete(key)
+    if isinstance(store, FileSystemStorage):
+        with contextlib.suppress(OSError):
+            os.rmdir(os.path.dirname(store.path(key)))
+
+
 def store_blob[T](
     workspace_id: UUID,
     sha256: str,
@@ -89,6 +99,8 @@ def store_blob[T](
     """
     if connection.in_atomic_block:
         raise RuntimeError("store_blob writes to storage, which it does outside any transaction.")
+    if not SHA256.fullmatch(sha256):
+        raise ValueError("A sha256 is 64 lowercase hex digits.")
     if os.path.getsize(path) != size:
         raise ValueError("The file's size does not match.")
     try:
@@ -138,7 +150,7 @@ def _stage(workspace_id: UUID, sha256: str, path) -> str:
 def _discard(key: str) -> None:
     """Deletes an object that no row names, then its loose row. On failure, the loose row stays for the sweep."""
     try:
-        storage().delete(key)
+        delete_object(key)
         with connection.cursor() as cursor:
             cursor.execute("DELETE FROM files_looseobject WHERE key = %s", [key])
     except Exception:

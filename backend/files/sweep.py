@@ -18,7 +18,7 @@ from django.db.models import Exists, OuterRef, Q, RestrictedError
 
 from conversations.models import Conversation
 from files.models import Blob, FolderVersion, RunBlob
-from files.store import storage
+from files.store import delete_object
 from runs.models import Run
 
 log = logging.getLogger("minerva.files")
@@ -158,7 +158,7 @@ def _loose() -> tuple[int, bool]:
             _finish(key, lease)
             continue
         try:
-            storage().delete(key)
+            delete_object(key)
         except Exception:
             log.warning("Files sweep: could not delete %s; retrying after the lease", key, exc_info=True)
             continue
