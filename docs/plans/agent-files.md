@@ -104,6 +104,9 @@ Done 2026-10-07 (`backend/files/runs.py`, `backend/gateway/files.py`), apart fro
 - `GET /run` also returns the folder's version id, which is the parent of the attempt's first checkpoint.
 - Refusals carry `{"error": {"code", "message"}}`, with `limit` for `quota`. Status codes: `stale` 401, `conflict` 409, `invalid_manifest` 400, `unknown_blob` 403, `quota` 413. An upload over the folder size is refused with `quota` before its body is read, since no file can be larger than its folder.
 - `GET /blobs/{sha256}` answers 404 both for a blob that does not exist and for one the run may not read.
+- What a run may read is checked against its uploads, its base version and its last checkpoint only: anything in an earlier checkpoint was in one of them. The arrays are compared in the database, never loaded.
+- An upload is checked (attempt and budget) before its body is read and again before anything is written to storage. Bytes received for an upload that is not stored (a wrong hash or length, a disconnect) still count against the run's budget.
+- Blob transfers run on a pool of their own (16 threads per gateway process), and a run has at most 4 at once per process; more are answered 429.
 - `start_run()` reads the conversation's folder after inserting the run, which waits for a run that is ending, so it sees that run's published folder.
 
 - **Run spec.** `GET /run` gains:

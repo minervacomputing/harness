@@ -8,16 +8,20 @@ contents. `GET /blobs/{sha256}` and `PUT /checkpoint` are Django views.
 
 import asyncio
 import contextlib
+import functools
 import hashlib
 import json
 import os
 import re
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID
 
 from asgiref.sync import sync_to_async
 from django.db import connection
+from django.db.models import F
 from django.http import HttpRequest, JsonResponse, StreamingHttpResponse
+from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods
 from starlette.types import Receive, Scope, Send
 
@@ -40,8 +44,51 @@ CHECKPOINT_STATUS = {
 }
 
 
+# Blob I/O (temporary files, storage, and the database work of an upload) has threads of its own, so transfers
+# never wait behind, or hold up, the views' shared thread or the loop's default pool. Each run may have a few
+# transfers at once in each process, so one run cannot take every thread.
+BLOB_IO = ThreadPoolExecutor(max_workers=16, thread_name_prefix="blob-io")
+TRANSFERS_PER_RUN = 4
+_transfers: dict[UUID, int] = {}
+
+
 class _Inactive(Exception):
     pass
+
+
+class _Busy(Exception):
+    pass
+
+
+async def _io(fn, *args):
+    return await asyncio.get_running_loop().run_in_executor(BLOB_IO, functools.partial(fn, *args))
+
+
+def _closing_connection(fn):
+    """A blob I/O thread's database work: its connection is closed after, since no request cycle does."""
+
+    @functools.wraps(fn)
+    def wrapper(*args):
+        try:
+            return fn(*args)
+        finally:
+            connection.close()
+
+    return wrapper
+
+
+def _acquire(run_id: UUID) -> None:
+    count = _transfers.get(run_id, 0)
+    if count >= TRANSFERS_PER_RUN:
+        raise _Busy
+    _transfers[run_id] = count + 1
+
+
+def _release(run_id: UUID) -> None:
+    if _transfers[run_id] > 1:
+        _transfers[run_id] -= 1
+    else:
+        del _transfers[run_id]
 
 
 async def _send_json(send: Send, status: int, body: dict) -> None:
@@ -79,11 +126,33 @@ async def put_blob(scope: Scope, receive: Receive, send: Send) -> None:
         return
 
     run_id, attempt = scope[RUN_SCOPE_KEY], scope[ATTEMPT_SCOPE_KEY]
-    descriptor, path = tempfile.mkstemp(prefix="minerva-blob-")
+    try:
+        _acquire(run_id)
+    except _Busy:
+        await send_error(send, 429, "This run has too many transfers in flight.")
+        return
+    try:
+        await _receive_blob(run_id, attempt, sha256, size, receive, send)
+    finally:
+        _release(run_id)
+
+
+async def _receive_blob(run_id: UUID, attempt: int, sha256: str, size: int, receive: Receive, send: Send):
+    # Checked before the body is read, and again before anything is written to storage.
+    try:
+        await _io(_admit, run_id, attempt, size)
+    except _Inactive:
+        await send_error(send, 401, INACTIVE)
+        return
+    except QuotaExceeded as error:
+        await _quota(send, error.limit)
+        return
+    descriptor, path = await _io(tempfile.mkstemp, "", "minerva-blob-")
+    received = 0
+    stored = False
     try:
         with os.fdopen(descriptor, "wb") as file:
             digest = hashlib.sha256()
-            received = 0
             while True:
                 message = await receive()
                 if message["type"] == "http.disconnect":
@@ -94,7 +163,7 @@ async def put_blob(scope: Scope, receive: Receive, send: Send) -> None:
                     await send_error(send, 400, "The body is longer than its Content-Length.")
                     return
                 if body:
-                    await asyncio.to_thread(_write, file, digest, body)
+                    await _io(_write, file, digest, body)
                 if not message.get("more_body"):
                     break
         if received != size:
@@ -104,18 +173,23 @@ async def put_blob(scope: Scope, receive: Receive, send: Send) -> None:
             await send_error(send, 400, "The contents do not match the hash.")
             return
         try:
-            # Not on the thread the views share: a large write to storage would hold them all up.
-            blob = await sync_to_async(_record, thread_sensitive=False)(run_id, attempt, sha256, size, path)
+            blob = await _io(_record, run_id, attempt, sha256, size, path)
         except _Inactive:
             await send_error(send, 401, INACTIVE)
             return
         except QuotaExceeded as error:
             await _quota(send, error.limit)
             return
+        stored = True
         await _send_json(send, 200, {"sha256": blob.sha256, "size": blob.size})
     finally:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(path)
+        if received and not stored:
+            # Bytes the gateway received count against the run's budget even when nothing was stored, so a run
+            # cannot make it receive and hash without end.
+            with contextlib.suppress(Exception):
+                await _io(_charge_refused, run_id, attempt, received)
 
 
 def _write(file, digest, body: bytes) -> None:
@@ -123,6 +197,34 @@ def _write(file, digest, body: bytes) -> None:
     file.write(body)
 
 
+def _current(run: Run | None, attempt: int) -> bool:
+    return (
+        run is not None
+        and run.attempt == attempt
+        and run.status in Run.TOKEN_VALID
+        and not run.expired(timezone.now())
+    )
+
+
+def _check(run_id: UUID, attempt: int, size: int) -> None:
+    """Raises _Inactive, or QuotaExceeded when the upload would pass the run's budget. Not locked: the upload's
+    transaction checks again."""
+    run = Run.unscoped.only("status", "deadline", "attempt", "uploaded_bytes").filter(pk=run_id).first()
+    if not _current(run, attempt):
+        raise _Inactive
+    if run.uploaded_bytes + size > limits.run_upload_bytes():
+        raise QuotaExceeded("run_uploads")
+
+
+_admit = _closing_connection(_check)
+
+
+@_closing_connection
+def _charge_refused(run_id: UUID, attempt: int, received: int) -> None:
+    Run.unscoped.filter(pk=run_id, attempt=attempt).update(uploaded_bytes=F("uploaded_bytes") + received)
+
+
+@_closing_connection
 def _record(run_id: UUID, attempt: int, sha256: str, size: int, path: str):
     """Charges the upload to the run, records the blob (charged to the workspace if new) and grants it to the
     run, while the attempt is current."""
@@ -136,14 +238,9 @@ def _record(run_id: UUID, attempt: int, sha256: str, size: int, path: str):
         store.grant(run, blob)
         return blob
 
-    try:
-        workspace_id = Run.unscoped.filter(pk=run_id).values_list("workspace_id", flat=True).first()
-        if workspace_id is None:
-            raise _Inactive
-        return store.store_blob(workspace_id, sha256, size, path, transact)
-    finally:
-        # A pool thread's connection, which no request cycle closes.
-        connection.close()
+    _check(run_id, attempt, size)
+    workspace_id = Run.unscoped.filter(pk=run_id).values_list("workspace_id", flat=True).get()
+    return store.store_blob(workspace_id, sha256, size, path, transact)
 
 
 @require_GET
@@ -151,23 +248,43 @@ def _record(run_id: UUID, attempt: int, sha256: str, size: int, path: str):
 async def get_blob(request: HttpRequest, sha256: str):
     if not SHA256.fullmatch(sha256):
         return error_response("Not found.", 404)
-    blob = await sync_to_async(folder.readable_blob)(request.run, sha256)  # type: ignore[attr-defined]
+    run = request.run  # type: ignore[attr-defined]
+    blob = await sync_to_async(folder.readable_blob)(run, sha256)
     if blob is None:
         # The same answer whether the blob does not exist or the run may not read it.
         return error_response("Not found.", 404)
-    stream = await sync_to_async(store.open_blob, thread_sensitive=False)(blob)
-    response = StreamingHttpResponse(_chunks(stream), content_type="application/octet-stream")
+    try:
+        _acquire(run.id)
+    except _Busy:
+        return error_response("This run has too many transfers in flight.", 429)
+    try:
+        stream = await _io(store.open_blob, blob)
+    except BaseException:
+        _release(run.id)
+        raise
+    response = StreamingHttpResponse(_Download(stream, run.id), content_type="application/octet-stream")
     response["Content-Length"] = str(blob.size)
     return response
 
 
-async def _chunks(stream):
-    """Reads in a pool thread, chunk by chunk: Django buffers a synchronous iterator whole under ASGI."""
-    try:
-        while chunk := await asyncio.to_thread(stream.read, CHUNK_BYTES):
+class _Download:
+    """A blob's contents, read chunk by chunk on the blob I/O threads (Django buffers a synchronous iterator
+    whole under ASGI). Django calls close() however the response ends, even if it was never read."""
+
+    def __init__(self, stream, run_id: UUID) -> None:
+        self.stream, self.run_id, self.closed = stream, run_id, False
+        self.loop = asyncio.get_running_loop()
+
+    async def __aiter__(self):
+        while chunk := await _io(self.stream.read, CHUNK_BYTES):
             yield chunk
-    finally:
-        await asyncio.to_thread(stream.close)
+
+    def close(self) -> None:
+        if not self.closed:
+            self.closed = True
+            # Django calls this from a thread of its own; the counts belong to the loop.
+            self.loop.call_soon_threadsafe(_release, self.run_id)
+            self.stream.close()
 
 
 @require_http_methods(["PUT"])

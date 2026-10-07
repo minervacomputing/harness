@@ -6,12 +6,13 @@ import pytest
 from asgiref.sync import async_to_sync, sync_to_async
 from django.db import transaction
 from django.test import AsyncClient, Client
-from files_support import Background, conversation_in, put, run_in, sha, wait_until_blocked
+from files_support import Background, conversation_in, put, run_in, sha, stored_keys, wait_until_blocked
 from test_gateway_auth import Upload, bearer
 
 from conversations.models import Conversation
 from files import runs as folder
 from files.models import Blob, FolderVersion, RunBlob
+from gateway import files
 from minerva.config import config
 from runs import services
 from runs.models import Run
@@ -89,19 +90,19 @@ async def test_an_upload_is_stored_charged_and_granted_to_the_run(application, c
 
 
 @pytest.mark.parametrize(
-    ("data", "kwargs", "status"),
+    ("data", "kwargs", "status", "charged"),
     [
-        (b"hello", {"sha256": sha(b"other")}, 400),
-        (b"hello", {"sha256": "A" * 64}, 404),
-        (b"hello", {"length": b"4"}, 400),
-        (b"hello", {"length": b"6"}, 400),
-        (b"hello", {"length": b""}, 411),
-        (b"hello", {"length": b"-5"}, 400),
+        (b"hello", {"sha256": sha(b"other")}, 400, 5),
+        (b"hello", {"sha256": "A" * 64}, 404, 0),
+        (b"hello", {"length": b"4"}, 400, 5),
+        (b"hello", {"length": b"6"}, 400, 5),
+        (b"hello", {"length": b""}, 411, 0),
+        (b"hello", {"length": b"-5"}, 400, 0),
     ],
     ids=["wrong hash", "malformed hash", "longer", "shorter", "no length", "invalid length"],
 )
 async def test_a_bad_upload_is_refused_and_leaves_nothing(
-    application, claimed, temp_dir, data, kwargs, status
+    application, claimed, temp_dir, files_storage, data, kwargs, status, charged
 ):
     run, token = claimed
     request = Upload(bearer(token), path=f"/blobs/{kwargs.get('sha256', sha(data))}", body=data)
@@ -112,8 +113,10 @@ async def test_a_bad_upload_is_refused_and_leaves_nothing(
         request.scope["headers"] = headers
     assert await request.answer(application) == status
     assert not await Blob.unscoped.aexists()
-    assert (await Run.unscoped.aget(pk=run.id)).uploaded_bytes == 0
+    # Bytes the gateway received count against the run's budget, stored or not.
+    assert (await Run.unscoped.aget(pk=run.id)).uploaded_bytes == charged
     assert list(temp_dir.iterdir()) == []
+    assert stored_keys(files_storage) == []
 
 
 async def test_an_upload_that_ends_early_leaves_nothing(application, claimed, temp_dir):
@@ -130,8 +133,10 @@ async def test_an_upload_that_ends_early_leaves_nothing(application, claimed, te
     assert list(temp_dir.iterdir()) == []
 
 
-async def test_uploads_are_limited_by_the_folder_and_the_run(application, claimed, temp_dir, monkeypatch):
-    _run, token = claimed
+async def test_uploads_are_limited_by_the_folder_and_the_run(
+    application, claimed, temp_dir, files_storage, monkeypatch
+):
+    _, token = claimed
     monkeypatch.setattr(config(), "files_folder_bytes", 8)
     request = await upload(application, token, b"123456789")
     assert (request.status, json.loads(request.body)["error"]["limit"]) == (413, "folder_bytes")
@@ -139,9 +144,55 @@ async def test_uploads_are_limited_by_the_folder_and_the_run(application, claime
     # Four times the folder: 32 bytes.
     for _ in range(4):
         assert (await upload(application, token, b"12345678")).status == 200
+    # Over the budget, an upload is refused before its body is read, and nothing reaches storage.
+    stored = stored_keys(files_storage)
     request = await upload(application, token, b"1")
     assert (request.status, json.loads(request.body)["error"]["limit"]) == (413, "run_uploads")
+    assert request.reads == 0
+    assert stored_keys(files_storage) == stored
     assert list(temp_dir.iterdir()) == []
+
+
+async def test_uploads_that_fail_their_hash_use_up_the_budget(application, claimed, monkeypatch):
+    run, token = claimed
+    monkeypatch.setattr(config(), "files_folder_bytes", 8)
+    for _ in range(4):
+        request = Upload(bearer(token), path=f"/blobs/{sha(b'other')}", body=b"12345678")
+        assert await request.answer(application) == 400
+    request = Upload(bearer(token), path=f"/blobs/{sha(b'other')}", body=b"12345678")
+    assert await request.answer(application) == 413
+    assert request.reads == 0
+    assert (await Run.unscoped.aget(pk=run.id)).uploaded_bytes == 32
+
+
+async def test_a_run_has_a_few_transfers_at_once(application, claimed, temp_dir):
+    run, token = claimed
+    data = b"x" * 200_000
+    slow = [
+        Upload(bearer(token), path=f"/blobs/{sha(data)}", body=data) for _ in range(files.TRANSFERS_PER_RUN)
+    ]
+    tasks = []
+    for request in slow:
+        request.flowing.clear()
+        tasks.append(request.start(application))
+        await asyncio.wait_for(request.read.wait(), 10)
+    refused = await upload(application, token, b"hello")
+    assert refused.status == 429
+    response = await AsyncClient().get(f"/blobs/{sha(data)}", headers=auth(token))
+    assert response.status_code in (404, 429)
+    for request in slow:
+        request.flowing.set()
+    await asyncio.wait_for(asyncio.gather(*tasks), 10)
+    assert [request.status for request in slow] == [200] * files.TRANSFERS_PER_RUN
+    assert files._transfers == {}
+
+    # A download holds its place until Django closes the response.
+    response = await AsyncClient().get(f"/blobs/{sha(data)}", headers=auth(token))
+    assert files._transfers == {run.id: 1}
+    assert len(await read_all(response)) == 200_000
+    await sync_to_async(response.close)()
+    await asyncio.sleep(0)
+    assert files._transfers == {}
 
 
 async def test_an_upload_streaming_when_the_attempt_changed_is_refused(application, claimed, temp_dir):
@@ -394,3 +445,22 @@ def test_a_run_ending_while_a_checkpoint_is_recorded_publishes_it(claimed, tmp_p
         wait_until_blocked()
     assert ending.result() is True
     assert reload(run).result_version_id == version.pk
+
+
+def test_a_run_reads_its_base_and_uploads_whatever_its_checkpoints_drop(claimed, tmp_path, user):
+    run, token = claimed
+    put(tmp_path, run.workspace_id, b"one", run=run)
+    _, body = put_checkpoint(token, None, entry("a", b"one"))
+    services.complete(run.id, "Done.", attempt=1)
+    conversation = Conversation.unscoped.get(pk=run.conversation_id)
+    services.start_run(conversation=conversation, user_id=user.id, content="Again")
+    [(second, second_token)] = services.claim_queued(1)
+    put(tmp_path, run.workspace_id, b"two", run=second)
+
+    # Empty the folder, then bring back the base version's file and the upload.
+    _, emptied = put_checkpoint(second_token, body["version"])
+    status, _ = put_checkpoint(second_token, emptied["version"], entry("a", b"one"), entry("b", b"two"))
+    assert status == 200
+    assert folder.unreadable(reload(second), {sha(b"one"), sha(b"two"), sha(b"three")}) == [sha(b"three")]
+    assert folder.unreadable(reload(second), {sha(b"one")}) == []
+    assert folder.unreadable(reload(second), {sha(b"three")}) == [sha(b"three")]

@@ -10,16 +10,31 @@ accepted after the run ended, and the version a run publishes is its last accept
 
 from uuid import UUID
 
-from django.db import transaction
-from django.db.models import Q
+from django.db import connection, transaction
 from django.utils import timezone
 
 from conversations.models import Conversation
 from files import limits, store
 from files.limits import QuotaExceeded
 from files.manifest import InvalidManifest, Manifest, parse
-from files.models import Blob, FolderVersion, RunBlob
+from files.models import Blob, FolderVersion
 from runs.models import Run
+
+UNREADABLE = """
+    SELECT h FROM unnest(%s::varchar[]) AS wanted(h)
+    EXCEPT SELECT b.sha256 FROM files_runblob g JOIN files_blob b ON b.id = g.blob_id WHERE g.run_id = %s
+    EXCEPT SELECT unnest(v.hashes) FROM files_folderversion v WHERE v.id = ANY(%s::uuid[])
+"""
+# One hash, as for every download: a containment test on at most two arrays, with nothing unnested.
+SINGLE_UNREADABLE = """
+    SELECT h FROM unnest(%s::varchar[]) AS wanted(h)
+    WHERE NOT EXISTS (
+        SELECT 1 FROM files_runblob g JOIN files_blob b ON b.id = g.blob_id WHERE g.run_id = %s AND b.sha256 = h
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM files_folderversion v WHERE v.id = ANY(%s::uuid[]) AND v.hashes @> ARRAY[h]::varchar(64)[]
+    )
+"""
 
 
 class CheckpointRefused(Exception):
@@ -45,20 +60,21 @@ def wire_entries(version: FolderVersion | None) -> dict:
 
 
 def unreadable(run: Run, hashes: set[str]) -> list[str]:
-    """The hashes among `hashes` that the run may not read."""
-    missing = set(hashes)
-    if missing:
-        granted = RunBlob.unscoped.filter(run_id=run.pk, blob__sha256__in=missing)
-        missing -= set(granted.values_list("blob__sha256", flat=True))
-    if missing:
-        named = FolderVersion.unscoped.filter(
-            Q(pk=run.base_version_id) | Q(run_id=run.pk, kind=FolderVersion.Kind.CHECKPOINT),
-            workspace_id=run.workspace_id,
-            hashes__overlap=sorted(missing),
-        )
-        for version_hashes in named.values_list("hashes", flat=True):
-            missing -= set(version_hashes)
-    return sorted(missing)
+    """The hashes among `hashes` that the run may not read.
+
+    The run's uploads, its base version and its last checkpoint are enough: every blob of an earlier checkpoint
+    was in the base version or uploaded, and grants last until the run ends. Version hashes are compared in the
+    database, never loaded.
+    """
+    if not hashes:
+        return []
+    versions = [pk for pk in (run.base_version_id, run.checkpoint_id) if pk is not None]
+    with connection.cursor() as cursor:
+        if len(hashes) == 1:
+            cursor.execute(SINGLE_UNREADABLE, [list(hashes), run.pk, versions])
+        else:
+            cursor.execute(UNREADABLE, [list(hashes), run.pk, versions])
+        return sorted(sha256 for (sha256,) in cursor.fetchall())
 
 
 def readable_blob(run: Run, sha256: str) -> Blob | None:
