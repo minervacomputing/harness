@@ -6,12 +6,14 @@ from urllib.parse import parse_qs
 import httpx
 import pytest
 from connector_runs import ceiling, refusal
+from pydantic import SecretStr
 
 from connections.models import Connection
 from connectors.base import OperationError
 from connectors.stripe import money
 from connectors.stripe.client import StripeClient, classify
 from connectors.stripe.connector import StripeConnector
+from minerva.config import config
 from workspaces.tenancy import workspace_scope
 
 KEY = "rk_test_" + "a" * 24
@@ -631,7 +633,10 @@ def _post(api, url: str, body: dict, method: str = "post"):
 
 
 @pytest.mark.django_db
-def test_keys_connect_and_are_never_returned(api, workspace, stripe):
+def test_keys_connect_and_are_never_returned(api, workspace, stripe, monkeypatch):
+    # Gmail is offered only with a Google client.
+    monkeypatch.setattr(config(), "google_client_id", "gid")
+    monkeypatch.setattr(config(), "google_client_secret", SecretStr("gs"))
     connectors = {c["slug"]: c for c in api.get(f"/api/workspaces/{workspace.id}/connectors").json()}
     assert connectors["stripe"]["auth"] == "api_key"
     assert (
