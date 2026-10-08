@@ -47,7 +47,7 @@ Constraints that shaped all of it: the first offering is a hosted product for in
 | Backend | Yes | Provider and model keys, permissions, all state |
 | Worker | **No**, treated as hostile | Its run token, nothing else |
 
-All roles run from one codebase. Locally they run under honcho (`Procfile`); in the cloud they scale as separate deployments. The public demo runs them on one VPS from the `demo` branch ([deploy/demo/](deploy/demo/README.md)).
+All roles run from one codebase. Locally they run under honcho (`Procfile`); in the cloud they scale as separate deployments. Staging runs them on one VPS from images CI builds for every commit of `main` ([deploy/](deploy/README.md)); the public demo does the same from the `demo` branch ([deploy/demo/](deploy/demo/README.md)).
 
 ## 2. One chat turn
 

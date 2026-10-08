@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# docker compose for the deployed release, e.g. `minerva-compose ps`, `minerva-compose logs -f web`.
+# Installed in /usr/local/bin by bootstrap.sh.
+set -euo pipefail
+exec docker compose -f /opt/minerva/src/deploy/compose.yaml \
+  --env-file /opt/minerva/.env --env-file /opt/minerva/release.env "$@"

@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Deploys a commit of main to this server. Installed in /usr/local/bin by bootstrap.sh, and the forced
+# command of the CI deploy key (deploy/ops.sh ci-key), which can therefore run nothing else:
+#   ssh root@<server> <commit>                  CI; the commit arrives in SSH_ORIGINAL_COMMAND
+#   ssh root@<server> minerva-deploy <commit>   the operator, through deploy/ops.sh deploy
+# The release runs as a systemd unit, so a dropped connection does not stop it halfway. This follows its
+# log and exits with its result. One release at a time: another request is refused while one runs.
+#
+# What runs is the commit's own deploy/release.sh, so this checks first that the commit is on main:
+# GitHub serves the commits of every pull request by id, forks' included. CI only moves forward: its
+# builds can finish out of order, so it skips a commit older than the running release. Rollbacks are the
+# operator's. This file is not taken from the commit: it changes only when bootstrap.sh is run again.
+set -euo pipefail
+
+SELF=/usr/local/bin/minerva-deploy
+REPO=https://github.com/minervacomputing/harness.git
+SRC=/opt/minerva/src
+RELEASE_ENV=/opt/minerva/release.env
+
+running_release() {
+  sed -n 's/^MINERVA_RELEASE=//p' "$RELEASE_ENV" 2>/dev/null || true
+}
+
+if [[ "${1:-}" == --run ]]; then
+  mode="$2"
+  commit="$3"
+  # Shared with `deploy/ops.sh env`, so a release never starts on half-written configuration.
+  exec 9>/opt/minerva/deploy.lock
+  flock 9
+  if [[ ! -d "$SRC/.git" ]]; then
+    rm -rf "$SRC"
+    # Blobless, and only deploy/: the code itself arrives in the images.
+    git clone --quiet --filter=blob:none --no-checkout "$REPO" "$SRC"
+    git -C "$SRC" sparse-checkout set deploy
+  fi
+  git -C "$SRC" fetch --quiet origin +refs/heads/main:refs/remotes/origin/main
+  if ! git -C "$SRC" merge-base --is-ancestor "$commit" origin/main 2>/dev/null; then
+    echo "$commit is not a commit of main." >&2
+    exit 1
+  fi
+  previous="$(running_release)"
+  if [[ "$mode" == forward && -n "$previous" && "$previous" != "$commit" ]] \
+    && git -C "$SRC" merge-base --is-ancestor "$commit" "$previous" 2>/dev/null; then
+    echo "Skipped: $previous, a newer commit, is already released."
+    exit 0
+  fi
+  git -C "$SRC" checkout --quiet --force --detach "$commit"
+  # A release that failed or timed out before it started anything leaves the checkout of the one still
+  # running, which minerva-compose and `deploy/ops.sh env` use.
+  restore() {
+    if [[ -n "$previous" && "$(running_release)" != "$commit" ]]; then
+      git -C "$SRC" checkout --quiet --force --detach "$previous" || true
+    fi
+  }
+  trap restore EXIT
+  trap 'exit 143' TERM
+  bash "$SRC/deploy/release.sh" "$commit"
+  exit 0
+fi
+
+if [[ $# -gt 0 ]]; then
+  commit="$1"
+  mode=any
+else
+  commit="${SSH_ORIGINAL_COMMAND:-}"
+  mode=forward
+fi
+if [[ ! "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "Usage: minerva-deploy <full commit id of main>" >&2
+  exit 2
+fi
+# Held while this waits for its release; the unit check covers a release whose connection dropped.
+exec 8>/run/minerva-deploy.lock
+if ! flock -n 8 || [[ -n "$(systemctl list-units --plain --no-legend --state=active,activating 'minerva-release-*')" ]]; then
+  echo "A release is running (journalctl -fu 'minerva-release-*'). Try again when it has finished." >&2
+  exit 75
+fi
+
+unit="minerva-release-$(date +%Y%m%d-%H%M%S)-${commit:0:12}"
+journalctl --follow --quiet --output=cat --unit="$unit" &
+follower=$!
+status=0
+systemd-run --unit="$unit" --description="Minerva release $commit" --quiet --wait --collect \
+  --setenv=HOME=/root --property=RuntimeMaxSec=20min "$SELF" --run "$mode" "$commit" || status=$?
+# The journal can trail the unit by a moment.
+sleep 1
+kill "$follower" 2>/dev/null || true
+if [[ $status -ne 0 ]]; then
+  echo "The release failed (status $status). Its log: journalctl -u $unit" >&2
+fi
+exit "$status"

@@ -1,0 +1,176 @@
+# Minerva on one server behind a Cloudflare Tunnel: staging now, production later (see README.md).
+# Images come from CI, tagged with the commit they were built from. On the server, run it through
+# minerva-compose, which adds the env files:
+#   docker compose -f /opt/minerva/src/deploy/compose.yaml --env-file /opt/minerva/.env --env-file /opt/minerva/release.env
+# .env is the operator's (deploy/ops.sh env); release.env is written by release.sh (MINERVA_RELEASE, DOCKER_GID).
+# Nothing is published on the host. cloudflared dials out to Cloudflare and forwards to proxy:80.
+name: minerva
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-backend: &backend
+  image: ghcr.io/minervacomputing/minerva-backend:${MINERVA_RELEASE:?set by release.sh}
+  env_file:
+    - path: /opt/minerva/.env
+  # These win over the env file.
+  environment: &backend-env
+    MINERVA_DEBUG: "false"
+    MINERVA_DATABASE_URL: postgres://minerva:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/minerva
+    MINERVA_ALLOWED_HOSTS: ${PUBLIC_HOST:?set PUBLIC_HOST},web,localhost
+    MINERVA_SITE_URL: https://${PUBLIC_HOST}
+    MINERVA_CSRF_TRUSTED_ORIGINS: https://${PUBLIC_HOST}
+    MINERVA_SANDBOX_PROVIDER: container
+    # Pulled by release.sh: the supervisor creates workers through the Docker API, which does not pull.
+    MINERVA_SANDBOX_IMAGE: ghcr.io/minervacomputing/minerva-worker:${MINERVA_RELEASE}
+    # runsc with --host-uds=open, so that workers can connect to the gateway socket (bootstrap.sh).
+    MINERVA_SANDBOX_RUNTIME: runsc-minerva
+    # Workers reach the gateway through a loopback port inside their own container.
+    MINERVA_GATEWAY_ALLOWED_HOSTS: 127.0.0.1,gateway,localhost
+    MINERVA_FILES_DIR: /var/lib/minerva/files
+  # Files the env file points at, such as MINERVA_APPLE_PRIVATE_KEY_FILE=/run/secrets/minerva/apple.p8.
+  volumes:
+    - /opt/minerva/secrets:/run/secrets/minerva:ro
+    - files:/var/lib/minerva/files
+  restart: unless-stopped
+  logging: *logging
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: minerva
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: minerva
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U minerva -d minerva"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+    logging: *logging
+
+  # Runs on every `up`, also when the release has not changed.
+  migrate:
+    <<: *backend
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    <<: *backend
+    # Two processes: each holds its own LISTEN connection for run streams; sessions live in Postgres.
+    # A short graceful timeout, because open event streams never finish on their own.
+    command:
+      - uvicorn
+      - minerva.asgi:application
+      - --host=0.0.0.0
+      - --port=8000
+      - --workers=2
+      - --lifespan=off
+      - --proxy-headers
+      - --forwarded-allow-ips=*
+      - --no-server-header
+      - --timeout-graceful-shutdown=5
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  # Worker-facing API.
+  gateway:
+    <<: *backend
+    environment:
+      <<: *backend-env
+      MINERVA_ROLE: gateway
+    command:
+      - uvicorn
+      - gateway.asgi:application
+      - --host=0.0.0.0
+      - --port=8001
+      - --no-server-header
+      - --timeout-graceful-shutdown=5
+
+  # Starts and removes worker containers through the host's Docker daemon. Access to the socket is
+  # root-equivalent on the host; this container holds it only through the socket's group.
+  supervisor:
+    <<: *backend
+    command: ["python", "manage.py", "supervisor"]
+    group_add:
+      - ${DOCKER_GID:?set by release.sh}
+    volumes:
+      - /opt/minerva/secrets:/run/secrets/minerva:ro
+      - files:/var/lib/minerva/files
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      gateway-socket:
+        condition: service_healthy
+
+  # Workers have no network. Each mounts this volume read-only, and the socket in it is their only
+  # way out: every connection to it is forwarded to the gateway port, and nowhere else.
+  gateway-socket:
+    image: alpine/socat:1.8.0.3
+    command:
+      - UNIX-LISTEN:/run/minerva/gateway/gateway.sock,fork,unlink-early,user=1000,group=1000,mode=600,max-children=128
+      - TCP:gateway:8001
+    volumes:
+      - gateway-socket:/run/minerva/gateway
+    read_only: true
+    cap_drop: [ALL]
+    # To hand the socket to the workers' user, then set its mode.
+    cap_add: [CHOWN, FOWNER]
+    security_opt: [no-new-privileges]
+    mem_limit: 128m
+    pids_limit: 256
+    restart: unless-stopped
+    logging: *logging
+    depends_on: [gateway]
+    # The socket exists and the gateway answers upstream. The check cannot use the socket itself: only the
+    # workers' user may connect to it.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          test -S /run/minerva/gateway/gateway.sock &&
+          printf 'GET /run HTTP/1.0\r\nHost: gateway\r\n\r\n' | socat -T5 - TCP:gateway:8001 | grep -q '^HTTP/1.1 401'
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  proxy:
+    image: ghcr.io/minervacomputing/minerva-proxy:${MINERVA_RELEASE}
+    restart: unless-stopped
+    logging: *logging
+    depends_on:
+      web:
+        condition: service_healthy
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.9.3
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN}
+    restart: unless-stopped
+    logging: *logging
+    depends_on: [proxy]
+
+volumes:
+  postgres-data:
+  files:
+  # Under a fixed name, so the supervisor finds it on the host daemon.
+  gateway-socket:
+    name: minerva-gateway-socket

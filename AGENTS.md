@@ -77,7 +77,7 @@ Emails (verification and sign-in codes) are printed in the `web` process output.
 
 This project does not use pull requests. Commit directly to `main` (or merge a short-lived branch into it) and push `main`.
 
-`main` is the product. The public demo runs from the `demo` branch, which takes bug fixes and small changes only, never new features:
+`main` is the product. Every push to `main` is tested and built into images by GitHub Actions, which deploy the newest commit to staging; see [deploy/README.md](deploy/README.md). When the `main` workflow fails, read which job failed: tests, image builds or the deploy. The public demo runs from the `demo` branch, which takes bug fixes and small changes only, never new features:
 
 - A fix that both need is committed on `main` first, then copied onto `demo` with `git cherry-pick -x`.
 - A change only the demo needs (demo settings, `backend/demo/`, `deploy/demo/`) is committed on `demo` only.
