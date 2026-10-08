@@ -92,6 +92,10 @@ This project does not use pull requests. Commit directly to `main` (or merge a s
 
 Use reserved `.example` domains and placeholders in docs, tests and seed data. Notes for the operator that need real identifiers, such as prompts for browser agents, go in `deploy/demo/private/`, which is gitignored. Check the staged diff for these before every commit.
 
+## Cloudflare
+
+Staging sits behind a Cloudflare Tunnel and Cloudflare Access (see [deploy/README.md](deploy/README.md)), the demo behind a tunnel only. Use Cloudflare's [`cf` CLI](https://developers.cloudflare.com/cf/) (npm package `cf`), not Wrangler. Find commands with `cf cli search "<task>"` and preview API changes with `--dry-run`. A destructive command without `--force` in a non-interactive shell prints `Aborted.` and still exits 0, so read the output or check the resource. Changes to the tunnel, Access policies or DNS affect the running deployments: ask before making them.
+
 ## Second opinions with opencode
 
 Use opencode as a read-only subagent for code review, adversarial review, or critiques of plans. Always use the `plan` agent (it does not edit files) with `--auto` (no permission prompts):
