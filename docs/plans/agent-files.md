@@ -156,6 +156,27 @@ Done 2026-10-07 (`backend/files/runs.py`, `backend/gateway/files.py`), apart fro
 
 ### 4. Worker
 
+Done 2026-10-08 (`worker/src/folder.ts`, `worker/src/local-tools.ts`). Differences from the outline below:
+
+- The local tools run in `WorkspaceEnv`, a `NodeExecutionEnv` whose text reads and writes open files without blocking and refuse anything but a regular file, so a FIFO in the folder cannot hang `write` or `edit`.
+- The provider sets `WORKSPACE` (the folder) and `TMPDIR`. Commands get `HOME` and `MPLCONFIGDIR` under `TMPDIR`. The local-process provider gives each worker a temporary directory of its own and removes it when the worker is stopped.
+- pi-durable resolves paths itself: `~` is the worker's home directory, not `HOME`, a leading `@` is dropped, and Unicode spaces become ASCII spaces. A file named `@notes.txt` is reached as `./@notes.txt`.
+- Only calls that can change the folder (`write`, `edit`, `bash`) need a checkpoint. A round of `read` calls alone releases its results at once. The final checkpoint at the turn's end runs only if the attempt admitted such a call.
+- Processes are killed only where the provider says the worker has a PID namespace of its own (`WORKER_KILL_STRAYS=1`, set by the container provider, which runs an init). The worker refuses to start with it when it runs as root or when init runs as another user. The local-process provider kills nothing, since `kill(-1)` would reach the user's other processes.
+- A call is stuck a minute after its `bash` timeout, or after two minutes for a file tool. Every other process is then killed, and no call is admitted until they are gone. If the call has not settled 10 seconds later, or the processes cannot be stopped, the attempt ends through the storage, like a failed checkpoint.
+- A `bash` timeout is cut to the time left before the run's deadline once the call is admitted, so a command that waited for a checkpoint gets only the time left after it. A call after the deadline fails at once.
+- Over a folder limit, the worker reports `failed` with `limit` (`folder_bytes`, `folder_entries`, `run_uploads` or `workspace`). The gateway ends the run with the code `folder_limit` and a message it writes itself. A revoked token (401) makes the worker exit without failing the run.
+- What the scan skipped goes to the gateway with every checkpoint, as `warnings` in the body: `{total, items: [{path, reason}]}`, at most 100 items, paths cut to 1,024 characters with control characters and invalid UTF-8 shown as U+FFFD. The gateway keeps the last on `Run.folder_warnings`, also when the manifest is unchanged. A checkpoint whose warnings alone changed is still sent.
+- Transfers are retried on 429, 5xx and failed connections, up to six tries, each with a timeout of 30 seconds plus a second per MB. The gateway charges every byte it receives, so a retried upload uses up the run's upload budget again.
+- Where the system limits paths below the root plus 1,024 bytes (macOS), a path it refuses is skipped as `too_long`.
+- `local_tool` events: the summary is the command or path, at most 300 characters; the excerpt is the end of the output or error, at most 2,000 characters. The worker removes NUL and replaces lone surrogates. The gateway refuses these fields on other events, and a `limit` on any but `failed`.
+- The worker checks names for NFC with Node's Unicode tables, the gateway with Python's. A name the two normalize differently, such as one with a character only the newer tables know, would fail every checkpoint with `invalid_manifest`.
+- Commands run as the worker's user, so they can read the worker's environment in `/proc` and reach the gateway's socket with the run token: a command can do what the worker can. The gateway already treats the worker as untrusted. Step 5's check that `RUN_TOKEN` is not in a command's environment keeps it from commands' output and children, not from a command that looks for it.
+- Not done yet:
+  - the end-to-end kill check and the `setsid` test, which kill every process of the worker's user and so cannot run inside the test runner; they wait for step 5's image;
+  - the fake model's Python step fails until step 5 adds `python3` to the image;
+  - the chat does not show `local_tool` events or warnings (step 6).
+
 - **Hydrate** (`worker/src/folder.ts`).
   - Before the session opens, download the run spec's folder into `/workspace` with a few downloads at once.
   - Set modes and mtimes, then index each file's path, size, mtime, ctime, inode, mode and sha256.

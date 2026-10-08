@@ -639,6 +639,7 @@
               "text_delta",
               "reasoning_delta",
               "tool_call",
+              "local_tool",
               "message"
             ],
             "title": "Type",

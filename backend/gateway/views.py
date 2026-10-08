@@ -12,7 +12,7 @@ from django.db.models.functions import Coalesce
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from connectors import registry
 from files import limits as file_limits
@@ -27,8 +27,10 @@ from runs.journal import Appended
 from runs.models import Run, RunEvent
 
 log = logging.getLogger(__name__)
+LocalTool = Literal["read", "write", "edit", "bash"]
 # Tools the worker runs in the sandbox's folder. Every run has all of them for now.
-LOCAL_TOOLS = ["read", "write", "edit", "bash"]
+LOCAL_TOOLS: list[LocalTool] = ["read", "write", "edit", "bash"]
+FolderLimit = Literal["folder_bytes", "folder_entries", "run_uploads", "workspace"]
 
 
 @require_GET
@@ -88,8 +90,27 @@ def _start(run_id, attempt: int) -> None:
 class WorkerEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
     seq: Annotated[int, Field(ge=1)]
-    type: Literal["phase", "completed", "failed"]
+    type: Literal["phase", "completed", "failed", "local_tool"]
     text: Annotated[str, Field(max_length=100_000)] = ""
+    # failed: the folder went over this limit, so the turn cannot succeed by running again.
+    limit: FolderLimit | None = None
+    # local_tool: a call the worker ran in its folder. The summary is its command or path; the excerpt, the end
+    # of its output or error.
+    tool: LocalTool | None = None
+    summary: Annotated[str, Field(max_length=300)] = ""
+    ok: bool | None = None
+    excerpt: Annotated[str, Field(max_length=2000)] = ""
+
+    @model_validator(mode="after")
+    def _fields_of_type(self):
+        if self.limit is not None and self.type != "failed":
+            raise ValueError("Only a failed event has a limit.")
+        if self.type == "local_tool":
+            if self.tool is None or self.ok is None:
+                raise ValueError("A local_tool event has a tool and ok.")
+        elif self.tool is not None or self.ok is not None or self.summary or self.excerpt:
+            raise ValueError("Only a local_tool event describes a call.")
+        return self
 
 
 class WorkerEvents(BaseModel):
@@ -123,15 +144,46 @@ def _apply_event(run: Run, event: WorkerEvent) -> None:
             )
         case "completed":
             services.complete(run.id, event.text, attempt=run.attempt)
+        case "local_tool":
+            data = {
+                "tool": event.tool,
+                "summary": _storable(event.summary),
+                "ok": event.ok,
+                "excerpt": _storable(event.excerpt),
+            }
+            services.append_event(run.id, RunEvent.Type.LOCAL_TOOL, data, attempt=run.attempt)
         case "failed":
             log.info("Worker reported failure for run %s: %s", run.id, event.text[:500])
-            services.finish(
-                run.id,
-                Run.Status.FAILED,
-                code="worker_failed",
-                message="The agent could not finish this run. Try again.",
-                attempt=run.attempt,
-            )
+            if event.limit is not None:
+                code, message = "folder_limit", _limit_message(event.limit)
+            else:
+                code, message = "worker_failed", "The agent could not finish this run. Try again."
+            services.finish(run.id, Run.Status.FAILED, code=code, message=message, attempt=run.attempt)
+
+
+def _storable(text: str) -> str:
+    """`text` without NUL characters, which PostgreSQL cannot store. The JSON parser refuses lone surrogates."""
+    return text.replace("\x00", "")
+
+
+def _mib(size: int) -> str:
+    return f"{size / 2**20:.0f} MiB" if size >= 2**20 else f"{size} bytes"
+
+
+def _limit_message(limit: str) -> str:
+    """The run's error for a folder over `limit`. The worker only names the limit, so the text is ours."""
+    match limit:
+        case "folder_bytes":
+            kept = _mib(file_limits.folder_bytes())
+            return f"The agent's files grew past the {kept} a conversation can keep."
+        case "folder_entries":
+            kept = file_limits.folder_entries()
+            return f"The agent made more than the {kept} files and folders a conversation can keep."
+        case "run_uploads":
+            kept = _mib(file_limits.run_upload_bytes())
+            return f"The agent saved more than the {kept} of files a turn may save."
+        case _:
+            return "The workspace has used all of its storage for files."
 
 
 @require_POST

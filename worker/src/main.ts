@@ -2,12 +2,17 @@
  * Minerva run worker. Runs one agent turn with pi-durable inside the sandbox.
  *
  * The worker holds a single run token and makes outbound calls to the gateway only:
- * `GET /run` for the turn, `/v1` for model calls, `/mcp` for tools, `POST /events` for progress, and `/journal` for
- * the turn's saved state. It never sees provider keys, connection credentials, or anything outside its own run.
+ * `GET /run` for the turn, `/v1` for model calls, `/mcp` for tools, `POST /events` for progress, `/journal` for
+ * the turn's saved state, and `/blobs` and `/checkpoint` for the run's folder. It never sees provider keys, connection
+ * credentials, or anything outside its own run.
  *
- * When a worker dies, the backend starts another for the same run, which loads the saved state and resumes the turn.
- * An interrupted read runs again; an interrupted write or script does not, and the model is told so.
+ * When a worker dies, the backend starts another for the same run, which loads the saved state and the folder's last
+ * checkpoint, and resumes the turn. An interrupted read runs again; an interrupted write, command or script does not,
+ * and the model is told so.
  */
+import { mkdir } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import type { AssistantMessage, Model, TSchema } from '@earendil-works/pi-ai'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
@@ -21,7 +26,12 @@ import {
   type AgentEventStream, type Conversation, type ToolRegistration,
 } from '@earendil-works/pi-durable'
 import { McpClient, StreamableHttpTransport, toLlmContent, type Tool as McpTool } from '@earendil-works/pi-mcp'
+import { limiter, serial, sleep, untilAborted } from './concurrency.ts'
+import { Folder, FolderClient, FolderLimit, FolderRevoked, FolderUnavailable } from './folder.ts'
 import { authHeader, env, EventSink, fetchRunSpec, gatewayUrl, RunRevoked, type RunSpec } from './gateway.ts'
+import {
+  COMMAND_TIMEOUT_S, LocalCalls, localTools, LocalToolStuck, strayKiller, WorkspaceEnv,
+} from './local-tools.ts'
 import { loadStore, saveStore, STORE_BYTES } from './script-store.ts'
 import { GatewayJournal, GatewayStorage, GatewayUnreachable, JournalRevoked } from './storage.ts'
 
@@ -48,6 +58,8 @@ const SCRIPT_REFUSALS = 100
 const MODEL_TOOLS_MAX = 128
 // Longer than a turn runs in practice, so pi-durable saves an answer only once it is complete, not while it streams in.
 const NEVER_MS = 2_000_000_000
+// How long a worker that is stopping waits to report why.
+const REPORT_MS = 30000
 
 const context = BACKGROUND_CONTEXT
 
@@ -105,6 +117,11 @@ function remainingMs(spec: RunSpec): number {
   return Number.isNaN(deadline) ? 60000 : Math.max(1000, deadline - Date.now())
 }
 
+/** When the turn must end, in milliseconds since the epoch, or null for no deadline. */
+function deadlineMs(spec: RunSpec): number | null {
+  return spec.limits.deadline === null ? null : Date.now() + remainingMs(spec)
+}
+
 /** A gateway tool. Writes run one at a time: the gateway refuses a second write while one is in progress. */
 function gatewayTool(client: McpClient, tool: McpTool, spec: RunSpec, gateway: GatewayCalls): ToolRegistration {
   const write = tool.annotations?.readOnlyHint !== true
@@ -131,50 +148,12 @@ function gatewayTool(client: McpClient, tool: McpTool, spec: RunSpec, gateway: G
   }
 }
 
-/** Runs tasks one after another, in the order they were queued. */
-function serial(): <T>(task: () => Promise<T>) => Promise<T> {
-  let last: Promise<unknown> = Promise.resolve()
-  return task => {
-    const next = last.then(task, task)
-    last = next.catch(() => {})
-    return next
-  }
-}
-
-/** Settles like `promise`, or rejects as soon as `signal` aborts. */
-function untilAborted<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
-  if (!signal) return promise
-  return new Promise((resolve, reject) => {
-    const abort = () => reject(signal.reason)
-    signal.addEventListener('abort', abort, { once: true })
-    if (signal.aborted) abort()
-    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
-  })
-}
-
 /** `value` as JSON, or undefined when it cannot be written as JSON, for example because it is nested too deeply. */
 function toJson(value: unknown): string | undefined {
   try {
     return JSON.stringify(value)
   } catch {
     return undefined
-  }
-}
-
-/** Runs at most `size` tasks at once; the rest wait in the order they were queued. */
-function limiter(size: number): <T>(task: () => Promise<T>) => Promise<T> {
-  let free = size
-  const waiting: Array<() => void> = []
-  return async task => {
-    if (free > 0) free--
-    else await new Promise<void>(resolve => waiting.push(resolve))
-    try {
-      return await task()
-    } finally {
-      const next = waiting.shift()
-      if (next) next()
-      else free++
-    }
   }
 }
 
@@ -352,6 +331,15 @@ function scriptRunner(client: McpClient, tools: McpTool[], spec: RunSpec, gatewa
   }
 }
 
+/** What the model is told about its folder and commands. */
+const FOLDER_INSTRUCTIONS = [
+  `You have a folder at ${env.WORKSPACE}, which is kept between the turns of this conversation. The user sees its files and can download them.`,
+  'Commands have no network access, and nothing can be installed.',
+  `A command stops after ${COMMAND_TIMEOUT_S / 60} minutes unless you give it a longer timeout.`,
+  'Processes left running in the background are stopped once no file or command tool call is running.',
+  'Symbolic links are not kept.',
+].join(' ')
+
 function clip(text: string): string {
   if (text.length <= MESSAGE_LIMIT) return text
   return `${text.slice(0, MESSAGE_LIMIT)}\n\n[The rest of this message was left out.]`
@@ -407,11 +395,12 @@ async function close(): Promise<void> {
   await mcp?.close().catch(() => {})
 }
 
-/** Exits with the first code asked for. */
-function shutdown(code: number): Promise<never> {
+/** Exits with the first code asked for, after `report` has told the gateway why, if it can. */
+function shutdown(code: number, report?: () => Promise<void>): Promise<never> {
   exiting ??= (async () => {
+    if (report) await Promise.race([report().catch(() => {}), sleep(REPORT_MS)])
     // A tool call that ignores cancellation must not keep the process alive.
-    await Promise.race([close(), new Promise(resolve => setTimeout(resolve, 5000))])
+    await Promise.race([close(), sleep(5000)])
     process.exit(code)
   })()
   return exiting
@@ -422,20 +411,64 @@ process.on('SIGINT', () => { void shutdown(130) })
 
 const sink = new EventSink(() => { void shutdown(0) })
 
+/**
+ * Stops the worker because of `error`. A revoked run stops quietly, and a folder over a limit fails the turn with the
+ * limit's message. Otherwise, with `resume`, the next worker resumes the turn from what was saved; without it, the
+ * turn fails.
+ */
+function stop(error: unknown, resume: boolean): Promise<never> {
+  if (error instanceof RunRevoked || error instanceof JournalRevoked || error instanceof FolderRevoked || sink.revoked) {
+    return shutdown(0)
+  }
+  // Logged for operators through the sandbox logs; the gateway shows users a generic message.
+  process.stderr.write(`${describeError(error)}\n`)
+  if (error instanceof FolderLimit) return shutdown(1, () => sink.failed(error.message, error.limit))
+  return resume ? shutdown(1) : shutdown(1, () => sink.failed(describeError(error)))
+}
+
+// Saving the folder, and the local and gateway calls running, for the chat's progress line.
+let saving = false
+const running = new Map<string, string>()
+
+function showPhase(): void {
+  const names = [...running.values()]
+  if (saving) sink.phase('Saving files')
+  else if (names.includes(SCRIPT_TOOL)) sink.phase('Running a script')
+  else if (names.includes('bash')) sink.phase('Running commands')
+  else sink.phase(names.length ? 'Using tools' : 'Thinking')
+}
+
 try {
   const spec = await fetchRunSpec()
-  const storage = await GatewayStorage.load(new GatewayJournal(gatewayUrl, authHeader), error => {
-    // Whether the gateway saved the commit is unknown, so this worker stops without failing the run. The next
-    // worker resumes from what was saved; a run whose state grew too large was failed by the gateway.
-    process.stderr.write(`${describeError(error)}\n`)
-    void shutdown(error instanceof JournalRevoked ? 0 : 1)
-  }).catch(async (error: unknown) => {
-    // The next worker tries again. Saved state that cannot be loaded fails the run instead.
-    if (!(error instanceof GatewayUnreachable)) throw error
-    process.stderr.write(`${describeError(error)}\n`)
-    return shutdown(1)
-  })
+  // Whether the gateway saved a failed commit or checkpoint is unknown, so this worker stops without failing the run.
+  // The next worker resumes from what was saved; a run whose state grew too large was failed by the gateway.
+  const storage = await GatewayStorage.load(new GatewayJournal(gatewayUrl, authHeader), error => { void stop(error, true) })
   sink.phase(storage.loaded ? 'Resuming the agent' : 'Starting the agent')
+
+  // The folder, for a run with local tools. A resumed turn starts from the last checkpoint.
+  let locals: LocalCalls | null = null
+  if (spec.local_tools.length) {
+    sink.phase('Preparing files')
+    const tmp = tmpdir()
+    await mkdir(join(tmp, 'home'), { recursive: true })
+    await mkdir(join(tmp, 'matplotlib'), { recursive: true })
+    const killStrays = strayKiller(env.WORKER_KILL_STRAYS === '1')
+    const folder = await Folder.hydrate(spec.folder, {
+      root: env.WORKSPACE,
+      client: new FolderClient({ url: gatewayUrl, auth: authHeader }),
+      limits: { bytes: spec.limits.folder_bytes, entries: spec.limits.folder_entries },
+    })
+    locals = new LocalCalls({
+      checkpoint: options => folder.checkpoint(options),
+      killStrays,
+      fail: error => storage.fail(error),
+      report: event => sink.localTool(event),
+      saving(active) {
+        saving = active
+        showPhase()
+      },
+    })
+  }
 
   const models = createModels()
   models.setProvider(createProvider({
@@ -455,10 +488,17 @@ try {
   const client = mcp
   const listed = await client.listTools()
   const gateway = gatewayCalls()
-  const tools = listed.map(tool => gatewayTool(client, tool, spec, gateway))
-  // Scripts call the gateway's tools, so a run without any gets none; one with a full list keeps its direct tools.
-  if (listed.length && listed.length < MODEL_TOOLS_MAX) tools.push(scriptRunner(client, listed, spec, gateway))
+  const local = locals ? localTools({ names: spec.local_tools, calls: locals, tmp: tmpdir(), deadline: deadlineMs(spec) }) : []
+  // Scripts call the gateway's tools, so a run without any gets none. Gateway tools that do not fit beside the local
+  // tools and the script tool are reached only through scripts.
+  const room = MODEL_TOOLS_MAX - local.length
+  const direct = listed.length < room ? listed : listed.slice(0, room - 1)
+  const tools = direct.map(tool => gatewayTool(client, tool, spec, gateway))
+  if (listed.length) tools.push(scriptRunner(client, listed, spec, gateway))
+  tools.push(...local)
 
+  // Commands start in the folder; the file tools resolve relative paths against it.
+  const workspace = locals ? new WorkspaceEnv({ cwd: env.WORKSPACE }) : null
   const registry = createRegistry()
   registry.install(defineExtension({ name: 'minerva', tools }))
 
@@ -475,10 +515,12 @@ try {
       progress: { partialIntervalMs: NEVER_MS, outputIntervalMs: NEVER_MS },
     },
     onReport: error => { process.stderr.write(`${describeError(error)}\n`) },
+    ...(workspace ? { env: () => workspace } : {}),
   }, context)
 
   const history = recentHistory(spec)
-  const agent = { model: { provider: PROVIDER, modelId: spec.model.alias }, instructions: spec.instructions || null }
+  const instructions = [spec.instructions, locals ? FOLDER_INSTRUCTIONS : ''].filter(Boolean).join('\n\n')
+  const agent = { model: { provider: PROVIDER, modelId: spec.model.alias }, instructions: instructions || null }
   root = await harness.root(context, {
     agent,
     async init(tx, conversationId) {
@@ -495,19 +537,17 @@ try {
   // A resumed turn keeps its saved history, but its agent comes from the spec, as for a new one.
   if (storage.loaded) await root.configure({ ...agent, thinkingLevel: null, extensions: null, tools: null, cwd: null }, context)
 
-  const running = new Map<string, string>()
   events = await watchEvents(harness, root.id, context)
   events.start(async batch => {
     for (const event of batch) {
       if (event.type === 'tool_execution_start') running.set(event.toolCallId, event.toolName)
       else if (event.type === 'tool_execution_end') running.delete(event.toolCallId)
       else if (event.type !== 'turn_start') continue
-      const names = [...running.values()]
-      sink.phase(names.includes(SCRIPT_TOOL) ? 'Running a script' : names.length ? 'Using tools' : 'Thinking')
+      showPhase()
     }
   })
 
-  sink.phase('Thinking')
+  showPhase()
   // A worker that resumes the turn gets the submission the first one made.
   const submission = await root.submit({ type: 'input', content: spec.prompt, requestId: `run:${spec.run_id}` }, context)
   const settled = await submission.wait(context)
@@ -519,14 +559,14 @@ try {
   const answer = answerId && await root.commit(tx => tx.entry(AssistantEntry, answerId), context)
   const response = answer ? answerText(answer.model?.[0]) : ''
   if (!response) throw new Error('The model turn ended without a response.')
+  // The folder as the turn left it, before the turn counts as complete.
+  await locals?.finish()
   await sink.completed(response)
   await shutdown(0)
 } catch (error) {
   // Already stopping, for example because a commit could not be saved: the next worker resumes the turn.
   if (exiting) await exiting
-  if (error instanceof RunRevoked || error instanceof JournalRevoked || sink.revoked) await shutdown(0)
-  // Logged for operators through the sandbox logs; the gateway shows users a generic message.
-  process.stderr.write(`${describeError(error)}\n`)
-  await sink.failed(describeError(error)).catch(() => {})
-  await shutdown(1)
+  // The gateway could not be reached, the folder could not be loaded or saved, or a command would not stop: the next
+  // worker tries again. Saved state that cannot be loaded fails the run instead.
+  await stop(error, error instanceof GatewayUnreachable || error instanceof FolderUnavailable || error instanceof LocalToolStuck)
 }

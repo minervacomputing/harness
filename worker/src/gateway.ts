@@ -1,12 +1,18 @@
 import { z } from 'zod'
+import { folderSpec, type Limit } from './folder.ts'
+import type { LocalToolEvent } from './local-tools.ts'
 import { gatewayBaseUrl, isSocketUrl } from './transport.ts'
 
-/** The only process environment the backend provides. Everything else comes from the gateway. */
+/** The process environment the backend provides, apart from `TMPDIR`. Everything else comes from the gateway. */
 export const env = z.object({
   // An http(s) URL, or unix:<path> for a worker without a network (see transport.ts).
   GATEWAY_URL: z.union([z.url({ protocol: /^https?$/ }), z.string().refine(isSocketUrl)]),
   RUN_TOKEN: z.string().min(20),
   RUN_ID: z.string().min(1),
+  // The run's folder, empty when the worker starts.
+  WORKSPACE: z.string().startsWith('/').default('/workspace'),
+  // Set where the worker has a PID namespace of its own, so that it can kill what commands leave running.
+  WORKER_KILL_STRAYS: z.enum(['0', '1']).default('0'),
 }).parse(process.env)
 
 export const gatewayUrl = await gatewayBaseUrl(env.GATEWAY_URL)
@@ -25,8 +31,15 @@ export const runSpec = z.object({
     api: z.enum(['responses', 'chat']),
     max_output_tokens: z.number().int().positive(),
   }),
-  // No deadline: the turn runs until it ends or is stopped.
-  limits: z.object({ deadline: z.string().nullable() }),
+  limits: z.object({
+    // No deadline: the turn runs until it ends or is stopped.
+    deadline: z.string().nullable(),
+    folder_bytes: z.number().int().positive(),
+    folder_entries: z.number().int().positive(),
+  }),
+  // The folder to start from: the run's last checkpoint, else the version the turn started from.
+  folder: folderSpec,
+  local_tools: z.array(z.string()),
 })
 export type RunSpec = z.infer<typeof runSpec>
 
@@ -40,7 +53,13 @@ export async function fetchRunSpec(): Promise<RunSpec> {
 /** The gateway refused worker events outright; sending them again cannot help. */
 class GatewayRejected extends Error {}
 
-type WorkerEvent = { seq: number; type: 'phase' | 'completed' | 'failed'; text: string }
+type WorkerEvent =
+  | { seq: number; type: 'phase' | 'completed'; text: string }
+  // `limit`: the turn failed because the folder is over this limit.
+  | { seq: number; type: 'failed'; text: string; limit?: Limit }
+  | { seq: number; type: 'local_tool' } & LocalToolEvent
+
+type Unsequenced<T> = T extends unknown ? Omit<T, 'seq'> : never
 
 /** Delivers events in order, at least once. The gateway ignores sequence numbers it has already seen. */
 export class EventSink {
@@ -58,14 +77,22 @@ export class EventSink {
   phase(text: string): void {
     if (text === this.lastPhase) return
     this.lastPhase = text
-    this.push('phase', text).catch(() => { /* Surfaced by the terminal event instead. */ })
+    this.push({ type: 'phase', text }).catch(() => { /* Surfaced by the terminal event instead. */ })
   }
 
-  completed(response: string): Promise<void> { return this.push('completed', response) }
-  failed(reason: string): Promise<void> { return this.push('failed', reason) }
+  /** Reports a local call for the chat. Best effort, like phases. */
+  localTool(event: LocalToolEvent): void {
+    this.push({ type: 'local_tool', ...event }).catch(() => { /* Surfaced by the terminal event instead. */ })
+  }
 
-  private push(type: WorkerEvent['type'], text: string): Promise<void> {
-    this.pending.push({ seq: ++this.seq, type, text })
+  completed(response: string): Promise<void> { return this.push({ type: 'completed', text: response }) }
+
+  failed(reason: string, limit?: Limit): Promise<void> {
+    return this.push(limit ? { type: 'failed', text: reason, limit } : { type: 'failed', text: reason })
+  }
+
+  private push(event: Unsequenced<WorkerEvent>): Promise<void> {
+    this.pending.push({ ...event, seq: ++this.seq } as WorkerEvent)
     this.sending = this.sending.catch(() => {}).then(() => this.send())
     return this.sending
   }

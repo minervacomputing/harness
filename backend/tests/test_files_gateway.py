@@ -32,8 +32,9 @@ def entry(path: str, data: bytes, mode: int = 0o644, mtime: int = 0) -> dict:
     return {"path": path, "sha256": sha(data), "mode": mode, "mtime": mtime}
 
 
-def put_checkpoint(token: str, parent, *files: dict, dirs=()) -> tuple[int, dict]:
+def put_checkpoint(token: str, parent, *files: dict, dirs=(), **extra) -> tuple[int, dict]:
     body = {"parent": str(parent) if parent else None, "entries": {"files": list(files), "dirs": list(dirs)}}
+    body |= extra
     response = Client().put(
         "/checkpoint", json.dumps(body), content_type="application/json", headers=auth(token)
     )
@@ -444,6 +445,55 @@ def test_a_checkpoint_is_limited_in_size_and_entries(claimed, tmp_path, monkeypa
     status, body = put_checkpoint(token, None, entry("d/e/f", b"x" * 5000))
     assert (status, body["error"]["limit"]) == (413, "folder_entries")
     assert put_checkpoint(token, None, entry("d/f", b"x" * 5000))[0] == 200
+
+
+def test_a_checkpoint_records_what_the_worker_left_out(claimed, tmp_path):
+    run, token = claimed
+    put(tmp_path, run.workspace_id, b"one", run=run)
+    # The worker shows a control character in a name as U+FFFD.
+    items = [{"path": "link", "reason": "symlink"}, {"path": "a\ufffdb", "reason": "invalid_name"}]
+    left_out = {"total": 3, "items": items}
+    status, body = put_checkpoint(token, None, entry("a", b"one"), warnings=left_out)
+    assert status == 200
+    assert reload(run).folder_warnings == left_out
+    # The same folder with less left out is the same version, with the new warnings.
+    version = body["version"]
+    assert put_checkpoint(token, version, entry("a", b"one"), warnings={"total": 0, "items": []}) == (
+        200,
+        {"version": version},
+    )
+    assert reload(run).folder_warnings == {"total": 0, "items": []}
+    # A checkpoint without warnings leaves them as they were.
+    assert put_checkpoint(token, version, entry("a", b"one"))[0] == 200
+    assert reload(run).folder_warnings == {"total": 0, "items": []}
+
+
+@pytest.mark.parametrize(
+    "warnings",
+    [
+        [],
+        {"total": 0},
+        {"total": 0, "items": [], "more": 1},
+        {"total": True, "items": []},
+        {"total": 0, "items": [{"path": "a", "reason": "symlink"}]},
+        {"total": 2**31, "items": []},
+        {"total": 101, "items": [{"path": "a", "reason": "symlink"}] * 101},
+        {"total": 1, "items": [{"path": "a", "reason": "deleted"}]},
+        {"total": 1, "items": [{"path": "a", "reason": []}]},
+        {"total": 1, "items": [{"path": "a", "reason": {}}]},
+        {"total": 1, "items": [{"path": "a", "reason": "symlink", "size": 1}]},
+        {"total": 1, "items": [{"path": "", "reason": "symlink"}]},
+        {"total": 1, "items": [{"path": "a\nb", "reason": "symlink"}]},
+        {"total": 1, "items": [{"path": "a" * 1025, "reason": "too_long"}]},
+        {"total": 1, "items": [{"path": 1, "reason": "symlink"}]},
+    ],
+)
+def test_malformed_warnings_refuse_the_checkpoint(claimed, warnings):
+    run, token = claimed
+    status, body = put_checkpoint(token, None, warnings=warnings)
+    assert (status, body["error"]["code"]) == (400, "invalid_manifest")
+    run = reload(run)
+    assert (run.checkpoint_id, run.folder_warnings) == (None, None)
 
 
 def test_an_earlier_attempt_cannot_checkpoint(claimed, tmp_path):

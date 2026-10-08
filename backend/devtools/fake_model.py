@@ -5,6 +5,8 @@ result is present it answers in text and quotes the start of that result. A mess
 `run_script:` makes it call the code-mode tool with the rest of the message as the script. A message that starts with
 `slow:` makes it stream one event per second, which leaves time to stop a worker mid-answer. A message that starts with
 `multi:` makes it call three tools that need no arguments, one after another, before it answers. It says a sentence before each tool call.
+A message that starts with `files:` makes it work in the run's folder: write a file, edit it, run Python on it, and
+run two commands at once. The other turns never call the folder's tools.
 Serves Chat Completions and Responses, and streams like the real API. When asked for encrypted reasoning it emits a
 reasoning item, with a summary when one is asked for; over Chat Completions it streams `reasoning_content`.
 
@@ -21,6 +23,22 @@ PORT = 9900
 SCRIPT_PREFIX = "run_script:"
 SLOW_PREFIX = "slow:"
 MULTI_PREFIX = "multi:"
+FILES_PREFIX = "files:"
+LOCAL_TOOLS = {"read", "write", "edit", "bash"}
+TOTAL_SCRIPT = (
+    "import pathlib\n"
+    "rows = [line.split() for line in pathlib.Path('notes.txt').read_text().splitlines()]\n"
+    "total = sum(int(count) for _, count in rows)\n"
+    "pathlib.Path('total.txt').write_text(f'{total}\\n')\n"
+    "print(total)\n"
+)
+# The calls of a `files:` turn, round by round; the calls of a round run at once.
+FILES_ROUNDS = [
+    [("write", {"path": "notes.txt", "content": "apples 3\npears 5\n"})],
+    [("edit", {"path": "notes.txt", "edits": [{"oldText": "pears 5", "newText": "pears 7"}]})],
+    [("bash", {"command": f"python3 - <<'EOF'\n{TOTAL_SCRIPT}EOF"})],
+    [("bash", {"command": "sleep 1; ls -l"}), ("bash", {"command": "sleep 1; wc -l notes.txt"})],
+]
 
 
 def text_of(message: dict) -> str:
@@ -49,30 +67,55 @@ def plan(body: dict) -> dict:
     prompt = next((text_of(m) for m in reversed(messages) if m.get("role") == "user"), "")
     pace = 1.0 if prompt.startswith(SLOW_PREFIX) else 0.03
     step = choose(tools, free, responses, last, is_result, prompt, results)
-    return {**step, "pace": pace, "thought": thought(step, results), "call": f"call_{results + 1}"}
+    # Call ids follow the results, so they never repeat within a turn.
+    calls = [{**call, "id": f"call_{results + 1 + i}"} for i, call in enumerate(step.pop("calls", []))]
+    return {**step, "calls": calls, "pace": pace, "thought": thought(calls, results)}
 
 
-def thought(step: dict, results: int) -> str:
-    if "tool" in step:
-        return f"The user wants something from their apps. Step {results + 1}: I will call {step['tool']}."
+def thought(calls: list[dict], results: int) -> str:
+    if calls:
+        names = " and ".join(call["name"] for call in calls)
+        return f"The user wants something done. Step {results + 1}: I will call {names}."
     return "I have what I need. I will answer briefly."
 
 
+def call(name: str, arguments: dict | None = None) -> dict:
+    return {"name": name, "arguments": json.dumps(arguments or {})}
+
+
 def choose(
-    tools: list[str], free: list[str], responses: bool, last: dict, is_result: bool, prompt: str, results: int
+    offered: list[str],
+    offered_free: list[str],
+    responses: bool,
+    last: dict,
+    is_result: bool,
+    prompt: str,
+    results: int,
 ) -> dict:
+    if prompt.startswith(FILES_PREFIX) and set(offered) >= LOCAL_TOOLS:
+        done = 0
+        for number, round in enumerate(FILES_ROUNDS):
+            if results == done:
+                return {
+                    "calls": [call(name, arguments) for name, arguments in round],
+                    "say": f"Step {number + 1}.",
+                }
+            done += len(round)
+        return {"text": "This is the fake model. I wrote notes.txt and total.txt in the folder."}
+    tools = [tool for tool in offered if tool not in LOCAL_TOOLS]
+    free = [tool for tool in offered_free if tool not in LOCAL_TOOLS]
     if "run_script" in tools and not is_result and prompt.startswith(SCRIPT_PREFIX):
-        return {"tool": "run_script", "arguments": json.dumps({"code": prompt.removeprefix(SCRIPT_PREFIX)})}
+        return {"calls": [call("run_script", {"code": prompt.removeprefix(SCRIPT_PREFIX)})]}
     if tools and prompt.startswith(MULTI_PREFIX) and results < 3:
         name = (free or tools)[results % len(free or tools)]
-        return {"tool": name, "say": f"Now {name}."}
+        return {"calls": [call(name)], "say": f"Now {name}."}
     if tools and not is_result:
         name = next((tool for tool in tools if tool.endswith("list_projects")), tools[0])
-        return {"tool": name, "say": "Let me look that up."}
+        return {"calls": [call(name)], "say": "Let me look that up."}
     result = last.get("output" if responses else "content") if is_result else None
     if isinstance(result, list):
         result = " ".join(part.get("text", "") for part in result if isinstance(part, dict))
-    text = f"This is the fake model. I was offered {len(tools)} tool(s)."
+    text = f"This is the fake model. I was offered {len(offered)} tool(s)."
     if result:
         text += f" The tool answered: {str(result)[:300]}"
     return {"text": text}
@@ -101,18 +144,18 @@ def response_items(body: dict, step: dict) -> list[dict]:
         items.append({"type": "reasoning", "id": "rs_fake", "summary": summary, "encrypted_content": "fake"})
     if "say" in step:
         items.append(message_item(step["say"], "msg_say"))
-    if "tool" in step:
+    for call in step["calls"]:
         items.append(
             {
                 "type": "function_call",
-                "id": f"fc_{step['call']}",
-                "call_id": step["call"],
-                "name": step["tool"],
-                "arguments": step.get("arguments", "{}"),
+                "id": f"fc_{call['id']}",
+                "call_id": call["id"],
+                "name": call["name"],
+                "arguments": call["arguments"],
                 "status": "completed",
             }
         )
-    else:
+    if not step["calls"]:
         items.append(message_item(step["text"]))
     return items
 
@@ -173,13 +216,14 @@ class Handler(BaseHTTPRequestHandler):
         usage = {"prompt_tokens": 42, "completion_tokens": 7, "total_tokens": 49}
         if not body.get("stream"):
             message = {"role": "assistant", "content": step.get("text")}
-            if "tool" in step:
+            if step["calls"]:
                 message["tool_calls"] = [
                     {
-                        "id": step["call"],
+                        "id": call["id"],
                         "type": "function",
-                        "function": {"name": step["tool"], "arguments": step.get("arguments", "{}")},
+                        "function": {"name": call["name"], "arguments": call["arguments"]},
                     }
+                    for call in step["calls"]
                 ]
             payload = {"id": "chatcmpl-fake", "object": "chat.completion", "model": "fake", "usage": usage}
             payload["choices"] = [{"index": 0, "message": message, "finish_reason": "stop"}]
@@ -194,10 +238,19 @@ class Handler(BaseHTTPRequestHandler):
         events += [chunk({"reasoning_content": word + " "}) for word in step["thought"].split(" ")]
         if "say" in step:
             events += [chunk({"content": word + " "}) for word in step["say"].split(" ")]
-        if "tool" in step:
-            call = {"index": 0, "id": step["call"], "type": "function"}
-            call["function"] = {"name": step["tool"], "arguments": step.get("arguments", "{}")}
-            events += [chunk({"tool_calls": [call]}), chunk({}, "tool_calls")]
+        if step["calls"]:
+            for index, call in enumerate(step["calls"]):
+                function = {"name": call["name"], "arguments": call["arguments"]}
+                events.append(
+                    chunk(
+                        {
+                            "tool_calls": [
+                                {"index": index, "id": call["id"], "type": "function", "function": function}
+                            ]
+                        }
+                    )
+                )
+            events.append(chunk({}, "tool_calls"))
         else:
             events += [chunk({"content": word + " "}) for word in step["text"].split(" ")]
             events.append(chunk({}, "stop"))

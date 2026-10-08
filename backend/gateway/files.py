@@ -408,13 +408,20 @@ async def put_checkpoint(request: HttpRequest) -> JsonResponse:
     run = request.run  # type: ignore[attr-defined]
     try:
         body = json.loads(request.body)
-        if not isinstance(body, dict) or set(body) != {"parent", "entries"}:
+        if not isinstance(body, dict) or not {"parent", "entries"} <= set(body) <= {
+            "parent",
+            "entries",
+            "warnings",
+        }:
             raise ValueError
         parent = UUID(body["parent"]) if body["parent"] is not None else None
     except ValueError, TypeError, AttributeError:
-        return _refused(folder.CheckpointRefused("invalid_manifest", 'The body is {"parent", "entries"}.'))
+        message = 'The body is {"parent", "entries"}, with optional "warnings".'
+        return _refused(folder.CheckpointRefused("invalid_manifest", message))
     try:
-        version = await sync_to_async(folder.checkpoint)(run.id, run.attempt, parent, body["entries"])
+        version = await sync_to_async(folder.checkpoint)(
+            run.id, run.attempt, parent, body["entries"], body.get("warnings")
+        )
     except folder.CheckpointRefused as error:
         return _refused(error)
     return JsonResponse({"version": str(version.id) if version is not None else None})

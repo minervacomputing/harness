@@ -179,6 +179,16 @@ export class GatewayStorage extends MemoryStorage {
     }
   }
 
+  /**
+   * Refuses every later commit and tells `onFatal`, as a commit that could not be saved does. For a failure outside
+   * the journal after which nothing more may be recorded, such as a checkpoint of the folder that failed.
+   */
+  fail(error: Error): void {
+    if (this.failure) return
+    this.failure = error
+    this.onFatal(error)
+  }
+
   override commit(writes: readonly StorageWrite[], _context: Context): Promise<Seq> {
     const next = this.queue.then(() => this.save(writes))
     this.queue = next.catch(() => {})
@@ -198,8 +208,7 @@ export class GatewayStorage extends MemoryStorage {
     try {
       await this.journal.write(prepared.seq, body)
     } catch (error) {
-      this.failure = error instanceof Error ? error : new Error(String(error))
-      this.onFatal(this.failure)
+      this.fail(error instanceof Error ? error : new Error(String(error)))
       throw this.failure
     }
     return prepared.apply()

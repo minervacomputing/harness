@@ -9,6 +9,7 @@ accepted after the run ended, and the version a run publishes is its last accept
 one: each checkpoint deletes the one it replaces.
 """
 
+import unicodedata
 from uuid import UUID
 
 from django.db import connection, transaction
@@ -38,6 +39,12 @@ SINGLE_UNREADABLE = """
         SELECT 1 FROM files_folderversion v WHERE v.id = ANY(%s::uuid[]) AND v.hashes @> ARRAY[h]::varchar(64)[]
     )
 """
+
+
+# Why the worker left an entry out of a checkpoint.
+WARNING_REASONS = {"symlink", "special", "invalid_name", "too_long", "too_deep", "unreadable"}
+WARNINGS_KEPT = 100
+WARNING_PATH_CHARS = 1024
 
 
 class CheckpointRefused(Exception):
@@ -101,10 +108,13 @@ def current_run(run_id: UUID, attempt: int) -> Run | None:
     return run
 
 
-def checkpoint(run_id: UUID, attempt: int, parent_id: UUID | None, data: object) -> FolderVersion | None:
+def checkpoint(
+    run_id: UUID, attempt: int, parent_id: UUID | None, data: object, warnings: object = None
+) -> FolderVersion | None:
     """Records the run's folder as `data` (a manifest in wire form) describes it, on top of `parent_id`, which
     must be the run's last checkpoint (or its base version, for the first). An identical manifest is answered
-    with the current version, which is None for a run that has never had files. Raises CheckpointRefused."""
+    with the current version, which is None for a run that has never had files. `warnings`, what the worker left
+    out (parse_warnings), replace the run's. Raises CheckpointRefused."""
     with transaction.atomic():
         run = current_run(run_id, attempt)
         if run is None:
@@ -114,6 +124,9 @@ def checkpoint(run_id: UUID, attempt: int, parent_id: UUID | None, data: object)
             raise CheckpointRefused("conflict", "The parent is not the run's last checkpoint.")
         try:
             manifest = parse(data, max_entries=limits.folder_entries())
+            if warnings is not None:
+                # Even for an identical manifest: what was left out can change without what was kept changing.
+                Run.unscoped.filter(pk=run_id).update(folder_warnings=parse_warnings(warnings))
         except InvalidManifest as error:
             raise CheckpointRefused("invalid_manifest", str(error)) from None
         except QuotaExceeded as error:
@@ -146,6 +159,37 @@ def checkpoint(run_id: UUID, attempt: int, parent_id: UUID | None, data: object)
             FolderVersion.unscoped.filter(pk=version.pk).update(parent_id=run.base_version_id)
             FolderVersion.unscoped.filter(pk=current.pk).delete()
     return version
+
+
+def parse_warnings(data: object) -> dict:
+    """What the worker left out of the folder, as it reports it: {"total", "items": [{"path", "reason"}]}, with at
+    most WARNINGS_KEPT items. The paths are for display only, so they need not be valid manifest paths, but they
+    must be storable. Raises InvalidManifest."""
+    if not isinstance(data, dict) or set(data) != {"total", "items"}:
+        raise InvalidManifest('Warnings are {"total", "items"}.')
+    total, items = data["total"], data["items"]
+    if not isinstance(items, list) or len(items) > WARNINGS_KEPT:
+        raise InvalidManifest(f"Warnings list at most {WARNINGS_KEPT} items.")
+    if type(total) is not int or not len(items) <= total < 2**31:
+        raise InvalidManifest("The warnings' total is not a count of their items.")
+    kept = []
+    for item in items:
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"path", "reason"}
+            or not isinstance(item["reason"], str)
+            or item["reason"] not in WARNING_REASONS
+        ):
+            raise InvalidManifest('A warning is {"path", "reason"}, with a known reason.')
+        path = item["path"]
+        if (
+            not isinstance(path, str)
+            or not 0 < len(path) <= WARNING_PATH_CHARS
+            or any(unicodedata.category(char) in ("Cc", "Cs") for char in path)
+        ):
+            raise InvalidManifest("A warning's path is empty, too long, or has control characters.")
+        kept.append({"path": path, "reason": item["reason"]})
+    return {"total": total, "items": kept}
 
 
 def _quota(limit: str) -> CheckpointRefused:

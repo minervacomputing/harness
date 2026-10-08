@@ -125,6 +125,9 @@ def test_workers_get_no_network_and_only_the_gateway_socket_read_only(provider, 
     assert mount["VolumeOptions"]["NoCopy"] is True
     # The provider decides how the worker reaches the gateway, not the caller.
     assert kwargs["environment"]["GATEWAY_URL"] == GATEWAY_URL == provider.gateway_url
+    # Alone in its PID namespace with init, the worker may kill what its commands leave running.
+    assert kwargs["environment"]["WORKER_KILL_STRAYS"] == "1"
+    assert kwargs["init"] is True
     assert kwargs["runtime"] == "runsc-minerva"
     assert kwargs["read_only"] is True
     assert kwargs["cap_drop"] == ["ALL"]

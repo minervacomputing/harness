@@ -40,7 +40,8 @@ class SandboxProvider(Protocol):
     reaches nothing else: no other worker, no host service, no host credentials or readable host secrets.
     `local-process` is the development-only exception and isolates nothing. How the channel works is the
     provider's choice; `gateway_url` tells the worker where it is, and providers set it in the worker's
-    environment themselves. `env` holds only GATEWAY_URL, RUN_TOKEN, and RUN_ID. Security never depends on
+    environment themselves. `env` holds only GATEWAY_URL, RUN_TOKEN, and RUN_ID; a provider adds what its sandbox
+    needs (WORKSPACE, the run's folder, empty at the start; TMPDIR; WORKER_KILL_STRAYS). Security never depends on
     `stop` succeeding; revoking the run token ends its access to data and tools, though a running worker can still
     hold connections open. `attempt` tells apart the workers of a run that
     was restarted. `command` overrides the image entrypoint; only the sandbox conformance check uses it."""

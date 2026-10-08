@@ -110,6 +110,86 @@ async def test_replayed_worker_events_are_ignored(claimed):
     assert await RunEvent.unscoped.filter(run=run, type="phase").acount() == 1
 
 
+def post_events(token: str, *events: dict):
+    body = json.dumps({"events": list(events)})
+    return Client().post("/events", data=body, content_type="application/json", headers=auth(token))
+
+
+def test_calls_in_the_folder_are_recorded_as_the_worker_reports_them(claimed):
+    run, token = claimed
+    response = post_events(
+        token,
+        {
+            "seq": 1,
+            "type": "local_tool",
+            "tool": "bash",
+            "summary": "ls -l",
+            "ok": True,
+            "excerpt": "total 0",
+        },
+        # PostgreSQL cannot store NUL.
+        {
+            "seq": 2,
+            "type": "local_tool",
+            "tool": "read",
+            "summary": "a\x00b",
+            "ok": False,
+            "excerpt": "c\x00",
+        },
+    )
+    assert response.status_code == 200
+    events = RunEvent.unscoped.filter(run=run, type="local_tool").order_by("seq")
+    assert [event.data for event in events] == [
+        {"tool": "bash", "summary": "ls -l", "ok": True, "excerpt": "total 0"},
+        {"tool": "read", "summary": "ab", "ok": False, "excerpt": "c"},
+    ]
+    # Nor a lone surrogate, which the worker replaces before it sends an event.
+    event = {"seq": 3, "type": "local_tool", "tool": "read", "summary": "\ud800", "ok": True}
+    assert post_events(token, event).status_code == 400
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"type": "local_tool", "tool": "bash"},
+        {"type": "local_tool", "ok": True},
+        {"type": "local_tool", "tool": "python", "ok": True},
+        {"type": "local_tool", "tool": "bash", "ok": True, "summary": "x" * 301},
+        {"type": "local_tool", "tool": "bash", "ok": True, "excerpt": "x" * 2001},
+        {"type": "phase", "text": "Working", "tool": "bash"},
+        {"type": "phase", "text": "Working", "excerpt": "x"},
+        {"type": "completed", "text": "Hello", "limit": "folder_bytes"},
+        {"type": "failed", "limit": "disk"},
+    ],
+)
+def test_worker_events_carry_only_the_fields_of_their_type(claimed, event):
+    run, token = claimed
+    assert post_events(token, {"seq": 1, **event}).status_code == 400
+    assert Run.unscoped.get(pk=run.id).worker_seq == 0
+
+
+@pytest.mark.parametrize(
+    ("limit", "message"),
+    [
+        (None, "The agent could not finish this run. Try again."),
+        ("folder_bytes", "The agent's files grew past the 100 MiB a conversation can keep."),
+        ("folder_entries", "The agent made more than the 10000 files and folders a conversation can keep."),
+        ("run_uploads", "The agent saved more than the 200 MiB of files a turn may save."),
+        ("workspace", "The workspace has used all of its storage for files."),
+    ],
+)
+def test_a_run_that_failed_over_a_folder_limit_says_which(claimed, monkeypatch, limit, message):
+    run, token = claimed
+    monkeypatch.setattr(config(), "files_folder_bytes", 100 * 2**20)
+    monkeypatch.setattr(config(), "files_folder_entries", 10_000)
+    monkeypatch.setattr(config(), "files_run_upload_bytes", 200 * 2**20)
+    event = {"seq": 1, "type": "failed", "text": "over"} | ({"limit": limit} if limit else {})
+    assert post_events(token, event).status_code == 200
+    run = Run.unscoped.get(pk=run.id)
+    code = "folder_limit" if limit else "worker_failed"
+    assert (run.status, run.error_code, run.error_message) == (Run.Status.FAILED, code, message)
+
+
 def test_a_worker_event_whose_effect_failed_is_heard_again(claimed, monkeypatch):
     run, _ = claimed
     complete = services.complete

@@ -75,8 +75,9 @@ class ContainerProvider:
                 entrypoint=["node"] if command else None,
                 name=f"minerva-run-{run_id}-{attempt}",
                 labels={LABEL: str(run_id), ATTEMPT_LABEL: str(attempt)},
-                # The worker reaches the gateway the one way this provider offers, whatever the caller passed.
-                environment={**env, "GATEWAY_URL": GATEWAY_URL},
+                # The worker reaches the gateway the one way this provider offers, whatever the caller passed. Its
+                # PID namespace holds only init and the worker's own processes, so it may kill what commands leave.
+                environment={**env, "GATEWAY_URL": GATEWAY_URL, "WORKER_KILL_STRAYS": "1"},
                 network_mode="none",
                 # The directory, not the socket file: a relay that restarts makes a new socket, which workers see.
                 mounts=[Mount(GATEWAY_DIRECTORY, self.gateway_volume, read_only=True, no_copy=True)],

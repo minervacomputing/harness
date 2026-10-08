@@ -76,6 +76,9 @@ class Run(TenantModel):
     )
     # Bytes uploaded to the blob store, including contents the store already had (files.store.charge_run_upload).
     uploaded_bytes = models.PositiveBigIntegerField(default=0)
+    # What the worker's last checkpoint left out of the folder, as it reported it: {"total", "items": [{"path",
+    # "reason"}]}, at most 100 items. Untrusted, like agent text.
+    folder_warnings = models.JSONField(null=True, blank=True)
 
     sandbox_provider = models.CharField(max_length=32, blank=True)
     sandbox_handle = models.JSONField(null=True, blank=True)
@@ -118,6 +121,8 @@ class RunEvent(TenantModel):
         TEXT_DELTA = "text_delta"
         REASONING_DELTA = "reasoning_delta"
         TOOL_CALL = "tool_call"
+        # A call the worker ran in its folder (read, write, edit, bash), as the worker reported it.
+        LOCAL_TOOL = "local_tool"
         MESSAGE = "message"
 
     run = models.ForeignKey(Run, on_delete=models.CASCADE, related_name="events")
