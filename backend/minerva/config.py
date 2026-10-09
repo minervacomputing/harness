@@ -112,6 +112,9 @@ class Config(BaseSettings):
     # Optional OCI runtime for workers. Under gVisor it must allow connecting to host sockets: `runsc install
     # --runtime=runsc-minerva -- --host-uds=open`, then "runsc-minerva" here.
     sandbox_runtime: str | None = None
+    # Workers run under gVisor: the container provider refuses to start them under another runtime unless this is
+    # set, as for local development on Docker Desktop, where gVisor is not available.
+    sandbox_allow_runc: bool = False
     sandbox_allow_unisolated: bool = False
     max_concurrent_runs: int = 4
 

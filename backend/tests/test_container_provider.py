@@ -3,6 +3,8 @@ import uuid
 import pytest
 from docker.errors import DockerException, NotFound
 
+from minerva.config import config
+from runs.sandbox import limits
 from runs.sandbox.base import Limits, SandboxError
 from runs.sandbox.container import GATEWAY_DIRECTORY, GATEWAY_URL, ContainerProvider
 
@@ -189,7 +191,7 @@ def test_under_gvisor_forks_are_limited_inside_the_sandbox_with_room_on_the_host
 
 
 def gvisor_detected(client, runtime: str | None) -> bool:
-    sandbox = ContainerProvider(gateway_volume=VOLUME, runtime=runtime)
+    sandbox = ContainerProvider(gateway_volume=VOLUME, runtime=runtime, allow_runc=True)
     sandbox._client = client  # type: ignore[assignment]
     start(sandbox)
     return "ulimits" in client.created[-1].kwargs
@@ -205,7 +207,7 @@ def test_gvisor_as_dockers_default_runtime_is_recognised(client):
 
 
 def test_dockers_default_runtime_is_pinned_so_the_limits_keep_matching_it(client):
-    sandbox = ContainerProvider(gateway_volume=VOLUME)
+    sandbox = ContainerProvider(gateway_volume=VOLUME, allow_runc=True)
     sandbox._client = client  # type: ignore[assignment]
     start(sandbox)
     client.default_runtime = "runsc-minerva"
@@ -225,3 +227,34 @@ def test_an_unreachable_docker_refuses_to_start_the_worker(client):
 def test_other_runtimes_get_only_the_pids_limit(client, runtime):
     assert not gvisor_detected(client, runtime)
     assert client.created[0].kwargs["pids_limit"] == 256
+
+
+@pytest.mark.parametrize("runtime", [None, "runc"])
+def test_workers_are_refused_outside_gvisor_unless_runc_is_allowed(client, runtime):
+    sandbox = ContainerProvider(gateway_volume=VOLUME, runtime=runtime)
+    sandbox._client = client  # type: ignore[assignment]
+    with pytest.raises(SandboxError, match="gVisor"):
+        start(sandbox)
+    assert not client.created
+
+
+def test_the_folder_is_an_executable_tmpfs_of_the_folders_size_and_counts_as_memory(provider, client):
+    limits = Limits(memory_mb=1000, workspace_bytes=300 * 2**20, workspace_entries=500, tmp_mb=200)
+    provider.start(uuid.uuid4(), "minerva-worker:test", {"RUN_TOKEN": "t", "RUN_ID": "r"}, limits)
+    kwargs = client.created[0].kwargs
+    workspace = kwargs["tmpfs"]["/workspace"].split(",")
+    assert "exec" in workspace and "noexec" not in workspace
+    assert f"size={300 * 2**20}" in workspace
+    # The folder itself takes an inode beside its entries.
+    assert "nr_inodes=501" in workspace
+    assert kwargs["tmpfs"]["/tmp"].split(",") == ["rw", "noexec", "nosuid", "size=200m"]  # noqa: S108
+    assert kwargs["mem_limit"] == kwargs["memswap_limit"] == (1000 + 200 + 300) * 2**20
+
+
+def test_the_sandbox_gets_the_folder_limits_the_gateway_enforces(monkeypatch):
+    monkeypatch.setattr(config(), "files_folder_bytes", 64 * 2**20)
+    monkeypatch.setattr(config(), "files_folder_entries", 123)
+    assert (limits().workspace_bytes, limits().workspace_entries) == (64 * 2**20, 123)
+    # tmpfs would round a size that is not whole pages up, past what the gateway accepts.
+    monkeypatch.setattr(config(), "files_folder_bytes", 100_000_000)
+    assert limits().workspace_bytes == 99_999_744

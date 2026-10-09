@@ -173,8 +173,7 @@ Done 2026-10-08 (`worker/src/folder.ts`, `worker/src/local-tools.ts`). Differenc
 - The worker checks names for NFC with Node's Unicode tables, the gateway with Python's. A name the two normalize differently, such as one with a character only the newer tables know, would fail every checkpoint with `invalid_manifest`.
 - Commands run as the worker's user, so they can read the worker's environment in `/proc` and reach the gateway's socket with the run token: a command can do what the worker can. The gateway already treats the worker as untrusted. Step 5's check that `RUN_TOKEN` is not in a command's environment keeps it from commands' output and children, not from a command that looks for it.
 - Not done yet:
-  - the end-to-end kill check and the `setsid` test, which kill every process of the worker's user and so cannot run inside the test runner; they wait for step 5's image;
-  - the fake model's Python step fails until step 5 adds `python3` to the image;
+  - the end-to-end kill check and the `setsid` test, which kill every process of the worker's user and so cannot run inside the test runner (step 5 covers part of them);
   - the chat does not show `local_tool` events or warnings (step 6).
 
 - **Hydrate** (`worker/src/folder.ts`).
@@ -233,6 +232,16 @@ Done 2026-10-08 (`worker/src/folder.ts`, `worker/src/local-tools.ts`). Differenc
   - the end-to-end kill check: kill the container during a long `bash` call; the next attempt has the last checkpoint and reports the call as interrupted.
 
 ### 5. Sandbox and image
+
+Done 2026-10-09 (`worker/Dockerfile`, `worker/python/`, `backend/runs/sandbox/`). Differences from the outline below:
+
+- The Python packages are installed into a virtual environment at `/opt/python` from `worker/python/requirements.txt`, compiled from `requirements.in` with hashes, as wheels only. pip is removed afterwards and the byte code is compiled at build time, since nothing can be written at run time.
+- The image grew from 340 MB to 739 MB (arm64). A container still starts in about 0.23 s under runc.
+- `Limits` takes the folder's limits from `files_folder_bytes` and `files_folder_entries` (`sandbox.limits()`), so the sandbox's folder and the gateway's limits cannot drift apart. The size is rounded down to whole pages, since tmpfs would round it up past what the gateway accepts.
+- `make setup` does not write `.env`. `.env.example` sets `MINERVA_SANDBOX_ALLOW_RUNC=true` for local development, and the deployments set `MINERVA_SANDBOX_RUNTIME`.
+- `make sandbox-check` also runs a command through the real `bash` tool, with the worker's `LocalCalls` and stray killer: the command's environment has none of `RUN_TOKEN`, `GATEWAY_URL` and `RUN_ID`, and processes it leaves running, also with `setsid`, are gone after the checkpoint's kill. The entry limit is checked under runc only.
+- The fake model's `files:` turn runs end to end: write, edit, a Python step and two commands at once.
+- Not done yet: the `setsid` test with a process that keeps writing output past the timeout, and the end-to-end kill check (kill the container during a long `bash` call). Both need a harness that drives a worker container through attempts.
 
 - **Worker image.**
   - Add `python3` with pinned, hashed packages: pypdf, pdfplumber, python-docx, openpyxl, matplotlib, pillow and pandas.

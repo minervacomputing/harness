@@ -13,8 +13,8 @@ import uuid
 from django.core.management.base import BaseCommand, CommandError
 
 from minerva.config import config
-from runs.sandbox import Limits, SandboxError, provider
-from runs.sandbox.base import SandboxStatus
+from runs.sandbox import SandboxError, limits, provider
+from runs.sandbox.base import Limits, SandboxStatus
 from runs.sandbox.container import ContainerProvider
 
 PROBE = "/app/src/probe.ts"
@@ -23,6 +23,11 @@ CHECKS = {
     "nonRootUser",
     "onlyRunTokenInEnvironment",
     "workspaceWritable",
+    "workspaceExecutable",
+    "tmpNotExecutable",
+    "workspaceSizeLimitHolds",
+    "commandsWithoutRunToken",
+    "commandStraysKilled",
     "rootFilesystemReadOnly",
     "gatewayReachable",
     "gatewayDirectoryReadOnly",
@@ -36,8 +41,8 @@ CHECKS = {
     "otherWorkersUnreachable",
     "forkLimitHolds",
 }
-# What real runs get, so the probe checks their process limit.
-LIMITS = Limits()
+# Only runc limits the folder's entries; under gVisor the worker's scan does.
+RUNC_CHECKS = {"workspaceEntryLimitHolds"}
 LISTEN_TIMEOUT = 60
 PROBE_TIMEOUT = 90
 
@@ -61,15 +66,25 @@ class Command(BaseCommand):
         sandbox = provider()
         if not isinstance(sandbox, ContainerProvider):
             raise CommandError("The sandbox check applies to the container provider only.")
+        # What real runs get, so the probe checks their limits.
+        run_limits = limits()
+        _, gvisor = sandbox._runtime()
+        expected = CHECKS if gvisor else CHECKS | RUNC_CHECKS
+        probe_args = [
+            "--processes",
+            str(run_limits.pids),
+            "--folder-bytes",
+            str(run_limits.workspace_bytes),
+        ]
+        if not gvisor:
+            probe_args += ["--folder-entries", str(run_limits.workspace_entries)]
         peer = secrets.token_hex(8)
         handles = []
         try:
-            listener = self._start(sandbox, cfg.sandbox_image, [PROBE, "--listen", peer])
+            listener = self._start(sandbox, cfg.sandbox_image, [PROBE, "--listen", peer], run_limits)
             handles.append(listener)
             self._wait_listening(sandbox, listener)
-            probe = self._start(
-                sandbox, cfg.sandbox_image, [PROBE, "--peer", peer, "--processes", str(LIMITS.pids)]
-            )
+            probe = self._start(sandbox, cfg.sandbox_image, [PROBE, "--peer", peer, *probe_args], run_limits)
             handles.append(probe)
             status = self._wait_exit(sandbox, probe)
             output = sandbox.logs(probe)
@@ -83,11 +98,11 @@ class Command(BaseCommand):
         checks = _last_json(output)
         if checks is None:
             raise CommandError(f"The probe produced no result:\n{output}")
-        names = sorted(CHECKS | checks.keys())
+        names = sorted(expected | checks.keys())
         width = max(map(len, names))
         failed = []
         for name in names:
-            if name not in CHECKS:
+            if name not in expected:
                 label = "UNEXPECTED"
             elif name not in checks:
                 label = "MISSING"
@@ -101,13 +116,13 @@ class Command(BaseCommand):
             raise CommandError(f"Sandbox checks failed: {', '.join(failed)}")
         if status.exit_code != 0:
             raise CommandError(f"The probe exited with status {status.exit_code}.")
-        self.stdout.write(self.style.SUCCESS(f"All {len(CHECKS)} sandbox checks passed."))
+        self.stdout.write(self.style.SUCCESS(f"All {len(expected)} sandbox checks passed."))
 
-    def _start(self, sandbox: ContainerProvider, image: str, command: list[str]) -> dict:
+    def _start(self, sandbox: ContainerProvider, image: str, command: list[str], run_limits: Limits) -> dict:
         run_id = uuid.uuid4()
         env = {"RUN_TOKEN": f"probe-{secrets.token_urlsafe(24)}", "RUN_ID": str(run_id)}
         try:
-            return sandbox.start(run_id, image, env, LIMITS, command=command)
+            return sandbox.start(run_id, image, env, run_limits, command=command)
         except SandboxError as error:
             raise CommandError(str(error)) from error
 

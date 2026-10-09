@@ -6,10 +6,20 @@ from uuid import UUID
 
 @dataclass(frozen=True)
 class Limits:
+    """What one worker may use. The run's folder holds `workspace_bytes` in at most `workspace_entries` files and
+    directories, as the gateway counts them (`MINERVA_FILES_FOLDER_*`). The folder and the temporary directory are
+    in memory, so the memory limit is `memory_mb` for the worker and its commands plus both of them."""
+
     memory_mb: int = 1024
     cpus: float = 1.0
     pids: int = 256
-    workspace_mb: int = 256
+    workspace_bytes: int = 256 * 2**20
+    workspace_entries: int = 10_000
+    tmp_mb: int = 256
+
+    @property
+    def memory_bytes(self) -> int:
+        return (self.memory_mb + self.tmp_mb) * 2**20 + self.workspace_bytes
 
 
 SandboxState = Literal["starting", "running", "exited", "missing"]

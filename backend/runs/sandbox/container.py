@@ -3,7 +3,11 @@ mount read-only. They run as an unprivileged user on a read-only root filesystem
 
 To run workers under gVisor, register a runtime that may connect to host sockets (`runsc install
 --runtime=runsc-minerva -- --host-uds=open`) and set `MINERVA_SANDBOX_RUNTIME=runsc-minerva`. That runtime lets a
-worker connect to any host socket it can see, so the gateway volume must hold nothing else."""
+worker connect to any host socket it can see, so the gateway volume must hold nothing else. Workers run only under
+gVisor unless `MINERVA_SANDBOX_ALLOW_RUNC=true`, which local development on Docker Desktop sets.
+
+The run's folder, `/workspace`, is a tmpfs of exactly the folder's size, where commands may run programs. Its inode
+limit holds the folder's entries under runc; gVisor ignores it, and the worker's scan enforces the limit instead."""
 
 import contextlib
 from datetime import UTC, datetime
@@ -40,9 +44,10 @@ class ContainerProvider:
     name = "container"
     gateway_url = GATEWAY_URL
 
-    def __init__(self, *, gateway_volume: str, runtime: str | None = None) -> None:
+    def __init__(self, *, gateway_volume: str, runtime: str | None = None, allow_runc: bool = False) -> None:
         self.gateway_volume = gateway_volume
         self.runtime = runtime
+        self.allow_runc = allow_runc
         self._client: docker.DockerClient | None = None
         self._resolved: tuple[str | None, bool] | None = None
 
@@ -67,6 +72,11 @@ class ContainerProvider:
     ) -> dict:
         self._check_gateway_volume()
         runtime, gvisor = self._runtime()
+        if not gvisor and not self.allow_runc:
+            raise SandboxError(
+                "Workers run under gVisor: set MINERVA_SANDBOX_RUNTIME to a gVisor runtime, or "
+                "MINERVA_SANDBOX_ALLOW_RUNC=true where gVisor is not available."
+            )
         process_limits = self._process_limits(limits, gvisor=gvisor)
         try:
             container = self.client.containers.create(
@@ -85,15 +95,20 @@ class ContainerProvider:
                 user="1000:1000",
                 read_only=True,
                 tmpfs={
-                    "/tmp": "rw,noexec,nosuid,size=64m",  # noqa: S108
-                    "/workspace": f"rw,nosuid,size={limits.workspace_mb}m,uid=1000,gid=1000",
+                    "/tmp": f"rw,noexec,nosuid,size={limits.tmp_mb}m",  # noqa: S108
+                    # One inode more than the entries, for the folder itself.
+                    "/workspace": (
+                        f"rw,exec,nosuid,size={limits.workspace_bytes},"
+                        f"nr_inodes={limits.workspace_entries + 1},uid=1000,gid=1000"
+                    ),
                 },
                 working_dir="/workspace",
                 cap_drop=["ALL"],
                 security_opt=["no-new-privileges"],
                 **process_limits,
-                mem_limit=f"{limits.memory_mb}m",
-                memswap_limit=f"{limits.memory_mb}m",
+                # tmpfs pages count as the container's memory.
+                mem_limit=limits.memory_bytes,
+                memswap_limit=limits.memory_bytes,
                 nano_cpus=int(limits.cpus * 1e9),
                 ipc_mode="none",
                 init=True,

@@ -20,7 +20,7 @@ from files import sweep as files_sweep
 from minerva.config import config
 from runs import services
 from runs.models import Run
-from runs.sandbox import Limits, SandboxError, provider
+from runs.sandbox import SandboxError, limits, provider
 
 log = logging.getLogger("minerva.supervisor")
 PROVISIONING_TIMEOUT = timedelta(seconds=90)
@@ -76,7 +76,7 @@ class Supervisor:
         """Starts the worker of the run's current attempt."""
         env = {"GATEWAY_URL": self.provider.gateway_url, "RUN_TOKEN": token, "RUN_ID": str(run.id)}
         try:
-            handle = self.provider.start(run.id, self.cfg.sandbox_image, env, Limits(), attempt=run.attempt)
+            handle = self.provider.start(run.id, self.cfg.sandbox_image, env, limits(), attempt=run.attempt)
         except SandboxError as error:
             # Fail closed: there is no unsandboxed fallback.
             log.error("Sandbox start failed for run %s: %s", run.id, error)
