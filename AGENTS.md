@@ -37,6 +37,10 @@ Configuration is read from the process environment and `.env` at the repository 
 | `MINERVA_SANDBOX_IMAGE` | `minerva-worker:dev` | Built by `make worker-image` |
 | `MINERVA_SANDBOX_GATEWAY_VOLUME` | `minerva-gateway-socket` | Holds the workers' socket to the gateway; created by `make services` |
 | `MINERVA_SANDBOX_RUNTIME` | empty | gVisor needs a runtime registered with `--host-uds=open`, such as `runsc-minerva` |
+| `MINERVA_SANDBOX_ALLOW_RUNC` | `false` | Workers start only under gVisor unless `true`. `.env.example` sets it for Docker Desktop. |
+| `MINERVA_FILES_DIR`, `MINERVA_FILES_S3_*` | `data/files` | Where agent files are kept: a directory, or an S3-compatible bucket when `MINERVA_FILES_S3_BUCKET` is set |
+| `MINERVA_FILES_FOLDER_BYTES`, `MINERVA_FILES_FOLDER_ENTRIES` | 256 MB, 10,000 | A conversation's folder; also the size of the sandbox's `/workspace` |
+| `MINERVA_FILES_UPLOAD_BYTES`, `MINERVA_FILES_MESSAGE_ATTACHMENTS` | 50 MB, 10 | An attached file's size; files per message |
 | `MINERVA_GATEWAY_BIND` | `127.0.0.1` | Linux only: set to `172.17.0.1` |
 
 ## Starting the app

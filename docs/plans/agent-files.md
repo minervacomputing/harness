@@ -305,6 +305,8 @@ Done 2026-10-09 (`backend/files/upload_app.py`, `uploads.py`, `views.py`, `backe
 
 ### 7. Documents
 
+Done 2026-10-09. The README screenshots show the composer's attach button and the Files button but no files yet; the demo seed has no folders. The deploy proxy's `Content-Security-Policy` became a default (`?`), since it replaced the downloads' `sandbox` policy.
+
 - ARCHITECTURE.md: section 7 describes what was built instead of the plan, and section 10 its status and gaps.
 - README (features and screenshots, `make screenshots`), AGENTS.md (the new settings), `.env.example`.
 

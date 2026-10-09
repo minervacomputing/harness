@@ -22,7 +22,8 @@
 		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
 		Cross-Origin-Opener-Policy "same-origin"
 		# index.html carries its own img-src policy and an inline theme script, so no script-src here.
-		Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; object-src 'none'"
+		# Only where the backend set none: file downloads carry their own sandbox policy.
+		?Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; object-src 'none'"
 		-Server
 	}
 

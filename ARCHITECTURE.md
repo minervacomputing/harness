@@ -1,6 +1,6 @@
 # Minerva architecture
 
-Updated 2026-10-07. How Minerva is built, why, and what is missing. Setup is in [README.md](README.md). What each connector lets agents do, and its limits, is in [docs/connectors.md](docs/connectors.md). Work in progress has a plan in [docs/plans/](docs/plans/).
+Updated 2026-10-09. How Minerva is built, why, and what is missing. Setup is in [README.md](README.md). What each connector lets agents do, and its limits, is in [docs/connectors.md](docs/connectors.md). Work in progress has a plan in [docs/plans/](docs/plans/).
 
 ## Summary
 
@@ -15,7 +15,7 @@ Minerva runs AI agents that **never hold credentials and never decide their own 
 | Login | django-allauth; WorkOS SSO later for enterprise workspaces, never required self-hosted |
 | Worker | pi-durable in its own image, one sandbox per turn, reaching only the gateway with a per-run token |
 | Durable turns | Worker state is saved behind the gateway; a new worker resumes a turn whose worker died; reads replay, writes never do |
-| Files | Planned: a folder per conversation kept as versions behind the gateway, worked on with ordinary file and shell tools |
+| Files | A folder per conversation kept as versions behind the gateway, worked on with ordinary file and shell tools; attachments and downloads in the chat |
 | Sandbox | `SandboxProvider` interface; containers without a network, gVisor in production |
 | Models | An OpenAI-compatible relay in the gateway; the backend picks upstream, model, key and caps |
 | Chat UI | React, Vite and assistant-ui; conversations stored in our database |
@@ -147,11 +147,11 @@ A provider has one security duty: **the worker reaches the gateway and nothing e
 | `kubernetes` | Planned | Cloud: a Pod per run with a gVisor or Kata runtime class and network policy |
 | `macos-srt` | Planned | Mac development through the Anthropic Sandbox Runtime |
 
-The `container` provider runs each worker with a read-only root, a 256 MB writable `/workspace` and a 64 MB non-executable `/tmp`, user 1000, all capabilities dropped, `no-new-privileges`, no shared IPC, 1 GB memory, 1 CPU and 256 processes, and **no network** (`network_mode: none`, only its own loopback). Its one way out is the `minerva-gateway-socket` volume, mounted read-only, holding a Unix socket that a `gateway-socket` container (socat) forwards to the gateway. A loopback bridge in the worker keeps its HTTP clients unchanged. The provider checks that Docker reports no network and exactly that mount before starting the container.
+The `container` provider runs each worker with a read-only root, a writable and executable `/workspace` the size of the conversation's folder limit (256 MB by default) and a 256 MB non-executable `/tmp`, user 1000, all capabilities dropped, `no-new-privileges`, no shared IPC, 1 GB memory plus both tmpfs sizes, 1 CPU and 256 processes, and **no network** (`network_mode: none`, only its own loopback). Its one way out is the `minerva-gateway-socket` volume, mounted read-only, holding a Unix socket that a `gateway-socket` container (socat) forwards to the gateway. A loopback bridge in the worker keeps its HTTP clients unchanged. The provider checks that Docker reports no network and exactly that mount before starting the container.
 
 - **Why no network.** A network shared by workers let them reach each other, and a network per run costs a bridge and an address range per turn. With none there is nothing to share, under runc and gVisor alike.
-- **gVisor** refuses host-mounted sockets unless started with `--host-uds=open`, so register a runtime for it (`runsc install --runtime=runsc-minerva -- --host-uds=open`) and set `MINERVA_SANDBOX_RUNTIME=runsc-minerva`. The cloud requires gVisor or Kata from the first beta, since strangers' runs share machines.
-- **Conformance.** `make sandbox-check` runs a probe in the real image next to a second worker. It checks 15 properties: non-root, only the run token in the environment, root read-only and workspace writable, the gateway reachable and the socket's directory unchangeable, only loopback, blocked IPv4 and IPv6 internet, cloud metadata, public DNS, host, database and the other worker, and a process limit that refuses a fork with `EAGAIN` within 32 processes of the configured limit (the worker's own threads count too) and lets processes start again afterwards. All 15 passed locally with runc on 2026-10-07; the first 14 passed on the demo with gVisor on 2026-10-06.
+- **gVisor** refuses host-mounted sockets unless started with `--host-uds=open`, so register a runtime for it (`runsc install --runtime=runsc-minerva -- --host-uds=open`) and set `MINERVA_SANDBOX_RUNTIME=runsc-minerva`. The cloud requires gVisor or Kata from the first beta, since strangers' runs share machines. Workers run arbitrary commands, so the provider refuses to start them outside gVisor unless `MINERVA_SANDBOX_ALLOW_RUNC=true`, which local development on Docker Desktop sets.
+- **Conformance.** `make sandbox-check` runs a probe in the real image next to a second worker. It checks 21 properties: non-root, only the run token in the environment, root read-only, `/workspace` writable and executable and full at its size (and entry limit under runc), `/tmp` not executable, commands run through the real `bash` tool without the run token and their leftover processes killed, the gateway reachable and the socket's directory unchangeable, only loopback, blocked IPv4 and IPv6 internet, cloud metadata, public DNS, host, database and the other worker, and a process limit that refuses a fork with `EAGAIN` within 32 processes of the configured limit (the worker's own threads count too) and lets processes start again afterwards. All 21 passed locally with runc on 2026-10-09; the first 14 passed on the demo with gVisor on 2026-10-06.
 - **Process limit under gVisor.** Each process in the sandbox also costs about two host processes, so a fork loop reaches Docker's `--pids-limit` on the host side first, and the whole sandbox exits instead of the fork failing. Under gVisor the provider therefore sets the limit inside the sandbox (`RLIMIT_NPROC`, which gVisor counts per sandbox) and the host limit to 64 + 3 × that, so forks fail with `EAGAIN`. The headroom is measured (about 34 + 2 per process), not guaranteed across gVisor versions; the conformance probe checks it. gVisor is recognized when the configured runtime, else Docker's default (read once and then named on every container), is its containerd shim by name or a runtime whose binary is `runsc`; Docker does not report what a shim alias stands for, so an alias for gVisor's shim is not. Not under runc, where `RLIMIT_NPROC` counts every process of the worker's uid on the host.
 - **Known weakness.** Workers share the socket relay (at most 128 connections, none dropped for idling), so a compromised worker could hold every slot and block other workers from the gateway. This affects availability only; a relay per run would remove it.
 - **Self-hosting.** Giving the backend the Docker socket is root-equivalent on the host. A narrow sandbox runner, or rootless Podman, should replace it.
@@ -168,21 +168,24 @@ The gateway exposes an OpenAI-compatible endpoint to the worker and routes it th
 
 ## 7. Agent files
 
-Decided 2026-10-07, not built. The order of work is [docs/plans/agent-files.md](docs/plans/agent-files.md).
+Built 2026-10-07 to 2026-10-09; [docs/plans/agent-files.md](docs/plans/agent-files.md) records each step and how it differs from its outline.
 
 Each conversation has a folder that the agent works in as on a laptop: pi's ordinary `read`, `write`, `edit` and `bash` tools on a real directory, called in parallel. Sandboxes stay one per turn.
 
-- **Store.** File contents are blobs named by SHA-256, stored once per workspace through Django's storage API (S3-compatible in the cloud, a local directory or MinIO self-hosted). A folder version is an immutable manifest in Postgres with a parent; a conversation points at its current one. Only the backend holds storage credentials.
-- **Working copy.** A turn downloads its starting version into `/workspace`, a tmpfs whose size equals the conversation's quota as the gateway counts it (each file in whole 4 KiB pages), so a full folder fails with `ENOSPC`. gVisor ignores tmpfs inode limits, so the scan enforces the entry limit, and the memory limit bounds what a runaway costs. Commands run without network or the run token, with a time limit, and with only the tools in the image (Python with document and plotting libraries, ripgrep and similar).
-- **Checkpoints at quiet moments.** Local tool results are held. When no local tool is running, the worker kills leftover processes, uploads changed blobs (`PUT /blobs/{sha256}`), sends the manifest (`PUT /checkpoint`, accepted only from the current attempt on top of its previous checkpoint), then releases the results; new calls wait meanwhile. So no result the journal records describes files the gateway lacks. Parallel calls cost only the checkpoint's own time. A failed checkpoint ends the attempt without recording the result, and is never retried.
-- **Crashes and turn end.** A new attempt starts from the last checkpoint, on any machine. The run's last checkpoint becomes the conversation's next version in the transaction that ends the run, however it ends.
-- **Attachments and downloads.** Attached files are added to the version the run starts from. Users download any version's files: presigned URLs on the storage's origin in the cloud, attachment responses with `nosniff` and a sandboxing CSP self-hosted. Agent files are never shown inline from the app's origin.
-- **Files are untrusted.** Attachments and agent files are parsed in sandboxes, never in the backend (the OneDrive connector's Office reader is an existing exception). A run reads only blobs from its starting version, its checkpoints, or its own uploads, and an upload is hashed even if the store has it, so knowing a hash does not reach another conversation's file. The gateway validates every manifest's paths and takes sizes from its own records.
+- **Store** (`backend/files/`). File contents are blobs named by SHA-256, stored once per workspace through Django's storage API (an S3-compatible bucket, or a local directory), each under a key of its own. A folder version is an immutable manifest in Postgres with a parent and a digest; a conversation points at its current one. Only the backend holds storage credentials. Objects are tracked rather than listed: each is recorded as loose before it is written and claimed when its blob row is, and the sweep deletes loose objects, unattached uploads and finished runs' checkpoints. Database triggers keep blob identity and version contents unchangeable and the workspace's byte counter right.
+- **Working copy.** A turn downloads its starting version into `/workspace` (at most 4 transfers at once, each checked for size and hash). That is a tmpfs whose size equals the folder's limit as the gateway counts it (each file in whole 4 KiB pages), so a full folder fails with `ENOSPC`. gVisor ignores tmpfs inode limits, so the scan enforces the entry limit, and the memory limit bounds what a runaway costs. Commands run without network, without the worker's environment (which holds the run token), with a timeout of 10 minutes unless the model asks for longer, never past the run's deadline, and with only the tools in the image: Python with document, spreadsheet, plotting and data libraries, poppler, ripgrep, jq, sqlite3 and similar.
+- **Checkpoints at quiet moments.** Results of calls that can change the folder are held. When no local tool is running, the worker kills leftover processes (where the provider gives it a PID namespace), scans the folder, uploads changed blobs (`PUT /blobs/{sha256}`), sends the manifest with what the scan left out (`PUT /checkpoint`, accepted only from the current attempt on top of its previous checkpoint), then releases the results; new calls wait meanwhile. So no result the journal records describes files the gateway lacks. A round of reads needs no checkpoint. A failed checkpoint ends the attempt without recording the result. A call that has not settled a minute after its timeout has its leftover processes killed, and the attempt ends if it still does not settle.
+- **Crashes and turn end.** A new attempt starts from the last checkpoint, on any machine. The run keeps only its last checkpoint, which becomes the conversation's next version in the transaction that ends the run, however it ends; the run records what the turn added, changed and deleted, and what the scan could not keep (symbolic links, special files, unreadable entries, names too long or deep). A folder over its size or entry limit is not saved in part: the turn fails and says which limit it hit.
+- **Attachments.** The composer uploads each file as soon as it is added, as the raw body of `POST /api/workspaces/{ws}/uploads`. That route is an ASGI app beside Django, since Django buffers whole request bodies: it checks the session, CSRF token and membership from the headers, then streams the body to a temporary file while hashing it. The media type is sniffed from the content and the name cleaned to one valid path segment. Sending a message names its uploads, which are added at the folder's root (numbered when the name is taken) as the version the run starts from, in the transaction that starts it. A message over the folder's limits is refused before any run starts, and the composer gets it back.
+- **Downloads.** Users download any file of a version the conversation's runs started from or produced. The backend streams it as an attachment with `nosniff` and `Content-Security-Policy: sandbox`; presigned URLs on the storage's origin are planned for the cloud. Agent files are never shown inline from the app's origin.
+- **Chat.** The work row shows each local tool call with its command or path and the end of its output. A turn that changed files gets a card with downloads and the scan's warnings, and a files panel lists the conversation's current folder.
+- **Files are untrusted.** Attachments and agent files are parsed in sandboxes, never in the backend (the OneDrive connector's Office reader is an existing exception). A run reads only blobs from its starting version, its last checkpoint, or its own uploads, and an upload is hashed even if the store has it, so knowing a hash does not reach another conversation's file. The gateway validates every manifest's paths and takes sizes from its own records.
+- **Limits** (settings): 256 MB and 10,000 entries per folder; uploads by a run up to four times the folder size; 50 MB per attached file and 10 files per message; paths of at most 1,024 bytes and 32 levels; optionally a total per workspace.
 - **Later.** Images to the model as blob references the relay inlines; connector uploads (Drive, OneDrive) that take a path pinned to a blob, so contents never pass through the model; warm sandboxes, project folders and branches.
 
-Consequences: workers run arbitrary commands, so production needs gVisor, Kata or a microVM, and runc needs an explicit setting. Every provider must offer an executable working folder whose size limit fails with `ENOSPC`. Unlike a laptop, processes left running are killed at each checkpoint, commands have no network, a crash can lose changes since the last checkpoint, and only regular files and directories are kept. A process the agent starts can read the run token from the worker's memory; that is accepted, as the worker is already treated as hostile.
+Consequences: workers run arbitrary commands, so production needs gVisor, Kata or a microVM, and runc needs an explicit setting. Every provider must offer an executable working folder whose size limit fails with `ENOSPC`. Unlike a laptop, processes left running are killed at each checkpoint, commands have no network, a crash can lose changes since the last checkpoint, and only regular files and directories are kept. Commands run as the worker's user, so one that looks for the run token can find it in the worker's memory; that is accepted, as the worker is already treated as hostile.
 
-Rejected: saving only at turn end (a crash would lose files the journal says were written); saving after each call one at a time (no parallel tools); freezing processes with `SIGSTOP` (not a sound barrier); persistent host folders or FUSE over object storage (provider-specific, privileged or credentialed next to the sandbox); snapshotting whole sandboxes (large, hard to self-host); gateway file tools instead of a folder (awkward, no commands).
+Rejected: saving only at turn end (a crash would lose files the journal says were written); saving after each call one at a time (no parallel tools); freezing processes with `SIGSTOP` (not a sound barrier); persistent host folders or FUSE over object storage (provider-specific, privileged or credentialed next to the sandbox); snapshotting whole sandboxes (large, hard to self-host); gateway file tools instead of a folder (awkward, no commands); multipart uploads through Django (it buffers the body before any check).
 
 ## 8. Tenancy, accounts and data
 
@@ -201,6 +204,8 @@ Rejected: saving only at turn end (a crash would lose files the journal says wer
 | `Run`, `RunEvent` | Status, attempt, permission snapshot, token hash, deadline, usage, sandbox handle; ordered events |
 | `RunCommit` | A running turn's saved state, encrypted and never read; deleted when the run ends |
 | `RunWrite`, `RunPageToken` | Write state and deduplication; run-bound page tokens |
+| `Blob`, `RunBlob`, `FolderVersion`, `Upload` | Agent files: contents by hash, what a run uploaded, folder versions, files waiting to be attached |
+| `WorkspaceStorage`, `LooseObject` | Bytes stored per workspace; stored objects no row names yet |
 
 Secrets live only in `.env` (mode 600, gitignored). The supervisor removes containers no run owns.
 
@@ -213,30 +218,31 @@ Secrets live only in `.env` (mode 600, gitignored). The supervisor removes conta
 
 ## 10. Status
 
-Built: accounts and two-factor sign-in, a personal workspace per user, 20 connectors with resource-level permissions ([docs/connectors.md](docs/connectors.md)), agents with their own instructions and connections, streamed chat that shows every tool call, code mode, a hardened container per turn, and durable turns.
+Built: accounts and two-factor sign-in, a personal workspace per user, 20 connectors with resource-level permissions ([docs/connectors.md](docs/connectors.md)), agents with their own instructions and connections, streamed chat that shows every tool call, code mode, a hardened container per turn, durable turns, and agent files with attachments and downloads.
 
 | Check | Result |
 |---|---|
-| Backend tests (`make test`, needs Postgres): includes cross-workspace access and the connector contract | 837 pass (2026-10-06) |
-| Worker tests: includes pi-durable's storage conformance suite and resuming after each kind of interruption | 73 pass (2026-10-06) |
+| Backend tests (`make test`, needs Postgres): includes cross-workspace access and the connector contract | 1070 pass (2026-10-09) |
+| Worker tests: includes pi-durable's storage conformance suite and resuming after each kind of interruption | 118 pass (2026-10-09) |
 | Lint, typechecks, production build | Pass |
-| Sandbox conformance | 15/15 locally with runc (2026-10-07); 14/14 on the demo with gVisor (2026-10-06) |
+| Sandbox conformance | 21/21 locally with runc (2026-10-09); 14/14 on the demo with gVisor (2026-10-06) |
 | A worker killed mid-turn (`docker kill`, fake model) | Resumed without rerunning the read or the script; failed after the second restart; state and containers cleaned up |
-| Browser walkthrough | Sign-up, verification, streaming, tool cards, reconnect prompt, agents, two-factor setup |
+| Browser walkthrough | Sign-up, verification, streaming, tool cards, reconnect prompt, agents, two-factor setup; attaching, sending and downloading files with the fake model's file tools (2026-10-09) |
 
-Not verified: a real Todoist account, a real model provider, and a cloud deployment.
+Not verified: a real Todoist account, a real model provider, a cloud deployment, and agent files under gVisor.
+
+**Known limits of agent files.** Two checks need a harness that drives a worker container through attempts and are not done: killing the container during a long `bash` call, and a detached process that keeps writing past its timeout. Downloads stream through the backend rather than from presigned URLs. Images and documents are not shown to the model, only to its tools.
 
 **Known limits of durable turns.** A model or tool call cut off by a dropped connection fails rather than passing to a new worker. A turn cannot wait for an approval without holding its container, and one without a deadline holds a container and a run slot until it ends. A long turn is bounded by what it stores (32 MiB of state, 200 page tokens), while its run events and `RunWrite` records grow with it. Each turn is its own pi session: no steers, follow-ups or background subagents. Restarts count whatever the cause. `RunWrite.result` is stored unencrypted, and it and `RunPageToken` have no retention period.
 
 **Next, roughly in order:**
 
-1. Agent files ([section 7](#7-agent-files)).
-2. Cloud alpha: production images for the three roles, a cluster with gVisor or Kata, PlanetScale, SMTP email.
-3. Audit records.
-4. Teams: team workspaces, invitations, a workspace switcher, the ceiling UI, shared connections.
-5. Login options: Google, GitHub, passkeys in the UI.
-6. Model keys: bring-your-own key per workspace, and quotas.
-7. A cap on web searches per run or workspace (each costs the operator), and egress rules for the gateway.
+1. Cloud alpha: production images for the three roles, a cluster with gVisor or Kata, PlanetScale, SMTP email.
+2. Audit records.
+3. Teams: team workspaces, invitations, a workspace switcher, the ceiling UI, shared connections.
+4. Login options: Google, GitHub, passkeys in the UI.
+5. Model keys: bring-your-own key per workspace, and quotas.
+6. A cap on web searches per run or workspace (each costs the operator), and egress rules for the gateway.
 
 Later: SSO and directory sync, groups, approvals and a two-person rule for high-risk actions, retention policies, support-access controls, a database role per process role, and single-tenant deployments.
 

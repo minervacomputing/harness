@@ -42,6 +42,8 @@ You chat with an agent. Each agent has its own instructions and its own connecti
 
 What an agent may do is the intersection of what your account, the connection and the agent allow.
 
+Each conversation also has a folder. Attach files to a message, and the agent reads and writes them with ordinary file tools and shell commands, with Python and libraries for PDFs, Word documents, spreadsheets and charts. The chat shows each command and what it printed, and every file it leaves in the folder can be downloaded.
+
 ![The Connections page: ten connected apps, each with the resources agents may reach.](docs/images/connections.png)
 
 ### The sealed container
@@ -50,10 +52,10 @@ Each answer runs in a fresh container, which is removed when the answer is finis
 
 - no internet access: it reaches only the gateway;
 - no access to the host or the database;
-- write access only to its scratch folder;
+- write access only to the conversation's folder and a temporary folder;
 - no admin rights, and no secrets in its environment.
 
-If the container dies mid-answer, for example by running out of memory, a new one picks the answer up from its last saved step (up to twice per answer). The agent's progress is saved behind the gateway, not in the container. A read that was cut off runs again. A write that was cut off does not: the agent is told, and asking for the same write again gets the first one's outcome rather than sending it twice.
+If the container dies mid-answer, for example by running out of memory, a new one picks the answer up from its last saved step (up to twice per answer). The agent's progress and its files are saved behind the gateway, not in the container. A read that was cut off runs again. A write to a connected app that was cut off does not: the agent is told, and asking for the same write again gets the first one's outcome rather than sending it twice. The folder goes back to its last saved state, so file changes and commands since then may be lost.
 
 ### When an agent is tricked
 
@@ -139,10 +141,11 @@ Every agent turn runs in a hardened container with no network. Its only way out 
 make sandbox-check
 ```
 
-It starts the worker image with a probe and verifies 15 properties, including a non-root user, no secrets in the environment, a read-only filesystem, only a loopback interface, blocked internet, DNS, cloud metadata, host, database and other-worker access, and a process limit that refuses further forks.
+It starts the worker image with a probe and verifies 21 properties, including a non-root user, no secrets in the environment, a read-only filesystem apart from a size-limited folder, only a loopback interface, blocked internet, DNS, cloud metadata, host, database and other-worker access, a process limit that refuses further forks, and that the agent's commands get no run token and leave no processes behind.
 
 - **Linux:** the relay reaches the host through the Docker bridge, so set `MINERVA_GATEWAY_BIND=172.17.0.1`.
 - **gVisor:** register a runtime that lets workers connect to the socket, `sudo runsc install --runtime=runsc-minerva -- --host-uds=open`, restart Docker, and set `MINERVA_SANDBOX_RUNTIME=runsc-minerva`.
+- **Without gVisor:** agents run arbitrary commands, so workers start only under gVisor unless `MINERVA_SANDBOX_ALLOW_RUNC=true`. `.env.example` sets it for local development on Docker Desktop; do not set it where strangers' agents run.
 
 ### Development
 
@@ -164,7 +167,7 @@ compose.yaml Postgres and the gateway socket relay for development
 
 Minerva is early. The permissions, the sandbox and the connectors work against live accounts. [ARCHITECTURE.md](ARCHITECTURE.md) describes how it is built and why, what works today, and what is next.
 
-**Available now:** agents with their own instructions and connections, chat that shows every tool call, 20 connectors with resource-level permissions, a sealed container per answer, two-factor sign-in, and self-hosting.
+**Available now:** agents with their own instructions and connections, chat that shows every tool call, 20 connectors with resource-level permissions, a sealed container per answer, files the agent works on with commands, two-factor sign-in, and self-hosting.
 
 **Next:** schedules and triggers, agents you can reach from Slack and Teams, team workspaces with admin limits, asking you to allow a single action, an audit log, and a hosted beta.
 
