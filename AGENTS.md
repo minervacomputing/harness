@@ -85,7 +85,7 @@ This project does not use pull requests. Commit directly to `main` (or merge a s
 
 **This repository is public** (`github.com/minervacomputing/harness`). Everything you commit is published, history included. Never commit:
 
-- secrets (they belong in `.env`, `.env.demo` or `.env.demo.d/`, all gitignored);
+- secrets (they belong in `.env`, `.env.demo`, `.env.staging`, `.env.staging.access` or a `.env.<env>.d/` directory, all gitignored);
 - personal data: real people's email addresses, phone numbers, or names other than the author credit in the README;
 - server details: IP addresses, provider hostnames, SSH users;
 - account identifiers: cloud project IDs, OAuth client IDs, Stripe account IDs, Apple team and key IDs, Cloudflare account, zone and tunnel IDs.
@@ -95,6 +95,22 @@ Use reserved `.example` domains and placeholders in docs, tests and seed data. N
 ## Cloudflare
 
 Staging sits behind a Cloudflare Tunnel and Cloudflare Access (see [deploy/README.md](deploy/README.md)), the demo behind a tunnel only. Use Cloudflare's [`cf` CLI](https://developers.cloudflare.com/cf/) (npm package `cf`), not Wrangler. Find commands with `cf cli search "<task>"` and preview API changes with `--dry-run`. A destructive command without `--force` in a non-interactive shell prints `Aborted.` and still exits 0, so read the output or check the resource. Changes to the tunnel, Access policies or DNS affect the running deployments: ask before making them.
+
+## Staging
+
+<https://staging.minervacomputing.com> runs the newest commit of `main` (see [deploy/README.md](deploy/README.md)). Its configuration is `.env.staging` at the repository root; never print its values.
+
+- **Reaching it:** Cloudflare Access sends requests without a session to a sign-in page. Pass the service token in `.env.staging.access` as headers, read from a file descriptor so the secret stays out of the process list (and never with `set -x`):
+
+  ```sh
+  set -a; . ./.env.staging.access; set +a
+  curl -H @<(printf 'CF-Access-Client-Id: %s\nCF-Access-Client-Secret: %s\n' "$CF_ACCESS_CLIENT_ID" "$CF_ACCESS_CLIENT_SECRET") \
+    https://staging.minervacomputing.com/api/health
+  ```
+
+  In the in-app browser, use the app only after the user has signed in there; never type their password.
+- **Operating it** with `deploy/ops.sh staging <command>`: `releases` (what is deployed), `compose ps`, `compose logs --tail 100 web` (sign-in codes appear there: do not quote them), `manage <command>`, `deploy [<ref>]` (a commit of `main`, also to roll back). `env` installs a changed `.env.staging` and restarts what it affects.
+- **Ask first** before `env`, a deploy or rollback by hand, `ci-key`, `bootstrap`, stopping or restarting services, or anything that changes data on the server.
 
 ## Second opinions with opencode
 

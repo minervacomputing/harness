@@ -82,7 +82,7 @@ In Cloudflare Zero Trust:
      https://staging.minervacomputing.com/api/health
    ```
 
-   Keep the token in your password manager, not in `.env.staging`, which goes to the server.
+   Keep the token out of `.env.staging`, which goes to the server. Agents read it from `.env.staging.access` at the repository root (gitignored, mode 600), with the lines `CF_ACCESS_CLIENT_ID=…` and `CF_ACCESS_CLIENT_SECRET=…`; Cloudflare shows the secret only once, so keep a copy in your password manager too.
 
 In the zone's settings: SSL/TLS Full, Rocket Loader off, and no caching rule for `/api/*`.
 
