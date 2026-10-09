@@ -79,6 +79,9 @@ class Run(TenantModel):
     # What the worker's last checkpoint left out of the folder, as it reported it: {"total", "items": [{"path",
     # "reason"}]}, at most 100 items. Untrusted, like agent text.
     folder_warnings = models.JSONField(null=True, blank=True)
+    # What the turn changed in the folder, from its base version to its result (files.runs.folder_changes); null
+    # when it changed nothing.
+    folder_changes = models.JSONField(null=True, blank=True)
 
     sandbox_provider = models.CharField(max_length=32, blank=True)
     sandbox_handle = models.JSONField(null=True, blank=True)

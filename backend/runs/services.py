@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import secrets
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from datetime import timedelta
 from enum import Enum
@@ -16,6 +17,7 @@ from connectors import registry
 from connectors.base import consent_given
 from conversations.models import Conversation, Message
 from files import runs as folder
+from files import uploads
 from minerva.config import config
 from permissions.policy import Policy
 from permissions.services import effective_policy, user_layer
@@ -103,7 +105,11 @@ def _instructions(agent: Agent) -> str:
     return f"{SAFETY_INSTRUCTIONS}\nThe run started on {now}.\n\n{agent.instructions}".strip()
 
 
-def start_run(*, conversation: Conversation, user_id: UUID, content: str) -> tuple[Message, Run]:
+def start_run(
+    *, conversation: Conversation, user_id: UUID, content: str, attachments: Sequence[UUID] = ()
+) -> tuple[Message, Run]:
+    """Records the user's message and queues the run that answers it. `attachments` are the user's uploads, added to
+    the folder the run starts from; raises files.uploads.AttachmentsRefused, and RunConflict."""
     agent = conversation.agent
     with transaction.atomic():
         if Run.objects.filter(conversation=conversation, status__in=Run.ACTIVE).exists():
@@ -126,14 +132,15 @@ def start_run(*, conversation: Conversation, user_id: UUID, content: str) -> tup
         except IntegrityError as error:
             raise RunConflict(BUSY_MESSAGE) from error
         # Read after the run exists, which waited for any run that was ending: its folder is published.
-        run.base_version_id = (
-            Conversation.unscoped.filter(pk=conversation.pk).values_list("folder_id", flat=True).get()
-        )
+        folder_id = Conversation.unscoped.filter(pk=conversation.pk).values_list("folder_id", flat=True).get()
+        attached = uploads.attach(conversation, run, folder_id, user_id, list(attachments))
+        run.base_version = attached.version
         run.save(update_fields=["base_version"])
         message.run = run
-        message.save(update_fields=["run"])
+        message.attachments = attached.attachments
+        message.save(update_fields=["run", "attachments"])
         if not conversation.title:
-            conversation.title = content[:80]
+            conversation.title = (content or ", ".join(item["path"] for item in attached.attachments))[:80]
         conversation.save(update_fields=["title", "updated_at"])
         append_event(run.id, RunEvent.Type.STATUS, {"status": run.status})
         _notify(QUEUED_CHANNEL, str(run.id))
@@ -350,11 +357,46 @@ def history(run: Run) -> list[dict]:
     messages = list(
         Message.unscoped.filter(conversation_id=run.conversation_id)
         .exclude(run=run, role=Message.Role.USER)
+        .select_related("run")
         .order_by("-created_at", "-id")[:HISTORY_LIMIT]
     )
-    return [{"role": m.role, "content": m.content} for m in reversed(messages)]
+    return [{"role": m.role, "content": _with_files(m)} for m in reversed(messages)]
 
 
 def current_prompt(run: Run) -> str:
     message = Message.unscoped.filter(run=run, role=Message.Role.USER).first()
-    return message.content if message else ""
+    return _with_files(message) if message else ""
+
+
+# Paths named in a note on a message's files; the folder itself is what the model reads.
+NOTE_PATHS = 20
+
+
+def _with_files(message: Message) -> str:
+    """A message as the model sees it: a user's message notes the files attached to it, an answer the files its
+    turn changed."""
+    if message.role == Message.Role.USER:
+        paths = [item["path"] for item in message.attachments]
+        if not paths:
+            return message.content
+        note = f"[The user attached {_paths(paths, len(paths))} to this message, in your folder.]"
+    else:
+        changes = message.run.folder_changes if message.run is not None else None
+        if not changes:
+            return message.content
+        counts = changes["counts"]
+        parts = [
+            f"{verb} {_paths(changes[key], counts[key])}"
+            for key, verb in (("added", "added"), ("modified", "changed"), ("deleted", "deleted"))
+            if counts[key]
+        ]
+        if not parts:
+            return message.content
+        note = f"[In this turn, files in your folder were {'; '.join(parts)}.]"
+    return f"{message.content}\n\n{note}" if message.content else note
+
+
+def _paths(paths: list, total: int) -> str:
+    names = ", ".join(item["path"] if isinstance(item, dict) else item for item in paths[:NOTE_PATHS])
+    more = total - min(len(paths), NOTE_PATHS)
+    return f"{names} and {more} more" if more > 0 else names

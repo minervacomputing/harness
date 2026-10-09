@@ -262,6 +262,25 @@ Done 2026-10-09 (`worker/Dockerfile`, `worker/python/`, `backend/runs/sandbox/`)
 
 ### 6. Web API and chat
 
+Done 2026-10-09 (`backend/files/upload_app.py`, `uploads.py`, `views.py`, `backend/conversations/api.py`, `frontend/src/lib/uploads.ts`, `frontend/src/components/chat/`). Differences from the outline below:
+
+- **Uploads are raw request bodies, not multipart.** `POST /api/workspaces/{ws}/uploads?name=` is an ASGI app routed beside Django (`minerva.asgi`), since Django's handler buffers the whole body before any view sees it. It checks the session, CSRF token, membership and demo rules from the headers, then streams the body to a temporary file while hashing it. It answers 201 with `{id, name, size, media_type}`, and `DELETE …/uploads/{id}` removes an upload.
+  - At most 3 uploads in flight per user and 32 in all, per process (429 past that).
+  - A body that stalls for 60 seconds, or is still arriving after 15 minutes, is refused.
+  - A user holds at most 30 unattached uploads in a workspace.
+  - The name is cleaned: its last segment, without control or formatting characters, in NFC, at most 255 bytes.
+- **The composer uploads each file as soon as it is added**, with progress on its chip. Two uploads run at once and the rest wait, so a page stays under the server's limit. Sending names the uploads.
+  - Uploads the page leaves unsent are deleted when the page is left, closed or reloaded; the sweep deletes the rest after a day.
+  - A message the server refuses (an upload gone, the folder over its limits) goes back into the composer with its attachments. A refused first message also deletes the chat it created, which the earlier code meant to do but never did, since the SDK throws on errors.
+  - Removing an attachment the composer gave back does not tell the adapter (assistant-ui counts it as sent), so that upload stays until the page closes.
+- **Downloads always stream** through the backend, with at most 4 at once per user; the S3 redirect to a presigned URL is left for later.
+- **What a turn changed:** `Run.folder_changes` holds what each turn changed (added, modified and deleted paths, and the scan's warnings), computed when the result version is recorded. A message's attachments are kept on the message (`Message.attachments`: path, size, media type), and the chat shows them as chips.
+- **Chat:**
+  - The work row shows `bash`, `read`, `write` and `edit` calls as tool cards.
+  - A "files changed" card on each turn links to the files in its result version.
+  - The files panel lists the current folder with downloads. It replaces the thread on narrow screens and closes with Escape.
+  - Demo visitors get no attachment adapter.
+
 - **Uploads.**
   - `POST /api/workspaces/{ws}/uploads`, multipart with one file per request; Django streams file parts to disk.
   - The web ASGI app gets the body limit the gateway has (`limit_body`): the file limit plus a margin on this route, and Django's default elsewhere. Django itself limits only the fields that are not files.

@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.postgres.fields import ArrayField
 from django.contrib.postgres.indexes import GinIndex
 from django.db import models
@@ -55,6 +56,20 @@ class RunBlob(TenantModel):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["run", "blob"], name="files_runblob_run_blob")]
+
+
+class Upload(TenantModel):
+    """A file a user uploaded to attach to a message, until it is attached (which deletes the row: the run's base
+    version then names its blob) or the sweep deletes it a day later."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    blob = models.ForeignKey(Blob, on_delete=models.RESTRICT, related_name="+")
+    # A valid name for a file at the folder's root (files.uploads.clean_name).
+    name = models.CharField(max_length=255)
+    # Sniffed from the contents, for display only: downloads are always application/octet-stream.
+    media_type = models.CharField(max_length=100)
+    size = models.PositiveBigIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
 
 class FolderVersion(TenantModel):

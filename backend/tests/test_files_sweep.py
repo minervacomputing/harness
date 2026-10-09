@@ -35,7 +35,7 @@ def test_an_unused_blob_is_deleted_and_its_object_deleted_twice(tmp_path, files_
     blob = put(tmp_path, workspace.id, b"hello")
     age(blob)
     removed = sweep.sweep()
-    assert removed == {"checkpoints": 0, "grants": 0, "blobs": 1, "loose": 0}
+    assert removed == {"checkpoints": 0, "grants": 0, "uploads": 0, "blobs": 1, "loose": 0}
     assert not Blob.unscoped.exists()
     assert counted(workspace) == 0
     assert stored_keys(files_storage) == []

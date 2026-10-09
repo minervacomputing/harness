@@ -1,8 +1,8 @@
-import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react'
+import { AssistantRuntimeProvider, MessageNotSentError, useExternalStoreRuntime } from '@assistant-ui/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import { BotIcon } from 'lucide-react'
-import { useMemo } from 'react'
+import { BotIcon, FolderIcon } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
 import {
   cancelRunMutation,
   getConversationOptions,
@@ -10,17 +10,30 @@ import {
   listAgentsOptions,
   listConnectionsOptions,
   listConversationsQueryKey,
+  listFilesQueryKey,
   meQueryKey,
-  postMessageMutation,
 } from '@/api/@tanstack/react-query.gen'
+import { postMessage } from '@/api/sdk.gen'
 import { AppIcons, connectionsOf } from '@/components/agents/agent-apps'
 import { AgentIntro } from '@/components/chat/agent-intro'
-import { buildMessages, messageText, pendingMessages, toThreadMessage } from '@/components/chat/model'
+import { FilesPanel } from '@/components/chat/files-panel'
+import {
+  buildMessages,
+  messageText,
+  pendingMessages,
+  refusedMessage,
+  sendingAttachments,
+  toThreadMessage,
+} from '@/components/chat/model'
 import { Thread } from '@/components/chat/thread'
+import { Button } from '@/components/ui/button'
 import { ErrorNote, Spinner } from '@/components/ui/misc'
+import { useDemoVisitor } from '@/lib/demo'
 import { errorMessage } from '@/lib/http'
 import { ACTIVE_STATUSES, useRunEvents } from '@/lib/run-stream'
 import { useDocumentTitle } from '@/lib/title'
+import { cn } from '@/lib/utils'
+import { downloadUrl, useUploadAdapter, type Uploaded } from '@/lib/uploads'
 
 export const Route = createFileRoute('/w/$workspaceId/chat/$conversationId')({
   loader: ({ context, params }) => context.queryClient.ensureQueryData(
@@ -44,6 +57,7 @@ function ConversationPage() {
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: getConversationQueryKey({ path }) })
     await queryClient.invalidateQueries({ queryKey: listConversationsQueryKey({ path: { workspace_id: workspaceId } }) })
+    await queryClient.invalidateQueries({ queryKey: listFilesQueryKey({ path }) })
   }
 
   const latest = conversation.data?.runs.at(-1)
@@ -52,7 +66,15 @@ function ConversationPage() {
   const settled = events.some(e => e.type === 'status' && !ACTIVE_STATUSES.has(e.data.status as never))
 
   const post = useMutation({
-    ...postMessageMutation(),
+    mutationFn: async ({ content, uploads }: { content: string; uploads: Uploaded[] }) => {
+      const posted = await postMessage({ path, body: { content, attachments: uploads.map(upload => upload.id) }, throwOnError: false })
+      if (posted.error) {
+        // Refused: the composer gets the text and files back. Anything else may have started the run.
+        if (refusedMessage(posted.response)) throw new MessageNotSentError(errorMessage(posted.error))
+        throw posted.error
+      }
+      return posted.data
+    },
     onSuccess: async () => {
       await refresh()
       // A demo visitor's allowance of messages changed.
@@ -60,19 +82,38 @@ function ConversationPage() {
     },
   })
   const cancel = useMutation({ ...cancelRunMutation(), onSuccess: refresh })
+  const visitor = useDemoVisitor()
+  const adapter = useUploadAdapter(workspaceId)
+  const [filesOpen, setFilesOpen] = useState(false)
+  const filesButton = useRef<HTMLButtonElement>(null)
+  const closeFiles = () => {
+    setFilesOpen(false)
+    filesButton.current?.focus()
+  }
 
   const messages = useMemo(() => {
     const built = buildMessages(conversation.data, liveRun, events)
-    return post.isPending && post.variables ? [...built, ...pendingMessages(post.variables.body.content)] : built
+    return post.isPending && post.variables ? [...built, ...pendingMessages(post.variables.content, sendingAttachments(post.variables.uploads))] : built
   }, [conversation.data, liveRun, events, post.isPending, post.variables])
 
   const runtime = useExternalStoreRuntime({
     messages,
     convertMessage: toThreadMessage,
     isRunning: post.isPending || (!!liveRun && !settled),
+    // Demo visitors cannot upload files.
+    adapters: visitor ? {} : { attachments: adapter },
     onNew: async message => {
       const content = messageText(message)
-      if (content) await post.mutateAsync({ path, body: { content } })
+      const ids = (message.attachments ?? []).map(attachment => attachment.id)
+      const uploads = ids.map(id => adapter.uploaded(id)).filter(upload => upload !== undefined)
+      if (!content && uploads.length === 0) return
+      const taken = adapter.take(ids)
+      try {
+        await post.mutateAsync({ content, uploads })
+      } catch (error) {
+        if (error instanceof MessageNotSentError) adapter.restore(taken)
+        throw error
+      }
     },
     onCancel: async () => {
       if (liveRun) await cancel.mutateAsync({ path: { workspace_id: workspaceId, run_id: liveRun.id } })
@@ -93,10 +134,27 @@ function ConversationPage() {
               <AppIcons connections={connectionsOf(agent, connections.data)} size="xs" className="hidden sm:flex" />
             </div>
           )}
+          <Button
+            ref={filesButton}
+            size="sm"
+            variant={filesOpen ? 'secondary' : 'ghost'}
+            aria-expanded={filesOpen}
+            aria-controls="conversation-files"
+            onClick={() => (filesOpen ? closeFiles() : setFilesOpen(true))}
+          >
+            <FolderIcon />Files
+          </Button>
         </header>
         {error && <ErrorNote className="mx-4 mt-4 md:mx-6">{errorMessage(error)}</ErrorNote>}
-        <div className="min-h-0 flex-1">
-          <Thread empty={<AgentIntro workspaceId={workspaceId} agents={agents.data} agent={agent} />} />
+        <div className="flex min-h-0 flex-1">
+          {/* On a narrow screen the panel takes the thread's place. */}
+          <div className={cn('min-w-0 flex-1', filesOpen && 'max-md:hidden')}>
+            <Thread
+              empty={<AgentIntro workspaceId={workspaceId} agents={agents.data} agent={agent} />}
+              fileHref={(file, version) => downloadUrl(workspaceId, conversationId, file, version)}
+            />
+          </div>
+          {filesOpen && <FilesPanel id="conversation-files" workspaceId={workspaceId} conversationId={conversationId} onClose={closeFiles} />}
         </div>
       </div>
     </AssistantRuntimeProvider>

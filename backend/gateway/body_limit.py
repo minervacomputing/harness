@@ -1,6 +1,8 @@
 """Refuses oversized request bodies before Django reads them. Django's ASGI handler buffers the whole body
 before any view or limit setting sees it."""
 
+from collections.abc import Awaitable, Callable
+
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from gateway.asgi_json import send_error
@@ -10,14 +12,16 @@ async def _refuse(send: Send) -> None:
     await send_error(send, 413, "The request is too large.")
 
 
-def limit_body(app: ASGIApp, max_bytes: int) -> ASGIApp:
+def limit_body(app: ASGIApp, max_bytes: int, refuse: Callable[[Send], Awaitable[None]] = _refuse) -> ASGIApp:
+    """`refuse` sends the 413 response, in the shape the app's own errors have."""
+
     async def limited(scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await app(scope, receive, send)
             return
         declared = dict(scope.get("headers", [])).get(b"content-length", b"0")
         if not declared.isdigit() or int(declared) > max_bytes:
-            await _refuse(send)
+            await refuse(send)
             return
         received = 0
         started = refused = False
@@ -39,7 +43,7 @@ def limit_body(app: ASGIApp, max_bytes: int) -> ASGIApp:
                 if received > max_bytes:
                     if not started and not refused:
                         refused = True
-                        await _refuse(send)
+                        await refuse(send)
                     return {"type": "http.disconnect"}
             return message
 

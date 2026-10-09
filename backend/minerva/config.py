@@ -146,6 +146,9 @@ class Config(BaseSettings):
     files_run_upload_bytes: Annotated[int, Field(gt=0)] | None = None
     # Bytes of all blobs in a workspace; unset: no limit.
     files_workspace_bytes: Annotated[int, Field(gt=0)] | None = None
+    # Files a user attaches to a message: bytes per file, and files per message.
+    files_upload_bytes: Annotated[int, Field(gt=0)] = 50 * 2**20
+    files_message_attachments: Annotated[int, Field(gt=0)] = 10
 
     # Public demo: visitors pass a Turnstile check, sign in, and chat in one shared, locked workspace.
     demo: bool = False

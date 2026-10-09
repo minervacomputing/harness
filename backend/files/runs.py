@@ -208,16 +208,69 @@ def _same(current: FolderVersion | None, manifest: Manifest) -> bool:
 
 
 def publish(run_id: UUID) -> None:
-    """Makes the run's last checkpoint, else its base version, the conversation's folder and the run's result.
-    In the transaction that ends the run, which holds its row lock."""
+    """Makes the run's last checkpoint, else its base version, the conversation's folder and the run's result, and
+    records what the turn changed. In the transaction that ends the run, which holds its row lock."""
     run = Run.unscoped.only("conversation_id", "base_version_id", "checkpoint_id").get(pk=run_id)
     version_id = run.checkpoint_id or run.base_version_id
     if version_id is None:
         return
+    changes = None
     if run.checkpoint_id is not None:
         # The turn's version builds on the turn's start.
         FolderVersion.unscoped.filter(pk=run.checkpoint_id).update(
             kind=FolderVersion.Kind.TURN, parent_id=run.base_version_id
         )
-    Run.unscoped.filter(pk=run_id).update(result_version_id=version_id)
+        entries = dict(
+            FolderVersion.unscoped.filter(pk__in=[run.base_version_id, run.checkpoint_id]).values_list(
+                "pk", "entries"
+            )
+        )
+        changes = folder_changes(entries.get(run.base_version_id), entries[run.checkpoint_id])
+    Run.unscoped.filter(pk=run_id).update(result_version_id=version_id, folder_changes=changes)
     Conversation.unscoped.filter(pk=run.conversation_id).update(folder_id=version_id)
+
+
+# Paths listed of each kind of change; the counts are complete.
+CHANGES_KEPT = 100
+
+
+def folder_changes(before: dict | None, after: dict) -> dict | None:
+    """What changed from one version's entries to another's: files added, modified (contents or mode) and deleted,
+    and directories added and deleted (listed or implied). None when nothing did."""
+    old, new = (before or {"files": {}, "dirs": []})["files"], after["files"]
+    changed = {
+        "added": sorted(path for path in new if path not in old),
+        "modified": sorted(
+            path
+            for path in new
+            if path in old
+            and (new[path]["sha256"], new[path]["mode"]) != (old[path]["sha256"], old[path]["mode"])
+        ),
+        "deleted": sorted(path for path in old if path not in new),
+    }
+    old_dirs, new_dirs = _directories(before), _directories(after)
+    changed["dirs_added"] = sorted(new_dirs - old_dirs)
+    changed["dirs_deleted"] = sorted(old_dirs - new_dirs)
+    if not any(changed.values()):
+        return None
+    sizes = {"added": new, "modified": new, "deleted": old}
+    result: dict = {"counts": {key: len(paths) for key, paths in changed.items()}}
+    for key, paths in changed.items():
+        kept = paths[:CHANGES_KEPT]
+        result[key] = (
+            [{"path": path, "size": sizes[key][path]["size"]} for path in kept] if key in sizes else kept
+        )
+    return result
+
+
+def _directories(entries: dict | None) -> set[str]:
+    if entries is None:
+        return set()
+    implied: set[str] = set()
+    for path in (*entries["files"], *entries["dirs"]):
+        end = path.rfind("/")
+        # A directory's parents were added with it.
+        while end > 0 and path[:end] not in implied:
+            implied.add(path[:end])
+            end = path.rfind("/", 0, end)
+    return implied | set(entries["dirs"])

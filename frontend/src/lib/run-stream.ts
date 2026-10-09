@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { EventOut, RunOut } from '@/api/types.gen'
 
 export const ACTIVE_STATUSES = new Set<RunOut['status']>(['queued', 'provisioning', 'running'])
-const EVENT_TYPES: EventOut['type'][] = ['status', 'phase', 'text_delta', 'reasoning_delta', 'tool_call', 'message']
+const EVENT_TYPES: EventOut['type'][] = ['status', 'phase', 'text_delta', 'reasoning_delta', 'tool_call', 'local_tool', 'message']
 
 /**
  * Follows one run's events over server-sent events, starting after what the page already has.

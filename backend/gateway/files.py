@@ -5,11 +5,10 @@ buffers its body: it streams to a temporary file while hashing, and the file is 
 The bytes are received and hashed even when the store already has the blob, since only that shows the run has the
 contents. `GET /blobs/{sha256}` and `PUT /checkpoint` are Django views.
 
-Each upload or download is a _Transfer, which holds one of the run's places until the blob I/O it started has
-finished: cancelling an await (a client that leaves, a shutdown) does not stop a thread.
+Each upload or download is a files.transfers.Transfer, which holds one of the run's places until the blob I/O it
+started has finished: cancelling an await (a client that leaves, a shutdown) does not stop a thread.
 """
 
-import asyncio
 import contextlib
 import functools
 import hashlib
@@ -18,12 +17,9 @@ import logging
 import os
 import re
 import tempfile
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID
 
 from asgiref.sync import sync_to_async
-from django.db import connection
 from django.db.models import F
 from django.http import HttpRequest, JsonResponse, StreamingHttpResponse
 from django.utils import timezone
@@ -34,12 +30,12 @@ from files import limits, store
 from files import runs as folder
 from files.limits import QuotaExceeded
 from files.manifest import SHA256
+from files.transfers import Busy, Download, Transfer, closing_connection
 from gateway.asgi_json import send_error
 from gateway.auth import ATTEMPT_SCOPE_KEY, INACTIVE, RUN_SCOPE_KEY, error_response, run_required
 from runs.models import Run
 
 BLOB_PATH = re.compile(r"/blobs/(?P<sha256>[^/]+)")
-CHUNK_BYTES = 256 * 1024
 CHECKPOINT_STATUS = {
     "stale": 401,
     "conflict": 409,
@@ -49,121 +45,13 @@ CHECKPOINT_STATUS = {
 }
 
 
-# Blob I/O (temporary files, storage, and the database work of an upload) has threads of its own, so transfers
-# never wait behind, or hold up, the views' shared thread or the loop's default pool. Each run may have a few
-# transfers at once in each process, so one run cannot take every thread.
-BLOB_IO = ThreadPoolExecutor(max_workers=16, thread_name_prefix="blob-io")
 TRANSFERS_PER_RUN = 4
-# Places taken per run. Only the event loop changes it.
-_transfers: dict[UUID, int] = {}
 
 log = logging.getLogger("minerva.files")
 
 
 class _Inactive(Exception):
     pass
-
-
-class _Busy(Exception):
-    pass
-
-
-class _Transfer:
-    """One upload or download of a run, holding one of its places in this process.
-
-    Its jobs run on the blob I/O threads. The place is given back only once the transfer has ended and every job
-    has finished, then its cleanup: a thread keeps running when the await on it is cancelled, so giving the place
-    back earlier would let a run that keeps leaving occupy every thread. The jobs settle on their threads, so the
-    cleanup does not depend on the loop; at shutdown it is best effort.
-    """
-
-    def __init__(self, run_id: UUID) -> None:
-        count = _transfers.get(run_id, 0)
-        if count >= TRANSFERS_PER_RUN:
-            raise _Busy
-        _transfers[run_id] = count + 1
-        self.run_id = run_id
-        self.loop = asyncio.get_running_loop()
-        self.released = self.loop.create_future()
-        self.lock = threading.Lock()
-        self.running = 0
-        self.ended = False
-        self.cleanup = None
-
-    async def io(self, fn, *args):
-        with self.lock:
-            if self.ended:
-                raise RuntimeError("The transfer has ended.")
-            self.running += 1
-        try:
-            job = BLOB_IO.submit(fn, *args)
-        except BaseException:
-            self._settled(None)
-            raise
-        # Settles on the job's thread when it finishes, or here if it is cancelled before it starts.
-        job.add_done_callback(self._settled)
-        return await asyncio.wrap_future(job)
-
-    def end(self, cleanup=None) -> None:
-        """Ends the transfer, from any thread. `cleanup` runs on a blob I/O thread once every job has finished,
-        then the place is given back. Only the first call counts."""
-        with self.lock:
-            if self.ended:
-                return
-            self.ended, self.cleanup = True, cleanup
-            idle = self.running == 0
-        if idle:
-            self._close()
-
-    async def finish(self, cleanup=None) -> None:
-        """Ends the transfer and waits until its place is given back. Cancelling the wait does not stop that."""
-        self.end(cleanup)
-        await asyncio.shield(self.released)
-
-    def _settled(self, _job) -> None:
-        with self.lock:
-            self.running -= 1
-            idle = self.ended and self.running == 0
-        if idle:
-            self._close()
-
-    def _close(self) -> None:
-        try:
-            BLOB_IO.submit(self._clean_up)
-        except RuntimeError:
-            # The executor is shutting down.
-            self._clean_up()
-
-    def _clean_up(self) -> None:
-        try:
-            if self.cleanup is not None:
-                self.cleanup()
-        except Exception:
-            log.warning("Blob transfer cleanup failed", exc_info=True)
-        finally:
-            with contextlib.suppress(RuntimeError):
-                # The loop has closed: the process is ending.
-                self.loop.call_soon_threadsafe(self._release)
-
-    def _release(self) -> None:
-        if _transfers[self.run_id] > 1:
-            _transfers[self.run_id] -= 1
-        else:
-            del _transfers[self.run_id]
-        self.released.set_result(None)
-
-
-def _closing_connection(fn):
-    """A blob I/O thread's database work: its connection is closed after, since no request cycle does."""
-
-    @functools.wraps(fn)
-    def wrapper(*args):
-        try:
-            return fn(*args)
-        finally:
-            connection.close()
-
-    return wrapper
 
 
 async def _send_json(send: Send, status: int, body: dict) -> None:
@@ -202,8 +90,8 @@ async def put_blob(scope: Scope, receive: Receive, send: Send) -> None:
 
     run_id, attempt = scope[RUN_SCOPE_KEY], scope[ATTEMPT_SCOPE_KEY]
     try:
-        transfer = _Transfer(run_id)
-    except _Busy:
+        transfer = Transfer(run_id, TRANSFERS_PER_RUN)
+    except Busy:
         await send_error(send, 429, "This run has too many transfers in flight.")
         return
     staged = _Staged()
@@ -229,7 +117,7 @@ class _Staged:
 
 
 async def _receive_blob(
-    transfer: _Transfer,
+    transfer: Transfer,
     staged: _Staged,
     run_id: UUID,
     attempt: int,
@@ -279,7 +167,7 @@ async def _receive_blob(
     await _send_json(send, 200, {"sha256": blob.sha256, "size": blob.size})
 
 
-@_closing_connection
+@closing_connection
 def _discard(staged: _Staged, run_id: UUID, attempt: int) -> None:
     """An upload's cleanup, once its other jobs have finished: whether it was stored is what _record did. Each step
     runs even if one before it fails."""
@@ -324,10 +212,10 @@ def _check(run_id: UUID, attempt: int, size: int) -> None:
         raise QuotaExceeded("run_uploads")
 
 
-_admit = _closing_connection(_check)
+_admit = closing_connection(_check)
 
 
-@_closing_connection
+@closing_connection
 def _record(run_id: UUID, attempt: int, sha256: str, size: int, staged: _Staged):
     """Charges the upload to the run, records the blob (charged to the workspace if new) and grants it to the
     run, while the attempt is current."""
@@ -360,10 +248,10 @@ async def get_blob(request: HttpRequest, sha256: str):
         # The same answer whether the blob does not exist or the run may not read it.
         return error_response("Not found.", 404)
     try:
-        transfer = _Transfer(run.id)
-    except _Busy:
+        transfer = Transfer(run.id, TRANSFERS_PER_RUN)
+    except Busy:
         return error_response("This run has too many transfers in flight.", 429)
-    download = _Download(transfer)
+    download = Download(transfer)
     try:
         await transfer.io(download.open, blob)
         response = StreamingHttpResponse(download, content_type="application/octet-stream")
@@ -372,34 +260,6 @@ async def get_blob(request: HttpRequest, sha256: str):
         download.close()
         raise
     return response
-
-
-class _Download:
-    """A blob's contents, read chunk by chunk on the blob I/O threads (Django buffers a synchronous iterator
-    whole under ASGI). The transfer ends when the iteration does, or when Django closes the response, which it
-    does when the client leaves, even if it was never read."""
-
-    def __init__(self, transfer: _Transfer) -> None:
-        self.transfer = transfer
-        self.stream = None
-
-    def open(self, blob) -> None:
-        self.stream = store.open_blob(blob)
-
-    async def __aiter__(self):
-        try:
-            while chunk := await self.transfer.io(self.stream.read, CHUNK_BYTES):
-                yield chunk
-        finally:
-            self.close()
-
-    def close(self) -> None:
-        # From any thread; the stream is closed once a read still running has finished.
-        self.transfer.end(self._close_stream)
-
-    def _close_stream(self) -> None:
-        if self.stream is not None:
-            self.stream.close()
 
 
 @require_http_methods(["PUT"])

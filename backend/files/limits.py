@@ -25,3 +25,11 @@ def run_upload_bytes() -> int:
 
 def workspace_bytes() -> int | None:
     return config().files_workspace_bytes
+
+
+def upload_bytes() -> int:
+    return config().files_upload_bytes
+
+
+def message_attachments() -> int:
+    return config().files_message_attachments

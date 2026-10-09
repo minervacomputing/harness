@@ -136,6 +136,24 @@ export type AllowedOut = {
 };
 
 /**
+ * AttachmentOut
+ */
+export type AttachmentOut = {
+    /**
+     * Media Type
+     */
+    media_type: string;
+    /**
+     * Path
+     */
+    path: string;
+    /**
+     * Size
+     */
+    size: number;
+};
+
+/**
  * AuthorizeOut
  */
 export type AuthorizeOut = {
@@ -161,6 +179,20 @@ export type ChangeIn = {
      * Kind
      */
     kind: string;
+};
+
+/**
+ * ChangedFileOut
+ */
+export type ChangedFileOut = {
+    /**
+     * Path
+     */
+    path: string;
+    /**
+     * Size
+     */
+    size: number;
 };
 
 /**
@@ -404,6 +436,106 @@ export type EventOut = {
 };
 
 /**
+ * FolderChangesOut
+ *
+ * What a turn changed in the folder. Each list holds at most 100 paths; `counts` are complete.
+ */
+export type FolderChangesOut = {
+    /**
+     * Added
+     */
+    added: Array<ChangedFileOut>;
+    /**
+     * Counts
+     */
+    counts: {
+        [key: string]: number;
+    };
+    /**
+     * Deleted
+     */
+    deleted: Array<ChangedFileOut>;
+    /**
+     * Dirs Added
+     */
+    dirs_added: Array<string>;
+    /**
+     * Dirs Deleted
+     */
+    dirs_deleted: Array<string>;
+    /**
+     * Modified
+     */
+    modified: Array<ChangedFileOut>;
+};
+
+/**
+ * FolderFileOut
+ */
+export type FolderFileOut = {
+    /**
+     * Mtime
+     */
+    mtime: number;
+    /**
+     * Path
+     */
+    path: string;
+    /**
+     * Size
+     */
+    size: number;
+};
+
+/**
+ * FolderOut
+ */
+export type FolderOut = {
+    /**
+     * Dirs
+     */
+    dirs: Array<string>;
+    /**
+     * Files
+     */
+    files: Array<FolderFileOut>;
+    /**
+     * Version Id
+     */
+    version_id: string | null;
+};
+
+/**
+ * FolderWarningOut
+ */
+export type FolderWarningOut = {
+    /**
+     * Path
+     */
+    path: string;
+    /**
+     * Reason
+     */
+    reason: string;
+};
+
+/**
+ * FolderWarningsOut
+ *
+ * What the run left out of the folder: `total` items, at most 100 of them listed.
+ */
+export type FolderWarningsOut = {
+    /**
+     * Items
+     */
+    items: Array<FolderWarningOut>;
+    /**
+     * Total
+     */
+    total: number;
+};
+
+/**
  * GateIn
  */
 export type GateIn = {
@@ -504,6 +636,10 @@ export type MeOut = {
  */
 export type MessageIn = {
     /**
+     * Attachments
+     */
+    attachments?: Array<string>;
+    /**
      * Content
      */
     content: string;
@@ -513,6 +649,10 @@ export type MessageIn = {
  * MessageOut
  */
 export type MessageOut = {
+    /**
+     * Attachments
+     */
+    attachments: Array<AttachmentOut>;
     /**
      * Content
      */
@@ -610,6 +750,10 @@ export type ResourceQuery = {
  */
 export type RunOut = {
     /**
+     * Base Version Id
+     */
+    base_version_id: string | null;
+    /**
      * Created At
      */
     created_at: string;
@@ -625,10 +769,16 @@ export type RunOut = {
      * Finished At
      */
     finished_at: string | null;
+    folder_changes: FolderChangesOut | null;
+    folder_warnings: FolderWarningsOut | null;
     /**
      * Id
      */
     id: string;
+    /**
+     * Result Version Id
+     */
+    result_version_id: string | null;
     /**
      * Status
      */
@@ -1244,6 +1394,36 @@ export type GetConversationResponses = {
 
 export type GetConversationResponse = GetConversationResponses[keyof GetConversationResponses];
 
+export type ListFilesData = {
+    body?: never;
+    path: {
+        /**
+         * Workspace Id
+         */
+        workspace_id: string;
+        /**
+         * Conversation Id
+         */
+        conversation_id: string;
+    };
+    query?: {
+        /**
+         * Version
+         */
+        version?: string | null;
+    };
+    url: '/api/workspaces/{workspace_id}/conversations/{conversation_id}/files';
+};
+
+export type ListFilesResponses = {
+    /**
+     * OK
+     */
+    200: FolderOut;
+};
+
+export type ListFilesResponse = ListFilesResponses[keyof ListFilesResponses];
+
 export type PostMessageData = {
     body: MessageIn;
     path: {
@@ -1318,3 +1498,28 @@ export type CancelRunResponses = {
 };
 
 export type CancelRunResponse = CancelRunResponses[keyof CancelRunResponses];
+
+export type DeleteUploadData = {
+    body?: never;
+    path: {
+        /**
+         * Workspace Id
+         */
+        workspace_id: string;
+        /**
+         * Upload Id
+         */
+        upload_id: string;
+    };
+    query?: never;
+    url: '/api/workspaces/{workspace_id}/uploads/{upload_id}';
+};
+
+export type DeleteUploadResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DeleteUploadResponse = DeleteUploadResponses[keyof DeleteUploadResponses];

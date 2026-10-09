@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AuthorizeData, AuthorizeResponses, CancelRunData, CancelRunResponses, ChangeAccessData, ChangeAccessResponses, ConnectKeyData, ConnectKeyResponses, CreateAgentData, CreateAgentResponses, CreateConversationData, CreateConversationResponses, DeleteAgentData, DeleteAgentResponses, DeleteConnectionData, DeleteConnectionResponses, DeleteConversationData, DeleteConversationResponses, DemoConfigData, DemoConfigResponses, DemoEmailData, DemoEmailResponses, DemoGateData, DemoGateResponses, EnableData, EnableResponses, GetAccessData, GetAccessResponses, GetAgentData, GetAgentResponses, GetConversationData, GetConversationResponses, GetRunData, GetRunResponses, ListAccessResourcesData, ListAccessResourcesResponses, ListAgentsData, ListAgentsResponses, ListConnectionsData, ListConnectionsResponses, ListConnectorsData, ListConnectorsResponses, ListConversationsData, ListConversationsResponses, MeData, MeResponses, PostMessageData, PostMessageResponses, ReconnectData, ReconnectResponses, ReplaceKeyData, ReplaceKeyResponses, UpdateAgentData, UpdateAgentResponses } from './types.gen';
+import type { AuthorizeData, AuthorizeResponses, CancelRunData, CancelRunResponses, ChangeAccessData, ChangeAccessResponses, ConnectKeyData, ConnectKeyResponses, CreateAgentData, CreateAgentResponses, CreateConversationData, CreateConversationResponses, DeleteAgentData, DeleteAgentResponses, DeleteConnectionData, DeleteConnectionResponses, DeleteConversationData, DeleteConversationResponses, DeleteUploadData, DeleteUploadResponses, DemoConfigData, DemoConfigResponses, DemoEmailData, DemoEmailResponses, DemoGateData, DemoGateResponses, EnableData, EnableResponses, GetAccessData, GetAccessResponses, GetAgentData, GetAgentResponses, GetConversationData, GetConversationResponses, GetRunData, GetRunResponses, ListAccessResourcesData, ListAccessResourcesResponses, ListAgentsData, ListAgentsResponses, ListConnectionsData, ListConnectionsResponses, ListConnectorsData, ListConnectorsResponses, ListConversationsData, ListConversationsResponses, ListFilesData, ListFilesResponses, MeData, MeResponses, PostMessageData, PostMessageResponses, ReconnectData, ReconnectResponses, ReplaceKeyData, ReplaceKeyResponses, UpdateAgentData, UpdateAgentResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -400,6 +400,22 @@ export const getConversation = <ThrowOnError extends boolean = false>(options: O
 });
 
 /**
+ * List Files
+ *
+ * A version of the conversation's folder: the current one, or a run's base or result version.
+ */
+export const listFiles = <ThrowOnError extends boolean = false>(options: Options<ListFilesData, ThrowOnError>): RequestResult<ListFilesResponses, unknown, ThrowOnError> => (options.client ?? client).get<ListFilesResponses, unknown, ThrowOnError>({
+    security: [{
+            key: 'WorkspaceMember',
+            in: 'cookie',
+            name: 'sessionid',
+            type: 'apiKey'
+        }],
+    url: '/api/workspaces/{workspace_id}/conversations/{conversation_id}/files',
+    ...options
+});
+
+/**
  * Post Message
  */
 export const postMessage = <ThrowOnError extends boolean = false>(options: Options<PostMessageData, ThrowOnError>): RequestResult<PostMessageResponses, unknown, ThrowOnError> => (options.client ?? client).post<PostMessageResponses, unknown, ThrowOnError>({
@@ -442,5 +458,21 @@ export const cancelRun = <ThrowOnError extends boolean = false>(options: Options
             type: 'apiKey'
         }],
     url: '/api/workspaces/{workspace_id}/runs/{run_id}/cancel',
+    ...options
+});
+
+/**
+ * Delete Upload
+ *
+ * Removes an upload that was not attached; its file is deleted with the next sweep.
+ */
+export const deleteUpload = <ThrowOnError extends boolean = false>(options: Options<DeleteUploadData, ThrowOnError>): RequestResult<DeleteUploadResponses, unknown, ThrowOnError> => (options.client ?? client).delete<DeleteUploadResponses, unknown, ThrowOnError>({
+    security: [{
+            key: 'WorkspaceMember',
+            in: 'cookie',
+            name: 'sessionid',
+            type: 'apiKey'
+        }],
+    url: '/api/workspaces/{workspace_id}/uploads/{upload_id}',
     ...options
 });

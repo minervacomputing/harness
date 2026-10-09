@@ -207,6 +207,29 @@
         "title": "AllowedOut",
         "type": "object"
       },
+      "AttachmentOut": {
+        "properties": {
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "size",
+          "media_type"
+        ],
+        "title": "AttachmentOut",
+        "type": "object"
+      },
       "AuthorizeOut": {
         "properties": {
           "url": {
@@ -249,6 +272,24 @@
           "actions"
         ],
         "title": "ChangeIn",
+        "type": "object"
+      },
+      "ChangedFileOut": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "size"
+        ],
+        "title": "ChangedFileOut",
         "type": "object"
       },
       "ConnectionOut": {
@@ -654,6 +695,163 @@
         "title": "EventOut",
         "type": "object"
       },
+      "FolderChangesOut": {
+        "description": "What a turn changed in the folder. Each list holds at most 100 paths; `counts` are complete.",
+        "properties": {
+          "added": {
+            "items": {
+              "$ref": "#/components/schemas/ChangedFileOut"
+            },
+            "title": "Added",
+            "type": "array"
+          },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Counts",
+            "type": "object"
+          },
+          "deleted": {
+            "items": {
+              "$ref": "#/components/schemas/ChangedFileOut"
+            },
+            "title": "Deleted",
+            "type": "array"
+          },
+          "dirs_added": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Dirs Added",
+            "type": "array"
+          },
+          "dirs_deleted": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Dirs Deleted",
+            "type": "array"
+          },
+          "modified": {
+            "items": {
+              "$ref": "#/components/schemas/ChangedFileOut"
+            },
+            "title": "Modified",
+            "type": "array"
+          }
+        },
+        "required": [
+          "counts",
+          "added",
+          "modified",
+          "deleted",
+          "dirs_added",
+          "dirs_deleted"
+        ],
+        "title": "FolderChangesOut",
+        "type": "object"
+      },
+      "FolderFileOut": {
+        "properties": {
+          "mtime": {
+            "title": "Mtime",
+            "type": "integer"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "size",
+          "mtime"
+        ],
+        "title": "FolderFileOut",
+        "type": "object"
+      },
+      "FolderOut": {
+        "properties": {
+          "dirs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Dirs",
+            "type": "array"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/FolderFileOut"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          }
+        },
+        "required": [
+          "version_id",
+          "files",
+          "dirs"
+        ],
+        "title": "FolderOut",
+        "type": "object"
+      },
+      "FolderWarningOut": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "reason"
+        ],
+        "title": "FolderWarningOut",
+        "type": "object"
+      },
+      "FolderWarningsOut": {
+        "description": "What the run left out of the folder: `total` items, at most 100 of them listed.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FolderWarningOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "items"
+        ],
+        "title": "FolderWarningsOut",
+        "type": "object"
+      },
       "GateIn": {
         "properties": {
           "newsletter": {
@@ -816,9 +1014,18 @@
       },
       "MessageIn": {
         "properties": {
+          "attachments": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Attachments",
+            "type": "array"
+          },
           "content": {
             "maxLength": 20000,
-            "minLength": 1,
             "title": "Content",
             "type": "string"
           }
@@ -831,6 +1038,13 @@
       },
       "MessageOut": {
         "properties": {
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentOut"
+            },
+            "title": "Attachments",
+            "type": "array"
+          },
           "content": {
             "title": "Content",
             "type": "string"
@@ -870,6 +1084,7 @@
           "id",
           "role",
           "content",
+          "attachments",
           "run_id",
           "created_at"
         ],
@@ -1013,6 +1228,18 @@
       },
       "RunOut": {
         "properties": {
+          "base_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Version Id"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -1041,10 +1268,42 @@
             ],
             "title": "Finished At"
           },
+          "folder_changes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FolderChangesOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "folder_warnings": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FolderWarningsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "result_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Version Id"
           },
           "status": {
             "enum": [
@@ -1066,6 +1325,10 @@
           "error_message",
           "created_at",
           "finished_at",
+          "base_version_id",
+          "result_version_id",
+          "folder_changes",
+          "folder_warnings",
           "events"
         ],
         "title": "RunOut",
@@ -2295,6 +2558,72 @@
         ]
       }
     },
+    "/api/workspaces/{workspace_id}/conversations/{conversation_id}/files": {
+      "get": {
+        "description": "A version of the conversation's folder: the current one, or a run's base or result version.",
+        "operationId": "list_files",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderOut"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "security": [
+          {
+            "WorkspaceMember": []
+          }
+        ],
+        "summary": "List Files",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
     "/api/workspaces/{workspace_id}/conversations/{conversation_id}/messages": {
       "post": {
         "operationId": "post_message",
@@ -2444,6 +2773,48 @@
           }
         ],
         "summary": "Cancel Run",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/uploads/{upload_id}": {
+      "delete": {
+        "description": "Removes an upload that was not attached; its file is deleted with the next sweep.",
+        "operationId": "delete_upload",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "upload_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Upload Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "security": [
+          {
+            "WorkspaceMember": []
+          }
+        ],
+        "summary": "Delete Upload",
         "tags": [
           "conversations"
         ]

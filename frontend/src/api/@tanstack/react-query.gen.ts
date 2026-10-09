@@ -3,8 +3,8 @@
 import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOptions, type UseMutationOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { authorize, cancelRun, changeAccess, connectKey, createAgent, createConversation, deleteAgent, deleteConnection, deleteConversation, demoConfig, demoEmail, demoGate, enable, getAccess, getAgent, getConversation, getRun, listAccessResources, listAgents, listConnections, listConnectors, listConversations, me, type Options, postMessage, reconnect, replaceKey, updateAgent } from '../sdk.gen';
-import type { AuthorizeData, AuthorizeResponse, CancelRunData, CancelRunResponse, ChangeAccessData, ChangeAccessResponse, ConnectKeyData, ConnectKeyResponse, CreateAgentData, CreateAgentResponse, CreateConversationData, CreateConversationResponse, DeleteAgentData, DeleteAgentResponse, DeleteConnectionData, DeleteConnectionResponse, DeleteConversationData, DeleteConversationResponse, DemoConfigData, DemoConfigResponse, DemoEmailData, DemoEmailResponse, DemoGateData, DemoGateResponse, EnableData, EnableResponse, GetAccessData, GetAccessResponse, GetAgentData, GetAgentResponse, GetConversationData, GetConversationResponse, GetRunData, GetRunResponse, ListAccessResourcesData, ListAccessResourcesResponse, ListAgentsData, ListAgentsResponse, ListConnectionsData, ListConnectionsResponse, ListConnectorsData, ListConnectorsResponse, ListConversationsData, ListConversationsResponse, MeData, MeResponse, PostMessageData, PostMessageResponse, ReconnectData, ReconnectResponse, ReplaceKeyData, ReplaceKeyResponse, UpdateAgentData, UpdateAgentResponse } from '../types.gen';
+import { authorize, cancelRun, changeAccess, connectKey, createAgent, createConversation, deleteAgent, deleteConnection, deleteConversation, deleteUpload, demoConfig, demoEmail, demoGate, enable, getAccess, getAgent, getConversation, getRun, listAccessResources, listAgents, listConnections, listConnectors, listConversations, listFiles, me, type Options, postMessage, reconnect, replaceKey, updateAgent } from '../sdk.gen';
+import type { AuthorizeData, AuthorizeResponse, CancelRunData, CancelRunResponse, ChangeAccessData, ChangeAccessResponse, ConnectKeyData, ConnectKeyResponse, CreateAgentData, CreateAgentResponse, CreateConversationData, CreateConversationResponse, DeleteAgentData, DeleteAgentResponse, DeleteConnectionData, DeleteConnectionResponse, DeleteConversationData, DeleteConversationResponse, DeleteUploadData, DeleteUploadResponse, DemoConfigData, DemoConfigResponse, DemoEmailData, DemoEmailResponse, DemoGateData, DemoGateResponse, EnableData, EnableResponse, GetAccessData, GetAccessResponse, GetAgentData, GetAgentResponse, GetConversationData, GetConversationResponse, GetRunData, GetRunResponse, ListAccessResourcesData, ListAccessResourcesResponse, ListAgentsData, ListAgentsResponse, ListConnectionsData, ListConnectionsResponse, ListConnectorsData, ListConnectorsResponse, ListConversationsData, ListConversationsResponse, ListFilesData, ListFilesResponse, MeData, MeResponse, PostMessageData, PostMessageResponse, ReconnectData, ReconnectResponse, ReplaceKeyData, ReplaceKeyResponse, UpdateAgentData, UpdateAgentResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseUrl' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -538,6 +538,26 @@ export const getConversationOptions = (options: Options<GetConversationData>) =>
     queryKey: getConversationQueryKey(options)
 });
 
+export const listFilesQueryKey = (options: Options<ListFilesData>) => createQueryKey('listFiles', options);
+
+/**
+ * List Files
+ *
+ * A version of the conversation's folder: the current one, or a run's base or result version.
+ */
+export const listFilesOptions = (options: Options<ListFilesData>) => queryOptions<ListFilesResponse, DefaultError, ListFilesResponse, ReturnType<typeof listFilesQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listFiles({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listFilesQueryKey(options)
+});
+
 /**
  * Post Message
  */
@@ -580,6 +600,25 @@ export const cancelRunMutation = (options?: Partial<Options<CancelRunData>>): Us
     const mutationOptions: UseMutationOptions<CancelRunResponse, DefaultError, Options<CancelRunData>> = {
         mutationFn: async (fnOptions) => {
             const { data } = await cancelRun({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Delete Upload
+ *
+ * Removes an upload that was not attached; its file is deleted with the next sweep.
+ */
+export const deleteUploadMutation = (options?: Partial<Options<DeleteUploadData>>): UseMutationOptions<DeleteUploadResponse, DefaultError, Options<DeleteUploadData>> => {
+    const mutationOptions: UseMutationOptions<DeleteUploadResponse, DefaultError, Options<DeleteUploadData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await deleteUpload({
                 ...options,
                 ...fnOptions,
                 throwOnError: true

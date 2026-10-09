@@ -9,6 +9,7 @@ from connections.api import router as connections_router
 from connections.views import oauth_callback
 from conversations.api import router as conversations_router
 from demo.api import router as demo_router
+from files.views import download
 from runs.stream import run_stream
 from workspaces.api import router as workspaces_router
 
@@ -34,6 +35,7 @@ urlpatterns = [
     path("api/accounts/", include("allauth.urls")),
     path("api/oauth/<slug:provider>/callback", oauth_callback),
     path("api/workspaces/<uuid:workspace_id>/runs/<uuid:run_id>/stream", run_stream),
+    path("api/workspaces/<uuid:workspace_id>/conversations/<uuid:conversation_id>/files/download", download),
     path("api/", api.urls),
     path("admin/", admin.site.urls),
 ]

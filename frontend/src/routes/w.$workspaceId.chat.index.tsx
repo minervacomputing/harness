@@ -1,4 +1,4 @@
-import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react'
+import { AssistantRuntimeProvider, MessageNotSentError, useExternalStoreRuntime } from '@assistant-ui/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { ArrowUpIcon, MessageSquareIcon, ShieldBanIcon } from 'lucide-react'
@@ -10,12 +10,20 @@ import {
 } from '@/api/@tanstack/react-query.gen'
 import { createConversation, deleteConversation, postMessage } from '@/api/sdk.gen'
 import { AgentIntro } from '@/components/chat/agent-intro'
-import { type ChatMessage, messageText, pendingMessages, toThreadMessage } from '@/components/chat/model'
+import {
+  type ChatMessage,
+  messageText,
+  pendingMessages,
+  refusedMessage,
+  sendingAttachments,
+  toThreadMessage,
+} from '@/components/chat/model'
 import { Thread } from '@/components/chat/thread'
 import { ErrorNote } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
 import { useDemo } from '@/lib/demo'
 import { useDocumentTitle } from '@/lib/title'
+import { useUploadAdapter, type Uploaded } from '@/lib/uploads'
 import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/w/$workspaceId/chat/')({
@@ -39,19 +47,24 @@ function NewChat() {
   const agent = wanted ? agents.data?.find(a => a.id === wanted) : agents.data?.[0]
   const choose = (agentId: string) => navigate({ to: '/w/$workspaceId/chat', params: { workspaceId }, search: { agent: agentId }, replace: true })
 
+  const adapter = useUploadAdapter(workspaceId)
   const start = useMutation({
-    mutationFn: async (content: string) => {
-      if (!agent) throw new Error('Create an agent first.')
+    mutationFn: async ({ content, uploads }: { content: string; uploads: Uploaded[] }) => {
+      if (!agent) throw new MessageNotSentError('Create an agent first.')
       const path = { workspace_id: workspaceId }
-      const { data: conversation } = await createConversation({ path, body: { agent_id: agent.id }, throwOnError: true })
+      const created = await createConversation({ path, body: { agent_id: agent.id }, throwOnError: false })
+      if (created.error) throw new MessageNotSentError(errorMessage(created.error))
+      const conversation = created.data!
       const chat = { ...path, conversation_id: conversation.id }
-      const posted = await postMessage({ path: chat, body: { content } })
+      const posted = await postMessage({ path: chat, body: { content, attachments: uploads.map(upload => upload.id) }, throwOnError: false })
         .finally(() => void queryClient.invalidateQueries({ queryKey: meQueryKey() }))
       if (posted.error) {
-        // Refused (for example over the demo's daily allowance): do not leave an empty chat behind. Other
-        // failures may have started the run, so the chat stays.
-        const status = posted.response?.status ?? 0
-        if ((status >= 400 && status < 500) || status === 503) await deleteConversation({ path: chat })
+        // Refused (for example over the demo's daily allowance): do not leave an empty chat behind, and give the
+        // composer the message back. Other failures may have started the run, so the chat stays.
+        if (refusedMessage(posted.response)) {
+          await deleteConversation({ path: chat, throwOnError: false })
+          throw new MessageNotSentError(errorMessage(posted.error))
+        }
         throw posted.error
       }
       await queryClient.invalidateQueries({ queryKey: listConversationsQueryKey({ path }) })
@@ -64,15 +77,28 @@ function NewChat() {
     }),
   })
 
-  const messages: ChatMessage[] = start.isPending && start.variables ? pendingMessages(start.variables) : []
+  const messages: ChatMessage[] = start.isPending && start.variables
+    ? pendingMessages(start.variables.content, sendingAttachments(start.variables.uploads))
+    : []
   const runtime = useExternalStoreRuntime({
     messages,
     convertMessage: toThreadMessage,
     isRunning: start.isPending,
     isDisabled: !agent,
+    // Demo visitors cannot upload files.
+    adapters: demo?.visitor ? {} : { attachments: adapter },
     onNew: async message => {
-      const text = messageText(message)
-      if (text) await start.mutateAsync(text)
+      const content = messageText(message)
+      const ids = (message.attachments ?? []).map(attachment => attachment.id)
+      const uploads = ids.map(id => adapter.uploaded(id)).filter(upload => upload !== undefined)
+      if (!content && uploads.length === 0) return
+      const taken = adapter.take(ids)
+      try {
+        await start.mutateAsync({ content, uploads })
+      } catch (error) {
+        if (error instanceof MessageNotSentError) adapter.restore(taken)
+        throw error
+      }
     },
   })
 
@@ -100,12 +126,12 @@ function NewChat() {
                     <ul className="divide-y divide-border border border-border-strong bg-card shadow-(--raise-surface)">
                       {featured && (
                         <li>
-                          <Suggestion text={featured} featured disabled={start.isPending} onAsk={start.mutate} />
+                          <Suggestion text={featured} featured disabled={start.isPending} onAsk={text => start.mutate({ content: text, uploads: [] })} />
                         </li>
                       )}
                       {suggestions.map(text => (
                         <li key={text}>
-                          <Suggestion text={text} disabled={start.isPending} onAsk={start.mutate} />
+                          <Suggestion text={text} disabled={start.isPending} onAsk={text => start.mutate({ content: text, uploads: [] })} />
                         </li>
                       ))}
                     </ul>

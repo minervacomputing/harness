@@ -13,7 +13,7 @@ from test_gateway_auth import CHUNK, Upload, bearer
 
 from conversations.models import Conversation
 from files import runs as folder
-from files import store
+from files import store, transfers
 from files.models import Blob, FolderVersion, RunBlob
 from gateway import files
 from minerva.config import config
@@ -197,14 +197,14 @@ async def test_a_run_has_a_few_transfers_at_once(application, claimed, temp_dir)
         request.flowing.set()
     await asyncio.wait_for(asyncio.gather(*tasks), 10)
     assert [request.status for request in slow] == [200] * files.TRANSFERS_PER_RUN
-    assert files._transfers == {}
+    assert transfers.places == {}
 
     # A download holds its place until Django closes the response.
     response = await AsyncClient().get(f"/blobs/{sha(data)}", headers=auth(token))
-    assert files._transfers == {run.id: 1}
+    assert transfers.places == {run.id: 1}
     assert len(await read_all(response)) == 200_000
     await sync_to_async(response.close)()
-    await until(lambda: files._transfers == {})
+    await until(lambda: transfers.places == {})
 
 
 async def test_a_cancelled_upload_keeps_its_place_until_its_write_has_finished(
@@ -229,13 +229,13 @@ async def test_a_cancelled_upload_keeps_its_place_until_its_write_has_finished(
         task.cancel()
     await asyncio.sleep(0.05)
     # The threads still write, so the run's places stay taken.
-    assert files._transfers == {run.id: files.TRANSFERS_PER_RUN}
+    assert transfers.places == {run.id: files.TRANSFERS_PER_RUN}
     assert (await upload(application, token, b"hello")).status == 429
 
     release.set()
     results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 10)
     assert all(isinstance(result, asyncio.CancelledError) for result in results)
-    assert files._transfers == {}
+    assert transfers.places == {}
     assert list(temp_dir.iterdir()) == []
     assert not await Blob.unscoped.aexists()
     # Each upload's first chunk was received, and charged once.
@@ -259,12 +259,12 @@ async def test_an_upload_cancelled_while_it_is_recorded_is_charged_once(
     await until(recording.is_set)
     task.cancel()
     await asyncio.sleep(0.05)
-    assert files._transfers == {run.id: 1}
+    assert transfers.places == {run.id: 1}
 
     release.set()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, 10)
-    assert files._transfers == {}
+    assert transfers.places == {}
     assert list(temp_dir.iterdir()) == []
     # Stored, and charged as stored only.
     assert await RunBlob.unscoped.filter(run_id=run.id, blob__sha256=sha(b"hello")).aexists()
@@ -311,11 +311,11 @@ async def test_a_download_closed_while_reading_keeps_its_place_until_the_read_ha
     reader.cancel()
     await sync_to_async(response.close)()
     await asyncio.sleep(0.05)
-    assert files._transfers == {run.id: 1}
+    assert transfers.places == {run.id: 1}
     assert not stream.closed
 
     release.set()
-    await until(lambda: files._transfers == {})
+    await until(lambda: transfers.places == {})
     assert stream.closed
 
 

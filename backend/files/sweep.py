@@ -5,25 +5,29 @@ A batch that fails (a lock it would wait for, a reference that appeared meanwhil
 
 1. Checkpoints of finished runs (or of none) that nothing refers to.
 2. The upload grants (RunBlob) of finished runs.
-3. Blobs that no version or grant names, unused for an hour.
-4. Loose objects that are due: deleted from storage, and once more a day later.
+3. Uploads never attached to a message, after a day.
+4. Blobs that no version, grant or upload names, unused for an hour.
+5. Loose objects that are due: deleted from storage, and once more a day later.
 """
 
 import logging
 import time
 from contextlib import contextmanager
+from datetime import timedelta
 
 from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.db.models import Exists, OuterRef, Q, RestrictedError
+from django.utils import timezone
 
 from conversations.models import Conversation
-from files.models import Blob, FolderVersion, RunBlob
+from files.models import Blob, FolderVersion, RunBlob, Upload
 from files.store import delete_object
 from runs.models import Run
 
 log = logging.getLogger("minerva.files")
 BATCH = 100
 FINISHED = [status for status in Run.Status if status not in Run.ACTIVE]
+UPLOAD_LIFETIME = timedelta(days=1)
 
 # The blobs are locked first, then the references checked again in a new statement, whose snapshot sees every
 # reference committed before the locks were granted. Whatever refers to a blob later waits for the locks and then
@@ -31,6 +35,7 @@ FINISHED = [status for status in Run.Status if status not in Run.ACTIVE]
 # waits for a transaction (such as a workspace's deletion) that may be waiting for its blobs.
 UNNAMED = """
     NOT EXISTS (SELECT 1 FROM files_runblob grant_ WHERE grant_.blob_id = b.id)
+    AND NOT EXISTS (SELECT 1 FROM files_upload upload WHERE upload.blob_id = b.id)
     AND NOT EXISTS (
         SELECT 1 FROM files_folderversion v
         WHERE v.workspace_id = b.workspace_id AND v.hashes @> ARRAY[b.sha256]::varchar(64)[]
@@ -67,6 +72,7 @@ def sweep(budget_seconds: float = 30.0) -> dict[str, int]:
     for name, phase in (
         ("checkpoints", _checkpoints),
         ("grants", _grants),
+        ("uploads", _uploads),
         ("blobs", _blobs),
         ("loose", _loose),
     ):
@@ -131,6 +137,17 @@ def _grants() -> tuple[int, bool]:
     with _batch():
         ids = list(RunBlob.unscoped.filter(run__status__in=FINISHED).values_list("pk", flat=True)[:BATCH])
         deleted, _ = RunBlob.unscoped.filter(pk__in=ids).delete()
+    return deleted, len(ids) == BATCH
+
+
+def _uploads() -> tuple[int, bool]:
+    with _batch():
+        ids = list(
+            Upload.unscoped.filter(created_at__lt=timezone.now() - UPLOAD_LIFETIME)
+            .order_by("created_at")
+            .values_list("pk", flat=True)[:BATCH]
+        )
+        deleted, _ = Upload.unscoped.filter(pk__in=ids).delete()
     return deleted, len(ids) == BATCH
 
 

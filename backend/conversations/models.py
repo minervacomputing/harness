@@ -30,6 +30,9 @@ class Message(TenantModel):
     run = models.ForeignKey(
         "runs.Run", null=True, blank=True, on_delete=models.SET_NULL, related_name="messages"
     )
+    # A user message's files, as they were added to the folder of its run's base version: [{"path", "size",
+    # "media_type"}].
+    attachments = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

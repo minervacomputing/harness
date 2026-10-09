@@ -1,8 +1,18 @@
 import type { AppendMessage, ThreadMessageLike } from '@assistant-ui/react'
-import type { ConversationDetail, EventOut, RunOut } from '@/api/types.gen'
+import type { AttachmentOut, ConversationDetail, EventOut, FolderChangesOut, FolderWarningsOut, RunOut } from '@/api/types.gen'
 import { ACTIVE_STATUSES } from '@/lib/run-stream'
+import type { Uploaded } from '@/lib/uploads'
 
-export type ToolCallResult = { decision: 'allowed' | 'denied' | 'error'; message?: string; label?: string }
+export type LocalTool = { tool: 'read' | 'write' | 'edit' | 'bash'; summary: string; excerpt: string }
+
+/** `local` is set on a call the agent ran in the conversation's folder rather than on a connected app. */
+export type ToolCallResult = { decision: 'allowed' | 'denied' | 'error'; message?: string; label?: string; local?: LocalTool }
+
+/** What a finished turn did to the folder; downloads come from `version`, the folder it left. */
+export type TurnFiles = { changes: FolderChangesOut | null; warnings: FolderWarningsOut | null; version: string | null }
+
+/** A user message's attachments, and the version (the run's start) that holds them. */
+export type MessageFiles = { attachments: AttachmentOut[]; version: string | null }
 
 /** Marks text the agent wrote between steps of its work, before its last tool call, rather than its answer. */
 export const NARRATION = 'narration'
@@ -13,8 +23,8 @@ type Part =
   | { type: 'tool-call'; toolCallId: string; toolName: string; args: Record<string, never>; result: ToolCallResult; isError: boolean }
 
 export type ChatMessage =
-  | { kind: 'user'; id: string; text: string; createdAt: string }
-  | { kind: 'assistant'; id: string; parts: Part[]; createdAt: string }
+  | { kind: 'user'; id: string; text: string; createdAt: string; files: MessageFiles }
+  | { kind: 'assistant'; id: string; parts: Part[]; createdAt: string; files?: TurnFiles }
   | { kind: 'progress'; id: string; parts: Part[]; phase: string }
   | { kind: 'failure'; id: string; parts: Part[]; text: string }
 
@@ -53,6 +63,17 @@ function collect(events: EventOut[]): { parts: Part[]; callOf: WeakMap<Part, unk
         args: data.arguments ?? {},
         result: { decision: data.decision, message: data.message, label: data.label },
         isError: data.decision !== 'allowed',
+      })
+    } else if (event.type === 'local_tool') {
+      const data = event.data as LocalTool & { ok: boolean }
+      const local = { tool: data.tool, summary: String(data.summary ?? ''), excerpt: String(data.excerpt ?? '') }
+      parts.push({
+        type: 'tool-call',
+        toolCallId: `${event.seq}`,
+        toolName: data.tool,
+        args: {},
+        result: { decision: data.ok ? 'allowed' : 'error', label: 'Files', local },
+        isError: !data.ok,
       })
     } else if (event.type === 'text_delta' || event.type === 'reasoning_delta') {
       const type = event.type === 'text_delta' ? 'text' : 'reasoning'
@@ -123,13 +144,14 @@ export function buildMessages(conversation: ConversationDetail | undefined, live
   for (const message of conversation.messages) {
     const run = message.run_id ? runs.get(message.run_id) : undefined
     if (message.role === 'user') {
-      out.push({ kind: 'user', id: message.id, text: message.content, createdAt: message.created_at })
+      const files = { attachments: message.attachments, version: run?.base_version_id ?? null }
+      out.push({ kind: 'user', id: message.id, text: message.content, createdAt: message.created_at, files })
       if (!run || answered.has(run.id)) continue
       const streamed = run.events.findLast(e => e.type === 'message')
       // One id for the run's answer, live or finished, so the message is not remounted when the run ends.
       if (streamed) {
         const parts = finishedParts(run.events, String(streamed.data.content ?? ''))
-        out.push({ kind: 'assistant', id: `run-${run.id}`, parts, createdAt: message.created_at })
+        out.push({ kind: 'assistant', id: `run-${run.id}`, parts, createdAt: message.created_at, files: turnFiles(run) })
       } else if (ACTIVE_STATUSES.has(run.status)) {
         out.push({ kind: 'progress', id: `run-${run.id}`, parts: partsFrom(run.events), phase: phaseOf(run, run.events) })
       } else if (run.status !== 'completed') {
@@ -138,16 +160,33 @@ export function buildMessages(conversation: ConversationDetail | undefined, live
       }
     } else if (message.role === 'assistant') {
       const parts = run ? finishedParts(run.events, message.content) : [{ type: 'text' as const, text: message.content }]
-      out.push({ kind: 'assistant', id: run ? `run-${run.id}` : message.id, parts, createdAt: message.created_at })
+      out.push({ kind: 'assistant', id: run ? `run-${run.id}` : message.id, parts, createdAt: message.created_at, files: run && turnFiles(run) })
     }
   }
   return out
 }
 
+function turnFiles(run: RunOut): TurnFiles | undefined {
+  if (!run.folder_changes && !run.folder_warnings) return undefined
+  return { changes: run.folder_changes, warnings: run.folder_warnings, version: run.result_version_id }
+}
+
 /** Shown while a message is on its way to the server, before the conversation refreshes. */
-export function pendingMessages(text: string): ChatMessage[] {
+/** Whether posting a message was refused before any run started (4xx, or 503 while the app is busy), so the
+ * composer may have it back. Anything else may have started the run. */
+export function refusedMessage(response: Response | undefined): boolean {
+  const status = response?.status ?? 0
+  return (status >= 400 && status < 500) || status === 503
+}
+
+/** The files a message being sent attaches, as the message will list them. */
+export function sendingAttachments(uploads: Uploaded[]): AttachmentOut[] {
+  return uploads.map(upload => ({ path: upload.name, size: upload.size, media_type: upload.media_type }))
+}
+
+export function pendingMessages(text: string, attachments: AttachmentOut[]): ChatMessage[] {
   return [
-    { kind: 'user', id: 'pending-user', text, createdAt: new Date().toISOString() },
+    { kind: 'user', id: 'pending-user', text, createdAt: new Date().toISOString(), files: { attachments, version: null } },
     { kind: 'progress', id: 'pending-run', parts: [], phase: 'Sending' },
   ]
 }
@@ -155,9 +194,30 @@ export function pendingMessages(text: string): ChatMessage[] {
 export function toThreadMessage(message: ChatMessage): ThreadMessageLike {
   switch (message.kind) {
     case 'user':
-      return { role: 'user', id: message.id, content: message.text, createdAt: new Date(message.createdAt) }
+      return {
+        role: 'user',
+        id: message.id,
+        content: message.text,
+        createdAt: new Date(message.createdAt),
+        attachments: message.files.attachments.map(file => ({
+          id: file.path,
+          type: 'file',
+          name: file.path,
+          contentType: file.media_type,
+          status: { type: 'complete' },
+          content: [],
+        })),
+        metadata: { custom: { files: message.files } },
+      }
     case 'assistant':
-      return { role: 'assistant', id: message.id, content: message.parts, createdAt: new Date(message.createdAt), status: { type: 'complete', reason: 'stop' } }
+      return {
+        role: 'assistant',
+        id: message.id,
+        content: message.parts,
+        createdAt: new Date(message.createdAt),
+        status: { type: 'complete', reason: 'stop' },
+        metadata: { custom: { files: message.files } },
+      }
     case 'progress':
       return { role: 'assistant', id: message.id, content: message.parts, status: { type: 'running' }, metadata: { custom: { phase: message.phase } } }
     case 'failure':
