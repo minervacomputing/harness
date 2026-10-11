@@ -3,6 +3,8 @@
 // additive only, never edited once deployed, and code accepts rows the previous and the next version write
 // (plan: Spike results, Versions). A step this code does not know, applied by a newer version, is left as is.
 
+import { durableSql, migrate as migrateSql } from "./sql.ts";
+
 export interface Migration {
 	/** Ascending and unique; never reused. */
 	id: number;
@@ -10,21 +12,9 @@ export interface Migration {
 	sql: string;
 }
 
-/** Applies the steps not yet applied, each in its own transaction. Returns the ids it applied. */
+/** Applies the steps not yet applied, each in its own transaction. Returns the ids it applied (lib/sql.ts). */
 export function migrate(storage: DurableObjectStorage, migrations: readonly Migration[]): number[] {
-	const sql = storage.sql;
-	sql.exec("CREATE TABLE IF NOT EXISTS _migrations (id INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
-	const applied = new Set(sql.exec<{ id: number }>("SELECT id FROM _migrations").toArray().map((row) => row.id));
-	const done: number[] = [];
-	for (const migration of [...migrations].sort((a, b) => a.id - b.id)) {
-		if (applied.has(migration.id)) continue;
-		storage.transactionSync(() => {
-			sql.exec(migration.sql);
-			sql.exec("INSERT INTO _migrations (id, applied_at) VALUES (?, ?)", migration.id, Date.now());
-		});
-		done.push(migration.id);
-	}
-	return done;
+	return migrateSql(durableSql(storage), migrations, Date.now());
 }
 
 /** The ids of the steps applied so far, ascending. */

@@ -1,23 +1,1168 @@
-// The Conversation Durable Object. Step 2 builds it to `ConversationApi` (contracts/conversation.ts) as an
-// Agents SDK `Agent` running pi-durable through PiHarness: messages, runs and attempts, events, the write
-// ledger, page tokens, folder versions and the executor. Until then it holds only its schema record.
+// The Conversation Durable Object (contracts/conversation.ts; plan: Data placement, Protocols): one per chat.
+// It extends the Agents SDK's Agent and runs pi-durable through PiHarness, one pi session per run, with the
+// `minerva` extension's tools and the model wrapper of src/model/. It owns its messages, runs, attempts and
+// run events, and the start protocol's side of the Workspace's registry. Nothing routes to it but our own
+// typed RPC and the stream's WebSocket (no `routeAgentRequest`).
+//
+// Every event that opens pi (an RPC, a request, an alarm) goes through PiHarness's harness factory, where
+// the attempt gate runs first, before `Harness.open` (plan: Attempts and recovery). The constructor holds
+// nothing of PiHarness: the platform sometimes builds an instance it never delivers an event to.
 
-import { DurableObject } from "cloudflare:workers";
+import { createModels } from "@earendil-works/pi-ai";
+import {
+	AssistantEntry,
+	type CommitPublication,
+	type ConversationId as PiConversationId,
+	createRegistry,
+	type EntryRecord,
+	type Extension,
+	Harness,
+	type HarnessSettings,
+	ProviderDoc,
+	type Registry,
+	type SubmissionRecord,
+	type ToolRegistration,
+	type Tx,
+	UserEntry,
+} from "@earendil-works/pi-durable";
+import type { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
+import { Agent } from "agents";
+import { PiHarness } from "agents/harness/pi";
+import { settings } from "../config.ts";
+import type { FolderOut, MessageIn, MessageOut } from "../contracts/api.ts";
+import type { AttemptFence, Caller, Json, Outcome, Refusal, RunId, VersionId } from "../contracts/common.ts";
+import type { CancelAck, ConversationApi, ConversationInit, DownloadTarget, EventPage } from "../contracts/conversation.ts";
+import type { RunEvent } from "../contracts/events.ts";
+import type { CredentialPort, Executor, RunStatePort, ToolCallOutcome, ToolDeclaration } from "../contracts/executor.ts";
+import type { CancelReason, ConversationHead, PostedView, RunEnd, RunHead, RunSnapshot } from "../contracts/runs.ts";
+import type { CredentialPayload } from "../contracts/connectors.ts";
+import { connectorRegistry } from "../connectors/index.ts";
+import type { Registry as ConnectorRegistry } from "../gateway/registry.ts";
+import { modelTools } from "../gateway/tools.ts";
 import { type About, identity } from "../lib/about.ts";
-import { appliedMigrations, type Migration, migrate } from "../lib/sqlite.ts";
+import { KeyRing } from "../lib/fernet.ts";
+import { parseJson } from "../lib/json.ts";
+import { isUuid, uuid7 } from "../lib/random.ts";
+import { appliedMigrations, migrate } from "../lib/sqlite.ts";
+import { codePointLength, pythonStrip, sliceCodePoints } from "../lib/text.ts";
+import { MODEL_REF, MINERVA_API, MINERVA_PROVIDER, MODEL_ALIAS, minervaProvider, type ModelHost } from "../model/provider.ts";
+import { routeOf } from "../model/route.ts";
+import { START_FAILED } from "../workspace/core.ts";
+import {
+	ACTING,
+	ACTIVE,
+	CANCELLED,
+	COMPLETED,
+	endFor,
+	phaseEvent,
+	phaseOf,
+	START_EXPIRED,
+	statusEvent,
+	TIMED_OUT,
+	WORKER_EXITED,
+	WORKER_FAILED,
+} from "./events.ts";
+import { decideGate, type PiWork, classifyWork } from "./gate.ts";
+import { HISTORY_LIMIT, historyOf, promptOf, recentHistory, sessionInstructions } from "./history.ts";
+import { type ConversationPorts, type FolderPort, PORTS, type PortsContext, runStatePort, type WorkspaceClient, type WriteLedger } from "./ports.ts";
+import { ToolQueue } from "./queue.ts";
+import { MIGRATIONS } from "./schema.ts";
+import { type RunRow, RunStore, type StartRow } from "./store.ts";
+import { RunStream } from "./stream.ts";
+import { connectorTool, isWrite, RUN_ENDED_MESSAGE, type ToolHost } from "./tools.ts";
 
-/** Additive only; see lib/sqlite.ts. */
-const MIGRATIONS: Migration[] = [];
+/** chord's background context: never cancelled, no values. */
+const BG = Object.freeze({ abortSignal: undefined, value: () => undefined, toString: () => "[Context minerva-conversation]" });
 
-export class Conversation extends DurableObject<Env> {
+/** Longer than a turn runs in practice: partial answers and tool output are not committed while they stream. */
+const NEVER_MS = 2_000_000_000;
+
+/**
+ * pi's settings (harness 3.1): a failed model call ends the turn, as today (any retry delay pi might use
+ * stays at or under 60 s, so a long wait is never mistaken for a restart); no background compaction; no
+ * partial commits, so an interrupted answer is asked again; and no context kept in memory after a turn,
+ * which would keep every object active, and billed, for 10 minutes (spike: PiHarness, fact 17).
+ */
+const PI_SETTINGS: HarnessSettings = {
+	retry: { enabled: false, maxAgentDelayMs: 60_000 },
+	compaction: { backgroundTokens: 0 },
+	progress: { partialIntervalMs: NEVER_MS, outputIntervalMs: NEVER_MS },
+	stream: { maxRetryDelayMs: 60_000 },
+	contextRetentionMs: 0,
+};
+
+/** Today's answer for a second message while a run is active (runs 3.1). */
+export const BUSY_MESSAGE = "Wait for the current answer to finish, or stop it.";
+export const EMPTY_MESSAGE = "Write a message or attach a file.";
+/** A watch job wakes the object this long after a run is stored, until pi has its input (plan: Attempts and recovery). */
+export const WATCH_MS = 20_000;
+/** An answer is a WorkerEvent text of at most this many characters today; a longer one failed its run. */
+export const ANSWER_CHARS = 100_000;
+/** The lost-write sweep runs this long after a dispatch at the latest: the write window and its grace. */
+const SWEEP_AFTER_MS = 60_000 + 30_000;
+const LOST_WRITE_GRACE_MS = 30_000;
+/**
+ * A job waits this long for another object's answer: Lifecycle drives due jobs one after another, so a hung
+ * call must not hold the deadline behind it. The call itself goes on; the job tries again later.
+ */
+const RPC_WAIT_MS = 10_000;
+const RELEASE_RETRY_MS = 30_000;
+const LIVE_TASKS = ["pending", "running", "waiting", "completing"] as const;
+
+/** Ninja's `get_object_or_404` (web-api 3): another user's conversation looks like none. */
+const NOT_FOUND = { status: 404, detail: "Not Found" } as const;
+
+type Job = { fn: string; payload?: unknown; job: { id: string; payload: unknown } };
+
+export class Conversation extends Agent<Env> implements ConversationApi {
+	/** Set once the gate's decision is committed, so a factory that throws runs the gate again. */
+	#gated = false;
+	/** Runs the gate gave a new attempt in this instance. */
+	readonly #restarted = new Set<RunId>();
+	#piStorage: SqliteStorage | null = null;
+	#registry: Registry | null = null;
+	/** The connector registry the run's executor reads (connectors/index.ts), loaded in the factory. */
+	#connectors: ConnectorRegistry | null = null;
+	readonly #store: RunStore;
+	readonly #stream: RunStream;
+	readonly #ports: ConversationPorts;
+	#ledgerInstance: WriteLedger | null = null;
+	#keyRing: Promise<KeyRing> | null = null;
+	readonly #queues = new Map<RunId, ToolQueue>();
+	readonly #executors = new Map<RunId, Executor>();
+	readonly #controllers = new Map<RunId, AbortController>();
+	readonly #running = new Map<RunId, Map<string, string>>();
+	readonly #phases = new Map<RunId, string>();
+	readonly #loops = new Map<RunId, Promise<void>>();
+	readonly #activations = new Map<RunId, Promise<void>>();
+	readonly #begins = new Map<RunId, Promise<Outcome<PostedView>>>();
+
+	readonly harness = new PiHarness({
+		harness: ({ storage, context }) => this.#openPi(storage, context),
+		defaults: { model: { provider: MODEL_REF.provider, id: MODEL_REF.modelId } },
+	});
+
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
-		void ctx.blockConcurrencyWhile(async () => {
-			migrate(ctx.storage, MIGRATIONS);
+		migrate(ctx.storage, MIGRATIONS);
+		this.#store = new RunStore(ctx.storage);
+		this.#store.watchTransactions();
+		this.#stream = new RunStream(ctx, () => this.#store);
+		this.#ports = PORTS.factory(env);
+		this.#store.listen(
+			{
+				appended: (runId, event) => this.#stream.broadcast(runId, event),
+				ended: (runId) => this.#afterFinish(runId),
+			},
+			(run) => this.#folder()?.publish(run.id, { baseVersionId: run.base_version_id, checkpointVersionId: run.checkpoint_version_id, status: run.status }) ?? {
+				resultVersionId: run.checkpoint_version_id ?? run.base_version_id,
+				changes: null,
+			},
+		);
+		this.lifecycle.use(this.#stream as never).use(this.harness);
+	}
+
+	/** Not async, so it answers without opening pi (the probe and the platform tests call it). */
+	about(): Promise<About<"conversation">> {
+		return Promise.resolve({ kind: "conversation", ...identity(this.ctx), migrations: appliedMigrations(this.ctx.storage) });
+	}
+
+	// The RPC surface (ConversationApi). Async methods start the Agent's lifecycle first, which opens pi
+	// through the factory, so the gate runs before any of them.
+
+	async init(input: ConversationInit): Promise<void> {
+		if (!this.#store.init(input)) throw new Error("This conversation already has another owner, workspace or agent.");
+	}
+
+	async getConversation(caller: Caller): Promise<ConversationHead | null> {
+		const conversation = this.#owned(caller);
+		return conversation ? this.#store.conversationHead(conversation) : null;
+	}
+
+	async getRun(caller: Caller, runId: RunId): Promise<RunHead | null> {
+		const run = this.#ownedRun(caller, runId);
+		return run ? this.#store.runHead(run) : null;
+	}
+
+	async getRunEvents(caller: Caller, runId: RunId, page: EventPage): Promise<RunEvent[] | null> {
+		const run = this.#ownedRun(caller, runId);
+		if (!run) return null;
+		// The Worker sends whole numbers; anything else reads as an empty page rather than a failed call.
+		if (![page.after, page.upTo, page.limit].every((value) => Number.isSafeInteger(value) && value >= 0)) return [];
+		return this.#store.events(runId, page);
+	}
+
+	async postMessage(caller: Caller, input: Required<MessageIn>): Promise<Outcome<PostedView>> {
+		const conversation = this.#owned(caller);
+		if (!conversation) return { ok: false, refusal: NOT_FOUND };
+		// MessageIn is validated by the Worker (20,000 characters, at most 100 UUIDs, no lone surrogate, which
+		// Pydantic refuses as string_unicode); anything else here is a bug, not a user's input.
+		if (
+			typeof input.content !== "string" ||
+			!input.content.isWellFormed() ||
+			!Array.isArray(input.attachments) ||
+			!input.attachments.every((id) => typeof id === "string" && isUuid(id))
+		) {
+			throw new TypeError("The Worker validates a message before it reaches the conversation.");
+		}
+		if (pythonStrip(input.content) === "" && input.attachments.length === 0) return { ok: false, refusal: { status: 400, detail: EMPTY_MESSAGE } };
+		const runId = uuid7();
+		const accepted = await this.#store.outside(() =>
+			this.#store.write(() => {
+				// A start in flight counts as an active run: its message may still be stored.
+				if (this.#store.activeRun() || this.#store.starts().length) return false;
+				this.#store.addStart({ runId, userId: caller.userId, content: input.content, uploadIds: input.attachments, createdAt: this.#store.now() });
+				return true;
+			}),
+		);
+		if (!accepted) return { ok: false, refusal: { status: 409, detail: BUSY_MESSAGE } };
+		return this.#begin(runId);
+	}
+
+	async cancelRun(caller: Caller, runId: RunId): Promise<RunHead | null> {
+		// Outside pi's transactions (store.ts `outside`): the answer says the run was stopped.
+		return this.#store.outside(() => {
+			const run = this.#ownedRun(caller, runId);
+			if (!run) return null;
+			if (ACTIVE.has(run.status)) this.#store.finish(runId, CANCELLED);
+			return this.#store.runHead(this.#store.run(runId) as RunRow);
 		});
 	}
 
-	async about(): Promise<About<"conversation">> {
-		return { kind: "conversation", ...identity(this.ctx), migrations: appliedMigrations(this.ctx.storage) };
+	/** The revocation's cancel (plan: Strict revocation): acknowledged only once the flag is committed on its own. */
+	async cancel(runId: RunId, reason: CancelReason, entryId: number): Promise<CancelAck> {
+		return this.#store.outside((): CancelAck => {
+			const run = this.#store.run(runId);
+			if (run) {
+				if (!ACTIVE.has(run.status)) return { runId, state: "ended" };
+				this.#store.write(() => {
+					this.#store.revoke(runId);
+					this.#store.finish(runId, endFor(reason));
+				});
+				return { runId, state: "stopping" };
+			}
+			this.#store.write(() => this.#store.addTombstone(runId, reason, entryId));
+			return { runId, state: "tombstoned" };
+		});
 	}
+
+	async listFiles(caller: Caller, versionId: VersionId | null): Promise<FolderOut | null> {
+		if (!this.#owned(caller)) return null;
+		return this.#folder()?.list(versionId) ?? null;
+	}
+
+	async resolveDownload(caller: Caller, versionId: VersionId | null, path: string): Promise<DownloadTarget | null> {
+		if (!this.#owned(caller)) return null;
+		return this.#folder()?.resolve(versionId, path) ?? null;
+	}
+
+	/**
+	 * Deletes the conversation (plan: Files, Deletion): tombstoned first, so it refuses new runs; its active
+	 * run cancelled ("Stopped.") and pi stopped; its objects in R2 deleted; then the Agent's own teardown
+	 * deletes all storage and resets the object, so the caller may see the connection break after this
+	 * resolves. The Workspace drives it, and calls it again until it returns.
+	 */
+	override async destroy(): Promise<void> {
+		await this.lifecycle.start();
+		const run = await this.#store.outside(() => {
+			const active = this.#store.activeRun();
+			this.#store.write(() => {
+				this.#store.markDeleted();
+				for (const start of this.#store.starts()) this.#store.addTombstone(start.run_id, "cancelled", 0);
+				if (active) {
+					this.#store.revoke(active.id);
+					this.#store.finish(active.id, CANCELLED);
+				}
+			});
+			return active;
+		});
+		this.#stream.closeAll();
+		if (run) await this.#stopPi(run.id).catch((error: unknown) => this.#log("pi did not stop", error));
+		await this.#folder()?.deleteObjects();
+		await super.destroy();
+	}
+
+	// The start protocol (plan: Starting a run).
+
+	/** One start at a time per run: a resumed start and the message's own share the same `beginRun`. */
+	#begin(runId: RunId): Promise<Outcome<PostedView>> {
+		const running = this.#begins.get(runId);
+		if (running) return running;
+		const work = this.#beginOnce(runId).finally(() => this.#begins.delete(runId));
+		this.#begins.set(runId, work);
+		return work;
+	}
+
+	/** `beginRun`, the copies, then one transaction; a refusal leaves nothing behind. */
+	async #beginOnce(runId: RunId): Promise<Outcome<PostedView>> {
+		const start = this.#store.start(runId);
+		const conversation = this.#store.conversation();
+		if (!start || !conversation) return { ok: false, refusal: NOT_FOUND };
+		const folder = this.#folder() as FolderPort;
+		const usage = folder.usage();
+		const uploadIds = idsOf(start);
+		const workspace = this.#workspace();
+		// If anything below fails, the watch sends the start again (`beginRun` is idempotent by run id) until it
+		// is stored or refused, so a marker never holds the conversation busy.
+		await this.lifecycle.jobs.push({ id: `watch:${runId}`, fn: "watch", time: Date.now() + WATCH_MS, payload: { runId } });
+		const answer = await workspace.beginRun({
+			runId,
+			conversationId: conversation.id,
+			userId: start.user_id,
+			agentId: conversation.agent_id,
+			uploadIds,
+			folder: { bytes: usage.bytes, entries: usage.entries },
+		});
+		if (!answer.ok) {
+			// Released too: a resumed start the Workspace registered, then refused as revoked, would keep its
+			// uploads reserved until it expired. A run the Workspace never registered is not affected.
+			return this.#refuseStart(runId, answer);
+		}
+		const prepared = await folder.prepareAttachments(runId, answer.value.uploads);
+		if (!prepared.ok) return this.#refuseStart(runId, prepared);
+		const limits = settings(this.env).files;
+		let stored: string | null;
+		try {
+			// Outside pi's transactions (store.ts `outside`): the answer says the run was stored.
+			stored = await this.#store.outside(() =>
+				this.#store.write(() => {
+					const current = this.#store.conversation();
+					if (!this.#store.start(runId) || !current) return null;
+					if (current.deleted_at !== null) {
+						this.#store.deleteStart(runId);
+						this.#store.addRelease(runId);
+						return null;
+					}
+					const now = this.#store.now();
+					const { baseVersionId, attachments } = folder.commitAttachments(runId, prepared.value);
+					const snapshot: RunSnapshot = {
+						...answer.value.snapshot,
+						runId,
+						baseVersionId,
+						attachments,
+						limits: { folderBytes: limits.folderBytes, folderEntries: limits.folderEntries, runUploadBytes: limits.runUploadBytes },
+					};
+					const messageId = uuid7(now);
+					this.#store.insertMessage({ id: messageId, role: "user", content: start.content, attachments, runId, createdAt: now });
+					this.#store.insertRun({ id: runId, snapshot, deadline: snapshot.deadline, baseVersionId, createdAt: now });
+					this.#store.append(runId, statusEvent({ status: "queued" }));
+					const title = current.title ? undefined : sliceCodePoints(start.content || attachments.map((item) => item.path).join(", "), 0, 80);
+					this.#store.touch({ title });
+					this.#store.deleteStart(runId);
+					// Pushed in this transaction (Lifecycle's queue is SQL), so a stored run always has its wake-up.
+					this.#push({ id: `watch:${runId}`, fn: "watch", time: now + WATCH_MS, payload: { runId } });
+					if (snapshot.deadline !== null) this.#push({ id: `deadline:${runId}`, fn: "deadline", time: snapshot.deadline, payload: { runId } });
+					// A cancel that arrived during the awaits: stored as cancelled, as when a grant change races a start.
+					const tombstone = this.#store.tombstone(runId);
+					if (tombstone) {
+						this.#store.revoke(runId);
+						this.#store.finish(runId, endFor(tombstone.reason));
+					}
+					return messageId;
+				}),
+			);
+		} catch (error) {
+			// The store refused the start (a value or a row past the platform's limits, say). That would happen
+			// again every time the watch sent it, holding the conversation busy: it is refused now instead, and
+			// its registration released (plan: Starting a run: a refusal leaves nothing behind).
+			this.#log("a start could not be stored", error);
+			return this.#refuseStart(runId, { ok: false, refusal: { status: 503, detail: START_FAILED } });
+		}
+		if (stored === null) {
+			// Deleted meanwhile: the registration is released. A run another flow stored is left alone.
+			if (this.#store.releases().includes(runId)) this.#defer(() => this.#releaseRefused(runId));
+			return { ok: false, refusal: NOT_FOUND };
+		}
+		this.#touchIndex();
+		const run = this.#store.run(runId) as RunRow;
+		if (ACTIVE.has(run.status)) this.#defer(() => this.#activate(runId));
+		const head = this.#store.runHead(run);
+		const { eventSeq, ...view } = head;
+		return {
+			ok: true,
+			value: {
+				message: this.#store.message(stored) as MessageOut,
+				run: { ...view, events: this.#store.events(runId, { after: 0, upTo: eventSeq, limit: 1000 }) },
+			},
+		};
+	}
+
+	/** A refused start: its marker deleted and its registration released in one write, the release retried until heard. */
+	async #refuseStart(runId: RunId, refusal: { ok: false; refusal: Refusal }): Promise<Outcome<PostedView>> {
+		await this.#store.outside(() =>
+			this.#store.write(() => {
+				this.#store.deleteStart(runId);
+				this.#store.addRelease(runId);
+			}),
+		);
+		this.#defer(() => this.#releaseRefused(runId));
+		return refusal;
+	}
+
+	/**
+	 * `activate` (step 5): until the Workspace answers, sent again by the watch job and whenever the object
+	 * starts. Active: the run is provisioned and its loop starts. Revoked: it stops with that reason. Expired:
+	 * it fails (`start_expired`). Ended: the Workspace no longer tracks it, so no revocation could reach it;
+	 * it stops ("Stopped.").
+	 */
+	#activate(runId: RunId): Promise<void> {
+		const running = this.#activations.get(runId);
+		if (running) return running;
+		const work = (async () => {
+			const run = this.#store.run(runId);
+			if (!run || run.activated || !ACTIVE.has(run.status)) return;
+			const answer = await this.#workspace().activate(runId);
+			if (answer.state === "active") {
+				if (await this.#store.outside(() => this.#store.activate(runId))) await this.#startLoop(runId);
+				return;
+			}
+			const end: RunEnd = answer.state === "revoked" ? endFor(answer.reason) : answer.state === "expired" ? START_EXPIRED : CANCELLED;
+			await this.#store.outside(() =>
+				this.#store.write(() => {
+					this.#store.update(runId, { activated: 1 });
+					if (answer.state === "revoked") this.#store.revoke(runId);
+					this.#store.finish(runId, end);
+				}),
+			);
+		})().finally(() => this.#activations.delete(runId));
+		this.#activations.set(runId, work);
+		return work;
+	}
+
+	/**
+	 * The loop starts: `running` (once per attempt), the run's tools installed, its pi session created with
+	 * the history replay (only here, never on resume), and its prompt submitted once, as `run:<id>`.
+	 */
+	#startLoop(runId: RunId): Promise<void> {
+		const running = this.#loops.get(runId);
+		if (running) return running;
+		const work = (async () => {
+			const run = this.#store.run(runId);
+			if (!run || !ACTING.has(run.status) || !run.activated) return;
+			const fence = { runId, attempt: run.attempt };
+			if (!this.#store.isCurrent(fence)) return;
+			this.#store.startAttempt(fence);
+			this.#phase(fence, this.#restarted.has(runId) ? "Resuming the agent" : "Starting the agent");
+			this.#installTools(run);
+			let session = run.session;
+			if (session === null) {
+				const pi = await this.harness.pi();
+				const snapshot = this.#store.snapshot(run);
+				const history = recentHistory(historyOf(this.#store.storedMessages(runId, HISTORY_LIMIT), runId));
+				let providerSession: string | null = null;
+				const created = await pi.createConversation(
+					{
+						ownership: { kind: "ownerless" },
+						// The local tools (read, write, edit, bash) join in step 3, and with them the folder's paragraph.
+						agent: { model: { ...MODEL_REF }, instructions: sessionInstructions(snapshot.instructions, []) },
+						init: async (tx: Tx, id: PiConversationId) => {
+							providerSession = (await tx.doc(ProviderDoc, id)).sessionId;
+							await replay(tx, id, history);
+						},
+					},
+					BG,
+				);
+				session = await this.#store.outside(() => this.#store.claimSession(runId, String(created.id), providerSession));
+			}
+			if (session === null || !this.#store.isCurrent(fence)) return;
+			this.#showPhase(fence);
+			await this.harness.submit(promptOf(this.#store.storedMessages(runId, HISTORY_LIMIT), runId), { session, operationId: `run:${runId}` });
+		})().finally(() => this.#loops.delete(runId));
+		this.#loops.set(runId, work);
+		return work;
+	}
+
+	/** After a restart of the object: the starts in flight, activations not answered, releases not heard. */
+	async #recover(): Promise<void> {
+		for (const start of this.#store.starts()) await this.#begin(start.run_id).catch((error: unknown) => this.#log("a start could not resume", error));
+		const run = this.#store.activeRun();
+		if (run && !run.activated) await this.#activate(run.id).catch((error: unknown) => this.#log("activation failed", error));
+		for (const ended of this.#store.unreleased()) await this.#release(ended);
+		for (const runId of this.#store.releases()) await this.#releaseRefused(runId);
+	}
+
+	// The harness factory and the attempt gate (plan: Attempts and recovery).
+
+	async #openPi(storage: SqliteStorage, context: Parameters<typeof Harness.open>[2]): Promise<Harness> {
+		this.#piStorage = storage;
+		if (!this.#gated) {
+			await this.#gate(storage);
+			// Only after the decision is committed: a factory that throws before this runs the gate again.
+			this.#gated = true;
+		}
+		// After the gate, before any run's tools are built from it.
+		this.#connectors ??= await connectorRegistry();
+		const models = createModels();
+		models.setProvider(
+			minervaProvider({
+				route: () => routeOf(settings(this.env)),
+				upstream: (route) => this.#ports.upstream(route, this.#portsContext() as PortsContext),
+				host: this.#modelHost(),
+			}),
+		);
+		const registry = createRegistry();
+		this.#registry = registry;
+		const active = this.#store.activeRun();
+		registry.install(this.#extension(active && ACTING.has(active.status) ? active : null));
+		const pi = await Harness.open(storage, { models, registry, settings: PI_SETTINGS, onReport: (error) => this.#log("pi reported", error) }, context);
+		pi.subscribeCommits((publication) => this.#onPiCommit(publication));
+		await this.#stopEnded(pi, context);
+		return pi;
+	}
+
+	/**
+	 * First in the factory, once per instance: a restart is pi opening in a new instance while an activated
+	 * `provisioning` or `running` run has unsettled pi work. The decision is one transaction, with the dead
+	 * instance's dispatched writes marked uncertain in it, then synced before pi opens, so a crash right
+	 * after cannot lose the count. Nothing here waits on anything outside this object.
+	 */
+	async #gate(storage: SqliteStorage): Promise<void> {
+		const run = this.#store.activeRun();
+		const acting = run !== null && run.activated === 1 && ACTING.has(run.status);
+		const work = acting ? await piWork(storage, run) : null;
+		const decision = decideGate(run ? { status: run.status, attempt: run.attempt, activated: run.activated === 1, deadline: run.deadline } : null, work, Date.now());
+		if (decision.kind === "none" || run === null) return;
+		// The test build's fault points (ConversationPorts.gate); production has none, and awaits nothing here.
+		const point = this.#ports.gate;
+		if (point) await point(this.#portsContext() as PortsContext, "decided", decision.kind);
+		// Outside any transaction of pi's (store.ts `outside`), so the count cannot roll back; none is open
+		// before pi opens, so this does not wait.
+		await this.#store.outside(() =>
+			this.#store.write(() => {
+				if (acting) this.#ledger().markDispatchedUncertain(run.id);
+				if (decision.kind === "timed_out") this.#store.finish(run.id, TIMED_OUT);
+				else if (decision.kind === "worker_exited") this.#store.finish(run.id, WORKER_EXITED);
+				else this.#store.restart(run.id, decision.attempt);
+			}),
+		);
+		if (decision.kind === "restart") this.#restarted.add(run.id);
+		await this.ctx.storage.sync();
+		if (point) await point(this.#portsContext() as PortsContext, "committed", decision.kind);
+	}
+
+	/**
+	 * Before PiHarness resumes pi: every live task of a session whose run is not active (the gate's ends,
+	 * cancels and revocations while the object was away, orphaned sessions), background compactions
+	 * included, is marked with `abortTask`, and queued inputs are withdrawn with `abortSubmission`, all
+	 * started in one synchronous stretch, so the paused scheduler reserves nothing meanwhile. The abort
+	 * handlers run once pi resumes.
+	 */
+	async #stopEnded(pi: Harness, context: Parameters<typeof Harness.open>[2]): Promise<void> {
+		const inspection = await pi.inspect(context);
+		const sessions = this.#store.sessions();
+		const ended = new Set<number>();
+		for (const task of inspection.tasks) if (sessions.get(String(task.record.conversationId)) !== true) ended.add(task.record.conversationId);
+		for (const submission of inspection.submissions) if (sessions.get(String(submission.conversationId)) !== true) ended.add(submission.conversationId);
+		if (!ended.size) return;
+		const marks: Promise<unknown>[] = [];
+		for (const task of inspection.tasks) if (ended.has(task.record.conversationId)) marks.push(pi.abortTask(task.record.id, context));
+		for (const submission of inspection.submissions) {
+			if (ended.has(submission.conversationId) && submission.status === "queued") marks.push(pi.abortSubmission(submission.id, context, submission.conversationId));
+		}
+		await Promise.all(marks);
+	}
+
+	/** After the factory and pi's resume: the attempt runs, a lost submit is sent again, a settled run is reconciled. */
+	override async onStart(): Promise<void> {
+		const run = this.#store.activeRun();
+		if (run && run.activated === 1 && ACTING.has(run.status) && this.#piStorage) {
+			const work = await piWork(this.#piStorage, run);
+			if (work === "settled") this.#defer(() => this.#reconcile(run.id).catch((error: unknown) => this.#settleLater(run.id, error)));
+			else if (work === "not_submitted") this.#defer(() => this.#startLoop(run.id));
+			else if (this.#restarted.has(run.id)) {
+				// The gate's new attempt: running again (`{status: "running"}`, no attempt key), then its phases.
+				const fence = { runId: run.id, attempt: run.attempt };
+				this.#store.startAttempt(fence);
+				this.#phase(fence, "Resuming the agent");
+				this.#showPhase(fence);
+			}
+		}
+		// Streams this instance did not accept may have missed events: their clients reconnect from where they are.
+		this.#stream.resetInherited();
+		this.#defer(() => this.#recover());
+	}
+
+	/** Lifecycle jobs of the host: the start watch, the deadline, the lost-write sweep, pending releases. */
+	override _onHostJob(fn: string, context: Parameters<Agent<Env>["_onHostJob"]>[1]) {
+		const runId = runOfPayload((context as unknown as Job).job.payload);
+		if (fn === "watch" && runId) return this.#watch(runId);
+		if (fn === "deadline" && runId) return this.#deadline(runId);
+		if (fn === "sweep") return this.#sweep();
+		if (fn === "release") return this.#retryReleases();
+		return super._onHostJob(fn, context);
+	}
+
+	/**
+	 * The start's wake-up, until pi has the run's input: a start whose `beginRun` failed is sent again, an
+	 * activation not answered is sent again, and an activated run pi has no submission for is submitted.
+	 */
+	async #watch(runId: RunId): Promise<{ rescheduleAt: number } | undefined> {
+		const again = { rescheduleAt: Date.now() + WATCH_MS };
+		if (this.#store.start(runId)) {
+			await within(this.#begin(runId), RPC_WAIT_MS).catch((error: unknown) => this.#log("a start could not resume", error));
+			if (this.#store.start(runId)) return again;
+		}
+		const run = this.#store.run(runId);
+		if (!run || !ACTIVE.has(run.status)) return undefined;
+		if (!run.activated) {
+			await within(this.#activate(runId), RPC_WAIT_MS).catch((error: unknown) => this.#log("activation failed", error));
+			if (!this.#store.run(runId)?.activated) return again;
+		}
+		const work = async (): Promise<PiWork | null> => {
+			const now = this.#store.run(runId);
+			return now !== null && ACTING.has(now.status) && this.#piStorage !== null ? piWork(this.#piStorage, now) : null;
+		};
+		const before = await work();
+		// In progress: pi's own wake job drives it from here.
+		if (before === null || before === "in_progress") return undefined;
+		if (before === "settled") await this.#reconcile(runId).catch((error: unknown) => this.#log("a settled run could not be reconciled", error));
+		else await this.#startLoop(runId).catch((error: unknown) => this.#log("the loop could not start", error));
+		const after = await work();
+		return after === "settled" || after === "not_submitted" ? again : undefined;
+	}
+
+	#deadline(runId: RunId): Promise<{ rescheduleAt: number } | undefined> {
+		return this.#store.outside(() => {
+			const run = this.#store.run(runId);
+			if (!run || !ACTIVE.has(run.status) || run.deadline === null) return undefined;
+			if (run.deadline > Date.now()) return { rescheduleAt: run.deadline };
+			this.#store.finish(runId, TIMED_OUT);
+			return undefined;
+		});
+	}
+
+	#sweep(): Promise<{ rescheduleAt: number } | undefined> {
+		return this.#store.outside(() => {
+			const { nextAt } = this.#store.write(() => this.#ledger().sweepLostWrites(Date.now()));
+			return nextAt === null ? undefined : { rescheduleAt: nextAt };
+		});
+	}
+
+	async #retryReleases(): Promise<{ rescheduleAt: number } | undefined> {
+		for (const run of this.#store.unreleased()) await this.#release(run);
+		for (const runId of this.#store.releases()) await this.#releaseRefused(runId);
+		return this.#store.unreleased().length || this.#store.releases().length ? { rescheduleAt: Date.now() + RELEASE_RETRY_MS } : undefined;
+	}
+
+	// pi's side of a run.
+
+	/** pi's commits as they are adopted: a settled `run:<id>` submission ends the run. Never throws. */
+	#onPiCommit(publication: CommitPublication): void {
+		try {
+			const entries = new Map<number, EntryRecord>();
+			for (const change of publication.changes) if (change.type === "entry") entries.set(change.value.id, change.value);
+			for (const change of publication.changes) {
+				if (change.type !== "submission") continue;
+				const submission = change.value;
+				if (!submission.requestId?.startsWith("run:")) continue;
+				if (submission.status !== "done" && submission.status !== "unanswered") continue;
+				const runId = submission.requestId.slice(4);
+				this.#settle(runId, submission, entries).catch((error: unknown) => this.#settleLater(runId, error));
+			}
+		} catch (error) {
+			this.#log("a pi commit could not be read", error);
+		}
+	}
+
+	/** pi will not publish a settlement again: a failed one is retried by the watch, which reconciles it. */
+	#settleLater(runId: RunId, error: unknown): void {
+		this.#log("a settled run could not be ended", error);
+		if (this.#store.run(runId)) this.#push({ id: `watch:${runId}`, fn: "watch", time: Date.now() + WATCH_MS, payload: { runId } });
+	}
+
+	async #settle(runId: RunId, submission: SubmissionRecord, entries: Map<number, EntryRecord>): Promise<void> {
+		const run = this.#store.run(runId);
+		if (!run || !ACTIVE.has(run.status)) return;
+		const fence = { runId, attempt: run.attempt };
+		if (submission.status === "unanswered") {
+			this.#log(`the model turn ended without an answer (${submission.reason})`);
+			await this.#fail(fence, WORKER_FAILED);
+			return;
+		}
+		if (submission.status !== "done" || submission.type !== "input") return;
+		const entry = entries.get(submission.answer) ?? (await this.#entry(run, submission.answer));
+		await this.#complete(fence, answerText(entry));
+	}
+
+	/** pi settled the run's submission while the object was away: reconcile from pi's record, stop what is left. */
+	async #reconcile(runId: RunId): Promise<void> {
+		const run = this.#store.run(runId);
+		if (!run || run.session === null || !this.#piStorage) return;
+		const submission = await this.#piStorage.submissionByRequest(Number(run.session) as PiConversationId, `run:${runId}`, BG);
+		if (submission) await this.#settle(runId, submission, new Map());
+		await this.#stopPi(runId);
+	}
+
+	async #entry(run: RunRow, id: number): Promise<EntryRecord | undefined> {
+		const pi = await this.harness.pi();
+		const conversation = await pi.conversation(Number(run.session) as PiConversationId, BG);
+		return (await conversation?.entries({ minEntryId: id as never, maxEntryId: id as never }, 1, undefined, BG))?.items[0];
+	}
+
+	/**
+	 * `complete` (runs 2.2): the assistant message, the `message` event and `completed`, in one transaction and
+	 * in that order, only while the attempt is current. An empty answer, or one past what a WorkerEvent could
+	 * carry, fails the run instead, as today. Outside pi's transactions (store.ts `outside`), as every end.
+	 */
+	async #complete(fence: AttemptFence, text: string): Promise<void> {
+		if (!text || codePointLength(text) > ANSWER_CHARS) {
+			this.#log(text ? "the answer is too long" : "the model turn ended without a response");
+			await this.#fail(fence, WORKER_FAILED);
+			return;
+		}
+		await this.#store.outside(() =>
+			this.#store.write(() => {
+				if (!this.#store.isCurrent(fence)) return;
+				const now = this.#store.now();
+				const id = uuid7(now);
+				this.#store.insertMessage({ id, role: "assistant", content: text, attachments: [], runId: fence.runId, createdAt: now });
+				this.#store.append(fence.runId, { type: "message", data: { id, content: text } });
+				this.#store.finish(fence.runId, COMPLETED, { attempt: fence.attempt });
+			}),
+		);
+	}
+
+	/**
+	 * The loop's failure ends the run only while its attempt is current: today's gateway dropped a replaced or
+	 * expired attempt's `failed` event, and an expired run is marked `timed_out` by its deadline instead.
+	 */
+	async #fail(fence: AttemptFence, end: RunEnd): Promise<void> {
+		await this.#store.outside(() =>
+			this.#store.write(() => {
+				if (this.#store.isCurrent(fence)) this.#store.finish(fence.runId, end, { attempt: fence.attempt });
+			}),
+		);
+	}
+
+	/** After a run ended, outside its transaction: its calls cut, its stream ended, pi stopped, the Workspace told. */
+	#afterFinish(runId: RunId): void {
+		this.#controllers.get(runId)?.abort(new Error(RUN_ENDED_MESSAGE));
+		this.#controllers.delete(runId);
+		this.#running.delete(runId);
+		this.#phases.delete(runId);
+		this.#executors.delete(runId);
+		this.#queues.delete(runId);
+		this.#stream.end(runId);
+		this.#defer(async () => {
+			await this.lifecycle.jobs.cancel(`watch:${runId}`);
+			await this.lifecycle.jobs.cancel(`deadline:${runId}`);
+			const run = this.#store.run(runId);
+			if (run) await this.#release(run);
+			this.#touchIndex();
+			await this.#stopPi(runId);
+		});
+	}
+
+	/** Aborts everything pi still runs for the run's session, background work included. */
+	async #stopPi(runId: RunId): Promise<void> {
+		const run = this.#store.run(runId);
+		if (!run || run.session === null) return;
+		const pi = await this.harness.pi();
+		const conversation = await pi.conversation(Number(run.session) as PiConversationId, BG);
+		await conversation?.abort(BG, { background: true });
+	}
+
+	async #release(run: RunRow): Promise<void> {
+		if (run.released || ACTIVE.has(run.status)) return;
+		try {
+			await within(this.#workspace().release(run.id, run.status), RPC_WAIT_MS);
+			this.#store.update(run.id, { released: 1 });
+		} catch (error) {
+			this.#log("the Workspace did not hear that a run ended", error);
+			this.#push({ id: "release", fn: "release", time: Date.now() + RELEASE_RETRY_MS });
+		}
+	}
+
+	/** A start refused after `beginRun`: its registration and reservations are released, retried until heard. */
+	async #releaseRefused(runId: RunId): Promise<void> {
+		try {
+			await within(this.#workspace().release(runId, "refused"), RPC_WAIT_MS);
+			this.#store.deleteRelease(runId);
+		} catch (error) {
+			this.#log("the Workspace did not hear that a start was refused", error);
+			this.#push({ id: "release", fn: "release", time: Date.now() + RELEASE_RETRY_MS });
+		}
+	}
+
+	// Tools, the executor and the model.
+
+	#installTools(run: RunRow): void {
+		this.#registry?.install(this.#extension(run));
+	}
+
+	/** The `minerva` extension for a run: its connector tools, in the model's order (gateway/tools.ts). */
+	#extension(run: RunRow | null): Extension {
+		if (run === null) return { name: "minerva", tools: [] };
+		const host = this.#toolHost();
+		let listed: ToolDeclaration[];
+		try {
+			listed = this.#executor(run.id).declarations();
+		} catch (error) {
+			// A snapshot the executor cannot read is a bug; the factory must still open pi, or no event of this
+			// object could run. The run goes on without connector tools.
+			this.#log("the run's tools could not be built", error);
+			listed = [];
+		}
+		// `run_script` (step 4) and the local tools (step 3) join here.
+		const tools = modelTools<ToolDeclaration, ToolRegistration | null>(
+			listed,
+			[],
+			(declaration) => connectorTool(declaration, host),
+			() => null,
+		).filter((tool): tool is ToolRegistration => tool !== null);
+		return { name: "minerva", tools };
+	}
+
+	#executor(runId: RunId): Executor {
+		let executor = this.#executors.get(runId);
+		if (!executor) {
+			const run = this.#store.run(runId) as RunRow;
+			const snapshot = this.#store.snapshot(run);
+			executor = this.#ports.executor(
+				{
+					runId,
+					userId: snapshot.userId,
+					permissions: snapshot.permissions,
+					tools: snapshot.tools,
+					run: this.#runState(),
+					credentials: this.#credentials(snapshot),
+					fetch: this.#ports.fetch(this.#portsContext() as PortsContext),
+					deadline: snapshot.deadline,
+				},
+				this.#portsContext() as PortsContext,
+			);
+			this.#executors.set(runId, executor);
+		}
+		return executor;
+	}
+
+	/** The executor's view of the run (contracts/executor.ts): our checks and the ledger's records (ports.ts `runStatePort`). */
+	#runState(): RunStatePort {
+		return runStatePort(this.#store, () => this.#ledger(), (runId) => this.#scheduleSweep(runId));
+	}
+
+	/** A lease is for the call's attempt: checked before the Workspace is asked and again after (it knows runs, not attempts). */
+	#credentials(snapshot: RunSnapshot): CredentialPort {
+		const ended = { refused: "RUN_ENDED" as const, message: RUN_ENDED_MESSAGE };
+		return {
+			lease: async (fence, connectionId) => {
+				if (!this.#store.isCurrent(fence)) return ended;
+				const lease = await this.#workspace().lease(connectionId, { run: fence.runId, userId: snapshot.userId });
+				if (!this.#store.isCurrent(fence)) return ended;
+				return lease;
+			},
+			markUnauthorized: (connectionId, generation) => this.#workspace().markUnauthorized(connectionId, generation),
+			open: async (lease) => (await (await this.#keys()).decrypt(lease.sealed)) as unknown as CredentialPayload,
+		};
+	}
+
+	#toolHost(): ToolHost {
+		const store = this.#store;
+		return {
+			current: (session) => {
+				const run = store.runBySession(String(session));
+				if (!run) return null;
+				this.#entered("tool", run.id);
+				const fence = { runId: run.id, attempt: run.attempt };
+				return store.isCurrent(fence) ? { fence, deadline: run.deadline } : null;
+			},
+			// Outside pi's transactions (store.ts `outside`): the replay cap counts what ran, so its count must not roll back.
+			executions: (runId, callId) => store.outside(() => store.countExecution(runId, callId)),
+			argumentText: (runId, callId) => store.argumentText(runId, callId),
+			invoke: (fence, declaration, args, signal) => this.#invoke(fence, declaration, args, signal),
+			started: (runId, callId, name) => {
+				let running = this.#running.get(runId);
+				if (!running) this.#running.set(runId, (running = new Map()));
+				running.set(callId, name);
+				this.#showPhase({ runId, attempt: store.run(runId)?.attempt ?? 0 });
+			},
+			ended: (runId, callId) => {
+				this.#running.get(runId)?.delete(callId);
+				this.#showPhase({ runId, attempt: store.run(runId)?.attempt ?? 0 });
+			},
+		};
+	}
+
+	/**
+	 * One call through the run's queue and the executor. The `tool_call` event is appended when the call
+	 * settles, whether or not its caller still waits (the executor's `settled`, so a write sent before pi
+	 * aborted the call is recorded with its real outcome), while the run is active (any attempt), never for
+	 * RUN_ENDED (the executor returns no event then).
+	 */
+	#invoke(fence: AttemptFence, declaration: ToolDeclaration, args: Json | undefined, signal: AbortSignal | undefined): Promise<ToolCallOutcome> {
+		let queue = this.#queues.get(fence.runId);
+		if (!queue) this.#queues.set(fence.runId, (queue = new ToolQueue()));
+		const executor = this.#executor(fence.runId);
+		// Cut when the run ends or its deadline passes, while the call still waits for its slot.
+		const stopped = this.#store.isActive(fence.runId) ? this.#controller(fence.runId).signal : AbortSignal.abort(new Error(RUN_ENDED_MESSAGE));
+		// The executor stops at pi's abort or the run's end, whichever comes first: no new provider request,
+		// reads in flight cut, a write already sent still settled (gateway/executor.ts).
+		const cut = signal ? AbortSignal.any([signal, stopped]) : stopped;
+		// Once, outside pi's transactions (store.ts `outside`), so the record of a write that was sent cannot roll
+		// back with one of pi's. A failed append is forgotten, so it is tried again when the caller hears the outcome.
+		let recording: Promise<void> | null = null;
+		const record = (outcome: ToolCallOutcome): Promise<void> => {
+			const event = outcome.event;
+			recording ??= (event ? this.#store.outside(() => void this.#store.append(fence.runId, { type: "tool_call", data: event }, "active")) : Promise.resolve()).catch(
+				(error: unknown) => {
+					recording = null;
+					throw error;
+				},
+			);
+			return recording;
+		};
+		const settled = (outcome: ToolCallOutcome) => {
+			this.ctx.waitUntil(record(outcome).catch((error: unknown) => this.#log("a tool call could not be recorded", error)));
+		};
+		const call = queue
+			.send(
+				isWrite(declaration),
+				() => executor.invoke({ fence, name: declaration.name, arguments: args, signal: cut, settled }),
+				() => {
+					signal?.throwIfAborted();
+					stopped.throwIfAborted();
+				},
+			)
+			.then(
+				async (outcome) => {
+					// Recorded before the caller hears it; an executor that does not call `settled` is recorded here.
+					await record(outcome).catch(() => record(outcome));
+					return outcome;
+				},
+				(error: unknown): ToolCallOutcome => {
+					if (signal?.aborted || stopped.aborted) throw error;
+					this.#log("a tool call failed", error);
+					return { ok: false, error: { code: "FAILED", message: "The operation could not be completed. Check the connection and try again." }, event: null };
+				},
+			);
+		this.ctx.waitUntil(call.catch(() => {}));
+		return call;
+	}
+
+	/**
+	 * The lost-write sweep for a write just dispatched: its window closes at most 60 s from now, or at the
+	 * run's deadline, and it is lost 30 s after that. An earlier sweep already scheduled stays.
+	 */
+	#scheduleSweep(runId: RunId): void {
+		const deadline = this.#store.run(runId)?.deadline ?? null;
+		const now = Date.now();
+		const time = Math.min(now + SWEEP_AFTER_MS, deadline === null ? Number.POSITIVE_INFINITY : deadline + LOST_WRITE_GRACE_MS);
+		const scheduled = this.lifecycle.jobs.get("sweep");
+		if (scheduled && scheduled.time <= time) return;
+		this.#push({ id: "sweep", fn: "sweep", time });
+	}
+
+	/**
+	 * What cuts a run's model streams and waiting tool calls: aborted when the run ends, and at its deadline,
+	 * whichever comes first, so a deadline job that runs late cannot let a stream go on.
+	 */
+	#controller(runId: RunId): AbortController {
+		let controller = this.#controllers.get(runId);
+		if (!controller) {
+			const created = new AbortController();
+			controller = created;
+			this.#controllers.set(runId, created);
+			const deadline = this.#store.run(runId)?.deadline ?? null;
+			if (deadline !== null) {
+				const timer = setTimeout(() => created.abort(new Error("The run took too long.")), Math.max(0, deadline - Date.now()));
+				created.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
+			}
+		}
+		return controller;
+	}
+
+	#modelHost(): ModelHost {
+		const store = this.#store;
+		return {
+			begin: (sessionId) => {
+				const run = sessionId ? store.runByProviderSession(sessionId) : null;
+				if (!run) return null;
+				this.#entered("model", run.id);
+				const fence = { runId: run.id, attempt: run.attempt };
+				if (!store.isCurrent(fence)) return null;
+				return { fence, signal: this.#controller(run.id).signal };
+			},
+			counted: (fence) => store.countModelCall(fence.runId),
+			current: (fence) => store.isCurrent(fence),
+			deltas: (fence, call, segments) => {
+				store.write(() => {
+					for (const [kind, text] of segments) store.append(fence.runId, { type: kind === "text" ? "text_delta" : "reasoning_delta", data: { text, call } }, fence);
+				});
+			},
+			toolCallText: (fence, callId, text) => {
+				// A key without an escape parses right with JSON.parse; only text with a backslash is kept.
+				if (text.includes("\\")) store.saveArgumentText(fence.runId, callId, text);
+			},
+			settled: (fence, usage) => store.settleModelCall(fence.runId, usage),
+			log: (message) => this.#log(message),
+		};
+	}
+
+	// Phases (harness 12.2): emitted only when they change, fenced by the attempt.
+
+	#phase(fence: AttemptFence, text: string): void {
+		if (this.#phases.get(fence.runId) === text) return;
+		if (this.#store.append(fence.runId, phaseEvent(text), fence)) this.#phases.set(fence.runId, text);
+	}
+
+	#showPhase(fence: AttemptFence): void {
+		this.#phase(fence, phaseOf(false, this.#running.get(fence.runId)?.values() ?? []));
+	}
+
+	// Ports.
+
+	#entered(kind: "model" | "tool", runId: RunId): void {
+		if (this.#ports.entered) this.#ports.entered(this.#portsContext() as PortsContext, kind, runId);
+	}
+
+	#workspace(): WorkspaceClient {
+		return this.#ports.workspace(this.#portsContext() as PortsContext);
+	}
+
+	#folderInstance: FolderPort | null = null;
+
+	#folder(): FolderPort | null {
+		if (!this.#folderInstance) {
+			const context = this.#portsContext();
+			if (context) this.#folderInstance = this.#ports.folder(context);
+		}
+		return this.#folderInstance;
+	}
+
+	#ledger(): WriteLedger {
+		this.#ledgerInstance ??= this.#ports.ledger(
+			this.ctx.storage,
+			{
+				isCurrent: (fence) => this.#store.isCurrent(fence),
+				deadline: (runId) => this.#store.run(runId)?.deadline ?? null,
+				writesUncertain: (runId) => this.#store.run(runId)?.writes_uncertain === 1,
+				markWritesUncertain: (runId) => this.#store.setWritesUncertain(runId),
+			},
+			this.#portsContext() as PortsContext,
+		);
+		return this.#ledgerInstance;
+	}
+
+	#portsContext(): PortsContext | null {
+		const conversation = this.#store.conversation();
+		if (!conversation) return null;
+		return {
+			env: this.env,
+			ctx: this.ctx,
+			workspace: this.#store.workspaceRef(conversation),
+			conversationId: conversation.id,
+			folderVersionId: () => this.#store.conversation()?.folder_version_id ?? null,
+			connectors: () => {
+				if (this.#connectors === null) throw new Error("The connector registry is loaded when pi opens.");
+				return this.#connectors;
+			},
+		};
+	}
+
+	#keys(): Promise<KeyRing> {
+		this.#keyRing ??= KeyRing.parse(this.env.MINERVA_ENCRYPTION_KEYS);
+		return this.#keyRing;
+	}
+
+	#touchIndex(): void {
+		const conversation = this.#store.conversation();
+		if (!conversation) return;
+		this.#defer(() => this.#workspace().conversationTouched(conversation.id, { title: conversation.title, updatedAt: conversation.updated_at }));
+	}
+
+	#owned(caller: Caller) {
+		const conversation = this.#store.conversation();
+		return conversation && conversation.deleted_at === null && conversation.user_id === caller.userId ? conversation : null;
+	}
+
+	#ownedRun(caller: Caller, runId: RunId): RunRow | null {
+		if (!this.#owned(caller) || !isUuid(runId)) return null;
+		return this.#store.run(runId);
+	}
+
+	/**
+	 * A Lifecycle job of the host. Its row is written synchronously (Lifecycle's queue is SQL), so inside a
+	 * `write` it commits with the change; the alarm is rearmed afterwards.
+	 */
+	#push(job: { id: string; fn: string; time: number; payload?: { runId: RunId } }): void {
+		this.lifecycle.jobs.push(job).catch((error: unknown) => this.#log(`the job ${job.id} was not scheduled`, error));
+	}
+
+	/** Work that outlives the event that started it; failures are logged. */
+	#defer(work: () => Promise<unknown>): void {
+		this.ctx.waitUntil(
+			Promise.resolve()
+				.then(work)
+				.catch((error: unknown) => this.#log("deferred work failed", error)),
+		);
+	}
+
+	#log(message: string, error?: unknown): void {
+		const detail = error === undefined ? "" : `: ${error instanceof Error ? error.message : String(error)}`;
+		console.warn(`conversation ${this.ctx.id.name ?? ""}: ${message}${detail}`.slice(0, 2000));
+	}
+}
+
+/** What pi holds for a run, read through the factory's storage (the gate) or after open. */
+async function piWork(storage: SqliteStorage, run: RunRow): Promise<PiWork> {
+	if (run.session === null) return "not_submitted";
+	const id = Number(run.session) as PiConversationId;
+	const submission = await storage.submissionByRequest(id, `run:${run.id}`, BG);
+	let live = 0;
+	for (const status of LIVE_TASKS) live += (await storage.scanTasks({ conversationId: id, status }, 1, undefined, BG)).items.length;
+	return classifyWork(submission?.status, live);
+}
+
+/** The history replay, in the commit that creates the run's session: one timestamp for every entry (harness 3.3). */
+async function replay(tx: Tx, id: PiConversationId, history: { role: "user" | "assistant"; content: string }[]): Promise<void> {
+	const timestamp = Date.now();
+	for (const message of history) {
+		if (message.role === "user") {
+			await tx.appendEntry(UserEntry, id, { model: [{ role: "user", content: message.content, timestamp }] });
+		} else {
+			await tx.appendEntry(AssistantEntry, id, {
+				model: [
+					{
+						role: "assistant",
+						content: [{ type: "text", text: message.content }],
+						api: MINERVA_API,
+						provider: MINERVA_PROVIDER,
+						model: MODEL_ALIAS,
+						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+						stopReason: "stop",
+						timestamp,
+					},
+				],
+			});
+		}
+	}
+}
+
+/** The answer: the text blocks of the assistant message joined and trimmed (harness 3.6). */
+function answerText(entry: EntryRecord | undefined): string {
+	const message = entry?.model?.[0];
+	if (message?.role !== "assistant") return "";
+	return message.content
+		.flatMap((block) => (block.type === "text" ? [block.text] : []))
+		.join("")
+		.trim();
+}
+
+/** Settles like `promise`, or rejects after `ms`, leaving it to run on. */
+function within<T>(promise: Promise<T>, ms: number): Promise<T> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => reject(new Error(`No answer within ${ms} ms.`)), ms);
+		promise.then(resolve, reject).finally(() => clearTimeout(timer));
+	});
+}
+
+/** The uploads a start marker names. */
+function idsOf(start: StartRow): string[] {
+	const parsed = parseJson(start.upload_ids);
+	return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+}
+
+function runOfPayload(payload: unknown): RunId | null {
+	const runId = payload !== null && typeof payload === "object" ? (payload as { runId?: unknown }).runId : undefined;
+	return typeof runId === "string" && isUuid(runId) ? runId : null;
 }

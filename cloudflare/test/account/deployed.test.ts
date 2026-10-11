@@ -1,5 +1,7 @@
 import { readdirSync } from "node:fs";
 import { describe, expect, test } from "vitest";
+import { MIGRATIONS as CONVERSATION_MIGRATIONS } from "../../src/conversation/schema.ts";
+import { MIGRATIONS as WORKSPACE_MIGRATIONS } from "../../src/workspace/schema.ts";
 import { PROBE_HEADER, probeToken } from "../../src/http/probe-token.ts";
 import { cf, fetchDeployed, origin, secret } from "./client.ts";
 
@@ -95,9 +97,11 @@ describe("inside minerva-cf (/api/probe)", () => {
 			json: { native: number[]; parseJson: number[] };
 		};
 		for (const kind of ["workspace", "conversation", "scripts", "sandbox"]) {
-			expect(body.objects[`${kind}:default`], kind).toEqual({ kind, name: NIL, jurisdiction: null, migrations: [] });
+			// The Conversation applies its schema steps when it is built (src/conversation/schema.ts).
+			const migrations = kind === "conversation" ? CONVERSATION_MIGRATIONS.map((step) => step.id) : kind === "workspace" ? WORKSPACE_MIGRATIONS.map((step) => step.id) : [];
+			expect(body.objects[`${kind}:default`], kind).toEqual({ kind, name: NIL, jurisdiction: null, migrations });
 			// The Sandbox is reached through ctx.exports (addressing.ts); its jurisdiction works there too.
-			expect(body.objects[`${kind}:eu`], kind).toEqual({ kind, name: NIL, jurisdiction: "eu", migrations: [] });
+			expect(body.objects[`${kind}:eu`], kind).toEqual({ kind, name: NIL, jurisdiction: "eu", migrations });
 		}
 		const local = readdirSync(new URL("../../migrations/", import.meta.url)).filter((name) => name.endsWith(".sql")).sort();
 		expect(body.d1Migrations).toEqual(local);

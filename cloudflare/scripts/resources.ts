@@ -2,16 +2,18 @@
 // applies D1's migrations (migrations/) before `cf deploy` uploads code that may need them. Migrations are
 // additive, so the running version keeps working (plan: Versions). cf would otherwise create a missing D1
 // database or bucket with default settings on deploy (no lifecycle rule, no schema, no jurisdiction), so a
-// missing one stops the deploy here. Resource ids are never printed. `pnpm run deploy` runs it.
+// missing one stops the deploy here. Resource ids are never printed. `pnpm run deploy` runs it, and
+// `pnpm run deploy:test` with `--test` for the test Worker's own minerva-cf-test resources.
 
 import { execFileSync } from "node:child_process";
 
-const D1 = "minerva-cf";
+const PREFIX = process.argv.includes("--test") ? "minerva-cf-test" : "minerva-cf";
+const D1 = PREFIX;
 const BUCKETS: { name: string; jurisdiction: string | null }[] = [
-	{ name: "minerva-cf-files", jurisdiction: null },
-	{ name: "minerva-cf-files-eu", jurisdiction: "eu" },
+	{ name: `${PREFIX}-files`, jurisdiction: null },
+	{ name: `${PREFIX}-files-eu`, jurisdiction: "eu" },
 ];
-const GATEWAY = "minerva-cf";
+const GATEWAY = PREFIX;
 const UPLOADS_RULE = "Expire unattached uploads";
 
 function cf(args: string[]): unknown {

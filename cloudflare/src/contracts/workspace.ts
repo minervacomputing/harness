@@ -169,15 +169,15 @@ export interface WorkspaceApi {
 
 	/**
 	 * Credentials for one provider call, refreshed first when they expire within 120 s (single-flight per
-	 * connection, fenced by the generation). `purpose` says who asks: a run's executor (refused unless the
-	 * run is registered, active and not revoked) or a settings request of the caller. The registry does not
-	 * know attempts: the Conversation Durable Object checks the call's AttemptFence before and after this
-	 * (executor.ts, CredentialPort).
+	 * connection, fenced by the generation). `purpose` says who asks: a run's executor (RUN_ENDED "This run
+	 * is no longer active." unless the run is registered, activated, not revoked and the user's) or a
+	 * settings request of the caller. The registry does not know attempts: the Conversation Durable Object
+	 * checks the call's AttemptFence before and after this (executor.ts, CredentialPort).
 	 */
 	lease(
 		connectionId: ConnectionId,
 		purpose: { run: RunId; userId: UserId } | { settings: Caller },
-	): Promise<CredentialLease | { refused: "CONNECTION_UNAUTHORIZED" | "PROVIDER_UNAVAILABLE"; message: string }>;
+	): Promise<CredentialLease | { refused: "RUN_ENDED" | "CONNECTION_UNAUTHORIZED" | "PROVIDER_UNAVAILABLE"; message: string }>;
 	/** Compare-and-set: `error` only if still `active` at this generation (connectors 9.2). */
 	markUnauthorized(connectionId: ConnectionId, generation: number): Promise<void>;
 
@@ -186,7 +186,9 @@ export interface WorkspaceApi {
 	 * Idempotent by run id and synchronous inside (no awaits): checks the agent, the uploads (the user's
 	 * own, unattached, complete) and the folder limits with the attachments, reserves the uploads, computes
 	 * the snapshot and registers the run as active. Called again with the same run id it returns the same
-	 * answer; it refuses a run it has since revoked or expired.
+	 * answer; it refuses a run it has since revoked (409 with the run's end message, "Stopped because
+	 * permissions changed." or "Stopped.") or expired or released (503 "The agent could not finish this run.
+	 * Try again."). A refused start registers nothing.
 	 */
 	beginRun(input: BeginRunInput): Promise<BeginRunResult>;
 	/**
@@ -216,16 +218,19 @@ export interface WorkspaceApi {
 	conversationTouched(conversationId: ConversationId, change: { title: string; updatedAt: EpochMs }): Promise<void>;
 	/**
 	 * Tombstones the conversation (both objects then refuse new runs, uploads and writes), cancels its active
-	 * run through the outbox and waits for it to end, then deletes the Conversation Durable Object's storage
-	 * and its R2 prefix, again an hour later; an alarm finishes an interrupted deletion (plan: Files, Deletion).
+	 * run through the outbox and waits for the acknowledgement (`revocation` as for a grant change), then has
+	 * the Conversation Durable Object destroy itself (`destroy()`: its run ended, its storage and R2 prefix
+	 * deleted), again an hour later; an alarm finishes an interrupted deletion (plan: Files, Deletion).
 	 */
-	deleteConversation(caller: Caller, conversationId: ConversationId): Promise<Outcome<null>>;
+	deleteConversation(caller: Caller, conversationId: ConversationId): Promise<Outcome<{ revocation: Revocation }>>;
 
 	// Uploads (files 9; plan: Files). Every object is recorded before it is written.
 	/**
 	 * Records the upload as pending, with its key and a byte reservation against the workspace's quota,
-	 * before the Worker streams the body into R2. 429 "You have too many files waiting to be sent. Send or
-	 * remove some, or try again tomorrow." (30 per user); 413 "This workspace has no room for more files."
+	 * before the Worker streams the body into R2. In files 9.1's order: 429 "You are uploading too many files
+	 * at once." (3 pending per user, younger than the body's 15 minutes); 429 "You have too many files waiting
+	 * to be sent. Send or remove some, or try again tomorrow." (30 per user); 413 "This workspace has no room
+	 * for more files."
 	 */
 	reserveUpload(caller: Caller, upload: { name: string; size: number }): Promise<Outcome<{ id: UploadId; key: string }>>;
 	/** After the put and the hash: the upload is complete and attachable for a day. */

@@ -96,8 +96,13 @@ export interface ConversationApi {
 	/** A file of a non-checkpoint version (or of the current folder), for a signed link; null is 404 (files 11.2). */
 	resolveDownload(caller: Caller, versionId: VersionId | null, path: string): Promise<DownloadTarget | null>;
 
-	/** Tombstone, cancel and wait, then delete storage and the R2 prefix (plan: Files, Deletion). Driven by the Workspace. */
-	destroy(): Promise<{ done: boolean }>;
+	/**
+	 * Tombstone, cancel and wait, then delete storage and the R2 prefix (plan: Files, Deletion). Driven by the
+	 * Workspace, which calls it again until it resolves. It overrides the Agents SDK's own `destroy()`, which
+	 * resets the object after it deletes the storage, so the caller may see the connection break once the
+	 * deletion is done: a broken call after a resolved one, or a second call that finds nothing, is done.
+	 */
+	destroy(): Promise<void>;
 }
 
 /**

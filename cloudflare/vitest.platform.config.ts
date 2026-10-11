@@ -25,6 +25,8 @@ export default defineConfig(async () => {
 						WORKSPACE: { className: "Workspace", useSQLite: true },
 						CONVERSATION: { className: "Conversation", useSQLite: true },
 						SCRIPTS: { className: "Scripts", useSQLite: true },
+						// Mode `test` builds the test Worker's entry (src/faults/index.ts), with its fake provider.
+						FAULT_PROVIDER: { className: "FaultProvider", useSQLite: true },
 					},
 				},
 			}),
@@ -32,6 +34,9 @@ export default defineConfig(async () => {
 		test: {
 			include: ["test/platform/**/*.test.ts"],
 			setupFiles: ["test/platform/setup.ts"],
+			// A fault's `ctx.abort()` inside a DurableObject's RPC leaves the reset's own rejection unhandled in
+			// the isolate the tests share with the objects (src/faults/plan.ts); only those are ignored.
+			onUnhandledError: (error: unknown) => !(String((error as { message?: unknown }).message).startsWith("fault: ") && (error as { durableObjectReset?: unknown }).durableObjectReset === true),
 		},
 	};
 });

@@ -12,14 +12,24 @@ const VARS = new URL("../../../.env.cloudflare.vars", import.meta.url);
 if (existsSync(VARS)) process.loadEnvFile(VARS);
 
 const SECRETS = new URL("../../../.env.cloudflare", import.meta.url);
+const TEST_SECRETS = new URL("../../../.env.cloudflare-test", import.meta.url);
+const TEST_VARS = new URL("../../../.env.cloudflare-test.vars", import.meta.url);
 
-/** A secret from ../.env.cloudflare, as scripts/secrets.ts writes it. */
-export function secret(name: string): string {
-	for (const line of readFileSync(SECRETS, "utf8").split("\n")) {
+/** A secret from ../.env.cloudflare (or the test Worker's ../.env.cloudflare-test), as scripts/secrets.ts writes it. */
+export function secret(name: string, file: URL = SECRETS): string {
+	for (const line of readFileSync(file, "utf8").split("\n")) {
 		const match = /^([A-Z0-9_]+)="(.*)"$/.exec(line.trim());
 		if (match?.[1] === name && match[2]) return match[2];
 	}
-	throw new Error(`${name} is not set in .env.cloudflare.`);
+	throw new Error(`${name} is not set in ${file.pathname.split("/").pop()}.`);
+}
+
+/** The test Worker minerva-cf-test: its origin from ../.env.cloudflare-test.vars and its secret key. */
+export function testWorker(): { origin: string; secretKey: string } {
+	if (!existsSync(TEST_VARS)) throw new Error("The test Worker's settings are in .env.cloudflare-test.vars (cloudflare/README.md, The test Worker).");
+	const site = /^MINERVA_SITE_URL=(.*)$/m.exec(readFileSync(TEST_VARS, "utf8"))?.[1]?.trim().replace(/^"|"$/g, "");
+	if (!site?.startsWith("https://")) throw new Error("Set MINERVA_SITE_URL to the test Worker's https origin in .env.cloudflare-test.vars.");
+	return { origin: site.replace(/\/$/, ""), secretKey: secret("MINERVA_SECRET_KEY", TEST_SECRETS) };
 }
 
 /** cf's JSON answer to a read-only command (cf must be signed in). */
@@ -61,7 +71,7 @@ export interface Reply {
 	text: string;
 }
 
-export function fetchDeployed(url: string, init: { method?: string; headers?: Record<string, string>; timeoutMs?: number } = {}): Promise<Reply> {
+export function fetchDeployed(url: string, init: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number } = {}): Promise<Reply> {
 	return new Promise((resolve, reject) => {
 		const req = request(url, { method: init.method ?? "GET", headers: init.headers, lookup: lookup as never, timeout: init.timeoutMs }, (res) => {
 			const chunks: Buffer[] = [];
@@ -76,6 +86,6 @@ export function fetchDeployed(url: string, init: { method?: string; headers?: Re
 		});
 		req.on("timeout", () => req.destroy(Object.assign(new Error(`No answer from ${url}`), { code: "ETIMEDOUT" })));
 		req.on("error", reject);
-		req.end();
+		req.end(init.body);
 	});
 }

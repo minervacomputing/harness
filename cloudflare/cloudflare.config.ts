@@ -1,6 +1,7 @@
 import { bindings, defineConfig, exports } from "cf/config";
+import * as faultsEntrypoint from "./src/faults/index.ts" with { type: "cf-worker" };
 import * as entrypoint from "./src/index.ts" with { type: "cf-worker" };
-import { parse, type SettingsEnv } from "./src/config.ts";
+import { checkBuild, parse, type SettingsEnv } from "./src/config.ts";
 
 const NAME = "minerva-cf";
 
@@ -9,10 +10,51 @@ const NAME = "minerva-cf";
 // defaults below. A production build (cf build, cf deploy) reads ../.env.cloudflare.vars alone, which is
 // gitignored because it names the deployed origins: the shell's MINERVA_* are ignored there (the Django
 // app uses the same names), the file must exist, both origins must be https, and MINERVA_DEBUG must be
-// off. Secrets never go here: they are in ../.env.cloudflare.
+// off. No build but the test build's accepts the fake model, which only its entry contains. Secrets never
+// go here: they are in ../.env.cloudflare.
+
+// The test Worker (mode `faults`, `pnpm run deploy:test`) is minerva-cf-test: the same code built from
+// src/faults/index.ts, which adds a fake connector, its provider object, fault points and a token-gated
+// driver for the account tests, with resources of its own (minerva-cf-test-*) and its settings from
+// ../.env.cloudflare-test.vars, under the same rules as production's. The platform tests (mode `test`, under
+// names of their own, locally) run that entry too. Production builds src/index.ts, which imports nothing of
+// src/faults/.
 
 // This file runs in Node but is type-checked with the Worker's runtime types, which lack Node's.
-const VARS = new URL("../.env.cloudflare.vars", (import.meta as unknown as { url: string }).url);
+const here = (import.meta as unknown as { url: string }).url;
+
+interface Target {
+	name: string;
+	d1: string;
+	files: string;
+	filesEu: string;
+	/** The settings file of a deployed build; null reads the environment. */
+	vars: URL | null;
+	faults: boolean;
+}
+
+function targetFor(mode: string | undefined): Target {
+	const own = { name: NAME, d1: "minerva-cf", files: "minerva-cf-files", filesEu: "minerva-cf-files-eu" };
+	if (mode === "production") return { ...own, vars: new URL("../.env.cloudflare.vars", here), faults: false };
+	if (mode === "faults") {
+		return {
+			name: "minerva-cf-test",
+			d1: "minerva-cf-test",
+			files: "minerva-cf-test-files",
+			filesEu: "minerva-cf-test-files-eu",
+			vars: new URL("../.env.cloudflare-test.vars", here),
+			faults: true,
+		};
+	}
+	if (mode === "test") {
+		// The platform tests' (vitest sets VITEST): the test build's entry under names of its own, never
+		// production's, so even a deploy in this mode could not put the fault code in minerva-cf.
+		if (build.env.VITEST !== "true") throw new Error("Mode test is the platform tests' (vitest); deploy the test build with mode faults.");
+		const local = "minerva-cf-local";
+		return { name: local, d1: local, files: `${local}-files`, filesEu: `${local}-files-eu`, vars: null, faults: true };
+	}
+	return { ...own, vars: null, faults: false };
+}
 interface BuildProcess {
 	env: Record<string, string | undefined>;
 	getBuiltinModule(id: "node:fs"): { readFileSync(path: URL, encoding: "utf8"): string };
@@ -42,40 +84,38 @@ const DEFAULTS: SettingsEnv = {
 	MINERVA_FILES_MESSAGE_ATTACHMENTS: "10",
 };
 
-/** The production build's settings: ../.env.cloudflare.vars and nothing else. */
-function productionVars(): Record<string, string | undefined> {
+/** A deployed build's settings: its vars file and nothing else. */
+function deployedVars(file: URL): Record<string, string | undefined> {
+	const name = file.pathname.split("/").pop();
 	let text: string;
 	try {
-		text = build.getBuiltinModule("node:fs").readFileSync(VARS, "utf8");
+		text = build.getBuiltinModule("node:fs").readFileSync(file, "utf8");
 	} catch (error) {
 		if ((error as { code?: string }).code !== "ENOENT") throw error;
-		throw new Error("A production build reads its settings from ../.env.cloudflare.vars, which is missing (cloudflare/README.md).");
+		throw new Error(`A deployed build reads its settings from ../${name}, which is missing (cloudflare/README.md).`);
 	}
 	return build.getBuiltinModule("node:util").parseEnv(text);
 }
 
-function settingsFor(mode: string | undefined): SettingsEnv {
-	const source = mode === "production" ? productionVars() : build.env;
+function settingsFor(target: Target): SettingsEnv {
+	const source = target.vars ? deployedVars(target.vars) : build.env;
 	const values = Object.fromEntries(Object.entries(DEFAULTS).map(([name, fallback]) => [name, source[name] ?? fallback])) as unknown as SettingsEnv;
 	const parsed = parse(values);
-	if (mode === "production") {
-		if (!parsed.siteUrl.startsWith("https://") || !parsed.downloadOrigin.startsWith("https://")) {
-			throw new Error("MINERVA_SITE_URL and MINERVA_DOWNLOAD_ORIGIN must be https origins in .env.cloudflare.vars.");
-		}
-		if (parsed.debug) throw new Error("MINERVA_DEBUG must be off in a production build.");
-	}
+	checkBuild(parsed, { deployed: target.vars !== null, testBuild: target.faults });
 	return values;
 }
 
 export default defineConfig(({ mode }) => {
-	const values = settingsFor(mode);
+	const target = targetFor(mode);
+	const values = settingsFor(target);
 	const setting = (name: keyof SettingsEnv) => bindings.text(values[name]);
 	return {
 		worker: {
-			name: NAME,
+			name: target.name,
 			compatibilityDate: "2026-10-06",
 			compatibilityFlags: ["nodejs_compat"],
-			entrypoint,
+			// One module type for the Env cf infers: both entries export the same classes.
+			entrypoint: target.faults ? (faultsEntrypoint as unknown as typeof entrypoint) : entrypoint,
 			// workers.dev, but no preview URLs: every uploaded version would stay reachable at an origin of
 			// its own, with the bindings and secrets of its day, and versions cannot be deleted.
 			workersDev: true,
@@ -87,16 +127,18 @@ export default defineConfig(({ mode }) => {
 			observability: { enabled: true, redactQueryString: true },
 			env: {
 				ASSETS: bindings.assets(),
-				DB: bindings.d1({ name: "minerva-cf" }),
+				DB: bindings.d1({ name: target.d1 }),
 				// An EU workspace's files stay in a bucket in R2's EU jurisdiction (src/addressing.ts).
-				FILES: bindings.r2({ name: "minerva-cf-files" }),
-				FILES_EU: bindings.r2({ name: "minerva-cf-files-eu", jurisdiction: "eu" }),
+				FILES: bindings.r2({ name: target.files }),
+				FILES_EU: bindings.r2({ name: target.filesEu, jurisdiction: "eu" }),
 				// Workers AI has no local simulation: in local dev it is the account's, and the tests leave it off.
 				AI: bindings.ai({ dev: { remote: true } }),
 				LOADER: bindings.workerLoader(),
-				WORKSPACE: bindings.durableObject({ worker: NAME, exportName: "Workspace" }),
-				CONVERSATION: bindings.durableObject({ worker: NAME, exportName: "Conversation" }),
-				SCRIPTS: bindings.durableObject({ worker: NAME, exportName: "Scripts" }),
+				WORKSPACE: bindings.durableObject({ worker: target.name, exportName: "Workspace" }),
+				CONVERSATION: bindings.durableObject({ worker: target.name, exportName: "Conversation" }),
+				SCRIPTS: bindings.durableObject({ worker: target.name, exportName: "Scripts" }),
+				// The test build's fake provider (src/faults/provider.ts).
+				...(target.faults ? { FAULT_PROVIDER: bindings.durableObject({ worker: target.name, exportName: "FaultProvider" }) } : {}),
 				// The Sandbox class gets its container in step 3; a container class cannot be bound by its own
 				// Worker's name, so it is reached through ctx.exports.Sandbox instead of a binding.
 
@@ -136,6 +178,7 @@ export default defineConfig(({ mode }) => {
 				Scripts: exports.durableObject({ storage: "sqlite" }),
 				Sandbox: exports.durableObject({ storage: "sqlite" }),
 				ScriptHost: exports.worker(),
+				...(target.faults ? { FaultProvider: exports.durableObject({ storage: "sqlite" }) } : {}),
 			},
 		},
 	};

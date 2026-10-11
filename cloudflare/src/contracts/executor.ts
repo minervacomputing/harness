@@ -47,6 +47,16 @@ export interface ToolCallRequest {
 	name: string;
 	/** As the model sent them; `null` or absent validate as `{}`. */
 	arguments: Json | undefined;
+	/**
+	 * pi's abort for the call (`context.abortSignal`): the call answers at once and starts nothing more. A
+	 * write already dispatched still settles, under the host's `waitUntil` (gateway/executor.ts).
+	 */
+	signal?: AbortSignal;
+	/**
+	 * Called once with the call's outcome when its pipeline finishes, also after the caller stopped waiting:
+	 * a write already sent when the call was cancelled still gets its `tool_call` event from it.
+	 */
+	settled?: (outcome: ToolCallOutcome) => void;
 }
 
 /**
@@ -103,6 +113,8 @@ export interface ExecutorContext {
 	credentials: CredentialPort;
 	/** Injected in tests. */
 	fetch: typeof fetch;
+	/** The snapshot's deadline, which bounds a call's wait for one of the run's slots; null or absent for none. */
+	deadline?: EpochMs | null;
 }
 
 // The write ledger (runs 5.6; plan: Writes): today's RunWrite in the Conversation Durable Object's SQLite.
@@ -142,6 +154,11 @@ export type Settlement =
  * Run state the executor needs. Synchronous methods are synchronous on purpose: the Conversation Durable
  * Object answers them from SQLite and memory with no await, which is what makes the revocation and
  * dispatch checks atomic (plan: Strict revocation, Writes).
+ *
+ * `dispatchWrite` and `settleWrite` may answer later: the Conversation Durable Object first waits until no
+ * asynchronous transaction of pi's is open on its storage, since a claim or a settlement made inside one
+ * would roll back with it (conversation/store.ts `outside`). The check and the claim still run in one
+ * synchronous stretch, after that wait; the executor sends nothing until the claim has answered.
  */
 export interface RunStatePort {
 	/** Status acting, deadline not passed, attempt equal, not revoked. */
@@ -152,9 +169,9 @@ export interface RunStatePort {
 	countToolCall(fence: AttemptFence): boolean;
 	knownWrite(runId: RunId, key: string): WriteRecord | null;
 	/** One write dispatched at a time per run; refused when paused, in progress or not current (runs 5.6). */
-	dispatchWrite(fence: AttemptFence, key: string): DispatchResult;
+	dispatchWrite(fence: AttemptFence, key: string): DispatchResult | Promise<DispatchResult>;
 	/** Always recorded, even for an older attempt and even when the call that asked for it was cancelled (under waitUntil). */
-	settleWrite(runId: RunId, key: string, settlement: Settlement): void;
+	settleWrite(runId: RunId, key: string, settlement: Settlement): void | Promise<void>;
 	/** The upstream cursor for a token issued to this run for the same tool and query hash, else null. */
 	resolvePageToken(runId: RunId, token: string, tool: string, queryHash: string): string | null;
 	/** A new opaque token (`tokenUrlsafe(18)`), or null when the run already holds 200. */

@@ -5,6 +5,8 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
 	test: {
 		include: ["test/account/**/*.test.ts"],
+		// The test Worker's fault tests have their own run (vitest.faults.config.ts).
+		exclude: ["test/account/faults.test.ts"],
 		environment: "node",
 		testTimeout: 30_000,
 	},

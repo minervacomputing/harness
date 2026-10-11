@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { parse, settings } from "../../src/config.ts";
+import { checkBuild, parse, settings } from "../../src/config.ts";
 import { settingsEnv } from "./settings.ts";
 
 test("defaults are today's", () => {
@@ -35,4 +35,18 @@ test("a malformed value fails closed", () => {
 test("settings are parsed once per environment", () => {
 	const env = settingsEnv();
 	expect(settings(env)).toBe(settings(env));
+});
+
+test("a build refuses the fake model unless it is the test build; a deployed one needs https origins and debug off", () => {
+	const parsed = (values: Parameters<typeof settingsEnv>[0] = {}) => parse(settingsEnv(values));
+	const deployed = { deployed: true, testBuild: false };
+	expect(() => checkBuild(parsed(), deployed)).not.toThrow();
+	expect(() => checkBuild(parsed({ MINERVA_SITE_URL: "http://minerva.example" }), deployed)).toThrow("must be https origins");
+	expect(() => checkBuild(parsed({ MINERVA_SITE_URL: "http://minerva.example" }), { deployed: false, testBuild: false })).not.toThrow();
+	expect(() => checkBuild(parsed({ MINERVA_DEBUG: "true" }), { deployed: true, testBuild: true })).toThrow("MINERVA_DEBUG must be off in a deployed build.");
+	// The fake model answers from the last user message: production would no longer use a real model.
+	for (const build of [deployed, { deployed: false, testBuild: false }]) {
+		expect(() => checkBuild(parsed({ MINERVA_MODEL_PROVIDER: "fake" }), build)).toThrow("MINERVA_MODEL_PROVIDER=fake is only for the test build.");
+	}
+	expect(() => checkBuild(parsed({ MINERVA_MODEL_PROVIDER: "fake" }), { deployed: true, testBuild: true })).not.toThrow();
 });

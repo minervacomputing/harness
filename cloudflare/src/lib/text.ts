@@ -52,6 +52,26 @@ export function sliceCodePoints(text: string, start: number, end?: number): stri
 	return Array.from(text).slice(start, end).join("");
 }
 
+/**
+ * UTF-16 units per part of a long text kept in SQLite: at most 1.5 MB of UTF-8, under the 2 MB a Durable
+ * Object's string, BLOB or row may have (local workerd does not enforce it).
+ */
+export const VALUE_PART = 500_000;
+
+/** `text` in parts of at most `size` UTF-16 units, never between the two halves of a surrogate pair. */
+export function splitParts(text: string, size: number): string[] {
+	if (size < 2) throw new RangeError("A part holds at least two units.");
+	const parts: string[] = [];
+	for (let at = 0; at < text.length; ) {
+		let end = Math.min(at + size, text.length);
+		const last = text.charCodeAt(end - 1);
+		if (end < text.length && last >= 0xd800 && last <= 0xdbff) end--;
+		parts.push(text.slice(at, end));
+		at = end;
+	}
+	return parts;
+}
+
 /** The text cut to `limit` characters, and whether it was cut. Callers expose `<field>_truncated`. */
 export function truncate(value: string, limit: number): [string, boolean];
 export function truncate(value: string | null | undefined, limit: number): [string | null, boolean];

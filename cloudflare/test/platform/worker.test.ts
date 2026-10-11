@@ -2,6 +2,7 @@ import { type D1Migration, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { beforeEach, describe, expect, test } from "vitest";
 import { conversationObject, filesBucket, sandboxObject, scriptsObject, workspaceObject } from "../../src/addressing.ts";
+import { MIGRATIONS as CONVERSATION_MIGRATIONS } from "../../src/conversation/schema.ts";
 import { PROBE_HEADER, probeToken } from "../../src/http/probe-token.ts";
 import { CHECKED_LATER, createApp } from "../../src/http/router.ts";
 import { escapedKeyCheck } from "../../src/lib/json.ts";
@@ -101,9 +102,11 @@ describe("jurisdictions", () => {
 describe("Durable Object stubs with SQLite", () => {
 	test("each class answers over RPC, addressed by workspace and conversation", async () => {
 		const workspace = { id: WS, jurisdiction: null };
-		const named = (kind: string, name: string) => ({ kind, name, jurisdiction: null, migrations: [] });
-		expect(await workspaceObject(env, workspace).about()).toEqual(named("workspace", WS));
-		expect(await conversationObject(env, workspace, USER).about()).toEqual(named("conversation", USER));
+		const named = (kind: string, name: string, migrations: number[] = []) => ({ kind, name, jurisdiction: null, migrations });
+		// The Workspace and the Conversation apply their schema steps when they are built
+		// (src/workspace/schema.ts, src/conversation/schema.ts).
+		expect(await workspaceObject(env, workspace).about()).toEqual(named("workspace", WS, [1]));
+		expect(await conversationObject(env, workspace, USER).about()).toEqual(named("conversation", USER, CONVERSATION_MIGRATIONS.map((step) => step.id)));
 		expect(await scriptsObject(env, workspace, USER).about()).toEqual(named("scripts", USER));
 		expect(await sandboxObject(env, exports, workspace, USER).about()).toEqual(named("sandbox", USER));
 	});
@@ -111,18 +114,20 @@ describe("Durable Object stubs with SQLite", () => {
 	test("schema steps apply once, in order, each in a transaction", async () => {
 		const stub = workspaceObject(env, { id: "0199a000-0000-7000-8000-0000000000cc", jurisdiction: null });
 		await runInDurableObject(stub, (_, state) => {
+			// Ids past any class's own steps, which the object applied when it started.
+			const own = appliedMigrations(state.storage);
 			const steps = [
-				{ id: 2, sql: "ALTER TABLE t ADD COLUMN y TEXT" },
-				{ id: 1, sql: "CREATE TABLE t (x INTEGER); CREATE INDEX t_x ON t (x)" },
+				{ id: 9002, sql: "ALTER TABLE t ADD COLUMN y TEXT" },
+				{ id: 9001, sql: "CREATE TABLE t (x INTEGER); CREATE INDEX t_x ON t (x)" },
 			];
-			expect(migrate(state.storage, steps)).toEqual([1, 2]);
+			expect(migrate(state.storage, steps)).toEqual([9001, 9002]);
 			expect(migrate(state.storage, steps)).toEqual([]);
-			expect(appliedMigrations(state.storage)).toEqual([1, 2]);
+			expect(appliedMigrations(state.storage)).toEqual([...own, 9001, 9002]);
 			state.storage.sql.exec("INSERT INTO t (x, y) VALUES (1, 'a')");
-			expect(() => migrate(state.storage, [{ id: 3, sql: "CREATE TABLE u (a); CREATE TABLE t (b)" }])).toThrow();
+			expect(() => migrate(state.storage, [{ id: 9003, sql: "CREATE TABLE u (a); CREATE TABLE t (b)" }])).toThrow();
 			// The failed step left nothing behind.
 			expect(state.storage.sql.exec("SELECT count(*) AS n FROM sqlite_master WHERE name = 'u'").one().n).toBe(0);
-			expect(appliedMigrations(state.storage)).toEqual([1, 2]);
+			expect(appliedMigrations(state.storage)).toEqual([...own, 9001, 9002]);
 		});
 	});
 });

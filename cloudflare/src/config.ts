@@ -24,7 +24,8 @@ export interface SettingsEnv {
 	MINERVA_FILES_MESSAGE_ATTACHMENTS: string;
 }
 
-export type ModelProvider = "workers-ai" | "openai" | "anthropic";
+/** `fake` is the deterministic model of src/model/fake.ts, for tests and a test deployment. */
+export type ModelProvider = "workers-ai" | "openai" | "anthropic" | "fake";
 
 export interface Settings {
 	/** The public origin of the app, without a trailing slash: redirects, email links, OAuth callbacks, CSRF. */
@@ -82,7 +83,7 @@ export function parse(env: SettingsEnv): Settings {
 		emailFrom: env.MINERVA_EMAIL_FROM,
 		runTimeoutMs: timeout === null ? null : timeout * 1000,
 		model: {
-			provider: oneOf(env, "MINERVA_MODEL_PROVIDER", ["workers-ai", "openai", "anthropic"] as const),
+			provider: oneOf(env, "MINERVA_MODEL_PROVIDER", ["workers-ai", "openai", "anthropic", "fake"] as const),
 			name: required(env, "MINERVA_MODEL_NAME"),
 			gateway: required(env, "MINERVA_MODEL_GATEWAY"),
 			api: oneOf(env, "MINERVA_MODEL_API", ["chat", "responses"] as const),
@@ -99,6 +100,20 @@ export function parse(env: SettingsEnv): Settings {
 			messageAttachments: count(env, "MINERVA_FILES_MESSAGE_ATTACHMENTS"),
 		},
 	};
+}
+
+/**
+ * A build's rules beyond parsing (cloudflare.config.ts). The fake model answers from the last user message,
+ * so a prompt could script it: only the test build's entry has it, so any other build refuses it rather
+ * than fail every model call. A deployed build also needs https origins and debug off.
+ */
+export function checkBuild(parsed: Settings, build: { deployed: boolean; testBuild: boolean }): void {
+	if (!build.testBuild && parsed.model.provider === "fake") throw new Error("MINERVA_MODEL_PROVIDER=fake is only for the test build.");
+	if (!build.deployed) return;
+	if (!parsed.siteUrl.startsWith("https://") || !parsed.downloadOrigin.startsWith("https://")) {
+		throw new Error("MINERVA_SITE_URL and MINERVA_DOWNLOAD_ORIGIN must be https origins in a deployed build's vars file.");
+	}
+	if (parsed.debug) throw new Error("MINERVA_DEBUG must be off in a deployed build.");
 }
 
 type Name = keyof SettingsEnv;
