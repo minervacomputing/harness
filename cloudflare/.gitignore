@@ -1,0 +1,6 @@
+# cf's caches and generated types (.cloudflare/, .wrangler/) are ignored at any depth by the root .gitignore.
+# The assembled static assets: frontend/dist plus public/_headers (scripts/assets.ts)
+.assets/
+# Secret files written for one deploy, then deleted
+.secrets/
+.dev.vars*

@@ -1,0 +1,15 @@
+[
+  {
+    "id": "Expire unattached uploads",
+    "enabled": true,
+    "conditions": { "prefix": "uploads/" },
+    "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 86400 } },
+    "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": 86400 } }
+  },
+  {
+    "id": "Default Multipart Abort Rule",
+    "enabled": true,
+    "conditions": {},
+    "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": 604800 } }
+  }
+]

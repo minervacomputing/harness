@@ -1,0 +1,21 @@
+{
+	"compilerOptions": {
+		"target": "es2024",
+		"lib": ["es2024", "esnext.disposable"],
+		"module": "preserve",
+		"moduleResolution": "bundler",
+		"types": ["@cloudflare/vitest-plugin/types"],
+		"strict": true,
+		"noEmit": true,
+		"allowImportingTsExtensions": true,
+		"isolatedModules": true,
+		"verbatimModuleSyntax": true,
+		"erasableSyntaxOnly": true,
+		"resolveJsonModule": true,
+		"noUncheckedIndexedAccess": true,
+		"noUnusedLocals": true,
+		"skipLibCheck": true
+	},
+	"include": ["src", "test/unit", "test/platform", "cloudflare.config.ts", ".cloudflare/types"],
+	"exclude": ["test/unit/sources.test.ts"]
+}

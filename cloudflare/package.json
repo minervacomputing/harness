@@ -1,0 +1,37 @@
+{
+  "name": "minerva-cloudflare",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "packageManager": "pnpm@10.18.1",
+  "scripts": {
+    "assets": "pnpm --dir ../frontend build && node scripts/assets.ts",
+    "build": "pnpm assets && cf build && cd files-worker && cf build",
+    "types": "cf workers types && cd files-worker && cf workers types",
+    "typecheck": "pnpm types && tsc -p tsconfig.json && tsc -p tsconfig.node.json && tsc -p files-worker/tsconfig.json",
+    "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:platform": "vitest run --config vitest.platform.config.ts",
+    "test:account": "vitest run --config vitest.account.config.ts",
+    "secrets": "node scripts/secrets.ts generate",
+    "deploy": "pnpm assets && node scripts/secrets.ts check && node scripts/resources.ts && cf deploy --secrets-file ../.env.cloudflare && pnpm deploy:files",
+    "deploy:files": "node scripts/secrets.ts subset .secrets/files.env MINERVA_DOWNLOAD_KEY && cd files-worker && cf deploy --secrets-file ../.secrets/files.env; status=$?; rm -f ../.secrets/files.env; exit $status"
+  },
+  "dependencies": {
+    "@cloudflare/sandbox": "1.0.0",
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-durable": "1.1.0",
+    "agents": "0.28.0",
+    "hono": "4.13.9",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "2.0.0-beta.sha-91c870c02",
+    "@cloudflare/vitest-plugin": "1.4.0",
+    "@types/node": "24.19.0",
+    "cf": "1.0.0-beta.13",
+    "typescript": "5.9.3",
+    "vite": "8.3.4",
+    "vitest": "4.1.11"
+  }
+}

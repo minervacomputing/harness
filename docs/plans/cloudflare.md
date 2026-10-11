@@ -40,7 +40,7 @@ Browser ── HTTPS (cookie session, CSRF) ──► Worker minerva-cf
                                    Scripts DO (per chat)     Sandbox DO (per chat)
                                    Dynamic Worker guests,    ctx.container: Firecracker VM,
                                    no network                no egress at all
-R2 minerva-cf-files: blobs, uploads ◄── Worker minerva-cf-files (download origin, signed links)
+R2 minerva-cf-files(-eu): blobs, uploads ◄── Worker minerva-cf-files (download origin, signed links)
 Workers AI / AI Gateway minerva-cf: models
 ```
 
@@ -88,9 +88,9 @@ Each piece of state has one authoritative home; everything else is an index that
 - **Conversation DO**: authoritative for its owner, workspace and agent (fixed at creation), `messages`, `runs` and `attempts`, `run_events`, the write ledger (`run_writes`), `page_tokens`, `folder_versions` (manifests split into rows under 2 MB), the run's checkpoint, the script store, and pi's `pi_*` tables.
 - **Sandbox DO**: authoritative for the container's lifecycle: incarnation id, owning run and attempt, hardening state, cleanup pending.
 - **Scripts DO**: nothing durable.
-- **R2 `minerva-cf-files`**: `blobs/<ws>/<conv>/<sha256>/<random>` and `uploads/<ws>/<user>/<id>`. Content is deduplicated within a conversation, not across conversations.
+- **R2 `minerva-cf-files`**, and **`minerva-cf-files-eu`** (created in R2's EU jurisdiction) for EU workspaces: `blobs/<ws>/<conv>/<sha256>/<random>` and `uploads/<ws>/<user>/<id>`. Content is deduplicated within a conversation, not across conversations. A lifecycle rule deletes `uploads/` objects a day after they were written, attached or not, so a folder never names one (see Starting a run).
 
-**Addressing.** One function maps a workspace's id and jurisdiction (from D1) to its objects (`jurisdiction('eu')` when set), since the same name with and without a jurisdiction is a different, empty object. The Worker never routes a request to a Durable Object by a client-chosen name without checking it; there are no generic Agent routes (`routeAgentRequest` is not used); objects are reached only through typed RPC from our own code.
+**Addressing.** One module (`src/addressing.ts`) maps a workspace's id and jurisdiction (from D1) to its objects (`jurisdiction('eu')` when set) and to its bucket, since the same name with and without a jurisdiction is a different, empty object. The Worker never routes a request to a Durable Object by a client-chosen name without checking it; there are no generic Agent routes (`routeAgentRequest` is not used); objects are reached only through typed RPC from our own code. Local workerd has no jurisdictions (`jurisdiction()` throws), so with `MINERVA_DEBUG` on, and only then, an EU object is named `eu:<name>` in the plain namespace; a production build refuses `MINERVA_DEBUG`. Where an EU workspace's container runs is unmeasured: `durable_object` scheduling has no placement constraint, so the VM may sit outside the EU even when its Sandbox DO does not (measured in step 3). The deployed Worker's `/api/probe` (token-gated) reports each class's jurisdiction as the account tests see it.
 
 ## Protocols
 
@@ -102,8 +102,9 @@ A message that is refused (409 while a run is active, an unknown agent, a missin
 
 1. **Conversation DO:** checks that no run is active (409), picks the run id, and records a private `starting` marker for it (invisible to the API).
 2. **Workspace DO `beginRun(runId, conversation, user, agent, uploadIds, folderUsage)`**, idempotent by run id and synchronous inside (no awaits): checks the agent, the uploads (the user's own, unattached, complete) and the folder limits with the attachments, reserves the uploads for the run, computes the snapshot, registers the run as active, and returns the snapshot or a refusal. Called again with the same run id, it returns the same answer; it refuses a run it has since revoked or expired.
-3. **Conversation DO, in one transaction:** on a refusal, deletes the marker and answers the API with today's status and message; on success, stores the message, the run (`queued`, attempt 1), the snapshot, and the base version with the attachments, and answers. If a cancel arrived during the await, the run is stored as cancelled, as today when a grant change races a start.
-4. **Activation:** the Conversation DO then calls `activate(runId)`, which turns the reservation into consumption. A Conversation DO that restarts with a `starting` marker calls `beginRun` again; the Workspace DO's alarm releases reservations not activated within ten minutes and marks those runs expired, so a late `beginRun` result cannot start them.
+3. **Conversation DO, copying the attachments** (files spec 15.2, option A): for each reserved upload whose contents the conversation does not hold yet, it records a loose blob key `blobs/<ws>/<conv>/<sha256>/<random>`, then copies the upload's object to it with `get` and `put` with the upload's SHA-256, which R2 checks. The folder then names only the conversation's own blobs, never an `uploads/` key, which the lifecycle rule deletes a day after it was written. An upload already gone refuses the start ("An attached file is no longer available. Remove it and attach it again."). Up to 10 × 50 MB per message pass through the object; its time and CPU are measured in step 3, with a crash during the copy among the fault tests (loose keys not claimed are deleted by an alarm).
+4. **Conversation DO, in one transaction:** on a refusal, deletes the marker and answers the API with today's status and message; on success, stores the message, the run (`queued`, attempt 1, `activated` false), the snapshot, and the base version with the copies (claiming their loose keys), sets an alarm, and answers. If a cancel arrived during the awaits, the run is stored as cancelled, as today when a grant change races a start.
+5. **Activation:** the Conversation DO then calls `activate(runId)`, which turns the reservation into consumption (the Workspace deletes the upload rows and objects). It is idempotent and answers where the registration stands: active, revoked with its reason, expired, or ended. Until an answer arrives, the Conversation DO sends it again on its alarm and whenever its constructor runs, for every stored active run not yet `activated`; a run that comes back revoked stops with that reason, and one that comes back expired fails (`start_expired`). A Conversation DO that restarts with a `starting` marker calls `beginRun` again; the Workspace DO's alarm releases reservations not activated within ten minutes and marks those runs expired, so a late `beginRun` result cannot start them.
 
 The snapshot holds everything today's does: policy layers, tool refs and fingerprints, instructions with the start time, model alias, base folder version, attachments, deadline.
 
@@ -112,7 +113,7 @@ The snapshot holds everything today's does: policy layers, tool refs and fingerp
 The Workspace DO's transaction that changes grants, removes a connection or changes an agent's connection set is the commit point; the acknowledgement barrier after it is the enforcement point.
 
 1. In that one transaction it applies the change, marks every affected registered run `revoked`, and writes one outbox entry per run.
-2. It delivers each entry: `cancel(runId, reason)` on the run's Conversation DO, which sets the run's local `revoked` flag and stops the run with "Stopped because permissions changed." and the matching code.
+2. It delivers each entry: `cancel(runId, reason)` on the run's Conversation DO, which sets the run's local `revoked` flag and stops the run with "Stopped because permissions changed." and the matching code (a deletion's cancel and an emergency stop end with "Stopped.", codes `cancelled` and `emergency_stop`).
 3. The API answers the browser only after every delivery is acknowledged. An entry that fails is retried by the Workspace DO's alarm until acknowledged; the request answers 503 if that takes over 10 s (the change stays saved and the runs are stopped shortly after).
 4. A cancel for a run the Conversation DO has not stored yet leaves a tombstone, so step 3 of a start stores it as cancelled.
 
@@ -138,7 +139,7 @@ pi has no restart limit and no notion of Minerva's attempts, so the Conversation
 - **What counts as a restart:** the Conversation DO's constructor running while a run is `running` and pi has work in progress. PiHarness keeps the object active while pi works, so an idle eviction cannot happen mid-turn; a deploy does not replace a busy object; a long tool waiting across alarms keeps the same instance. Constructor runs therefore mean the previous instance died (crash, memory limit, `ctx.abort()`). Hibernation between turns is not a restart.
 - **The gate:** inside the constructor's `blockConcurrencyWhile`, before any alarm or request is delivered and so before pi resumes, the DO increments the run's attempt, emits the restart marker (`status: running` with `attempt`), and, if the attempt would be over 3 or under 30 s remain before the deadline, aborts pi's session and fails the run. This ordering is an assumption until proven: it is the first task of step 2, with fault injection against PiHarness (crash in a tool, in a model stream, during provisioning, during lifecycle start-up). If the constructor cannot gate pi, the gate moves into PiHarness's harness factory, which also runs before pi resumes; if neither can, step 2 stops and the plan is revised.
 - **Replay cap:** safe tools are wrapped with a per-call execution counter in SQLite; a call replayed more than twice is answered with an error instead of running again.
-- **Fencing:** every asynchronous operation (a tool call, a script, a sandbox command, a checkpoint, an event append) carries the run id and the attempt it started under, and is refused when either is not current. The one exception is settling a write that an older attempt already dispatched, which is always recorded.
+- **Fencing:** every asynchronous operation (a tool call, a credential lease, a script and its reset, a sandbox command, a checkpoint, an event append) carries the run id and the attempt it started under, and is refused when either is not current. The one exception is settling a write that an older attempt already dispatched, which is always recorded. The Workspace DO knows runs, not attempts, so the Conversation DO checks a lease's attempt before and after asking for it; the Scripts DO keeps the newest run and attempt it has run a script under and refuses a reset from an older one, since a reset aborts every guest it loaded.
 
 ### Writes
 
@@ -167,11 +168,11 @@ A Sandbox DO per conversation runs one container per turn: `durable_object` sche
 Hardening is a state machine recorded with the container's incarnation id: `starting → hardening → verified → in_use → destroying`. Before `verified`, no agent command or file operation is admitted. One root `exec` runs, with `set -eu`:
 
 1. a tmpfs `/workspace` with `size` and `nr_inodes` set to the folder limits, owned by uid 1000, so a full folder fails with `ENOSPC` at the size the store counts;
-2. a tmpfs `/tmp`, `noexec`;
-3. a cgroup `/sys/fs/cgroup/agent` with `pids.max` and `memory.max`;
+2. a tmpfs `/tmp`, `noexec`, with `/tmp/home` and `/tmp/matplotlib` owned by uid 1000 (bash's `HOME` and `MPLCONFIGDIR`);
+3. a cgroup `/sys/fs/cgroup/agent` with `pids.max` (256) and `memory.max` set to the base (1 GiB) plus both tmpfs sizes, as today: pages the agent writes to a tmpfs are charged to its cgroup, so with the base alone a growing folder would OOM-kill commands instead of failing with `ENOSPC` at the folder's limit;
 4. `mount -o remount,ro /`.
 
-A second `exec` verifies each postcondition (mount options and sizes, `/tmp` not executable, `/` read-only, the cgroup's limits, that the dropped wrapper reports no capabilities and `NoNewPrivs: 1`). Any failure, or any doubt, destroys the container and fails the turn. A Sandbox DO that restarts never reuses a running container it did not verify in its current incarnation: it destroys it first. If `destroy()` fails, the DO keeps `cleanup pending` and retries on an alarm. Every operation on the Sandbox DO, `destroy` and cleanup included, names the incarnation (and the run and attempt) it is for, and is refused for any other, so a late cleanup from one attempt can never destroy the next attempt's container.
+A second `exec` verifies each postcondition (mount options and sizes, `/tmp` not executable, the home directories and their owner, `/` read-only, the cgroup's limits equal to the spec's, that the dropped wrapper reports no capabilities and `NoNewPrivs: 1`). Any failure, or any doubt, destroys the container and fails the turn. A Sandbox DO that restarts never reuses a running container it did not verify in its current incarnation: it destroys it first. If `destroy()` fails, the DO keeps `cleanup pending` and retries on an alarm. Every operation on the Sandbox DO, `destroy` and cleanup included, names the incarnation (and the run and attempt) it is for, and is refused for any other, so a late cleanup from one attempt can never destroy the next attempt's container.
 
 Every agent command runs through one wrapper: `echo $$ > /sys/fs/cgroup/agent/cgroup.procs || exit 125; exec setpriv --reuid=1000 --regid=1000 --clear-groups --inh-caps=-all --ambient-caps=-all --bounding-set=-all --no-new-privs timeout -k 5 <s> bash -c "$0"`, with the command as an argument, never interpolated. `cgroup.kill` replaces today's stray killer and catches `setsid` processes.
 
@@ -186,6 +187,8 @@ Every agent command runs through one wrapper: `echo $$ > /sys/fs/cgroup/agent/cg
 ### Events and the stream
 
 Events are appended to the Conversation DO's `run_events` with today's types, payloads and dense per-run sequence numbers; a refused append takes no number. Text and reasoning deltas come from a tap on the provider stream, flushed every 0.25 s per model call with the call's 8-hex id; the restart marker before a new attempt makes the frontend drop the earlier attempt's text, as today. History replay into a run reads our `messages` table (final text and file notes only), never pi's transcript, so pi's aborted partial entries never reach the next turn.
+
+**Reading runs.** Workers RPC refuses arguments and results over 32 MiB, and a conversation's events have no retention yet (open question 5), so no Durable Object method returns more than a page of them: `getConversation`, `getRun` and `cancelRun` return runs without events but with the seq of their last event, read with their status, and the Worker streams the API's body (each run with all its events, as today), paging each run's events with `getRunEvents` up to that seq. Step 5 adds a platform test with a conversation whose events pass 32 MiB.
 
 The browser's `EventSource` connects to the stateless Worker, which checks the session and the run's owner, opens a hibernatable WebSocket to the Conversation DO with `after`, and relays frames (`id`, `event`, one-line `data`, 15 s keepalive comments, `end` when the run is inactive and caught up). The DO sends the backlog and subscribes in one synchronous step, so no event falls between them.
 
@@ -205,9 +208,9 @@ The Worker implements the endpoint table of the web-api spec exactly: paths, sta
 
 The store, versions, uploads, downloads and limits keep today's semantics (files spec). What changes:
 
-- **Uploads** stream into R2 while hashing (`body.tee()` into `crypto.DigestStream` and `put`, about 550 ms CPU per 50 MiB). The edge buffers a request body before the Worker runs, so checks before the body cannot save bandwidth; the 100 MiB request limit is above the 50 MB file limit.
+- **Uploads** stream into R2 while hashing (`body.tee()` into `crypto.DigestStream` and `put`, about 550 ms CPU per 50 MiB). The edge buffers a request body before the Worker runs, so checks before the body cannot save bandwidth; the 100 MiB request limit is above the 50 MB file limit. Sending a message copies its uploads into the conversation's blobs (Starting a run, step 3); the bucket's lifecycle rule deletes every `uploads/` object a day after it was written.
 - **Every object is recorded before it is written**, as today's loose objects: the Workspace DO records an upload as `pending` (with its key and a byte reservation against the workspace's quota) before the `put`, and as complete after it; the Conversation DO records a checkpoint blob's key before the Sandbox DO writes it, and claims it when the checkpoint is recorded. Alarms delete pending and unclaimed objects older than an hour and release their reservations, so a crash between the record and the write leaves nothing that is not eventually removed, and counters stay right.
-- **Downloads** are links signed with HMAC (`MINERVA_DOWNLOAD_KEY`) over the workspace, conversation, version, path, user and an expiry of five minutes, served by `minerva-cf-files` on its own origin with `Content-Disposition: attachment`, `nosniff` and `Content-Security-Policy: sandbox`. A link is a bearer capability until it expires: signing out does not revoke one already issued.
+- **Downloads** are links signed with HMAC (`MINERVA_DOWNLOAD_KEY`) over the download origin, workspace, conversation, version, path, user and an expiry of five minutes, served by `minerva-cf-files` on its own origin, which also checks the request's host, with `Content-Disposition: attachment`, `nosniff` and `Content-Security-Policy: sandbox`. Neither Worker has preview URLs: every uploaded version would stay reachable at an origin of its own, with the bindings of its day, and versions cannot be deleted. A link is a bearer capability until it expires: signing out does not revoke one already issued.
 - **Encryption.** Blobs use R2's own encryption at first. Per-workspace keys (SSE-C, proven in the spike) are a later step: both Workers then hold a derivation secret and derive the workspace's key; keys never appear in links.
 - **Blob keys** keep a random part, so deleting an object never races a re-upload of the same contents.
 - **Deletion** of a conversation (or an agent, which deletes its conversations) tombstones it in the Workspace DO and the Conversation DO first, after which both refuse new runs, uploads and object writes; cancels its active run through the revocation outbox and waits for the run to end (its container destroyed and its Scripts DO reset); then deletes the Conversation DO's storage and the R2 prefix, and deletes the prefix again an hour later to catch any write that was already in flight. An alarm finishes an interrupted deletion.
@@ -220,10 +223,11 @@ The store, versions, uploads, downloads and limits keep today's semantics (files
 | `minerva-cf-files` | Worker | The download origin; holds the R2 binding and the link key |
 | `minerva-cf` | D1 | Primary near Frankfurt (`weur`) |
 | `minerva-cf-files` | R2 bucket | Lifecycle rule expires `uploads/` after a day |
+| `minerva-cf-files-eu` | R2 bucket | In R2's EU jurisdiction, for EU workspaces; the same rule |
 | `minerva-cf` | AI Gateway | Prompt logging off |
 | `minerva-cf-sandbox` | Container application | Built by `cf build` from `cloudflare/container/` |
 
-Secrets (`MINERVA_SECRET_KEY`, `MINERVA_ENCRYPTION_KEYS`, `MINERVA_DOWNLOAD_KEY`, model keys, connector clients) live in `.env.cloudflare` at the repository root (gitignored, mode 600) and are uploaded with `cf deploy --secrets-file`; they are never printed. Plain settings (`MINERVA_SITE_URL`, `MINERVA_MODEL_*`, limits, `MINERVA_SIGNUP_OPEN`, `MINERVA_DEBUG`) are text bindings in `cloudflare.config.ts`, read from the environment at build time.
+Secrets (`MINERVA_SECRET_KEY`, `MINERVA_ENCRYPTION_KEYS`, `MINERVA_DOWNLOAD_KEY`, model keys, connector clients) live in `.env.cloudflare` at the repository root (gitignored, mode 600) and are uploaded with `cf deploy --secrets-file`; they are never printed. Plain settings (`MINERVA_SITE_URL`, `MINERVA_MODEL_*`, limits, `MINERVA_SIGNUP_OPEN`, `MINERVA_DEBUG`) are text bindings in `cloudflare.config.ts`, checked by the Worker's own parser at build time. Development and tests read them from the environment; a production build reads `.env.cloudflare.vars` alone (gitignored: it names the deployed origins), which must exist, with https origins and debug off, so a shell's `MINERVA_*` (the Django app's names) never reach a deploy. `pnpm run deploy` checks that D1, both buckets (with their jurisdiction and lifecycle rule) and the AI Gateway exist, since `cf deploy` would create a missing one with default settings, and applies D1's migrations before uploading code.
 
 ## Repository layout
 
@@ -254,22 +258,22 @@ cloudflare/
 ## Testing
 
 - **Unit tests** with Vitest in Node for everything that is plain TypeScript: `lib/`, the policy (with today's randomized equivalence test, seed 7), the executor with fake connectors and an injected `fetch`, each connector against recorded provider responses (today's tests ported case by case, normalized outcomes compared with the Python implementation where the cases allow), manifests and `folder_changes`, the allauth flows over an in-memory store, history replay, event rules.
-- **Platform tests** run the Worker locally in workerd (the Vite plugin's dev server or Miniflare, settled in step 1) for the DOs, D1, R2 and the HTTP API, including tenancy (every endpoint refuses other workspaces, jurisdiction-qualified addressing) and the frontend's contracts (SSE frames, upload and download headers).
+- **Platform tests** run the Worker locally in workerd with `@cloudflare/vitest-plugin`, which loads `cloudflare.config.ts` itself (settled in step 1; remote bindings off), for the DOs, D1, R2 and the HTTP API, including tenancy (every endpoint refuses other workspaces; an EU workspace's objects and bucket are separate from a default one's, through the local seam, since workerd has no jurisdictions), CSRF on every unsafe route, and the frontend's contracts (SSE frames, upload and download headers).
 - **Fault-injection tests** with a deterministic fake model and fake providers, for every protocol above:
 
 | Protocol | Failures injected |
 |---|---|
-| Start and revocation | revoke before the run exists, during `beginRun`, after; crash after the grant commit; lost cancel acknowledgement; start concurrent with revoke |
+| Start and revocation | revoke before the run exists, during `beginRun`, after; crash during the attachments' copy; crash between storing the run and `activate`, and a lost `activate` answer; crash after the grant commit; lost cancel acknowledgement; start concurrent with revoke |
 | Attempts | crash in a safe tool, in an unsafe tool, during the model stream; repeated memory-limit resets; hibernation between turns; a long tool across alarms; a late call from an old attempt |
 | Writes | applied then response lost; claimed then never sent; crash while dispatched; the same write under a new pi call id; deadline passed |
 | Refresh | crash during a rotating refresh; reconnect during a refresh |
 | Sandbox | each hardening step failing; cgroup admission failing; lost `destroy()`; restart with a container still running |
 | Checkpoints | detached writer; FIFO, symlink, oversized file; crash between upload, record, release and pi's commit |
-| Scripts | CPU-bound guest; timeout during a write; calls after return; more than ten scripts in a row |
+| Scripts | CPU-bound guest; timeout during a write; calls after return; more than ten scripts in a row; a late reset from a replaced attempt |
 | Stream | slow client; append during reconnect; reconnect after a deploy |
 | Files | attach retried; upload during deletion; lost R2 acknowledgement |
 
-- **Account tests** against a deployed `minerva-cf`: the container and the reworked sandbox probe, Dynamic Workers, Workers AI, the fault tests that need the real platform (memory-limit resets, deploys mid-turn), and a walkthrough in a real browser.
+- **Account tests** against a deployed `minerva-cf`: the token-gated `/api/probe` (one RPC to each Durable Object class without and with the EU jurisdiction, D1's applied migrations against `migrations/`, the runtime's JSON parser), that neither Worker has preview URLs, the container and the reworked sandbox probe, Dynamic Workers, Workers AI, the fault tests that need the real platform (memory-limit resets, deploys mid-turn), and a walkthrough in a real browser.
 - pi's `ExecutionEnv` conformance suite runs against the container-backed environment.
 
 ## Steps
@@ -277,7 +281,7 @@ cloudflare/
 The risky protocols come first, proven with fault injection before the API and the connectors are built on them. Each step ends with its tests passing and an opencode review of the diff, then a commit on `cloudflare`.
 
 0. **Research and spikes.** Done 2026-10-10: specs of every subsystem and four spikes on the account (below).
-1. **Scaffold.** Project, config, D1 migrations, the router with error shapes, security headers, `lib/` (canonical JSON, Fernet compatible with today's ciphertext, code-point order, text sanitizers), the three test layers, a first deploy as `minerva-cf` serving the frontend.
+1. **Scaffold.** Project, config, D1 migrations, the router with error shapes, security headers, `lib/` (canonical JSON, Fernet compatible with today's ciphertext, code-point order, text sanitizers), the three test layers, a first deploy as `minerva-cf` serving the frontend. Done 2026-10-11 ([cloudflare/README.md](../../cloudflare/README.md)); the interfaces of steps 2 to 6 are in `cloudflare/src/contracts/`. Found on the way: the runtime's `JSON.parse` can return wrong keys (below), and zod counts string lengths in UTF-16 units and trims differently from Pydantic, so `lib/` reads every JSON text with its own `parseJson` and ports `Field(max_length=…)` with code-point checks (`lib/schema.ts`).
 2. **Core protocols.** Workspace DO (connections, layers, grants, agents, run registry, outbox, credentials and refresh), Conversation DO (messages, runs, attempts, events, write ledger, page tokens), the connector contract, policy and executor ported with fake connectors, PiHarness with the fake model and the attempt gate, the model wrapper. Start, revocation, attempts, writes and refresh pass their fault tests.
 3. **Sandbox and files.** Container image, Sandbox DO lifecycle and hardening, `minerva-fs`, the `ExecutionEnv`, the R2 store, versions and checkpoints. Their fault tests and the sandbox probe pass on the account.
 4. **Code mode.** Scripts DO and `run_script`, with their fault tests.
@@ -302,9 +306,10 @@ Consequences for the design:
 
 - The Web connector keeps its URL and host policy and its same-host redirect rule; the DNS-pinning guard against private networks becomes the platform's refusal, which the connector must recognise (a 403 with `error code: 1003`) and report as today. That refusal is measured, not documented, so step 6 adds adversarial tests (rebinding names, `nip.io`, IPv6 encodings, redirects to private addresses) against the deployed Worker.
 - **Versions.** Busy objects keep their old code for minutes after a deploy and new objects may start on the previous version, so two versions run side by side: Durable Object storage changes are additive only, code accepts rows written by the previous and the next version, and a changed tool still fails through its fingerprint (`OPERATION_CHANGED`).
-- `/assets/<missing>` gets the SPA shell instead of today's 404 (accepted: a stale page fails to load its chunk either way).
+- `/assets/<missing>` would get the SPA shell, cached as immutable by the `/assets/*` header rule; the Worker therefore runs first for `/assets/*` and answers a miss with today's 404 (`no-store`).
 - The sandbox checks are reworked for this platform (no loopback-only check; network checks over HTTP and TLS, not TCP connect) and run against the deployed Worker.
 - Deploys never reach a busy object, so revocation and policy can never rely on a deploy.
+- **JSON keys** (found in step 1, in Node 24's V8, in workerd 1.20261006.1 and on the deployed Worker): after any JSON text with the key `"\\"` was parsed in an isolate, a later key written with an escape in the same place (`"\n"`, `"\u00e9"`) comes back as `"\\"`. `JSON.parse`, `Response.json()` and Hono's `c.req.json()` are affected, values are not. The state is per isolate, so one tenant's input could change another's parsed keys and the hashes over them; every port parses JSON with `lib/json.ts`'s `parseJson`, a unit test refuses `JSON.parse` elsewhere in `src/`, and a platform test and the deployed probe keep the bug visible until the runtime is fixed. Still to be reported upstream.
 
 ## Open questions
 
@@ -315,3 +320,4 @@ Consequences for the design:
 5. Retention: run events, the write ledger and page tokens grow with every turn (today without a retention period too). Pick limits per conversation, and measure whether a very long turn approaches the 10,000 subrequests of one invocation (not tested in the spike).
 6. Email Sending is in beta; a provider API may be needed for production.
 7. Compliance scope: Containers, Dynamic Workers and Secrets Store are missing from Cloudflare's published SOC 2 and HIPAA lists.
+8. Residency of an EU workspace beyond its Durable Objects and bucket: where its container's VM runs (no placement constraint for `durable_object` scheduling), where Workers AI and AI Gateway process its prompts, and its users' accounts, which live in the one D1 database (location hint `weur`, not the EU jurisdiction D1 also offers).

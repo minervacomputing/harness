@@ -1,0 +1,142 @@
+import { readdirSync } from "node:fs";
+import { describe, expect, test } from "vitest";
+import { PROBE_HEADER, probeToken } from "../../src/http/probe-token.ts";
+import { cf, fetchDeployed, origin, secret } from "./client.ts";
+
+const NIL = "00000000-0000-0000-0000-000000000000";
+
+const SECURITY = {
+	"strict-transport-security": "max-age=31536000",
+	"x-content-type-options": "nosniff",
+	"x-frame-options": "DENY",
+	"referrer-policy": "strict-origin-when-cross-origin",
+	"permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+	"cross-origin-opener-policy": "same-origin",
+	"content-security-policy": "frame-ancestors 'none'; base-uri 'self'; object-src 'none'",
+};
+
+function expectSecurityHeaders(headers: Headers) {
+	for (const [name, value] of Object.entries(SECURITY)) expect(headers.get(name), name).toBe(value);
+}
+
+describe("minerva-cf", () => {
+	const site = origin("MINERVA_SITE_URL");
+
+	test("/api/health answers with the security headers", async () => {
+		const reply = await fetchDeployed(`${site}/api/health`);
+		expect(reply.status).toBe(200);
+		expect(JSON.parse(reply.text)).toEqual({ ok: true });
+		expectSecurityHeaders(reply.headers);
+		expect(reply.headers.get("cache-control")).toBe("no-store");
+	});
+
+	test("a missing API route is 404 {detail}", async () => {
+		const reply = await fetchDeployed(`${site}/api/no-such-route`, { method: "POST" });
+		expect(reply.status).toBe(404);
+		expect(JSON.parse(reply.text)).toEqual({ detail: "Not Found" });
+		expectSecurityHeaders(reply.headers);
+	});
+
+	test("/api/csrf sets a secure, readable csrftoken", async () => {
+		const reply = await fetchDeployed(`${site}/api/csrf`);
+		expect(reply.status).toBe(204);
+		expect(reply.headers.get("set-cookie")).toMatch(/^csrftoken=[A-Za-z0-9]{32}; Max-Age=31449600; Path=\/; SameSite=Lax; Secure$/);
+	});
+
+	test("/ and client routes serve the SPA shell with the asset headers", async () => {
+		for (const path of ["/", "/login", "/w/0199a000-0000-7000-8000-000000000001/chat"]) {
+			const reply = await fetchDeployed(`${site}${path}`);
+			expect(reply.status, path).toBe(200);
+			expect(reply.headers.get("content-type")).toMatch(/^text\/html/);
+			expect(reply.text).toContain('<div id="root"></div>');
+			expect(reply.text).toContain(`<meta http-equiv="Content-Security-Policy" content="img-src 'self' data: blob:" />`);
+			expectSecurityHeaders(reply.headers);
+		}
+	});
+
+	test("a missing asset is a 404 nothing caches, not the app shell", async () => {
+		for (const mode of ["no-cors", "navigate"]) {
+			const reply = await fetchDeployed(`${site}/assets/missing-${Date.now()}.js`, { headers: { "Sec-Fetch-Mode": mode } });
+			expect(reply.status, mode).toBe(404);
+			expect(reply.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+			expect(reply.headers.get("cache-control")).toBe("no-store");
+			expectSecurityHeaders(reply.headers);
+		}
+	});
+
+	test("hashed assets are immutable", async () => {
+		const shell = await fetchDeployed(`${site}/`);
+		const script = /src="(\/assets\/[^"]+\.js)"/.exec(shell.text)?.[1];
+		expect(script).toBeDefined();
+		const reply = await fetchDeployed(`${site}${script}`);
+		expect(reply.status).toBe(200);
+		expect(reply.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+		expect(reply.headers.get("x-content-type-options")).toBe("nosniff");
+	});
+});
+
+describe("inside minerva-cf (/api/probe)", () => {
+	const site = origin("MINERVA_SITE_URL");
+
+	test("without its token it is a plain 404", async () => {
+		for (const headers of [{}, { [PROBE_HEADER]: "0".repeat(64) }] as Record<string, string>[]) {
+			const reply = await fetchDeployed(`${site}/api/probe`, { headers });
+			expect(reply.status).toBe(404);
+			expect(JSON.parse(reply.text)).toEqual({ detail: "Not Found" });
+		}
+	});
+
+	test("every Durable Object class answers, in the EU jurisdiction too; D1 has every migration; JSON keys", async () => {
+		const reply = await fetchDeployed(`${site}/api/probe`, { headers: { [PROBE_HEADER]: await probeToken(secret("MINERVA_SECRET_KEY")) } });
+		expect(reply.status).toBe(200);
+		const body = JSON.parse(reply.text) as {
+			objects: Record<string, unknown>;
+			d1Migrations: string[];
+			json: { native: number[]; parseJson: number[] };
+		};
+		for (const kind of ["workspace", "conversation", "scripts", "sandbox"]) {
+			expect(body.objects[`${kind}:default`], kind).toEqual({ kind, name: NIL, jurisdiction: null, migrations: [] });
+			// The Sandbox is reached through ctx.exports (addressing.ts); its jurisdiction works there too.
+			expect(body.objects[`${kind}:eu`], kind).toEqual({ kind, name: NIL, jurisdiction: "eu", migrations: [] });
+		}
+		const local = readdirSync(new URL("../../migrations/", import.meta.url)).filter((name) => name.endsWith(".sql")).sort();
+		expect(body.d1Migrations).toEqual(local);
+		// The runtime's escaped-key bug, on the edge too (lib/json.ts). When `native` is [10], it is fixed.
+		expect(body.json).toEqual({ native: [92], parseJson: [10] });
+	});
+});
+
+describe("preview URLs", () => {
+	interface WorkerInfo {
+		subdomain: { enabled: boolean; previews_enabled: boolean };
+	}
+
+	test("are off for both Workers", () => {
+		for (const name of ["minerva-cf", "minerva-cf-files"]) {
+			const info = cf<WorkerInfo>(["workers", "get", name]);
+			expect(info.subdomain.enabled, name).toBe(true);
+			expect(info.subdomain.previews_enabled, name).toBe(false);
+		}
+	});
+
+	test("no version of the download Worker answers at its preview origin", async () => {
+		const host = new URL(origin("MINERVA_DOWNLOAD_ORIGIN")).host;
+		const versions = cf<{ id: string; urls?: string[] }[]>(["workers", "versions", "list", "--worker-id", "minerva-cf-files"]);
+		expect(versions.length).toBeGreaterThan(0);
+		for (const version of versions) {
+			expect(version.urls ?? []).toEqual([]);
+			const reply = await fetchDeployed(`https://${version.id.slice(0, 8)}-${host}/x`, { timeoutMs: 10_000 }).catch(() => null);
+			// Cloudflare's own page, or nothing at all: never the Worker, whose answer carries `CSP: sandbox`.
+			expect(reply?.headers.get("content-security-policy") ?? null).not.toBe("sandbox");
+		}
+	});
+});
+
+describe("minerva-cf-files", () => {
+	test("answers 404 until downloads are built, as a sandboxed response", async () => {
+		const reply = await fetchDeployed(`${origin("MINERVA_DOWNLOAD_ORIGIN")}/anything`);
+		expect(reply.status).toBe(404);
+		expect(JSON.parse(reply.text)).toEqual({ detail: "Not Found" });
+		expect(reply.headers.get("content-security-policy")).toBe("sandbox");
+	});
+});

@@ -3,6 +3,10 @@
 .env.*
 !.env.example
 
+# Cloudflare CLI caches (they hold the account id) and local state, wherever cf runs
+.cloudflare/
+.wrangler/
+
 # Upstream reference checkout (has its own repository)
 /deepseek-harness/
 
