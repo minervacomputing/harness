@@ -85,8 +85,12 @@ export interface Operation<Input = Json> {
 	/**
 	 * Strict input: unknown fields refused (the model must never pick a connection), no coercion, every
 	 * string stripped before its limits. `null` or missing arguments validate as `{}`. The executor hashes the
-	 * normalized output, defaults included (connectors 1.2). Its JSON Schema, generated deterministically
-	 * with a pinned library, is what the model sees and what the fingerprint covers.
+	 * normalized output, defaults included (connectors 1.2). Its JSON Schema, zod's own of the input with
+	 * zod pinned (gateway/registry.ts `inputSchema`), is what the model sees and what the fingerprint
+	 * covers. The registry refuses an input that is not strict at every depth, as Pydantic's config applies
+	 * to nested models too (gateway/registry.ts `checkStrict`): every object `z.strictObject`, every
+	 * `dict[str, …]` `strictRecord` or `anyRecord` (never `z.record`, which mishandles a "__proto__" key),
+	 * every string `strippedStr`, no `z.coerce`, no transform before validation.
 	 *
 	 * Strings are `strippedStr({min, max})` from lib/schema.ts, never zod's `.trim()`, `.min()` or `.max()`:
 	 * Pydantic strips Unicode White_Space (U+0085 included, U+FEFF not) and counts code points, so an emoji
@@ -162,6 +166,7 @@ export interface Connector<Client extends ProviderClient = ProviderClient> {
 	kinds: ResourceKind[];
 	actions: ActionSpec[];
 	auth: Auth;
+	/** Each declared with `defineOperation` (gateway/connector.ts), which keeps its input's type for `prepare`. */
 	operations: Operation<never>[];
 	/** Hierarchical kinds users browse as a tree with `children`; not part of the fingerprint. */
 	browsable?: string[];
@@ -251,8 +256,8 @@ export type ConnectorErrorCode =
 export type ErrorCode = CoreErrorCode | ConnectorErrorCode;
 
 /**
- * An owned, deliberately safe error: `{code, message}` (step 2 provides the class, `OperationError`, and
- * `denied()`: POLICY_DENIED "This resource or action is not available under the current permissions.",
+ * An owned, deliberately safe error: `{code, message}` (gateway/connector.ts has the class, `OperationError`,
+ * and `denied()`: POLICY_DENIED "This resource or action is not available under the current permissions.",
  * also for what Minerva will not reveal). Any other exception is logged and the model sees "The
  * operation could not be completed. Check the connection and try again." (code FAILED).
  */

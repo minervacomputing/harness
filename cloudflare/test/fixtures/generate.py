@@ -121,6 +121,15 @@ UNESCAPED = [
 
 TRUNCATE = [["abc", 2], ["abc", 3], ["\U0001f600\U0001f600\U0001f600", 2], ["\u00e9", 1], [None, 3], ["", 0]]
 
+# Strings as `f"{value!r}"` writes them into messages (permissions/services.py, connectors/registry.py).
+# No lone surrogates: the tests' JSON loader refuses them (text.test.ts checks one itself).
+REPR = [
+    "", "project", "it's", 'say "hi"', "both ' and \"", "back\\slash", "tab\tnl\ncr\r", "\x00\x1f\x7f", "\x80\x9f\xa0\xad\xe9",
+    "\u200b\u2028\u3000\ufeff\ue000\ufffe", "\U0001f600\U000e0001\U0010ffff", "e\u0301", "\u0378",
+]
+
+STRIPPED = ["  x  ", "\x1c\x1fx\x1f", "\ufeffx\ufeff", "\x85x\u3000", "\n\nAgent.\n", "", "\t"]
+
 SORTED = ["b", "a", "\u00e9", "\U0001f600", "\ue000", "\uffff", "Z", "a\u0000", "", "ab", "aa", "\U0001f600x", "\U0001f601", "\ud7ff"]
 
 
@@ -155,6 +164,58 @@ def pydantic_strings() -> dict:
             for case in cases
         ],
     }
+
+
+# Connector inputs with dicts, as JSON text the model could send (lib/schema.ts `strictRecord`).
+RECORDS = [
+    '{"flags": {"__proto__": 1}}',
+    '{"flags": {"__proto__": true}}',
+    '{"filter": {" __proto__ ": {"injected": true}}}',
+    '{"filter": {"__proto__": {"injected": true}, " k ": " v ", "n": {" x ": " y ", "__proto__": null}}}',
+    '{"filter": {" a ": 1, "a": 2, "b": 3}}',
+    '{"filter": {"b": 0, " a ": 1, "c": 2, "a": 3}}',
+    '{"filter": {"1": "a", " 1 ": "b"}}',
+    '{"filter": {"\\u0085a\\ufeff": 1, "": 2, "  ": 3}}',
+    '{"filter": null}',
+    '{"filter": [1]}',
+    '{"filter": "x"}',
+    '{"flags": {"a": 1, "b": false, " c ": "x"}}',
+    '{"flags": {" a ": 1, "a": true}}',
+    '{"sorts": [{"property": "x"}, {"__proto__": {"a": 1}}]}',
+    '{"sorts": [1]}',
+    '{"sorts": [' + ", ".join(["{}"] * 11) + "]}",
+    '{"properties": {}}',
+    '{"properties": {"a": 1, "b": 2, "c": 3}}',
+    '{"properties": {" a ": 1, "a": 2, "b": 3}}',
+    '{"properties": {"a": 1, "b": 2, "c": 3}, "flags": {"a": 0}}',
+]
+
+
+def pydantic_records(variant: dict) -> list:
+    """How `dict[str, …]` validates in a connector input: keys stripped, "__proto__" an ordinary key, a
+    dict's length after validation. The output in the write-key variant, or the errors as Ninja and the
+    executor read them (`model_validate` of the parsed JSON)."""
+    from typing import Annotated, Any
+
+    from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+    class Input(BaseModel):
+        # As connectors/base.py's OperationInput, with the dicts of notion's QueryDatabase and CreateRow.
+        model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
+        flags: dict[str, bool] | None = None
+        filter: dict[str, Any] | None = None
+        sorts: Annotated[list[dict[str, Any]], Field(max_length=10)] | None = None
+        properties: Annotated[dict[str, Any], Field(min_length=1, max_length=2)] | None = None
+
+    cases = []
+    for source in RECORDS:
+        try:
+            data = Input.model_validate(json.loads(source)).model_dump()
+        except ValidationError as error:
+            cases.append({"json": source, "errors": error.errors(include_url=False, include_input=False)})
+        else:
+            cases.append({"json": source, "canonical": json.dumps(data, **variant)})
+    return cases
 
 
 def main() -> None:
@@ -232,6 +293,10 @@ def main() -> None:
         "sorted": sorted(SORTED),
         "sha256": [{"input": item, "hex": hashlib.sha256(item.encode()).hexdigest()} for item in ["", "abc", "\u00e9\U0001f600"]],
         "pydantic": pydantic_strings(),
+        "pydantic_records": pydantic_records(variants["write_key"]),
+        "repr": [{"input": item, "output": repr(item)} for item in REPR],
+        "isspace": [c for c in range(0x110000) if chr(c).isspace()],
+        "strip": [{"input": item, "output": item.strip()} for item in STRIPPED],
     }
     (HERE / "python-vectors.json").write_text(json.dumps(vectors, indent=1, ensure_ascii=True) + "\n")
     print(f"wrote python-vectors.json with Python {vectors['python']}")

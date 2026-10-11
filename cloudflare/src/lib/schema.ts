@@ -12,6 +12,10 @@
 //
 // So a port of `Field(min_length=…, max_length=…)` is `str({min, max})` (API) or `strippedStr({min, max})`
 // (connector input), never `z.string().min().max().trim()`.
+//
+// A connector input's `dict[str, …]` is `strictRecord(value)`, and `dict[str, Any]` is `anyRecord()`, never
+// `z.record`: zod's record skips a "__proto__" key, and assigns the others to a fresh `{}`, so a key that
+// strips to "__proto__" replaces the result's prototype. Python keeps "__proto__" as an ordinary key.
 
 import { z } from "zod";
 import * as core from "zod/v4/core";
@@ -93,4 +97,121 @@ export function str(limits: Limits = {}): z.ZodString {
 /** The same in a connector's input, which strips White_Space before the limits (connectors 1.2). */
 export function strippedStr(limits: Limits = {}): z.ZodString {
 	return limited(z.string().overwrite(stripWhitespace), limits);
+}
+
+/** A length check of `str` or `strippedStr`, which counts code points (zod's own count UTF-16 units). */
+export function countsCodePoints(check: core.$ZodCheck<never>): boolean {
+	// zod's constructors answer `instanceof` by the instance's traits.
+	return check instanceof CodePoints;
+}
+
+// Records.
+
+export interface RecordLimits {
+	/** `min_length`: items after validation, so keys that strip alike count once. */
+	min?: number;
+	/** `max_length`, counted the same way. */
+	max?: number;
+}
+
+export interface StrictRecordDef<V extends core.$ZodType = core.$ZodType> extends core.$ZodTypeDef {
+	/** A type zod's own tools do not know, which `checkStrict` (gateway/registry.ts) tells by its trait. */
+	type: "custom";
+	valueType: V;
+	min?: number | undefined;
+	max?: number | undefined;
+}
+
+export interface StrictRecordInternals<V extends core.$ZodType = core.$ZodType>
+	extends core.$ZodTypeInternals<Record<string, core.output<V>>, Record<string, core.input<V>>> {
+	def: StrictRecordDef<V>;
+}
+
+export interface StrictRecord<V extends core.$ZodType = core.$ZodType>
+	extends z.ZodType<Record<string, core.output<V>>, Record<string, core.input<V>>, StrictRecordInternals<V>> {}
+
+/** Python's dict: a plain object, not an array, null or an instance of a class. */
+function isDict(value: unknown): value is Record<string, unknown> {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+	const prototype: unknown = Object.getPrototypeOf(value);
+	return prototype === Object.prototype || prototype === null;
+}
+
+// An assertion function must be called through a name with an explicit type.
+const ZodType: core.$constructor<z.ZodType> = z.ZodType;
+
+type Item = readonly [raw: string, result: core.ParsePayload];
+
+const StrictRecordType = core.$constructor<StrictRecord>("MinervaRecord", (inst, def) => {
+	ZodType.init(inst, def);
+	const finish = (payload: core.ParsePayload, input: Record<string, unknown>, items: readonly Item[]): core.ParsePayload => {
+		// Own properties only, defined rather than assigned: "__proto__" is a key like any other, and no
+		// prototype is read or replaced. Keys that strip alike keep the first one's place and the last value,
+		// as a dict does; each item is validated, and a failure is reported at the key as it was sent.
+		const output: Record<string, unknown> = {};
+		let valid = true;
+		for (const [raw, result] of items) {
+			if (result.issues.length) {
+				valid = false;
+				payload.issues.push(...core.util.prefixIssues(raw, result.issues));
+				continue;
+			}
+			Object.defineProperty(output, stripWhitespace(raw), { value: result.value, enumerable: true, writable: true, configurable: true });
+		}
+		payload.value = output;
+		if (!valid) {
+			// An item's issue may let zod go on (a length check's does), but Pydantic runs neither the length
+			// check nor an AfterValidator (a refinement here) on a dict whose items failed.
+			payload.aborted = true;
+			return payload;
+		}
+		// Pydantic checks the length after validation, and only when every item passed.
+		const actual = Object.keys(output).length;
+		if (def.min !== undefined && actual < def.min) {
+			payload.issues.push({ code: "too_small", origin: "record", minimum: def.min, inclusive: true, actual, input, inst });
+		} else if (def.max !== undefined && actual > def.max) {
+			payload.issues.push({ code: "too_big", origin: "record", maximum: def.max, inclusive: true, actual, input, inst });
+		}
+		return payload;
+	};
+	inst._zod.parse = (payload, ctx) => {
+		const input = payload.value;
+		if (!isDict(input)) {
+			payload.issues.push({ code: "invalid_type", expected: "record", input, inst });
+			return payload;
+		}
+		// In the object's own order, which is the text's except that integer-like keys come first: so of
+		// " 1 " and "1", the padded one wins wherever it was sent, where Python keeps the later one.
+		const pending: (readonly [string, core.util.MaybeAsync<core.ParsePayload>])[] = Object.keys(input).map((raw) => [
+			raw,
+			def.valueType._zod.run({ value: input[raw], issues: [] }, ctx),
+		]);
+		if (pending.every((item): item is Item => !(item[1] instanceof Promise))) return finish(payload, input, pending);
+		return Promise.all(pending.map(async ([raw, result]): Promise<Item> => [raw, await result])).then((items) => finish(payload, input, items));
+	};
+	// Pydantic's: an object whose every value is the value's schema, with minProperties and maxProperties.
+	inst._zod.processJSONSchema = (ctx, json, params) => {
+		json.type = "object";
+		json.additionalProperties = core.process(def.valueType, ctx, { ...params, path: [...params.path, "additionalProperties"] });
+		if (def.min !== undefined) json.minProperties = def.min;
+		if (def.max !== undefined) json.maxProperties = def.max;
+	};
+});
+
+/**
+ * A connector input's `dict[str, V]` with `Field(min_length, max_length)`: keys stripped as strings are,
+ * values validated by `valueType`, and errors in Pydantic's words through http/errors.ts.
+ */
+export function strictRecord<V extends core.$ZodType>(valueType: V, limits: RecordLimits = {}): StrictRecord<V> {
+	return new StrictRecordType({ type: "custom", valueType, min: limits.min, max: limits.max }) as StrictRecord<V>;
+}
+
+/** `dict[str, Any]`: keys stripped, values left as they are (nested keys too, as Pydantic leaves them). */
+export function anyRecord(limits: RecordLimits = {}): StrictRecord<z.ZodUnknown> {
+	return strictRecord(z.unknown(), limits);
+}
+
+/** Whether a schema is `strictRecord`'s (or `anyRecord`'s). */
+export function isStrictRecord(schema: core.$ZodType): schema is StrictRecord {
+	return schema instanceof StrictRecordType;
 }

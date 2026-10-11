@@ -761,5 +761,322 @@
     "plain": false
    }
   ]
- }
+ },
+ "pydantic_records": [
+  {
+   "json": "{\"flags\": {\"__proto__\": 1}}",
+   "errors": [
+    {
+     "type": "bool_type",
+     "loc": [
+      "flags",
+      "__proto__"
+     ],
+     "msg": "Input should be a valid boolean"
+    }
+   ]
+  },
+  {
+   "json": "{\"flags\": {\"__proto__\": true}}",
+   "canonical": "{\"filter\":null,\"flags\":{\"__proto__\":true},\"properties\":null,\"sorts\":null}"
+  },
+  {
+   "json": "{\"filter\": {\" __proto__ \": {\"injected\": true}}}",
+   "canonical": "{\"filter\":{\"__proto__\":{\"injected\":true}},\"flags\":null,\"properties\":null,\"sorts\":null}"
+  },
+  {
+   "json": "{\"filter\": {\"__proto__\": {\"injected\": true}, \" k \": \" v \", \"n\": {\" x \": \" y \", \"__proto__\": null}}}",
+   "canonical": "{\"filter\":{\"__proto__\":{\"injected\":true},\"k\":\" v \",\"n\":{\" x \":\" y \",\"__proto__\":null}},\"flags\":null,\"properties\":null,\"sorts\":null}"
+  },
+  {
+   "json": "{\"filter\": {\" a \": 1, \"a\": 2, \"b\": 3}}",
+   "canonical": "{\"filter\":{\"a\":2,\"b\":3},\"flags\":null,\"properties\":null,\"sorts\":null}"
+  },
+  {
+   "json": "{\"filter\": {\"b\": 0, \" a \": 1, \"c\": 2, \"a\": 3}}",
+   "canonical": "{\"filter\":{\"a\":3,\"b\":0,\"c\":2},\"flags\":null,\"properties\":null,\"sorts\":null}"
+  },
+  {
+   "json": "{\"filter\": {\"1\": \"a\", \" 1 \": \"b\"}}",
+   "canonical": "{\"filter\":{\"1\":\"b\"},\"flags\":null,\"properties\":null,\"sorts\":null}"
+  },
+  {
+   "json": "{\"filter\": {\"\\u0085a\\ufeff\": 1, \"\": 2, \"  \": 3}}",
+   "canonical": "{\"filter\":{\"\":3,\"a\\ufeff\":1},\"flags\":null,\"properties\":null,\"sorts\":null}"
+  },
+  {
+   "json": "{\"filter\": null}",
+   "canonical": "{\"filter\":null,\"flags\":null,\"properties\":null,\"sorts\":null}"
+  },
+  {
+   "json": "{\"filter\": [1]}",
+   "errors": [
+    {
+     "type": "dict_type",
+     "loc": [
+      "filter"
+     ],
+     "msg": "Input should be a valid dictionary"
+    }
+   ]
+  },
+  {
+   "json": "{\"filter\": \"x\"}",
+   "errors": [
+    {
+     "type": "dict_type",
+     "loc": [
+      "filter"
+     ],
+     "msg": "Input should be a valid dictionary"
+    }
+   ]
+  },
+  {
+   "json": "{\"flags\": {\"a\": 1, \"b\": false, \" c \": \"x\"}}",
+   "errors": [
+    {
+     "type": "bool_type",
+     "loc": [
+      "flags",
+      "a"
+     ],
+     "msg": "Input should be a valid boolean"
+    },
+    {
+     "type": "bool_type",
+     "loc": [
+      "flags",
+      " c "
+     ],
+     "msg": "Input should be a valid boolean"
+    }
+   ]
+  },
+  {
+   "json": "{\"flags\": {\" a \": 1, \"a\": true}}",
+   "errors": [
+    {
+     "type": "bool_type",
+     "loc": [
+      "flags",
+      " a "
+     ],
+     "msg": "Input should be a valid boolean"
+    }
+   ]
+  },
+  {
+   "json": "{\"sorts\": [{\"property\": \"x\"}, {\"__proto__\": {\"a\": 1}}]}",
+   "canonical": "{\"filter\":null,\"flags\":null,\"properties\":null,\"sorts\":[{\"property\":\"x\"},{\"__proto__\":{\"a\":1}}]}"
+  },
+  {
+   "json": "{\"sorts\": [1]}",
+   "errors": [
+    {
+     "type": "dict_type",
+     "loc": [
+      "sorts",
+      0
+     ],
+     "msg": "Input should be a valid dictionary"
+    }
+   ]
+  },
+  {
+   "json": "{\"sorts\": [{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}]}",
+   "errors": [
+    {
+     "type": "too_long",
+     "loc": [
+      "sorts"
+     ],
+     "msg": "List should have at most 10 items after validation, not 11",
+     "ctx": {
+      "field_type": "List",
+      "max_length": 10,
+      "actual_length": 11
+     }
+    }
+   ]
+  },
+  {
+   "json": "{\"properties\": {}}",
+   "errors": [
+    {
+     "type": "too_short",
+     "loc": [
+      "properties"
+     ],
+     "msg": "Dictionary should have at least 1 item after validation, not 0",
+     "ctx": {
+      "field_type": "Dictionary",
+      "min_length": 1,
+      "actual_length": 0
+     }
+    }
+   ]
+  },
+  {
+   "json": "{\"properties\": {\"a\": 1, \"b\": 2, \"c\": 3}}",
+   "errors": [
+    {
+     "type": "too_long",
+     "loc": [
+      "properties"
+     ],
+     "msg": "Dictionary should have at most 2 items after validation, not 3",
+     "ctx": {
+      "field_type": "Dictionary",
+      "max_length": 2,
+      "actual_length": 3
+     }
+    }
+   ]
+  },
+  {
+   "json": "{\"properties\": {\" a \": 1, \"a\": 2, \"b\": 3}}",
+   "canonical": "{\"filter\":null,\"flags\":null,\"properties\":{\"a\":2,\"b\":3},\"sorts\":null}"
+  },
+  {
+   "json": "{\"properties\": {\"a\": 1, \"b\": 2, \"c\": 3}, \"flags\": {\"a\": 0}}",
+   "errors": [
+    {
+     "type": "bool_type",
+     "loc": [
+      "flags",
+      "a"
+     ],
+     "msg": "Input should be a valid boolean"
+    },
+    {
+     "type": "too_long",
+     "loc": [
+      "properties"
+     ],
+     "msg": "Dictionary should have at most 2 items after validation, not 3",
+     "ctx": {
+      "field_type": "Dictionary",
+      "max_length": 2,
+      "actual_length": 3
+     }
+    }
+   ]
+  }
+ ],
+ "repr": [
+  {
+   "input": "",
+   "output": "''"
+  },
+  {
+   "input": "project",
+   "output": "'project'"
+  },
+  {
+   "input": "it's",
+   "output": "\"it's\""
+  },
+  {
+   "input": "say \"hi\"",
+   "output": "'say \"hi\"'"
+  },
+  {
+   "input": "both ' and \"",
+   "output": "'both \\' and \"'"
+  },
+  {
+   "input": "back\\slash",
+   "output": "'back\\\\slash'"
+  },
+  {
+   "input": "tab\tnl\ncr\r",
+   "output": "'tab\\tnl\\ncr\\r'"
+  },
+  {
+   "input": "\u0000\u001f\u007f",
+   "output": "'\\x00\\x1f\\x7f'"
+  },
+  {
+   "input": "\u0080\u009f\u00a0\u00ad\u00e9",
+   "output": "'\\x80\\x9f\\xa0\\xad\u00e9'"
+  },
+  {
+   "input": "\u200b\u2028\u3000\ufeff\ue000\ufffe",
+   "output": "'\\u200b\\u2028\\u3000\\ufeff\\ue000\\ufffe'"
+  },
+  {
+   "input": "\ud83d\ude00\udb40\udc01\udbff\udfff",
+   "output": "'\ud83d\ude00\\U000e0001\\U0010ffff'"
+  },
+  {
+   "input": "e\u0301",
+   "output": "'e\u0301'"
+  },
+  {
+   "input": "\u0378",
+   "output": "'\\u0378'"
+  }
+ ],
+ "isspace": [
+  9,
+  10,
+  11,
+  12,
+  13,
+  28,
+  29,
+  30,
+  31,
+  32,
+  133,
+  160,
+  5760,
+  8192,
+  8193,
+  8194,
+  8195,
+  8196,
+  8197,
+  8198,
+  8199,
+  8200,
+  8201,
+  8202,
+  8232,
+  8233,
+  8239,
+  8287,
+  12288
+ ],
+ "strip": [
+  {
+   "input": "  x  ",
+   "output": "x"
+  },
+  {
+   "input": "\u001c\u001fx\u001f",
+   "output": "x"
+  },
+  {
+   "input": "\ufeffx\ufeff",
+   "output": "\ufeffx\ufeff"
+  },
+  {
+   "input": "\u0085x\u3000",
+   "output": "x"
+  },
+  {
+   "input": "\n\nAgent.\n",
+   "output": "Agent."
+  },
+  {
+   "input": "",
+   "output": ""
+  },
+  {
+   "input": "\t",
+   "output": ""
+  }
+ ]
 }

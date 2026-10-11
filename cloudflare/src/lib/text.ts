@@ -129,3 +129,54 @@ export function htmlUnescape(text: string): string {
 function entity(name: string): string | undefined {
 	return Object.hasOwn(NAMED, name) ? NAMED[name] : undefined;
 }
+
+/**
+ * Python's `str.isspace()` set, which `str.strip()` removes: Unicode White_Space (lib/schema.ts's
+ * WHITE_SPACE) and the information separators U+001C to U+001F, which Python counts and Pydantic does not.
+ */
+export const PYTHON_WHITESPACE: readonly number[] = [
+	0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x85, 0xa0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004,
+	0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000,
+];
+
+const PYTHON_SPACE = new Set(PYTHON_WHITESPACE);
+
+/** Python's `text.strip()` without arguments. */
+export function pythonStrip(text: string): string {
+	let start = 0;
+	let end = text.length;
+	while (start < end && PYTHON_SPACE.has(text.charCodeAt(start))) start++;
+	while (end > start && PYTHON_SPACE.has(text.charCodeAt(end - 1))) end--;
+	return start === 0 && end === text.length ? text : text.slice(start, end);
+}
+
+// What `str.isprintable()` refuses: categories Other and Separator, except the ASCII space.
+const UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Zs}]/u;
+
+/**
+ * Python's `repr(text)`, as `f"{value!r}"` writes a string into a message: single quotes, or double ones
+ * when the text has a single quote and no double quote; backslash escapes for the quote, backslash, tab,
+ * newline and carriage return; `\xhh`, `\uhhhh` or `\Uhhhhhhhh` for other characters that are not
+ * printable. Printability comes from the runtime's Unicode tables, which may be newer than Python's.
+ */
+export function pythonRepr(text: string): string {
+	const quote = text.includes("'") && !text.includes('"') ? '"' : "'";
+	let out = quote;
+	for (const char of text) {
+		const point = char.codePointAt(0) as number;
+		if (char === quote || char === "\\") out += `\\${char}`;
+		else if (char === "\t") out += "\\t";
+		else if (char === "\n") out += "\\n";
+		else if (char === "\r") out += "\\r";
+		else if (point < 0x20 || point === 0x7f) out += `\\x${hex(point, 2)}`;
+		else if (point < 0x7f || !UNPRINTABLE.test(char)) out += char;
+		else if (point < 0x100) out += `\\x${hex(point, 2)}`;
+		else if (point < 0x10000) out += `\\u${hex(point, 4)}`;
+		else out += `\\U${hex(point, 8)}`;
+	}
+	return out + quote;
+}
+
+function hex(point: number, digits: number): string {
+	return point.toString(16).padStart(digits, "0");
+}

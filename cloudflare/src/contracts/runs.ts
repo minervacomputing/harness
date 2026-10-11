@@ -24,11 +24,14 @@ export type TerminalStatus = Exclude<RunStatus, ActiveStatus>;
 
 /**
  * Attempts (plan: Attempts and recovery). The first execution is attempt 1; there are at most 3. A
- * restart is the Conversation Durable Object's constructor running while a run is `running` and pi has
- * work in progress (hibernation between turns is not one). Inside the constructor's
- * `blockConcurrencyWhile`, before pi resumes, the object increments the attempt, emits the restart marker
- * (`status: running` with `attempt`), and fails the run if the attempt would be over 3 or fewer than 30 s
- * remain before the deadline. A new attempt waits while any write is dispatched.
+ * restart is PiHarness's harness factory running in a new instance while an activated `provisioning` or
+ * `running` run has unsettled pi work (its submission queued or placed, or live tasks in its session);
+ * hibernation between turns is not one, and queued runs belong to the start protocol. First in the
+ * factory, before pi opens, the object ends the run as `timed_out` if its deadline passed, as
+ * `worker_exited` if this would be attempt 4 or fewer than 30 s remain, and otherwise increments the
+ * attempt and appends the restart marker `{status: "provisioning", attempt}`, then syncs storage. In the
+ * same transaction it marks the run's writes still `dispatched` as uncertain: the instance that dispatched
+ * them died and can never settle them.
  */
 export type MaxAttempts = 3;
 /** No restart with less than this left before the deadline. */
@@ -91,8 +94,8 @@ export type CancelReason = RevocationReason | "cancelled" | "emergency_stop";
  * A tool as a run snapshots it, with today's field names (runs 3.3). `name` is `{alias}_{operation}`, the
  * alias numbering usable connections per provider in `created_at` order (`todoist`, `todoist2`). The
  * model never names a connection; the executor takes it from here. `contract` is the operation's
- * fingerprint: `sha256(canonicalAscii(declaration))[:16]` (connectors 2.2); a mismatch at call time is
- * `OPERATION_CHANGED`.
+ * fingerprint: `sha256(canonicalAscii(meaning))[:16]` (connectors 2.2; gateway/registry.ts); a mismatch
+ * at call time is `OPERATION_CHANGED`. Built by gateway/tools.ts `toolsFor`.
  */
 export interface ToolRef {
 	name: string;
@@ -124,7 +127,7 @@ export interface StartSnapshot {
 	/** Fixed at start from MINERVA_RUN_TIMEOUT_SECONDS; never changes across attempts; null for none (runs 2.5). */
 	deadline: EpochMs | null;
 	createdAt: EpochMs;
-	/** The connections the run may use, for revocation by connection. */
+	/** The connections the run's tools use, in tool order, for revocation by connection. */
 	connectionIds: ConnectionId[];
 }
 

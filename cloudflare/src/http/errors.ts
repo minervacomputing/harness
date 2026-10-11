@@ -103,6 +103,9 @@ function pydantic(issue: core.$ZodIssue, value: unknown): Omit<ValidationItem, "
 			if (issue.expected === "string") return { type: "string_type", msg: "Input should be a valid string" };
 			if (issue.expected === "array") return { type: "list_type", msg: "Input should be a valid list" };
 			if (issue.expected === "object") return { type: "model_type", msg: "Input should be an object" };
+			// A `dict` (lib/schema.ts `strictRecord`), worded as `model_validate` words it: the executor
+			// validates arguments already parsed from JSON.
+			if (issue.expected === "record") return { type: "dict_type", msg: "Input should be a valid dictionary" };
 			if (issue.expected === "boolean") return { type: "bool_type", msg: "Input should be a valid boolean" };
 			if (issue.expected === "int") return { type: "int_type", msg: "Input should be a valid integer" };
 			if (issue.expected === "number") return { type: "float_type", msg: "Input should be a valid number" };
@@ -119,6 +122,14 @@ function pydantic(issue: core.$ZodIssue, value: unknown): Omit<ValidationItem, "
 					ctx: { field_type: "List", max_length: Number(issue.maximum), actual_length: actual },
 				};
 			}
+			if (issue.origin === "record") {
+				const actual = itemCount(issue, value);
+				return {
+					type: "too_long",
+					msg: `Dictionary should have at most ${plural(issue.maximum, "item")} after validation, not ${actual}`,
+					ctx: { field_type: "Dictionary", max_length: Number(issue.maximum), actual_length: actual },
+				};
+			}
 			return { type: "less_than_equal", msg: `Input should be less than or equal to ${issue.maximum}`, ctx: { le: Number(issue.maximum) } };
 		case "too_small":
 			if (issue.origin === "string") {
@@ -132,6 +143,14 @@ function pydantic(issue: core.$ZodIssue, value: unknown): Omit<ValidationItem, "
 					ctx: { field_type: "List", min_length: Number(issue.minimum), actual_length: actual },
 				};
 			}
+			if (issue.origin === "record") {
+				const actual = itemCount(issue, value);
+				return {
+					type: "too_short",
+					msg: `Dictionary should have at least ${plural(issue.minimum, "item")} after validation, not ${actual}`,
+					ctx: { field_type: "Dictionary", min_length: Number(issue.minimum), actual_length: actual },
+				};
+			}
 			return { type: "greater_than_equal", msg: `Input should be greater than or equal to ${issue.minimum}`, ctx: { ge: Number(issue.minimum) } };
 		case "invalid_format":
 			if (issue.format === "uuid" || issue.format === "guid") return { type: "uuid_parsing", msg: "Input should be a valid UUID" };
@@ -141,6 +160,13 @@ function pydantic(issue: core.$ZodIssue, value: unknown): Omit<ValidationItem, "
 		default:
 			return { type: "value_error", msg: issue.message };
 	}
+}
+
+/** A dict's items after validation, which `strictRecord` reports (keys that strip alike count once). */
+function itemCount(issue: core.$ZodIssue, value: unknown): number {
+	const actual = (issue as { actual?: unknown }).actual;
+	if (typeof actual === "number") return actual;
+	return value !== null && typeof value === "object" ? Object.keys(value).length : 0;
 }
 
 function plural(count: number | bigint, noun: string): string {

@@ -1,12 +1,15 @@
 import { describe, expect, test } from "vitest";
 import {
 	PLAIN_TEXT,
+	PYTHON_WHITESPACE,
 	SINGLE_LINE,
 	TextError,
 	codePointLength,
 	decoded,
 	htmlUnescape,
 	plainText,
+	pythonRepr,
+	pythonStrip,
 	singleLine,
 	sliceCodePoints,
 	truncate,
@@ -74,4 +77,24 @@ test("code point length and slices", () => {
 	expect(codePointLength("a\u{1f600}é")).toBe(3);
 	expect(sliceCodePoints("a\u{1f600}é", 1, 2)).toBe("\u{1f600}");
 	expect(sliceCodePoints("a\u{1f600}é", -1)).toBe("é");
+});
+
+describe("pythonRepr matches repr(str)", () => {
+	test.each(vectors.repr)("$output", ({ input, output }) => {
+		expect(pythonRepr(input)).toBe(output);
+	});
+
+	test("a lone surrogate, which the vectors cannot hold", () => {
+		expect(pythonRepr("\ud800")).toBe("'\\ud800'");
+	});
+});
+
+describe("pythonStrip matches str.strip()", () => {
+	test("the same whitespace", () => {
+		expect([...PYTHON_WHITESPACE].sort((a, b) => a - b)).toEqual(vectors.isspace);
+	});
+
+	test.each(vectors.strip)("$input", ({ input, output }) => {
+		expect(pythonStrip(input)).toBe(output);
+	});
 });

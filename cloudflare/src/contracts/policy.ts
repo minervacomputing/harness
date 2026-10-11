@@ -1,5 +1,5 @@
 // The permission model's data (connectors 3, 4). The algebra itself (`permits`, `permitsAny`, with
-// partial ancestry and the randomized equivalence test, seed 7) is a pure module of step 2.
+// partial ancestry) is gateway/policy.ts, and the layers and grant edits are gateway/grants.ts.
 
 import type { ConnectionId } from "./common.ts";
 

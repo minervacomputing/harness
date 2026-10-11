@@ -154,8 +154,9 @@ export interface WorkspaceApi {
 	getAccess(caller: Caller, connectionId: ConnectionId): Promise<AccessOut | null>;
 	/**
 	 * All or nothing, after `checkChanges` and the provider's `describe` of new concrete grants (names
-	 * given). 422 with connectors 4.5's messages; at most 500 grants per connection. Revokes the caller's
-	 * active runs (`permissions_changed`) in the same transaction, then waits for the acknowledgements.
+	 * given, keyed by gateway/grants.ts `resourceKey(kind, id)`), then `planGrantChanges`. 422 with
+	 * connectors 4.5's messages; at most 500 grants per connection. Revokes the caller's active runs
+	 * (`permissions_changed`) in the same transaction, then waits for the acknowledgements.
 	 */
 	applyGrantChanges(
 		caller: Caller,
