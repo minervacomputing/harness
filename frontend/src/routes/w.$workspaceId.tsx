@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, Link, notFound, Outlet, useNavigate, useRouterState } from '@tanstack/react-router'
-import { BotIcon, LogOutIcon, MenuIcon, PlugIcon, SquarePenIcon, UserIcon, XIcon } from 'lucide-react'
+import { BotIcon, LogOutIcon, MenuIcon, PlugIcon, ShieldCheckIcon, SquarePenIcon, UserIcon, XIcon } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { type MouseEvent, useEffect, useState } from 'react'
 import { listConnectionsOptions, meOptions } from '@/api/@tanstack/react-query.gen'
@@ -10,7 +10,7 @@ import { ConversationList } from '@/components/chat/conversation-list'
 import { setupOf } from '@/components/connections/summary'
 import { Button } from '@/components/ui/button'
 import { Status } from '@/components/ui/misc'
-import { authQuery, type AuthUser, useSignOut } from '@/lib/auth'
+import { authQuery, type AuthUser, isSigningOut, useSignOut } from '@/lib/auth'
 import { useDemo } from '@/lib/demo'
 import { requireSignedIn } from '@/lib/guards'
 
@@ -37,7 +37,8 @@ function AppShell() {
   const pathname = useRouterState({ select: s => s.location.pathname })
 
   useEffect(() => {
-    if (state?.kind === 'anonymous') void navigate({ to: '/login', search: { next: window.location.pathname } })
+    // Signing out goes to the sign-in page itself, without a way back to this one.
+    if (state?.kind === 'anonymous' && !isSigningOut()) void navigate({ to: '/login', search: { next: window.location.pathname } })
   }, [state, navigate])
 
   // The drawer is for small screens: close it after navigating (back and forward included) and when the window widens.
@@ -101,6 +102,8 @@ function AppShell() {
 function Sidebar({ workspace, user }: { workspace: WorkspaceOut; user: AuthUser }) {
   const signOut = useSignOut()
   const params = { workspaceId: workspace.id }
+  // Only what to show: the server checks the role again on every instance request.
+  const isAdmin = useQuery(meOptions()).data?.user.is_staff === true
 
   return (
     <>
@@ -119,6 +122,11 @@ function Sidebar({ workspace, user }: { workspace: WorkspaceOut; user: AuthUser 
           <PlugIcon className="size-4" /> Connections
           <Attention workspaceId={workspace.id} />
         </Link>
+        {isAdmin && (
+          <Link to="/w/$workspaceId/instance" params={params} className={LINK} activeProps={ACTIVE}>
+            <ShieldCheckIcon className="size-4" /> Instance
+          </Link>
+        )}
       </nav>
       <div className="mt-5 min-h-0 flex-1 overflow-y-auto px-2 pb-4">
         <ConversationList workspaceId={workspace.id} />

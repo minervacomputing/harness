@@ -7,6 +7,12 @@
     "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": 86400 } }
   },
   {
+    "id": "Expire archived assets",
+    "enabled": true,
+    "conditions": { "prefix": "static/" },
+    "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 2592000 } }
+  },
+  {
     "id": "Default Multipart Abort Rule",
     "enabled": true,
     "conditions": {},

@@ -17,5 +17,5 @@
 		"skipLibCheck": true
 	},
 	"include": ["src", "test/unit", "test/platform", "test/account/scripts-worker/src", "cloudflare.config.ts", ".cloudflare/types"],
-	"exclude": ["test/unit/sources.test.ts"]
+	"exclude": ["test/unit/sources.test.ts", "test/unit/schema-check.test.ts"]
 }

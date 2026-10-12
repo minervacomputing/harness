@@ -21,6 +21,12 @@ const NAME = "minerva-cf";
 // names of their own, locally) run that entry too. Production builds src/index.ts, which imports nothing of
 // src/faults/.
 
+// Mode `offline` is the dev server's (`pnpm dev:offline`, cloudflare/README.md, Local development): the test
+// build's entry (it has the fake model), debug on, no AI binding (Workers AI and the AI Gateway need an
+// account) and the container only if Docker runs, with names of its own (minerva-cf-dev). It exists only
+// under `vite --mode offline`, which marks the process (vite.config.ts); `cf build` or `cf deploy` in that mode
+// stops, so a local build cannot be deployed by accident.
+
 // This file runs in Node but is type-checked with the Worker's runtime types, which lack Node's.
 const here = (import.meta as unknown as { url: string }).url;
 
@@ -34,11 +40,13 @@ interface Target {
 	/** The secrets file `cf deploy --secrets-file` uploads, for a deployed build; null reads the environment. */
 	secrets: URL | null;
 	faults: boolean;
+	/** The dev server's mode `offline`: no AI binding, the container only if Docker runs, local defaults. */
+	offline: boolean;
 }
 
 function targetFor(mode: string | undefined): Target {
 	const own = { name: NAME, d1: "minerva-cf", files: "minerva-cf-files", filesEu: "minerva-cf-files-eu" };
-	if (mode === "production") return { ...own, vars: new URL("../.env.cloudflare.vars", here), secrets: new URL("../.env.cloudflare", here), faults: false };
+	if (mode === "production") return { ...own, vars: new URL("../.env.cloudflare.vars", here), secrets: new URL("../.env.cloudflare", here), faults: false, offline: false };
 	if (mode === "faults") {
 		return {
 			name: "minerva-cf-test",
@@ -48,23 +56,35 @@ function targetFor(mode: string | undefined): Target {
 			vars: new URL("../.env.cloudflare-test.vars", here),
 			secrets: new URL("../.env.cloudflare-test", here),
 			faults: true,
+			offline: false,
 		};
+	}
+	if (mode === "offline") {
+		// Only the dev server, which vite.config.ts marks: a build or deploy in this mode would carry the
+		// fake model and the debug settings into an account.
+		if (build.env.MINERVA_DEV_OFFLINE !== "1") throw new Error("Mode offline is the dev server's (pnpm dev:offline); it cannot be built or deployed.");
+		const dev = "minerva-cf-dev";
+		return { name: dev, d1: dev, files: `${dev}-files`, filesEu: `${dev}-files-eu`, vars: null, secrets: null, faults: true, offline: true };
 	}
 	if (mode === "test") {
 		// The platform tests' (vitest sets VITEST): the test build's entry under names of its own, never
 		// production's, so even a deploy in this mode could not put the fault code in minerva-cf.
 		if (build.env.VITEST !== "true") throw new Error("Mode test is the platform tests' (vitest); deploy the test build with mode faults.");
 		const local = "minerva-cf-local";
-		return { name: local, d1: local, files: `${local}-files`, filesEu: `${local}-files-eu`, vars: null, secrets: null, faults: true };
+		return { name: local, d1: local, files: `${local}-files`, filesEu: `${local}-files-eu`, vars: null, secrets: null, faults: true, offline: false };
 	}
-	return { ...own, vars: null, secrets: null, faults: false };
+	return { ...own, vars: null, secrets: null, faults: false, offline: false };
 }
 interface BuildProcess {
 	env: Record<string, string | undefined>;
 	getBuiltinModule(id: "node:fs"): { readFileSync(path: URL, encoding: "utf8"): string };
 	getBuiltinModule(id: "node:util"): { parseEnv(content: string): Record<string, string> };
+	getBuiltinModule(id: "node:child_process"): { spawnSync(command: string, args: string[], options: { stdio: "ignore"; timeout: number }): { status: number | null } };
 }
 const build = (globalThis as unknown as { process: BuildProcess }).process;
+
+/** The id of the dev server's local D1 database in mode `offline`: nothing in an account. */
+const OFFLINE_D1_ID = "00000000-0000-4000-8000-00000000d1d1";
 
 const DEFAULTS: SettingsEnv = {
 	MINERVA_SITE_URL: "http://localhost:5173",
@@ -86,6 +106,17 @@ const DEFAULTS: SettingsEnv = {
 	MINERVA_FILES_WORKSPACE_BYTES: "",
 	MINERVA_FILES_UPLOAD_BYTES: "52428800",
 	MINERVA_FILES_MESSAGE_ATTACHMENTS: "10",
+};
+
+/**
+ * What the dev server's mode `offline` sets besides DEFAULTS, unless the shell sets it: debug on (emails are
+ * written to the log, cookies work over http), the fake model (the test build's entry has it), and a
+ * fake model name for the settings parser.
+ */
+const OFFLINE_DEFAULTS: Partial<SettingsEnv> = {
+	MINERVA_DEBUG: "true",
+	MINERVA_MODEL_PROVIDER: "fake",
+	MINERVA_MODEL_NAME: "fake-1",
 };
 
 /** A deployed build's settings: its vars file and nothing else. */
@@ -121,7 +152,8 @@ function connectorSecrets(target: Target) {
 
 function settingsFor(target: Target): SettingsEnv {
 	const source = target.vars ? deployedVars(target.vars) : build.env;
-	const values = Object.fromEntries(Object.entries(DEFAULTS).map(([name, fallback]) => [name, source[name] ?? fallback])) as unknown as SettingsEnv;
+	const defaults = target.offline ? { ...DEFAULTS, ...OFFLINE_DEFAULTS } : DEFAULTS;
+	const values = Object.fromEntries(Object.entries(defaults).map(([name, fallback]) => [name, source[name] ?? fallback])) as unknown as SettingsEnv;
 	const parsed = parse(values);
 	checkBuild(parsed, { deployed: target.vars !== null, testBuild: target.faults });
 	return values;
@@ -143,11 +175,20 @@ function sandboxContainer(target: Target) {
 	});
 }
 
+/** Whether Docker answers, which the dev server needs to run the sandbox's container. */
+function dockerRuns(): boolean {
+	return build.getBuiltinModule("node:child_process").spawnSync("docker", ["info"], { stdio: "ignore", timeout: 10_000 }).status === 0;
+}
+
 export default defineConfig(({ mode }) => {
 	const target = targetFor(mode);
 	const values = settingsFor(target);
 	const setting = (name: keyof SettingsEnv) => bindings.text(values[name]);
-	const container = mode === "test" ? null : sandboxContainer(target);
+	// The platform tests run in local workerd, which has no containers. The dev server in mode offline has the
+	// container when Docker runs; without it the Sandbox class has none, and a tool that needs it says so.
+	const docker = target.offline ? dockerRuns() : false;
+	if (target.offline && !docker) console.warn("Docker is not running: the sandbox has no container, so tools that need it will fail. Start Docker and restart the dev server for them.");
+	const container = mode === "test" || (target.offline && !docker) ? null : sandboxContainer(target);
 	return {
 		...(container ? { containers: [container] } : {}),
 		worker: {
@@ -167,12 +208,14 @@ export default defineConfig(({ mode }) => {
 			observability: { enabled: true, redactQueryString: true },
 			env: {
 				ASSETS: bindings.assets(),
-				DB: bindings.d1({ name: target.d1 }),
+				// The dev server's database has an id of its own, only so that `cf d1 migrations apply --local` can name it.
+				DB: bindings.d1({ name: target.d1, ...(target.offline ? { id: OFFLINE_D1_ID } : {}) }),
 				// An EU workspace's files stay in a bucket in R2's EU jurisdiction (src/addressing.ts).
 				FILES: bindings.r2({ name: target.files }),
 				FILES_EU: bindings.r2({ name: target.filesEu, jurisdiction: "eu" }),
 				// Workers AI has no local simulation: in local dev it is the account's, and the tests leave it off.
-				AI: bindings.ai({ dev: { remote: true } }),
+				// Mode offline has none at all: it runs the fake model and needs no account.
+				...(target.offline ? {} : { AI: bindings.ai({ dev: { remote: true } }) }),
 				LOADER: bindings.workerLoader(),
 				WORKSPACE: bindings.durableObject({ worker: target.name, exportName: "Workspace" }),
 				CONVERSATION: bindings.durableObject({ worker: target.name, exportName: "Conversation" }),

@@ -8,7 +8,7 @@ const app = createApp();
 
 export default {
 	fetch(request, env, ctx) {
-		if (new URL(request.url).pathname.startsWith(ASSETS_PREFIX)) return serveAsset(request, env.ASSETS);
+		if (new URL(request.url).pathname.startsWith(ASSETS_PREFIX)) return serveAsset(request, env.ASSETS, { bucket: env.FILES, waitUntil: (promise) => ctx.waitUntil(promise) });
 		return app.fetch(request, env, ctx);
 	},
 } satisfies ExportedHandler<Env>;

@@ -13,7 +13,6 @@ import {
   listFilesQueryKey,
   meQueryKey,
 } from '@/api/@tanstack/react-query.gen'
-import { postMessage } from '@/api/sdk.gen'
 import { AppIcons, connectionsOf } from '@/components/agents/agent-apps'
 import { AgentIntro } from '@/components/chat/agent-intro'
 import { FilesPanel } from '@/components/chat/files-panel'
@@ -30,6 +29,7 @@ import { Button } from '@/components/ui/button'
 import { ErrorNote, Spinner } from '@/components/ui/misc'
 import { useDemoVisitor } from '@/lib/demo'
 import { errorMessage } from '@/lib/http'
+import { newSendKey, sendMessage } from '@/lib/messages'
 import { ACTIVE_STATUSES, useRunEvents } from '@/lib/run-stream'
 import { useDocumentTitle } from '@/lib/title'
 import { cn } from '@/lib/utils'
@@ -66,8 +66,8 @@ function ConversationPage() {
   const settled = events.some(e => e.type === 'status' && !ACTIVE_STATUSES.has(e.data.status as never))
 
   const post = useMutation({
-    mutationFn: async ({ content, uploads }: { content: string; uploads: Uploaded[] }) => {
-      const posted = await postMessage({ path, body: { content, attachments: uploads.map(upload => upload.id) }, throwOnError: false })
+    mutationFn: async ({ content, uploads, key }: { content: string; uploads: Uploaded[]; key: string }) => {
+      const posted = await sendMessage({ path, body: { content, attachments: uploads.map(upload => upload.id) }, key })
       if (posted.error) {
         // Refused: the composer gets the text and files back. Anything else may have started the run.
         if (refusedMessage(posted.response)) throw new MessageNotSentError(errorMessage(posted.error))
@@ -109,7 +109,7 @@ function ConversationPage() {
       if (!content && uploads.length === 0) return
       const taken = adapter.take(ids)
       try {
-        await post.mutateAsync({ content, uploads })
+        await post.mutateAsync({ content, uploads, key: newSendKey() })
       } catch (error) {
         if (error instanceof MessageNotSentError) adapter.restore(taken)
         throw error

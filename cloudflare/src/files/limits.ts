@@ -110,6 +110,13 @@ export const BODY_SHORTER = "The body is shorter than its Content-Length.";
 /** An upload's body still arriving 15 minutes after its start is refused (upload_app.py DEADLINE_SECONDS). */
 export const UPLOAD_DEADLINE_MS = 15 * 60 * 1000;
 
+/**
+ * After that deadline the upload waits this long for its write to R2 to settle before it is abandoned: a
+ * write that ends after the Workspace has deleted the object would put it back. A body that has stopped
+ * never settles, so the wait is short.
+ */
+export const UPLOAD_SETTLE_MS = 5_000;
+
 // Checkpoints (files 7.3): `CheckpointRefused`'s messages.
 export const STALE = "This attempt is no longer the run's current one.";
 export const CONFLICT = "The parent is not the run's last checkpoint.";

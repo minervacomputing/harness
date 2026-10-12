@@ -97,3 +97,34 @@ test("only the test build imports src/faults/ and the fake model", () => {
 	}
 	expect(offenders).toEqual([]);
 });
+
+test("mode offline (the dev server without an account) is never built or deployed", () => {
+	// Mode offline has the test build's entry, the fake model and debug on (cloudflare.config.ts). It exists
+	// only under `vite --mode offline`, whose config marks the process with MINERVA_DEV_OFFLINE for a serve and
+	// never for a build; the config refuses the mode without the mark; and nothing that deploys names it.
+	const config = readFileSync(join(ROOT, "cloudflare.config.ts"), "utf8");
+	const gate = config.slice(config.indexOf('if (mode === "offline")'));
+	expect(gate.slice(0, gate.indexOf("return"))).toMatch(/MINERVA_DEV_OFFLINE !== "1"\)\s*throw/);
+
+	const vite = readFileSync(join(ROOT, "vite.config.ts"), "utf8");
+	// A build in the mode stops before the mark is set, even when the shell already has it.
+	expect(vite).toMatch(/offline && command !== "serve"\) throw new Error/);
+	expect(vite.indexOf('command !== "serve"')).toBeLessThan(vite.indexOf('process.env.MINERVA_DEV_OFFLINE = "1"'));
+
+	// Only the vite config and the dev script set the mark.
+	const setters: string[] = [];
+	for (const path of [...sources("src"), ...sources("scripts"), "vite.config.ts", "cloudflare.config.ts", "package.json", "files-worker/package.json"]) {
+		if (!existsSync(join(ROOT, path))) continue;
+		for (const [line, number] of code(path)) if (/MINERVA_DEV_OFFLINE\s*(=|:)[^=]/.test(line) || /MINERVA_DEV_OFFLINE=/.test(line)) setters.push(`${path}:${number}`);
+	}
+	expect(setters.map((setter) => setter.split(":")[0])).toEqual(["scripts/dev-offline.ts", "vite.config.ts"]);
+
+	// No script that deploys or builds for the account passes the mode.
+	const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { scripts: Record<string, string> };
+	for (const [name, command] of Object.entries(pkg.scripts)) {
+		if (name === "dev:offline" || name === "secrets:offline") continue;
+		expect(command, name).not.toMatch(/offline/);
+	}
+	// And no Worker source reads the mark (it would be a way to switch behaviour at run time).
+	for (const path of sources("src")) for (const [line, number] of code(path)) expect(line, `${path}:${number}`).not.toMatch(/MINERVA_DEV_OFFLINE/);
+});

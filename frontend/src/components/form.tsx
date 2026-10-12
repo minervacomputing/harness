@@ -53,11 +53,15 @@ export function TextAreaField({ field, label, hint, serverError, ...props }: Fie
   )
 }
 
-/** The `onSubmit` of a `<form>` that hands submission to a TanStack form instead of the browser. */
+/**
+ * The `onSubmit` of a `<form>` that hands submission to a TanStack form instead of the browser. A submit
+ * handler that fails makes `handleSubmit` reject (a 429, a refused password). Every form's handler awaits a
+ * mutation, whose error the page shows, so the rejection is dropped here instead of left unhandled.
+ */
 export function submitForm(form: AnyFormApi) {
   return (event: FormEvent) => {
     event.preventDefault()
-    void form.handleSubmit()
+    form.handleSubmit().catch(() => {})
   }
 }
 

@@ -33,12 +33,40 @@ pnpm --dir ../frontend install
 pnpm secrets   # writes ../.env.cloudflare (mode 600) with fresh secrets; never prints them
 ```
 
+To develop without an account, skip `cf auth login` and the secrets: see Local development.
+
 Settings are text bindings, checked by `src/config.ts`'s parser when the Worker is built (see `cloudflare.config.ts`). Development and the tests read them from the environment. A production build reads `../.env.cloudflare.vars` and nothing else, so a shell's `MINERVA_*` (the Django app uses the same names) never reach a deploy; the file is gitignored because it names the deployed origins, both must be https, and `MINERVA_DEBUG` must be off:
 
 ```sh
 MINERVA_SITE_URL=https://minerva-cf.<subdomain>.workers.dev
 MINERVA_DOWNLOAD_ORIGIN=https://minerva-cf-files.<subdomain>.workers.dev
 ```
+
+## Local development
+
+No account, token or `cf auth login` is needed:
+
+```sh
+pnpm dev:offline                # the Worker on http://127.0.0.1:8787 (Ctrl-C stops it)
+pnpm --dir ../frontend dev      # the pages on http://localhost:5173, which proxies /api to the Worker
+```
+
+`dev:offline` (`scripts/dev-offline.ts`) makes `.dev.vars` with fresh secrets if there are none (gitignored; `pnpm secrets:offline` does only that), creates `.assets/` if the frontend was never built (the frontend's own dev server serves the pages), applies the migrations to the local D1 database in `.cloudflare/state`, and starts `vite --mode offline`. It drops `CLOUDFLARE_API_TOKEN` from the environment, so nothing in it can reach an account.
+
+What mode `offline` is, against a deployed Worker:
+
+| | Local (`offline`) | Deployed |
+|---|---|---|
+| Model | The deterministic fake model (`MINERVA_MODEL_PROVIDER=fake`), no Workers AI or AI Gateway binding, no remote bindings | Workers AI or the AI Gateway |
+| Entry | The test build's (`src/faults/`): the fake Notes connector and the token-gated `/api/faults/` driver | `src/index.ts`, which reaches nothing of it |
+| Email | Written to the dev server's log (`MINERVA_DEBUG=true`): a sign-in code or verification link is in the terminal | The Email Sending binding |
+| D1, R2, Durable Objects | Local simulations under `.cloudflare/state`, in a database and buckets named `minerva-cf-dev…` | The account's |
+| Sandbox | The container when Docker runs (the first start builds the image from `container/`); otherwise the Sandbox object has no container, a warning says so at start, and a tool that needs it fails (`This Worker has no container.`) | `minerva-cf-sandbox` |
+| Settings | `src/config.ts` defaults for localhost, which the shell's `MINERVA_*` override | `../.env.cloudflare.vars` only |
+
+Mode `offline` exists only for this server: `vite.config.ts` marks the process (`MINERVA_DEV_OFFLINE`) when it serves, and `cloudflare.config.ts` refuses the mode without the mark, so `cf build`, `cf deploy` and `vite build` in it stop with an error. Nothing in `src/` reads the mark.
+
+Vite's dev server loads the Worker's sources itself, so the `workerSources()` plugin in `vite.config.ts` lets it serve everything under `src/` (the Cloudflare plugin's deny list for the files `cloudflare.config.ts` imports otherwise stops the Worker from loading `src/config.ts`). `pnpm exec vite` without `--mode offline` is the earlier mode: it uses the account's Workers AI and AI Gateway as remote bindings and needs `CLOUDFLARE_API_TOKEN`.
 
 ## Checks
 
@@ -66,15 +94,15 @@ cf r2 buckets lifecycle update minerva-cf-files-eu --cf-r2-jurisdiction eu --rul
 cf ai-gateway gateways create --id minerva-cf --collect-logs=false --cache-ttl 0 --cache-invalidate-on-update=false --rate-limiting-interval 0 --rate-limiting-limit 0 --rate-limiting-technique fixed
 ```
 
-The lifecycle rule deletes `uploads/` objects a day after they were written; a message copies its attachments into the conversation's own blobs first. Then write `../.env.cloudflare.vars` (above) and deploy.
+The lifecycle rules delete `uploads/` objects a day after they were written (a message copies its attachments into the conversation's own blobs first) and `static/` objects 30 days after. `static/` is where the Worker keeps the earlier builds' hashed frontend files, so a page opened before a deploy still finds its chunks; a bucket created before that rule existed needs the `lifecycle update` command above run again (`pnpm run deploy` warns when the rule is missing). Then write `../.env.cloudflare.vars` (above) and deploy.
 
 ## Deploy
 
 ```sh
-pnpm run deploy   # builds the frontend, assembles .assets/, checks the resources, applies D1's migrations, deploys minerva-cf, then minerva-cf-files
+pnpm run deploy   # builds the frontend, assembles .assets/, checks the resources, applies D1's migrations, checks D1's schema, deploys minerva-cf, then minerva-cf-files
 ```
 
-`deploy` checks the resources and applies the migrations in `migrations/` that D1 has not applied yet (`scripts/resources.ts`, which finds the database by name) before any code that needs them is uploaded. It builds first and checks that the bundle has none of the test build's code (`scripts/bundle.ts`), then uploads that build. It uploads `../.env.cloudflare` as the main Worker's secrets and only `MINERVA_DOWNLOAD_KEY` to the download Worker. Both Workers are on workers.dev without preview URLs. `pnpm deploy` without `run` is pnpm's own command. `cf` keeps caches with the account id in `.cloudflare/`, which the repository's `.gitignore` ignores at any depth.
+`deploy` checks the resources and applies the migrations in `migrations/` that D1 has not applied yet (`scripts/resources.ts`, which finds the database by name) before any code that needs them is uploaded. Then `scripts/schema-check.ts` reads the deployed database's schema with `cf d1 query` (SELECT statements only) and compares it with what `migrations/` builds on an empty SQLite database: tables, columns (type, NOT NULL, default, primary key), UNIQUE and FOREIGN KEY constraints, indexes, views, triggers, and the list of applied migrations (`scripts/schema.ts`). A table, column, constraint or index that is missing, one no migration made, or a column of another shape stops the deploy with the list of differences; CHECK clauses and collations inside a `CREATE TABLE` are not listed by SQLite and are not compared. It builds first and checks that the bundle has none of the test build's code (`scripts/bundle.ts`), then uploads that build. It uploads `../.env.cloudflare` as the main Worker's secrets and only `MINERVA_DOWNLOAD_KEY` to the download Worker. Both Workers are on workers.dev without preview URLs. `pnpm deploy` without `run` is pnpm's own command. `cf` keeps caches with the account id in `.cloudflare/`, which the repository's `.gitignore` ignores at any depth.
 
 ## The test Worker
 

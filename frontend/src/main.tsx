@@ -4,6 +4,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { authQuery } from '@/lib/auth'
 import { installClientInterceptors } from '@/lib/http'
+import { installPreloadErrorReload } from '@/lib/reload'
 import '@/lib/theme'
 import { routeTree } from '@/routeTree.gen'
 import './index.css'
@@ -30,6 +31,8 @@ declare module '@tanstack/react-router' {
     router: typeof router
   }
 }
+
+installPreloadErrorReload()
 
 installClientInterceptors(() => {
   void queryClient.invalidateQueries({ queryKey: authQuery.queryKey })

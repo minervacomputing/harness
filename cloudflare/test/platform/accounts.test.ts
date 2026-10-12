@@ -275,8 +275,8 @@ describe("passwords and rate limits", () => {
 	test("sign-in attempts are limited per IP and counted in D1", async () => {
 		const browser = new Browser();
 		const statuses = [];
-		for (let i = 0; i < 4; i++) statuses.push((await browser.auth("/sign-in/email", { email: uniqueEmail(), password: "wrong passphrase" })).status);
-		expect(statuses).toEqual([401, 401, 401, 429]);
+		for (let i = 0; i < 11; i++) statuses.push((await browser.auth("/sign-in/email", { email: uniqueEmail(), password: "wrong passphrase" })).status);
+		expect(statuses).toEqual([...Array(10).fill(401), 429]);
 		const rows = await db.prepare(`SELECT count(*) AS n FROM "rateLimit" WHERE key LIKE ?`).bind(`%${browser.ip}%`).first<{ n: number }>();
 		expect(rows?.n).toBeGreaterThan(0);
 	});

@@ -18,6 +18,7 @@ import type { BetterAuthOptions, BetterAuthPlugin, GenericEndpointContext } from
 import { createAuthMiddleware } from "better-auth/api";
 import { admin, emailOTP, organization, twoFactor } from "better-auth/plugins";
 import { uuid7 } from "../lib/random.ts";
+import { IP_LIMIT_OPTIONS } from "./ip-limits.ts";
 import { hashPassword, needsRehash, verifyPassword } from "./passwords.ts";
 
 export type OtpType = "sign-in" | "email-verification" | "forget-password" | "change-email";
@@ -158,8 +159,9 @@ export function authOptions(deps: AuthDeps) {
 				credentialStamp: { type: "string", required: false, input: false, returned: false },
 			},
 		},
-		// On everywhere (Better Auth's default is production only), counted in D1 so every isolate shares them.
-		rateLimit: { enabled: true, storage: "database" },
+		// On everywhere (Better Auth's default is production only), counted in D1 so every isolate shares them,
+		// per address and path, with the numbers of ip-limits.ts instead of Better Auth's own.
+		rateLimit: { enabled: true, storage: "database", ...IP_LIMIT_OPTIONS },
 		user: {
 			additionalFields: {
 				// Null until the user's organization, workspace and Workspace object exist (provision.ts).

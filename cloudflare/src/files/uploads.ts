@@ -20,7 +20,7 @@
 import type { UploadOut } from "../contracts/api.ts";
 import type { Caller, Outcome, Refusal, Sha256, UploadId } from "../contracts/common.ts";
 import { hex } from "../lib/bytes.ts";
-import { BODY_LONGER, BODY_SHORTER, INVALID_LENGTH, NAME_THE_FILE, SEND_LENGTH, SNIFF_BYTES, TOO_SLOW, UPLOAD_DEADLINE_MS, USE_POST, uploadTooLarge } from "./limits.ts";
+import { BODY_LONGER, BODY_SHORTER, INVALID_LENGTH, NAME_THE_FILE, SEND_LENGTH, SNIFF_BYTES, TOO_SLOW, UPLOAD_DEADLINE_MS, UPLOAD_SETTLE_MS, USE_POST, uploadTooLarge } from "./limits.ts";
 import { cleanName, sniff, uploadName } from "./names.ts";
 
 /** The Workspace's side of an upload (contracts/workspace.ts). */
@@ -33,6 +33,7 @@ export interface UploadRecorder {
 /** The part of the bucket an upload writes. */
 export interface UploadBucket {
 	put(key: string, value: ReadableStream<Uint8Array>): Promise<{ size: number } | null>;
+	delete(key: string): Promise<void>;
 }
 
 function refused(status: Refusal["status"], detail: string): { ok: false; refusal: Refusal } {
@@ -102,6 +103,10 @@ function lengthError(error: unknown): "longer" | "shorter" | null {
 export interface ReceiveOptions {
 	/** 15 minutes; shorter in tests. */
 	deadlineMs?: number;
+	/** How long past the deadline to wait for the write to R2 to settle (UPLOAD_SETTLE_MS); shorter in tests. */
+	settleMs?: number;
+	/** Keeps the request's work alive after its response (`ctx.waitUntil`): the object of a write that settles even later is deleted. */
+	waitUntil?: (work: Promise<unknown>) => void;
 }
 
 /**
@@ -109,7 +114,9 @@ export interface ReceiveOptions {
  * to 22): reserved in the Workspace (3 arriving and 30 waiting per user, the workspace's quota), streamed
  * into R2 while hashed, then completed with its hash, size and sniffed type. Anything that fails after the
  * reservation abandons it, so the Workspace deletes the object, written or not; an R2 failure is thrown
- * (500, as today) once it is abandoned.
+ * (500, as today) once it is abandoned. Past the deadline the write is stopped and given `settleMs` to end
+ * before the abandonment, so the delete follows the write and not the other way round; a write that ends
+ * later still has its object deleted (`waitUntil`).
  */
 export async function receiveUpload(
 	recorder: UploadRecorder,
@@ -128,6 +135,12 @@ export async function receiveUpload(
 		const body = upload.body ?? new ReadableStream<Uint8Array>({ start: (controller) => controller.close() });
 		const stop = new AbortController();
 		const piping = body.pipeTo(sized.writable, { signal: stop.signal });
+		// Whether the whole body is in: only then can the put still end with an object after the deadline.
+		let arrived = false;
+		piping.then(
+			() => (arrived = true),
+			() => {},
+		);
 		const [toStore, rest] = sized.readable.tee();
 		const [toHash, toSniff] = rest.tee();
 		const digest = new crypto.DigestStream("SHA-256");
@@ -142,7 +155,26 @@ export async function receiveUpload(
 			// Best effort: workerd's pipe does not notice the abort while it waits for a chunk that never
 			// comes. A put of a stream that never ends stores nothing, and the request's end cancels it.
 			stop.abort(new Error("The file took too long to arrive."));
+			// A body that has all arrived leaves the put finishing, and an object written after the Workspace deleted
+			// it would stay under uploads/ until the bucket's lifecycle rule removes it, a day later. So the
+			// abandonment follows the put when it ends soon, and when it does not, the object is deleted when it
+			// does. A body still arriving cannot be stored: the abort ends its stream, and that is all.
+			let ended: "ended" | "late" = "ended";
+			if (arrived) {
+				const second = timer(options.settleMs ?? UPLOAD_SETTLE_MS);
+				ended = await Promise.race([storing.then(() => "ended" as const, () => "ended" as const), second.promise]);
+				second.cancel();
+			}
 			await abandon();
+			if (ended === "late") {
+				const cleanup = storing
+					.then(
+						() => bucket.delete(key),
+						() => {},
+					)
+					.catch(() => {});
+				options.waitUntil?.(cleanup);
+			}
 			return refused(408, TOO_SLOW);
 		}
 		const [piped, hashed, stored, head] = outcome;

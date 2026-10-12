@@ -8,7 +8,7 @@ import {
   listConversationsQueryKey,
   meQueryKey,
 } from '@/api/@tanstack/react-query.gen'
-import { createConversation, deleteConversation, postMessage } from '@/api/sdk.gen'
+import { createConversation, deleteConversation } from '@/api/sdk.gen'
 import { AgentIntro } from '@/components/chat/agent-intro'
 import {
   type ChatMessage,
@@ -22,6 +22,7 @@ import { Thread } from '@/components/chat/thread'
 import { ErrorNote } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
 import { useDemo } from '@/lib/demo'
+import { newSendKey, sendMessage } from '@/lib/messages'
 import { useDocumentTitle } from '@/lib/title'
 import { useUploadAdapter, type Uploaded } from '@/lib/uploads'
 import { cn } from '@/lib/utils'
@@ -49,14 +50,14 @@ function NewChat() {
 
   const adapter = useUploadAdapter(workspaceId)
   const start = useMutation({
-    mutationFn: async ({ content, uploads }: { content: string; uploads: Uploaded[] }) => {
+    mutationFn: async ({ content, uploads, key }: { content: string; uploads: Uploaded[]; key: string }) => {
       if (!agent) throw new MessageNotSentError('Create an agent first.')
       const path = { workspace_id: workspaceId }
       const created = await createConversation({ path, body: { agent_id: agent.id }, throwOnError: false })
       if (created.error) throw new MessageNotSentError(errorMessage(created.error))
       const conversation = created.data!
       const chat = { ...path, conversation_id: conversation.id }
-      const posted = await postMessage({ path: chat, body: { content, attachments: uploads.map(upload => upload.id) }, throwOnError: false })
+      const posted = await sendMessage({ path: chat, body: { content, attachments: uploads.map(upload => upload.id) }, key })
         .finally(() => void queryClient.invalidateQueries({ queryKey: meQueryKey() }))
       if (posted.error) {
         // Refused (for example over the demo's daily allowance): do not leave an empty chat behind, and give the
@@ -94,7 +95,7 @@ function NewChat() {
       if (!content && uploads.length === 0) return
       const taken = adapter.take(ids)
       try {
-        await start.mutateAsync({ content, uploads })
+        await start.mutateAsync({ content, uploads, key: newSendKey() })
       } catch (error) {
         if (error instanceof MessageNotSentError) adapter.restore(taken)
         throw error
@@ -126,12 +127,12 @@ function NewChat() {
                     <ul className="divide-y divide-border border border-border-strong bg-card shadow-(--raise-surface)">
                       {featured && (
                         <li>
-                          <Suggestion text={featured} featured disabled={start.isPending} onAsk={text => start.mutate({ content: text, uploads: [] })} />
+                          <Suggestion text={featured} featured disabled={start.isPending} onAsk={text => start.mutate({ content: text, uploads: [], key: newSendKey() })} />
                         </li>
                       )}
                       {suggestions.map(text => (
                         <li key={text}>
-                          <Suggestion text={text} disabled={start.isPending} onAsk={text => start.mutate({ content: text, uploads: [] })} />
+                          <Suggestion text={text} disabled={start.isPending} onAsk={text => start.mutate({ content: text, uploads: [], key: newSendKey() })} />
                         </li>
                       ))}
                     </ul>

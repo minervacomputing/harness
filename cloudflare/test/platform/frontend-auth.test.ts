@@ -32,6 +32,8 @@ interface Frontend {
 	};
 	authQuery: { queryKey: unknown[]; queryFn(context: { client: QueryCache; signal: AbortSignal }): Promise<State> };
 	runAuthStep<Vars>(client: QueryCache, step: (vars: Vars) => Promise<State>, vars: Vars): Promise<State>;
+	signOut(client: QueryCache, goToLogin: () => Promise<unknown>): Promise<void>;
+	isSigningOut(): boolean;
 	AuthError: new (...args: never[]) => Error & { fields: Record<string, string> };
 	fieldErrors(error: unknown): Record<string, string>;
 }
@@ -39,11 +41,24 @@ interface Frontend {
 /** The part of a QueryClient the auth query uses; react-query itself is the frontend's, not this project's. */
 class QueryCache {
 	readonly data = new Map<string, unknown>();
+	/** What was called on the client, in order, for the tests of what a sign-out does and when. */
+	readonly calls: string[] = [];
 	setQueryData(key: unknown, value: unknown): void {
+		this.calls.push("set");
 		this.data.set(JSON.stringify(key), value);
 	}
 	removeQueries(): void {
 		this.data.clear();
+	}
+	async cancelQueries(): Promise<void> {
+		this.calls.push("cancel");
+	}
+	clear(): void {
+		this.calls.push("clear");
+		this.data.clear();
+	}
+	async invalidateQueries(): Promise<void> {
+		this.calls.push("invalidate");
 	}
 }
 
@@ -57,14 +72,28 @@ class MemoryStorage {
 let browser: Browser;
 let frontend: Frontend;
 let queryClient: QueryCache;
+/** The requests the page's `fetch` sent since it loaded, as "METHOD /path". */
+let requests: string[] = [];
+/** How many sessions the page has ended (frontend/src/lib/session.ts), which work that waits checks. */
+let sessionsEnded: () => number;
+let failSignOut = false;
 
 /** The client as a page loads it: fresh module state, the browser's cookies behind `fetch`. */
 async function load(next = new Browser()): Promise<void> {
 	browser = next;
-	vi.stubGlobal("fetch", browser.fetch);
+	requests = [];
+	failSignOut = false;
+	vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+		const request = new Request(typeof input === "string" ? new URL(input, ORIGIN) : input, init);
+		requests.push(`${request.method} ${new URL(request.url).pathname}`);
+		if (failSignOut && new URL(request.url).pathname === "/api/auth/sign-out") throw new TypeError("fetch failed");
+		return browser.fetch(request);
+	});
 	vi.resetModules();
 	// @ts-expect-error The frontend is outside this project's types; the vitest alias resolves it (vitest.platform.config.ts).
 	frontend = (await import("@/lib/auth.ts")) as Frontend;
+	// @ts-expect-error The frontend is outside this project's types; the vitest alias resolves it (vitest.platform.config.ts).
+	sessionsEnded = ((await import("@/lib/session.ts")) as { sessionsEnded(): number }).sessionsEnded;
 	queryClient = new QueryCache();
 }
 
@@ -185,14 +214,15 @@ describe("sign-up, verification and sign-in", () => {
 		}
 	});
 
-	test("asking again at once is fine (a code just went out); Better Auth's limit per IP is an error, not a sent code", async () => {
+	test("asking again at once is fine (a code just went out); the limit per IP is an error, not a sent code", async () => {
 		const email = uniqueEmail();
 		await frontend.auth.signup({ email, password: PASSWORD });
 		const sent = emailsTo(email).length;
 		await frontend.auth.resendVerification(); // sends
 		await frontend.auth.resendVerification(); // our 10 s limit per address: the code from a moment ago stands
 		expect(emailsTo(email).length).toBe(sent + 1);
-		await frontend.auth.resendVerification(); // the third request in a minute from this address still passes Better Auth's limit
+		// The IP limit on code requests is ten in a minute (ip-limits.ts): the next eight pass, the eleventh is refused.
+		for (let request = 3; request <= 10; request++) await frontend.auth.resendVerification();
 		expect(await failure(frontend.auth.resendVerification())).toEqual({ message: "Too many attempts. Wait a moment and try again.", fields: {} });
 		expect(emailsTo(email).length).toBe(sent + 1);
 	});
@@ -380,6 +410,78 @@ describe("password reset and change", () => {
 		expect((await state()).kind).toBe("authenticated");
 		expect((await other.call("GET", "/api/me")).status).toBe(401);
 	});
+});
+
+describe("signing out", () => {
+	test("ends the session with one request, then leaves for the sign-in page before the cache is dropped, and nothing is fetched again", async () => {
+		await newAccount();
+		await state();
+		queryClient.calls.length = 0;
+		requests = [];
+		const endedBefore = sessionsEnded();
+		const during: boolean[] = [];
+		await frontend.signOut(queryClient, async () => {
+			during.push(frontend.isSigningOut());
+			queryClient.calls.push("login");
+		});
+		// Everything in flight is cancelled first; the cache says signed out before the page changes (so the sign-in
+		// page lets the visitor in, and the app shell is not sent there with a way back), and is dropped after.
+		expect(queryClient.calls).toEqual(["cancel", "set", "login", "clear", "set"]);
+		expect(requests).toEqual(["POST /api/auth/sign-out"]);
+		expect(during).toEqual([true]);
+		// Noted once the server ended the session, so a send waiting to be repeated knows not to.
+		expect(sessionsEnded()).toBe(endedBefore + 1);
+		expect(frontend.isSigningOut()).toBe(false);
+		expect(cached()).toEqual({ kind: "anonymous", pending: null, mfaTypes: [] });
+		expect((await browser.call("GET", "/api/me")).status).toBe(401);
+	});
+
+	test("a sign-out the server cannot be asked for leaves the user signed in and fetches again what was cancelled", async () => {
+		await newAccount();
+		queryClient.calls.length = 0;
+		failSignOut = true;
+		const reached: string[] = [];
+		const error = await failure(frontend.signOut(queryClient, async () => void reached.push("login")));
+		expect(error.message).toBe("The server could not be reached.");
+		expect(queryClient.calls).toEqual(["cancel", "invalidate"]);
+		expect(reached).toEqual([]);
+		expect(sessionsEnded()).toBe(0);
+		expect(frontend.isSigningOut()).toBe(false);
+		failSignOut = false;
+		expect((await state()).kind).toBe("authenticated");
+	});
+
+	test("the next person signing in on this page sees their own account", async () => {
+		const first = await newAccount();
+		await frontend.signOut(queryClient, async () => undefined);
+		const second = await newAccount();
+		expect(second).not.toBe(first);
+		expect(await state()).toMatchObject({ kind: "authenticated", user: { email: second } });
+	});
+
+	test("a form whose submit handler fails does not leave an unhandled rejection (a 429 on sign-in)", async () => {
+		// @ts-expect-error The frontend is outside this project's types; the vitest alias resolves it.
+		const { submitForm } = (await import("@/components/form.tsx")) as { submitForm(form: unknown): (event: unknown) => void };
+		let rejected = 0;
+		let last: unknown;
+		const form = {
+			handleSubmit: async () => {
+				rejected++;
+				try {
+					await frontend.auth.login({ email: uniqueEmail(), password: "not the password" });
+				} catch (error) {
+					last = error;
+					throw error;
+				}
+			},
+		};
+		let prevented = false;
+		submitForm(form)({ preventDefault: () => void (prevented = true) });
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		// An unhandled rejection would fail the run (vitest reports it); the handler ran and the event was claimed.
+		expect([prevented, rejected]).toEqual([true, 1]);
+		expect(last).toBeInstanceOf(frontend.AuthError);
+	}, 30_000);
 });
 
 test("too many sign-ins in a short time say to wait", async () => {

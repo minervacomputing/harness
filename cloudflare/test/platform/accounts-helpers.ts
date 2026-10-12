@@ -41,6 +41,27 @@ export function lastCode(address: string): string {
 	return code;
 }
 
+/**
+ * Waits for the next fixed window when fewer than `needed` ms of the current one are left, for each
+ * `[seconds, needed]`. Our per-address and per-user limits (rate-limits.ts) count in fixed windows of that
+ * length, and a test that counts attempts to the limit would otherwise straddle two windows now and then
+ * (the earlier window only weighs in part), and see no refusal where it expects one.
+ */
+export async function withinWindows(...windows: [seconds: number, needed: number][]): Promise<void> {
+	for (;;) {
+		const now = Date.now();
+		const wait = Math.max(
+			0,
+			...windows.map(([seconds, needed]) => {
+				const left = seconds * 1000 - (now % (seconds * 1000));
+				return left < needed ? left + 50 : 0;
+			}),
+		);
+		if (wait === 0) return;
+		await new Promise((resolve) => setTimeout(resolve, wait));
+	}
+}
+
 export function uniqueEmail(name = "ada"): string {
 	return `${name}-${uuid7().slice(-12)}@example.com`;
 }

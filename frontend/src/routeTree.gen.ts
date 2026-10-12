@@ -10,9 +10,9 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as DemoRouteImport } from './routes/demo'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
+import { Route as SetupRouteImport } from './routes/setup'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as VerifyEmailRouteImport } from './routes/verify-email'
 import { Route as DevComponentsRouteImport } from './routes/dev.components'
@@ -23,17 +23,13 @@ import { Route as WWorkspaceIdIndexRouteImport } from './routes/w.$workspaceId.i
 import { Route as WWorkspaceIdAccountRouteImport } from './routes/w.$workspaceId.account'
 import { Route as WWorkspaceIdAgentsRouteImport } from './routes/w.$workspaceId.agents'
 import { Route as WWorkspaceIdConnectionsRouteImport } from './routes/w.$workspaceId.connections'
+import { Route as WWorkspaceIdInstanceRouteImport } from './routes/w.$workspaceId.instance'
 import { Route as WWorkspaceIdChatIndexRouteImport } from './routes/w.$workspaceId.chat.index'
 import { Route as WWorkspaceIdChatConversationIdRouteImport } from './routes/w.$workspaceId.chat.$conversationId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoRoute = DemoRouteImport.update({
-  id: '/demo',
-  path: '/demo',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -44,6 +40,11 @@ const LoginRoute = LoginRouteImport.update({
 const ResetPasswordRoute = ResetPasswordRouteImport.update({
   id: '/reset-password',
   path: '/reset-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SetupRoute = SetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignupRoute = SignupRouteImport.update({
@@ -96,6 +97,11 @@ const WWorkspaceIdConnectionsRoute = WWorkspaceIdConnectionsRouteImport.update({
   path: '/connections',
   getParentRoute: () => WWorkspaceIdRoute,
 } as any)
+const WWorkspaceIdInstanceRoute = WWorkspaceIdInstanceRouteImport.update({
+  id: '/instance',
+  path: '/instance',
+  getParentRoute: () => WWorkspaceIdRoute,
+} as any)
 const WWorkspaceIdChatIndexRoute = WWorkspaceIdChatIndexRouteImport.update({
   id: '/chat/',
   path: '/chat/',
@@ -110,9 +116,9 @@ const WWorkspaceIdChatConversationIdRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/demo': typeof DemoRoute
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/setup': typeof SetupRoute
   '/signup': typeof SignupRoute
   '/verify-email': typeof VerifyEmailRoute
   '/dev/components': typeof DevComponentsRoute
@@ -122,15 +128,16 @@ export interface FileRoutesByFullPath {
   '/w/$workspaceId/account': typeof WWorkspaceIdAccountRoute
   '/w/$workspaceId/agents': typeof WWorkspaceIdAgentsRoute
   '/w/$workspaceId/connections': typeof WWorkspaceIdConnectionsRoute
+  '/w/$workspaceId/instance': typeof WWorkspaceIdInstanceRoute
   '/w/$workspaceId/': typeof WWorkspaceIdIndexRoute
   '/w/$workspaceId/chat/$conversationId': typeof WWorkspaceIdChatConversationIdRoute
   '/w/$workspaceId/chat/': typeof WWorkspaceIdChatIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/demo': typeof DemoRoute
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/setup': typeof SetupRoute
   '/signup': typeof SignupRoute
   '/verify-email': typeof VerifyEmailRoute
   '/dev/components': typeof DevComponentsRoute
@@ -139,6 +146,7 @@ export interface FileRoutesByTo {
   '/w/$workspaceId/account': typeof WWorkspaceIdAccountRoute
   '/w/$workspaceId/agents': typeof WWorkspaceIdAgentsRoute
   '/w/$workspaceId/connections': typeof WWorkspaceIdConnectionsRoute
+  '/w/$workspaceId/instance': typeof WWorkspaceIdInstanceRoute
   '/w/$workspaceId': typeof WWorkspaceIdIndexRoute
   '/w/$workspaceId/chat/$conversationId': typeof WWorkspaceIdChatConversationIdRoute
   '/w/$workspaceId/chat': typeof WWorkspaceIdChatIndexRoute
@@ -146,9 +154,9 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/demo': typeof DemoRoute
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/setup': typeof SetupRoute
   '/signup': typeof SignupRoute
   '/verify-email': typeof VerifyEmailRoute
   '/dev/components': typeof DevComponentsRoute
@@ -158,6 +166,7 @@ export interface FileRoutesById {
   '/w/$workspaceId/account': typeof WWorkspaceIdAccountRoute
   '/w/$workspaceId/agents': typeof WWorkspaceIdAgentsRoute
   '/w/$workspaceId/connections': typeof WWorkspaceIdConnectionsRoute
+  '/w/$workspaceId/instance': typeof WWorkspaceIdInstanceRoute
   '/w/$workspaceId/': typeof WWorkspaceIdIndexRoute
   '/w/$workspaceId/chat/$conversationId': typeof WWorkspaceIdChatConversationIdRoute
   '/w/$workspaceId/chat/': typeof WWorkspaceIdChatIndexRoute
@@ -166,9 +175,9 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/demo'
     | '/login'
     | '/reset-password'
+    | '/setup'
     | '/signup'
     | '/verify-email'
     | '/dev/components'
@@ -178,15 +187,16 @@ export interface FileRouteTypes {
     | '/w/$workspaceId/account'
     | '/w/$workspaceId/agents'
     | '/w/$workspaceId/connections'
+    | '/w/$workspaceId/instance'
     | '/w/$workspaceId/'
     | '/w/$workspaceId/chat/$conversationId'
     | '/w/$workspaceId/chat/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/demo'
     | '/login'
     | '/reset-password'
+    | '/setup'
     | '/signup'
     | '/verify-email'
     | '/dev/components'
@@ -195,15 +205,16 @@ export interface FileRouteTypes {
     | '/w/$workspaceId/account'
     | '/w/$workspaceId/agents'
     | '/w/$workspaceId/connections'
+    | '/w/$workspaceId/instance'
     | '/w/$workspaceId'
     | '/w/$workspaceId/chat/$conversationId'
     | '/w/$workspaceId/chat'
   id:
     | '__root__'
     | '/'
-    | '/demo'
     | '/login'
     | '/reset-password'
+    | '/setup'
     | '/signup'
     | '/verify-email'
     | '/dev/components'
@@ -213,6 +224,7 @@ export interface FileRouteTypes {
     | '/w/$workspaceId/account'
     | '/w/$workspaceId/agents'
     | '/w/$workspaceId/connections'
+    | '/w/$workspaceId/instance'
     | '/w/$workspaceId/'
     | '/w/$workspaceId/chat/$conversationId'
     | '/w/$workspaceId/chat/'
@@ -220,9 +232,9 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  DemoRoute: typeof DemoRoute
   LoginRoute: typeof LoginRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
+  SetupRoute: typeof SetupRoute
   SignupRoute: typeof SignupRoute
   VerifyEmailRoute: typeof VerifyEmailRoute
   DevComponentsRoute: typeof DevComponentsRoute
@@ -240,13 +252,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/demo': {
-      id: '/demo'
-      path: '/demo'
-      fullPath: '/demo'
-      preLoaderRoute: typeof DemoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/login': {
       id: '/login'
       path: '/login'
@@ -259,6 +264,13 @@ declare module '@tanstack/react-router' {
       path: '/reset-password'
       fullPath: '/reset-password'
       preLoaderRoute: typeof ResetPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/setup': {
+      id: '/setup'
+      path: '/setup'
+      fullPath: '/setup'
+      preLoaderRoute: typeof SetupRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/signup': {
@@ -331,6 +343,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WWorkspaceIdConnectionsRouteImport
       parentRoute: typeof WWorkspaceIdRoute
     }
+    '/w/$workspaceId/instance': {
+      id: '/w/$workspaceId/instance'
+      path: '/instance'
+      fullPath: '/w/$workspaceId/instance'
+      preLoaderRoute: typeof WWorkspaceIdInstanceRouteImport
+      parentRoute: typeof WWorkspaceIdRoute
+    }
     '/w/$workspaceId/chat/': {
       id: '/w/$workspaceId/chat/'
       path: '/chat'
@@ -352,6 +371,7 @@ interface WWorkspaceIdRouteChildren {
   WWorkspaceIdAccountRoute: typeof WWorkspaceIdAccountRoute
   WWorkspaceIdAgentsRoute: typeof WWorkspaceIdAgentsRoute
   WWorkspaceIdConnectionsRoute: typeof WWorkspaceIdConnectionsRoute
+  WWorkspaceIdInstanceRoute: typeof WWorkspaceIdInstanceRoute
   WWorkspaceIdIndexRoute: typeof WWorkspaceIdIndexRoute
   WWorkspaceIdChatConversationIdRoute: typeof WWorkspaceIdChatConversationIdRoute
   WWorkspaceIdChatIndexRoute: typeof WWorkspaceIdChatIndexRoute
@@ -361,6 +381,7 @@ const WWorkspaceIdRouteChildren: WWorkspaceIdRouteChildren = {
   WWorkspaceIdAccountRoute: WWorkspaceIdAccountRoute,
   WWorkspaceIdAgentsRoute: WWorkspaceIdAgentsRoute,
   WWorkspaceIdConnectionsRoute: WWorkspaceIdConnectionsRoute,
+  WWorkspaceIdInstanceRoute: WWorkspaceIdInstanceRoute,
   WWorkspaceIdIndexRoute: WWorkspaceIdIndexRoute,
   WWorkspaceIdChatConversationIdRoute: WWorkspaceIdChatConversationIdRoute,
   WWorkspaceIdChatIndexRoute: WWorkspaceIdChatIndexRoute,
@@ -372,9 +393,9 @@ const WWorkspaceIdRouteWithChildren = WWorkspaceIdRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  DemoRoute: DemoRoute,
   LoginRoute: LoginRoute,
   ResetPasswordRoute: ResetPasswordRoute,
+  SetupRoute: SetupRoute,
   SignupRoute: SignupRoute,
   VerifyEmailRoute: VerifyEmailRoute,
   DevComponentsRoute: DevComponentsRoute,

@@ -22,7 +22,7 @@ import { signDownload } from "../../src/files/links.ts";
 import { parseManifest } from "../../src/files/manifest.ts";
 import type { Bucket } from "../../src/files/objects.ts";
 import { FolderStore } from "../../src/files/store.ts";
-import { receiveUpload, type UploadRecorder } from "../../src/files/uploads.ts";
+import { receiveUpload, type UploadBucket, type UploadRecorder } from "../../src/files/uploads.ts";
 import { hex } from "../../src/lib/bytes.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { durableSql } from "../../src/lib/sql.ts";
@@ -192,6 +192,67 @@ describe("uploads", () => {
 		expect(await w.workspaceRows("SELECT * FROM uploads")).toEqual([]);
 		// Its write was stopped with it: nothing is stored, now or later.
 		await sleep(50);
+		expect((await w.bucket.list({ prefix: `uploads/${w.ref.id}/` })).objects).toEqual([]);
+	});
+
+	/** The bucket with its write held until `release()`: a write that ends after the upload's deadline. */
+	function heldBucket(bucket: UploadBucket) {
+		let release = () => {};
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		let settled = false;
+		return {
+			bucket: {
+				put: async (key: string, value: ReadableStream<Uint8Array>) => {
+					await gate;
+					const stored = await bucket.put(key, value);
+					settled = true;
+					return stored;
+				},
+				delete: (key: string) => bucket.delete(key),
+			} satisfies UploadBucket,
+			release,
+			get settled() {
+				return settled;
+			},
+		};
+	}
+
+	test("a write that ends just after the deadline leaves no object behind", async () => {
+		// The body is whole and the put is held past the deadline, then lands: the abandonment waits for it, so the
+		// Workspace's delete (with its next alarm) follows the write instead of preceding it.
+		const w = await world();
+		const held = heldBucket(w.bucket);
+		setTimeout(held.release, 150);
+		const data = new TextEncoder().encode("a whole body");
+		const answer = await receiveUpload(w.recorder, held.bucket, CALLER, { name: "late", size: data.length, body: body(data) }, { deadlineMs: 50 });
+		expect(answer).toEqual({ ok: false, refusal: { status: 408, detail: TOO_SLOW } });
+		// It answered after the write ended, not before.
+		expect(held.settled).toBe(true);
+		expect(await w.workspaceRows("SELECT * FROM uploads")).toEqual([]);
+		await until(
+			async () => (await w.bucket.list({ prefix: `uploads/${w.ref.id}/` })).objects,
+			(objects) => objects.length === 0,
+		);
+	});
+
+	test("a write that ends after the settle wait too has its object deleted when it does", async () => {
+		const w = await world();
+		const held = heldBucket(w.bucket);
+		const work: Promise<unknown>[] = [];
+		const data = new TextEncoder().encode("a whole body");
+		const answer = await receiveUpload(
+			w.recorder,
+			held.bucket,
+			CALLER,
+			{ name: "later", size: data.length, body: body(data) },
+			{ deadlineMs: 50, settleMs: 20, waitUntil: (promise) => work.push(promise) },
+		);
+		expect(answer).toEqual({ ok: false, refusal: { status: 408, detail: TOO_SLOW } });
+		expect(held.settled).toBe(false);
+		expect(work).toHaveLength(1);
+		held.release();
+		await Promise.all(work);
+		expect(held.settled).toBe(true);
 		expect((await w.bucket.list({ prefix: `uploads/${w.ref.id}/` })).objects).toEqual([]);
 	});
 
@@ -485,8 +546,12 @@ describe("fault rows: Files", () => {
 		const posted = await w.conversation.postMessage(CALLER, { content: DONE, attachments: [upload.id] });
 		if (!posted.ok) throw new Error(posted.refusal.detail);
 		await settled(w, posted.value.run.id);
-		// The Conversation's own copy, held in flight while the conversation is deleted.
+		// The Conversation's own copy, held in flight while the conversation is deleted. Only this
+		// conversation's keys are held, and the deletion waits until the copy is really in its put: a
+		// deletion that overtakes the start before that refuses it instead (the Workspace answers 413 to
+		// growth in a deleted conversation) and leaves nothing, which is a different case.
 		const held = Promise.withResolvers<void>();
+		let copying = false;
 		const late = await w.upload("late.txt", "late bytes");
 		FOLDER_PORTS.bucket = (context) => {
 			const inner = realBucket(context);
@@ -495,7 +560,10 @@ describe("fault rows: Files", () => {
 				list: (options) => inner.list(options),
 				delete: (keys) => inner.delete(keys),
 				async put(key, value, options) {
-					await held.promise;
+					if (key.startsWith(w.prefix)) {
+						copying = true;
+						await held.promise;
+					}
 					return inner.put(key, value, options);
 				},
 			};
@@ -503,7 +571,7 @@ describe("fault rows: Files", () => {
 		// The object restarts, so its new instance builds its folder with the held bucket.
 		await runInDurableObject(w.conversation, (_instance, state) => state.abort("fault: reload")).catch(() => {});
 		const inFlight = w.conversation.postMessage(CALLER, { content: DONE, attachments: [late.id] }).catch(() => null);
-		await until(() => w.conversationRows("SELECT run_id FROM starts"), (rows) => rows.length === 1);
+		await until(async () => copying, (reached) => reached);
 		const deleted = await w.ws.deleteConversation(CALLER, w.conversationId);
 		expect(deleted).toEqual({ ok: true, value: { revocation: "acknowledged" } });
 		await until(() => w.workspaceRows<{ first_done_at: number | null }>("SELECT first_done_at FROM purges"), (rows) => rows[0]?.first_done_at !== null);

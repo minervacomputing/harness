@@ -1,10 +1,11 @@
 // The Workers' secrets live in ../.env.cloudflare at the repository root (gitignored, mode 600) and are
 // uploaded with `cf deploy --secrets-file`. The test Worker (minerva-cf-test) has its own, in
-// ../.env.cloudflare-test (`--test`), so its fault driver's token and its keys are not production's. This
-// script never prints a value.
+// ../.env.cloudflare-test (`--test`), so its fault driver's token and its keys are not production's. The
+// local dev server (`pnpm dev:offline`) reads its own in .dev.vars here (`--offline`), gitignored like the
+// others. This script never prints a value.
 //
-//   node scripts/secrets.ts generate [--test]          adds any missing required secret, keeping the others
-//   node scripts/secrets.ts check [--test]             says which required secrets are set
+//   node scripts/secrets.ts generate [--test|--offline]  adds any missing required secret, keeping the others
+//   node scripts/secrets.ts check [--test|--offline]     says which required secrets are set
 //   node scripts/secrets.ts subset OUT NAME…           writes only these secrets to OUT, for the download Worker
 
 import { randomBytes } from "node:crypto";
@@ -14,8 +15,11 @@ import { fileURLToPath } from "node:url";
 import { OAUTH_APPS, clientSecretNames, connectorClientSecrets } from "../src/config.ts";
 
 const TEST = process.argv.includes("--test");
-const NAME = TEST ? ".env.cloudflare-test" : ".env.cloudflare";
-const FILE = fileURLToPath(new URL(`../../${NAME}`, import.meta.url));
+const OFFLINE = process.argv.includes("--offline");
+if (TEST && OFFLINE) throw new Error("--test and --offline are different targets.");
+const NAME = OFFLINE ? ".dev.vars" : TEST ? ".env.cloudflare-test" : ".env.cloudflare";
+// The dev server reads .dev.vars from the project (cloudflare/); the deployed Workers' files are at the repository root.
+const FILE = fileURLToPath(new URL(OFFLINE ? `../${NAME}` : `../../${NAME}`, import.meta.url));
 
 const REQUIRED: Record<string, () => string> = {
 	// Signs and keys our own values (as Django's SECRET_KEY: secrets.token_urlsafe(50)).
@@ -64,7 +68,7 @@ function generate(): void {
 	const added = Object.keys(REQUIRED).filter((name) => !values.get(name));
 	for (const name of added) values.set(name, (REQUIRED[name] as () => string)());
 	const lines = [
-		`# Secrets of the ${TEST ? "minerva-cf-test Worker" : "minerva-cf Workers"} (cloudflare/). Never commit or print them.`,
+		`# Secrets of the ${OFFLINE ? "local dev server (pnpm dev:offline)" : TEST ? "minerva-cf-test Worker" : "minerva-cf Workers"} (cloudflare/). Never commit or print them.`,
 		...[...values].map(([name, value]) => `${name}="${value}"`),
 		"",
 		"# Optional: model keys (uploaded once declared) and connector clients (set both names of an app):",
@@ -76,7 +80,7 @@ function generate(): void {
 
 function check(): void {
 	if (!existsSync(FILE)) {
-		console.error(`${NAME} is missing: run \`pnpm secrets${TEST ? ":test" : ""}\`.`);
+		console.error(`${NAME} is missing: run \`pnpm secrets${OFFLINE ? ":offline" : TEST ? ":test" : ""}\`.`);
 		process.exit(1);
 	}
 	if ((statSync(FILE).mode & 0o077) !== 0) {
@@ -108,7 +112,7 @@ function subset(out: string, names: string[]): void {
 	write(out, names.map((name) => `${name}="${values.get(name)}"`));
 }
 
-const [command, ...rest] = process.argv.slice(2).filter((arg) => arg !== "--test");
+const [command, ...rest] = process.argv.slice(2).filter((arg) => arg !== "--test" && arg !== "--offline");
 if (command === "generate") generate();
 else if (command === "check") check();
 else if (command === "subset" && rest.length >= 2) subset(rest[0] as string, rest.slice(1));

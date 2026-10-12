@@ -1,16 +1,17 @@
 import { useForm } from '@tanstack/react-form'
+import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { AuthLayout, useContinueAuth } from '@/components/auth-layout'
 import { SubmitButton, submitForm, TextField } from '@/components/form'
 import { ErrorNote } from '@/components/ui/misc'
 import { auth, fieldErrors, useAuthStep } from '@/lib/auth'
-import { redirectIfSignedIn, redirectOnDemo, validateNext } from '@/lib/guards'
+import { redirectIfSignedIn, validateNext } from '@/lib/guards'
+import { setupQuery } from '@/lib/instance'
 
 export const Route = createFileRoute('/signup')({
   validateSearch: validateNext,
   beforeLoad: async ({ context }) => {
     await redirectIfSignedIn(context.queryClient)
-    await redirectOnDemo(context.queryClient)
   },
   component: SignupPage,
 })
@@ -20,10 +21,16 @@ function SignupPage() {
   const continueAuth = useContinueAuth()
   const signup = useAuthStep(auth.signup)
   const fields = fieldErrors(signup.error)
+  // A server nobody administers yet takes the operator's setup key here, for when its sign-up is closed.
+  const setupNeeded = useQuery(setupQuery).data?.needed === true
 
   const form = useForm({
-    defaultValues: { email: '', password: '' },
-    onSubmit: async ({ value }) => continueAuth(await signup.mutateAsync(value), next),
+    defaultValues: { email: '', password: '', setupKey: '' },
+    onSubmit: async ({ value }) => {
+      const state = await signup.mutateAsync({ email: value.email, password: value.password, setupKey: setupNeeded ? value.setupKey : '' })
+      // With the key, the next stop after verifying the address is claiming the setup.
+      await continueAuth(state, setupNeeded && value.setupKey.trim() ? '/setup' : next)
+    },
   })
 
   return (
@@ -39,6 +46,21 @@ function SignupPage() {
         <form.Field name="password" validators={{ onBlur: ({ value }) => (value.length < 10 ? 'Use at least 10 characters.' : undefined) }}>
           {field => <TextField field={field} label="Password" type="password" autoComplete="new-password" serverError={fields.password} />}
         </form.Field>
+        {setupNeeded && (
+          <form.Field name="setupKey">
+            {field => (
+              <TextField
+                field={field}
+                label="Setup key (optional)"
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                hint="Only for the person who runs this server: it lets you create the first account while sign-up is closed."
+                serverError={fields.setup_key}
+              />
+            )}
+          </form.Field>
+        )}
         <ErrorNote>{signup.error && !Object.keys(fields).length ? signup.error.message : null}</ErrorNote>
         <SubmitButton form={form}>Create account</SubmitButton>
       </form>

@@ -34,7 +34,15 @@ async function upload(c: Context<AppEnv>): Promise<Response> {
 		if (error instanceof HttpError) return withSessionCookies(error.response, session);
 		throw error;
 	}
-	const outcome = await receiveUpload(m.object, filesBucket(c.env, m.workspace), m.caller, { ...checked.value, body: c.req.raw.body });
+	// A write to R2 that ends after the upload's deadline has its object deleted after the response too.
+	const waitUntil = (work: Promise<unknown>) => {
+		try {
+			c.executionCtx.waitUntil(work);
+		} catch {
+			// Without an execution context (a request made outside a Worker) the delete is best effort.
+		}
+	};
+	const outcome = await receiveUpload(m.object, filesBucket(c.env, m.workspace), m.caller, { ...checked.value, body: c.req.raw.body }, { waitUntil });
 	return withSessionCookies(outcome.ok ? json(201, outcome.value) : refused(outcome.refusal), session);
 }
 

@@ -15,6 +15,7 @@ const BUCKETS: { name: string; jurisdiction: string | null }[] = [
 ];
 const GATEWAY = PREFIX;
 const UPLOADS_RULE = "Expire unattached uploads";
+const ARCHIVE_RULE = "Expire archived assets";
 
 function cf(args: string[]): unknown {
 	try {
@@ -45,6 +46,12 @@ function expiresUploads(rule: LifecycleRule): boolean {
 	);
 }
 
+/** The rule that deletes the asset archive (static/) 30 days after a build's files were copied; without it old builds' files stay. */
+function expiresArchive(rule: LifecycleRule): boolean {
+	const condition = rule.deleteObjectsTransition?.condition;
+	return rule.id === ARCHIVE_RULE && rule.enabled === true && rule.conditions?.prefix === "static/" && condition?.type === "Age" && typeof condition.maxAge === "number" && condition.maxAge > 0;
+}
+
 function fail(message: string): never {
 	console.error(`${message} See cloudflare/README.md, First deploy.`);
 	process.exit(1);
@@ -62,6 +69,10 @@ for (const bucket of BUCKETS) {
 	const lifecycle = cf(["r2", "buckets", "lifecycle", "get", bucket.name, ...scope]) as { rules?: LifecycleRule[] } | null;
 	if (!lifecycle?.rules?.some(expiresUploads)) {
 		fail(`R2 bucket ${bucket.name} lacks the enabled lifecycle rule that deletes uploads/ after a day (r2-lifecycle.json).`);
+	}
+	// Only a cost, not a safety rule: the files bucket keeps previous builds' hashed assets under static/ (src/http/assets.ts).
+	if (bucket.jurisdiction === null && !lifecycle.rules.some(expiresArchive)) {
+		console.warn(`Warning: R2 bucket ${bucket.name} has no lifecycle rule that expires static/ (r2-lifecycle.json), so archived assets of old builds stay.`);
 	}
 }
 

@@ -8,8 +8,8 @@
 // Keys hold an HMAC of the address, user or IP under MINERVA_SECRET_KEY, never the value itself.
 //
 // The policy (policy.ts) counts the per-address and per-user rates; per IP, Better Auth's own limiter
-// counts every route in D1 instead (auth-options.ts), so the `ip` rates here and `manage_email` (email
-// changes are not available yet) are kept as today's table but not applied.
+// counts every route in D1 instead, with the numbers of ip-limits.ts (auth-options.ts), so the `ip` rates
+// here and `manage_email` (email changes are not available yet) are kept as today's table but not applied.
 
 import { hmacSha256Hex } from "../lib/hash.ts";
 

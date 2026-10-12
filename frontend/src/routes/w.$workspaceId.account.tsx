@@ -1,15 +1,16 @@
 import { useForm } from '@tanstack/react-form'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { useRef, useState } from 'react'
 import { Setting, SettingsList } from '@/components/account/setting'
 import { TwoFactorSetting } from '@/components/account/two-factor'
-import { TextField } from '@/components/form'
+import { submitForm, TextField } from '@/components/form'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { Button } from '@/components/ui/button'
 import { Alert, ErrorNote, PageHeader } from '@/components/ui/misc'
 import { auth, authQuery, fieldErrors, useSignOut } from '@/lib/auth'
 import { useDemo } from '@/lib/demo'
+import { setupQuery } from '@/lib/instance'
 
 export const Route = createFileRoute('/w/$workspaceId/account')({
   component: AccountPage,
@@ -21,6 +22,8 @@ function AccountPage() {
   const user = state?.kind === 'authenticated' ? state.user : context.user
   const signOut = useSignOut()
   const demo = useDemo()
+  // Until someone claims it, any signed-in user can find the setup here; it works only with the setup key.
+  const setupNeeded = useQuery(setupQuery).data?.needed === true
   return (
     <div>
       <PageHeader title="Account" />
@@ -37,6 +40,13 @@ function AccountPage() {
               <PasswordSetting />
               <TwoFactorSetting />
             </>
+          )}
+          {setupNeeded && (
+            <Setting
+              title="Set up this server"
+              description="Nobody administers this server yet. If you run it, claim it with the setup key."
+              action={<Button variant="outline" size="sm" asChild><Link to="/setup">Enter setup key</Link></Button>}
+            />
           )}
           <Setting title="Appearance" description="Light, dark, or the same as your system." action={<ThemeToggle labelled />} />
           <Setting
@@ -84,7 +94,7 @@ function PasswordSetting() {
     >
       {done && <Alert tone="info" role="status">{done}</Alert>}
       {open && (
-        <form className="grid max-w-md gap-4" onSubmit={event => { event.preventDefault(); void form.handleSubmit() }}>
+        <form className="grid max-w-md gap-4" onSubmit={submitForm(form)}>
           <form.Field name="current_password">
             {field => <TextField field={field} label="Current password" type="password" autoComplete="current-password" autoFocus serverError={fields.current_password} />}
           </form.Field>

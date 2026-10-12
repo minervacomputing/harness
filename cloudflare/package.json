@@ -22,10 +22,12 @@
     "auth:schema": "auth generate --config scripts/auth-schema.ts --output .cloudflare/auth-schema.sql --yes && cat .cloudflare/auth-schema.sql",
     "secrets": "node scripts/secrets.ts generate",
     "secrets:test": "node scripts/secrets.ts generate --test",
-    "deploy": "pnpm assets && node scripts/secrets.ts check && node scripts/resources.ts && cf build && node scripts/bundle.ts && cf deploy --prebuilt --secrets-file ../.env.cloudflare && pnpm deploy:files",
+    "secrets:offline": "node scripts/secrets.ts generate --offline",
+    "dev:offline": "node scripts/dev-offline.ts",
+    "deploy": "pnpm assets && node scripts/secrets.ts check && node scripts/resources.ts && node scripts/schema-check.ts && cf build && node scripts/bundle.ts && cf deploy --prebuilt --secrets-file ../.env.cloudflare && pnpm deploy:files",
     "deploy:files": "node scripts/secrets.ts subset .secrets/files.env MINERVA_DOWNLOAD_KEY && cd files-worker && cf deploy --secrets-file ../.secrets/files.env; status=$?; rm -f ../.secrets/files.env; exit $status",
     "deploy:cm": "cd test/account/scripts-worker && cf deploy --secrets-file ../../../../.env.cloudflare-cm",
-    "deploy:test": "pnpm assets && node scripts/secrets.ts check --test && node scripts/resources.ts --test && cf build --mode faults && node scripts/bundle.ts --test && cf deploy --prebuilt --secrets-file ../.env.cloudflare-test"
+    "deploy:test": "pnpm assets && node scripts/secrets.ts check --test && node scripts/resources.ts --test && node scripts/schema-check.ts --test && cf build --mode faults && node scripts/bundle.ts --test && cf deploy --prebuilt --secrets-file ../.env.cloudflare-test"
   },
   "dependencies": {
     "@cloudflare/sandbox": "1.0.0",

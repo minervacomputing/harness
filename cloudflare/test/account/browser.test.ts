@@ -193,8 +193,9 @@ async function nextTotp(): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// Better Auth's limit per IP and path: 3 requests to /sign-in/* or /two-factor/* while each comes within 10 s
-// of the one before. A person is slower than the walk, so it waits between requests to the same path.
+// Better Auth's limit per IP and path was 3 requests to /sign-in/* or /two-factor/* while each came within
+// 10 s of the one before; it is 10 now (src/accounts/ip-limits.ts), which the walk never reaches. It still
+// waits between requests to the same path, as a person would; a run against a deployed build may drop this.
 
 const lastRequest = new Map<string, number>();
 

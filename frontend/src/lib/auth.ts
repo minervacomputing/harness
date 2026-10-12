@@ -13,6 +13,8 @@ import { emailOTPClient, twoFactorClient } from 'better-auth/client/plugins'
 import { createAuthClient } from 'better-auth/react'
 import { meOptions } from '@/api/@tanstack/react-query.gen'
 import type { MeOut } from '@/api/types.gen'
+import { SETUP_KEY_HEADER } from '@/lib/instance'
+import { noteSessionEnded } from '@/lib/session'
 
 // Only the plugins' client parts the Worker enables and the UI uses. The Worker answers a fixed list of
 // Better Auth's routes (cloudflare/src/accounts/policy.ts, BROWSER_ROUTES); anything else is a 404.
@@ -297,11 +299,31 @@ function backupCode(code: string): string {
 export const auth = {
   login: ({ email, password }: { email: string; password: string }) => signInWithPassword(normalize(email), password),
 
-  async signup({ email, password }: { email: string; password: string }): Promise<AuthState> {
+  /**
+   * `setupKey` is the operator's key (cloudflare/src/accounts/instance.ts): it admits the first sign-up on a
+   * server whose sign-up is closed. It travels in one header of this request and is kept nowhere.
+   */
+  async signup({ email, password, setupKey }: { email: string; password: string; setupKey?: string }): Promise<AuthState> {
     const address = normalize(email)
+    const key = setupKey?.trim()
     // Better Auth wants a name; the account has none yet. A taken address looks like a new one (the owner is emailed).
-    const result = await call(client.signUp.email({ email: address, password, name: '' }))
-    if (!result.ok) throw failure(result.error)
+    const result = await call(client.signUp.email({
+      email: address,
+      password,
+      name: '',
+      ...(key ? { fetchOptions: { headers: { [SETUP_KEY_HEADER]: key } } } : {}),
+    }))
+    if (!result.ok) {
+      // With a key, "closed" means the key did not open it: it is wrong, or the server is already set up.
+      if (key && result.error.code === 'EMAIL_PASSWORD_SIGN_UP_DISABLED') {
+        throw new AuthError([{
+          message: 'Sign-up is not open, and this setup key does not open it. It is not valid, or the server is already set up.',
+          code: result.error.code,
+          param: 'setup_key',
+        }])
+      }
+      throw failure(result.error)
+    }
     held = { email: address, password, until: Date.now() + PENDING_MS.verify_email }
     setPending('verify_email', address)
     return anonymous()
@@ -423,13 +445,50 @@ export const auth = {
   },
 }
 
+let signingOut = false
+/** True while `signOut` runs; the app shell then leaves the way to the sign-in page to it. */
+export const isSigningOut = () => signingOut
+
+/** What `signOut` needs of the query client, and of the router: the way to the sign-in page. */
+type SignOutClient = Pick<QueryClient, 'cancelQueries' | 'clear' | 'invalidateQueries' | 'setQueryData'>
+
+/**
+ * Ends the session without a request failing on the way. Queries that are still mounted would refetch into
+ * 401s if their cache were cleared or their session ended under them, so first everything in flight is
+ * cancelled; then the session ends; then the cache says "signed out" and the sign-in page opens, which
+ * unmounts the signed-in app; and only then is the account's data dropped. If the server cannot end the
+ * session, the user is still signed in and what was cancelled is fetched again.
+ */
+export async function signOut(queryClient: SignOutClient, goToLogin: () => Promise<unknown>): Promise<void> {
+  signingOut = true
+  try {
+    await queryClient.cancelQueries()
+    try {
+      await auth.logout()
+    } catch (error) {
+      void queryClient.invalidateQueries({ refetchType: 'active' })
+      throw error
+    }
+    noteSessionEnded()
+    queryClient.setQueryData(authQuery.queryKey, anonymous())
+    await goToLogin()
+    queryClient.clear()
+    // Known, so the next visit to the sign-in page does not ask the server who is signed in.
+    queryClient.setQueryData(authQuery.queryKey, anonymous())
+  } finally {
+    signingOut = false
+  }
+}
+
 /** Signs out, forgets everything cached for the account, and goes to the sign-in page. */
 export function useSignOut() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   return async () => {
-    await auth.logout()
-    queryClient.clear()
-    await navigate({ to: '/login' })
+    try {
+      await signOut(queryClient, () => navigate({ to: '/login' }))
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Could not sign out. Try again.')
+    }
   }
 }
