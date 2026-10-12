@@ -4,7 +4,9 @@
 // [::ffff:127.0.0.1] are IP literals to it), refuses every IP literal that is not Cloudflare's with "error
 // code: 1003", localtest.me and *.localhost with 1102, a name whose address is private with 1002 (looked up
 // on every request, so a name that changes its answer is refused once it does), and a name public DNS lacks
-// with 530 and 1016; each refusal is a 403 (530) from `server: cloudflare` with a plain-text body. Redirects
+// with 530 and 1016; each refusal is a 403 (530) from `server: cloudflare` with a plain-text body, or, to a
+// request with an Accept header (the Web connector's has one), Cloudflare's HTML error page headed `Error NNNN`
+// (measured on the account 2026-10-12; the page here keeps only its shape). Redirects
 // are followed with the same checks unless the request says `redirect: "manual"`, and gzip and br bodies are
 // decoded (Content-Encoding kept) unless it says `encodeResponseBody: "manual"`. Names under nip.io and
 // sslip.io resolve to the address they spell, as those services do. Addresses are made up.
@@ -108,7 +110,24 @@ function spelled(host: string): string | null {
 	return spelling.replaceAll("-", ".");
 }
 
-function refusal(code: number, status = 403): Response {
+/** The platform's error page for a refusal, in the shape the account served (about 6.5 KB, the code in its heading). */
+export function refusalPage(code: number, host: string): string {
+	const filler = `<p class="cf-text">${"Cloudflare's explanation of the error, and what a visitor and the site's owner can do. ".repeat(60)}</p>`;
+	return `<!DOCTYPE html>
+<html class="no-js" lang="en-US"><head><title>DNS points to local or disallowed IP | ${host} | Cloudflare</title></head>
+<body><div id="cf-wrapper"><div id="cf-error-details" class="p-0">
+<header class="mx-auto pt-10 lg:pt-6 lg:px-8 w-240 lg:w-full mb-15 antialiased">
+  <h1 class="inline-block md:block mr-2 md:mb-2 font-light text-60 md:text-3xl text-black-dark leading-tight">
+    <span data-translate="error">Error</span>
+    <span>${code}</span>
+  </h1>
+</header>${filler}</div></div></body></html>`;
+}
+
+function refusal(code: number, sent: SentRequest, status = 403): Response {
+	if (sent.headers.get("accept")) {
+		return new Response(refusalPage(code, sent.host), { status, headers: { server: "cloudflare", "content-type": "text/html; charset=UTF-8" } });
+	}
 	return new Response(`error code: ${code}`, { status, headers: { server: "cloudflare", "content-type": "text/plain; charset=UTF-8" } });
 }
 
@@ -192,15 +211,15 @@ export class FakeWeb {
 		const host = url.hostname;
 		if (host === BRAVE_HOST) return this.#brave(sent);
 		const literal = ipv4(host) !== null || host.startsWith("[");
-		if (literal) return cloudflareAddress(host) ? new Response(null, { status: 404 }) : refusal(1003);
-		if (host === "localhost") return refusal(1003);
-		if (host.endsWith(".localhost") || host === "localtest.me" || host.endsWith(".localtest.me")) return refusal(1102);
+		if (literal) return cloudflareAddress(host) ? new Response(null, { status: 404 }) : refusal(1003, sent);
+		if (host === "localhost") return refusal(1003, sent);
+		if (host.endsWith(".localhost") || host === "localtest.me" || host.endsWith(".localtest.me")) return refusal(1102, sent);
 		this.resolved.push(host);
 		const answer = spelled(host) !== null ? [spelled(host) as string] : this.dns.get(host);
 		const addresses = typeof answer === "function" ? answer() : answer;
-		if (addresses === undefined || addresses.length === 0) return refusal(1016, 530);
+		if (addresses === undefined || addresses.length === 0) return refusal(1016, sent, 530);
 		// The platform connects to one address; refused when that one is private.
-		if (privateAddress(addresses[0] as string)) return refusal(1002);
+		if (privateAddress(addresses[0] as string)) return refusal(1002, sent);
 		this.requests.push(sent);
 		const page = this.pages.get(`${host} ${url.pathname + url.search}`);
 		if (page === undefined) return new Response(null, { status: 404 });

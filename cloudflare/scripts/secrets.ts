@@ -7,12 +7,13 @@
 //   node scripts/secrets.ts generate [--test|--offline]  adds any missing required secret, keeping the others
 //   node scripts/secrets.ts check [--test|--offline]     says which required secrets are set
 //   node scripts/secrets.ts subset OUT NAME…           writes only these secrets to OUT, for the download Worker
+//                                                      (owner-only; the caller removes it, scripts/deploy.ts does)
 
 import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { OAUTH_APPS, clientSecretNames, connectorClientSecrets } from "../src/config.ts";
+import { MIN_SETUP_KEY_LENGTH, OAUTH_APPS, clientSecretNames, connectorClientSecrets } from "../src/config.ts";
 import { EncryptionKeys } from "../src/lib/encryption.ts";
 
 const TEST = process.argv.includes("--test");
@@ -62,6 +63,8 @@ function read(path: string): Map<string, string> {
 
 function write(path: string, lines: string[]): void {
 	mkdirSync(dirname(path), { recursive: true });
+	// The mode applies only to a new file, so an existing one is narrowed first, before the secrets go in.
+	if (existsSync(path)) chmodSync(path, 0o600);
 	writeFileSync(path, `${lines.join("\n")}\n`, { mode: 0o600 });
 	chmodSync(path, 0o600);
 }
@@ -93,6 +96,13 @@ async function check(): Promise<void> {
 	const values = read(FILE);
 	const missing = Object.keys(REQUIRED).filter((name) => !values.get(name));
 	for (const name of Object.keys(REQUIRED)) console.log(`${name}: ${values.get(name) ? "set" : "missing"}`);
+	// A setup key the Worker would never accept (src/accounts/instance.ts) is diagnosed, not regenerated:
+	// `generate` fills only missing values, so a short one is replaced by hand (or deleted, then generated).
+	const setupKey = values.get("MINERVA_SETUP_KEY");
+	if (setupKey && setupKey.length < MIN_SETUP_KEY_LENGTH) {
+		console.error(`MINERVA_SETUP_KEY in ${NAME} is shorter than ${MIN_SETUP_KEY_LENGTH} characters, so it could never claim setup: delete the line and run \`pnpm secrets${OFFLINE ? ":offline" : TEST ? ":test" : ""}\`.`);
+		process.exit(1);
+	}
 	// A key list the Worker would refuse (a JSON list, a duplicate id, a short secret) stops a deploy here,
 	// with the Worker's own message, which never holds a secret.
 	const keys = values.get("MINERVA_ENCRYPTION_KEYS");

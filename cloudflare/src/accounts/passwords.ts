@@ -3,8 +3,12 @@
 //
 // A hash is `scrypt$<log2 N>$<r>$<p>$<salt>$<key>` (salt 16 bytes, key 32, both base64 without padding),
 // so the parameters can be raised later and old hashes still verified (`needsRehash`). N 2^15, r 8, p 3
-// costs about 87 ms of CPU in local workerd on Apple silicon (measured 2026-10-12; plan: The web API) and
-// 32 MiB of memory, since the p lanes run one after another.
+// is one of OWASP's equivalent settings (never go below them). It costs about 87 ms of CPU in local workerd
+// on Apple silicon and about 260 ms on the edge (one hash per request, Workers Logs' CPU time, median of 10,
+// measured twice 2026-10-12; plan: The web API), and 32 MiB of memory, since the p lanes run one after
+// another. Of the other equivalents measured there, 2^14/p 5 took about 190 ms with half the memory, the
+// thing that makes a guess expensive in parallel; 2^16/p 2 and 2^17/p 1 took about 310 and 320 ms and need
+// 64 and 128 MiB, half and all of an isolate's 128 MB, which concurrent sign-ins share.
 //
 // Better Auth calls `hashPassword` and `verifyPassword` as its custom hash (auth-options.ts), including for
 // a sign-in with an unknown address, which it hashes the password for so it takes as long as a wrong one.

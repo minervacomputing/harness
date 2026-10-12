@@ -1,5 +1,6 @@
 // A small HTTPS client for the deployed Workers. Some resolvers fail on *.workers.dev now and then
-// (ENOTFOUND), so a failed lookup is retried against 1.1.1.1 directly. Also the Workers' secrets and cf's
+// (ENOTFOUND; 1.1.1.1 itself answers SERVFAIL at times), so a failed lookup is retried against public
+// resolvers directly, Google's first. Also the Workers' secrets and cf's
 // view of the account, for the checks that need them; neither is ever printed.
 
 import { execFileSync } from "node:child_process";
@@ -7,6 +8,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { Resolver } from "node:dns/promises";
 import { lookup as systemLookup, type LookupAddress } from "node:dns";
 import { request } from "node:https";
+import { TEST_APP, testOrigin } from "./origins.ts";
 
 const VARS = new URL("../../../.env.cloudflare.vars", import.meta.url);
 if (existsSync(VARS)) process.loadEnvFile(VARS);
@@ -24,12 +26,19 @@ export function secret(name: string, file: URL = SECRETS): string {
 	throw new Error(`${name} is not set in ${file.pathname.split("/").pop()}.`);
 }
 
-/** The test Worker minerva-cf-test: its origin from ../.env.cloudflare-test.vars and its secret key. */
-export function testWorker(): { origin: string; secretKey: string } {
+/** A setting of ../.env.cloudflare-test.vars, or undefined. */
+export function testVar(name: string): string | undefined {
 	if (!existsSync(TEST_VARS)) throw new Error("The test Worker's settings are in .env.cloudflare-test.vars (cloudflare/README.md, The test Worker).");
-	const site = /^MINERVA_SITE_URL=(.*)$/m.exec(readFileSync(TEST_VARS, "utf8"))?.[1]?.trim().replace(/^"|"$/g, "");
-	if (!site?.startsWith("https://")) throw new Error("Set MINERVA_SITE_URL to the test Worker's https origin in .env.cloudflare-test.vars.");
-	return { origin: site.replace(/\/$/, ""), secretKey: secret("MINERVA_SECRET_KEY", TEST_SECRETS) };
+	return new RegExp(`^${name}=(.*)$`, "m").exec(readFileSync(TEST_VARS, "utf8"))?.[1]?.trim().replace(/^"|"$/g, "");
+}
+
+/**
+ * The test Worker minerva-cf-test: its origin from ../.env.cloudflare-test.vars, checked to be the test
+ * Worker's own before any request is sent (origins.ts), and its secret key.
+ */
+export function testWorker(): { origin: string; secretKey: string } {
+	const origin = testOrigin(testVar("MINERVA_SITE_URL"), TEST_APP, "MINERVA_SITE_URL in .env.cloudflare-test.vars");
+	return { origin, secretKey: secret("MINERVA_SECRET_KEY", TEST_SECRETS) };
 }
 
 /** cf's JSON answer to a read-only command (cf must be signed in). */
@@ -45,8 +54,11 @@ export function origin(name: "MINERVA_SITE_URL" | "MINERVA_DOWNLOAD_ORIGIN"): st
 	return value.replace(/\/$/, "");
 }
 
-const resolver = new Resolver();
-resolver.setServers(["1.1.1.1", "1.0.0.1"]);
+/** The resolvers a failed lookup is retried against, in order (c-ares moves on after a server's failure). */
+export const FALLBACK_RESOLVERS = ["8.8.8.8", "1.1.1.1", "8.8.4.4", "1.0.0.1"];
+
+const resolver = new Resolver({ tries: 2 });
+resolver.setServers(FALLBACK_RESOLVERS);
 
 type Callback = (error: NodeJS.ErrnoException | null, address: string | LookupAddress[], family?: number) => void;
 

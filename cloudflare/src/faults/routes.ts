@@ -1,16 +1,20 @@
 // The test build's driver (src/faults/): POST /api/faults/<op> with a JSON body, for the account tests.
-// It answers only a request with `X-Minerva-Faults: <faultsToken(MINERVA_SECRET_KEY)>`; any other request
+// It answers only a request with `X-Minerva-Faults-Token: <faultsToken(MINERVA_SECRET_KEY)>`; any other request
 // is passed on to the Worker, which answers 404 as for a path with no route. It calls the objects through
 // addressing.ts as the API will (step 5), as a fixed test user, against the fake provider only. Operations
 // under `sandbox/` drive a Sandbox object of their own (lab.ts). `emails` and `emails-clear` read and empty
 // the mailbox the build's emails go to (mailbox.ts); `download` serves a signed download link as the
-// download origin (files-worker/) would, from the test Worker's own buckets, for the browser walk
-// (test/account/browser.test.ts), since the test build has no download Worker of its own. `web/get` fetches a
-// web address as the Web connector does (web.ts), for test/account/web-egress.test.ts.
+// download origin (files-worker/) would, from the test Worker's own buckets, for the platform tests (the
+// browser walk downloads through minerva-cf-files-test, the deployed download origin). `web/get`, `web/get-many`
+// and `web/raw` fetch web addresses as the Web connector does (web.ts), for test/account/web-egress.test.ts.
+// `setup-reopen` deletes the instance's setup claim (not the admins it made), so each browser walk claims the
+// first-run setup through its page. `scrypt` hashes one password with the given parameters and nothing else,
+// so the request's CPU time is the hash's (plan: Step 7, the scrypt measurement).
 
 import { conversationObject, filesBucket, sandboxObject, workspaceObject } from "../addressing.ts";
 import type { Caller, WorkspaceRef } from "../contracts/common.ts";
 import type { GrantChange } from "../contracts/policy.ts";
+import { hashPassword } from "../accounts/passwords.ts";
 import { timingSafeEqual } from "../lib/hash.ts";
 import { serveDownload } from "../files/download.ts";
 import { receiveUpload } from "../files/uploads.ts";
@@ -23,7 +27,7 @@ import type { Fault } from "./plan.ts";
 import type { FaultSandbox } from "./sandbox.ts";
 import { providerOf } from "./ports.ts";
 import { FAULTS_HEADER, faultsToken } from "./token.ts";
-import { webGet } from "./web.ts";
+import { webGet, webGetMany, webRaw } from "./web.ts";
 
 const PREFIX = "/api/faults/";
 
@@ -85,11 +89,41 @@ export async function setUpWorkspace(
 	return { connectionId, agentId: agent.id };
 }
 
+/** Deletes the setup claim, so the next claim through `/setup` succeeds; the admins it made stay admins. */
+async function reopenSetup(db: D1Database): Promise<unknown> {
+	const deleted = await db.prepare("DELETE FROM instance_setup WHERE id = 1").run();
+	return { reopened: (deleted.meta.changes ?? 0) > 0 };
+}
+
+/** OWASP's equivalent scrypt settings (r 8, trading memory, 128 · r · N bytes, for CPU), all the measurement may ask for. */
+const OWASP_SCRYPT: ReadonlyArray<{ logN: number; r: number; p: number }> = [
+	{ logN: 17, r: 8, p: 1 },
+	{ logN: 16, r: 8, p: 2 },
+	{ logN: 15, r: 8, p: 3 },
+	{ logN: 14, r: 8, p: 5 },
+	{ logN: 13, r: 8, p: 10 },
+];
+
+/** One hash with one of OWASP's settings (or none, `rounds` 0, for the request's own cost), and the clocks around it. */
+async function timeScrypt(body: Body): Promise<unknown> {
+	const params = OWASP_SCRYPT.find((item) => item.logN === body.logN && item.r === body.r && item.p === body.p);
+	if (!params) return { refused: "Only OWASP's equivalent settings are measured." };
+	const rounds = body.rounds === 0 ? 0 : 1;
+	const wall = Date.now();
+	const perf = performance.now();
+	if (rounds) await hashPassword("a password for the measurement", params);
+	return { params, rounds, dateMs: Date.now() - wall, perfMs: performance.now() - perf };
+}
+
 async function operation(op: string, body: Body, env: Env, exports: Cloudflare.Exports): Promise<unknown> {
 	if (op.startsWith("sandbox/")) return new SandboxLab(env, exports).run(op.slice("sandbox/".length), body);
 	if (op === "emails") return { emails: await mailboxOf(env).list(typeof body.to === "string" ? body.to : null) };
 	if (op === "emails-clear") return { cleared: await mailboxOf(env).clear(typeof body.to === "string" ? body.to : null) };
 	if (op === "web/get") return webGet(String(body.url));
+	if (op === "web/get-many") return webGetMany(((body.urls ?? []) as Json[]).map(String), body.together === true);
+	if (op === "web/raw") return webRaw(String(body.url), typeof body.accept === "string" ? body.accept : null);
+	if (op === "setup-reopen") return reopenSetup(env.DB);
+	if (op === "scrypt") return timeScrypt(body);
 	const ref = body.workspace;
 	const caller: Caller = { userId: body.userId, role: "owner" };
 	const ws = workspaceOf(env, ref);

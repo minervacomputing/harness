@@ -8,6 +8,7 @@ import { MIGRATIONS as SCRIPTS_MIGRATIONS } from "../../src/scripts/schema.ts";
 import { PROBE_HEADER, probeToken } from "../../src/http/probe-token.ts";
 import { AUTH_ROUTE } from "../../src/accounts/routes.ts";
 import { CHECKED_LATER, createApp } from "../../src/http/router.ts";
+import { saltedHmacHex } from "../../src/lib/hash.ts";
 import { escapedKeyCheck } from "../../src/lib/json.ts";
 import { appliedMigrations, migrate } from "../../src/lib/sqlite.ts";
 
@@ -52,7 +53,9 @@ describe("the router in workerd", () => {
 	});
 
 	test("the probe is a plain 404 without its token", async () => {
-		for (const headers of [{}, { [PROBE_HEADER]: "0".repeat(64) }] as Record<string, string>[]) {
+		// Including the token of before 2026-10-12, which Workers Logs kept whole under the header's old name.
+		const retired = await saltedHmacHex("minerva.probe", "probe", env.MINERVA_SECRET_KEY, "SHA-256");
+		for (const headers of [{}, { [PROBE_HEADER]: "0".repeat(64) }, { [PROBE_HEADER]: retired }, { "X-Minerva-Probe": retired }] as Record<string, string>[]) {
 			const response = await exports.default.fetch("http://localhost/api/probe", { headers });
 			expect(response.status).toBe(404);
 			expect(((await response.json()) as { detail: string }).detail).toMatch(/^Not Found/);

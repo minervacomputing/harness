@@ -217,6 +217,7 @@ const { DatabaseSync } = require("node:sqlite");
 const args = process.argv.slice(2);
 appendFileSync(process.env.FAKE_LOG, JSON.stringify(args) + "\\n");
 if (args[0] === "d1" && args[1] === "list") {
+	if (process.env.FAKE_GARBAGE) { console.log("not JSON for ${DATABASE_ID}"); process.exit(0); }
 	console.log(JSON.stringify(process.env.FAKE_NO_DATABASE ? [] : [{ uuid: "${DATABASE_ID}", name: args[3] }]));
 } else if (args[0] === "d1" && args[1] === "query" && args[3] === "--sql") {
 	if (process.env.FAKE_FAIL) { console.error("authentication failed for ${DATABASE_ID}"); process.exit(1); }
@@ -285,20 +286,39 @@ if (args[0] === "d1" && args[1] === "list") {
 		expect(result.err).toContain("- Table scratch is not made by any migration.");
 	});
 
-	test("fails, never passes, when the database cannot be read or does not exist", () => {
+	test("fails, never passes, when the database cannot be read or does not exist, apart from drift (exit 2, not 1)", () => {
 		const unreadable = run(() => {}, { FAKE_FAIL: "1" });
-		expect(unreadable.status).toBe(1);
+		expect(unreadable.status).toBe(2);
 		expect(unreadable.err).toContain("failed");
 		expect(unreadable.out + unreadable.err).not.toContain(DATABASE_ID);
 		const missing = run(() => {}, { FAKE_NO_DATABASE: "1" });
-		expect(missing.status).toBe(1);
+		expect(missing.status).toBe(2);
 		expect(missing.err).toContain("No D1 database named minerva-cf.");
 		expect(missing.calls).toHaveLength(1);
+		// An answer it cannot parse throws where nothing catches it: still 2, never drift's 1.
+		const garbage = run(() => {}, { FAKE_GARBAGE: "1" });
+		expect(garbage.status).toBe(2);
+		expect(garbage.err).toContain("The schema check stopped:");
 	});
 
-	test("both deploy scripts run it after the resources check and before the build", () => {
+	test("both deploys run it after the builds and the resources check, before uploading anything", () => {
 		const scripts = (JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { scripts: Record<string, string> }).scripts;
-		expect(scripts.deploy).toMatch(/scripts\/resources\.ts && node scripts\/schema-check\.ts && cf build/);
-		expect(scripts["deploy:test"]).toMatch(/scripts\/resources\.ts --test && node scripts\/schema-check\.ts --test && cf build/);
+		expect(scripts.deploy).toBe("pnpm assets && node scripts/deploy.ts");
+		expect(scripts["deploy:test"]).toBe("pnpm assets && node scripts/deploy.ts --test");
+		// scripts/deploy.ts: everything local first, then the first change on the account (the migrations).
+		const deploy = readFileSync(new URL("../../scripts/deploy.ts", import.meta.url), "utf8");
+		const order = [
+			'"scripts/secrets.ts", "check"',
+			'run("cf", ["build", "--mode", MODE], { print: false })',
+			'"scripts/bundle.ts"',
+			'run("cf", ["build", "--mode", MODE], { cwd: FILES_DIR',
+			"filesBuildProblems(",
+			'"scripts/resources.ts", ...FLAG',
+			'"scripts/schema-check.ts"',
+			'run("cf", ["deploy", "--prebuilt", "--secrets-file", SECRETS]',
+			'run("cf", ["deploy", "--prebuilt", "--secrets-file", subset], { cwd: FILES_DIR',
+		].map((call) => deploy.indexOf(call));
+		expect(order.every((index) => index > 0)).toBe(true);
+		expect(order).toEqual([...order].sort((a, b) => a - b));
 	});
 });

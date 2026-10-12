@@ -34,6 +34,26 @@
         "MINERVA_MODEL_BASE_URL=http://127.0.0.1:9900/v1 MINERVA_MODEL_API_KEY=fake exec uv run --project backend honcho -e /dev/null -f Procfile start"
       ],
       "port": 5173
+    },
+    {
+      "name": "cf-offline",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "cloudflare",
+        "dev:offline"
+      ],
+      "port": 8787
+    },
+    {
+      "name": "cf-frontend",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "frontend",
+        "dev"
+      ],
+      "port": 5173
     }
   ]
 }

@@ -6,7 +6,8 @@
 // Cloudflare refuses a Worker's request to a private, loopback, link-local, CGNAT, ULA or metadata address,
 // whichever name led there (also after a redirect), and to any IP literal that is not Cloudflare's, with a
 // 403 from `server: cloudflare` whose body is "error code: 1003" (1002 for a name that resolves to such an
-// address, 1102 for loopback names such as `localhost` and `localtest.me`). That is measured, not
+// address, 1102 for loopback names such as `localhost` and `localtest.me`), or, since this request has an
+// Accept header, Cloudflare's error page headed "Error 1002" (gateway/http.ts `platformRefusal`). That is measured, not
 // documented (plan: Spike results), so it is recognised here and reported with today's SITE_NOT_PUBLIC
 // message. Everything else is still decided here, before anything is sent: the address is parsed and its
 // host checked (lib/sites.ts: no IP literal in any spelling, no special-use name, only names under a known
@@ -37,6 +38,18 @@ import { Inflater, unsupportedEncoding } from "./inflate.ts";
 
 export const USER_AGENT = "Minerva/0.1 (governed AI agent; reads a page when a user's agent asks)";
 export const ACCEPT = "text/html, application/xhtml+xml, text/plain, text/markdown, application/json, application/xml;q=0.9";
+/**
+ * Every hop's request headers, asking for the encodings inflate.ts decodes. On the account the platform sends
+ * its own `Accept-Encoding: gzip, br` in place of this one, hands a gzip body on as sent (`encodeResponseBody:
+ * "manual"`), and decodes br and deflate itself (measured 2026-10-12, test/account/web-egress.test.ts), so a
+ * body arrives gzip or as is, never in an encoding this reader refuses.
+ */
+export const REQUEST_HEADERS: Readonly<Record<string, string>> = {
+	"User-Agent": USER_AGENT,
+	Accept: ACCEPT,
+	"Accept-Encoding": "gzip, deflate",
+	"Accept-Language": "en;q=0.9, *;q=0.5",
+};
 export const MAX_BODY = 3 * 1024 * 1024;
 export const MAX_REDIRECTS = 5;
 /** The whole fetch, and each wait for the response's headers or the next piece of its body (httpx's 10 s). Tests lower them. */
@@ -46,8 +59,8 @@ const REDIRECT_STATUSES: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]
 export const NOT_PUBLIC_CODES: ReadonlySet<number> = new Set([1002, 1003, 1102]);
 /** The platform's code when it could not resolve the name (530, measured with a name public DNS lacks). */
 export const NAME_NOT_FOUND_CODE = 1016;
-/** What is read of an error response to recognise the platform's refusal ("error code: 1003"). */
-const REFUSAL_BYTES = 1024;
+/** What is read of an error response to recognise the platform's refusal: "error code: 1003", or its error page of about 6.5 KB. */
+const REFUSAL_BYTES = 16 * 1024;
 /** How long that body may take (the platform's refusals came within a millisecond). */
 const REFUSAL_MS = 1000;
 
@@ -322,12 +335,7 @@ export class Fetcher {
 
 	/** `_hop`: the page at this address, or the Location it redirects to. */
 	async #hop(url: WebURL, deadline: Deadline): Promise<Page | string> {
-		const headers = {
-			"User-Agent": USER_AGENT,
-			Accept: ACCEPT,
-			"Accept-Encoding": "gzip, deflate",
-			"Accept-Language": "en;q=0.9, *;q=0.5",
-		};
+		const headers = { ...REQUEST_HEADERS };
 		let response: Response | null = null;
 		try {
 			deadline.arm();

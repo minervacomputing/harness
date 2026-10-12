@@ -22,7 +22,7 @@ import { Registry, validate } from "../../src/gateway/registry.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { htmlToText } from "../../src/lib/markdown.ts";
 import { ancestors, canonicalHost, choices, name, parseUrl, validId } from "../../src/lib/sites.ts";
-import { FakeWeb, PUBLIC, type Served, privateAddress, stalled, trickle } from "../fixtures/connectors/web/fake.ts";
+import { FakeWeb, PUBLIC, type Served, privateAddress, refusalPage, stalled, trickle } from "../fixtures/connectors/web/fake.ts";
 import { Scenario, userGrants } from "./executor-fakes.ts";
 import { ADA, GRACE, accessOf, harness } from "./workspace-support.ts";
 
@@ -736,9 +736,15 @@ describe("what the fetcher may reach (adversarial)", () => {
 		const web = new FakeWeb();
 		web.site("example.com");
 		web.page("example.com", "/origin-403", { status: 403, headers: { "content-type": "text/plain" }, body: "error code: 1003" });
-		web.page("example.com", "/long", { status: 403, headers: { server: "cloudflare" }, body: `error code: 1003${" ".repeat(2000)}` });
+		web.page("example.com", "/long", { status: 403, headers: { server: "cloudflare" }, body: `error code: 1003${" ".repeat(20_000)}` });
 		web.page("example.com", "/other", { status: 403, headers: { server: "cloudflare" }, body: "error code: 1020" });
 		web.page("example.com", "/limits", { status: 503, headers: { server: "cloudflare" }, body: "error code: 1102" });
+		// The error page: only from `server: cloudflare`, as HTML, within what is read, with a code that means a private site.
+		const page = (code: number) => refusalPage(code, "example.com");
+		web.page("example.com", "/page-origin", { status: 403, headers: { "content-type": "text/html" }, body: page(1002) });
+		web.page("example.com", "/page-as-text", { status: 403, headers: { server: "cloudflare", "content-type": "text/plain" }, body: page(1002) });
+		web.page("example.com", "/page-long", { status: 403, headers: { server: "cloudflare", "content-type": "text/html" }, body: `${page(1002)}${" ".repeat(20_000)}` });
+		web.page("example.com", "/page-other", { status: 403, headers: { server: "cloudflare", "content-type": "text/html" }, body: page(1020) });
 		// An origin whose error body never comes is an error response, not a slow site.
 		web.page("example.com", "/stalled", { status: 403, headers: { server: "cloudflare" }, body: stalled("error code: ") });
 		for (const [target, status] of [
@@ -746,6 +752,10 @@ describe("what the fetcher may reach (adversarial)", () => {
 			["/long", 403],
 			["/other", 403],
 			["/limits", 503],
+			["/page-origin", 403],
+			["/page-as-text", 403],
+			["/page-long", 403],
+			["/page-other", 403],
 			["/stalled", 403],
 		] as const) {
 			expect(await raised(fetcher(web).get(parseUrl(`https://example.com${target}`))), target).toMatchObject({
@@ -753,6 +763,23 @@ describe("what the fetcher may reach (adversarial)", () => {
 				message: `The site answered with HTTP ${status}.`,
 			});
 		}
+	});
+
+	test("the platform's refusal is read in both its forms: the error page a request with an Accept header gets, and the text", async () => {
+		const web = new FakeWeb();
+		web.site("example.com");
+		web.page("example.com", "/page", { status: 403, headers: { server: "cloudflare", "content-type": "text/html; charset=UTF-8" }, body: refusalPage(1002, "example.com") });
+		web.page("example.com", "/text", { status: 403, headers: { server: "cloudflare", "content-type": "text/plain; charset=UTF-8" }, body: "error code: 1003" });
+		for (const target of ["/page", "/text"]) {
+			expect(await raised(fetcher(web).get(parseUrl(`https://example.com${target}`))), target).toMatchObject({
+				code: "SITE_NOT_PUBLIC",
+				message: "This site's name points to a private network, which Minerva does not open.",
+			});
+		}
+		// The private names themselves get the page, since the connector's request has an Accept header.
+		web.dns.set("private.example.com", ["10.0.0.7"]);
+		expect(await acode(fetcher(web).get(parseUrl("https://private.example.com/")))).toBe("SITE_NOT_PUBLIC");
+		expect(web.requests).toEqual([expect.objectContaining({ target: "/page" }), expect.objectContaining({ target: "/text" })]);
 	});
 
 	test("a refusal body that never comes ends with the fetch's total time, as the error response it is", async () => {

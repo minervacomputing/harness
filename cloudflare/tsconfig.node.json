@@ -12,6 +12,6 @@
 		"verbatimModuleSyntax": true,
 		"skipLibCheck": true
 	},
-	"include": ["vite.config.ts", "vitest.*.config.ts", "scripts", "test/account", "test/unit/sources.test.ts", "test/unit/schema-check.test.ts", "files-worker/vite.config.ts"],
+	"include": ["vite.config.ts", "vitest.*.config.ts", "scripts", "test/account", "test/unit/sources.test.ts", "test/unit/schema-check.test.ts", "test/unit/deploy-checks.test.ts", "files-worker/vite.config.ts", "reset-worker/vite.config.ts"],
 	"exclude": ["test/account/scripts-worker"]
 }

@@ -128,3 +128,15 @@ test("mode offline (the dev server without an account) is never built or deploye
 	// And no Worker source reads the mark (it would be a way to switch behaviour at run time).
 	for (const path of sources("src")) for (const [line, number] of code(path)) expect(line, `${path}:${number}`).not.toMatch(/MINERVA_DEV_OFFLINE/);
 });
+
+test("the account suites never skip a whole suite", () => {
+	// A skipped required check looks like a pass (plan: Step 7): missing settings, misdirected origins and a
+	// Chrome that does not start fail the run instead. A step may still skip itself after an earlier one failed,
+	// or the Workers AI turn when the model never calls the tools (ctx.skip, reported).
+	const offenders: string[] = [];
+	for (const path of sources("test/account")) {
+		if (!path.endsWith(".test.ts")) continue;
+		for (const [line, number] of code(path)) if (/\b(describe|test|it)\.(skip|skipIf|runIf|todo)\b/.test(line)) offenders.push(`${path}:${number}`);
+	}
+	expect(offenders).toEqual([]);
+});

@@ -12,7 +12,7 @@
 // until setup is done (policy.ts); the address is verified as any other's before it can sign in. The
 // routes are in instance-routes.ts.
 
-import { settings } from "../config.ts";
+import { MIN_SETUP_KEY_LENGTH, settings } from "../config.ts";
 import { digest, timingSafeEqual } from "../lib/hash.ts";
 
 /** The header that admits the operator's sign-up before setup on an instance whose sign-up is closed. */
@@ -24,8 +24,8 @@ export const ADMINS_ONLY = "Only instance admins can do this.";
 export const LAST_ADMIN = "Keep at least one instance admin.";
 export const NO_SUCH_USER = "No user has this email address.";
 
-/** A key shorter than this (a misconfiguration) admits nothing; `pnpm secrets` generates 43 characters. */
-const MIN_KEY_LENGTH = 32;
+/** A key shorter than this (a misconfiguration) admits nothing (src/config.ts). */
+const MIN_KEY_LENGTH = MIN_SETUP_KEY_LENGTH;
 
 /** Whether `key` is the instance's setup key, compared in constant time (as digests, so lengths do not leak). */
 export async function setupKeyValid(env: Env, key: string | null | undefined): Promise<boolean> {

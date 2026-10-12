@@ -1,19 +1,23 @@
-// The browser walk (plan: Step 5, unit 5f): the real frontend, served by the test Worker minerva-cf-test as its
-// assets, driven in headless Chrome through its pages. Sign-up with the emailed code, the first-run setup
-// claimed with the setup key, sign-out and sign-in with a password, two-factor turned on and used (TOTP
-// computed here, a recovery code), sign-in by emailed code, a password reset, an agent, a connection to the
-// fake Notes connector through its OAuth flow, a chat turn with the fake model that writes a file, that file
-// downloaded, one short turn with Workers AI, and sign-out. Every page is watched for console errors and
-// warnings, uncaught exceptions, failed requests and unexpected error statuses.
+// The browser walk (plan: Step 5, unit 5f; Step 7): the real frontend, served by the test Worker minerva-cf-test
+// as its assets, driven in headless Chrome through its pages. Sign-up with the emailed code and the setup key,
+// the first-run setup claimed on its page, the instance admin page, sign-out and sign-in with a password,
+// two-factor turned on and used (TOTP computed here, a recovery code), sign-in by emailed code, a password
+// reset, an agent, a connection to the fake Notes connector through its OAuth flow, a chat turn with the fake
+// model that writes a file, that file downloaded through the app's redirect to the deployed download origin
+// minerva-cf-files-test (and that origin refusing the link unsigned, tampered with and expired), one short
+// turn with Workers AI, and sign-out. Every page is watched for console errors and warnings, uncaught
+// exceptions, failed requests and unexpected error statuses.
 //
 // The test Worker sends no email: its emails go to a mailbox the token-gated driver reads (src/faults/
-// mailbox.ts). The fake provider's consent page and the download origin are not deployed for it, so the walk
-// stands in for both through the driver: the consent (`provider-authorize`) and the download origin's answer
-// to the link the app signed (`download`, files-worker's handler on the test Worker's buckets).
+// mailbox.ts). The fake provider's consent page is not deployed, so the walk stands in for it through the
+// driver (`provider-authorize`). Each walk claims the setup: the driver first deletes an earlier walk's claim
+// (`setup-reopen`; the admins it made stay admins).
 //
-// Run after `pnpm run deploy:test`: `pnpm test:account test/account/browser.test.ts`. It is skipped without
-// the test Worker's settings and secrets (../.env.cloudflare-test.vars, ../.env.cloudflare-test) or without
-// Google Chrome. MINERVA_BROWSER_SHOTS=<dir> saves a screenshot of each step there.
+// Run after `pnpm run deploy:test`: `pnpm test:account test/account/browser.test.ts`. Both origins must be the
+// test instance's own (origins.ts), or it fails before sending anything. It fails too, rather than skip, without
+// the test Worker's settings and secrets (../.env.cloudflare-test.vars, ../.env.cloudflare-test) or when Google
+// Chrome does not start. MINERVA_BROWSER_SHOTS=<dir> saves a screenshot of every page there, with every field
+// masked.
 
 import { execFileSync } from "node:child_process";
 import { createHmac } from "node:crypto";
@@ -24,26 +28,27 @@ import { fileURLToPath } from "node:url";
 import { type Browser, type BrowserContext, chromium, type Page, type Request } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { FAULTS_HEADER, faultsToken } from "../../src/faults/token.ts";
-import { fetchDeployed, secret, testWorker } from "./client.ts";
+import { LINK_LIFETIME_MS } from "../../src/files/limits.ts";
+import { signDownload } from "../../src/files/links.ts";
+import { FALLBACK_RESOLVERS, fetchDeployed, secret, testVar, testWorker } from "./client.ts";
+import { chromeFailure, testOrigins } from "./origins.ts";
 
 const TEST_SECRETS = new URL("../../../.env.cloudflare-test", import.meta.url);
 const TEST_VARS = new URL("../../../.env.cloudflare-test.vars", import.meta.url);
 
-/** The test Worker's origin, keys and download origin, or why the walk cannot run. */
-function setting(): { origin: string; secretKey: string; setupKey: string; downloadOrigin: string } | string {
-	if (!existsSync(TEST_VARS) || !existsSync(TEST_SECRETS)) return "the test Worker's settings or secrets are missing (cloudflare/README.md, The test Worker)";
-	try {
-		const worker = testWorker();
-		const download = /^MINERVA_DOWNLOAD_ORIGIN=(.*)$/m.exec(readFileSync(TEST_VARS, "utf8"))?.[1]?.trim().replace(/^"|"$/g, "");
-		if (!download) return "MINERVA_DOWNLOAD_ORIGIN is not set in .env.cloudflare-test.vars";
-		return { ...worker, setupKey: secret("MINERVA_SETUP_KEY", TEST_SECRETS), downloadOrigin: new URL(download).origin };
-	} catch (error) {
-		return (error as Error).message;
-	}
+/**
+ * The test Worker's origin, keys and download origin. Missing files, and origins that are not the test instance's
+ * own (origins.ts), throw: the walk fails rather than skip.
+ */
+function setting(): { origin: string; secretKey: string; setupKey: string; downloadOrigin: string; downloadKey: string } {
+	if (!existsSync(TEST_VARS) || !existsSync(TEST_SECRETS)) throw new Error("The browser walk needs the test Worker's settings and secrets (cloudflare/README.md, The test Worker).");
+	const { origin, secretKey } = testWorker();
+	const { downloadOrigin } = testOrigins(origin, testVar("MINERVA_DOWNLOAD_ORIGIN"), { site: "MINERVA_SITE_URL", download: "MINERVA_DOWNLOAD_ORIGIN" });
+	return { origin, secretKey, setupKey: secret("MINERVA_SETUP_KEY", TEST_SECRETS), downloadOrigin, downloadKey: secret("MINERVA_DOWNLOAD_KEY", TEST_SECRETS) };
 }
 
 /**
- * The addresses of the Workers' host, from the system's resolver or else 1.1.1.1 (as client.ts: some resolvers
+ * The addresses of the Workers' host, from the system's resolver or else public ones (as client.ts: some resolvers
  * fail on *.workers.dev now and then), handed to Chrome so a lookup that fails once does not fail a page.
  */
 async function addressOf(host: string): Promise<string> {
@@ -51,32 +56,27 @@ async function addressOf(host: string): Promise<string> {
 		return (await lookup(host, { family: 4 })).address;
 	} catch {
 		const resolver = new Resolver();
-		resolver.setServers(["1.1.1.1", "1.0.0.1"]);
+		resolver.setServers(FALLBACK_RESOLVERS);
 		const [address] = await resolver.resolve4(host);
 		if (!address) throw new Error("no address");
 		return address;
 	}
 }
 
-const found = setting();
-let chrome: Browser | null = null;
-let missing = typeof found === "string" ? found : null;
-if (typeof found !== "string") {
-	const host = new URL(found.origin).hostname;
-	// Its error would name the host, which stays out of the test's output.
+const worker = setting();
+// The app's host and the download origin's. An error would name the host, which stays out of the test's output.
+const hosts = [worker.origin, worker.downloadOrigin].map((origin) => new URL(origin).hostname);
+const maps: string[] = [];
+for (const host of hosts) {
 	const address = await addressOf(host).catch(() => {
-		throw new Error("The test Worker's host does not resolve, from the system's resolver or 1.1.1.1");
+		throw new Error("A test Worker's host does not resolve, from the system's resolver or public ones");
 	});
-	const rules = `MAP ${host} ${address}`;
-	try {
-		chrome = await chromium.launch({ channel: "chrome", headless: true, args: [`--host-resolver-rules=${rules}`] });
-	} catch {
-		missing = "Google Chrome is not installed";
-	}
+	maps.push(`MAP ${host} ${address}`);
 }
-if (missing) console.warn(`The browser walk is skipped: ${missing}.`);
-const worker = typeof found === "string" ? { origin: "", secretKey: "", setupKey: "", downloadOrigin: "" } : found;
-const token = missing ? "" : await faultsToken(worker.secretKey);
+const chrome: Browser = await chromium.launch({ channel: "chrome", headless: true, args: [`--host-resolver-rules=${maps.join(",")}`] }).catch((error: unknown) => {
+	throw chromeFailure(error, hosts);
+});
+const token = await faultsToken(worker.secretKey);
 
 /** MINERVA_BROWSER_SHOTS, which must be outside the repository or ignored by it, so screenshots are never committed. */
 function shotsDirectory(): string | undefined {
@@ -264,7 +264,7 @@ function watch(page: Page): void {
  */
 function redact(text: string): string {
 	let out = text.replace(/https?:\/\/[^\s/"'`)]+([^\s?"'`)]*)(\?[^\s"'`)]*)?/g, (_url, path: string, query?: string) => `<origin>${path}${query ? "?<query>" : ""}`);
-	for (const secret of [totpKey, ...recovery, ...issued, PASSWORD, NEW_PASSWORD]) if (secret) out = out.split(secret).join("<secret>");
+	for (const secret of [totpKey, ...recovery, ...issued, PASSWORD, NEW_PASSWORD, worker.setupKey, worker.downloadKey]) if (secret) out = out.split(secret).join("<secret>");
 	for (const origin of [worker.origin, worker.downloadOrigin]) if (origin) out = out.split(new URL(origin).hostname).join("<host>");
 	return out;
 }
@@ -292,6 +292,8 @@ let workspaceId = "";
 let agentId = "";
 let conversationId = "";
 let recovery: string[] = [];
+/** The links on the download origin that the app redirected Chrome to. */
+const signedLinks: string[] = [];
 
 /** A screenshot of the page, once it has loaded, into MINERVA_BROWSER_SHOTS, with every field masked; on the account page, the two-factor key, its QR code and the recovery codes are masked. */
 async function screenshot(name: string): Promise<void> {
@@ -305,6 +307,14 @@ async function screenshot(name: string): Promise<void> {
 
 const field = (label: string | RegExp) => page.getByLabel(label, { exact: typeof label === "string" });
 const button = (name: string | RegExp) => page.getByRole("button", { name, exact: typeof name === "string" });
+
+const shown = new Set<string>();
+/** A screenshot of a page the walk passes more than once, the first time. */
+async function screenshotOnce(name: string): Promise<void> {
+	if (shown.has(name)) return;
+	shown.add(name);
+	await screenshot(name);
+}
 
 /** Waits until the page shows no loading spinner. */
 async function settled(): Promise<void> {
@@ -334,6 +344,7 @@ async function signInWithPassword(password: string): Promise<void> {
 	await page.goto(`${worker.origin}/login`);
 	await field("Email").fill(EMAIL);
 	await field("Password").fill(password);
+	await screenshotOnce("login");
 	await paced("/sign-in/email");
 	await button("Sign in").click();
 }
@@ -342,6 +353,7 @@ async function signInWithPassword(password: string): Promise<void> {
 async function twoFactor(code: string): Promise<void> {
 	await page.waitForURL(/\/login\/mfa/);
 	await field("Code").fill(code);
+	await screenshotOnce("login-mfa");
 	await paced(/^[0-9]{6}$/.test(code) ? "/two-factor/verify-totp" : "/two-factor/verify-backup-code");
 	await button("Continue").click();
 }
@@ -431,12 +443,69 @@ async function settledDeploy(): Promise<void> {
 	}
 }
 
-describe.skipIf(missing !== null)("the browser walk on the test Worker", () => {
+/** The download origin's answer to `url`, from here. */
+const fromOrigin = (url: URL) => fetchDeployed(url.href, { timeoutMs: 30_000 });
+
+/**
+ * The deployed download origin (minerva-cf-files-test) with the link the app signed: it serves it again, as an
+ * attachment, and refuses it without its signature (401), with the signature or a signed field changed (404),
+ * and expired (404). The expired link is signed here with the instance's download key, exactly as the app signs
+ * (src/files/links.ts), five minutes and a minute before now; the same fields signed now are served, so the
+ * refusal is the expiry's alone.
+ */
+async function refusals(link: URL): Promise<void> {
+	expect(link.origin === worker.downloadOrigin && link.pathname === "/download", "the app's redirect leads to the download origin").toBe(true);
+	const served = await fromOrigin(link);
+	expect(served.status).toBe(200);
+	expect(served.text).toBe("written in the browser walk\n");
+	expect(served.headers.get("content-type")).toBe("application/octet-stream");
+	expect(served.headers.get("content-disposition")).toBe('attachment; filename="report.txt"');
+	expect(served.headers.get("cache-control")).toBe("private, no-store");
+	expect(served.headers.get("x-content-type-options")).toBe("nosniff");
+
+	const changed = (change: (query: URLSearchParams) => void) => {
+		const url = new URL(link);
+		change(url.searchParams);
+		return url;
+	};
+	const unsigned = await fromOrigin(changed((query) => query.delete("s")));
+	expect([unsigned.status, unsigned.text]).toEqual([401, '{"detail":"Unauthorized"}']);
+	const signature = link.searchParams.get("s") ?? "";
+	const flipped = `${signature[0] === "A" ? "B" : "A"}${signature.slice(1)}`;
+	for (const tampered of [
+		changed((query) => query.set("s", flipped)),
+		changed((query) => query.set("p", "other.txt")),
+		changed((query) => query.set("e", String(Number(query.get("e")) + 3600))),
+		changed((query) => query.set("u", "00000000-0000-4000-8000-000000000000")),
+	]) {
+		const refused = await fromOrigin(tampered);
+		expect(refused.status).toBe(404);
+		expect(refused.text).not.toContain("written in the browser walk");
+	}
+
+	const query = link.searchParams;
+	const fields = {
+		workspaceId: query.get("w") ?? "",
+		jurisdiction: query.get("j") === "eu" ? ("eu" as const) : null,
+		conversationId: query.get("c") ?? "",
+		versionId: query.get("v") ?? "",
+		path: query.get("p") ?? "",
+		userId: query.get("u") ?? "",
+		key: query.get("k") ?? "",
+	};
+	const now = await fromOrigin(new URL(await signDownload(worker.downloadKey, worker.downloadOrigin, fields)));
+	expect(now.status, "the same fields signed here now are served").toBe(200);
+	const expired = await fromOrigin(new URL(await signDownload(worker.downloadKey, worker.downloadOrigin, fields, Date.now() - LINK_LIFETIME_MS - 60_000)));
+	expect(expired.status).toBe(404);
+	expect(expired.text).not.toContain("written in the browser walk");
+}
+
+describe("the browser walk on the test Worker", () => {
 	beforeAll(async () => {
 		await settledDeploy().catch((error: unknown) => {
 			throw redacted(error);
 		});
-		context = await (chrome as Browser).newContext({ viewport: { width: 1280, height: 860 }, acceptDownloads: true });
+		context = await chrome.newContext({ viewport: { width: 1280, height: 860 }, acceptDownloads: true });
 		// The fake provider's consent page: the user approves, and it redirects to the app's callback with a code.
 		await context.route(/^https:\/\/notes\.fake\.invalid\//, async (route) => {
 			const consent = await driver<{ code: string; state: string | null; redirectUri: string }>("provider-authorize", {
@@ -449,33 +518,30 @@ describe.skipIf(missing !== null)("the browser walk on the test Worker", () => {
 			if (consent.state !== null) back.searchParams.set("state", consent.state);
 			await route.fulfill({ status: 302, headers: { location: back.toString() } });
 		});
-		// A download: the app's answer to the link (a redirect to a link it signed on the download origin) is
-		// real; the download origin's answer comes from its handler on the test Worker (driver `download`).
-		// Chrome's download manager makes the first request itself, so only the redirected one can be routed.
-		await context.route(
-			(url) => url.origin === worker.downloadOrigin && url.pathname === "/download",
-			async (route) => {
-				const served = await driverReply("download", { url: route.request().url() });
-				const headers: Record<string, string> = {};
-				served.headers.forEach((value, name) => {
-					headers[name] = value;
-				});
-				await route.fulfill({ status: served.status, headers, body: served.text });
-			},
-		);
+		// A download goes to the deployed download origin (minerva-cf-files-test) through the app's redirect; the
+		// signed link it was redirected to is kept for the refusals. Chrome's download manager makes the requests.
+		context.on("request", (request) => {
+			const url = new URL(request.url());
+			if (url.origin === worker.downloadOrigin && url.pathname === "/download") signedLinks.push(request.url());
+		});
 		page = await context.newPage();
 		watch(page);
 	}, 150_000);
 
 	afterAll(async () => {
-		await chrome?.close();
+		await chrome.close();
 	});
 
-	step("sign-up with the emailed code, then the first-run setup claimed with the setup key", async () => {
+	step("sign-up with the emailed code and the setup key, the first-run setup claimed on its page, and the instance page", async () => {
+		// Each walk claims the setup through its page: an earlier walk's claim is deleted (its admins stay admins).
+		await driver("setup-reopen", {});
 		await page.goto(`${worker.origin}/signup`);
 		await page.getByRole("heading", { name: "Create your account" }).waitFor();
 		await field("Email").fill(EMAIL);
 		await field("Password").fill(PASSWORD);
+		// A server nobody administers offers the setup key at sign-up; with it, verifying leads on to /setup.
+		await field("Setup key (optional)").fill(worker.setupKey);
+		await screenshot("signup");
 		await button("Create account").click();
 		await page.waitForURL(/\/verify-email/);
 		await field("Verification code").waitFor();
@@ -484,20 +550,32 @@ describe.skipIf(missing !== null)("the browser walk on the test Worker", () => {
 		// Verified, the page signs in with the password it still holds.
 		await paced("/sign-in/email");
 		await button("Verify email").click();
+
+		// The first-run setup, claimed with the key on its page.
+		await page.waitForURL(/\/setup(\?|$)/, { timeout: 30_000 });
+		await field("Setup key").waitFor();
+		await screenshot("setup");
+		await field("Setup key").fill(worker.setupKey);
+		await button("Claim this server").click();
+		await page.getByRole("heading", { name: "This server is set up" }).waitFor();
+		await screenshot("setup-claimed");
+		await page.getByRole("link", { name: "Open Minerva" }).click();
 		workspaceId = await inApp();
 		await screenshot("signed-up");
-
-		// The instance's first admin (no page yet): POST /api/setup with the key, once. A rerun finds it claimed.
-		expected = [/^POST \/api\/setup 409$/];
-		const claimed = await api<{ detail?: string }>("POST", "/api/setup", { key: worker.setupKey });
-		expect([204, 409], JSON.stringify(claimed.body)).toContain(claimed.status);
-		if (claimed.status === 409) expect(claimed.body.detail).toBe("This instance is already set up.");
 		expect((await api<{ needed: boolean }>("GET", "/api/setup")).body).toEqual({ needed: false });
 		const me = await api<{ user: { email: string; is_staff: boolean } }>("GET", "/api/me");
 		expect(me.body.user.email).toBe(EMAIL);
-		expect(me.body.user.is_staff).toBe(claimed.status === 204);
+		expect(me.body.user.is_staff).toBe(true);
+
+		// The instance admin page, from the sidebar's link (shown to admins only), with this admin listed.
+		await page.getByRole("link", { name: "Instance", exact: true }).click();
+		await page.waitForURL(/\/w\/[0-9a-f-]{36}\/instance$/);
+		await page.getByRole("heading", { name: "Instance", exact: true }).waitFor();
+		await page.getByRole("heading", { name: "Administrators" }).waitFor();
+		await page.getByText(EMAIL, { exact: true }).first().waitFor();
+		await screenshot("instance");
 		expectClean();
-	}, 120_000);
+	}, 150_000);
 
 	step("sign-out, and sign-in with the password", async () => {
 		await signOut();
@@ -526,6 +604,7 @@ describe.skipIf(missing !== null)("the browser walk on the test Worker", () => {
 		await screenshot("recovery-codes");
 		await button("I have saved them").click();
 		await page.getByText("On", { exact: true }).waitFor();
+		await screenshot("account");
 
 		await signOut();
 		await signInWithPassword(PASSWORD);
@@ -541,6 +620,8 @@ describe.skipIf(missing !== null)("the browser walk on the test Worker", () => {
 		await field("Email").fill(EMAIL);
 		await button("Email me a code").click();
 		await page.waitForURL(/\/login\/code/);
+		await field("Sign-in code").waitFor();
+		await screenshot("login-code");
 		await field("Sign-in code").fill(await emailedCode(EMAIL, /Sign-In Code/));
 		await paced("/sign-in/email-otp");
 		await button("Sign in").click();
@@ -553,7 +634,10 @@ describe.skipIf(missing !== null)("the browser walk on the test Worker", () => {
 		await signOut();
 		await page.goto(`${worker.origin}/reset-password`);
 		await field("Email").fill(EMAIL);
+		await screenshot("reset-password");
 		await button("Send reset code").click();
+		await field("Reset code").waitFor();
+		await screenshot("reset-password-code");
 		await field("Reset code").fill(await emailedCode(EMAIL, /Password Reset Code/));
 		await field("New password").fill(NEW_PASSWORD);
 		await button("Set new password").click();
@@ -581,6 +665,8 @@ describe.skipIf(missing !== null)("the browser walk on the test Worker", () => {
 
 	step("a connection to the fake Notes connector through its OAuth flow, given to the agent", async () => {
 		await page.goto(`${worker.origin}/w/${workspaceId}/connections`);
+		await page.getByRole("searchbox", { name: "Search apps" }).waitFor();
+		await screenshot("connections");
 		await page.getByRole("searchbox", { name: "Search apps" }).fill("Notes");
 		await button("Connect Notes").click();
 		await page.waitForURL(/\/connections\?connected=/, { timeout: 30_000 });
@@ -600,7 +686,7 @@ describe.skipIf(missing !== null)("the browser walk on the test Worker", () => {
 		expectClean();
 	}, 90_000);
 
-	step("a chat turn with the fake model that writes a file, and the file downloaded", async () => {
+	step("a chat turn with the fake model that writes a file, and the file downloaded through the download origin", async () => {
 		await page.goto(`${worker.origin}/w/${workspaceId}/chat?agent=${agentId}`);
 		const script = {
 			fake: {
@@ -610,6 +696,8 @@ describe.skipIf(missing !== null)("the browser walk on the test Worker", () => {
 				],
 			},
 		};
+		await page.getByPlaceholder(/Message your agent/).waitFor();
+		await screenshot("chat");
 		await page.getByPlaceholder(/Message your agent/).fill(JSON.stringify(script));
 		await button("Send").click();
 		await page.waitForURL(/\/chat\/[0-9a-f-]{36}/);
@@ -629,6 +717,10 @@ describe.skipIf(missing !== null)("the browser walk on the test Worker", () => {
 		expect(readFileSync(saved, "utf8")).toBe("written in the browser walk\n");
 		await screenshot("files");
 		expectClean();
+
+		// The app redirected Chrome to a link it signed on the download origin, which served the file.
+		expect(signedLinks).toHaveLength(1);
+		await refusals(new URL(signedLinks[0] as string));
 	}, 300_000);
 
 	step("one short turn with Workers AI", async () => {

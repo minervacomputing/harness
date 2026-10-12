@@ -10,7 +10,7 @@
 //
 // The lab keeps nothing: each test keeps the fence its prepare (or start) answered and sends it with each
 // later operation on that sandbox. Timings are written to MINERVA_SBX_TIMINGS when it is set. Run with
-// `pnpm test:faults` after `pnpm run deploy:test`; it skips without the test Worker's settings.
+// `pnpm test:faults` after `pnpm run deploy:test`; it fails without the test Worker's settings.
 
 import { writeFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
@@ -19,17 +19,14 @@ import { fetchDeployed, testWorker } from "./client.ts";
 
 const MiB = 1024 * 1024;
 
-function target(): { origin: string; token: string } | null {
-	try {
-		const worker = testWorker();
-		return { origin: worker.origin, token: worker.secretKey };
-	} catch {
-		return null;
-	}
+/** The test Worker. Missing or misdirected settings fail the run (a skipped sandbox lab would look like a pass). */
+function target(): { origin: string; token: string } {
+	const worker = testWorker();
+	return { origin: worker.origin, token: worker.secretKey };
 }
 
 const WORKER = target();
-const TOKEN = WORKER ? await faultsToken(WORKER.token) : null;
+const TOKEN = await faultsToken(WORKER.token);
 const timings: Record<string, unknown> = {};
 /** Each sandbox's fence, from its prepare or start. */
 const fences = new Map<string, unknown>();
@@ -45,9 +42,9 @@ type Answer = any;
 async function lab(op: string, body: Record<string, unknown> = {}, timeoutMs = 300_000): Promise<Answer> {
 	const name = typeof body.name === "string" ? body.name : undefined;
 	const sent = name !== undefined && body.fence === undefined && fences.has(name) ? { ...body, fence: fences.get(name) } : body;
-	const reply = await fetchDeployed(`${WORKER?.origin}/api/faults/sandbox/${op}`, {
+	const reply = await fetchDeployed(`${WORKER.origin}/api/faults/sandbox/${op}`, {
 		method: "POST",
-		headers: { "content-type": "application/json", [FAULTS_HEADER]: TOKEN as string },
+		headers: { "content-type": "application/json", [FAULTS_HEADER]: TOKEN },
 		body: JSON.stringify(sent),
 		timeoutMs,
 	});
@@ -60,7 +57,7 @@ async function lab(op: string, body: Record<string, unknown> = {}, timeoutMs = 3
 
 const sh = (name: string, command: string, extra: Record<string, unknown> = {}) => lab("exec", { name, request: { command, timeoutSeconds: 120, ...extra } });
 
-describe.skipIf(!WORKER)("the sandbox on the account", { timeout: 600_000 }, () => {
+describe("the sandbox on the account", { timeout: 600_000 }, () => {
 	const main = `main-${Date.now()}`;
 
 	test("a container starts, is hardened and passes every check of its verification", async () => {
@@ -188,7 +185,7 @@ describe.skipIf(!WORKER)("the sandbox on the account", { timeout: 600_000 }, () 
 	});
 });
 
-describe.skipIf(!WORKER)("the Sandbox's fault rows on the account", { timeout: 600_000 }, () => {
+describe("the Sandbox's fault rows on the account", { timeout: 600_000 }, () => {
 	for (const step of ["workspace", "tmp", "home_dirs", "cgroup", "readonly_root"]) {
 		test(`a hardening that fails at ${step} destroys the container`, async () => {
 			const name = `harden-${step}-${Date.now()}`;

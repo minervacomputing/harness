@@ -17,7 +17,8 @@
 //   within the timeout (for a write, within min(timeout, time left), fixed when it is sent). Bodies are
 //   read into memory with a cap, which httpx did not have.
 // - A fetch the platform refuses (private and non-Cloudflare IP literals) resolves to a 403 with
-//   "error code: 1003" rather than throwing; `platformRefusal` lets the Web connector recognise it.
+//   "error code: 1003", or Cloudflare's error page for it when the request has an Accept header, rather than
+//   throwing; `platformRefusal` lets the Web connector recognise it.
 
 import type { z } from "zod";
 import type {
@@ -263,16 +264,27 @@ export function defaultForbidden(provider: string): OperationErrorShape {
 	return new OperationError("PROVIDER_FORBIDDEN", `${provider} refused this request for the connected account.`);
 }
 
+/** The platform's refusal as text, for a request without an Accept header. */
+const PLAIN_REFUSAL = /^error code: (\d{4})\s*$/;
+/** The heading of Cloudflare's error page, `Error NNNN`, which a request with an Accept header gets instead. */
+const PAGE_REFUSAL = /<span data-translate="error">Error<\/span>\s*<span>(\d{4})<\/span>/;
+
 /**
  * The platform's code when Cloudflare refused a Worker's fetch itself rather than the provider answering:
  * a 403 from `server: cloudflare` whose body is `error code: NNNN` (1003 for private, loopback,
  * link-local and non-Cloudflare IP literals; 1002 and 1102 for names that resolve to them), else null.
- * Measured, not documented (plan: Spike results). The Web connector's `classify` reports it as today.
+ * To a request with an Accept header (any value, the wildcard and text/plain included; the Web connector's has one),
+ * the body is instead Cloudflare's HTML error page (text/html, about 6.5 KB) headed `Error NNNN` (measured
+ * on the account 2026-10-12: 1002 for a name of a private IPv4 address, 1102 for localtest.me). Measured, not
+ * documented (plan: Spike results). The Web connector's `classify` reports it as today.
  */
 export function platformRefusal(response: Response, body: string): number | null {
 	if (response.headers.get("server")?.toLowerCase() !== "cloudflare") return null;
-	const match = /^error code: (\d{4})\s*$/.exec(body);
-	return match === null ? null : Number(match[1]);
+	const plain = PLAIN_REFUSAL.exec(body);
+	if (plain !== null) return Number(plain[1]);
+	if (!(response.headers.get("content-type") ?? "").toLowerCase().startsWith("text/html")) return null;
+	const page = PAGE_REFUSAL.exec(body);
+	return page === null ? null : Number(page[1]);
 }
 
 /** A provider's HTTP client (http.py `ProviderHTTP`), built by a connector's `client()` on the call's io. */

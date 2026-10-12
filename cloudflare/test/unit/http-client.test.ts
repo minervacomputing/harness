@@ -16,6 +16,7 @@ import {
 	REFUSED_STATUSES,
 	platformRefusal,
 } from "../../src/gateway/http.ts";
+import { refusalPage } from "../fixtures/connectors/web/fake.ts";
 import { Gate, jsonResponse } from "./executor-fakes.ts";
 
 interface Sent {
@@ -293,6 +294,13 @@ describe("errors", () => {
 		expect(platformRefusal(blocked, "error code: 1102")).toBe(1102);
 		expect(platformRefusal(new Response("", { status: 403, headers: { server: "nginx" } }), "error code: 1003")).toBeNull();
 		expect(platformRefusal(blocked, "<html>Forbidden</html>")).toBeNull();
+		// The error page a request with an Accept header gets (measured on the account), only as HTML from Cloudflare.
+		const page = refusalPage(1002, "name.example");
+		const html = (headers: Record<string, string>) => new Response(page, { status: 403, headers });
+		expect(platformRefusal(html({ server: "cloudflare", "content-type": "text/html; charset=UTF-8" }), page)).toBe(1002);
+		expect(platformRefusal(html({ server: "cloudflare", "content-type": "text/plain" }), page)).toBeNull();
+		expect(platformRefusal(html({ server: "nginx", "content-type": "text/html" }), page)).toBeNull();
+		expect(platformRefusal(html({ server: "cloudflare", "content-type": "text/html" }), "<h1><span>Error</span> <span>1002</span></h1>")).toBeNull();
 	});
 });
 

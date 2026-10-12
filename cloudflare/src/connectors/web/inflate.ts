@@ -1,8 +1,11 @@
 // fetch.py's `_Inflater`: bounded decompression of a page sent with Content-Encoding gzip or deflate, as
 // Python's zlib does it, never producing more than it is given room for.
 //
-// The Worker asks fetch for the body as sent (`encodeResponseBody: "manual"`), so the runtime decodes
-// nothing and the cap applies before decompression as well as after it, as today. The decoder is zlib's own
+// The Worker asks fetch for the body as sent (`encodeResponseBody: "manual"`), so a gzip body arrives
+// encoded and the cap applies before decompression as well as after it, as today. On the account the platform
+// decodes br and deflate itself (it asks the site for `gzip, br` whatever the request says; fetch.ts
+// REQUEST_HEADERS), so those arrive as is and only the cap after decompression applies; the deflate path
+// stays for a runtime that hands it on. The decoder is zlib's own
 // inflate as pako ports it (pako/lib/zlib, pinned in package.json), driven the way CPython's
 // `Decompress.decompress(data, max_length)` drives zlib: Z_SYNC_FLUSH, output in blocks up to the limit,
 // the input left over at the limit kept as `unconsumed_tail`, and after the end of the stream every further

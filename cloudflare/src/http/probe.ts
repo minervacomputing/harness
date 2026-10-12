@@ -1,5 +1,5 @@
 // GET /api/probe: what the account tests (test/account) cannot see from outside, measured inside the
-// deployed Worker. It answers only a request with `X-Minerva-Probe: <probeToken(MINERVA_SECRET_KEY)>`;
+// deployed Worker. It answers only a request with `X-Minerva-Probe-Token: <probeToken(MINERVA_SECRET_KEY)>`;
 // any other request gets the same 404 as a path with no route. It touches only fixed objects named by the
 // nil UUID, which no workspace or conversation can have (ids are UUIDv7), and writes nothing else.
 //

@@ -2,7 +2,8 @@
 // make (scripts/schema.ts), with their UNIQUE and FOREIGN KEY constraints, and the same list of applied migrations. `pnpm run deploy` runs it right after
 // scripts/resources.ts, which has applied any new migration, and before `cf deploy`; `deploy:test` runs it with
 // `--test` for minerva-cf-test. It only reads: `cf d1 query` with SELECT statements (`readOnly`). Drift stops
-// the deploy; the database's id is never printed.
+// the deploy (exit 1); a database it cannot find or read, or an answer it cannot parse, exits 2, so that
+// scripts/reset.ts can accept drift but not a check that did not run. The database's id is never printed.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
@@ -15,10 +16,18 @@ const MIGRATIONS = fileURLToPath(new URL("../migrations/", import.meta.url));
 /** The database's id, once known: it is replaced in everything printed. */
 let hidden = "";
 
-function fail(message: string): never {
+/** Exit codes: drift, and a check that could not run. */
+const DRIFT = 1;
+const FAILED = 2;
+
+function fail(message: string, code: number = FAILED): never {
 	console.error(`${hidden ? message.replaceAll(hidden, "<database>") : message}\nSee cloudflare/README.md, Deploy.`);
-	process.exit(1);
+	process.exit(code);
 }
+
+// Node exits 1 on an error nothing caught (an answer of an unexpected shape, say), which would read as drift.
+process.on("uncaughtException", (error) => fail(`The schema check stopped: ${error instanceof Error ? error.message : String(error)}`));
+process.on("unhandledRejection", (error) => fail(`The schema check stopped: ${error instanceof Error ? error.message : String(error)}`));
 
 function cf(args: string[]): string {
 	try {
@@ -55,7 +64,7 @@ if (!applied.every((name): name is string => typeof name === "string")) fail("Th
 
 const differences = [...compareSchemas(expected, actual), ...compareMigrations(files, applied)];
 if (differences.length) {
-	fail(`The schema of ${NAME} is not what the migrations make:\n${differences.map((line) => `- ${line}`).join("\n")}`);
+	fail(`The schema of ${NAME} is not what the migrations make:\n${differences.map((line) => `- ${line}`).join("\n")}`, DRIFT);
 }
 const columns = [...actual.tables.values()].reduce((sum, table) => sum + table.size, 0);
 console.log(`The schema of ${NAME} matches the migrations (${actual.tables.size} tables, ${columns} columns, ${actual.objects.size} indexes and other objects, ${applied.length} migrations).`);

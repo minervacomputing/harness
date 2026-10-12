@@ -116,6 +116,9 @@ export function checkBuild(parsed: Settings, build: { deployed: boolean; testBui
 	if (parsed.debug) throw new Error("MINERVA_DEBUG must be off in a deployed build.");
 }
 
+/** The shortest MINERVA_SETUP_KEY that can claim setup (src/accounts/instance.ts); `pnpm secrets` generates 43 characters, and `secrets.ts check` refuses a shorter one. */
+export const MIN_SETUP_KEY_LENGTH = 32;
+
 /** The OAuth apps of the connectors (`auth.app`); several connectors may share one app's client. */
 export const OAUTH_APPS = ["todoist", "google", "github", "notion", "linear", "slack", "microsoft", "hubspot", "jira", "confluence", "intercom", "xero", "sentry"] as const;
 
