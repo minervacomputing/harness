@@ -4,24 +4,16 @@
 // never split (files risk 3). Categories and NFC come from the runtime's Unicode tables.
 
 import { fromUtf8Strict } from "../lib/bytes.ts";
-import { PYTHON_WHITESPACE, pythonStrip } from "../lib/text.ts";
+import { pythonRstrip, pythonStrip } from "../lib/text.ts";
 import { MAX_EXTENSION_CHARS, MAX_SEGMENT_BYTES } from "./limits.ts";
 
 const ENCODER = new TextEncoder();
-const PYTHON_SPACE = new Set(PYTHON_WHITESPACE);
 // Control and formatting characters, lone surrogates and line and paragraph separators: they could
 // disguise an extension (U+202E) or break a line.
 const UNWANTED = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/gu;
 
 function utf8Length(text: string): number {
 	return ENCODER.encode(text).length;
-}
-
-/** Python's `text.rstrip()`. */
-function pythonRstrip(text: string): string {
-	let end = text.length;
-	while (end > 0 && PYTHON_SPACE.has(text.charCodeAt(end - 1))) end--;
-	return text.slice(0, end);
 }
 
 /**

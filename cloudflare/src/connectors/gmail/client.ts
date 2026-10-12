@@ -1,0 +1,238 @@
+// A thin client for the Gmail API v1, for the connected account (`users/me`), ported from
+// backend/connectors/gmail/client.py.
+//
+// Responses are validated before use. Full messages and threads are read with a byte limit, since their
+// bodies come inline. Gmail reports an account without Gmail as a failed precondition (`UNSUPPORTED_ACCOUNT`);
+// rate limits and an API that is not enabled come as Google's usual 403s (see connectors/google).
+
+import { z } from "zod";
+import type { OperationErrorShape, ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
+import { OperationError } from "../../gateway/connector.ts";
+import { ProviderHTTP } from "../../gateway/http.ts";
+import { fromUtf8Strict } from "../../lib/bytes.ts";
+import { isDict, type Json, parseJson } from "../../lib/json.ts";
+import { GoogleUser, USERINFO_URL, classify as googleClassify, segment } from "../google/index.ts";
+import { laxInt, model } from "../google/model.ts";
+
+export const API_URL = "https://gmail.googleapis.com/gmail/v1/users/me";
+/** Message, thread and label ids. Gmail's message and thread ids are hex; user label ids are `Label_<n>`. */
+export const ID = /^[A-Za-z0-9_-]{1,64}$/;
+const PAGE_TOKEN = /^[A-Za-z0-9_-]{1,200}$/;
+export const MAX_MESSAGE_BYTES = 8 * 1024 * 1024;
+export const MAX_THREAD_BYTES = 16 * 1024 * 1024;
+export const SUMMARY_HEADERS = ["From", "To", "Cc", "Subject", "Date"] as const;
+/** What a reply is addressed and threaded by. */
+export const REPLY_HEADERS = ["From", "Sender", "Reply-To", "Subject", "Message-ID", "References"] as const;
+
+export const Label = model({
+	id: z.string(),
+	name: z.string(),
+	type: z.string().nullable().default(null),
+});
+export type Label = z.output<typeof Label>;
+
+const LabelList = model({ labels: z.array(Label).default([]) });
+
+const Header = model({ name: z.string(), value: z.string() });
+
+const PartBody = model({
+	size: laxInt.default(0),
+	data: z.string().nullable().default(null),
+	attachment_id: z.string().nullable().default(null),
+});
+
+export interface Part {
+	mime_type: string;
+	filename: string;
+	headers: { name: string; value: string }[];
+	body: { size: number; data: string | null; attachment_id: string | null } | null;
+	parts: Part[];
+}
+
+export const Part: z.ZodType<Part> = model({
+	mime_type: z.string().default(""),
+	filename: z.string().default(""),
+	headers: z.array(Header).default([]),
+	body: PartBody.nullable().default(null),
+	parts: z.array(z.lazy(() => Part)).default([]),
+}) as unknown as z.ZodType<Part>;
+
+export const Message = model({
+	id: z.string(),
+	thread_id: z.string(),
+	label_ids: z.array(z.string()).default([]),
+	snippet: z.string().default(""),
+	internal_date: z.string().nullable().default(null),
+	payload: Part.nullable().default(null),
+});
+export type Message = z.output<typeof Message>;
+
+/** `Message.headers(name)`: every value of one top-level header (a header can appear more than once). */
+export function headersOf(message: Message, name: string): string[] {
+	const folded = name.toLowerCase();
+	return (message.payload ? message.payload.headers : []).filter((h) => h.name.toLowerCase() === folded).map((h) => h.value);
+}
+
+const MessageRef = model({ id: z.string(), thread_id: z.string() });
+export type MessageRef = z.output<typeof MessageRef>;
+
+const MessageList = model({
+	messages: z.array(MessageRef).default([]),
+	next_page_token: z.string().nullable().default(null),
+});
+
+const Thread = model({ id: z.string(), messages: z.array(Message).default([]) });
+export type Thread = z.output<typeof Thread>;
+
+const Draft = model({ id: z.string(), message: MessageRef });
+export type Draft = z.output<typeof Draft>;
+
+const SendAsList = model({ send_as: z.array(model({ send_as_email: z.string() })).default([]) });
+
+const Profile = model({ email_address: z.string() });
+
+/**
+ * The `reason`s of `error.errors[]`, as client.py `_reasons` reads them: items that are not objects are
+ * skipped, and any shape `.get` or a set would fail on (a body that is not JSON, an `error` that is not an
+ * object, a reason that is a list or an object) yields none.
+ */
+function reasons(body: string): Set<Json> {
+	let data: Json;
+	try {
+		data = parseJson(body);
+	} catch {
+		return new Set();
+	}
+	if (!isDict(data)) return new Set();
+	const error = Object.hasOwn(data, "error") ? (data.error as Json) : {};
+	if (!isDict(error)) return new Set();
+	const errors = Object.hasOwn(error, "errors") ? (error.errors as Json) : [];
+	let items: Json[];
+	if (Array.isArray(errors)) items = errors;
+	else if (typeof errors === "string") items = Array.from(errors);
+	else if (isDict(errors)) items = Object.keys(errors);
+	else return new Set();
+	const found = new Set<Json>();
+	for (const item of items) {
+		if (!isDict(item)) continue;
+		const reason = Object.hasOwn(item, "reason") ? (item.reason as Json) : null;
+		// An unhashable reason makes the set comprehension raise TypeError.
+		if (typeof reason === "object" && reason !== null) return new Set();
+		found.add(reason);
+	}
+	return found;
+}
+
+/** Gmail's own errors first (its wording, "Mail service not enabled", is never shown), then Google's 403s. */
+export function classify(provider: string, response: Response, body: string): OperationErrorShape | null {
+	if (response.status === 400 && reasons(body).has("failedPrecondition")) {
+		return new OperationError("UNSUPPORTED_ACCOUNT", "This Google account does not have Gmail.");
+	}
+	return googleClassify(provider, response, body);
+}
+
+/** A page token Gmail returned, as the next cursor; one Minerva would not accept back is refused. */
+export function pageToken(value: unknown): string | null {
+	if (value === null || value === undefined) return null;
+	if (typeof value !== "string" || !PAGE_TOKEN.test(value)) throw new OperationError("PROVIDER_LIMIT", "Gmail returned a page token Minerva does not accept.");
+	return value;
+}
+
+export type Format = "minimal" | "metadata" | "full";
+
+export interface MessageQuery {
+	labelId: string | null;
+	query: string | null;
+	limit: number;
+	cursor: string | null;
+	spamTrash: boolean;
+}
+
+export class GmailClient implements ProviderClient {
+	readonly http: ProviderHTTP;
+
+	constructor(accessToken: string, io: ProviderIo, options: { baseUrl?: string } = {}) {
+		this.http = new ProviderHTTP(io, {
+			provider: "Gmail",
+			baseUrl: options.baseUrl ?? API_URL,
+			headers: { Authorization: `Bearer ${accessToken}` },
+			classify,
+		});
+	}
+
+	close(): Promise<void> {
+		return this.http.close();
+	}
+
+	unexpected(): OperationError {
+		return this.http.unexpected();
+	}
+
+	user(): Promise<GoogleUser> {
+		return this.http.parsed({ method: "GET", path: USERINFO_URL }, GoogleUser);
+	}
+
+	/** Every label of the mailbox: Gmail lists them all in one response. */
+	async labels(): Promise<Label[]> {
+		return (await this.http.parsed({ method: "GET", path: "/labels" }, LabelList)).labels;
+	}
+
+	async messages(options: MessageQuery): Promise<[MessageRef[], string | null]> {
+		const query: { [name: string]: string | number } = { maxResults: options.limit, includeSpamTrash: String(options.spamTrash) };
+		if (options.labelId) query.labelIds = options.labelId;
+		if (options.query) query.q = options.query;
+		if (options.cursor) {
+			if (!PAGE_TOKEN.test(options.cursor)) throw new OperationError("INVALID_CURSOR", "This cursor is not valid.");
+			query.pageToken = options.cursor;
+		}
+		const page = await this.http.parsed({ method: "GET", path: "/messages", query }, MessageList);
+		return [page.messages, pageToken(page.next_page_token)];
+	}
+
+	/** A message in `minimal` (labels only), `metadata` (also `headers`) or `full` format. */
+	message(messageId: string, format: Format, headers: readonly string[] = SUMMARY_HEADERS): Promise<Message> {
+		const params = new URLSearchParams({ format });
+		if (format === "metadata") for (const name of headers) params.append("metadataHeaders", name);
+		const path = `/messages/${segment(messageId)}?${params}`;
+		if (format !== "full") return this.http.parsed({ method: "GET", path }, Message);
+		return this.bounded(Message, path, MAX_MESSAGE_BYTES);
+	}
+
+	thread(threadId: string): Promise<Thread> {
+		return this.bounded(Thread, `/threads/${segment(threadId)}?format=full`, MAX_THREAD_BYTES);
+	}
+
+	private async bounded<T>(schema: z.ZodType<T>, path: string, limit: number): Promise<T> {
+		const response = await this.http.bounded({ method: "GET", path }, limit, new OperationError("RESPONSE_TOO_LARGE", "Gmail returned more than Minerva reads."));
+		const bytes = new Uint8Array(await response.arrayBuffer());
+		let data: Json;
+		try {
+			const start = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
+			data = parseJson(fromUtf8Strict(bytes.subarray(start)));
+		} catch (error) {
+			throw this.http.unexpected(error);
+		}
+		const result = await schema.safeParseAsync(data);
+		if (!result.success) throw this.http.unexpected(result.error);
+		return result.data;
+	}
+
+	/** The account's address and every address it sends as. */
+	async ownAddresses(): Promise<string[]> {
+		const profile = await this.http.parsed({ method: "GET", path: "/profile" }, Profile);
+		const sendAs = await this.http.parsed({ method: "GET", path: "/settings/sendAs" }, SendAsList);
+		return [profile.email_address, ...sendAs.send_as.map((item) => item.send_as_email)];
+	}
+
+	send(raw: string, threadId: string | null): Promise<MessageRef> {
+		const body: { [key: string]: Json } = { raw };
+		if (threadId) body.threadId = threadId;
+		return this.http.parsed({ method: "POST", path: "/messages/send", json: body }, MessageRef);
+	}
+
+	createDraft(raw: string, threadId: string | null): Promise<Draft> {
+		const message: { [key: string]: Json } = { raw };
+		if (threadId) message.threadId = threadId;
+		return this.http.parsed({ method: "POST", path: "/drafts", json: { message } }, Draft);
+	}
+}

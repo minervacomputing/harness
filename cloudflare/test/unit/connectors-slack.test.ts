@@ -1,0 +1,731 @@
+// backend/tests/test_slack.py, case by case: the Slack connector against an in-memory Slack Web API behind
+// an injected `fetch`, and runs through the executor (executor-fakes.ts `Scenario`, which is
+// connector_runs.py's claimed run). The text cases (`redact`, `check_written`, `escape`, `judge`) are in
+// connectors-slack-text.test.ts with the vectors from today's Python. Also: the registry accepts the
+// declaration, whose fingerprints are printed and pinned.
+
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { describe, expect, test } from "vitest";
+import type { z } from "zod";
+import type { ToolCallOutcome } from "../../src/contracts/executor.ts";
+import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
+import { SlackClient } from "../../src/connectors/slack/client.ts";
+import { CHANNEL, slackConnector } from "../../src/connectors/slack/connector.ts";
+import { OperationError, termsOf } from "../../src/gateway/connector.ts";
+import { settingsIo } from "../../src/gateway/http.ts";
+import { Registry, inputSchema } from "../../src/gateway/registry.ts";
+import { validateInput } from "../../src/gateway/validation.ts";
+import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
+import { KeyRing } from "../../src/lib/fernet.ts";
+import { WorkspaceCore } from "../../src/workspace/core.ts";
+import { tokenBody, tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
+import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
+import { Scenario, userGrants } from "./executor-fakes.ts";
+import { ADA, FakeConversations, FakeObjects, FakeOAuth, FakeTimers, KEYS, SETTINGS, TokenEndpoint, USER, WORKSPACE, database, nodeSql, tokens } from "./workspace-support.ts";
+
+/** Today's declaration and normalized inputs (generate.py), read with parseJson: Vite's JSON loader refuses lone surrogates. */
+const vectors = parseJson(readFileSync(fileURLToPath(new URL("../fixtures/connectors/slack/vectors.json", import.meta.url).href), "utf8")) as unknown as {
+	declaration: Json;
+	inputs: { [operation: string]: { in: Json; out?: Json; error?: string }[] };
+};
+
+const SECRET = "SECRET plans";
+const GENERAL = "C0GENERAL1";
+const RANDOM = "C0RANDOM01";
+const PRIVATE = "G0PRIVATE1";
+const HIDDEN = "C0HIDDEN01";
+const PARTNER = "C0PARTNER1";
+const OLD = "C0ARCHIVE1";
+const THREAD = "1727780000.000100";
+const REPLY = "1727780050.000300";
+const SLACK = "0199a000-0000-7000-8000-000000000051";
+const BASE_SCOPES = ["channels:read", "groups:read", "channels:history", "groups:history", "users:read"];
+
+type Params = { [name: string]: Json };
+type FakeChannel = { [key: string]: Json };
+type FakeMessage = { [key: string]: Json };
+
+function channel(id: string, name: string, flags: FakeChannel = {}): FakeChannel {
+	const isPrivate = id.startsWith("G") || flags.is_private === true;
+	return {
+		id,
+		name,
+		is_channel: !id.startsWith("G"),
+		is_group: id.startsWith("G"),
+		is_im: false,
+		is_mpim: false,
+		is_private: isPrivate,
+		is_archived: false,
+		is_member: true,
+		is_ext_shared: false,
+		topic: { value: "" },
+		purpose: { value: "" },
+		num_members: 3,
+		...flags,
+	};
+}
+
+function json(status: number, body: Json | unknown): Response {
+	return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8" } });
+}
+
+/**
+ * Slack's Web API (test_slack.py `FakeSlack`). Channels: #general and #random (public; the app is only in
+ * #general), #private (private, the app is in it), #hidden (private, the app is not in it, so it does not
+ * exist for the app), #partner (shared with another organization) and #old (archived).
+ */
+class FakeSlack {
+	channels: { [id: string]: FakeChannel } = {
+		[GENERAL]: channel(GENERAL, "general", { topic: { value: `Plans: <#${PRIVATE}|${SECRET}>` } }),
+		[RANDOM]: channel(RANDOM, "random", { is_member: false }),
+		[PRIVATE]: channel(PRIVATE, "private"),
+		[HIDDEN]: channel(HIDDEN, "hidden", { is_private: true, is_member: false }),
+		[PARTNER]: channel(PARTNER, "partner", { is_ext_shared: true }),
+		[OLD]: channel(OLD, "old", { is_archived: true }),
+	};
+	messages: { [id: string]: FakeMessage[] } = {
+		[GENERAL]: [
+			{
+				type: "message",
+				ts: THREAD,
+				thread_ts: THREAD,
+				reply_count: 1,
+				user: "U0ADA",
+				text: `See <#${PRIVATE}|${SECRET}>, <https://acme.slack.com/archives/${PRIVATE}/p1|${SECRET}> and <https://example.com|the docs>; cc <@U0GRACE>`,
+			},
+			{ type: "message", ts: REPLY, thread_ts: THREAD, user: "U0GRACE", text: "On it &amp; more" },
+			{
+				type: "message",
+				ts: "1727780100.000200",
+				subtype: "bot_message",
+				bot_id: "B0BOT",
+				username: "helper",
+				text: "",
+				attachments: [{ is_share: true, text: SECRET, channel_id: PRIVATE }],
+				files: [{ id: "F0FILE", name: "plan.pdf", title: "Plan", mimetype: "application/pdf", size: 10, channels: [PRIVATE], preview: SECRET }],
+			},
+		],
+		[PRIVATE]: [{ type: "message", ts: "1727780000.000900", user: "U0ADA", text: SECRET }],
+		[PARTNER]: [{ type: "message", ts: "1727780000.000500", user: "U0ADA", text: "hello" }],
+		[OLD]: [],
+		[RANDOM]: [{ type: "message", ts: "1727780000.000700", user: "U0ADA", text: "random" }],
+		[HIDDEN]: [],
+	};
+	users: { [id: string]: Json } = {
+		U0ADA: { id: "U0ADA", name: "ada", real_name: "Ada Lovelace", profile: { display_name: "ada" } },
+		U0GRACE: { id: "U0GRACE", name: "grace", real_name: "Grace Hopper", profile: {} },
+	};
+	ops: [method: string, params: Params][] = [];
+	writes: Params[] = [];
+	/** Bearer tokens the requests carried. */
+	tokens: string[] = [];
+	hook: ((method: string, params: Params) => Response | null) | null = null;
+	token = "xoxb-token";
+	identity: JsonObject = {
+		ok: true,
+		team_id: "T0ACME",
+		team: "Acme",
+		user_id: "U0BOT",
+		user: "minerva",
+		bot_id: "B0MINERVA",
+		is_enterprise_install: false,
+	};
+
+	visible(id: string): FakeChannel | null {
+		const found = this.channels[id];
+		if (found === undefined || (found.is_private && !found.is_member)) return null;
+		return found;
+	}
+
+	static page(items: Json[], params: Params, key: string): JsonObject {
+		const limit = Number(params.limit ?? 100);
+		const start = typeof params.cursor === "string" && params.cursor ? Number(params.cursor.slice(1)) : 0;
+		const more = start + limit < items.length;
+		return { ok: true, [key]: items.slice(start, start + limit), response_metadata: { next_cursor: more ? `p${start + limit}` : "" } };
+	}
+
+	readonly fetch: typeof fetch = async (input, init) => {
+		const request = new Request(input as RequestInfo, init as RequestInit);
+		const url = new URL(request.url);
+		expect(url.origin).toBe("https://slack.com");
+		const method = url.pathname.replace(/^\/api\//, "");
+		this.tokens.push(request.headers.get("authorization") ?? "");
+		const params: Params = request.method === "POST" ? (parseJson(await request.text()) as Params) : Object.fromEntries(url.searchParams);
+		this.ops.push([method, params]);
+		const hooked = this.hook?.(method, params) ?? null;
+		if (hooked !== null) return hooked;
+		return json(200, this.answer(method, params));
+	};
+
+	answer(method: string, params: Params): JsonObject {
+		const notFound = { ok: false, error: "channel_not_found" };
+		switch (method) {
+			case "auth.test":
+				return this.identity;
+			case "conversations.info": {
+				const found = this.visible(params.channel as string);
+				return found ? { ok: true, channel: found } : notFound;
+			}
+			case "conversations.list":
+				return FakeSlack.page(
+					Object.values(this.channels).filter((item) => this.visible(item.id as string)),
+					params,
+					"channels",
+				);
+			case "users.conversations":
+				return FakeSlack.page(
+					Object.values(this.channels)
+						.filter((item) => item.is_member && !item.is_archived)
+						.map((item) => Object.fromEntries(Object.entries(item).filter(([key]) => key !== "is_member"))),
+					params,
+					"channels",
+				);
+			case "conversations.history": {
+				const found = this.visible(params.channel as string);
+				if (found === null) return notFound;
+				if (!found.is_member) return { ok: false, error: "not_in_channel" };
+				const top = (this.messages[found.id as string] ?? []).filter((m) => m.thread_ts === undefined || m.thread_ts === m.ts);
+				return FakeSlack.page([...top].reverse(), params, "messages");
+			}
+			case "conversations.replies": {
+				const found = this.visible(params.channel as string);
+				if (found === null) return notFound;
+				const messages = this.messages[found.id as string] ?? [];
+				const message = messages.find((m) => m.ts === params.ts);
+				if (message === undefined) return { ok: false, error: "thread_not_found" };
+				const root = message.thread_ts ?? message.ts;
+				return FakeSlack.page(
+					messages.filter((m) => m.ts === root || m.thread_ts === root),
+					params,
+					"messages",
+				);
+			}
+			case "users.info": {
+				const user = this.users[params.user as string];
+				return user ? { ok: true, user } : { ok: false, error: "user_not_found" };
+			}
+			case "chat.postMessage":
+				this.writes.push(params);
+				return { ok: true, channel: params.channel as string, ts: "1727790000.000001", message: {} };
+		}
+		throw new Error(`Unexpected Slack method ${method}`);
+	}
+
+	names(): string[] {
+		return this.ops.map(([name]) => name);
+	}
+
+	client(): SlackClient {
+		return new SlackClient(this.token, settingsIo(this.fetch));
+	}
+}
+
+/** Starts a run for an agent with the user's Slack connection, holding `grants` on channels (test_slack.py `start`). */
+function start(slack: FakeSlack, grants: { [channel: string]: string[] }, connector = slackConnector()): Promise<Scenario> {
+	return Scenario.start({
+		connectors: [connector],
+		connections: [{ id: SLACK, provider: "slack", payload: { kind: "oauth2", access_token: "xoxb-t", refresh_token: null, scopes: [...BASE_SCOPES, "chat:write"] } }],
+		user: userGrants(SLACK, CHANNEL, grants),
+		fetch: slack.fetch,
+	});
+}
+
+function items(outcome: ToolCallOutcome): JsonObject[] {
+	if (!outcome.ok) throw new Error(`${outcome.error.code}: ${outcome.error.message}`);
+	return outcome.result.items as JsonObject[];
+}
+
+/** The one item of a result: Python's `[item] = ...` requires exactly one. */
+function only(outcome: ToolCallOutcome): JsonObject {
+	const found = items(outcome);
+	expect(found).toHaveLength(1);
+	return found[0] as JsonObject;
+}
+
+async function failure(promise: Promise<unknown>): Promise<OperationError> {
+	try {
+		await promise;
+	} catch (error) {
+		if (error instanceof OperationError) return error;
+		throw error;
+	}
+	throw new Error("The call succeeded.");
+}
+
+describe("connecting (test_slack.py)", () => {
+	test("account, discovery and names", async () => {
+		const slack = new FakeSlack();
+		const connector = slackConnector();
+		const account = await connector.account(slack.client());
+		expect([account.id, account.label]).toEqual(["T0ACME:U0BOT", "minerva (Acme)"]);
+		let found = await connector.discover(slack.client(), "channel", { query: null, cursor: null });
+		expect(found.items.map((item) => item.name)).toEqual(["#general", "#random (app not added)", "#private", "#partner", "#old"]);
+		found = await connector.discover(slack.client(), "channel", { query: "#PRIV", cursor: null });
+		expect(found.items.map((item) => [item.id, item.name])).toEqual([[PRIVATE, "#private"]]);
+		const bad = await failure(connector.discover(slack.client(), "channel", { query: null, cursor: "not a cursor" }));
+		expect(bad.code).toBe("INVALID_CURSOR");
+		const names = await connector.describe(slack.client(), "channel", [GENERAL, HIDDEN, "*", "general"]);
+		expect(names).toEqual({ [GENERAL]: "#general" });
+	});
+
+	test.each([["enterprise install"], ["user token"]])("only workspace bot installs connect: %s", async (change) => {
+		const slack = new FakeSlack();
+		if (change === "user token") slack.token = "xoxp-token";
+		else slack.identity.is_enterprise_install = true;
+		const refused = await failure(slackConnector().account(slack.client()));
+		expect(refused.code).toBe("UNSUPPORTED_ACCOUNT");
+		expect(refused.message).toBe("Connect Slack by installing the app into one workspace; organization-wide installs are not supported.");
+	});
+
+	test("Slack tokens carry their scopes", () => {
+		// What connections/oauth.py's exchange_code does with Slack's answer, through the ported helpers.
+		const auth = slackConnector().auth;
+		if (auth.type !== "oauth2") throw new Error("Slack connects through OAuth.");
+		expect([auth.tokenUrl, auth.clientAuth, auth.pkce]).toEqual(["https://slack.com/api/oauth.v2.access", "basic", false]);
+		const request = tokenRequest(auth, { clientId: "id", clientSecret: "s", redirectUri: "https://minerva.example/cb" }, [
+			["grant_type", "authorization_code"],
+			["code", "c"],
+		]);
+		const headers = new Headers(request.headers);
+		expect(headers.get("authorization")).toBe(`Basic ${btoa("id:s")}`);
+		const fields = new URLSearchParams(request.body as string);
+		expect(fields.has("client_secret") || fields.has("client_id") || fields.has("code_verifier")).toBe(false);
+		const answer = tokenBody(
+			JSON.stringify({ ok: true, access_token: "xoxb-a", token_type: "bot", scope: "channels:read,chat:write", team: { id: "T0ACME", name: "Acme" } }),
+		);
+		expect(answer).not.toBeNull();
+		const tokens = tokenPayload(answer as JsonObject, Date.UTC(2026, 9, 11));
+		expect(tokens.access_token).toBe("xoxb-a");
+		expect(tokens.scopes).toEqual(["channels:read", "chat:write"]);
+		expect("expires_at" in tokens).toBe(false);
+		// Slack reports refusals with HTTP 200.
+		expect(tokenBody(JSON.stringify({ ok: false, error: "invalid_code" }))).toBeNull();
+	});
+
+	test("Slack scopes follow the allowed actions", () => {
+		const connector = slackConnector();
+		const auth = connector.auth;
+		if (auth.type !== "oauth2") throw new Error("Slack connects through OAuth.");
+		expect(requestedScopes(connector, new Set(["read"]))).toEqual(BASE_SCOPES);
+		const requested = requestedScopes(connector, new Set(["read", "reply"]));
+		expect(requested).toEqual([...BASE_SCOPES, "chat:write"]);
+		// The authorization URL's `scope` joins them with the separator; no PKCE challenge is sent.
+		expect(auth.authorizeUrl).toBe("https://slack.com/oauth/v2/authorize");
+		expect(requested.join(auth.scopeSeparator)).toBe(`${BASE_SCOPES.join(",")},chat:write`);
+		expect(auth.pkce).toBe(false);
+		expect(consentNeeded(connector, BASE_SCOPES, new Set(["read", "reply", "post"]))).toEqual(["reply", "post"]);
+		expect(consentNeeded(connector, [...BASE_SCOPES, "chat:write"], new Set(["read", "reply", "post"]))).toEqual([]);
+	});
+
+	test("a refused Slack refresh needs reconnecting", async () => {
+		// The Workspace's credential lease (credentials.py `access_secret`), with Slack registered.
+		const timers = new FakeTimers();
+		const oauth = new FakeOAuth();
+		oauth.clients.set("slack", { clientId: "id", clientSecret: "s" });
+		const endpoint = new TokenEndpoint();
+		const core = new WorkspaceCore({
+			sql: nodeSql(database()),
+			timers,
+			keys: await KeyRing.parse(KEYS),
+			registry: await Registry.create([slackConnector()]),
+			settings: SETTINGS,
+			conversations: new FakeConversations(),
+			objects: new FakeObjects(),
+			oauth,
+			fetch: endpoint.fetch,
+			log: () => {},
+			wake: () => {},
+		});
+		await core.init({ workspace: { id: WORKSPACE, jurisdiction: null }, kind: "personal", ownerId: USER, createdAt: timers.now() });
+		const saved = await core.saveConnection(ADA, {
+			provider: "slack",
+			account: { id: "T0ACME:U0BOT", label: "Acme" },
+			credentials: { kind: "oauth2", access_token: "xoxe.xoxb-old", refresh_token: "xoxe-1-r1", scopes: [], expires_at: Math.floor(timers.now() / 1000) },
+			connectionId: null,
+		});
+		if (!saved.ok) throw new Error(saved.refusal.detail);
+		// Slack refuses with HTTP 200.
+		endpoint.responses.push(tokens({ ok: false, error: "invalid_refresh_token" }));
+		expect(await core.lease(saved.value.id, { settings: ADA })).toMatchObject({ refused: "CONNECTION_UNAUTHORIZED" });
+		expect(endpoint.sent.map((request) => [request.url, request.headers.authorization, request.fields])).toEqual([
+			["https://slack.com/api/oauth.v2.access", `Basic ${btoa("id:s")}`, { grant_type: "refresh_token", refresh_token: "xoxe-1-r1" }],
+		]);
+	});
+});
+
+describe("runs (test_slack.py)", () => {
+	test("channels without a grant or out of reach look alike", async () => {
+		const slack = new FakeSlack();
+		const run = await start(slack, { [GENERAL]: ["read"] });
+		const general = only(await run.call("slack_list_channels", {}));
+		expect(general.name).toBe("general");
+		expect(JSON.stringify(general)).not.toContain(SECRET);
+		expect(general.topic).toBe(`Plans: <#${PRIVATE}>`);
+		expect(items(await run.call("slack_read_channel", { channel: "#General" })).length).toBeGreaterThan(0);
+		expect(items(await run.call("slack_read_channel", { channel: GENERAL })).length).toBeGreaterThan(0);
+
+		slack.ops = [];
+		for (const name of ["#random", "#hidden", PRIVATE, HIDDEN, "#nope", "C0NOPE0000", "private", "D0DIRECT01"]) {
+			expect(await run.code("slack_read_channel", { channel: name }), name).toBe("POLICY_DENIED");
+		}
+		// Nothing but where the channel is was asked for.
+		expect(new Set(slack.names())).toEqual(new Set(["conversations.list", "conversations.info"]));
+		for (const name of ["a.b", "general channel", "<#C0GENERAL1>", "#"]) {
+			expect(await run.code("slack_read_channel", { channel: name }), name).toBe("INVALID_ARGUMENTS");
+		}
+	});
+
+	test("a wildcard reaches only channels the app is in", async () => {
+		const slack = new FakeSlack();
+		const run = await start(slack, { "*": ["read"] });
+		const channels = items(await run.call("slack_list_channels", {}));
+		expect(channels.map((item) => item.name)).toEqual(["general", "private", "partner"]);
+		expect(channels.map((item) => item.shared_with_other_organizations)).toEqual([false, false, true]);
+		const secret = only(await run.call("slack_read_channel", { channel: "#private" }));
+		expect(secret.text).toBe(SECRET);
+		expect(await run.code("slack_read_channel", { channel: "#random" })).toBe("NOT_IN_CHANNEL");
+		expect(await run.code("slack_read_channel", { channel: "#hidden" })).toBe("POLICY_DENIED");
+	});
+
+	test("reading hides other channels", async () => {
+		const slack = new FakeSlack();
+		const run = await start(slack, { [GENERAL]: ["read"] });
+		const messages = items(await run.call("slack_read_channel", { channel: "#general" }));
+		expect(JSON.stringify(messages)).not.toContain(SECRET);
+		expect(messages.map((message) => message.ts)).toEqual(["1727780100.000200", THREAD]);
+		const [shared, first] = messages as [JsonObject, JsonObject];
+		expect(shared.attachments_not_shown).toBe(1);
+		expect(shared.author).toBe("helper");
+		expect(shared.files).toEqual([{ id: "F0FILE", name: "plan.pdf", title: "Plan", mimetype: "application/pdf", size: 10 }]);
+		expect(first.author).toBe("ada");
+		expect(first.mentioned).toEqual({ U0GRACE: "Grace Hopper" });
+		expect(String(first.text).startsWith(`See <#${PRIVATE}>, <https://acme.slack.com/archives/${PRIVATE}/p1> and `)).toBe(true);
+		expect(first.time).toBe("2024-10-01T10:53:20.000100Z");
+		expect(first.reply_count).toBe(1);
+
+		const thread = items(await run.call("slack_read_thread", { channel: "#general", thread: REPLY }));
+		expect(thread.map((message) => message.ts)).toEqual([THREAD, REPLY]);
+		expect(thread[1]?.text).toBe("On it &amp; more");
+		expect(thread[1]?.author).toBe("Grace Hopper");
+
+		const page = await run.call("slack_read_channel", { channel: "#general", limit: 1 });
+		expect(items(page).map((message) => message.ts)).toEqual(["1727780100.000200"]);
+		slack.ops = [];
+		await run.ok("slack_read_channel", { channel: "#general", after: "2024-10-01T10:50:00Z", before: "2024-10-01T12:00:00+02:00" });
+		const history = slack.ops.filter(([name]) => name === "conversations.history");
+		expect(history.map(([, params]) => [params.oldest, params.latest])).toEqual([["1727779800.000000", "1727776800.000000"]]);
+	});
+
+	test("posting and replying", async () => {
+		const slack = new FakeSlack();
+		let run = await start(slack, { [GENERAL]: ["read", "post"], [PARTNER]: ["read", "post", "reply"], [OLD]: ["read", "post"] });
+		const posted = only(await run.call("slack_post_message", { channel: "#general", text: "Hi <!channel> & <@U0ADA>" }));
+		expect(posted).toEqual({ written: true, channel: GENERAL, ts: "1727790000.000001", time: "2024-10-01T13:40:00.000001Z", thread_ts: null });
+		expect(slack.writes.length).toBe(1);
+		const sent = slack.writes[0] as Params;
+		expect(sent.text).toBe("Hi &lt;!channel&gt; &amp; &lt;@U0ADA&gt;");
+		expect(sent.channel).toBe(GENERAL);
+		expect("thread_ts" in sent).toBe(false);
+		expect([sent.parse, sent.link_names, sent.unfurl_links, sent.unfurl_media]).toEqual(["none", false, false, false]);
+		// Replying is its own action.
+		const reply = { channel: "#general", thread: THREAD, text: "ok" };
+		expect(await run.code("slack_reply", reply)).toBe("POLICY_DENIED");
+		expect(await run.code("slack_post_message", { channel: "#partner", text: "x" })).toBe("EXTERNAL_CHANNEL");
+		expect(await run.code("slack_post_message", { channel: "#old", text: "x" })).toBe("CHANNEL_ARCHIVED");
+		expect(await run.code("slack_post_message", { channel: "#general", text: "https://acme.slack.com/x" })).toBe("INVALID_ARGUMENTS");
+		expect(slack.writes.length).toBe(1);
+
+		slack.writes = [];
+		run = await start(slack, { [GENERAL]: ["read", "reply"], [RANDOM]: ["read", "reply"] });
+		const replied = only(await run.call("slack_reply", { channel: "#general", thread: REPLY, text: "ok" }));
+		expect(replied.thread_ts).toBe(THREAD);
+		expect(slack.writes.length).toBe(1);
+		expect(slack.writes[0]?.thread_ts).toBe(THREAD);
+		expect(slack.writes[0]?.reply_broadcast).toBe(false);
+		// No channel allows posting, so the tool is not offered.
+		expect(await run.code("slack_post_message", { channel: "#general", text: "x" })).toBe("UNKNOWN_OPERATION");
+		const elsewhere = { channel: "#general", thread: "1727780000.000900", text: "x" };
+		expect(await run.error("slack_reply", elsewhere)).toEqual({ code: "INVALID_ARGUMENTS", message: "thread must be a message in this channel." });
+		expect(await run.code("slack_reply", { channel: "#random", thread: "1727780000.000700", text: "x" })).toBe("NOT_IN_CHANNEL");
+		expect(slack.writes.length).toBe(1);
+	});
+
+	test("a channel that changed before the write is refused", async () => {
+		const slack = new FakeSlack();
+		const run = await start(slack, { [GENERAL]: ["read", "reply"] });
+		const args = { channel: GENERAL, thread: THREAD, text: "x" };
+		const changedAfterResolving = (change: FakeChannel) => {
+			let infos = 0;
+			slack.hook = (method) => {
+				if (method !== "conversations.info") return null;
+				infos += 1;
+				const general = slack.channels[GENERAL] as FakeChannel;
+				return json(200, { ok: true, channel: infos === 1 ? general : { ...general, ...change } });
+			};
+		};
+		changedAfterResolving({ is_ext_shared: true });
+		expect(await run.code("slack_reply", args)).toBe("EXTERNAL_CHANNEL");
+		changedAfterResolving({ is_pending_ext_shared: true });
+		expect(await run.code("slack_reply", { ...args, text: "y" })).toBe("EXTERNAL_CHANNEL");
+		changedAfterResolving({ id: "C0OTHER000" });
+		expect(await run.code("slack_reply", { ...args, text: "z" })).toBe("CHANNEL_MOVED");
+		changedAfterResolving({ is_member: false });
+		expect(await run.code("slack_reply", { ...args, text: "w" })).toBe("NOT_IN_CHANNEL");
+		expect(slack.writes).toEqual([]);
+	});
+
+	test("write outcomes follow what Slack confirmed", async () => {
+		const slack = new FakeSlack();
+		const run = await start(slack, { [GENERAL]: ["read", "post"] });
+		const args = { channel: "#general", text: "hi" };
+		const answer = (body: Json, status = 200) => {
+			slack.hook = (method) => (method === "chat.postMessage" ? json(status, body) : null);
+		};
+		answer({ ok: false, error: "ratelimited" }, 429);
+		expect(await run.code("slack_post_message", { ...args, text: "a" })).toBe("PROVIDER_RATE_LIMITED");
+		answer({ ok: false, error: "restricted_action" });
+		expect(await run.code("slack_post_message", { ...args, text: "b" })).toBe("PROVIDER_FORBIDDEN");
+		// Confirmed without the message: applied, with nothing more to show.
+		answer({ ok: true });
+		const written = only(await run.call("slack_post_message", { ...args, text: "c" }));
+		expect(written.written).toBe(true);
+		expect(written.ts).toBeNull();
+		// An error after the post may have gone through: unknown, and further writes pause.
+		answer({ ok: false, error: "internal_error" });
+		expect(await run.code("slack_post_message", { ...args, text: "d" })).toBe("WRITE_UNCERTAIN");
+		slack.hook = null;
+		expect(await run.code("slack_post_message", { ...args, text: "e" })).toBe("WRITE_UNCERTAIN");
+		// Writes Slack refused are forgotten, so they may be sent again.
+		expect(run.writes().map((write) => write.status)).toEqual(["succeeded", "uncertain"]);
+	});
+
+	test("reads with errors or too much data are refused", async () => {
+		const slack = new FakeSlack();
+		const run = await start(slack, { [GENERAL]: ["read"] });
+		slack.hook = (method) => (method === "conversations.history" ? json(200, { ok: false, error: "missing_scope" }) : null);
+		expect(await run.code("slack_read_channel", { channel: GENERAL })).toBe("PROVIDER_FORBIDDEN");
+		const huge = { ok: true, messages: [{ ts: THREAD, text: "x".repeat(5 * 1024 * 1024) }] };
+		slack.hook = (method) => (method === "conversations.history" ? json(200, huge) : null);
+		expect(await run.code("slack_read_channel", { channel: GENERAL })).toBe("RESPONSE_TOO_LARGE");
+		slack.hook = (method) => (method === "conversations.info" ? json(200, { ok: false, error: "token_revoked" }) : null);
+		expect(await run.code("slack_read_channel", { channel: GENERAL })).toBe("CONNECTION_UNAUTHORIZED");
+	});
+
+	test("a name scan cut short reveals nothing", async () => {
+		const slack = new FakeSlack();
+		const run = await start(slack, { "*": ["read"] }, slackConnector({ resolvePage: 1, resolvePages: 2 }));
+		// #general and #random are on the pages read, #private is not; all are refused alike.
+		for (const name of ["#general", "#random", "#private", "#nope"]) {
+			expect(await run.code("slack_read_channel", { channel: name }), name).toBe("PROVIDER_LIMIT");
+		}
+		const general = only(await run.call("slack_read_channel", { channel: GENERAL, limit: 1 }));
+		expect(general.ts).toBe("1727780100.000200");
+	});
+});
+
+// Beyond test_slack.py: what the port adds or changes.
+
+describe("the port", () => {
+	test("a post whose answer is not UTF-8 stays unknown, as json.loads refuses it", async () => {
+		const slack = new FakeSlack();
+		const run = await start(slack, { [GENERAL]: ["read", "post"] });
+		const bytes = new Uint8Array([...new TextEncoder().encode('{"ok": true, "ts": "1727790000.000001", "x": "'), 0xff, ...new TextEncoder().encode('"}')]);
+		slack.hook = (method) => (method === "chat.postMessage" ? new Response(bytes, { status: 200 }) : null);
+		expect(await run.code("slack_post_message", { channel: "#general", text: "hi" })).toBe("WRITE_UNCERTAIN");
+		expect(run.writes().map((write) => write.status)).toEqual(["uncertain"]);
+	});
+
+	test("a post is sent as Python's json.dumps writes it, with the token", async () => {
+		const slack = new FakeSlack();
+		const bodies: string[] = [];
+		const run = await Scenario.start({
+			connectors: [slackConnector()],
+			connections: [{ id: SLACK, provider: "slack", payload: { kind: "oauth2", access_token: "xoxb-t", refresh_token: null, scopes: null } }],
+			user: userGrants(SLACK, CHANNEL, { [GENERAL]: ["read", "post"] }),
+			fetch: async (input, init) => {
+				const request = new Request(input as RequestInfo, init as RequestInit);
+				if (request.method === "POST") bodies.push(await request.clone().text());
+				return slack.fetch(request);
+			},
+		});
+		await run.ok("slack_post_message", { channel: "#general", text: "  Caf\u00e9 \ud83e\udd89  " });
+		expect(bodies).toEqual([
+			'{"channel": "C0GENERAL1", "text": "Caf\\u00e9 \\ud83e\\udd89", "mrkdwn": true, "parse": "none", "link_names": false, "unfurl_links": false, "unfurl_media": false}',
+		]);
+		expect(new Set(slack.tokens)).toEqual(new Set(["Bearer xoxb-t"]));
+		const [, params] = slack.ops.find(([name]) => name === "conversations.list") as [string, Params];
+		expect(params).toEqual({ types: "public_channel,private_channel", exclude_archived: "false", limit: "200" });
+	});
+
+	test("arguments are refused in Pydantic's words", async () => {
+		const slack = new FakeSlack();
+		const run = await start(slack, { [GENERAL]: ["read", "reply", "post"] });
+		expect(await run.error("slack_read_channel", { channel: "a.b" })).toEqual({
+			code: "INVALID_ARGUMENTS",
+			message: 'Invalid arguments. channel: Value error, must be a channel name such as "#general", or a channel id such as "C0123ABCDEF"',
+		});
+		expect(await run.error("slack_read_channel", { channel: "#general", after: "yesterday" })).toEqual({
+			code: "INVALID_ARGUMENTS",
+			message: "Invalid arguments. after: Value error, must be an ISO 8601 time such as 2026-10-01T09:00:00Z",
+		});
+		expect(await run.error("slack_reply", { channel: "#general", thread: "1727780000", text: "x" })).toEqual({
+			code: "INVALID_ARGUMENTS",
+			message: 'Invalid arguments. thread: Value error, must be a message ts such as "1727780000.123456"',
+		});
+		expect(await run.error("slack_post_message", { channel: "#general", text: "see slack.com" })).toEqual({
+			code: "INVALID_ARGUMENTS",
+			message: "Invalid arguments. text: Value error, must not link to Slack: Slack would show the linked message, which may be in another channel",
+		});
+		expect(await run.error("slack_post_message", { channel: "#general", text: "bell\u0007" })).toEqual({
+			code: "INVALID_ARGUMENTS",
+			message: "Invalid arguments. text: Value error, must not contain control characters other than tabs and newlines",
+		});
+		expect(await run.error("slack_post_message", { channel: "#general", text: "   " })).toEqual({
+			code: "INVALID_ARGUMENTS",
+			message: "Invalid arguments. text: String should have at least 1 character",
+		});
+		expect(await run.error("slack_list_channels", { limit: 201 })).toEqual({
+			code: "INVALID_ARGUMENTS",
+			message: "Invalid arguments. limit: Input should be less than or equal to 200",
+		});
+		expect(slack.writes).toEqual([]);
+	});
+
+	test("cursors: the provider's become page tokens, and a bad one from Slack is refused", async () => {
+		const slack = new FakeSlack();
+		const run = await start(slack, { "*": ["read"] });
+		const first = await run.ok("slack_list_channels", { limit: 2 });
+		expect(first.result.items.map((item) => (item as JsonObject).name)).toEqual(["general", "private"]);
+		const next = first.result.next_cursor as string;
+		expect(next).not.toBe("p2");
+		const second = await run.ok("slack_list_channels", { limit: 2, cursor: next });
+		expect(second.result.items.map((item) => (item as JsonObject).name)).toEqual(["partner"]);
+		expect(second.result.next_cursor).toBeUndefined();
+		expect(await run.code("slack_list_channels", { limit: 2, cursor: "p2" })).toBe("INVALID_CURSOR");
+		slack.hook = (method) =>
+			method === "users.conversations" ? json(200, { ok: true, channels: [], response_metadata: { next_cursor: "not a cursor" } }) : null;
+		expect(await run.code("slack_list_channels", {})).toBe("PROVIDER_LIMIT");
+	});
+
+	test("names are looked up five at a time, and at most thirty", async () => {
+		const slack = new FakeSlack();
+		const people = Array.from({ length: 40 }, (_, index) => `U0P${String(index).padStart(3, "0")}`);
+		for (const id of people) slack.users[id] = { id, name: id.toLowerCase(), real_name: `Person ${id}` };
+		const mentions = people.map((id) => `<@${id}>`).join(" ");
+		(slack.messages[GENERAL] as FakeMessage[]).push({ type: "message", ts: "1727780200.000000", user: "U0ADA", text: mentions });
+		let open = 0;
+		let most = 0;
+		const fetch = slack.fetch;
+		const run = await Scenario.start({
+			connectors: [slackConnector()],
+			connections: [{ id: SLACK, provider: "slack", payload: { kind: "oauth2", access_token: "xoxb-t", refresh_token: null, scopes: null } }],
+			user: userGrants(SLACK, CHANNEL, { [GENERAL]: ["read"] }),
+			fetch: async (input, init) => {
+				open += 1;
+				most = Math.max(most, open);
+				await new Promise((resolve) => setTimeout(resolve, 1));
+				try {
+					return await fetch(input, init);
+				} finally {
+					open -= 1;
+				}
+			},
+		});
+		const latest = only(await run.call("slack_read_channel", { channel: GENERAL, limit: 1 }));
+		expect(latest.ts).toBe("1727780200.000000");
+		expect(latest.author).toBe("ada");
+		expect(Object.keys(latest.mentioned as JsonObject).length).toBe(29);
+		expect(slack.names().filter((name) => name === "users.info").length).toBe(30);
+		expect(most).toBe(5);
+	});
+
+	test("the declaration is Python's: every string, need and flag, and the inputs' JSON Schema", () => {
+		const connector = slackConnector();
+		const declared = {
+			slug: connector.slug,
+			name: connector.name,
+			kinds: connector.kinds.map((kind) => ({
+				id: kind.id,
+				label: kind.label,
+				actions: kind.actions,
+				wildcard: kind.wildcard ?? false,
+				hierarchical: kind.hierarchical ?? false,
+				note: kind.note ?? null,
+				listed: kind.listed ?? true,
+			})),
+			actions: connector.actions.map((action) => ({ id: action.id, label: action.label, requires: action.requires ?? null })),
+			auth:
+				connector.auth.type === "oauth2"
+					? {
+							type: "oauth2",
+							app: connector.auth.app,
+							authorizeUrl: connector.auth.authorizeUrl,
+							tokenUrl: connector.auth.tokenUrl,
+							scopes: connector.auth.scopes,
+							scopeSeparator: connector.auth.scopeSeparator ?? " ",
+							registrationUrl: connector.auth.registrationUrl ?? null,
+							authorizeParams: connector.auth.authorizeParams ?? [],
+							loginHint: connector.auth.loginHint ?? false,
+							clientAuth: connector.auth.clientAuth ?? "post",
+							jsonBody: connector.auth.jsonBody ?? false,
+							pkce: connector.auth.pkce ?? true,
+						}
+					: connector.auth,
+			browsable: connector.browsable ?? [],
+			operations: connector.operations.map((op) => {
+				const terms = termsOf(op);
+				return {
+					name: op.name,
+					title: op.title,
+					description: op.description,
+					needs: op.needs,
+					outputAction: terms.outputAction,
+					consent: terms.consent,
+					revision: terms.revision,
+					mutates: terms.mutates,
+					paginated: terms.paginated,
+					// Pydantic leaves out an empty `required`.
+					input: (({ required, ...schema }) => (Array.isArray(required) && required.length === 0 ? schema : { required, ...schema }))(inputSchema(op)),
+				};
+			}),
+		};
+		expect(declared).toEqual(vectors.declaration);
+		expect(connector.manageLink).toBeUndefined();
+		expect(connector.offered).toBeUndefined();
+	});
+
+	test.each(Object.entries(vectors.inputs))("arguments normalized as Pydantic does, which write keys and query hashes hash: %s", async (name, cases) => {
+		const op = slackConnector().operations.find((item) => item.name === name);
+		if (op === undefined) throw new Error(`No operation ${name}`);
+		for (const vector of cases) {
+			const validated = await validateInput(op.input as z.ZodType, vector.in);
+			expect(validated.ok ? { out: validated.data } : { error: validated.message }, JSON.stringify(vector.in)).toEqual(
+				"out" in vector ? { out: vector.out } : { error: vector.error },
+			);
+		}
+	});
+});
+
+describe("registry", () => {
+	test("accepts the Slack declaration; its fingerprints", async () => {
+		const registry = await Registry.create([slackConnector()]);
+		const fingerprints = Object.fromEntries(registry.get("slack").operations.map((op) => [op.name, registry.contract("slack", op.name)]));
+		console.info("slack fingerprints", fingerprints);
+		expect(Object.values(fingerprints).every((value) => /^[0-9a-f]{16}$/.test(value))).toBe(true);
+		// Pinned: a change here means running runs fail the tool with OPERATION_CHANGED, so it must be meant.
+		expect(fingerprints).toEqual({
+			list_channels: "d5ff72ca63d77f60",
+			read_channel: "3df359d2cf860be5",
+			read_thread: "64ed6ed57893fbc1",
+			post_message: "cba1cf3e7c45f633",
+			reply: "93c0babaea45f451",
+		});
+	});
+
+	test("the Worker's registry serves Slack", async () => {
+		expect(CONNECTORS.some((connector) => connector.slug === "slack")).toBe(true);
+		const registry = await connectorRegistry();
+		expect(registry.get("slack").name).toBe("Slack");
+	});
+});

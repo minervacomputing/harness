@@ -316,7 +316,7 @@ The risky protocols come first, proven with fault injection before the API and t
 3. **Sandbox and files.** Container image, Sandbox DO lifecycle and hardening, `minerva-fs`, the `ExecutionEnv`, the R2 store, versions and checkpoints. Their fault tests and the sandbox probe pass on the account. Done 2026-10-12 on `cf-3-integration` (Step 3 below).
 4. **Code mode.** Scripts DO and `run_script`, with their fault tests. Built 2026-10-11 on `cf-3-codemode` and integrated with step 3 on `cf-3-integration` 2026-10-12, with an end-to-end turn on the account (Step 3, End to end); Step 4 below.
 5. **Web API.** Accounts and sessions, organizations (an additive migration; one per personal signup, the UI unchanged), workspaces, agents, conversations, connections and access, uploads, downloads origin, the SSE relay, instance-admin settings and a first-run setup that creates the first admin. The frontend works end to end against a deployed Worker with the fake model and Workers AI.
-6. **Connectors.** All 20, one at a time with their ported tests, on the contract from step 2.
+6. **Connectors.** All 20, one at a time with their ported tests, on the contract from step 2. Done 2026-10-12 on `cf-6-integration` (Step 6 below).
 7. **Deploy and verify.** A browser walkthrough of every page, the sandbox probe, timings, and an update of this file and of ARCHITECTURE.md with the comparison.
 8. **Self-hosting.** Any instance name in any account (resource names derived from it, not fixed to `minerva-cf`), `pnpm run setup` (creates the resources, generates secrets, applies migrations, creates the first admin; Cloudflare's deploy button does not support containers), upgrades by pulling and deploying (additive migrations), an export command (an organization's data walked from its indexes, since Durable Objects have no bulk export; for backups and offboarding), the signed management API, and a self-hosting guide. The Docker and VPS path on `main` retires once this step passes.
 
@@ -405,6 +405,19 @@ Found on the way:
 - `cf deploy` refuses to drop a Durable Object class from `exports` without a `{ state: "deleted" }` tombstone.
 - A storage write holds a Durable Object's answer until it is durable (about 100 ms a script, measured), so the Scripts DO writes its fence only when a run or attempt begins and when a script is reset without having answered; the order of script ids (UUIDv7s) does the rest.
 - Unawaited calls a guest started right before it returned did reach the host here (the spike saw none); either way they are reported as cancelled.
+
+### Step 6
+
+All 20 connectors are ported to `src/connectors/` and registered in `src/connectors/index.ts`: todoist, stripe, jira, confluence (shared Atlassian base), linear, slack, github, notion, hubspot, intercom, xero, sentry, google_calendar, google_drive, gmail (shared Google base), outlook, outlook_calendar, onedrive, teams (shared Microsoft base) and web. Each has its Python tests ported case by case over an injected fetch, pinned declaration fingerprints, and vectors generated from today's Python by a `generate.py` beside its fixtures (`--full` writes the complete randomized set; the committed files keep each under about 500 KB, onedrive's hand-picked cases about 770 KB). Python's string and number semantics the connectors rely on live once in `src/lib/` (casefold and digits as Python 3.14 / Unicode 16, whitespace classes, urlsplit, Pydantic's lax readers, `parseModelJson`, IDNA, Punycode, ip addresses, sites, time zones, an HTMLParser-like event parser, markdown, and the codecs of Python's `email` package, the CJK ones from CPython's tables).
+
+Deviations, all in code comments:
+
+- **Numbers.** Integers of 2^53 or more in a response are refused or left out, never rounded; tool arguments arrive as doubles. Decimal amounts are written as their text (`100`, not Python's `100.0`).
+- **Web.** Whether a name resolves to a public address rests on the platform: fetch cannot pin DNS answers, and the platform refuses private, loopback and link-local targets (error 1002/1003/1102, reported with today's message). A name with both public and private addresses is no longer refused outright, since the platform connects only to a public one. Our code keeps every host and URL rule of `sites.py`, same-host redirects, no https downgrade, the 3 MB cap after decompression (pako, which matches Python's zlib on damaged data) and the 25 s limit. The runtime adds a `Cf-Worker` header; certificate errors are not told apart from other failures; non-UTF-8 header values read with replacement characters.
+- **Text.** Office files declaring a single-byte encoding other than ISO-8859-1 or US-ASCII are unreadable; `\N{name}` escapes count as unknown; NaN and Infinity in a provider's JSON are refused.
+- **OAuth.** The connectors declare their OAuth endpoints, scopes, PKCE and client authentication; the authorize, callback and token exchange (and their tests) belong to the Worker's OAuth flow in step 5.
+
+Open: the settings routes that browse resources (`discover`, `describe`) come with step 5; the web connector's Accept-Encoding pass-through and the six-connection limit are measured in local workerd only and need an account check.
 
 ## Spike results (2026-10-10)
 

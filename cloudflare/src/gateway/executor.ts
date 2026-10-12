@@ -41,6 +41,7 @@ import { ANY, Policy } from "./policy.ts";
 import { type Registry, inputSchema } from "./registry.ts";
 import { RESULT_SCHEMA, type ShownCall, allowedEvent, appliedWithoutResult, publicError, refusedEvent, shownCall, writeId } from "./results.ts";
 import { validateInput } from "./validation.ts";
+import { truthy } from "../lib/json.ts";
 
 /** The provider client enforces the write's deadline; this only stops a connector that ignores it. */
 export const BACKSTOP_MS = 5000;
@@ -72,14 +73,6 @@ export interface ExecutorHost {
 
 function ended(): OperationError {
 	return new OperationError("RUN_ENDED", RUN_ENDED_MESSAGE);
-}
-
-/** Python's truthiness, for `if op.paginated and fields.get("cursor")`. */
-function truthy(value: unknown): boolean {
-	if (value === null || value === undefined || value === false || value === 0 || value === "") return false;
-	if (Array.isArray(value)) return value.length > 0;
-	if (typeof value === "object") return Object.keys(value).length > 0;
-	return true;
 }
 
 /** The secret a connector's client is built with: the OAuth access token, the API key, or "" for a built-in service. */

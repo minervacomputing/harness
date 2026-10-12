@@ -161,6 +161,54 @@ export const PYTHON_WHITESPACE: readonly number[] = [
 
 const PYTHON_SPACE = new Set(PYTHON_WHITESPACE);
 
+/** `PYTHON_WHITESPACE` as the body of a regular expression's character class (`\s` in a Python str pattern). */
+export const PYTHON_SPACE_CLASS: string = PYTHON_WHITESPACE.map((point) => `\\u${point.toString(16).padStart(4, "0")}`).join("");
+
+/**
+ * `re`'s `\w` in a str pattern, as the body of a character class (the `u` flag): letters, numbers and the
+ * underscore. The runtime's Unicode tables (17 in Node 24) stand for Python's (16 in 3.14), so a character
+ * assigned since differs. (Intercom's pinned table is connectors/intercom/unicode.ts.)
+ */
+export const WORD_CLASS = "\\p{L}\\p{N}_";
+
+/** Whether a UTF-16 code unit is one of `PYTHON_WHITESPACE` (all of them are one unit; a surrogate never is). */
+export function isPythonSpace(unit: number): boolean {
+	return PYTHON_SPACE.has(unit);
+}
+
+/** Python's `text.split()` without arguments: runs of whitespace separate, and empty parts are dropped. */
+export function pythonSplit(text: string): string[] {
+	const parts: string[] = [];
+	let part = "";
+	for (let i = 0; i < text.length; i++) {
+		if (PYTHON_SPACE.has(text.charCodeAt(i))) {
+			if (part) parts.push(part);
+			part = "";
+		} else part += text[i];
+	}
+	if (part) parts.push(part);
+	return parts;
+}
+
+/** `" ".join(text.split())`: runs of Python's whitespace become one space, none at either end. */
+export function pythonCollapse(text: string): string {
+	return pythonSplit(text).join(" ");
+}
+
+/** Python's `text.lstrip()` without arguments. */
+export function pythonLstrip(text: string): string {
+	let start = 0;
+	while (start < text.length && PYTHON_SPACE.has(text.charCodeAt(start))) start++;
+	return start === 0 ? text : text.slice(start);
+}
+
+/** Python's `text.rstrip()` without arguments. */
+export function pythonRstrip(text: string): string {
+	let end = text.length;
+	while (end > 0 && PYTHON_SPACE.has(text.charCodeAt(end - 1))) end--;
+	return end === text.length ? text : text.slice(0, end);
+}
+
 /** Python's `text.strip()` without arguments. */
 export function pythonStrip(text: string): string {
 	let start = 0;
@@ -168,6 +216,13 @@ export function pythonStrip(text: string): string {
 	while (start < end && PYTHON_SPACE.has(text.charCodeAt(start))) start++;
 	while (end > start && PYTHON_SPACE.has(text.charCodeAt(end - 1))) end--;
 	return start === 0 && end === text.length ? text : text.slice(start, end);
+}
+
+/** Python's `text.isspace()`: not empty, and only whitespace. */
+export function pythonIsSpace(text: string): boolean {
+	if (text.length === 0) return false;
+	for (let i = 0; i < text.length; i++) if (!PYTHON_SPACE.has(text.charCodeAt(i))) return false;
+	return true;
 }
 
 // What `str.isprintable()` refuses: categories Other and Separator, except the ASCII space.

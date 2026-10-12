@@ -267,11 +267,11 @@ export interface Harness {
 	restart(): WorkspaceCore;
 }
 
-export async function harness(options: { settings?: Partial<WorkspaceSettings>; db?: Database } = {}): Promise<Harness> {
+export async function harness(options: { settings?: Partial<WorkspaceSettings>; db?: Database; connectors?: Connector[] } = {}): Promise<Harness> {
 	const db = options.db ?? database();
 	const sql = nodeSql(db);
 	const server = new FakeServer();
-	const registry = await Registry.create([mixedConnector(server), keyedConnector(server), builtinConnector()]);
+	const registry = await Registry.create([mixedConnector(server), keyedConnector(server), builtinConnector(), ...(options.connectors ?? [])]);
 	const keys = await KeyRing.parse(KEYS);
 	const h = {
 		db,

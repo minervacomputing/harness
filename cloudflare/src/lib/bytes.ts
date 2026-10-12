@@ -62,6 +62,11 @@ export function fromBase64(text: string): Uint8Array {
 }
 
 export function concat(...parts: Uint8Array[]): Uint8Array {
+	return concatAll(parts);
+}
+
+/** `concat` over an array of parts, which may be too many to spread into a call (a body read in tiny chunks). */
+export function concatAll(parts: readonly Uint8Array[]): Uint8Array {
 	const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
 	let offset = 0;
 	for (const part of parts) {

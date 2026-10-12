@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { MAX_JSON_DEPTH, canonicalAscii, canonicalUtf8, dumps, parseJson, pythonDumps, pythonFloat } from "../../src/lib/json.ts";
+import { MAX_JSON_DEPTH, canonicalAscii, canonicalUtf8, dumps, parseJson, parseModelJson, pythonDumps, pythonFloat } from "../../src/lib/json.ts";
 import { sha256Hex } from "../../src/lib/hash.ts";
 import { utf8Strict } from "../../src/lib/bytes.ts";
 import vectors from "./vectors.ts";
@@ -120,5 +120,46 @@ describe("parseJson", () => {
 		expect(() => parseJson(plain(MAX_JSON_DEPTH))).not.toThrow();
 		expect(() => parseJson(plain(MAX_JSON_DEPTH + 1))).toThrow(SyntaxError);
 		expect(() => parseJson(`{"a":"${"[".repeat(MAX_JSON_DEPTH + 5)}"}`)).not.toThrow();
+	});
+});
+
+describe("parseModelJson reads what Pydantic's model_validate_json reads", () => {
+	test("Python's answers for lone surrogates and nesting", () => {
+		const nested = (open: string, inner: string, close: string, count: number) => open.repeat(count) + inner + close.repeat(count);
+		// [text, whether TypeAdapter(Any).validate_json takes it]
+		const cases: [string, boolean][] = [
+			['{"sub":"ok","x":"\\ud800","x":"ok"}', false],
+			['{"sub":"ok","\\ud800":1,"\\ud800":2}', false],
+			['{"x":"\\ud800\\udc00"}', true],
+			['["\\udc00\\ud800"]', false],
+			['["\\ud800x"]', false],
+			['["\\\\ud800"]', true],
+			['["\\"\\ud800"]', false],
+			['["\\ud800\\n"]', false],
+			['["a\\ud83d\\ude00b"]', true],
+			[nested("[", "1", "]", 200), true],
+			[nested("[", "1", "]", 201), false],
+			[nested("[", "", "]", 201), true],
+			[nested("[", "[]", "]", 201), false],
+			[nested('{"a":', "{}", "}", 200), true],
+			[nested('{"a":', "{}", "}", 201), false],
+			[`[${nested("[", "", "]", 199)},1]`, true],
+			[`[1,${nested("[", "1", "]", 200)}]`, false],
+			[nested("[ ", "", " ]", 201), true],
+			[nested("[\n", "\t1", "]", 200), true],
+			[nested("[", nested('{"a":', "1", "}", 50), "]", 150), true],
+			[nested("[", nested('{"a":', "1", "}", 51), "]", 150), false],
+			[`[${'"[",'.repeat(300)}1]`, true],
+		];
+		const actual = cases.map(([text]) => {
+			try {
+				parseModelJson(text);
+				return true;
+			} catch (error) {
+				expect(error).toBeInstanceOf(SyntaxError);
+				return false;
+			}
+		});
+		expect(actual).toEqual(cases.map(([, taken]) => taken));
 	});
 });

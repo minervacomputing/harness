@@ -6,9 +6,9 @@
 
 import type { Auth, Connector } from "../contracts/connectors.ts";
 import { base64, utf8 } from "../lib/bytes.ts";
-import { type Json, type JsonObject, parseJson } from "../lib/json.ts";
+import { type Json, type JsonObject, parseJson, truthy } from "../lib/json.ts";
 import { sortByCodePoint } from "../lib/order.ts";
-import { PYTHON_WHITESPACE } from "../lib/text.ts";
+import { pythonSplit } from "../lib/text.ts";
 import type { ClientCredentials, Log, OAuthClients } from "./ports.ts";
 
 /** Refresh OAuth access tokens with less than this left (credentials.py REFRESH_MARGIN_SECONDS). */
@@ -23,14 +23,6 @@ export const MAX_EXPIRES_IN = 365 * 24 * 3600;
 export const EXPIRED = "The connection expired. Reconnect it in Minerva.";
 
 export type OAuth2 = Extract<Auth, { type: "oauth2" }>;
-
-/** Python's truthiness, for the values a token payload holds. */
-function truthy(value: Json | undefined): boolean {
-	if (value === undefined || value === null || value === false || value === 0 || value === "") return false;
-	if (Array.isArray(value)) return value.length > 0;
-	if (typeof value === "object") return Object.keys(value).length > 0;
-	return true;
-}
 
 function own(payload: JsonObject, key: string): Json | undefined {
 	return Object.hasOwn(payload, key) ? payload[key] : undefined;
@@ -67,23 +59,6 @@ export function expiresAtOf(payload: JsonObject): number | null {
 /** `_needs_refresh`: `expires_at` is set and less than 120 s away. */
 export function needsRefresh(expiresAt: number | null, nowMs: number): boolean {
 	return expiresAt !== null && expiresAt - nowMs / 1000 < REFRESH_MARGIN_SECONDS;
-}
-
-const PYTHON_SPACE = new Set(PYTHON_WHITESPACE);
-
-/** Python's `text.split()`: runs of `str.isspace()` characters separate, and empty parts are dropped. */
-function pythonSplit(text: string): string[] {
-	const parts: string[] = [];
-	let part = "";
-	for (const char of text) {
-		// Every such character is one UTF-16 unit; a surrogate pair never is one.
-		if (PYTHON_SPACE.has(char.charCodeAt(0))) {
-			if (part) parts.push(part);
-			part = "";
-		} else part += char;
-	}
-	if (part) parts.push(part);
-	return parts;
 }
 
 /**

@@ -115,9 +115,13 @@ describe("requests", () => {
 		const redirected = await http.request({ method: "GET", path: "/repo", redirects: true });
 		expect([redirected.status, redirected.headers.get("location")]).toEqual([302, "https://elsewhere.example/"]);
 		await expect(http.request({ method: "POST", path: "/repo", redirects: true })).rejects.toThrow("A write is never redirected.");
-		// A 3xx without a Location is not a redirect.
-		const bare = setup(() => new Response(null, { status: 301 }));
-		expect(await code(bare.http.request({ method: "GET", path: "/repo", redirects: true }))).toBe("PROVIDER_FAILED");
+		// Every 3xx is returned when asked for, with a Location or not, as httpx 0.28's `is_redirect` counts
+		// them (a 304, a 300); without asking, each is an error.
+		for (const status of [301, 300, 304]) {
+			const bare = setup(() => new Response(null, { status }));
+			expect((await bare.http.request({ method: "GET", path: "/repo", redirects: true })).status).toBe(status);
+			expect(await code(bare.http.request({ method: "GET", path: "/repo" }))).toBe("PROVIDER_FAILED");
+		}
 	});
 
 	test("the body comes back decoded, without the headers that described its encoding", async () => {
@@ -342,6 +346,23 @@ describe("bodies", () => {
 		const { sent, http } = setup();
 		await http.bounded({ method: "POST", path: "/graphql", json: { query: "{ me }" } }, 1000, new OperationError("PAGE_TOO_LARGE", "x"));
 		expect(sent.map((item) => item.method)).toEqual(["POST"]);
+	});
+
+	test("a body read in two hundred thousand chunks is joined", async () => {
+		// Before: the chunks were spread into concat(), and that many arguments overflow the stack.
+		const { http } = setup(() => {
+			let left = 200_000;
+			return new Response(
+				new ReadableStream({
+					pull(controller) {
+						if (left-- > 0) controller.enqueue(Uint8Array.of(0x61));
+						else controller.close();
+					},
+				}),
+			);
+		});
+		const body = await http.download({ method: "GET", path: "/f" }, 1_000_000);
+		expect((await body.arrayBuffer()).byteLength).toBe(200_000);
 	});
 
 	test("download() says how much Minerva reads", async () => {

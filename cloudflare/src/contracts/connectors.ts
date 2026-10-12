@@ -346,10 +346,17 @@ export interface ProviderHttpOptions {
 	/** Seconds; default 20. */
 	timeout?: number;
 	forbidden?(provider: string, response: Response): OperationErrorShape;
-	/** Names the error for a failed response when its status does not; null keeps the status's meaning. */
-	classify?(provider: string, response: Response, body: string): OperationErrorShape | null;
-	/** What a response did to a write when its status does not tell (GraphQL answers failures with 200); null goes by the status. */
-	judge?(response: Response, body: string): Effect | null;
+	/**
+	 * Names the error for a failed response when its status does not; null keeps the status's meaning.
+	 * `body` is the text decoded with replacement characters; `bytes` what was received, for a connector
+	 * that reads it as Python's `response.json()` does, which refuses invalid UTF-8.
+	 */
+	classify?(provider: string, response: Response, body: string, bytes: Uint8Array): OperationErrorShape | null;
+	/**
+	 * What a response did to a write when its status does not tell (GraphQL answers failures with 200); null
+	 * goes by the status. `body` and `bytes` as for `classify`.
+	 */
+	judge?(response: Response, body: string, bytes: Uint8Array): Effect | null;
 }
 
 // Credentials (connectors 9.1). Existing ciphertext decrypts to these payloads.

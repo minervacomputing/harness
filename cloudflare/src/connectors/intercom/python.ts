@@ -1,0 +1,35 @@
+// Python's string semantics that Intercom's rules depend on, where JavaScript's differ: the pieces of `re`'s
+// Unicode patterns (`\w` and IGNORECASE; `\s` is PYTHON_SPACE_CLASS of lib/text.ts) that html.ts and reads.ts
+// are written with.
+//
+// `\w` comes from Python 3.14's own Unicode table (unicode.ts, Unicode 16.0), not the runtime's, which may be
+// newer and differ for characters assigned since. test/fixtures/connectors/intercom/ pins it, casefold (which
+// is lib/casefold.ts) and the IGNORECASE letters against Python for every code point.
+
+import { WORD } from "./unicode.ts";
+
+// re
+
+function unit(point: number): string {
+	return `\\u{${point.toString(16)}}`;
+}
+
+const words: string[] = [];
+for (let at = 0; at < WORD.length; at += 2) {
+	const first = WORD[at] as number;
+	const last = WORD[at + 1] as number;
+	words.push(first === last ? unit(first) : `${unit(first)}-${unit(last)}`);
+}
+
+/** The inside of a class for `re`'s `\w` in a str pattern (needs the `u` flag): `str.isalnum()` characters and the underscore. */
+export const RE_WORD = words.join("");
+
+/**
+ * `i` under IGNORECASE, for patterns compiled with JavaScript's `iu` flags. `re` matches U+0130 (whose
+ * lowercase is `i`) and U+0131 (one of its fixed equivalences) to `i`; JavaScript's simple case folding
+ * matches neither. The other two non-ASCII letters `re` matches to ASCII ones, U+017F to `s` and U+212A to
+ * `k`, fold to them in JavaScript too.
+ */
+export const RE_I = "[i\\u0130\\u0131]";
+/** What IGNORECASE adds to an ASCII letter class beyond JavaScript's `iu` folding: U+0130 and U+0131. */
+export const RE_LETTERS_EXTRA = "\\u0130\\u0131";

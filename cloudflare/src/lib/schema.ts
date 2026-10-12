@@ -20,6 +20,7 @@
 import { z } from "zod";
 import * as core from "zod/v4/core";
 import { codePointLength } from "./text.ts";
+import { extend } from "./arrays.ts";
 
 /** Unicode White_Space, as Rust's `char::is_whitespace` (and so Pydantic) strips it. All are one UTF-16 unit. */
 export const WHITE_SPACE: readonly number[] = [
@@ -153,7 +154,7 @@ const StrictRecordType = core.$constructor<StrictRecord>("MinervaRecord", (inst,
 		for (const [raw, result] of items) {
 			if (result.issues.length) {
 				valid = false;
-				payload.issues.push(...core.util.prefixIssues(raw, result.issues));
+				extend(payload.issues, core.util.prefixIssues(raw, result.issues));
 				continue;
 			}
 			Object.defineProperty(output, stripWhitespace(raw), { value: result.value, enumerable: true, writable: true, configurable: true });

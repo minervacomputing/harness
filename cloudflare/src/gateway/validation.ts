@@ -26,6 +26,7 @@ import type { Json } from "../lib/json.ts";
 import { pythonFloat } from "../lib/json.ts";
 import { isStrictRecord } from "../lib/schema.ts";
 import { pythonRepr } from "../lib/text.ts";
+import { extend } from "../lib/arrays.ts";
 
 /** At most this many problems are named in the message. */
 export const MAX_PROBLEMS = 5;
@@ -49,6 +50,18 @@ interface Problem {
 	surrogate?: "string" | "key";
 	/** A length limit: a list's maximum is checked before its items, a list's minimum and a dict's limits after. */
 	bound?: "before" | "after";
+	/**
+	 * `z.int()`'s own safe-integer range, which Python's int does not have: a value beyond it is reported by
+	 * the field's declared bound when that fails too.
+	 */
+	safeRange?: boolean;
+}
+
+/** zod's safe-integer range check (origin "int"), as opposed to a declared `.min()` or `.max()` (origin "number"). */
+function isSafeRange(issue: $ZodIssue): boolean {
+	if (issue.code === "too_big") return issue.origin === "int" && Number(issue.maximum) === Number.MAX_SAFE_INTEGER;
+	if (issue.code === "too_small") return issue.origin === "int" && Number(issue.minimum) === Number.MIN_SAFE_INTEGER;
+	return false;
 }
 
 const MISSING: unique symbol = Symbol("missing");
@@ -231,9 +244,12 @@ function message(issue: $ZodIssue, schema: $ZodType | null, value: unknown): str
 			return issue.inclusive === false ? `Input should be greater than ${pythonNumber(issue.minimum)}` : `Input should be greater than or equal to ${pythonNumber(issue.minimum)}`;
 		case "invalid_format": {
 			if (issue.format !== "regex") return issue.message;
-			// Pydantic shows the pattern as it was given; zod writes it as a regex literal.
+			// Pydantic shows the pattern as it was given; zod writes it as a regex literal, whose source escapes
+			// each "/" outside a class ("owner\/name"), where Python's pattern has the "/" itself.
 			const pattern = /^\/(.*)\/[a-z]*$/s.exec(String((issue as { pattern?: unknown }).pattern ?? ""));
-			return pattern === null ? issue.message : `String should match pattern '${pattern[1]}'`;
+			if (pattern === null) return issue.message;
+			const written = (pattern[1] as string).replace(/\\(.)/gs, (escape, char: string) => (char === "/" ? "/" : escape));
+			return `String should match pattern '${written}'`;
 		}
 		case "invalid_value":
 			return expected(issue.values);
@@ -334,17 +350,20 @@ export async function validateInput(schema: z.ZodType, raw: Json | undefined): P
 			const msg = issue.code === "unrecognized_keys" ? EXTRA_FORBIDDEN : message(issue, at, valueAt(input, loc));
 			const length = (issue.code === "too_big" || issue.code === "too_small") && (issue.origin === "array" || issue.origin === "record");
 			const bound = !length ? undefined : issue.code === "too_big" && issue.origin === "array" ? "before" : "after";
-			problems.push({ loc, msg, order, custom: issue.code === "custom", seq: seq++, ...(bound === undefined ? {} : { bound }) });
+			const safeRange = isSafeRange(issue);
+			problems.push({ loc, msg, order, custom: issue.code === "custom", seq: seq++, ...(bound === undefined ? {} : { bound }), ...(safeRange ? { safeRange } : {}) });
 		}
 	}
-	problems.push(...surrogates.map((problem) => ({ ...problem, seq: seq++ })));
+	extend(problems, surrogates.map((problem) => ({ ...problem, seq: seq++ })));
 	// pydantic-core reports one error per value: the first of its own checks that fails (a str's length, then
-	// its pattern), and a refinement's only when none of the others did; refinements stop at the first.
+	// its pattern), and a refinement's only when none of the others did; refinements stop at the first. zod's
+	// safe-integer range, which Python has not, gives way to a declared bound that failed as well.
+	const rank = (problem: Problem) => (problem.custom ? 2 : problem.safeRange ? 1 : 0);
 	const first = new Map<string, Problem>();
 	for (const problem of problems) {
 		const at = JSON.stringify(problem.loc.map(String));
 		const seen = first.get(at);
-		if (seen === undefined || (seen.custom && !problem.custom)) first.set(at, problem);
+		if (seen === undefined || rank(problem) < rank(seen)) first.set(at, problem);
 	}
 	let kept = [...first.values()];
 	// A list longer than its maximum is refused before its items are validated (its length is known); a

@@ -30,7 +30,7 @@ import type {
 	ProviderRequest,
 	WriteAttempt,
 } from "../contracts/connectors.ts";
-import { concat, fromUtf8, fromUtf8Strict } from "../lib/bytes.ts";
+import { concatAll, fromUtf8, fromUtf8Strict, utf8 } from "../lib/bytes.ts";
 import { type Json, parseJson } from "../lib/json.ts";
 import { OperationError } from "./connector.ts";
 import { RUN_ENDED_MESSAGE } from "./ledger.ts";
@@ -47,7 +47,6 @@ export const MAX_RESPONSE_BODY = 16 * 1024 * 1024;
 export const KEPT_ERROR_HEADERS: ReadonlySet<string> = new Set(["content-type", "retry-after", "x-ratelimit-remaining", "x-ratelimit-reset"]);
 export const DEFAULT_TIMEOUT_SECONDS = 20;
 
-const REDIRECTS: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
 const NULL_BODY: ReadonlySet<number> = new Set([101, 103, 204, 205, 304]);
 /** Headers that describe the body as it was sent; the body returned is already decoded. */
 const ENCODING_HEADERS: ReadonlySet<string> = new Set(["content-encoding", "content-length"]);
@@ -236,7 +235,7 @@ async function exchange(io: ProviderIo, url: string, init: RequestInit, phaseMs:
 				reader.cancel().catch(() => {});
 			}
 		}
-		return { status: response.status, statusText: response.statusText, headers: response.headers, body: concat(...chunks), over };
+		return { status: response.status, statusText: response.statusText, headers: response.headers, body: concatAll(chunks), over };
 	} finally {
 		clearTimeout(timer);
 	}
@@ -357,8 +356,8 @@ export class ProviderHTTP implements ProviderHttp, ProviderClient {
 
 	/**
 	 * Sends one request. `mutating` defaults by method; reads sent with POST must say so. With `redirects`,
-	 * a redirect is returned for the caller to judge instead of being an error; redirects are never
-	 * followed. The body is read in full (up to MAX_RESPONSE_BODY) and returned decoded.
+	 * a 3xx is returned for the caller to judge instead of being an error; redirects are never followed.
+	 * The body is read in full (up to MAX_RESPONSE_BODY) and returned decoded.
 	 */
 	async request(request: ProviderRequest): Promise<Response> {
 		if (this.#closed) throw new ProgrammingError("Cannot send a request, as the client has been closed.");
@@ -391,15 +390,16 @@ export class ProviderHTTP implements ProviderHttp, ProviderClient {
 			// be judged, so a write with a judge stays unknown then.
 			attempt.effect = "unknown";
 			const judgeable = !(exchanged.over && this.#judge !== undefined);
-			const judged = judgeable && this.#judge !== undefined ? this.#judge(fresh(), text) : null;
+			const judged = judgeable && this.#judge !== undefined ? this.#judge(fresh(), text, body) : null;
 			if (judged !== null) attempt.effect = judged;
 			else if (judgeable && success) attempt.effect = "applied";
 			else if (judgeable && REFUSED_STATUSES.has(exchanged.status)) attempt.effect = "not_applied";
 		}
 		if (success && exchanged.over) throw this.unexpected();
 		const response = fresh();
-		if (request.redirects && REDIRECTS.has(response.status) && response.headers.has("location")) return response;
-		if (!success) throw this.error(response, text);
+		// Every 3xx, with a Location or not, as httpx 0.28's `is_redirect` counts them; the caller judges it.
+		if (request.redirects && response.status >= 300 && response.status < 400) return response;
+		if (!success) throw this.error(response, text, body);
 		return response;
 	}
 
@@ -448,6 +448,7 @@ export class ProviderHTTP implements ProviderHttp, ProviderClient {
 		throw this.error(
 			responseOf(exchanged, body, (name) => KEPT_ERROR_HEADERS.has(name)),
 			fromUtf8(body),
+			body,
 		);
 	}
 
@@ -460,9 +461,9 @@ export class ProviderHTTP implements ProviderHttp, ProviderClient {
 		return new OperationError("PROVIDER_FAILED", `${this.provider} returned an unexpected response.`, { cause });
 	}
 
-	/** The owned error for a failed response: `classify` first, then the status. */
-	error(response: Response, body: string): OperationError {
-		const named = this.#classify?.(this.provider, response.clone(), body) ?? null;
+	/** The owned error for a failed response: `classify` first, then the status. `bytes` defaults to `body`'s. */
+	error(response: Response, body: string, bytes: Uint8Array = utf8(body)): OperationError {
+		const named = this.#classify?.(this.provider, response.clone(), body, bytes) ?? null;
 		if (named !== null) return owned(named);
 		const status = response.status;
 		if (status === 401) return new OperationError("CONNECTION_UNAUTHORIZED", `The ${this.provider} connection is no longer authorized.`);

@@ -1,0 +1,1918 @@
+{
+ "zones": [
+  "Africa/Cairo",
+  "Africa/Casablanca",
+  "Africa/Johannesburg",
+  "Africa/Lagos",
+  "Africa/Nairobi",
+  "Africa/Windhoek",
+  "America/Anchorage",
+  "America/Argentina/Buenos_Aires",
+  "America/Asuncion",
+  "America/Bahia",
+  "America/Bogota",
+  "America/Caracas",
+  "America/Cayenne",
+  "America/Chicago",
+  "America/Chihuahua",
+  "America/Cuiaba",
+  "America/Denver",
+  "America/Godthab",
+  "America/Guatemala",
+  "America/Halifax",
+  "America/Indiana/Indianapolis",
+  "America/La_Paz",
+  "America/Los_Angeles",
+  "America/Mexico_City",
+  "America/Montevideo",
+  "America/New_York",
+  "America/Phoenix",
+  "America/Regina",
+  "America/Santa_Isabel",
+  "America/Santiago",
+  "America/Sao_Paulo",
+  "America/St_Johns",
+  "Asia/Amman",
+  "Asia/Baghdad",
+  "Asia/Baku",
+  "Asia/Bangkok",
+  "Asia/Beirut",
+  "Asia/Colombo",
+  "Asia/Damascus",
+  "Asia/Dhaka",
+  "Asia/Dubai",
+  "Asia/Irkutsk",
+  "Asia/Jerusalem",
+  "Asia/Kabul",
+  "Asia/Karachi",
+  "Asia/Kathmandu",
+  "Asia/Kolkata",
+  "Asia/Krasnoyarsk",
+  "Asia/Magadan",
+  "Asia/Novosibirsk",
+  "Asia/Riyadh",
+  "Asia/Seoul",
+  "Asia/Shanghai",
+  "Asia/Singapore",
+  "Asia/Taipei",
+  "Asia/Tbilisi",
+  "Asia/Tehran",
+  "Asia/Tokyo",
+  "Asia/Ulaanbaatar",
+  "Asia/Vladivostok",
+  "Asia/Yakutsk",
+  "Asia/Yekaterinburg",
+  "Asia/Yerevan",
+  "Atlantic/Azores",
+  "Atlantic/Cape_Verde",
+  "Atlantic/Reykjavik",
+  "Australia/Adelaide",
+  "Australia/Brisbane",
+  "Australia/Darwin",
+  "Australia/Hobart",
+  "Australia/Perth",
+  "Australia/Sydney",
+  "Etc/GMT",
+  "Etc/GMT+11",
+  "Etc/GMT+12",
+  "Etc/GMT+2",
+  "Etc/GMT-12",
+  "Europe/Berlin",
+  "Europe/Bucharest",
+  "Europe/Budapest",
+  "Europe/Istanbul",
+  "Europe/Kaliningrad",
+  "Europe/Kyiv",
+  "Europe/London",
+  "Europe/Moscow",
+  "Europe/Paris",
+  "Europe/Warsaw",
+  "Indian/Mauritius",
+  "Pacific/Apia",
+  "Pacific/Auckland",
+  "Pacific/Fiji",
+  "Pacific/Guadalcanal",
+  "Pacific/Honolulu",
+  "Pacific/Kiritimati",
+  "Pacific/Port_Moresby",
+  "Pacific/Tongatapu",
+  "UTC"
+ ],
+ "list_events": [
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": null,
+    "time_max": null,
+    "limit": 25,
+    "cursor": null
+   }
+  },
+  {
+   "args": {
+    "calendar_id": "primary"
+   },
+   "data": {
+    "calendar_id": "primary",
+    "time_min": null,
+    "time_max": null,
+    "limit": 25,
+    "cursor": null
+   }
+  },
+  {
+   "args": {
+    "calendar_id": "Work"
+   },
+   "message": "Invalid arguments. calendar_id: Value error, must be a calendar id from list_calendars, or \"primary\""
+  },
+  {
+   "args": {
+    "calendar_id": "../me"
+   },
+   "message": "Invalid arguments. calendar_id: Value error, must be a calendar id from list_calendars, or \"primary\""
+  },
+  {
+   "args": {
+    "calendar_id": "short"
+   },
+   "message": "Invalid arguments. calendar_id: Value error, must be a calendar id from list_calendars, or \"primary\""
+  },
+  {
+   "args": {
+    "calendar_id": "AAMk/CAL/WORK"
+   },
+   "message": "Invalid arguments. calendar_id: Value error, must be a calendar id from list_calendars, or \"primary\""
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "limit": 0
+   },
+   "message": "Invalid arguments. limit: Input should be greater than or equal to 1"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "limit": 51
+   },
+   "message": "Invalid arguments. limit: Input should be less than or equal to 50"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "cursor": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   },
+   "message": "Invalid arguments. cursor: String should have at most 1000 characters"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-02T00:00:00Z",
+    "time_max": "2026-10-01T00:00:00Z"
+   },
+   "message": "Invalid arguments. input: Value error, time_max must be after time_min"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-01-01T00:00:00Z",
+    "time_max": "2027-01-03T00:00:00Z"
+   },
+   "message": "Invalid arguments. input: Value error, time_min and time_max may be at most 366 days apart"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-01-01T00:00:00Z",
+    "time_max": "2027-01-02T00:00:00Z"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-01-01T00:00:00Z",
+    "time_max": "2027-01-02T00:00:00Z",
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "2026-01-01T00:00:00Z",
+    "2027-01-02T00:00:00Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-01-01T00:00:00Z",
+    "time_max": "2027-01-02T00:00:00.000001Z"
+   },
+   "message": "Invalid arguments. input: Value error, time_min and time_max may be at most 366 days apart"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T00:00:00Z",
+    "time_max": "2026-10-01T00:00:00Z"
+   },
+   "message": "Invalid arguments. input: Value error, time_max must be after time_min"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T02:00:00+02:00",
+    "time_max": "2026-10-01T00:00:00.000001Z"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T02:00:00+02:00",
+    "time_max": "2026-10-01T00:00:00.000001Z",
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "2026-10-01T00:00:00Z",
+    "2026-10-01T00:00:00.000001Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T09:00:00+02:00"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T09:00:00+02:00",
+    "time_max": null,
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "2026-10-01T07:00:00Z",
+    "2026-10-31T07:00:00Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_max": "2026-10-31T00:00:00Z"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": null,
+    "time_max": "2026-10-31T00:00:00Z",
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "2026-10-01T00:00:00Z",
+    "2026-10-31T00:00:00Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T00:00:00.5+02:00",
+    "time_max": "2026-10-01T00:00:00.75+02:00"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T00:00:00.5+02:00",
+    "time_max": "2026-10-01T00:00:00.75+02:00",
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "2026-09-30T22:00:00.500000Z",
+    "2026-09-30T22:00:00.750000Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "1900-01-01T00:00:00+05:00"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "1900-01-01T00:00:00+05:00",
+    "time_max": null,
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "1899-12-31T19:00:00Z",
+    "1900-01-30T19:00:00Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_max": "2999-12-31T23:00:00-05:00"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": null,
+    "time_max": "2999-12-31T23:00:00-05:00",
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "2999-12-02T04:00:00Z",
+    "3000-01-01T04:00:00Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2999-12-20T00:00:00Z"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2999-12-20T00:00:00Z",
+    "time_max": null,
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "2999-12-20T00:00:00Z",
+    "3000-01-19T00:00:00Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_max": "1900-01-10T00:00:00Z"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": null,
+    "time_max": "1900-01-10T00:00:00Z",
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "1899-12-11T00:00:00Z",
+    "1900-01-10T00:00:00Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-03-29T01:30:00+01:00",
+    "time_max": "2026-03-29T03:30:00+02:00"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-03-29T01:30:00+01:00",
+    "time_max": "2026-03-29T03:30:00+02:00",
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "2026-03-29T00:30:00Z",
+    "2026-03-29T01:30:00Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T00:00:00+02:00"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T00:00:00+02:00",
+    "time_max": null,
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "2026-09-30T22:00:00Z",
+    "2026-10-30T22:00:00Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-31T00:00:00Z"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-31T00:00:00Z",
+    "time_max": null,
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "2026-10-31T00:00:00Z",
+    "2026-11-30T00:00:00Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T00:00:00.5+02:00"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T00:00:00.5+02:00",
+    "time_max": null,
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "2026-09-30T22:00:00.500000Z",
+    "2026-10-30T22:00:00.500000Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T00:00:00.75+02:00"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T00:00:00.75+02:00",
+    "time_max": null,
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "2026-09-30T22:00:00.750000Z",
+    "2026-10-30T22:00:00.750000Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01"
+   },
+   "message": "Invalid arguments. time_min: Value error, must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T09:00:00"
+   },
+   "message": "Invalid arguments. time_min: Value error, must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-W40-1T09:00:00Z"
+   },
+   "message": "Invalid arguments. time_min: Value error, must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T09:00:00+00:99"
+   },
+   "message": "Invalid arguments. time_min: Value error, must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "9999-12-31T00:00:00Z"
+   },
+   "message": "Invalid arguments. time_min: Value error, must be between the years 1900 and 2999"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "0001-01-01T00:00:00Z"
+   },
+   "message": "Invalid arguments. time_min: Value error, must be between the years 1900 and 2999"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "1899-12-31T23:59:59Z"
+   },
+   "message": "Invalid arguments. time_min: Value error, must be between the years 1900 and 2999"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "1900-01-01T00:00:00Z"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "1900-01-01T00:00:00Z",
+    "time_max": null,
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "1900-01-01T00:00:00Z",
+    "1900-01-31T00:00:00Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2999-12-31T23:59:59.999999Z"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2999-12-31T23:59:59.999999Z",
+    "time_max": null,
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "2999-12-31T23:59:59.999999Z",
+    "3000-01-30T23:59:59.999999Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "3000-01-01T00:00:00Z"
+   },
+   "message": "Invalid arguments. time_min: Value error, must be between the years 1900 and 2999"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-02-30T09:00:00Z"
+   },
+   "message": "Invalid arguments. time_min: Value error, day 30 must be in range 1..28 for month 2 in year 2026"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-13-01T09:00:00Z"
+   },
+   "message": "Invalid arguments. time_min: Value error, month must be in 1..12, not 13"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-00-10T09:00:00Z"
+   },
+   "message": "Invalid arguments. time_min: Value error, month must be in 1..12, not 0"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-00T09:00:00Z"
+   },
+   "message": "Invalid arguments. time_min: Value error, day 0 must be in range 1..31 for month 10 in year 2026"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T24:00:00Z"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T24:00:00Z",
+    "time_max": null,
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "2026-10-02T00:00:00Z",
+    "2026-11-01T00:00:00Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T24:00:01Z"
+   },
+   "message": "Invalid arguments. time_min: Value error, minute, second, and microsecond must be 0 when hour is 24"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T24:30Z"
+   },
+   "message": "Invalid arguments. time_min: Value error, minute, second, and microsecond must be 0 when hour is 24"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T25:00:00Z"
+   },
+   "message": "Invalid arguments. time_min: Value error, hour must be in 0..23, not 25"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T23:60:00Z"
+   },
+   "message": "Invalid arguments. time_min: Value error, minute must be in 0..59, not 60"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T23:59:60Z"
+   },
+   "message": "Invalid arguments. time_min: Value error, second must be in 0..59, not 60"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T09:00Z"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T09:00Z",
+    "time_max": null,
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "2026-10-01T09:00:00Z",
+    "2026-10-31T09:00:00Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T09:00:00.1234567Z"
+   },
+   "message": "Invalid arguments. time_min: Value error, must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T09:00:00,5Z"
+   },
+   "message": "Invalid arguments. time_min: Value error, must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01t09:00:00z"
+   },
+   "message": "Invalid arguments. time_min: Value error, must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01 09:00:00Z"
+   },
+   "message": "Invalid arguments. time_min: Value error, must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T09:00:00-23:59"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T09:00:00-23:59",
+    "time_max": null,
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "2026-10-02T08:59:00Z",
+    "2026-11-01T08:59:00Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T09:00:00+24:00"
+   },
+   "message": "Invalid arguments. time_min: Value error, must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T09:00:00+23:60"
+   },
+   "message": "Invalid arguments. time_min: Value error, must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "0000-10-01T09:00:00Z"
+   },
+   "message": "Invalid arguments. time_min: Value error, year must be in 1..9999, not 0"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "\uff12\uff10\uff12\uff16-10-01T09:00:00Z"
+   },
+   "message": "Invalid arguments. time_min: Value error, Invalid isoformat string: '\uff12\uff10\uff12\uff16-10-01T09:00:00Z'"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T09:00:00\uff3a"
+   },
+   "message": "Invalid arguments. time_min: Value error, must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T0\u0669:00:00Z"
+   },
+   "message": "Invalid arguments. time_min: Value error, Invalid isoformat string: '2026-10-01T0\u0669:00:00Z'"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T09:00:00Z\n"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-10-01T09:00:00Z",
+    "time_max": null,
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "2026-10-01T09:00:00Z",
+    "2026-10-31T09:00:00Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-12-31T24:00:00Z"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-12-31T24:00:00Z",
+    "time_max": null,
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "2027-01-01T00:00:00Z",
+    "2027-01-31T00:00:00Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2999-12-31T24:00:00Z"
+   },
+   "message": "Invalid arguments. time_min: Value error, must be between the years 1900 and 2999"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "1899-12-31T24:00:00Z"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "1899-12-31T24:00:00Z",
+    "time_max": null,
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "1900-01-01T00:00:00Z",
+    "1900-01-31T00:00:00Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-02-28T24:00:00+05:00"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "2026-02-28T24:00:00+05:00",
+    "time_max": null,
+    "limit": 25,
+    "cursor": null
+   },
+   "window": [
+    "2026-02-28T19:00:00Z",
+    "2026-03-30T19:00:00Z"
+   ]
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   },
+   "message": "Invalid arguments. time_min: String should have at most 40 characters"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "time_min": ""
+   },
+   "message": "Invalid arguments. time_min: Value error, must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  }
+ ],
+ "create_event": [
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Offsite",
+    "start": "2026-10-12",
+    "end": "2026-10-14",
+    "time_zone": "Europe/Berlin"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Offsite",
+    "start": "2026-10-12",
+    "end": "2026-10-14",
+    "time_zone": "Europe/Berlin",
+    "body": null,
+    "location": null
+   },
+   "payload": {
+    "subject": "Offsite",
+    "start": {
+     "dateTime": "2026-10-12T00:00:00",
+     "timeZone": "Europe/Berlin"
+    },
+    "end": {
+     "dateTime": "2026-10-14T00:00:00",
+     "timeZone": "Europe/Berlin"
+    },
+    "isAllDay": true,
+    "attendees": [],
+    "isOnlineMeeting": false
+   }
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-10-05T10:00:00+02:00",
+    "end": "2026-10-05T11:30:00+02:00"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-10-05T10:00:00+02:00",
+    "end": "2026-10-05T11:30:00+02:00",
+    "time_zone": null,
+    "body": null,
+    "location": null
+   },
+   "payload": {
+    "subject": "Focus",
+    "start": {
+     "dateTime": "2026-10-05T08:00:00",
+     "timeZone": "UTC"
+    },
+    "end": {
+     "dateTime": "2026-10-05T09:30:00",
+     "timeZone": "UTC"
+    },
+    "isAllDay": false,
+    "attendees": [],
+    "isOnlineMeeting": false
+   }
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-10-05T10:00:00+02:00",
+    "end": "2026-10-05T11:30:00+02:00",
+    "body": "Deep work\nNo meetings",
+    "location": "Home"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-10-05T10:00:00+02:00",
+    "end": "2026-10-05T11:30:00+02:00",
+    "time_zone": null,
+    "body": "Deep work\nNo meetings",
+    "location": "Home"
+   },
+   "payload": {
+    "subject": "Focus",
+    "start": {
+     "dateTime": "2026-10-05T08:00:00",
+     "timeZone": "UTC"
+    },
+    "end": {
+     "dateTime": "2026-10-05T09:30:00",
+     "timeZone": "UTC"
+    },
+    "isAllDay": false,
+    "attendees": [],
+    "isOnlineMeeting": false,
+    "body": {
+     "contentType": "text",
+     "content": "Deep work\nNo meetings"
+    },
+    "location": {
+     "displayName": "Home"
+    }
+   }
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-10-05T10:00:00+02:00",
+    "end": "2026-10-05T11:30:00+02:00",
+    "body": "",
+    "location": ""
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-10-05T10:00:00+02:00",
+    "end": "2026-10-05T11:30:00+02:00",
+    "time_zone": null,
+    "body": "",
+    "location": ""
+   },
+   "payload": {
+    "subject": "Focus",
+    "start": {
+     "dateTime": "2026-10-05T08:00:00",
+     "timeZone": "UTC"
+    },
+    "end": {
+     "dateTime": "2026-10-05T09:30:00",
+     "timeZone": "UTC"
+    },
+    "isAllDay": false,
+    "attendees": [],
+    "isOnlineMeeting": false
+   }
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Offsite",
+    "start": "2026-10-12",
+    "end": "2026-10-14",
+    "time_zone": null
+   },
+   "message": "Invalid arguments. input: Value error, time_zone is required for all-day events"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Offsite",
+    "start": "2026-10-12",
+    "end": "2026-10-14",
+    "time_zone": "Europe/Zurich"
+   },
+   "message": "Invalid arguments. time_zone: Value error, must be an IANA time zone Microsoft accepts, like Europe/Berlin or America/New_York"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Offsite",
+    "start": "2026-10-12",
+    "end": "2026-10-14",
+    "time_zone": "Mars/Olympus"
+   },
+   "message": "Invalid arguments. time_zone: Value error, must be an IANA time zone Microsoft accepts, like Europe/Berlin or America/New_York"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Offsite",
+    "start": "2026-10-12",
+    "end": "2026-10-14",
+    "time_zone": "UTC"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Offsite",
+    "start": "2026-10-12",
+    "end": "2026-10-14",
+    "time_zone": "UTC",
+    "body": null,
+    "location": null
+   },
+   "payload": {
+    "subject": "Offsite",
+    "start": {
+     "dateTime": "2026-10-12T00:00:00",
+     "timeZone": "UTC"
+    },
+    "end": {
+     "dateTime": "2026-10-14T00:00:00",
+     "timeZone": "UTC"
+    },
+    "isAllDay": true,
+    "attendees": [],
+    "isOnlineMeeting": false
+   }
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Offsite",
+    "start": "2026-10-12",
+    "end": "2026-10-14",
+    "time_zone": "Etc/GMT+12"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Offsite",
+    "start": "2026-10-12",
+    "end": "2026-10-14",
+    "time_zone": "Etc/GMT+12",
+    "body": null,
+    "location": null
+   },
+   "payload": {
+    "subject": "Offsite",
+    "start": {
+     "dateTime": "2026-10-12T00:00:00",
+     "timeZone": "Etc/GMT+12"
+    },
+    "end": {
+     "dateTime": "2026-10-14T00:00:00",
+     "timeZone": "Etc/GMT+12"
+    },
+    "isAllDay": true,
+    "attendees": [],
+    "isOnlineMeeting": false
+   }
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Offsite",
+    "start": "2026-10-12",
+    "end": "2026-10-14",
+    "time_zone": "US/Eastern"
+   },
+   "message": "Invalid arguments. time_zone: Value error, must be an IANA time zone Microsoft accepts, like Europe/Berlin or America/New_York"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Offsite",
+    "start": "2026-10-12",
+    "end": "2026-10-14",
+    "time_zone": " Europe/Berlin "
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Offsite",
+    "start": "2026-10-12",
+    "end": "2026-10-14",
+    "time_zone": "Europe/Berlin",
+    "body": null,
+    "location": null
+   },
+   "payload": {
+    "subject": "Offsite",
+    "start": {
+     "dateTime": "2026-10-12T00:00:00",
+     "timeZone": "Europe/Berlin"
+    },
+    "end": {
+     "dateTime": "2026-10-14T00:00:00",
+     "timeZone": "Europe/Berlin"
+    },
+    "isAllDay": true,
+    "attendees": [],
+    "isOnlineMeeting": false
+   }
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Offsite",
+    "start": "2026-10-12",
+    "end": "2026-10-14",
+    "time_zone": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   },
+   "message": "Invalid arguments. time_zone: String should have at most 64 characters"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Offsite",
+    "start": "2026-10-12",
+    "end": "2026-10-12",
+    "time_zone": "Europe/Berlin"
+   },
+   "message": "Invalid arguments. input: Value error, end must be after start"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Offsite",
+    "start": "2026-10-12",
+    "end": "2026-10-11",
+    "time_zone": "Europe/Berlin"
+   },
+   "message": "Invalid arguments. input: Value error, end must be after start"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Offsite",
+    "start": "2026-10-12",
+    "end": "2026-10-14T00:00:00Z",
+    "time_zone": "Europe/Berlin"
+   },
+   "message": "Invalid arguments. input: Value error, start and end must both be dates or both be date-times"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Offsite",
+    "start": "2026-10-12T09:00:00Z",
+    "end": "2026-10-12T10:00:00Z",
+    "time_zone": "Europe/Berlin"
+   },
+   "message": "Invalid arguments. input: Value error, time_zone is only for all-day events; give timed events an offset"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Two\nlines",
+    "start": "2026-10-12",
+    "end": "2026-10-14",
+    "time_zone": "Europe/Berlin"
+   },
+   "message": "Invalid arguments. subject: Value error, must be a single line without control characters"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "",
+    "start": "2026-10-12",
+    "end": "2026-10-14",
+    "time_zone": "Europe/Berlin"
+   },
+   "message": "Invalid arguments. subject: String should have at least 1 character"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "start": "2026-10-12",
+    "end": "2026-10-14",
+    "time_zone": "Europe/Berlin"
+   },
+   "message": "Invalid arguments. subject: String should have at most 255 characters"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Offsite",
+    "start": "1899-12-31",
+    "end": "1900-01-01",
+    "time_zone": "Europe/Berlin"
+   },
+   "message": "Invalid arguments. start: Value error, must be between the years 1900 and 2999"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Offsite",
+    "start": "2999-12-31",
+    "end": "3000-01-01",
+    "time_zone": "Europe/Berlin"
+   },
+   "message": "Invalid arguments. end: Value error, must be between the years 1900 and 2999"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-10-12T09:00:00+24:00",
+    "end": "2026-10-12T10:00:00Z"
+   },
+   "message": "Invalid arguments. start: Value error, must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-10-12T09:00:00.9Z",
+    "end": "2026-10-12T09:00:00.1Z"
+   },
+   "message": "Invalid arguments. input: Value error, end must be after start"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-10-05T10:00:00+02:00",
+    "end": "2026-10-05T10:00:00+02:00"
+   },
+   "message": "Invalid arguments. input: Value error, end must be after start"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-10-12T09:00:00Z",
+    "end": "2026-10-12T09:00:00.000001Z"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-10-12T09:00:00Z",
+    "end": "2026-10-12T09:00:00.000001Z",
+    "time_zone": null,
+    "body": null,
+    "location": null
+   },
+   "payload": {
+    "subject": "Focus",
+    "start": {
+     "dateTime": "2026-10-12T09:00:00",
+     "timeZone": "UTC"
+    },
+    "end": {
+     "dateTime": "2026-10-12T09:00:00.000001",
+     "timeZone": "UTC"
+    },
+    "isAllDay": false,
+    "attendees": [],
+    "isOnlineMeeting": false
+   }
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-10-12T24:00:00Z",
+    "end": "2026-10-13T01:00:00Z"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-10-12T24:00:00Z",
+    "end": "2026-10-13T01:00:00Z",
+    "time_zone": null,
+    "body": null,
+    "location": null
+   },
+   "payload": {
+    "subject": "Focus",
+    "start": {
+     "dateTime": "2026-10-13T00:00:00",
+     "timeZone": "UTC"
+    },
+    "end": {
+     "dateTime": "2026-10-13T01:00:00",
+     "timeZone": "UTC"
+    },
+    "isAllDay": false,
+    "attendees": [],
+    "isOnlineMeeting": false
+   }
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-10-05T10:00:00+02:00",
+    "end": "2026-10-05T11:30:00+02:00",
+    "body": "bell\u0007"
+   },
+   "message": "Invalid arguments. body: Value error, must not contain control characters other than tabs and newlines"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-10-05T10:00:00+02:00",
+    "end": "2026-10-05T11:30:00+02:00",
+    "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   },
+   "message": "Invalid arguments. body: String should have at most 8000 characters"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-10-05T10:00:00+02:00",
+    "end": "2026-10-05T11:30:00+02:00",
+    "location": "a\tb"
+   },
+   "message": "Invalid arguments. location: Value error, must be a single line without control characters"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-10-05T10:00:00+02:00",
+    "end": "2026-10-05T11:30:00+02:00",
+    "location": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   },
+   "message": "Invalid arguments. location: String should have at most 500 characters"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-02-30T09:00:00Z",
+    "end": "2026-10-05T11:30:00+02:00"
+   },
+   "message": "Invalid arguments. start: Value error, day 30 must be in range 1..28 for month 2 in year 2026"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-10-12",
+    "end": "2026-10-05T11:30:00+02:00"
+   },
+   "message": "Invalid arguments. input: Value error, start and end must both be dates or both be date-times"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Offsite",
+    "start": "2026-02-30",
+    "end": "2026-10-14",
+    "time_zone": "Europe/Berlin"
+   },
+   "message": "Invalid arguments. start: Value error, day 30 must be in range 1..28 for month 2 in year 2026"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Offsite",
+    "start": "\uff12\uff10\uff12\uff16-10-12",
+    "end": "2026-10-14",
+    "time_zone": "Europe/Berlin"
+   },
+   "message": "Invalid arguments. start: Value error, Invalid isoformat string: '\uff12\uff10\uff12\uff16-10-12'"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "x",
+    "start": "2026-10-12"
+   },
+   "message": "Invalid arguments. end: Field required"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-10-05T10:00:00+02:00",
+    "end": "2026-10-05T11:30:00+02:00",
+    "attendees": []
+   },
+   "message": "Invalid arguments. attendees: Extra inputs are not permitted"
+  },
+  {
+   "args": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-10-05T10:00:00.5+02:00",
+    "end": "2026-10-05T11:30:00.250001+02:00"
+   },
+   "data": {
+    "calendar_id": "AAMkCALWORK000",
+    "subject": "Focus",
+    "start": "2026-10-05T10:00:00.5+02:00",
+    "end": "2026-10-05T11:30:00.250001+02:00",
+    "time_zone": null,
+    "body": null,
+    "location": null
+   },
+   "payload": {
+    "subject": "Focus",
+    "start": {
+     "dateTime": "2026-10-05T08:00:00.500000",
+     "timeZone": "UTC"
+    },
+    "end": {
+     "dateTime": "2026-10-05T09:30:00.250001",
+     "timeZone": "UTC"
+    },
+    "isAllDay": false,
+    "attendees": [],
+    "isOnlineMeeting": false
+   }
+  }
+ ],
+ "date_time": {
+  "2026-10-01T00:00:00+02:00": {
+   "value": "2026-10-01T00:00:00+02:00"
+  },
+  "2026-10-31T00:00:00Z": {
+   "value": "2026-10-31T00:00:00Z"
+  },
+  "2026-10-01T00:00:00.5+02:00": {
+   "value": "2026-10-01T00:00:00.5+02:00"
+  },
+  "2026-10-01T00:00:00.75+02:00": {
+   "value": "2026-10-01T00:00:00.75+02:00"
+  },
+  "2026-10-01": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "2026-10-01T09:00:00": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "2026-W40-1T09:00:00Z": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "2026-10-01T09:00:00+00:99": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "9999-12-31T00:00:00Z": {
+   "error": "ValueError",
+   "message": "must be between the years 1900 and 2999"
+  },
+  "0001-01-01T00:00:00Z": {
+   "error": "ValueError",
+   "message": "must be between the years 1900 and 2999"
+  },
+  "1899-12-31T23:59:59Z": {
+   "error": "ValueError",
+   "message": "must be between the years 1900 and 2999"
+  },
+  "1900-01-01T00:00:00Z": {
+   "value": "1900-01-01T00:00:00Z"
+  },
+  "2999-12-31T23:59:59.999999Z": {
+   "value": "2999-12-31T23:59:59.999999Z"
+  },
+  "3000-01-01T00:00:00Z": {
+   "error": "ValueError",
+   "message": "must be between the years 1900 and 2999"
+  },
+  "2026-02-30T09:00:00Z": {
+   "error": "ValueError",
+   "message": "day 30 must be in range 1..28 for month 2 in year 2026"
+  },
+  "2026-13-01T09:00:00Z": {
+   "error": "ValueError",
+   "message": "month must be in 1..12, not 13"
+  },
+  "2026-00-10T09:00:00Z": {
+   "error": "ValueError",
+   "message": "month must be in 1..12, not 0"
+  },
+  "2026-10-00T09:00:00Z": {
+   "error": "ValueError",
+   "message": "day 0 must be in range 1..31 for month 10 in year 2026"
+  },
+  "2026-10-01T24:00:00Z": {
+   "value": "2026-10-01T24:00:00Z"
+  },
+  "2026-10-01T24:00:01Z": {
+   "error": "ValueError",
+   "message": "minute, second, and microsecond must be 0 when hour is 24"
+  },
+  "2026-10-01T24:30Z": {
+   "error": "ValueError",
+   "message": "minute, second, and microsecond must be 0 when hour is 24"
+  },
+  "2026-10-01T25:00:00Z": {
+   "error": "ValueError",
+   "message": "hour must be in 0..23, not 25"
+  },
+  "2026-10-01T23:60:00Z": {
+   "error": "ValueError",
+   "message": "minute must be in 0..59, not 60"
+  },
+  "2026-10-01T23:59:60Z": {
+   "error": "ValueError",
+   "message": "second must be in 0..59, not 60"
+  },
+  "2026-10-01T09:00Z": {
+   "value": "2026-10-01T09:00Z"
+  },
+  "2026-10-01T09:00:00.1234567Z": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "2026-10-01T09:00:00,5Z": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "2026-10-01t09:00:00z": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "2026-10-01 09:00:00Z": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "2026-10-01T09:00:00-23:59": {
+   "value": "2026-10-01T09:00:00-23:59"
+  },
+  "2026-10-01T09:00:00+24:00": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "2026-10-01T09:00:00+23:60": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "0000-10-01T09:00:00Z": {
+   "error": "ValueError",
+   "message": "year must be in 1..9999, not 0"
+  },
+  "\uff12\uff10\uff12\uff16-10-01T09:00:00Z": {
+   "error": "ValueError",
+   "message": "Invalid isoformat string: '\uff12\uff10\uff12\uff16-10-01T09:00:00Z'"
+  },
+  "2026-10-01T09:00:00\uff3a": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "2026-10-01T0\u0669:00:00Z": {
+   "error": "ValueError",
+   "message": "Invalid isoformat string: '2026-10-01T0\u0669:00:00Z'"
+  },
+  "2026-10-01T09:00:00Z\n": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "2026-12-31T24:00:00Z": {
+   "value": "2026-12-31T24:00:00Z"
+  },
+  "2999-12-31T24:00:00Z": {
+   "error": "ValueError",
+   "message": "must be between the years 1900 and 2999"
+  },
+  "1899-12-31T24:00:00Z": {
+   "value": "1899-12-31T24:00:00Z"
+  },
+  "2026-02-28T24:00:00+05:00": {
+   "value": "2026-02-28T24:00:00+05:00"
+  },
+  "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  }
+ },
+ "date_or_date_time": {
+  "2026-10-12": {
+   "value": "2026-10-12"
+  },
+  "2026-10-14": {
+   "value": "2026-10-14"
+  },
+  "1899-12-31": {
+   "error": "ValueError",
+   "message": "must be between the years 1900 and 2999"
+  },
+  "1900-01-01": {
+   "value": "1900-01-01"
+  },
+  "2999-12-31": {
+   "value": "2999-12-31"
+  },
+  "3000-01-01": {
+   "error": "ValueError",
+   "message": "must be between the years 1900 and 2999"
+  },
+  "2026-02-30": {
+   "error": "ValueError",
+   "message": "day 30 must be in range 1..28 for month 2 in year 2026"
+  },
+  "2026-13-01": {
+   "error": "ValueError",
+   "message": "month must be in 1..12, not 13"
+  },
+  "0000-01-01": {
+   "error": "ValueError",
+   "message": "year must be in 1..9999, not 0"
+  },
+  "\uff12\uff10\uff12\uff16-10-12": {
+   "error": "ValueError",
+   "message": "Invalid isoformat string: '\uff12\uff10\uff12\uff16-10-12'"
+  },
+  "2026-1-01": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "20261012": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "2026-10-12 ": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "2026-10-01T00:00:00+02:00": {
+   "value": "2026-10-01T00:00:00+02:00"
+  },
+  "2026-10-31T00:00:00Z": {
+   "value": "2026-10-31T00:00:00Z"
+  },
+  "2026-10-01T00:00:00.5+02:00": {
+   "value": "2026-10-01T00:00:00.5+02:00"
+  },
+  "2026-10-01T00:00:00.75+02:00": {
+   "value": "2026-10-01T00:00:00.75+02:00"
+  },
+  "2026-10-01": {
+   "value": "2026-10-01"
+  },
+  "2026-10-01T09:00:00": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "2026-W40-1T09:00:00Z": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "2026-10-01T09:00:00+00:99": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "9999-12-31T00:00:00Z": {
+   "error": "ValueError",
+   "message": "must be between the years 1900 and 2999"
+  },
+  "0001-01-01T00:00:00Z": {
+   "error": "ValueError",
+   "message": "must be between the years 1900 and 2999"
+  },
+  "1899-12-31T23:59:59Z": {
+   "error": "ValueError",
+   "message": "must be between the years 1900 and 2999"
+  },
+  "1900-01-01T00:00:00Z": {
+   "value": "1900-01-01T00:00:00Z"
+  },
+  "2999-12-31T23:59:59.999999Z": {
+   "value": "2999-12-31T23:59:59.999999Z"
+  },
+  "3000-01-01T00:00:00Z": {
+   "error": "ValueError",
+   "message": "must be between the years 1900 and 2999"
+  },
+  "2026-02-30T09:00:00Z": {
+   "error": "ValueError",
+   "message": "day 30 must be in range 1..28 for month 2 in year 2026"
+  },
+  "2026-13-01T09:00:00Z": {
+   "error": "ValueError",
+   "message": "month must be in 1..12, not 13"
+  },
+  "2026-00-10T09:00:00Z": {
+   "error": "ValueError",
+   "message": "month must be in 1..12, not 0"
+  },
+  "2026-10-00T09:00:00Z": {
+   "error": "ValueError",
+   "message": "day 0 must be in range 1..31 for month 10 in year 2026"
+  },
+  "2026-10-01T24:00:00Z": {
+   "value": "2026-10-01T24:00:00Z"
+  },
+  "2026-10-01T24:00:01Z": {
+   "error": "ValueError",
+   "message": "minute, second, and microsecond must be 0 when hour is 24"
+  },
+  "2026-10-01T24:30Z": {
+   "error": "ValueError",
+   "message": "minute, second, and microsecond must be 0 when hour is 24"
+  },
+  "2026-10-01T25:00:00Z": {
+   "error": "ValueError",
+   "message": "hour must be in 0..23, not 25"
+  },
+  "2026-10-01T23:60:00Z": {
+   "error": "ValueError",
+   "message": "minute must be in 0..59, not 60"
+  },
+  "2026-10-01T23:59:60Z": {
+   "error": "ValueError",
+   "message": "second must be in 0..59, not 60"
+  },
+  "2026-10-01T09:00Z": {
+   "value": "2026-10-01T09:00Z"
+  },
+  "2026-10-01T09:00:00.1234567Z": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "2026-10-01T09:00:00,5Z": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "2026-10-01t09:00:00z": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "2026-10-01 09:00:00Z": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "2026-10-01T09:00:00-23:59": {
+   "value": "2026-10-01T09:00:00-23:59"
+  },
+  "2026-10-01T09:00:00+24:00": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "2026-10-01T09:00:00+23:60": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "0000-10-01T09:00:00Z": {
+   "error": "ValueError",
+   "message": "year must be in 1..9999, not 0"
+  },
+  "\uff12\uff10\uff12\uff16-10-01T09:00:00Z": {
+   "error": "ValueError",
+   "message": "Invalid isoformat string: '\uff12\uff10\uff12\uff16-10-01T09:00:00Z'"
+  },
+  "2026-10-01T09:00:00\uff3a": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "2026-10-01T0\u0669:00:00Z": {
+   "error": "ValueError",
+   "message": "Invalid isoformat string: '2026-10-01T0\u0669:00:00Z'"
+  },
+  "2026-10-01T09:00:00Z\n": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "2026-12-31T24:00:00Z": {
+   "value": "2026-12-31T24:00:00Z"
+  },
+  "2999-12-31T24:00:00Z": {
+   "error": "ValueError",
+   "message": "must be between the years 1900 and 2999"
+  },
+  "1899-12-31T24:00:00Z": {
+   "value": "1899-12-31T24:00:00Z"
+  },
+  "2026-02-28T24:00:00+05:00": {
+   "value": "2026-02-28T24:00:00+05:00"
+  },
+  "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  },
+  "": {
+   "error": "ValueError",
+   "message": "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00"
+  }
+ },
+ "utc": {
+  "2026-10-01T00:00:00+02:00": {
+   "value": "2026-09-30T22:00:00Z"
+  },
+  "2026-10-31T00:00:00Z": {
+   "value": "2026-10-31T00:00:00Z"
+  },
+  "2026-10-01T00:00:00.5+02:00": {
+   "value": "2026-09-30T22:00:00.500000Z"
+  },
+  "2026-10-01T00:00:00.75+02:00": {
+   "value": "2026-09-30T22:00:00.750000Z"
+  },
+  "1900-01-01T00:00:00Z": {
+   "value": "1900-01-01T00:00:00Z"
+  },
+  "2999-12-31T23:59:59.999999Z": {
+   "value": "2999-12-31T23:59:59.999999Z"
+  },
+  "2026-10-01T24:00:00Z": {
+   "value": "2026-10-02T00:00:00Z"
+  },
+  "2026-10-01T09:00Z": {
+   "value": "2026-10-01T09:00:00Z"
+  },
+  "2026-10-01T09:00:00-23:59": {
+   "value": "2026-10-02T08:59:00Z"
+  },
+  "2026-12-31T24:00:00Z": {
+   "value": "2027-01-01T00:00:00Z"
+  },
+  "1899-12-31T24:00:00Z": {
+   "value": "1900-01-01T00:00:00Z"
+  },
+  "2026-02-28T24:00:00+05:00": {
+   "value": "2026-02-28T19:00:00Z"
+  }
+ },
+ "times": [
+  {
+   "time": {
+    "dateTime": "2026-10-05T07:00:00.0000000",
+    "timeZone": "UTC"
+   },
+   "all_day": false,
+   "shown": "2026-10-05T07:00:00Z"
+  },
+  {
+   "time": {
+    "dateTime": "2026-10-06T00:00:00.0000000",
+    "timeZone": "UTC"
+   },
+   "all_day": true,
+   "shown": "2026-10-06"
+  },
+  {
+   "time": {
+    "dateTime": "2026-10-05T07:00:00.0000000",
+    "timeZone": "utc"
+   },
+   "all_day": false,
+   "shown": "2026-10-05T07:00:00Z"
+  },
+  {
+   "time": {
+    "dateTime": "2026-10-05T07:00:00.0000000",
+    "timeZone": "Pacific Standard Time"
+   },
+   "all_day": false,
+   "shown": "2026-10-05T07:00:00 Pacific Standard Time"
+  },
+  {
+   "time": {
+    "dateTime": "2026-10-05T07:00:00.0000000",
+    "timeZone": null
+   },
+   "all_day": false,
+   "shown": "2026-10-05T07:00:00 None"
+  },
+  {
+   "time": {
+    "dateTime": "2026-10-05T07:00:00.0000000"
+   },
+   "all_day": false,
+   "shown": "2026-10-05T07:00:00 None"
+  },
+  {
+   "time": {
+    "dateTime": "2026-10-05",
+    "timeZone": "UTC"
+   },
+   "all_day": true,
+   "shown": "2026-10-05"
+  },
+  {
+   "time": {
+    "dateTime": "2026-10-05T07:00",
+    "timeZone": "UTC"
+   },
+   "all_day": false,
+   "shown": "2026-10-05T07:00Z"
+  },
+  {
+   "time": {
+    "dateTime": "",
+    "timeZone": "UTC"
+   },
+   "all_day": false,
+   "shown": "Z"
+  }
+ ],
+ "page_state": [
+  {
+   "cursor": "{\"calendar\": \"AAMkCALWORK000\", \"page\": \"skip:2\", \"start\": \"a\", \"end\": \"b\"}",
+   "calendar": "AAMkCALWORK000",
+   "value": {
+    "calendar": "AAMkCALWORK000",
+    "page": "skip:2",
+    "start": "a",
+    "end": "b"
+   }
+  },
+  {
+   "cursor": "{\"calendar\": \"AAMkCALWORK000\", \"page\": \"skip:2\", \"start\": \"a\", \"end\": \"b\"}",
+   "calendar": "AAMkCALDEFAULT",
+   "error": "INVALID_CURSOR"
+  },
+  {
+   "cursor": "{\"calendar\": \"AAMkCALWORK000\", \"page\": \"skip:2\", \"start\": \"a\", \"end\": \"b\", \"extra\": \"x\"}",
+   "calendar": "AAMkCALWORK000",
+   "error": "INVALID_CURSOR"
+  },
+  {
+   "cursor": "{\"calendar\": \"AAMkCALWORK000\", \"page\": 2, \"start\": \"a\", \"end\": \"b\"}",
+   "calendar": "AAMkCALWORK000",
+   "error": "INVALID_CURSOR"
+  },
+  {
+   "cursor": "[{\"calendar\": \"AAMkCALWORK000\", \"page\": \"skip:2\", \"start\": \"a\", \"end\": \"b\"}]",
+   "calendar": "AAMkCALWORK000",
+   "error": "INVALID_CURSOR"
+  },
+  {
+   "cursor": "skip:2",
+   "calendar": "AAMkCALWORK000",
+   "error": "INVALID_CURSOR"
+  }
+ ]
+}
