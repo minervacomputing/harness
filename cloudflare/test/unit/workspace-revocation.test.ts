@@ -7,7 +7,7 @@
 import { describe, expect, test } from "vitest";
 import type { Caller } from "../../src/contracts/common.ts";
 import { BARRIER_MS } from "../../src/workspace/core.ts";
-import { ADA, GRACE, attach, begin, conversation, connectMixed, defaultAgent, grant, harness, outbox, registered, running, settle, type Harness } from "./workspace-support.ts";
+import { ADA, GRACE, accessOf, attach, begin, conversation, connectMixed, defaultAgent, grant, harness, outbox, registered, running, settle, type Harness } from "./workspace-support.ts";
 
 /** Advances the clock in steps until the promise settles. */
 async function until<T>(h: Harness, promise: Promise<T>, step = 500, limit = 100): Promise<T> {
@@ -266,7 +266,7 @@ describe("faults", () => {
 		void h.core.applyGrantChanges(ADA, connection, [{ kind: "folder", id: "archive", actions: ["read"] }], {});
 		await settle();
 		h.restart();
-		expect((await h.core.getAccess(ADA, connection))?.grants.map((g) => g.id)).toEqual(["archive", "inbox"]);
+		expect(accessOf(await h.core.getAccess(ADA, connection)).grants.map((g) => g.id)).toEqual(["archive", "inbox"]);
 		expect(registered(h, run.input.runId)?.revoked).toBe("permissions_changed");
 		expect(h.core.nextWake()).toBe(h.timers.now());
 		h.conversations.mode = "answer";

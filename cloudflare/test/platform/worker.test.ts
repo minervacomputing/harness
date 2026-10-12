@@ -6,6 +6,7 @@ import { MIGRATIONS as CONVERSATION_MIGRATIONS } from "../../src/conversation/sc
 import { SANDBOX_MIGRATIONS } from "../../src/sandbox/store.ts";
 import { MIGRATIONS as SCRIPTS_MIGRATIONS } from "../../src/scripts/schema.ts";
 import { PROBE_HEADER, probeToken } from "../../src/http/probe-token.ts";
+import { AUTH_ROUTE } from "../../src/accounts/routes.ts";
 import { CHECKED_LATER, createApp } from "../../src/http/router.ts";
 import { escapedKeyCheck } from "../../src/lib/json.ts";
 import { appliedMigrations, migrate } from "../../src/lib/sqlite.ts";
@@ -41,8 +42,10 @@ describe("the router in workerd", () => {
 		const unsafe = createApp().routes.filter((route) => ["POST", "PUT", "PATCH", "DELETE"].includes(route.method));
 		for (const route of unsafe) {
 			if (CHECKED_LATER.has(`${route.method} ${route.path}`)) continue;
+			// Better Auth's own route checks origins itself (test/platform/accounts.test.ts, CSRF).
+			if (route.path === AUTH_ROUTE) continue;
 			// Each parameter gets a valid id; regex parameters are all UUIDs (router.ts).
-			const path = route.path.replace(/:[a-z]+(\{[^}]*\})?/gi, "0199a000-0000-7000-8000-000000000001");
+			const path = route.path.replace(/:[a-z]+(\{(?:[^{}]|\{[^{}]*\})*\})?/gi, "0199a000-0000-7000-8000-000000000001");
 			const response = await exports.default.fetch(`http://localhost${path}`, { method: route.method });
 			expect(response.status, `${route.method} ${route.path}`).toBe(403);
 		}
@@ -135,88 +138,57 @@ describe("Durable Object stubs with SQLite", () => {
 });
 
 describe("D1 enforces the accounts schema's rules", () => {
-	const session = "0".repeat(64);
+	const ORG = "0199a000-0000-7000-8000-0000000000c1";
+	const SESSION = "0199a000-0000-7000-8000-0000000000c2";
+	const NOW = "2026-10-12T00:00:00.000Z";
 
 	// Storage lasts for the whole file, so each test starts from empty tables.
 	beforeEach(async () => {
 		await env.DB.batch(
-			["sessions", "workspaces", "users", "rate_limits", "oauth_clients"].map((table) => env.DB.prepare(`DELETE FROM ${table}`)),
+			["oauth_flows", "memberships", "workspaces", "member", "organization", "session", "user", "rate_limits", "oauth_clients"].map((table) =>
+				env.DB.prepare(`DELETE FROM "${table}"`),
+			),
 		);
 	});
 
 	async function seed() {
 		await env.DB.batch([
-			env.DB.prepare("INSERT INTO users (id, date_joined) VALUES (?, ?)").bind(USER, 1),
-			env.DB.prepare("INSERT INTO emails (email, user_id, created_at) VALUES (?, ?, ?)").bind("ada@example.com", USER, 1),
-			env.DB.prepare("INSERT INTO workspaces (id, kind, name, personal_owner, created_at) VALUES (?, 'personal', 'Personal', ?, ?)").bind(WS, USER, 1),
+			env.DB.prepare(`INSERT INTO "user" (id, name, email, "emailVerified", "createdAt", "updatedAt") VALUES (?, '', 'ada@example.com', 1, ?, ?)`).bind(USER, NOW, NOW),
+			env.DB.prepare(`INSERT INTO organization (id, name, slug, "createdAt", "personalOwner") VALUES (?, 'Personal', ?, ?, ?)`).bind(ORG, ORG, NOW, USER),
+			env.DB.prepare("INSERT INTO workspaces (id, organization_id, kind, name, personal_owner, created_at) VALUES (?, ?, 'personal', 'Personal', ?, ?)").bind(WS, ORG, USER, 1),
 			env.DB.prepare("INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES (?, ?, 'owner', ?)").bind(WS, USER, 1),
-			env.DB.prepare("INSERT INTO sessions (id_hash, created_at, expires_at) VALUES (?, ?, ?)").bind(session, 1, 9e12),
+			env.DB.prepare(`INSERT INTO session (id, "expiresAt", token, "createdAt", "updatedAt", "userId") VALUES (?, ?, 't', ?, ?, ?)`).bind(SESSION, NOW, NOW, NOW, USER),
 		]);
 	}
 
-	test("a code allows three attempts and is used once", async () => {
+	test("workspaces are personal iff owned, one per owner; their owner and organization cannot be deleted under them", async () => {
 		await seed();
-		await env.DB.prepare(
-			"INSERT INTO auth_flows (session_hash, kind, user_id, email, code_hash, created_at, expires_at) VALUES (?, 'email_verification', ?, ?, 'right', 1, ?)",
-		)
-			.bind(session, USER, "ada@example.com", 9e12)
-			.run();
-		const wrong = env.DB.prepare(
-			"UPDATE auth_flows SET attempts = attempts + 1 WHERE session_hash = ? AND kind = 'email_verification' AND attempts < 3 AND expires_at > ? RETURNING attempts",
-		).bind(session, Date.now());
-		const consume = env.DB.prepare(
-			"DELETE FROM auth_flows WHERE session_hash = ? AND kind = 'email_verification' AND code_hash = ? AND attempts < 3 AND expires_at > ? RETURNING email",
-		).bind(session, "right", Date.now());
-		expect((await wrong.all()).results).toEqual([{ attempts: 1 }]);
-		expect((await consume.all()).results).toEqual([{ email: "ada@example.com" }]);
-		expect((await consume.all()).results).toEqual([]);
-	});
-
-	test("the third wrong code ends the process", async () => {
-		await seed();
-		await env.DB.prepare(
-			"INSERT INTO auth_flows (session_hash, kind, code_hash, created_at, expires_at) VALUES (?, 'password_reset', 'right', 1, ?)",
-		)
-			.bind(session, 9e12)
-			.run();
-		const wrong = env.DB.prepare(
-			"UPDATE auth_flows SET attempts = attempts + 1 WHERE session_hash = ? AND kind = 'password_reset' AND attempts < 3 RETURNING attempts",
-		).bind(session);
-		for (const expected of [1, 2, 3]) expect((await wrong.all()).results).toEqual([{ attempts: expected }]);
-		expect((await wrong.all()).results).toEqual([]);
-		const right = await env.DB.prepare(
-			"DELETE FROM auth_flows WHERE session_hash = ? AND kind = 'password_reset' AND code_hash = 'right' AND attempts < 3 RETURNING kind",
-		)
-			.bind(session)
-			.all();
-		expect(right.results).toEqual([]);
-	});
-
-	test("emails are unique and lowercased, workspaces personal iff owned, deletes cascade", async () => {
-		await seed();
-		await expect(env.DB.prepare("INSERT INTO emails (email, user_id, created_at) VALUES ('ada@example.com', ?, 1)").bind(USER).run()).rejects.toThrow(/UNIQUE/);
-		await expect(env.DB.prepare("INSERT INTO emails (email, user_id, created_at) VALUES ('Ada@Example.com', ?, 1)").bind(USER).run()).rejects.toThrow(/CHECK/);
 		await expect(
-			env.DB.prepare("INSERT INTO workspaces (id, kind, name, created_at) VALUES ('0199a000-0000-7000-8000-0000000000dd', 'personal', 'P', 1)").run(),
+			env.DB.prepare("INSERT INTO workspaces (id, organization_id, kind, name, created_at) VALUES ('0199a000-0000-7000-8000-0000000000dd', ?, 'personal', 'P', 1)").bind(ORG).run(),
 		).rejects.toThrow(/CHECK/);
-		await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(USER).run();
-		const left = await env.DB.batch([
-			env.DB.prepare("SELECT count(*) AS n FROM emails"),
-			env.DB.prepare("SELECT count(*) AS n FROM memberships"),
-			env.DB.prepare("SELECT count(*) AS n FROM workspaces"),
-		]);
-		expect(left.map((result) => (result.results[0] as { n: number }).n)).toEqual([0, 0, 0]);
+		await expect(
+			env.DB.prepare("INSERT INTO workspaces (id, organization_id, kind, name, personal_owner, created_at) VALUES ('0199a000-0000-7000-8000-0000000000dd', ?, 'personal', 'P', ?, 1)")
+				.bind(ORG, USER)
+				.run(),
+		).rejects.toThrow(/UNIQUE/);
+		// Its Durable Object and files need deleting first (plan: Files, Deletion); a cascade would lose them.
+		await expect(env.DB.prepare(`DELETE FROM "user" WHERE id = ?`).bind(USER).run()).rejects.toThrow(/FOREIGN KEY/);
+		await expect(env.DB.prepare("DELETE FROM organization WHERE id = ?").bind(ORG).run()).rejects.toThrow(/FOREIGN KEY/);
+		await env.DB.prepare("DELETE FROM workspaces WHERE id = ?").bind(WS).run();
+		expect((await env.DB.prepare("SELECT count(*) AS n FROM memberships").first())?.n).toBe(0);
 	});
 
-	test("an OAuth flow is popped once", async () => {
+	test("an OAuth flow is popped once, and ends with its session", async () => {
 		await seed();
-		await env.DB.prepare(
-			"INSERT INTO oauth_flows (session_hash, state, verifier, provider, workspace_id, client_id, issued_at, expires_at) VALUES (?, 's', 'v', 'todoist', ?, 'c', 1, 600001)",
-		)
-			.bind(session, WS)
-			.run();
-		const pop = env.DB.prepare("DELETE FROM oauth_flows WHERE session_hash = ? RETURNING state").bind(session);
+		const insert = env.DB.prepare(
+			"INSERT INTO oauth_flows (session_id, state, verifier, provider, workspace_id, client_id, issued_at, expires_at) VALUES (?, 's', 'v', 'todoist', ?, 'c', 1, 600001)",
+		).bind(SESSION, WS);
+		await insert.run();
+		const pop = env.DB.prepare("DELETE FROM oauth_flows WHERE session_id = ? RETURNING state").bind(SESSION);
 		expect((await pop.all()).results).toEqual([{ state: "s" }]);
 		expect((await pop.all()).results).toEqual([]);
+		await insert.run();
+		await env.DB.prepare("DELETE FROM session WHERE id = ?").bind(SESSION).run();
+		expect((await env.DB.prepare("SELECT count(*) AS n FROM oauth_flows").first())?.n).toBe(0);
 	});
 });

@@ -75,8 +75,14 @@ export interface ConversationApi {
 	 * available. Remove it and attach it again." Success stores the message, the run (`queued`, attempt 1,
 	 * event seq 1 `status: queued`) and the base version together, and sets the title from the first message
 	 * (`content[:80]`, else the attachment paths joined by ", "); then it calls `activate`.
+	 *
+	 * `key` is the client's Idempotency-Key, if it sent one (1 to 255 visible ASCII characters): the same
+	 * message sent again with it within a day answers for the run the first one started (joining the start in
+	 * flight, or the stored message and run with its first page of events), before the 409 check, so a
+	 * retried request never starts a second run; another message with the key is 422 "This
+	 * Idempotency-Key was used for a different message." A refused start forgets its key.
 	 */
-	postMessage(caller: Caller, input: Required<MessageIn>): Promise<Outcome<PostedView>>;
+	postMessage(caller: Caller, input: Required<MessageIn>, key?: string | null): Promise<Outcome<PostedView>>;
 
 	getRun(caller: Caller, runId: RunId): Promise<RunHead | null>;
 	/** The user's stop: idempotent, a finished run stays as it was; the refreshed run (runs 8). */

@@ -31,6 +31,7 @@ import type { CancelReason, RunStatus, StartSnapshot } from "../contracts/runs.t
 import type {
 	BeginRunInput,
 	BeginRunResult,
+	ConnectionAccount,
 	RefreshState,
 	Registration,
 	ReservedUpload,
@@ -442,11 +443,13 @@ export class WorkspaceCore implements WorkspaceApi {
 		return [...own, ...shared].map((row) => this.#connectionOut(caller, row)).filter((out) => out !== null);
 	}
 
-	async getAccess(caller: Caller, connectionId: ConnectionId): Promise<AccessOut | null> {
+	async getAccess(caller: Caller, connectionId: ConnectionId): Promise<Outcome<AccessOut>> {
 		const usable = this.#usable(caller, connectionId);
-		if (!usable.ok) return null;
+		if (!usable.ok) return usable;
 		const connector = this.#registry.find(usable.value.provider);
-		return connector === null ? null : accessOut(connector, this.#view(usable.value), this.#userGrants(connectionId, caller.userId));
+		// Python fails with a 500 for a connection whose connector is gone; it is not found instead.
+		if (connector === null) return refuse(404, NOT_FOUND);
+		return ok(accessOut(connector, this.#view(usable.value), this.#userGrants(connectionId, caller.userId)));
 	}
 
 	async allowedActions(caller: Caller, connectionId: ConnectionId): Promise<string[] | null> {
@@ -458,6 +461,11 @@ export class WorkspaceCore implements WorkspaceApi {
 				? this.#grants("l.level = 'user' AND g.connection_id = ? AND g.effect = 'allow'", connectionId)
 				: this.#userGrants(connectionId, caller.userId);
 		return sortByCodePoint(new Set(grants.flatMap((grant) => grant.actions)));
+	}
+
+	async connectionAccount(connectionId: ConnectionId): Promise<ConnectionAccount | null> {
+		const row = this.#connection(connectionId);
+		return row === null ? null : { provider: row.provider, accountId: row.external_account_id, label: row.label, ownerId: row.owner_id };
 	}
 
 	#writeCredentials(id: ConnectionId, sealed: Sealed, payload: JsonObject, generation: number, now: number): void {
@@ -952,6 +960,10 @@ export class WorkspaceCore implements WorkspaceApi {
 				caller.userId,
 			)
 			.map(conversationOut);
+	}
+
+	async ownsConversation(caller: Caller, conversationId: ConversationId): Promise<boolean> {
+		return this.#ownConversation(caller, conversationId) !== null;
 	}
 
 	async conversationTouched(conversationId: ConversationId, change: { title: string; updatedAt: number }): Promise<void> {

@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-import { checkBuild, parse, settings } from "../../src/config.ts";
+import { OAUTH_APPS, checkBuild, clientSecretNames, connectorClientSecrets, parse, settings } from "../../src/config.ts";
+import { connectorRegistry } from "../../src/connectors/index.ts";
 import { settingsEnv } from "./settings.ts";
 
 test("defaults are today's", () => {
@@ -49,4 +50,15 @@ test("a build refuses the fake model unless it is the test build; a deployed one
 		expect(() => checkBuild(parsed({ MINERVA_MODEL_PROVIDER: "fake" }), build)).toThrow("MINERVA_MODEL_PROVIDER=fake is only for the test build.");
 	}
 	expect(() => checkBuild(parsed({ MINERVA_MODEL_PROVIDER: "fake" }), { deployed: true, testBuild: true })).not.toThrow();
+});
+
+test("connector clients are declared in pairs, for the OAuth apps of the registry", async () => {
+	expect(clientSecretNames("github")).toEqual(["MINERVA_GITHUB_CLIENT_ID", "MINERVA_GITHUB_CLIENT_SECRET"]);
+	expect(connectorClientSecrets({})).toEqual([]);
+	const source = { MINERVA_GITHUB_CLIENT_ID: "id", MINERVA_GITHUB_CLIENT_SECRET: "secret", MINERVA_SLACK_CLIENT_ID: " ", MINERVA_SLACK_CLIENT_SECRET: "" };
+	expect(connectorClientSecrets(source)).toEqual(["MINERVA_GITHUB_CLIENT_ID", "MINERVA_GITHUB_CLIENT_SECRET"]);
+	expect(() => connectorClientSecrets({ MINERVA_GITHUB_CLIENT_ID: "id" })).toThrow("MINERVA_GITHUB_CLIENT_ID is set but MINERVA_GITHUB_CLIENT_SECRET is not: set both or neither.");
+	expect(() => connectorClientSecrets({ MINERVA_XERO_CLIENT_SECRET: "secret" })).toThrow("MINERVA_XERO_CLIENT_SECRET is set but MINERVA_XERO_CLIENT_ID is not: set both or neither.");
+	const apps = new Set((await connectorRegistry()).all().flatMap((connector) => (connector.auth.type === "oauth2" ? [connector.auth.app] : [])));
+	expect([...apps].filter((app) => !(OAUTH_APPS as readonly string[]).includes(app))).toEqual([]);
 });

@@ -9,7 +9,7 @@ import type { AgentId, Caller, ConnectionId, ConversationId, Outcome, Revocation
 import type { FolderLimit } from "../contracts/files.ts";
 import type { GrantChange } from "../contracts/policy.ts";
 import type { RunStatus } from "../contracts/runs.ts";
-import type { BeginRunInput, BeginRunResult, Registration, SaveConnectionInput, WorkspaceApi, WorkspaceInit } from "../contracts/workspace.ts";
+import type { BeginRunInput, BeginRunResult, ConnectionAccount, Registration, SaveConnectionInput, WorkspaceApi, WorkspaceInit } from "../contracts/workspace.ts";
 import { type About, identity } from "../lib/about.ts";
 import { KeyRing } from "../lib/fernet.ts";
 import { appliedMigrations } from "../lib/sqlite.ts";
@@ -152,7 +152,7 @@ export class Workspace extends DurableObject<Env> implements WorkspaceApi {
 		return this.#call((core) => core.deleteConnection(caller, connectionId));
 	}
 
-	getAccess(caller: Caller, connectionId: ConnectionId): Promise<AccessOut | null> {
+	getAccess(caller: Caller, connectionId: ConnectionId): Promise<Outcome<AccessOut>> {
 		return this.#call((core) => core.getAccess(caller, connectionId));
 	}
 
@@ -167,6 +167,10 @@ export class Workspace extends DurableObject<Env> implements WorkspaceApi {
 
 	allowedActions(caller: Caller, connectionId: ConnectionId): Promise<string[] | null> {
 		return this.#call((core) => core.allowedActions(caller, connectionId));
+	}
+
+	connectionAccount(connectionId: ConnectionId): Promise<ConnectionAccount | null> {
+		return this.#call((core) => core.connectionAccount(connectionId));
 	}
 
 	lease(connectionId: ConnectionId, purpose: { run: RunId; userId: UserId } | { settings: Caller }): Promise<LeaseAnswer> {
@@ -207,6 +211,10 @@ export class Workspace extends DurableObject<Env> implements WorkspaceApi {
 
 	listConversations(caller: Caller): Promise<ConversationOut[]> {
 		return this.#call((core) => core.listConversations(caller));
+	}
+
+	ownsConversation(caller: Caller, conversationId: ConversationId): Promise<boolean> {
+		return this.#call((core) => core.ownsConversation(caller, conversationId));
 	}
 
 	conversationTouched(conversationId: ConversationId, change: { title: string; updatedAt: number }): Promise<void> {

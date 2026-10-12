@@ -76,7 +76,7 @@ function ended(): OperationError {
 }
 
 /** The secret a connector's client is built with: the OAuth access token, the API key, or "" for a built-in service. */
-function secretOf(payload: CredentialPayload): string {
+export function secretOf(payload: CredentialPayload): string {
 	if (payload.kind === "api_key") return payload.key;
 	if (payload.kind === "builtin") return "";
 	// OAuth, and legacy rows without a kind, which are read as OAuth.
@@ -84,7 +84,7 @@ function secretOf(payload: CredentialPayload): string {
 }
 
 /** Whether a CONNECTION_UNAUTHORIZED is anywhere in the error's cause chain (credentials.py `_unauthorized`). */
-function unauthorized(error: unknown): boolean {
+export function unauthorized(error: unknown): boolean {
 	const seen = new Set<unknown>();
 	let current: unknown = error;
 	while (current !== null && current !== undefined && !seen.has(current)) {

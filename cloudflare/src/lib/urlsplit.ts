@@ -316,6 +316,16 @@ export function quote(text: string, safe = "/"): string {
 	return out;
 }
 
+/** `urllib.parse.quote_plus(text)`: `quote` with nothing else safe, and spaces as `+`. */
+export function quotePlus(text: string): string {
+	return quote(text, " ").replaceAll(" ", "+");
+}
+
+/** `urllib.parse.urlencode(pairs)`: `key=value` pairs, each side `quote_plus`ed, joined by `&`. */
+export function urlencode(pairs: readonly (readonly [string, string])[]): string {
+	return pairs.map(([key, value]) => `${quotePlus(key)}=${quotePlus(value)}`).join("&");
+}
+
 /**
  * `urllib.parse.quote(value, safe="")`, the way connectors write a path segment: everything but ASCII letters,
  * digits and `_.-~` percent-encoded as UTF-8. A lone surrogate throws (URIError), as Python's UTF-8 encoding

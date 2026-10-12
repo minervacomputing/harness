@@ -1,10 +1,7 @@
-// The session and CSRF cookies, with Django's names and attributes (web-api spec 3.1, 3.2). Both are
-// SameSite=Lax, on Path=/, without a Domain, and Secure unless debug is on.
+// The CSRF cookie, with Django's name and attributes (web-api spec 3.2): SameSite=Lax, on Path=/, without
+// a Domain, and Secure unless debug is on. The session cookie is Better Auth's (accounts/auth-options.ts).
 
-export const SESSION_COOKIE = "sessionid";
 export const CSRF_COOKIE = "csrftoken";
-/** Two weeks. The expiry restarts whenever the session is saved. */
-export const SESSION_MAX_AGE = 1_209_600;
 /** 52 weeks. */
 export const CSRF_MAX_AGE = 31_449_600;
 
@@ -42,15 +39,6 @@ export function serializeCookie(name: string, value: string, options: CookieOpti
 	if (options.httpOnly) parts.push("HttpOnly");
 	if (options.secure) parts.push("Secure");
 	return parts.join("; ");
-}
-
-/** `sessionid`: HttpOnly, two weeks. The value is the opaque session key; only its hash is stored. */
-export function sessionCookie(value: string, { debug }: { debug: boolean }): string {
-	return serializeCookie(SESSION_COOKIE, value, { maxAge: SESSION_MAX_AGE, httpOnly: true, secure: !debug });
-}
-
-export function clearSessionCookie({ debug }: { debug: boolean }): string {
-	return serializeCookie(SESSION_COOKIE, "", { maxAge: 0, httpOnly: true, secure: !debug });
 }
 
 /** `csrftoken`: readable by the page, which echoes it in `X-CSRFToken`, and never cleared during a page's life. */

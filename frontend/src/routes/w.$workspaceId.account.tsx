@@ -8,7 +8,7 @@ import { TextField } from '@/components/form'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { Button } from '@/components/ui/button'
 import { Alert, ErrorNote, PageHeader } from '@/components/ui/misc'
-import { accountCall, authQuery, fieldErrors, useSignOut } from '@/lib/auth'
+import { auth, authQuery, fieldErrors, useSignOut } from '@/lib/auth'
 import { useDemo } from '@/lib/demo'
 
 export const Route = createFileRoute('/w/$workspaceId/account')({
@@ -17,7 +17,6 @@ export const Route = createFileRoute('/w/$workspaceId/account')({
 
 function AccountPage() {
   const context = Route.useRouteContext()
-  // The live auth state, so setting a first password shows at once.
   const { data: state } = useQuery(authQuery)
   const user = state?.kind === 'authenticated' ? state.user : context.user
   const signOut = useSignOut()
@@ -35,7 +34,7 @@ function AccountPage() {
             />
           ) : (
             <>
-              <PasswordSetting hasPassword={user.has_usable_password} />
+              <PasswordSetting />
               <TwoFactorSetting />
             </>
           )}
@@ -51,16 +50,16 @@ function AccountPage() {
   )
 }
 
-function PasswordSetting({ hasPassword }: { hasPassword: boolean }) {
+function PasswordSetting() {
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
   const [done, setDone] = useState<string>()
   const button = useRef<HTMLButtonElement>(null)
   const change = useMutation({
     mutationFn: (value: { current_password: string; new_password: string }) =>
-      accountCall('POST', '/account/password/change', hasPassword ? value : { new_password: value.new_password }),
+      auth.account.changePassword({ current: value.current_password, next: value.new_password }),
     onSuccess: async () => {
-      setDone(hasPassword ? 'Your password was changed.' : 'Your password was set.')
+      setDone('Your password was changed.')
       setOpen(false)
       button.current?.focus()
       await queryClient.invalidateQueries({ queryKey: authQuery.queryKey })
@@ -71,7 +70,6 @@ function PasswordSetting({ hasPassword }: { hasPassword: boolean }) {
     defaultValues: { current_password: '', new_password: '' },
     onSubmit: async ({ value, formApi }) => { await change.mutateAsync(value); formApi.reset() },
   })
-  const action = hasPassword ? 'Change password' : 'Set password'
   const toggle = () => {
     setOpen(!open)
     setDone(undefined)
@@ -81,24 +79,20 @@ function PasswordSetting({ hasPassword }: { hasPassword: boolean }) {
   return (
     <Setting
       title="Password"
-      description={hasPassword
-        ? 'Changing your password keeps you signed in here.'
-        : 'Your account has no password yet. Set one to sign in with it.'}
-      action={<Button ref={button} variant={open ? 'ghost' : 'outline'} size="sm" aria-expanded={open} onClick={toggle}>{open ? 'Cancel' : action}</Button>}
+      description="Changing your password keeps you signed in here."
+      action={<Button ref={button} variant={open ? 'ghost' : 'outline'} size="sm" aria-expanded={open} onClick={toggle}>{open ? 'Cancel' : 'Change password'}</Button>}
     >
       {done && <Alert tone="info" role="status">{done}</Alert>}
       {open && (
         <form className="grid max-w-md gap-4" onSubmit={event => { event.preventDefault(); void form.handleSubmit() }}>
-          {hasPassword && (
-            <form.Field name="current_password">
-              {field => <TextField field={field} label="Current password" type="password" autoComplete="current-password" autoFocus serverError={fields.current_password} />}
-            </form.Field>
-          )}
+          <form.Field name="current_password">
+            {field => <TextField field={field} label="Current password" type="password" autoComplete="current-password" autoFocus serverError={fields.current_password} />}
+          </form.Field>
           <form.Field name="new_password" validators={{ onBlur: ({ value }) => (value && value.length < 10 ? 'Use at least 10 characters.' : undefined) }}>
-            {field => <TextField field={field} label="New password" type="password" autoComplete="new-password" autoFocus={!hasPassword} serverError={fields.new_password} />}
+            {field => <TextField field={field} label="New password" type="password" autoComplete="new-password" serverError={fields.new_password} />}
           </form.Field>
           {change.error && !Object.keys(fields).length && <ErrorNote>{change.error.message}</ErrorNote>}
-          <div><Button type="submit" size="sm" disabled={change.isPending}>{action}</Button></div>
+          <div><Button type="submit" size="sm" disabled={change.isPending}>Change password</Button></div>
         </form>
       )}
     </Setting>

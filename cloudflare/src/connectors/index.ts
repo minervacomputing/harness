@@ -26,26 +26,27 @@ import { onedriveConnector } from "./onedrive/connector.ts";
 import { teamsConnector } from "./teams/connector.ts";
 import { webConnector } from "./web/connector.ts";
 
+// In today's order (backend/connectors/registry.py `_declared`): the connectors page lists them so.
 export const CONNECTORS: readonly Connector[] = [
 	todoistConnector(),
-	stripeConnector(),
-	jiraConnector(),
-	confluenceConnector(),
-	linear,
-	slackConnector(),
-	githubConnector(),
-	notionConnector(),
-	hubspotConnector(),
-	intercom,
-	xeroConnector(),
-	sentryConnector(),
 	googleCalendarConnector(),
 	googleDriveConnector(),
-	gmailConnector(),
+	githubConnector(),
+	notionConnector(),
+	linear,
+	slackConnector(),
 	outlookConnector(),
 	outlookCalendarConnector(),
 	onedriveConnector(),
 	teamsConnector(),
+	gmailConnector(),
+	stripeConnector(),
+	hubspotConnector(),
+	jiraConnector(),
+	confluenceConnector(),
+	intercom,
+	xeroConnector(),
+	sentryConnector(),
 	webConnector(),
 ];
 

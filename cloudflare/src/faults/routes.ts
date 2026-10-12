@@ -2,17 +2,22 @@
 // It answers only a request with `X-Minerva-Faults: <faultsToken(MINERVA_SECRET_KEY)>`; any other request
 // is passed on to the Worker, which answers 404 as for a path with no route. It calls the objects through
 // addressing.ts as the API will (step 5), as a fixed test user, against the fake provider only. Operations
-// under `sandbox/` drive a Sandbox object of their own (lab.ts).
+// under `sandbox/` drive a Sandbox object of their own (lab.ts). `emails` and `emails-clear` read and empty
+// the mailbox the build's emails go to (mailbox.ts); `download` serves a signed download link as the
+// download origin (files-worker/) would, from the test Worker's own buckets, for the browser walk
+// (test/account/browser.test.ts), since the test build has no download Worker of its own.
 
 import { conversationObject, filesBucket, sandboxObject, workspaceObject } from "../addressing.ts";
 import type { Caller, WorkspaceRef } from "../contracts/common.ts";
 import type { GrantChange } from "../contracts/policy.ts";
 import { timingSafeEqual } from "../lib/hash.ts";
+import { serveDownload } from "../files/download.ts";
 import { receiveUpload } from "../files/uploads.ts";
 import { type Json, parseJson } from "../lib/json.ts";
 import { FOLDER, NOTES, NOTES_CLIENT, NOTES_TOKEN_URL } from "./connector.ts";
 import type { Conversation, Workspace } from "./index.ts";
 import { SandboxLab } from "./lab.ts";
+import { mailboxOf } from "./mailbox.ts";
 import type { Fault } from "./plan.ts";
 import type { FaultSandbox } from "./sandbox.ts";
 import { providerOf } from "./ports.ts";
@@ -80,6 +85,8 @@ export async function setUpWorkspace(
 
 async function operation(op: string, body: Body, env: Env, exports: Cloudflare.Exports): Promise<unknown> {
 	if (op.startsWith("sandbox/")) return new SandboxLab(env, exports).run(op.slice("sandbox/".length), body);
+	if (op === "emails") return { emails: await mailboxOf(env).list(typeof body.to === "string" ? body.to : null) };
+	if (op === "emails-clear") return { cleared: await mailboxOf(env).clear(typeof body.to === "string" ? body.to : null) };
 	const ref = body.workspace;
 	const caller: Caller = { userId: body.userId, role: "owner" };
 	const ws = workspaceOf(env, ref);
@@ -92,6 +99,11 @@ async function operation(op: string, body: Body, env: Env, exports: Cloudflare.E
 			await conversationOf(env, ref, created.value.id).faultPlan((body.faults ?? []) as unknown as Fault[], { model: (body.model ?? null) as string | null });
 			return { conversationId: created.value.id };
 		}
+		case "conversation-model":
+			// A conversation made through the API (the browser walk) gets Workers AI (`workers-ai`) or the fake
+			// model (null). Set it before the conversation's first run: its object keeps the model it first called.
+			await conversationOf(env, ref, String(body.conversationId)).faultPlan([], { model: (body.model ?? null) as string | null });
+			return { ok: true };
 		case "workspace-faults":
 			await ws.faultPlan((body.faults ?? []) as unknown as Fault[]);
 			return { ok: true };
@@ -168,6 +180,9 @@ async function operation(op: string, body: Body, env: Env, exports: Cloudflare.E
 		}
 		case "provider":
 			return providerOf(env, ref.id).state();
+		case "provider-authorize":
+			// The user consents on the fake provider's page for an authorize URL the API answered (provider.ts).
+			return providerOf(env, ref.id).authorize(String(body.url), (body.account ?? undefined) as { id: string; name: string } | undefined);
 		case "delays":
 			await providerOf(env, ref.id).setDelays((body.delays ?? {}) as { [prefix: string]: number });
 			return { ok: true };
@@ -190,7 +205,10 @@ export async function faultRoutes(request: Request, env: Env, ctx: ExecutionCont
 		return answer(400, { detail: "The body is not JSON." });
 	}
 	try {
-		const result = await operation(url.pathname.slice(PREFIX.length), body, env, ctx.exports);
+		const op = url.pathname.slice(PREFIX.length);
+		// The download origin's answer itself, headers and body, for a GET of the link in `url`.
+		if (op === "download") return await serveDownload(new Request(String(body.url), { headers: typeof body.range === "string" ? { range: body.range } : {} }), env);
+		const result = await operation(op, body, env, ctx.exports);
 		return result === null ? answer(404, { detail: "No such operation." }) : answer(200, result);
 	} catch (error) {
 		return answer(500, { detail: error instanceof Error ? error.message : String(error) });

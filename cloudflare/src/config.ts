@@ -116,6 +116,33 @@ export function checkBuild(parsed: Settings, build: { deployed: boolean; testBui
 	if (parsed.debug) throw new Error("MINERVA_DEBUG must be off in a deployed build.");
 }
 
+/** The OAuth apps of the connectors (`auth.app`); several connectors may share one app's client. */
+export const OAUTH_APPS = ["todoist", "google", "github", "notion", "linear", "slack", "microsoft", "hubspot", "jira", "confluence", "intercom", "xero", "sentry"] as const;
+
+/** MINERVA_<APP>_CLIENT_ID and MINERVA_<APP>_CLIENT_SECRET. */
+export function clientSecretNames(app: string): [id: string, secret: string] {
+	const prefix = `MINERVA_${app.toUpperCase()}_CLIENT_`;
+	return [`${prefix}ID`, `${prefix}SECRET`];
+}
+
+/**
+ * The connector clients a build declares as secrets (cloudflare.config.ts): both names of every app whose
+ * client the operator configured, which `cf deploy` then requires and uploads. An app with neither stays
+ * undeclared and its connectors are not offered (Todoist registers a client of its own); one with only half
+ * a client fails the build rather than hide the connector. Only names are read, never values.
+ */
+export function connectorClientSecrets(source: Readonly<Record<string, string | undefined>>): string[] {
+	const names: string[] = [];
+	for (const app of OAUTH_APPS) {
+		const [id, secret] = clientSecretNames(app);
+		const hasId = Boolean(source[id]?.trim());
+		const hasSecret = Boolean(source[secret]?.trim());
+		if (hasId !== hasSecret) throw new Error(`${hasId ? id : secret} is set but ${hasId ? secret : id} is not: set both or neither.`);
+		if (hasId) names.push(id, secret);
+	}
+	return names;
+}
+
 type Name = keyof SettingsEnv;
 
 function invalid(name: Name, expected: string): Error {

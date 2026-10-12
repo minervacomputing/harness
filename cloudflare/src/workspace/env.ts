@@ -2,7 +2,7 @@
 // Worker's secrets and D1, and its settings (ports.ts).
 
 import { conversationObject, filesBucket } from "../addressing.ts";
-import { settings } from "../config.ts";
+import { clientSecretNames, settings } from "../config.ts";
 import type { WorkspaceRef } from "../contracts/common.ts";
 import type { ConversationApi } from "../contracts/conversation.ts";
 import type { KeyRing } from "../lib/fernet.ts";
@@ -41,21 +41,24 @@ export function objectStore(env: Env, workspace: () => WorkspaceRef): ObjectStor
 	};
 }
 
+/** The operator's client for an OAuth app: MINERVA_<APP>_CLIENT_ID and _SECRET, both set (an empty id counts as unset). */
+export function configuredClient(env: Env, app: string): { clientId: string; clientSecret: string } | null {
+	const secrets = env as unknown as { [name: string]: unknown };
+	const [idName, secretName] = clientSecretNames(app);
+	const clientId = secrets[idName];
+	const clientSecret = secrets[secretName];
+	if (typeof clientId !== "string" || !clientId || typeof clientSecret !== "string") return null;
+	return { clientId, clientSecret };
+}
+
 /**
  * MINERVA_<APP>_CLIENT_ID and _SECRET (both required; an empty id counts as unset), then the clients
  * registered dynamically, in D1's `oauth_clients`, whose secrets are encrypted as `{"secret": …}`
  * (connectors 11.1).
  */
 export function oauthClients(env: Env, keys: KeyRing): OAuthClients {
-	const secrets = env as unknown as { [name: string]: unknown };
 	return {
-		configured(app) {
-			const prefix = `MINERVA_${app.toUpperCase()}_CLIENT_`;
-			const clientId = secrets[`${prefix}ID`];
-			const clientSecret = secrets[`${prefix}SECRET`];
-			if (typeof clientId !== "string" || !clientId || typeof clientSecret !== "string") return null;
-			return { clientId, clientSecret };
-		},
+		configured: (app) => configuredClient(env, app),
 		async stored(app, redirectUri): Promise<ClientCredentials | null> {
 			const row = await env.DB.prepare(
 				"SELECT client_id, secret_ciphertext, secret_key_version, redirect_uri FROM oauth_clients WHERE provider = ? AND redirect_uri = ?",

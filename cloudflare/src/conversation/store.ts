@@ -351,6 +351,12 @@ export class RunStore {
 			.map((row) => messageOut(row));
 	}
 
+	/** The user message that started a run. */
+	runMessage(runId: RunId): MessageOut | null {
+		const row = this.#sql.exec<MessageRow>("SELECT * FROM messages WHERE run_id = ? AND role = 'user' ORDER BY created_at, id LIMIT 1", runId).toArray()[0];
+		return row ? messageOut(row) : null;
+	}
+
 	message(id: string): MessageOut | null {
 		const row = this.#sql.exec<MessageRow>("SELECT * FROM messages WHERE id = ?", id).toArray()[0];
 		return row ? messageOut(row) : null;
@@ -683,6 +689,21 @@ export class RunStore {
 
 	deleteStart(runId: RunId): void {
 		this.#sql.exec("DELETE FROM starts WHERE run_id = ?", runId);
+	}
+
+	/** A client's key for a start (`postMessage`): the run it named, if it is younger than `since`. */
+	startKey(key: string, since: EpochMs): { run_id: string; digest: string } | null {
+		this.#sql.exec("DELETE FROM start_keys WHERE created_at < ?", since);
+		return this.#sql.exec<{ run_id: string; digest: string }>("SELECT run_id, digest FROM start_keys WHERE key = ?", key).toArray()[0] ?? null;
+	}
+
+	addStartKey(key: string, runId: RunId, digest: string): void {
+		this.#sql.exec("INSERT INTO start_keys (key, run_id, digest, created_at) VALUES (?, ?, ?, ?)", key, runId, digest, this.now());
+	}
+
+	/** A refused start's key: the same message may be sent again with it. */
+	deleteStartKeys(runId: RunId): void {
+		this.#sql.exec("DELETE FROM start_keys WHERE run_id = ?", runId);
 	}
 
 	/** A start refused after `beginRun` registered it: the Workspace must hear of it, until it has. */

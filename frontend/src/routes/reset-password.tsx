@@ -56,8 +56,8 @@ function ChooseNewPassword() {
   const form = useForm({
     defaultValues: { key: '', password: '' },
     onSubmit: async ({ value }) => {
-      const state = await reset.mutateAsync({ key: value.key.trim(), password: value.password })
-      await continueAuth(state.kind === 'authenticated' ? state : { kind: 'anonymous', pending: 'login', mfaTypes: [] })
+      // Resetting ends every session, so the way on is signing in.
+      await continueAuth(await reset.mutateAsync({ key: value.key.trim(), password: value.password }))
     },
   })
   return (

@@ -189,7 +189,7 @@ export type RefreshPlan = { kind: "invalid" } | { kind: "send"; tokenUrl: string
 const DEAD_REFRESH_TOKENS: ReadonlySet<string> = new Set(["bad_refresh_token", "invalid_grant", "invalid_refresh_token"]);
 
 /** The body as text, up to TOKEN_BODY_LIMIT bytes; null beyond it. */
-async function boundedText(response: Response): Promise<string | null> {
+export async function boundedText(response: Response): Promise<string | null> {
 	if (!response.body) return "";
 	const reader = response.body.getReader();
 	const chunks: Uint8Array[] = [];

@@ -5,21 +5,26 @@
 // Two rules hold for every route without the route asking for them, so a route added in a later step
 // cannot forget them: a declared body over 2.5 MB is 413, as the web role's ASGI wrapper answers before
 // Django today (web-api 1), and an unsafe request to a route fails closed without a valid CSRF token
-// (web-api 3.2), before the route's session check, in allauth's envelope under /api/auth/ and Ninja's
-// shape elsewhere. The only exemptions are in CHECKED_LATER: routes that check CSRF themselves, after the
-// session. test/platform/worker.test.ts sends a tokenless request to every unsafe route.
+// (web-api 3.2), before the route's session check. The exemptions: CHECKED_LATER, routes that check CSRF
+// themselves after the session; and Better Auth's one route (accounts/routes.ts AUTH_ROUTE), whose client
+// sends no token and which checks the request's origin against its trusted origins itself (only the
+// token check is skipped: the body cap and the security headers still apply). test/platform/worker.test.ts
+// sends a tokenless request to every other unsafe route.
 //
-// Later steps add their routes in their own modules (src/auth, src/api) through `routes(app)` functions
+// Later steps add their routes in their own modules (src/accounts, src/api) through `routes(app)` functions
 // called from `createApp`, and read bodies with body.ts's `readJson`.
 
 import { Hono, type MiddlewareHandler } from "hono";
 import { matchedRoutes } from "hono/route";
+import { AUTH_ROUTE, accountRoutes } from "../accounts/routes.ts";
+import { apiRoutes } from "../api/routes.ts";
 import { settings } from "../config.ts";
 import { MAX_JSON_BODY } from "./body.ts";
 import { csrfCookie } from "./cookies.ts";
 import { checkCsrf, csrfCookieToken, isSafeMethod, newCsrfToken } from "./csrf.ts";
-import { HttpError, allauthCsrfFailed, csrfFailed, json, notFound, serverError, tooLarge } from "./errors.ts";
+import { HttpError, csrfFailed, json, notFound, serverError, tooLarge } from "./errors.ts";
 import { withSecurityHeaders } from "./headers.ts";
+import { UPLOAD_ROUTE } from "./paths.ts";
 import { probe } from "./probe.ts";
 
 export interface AppEnv {
@@ -28,14 +33,13 @@ export interface AppEnv {
 
 export type App = Hono<AppEnv>;
 
-/** A path parameter that only matches a lowercase hyphenated UUID, as the API writes ids. */
-export const UUID = "{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}}";
+export { UPLOAD_ROUTE, UUID } from "./paths.ts";
 
-/** The raw upload (web-api 10.5): its body is the file, and it checks CSRF after the session. */
-export const UPLOAD_ROUTE = `/api/workspaces/:workspace${UUID}/uploads`;
-
-/** `METHOD path` of the routes that check CSRF themselves, after the session, and take bodies of their own size. */
-export const CHECKED_LATER: ReadonlySet<string> = new Set([`POST ${UPLOAD_ROUTE}`]);
+/**
+ * `METHOD path` of the routes that check CSRF themselves, after the session, and take bodies of their own
+ * size: the upload, and its other methods, which are 405 "Use POST." before anything else, as today.
+ */
+export const CHECKED_LATER: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH", "DELETE"].map((method) => `${method} ${UPLOAD_ROUTE}`));
 
 export function createApp(): App {
 	const app = new Hono<AppEnv>();
@@ -51,6 +55,9 @@ export function createApp(): App {
 		const token = csrfCookieToken(c.req.raw) ?? newCsrfToken();
 		return new Response(null, { status: 204, headers: { "Set-Cookie": csrfCookie(token, { debug }), "Cache-Control": "no-store" } });
 	});
+
+	accountRoutes(app);
+	apiRoutes(app);
 
 	app.notFound((c) => notFound(`No route for ${c.req.method} ${c.req.path}`, settings(c.env).debug));
 	app.onError((error, c) => {
@@ -72,8 +79,9 @@ const requestRules: MiddlewareHandler<AppEnv> = async (c, next) => {
 	const endpoint = matchedRoutes(c).find((route) => route.method !== "ALL");
 	const exempt = endpoint !== undefined && CHECKED_LATER.has(`${endpoint.method} ${endpoint.path}`);
 	if (!exempt && declaredTooLarge(c.req.raw)) return tooLarge();
-	if (endpoint && !exempt && !isSafeMethod(c.req.method) && checkCsrf(c.req.raw, settings(c.env).siteUrl) !== null) {
-		return c.req.path.startsWith("/api/auth/") ? allauthCsrfFailed() : csrfFailed();
+	const ownOrigins = endpoint !== undefined && endpoint.path === AUTH_ROUTE;
+	if (endpoint && !exempt && !ownOrigins && !isSafeMethod(c.req.method) && checkCsrf(c.req.raw, settings(c.env).siteUrl) !== null) {
+		return csrfFailed();
 	}
 	await next();
 };

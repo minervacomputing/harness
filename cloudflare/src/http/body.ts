@@ -23,8 +23,40 @@ export async function readJson(request: Request, limit = MAX_JSON_BODY): Promise
 	}
 }
 
+/**
+ * A body that may be absent: null when it is empty, as Ninja then validates the request as if no payload
+ * was sent (a required body is 422 `missing`, api/input.ts); otherwise as `readJson`.
+ */
+export async function readOptionalJson(request: Request, limit = MAX_JSON_BODY): Promise<{ value: Json } | null> {
+	const bytes = await readBytes(request, limit);
+	if (bytes.byteLength === 0) return null;
+	try {
+		return { value: parseJson(decode(bytes)) };
+	} catch (error) {
+		if (error instanceof HttpError) throw error;
+		throw new HttpError(unparseableBody());
+	}
+}
+
 async function readText(request: Request, limit: number): Promise<string> {
-	if (!request.body) return "";
+	return decode(await readBytes(request, limit));
+}
+
+function decode(bytes: Uint8Array): string {
+	try {
+		return new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
+	} catch {
+		throw new HttpError(unparseableBody());
+	}
+}
+
+/** The body's bytes, refused with 413 once a declared or streamed length passes `limit`. */
+export async function readBytes(request: Request, limit = MAX_JSON_BODY): Promise<Uint8Array> {
+	const declared = request.headers.get("Content-Length");
+	if (declared !== null && (!/^[0-9]+$/.test(declared.trim()) || Number(declared) > limit)) {
+		throw new HttpError(tooLarge());
+	}
+	if (!request.body) return new Uint8Array(0);
 	const reader = request.body.getReader();
 	const chunks: Uint8Array[] = [];
 	let size = 0;
@@ -44,9 +76,5 @@ async function readText(request: Request, limit: number): Promise<string> {
 		bytes.set(chunk, offset);
 		offset += chunk.byteLength;
 	}
-	try {
-		return new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
-	} catch {
-		throw new HttpError(unparseableBody());
-	}
+	return bytes;
 }

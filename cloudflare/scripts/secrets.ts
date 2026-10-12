@@ -11,6 +11,7 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { OAUTH_APPS, clientSecretNames, connectorClientSecrets } from "../src/config.ts";
 
 const TEST = process.argv.includes("--test");
 const NAME = TEST ? ".env.cloudflare-test" : ".env.cloudflare";
@@ -23,15 +24,17 @@ const REQUIRED: Record<string, () => string> = {
 	MINERVA_ENCRYPTION_KEYS: () => `v1:${randomBytes(32).toString("base64url")}=`,
 	// Signs download links; the download Worker holds it too.
 	MINERVA_DOWNLOAD_KEY: () => urlsafe(32),
+	// Makes its holder the instance's first admin, once (plan: Configuration; POST /api/setup). The operator
+	// reads it from this file; once claimed it opens nothing.
+	MINERVA_SETUP_KEY: () => urlsafe(32),
 };
 
-// Uploaded once the steps that use them declare them in cloudflare.config.ts.
+// Model keys are uploaded once the steps that use them declare them in cloudflare.config.ts. A connector
+// client (both names set) is declared and uploaded as soon as it is set; unset, its connectors are hidden.
 const PLACEHOLDERS = [
 	"MINERVA_MODEL_API_KEY",
 	"MINERVA_BRAVE_SEARCH_API_KEY",
-	...["TODOIST", "GOOGLE", "GITHUB", "NOTION", "LINEAR", "SLACK", "MICROSOFT", "HUBSPOT", "JIRA", "CONFLUENCE", "INTERCOM", "XERO", "SENTRY"].flatMap(
-		(app) => [`MINERVA_${app}_CLIENT_ID`, `MINERVA_${app}_CLIENT_SECRET`],
-	),
+	...OAUTH_APPS.flatMap((app) => clientSecretNames(app)),
 ];
 
 function urlsafe(bytes: number): string {
@@ -64,7 +67,7 @@ function generate(): void {
 		`# Secrets of the ${TEST ? "minerva-cf-test Worker" : "minerva-cf Workers"} (cloudflare/). Never commit or print them.`,
 		...[...values].map(([name, value]) => `${name}="${value}"`),
 		"",
-		"# Placeholders, uploaded once the steps that use them declare them:",
+		"# Optional: model keys (uploaded once declared) and connector clients (set both names of an app):",
 		...PLACEHOLDERS.filter((name) => !values.has(name)).map((name) => `# ${name}=`),
 	];
 	write(FILE, lines);
@@ -83,6 +86,15 @@ function check(): void {
 	const values = read(FILE);
 	const missing = Object.keys(REQUIRED).filter((name) => !values.get(name));
 	for (const name of Object.keys(REQUIRED)) console.log(`${name}: ${values.get(name) ? "set" : "missing"}`);
+	let clients: string[] = [];
+	try {
+		clients = connectorClientSecrets(Object.fromEntries(values));
+	} catch (error) {
+		console.error((error as Error).message);
+		process.exit(1);
+	}
+	const apps = OAUTH_APPS.filter((app) => clients.includes(clientSecretNames(app)[0]));
+	console.log(`Connector clients: ${apps.length ? apps.join(", ") : "none"}`);
 	if (missing.length) process.exit(1);
 }
 

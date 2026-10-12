@@ -9,9 +9,9 @@
 // The page sends the cookie's value as it is, so only that form is accepted; Django's 64-character masked
 // tokens are not (web-api spec 3.2: "the port only needs header equals cookie").
 //
-// Where the check sits among the others, and how a failure looks, depends on the route: Ninja routes
-// check it before the session (403 `CSRF check Failed`, so an anonymous unsafe request gets 403, not
-// 401), allauth routes answer with allauth's envelope, and uploads check it after the session.
+// Where the check sits among the others depends on the route: Ninja routes check it before the session
+// (403 `CSRF check Failed`, so an anonymous unsafe request gets 403, not 401), and uploads check it after
+// the session. Better Auth's routes are exempt: they check their own origin rules (http/router.ts).
 
 import { timingSafeEqual } from "../lib/hash.ts";
 import { ALPHANUMERIC, randomString } from "../lib/random.ts";

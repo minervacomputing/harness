@@ -148,4 +148,18 @@ CREATE TABLE run_snapshots (
 	{ id: 4, sql: FOLDER_SCHEMA },
 	// The revision of the folder's last byte report (files/store.ts `#report`).
 	{ id: 5, sql: FOLDER_REPORT_SCHEMA },
+	// A client's key for a message it may send again (`postMessage`, Idempotency-Key): the run it started,
+	// and a digest of the message, kept a day. Written with the start's marker; deleted with a refused start.
+	{
+		id: 6,
+		sql: `
+CREATE TABLE start_keys (
+	key TEXT PRIMARY KEY,
+	run_id TEXT NOT NULL,
+	digest TEXT NOT NULL,
+	created_at INTEGER NOT NULL
+) STRICT;
+CREATE INDEX start_keys_age ON start_keys (created_at);
+`,
+	},
 ];

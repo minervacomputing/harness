@@ -191,6 +191,22 @@ describe("the conversation index", () => {
 		expect(await h.core.listConversations(ADA)).toEqual([]);
 	});
 
+	test("ownsConversation: the caller's ready conversation only, never a deleted, foreign or unknown one", async () => {
+		const h = await harness();
+		const mine = await conversation(h, ADA);
+		const theirs = await conversation(h, GRACE);
+		expect(await h.core.ownsConversation(ADA, mine)).toBe(true);
+		expect(await h.core.ownsConversation(ADA, theirs)).toBe(false);
+		expect(await h.core.ownsConversation(ADA, "0199a000-0000-7000-8000-0000000000ff")).toBe(false);
+		h.conversations.initFails = true;
+		await expect(h.core.createConversation(ADA, await defaultAgent(h))).rejects.toThrow(/could not be reached/);
+		const [unready] = h.sql.exec<{ id: string }>("SELECT id FROM conversations WHERE ready = 0");
+		expect(await h.core.ownsConversation(ADA, unready?.id as string)).toBe(false);
+		h.conversations.initFails = false;
+		await h.core.deleteConversation(ADA, mine);
+		expect(await h.core.ownsConversation(ADA, mine)).toBe(false);
+	});
+
 	test("a conversation whose object could not be initialized is deleted again", async () => {
 		const h = await harness();
 		h.conversations.initFails = true;

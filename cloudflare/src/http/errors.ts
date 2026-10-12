@@ -1,5 +1,5 @@
-// The error shapes the frontend reads (web-api spec 4): Django Ninja's `{detail}` for the JSON API and
-// allauth's envelope for /api/auth. Every JSON response is `no-store`.
+// The error shapes the frontend reads (web-api spec 4): Django Ninja's `{detail}` for the JSON API
+// (Better Auth answers /api/auth in its own format). Every JSON response is `no-store`.
 
 import type { core } from "zod";
 
@@ -171,28 +171,4 @@ function itemCount(issue: core.$ZodIssue, value: unknown): number {
 
 function plural(count: number | bigint, noun: string): string {
 	return `${count} ${noun}${Number(count) === 1 ? "" : "s"}`;
-}
-
-// allauth's headless envelope (web-api spec 5.2): `{status, data?, meta?, errors?}`, the status repeated
-// from the HTTP status. An error without `param` is form-wide.
-
-export interface AllauthError {
-	message: string;
-	code: string;
-	param?: string;
-}
-
-export interface AllauthBody {
-	data?: unknown;
-	meta?: unknown;
-	errors?: AllauthError[];
-}
-
-export function allauth(status: number, body: AllauthBody = {}): Response {
-	return json(status, { status, ...body });
-}
-
-/** Today Django answers a failed CSRF check on allauth routes with an HTML page; the port answers this. */
-export function allauthCsrfFailed(): Response {
-	return allauth(403, { errors: [{ message: "CSRF check failed.", code: "csrf" }] });
 }

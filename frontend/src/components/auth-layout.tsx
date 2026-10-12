@@ -47,12 +47,11 @@ export function AuthLayout({ title, description, children, footer, back, backdro
   )
 }
 
-/** Sends the user to the next authentication step, or into the app once signed in. */
+/** Sends the user to the next authentication step, into the app once signed in, or to sign in when no step is left. */
 export function useContinueAuth() {
   const navigate = useNavigate()
   return (state: AuthState, next?: string) => {
     if (state.kind === 'authenticated') return navigate({ to: next && next.startsWith('/') ? next : '/' })
-    const path = pendingPath(state.pending)
-    if (path) return navigate({ to: path, search: next ? { next } : {} })
+    return navigate({ to: pendingPath(state.pending) ?? '/login', search: next ? { next } : {} })
   }
 }

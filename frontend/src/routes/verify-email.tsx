@@ -2,8 +2,10 @@ import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useState } from 'react'
 import { AuthLayout, useContinueAuth } from '@/components/auth-layout'
 import { CodeForm } from '@/components/code-form'
+import { ErrorNote } from '@/components/ui/misc'
 import { auth, useAuthStep } from '@/lib/auth'
 import { redirectIfSignedIn, validateNext } from '@/lib/guards'
+import { errorMessage } from '@/lib/http'
 
 export const Route = createFileRoute('/verify-email')({
   validateSearch: validateNext,
@@ -19,6 +21,7 @@ function VerifyEmailPage() {
   const continueAuth = useContinueAuth()
   const verify = useAuthStep(auth.verifyEmail)
   const [resent, setResent] = useState(false)
+  const [resendError, setResendError] = useState<string | null>(null)
 
   return (
     <AuthLayout
@@ -33,14 +36,25 @@ function VerifyEmailPage() {
         error={verify.error}
         onSubmit={async code => continueAuth(await verify.mutateAsync({ key: code }), next)}
         extra={
-          <button
-            type="button"
-            disabled={resent}
-            className="text-sm text-muted-foreground hover:text-foreground disabled:opacity-60"
-            onClick={async () => { await auth.resendVerification(); setResent(true) }}
-          >
-            {resent ? 'A new code is on its way.' : 'Send a new code'}
-          </button>
+          <>
+            <ErrorNote>{resendError}</ErrorNote>
+            <button
+              type="button"
+              disabled={resent}
+              className="text-sm text-muted-foreground hover:text-foreground disabled:opacity-60"
+              onClick={async () => {
+                try {
+                  await auth.resendVerification()
+                  setResendError(null)
+                  setResent(true)
+                } catch (failure) {
+                  setResendError(errorMessage(failure))
+                }
+              }}
+            >
+              {resent ? 'A new code is on its way.' : 'Send a new code'}
+            </button>
+          </>
         }
       />
     </AuthLayout>

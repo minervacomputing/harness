@@ -79,6 +79,7 @@ import { destroyRunSandbox, LocalRun } from "./local-run.ts";
 import { type ConversationPorts, type FolderPort, PORTS, type PortsContext, runStatePort, type WorkspaceClient, type WriteLedger } from "./ports.ts";
 import { ToolQueue, untilAborted } from "./queue.ts";
 import { MIGRATIONS } from "./schema.ts";
+import { KEY_REUSED, START_KEY, START_KEY_TTL_MS, messageDigest } from "./start-keys.ts";
 import { type RunRow, RunStore, type StartRow } from "./store.ts";
 import { RunStream } from "./stream.ts";
 import { connectorTool, isWrite, REPLAY_REFUSED, REPLAYS_ALLOWED, RUN_ENDED_MESSAGE, type ToolHost } from "./tools.ts";
@@ -106,6 +107,7 @@ const PI_SETTINGS: HarnessSettings = {
 /** Today's answer for a second message while a run is active (runs 3.1). */
 export const BUSY_MESSAGE = "Wait for the current answer to finish, or stop it.";
 export const EMPTY_MESSAGE = "Write a message or attach a file.";
+
 /** A watch job wakes the object this long after a run is stored, until pi has its input (plan: Attempts and recovery). */
 export const WATCH_MS = 20_000;
 /** An answer is a WorkerEvent text of at most this many characters today; a longer one failed its run. */
@@ -214,7 +216,13 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		return this.#store.events(runId, page);
 	}
 
-	async postMessage(caller: Caller, input: Required<MessageIn>): Promise<Outcome<PostedView>> {
+	/**
+	 * `key` is the client's Idempotency-Key, when it sent one: the same message sent again with it, within a
+	 * day, answers for the run the first one started (the start in flight joined, or the run stored), so a
+	 * retried request never starts a second run; another message with it is 422. A refused start forgets its
+	 * key, so the message may be sent again with it.
+	 */
+	async postMessage(caller: Caller, input: Required<MessageIn>, key: string | null = null): Promise<Outcome<PostedView>> {
 		const conversation = this.#owned(caller);
 		if (!conversation) return { ok: false, refusal: NOT_FOUND };
 		// MessageIn is validated by the Worker (20,000 characters, at most 100 UUIDs, no lone surrogate, which
@@ -223,22 +231,46 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			typeof input.content !== "string" ||
 			!input.content.isWellFormed() ||
 			!Array.isArray(input.attachments) ||
-			!input.attachments.every((id) => typeof id === "string" && isUuid(id))
+			!input.attachments.every((id) => typeof id === "string" && isUuid(id)) ||
+			(key !== null && (typeof key !== "string" || !START_KEY.test(key)))
 		) {
 			throw new TypeError("The Worker validates a message before it reaches the conversation.");
 		}
 		if (pythonStrip(input.content) === "" && input.attachments.length === 0) return { ok: false, refusal: { status: 400, detail: EMPTY_MESSAGE } };
+		const digest = key === null ? null : await messageDigest(input);
 		const runId = uuid7();
-		const accepted = await this.#store.outside(() =>
-			this.#store.write(() => {
+		const decision = await this.#store.outside(() =>
+			this.#store.write((): "start" | "busy" | "reused" | { replay: RunId } => {
+				if (key !== null) {
+					const known = this.#store.startKey(key, this.#store.now() - START_KEY_TTL_MS);
+					if (known) return known.digest === digest ? { replay: known.run_id } : "reused";
+				}
 				// A start in flight counts as an active run: its message may still be stored.
-				if (this.#store.activeRun() || this.#store.starts().length) return false;
+				if (this.#store.activeRun() || this.#store.starts().length) return "busy";
 				this.#store.addStart({ runId, userId: caller.userId, content: input.content, uploadIds: input.attachments, createdAt: this.#store.now() });
-				return true;
+				if (key !== null) this.#store.addStartKey(key, runId, digest as string);
+				return "start";
 			}),
 		);
-		if (!accepted) return { ok: false, refusal: { status: 409, detail: BUSY_MESSAGE } };
+		if (decision === "busy") return { ok: false, refusal: { status: 409, detail: BUSY_MESSAGE } };
+		if (decision === "reused") return { ok: false, refusal: { status: 422, detail: KEY_REUSED } };
+		if (decision !== "start") return this.#replay(decision.replay);
 		return this.#begin(runId);
+	}
+
+	/** A message sent again with its key: the start still in flight (its own answer), or the run it stored. */
+	async #replay(runId: RunId): Promise<Outcome<PostedView>> {
+		if (this.#store.start(runId)) return this.#begin(runId);
+		const run = this.#store.run(runId);
+		const message = run ? this.#store.runMessage(runId) : null;
+		if (!run || !message) return { ok: false, refusal: NOT_FOUND };
+		return { ok: true, value: this.#posted(message, run) };
+	}
+
+	/** The answer to a posted message: the message and its run, with the run's first page of events. */
+	#posted(message: MessageOut, run: RunRow): PostedView {
+		const { eventSeq, ...view } = this.#store.runHead(run);
+		return { message, run: { ...view, events: this.#store.events(run.id, { after: 0, upTo: eventSeq, limit: 1000 }) } };
 	}
 
 	async cancelRun(caller: Caller, runId: RunId): Promise<RunHead | null> {
@@ -411,15 +443,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		this.#touchIndex();
 		const run = this.#store.run(runId) as RunRow;
 		if (ACTIVE.has(run.status)) this.#defer(() => this.#activate(runId));
-		const head = this.#store.runHead(run);
-		const { eventSeq, ...view } = head;
-		return {
-			ok: true,
-			value: {
-				message: this.#store.message(stored) as MessageOut,
-				run: { ...view, events: this.#store.events(runId, { after: 0, upTo: eventSeq, limit: 1000 }) },
-			},
-		};
+		return { ok: true, value: this.#posted(this.#store.message(stored) as MessageOut, run) };
 	}
 
 	/** A refused start: its marker deleted and its registration released in one write, the release retried until heard. */
@@ -427,6 +451,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		await this.#store.outside(() =>
 			this.#store.write(() => {
 				this.#store.deleteStart(runId);
+				this.#store.deleteStartKeys(runId);
 				this.#store.addRelease(runId);
 			}),
 		);

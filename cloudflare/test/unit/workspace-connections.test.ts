@@ -7,7 +7,7 @@ import { describe, expect, test } from "vitest";
 import { resourceKey } from "../../src/gateway/grants.ts";
 import { ALREADY_CONNECTED, NOT_FOUND, NOT_YOURS, UNKNOWN_PROVIDER } from "../../src/workspace/core.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
-import { ADA, GRACE, OTHER, USER, column, connectMixed, credentials, grant, harness, setCredentials } from "./workspace-support.ts";
+import { ADA, GRACE, OTHER, USER, accessOf, column, connectMixed, credentials, grant, harness, setCredentials } from "./workspace-support.ts";
 
 const names = (...pairs: [string, string][]) => Object.fromEntries(pairs.map(([id, name]) => [resourceKey("folder", id), name]));
 
@@ -23,7 +23,7 @@ describe("saving connections", () => {
 		expect(column(h, id, "generation")).toBe(2);
 		expect((await credentials(h, id)).access_token).toBe("a2");
 		// A fresh authorize of a connected account keeps its grants.
-		expect((await h.core.getAccess(ADA, id))?.grants).toEqual([{ kind: "folder", id: "inbox", name: null, actions: ["read"] }]);
+		expect(accessOf(await h.core.getAccess(ADA, id)).grants).toEqual([{ kind: "folder", id: "inbox", name: null, actions: ["read"] }]);
 	});
 
 	test("an account connected by someone else in the workspace is refused", async () => {
@@ -171,7 +171,7 @@ describe("access settings", () => {
 	test("access lists the kinds and actions, and the user's grants sorted", async () => {
 		const h = await harness();
 		const id = await connectMixed(h, {});
-		const access = await h.core.getAccess(ADA, id);
+		const access = accessOf(await h.core.getAccess(ADA, id));
 		expect(access?.grants).toEqual([]);
 		expect(access?.kinds).toEqual([
 			{ id: "folder", label: "Folder", actions: ["read", "create"], wildcard: true, hierarchical: false, note: null, listed: true, browsable: false },
@@ -182,7 +182,7 @@ describe("access settings", () => {
 			{ id: "create", label: "Create", requires: "read" },
 		]);
 		expect(h.server.calls).toEqual([]);
-		expect(await h.core.getAccess(GRACE, id)).toBeNull();
+		expect(await h.core.getAccess(GRACE, id)).toEqual({ ok: false, refusal: { status: 404, detail: "Not found." } });
 	});
 
 	test("invalid changes are refused, all or nothing (test_api)", async () => {

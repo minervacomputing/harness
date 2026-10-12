@@ -1,7 +1,7 @@
 // The test build's Worker (cloudflare.config.ts, modes `faults` and `test`): the same Worker as
 // src/index.ts, plus the fake Notes connector and its provider (connector.ts, provider.ts), fault points in
-// the Conversation's and the Workspace's ports (ports.ts, plan.ts), and a token-gated driver at
-// /api/faults/ for the account tests (routes.ts). It is deployed only as minerva-cf-test; the production
+// the Conversation's and the Workspace's ports (ports.ts, plan.ts), a mailbox that keeps the emails it
+// would send (mailbox.ts), and a token-gated driver at /api/faults/ for the account tests (routes.ts). It is deployed only as minerva-cf-test; the production
 // build's entry is src/index.ts, which imports nothing from here (a unit test checks it), so none of this
 // is in minerva-cf.
 
@@ -14,14 +14,25 @@ import { SCRIPT_TIMEOUT_MS } from "../scripts/limits.ts";
 import { SCRIPT_CLOCK } from "../scripts/run.ts";
 import type { RunId } from "../contracts/common.ts";
 import { Workspace as BaseWorkspace, WORKSPACE_PORTS } from "../workspace/workspace.ts";
+import { FLOW_CLIENTS } from "../api/oauth-clients.ts";
+import { MAIL_TRANSPORT } from "../accounts/emails.ts";
+import { PROVIDER_NETWORK } from "../api/providers.ts";
 import { notesConnector } from "./connector.ts";
+import { captureEmail } from "./mailbox.ts";
 import { type Fault, type Fired, planOf } from "./plan.ts";
-import { executorContextOf, faultConversationPorts, faultWorkspacePorts } from "./ports.ts";
+import { executorContextOf, faultConversationPorts, faultFlowClients, faultWorkspacePorts, providerFetch } from "./ports.ts";
 import { faultRoutes } from "./routes.ts";
 
 CONNECTOR_SOURCE.connectors = () => [...CONNECTORS, notesConnector()];
 PORTS.factory = () => faultConversationPorts(defaultPorts);
 WORKSPACE_PORTS.factory = (deps, ctx, env) => faultWorkspacePorts(deps, ctx, env);
+// The settings pages' provider calls (src/api/providers.ts) reach the fake provider too, and nothing else.
+PROVIDER_NETWORK.fetch = (env, workspace) => providerFetch(env, workspace.id);
+// Notes is listed and connects through OAuth with its fake provider's client (src/api/flows.ts).
+const flowClients = FLOW_CLIENTS.of;
+FLOW_CLIENTS.of = (env) => faultFlowClients(flowClients(env));
+// Emails go to the mailbox the driver reads, never out (the build has no Email Sending binding).
+MAIL_TRANSPORT.send = captureEmail;
 
 /** What a test reads of a run besides its API view: attempts, the ledger and pi's executions. */
 export interface RunInternals {
@@ -136,6 +147,7 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 export { FaultProvider } from "./provider.ts";
+export { FaultMailbox } from "./mailbox.ts";
 // The Sandbox with the fault seams of the plan's Sandbox row (sandbox.ts), under production's export name.
 export { FaultSandbox as Sandbox } from "./sandbox.ts";
 export { Scripts } from "../scripts/scripts.ts";

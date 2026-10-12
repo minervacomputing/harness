@@ -10,7 +10,9 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
-    // The SPA and the API share one origin, so session cookies and CSRF work as in production.
-    proxy: { '/api': { target: 'http://127.0.0.1:8000', changeOrigin: false } },
+    // The SPA and the API share one origin, so session cookies and CSRF work as in production. The Worker
+    // checks the Origin header of Better Auth's requests against MINERVA_SITE_URL (this server's origin by
+    // default), so the proxy must pass it on unchanged.
+    proxy: { '/api': { target: process.env.MINERVA_API_URL ?? 'http://127.0.0.1:8787', changeOrigin: false } },
   },
 })

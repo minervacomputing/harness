@@ -24,7 +24,7 @@ import { htmlToText } from "../../src/lib/markdown.ts";
 import { ancestors, canonicalHost, choices, name, parseUrl, validId } from "../../src/lib/sites.ts";
 import { FakeWeb, PUBLIC, type Served, privateAddress, stalled, trickle } from "../fixtures/connectors/web/fake.ts";
 import { Scenario, userGrants } from "./executor-fakes.ts";
-import { ADA, GRACE, harness } from "./workspace-support.ts";
+import { ADA, GRACE, accessOf, harness } from "./workspace-support.ts";
 
 const WEB: ConnectionId = "0199a000-0000-7000-8000-0000000000f1";
 const registry = await Registry.create([webConnector({ braveKey: () => "test-key" })]);
@@ -500,7 +500,7 @@ describe("settings", () => {
 		const enabled = await h.core.enableBuiltin(ADA, "web");
 		if (!enabled.ok) throw new Error("not enabled");
 		const id = enabled.value.id;
-		const access = await h.core.getAccess(ADA, id);
+		const access = accessOf(await h.core.getAccess(ADA, id));
 		const site = access?.kinds.find((kind) => kind.id === "site");
 		expect(site?.listed).toBe(false);
 		expect(site?.note).toBeTruthy();
@@ -527,7 +527,7 @@ describe("settings", () => {
 		expect((await change("*.python.org")).ok).toBe(true);
 		expect(await change("*.python.org", "site", ["search"])).toMatchObject({ ok: false, refusal: { status: 422 } });
 		expect((await change(id, "account", ["search"])).ok).toBe(true);
-		const grants = (await h.core.getAccess(ADA, id))?.grants.map((grant) => [grant.kind, grant.id, grant.actions]);
+		const grants = accessOf(await h.core.getAccess(ADA, id)).grants.map((grant) => [grant.kind, grant.id, grant.actions]);
 		expect(grants).toEqual(
 			expect.arrayContaining([
 				["site", "*.python.org", ["read"]],

@@ -6,7 +6,8 @@
 
 import { expect } from "vitest";
 import { z } from "zod";
-import type { Caller, ConversationId, RunId, UserId } from "../../src/contracts/common.ts";
+import type { AccessOut } from "../../src/contracts/api.ts";
+import type { Caller, ConversationId, Outcome, RunId, UserId } from "../../src/contracts/common.ts";
 import type { Connector, Prepared } from "../../src/contracts/connectors.ts";
 import type { CancelAck, ConversationInit } from "../../src/contracts/conversation.ts";
 import type { CancelReason } from "../../src/contracts/runs.ts";
@@ -311,6 +312,12 @@ export async function harness(options: { settings?: Partial<WorkspaceSettings>; 
 }
 
 /** The connection's decrypted credentials, as stored. */
+/** The access of an answer that must have one. */
+export function accessOf(outcome: Outcome<AccessOut>): AccessOut {
+	if (!outcome.ok) throw new Error(`No access: ${outcome.refusal.status} ${outcome.refusal.detail}`);
+	return outcome.value;
+}
+
 export async function credentials(h: Harness, connectionId: string): Promise<JsonObject> {
 	const row = h.sql.exec<{ ciphertext: string; key_version: string }>("SELECT ciphertext, key_version FROM connections WHERE id = ?", connectionId)[0];
 	if (!row) throw new Error("No such connection.");

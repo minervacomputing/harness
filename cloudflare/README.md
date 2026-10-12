@@ -21,7 +21,7 @@ The experiment of [docs/plans/cloudflare.md](../docs/plans/cloudflare.md): the s
 | `src/scripts/` | Code mode: `run_script` in the `minerva` extension, the Scripts Durable Object that loads each script as a Dynamic Worker, the guest's prelude, the conversation's side of a script (wall clock, caps, the reset after every script) |
 | `src/faults/` | The test build only: a fake connector and its provider object, fault points, the account tests' driver, and the sandbox lab (`lab.ts`, `sandbox.ts`: production's Sandbox object with fault seams, behind the driver) (below) |
 | `src/addressing.ts` | The one map from a workspace (id, jurisdiction) to its objects and its bucket |
-| `test/` | `unit/`, `platform/` (with the end-to-end fault tests, `protocols.test.ts`), `account/` (`deployed.test.ts` for `minerva-cf`; `faults.test.ts`, `sandbox.test.ts` and `turns.test.ts` for the test Worker; `scripts.test.ts` for the code mode lab), and `fixtures/` with the Python vectors |
+| `test/` | `unit/`, `platform/` (with the end-to-end fault tests, `protocols.test.ts`, and `frontend-auth.test.ts`, which runs the frontend's auth client, `frontend/src/lib/auth.ts`, against the Worker), `account/` (`deployed.test.ts` for `minerva-cf`; `faults.test.ts`, `sandbox.test.ts` and `turns.test.ts` for the test Worker; `scripts.test.ts` for the code mode lab), and `fixtures/` with the Python vectors |
 
 ## Setup
 
@@ -100,6 +100,8 @@ pnpm test:faults       # about 10 minutes, one file at a time (a memory-limit re
 ```
 
 `MINERVA_SBX_TIMINGS=<file>` and `MINERVA_TURN_TIMINGS=<file>` make the sandbox and turn tests write their timings as JSON. `pnpm test:faults` does not run code mode's rows (`scripts.test.ts`); they need the lab Worker below.
+
+It sends no email: the test build has no Email Sending binding, and its emails go to a `FaultMailbox` object (`src/faults/mailbox.ts`, the newest 500) that the driver reads and empties (`emails`, `emails-clear`). `test/account/browser.test.ts`, run by `pnpm test:account` after `deploy:test` (about 90 s), drives the frontend the test Worker serves in headless Google Chrome (`playwright-core`, `channel: "chrome"`): sign-up with the emailed code, the first-run setup, sign-in by password, with TOTP and by emailed code, a password reset, an agent, the fake Notes connection, a chat turn with the fake model that writes a file, its download, a Workers AI turn and sign-out, failing on console errors, uncaught exceptions, failed requests and unexpected statuses. The driver stands in for the fake provider's consent page (`provider-authorize`) and for the download origin (`download`, files-worker's handler over the test Worker's buckets). It is skipped without Chrome or the test Worker's settings; `MINERVA_BROWSER_SHOTS=<dir>` keeps a screenshot of each step, and of a failure with what the page showed and its last requests.
 
 Keep it deployed for later steps. Never deploy the test build as `minerva-cf`, and never write its origin into tracked files.
 

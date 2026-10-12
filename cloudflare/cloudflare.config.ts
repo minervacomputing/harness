@@ -1,7 +1,8 @@
 import { bindings, defineConfig, defineContainer, exports } from "cf/config";
 import * as faultsEntrypoint from "./src/faults/index.ts" with { type: "cf-worker" };
 import * as entrypoint from "./src/index.ts" with { type: "cf-worker" };
-import { checkBuild, parse, type SettingsEnv } from "./src/config.ts";
+import { parseFrom } from "./src/accounts/emails.ts";
+import { checkBuild, connectorClientSecrets, parse, type SettingsEnv } from "./src/config.ts";
 
 const NAME = "minerva-cf";
 
@@ -30,12 +31,14 @@ interface Target {
 	filesEu: string;
 	/** The settings file of a deployed build; null reads the environment. */
 	vars: URL | null;
+	/** The secrets file `cf deploy --secrets-file` uploads, for a deployed build; null reads the environment. */
+	secrets: URL | null;
 	faults: boolean;
 }
 
 function targetFor(mode: string | undefined): Target {
 	const own = { name: NAME, d1: "minerva-cf", files: "minerva-cf-files", filesEu: "minerva-cf-files-eu" };
-	if (mode === "production") return { ...own, vars: new URL("../.env.cloudflare.vars", here), faults: false };
+	if (mode === "production") return { ...own, vars: new URL("../.env.cloudflare.vars", here), secrets: new URL("../.env.cloudflare", here), faults: false };
 	if (mode === "faults") {
 		return {
 			name: "minerva-cf-test",
@@ -43,6 +46,7 @@ function targetFor(mode: string | undefined): Target {
 			files: "minerva-cf-test-files",
 			filesEu: "minerva-cf-test-files-eu",
 			vars: new URL("../.env.cloudflare-test.vars", here),
+			secrets: new URL("../.env.cloudflare-test", here),
 			faults: true,
 		};
 	}
@@ -51,9 +55,9 @@ function targetFor(mode: string | undefined): Target {
 		// production's, so even a deploy in this mode could not put the fault code in minerva-cf.
 		if (build.env.VITEST !== "true") throw new Error("Mode test is the platform tests' (vitest); deploy the test build with mode faults.");
 		const local = "minerva-cf-local";
-		return { name: local, d1: local, files: `${local}-files`, filesEu: `${local}-files-eu`, vars: null, faults: true };
+		return { name: local, d1: local, files: `${local}-files`, filesEu: `${local}-files-eu`, vars: null, secrets: null, faults: true };
 	}
-	return { ...own, vars: null, faults: false };
+	return { ...own, vars: null, secrets: null, faults: false };
 }
 interface BuildProcess {
 	env: Record<string, string | undefined>;
@@ -95,6 +99,24 @@ function deployedVars(file: URL): Record<string, string | undefined> {
 		throw new Error(`A deployed build reads its settings from ../${name}, which is missing (cloudflare/README.md).`);
 	}
 	return build.getBuiltinModule("node:util").parseEnv(text);
+}
+
+/**
+ * The connector clients the operator configured, declared so the deploy uploads them (src/config.ts
+ * `connectorClientSecrets`): read by name from the deployed build's secrets file (a missing file declares
+ * none; `pnpm run deploy` checks it first), or from the environment. Values are never read here.
+ */
+function connectorSecrets(target: Target) {
+	let source: Record<string, string | undefined> = build.env;
+	if (target.secrets) {
+		try {
+			source = build.getBuiltinModule("node:util").parseEnv(build.getBuiltinModule("node:fs").readFileSync(target.secrets, "utf8"));
+		} catch (error) {
+			if ((error as { code?: string }).code !== "ENOENT") throw error;
+			source = {};
+		}
+	}
+	return Object.fromEntries(connectorClientSecrets(source).map((name) => [name, bindings.secret()]));
 }
 
 function settingsFor(target: Target): SettingsEnv {
@@ -155,8 +177,16 @@ export default defineConfig(({ mode }) => {
 				WORKSPACE: bindings.durableObject({ worker: target.name, exportName: "Workspace" }),
 				CONVERSATION: bindings.durableObject({ worker: target.name, exportName: "Conversation" }),
 				SCRIPTS: bindings.durableObject({ worker: target.name, exportName: "Scripts" }),
-				// The test build's fake provider (src/faults/provider.ts).
-				...(target.faults ? { FAULT_PROVIDER: bindings.durableObject({ worker: target.name, exportName: "FaultProvider" }) } : {}),
+				// The test build's fake provider (src/faults/provider.ts) and the mailbox that keeps its emails (mailbox.ts).
+				...(target.faults
+					? {
+							FAULT_PROVIDER: bindings.durableObject({ worker: target.name, exportName: "FaultProvider" }),
+							FAULT_MAILBOX: bindings.durableObject({ worker: target.name, exportName: "FaultMailbox" }),
+						}
+					: {}),
+				// Sign-up and sign-in codes (src/accounts/emails.ts), sent from MINERVA_EMAIL_FROM's address only. The
+				// test build has none: its emails go to its mailbox, or to the log in the platform tests (debug on).
+				...(target.faults ? {} : { EMAIL: bindings.sendEmail({ allowedSenderAddresses: [parseFrom(values.MINERVA_EMAIL_FROM).email] }) }),
 				// A container class cannot be bound by its own Worker's name, so the Sandbox is reached through
 				// ctx.exports.Sandbox instead of a binding (src/addressing.ts).
 
@@ -183,19 +213,23 @@ export default defineConfig(({ mode }) => {
 				MINERVA_FILES_MESSAGE_ATTACHMENTS: setting("MINERVA_FILES_MESSAGE_ATTACHMENTS"),
 
 				// Uploaded from ../.env.cloudflare by `pnpm run deploy`. A declared secret is required, so model
-				// keys and connector clients (MINERVA_MODEL_API_KEY, MINERVA_BRAVE_SEARCH_API_KEY,
-				// MINERVA_<APP>_CLIENT_ID and _SECRET) join this list in the steps that use them; until then they
-				// are commented-out placeholders in that file.
+				// keys (MINERVA_MODEL_API_KEY, MINERVA_BRAVE_SEARCH_API_KEY) join this list in the steps that use
+				// them; until then they are commented-out placeholders in that file. MINERVA_SETUP_KEY claims the
+				// instance's first admin, once (src/accounts/instance.ts).
 				MINERVA_SECRET_KEY: bindings.secret(),
 				MINERVA_ENCRYPTION_KEYS: bindings.secret(),
 				MINERVA_DOWNLOAD_KEY: bindings.secret(),
+				MINERVA_SETUP_KEY: bindings.secret(),
+				// Connector clients (MINERVA_<APP>_CLIENT_ID and _SECRET), only those the operator set: an unset
+				// one hides its connectors, as today.
+				...connectorSecrets(target),
 			},
 			exports: {
 				Workspace: exports.durableObject({ storage: "sqlite" }),
 				Conversation: exports.durableObject({ storage: "sqlite" }),
 				Scripts: exports.durableObject({ storage: "sqlite" }),
 				Sandbox: container ? exports.durableObject({ storage: "sqlite", container }) : exports.durableObject({ storage: "sqlite" }),
-				...(target.faults ? { FaultProvider: exports.durableObject({ storage: "sqlite" }) } : {}),
+				...(target.faults ? { FaultProvider: exports.durableObject({ storage: "sqlite" }), FaultMailbox: exports.durableObject({ storage: "sqlite" }) } : {}),
 			},
 		},
 	};

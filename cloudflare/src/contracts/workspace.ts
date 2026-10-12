@@ -115,6 +115,14 @@ export interface SaveConnectionInput {
 	connectionId: ConnectionId | null;
 }
 
+/** A connection's provider account and owner (null: shared), as `connectionAccount` answers. */
+export interface ConnectionAccount {
+	provider: string;
+	accountId: string;
+	label: string;
+	ownerId: UserId | null;
+}
+
 /**
  * The Workspace Durable Object's RPC surface. `Caller` is the Worker's verified user and role; every
  * refusal is `{status, detail}` with today's wording (web-api 8.3 to 8.5, connectors 13).
@@ -151,7 +159,12 @@ export interface WorkspaceApi {
 	saveConnection(caller: Caller, input: SaveConnectionInput): Promise<Outcome<ConnectionOut>>;
 	/** 403 for a shared connection and a non-admin; revokes the caller's runs (`connection_removed`). */
 	deleteConnection(caller: Caller, connectionId: ConnectionId): Promise<Outcome<{ revocation: Revocation }>>;
-	getAccess(caller: Caller, connectionId: ConnectionId): Promise<AccessOut | null>;
+	/**
+	 * `_usable`, then the caller's access: 404 "Not Found" when the connection does not exist, "Not found."
+	 * when it is another user's personal one. Never calls the provider. The Worker reads a connection's
+	 * provider, owner and the caller's grants from this before every settings request (web-api 8.5).
+	 */
+	getAccess(caller: Caller, connectionId: ConnectionId): Promise<Outcome<AccessOut>>;
 	/**
 	 * All or nothing, after `checkChanges` and the provider's `describe` of new concrete grants (names
 	 * given, keyed by gateway/grants.ts `resourceKey(kind, id)`), then `planGrantChanges`. 422 with
@@ -166,6 +179,12 @@ export interface WorkspaceApi {
 	): Promise<Outcome<{ access: AccessOut; revocation: Revocation }>>;
 	/** The actions allowed on a connection: the caller's, or every member's for a shared one (reconnect scopes). */
 	allowedActions(caller: Caller, connectionId: ConnectionId): Promise<string[] | null>;
+	/**
+	 * The provider account behind a connection and whose connection it is, for an OAuth flow (web-api 9):
+	 * `login_hint` on a reconnect and the callback's checks, which tell another user's connection apart from
+	 * one that is gone. Null when the connection does not exist.
+	 */
+	connectionAccount(connectionId: ConnectionId): Promise<ConnectionAccount | null>;
 
 	/**
 	 * Credentials for one provider call, refreshed first when they expire within 120 s (single-flight per
@@ -214,6 +233,12 @@ export interface WorkspaceApi {
 	createConversation(caller: Caller, agentId: AgentId): Promise<Outcome<ConversationOut>>;
 	/** The caller's, newest `updated_at` first, at most 100. */
 	listConversations(caller: Caller): Promise<ConversationOut[]>;
+	/**
+	 * Whether the conversation is in this workspace's index, ready, not deleted and the caller's: the Worker
+	 * asks before it addresses a Conversation Durable Object by an id from the URL (addressing.ts), so an id
+	 * from another workspace, another user's, or none at all is 404 without reaching (or creating) an object.
+	 */
+	ownsConversation(caller: Caller, conversationId: ConversationId): Promise<boolean>;
 	/** Written by the Conversation Durable Object when its title or `updated_at` changes. */
 	conversationTouched(conversationId: ConversationId, change: { title: string; updatedAt: EpochMs }): Promise<void>;
 	/**

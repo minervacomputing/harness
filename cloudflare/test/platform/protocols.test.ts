@@ -323,7 +323,7 @@ describe("start and revocation", () => {
 		await expect(w.ws.applyGrantChanges(CALLER, w.connectionId, READ_ONLY, {})).rejects.toThrow();
 		// The change was saved in the transaction that wrote the cancel.
 		const access = await w.ws.getAccess(CALLER, w.connectionId);
-		expect(access?.grants.map((grant) => grant.actions)).toEqual([["read"]]);
+		expect(access.ok && access.value.grants.map((grant) => grant.actions)).toEqual([["read"]]);
 		await until(async () => {
 			await runDurableObjectAlarm(w.ws).catch(() => false);
 			return (await w.conversation.getRun(CALLER, runId)) as RunHead;

@@ -7,11 +7,6 @@ export function isoTime(ms: number): string {
 	return new Date(ms).toISOString();
 }
 
-/** Seconds since the epoch as a float, as allauth writes `at` in authentication records. */
-export function epochSeconds(ms: number): number {
-	return ms / 1000;
-}
-
 /** `Monday, 2026-10-10 14:03`, the run's start in the instructions' "The run started on … UTC." (runs spec 3.4). */
 export function runStartLabel(ms: number): string {
 	const date = new Date(ms);

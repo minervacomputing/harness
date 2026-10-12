@@ -358,6 +358,46 @@ describe("starting a run", () => {
 		expect(head?.messages.filter((item) => item.role === "user").length).toBe(1);
 	});
 
+	test("a message sent again with its key answers for the same run: joined in flight, stored, never a second run", async () => {
+		const { stub, fakes } = await conversation();
+		let release = () => {};
+		fakes.workspace.hold = new Promise<void>((resolve) => (release = resolve));
+		const content = scripted({ turns: [{ text: "Once." }] });
+		const first = stub.postMessage(CALLER, { content, attachments: [] }, "retry-1");
+		await until(async () => fakes.workspace.begun.length, (n) => n === 1);
+		// While the first start is in flight: the same start's answer, not a 409.
+		const second = stub.postMessage(CALLER, { content, attachments: [] }, "retry-1");
+		expect(await stub.postMessage(CALLER, { content: "Something else", attachments: [] }, "retry-1")).toEqual({
+			ok: false,
+			refusal: { status: 422, detail: "This Idempotency-Key was used for a different message." },
+		});
+		release();
+		const [a, b] = await Promise.all([first, second]);
+		if (!a.ok || !b.ok) throw new Error("Refused");
+		expect([b.value.run.id, b.value.message.id]).toEqual([a.value.run.id, a.value.message.id]);
+		await settled(stub, a.value.run.id);
+		// Stored: the stored message and run, as they are now.
+		const third = await stub.postMessage(CALLER, { content, attachments: [] }, "retry-1");
+		expect(third.ok && [third.value.run.id, third.value.message.id, third.value.run.status]).toEqual([a.value.run.id, a.value.message.id, "completed"]);
+		expect(fakes.workspace.begun.length).toBe(1);
+		const head = await stub.getConversation(CALLER);
+		expect([head?.messages.filter((item) => item.role === "user").length, head?.runs.length]).toEqual([1, 1]);
+		// Another key is another message.
+		const next = await stub.postMessage(CALLER, { content, attachments: [] }, "retry-2");
+		expect(next.ok && next.value.run.id).not.toBe(a.value.run.id);
+		if (next.ok) await settled(stub, next.value.run.id);
+	});
+
+	test("a refused start forgets its key, so the message may be sent again with it", async () => {
+		const { stub, fakes } = await conversation();
+		fakes.workspace.answer = () => ({ ok: false, refusal: { status: 404, detail: "Not Found" } });
+		expect(await stub.postMessage(CALLER, { content: "Hi", attachments: [] }, "k")).toEqual({ ok: false, refusal: { status: 404, detail: "Not Found" } });
+		fakes.workspace.answer = (input) => ({ ok: true, value: { snapshot: fakes.workspace.snapshot(input), uploads: [] } });
+		const again = await stub.postMessage(CALLER, { content: "Hi", attachments: [] }, "k");
+		expect(again.ok).toBe(true);
+		if (again.ok) await settled(stub, again.value.run.id);
+	});
+
 	test("another user's conversation and runs are not found", async () => {
 		const { stub } = await conversation();
 		const runId = await posted(stub, "Mine");

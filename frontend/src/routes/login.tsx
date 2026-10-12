@@ -45,7 +45,15 @@ function LoginPage() {
         className="grid gap-4"
         onSubmit={submitForm(form)}
       >
-        <form.Field name="email" validators={{ onBlur: ({ value }) => (!value.includes('@') ? 'Enter your email address.' : undefined) }}>
+        {/* An empty field is not flagged on blur: the message would push the links below it down mid-click
+            ("Sign in with a code", "Forgot password?"), and the click would be lost. Submitting still checks it. */}
+        <form.Field
+          name="email"
+          validators={{
+            onBlur: ({ value }) => (value && !value.includes('@') ? 'Enter your email address.' : undefined),
+            onSubmit: ({ value }) => (!value.includes('@') ? 'Enter your email address.' : undefined),
+          }}
+        >
           {field => <TextField field={field} label="Email" type="email" autoComplete="email" autoFocus serverError={fields.email} />}
         </form.Field>
         {mode === 'password' && (
