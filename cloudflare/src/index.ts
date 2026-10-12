@@ -15,5 +15,5 @@ export default {
 
 export { Conversation } from "./conversation/conversation.ts";
 export { Sandbox } from "./sandbox/sandbox.ts";
-export { ScriptHost, Scripts } from "./scripts/scripts.ts";
+export { Scripts } from "./scripts/scripts.ts";
 export { Workspace } from "./workspace/workspace.ts";

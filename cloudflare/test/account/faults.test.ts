@@ -11,8 +11,14 @@
 // - a revocation during a run;
 // - a write applied then its response lost, and a crash while it is dispatched;
 // - a crash during a rotating refresh;
-// - one smoke run with Workers AI and the fake connector's tool.
+// - one smoke run with Workers AI and the fake connector's tool;
+// - the local tools in the conversation's real container (plan: Checkpoints; the Checkpoints and Files
+//   rows): write, edit, Python through bash and read, published with the run; a detached writer, a FIFO and
+//   a symlink; an attachment read by a command, and five of 50 MiB (the folder's limit) copied, hydrated
+//   and kept in the version; crashes between a checkpoint's upload, record, release and
+//   pi's commit, and a memory-limit reset during a checkpoint; the container destroyed at the run's end.
 //
+// The sandbox itself (hardening, the probe, pi's conformance suite, the Sandbox row) is in sandbox.test.ts.
 // Run with `pnpm test:faults` after `pnpm run deploy:test`; never against minerva-cf.
 
 import { describe, expect, test } from "vitest";
@@ -282,6 +288,138 @@ describe.concurrent("attempts on the platform", () => {
 	});
 });
 
+type LocalCard = { tool: string; summary: string; ok: boolean; excerpt: string };
+type Head = { status: string; result_version_id: string | null; folder_changes: { added?: { path: string; size: number }[] } | null; folder_warnings: { total: number; items: { path: string; reason: string }[] } | null };
+
+const local = (name: string, args: { [key: string]: unknown }): Turn => ({ tools: [{ name, arguments: args }] });
+const sh = (command: string): Turn => local("bash", { command });
+
+function cards(events: RunEvent[]): LocalCard[] {
+	return events.filter((event) => event.type === "local_tool").map((event) => event.data as unknown as LocalCard);
+}
+
+function headOf(view: RunView): Head {
+	return view.head as unknown as Head;
+}
+
+/** Waits until the conversation's container is gone (the run's end destroys it). */
+async function destroyed(w: World, timeoutMs = 120_000): Promise<number> {
+	const started = Date.now();
+	for (;;) {
+		const answer = await driver<{ status: { state: string }; running: boolean }>("conversation-sandbox", base(w));
+		if (answer.status.state === "none" && !answer.running) return Date.now() - started;
+		if (Date.now() - started > timeoutMs) throw new Error(`The container was not destroyed: ${JSON.stringify(answer)}`);
+		await sleep(2000);
+	}
+}
+
+describe.concurrent("the local tools in the container", () => {
+	test("write, edit, Python through bash and read: held until saved, carded, and the folder published with the run", async () => {
+		const w = await world();
+		const runId = await post(
+			w,
+			script([
+				local("write", { path: "notes.txt", content: "apples 3\n" }),
+				local("edit", { path: "notes.txt", edits: [{ oldText: "3", newText: "4" }] }),
+				sh("python3 -c \"open('py.txt', 'w').write('from python\\n')\" && cat notes.txt py.txt"),
+				local("read", { path: "py.txt" }),
+				{ text: "Done." },
+			]),
+		);
+		const view = await settled(w, runId);
+		const head = headOf(view);
+		expect(head.status).toBe("completed");
+		expect(cards(view.events)).toEqual([
+			{ tool: "write", summary: "notes.txt", ok: true, excerpt: "Successfully wrote to notes.txt" },
+			{ tool: "edit", summary: "notes.txt", ok: true, excerpt: "Successfully replaced 1 block(s) in notes.txt." },
+			{ tool: "bash", summary: expect.stringContaining("python3"), ok: true, excerpt: "apples 4\nfrom python\n" },
+			{ tool: "read", summary: "py.txt", ok: true, excerpt: "from python\n" },
+		]);
+		expect(head.folder_changes?.added?.map((file) => file.path).sort()).toEqual(["notes.txt", "py.txt"]);
+		const folder = await driver<{ version_id: string; files: { path: string }[] }>("files", base(w));
+		expect(folder.version_id).toBe(head.result_version_id);
+		const file = await driver<{ text: string | null }>("file", { ...base(w), path: "py.txt" });
+		expect(file.text).toBe("from python\n");
+		const destroyMs = await destroyed(w);
+		console.info(`local tools: ${view.seconds} s for the turn, container gone ${destroyMs} ms after`);
+
+		// The next turn's container starts from the published folder.
+		const next = await settled(w, await post(w, script([sh("cat notes.txt"), { text: "Read." }])));
+		expect(cards(next.events)).toEqual([{ tool: "bash", summary: "cat notes.txt", ok: true, excerpt: "apples 4\n" }]);
+		console.info(`second turn with hydration: ${next.seconds} s`);
+	});
+
+	test("a detached writer dies at the checkpoint; a FIFO and a symlink are reported with the run", async () => {
+		const w = await world();
+		const runId = await post(
+			w,
+			script([
+				sh("setsid sh -c 'while :; do echo x >> log.txt; sleep 0.05; done' > /dev/null 2>&1 & mkfifo pipe; ln -s /etc etc; sleep 1; echo started"),
+				sh("a=$(wc -c < log.txt); sleep 2; b=$(wc -c < log.txt); [ \"$a\" = \"$b\" ] && echo still"),
+				{ text: "Done." },
+			]),
+		);
+		const view = await settled(w, runId);
+		const head = headOf(view);
+		expect(head.status).toBe("completed");
+		expect(cards(view.events).map((card) => [card.ok, card.excerpt])).toEqual([
+			[true, "started\n"],
+			[true, "still\n"],
+		]);
+		expect(head.folder_warnings).toEqual({ total: 2, items: [{ path: "etc", reason: "symlink" }, { path: "pipe", reason: "special" }] });
+		expect(head.folder_changes?.added?.map((file) => file.path)).toEqual(["log.txt"]);
+	});
+
+	test("an attachment is in the folder for the agent's commands", async () => {
+		const w = await world();
+		const upload = await driver<{ ok: boolean; value: { id: string } }>("upload", { workspace: w.workspace, userId: USER, name: "data.csv", text: "a,b\n1,2\n" });
+		expect(upload.ok).toBe(true);
+		const posted = await driver<{ ok: boolean; value: { run: { id: string } } }>("post", { ...base(w), content: script([sh("wc -l data.csv"), { text: "Two lines." }]), attachments: [upload.value.id] });
+		const view = await settled(w, posted.value.run.id);
+		expect(headOf(view).status).toBe("completed");
+		expect(cards(view.events)).toEqual([{ tool: "bash", summary: "wc -l data.csv", ok: true, excerpt: "2 data.csv\n" }]);
+	});
+
+	test("five attachments of 50 MiB, the folder's limit: copied, hydrated into the container and kept in the version", async () => {
+		const MiB = 1024 * 1024;
+		const w = await world();
+		const started = Date.now();
+		const ids: string[] = [];
+		for (let i = 0; i < 5; i++) {
+			// One byte value each ('a' to 'e'), so the five contents differ.
+			const upload = await driver<{ ok: boolean; value: { id: string } }>("upload", { workspace: w.workspace, userId: USER, name: `big${i}.bin`, bytes: 50 * MiB, fill: 97 + i });
+			expect(upload.ok, JSON.stringify(upload)).toBe(true);
+			ids.push(upload.value.id);
+		}
+		const uploadedMs = Date.now() - started;
+		const posting = Date.now();
+		const posted = await driver<{ ok: boolean; value: { run: { id: string } } }>("post", { ...base(w), content: script([sh("wc -c big*.bin | tail -n 1; head -c 1 big3.bin; echo"), { text: "Counted." }]), attachments: ids });
+		expect(posted.ok, JSON.stringify(posted)).toBe(true);
+		const postedMs = Date.now() - posting;
+		const view = await settled(w, posted.value.run.id);
+		expect(headOf(view).status).toBe("completed");
+		expect(cards(view.events)).toEqual([{ tool: "bash", summary: expect.stringContaining("wc -c"), ok: true, excerpt: "262144000 total\nd\n" }]);
+		const folder = await driver<{ version_id: string; files: { path: string }[] }>("files", base(w));
+		expect(folder.files.map((file) => file.path).sort()).toEqual(["big0.bin", "big1.bin", "big2.bin", "big3.bin", "big4.bin"]);
+		console.info(`five attachments of 50 MiB: uploads ${uploadedMs} ms, post (the copies) ${postedMs} ms, the run ${view.seconds} s`);
+	});
+
+	test("crashes between a checkpoint's upload, record, release and pi's commit: the next attempt starts from the last checkpoint", async () => {
+		await Promise.all(
+			["checkpoint:uploaded", "checkpoint:recorded", "local:released"].map(async (point) => {
+				const w = await world({ faults: [{ point, mode: "abort" }] });
+				const view = await settled(w, await post(w, script([sh("echo a > a.txt"), sh("cat a.txt"), { text: "Done." }])));
+				expect(headOf(view).status, point).toBe("completed");
+				expect(restarts(view.events), point).toEqual([2]);
+				const cat = cards(view.events).find((card) => card.summary === "cat a.txt");
+				// Uploaded but not recorded: the file is not in the checkpoint attempt 2 starts from.
+				expect(cat?.ok, point).toBe(point !== "checkpoint:uploaded");
+				console.info(`a crash at ${point}: ${view.seconds} s`);
+			}),
+		);
+	});
+});
+
 describe("memory-limit resets", () => {
 	// One at a time: a reset takes every object of its isolate with it.
 	test("in a tool: the isolate is reset, and the run recovers in a new attempt", async () => {
@@ -292,6 +430,16 @@ describe("memory-limit resets", () => {
 		expect(restarts(view.events)).toEqual([2]);
 		expect(reads(await provider(w))).toBe(2);
 		console.info(`memory reset: ${view.seconds} s`);
+	});
+
+	test("during a checkpoint: the next attempt starts from the last checkpoint, in a new container", async () => {
+		const w = await world({ faults: [{ point: "checkpoint:scanned", mode: "oom" }] });
+		const view = await settled(w, await post(w, script([sh("echo a > a.txt"), sh("cat a.txt"), { text: "Done." }])));
+		expect(headOf(view).status).toBe("completed");
+		expect(restarts(view.events)).toEqual([2]);
+		// The reset came before the checkpoint was recorded: attempt 2's container starts without the file.
+		expect(cards(view.events).find((card) => card.summary === "cat a.txt")?.ok).toBe(false);
+		console.info(`memory reset during a checkpoint: ${view.seconds} s`);
 	});
 
 	test("repeated in a tool: the third attempt's reset ends the run as worker_exited", async () => {

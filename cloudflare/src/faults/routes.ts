@@ -1,16 +1,20 @@
 // The test build's driver (src/faults/): POST /api/faults/<op> with a JSON body, for the account tests.
 // It answers only a request with `X-Minerva-Faults: <faultsToken(MINERVA_SECRET_KEY)>`; any other request
 // is passed on to the Worker, which answers 404 as for a path with no route. It calls the objects through
-// addressing.ts as the API will (step 5), as a fixed test user, against the fake provider only.
+// addressing.ts as the API will (step 5), as a fixed test user, against the fake provider only. Operations
+// under `sandbox/` drive a Sandbox object of their own (lab.ts).
 
-import { conversationObject, workspaceObject } from "../addressing.ts";
+import { conversationObject, filesBucket, sandboxObject, workspaceObject } from "../addressing.ts";
 import type { Caller, WorkspaceRef } from "../contracts/common.ts";
 import type { GrantChange } from "../contracts/policy.ts";
 import { timingSafeEqual } from "../lib/hash.ts";
+import { receiveUpload } from "../files/uploads.ts";
 import { type Json, parseJson } from "../lib/json.ts";
 import { FOLDER, NOTES, NOTES_CLIENT, NOTES_TOKEN_URL } from "./connector.ts";
 import type { Conversation, Workspace } from "./index.ts";
+import { SandboxLab } from "./lab.ts";
 import type { Fault } from "./plan.ts";
+import type { FaultSandbox } from "./sandbox.ts";
 import { providerOf } from "./ports.ts";
 import { FAULTS_HEADER, faultsToken } from "./token.ts";
 
@@ -74,7 +78,8 @@ export async function setUpWorkspace(
 	return { connectionId, agentId: agent.id };
 }
 
-async function operation(op: string, body: Body, env: Env): Promise<unknown> {
+async function operation(op: string, body: Body, env: Env, exports: Cloudflare.Exports): Promise<unknown> {
+	if (op.startsWith("sandbox/")) return new SandboxLab(env, exports).run(op.slice("sandbox/".length), body);
 	const ref = body.workspace;
 	const caller: Caller = { userId: body.userId, role: "owner" };
 	const ws = workspaceOf(env, ref);
@@ -91,7 +96,54 @@ async function operation(op: string, body: Body, env: Env): Promise<unknown> {
 			await ws.faultPlan((body.faults ?? []) as unknown as Fault[]);
 			return { ok: true };
 		case "post":
-			return conversationOf(env, ref, String(body.conversationId)).postMessage(caller, { content: String(body.content), attachments: [] });
+			return conversationOf(env, ref, String(body.conversationId)).postMessage(caller, {
+				content: String(body.content),
+				attachments: (body.attachments ?? []) as string[],
+			});
+		case "upload": {
+			// An upload as the step-5 route will make it: the Workspace records it, the body streams into R2 hashed.
+			const data = new TextEncoder().encode(String(body.text ?? ""));
+			const filler = Number(body.bytes ?? 0);
+			if (filler > 0) {
+				// `bytes` of one byte value (`fill`, 120 by default), streamed in 1 MiB pieces so a 50 MiB upload
+				// does not sit in the isolate's memory; different values make different contents.
+				const piece = new Uint8Array(Math.min(filler, 1 << 20)).fill(Number(body.fill ?? 120));
+				let left = filler;
+				const stream = new ReadableStream<Uint8Array>({
+					pull(controller) {
+						if (left <= 0) return controller.close();
+						const next = left >= piece.length ? piece : piece.subarray(0, left);
+						left -= next.length;
+						controller.enqueue(next.slice());
+					},
+				});
+				return receiveUpload(ws, filesBucket(env, ref), caller, { name: String(body.name), size: filler, body: stream });
+			}
+			return receiveUpload(ws, filesBucket(env, ref), caller, { name: String(body.name), size: data.length, body: new Blob([data]).stream() });
+		}
+		case "files":
+			return conversationOf(env, ref, String(body.conversationId)).listFiles(caller, (body.versionId ?? null) as string | null);
+		case "file": {
+			// A file of a version as a download would read it: its object in R2, the first 4,000 characters of it.
+			const target = await conversationOf(env, ref, String(body.conversationId)).resolveDownload(caller, (body.versionId ?? null) as string | null, String(body.path));
+			if (!target) return { target: null };
+			const object = await filesBucket(env, ref).get(target.key);
+			return { target, size: object?.size ?? null, text: object ? (await object.text()).slice(0, 4000) : null };
+		}
+		case "objects": {
+			// The conversation's objects in R2 (blobs/<ws>/<conv>/), for the tests of loose and swept keys.
+			const listed = await filesBucket(env, ref).list({ prefix: `blobs/${ref.id}/${String(body.conversationId)}/` });
+			return { keys: listed.objects.map((object) => object.key), truncated: listed.truncated };
+		}
+		case "conversation-sandbox": {
+			const sandbox = sandboxObject(env, exports, ref, String(body.conversationId)) as unknown as DurableObjectStub<FaultSandbox>;
+			return { status: await sandbox.status(), running: await sandbox.faultRunning() };
+		}
+		case "script-clock":
+			await conversationOf(env, ref, String(body.conversationId)).faultScriptClock((body.ms ?? null) as number | null);
+			return { ok: true };
+		case "delete-conversation":
+			return ws.deleteConversation(caller, String(body.conversationId));
 		case "run": {
 			const conversation = conversationOf(env, ref, String(body.conversationId));
 			const runId = String(body.runId);
@@ -127,7 +179,7 @@ async function operation(op: string, body: Body, env: Env): Promise<unknown> {
 }
 
 /** The driver's answer, or null for a request that is not the driver's (the Worker answers it). */
-export async function faultRoutes(request: Request, env: Env): Promise<Response | null> {
+export async function faultRoutes(request: Request, env: Env, ctx: ExecutionContext): Promise<Response | null> {
 	const url = new URL(request.url);
 	if (!url.pathname.startsWith(PREFIX) || request.method !== "POST") return null;
 	if (!timingSafeEqual(request.headers.get(FAULTS_HEADER) ?? "", await faultsToken(env.MINERVA_SECRET_KEY))) return null;
@@ -138,7 +190,7 @@ export async function faultRoutes(request: Request, env: Env): Promise<Response 
 		return answer(400, { detail: "The body is not JSON." });
 	}
 	try {
-		const result = await operation(url.pathname.slice(PREFIX.length), body, env);
+		const result = await operation(url.pathname.slice(PREFIX.length), body, env, ctx.exports);
 		return result === null ? answer(404, { detail: "No such operation." }) : answer(200, result);
 	} catch (error) {
 		return answer(500, { detail: error instanceof Error ? error.message : String(error) });

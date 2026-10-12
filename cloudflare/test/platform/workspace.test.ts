@@ -81,7 +81,7 @@ describe("the Workspace object", () => {
 	test("provisions its workspace, with its schema", async () => {
 		const ref = { id: "0199a000-0000-7000-8000-000000000a01", jurisdiction: null };
 		const stub = await workspace(ref, {});
-		expect(await stub.about()).toEqual({ kind: "workspace", name: ref.id, jurisdiction: null, migrations: [1] });
+		expect(await stub.about()).toEqual({ kind: "workspace", name: ref.id, jurisdiction: null, migrations: [1, 2] });
 		expect((await stub.listAgents(ADA)).map((agent) => agent.name)).toEqual(["Assistant"]);
 		// The outbox's AUTOINCREMENT and the STRICT tables work in the object's SQLite.
 		await runInDurableObject(stub, (_, state) => {

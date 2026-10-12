@@ -3,6 +3,8 @@ import { env, exports } from "cloudflare:workers";
 import { beforeEach, describe, expect, test } from "vitest";
 import { conversationObject, filesBucket, sandboxObject, scriptsObject, workspaceObject } from "../../src/addressing.ts";
 import { MIGRATIONS as CONVERSATION_MIGRATIONS } from "../../src/conversation/schema.ts";
+import { SANDBOX_MIGRATIONS } from "../../src/sandbox/store.ts";
+import { MIGRATIONS as SCRIPTS_MIGRATIONS } from "../../src/scripts/schema.ts";
 import { PROBE_HEADER, probeToken } from "../../src/http/probe-token.ts";
 import { CHECKED_LATER, createApp } from "../../src/http/router.ts";
 import { escapedKeyCheck } from "../../src/lib/json.ts";
@@ -105,10 +107,10 @@ describe("Durable Object stubs with SQLite", () => {
 		const named = (kind: string, name: string, migrations: number[] = []) => ({ kind, name, jurisdiction: null, migrations });
 		// The Workspace and the Conversation apply their schema steps when they are built
 		// (src/workspace/schema.ts, src/conversation/schema.ts).
-		expect(await workspaceObject(env, workspace).about()).toEqual(named("workspace", WS, [1]));
+		expect(await workspaceObject(env, workspace).about()).toEqual(named("workspace", WS, [1, 2]));
 		expect(await conversationObject(env, workspace, USER).about()).toEqual(named("conversation", USER, CONVERSATION_MIGRATIONS.map((step) => step.id)));
-		expect(await scriptsObject(env, workspace, USER).about()).toEqual(named("scripts", USER));
-		expect(await sandboxObject(env, exports, workspace, USER).about()).toEqual(named("sandbox", USER));
+		expect(await scriptsObject(env, workspace, USER).about()).toEqual(named("scripts", USER, SCRIPTS_MIGRATIONS.map((step) => step.id)));
+		expect(await sandboxObject(env, exports, workspace, USER).about()).toEqual(named("sandbox", USER, SANDBOX_MIGRATIONS.map((step) => step.id)));
 	});
 
 	test("schema steps apply once, in order, each in a transaction", async () => {

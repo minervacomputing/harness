@@ -28,6 +28,7 @@ import {
 import type { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import { Agent } from "agents";
 import { PiHarness } from "agents/harness/pi";
+import { scriptsObject } from "../addressing.ts";
 import { settings } from "../config.ts";
 import type { FolderOut, MessageIn, MessageOut } from "../contracts/api.ts";
 import type { AttemptFence, Caller, Json, Outcome, Refusal, RunId, VersionId } from "../contracts/common.ts";
@@ -35,8 +36,11 @@ import type { CancelAck, ConversationApi, ConversationInit, DownloadTarget, Even
 import type { RunEvent } from "../contracts/events.ts";
 import type { CredentialPort, Executor, RunStatePort, ToolCallOutcome, ToolDeclaration } from "../contracts/executor.ts";
 import type { CancelReason, ConversationHead, PostedView, RunEnd, RunHead, RunSnapshot } from "../contracts/runs.ts";
+import type { ScriptsApi } from "../contracts/scripts.ts";
 import type { CredentialPayload } from "../contracts/connectors.ts";
+import type { FolderLimit } from "../contracts/files.ts";
 import { connectorRegistry } from "../connectors/index.ts";
+import { folderLimitMessage, type FolderLimits } from "../files/limits.ts";
 import type { Registry as ConnectorRegistry } from "../gateway/registry.ts";
 import { modelTools } from "../gateway/tools.ts";
 import { type About, identity } from "../lib/about.ts";
@@ -47,6 +51,11 @@ import { appliedMigrations, migrate } from "../lib/sqlite.ts";
 import { codePointLength, pythonStrip, sliceCodePoints } from "../lib/text.ts";
 import { MODEL_REF, MINERVA_API, MINERVA_PROVIDER, MODEL_ALIAS, minervaProvider, type ModelHost } from "../model/provider.ts";
 import { routeOf } from "../model/route.ts";
+import { sandboxSpec } from "../sandbox/constants.ts";
+import { outputSink } from "../sandbox/sink.ts";
+import { ScriptRuns, scriptToolHost } from "../scripts/host.ts";
+import { isReset, type ScriptsClient } from "../scripts/run.ts";
+import { scriptTool } from "../scripts/tool.ts";
 import { START_FAILED } from "../workspace/core.ts";
 import {
 	ACTING,
@@ -54,6 +63,7 @@ import {
 	CANCELLED,
 	COMPLETED,
 	endFor,
+	localToolEvent,
 	phaseEvent,
 	phaseOf,
 	START_EXPIRED,
@@ -64,12 +74,14 @@ import {
 } from "./events.ts";
 import { decideGate, type PiWork, classifyWork } from "./gate.ts";
 import { HISTORY_LIMIT, historyOf, promptOf, recentHistory, sessionInstructions } from "./history.ts";
+import { FolderOverLimit, LOCAL_TOOLS, type LocalTool, type LocalToolEvent, localToolSpecs, runGated, SandboxRefused } from "./local.ts";
+import { destroyRunSandbox, LocalRun } from "./local-run.ts";
 import { type ConversationPorts, type FolderPort, PORTS, type PortsContext, runStatePort, type WorkspaceClient, type WriteLedger } from "./ports.ts";
-import { ToolQueue } from "./queue.ts";
+import { ToolQueue, untilAborted } from "./queue.ts";
 import { MIGRATIONS } from "./schema.ts";
 import { type RunRow, RunStore, type StartRow } from "./store.ts";
 import { RunStream } from "./stream.ts";
-import { connectorTool, isWrite, RUN_ENDED_MESSAGE, type ToolHost } from "./tools.ts";
+import { connectorTool, isWrite, REPLAY_REFUSED, REPLAYS_ALLOWED, RUN_ENDED_MESSAGE, type ToolHost } from "./tools.ts";
 
 /** chord's background context: never cancelled, no values. */
 const BG = Object.freeze({ abortSignal: undefined, value: () => undefined, toString: () => "[Context minerva-conversation]" });
@@ -108,6 +120,8 @@ const LOST_WRITE_GRACE_MS = 30_000;
 const RPC_WAIT_MS = 10_000;
 const RELEASE_RETRY_MS = 30_000;
 const LIVE_TASKS = ["pending", "running", "waiting", "completing"] as const;
+/** The reason an attempt's object is reset when its local calls cannot go on (plan: Checkpoints). */
+export const ATTEMPT_ENDED = "The attempt ended: ";
 
 /** Ninja's `get_object_or_404` (web-api 3): another user's conversation looks like none. */
 const NOT_FOUND = { status: 404, detail: "Not Found" } as const;
@@ -136,6 +150,14 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	readonly #loops = new Map<RunId, Promise<void>>();
 	readonly #activations = new Map<RunId, Promise<void>>();
 	readonly #begins = new Map<RunId, Promise<Outcome<PostedView>>>();
+	/** Code mode: each run's scripted calls, and the lane that runs scripts after the reset of the one before. */
+	readonly #scriptRuns = new ScriptRuns();
+	/** Each run's folder in its container for the attempt this instance runs (local-run.ts). */
+	readonly #locals = new Map<RunId, LocalRun>();
+	/** Runs whose checkpoint is running ("Saving files"). */
+	readonly #saving = new Set<RunId>();
+	/** Local calls waiting for their run's container to be ready ("Preparing files"), by run. */
+	readonly #waiting = new Map<RunId, number>();
 
 	readonly harness = new PiHarness({
 		harness: ({ storage, context }) => this.#openPi(storage, context),
@@ -278,8 +300,21 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		});
 		this.#stream.closeAll();
 		if (run) await this.#stopPi(run.id).catch((error: unknown) => this.#log("pi did not stop", error));
+		await this.#destroyScripts();
+		if (this.#store.conversation()) await destroyRunSandbox(this.#sandbox(), null, "The conversation was deleted.");
 		await this.#folder()?.deleteObjects();
 		await super.destroy();
+	}
+
+	/** The conversation's Scripts object, emptied and reset; a call the reset broke is the reset done, any other failure is tried again. */
+	async #destroyScripts(): Promise<void> {
+		const conversation = this.#store.conversation();
+		if (!conversation) return;
+		try {
+			await (scriptsObject(this.env, this.#store.workspaceRef(conversation), conversation.id) as unknown as ScriptsApi).destroy();
+		} catch (error) {
+			if (!isReset(error)) throw error;
+		}
 	}
 
 	// The start protocol (plan: Starting a run).
@@ -453,8 +488,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				const created = await pi.createConversation(
 					{
 						ownership: { kind: "ownerless" },
-						// The local tools (read, write, edit, bash) join in step 3, and with them the folder's paragraph.
-						agent: { model: { ...MODEL_REF }, instructions: sessionInstructions(snapshot.instructions, []) },
+						agent: { model: { ...MODEL_REF }, instructions: sessionInstructions(snapshot.instructions, LOCAL_TOOLS) },
 						init: async (tx: Tx, id: PiConversationId) => {
 							providerSession = (await tx.doc(ProviderDoc, id)).sessionId;
 							await replay(tx, id, history);
@@ -465,6 +499,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				session = await this.#store.outside(() => this.#store.claimSession(runId, String(created.id), providerSession));
 			}
 			if (session === null || !this.#store.isCurrent(fence)) return;
+			this.#prepareLocal(run);
 			this.#showPhase(fence);
 			await this.harness.submit(promptOf(this.#store.storedMessages(runId, HISTORY_LIMIT), runId), { session, operationId: `run:${runId}` });
 		})().finally(() => this.#loops.delete(runId));
@@ -472,8 +507,10 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		return work;
 	}
 
-	/** After a restart of the object: the starts in flight, activations not answered, releases not heard. */
+	/** After a restart of the object: the starts in flight, activations not answered, releases not heard, containers left. */
 	async #recover(): Promise<void> {
+		const again = await this.#cleanSandbox();
+		if (again) this.#push({ id: "sandbox", fn: "sandbox", time: again.rescheduleAt });
 		for (const start of this.#store.starts()) await this.#begin(start.run_id).catch((error: unknown) => this.#log("a start could not resume", error));
 		const run = this.#store.activeRun();
 		if (run && !run.activated) await this.#activate(run.id).catch((error: unknown) => this.#log("activation failed", error));
@@ -574,6 +611,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				const fence = { runId: run.id, attempt: run.attempt };
 				this.#store.startAttempt(fence);
 				this.#phase(fence, "Resuming the agent");
+				this.#prepareLocal(run);
 				this.#showPhase(fence);
 			}
 		}
@@ -589,6 +627,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		if (fn === "deadline" && runId) return this.#deadline(runId);
 		if (fn === "sweep") return this.#sweep();
 		if (fn === "release") return this.#retryReleases();
+		if (fn === "files") return this.#folder()?.sweep() ?? Promise.resolve(undefined);
+		if (fn === "sandbox") return this.#cleanSandbox();
 		return super._onHostJob(fn, context);
 	}
 
@@ -681,6 +721,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		}
 		if (submission.status !== "done" || submission.type !== "input") return;
 		const entry = entries.get(submission.answer) ?? (await this.#entry(run, submission.answer));
+		// The folder as the turn left it, before the turn counts as complete (harness 2, step 12).
+		if (!(await this.#finishLocal(fence))) return;
 		await this.#complete(fence, answerText(entry));
 	}
 
@@ -742,6 +784,11 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		this.#phases.delete(runId);
 		this.#executors.delete(runId);
 		this.#queues.delete(runId);
+		this.#scriptRuns.forget(runId);
+		this.#locals.get(runId)?.end();
+		this.#locals.delete(runId);
+		this.#saving.delete(runId);
+		this.#waiting.delete(runId);
 		this.#stream.end(runId);
 		this.#defer(async () => {
 			await this.lifecycle.jobs.cancel(`watch:${runId}`);
@@ -750,6 +797,16 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			if (run) await this.#release(run);
 			this.#touchIndex();
 			await this.#stopPi(runId);
+		});
+		// Its container, whichever attempt or instance started it (a later run's is never touched); a destroy
+		// that fails, or that a reset of this object lost, is done by the `sandbox` job or the next start.
+		this.#defer(async () => {
+			try {
+				await destroyRunSandbox(this.#sandbox(), runId, "The run ended.");
+			} catch (error) {
+				this.#log("the run's sandbox could not be destroyed", error);
+				this.#push({ id: "sandbox", fn: "sandbox", time: Date.now() + RELEASE_RETRY_MS });
+			}
 		});
 	}
 
@@ -803,14 +860,225 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			this.#log("the run's tools could not be built", error);
 			listed = [];
 		}
-		// `run_script` (step 4) and the local tools (step 3) join here.
-		const tools = modelTools<ToolDeclaration, ToolRegistration | null>(
+		// read, write, edit and bash in the run's container, after the connector tools and `run_script` (harness 5.1).
+		const locals = localToolSpecs({ deadline: run.deadline }).map((local) => this.#localTool(local, host));
+		const tools = modelTools<ToolDeclaration, ToolRegistration>(
 			listed,
-			[],
+			locals,
 			(declaration) => connectorTool(declaration, host),
-			() => null,
-		).filter((tool): tool is ToolRegistration => tool !== null);
+			(all) => scriptTool(all, this.#scriptHost(host)),
+		);
 		return { name: "minerva", tools };
+	}
+
+	/**
+	 * A local tool (local.ts): the run's current attempt, the replay cap for `read`, the phases, the attempt's
+	 * container as the call's ExecutionEnv, and the checkpoint barrier (`runGated`), whose result reaches pi
+	 * only once a checkpoint saved what the call did. Its `local_tool` event is appended when it is released.
+	 */
+	#localTool(local: LocalTool, host: ToolHost): ToolRegistration {
+		const conversation = this;
+		const safe = local.tool.replay === "safe";
+		return {
+			...local.tool,
+			async execute(args, api, context) {
+				const run = host.current(api.conversationId);
+				if (run === null) return { content: [{ type: "text", text: RUN_ENDED_MESSAGE }], isError: true };
+				const { fence } = run;
+				if (safe && (await host.executions(fence.runId, api.callId)) > 1 + REPLAYS_ALLOWED) return { content: [{ type: "text", text: REPLAY_REFUSED }], isError: true };
+				const attempt = conversation.#localOf(fence);
+				if (attempt === null) return { content: [{ type: "text", text: RUN_ENDED_MESSAGE }], isError: true };
+				host.started(fence.runId, api.callId, local.name);
+				try {
+					const env = await conversation.#waitFor(fence, attempt, context.abortSignal);
+					const result = await runGated(attempt.calls, local, args, { ...api, env }, context);
+					await conversation.#point("local:released", local.name);
+					return result;
+				} finally {
+					host.ended(fence.runId, api.callId);
+				}
+			},
+		};
+	}
+
+	// The run's folder in its container (local-run.ts).
+
+	/** The attempt's LocalRun in this instance, made when first needed; null for an attempt that is not current. */
+	#localOf(fence: AttemptFence): LocalRun | null {
+		const existing = this.#locals.get(fence.runId);
+		if (existing && existing.fence.attempt === fence.attempt) return existing;
+		const run = this.#store.run(fence.runId);
+		const context = this.#portsContext();
+		if (!run || run.attempt !== fence.attempt || !this.#store.isCurrent(fence) || !context) return null;
+		existing?.end();
+		const limits = this.#store.snapshot(run).limits as FolderLimits;
+		const made = new LocalRun({
+			fence,
+			spec: sandboxSpec(context.workspace, context.conversationId, limits, run.deadline),
+			deadline: run.deadline,
+			sandbox: () => this.#sandbox(),
+			folder: this.#folder() as FolderPort,
+			sink: outputSink,
+			report: (event) => this.#reportLocal(fence, event),
+			saving: (active) => {
+				if (active) this.#saving.add(fence.runId);
+				else this.#saving.delete(fence.runId);
+				this.#showPhase(fence);
+			},
+			fail: (error) => this.#localFailed(fence, error, limits),
+			point: (name, detail) => this.#point(name, detail),
+			log: (message) => this.#log(message),
+		});
+		this.#locals.set(fence.runId, made);
+		return made;
+	}
+
+	/**
+	 * At the start of an attempt its container is prepared (started, hardened, verified, hydrated from the
+	 * run's last checkpoint, else its base version) while the model starts, so it is usually ready before the
+	 * first local call; a failure surfaces only when a call needs it.
+	 */
+	#prepareLocal(run: RunRow): void {
+		this.#localOf({ runId: run.id, attempt: run.attempt })?.prepare();
+	}
+
+	/** A local call's environment; "Preparing files" shows while a call waits for the container (harness 12.2). */
+	async #waitFor(fence: AttemptFence, local: LocalRun, signal: AbortSignal | undefined) {
+		const waits = local.preparing;
+		if (waits) {
+			this.#waiting.set(fence.runId, (this.#waiting.get(fence.runId) ?? 0) + 1);
+			this.#showPhase(fence);
+		}
+		try {
+			return await untilAborted(local.env(), signal);
+		} finally {
+			if (waits) {
+				const left = (this.#waiting.get(fence.runId) ?? 1) - 1;
+				if (left > 0) this.#waiting.set(fence.runId, left);
+				else this.#waiting.delete(fence.runId);
+				this.#showPhase(fence);
+			}
+		}
+	}
+
+	/**
+	 * The turn's last checkpoint, rehashing every file; false when the attempt cannot complete (its failure was
+	 * handled). An instance without the attempt's LocalRun (the object restarted after pi settled the turn,
+	 * for example while the final checkpoint ran or after it failed) has nothing to save: its container is
+	 * replaced, and every result pi recorded was released only after a checkpoint saved it, so the run's last
+	 * checkpoint is the folder as the turn left it, but for a change the rehash would have found. Today's
+	 * worker did the same: the next worker's LocalCalls had admitted no call, so its `finish` saved nothing.
+	 */
+	async #finishLocal(fence: AttemptFence): Promise<boolean> {
+		const local = this.#locals.get(fence.runId);
+		if (!local || local.fence.attempt !== fence.attempt) return true;
+		try {
+			await local.finish();
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	/** A local call's card, after its result was released (files 8.4); outside pi's transactions, for the attempt only. */
+	#reportLocal(fence: AttemptFence, event: LocalToolEvent): void {
+		this.#store
+			.outside(() => void this.#store.append(fence.runId, localToolEvent(event.tool, event.summary, event.ok, event.excerpt), fence))
+			.catch((error: unknown) => this.#log("a local tool call could not be recorded", error));
+	}
+
+	/**
+	 * The attempt's local calls cannot go on (local.ts), and no held result is released before this settles:
+	 * a folder over its limits fails the turn with `folder_limit` and that limit's own message (runs 2.3),
+	 * then the object is reset, so pi never commits a held result (today's `storage.fail`); a container that
+	 * failed its hardening or checks fails the turn as `worker_failed` (no local call ran in it); anything
+	 * else ends the attempt by resetting the object, and the next attempt starts from the last checkpoint.
+	 */
+	async #localFailed(fence: AttemptFence, error: Error, limits: FolderLimits): Promise<void> {
+		this.#log(`the attempt's local calls stop: ${error.name}: ${error.message}`);
+		if (error instanceof SandboxRefused) {
+			await this.#fail(fence, WORKER_FAILED).catch((failure: unknown) => this.#log("a run whose sandbox failed could not be ended", failure));
+			return;
+		}
+		if (error instanceof FolderOverLimit) {
+			const end: RunEnd = { status: "failed", code: "folder_limit", message: folderLimitMessage(error.limit as FolderLimit, limits) };
+			const ended = await this.#store
+				.outside(() =>
+					this.#store.write(() => {
+						if (!this.#store.isCurrent(fence) || !this.#store.finish(fence.runId, end, { attempt: fence.attempt })) return false;
+						// The end's clean-up (#afterFinish: its container destroyed, the Workspace told) is deferred, and
+						// the reset below cuts it: its retries are stored with the end, so the next start finishes it.
+						const at = Date.now() + RELEASE_RETRY_MS;
+						for (const fn of ["sandbox", "release"]) {
+							this.lifecycle.jobs.push({ id: fn, fn, time: at }).catch((failure: unknown) => this.#log(`the job ${fn} was not scheduled`, failure));
+						}
+						return true;
+					}),
+				)
+				.catch((failure: unknown) => {
+					this.#log("a run over its folder's limits could not be ended", failure);
+					return false;
+				});
+			// Durable before the reset, which may drop what is not.
+			if (ended) await this.ctx.storage.sync().catch((failure: unknown) => this.#log("storage did not sync", failure));
+			// Whether ended here or already over, nothing of the attempt may reach pi now.
+			this.#reset(`${ATTEMPT_ENDED}${error.message}`, ended || this.#store.isCurrent(fence));
+			return;
+		}
+		this.#reset(`${ATTEMPT_ENDED}${error.message}`, this.#store.isCurrent(fence));
+	}
+
+	/** Resets the object (`ctx.abort()`), when `needed`: what this instance holds in memory dies with it. */
+	#reset(reason: string, needed: boolean): void {
+		if (!needed) return;
+		try {
+			this.ctx.abort(reason.slice(0, 500));
+		} catch {
+			// The reset is under way.
+		}
+	}
+
+	#sandbox() {
+		return this.#ports.sandbox(this.#portsContext() as PortsContext);
+	}
+
+	/** Destroys a container a run that ended left running (its end's destroy failed, or a reset lost it); retried until done. */
+	async #cleanSandbox(): Promise<{ rescheduleAt: number } | undefined> {
+		if (!this.#store.conversation()) return undefined;
+		try {
+			const ended = (runId: string) => {
+				const run = this.#store.run(runId);
+				return run !== null && !ACTIVE.has(run.status);
+			};
+			await destroyRunSandbox(this.#sandbox(), ended, "The run ended.");
+			return undefined;
+		} catch (error) {
+			this.#log("a sandbox left by an ended run could not be destroyed", error);
+			return { rescheduleAt: Date.now() + RELEASE_RETRY_MS };
+		}
+	}
+
+	async #point(name: string, detail?: string): Promise<void> {
+		const point = this.#ports.point;
+		if (point) await point(this.#portsContext() as PortsContext, name, detail);
+	}
+
+	/** `run_script`'s host (scripts/host.ts): the connector tools' run and phases, scripted calls through `#invoke`. */
+	#scriptHost(host: ToolHost) {
+		return scriptToolHost({
+			runs: this.#scriptRuns,
+			current: (session) => host.current(session),
+			runSignal: (runId) => (this.#store.isActive(runId) ? this.#controller(runId).signal : AbortSignal.abort(new Error(RUN_ENDED_MESSAGE))),
+			invoke: (fence, declaration, args, drop) => this.#invoke(fence, declaration, args, undefined, drop),
+			scripts: () => {
+				const conversation = this.#store.conversation();
+				if (!conversation) throw new Error("A run's conversation is stored.");
+				return scriptsObject(this.env, this.#store.workspaceRef(conversation), conversation.id) as unknown as ScriptsClient;
+			},
+			waitUntil: (promise) => this.ctx.waitUntil(promise.catch((error: unknown) => this.#log("a script's reset failed", error))),
+			started: (runId, callId, name) => host.started(runId, callId, name),
+			ended: (runId, callId) => host.ended(runId, callId),
+		});
 	}
 
 	#executor(runId: RunId): Executor {
@@ -887,9 +1155,16 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	 * One call through the run's queue and the executor. The `tool_call` event is appended when the call
 	 * settles, whether or not its caller still waits (the executor's `settled`, so a write sent before pi
 	 * aborted the call is recorded with its real outcome), while the run is active (any attempt), never for
-	 * RUN_ENDED (the executor returns no event then).
+	 * RUN_ENDED (the executor returns no event then). A scripted call passes `drop` instead of `signal`: the
+	 * script's end drops it while it waits for its slot, but never cuts it once sent (harness 7.5).
 	 */
-	#invoke(fence: AttemptFence, declaration: ToolDeclaration, args: Json | undefined, signal: AbortSignal | undefined): Promise<ToolCallOutcome> {
+	#invoke(
+		fence: AttemptFence,
+		declaration: ToolDeclaration,
+		args: Json | undefined,
+		signal: AbortSignal | undefined,
+		drop?: AbortSignal,
+	): Promise<ToolCallOutcome> {
 		let queue = this.#queues.get(fence.runId);
 		if (!queue) this.#queues.set(fence.runId, (queue = new ToolQueue()));
 		const executor = this.#executor(fence.runId);
@@ -920,6 +1195,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				() => executor.invoke({ fence, name: declaration.name, arguments: args, signal: cut, settled }),
 				() => {
 					signal?.throwIfAborted();
+					drop?.throwIfAborted();
 					stopped.throwIfAborted();
 				},
 			)
@@ -930,7 +1206,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 					return outcome;
 				},
 				(error: unknown): ToolCallOutcome => {
-					if (signal?.aborted || stopped.aborted) throw error;
+					if (signal?.aborted || drop?.aborted || stopped.aborted) throw error;
 					this.#log("a tool call failed", error);
 					return { ok: false, error: { code: "FAILED", message: "The operation could not be completed. Check the connection and try again." }, event: null };
 				},
@@ -1006,7 +1282,9 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	#showPhase(fence: AttemptFence): void {
-		this.#phase(fence, phaseOf(false, this.#running.get(fence.runId)?.values() ?? []));
+		// Saving files first, then a call waiting for its container, then today's order (events.ts `phaseOf`).
+		const saving = this.#saving.has(fence.runId);
+		this.#phase(fence, !saving && this.#waiting.has(fence.runId) ? "Preparing files" : phaseOf(saving, this.#running.get(fence.runId)?.values() ?? []));
 	}
 
 	// Ports.
@@ -1055,6 +1333,13 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			connectors: () => {
 				if (this.#connectors === null) throw new Error("The connector registry is loaded when pi opens.");
 				return this.#connectors;
+			},
+			store: this.#store,
+			schedule: (time) => {
+				// The folder's sweep (src/files/): one job, moved only earlier.
+				const scheduled = this.lifecycle.jobs.get("files");
+				if (scheduled && scheduled.time <= time) return;
+				this.#push({ id: "files", fn: "files", time });
 			},
 		};
 	}

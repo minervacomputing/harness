@@ -17,6 +17,7 @@ import type { CancelAck } from "../../src/contracts/conversation.ts";
 import type { BeginRunInput, BeginRunResult, Registration } from "../../src/contracts/workspace.ts";
 import type { Conversation } from "../../src/conversation/conversation.ts";
 import { CANCELLED, WORKER_FAILED } from "../../src/conversation/events.ts";
+import { FOLDER_INSTRUCTIONS } from "../../src/conversation/history.ts";
 import { RunStore } from "../../src/conversation/store.ts";
 import { RunStream } from "../../src/conversation/stream.ts";
 import { type ConversationPorts, defaultPorts, emptyFolder, gatewayLedger, PORTS, runStatePort, type WorkspaceClient, type WriteLedger } from "../../src/conversation/ports.ts";
@@ -689,7 +690,8 @@ describe("the model", () => {
 		// pi adds the instructions as a positional system section; providers that take no mid-conversation
 		// system messages fold it into the leading one.
 		const system = context.messages.filter((message) => message.role === "system");
-		expect(JSON.stringify(system)).toContain("<instructions>\\nYou are a test agent.\\n</instructions>");
+		// With the local tools, the folder's paragraph follows the agent's instructions after a blank line (harness 3.3).
+		expect(JSON.stringify(system)).toContain(JSON.stringify(`<instructions>\nYou are a test agent.\n\n${FOLDER_INSTRUCTIONS}\n</instructions>`).slice(1, -1));
 	});
 
 	test("a provider's error text never reaches the run, and the run fails", async () => {

@@ -242,7 +242,10 @@ export interface WorkspaceApi {
 
 	/**
 	 * A conversation's absolute byte total, before it writes new blobs (files 15.2). Refused when the sum
-	 * would pass MINERVA_FILES_WORKSPACE_BYTES; absolute totals make it idempotent.
+	 * would pass MINERVA_FILES_WORKSPACE_BYTES; absolute totals make it idempotent. `revision` rises with
+	 * every report the conversation sends: one no newer than a report already seen changes nothing (it was
+	 * sent by an instance that has since reset). One without a revision, as an older caller sends, applies
+	 * only until a report with one has been seen.
 	 */
-	setConversationBytes(conversationId: ConversationId, total: number): Promise<{ ok: true } | { ok: false; limit: Extract<FolderLimit, "workspace"> }>;
+	setConversationBytes(conversationId: ConversationId, total: number, revision?: number): Promise<{ ok: true } | { ok: false; limit: Extract<FolderLimit, "workspace"> }>;
 }

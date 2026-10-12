@@ -15,6 +15,10 @@
 // - `lease:before`: before the Workspace is asked for a credential lease;
 // - `gate:decided`, `gate:committed`: in the attempt gate, once it decided to end or restart a run, before
 //   its transaction, and after the transaction and its sync (detail: the decision);
+// - `local:prepared`: an attempt's container started, hardened, verified and hydrated;
+// - `checkpoint:scanned`, `checkpoint:uploaded`, `checkpoint:recorded`: a checkpoint's scan taken, its
+//   files stored in R2 but the checkpoint not recorded, and recorded but its held results not released;
+// - `local:released`: a local call's result released by its checkpoint, before pi has it (filter `tool`);
 // Workspace
 // - `refresh:before`, `refresh:answered`: around the token endpoint's answer (`lose` drops it);
 // - `cancel:before`, `cancel:lost`: around delivering a cancel (`lose` drops the acknowledgement).
@@ -150,6 +154,10 @@ export function faultConversationPorts(base: ConversationPorts): ConversationPor
 			};
 		},
 		gate: (context, point, decision) => planOf(context.ctx).at(`gate:${point}`, { detail: decision }).then(() => {}),
+		point: (context, name, detail) =>
+			planOf(context.ctx)
+				.at(name, name === "local:released" ? { tool: detail, detail: detail ?? "" } : { detail: detail ?? "" }, ["abort", "oom", "throw", "hold", "note"])
+				.then(() => {}),
 		entered: (context, kind, runId) => planOf(context.ctx).enter(runId, kind),
 		upstream: (route, context) => {
 			const plan = planOf(context.ctx);

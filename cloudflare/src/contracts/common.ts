@@ -57,7 +57,7 @@ export interface AttemptFence {
 
 /** A refusal an API endpoint answers with: Ninja's `{"detail": message}` and this status. */
 export interface Refusal {
-	status: 400 | 403 | 404 | 409 | 413 | 422 | 429 | 502 | 503;
+	status: 400 | 403 | 404 | 405 | 408 | 409 | 411 | 413 | 422 | 429 | 502 | 503;
 	detail: string;
 }
 

@@ -180,4 +180,7 @@ CREATE TABLE purges (
 ) STRICT;
 `,
 	},
+	// The newest byte report a conversation sent that the Workspace has seen (files/store.ts `#report`): an
+	// older one, sent by an instance of the conversation that has since reset, changes nothing.
+	{ id: 2, sql: "ALTER TABLE conversations ADD COLUMN bytes_revision INTEGER NOT NULL DEFAULT 0" },
 ];

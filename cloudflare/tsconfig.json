@@ -16,6 +16,6 @@
 		"noUnusedLocals": true,
 		"skipLibCheck": true
 	},
-	"include": ["src", "test/unit", "test/platform", "cloudflare.config.ts", ".cloudflare/types"],
+	"include": ["src", "test/unit", "test/platform", "test/account/scripts-worker/src", "cloudflare.config.ts", ".cloudflare/types"],
 	"exclude": ["test/unit/sources.test.ts"]
 }

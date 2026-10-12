@@ -1,0 +1,348 @@
+# The sandbox probe: today's 21 sandbox checks (worker/src/probe.ts), reworked for a Firecracker VM with no
+# route out (plan: Spike results, Consequences): no loopback-only check, since the VM always has its own
+# interface; network checks over HTTP and TLS rather than a TCP connect, since ports 80 and 443 accept and
+# then reset; no gateway, run token or socket directory, which no longer exist. It runs as an agent command
+# does, through the wrapper as uid 1000 in the agent cgroup, with bash's fixed environment:
+#
+#     /usr/bin/python3 -I -S /opt/minerva/probe <folder bytes> <folder entries> <pids max> <cgroup> [<peer>...]
+#
+# where <cgroup> is the line /proc/self/cgroup must hold (`0::/agent` on the platform)
+#
+# and prints one JSON object: `checks` (every one must be true) and `details`. Started only by the account
+# tests (test/account/sandbox.test.ts), never by a user run. The checks that need the Sandbox Durable Object
+# (killing strays, a fork bomb, the hardening's postconditions) are made there.
+
+import errno
+import json
+import os
+import socket
+import subprocess
+import sys
+import threading
+
+WORKSPACE = "/workspace"
+MIB = 1024 * 1024
+# What tmpfs charges beyond the data written: whole pages per file. The size check allows this much below.
+SIZE_SLACK = 64 * 1024
+# More processes than the sandbox may run, so a missing limit fails the check rather than passing it.
+FORK_ATTEMPTS = 2048
+# This probe and the wrapper's processes count towards the limit too.
+FORK_BASELINE_MAX = 32
+BASH_ENVIRONMENT = {"PATH", "HOME", "TMPDIR", "LANG", "MPLCONFIGDIR"}
+SECRET_NAME = ("KEY", "SECRET", "PASSWORD", "CREDENTIAL", "DATABASE", "TOKEN")
+TIMEOUT = 5
+
+checks = {}
+details = {}
+
+
+def check(name, function):
+    try:
+        ok, detail = function()
+    except Exception as error:  # A check that cannot run fails.
+        ok, detail = False, f"{type(error).__name__}: {error}"
+    checks[name] = bool(ok)
+    details[name] = str(detail)[:500]
+
+
+def status_fields():
+    fields = {}
+    with open("/proc/self/status") as file:
+        for line in file:
+            key, _, rest = line.partition(":")
+            fields[key] = rest.strip()
+    return fields
+
+
+def non_root_user():
+    fields = status_fields()
+    caps = {key: fields.get(key) for key in ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb")}
+    ok = (
+        os.getuid() == 1000
+        and os.geteuid() == 1000
+        and os.getgid() == 1000
+        and os.getgroups() in ([], [1000])
+        and all(value == "0000000000000000" for value in caps.values())
+        and fields.get("NoNewPrivs") == "1"
+    )
+    return ok, f"uid {os.getuid()} gid {os.getgid()} groups {os.getgroups()} {caps} NoNewPrivs {fields.get('NoNewPrivs')}"
+
+
+def fixed_environment():
+    names = set(os.environ)
+    secrets = [name for name in names if any(part in name.upper() for part in SECRET_NAME)]
+    return names == BASH_ENVIRONMENT and not secrets, sorted(names)
+
+
+def pid1_environment_unreadable():
+    try:
+        with open("/proc/1/environ", "rb") as file:
+            file.read()
+    except PermissionError:
+        return True, "EACCES"
+    return False, "readable"
+
+
+def in_agent_cgroup(expected):
+    with open("/proc/self/cgroup") as file:
+        text = file.read().strip()
+    return text == expected, text
+
+
+def run_script(directory):
+    path = os.path.join(directory, f"probe-{os.getpid()}.sh")
+    try:
+        with open(path, "w") as file:
+            file.write("#!/bin/sh\necho ran\n")
+        os.chmod(path, 0o755)
+    except OSError as error:
+        return f"not written ({errno.errorcode.get(error.errno, error.errno)})"
+    try:
+        result = subprocess.run([path], capture_output=True, timeout=TIMEOUT)
+        return "ran" if result.stdout == b"ran\n" else "wrong output"
+    except PermissionError:
+        return "EACCES"
+    except OSError as error:
+        return errno.errorcode.get(error.errno, str(error.errno))
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def workspace_writable():
+    path = os.path.join(WORKSPACE, "probe.txt")
+    with open(path, "w") as file:
+        file.write("ok")
+    os.remove(path)
+    return True, "written"
+
+
+def home_directories():
+    out = []
+    ok = True
+    for name in ("HOME", "MPLCONFIGDIR"):
+        path = os.environ.get(name, "")
+        st = os.stat(path)
+        writable = os.access(path, os.W_OK)
+        ok = ok and os.path.isdir(path) and st.st_uid == 1000 and st.st_gid == 1000 and writable
+        out.append(f"{name}={path} {st.st_uid}:{st.st_gid} {oct(st.st_mode & 0o7777)}")
+    return ok and os.environ.get("TMPDIR") == "/tmp", "; ".join(out)
+
+
+def empty_folder():
+    for name in os.listdir(WORKSPACE):
+        path = os.path.join(WORKSPACE, name)
+        if os.path.isdir(path) and not os.path.islink(path):
+            import shutil
+
+            shutil.rmtree(path)
+        else:
+            os.remove(path)
+
+
+def folder_size_limit(limit):
+    empty_folder()
+    chunk = b"\x01" * MIB
+    written = 0
+    code = None
+    fd = os.open(os.path.join(WORKSPACE, "fill"), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    try:
+        # Never more than the limit plus a chunk, so a missing limit fails rather than fills memory.
+        while written <= limit:
+            try:
+                count = os.write(fd, chunk)
+            except OSError as error:
+                code = errno.errorcode.get(error.errno)
+                break
+            written += count
+            if count < len(chunk):
+                try:
+                    os.write(fd, chunk)
+                except OSError as error:
+                    code = errno.errorcode.get(error.errno)
+                break
+    finally:
+        os.close(fd)
+        empty_folder()
+    return code == "ENOSPC" and limit - SIZE_SLACK <= written <= limit, f"{written} of {limit} bytes, then {code}"
+
+
+def folder_entry_limit(limit):
+    empty_folder()
+    created = 0
+    code = None
+    try:
+        while created <= limit:
+            try:
+                os.close(os.open(os.path.join(WORKSPACE, f"e{created}"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644))
+            except OSError as error:
+                code = errno.errorcode.get(error.errno)
+                break
+            created += 1
+    finally:
+        empty_folder()
+    return code == "ENOSPC" and created == limit, f"{created} of {limit} entries, then {code}"
+
+
+def root_read_only():
+    # /home/agent belongs to the agent's user, so only a read-only root stops the write.
+    results = {}
+    for path in ("/home/agent/probe.txt", "/probe.txt", "/etc/probe.txt", "/var/tmp/probe.txt", "/opt/minerva/probe.txt"):
+        try:
+            with open(path, "w") as file:
+                file.write("no")
+            results[path] = "written"
+        except OSError as error:
+            results[path] = errno.errorcode.get(error.errno, str(error.errno))
+    ok = results["/home/agent/probe.txt"] == "EROFS" and all(value in ("EROFS", "EACCES") for value in results.values())
+    return ok, results
+
+
+def writable_elsewhere():
+    """Nothing the agent writes outside /workspace runs: every other mount it can write to (/tmp, and
+    /dev/shm or /dev/mqueue where the platform has them) is mounted noexec, and none of them is kept."""
+    found = []
+    with open("/proc/self/mountinfo") as file:
+        for line in file:
+            fields = line.split()
+            mount, options = fields[4], fields[5].split(",")
+            if mount == WORKSPACE or mount.startswith(("/proc", "/sys")):
+                continue
+            if os.path.isdir(mount) and os.access(mount, os.W_OK):
+                path = os.path.join(mount, f".probe-{os.getpid()}")
+                try:
+                    os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+                    os.remove(path)
+                except OSError:
+                    continue
+                if "noexec" not in options:
+                    found.append(mount)
+    return not found, found or "none"
+
+
+def http_fails(host, port, tls):
+    """True when no HTTP answer comes back: the connection is refused, reset, or times out."""
+    import http.client
+
+    try:
+        if tls:
+            import ssl
+
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            connection = http.client.HTTPSConnection(host, port, timeout=TIMEOUT, context=context)
+        else:
+            connection = http.client.HTTPConnection(host, port, timeout=TIMEOUT)
+        connection.request("GET", "/", headers={"Host": "example.com"})
+        response = connection.getresponse()
+        return False, f"HTTP {response.status}"
+    except Exception as error:
+        return True, f"{type(error).__name__}: {error}"
+
+
+def unreachable(targets):
+    def run():
+        results = {}
+        ok = True
+        for host, port, tls in targets:
+            failed, detail = http_fails(host, port, tls)
+            ok = ok and failed
+            results[f"{'https' if tls else 'http'}://{host}:{port}"] = detail
+        return ok, results
+
+    return run
+
+
+def tcp_unreachable(targets):
+    def run():
+        results = {}
+        ok = True
+        for host, port in targets:
+            family = socket.AF_INET6 if ":" in host else socket.AF_INET
+            sock = socket.socket(family, socket.SOCK_STREAM)
+            sock.settimeout(3)
+            try:
+                sock.connect((host, port))
+                results[f"{host}:{port}"] = "connected"
+                ok = False
+            except OSError as error:
+                results[f"{host}:{port}"] = type(error).__name__
+            finally:
+                sock.close()
+        return ok, results
+
+    return run
+
+
+def dns_unresolvable():
+    outcome = {}
+
+    def resolve():
+        try:
+            outcome["result"] = socket.getaddrinfo("example.com", 443)
+        except OSError as error:
+            outcome["error"] = f"{type(error).__name__}: {error}"
+
+    thread = threading.Thread(target=resolve, daemon=True)
+    thread.start()
+    thread.join(30)
+    if "result" in outcome:
+        return False, "resolved"
+    return True, outcome.get("error", "no answer within 30 s")
+
+
+def fork_limit(limit):
+    children = []
+    error = None
+    try:
+        while error is None and len(children) < FORK_ATTEMPTS:
+            try:
+                children.append(subprocess.Popen(["sleep", "600"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+            except OSError as failure:
+                error = errno.errorcode.get(failure.errno, str(failure.errno))
+    finally:
+        for child in children:
+            child.kill()
+        for child in children:
+            child.wait()
+    started = len(children)
+    ok = error == "EAGAIN" and limit - FORK_BASELINE_MAX <= started < limit
+    after = subprocess.run(["true"], timeout=TIMEOUT).returncode == 0
+    return ok and after, f"{started} processes, then {error}; a process starts afterwards: {after}"
+
+
+def main(argv):
+    folder_bytes, folder_entries, pids_max = (int(value) for value in argv[1:4])
+    cgroup = argv[4]
+    peers = argv[5:]
+    check("nonRootUser", non_root_user)
+    check("commandEnvironmentFixed", fixed_environment)
+    check("pid1EnvironmentUnreadable", pid1_environment_unreadable)
+    check("inAgentCgroup", lambda: in_agent_cgroup(cgroup))
+    check("workspaceWritable", workspace_writable)
+    check("workspaceExecutable", lambda: (run_script(WORKSPACE) == "ran", run_script(WORKSPACE)))
+    check("tmpNotExecutable", lambda: (run_script("/tmp") == "EACCES", run_script("/tmp")))
+    check("homeDirectories", home_directories)
+    check("workspaceSizeLimitHolds", lambda: folder_size_limit(folder_bytes))
+    check("workspaceEntryLimitHolds", lambda: folder_entry_limit(folder_entries))
+    check("rootFilesystemReadOnly", root_read_only)
+    check("otherWritableMountsNoexec", writable_elsewhere)
+    check("internetIPv4Blocked", unreachable([("1.1.1.1", 80, False), ("1.1.1.1", 443, True)]))
+    check("internetIPv6Blocked", unreachable([("2606:4700:4700::1111", 80, False), ("2606:4700:4700::1111", 443, True)]))
+    check("metadataServiceBlocked", unreachable([("169.254.169.254", 80, False), ("fd00:ec2::254", 80, False)]))
+    check("publicDnsUnresolvable", dns_unresolvable)
+    check("hostUnreachable", unreachable([("10.0.0.254", 80, False), ("10.0.0.254", 443, True)]))
+    check("otherPortsUnreachable", tcp_unreachable([("1.1.1.1", 22), ("10.0.0.254", 22), ("1.1.1.1", 53), ("10.0.0.254", 8080)]))
+    if peers:
+        check("otherContainersUnreachable", tcp_unreachable([(peer.rsplit(":", 1)[0].strip("[]"), int(peer.rsplit(":", 1)[1])) for peer in peers]))
+    # Last, since it briefly leaves no room for other processes.
+    check("forkLimitHolds", lambda: fork_limit(pids_max))
+    sys.stdout.write(json.dumps({"checks": checks, "details": details}) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

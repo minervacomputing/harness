@@ -1,0 +1,7047 @@
+{
+ "manifest": [
+  {
+   "data": {
+    "files": [
+     {
+      "path": "docs/a/x.txt",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     },
+     {
+      "path": "docs/b.txt",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": [
+     "empty"
+    ]
+   },
+   "max_entries": 10,
+   "outcome": {
+    "ok": {
+     "files": {
+      "docs/a/x.txt": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ],
+      "docs/b.txt": [
+       "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+       420,
+       0
+      ]
+     },
+     "dirs": [
+      "empty"
+     ],
+     "entry_count": 5,
+     "hashes": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "/abs",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'/abs' is not a relative path without empty, . or .. segments."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a//b",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a//b' is not a relative path without empty, . or .. segments."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a/",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a/' is not a relative path without empty, . or .. segments."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "./a",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'./a' is not a relative path without empty, . or .. segments."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a/../b",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a/../b' is not a relative path without empty, . or .. segments."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "..",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'..' is not a relative path without empty, . or .. segments."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": ".",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'.' is not a relative path without empty, . or .. segments."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'' is not a relative path without empty, . or .. segments."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a\u0000b",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a\\x00b' contains a control character."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a\nb",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a\\nb' contains a control character."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a\u007fb",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a\\x7fb' contains a control character."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a\u0085b",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a\\x85b' contains a control character."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "e\u0301",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'e\u0301' is not in NFC."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "\udcff",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "A path is valid UTF-8."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "\ud83d",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "A path is valid UTF-8."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' has a name longer than 255 bytes."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d' is more than 32 levels deep."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "A path has at most 1024 bytes."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": 7,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "A path is a string."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": null,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "A path is a string."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": [
+       "a"
+      ],
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "A path is a string."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a\u202eb",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "ok": {
+     "files": {
+      "a\u202eb": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ]
+     },
+     "dirs": [],
+     "entry_count": 1,
+     "hashes": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "\ufeffbom",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "ok": {
+     "files": {
+      "\ufeffbom": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ]
+     },
+     "dirs": [],
+     "entry_count": 1,
+     "hashes": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a b",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "ok": {
+     "files": {
+      "a b": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ]
+     },
+     "dirs": [],
+     "entry_count": 1,
+     "hashes": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "\u00dcn\u00efc\u00f6d\u00e9",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "ok": {
+     "files": {
+      "\u00dcn\u00efc\u00f6d\u00e9": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ]
+     },
+     "dirs": [],
+     "entry_count": 1,
+     "hashes": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "\ud83d\ude00/\ud83d\ude00",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "ok": {
+     "files": {
+      "\ud83d\ude00/\ud83d\ude00": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ]
+     },
+     "dirs": [],
+     "entry_count": 2,
+     "hashes": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a\\b",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "ok": {
+     "files": {
+      "a\\b": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ]
+     },
+     "dirs": [],
+     "entry_count": 1,
+     "hashes": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a'b",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "ok": {
+     "files": {
+      "a'b": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ]
+     },
+     "dirs": [],
+     "entry_count": 1,
+     "hashes": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a\"b",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "ok": {
+     "files": {
+      "a\"b": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ]
+     },
+     "dirs": [],
+     "entry_count": 1,
+     "hashes": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a'\"b",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "ok": {
+     "files": {
+      "a'\"b": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ]
+     },
+     "dirs": [],
+     "entry_count": 1,
+     "hashes": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "ok": {
+     "files": {
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ]
+     },
+     "dirs": [],
+     "entry_count": 1,
+     "hashes": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "ok": {
+     "files": {
+      "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ]
+     },
+     "dirs": [],
+     "entry_count": 1,
+     "hashes": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9' has a name longer than 255 bytes."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "quota": "folder_entries"
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/xxxxxxxxxxxxxxxxxxxxxxx",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "A path has at most 1024 bytes."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/xxxxxxxxxxxxxxxxxxxxxxxx",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "A path has at most 1024 bytes."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "\u2028",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "ok": {
+     "files": {
+      "\u2028": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ]
+     },
+     "dirs": [],
+     "entry_count": 1,
+     "hashes": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "\udb40\udc01",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "ok": {
+     "files": {
+      "\udb40\udc01": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ]
+     },
+     "dirs": [],
+     "entry_count": 1,
+     "hashes": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     },
+     {
+      "path": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 100,
+   "outcome": {
+    "ok": {
+     "files": {
+      "d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ],
+      "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ]
+     },
+     "dirs": [],
+     "entry_count": 33,
+     "hashes": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   }
+  },
+  {
+   "data": [],
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "A manifest is an object with exactly \"files\" and \"dirs\"."
+   }
+  },
+  {
+   "data": {
+    "files": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "A manifest is an object with exactly \"files\" and \"dirs\"."
+   }
+  },
+  {
+   "data": {
+    "files": [],
+    "dirs": [],
+    "extra": 1
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "A manifest is an object with exactly \"files\" and \"dirs\"."
+   }
+  },
+  {
+   "data": {
+    "files": {},
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "\"files\" and \"dirs\" are lists."
+   }
+  },
+  {
+   "data": {
+    "files": [],
+    "dirs": {}
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "\"files\" and \"dirs\" are lists."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0,
+      "size": 1
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "A file entry has exactly path, sha256, mode and mtime."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "A file entry has exactly path, sha256, mode and mtime."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     "a"
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "A file entry has exactly path, sha256, mode and mtime."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a",
+      "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a': sha256 is 64 lowercase hex digits."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a': sha256 is 64 lowercase hex digits."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a",
+      "sha256": null,
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a': sha256 is 64 lowercase hex digits."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 511,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a': mode is 0644 or 0755."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": true,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a': mode is 0644 or 0755."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": "420",
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a': mode is 0644 or 0755."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 493,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "ok": {
+     "files": {
+      "a": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       493,
+       0
+      ]
+     },
+     "dirs": [],
+     "entry_count": 1,
+     "hashes": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": -1
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a': mtime is an integer number of milliseconds within range."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 1.5
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a': mtime is an integer number of milliseconds within range."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": false
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a': mtime is an integer number of milliseconds within range."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 253402300799999
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "ok": {
+     "files": {
+      "a": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       253402300799999
+      ]
+     },
+     "dirs": [],
+     "entry_count": 1,
+     "hashes": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 253402300800000
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a': mtime is an integer number of milliseconds within range."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     },
+     {
+      "path": "a",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a' is listed twice."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": [
+     "a"
+    ]
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a' is listed twice."
+   }
+  },
+  {
+   "data": {
+    "files": [],
+    "dirs": [
+     "a",
+     "a"
+    ]
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a' is listed twice."
+   }
+  },
+  {
+   "data": {
+    "files": [],
+    "dirs": [
+     "a/",
+     "b"
+    ]
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a/' is not a relative path without empty, . or .. segments."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     },
+     {
+      "path": "a/b",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a' is both a file and a directory."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a/b",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     },
+     {
+      "path": "a",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a' is both a file and a directory."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a/b",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": [
+     "a"
+    ]
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a' is listed as an empty directory but has entries."
+   }
+  },
+  {
+   "data": {
+    "files": [],
+    "dirs": [
+     "a/b",
+     "a"
+    ]
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a' is listed as an empty directory but has entries."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a/b/c/d.txt",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 4,
+   "outcome": {
+    "ok": {
+     "files": {
+      "a/b/c/d.txt": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ]
+     },
+     "dirs": [],
+     "entry_count": 4,
+     "hashes": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a/b/c/d.txt",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 3,
+   "outcome": {
+    "quota": "folder_entries"
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": null
+     },
+     {
+      "path": null
+     },
+     {
+      "path": null
+     },
+     {
+      "path": null
+     },
+     {
+      "path": null
+     },
+     {
+      "path": null
+     },
+     {
+      "path": null
+     },
+     {
+      "path": null
+     },
+     {
+      "path": null
+     },
+     {
+      "path": null
+     },
+     {
+      "path": null
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "quota": "folder_entries"
+   }
+  },
+  {
+   "data": {
+    "files": [],
+    "dirs": [
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x"
+    ]
+   },
+   "max_entries": 10,
+   "outcome": {
+    "quota": "folder_entries"
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a/b/c",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     },
+     {
+      "path": "x/y",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": [
+     "z"
+    ]
+   },
+   "max_entries": 6,
+   "outcome": {
+    "ok": {
+     "files": {
+      "a/b/c": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ],
+      "x/y": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ]
+     },
+     "dirs": [
+      "z"
+     ],
+     "entry_count": 6,
+     "hashes": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a/b/c",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     },
+     {
+      "path": "x/y",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": [
+     "z"
+    ]
+   },
+   "max_entries": 7,
+   "outcome": {
+    "ok": {
+     "files": {
+      "a/b/c": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ],
+      "x/y": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ]
+     },
+     "dirs": [
+      "z"
+     ],
+     "entry_count": 6,
+     "hashes": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a/b/c",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     },
+     {
+      "path": "a/x/../c",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": []
+   },
+   "max_entries": 10,
+   "outcome": {
+    "invalid": "'a/x/../c' is not a relative path without empty, . or .. segments."
+   }
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "b",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "mode": 420,
+      "mtime": 0
+     },
+     {
+      "path": "a/b",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     },
+     {
+      "path": "\ud83d\ude00",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     },
+     {
+      "path": "\ue000",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     },
+     {
+      "path": "Z",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": [
+     "\uffff",
+     "\u00e9"
+    ]
+   },
+   "max_entries": 20,
+   "outcome": {
+    "ok": {
+     "files": {
+      "b": [
+       "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+       420,
+       0
+      ],
+      "a/b": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ],
+      "\ud83d\ude00": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ],
+      "\ue000": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ],
+      "Z": [
+       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       420,
+       0
+      ]
+     },
+     "dirs": [
+      "\u00e9",
+      "\uffff"
+     ],
+     "entry_count": 8,
+     "hashes": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+     ]
+    }
+   }
+  }
+ ],
+ "digest": [
+  {
+   "data": {
+    "files": [
+     {
+      "path": "a",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     },
+     {
+      "path": "b",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": [
+     "z",
+     "y"
+    ]
+   },
+   "sizes": {
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1,
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 4097
+   },
+   "entries": {
+    "files": {
+     "a": {
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size": 1,
+      "mode": 420,
+      "mtime": 0
+     },
+     "b": {
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "size": 4097,
+      "mode": 420,
+      "mtime": 0
+     }
+    },
+    "dirs": [
+     "y",
+     "z"
+    ]
+   },
+   "digest": "230310400d4659974c5c39e4209011352a0e0d6fa1aa3d9e8275fe947c22f3a8",
+   "folder_bytes": 12288
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "b",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "mode": 420,
+      "mtime": 0
+     },
+     {
+      "path": "a",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": [
+     "y",
+     "z"
+    ]
+   },
+   "sizes": {
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1,
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 4097
+   },
+   "entries": {
+    "files": {
+     "a": {
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size": 1,
+      "mode": 420,
+      "mtime": 0
+     },
+     "b": {
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "size": 4097,
+      "mode": 420,
+      "mtime": 0
+     }
+    },
+    "dirs": [
+     "y",
+     "z"
+    ]
+   },
+   "digest": "230310400d4659974c5c39e4209011352a0e0d6fa1aa3d9e8275fe947c22f3a8",
+   "folder_bytes": 12288
+  },
+  {
+   "data": {
+    "files": [],
+    "dirs": []
+   },
+   "sizes": {},
+   "entries": {
+    "files": {},
+    "dirs": []
+   },
+   "digest": "9d0efbd017188c3940fea7bf2439c6fd67e1bdec0492e1af779bb478c7640431",
+   "folder_bytes": 0
+  },
+  {
+   "data": {
+    "files": [
+     {
+      "path": "\u00e9.txt",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "mode": 493,
+      "mtime": 1700000000500
+     },
+     {
+      "path": "\ud83d\ude00/x",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "mode": 420,
+      "mtime": 253402300799999
+     },
+     {
+      "path": "\ufeffbom.txt",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 1
+     },
+     {
+      "path": "\ue000",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     },
+     {
+      "path": "q\"uote",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "mode": 420,
+      "mtime": 0
+     },
+     {
+      "path": "back\\slash",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "mode": 420,
+      "mtime": 0
+     },
+     {
+      "path": "a\u2028b",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": 420,
+      "mtime": 0
+     }
+    ],
+    "dirs": [
+     "empty",
+     "x/y",
+     "\ud83d\ude01"
+    ]
+   },
+   "sizes": {
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 0,
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 4096,
+    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": 5000
+   },
+   "entries": {
+    "files": {
+     "a\u2028b": {
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size": 0,
+      "mode": 420,
+      "mtime": 0
+     },
+     "back\\slash": {
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "size": 5000,
+      "mode": 420,
+      "mtime": 0
+     },
+     "q\"uote": {
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "size": 4096,
+      "mode": 420,
+      "mtime": 0
+     },
+     "\u00e9.txt": {
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "size": 4096,
+      "mode": 493,
+      "mtime": 1700000000500
+     },
+     "\ue000": {
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size": 0,
+      "mode": 420,
+      "mtime": 0
+     },
+     "\ufeffbom.txt": {
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size": 0,
+      "mode": 420,
+      "mtime": 1
+     },
+     "\ud83d\ude00/x": {
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "size": 5000,
+      "mode": 420,
+      "mtime": 253402300799999
+     }
+    },
+    "dirs": [
+     "empty",
+     "x/y",
+     "\ud83d\ude01"
+    ]
+   },
+   "digest": "281c36e9c3aff14304dd17fe27126787d6aa2035cad49ee5d065a72ccd2c2cdc",
+   "folder_bytes": 24576
+  }
+ ],
+ "folder_bytes": [
+  {
+   "sizes": [
+    0,
+    1,
+    4096,
+    4097
+   ],
+   "bytes": 16384
+  },
+  {
+   "sizes": [],
+   "bytes": 0
+  },
+  {
+   "sizes": [
+    8192,
+    1
+   ],
+   "bytes": 12288
+  }
+ ],
+ "folder_changes": [
+  {
+   "before": {
+    "files": {
+     "a.txt": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 1
+     },
+     "b.txt": {
+      "sha256": "2",
+      "mode": 420,
+      "size": 1
+     },
+     "sub/c.txt": {
+      "sha256": "3",
+      "mode": 420,
+      "size": 1
+     }
+    },
+    "dirs": [
+     "empty/inner"
+    ]
+   },
+   "after": {
+    "files": {
+     "a.txt": {
+      "sha256": "1",
+      "mode": 493,
+      "size": 1
+     },
+     "b.txt": {
+      "sha256": "2",
+      "mode": 420,
+      "size": 1
+     },
+     "new/deep/d.txt": {
+      "sha256": "4",
+      "mode": 420,
+      "size": 1
+     }
+    },
+    "dirs": [
+     "x/y"
+    ]
+   },
+   "changes": {
+    "counts": {
+     "added": 1,
+     "modified": 1,
+     "deleted": 1,
+     "dirs_added": 4,
+     "dirs_deleted": 3
+    },
+    "added": [
+     {
+      "path": "new/deep/d.txt",
+      "size": 1
+     }
+    ],
+    "modified": [
+     {
+      "path": "a.txt",
+      "size": 1
+     }
+    ],
+    "deleted": [
+     {
+      "path": "sub/c.txt",
+      "size": 1
+     }
+    ],
+    "dirs_added": [
+     "new",
+     "new/deep",
+     "x",
+     "x/y"
+    ],
+    "dirs_deleted": [
+     "empty",
+     "empty/inner",
+     "sub"
+    ]
+   }
+  },
+  {
+   "before": null,
+   "after": {
+    "files": {
+     "a": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 5
+     }
+    },
+    "dirs": []
+   },
+   "changes": {
+    "counts": {
+     "added": 1,
+     "modified": 0,
+     "deleted": 0,
+     "dirs_added": 0,
+     "dirs_deleted": 0
+    },
+    "added": [
+     {
+      "path": "a",
+      "size": 5
+     }
+    ],
+    "modified": [],
+    "deleted": [],
+    "dirs_added": [],
+    "dirs_deleted": []
+   }
+  },
+  {
+   "before": null,
+   "after": {
+    "files": {},
+    "dirs": []
+   },
+   "changes": null
+  },
+  {
+   "before": {
+    "files": {
+     "a": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 5
+     }
+    },
+    "dirs": []
+   },
+   "after": {
+    "files": {
+     "a": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 9
+     }
+    },
+    "dirs": []
+   },
+   "changes": null
+  },
+  {
+   "before": {
+    "files": {
+     "a": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 5
+     }
+    },
+    "dirs": []
+   },
+   "after": {
+    "files": {
+     "a": {
+      "sha256": "2",
+      "mode": 420,
+      "size": 9
+     }
+    },
+    "dirs": []
+   },
+   "changes": {
+    "counts": {
+     "added": 0,
+     "modified": 1,
+     "deleted": 0,
+     "dirs_added": 0,
+     "dirs_deleted": 0
+    },
+    "added": [],
+    "modified": [
+     {
+      "path": "a",
+      "size": 9
+     }
+    ],
+    "deleted": [],
+    "dirs_added": [],
+    "dirs_deleted": []
+   }
+  },
+  {
+   "before": {
+    "files": {
+     "\ud83d\ude00": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 5
+     },
+     "\ue000": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 5
+     }
+    },
+    "dirs": []
+   },
+   "after": {
+    "files": {
+     "z/\ud83d\ude00": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 5
+     },
+     "z/\ue000": {
+      "sha256": "2",
+      "mode": 420,
+      "size": 2
+     }
+    },
+    "dirs": []
+   },
+   "changes": {
+    "counts": {
+     "added": 2,
+     "modified": 0,
+     "deleted": 2,
+     "dirs_added": 1,
+     "dirs_deleted": 0
+    },
+    "added": [
+     {
+      "path": "z/\ue000",
+      "size": 2
+     },
+     {
+      "path": "z/\ud83d\ude00",
+      "size": 5
+     }
+    ],
+    "modified": [],
+    "deleted": [
+     {
+      "path": "\ue000",
+      "size": 5
+     },
+     {
+      "path": "\ud83d\ude00",
+      "size": 5
+     }
+    ],
+    "dirs_added": [
+     "z"
+    ],
+    "dirs_deleted": []
+   }
+  },
+  {
+   "before": {
+    "files": {
+     "f000": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 0
+     },
+     "f001": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 1
+     },
+     "f002": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 2
+     },
+     "f003": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 3
+     },
+     "f004": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 4
+     },
+     "f005": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 5
+     },
+     "f006": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 6
+     },
+     "f007": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 7
+     },
+     "f008": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 8
+     },
+     "f009": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 9
+     },
+     "f010": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 10
+     },
+     "f011": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 11
+     },
+     "f012": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 12
+     },
+     "f013": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 13
+     },
+     "f014": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 14
+     },
+     "f015": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 15
+     },
+     "f016": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 16
+     },
+     "f017": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 17
+     },
+     "f018": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 18
+     },
+     "f019": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 19
+     },
+     "f020": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 20
+     },
+     "f021": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 21
+     },
+     "f022": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 22
+     },
+     "f023": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 23
+     },
+     "f024": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 24
+     },
+     "f025": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 25
+     },
+     "f026": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 26
+     },
+     "f027": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 27
+     },
+     "f028": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 28
+     },
+     "f029": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 29
+     },
+     "f030": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 30
+     },
+     "f031": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 31
+     },
+     "f032": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 32
+     },
+     "f033": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 33
+     },
+     "f034": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 34
+     },
+     "f035": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 35
+     },
+     "f036": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 36
+     },
+     "f037": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 37
+     },
+     "f038": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 38
+     },
+     "f039": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 39
+     },
+     "f040": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 40
+     },
+     "f041": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 41
+     },
+     "f042": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 42
+     },
+     "f043": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 43
+     },
+     "f044": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 44
+     },
+     "f045": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 45
+     },
+     "f046": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 46
+     },
+     "f047": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 47
+     },
+     "f048": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 48
+     },
+     "f049": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 49
+     },
+     "f050": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 50
+     },
+     "f051": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 51
+     },
+     "f052": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 52
+     },
+     "f053": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 53
+     },
+     "f054": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 54
+     },
+     "f055": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 55
+     },
+     "f056": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 56
+     },
+     "f057": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 57
+     },
+     "f058": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 58
+     },
+     "f059": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 59
+     },
+     "f060": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 60
+     },
+     "f061": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 61
+     },
+     "f062": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 62
+     },
+     "f063": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 63
+     },
+     "f064": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 64
+     },
+     "f065": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 65
+     },
+     "f066": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 66
+     },
+     "f067": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 67
+     },
+     "f068": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 68
+     },
+     "f069": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 69
+     },
+     "f070": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 70
+     },
+     "f071": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 71
+     },
+     "f072": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 72
+     },
+     "f073": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 73
+     },
+     "f074": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 74
+     },
+     "f075": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 75
+     },
+     "f076": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 76
+     },
+     "f077": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 77
+     },
+     "f078": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 78
+     },
+     "f079": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 79
+     },
+     "f080": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 80
+     },
+     "f081": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 81
+     },
+     "f082": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 82
+     },
+     "f083": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 83
+     },
+     "f084": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 84
+     },
+     "f085": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 85
+     },
+     "f086": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 86
+     },
+     "f087": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 87
+     },
+     "f088": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 88
+     },
+     "f089": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 89
+     },
+     "f090": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 90
+     },
+     "f091": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 91
+     },
+     "f092": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 92
+     },
+     "f093": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 93
+     },
+     "f094": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 94
+     },
+     "f095": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 95
+     },
+     "f096": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 96
+     },
+     "f097": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 97
+     },
+     "f098": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 98
+     },
+     "f099": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 99
+     },
+     "f100": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 100
+     },
+     "f101": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 101
+     },
+     "f102": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 102
+     },
+     "f103": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 103
+     },
+     "f104": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 104
+     },
+     "f105": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 105
+     },
+     "f106": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 106
+     },
+     "f107": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 107
+     },
+     "f108": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 108
+     },
+     "f109": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 109
+     },
+     "f110": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 110
+     },
+     "f111": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 111
+     },
+     "f112": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 112
+     },
+     "f113": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 113
+     },
+     "f114": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 114
+     },
+     "f115": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 115
+     },
+     "f116": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 116
+     },
+     "f117": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 117
+     },
+     "f118": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 118
+     },
+     "f119": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 119
+     },
+     "f120": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 120
+     },
+     "f121": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 121
+     },
+     "f122": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 122
+     },
+     "f123": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 123
+     },
+     "f124": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 124
+     },
+     "f125": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 125
+     },
+     "f126": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 126
+     },
+     "f127": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 127
+     },
+     "f128": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 128
+     },
+     "f129": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 129
+     },
+     "f130": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 130
+     },
+     "f131": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 131
+     },
+     "f132": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 132
+     },
+     "f133": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 133
+     },
+     "f134": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 134
+     },
+     "f135": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 135
+     },
+     "f136": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 136
+     },
+     "f137": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 137
+     },
+     "f138": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 138
+     },
+     "f139": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 139
+     },
+     "f140": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 140
+     },
+     "f141": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 141
+     },
+     "f142": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 142
+     },
+     "f143": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 143
+     },
+     "f144": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 144
+     },
+     "f145": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 145
+     },
+     "f146": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 146
+     },
+     "f147": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 147
+     },
+     "f148": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 148
+     },
+     "f149": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 149
+     }
+    },
+    "dirs": [
+     "d000",
+     "d001",
+     "d002",
+     "d003",
+     "d004",
+     "d005",
+     "d006",
+     "d007",
+     "d008",
+     "d009",
+     "d010",
+     "d011",
+     "d012",
+     "d013",
+     "d014",
+     "d015",
+     "d016",
+     "d017",
+     "d018",
+     "d019",
+     "d020",
+     "d021",
+     "d022",
+     "d023",
+     "d024",
+     "d025",
+     "d026",
+     "d027",
+     "d028",
+     "d029",
+     "d030",
+     "d031",
+     "d032",
+     "d033",
+     "d034",
+     "d035",
+     "d036",
+     "d037",
+     "d038",
+     "d039",
+     "d040",
+     "d041",
+     "d042",
+     "d043",
+     "d044",
+     "d045",
+     "d046",
+     "d047",
+     "d048",
+     "d049",
+     "d050",
+     "d051",
+     "d052",
+     "d053",
+     "d054",
+     "d055",
+     "d056",
+     "d057",
+     "d058",
+     "d059",
+     "d060",
+     "d061",
+     "d062",
+     "d063",
+     "d064",
+     "d065",
+     "d066",
+     "d067",
+     "d068",
+     "d069",
+     "d070",
+     "d071",
+     "d072",
+     "d073",
+     "d074",
+     "d075",
+     "d076",
+     "d077",
+     "d078",
+     "d079",
+     "d080",
+     "d081",
+     "d082",
+     "d083",
+     "d084",
+     "d085",
+     "d086",
+     "d087",
+     "d088",
+     "d089",
+     "d090",
+     "d091",
+     "d092",
+     "d093",
+     "d094",
+     "d095",
+     "d096",
+     "d097",
+     "d098",
+     "d099",
+     "d100",
+     "d101",
+     "d102",
+     "d103",
+     "d104",
+     "d105",
+     "d106",
+     "d107",
+     "d108",
+     "d109",
+     "d110",
+     "d111",
+     "d112",
+     "d113",
+     "d114",
+     "d115",
+     "d116",
+     "d117",
+     "d118",
+     "d119"
+    ]
+   },
+   "after": {
+    "files": {
+     "g000/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 0
+     },
+     "g001/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 1
+     },
+     "g002/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 2
+     },
+     "g003/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 3
+     },
+     "g004/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 4
+     },
+     "g005/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 5
+     },
+     "g006/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 6
+     },
+     "g007/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 7
+     },
+     "g008/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 8
+     },
+     "g009/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 9
+     },
+     "g010/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 10
+     },
+     "g011/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 11
+     },
+     "g012/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 12
+     },
+     "g013/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 13
+     },
+     "g014/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 14
+     },
+     "g015/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 15
+     },
+     "g016/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 16
+     },
+     "g017/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 17
+     },
+     "g018/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 18
+     },
+     "g019/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 19
+     },
+     "g020/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 20
+     },
+     "g021/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 21
+     },
+     "g022/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 22
+     },
+     "g023/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 23
+     },
+     "g024/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 24
+     },
+     "g025/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 25
+     },
+     "g026/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 26
+     },
+     "g027/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 27
+     },
+     "g028/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 28
+     },
+     "g029/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 29
+     },
+     "g030/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 30
+     },
+     "g031/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 31
+     },
+     "g032/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 32
+     },
+     "g033/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 33
+     },
+     "g034/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 34
+     },
+     "g035/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 35
+     },
+     "g036/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 36
+     },
+     "g037/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 37
+     },
+     "g038/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 38
+     },
+     "g039/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 39
+     },
+     "g040/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 40
+     },
+     "g041/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 41
+     },
+     "g042/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 42
+     },
+     "g043/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 43
+     },
+     "g044/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 44
+     },
+     "g045/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 45
+     },
+     "g046/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 46
+     },
+     "g047/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 47
+     },
+     "g048/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 48
+     },
+     "g049/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 49
+     },
+     "g050/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 50
+     },
+     "g051/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 51
+     },
+     "g052/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 52
+     },
+     "g053/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 53
+     },
+     "g054/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 54
+     },
+     "g055/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 55
+     },
+     "g056/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 56
+     },
+     "g057/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 57
+     },
+     "g058/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 58
+     },
+     "g059/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 59
+     },
+     "g060/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 60
+     },
+     "g061/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 61
+     },
+     "g062/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 62
+     },
+     "g063/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 63
+     },
+     "g064/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 64
+     },
+     "g065/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 65
+     },
+     "g066/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 66
+     },
+     "g067/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 67
+     },
+     "g068/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 68
+     },
+     "g069/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 69
+     },
+     "g070/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 70
+     },
+     "g071/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 71
+     },
+     "g072/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 72
+     },
+     "g073/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 73
+     },
+     "g074/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 74
+     },
+     "g075/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 75
+     },
+     "g076/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 76
+     },
+     "g077/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 77
+     },
+     "g078/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 78
+     },
+     "g079/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 79
+     },
+     "g080/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 80
+     },
+     "g081/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 81
+     },
+     "g082/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 82
+     },
+     "g083/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 83
+     },
+     "g084/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 84
+     },
+     "g085/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 85
+     },
+     "g086/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 86
+     },
+     "g087/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 87
+     },
+     "g088/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 88
+     },
+     "g089/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 89
+     },
+     "g090/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 90
+     },
+     "g091/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 91
+     },
+     "g092/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 92
+     },
+     "g093/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 93
+     },
+     "g094/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 94
+     },
+     "g095/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 95
+     },
+     "g096/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 96
+     },
+     "g097/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 97
+     },
+     "g098/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 98
+     },
+     "g099/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 99
+     },
+     "g100/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 100
+     },
+     "g101/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 101
+     },
+     "g102/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 102
+     },
+     "g103/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 103
+     },
+     "g104/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 104
+     },
+     "g105/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 105
+     },
+     "g106/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 106
+     },
+     "g107/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 107
+     },
+     "g108/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 108
+     },
+     "g109/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 109
+     },
+     "g110/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 110
+     },
+     "g111/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 111
+     },
+     "g112/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 112
+     },
+     "g113/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 113
+     },
+     "g114/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 114
+     },
+     "g115/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 115
+     },
+     "g116/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 116
+     },
+     "g117/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 117
+     },
+     "g118/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 118
+     },
+     "g119/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 119
+     },
+     "g120/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 120
+     },
+     "g121/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 121
+     },
+     "g122/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 122
+     },
+     "g123/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 123
+     },
+     "g124/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 124
+     },
+     "g125/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 125
+     },
+     "g126/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 126
+     },
+     "g127/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 127
+     },
+     "g128/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 128
+     },
+     "g129/x": {
+      "sha256": "1",
+      "mode": 420,
+      "size": 129
+     }
+    },
+    "dirs": []
+   },
+   "changes": {
+    "counts": {
+     "added": 130,
+     "modified": 0,
+     "deleted": 150,
+     "dirs_added": 130,
+     "dirs_deleted": 120
+    },
+    "added": [
+     {
+      "path": "g000/x",
+      "size": 0
+     },
+     {
+      "path": "g001/x",
+      "size": 1
+     },
+     {
+      "path": "g002/x",
+      "size": 2
+     },
+     {
+      "path": "g003/x",
+      "size": 3
+     },
+     {
+      "path": "g004/x",
+      "size": 4
+     },
+     {
+      "path": "g005/x",
+      "size": 5
+     },
+     {
+      "path": "g006/x",
+      "size": 6
+     },
+     {
+      "path": "g007/x",
+      "size": 7
+     },
+     {
+      "path": "g008/x",
+      "size": 8
+     },
+     {
+      "path": "g009/x",
+      "size": 9
+     },
+     {
+      "path": "g010/x",
+      "size": 10
+     },
+     {
+      "path": "g011/x",
+      "size": 11
+     },
+     {
+      "path": "g012/x",
+      "size": 12
+     },
+     {
+      "path": "g013/x",
+      "size": 13
+     },
+     {
+      "path": "g014/x",
+      "size": 14
+     },
+     {
+      "path": "g015/x",
+      "size": 15
+     },
+     {
+      "path": "g016/x",
+      "size": 16
+     },
+     {
+      "path": "g017/x",
+      "size": 17
+     },
+     {
+      "path": "g018/x",
+      "size": 18
+     },
+     {
+      "path": "g019/x",
+      "size": 19
+     },
+     {
+      "path": "g020/x",
+      "size": 20
+     },
+     {
+      "path": "g021/x",
+      "size": 21
+     },
+     {
+      "path": "g022/x",
+      "size": 22
+     },
+     {
+      "path": "g023/x",
+      "size": 23
+     },
+     {
+      "path": "g024/x",
+      "size": 24
+     },
+     {
+      "path": "g025/x",
+      "size": 25
+     },
+     {
+      "path": "g026/x",
+      "size": 26
+     },
+     {
+      "path": "g027/x",
+      "size": 27
+     },
+     {
+      "path": "g028/x",
+      "size": 28
+     },
+     {
+      "path": "g029/x",
+      "size": 29
+     },
+     {
+      "path": "g030/x",
+      "size": 30
+     },
+     {
+      "path": "g031/x",
+      "size": 31
+     },
+     {
+      "path": "g032/x",
+      "size": 32
+     },
+     {
+      "path": "g033/x",
+      "size": 33
+     },
+     {
+      "path": "g034/x",
+      "size": 34
+     },
+     {
+      "path": "g035/x",
+      "size": 35
+     },
+     {
+      "path": "g036/x",
+      "size": 36
+     },
+     {
+      "path": "g037/x",
+      "size": 37
+     },
+     {
+      "path": "g038/x",
+      "size": 38
+     },
+     {
+      "path": "g039/x",
+      "size": 39
+     },
+     {
+      "path": "g040/x",
+      "size": 40
+     },
+     {
+      "path": "g041/x",
+      "size": 41
+     },
+     {
+      "path": "g042/x",
+      "size": 42
+     },
+     {
+      "path": "g043/x",
+      "size": 43
+     },
+     {
+      "path": "g044/x",
+      "size": 44
+     },
+     {
+      "path": "g045/x",
+      "size": 45
+     },
+     {
+      "path": "g046/x",
+      "size": 46
+     },
+     {
+      "path": "g047/x",
+      "size": 47
+     },
+     {
+      "path": "g048/x",
+      "size": 48
+     },
+     {
+      "path": "g049/x",
+      "size": 49
+     },
+     {
+      "path": "g050/x",
+      "size": 50
+     },
+     {
+      "path": "g051/x",
+      "size": 51
+     },
+     {
+      "path": "g052/x",
+      "size": 52
+     },
+     {
+      "path": "g053/x",
+      "size": 53
+     },
+     {
+      "path": "g054/x",
+      "size": 54
+     },
+     {
+      "path": "g055/x",
+      "size": 55
+     },
+     {
+      "path": "g056/x",
+      "size": 56
+     },
+     {
+      "path": "g057/x",
+      "size": 57
+     },
+     {
+      "path": "g058/x",
+      "size": 58
+     },
+     {
+      "path": "g059/x",
+      "size": 59
+     },
+     {
+      "path": "g060/x",
+      "size": 60
+     },
+     {
+      "path": "g061/x",
+      "size": 61
+     },
+     {
+      "path": "g062/x",
+      "size": 62
+     },
+     {
+      "path": "g063/x",
+      "size": 63
+     },
+     {
+      "path": "g064/x",
+      "size": 64
+     },
+     {
+      "path": "g065/x",
+      "size": 65
+     },
+     {
+      "path": "g066/x",
+      "size": 66
+     },
+     {
+      "path": "g067/x",
+      "size": 67
+     },
+     {
+      "path": "g068/x",
+      "size": 68
+     },
+     {
+      "path": "g069/x",
+      "size": 69
+     },
+     {
+      "path": "g070/x",
+      "size": 70
+     },
+     {
+      "path": "g071/x",
+      "size": 71
+     },
+     {
+      "path": "g072/x",
+      "size": 72
+     },
+     {
+      "path": "g073/x",
+      "size": 73
+     },
+     {
+      "path": "g074/x",
+      "size": 74
+     },
+     {
+      "path": "g075/x",
+      "size": 75
+     },
+     {
+      "path": "g076/x",
+      "size": 76
+     },
+     {
+      "path": "g077/x",
+      "size": 77
+     },
+     {
+      "path": "g078/x",
+      "size": 78
+     },
+     {
+      "path": "g079/x",
+      "size": 79
+     },
+     {
+      "path": "g080/x",
+      "size": 80
+     },
+     {
+      "path": "g081/x",
+      "size": 81
+     },
+     {
+      "path": "g082/x",
+      "size": 82
+     },
+     {
+      "path": "g083/x",
+      "size": 83
+     },
+     {
+      "path": "g084/x",
+      "size": 84
+     },
+     {
+      "path": "g085/x",
+      "size": 85
+     },
+     {
+      "path": "g086/x",
+      "size": 86
+     },
+     {
+      "path": "g087/x",
+      "size": 87
+     },
+     {
+      "path": "g088/x",
+      "size": 88
+     },
+     {
+      "path": "g089/x",
+      "size": 89
+     },
+     {
+      "path": "g090/x",
+      "size": 90
+     },
+     {
+      "path": "g091/x",
+      "size": 91
+     },
+     {
+      "path": "g092/x",
+      "size": 92
+     },
+     {
+      "path": "g093/x",
+      "size": 93
+     },
+     {
+      "path": "g094/x",
+      "size": 94
+     },
+     {
+      "path": "g095/x",
+      "size": 95
+     },
+     {
+      "path": "g096/x",
+      "size": 96
+     },
+     {
+      "path": "g097/x",
+      "size": 97
+     },
+     {
+      "path": "g098/x",
+      "size": 98
+     },
+     {
+      "path": "g099/x",
+      "size": 99
+     }
+    ],
+    "modified": [],
+    "deleted": [
+     {
+      "path": "f000",
+      "size": 0
+     },
+     {
+      "path": "f001",
+      "size": 1
+     },
+     {
+      "path": "f002",
+      "size": 2
+     },
+     {
+      "path": "f003",
+      "size": 3
+     },
+     {
+      "path": "f004",
+      "size": 4
+     },
+     {
+      "path": "f005",
+      "size": 5
+     },
+     {
+      "path": "f006",
+      "size": 6
+     },
+     {
+      "path": "f007",
+      "size": 7
+     },
+     {
+      "path": "f008",
+      "size": 8
+     },
+     {
+      "path": "f009",
+      "size": 9
+     },
+     {
+      "path": "f010",
+      "size": 10
+     },
+     {
+      "path": "f011",
+      "size": 11
+     },
+     {
+      "path": "f012",
+      "size": 12
+     },
+     {
+      "path": "f013",
+      "size": 13
+     },
+     {
+      "path": "f014",
+      "size": 14
+     },
+     {
+      "path": "f015",
+      "size": 15
+     },
+     {
+      "path": "f016",
+      "size": 16
+     },
+     {
+      "path": "f017",
+      "size": 17
+     },
+     {
+      "path": "f018",
+      "size": 18
+     },
+     {
+      "path": "f019",
+      "size": 19
+     },
+     {
+      "path": "f020",
+      "size": 20
+     },
+     {
+      "path": "f021",
+      "size": 21
+     },
+     {
+      "path": "f022",
+      "size": 22
+     },
+     {
+      "path": "f023",
+      "size": 23
+     },
+     {
+      "path": "f024",
+      "size": 24
+     },
+     {
+      "path": "f025",
+      "size": 25
+     },
+     {
+      "path": "f026",
+      "size": 26
+     },
+     {
+      "path": "f027",
+      "size": 27
+     },
+     {
+      "path": "f028",
+      "size": 28
+     },
+     {
+      "path": "f029",
+      "size": 29
+     },
+     {
+      "path": "f030",
+      "size": 30
+     },
+     {
+      "path": "f031",
+      "size": 31
+     },
+     {
+      "path": "f032",
+      "size": 32
+     },
+     {
+      "path": "f033",
+      "size": 33
+     },
+     {
+      "path": "f034",
+      "size": 34
+     },
+     {
+      "path": "f035",
+      "size": 35
+     },
+     {
+      "path": "f036",
+      "size": 36
+     },
+     {
+      "path": "f037",
+      "size": 37
+     },
+     {
+      "path": "f038",
+      "size": 38
+     },
+     {
+      "path": "f039",
+      "size": 39
+     },
+     {
+      "path": "f040",
+      "size": 40
+     },
+     {
+      "path": "f041",
+      "size": 41
+     },
+     {
+      "path": "f042",
+      "size": 42
+     },
+     {
+      "path": "f043",
+      "size": 43
+     },
+     {
+      "path": "f044",
+      "size": 44
+     },
+     {
+      "path": "f045",
+      "size": 45
+     },
+     {
+      "path": "f046",
+      "size": 46
+     },
+     {
+      "path": "f047",
+      "size": 47
+     },
+     {
+      "path": "f048",
+      "size": 48
+     },
+     {
+      "path": "f049",
+      "size": 49
+     },
+     {
+      "path": "f050",
+      "size": 50
+     },
+     {
+      "path": "f051",
+      "size": 51
+     },
+     {
+      "path": "f052",
+      "size": 52
+     },
+     {
+      "path": "f053",
+      "size": 53
+     },
+     {
+      "path": "f054",
+      "size": 54
+     },
+     {
+      "path": "f055",
+      "size": 55
+     },
+     {
+      "path": "f056",
+      "size": 56
+     },
+     {
+      "path": "f057",
+      "size": 57
+     },
+     {
+      "path": "f058",
+      "size": 58
+     },
+     {
+      "path": "f059",
+      "size": 59
+     },
+     {
+      "path": "f060",
+      "size": 60
+     },
+     {
+      "path": "f061",
+      "size": 61
+     },
+     {
+      "path": "f062",
+      "size": 62
+     },
+     {
+      "path": "f063",
+      "size": 63
+     },
+     {
+      "path": "f064",
+      "size": 64
+     },
+     {
+      "path": "f065",
+      "size": 65
+     },
+     {
+      "path": "f066",
+      "size": 66
+     },
+     {
+      "path": "f067",
+      "size": 67
+     },
+     {
+      "path": "f068",
+      "size": 68
+     },
+     {
+      "path": "f069",
+      "size": 69
+     },
+     {
+      "path": "f070",
+      "size": 70
+     },
+     {
+      "path": "f071",
+      "size": 71
+     },
+     {
+      "path": "f072",
+      "size": 72
+     },
+     {
+      "path": "f073",
+      "size": 73
+     },
+     {
+      "path": "f074",
+      "size": 74
+     },
+     {
+      "path": "f075",
+      "size": 75
+     },
+     {
+      "path": "f076",
+      "size": 76
+     },
+     {
+      "path": "f077",
+      "size": 77
+     },
+     {
+      "path": "f078",
+      "size": 78
+     },
+     {
+      "path": "f079",
+      "size": 79
+     },
+     {
+      "path": "f080",
+      "size": 80
+     },
+     {
+      "path": "f081",
+      "size": 81
+     },
+     {
+      "path": "f082",
+      "size": 82
+     },
+     {
+      "path": "f083",
+      "size": 83
+     },
+     {
+      "path": "f084",
+      "size": 84
+     },
+     {
+      "path": "f085",
+      "size": 85
+     },
+     {
+      "path": "f086",
+      "size": 86
+     },
+     {
+      "path": "f087",
+      "size": 87
+     },
+     {
+      "path": "f088",
+      "size": 88
+     },
+     {
+      "path": "f089",
+      "size": 89
+     },
+     {
+      "path": "f090",
+      "size": 90
+     },
+     {
+      "path": "f091",
+      "size": 91
+     },
+     {
+      "path": "f092",
+      "size": 92
+     },
+     {
+      "path": "f093",
+      "size": 93
+     },
+     {
+      "path": "f094",
+      "size": 94
+     },
+     {
+      "path": "f095",
+      "size": 95
+     },
+     {
+      "path": "f096",
+      "size": 96
+     },
+     {
+      "path": "f097",
+      "size": 97
+     },
+     {
+      "path": "f098",
+      "size": 98
+     },
+     {
+      "path": "f099",
+      "size": 99
+     }
+    ],
+    "dirs_added": [
+     "g000",
+     "g001",
+     "g002",
+     "g003",
+     "g004",
+     "g005",
+     "g006",
+     "g007",
+     "g008",
+     "g009",
+     "g010",
+     "g011",
+     "g012",
+     "g013",
+     "g014",
+     "g015",
+     "g016",
+     "g017",
+     "g018",
+     "g019",
+     "g020",
+     "g021",
+     "g022",
+     "g023",
+     "g024",
+     "g025",
+     "g026",
+     "g027",
+     "g028",
+     "g029",
+     "g030",
+     "g031",
+     "g032",
+     "g033",
+     "g034",
+     "g035",
+     "g036",
+     "g037",
+     "g038",
+     "g039",
+     "g040",
+     "g041",
+     "g042",
+     "g043",
+     "g044",
+     "g045",
+     "g046",
+     "g047",
+     "g048",
+     "g049",
+     "g050",
+     "g051",
+     "g052",
+     "g053",
+     "g054",
+     "g055",
+     "g056",
+     "g057",
+     "g058",
+     "g059",
+     "g060",
+     "g061",
+     "g062",
+     "g063",
+     "g064",
+     "g065",
+     "g066",
+     "g067",
+     "g068",
+     "g069",
+     "g070",
+     "g071",
+     "g072",
+     "g073",
+     "g074",
+     "g075",
+     "g076",
+     "g077",
+     "g078",
+     "g079",
+     "g080",
+     "g081",
+     "g082",
+     "g083",
+     "g084",
+     "g085",
+     "g086",
+     "g087",
+     "g088",
+     "g089",
+     "g090",
+     "g091",
+     "g092",
+     "g093",
+     "g094",
+     "g095",
+     "g096",
+     "g097",
+     "g098",
+     "g099"
+    ],
+    "dirs_deleted": [
+     "d000",
+     "d001",
+     "d002",
+     "d003",
+     "d004",
+     "d005",
+     "d006",
+     "d007",
+     "d008",
+     "d009",
+     "d010",
+     "d011",
+     "d012",
+     "d013",
+     "d014",
+     "d015",
+     "d016",
+     "d017",
+     "d018",
+     "d019",
+     "d020",
+     "d021",
+     "d022",
+     "d023",
+     "d024",
+     "d025",
+     "d026",
+     "d027",
+     "d028",
+     "d029",
+     "d030",
+     "d031",
+     "d032",
+     "d033",
+     "d034",
+     "d035",
+     "d036",
+     "d037",
+     "d038",
+     "d039",
+     "d040",
+     "d041",
+     "d042",
+     "d043",
+     "d044",
+     "d045",
+     "d046",
+     "d047",
+     "d048",
+     "d049",
+     "d050",
+     "d051",
+     "d052",
+     "d053",
+     "d054",
+     "d055",
+     "d056",
+     "d057",
+     "d058",
+     "d059",
+     "d060",
+     "d061",
+     "d062",
+     "d063",
+     "d064",
+     "d065",
+     "d066",
+     "d067",
+     "d068",
+     "d069",
+     "d070",
+     "d071",
+     "d072",
+     "d073",
+     "d074",
+     "d075",
+     "d076",
+     "d077",
+     "d078",
+     "d079",
+     "d080",
+     "d081",
+     "d082",
+     "d083",
+     "d084",
+     "d085",
+     "d086",
+     "d087",
+     "d088",
+     "d089",
+     "d090",
+     "d091",
+     "d092",
+     "d093",
+     "d094",
+     "d095",
+     "d096",
+     "d097",
+     "d098",
+     "d099"
+    ]
+   }
+  }
+ ],
+ "warnings": [
+  {
+   "data": {
+    "total": 3,
+    "items": [
+     {
+      "path": "link",
+      "reason": "symlink"
+     },
+     {
+      "path": "a\ufffdb",
+      "reason": "invalid_name"
+     }
+    ]
+   },
+   "outcome": {
+    "ok": {
+     "total": 3,
+     "items": [
+      {
+       "path": "link",
+       "reason": "symlink"
+      },
+      {
+       "path": "a\ufffdb",
+       "reason": "invalid_name"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "total": 0,
+    "items": []
+   },
+   "outcome": {
+    "ok": {
+     "total": 0,
+     "items": []
+    }
+   }
+  },
+  {
+   "data": [],
+   "outcome": {
+    "invalid": "Warnings are {\"total\", \"items\"}."
+   }
+  },
+  {
+   "data": {
+    "total": 0
+   },
+   "outcome": {
+    "invalid": "Warnings are {\"total\", \"items\"}."
+   }
+  },
+  {
+   "data": {
+    "total": 0,
+    "items": [],
+    "more": 1
+   },
+   "outcome": {
+    "invalid": "Warnings are {\"total\", \"items\"}."
+   }
+  },
+  {
+   "data": {
+    "total": true,
+    "items": []
+   },
+   "outcome": {
+    "invalid": "The warnings' total is not a count of their items."
+   }
+  },
+  {
+   "data": {
+    "total": 1.0,
+    "items": []
+   },
+   "outcome": {
+    "invalid": "The warnings' total is not a count of their items."
+   }
+  },
+  {
+   "data": {
+    "total": 0,
+    "items": [
+     {
+      "path": "a",
+      "reason": "symlink"
+     }
+    ]
+   },
+   "outcome": {
+    "invalid": "The warnings' total is not a count of their items."
+   }
+  },
+  {
+   "data": {
+    "total": 2147483648,
+    "items": []
+   },
+   "outcome": {
+    "invalid": "The warnings' total is not a count of their items."
+   }
+  },
+  {
+   "data": {
+    "total": 2147483647,
+    "items": []
+   },
+   "outcome": {
+    "ok": {
+     "total": 2147483647,
+     "items": []
+    }
+   }
+  },
+  {
+   "data": {
+    "total": -1,
+    "items": []
+   },
+   "outcome": {
+    "invalid": "The warnings' total is not a count of their items."
+   }
+  },
+  {
+   "data": {
+    "total": 101,
+    "items": [
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     },
+     {
+      "path": "a",
+      "reason": "symlink"
+     }
+    ]
+   },
+   "outcome": {
+    "invalid": "Warnings list at most 100 items."
+   }
+  },
+  {
+   "data": {
+    "total": 100,
+    "items": [
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     },
+     {
+      "path": "a",
+      "reason": "special"
+     }
+    ]
+   },
+   "outcome": {
+    "ok": {
+     "total": 100,
+     "items": [
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      },
+      {
+       "path": "a",
+       "reason": "special"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "total": 1,
+    "items": [
+     {
+      "path": "a",
+      "reason": "deleted"
+     }
+    ]
+   },
+   "outcome": {
+    "invalid": "A warning is {\"path\", \"reason\"}, with a known reason."
+   }
+  },
+  {
+   "data": {
+    "total": 1,
+    "items": [
+     {
+      "path": "a",
+      "reason": []
+     }
+    ]
+   },
+   "outcome": {
+    "invalid": "A warning is {\"path\", \"reason\"}, with a known reason."
+   }
+  },
+  {
+   "data": {
+    "total": 1,
+    "items": [
+     {
+      "path": "a",
+      "reason": {}
+     }
+    ]
+   },
+   "outcome": {
+    "invalid": "A warning is {\"path\", \"reason\"}, with a known reason."
+   }
+  },
+  {
+   "data": {
+    "total": 1,
+    "items": [
+     {
+      "path": "a",
+      "reason": "symlink",
+      "size": 1
+     }
+    ]
+   },
+   "outcome": {
+    "invalid": "A warning is {\"path\", \"reason\"}, with a known reason."
+   }
+  },
+  {
+   "data": {
+    "total": 1,
+    "items": [
+     {
+      "path": "",
+      "reason": "symlink"
+     }
+    ]
+   },
+   "outcome": {
+    "invalid": "A warning's path is empty, too long, or has control characters."
+   }
+  },
+  {
+   "data": {
+    "total": 1,
+    "items": [
+     {
+      "path": "a\nb",
+      "reason": "symlink"
+     }
+    ]
+   },
+   "outcome": {
+    "invalid": "A warning's path is empty, too long, or has control characters."
+   }
+  },
+  {
+   "data": {
+    "total": 1,
+    "items": [
+     {
+      "path": "a\u0085b",
+      "reason": "symlink"
+     }
+    ]
+   },
+   "outcome": {
+    "invalid": "A warning's path is empty, too long, or has control characters."
+   }
+  },
+  {
+   "data": {
+    "total": 1,
+    "items": [
+     {
+      "path": "a\ud800b",
+      "reason": "symlink"
+     }
+    ]
+   },
+   "outcome": {
+    "invalid": "A warning's path is empty, too long, or has control characters."
+   }
+  },
+  {
+   "data": {
+    "total": 1,
+    "items": [
+     {
+      "path": "a\u202eb\ufeff",
+      "reason": "invalid_name"
+     }
+    ]
+   },
+   "outcome": {
+    "ok": {
+     "total": 1,
+     "items": [
+      {
+       "path": "a\u202eb\ufeff",
+       "reason": "invalid_name"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "total": 1,
+    "items": [
+     {
+      "path": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "reason": "too_long"
+     }
+    ]
+   },
+   "outcome": {
+    "invalid": "A warning's path is empty, too long, or has control characters."
+   }
+  },
+  {
+   "data": {
+    "total": 1,
+    "items": [
+     {
+      "path": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "reason": "too_long"
+     }
+    ]
+   },
+   "outcome": {
+    "ok": {
+     "total": 1,
+     "items": [
+      {
+       "path": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "reason": "too_long"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "total": 1,
+    "items": [
+     {
+      "path": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+      "reason": "too_deep"
+     }
+    ]
+   },
+   "outcome": {
+    "ok": {
+     "total": 1,
+     "items": [
+      {
+       "path": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+       "reason": "too_deep"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "data": {
+    "total": 1,
+    "items": [
+     {
+      "path": 1,
+      "reason": "symlink"
+     }
+    ]
+   },
+   "outcome": {
+    "invalid": "A warning's path is empty, too long, or has control characters."
+   }
+  },
+  {
+   "data": {
+    "total": 1,
+    "items": [
+     "a"
+    ]
+   },
+   "outcome": {
+    "invalid": "A warning is {\"path\", \"reason\"}, with a known reason."
+   }
+  },
+  {
+   "data": {
+    "total": 1,
+    "items": {}
+   },
+   "outcome": {
+    "invalid": "Warnings list at most 100 items."
+   }
+  },
+  {
+   "data": {
+    "total": 6,
+    "items": [
+     {
+      "path": "a",
+      "reason": "invalid_name"
+     },
+     {
+      "path": "b",
+      "reason": "special"
+     },
+     {
+      "path": "c",
+      "reason": "symlink"
+     },
+     {
+      "path": "d",
+      "reason": "too_deep"
+     },
+     {
+      "path": "e",
+      "reason": "too_long"
+     },
+     {
+      "path": "f",
+      "reason": "unreadable"
+     }
+    ]
+   },
+   "outcome": {
+    "ok": {
+     "total": 6,
+     "items": [
+      {
+       "path": "a",
+       "reason": "invalid_name"
+      },
+      {
+       "path": "b",
+       "reason": "special"
+      },
+      {
+       "path": "c",
+       "reason": "symlink"
+      },
+      {
+       "path": "d",
+       "reason": "too_deep"
+      },
+      {
+       "path": "e",
+       "reason": "too_long"
+      },
+      {
+       "path": "f",
+       "reason": "unreadable"
+      }
+     ]
+    }
+   }
+  }
+ ],
+ "clean_name": [
+  {
+   "raw": "report.pdf",
+   "clean": "report.pdf"
+  },
+  {
+   "raw": "C:\\Users\\ada\\report.pdf",
+   "clean": "report.pdf"
+  },
+  {
+   "raw": "../../etc/passwd",
+   "clean": "passwd"
+  },
+  {
+   "raw": "..",
+   "clean": "file"
+  },
+  {
+   "raw": ".",
+   "clean": "file"
+  },
+  {
+   "raw": "",
+   "clean": "file"
+  },
+  {
+   "raw": "  ",
+   "clean": "file"
+  },
+  {
+   "raw": "evil\u202egnp.exe",
+   "clean": "evilgnp.exe"
+  },
+  {
+   "raw": "a\nb.txt",
+   "clean": "ab.txt"
+  },
+  {
+   "raw": "Cafe\u0301.txt",
+   "clean": "Caf\u00e9.txt"
+  },
+  {
+   "raw": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.txt",
+   "clean": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.txt"
+  },
+  {
+   "raw": "../Q3 report.pdf",
+   "clean": "Q3 report.pdf"
+  },
+  {
+   "raw": "a\ud800b.txt",
+   "clean": "ab.txt"
+  },
+  {
+   "raw": "\u2028line\u2029",
+   "clean": "line"
+  },
+  {
+   "raw": "\ufeffbom.txt",
+   "clean": "bom.txt"
+  },
+  {
+   "raw": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9.txt",
+   "clean": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9.txt"
+  },
+  {
+   "raw": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00.png",
+   "clean": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00.png"
+  },
+  {
+   "raw": "name.eeeeeeeeeeeeeee",
+   "clean": "name.eeeeeeeeeeeeeee"
+  },
+  {
+   "raw": "name.eeeeeeeeeeeeeeee",
+   "clean": "name.eeeeeeeeeeeeeeee"
+  },
+  {
+   "raw": ".bashrc",
+   "clean": ".bashrc"
+  },
+  {
+   "raw": "...",
+   "clean": "..."
+  },
+  {
+   "raw": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u0301",
+   "clean": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u00e1"
+  },
+  {
+   "raw": "trailing \u3000",
+   "clean": "trailing"
+  },
+  {
+   "raw": "\u0000\u0001",
+   "clean": "file"
+  },
+  {
+   "raw": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "clean": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  {
+   "raw": "a.bcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+   "clean": "a.bcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  {
+   "raw": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+   "clean": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00"
+  },
+  {
+   "raw": " x.txt ",
+   "clean": "x.txt"
+  },
+  {
+   "raw": "x.tar.gz",
+   "clean": "x.tar.gz"
+  },
+  {
+   "raw": "e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301.txt",
+   "clean": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9.txt"
+  },
+  {
+   "raw": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx     .txt",
+   "clean": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.txt"
+  }
+ ],
+ "numbered": [
+  {
+   "name": "a.txt",
+   "taken": [],
+   "numbered": "a.txt"
+  },
+  {
+   "name": "a.txt",
+   "taken": [
+    "a.txt",
+    "a (2).txt"
+   ],
+   "numbered": "a (3).txt"
+  },
+  {
+   "name": "archive.tar.gz",
+   "taken": [
+    "archive.tar.gz"
+   ],
+   "numbered": "archive.tar (2).gz"
+  },
+  {
+   "name": "README",
+   "taken": [
+    "README"
+   ],
+   "numbered": "README (2)"
+  },
+  {
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.txt",
+   "taken": [
+    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.txt"
+   ],
+   "numbered": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx (2).txt"
+  },
+  {
+   "name": ".bashrc",
+   "taken": [
+    ".bashrc"
+   ],
+   "numbered": ".bashrc (2)"
+  },
+  {
+   "name": "e\u0301",
+   "taken": [
+    "e\u0301"
+   ],
+   "numbered": "\u00e9 (2)"
+  },
+  {
+   "name": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+   "taken": [
+    "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9"
+   ],
+   "numbered": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9 (2)"
+  },
+  {
+   "name": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00.txt",
+   "taken": [
+    "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00.txt"
+   ],
+   "numbered": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00 (2).txt"
+  },
+  {
+   "name": "a",
+   "taken": [
+    "a",
+    "a (2)",
+    "a (3)",
+    "a (4)",
+    "a (5)",
+    "a (6)",
+    "a (7)",
+    "a (8)",
+    "a (9)",
+    "a (10)",
+    "a (11)"
+   ],
+   "numbered": "a (12)"
+  },
+  {
+   "name": "name.eeeeeeeeeeeeeee",
+   "taken": [
+    "name.eeeeeeeeeeeeeee"
+   ],
+   "numbered": "name (2).eeeeeeeeeeeeeee"
+  },
+  {
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx     .txt",
+   "taken": [
+    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx     .txt"
+   ],
+   "numbered": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx (2).txt"
+  }
+ ],
+ "sniff": [
+  {
+   "head": "JVBERi0xLjc=",
+   "name": "a.txt",
+   "media_type": "application/pdf"
+  },
+  {
+   "head": "iVBORw0KGgo=",
+   "name": "a.pdf",
+   "media_type": "image/png"
+  },
+  {
+   "head": "/9j/4A==",
+   "name": "a.bin",
+   "media_type": "image/jpeg"
+  },
+  {
+   "head": "R0lGODdh",
+   "name": "a",
+   "media_type": "image/gif"
+  },
+  {
+   "head": "R0lGODlhLi4uLg==",
+   "name": "a",
+   "media_type": "image/gif"
+  },
+  {
+   "head": "UklGRgAAAABXRUJQVlA4IA==",
+   "name": "a",
+   "media_type": "image/webp"
+  },
+  {
+   "head": "UklGRgAAAABXQVZF",
+   "name": "a.wav",
+   "media_type": "application/octet-stream"
+  },
+  {
+   "head": "UEsDBA==",
+   "name": "a.docx",
+   "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  },
+  {
+   "head": "UEsDBA==",
+   "name": "a.DOCX",
+   "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  },
+  {
+   "head": "UEsDBA==",
+   "name": "a.xlsx",
+   "media_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  },
+  {
+   "head": "UEsDBA==",
+   "name": "a.pptx",
+   "media_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+  },
+  {
+   "head": "UEsDBA==",
+   "name": "a.odt",
+   "media_type": "application/vnd.oasis.opendocument.text"
+  },
+  {
+   "head": "UEsDBA==",
+   "name": "a.ods",
+   "media_type": "application/vnd.oasis.opendocument.spreadsheet"
+  },
+  {
+   "head": "UEsDBA==",
+   "name": "a.zip",
+   "media_type": "application/zip"
+  },
+  {
+   "head": "H4sI",
+   "name": "a.gz",
+   "media_type": "application/gzip"
+  },
+  {
+   "head": "YSxiCjEsMgo=",
+   "name": "a.csv",
+   "media_type": "text/csv"
+  },
+  {
+   "head": "eyJhIjogMX0=",
+   "name": "a.json",
+   "media_type": "application/json"
+  },
+  {
+   "head": "IyBUaXRsZQ==",
+   "name": "a.md",
+   "media_type": "text/markdown"
+  },
+  {
+   "head": "YQli",
+   "name": "a.tsv",
+   "media_type": "text/tab-separated-values"
+  },
+  {
+   "head": "YQli",
+   "name": ".tsv",
+   "media_type": "text/plain"
+  },
+  {
+   "head": "cGxhaW4=",
+   "name": "a.TXT",
+   "media_type": "text/plain"
+  },
+  {
+   "head": "emHFvMOzxYLE",
+   "name": "a.txt",
+   "media_type": "text/plain"
+  },
+  {
+   "head": "YQBi",
+   "name": "a.txt",
+   "media_type": "application/octet-stream"
+  },
+  {
+   "head": "PGh0bWw+PHNjcmlwdD4=",
+   "name": "a.html",
+   "media_type": "text/plain"
+  },
+  {
+   "head": "",
+   "name": "empty",
+   "media_type": "text/plain"
+  },
+  {
+   "head": "/w==",
+   "name": "a",
+   "media_type": "text/plain"
+  },
+  {
+   "head": "//8=",
+   "name": "a",
+   "media_type": "text/plain"
+  },
+  {
+   "head": "////",
+   "name": "a",
+   "media_type": "text/plain"
+  },
+  {
+   "head": "/////w==",
+   "name": "a",
+   "media_type": "application/octet-stream"
+  },
+  {
+   "head": "b2v///8=",
+   "name": "a",
+   "media_type": "text/plain"
+  },
+  {
+   "head": "b2v/////",
+   "name": "a",
+   "media_type": "application/octet-stream"
+  },
+  {
+   "head": "8J8=",
+   "name": "a",
+   "media_type": "text/plain"
+  },
+  {
+   "head": "7aCA",
+   "name": "a",
+   "media_type": "text/plain"
+  },
+  {
+   "head": "YWJj7aCA",
+   "name": "a",
+   "media_type": "text/plain"
+  },
+  {
+   "head": "wK8=",
+   "name": "a",
+   "media_type": "text/plain"
+  },
+  {
+   "head": "eHh4eHh4eHh4eA==",
+   "name": "a..csv",
+   "media_type": "text/csv"
+  },
+  {
+   "head": "eA==",
+   "name": "..csv",
+   "media_type": "text/plain"
+  },
+  {
+   "head": "eA==",
+   "name": "a.tar.json",
+   "media_type": "application/json"
+  }
+ ],
+ "size_text": [
+  {
+   "bytes": 52428800,
+   "text": "50 MB"
+  },
+  {
+   "bytes": 268435456,
+   "text": "256 MB"
+  },
+  {
+   "bytes": 1073741824,
+   "text": "1 GB"
+  },
+  {
+   "bytes": 1610612736,
+   "text": "1.5 GB"
+  },
+  {
+   "bytes": 10,
+   "text": "9.53674e-06 MB"
+  },
+  {
+   "bytes": 1000000,
+   "text": "0.953674 MB"
+  },
+  {
+   "bytes": 1099511627776,
+   "text": "1024 GB"
+  },
+  {
+   "bytes": 3,
+   "text": "2.86102e-06 MB"
+  }
+ ],
+ "mib": [
+  {
+   "bytes": 1048576,
+   "text": "1 MiB"
+  },
+  {
+   "bytes": 268435456,
+   "text": "256 MiB"
+  },
+  {
+   "bytes": 1073741824,
+   "text": "1024 MiB"
+  },
+  {
+   "bytes": 1048575,
+   "text": "1048575 bytes"
+  },
+  {
+   "bytes": 1572864,
+   "text": "2 MiB"
+  },
+  {
+   "bytes": 2621440,
+   "text": "2 MiB"
+  },
+  {
+   "bytes": 3670016,
+   "text": "4 MiB"
+  },
+  {
+   "bytes": 1,
+   "text": "1 bytes"
+  },
+  {
+   "bytes": 0,
+   "text": "0 bytes"
+  }
+ ],
+ "content_disposition": [
+  {
+   "name": "report.html",
+   "header": "attachment; filename=\"report.html\""
+  },
+  {
+   "name": "za\u017c\u00f3\u0142\u0107 report.html",
+   "header": "attachment; filename*=utf-8''za%C5%BC%C3%B3%C5%82%C4%87%20report.html"
+  },
+  {
+   "name": "q\"uote",
+   "header": "attachment; filename=\"q\\\"uote\""
+  },
+  {
+   "name": "back\\slash",
+   "header": "attachment; filename=\"back\\\\slash\""
+  },
+  {
+   "name": "tab\there",
+   "header": "attachment; filename=\"tab\there\""
+  },
+  {
+   "name": "a\n",
+   "header": "attachment; filename=\"a\n\""
+  },
+  {
+   "name": "a\nb",
+   "header": "attachment; filename*=utf-8''a%0Ab"
+  },
+  {
+   "name": "~!@#$%^&*()_+`-={}|[]:;'<>?,./",
+   "header": "attachment; filename=\"~!@#$%^&*()_+`-={}|[]:;'<>?,./\""
+  },
+  {
+   "name": "\ud83d\ude00.png",
+   "header": "attachment; filename*=utf-8''%F0%9F%98%80.png"
+  },
+  {
+   "name": "\u007f",
+   "header": "attachment; filename*=utf-8''%7F"
+  },
+  {
+   "name": "100%",
+   "header": "attachment; filename=\"100%\""
+  },
+  {
+   "name": "a b",
+   "header": "attachment; filename=\"a b\""
+  },
+  {
+   "name": "\u00e9",
+   "header": "attachment; filename*=utf-8''%C3%A9"
+  },
+  {
+   "name": "line\u2028",
+   "header": "attachment; filename*=utf-8''line%E2%80%A8"
+  },
+  {
+   "name": "",
+   "header": "attachment"
+  }
+ ],
+ "query_names": [
+  {
+   "query": "name=report.pdf",
+   "names": [
+    "report.pdf"
+   ]
+  },
+  {
+   "query": "name=Q3+report.pdf",
+   "names": [
+    "Q3 report.pdf"
+   ]
+  },
+  {
+   "query": "name=Q3%20report.pdf",
+   "names": [
+    "Q3 report.pdf"
+   ]
+  },
+  {
+   "query": "name=%E2%82%AC.txt",
+   "names": [
+    "\u20ac.txt"
+   ]
+  },
+  {
+   "query": "name=%E2%82.txt",
+   "names": null
+  },
+  {
+   "query": "name=%ff",
+   "names": null
+  },
+  {
+   "query": "name=a&name=b",
+   "names": [
+    "a",
+    "b"
+   ]
+  },
+  {
+   "query": "name=",
+   "names": null
+  },
+  {
+   "query": "name=&name=a",
+   "names": [
+    "a"
+   ]
+  },
+  {
+   "query": "",
+   "names": null
+  },
+  {
+   "query": "other=1",
+   "names": null
+  },
+  {
+   "query": "name",
+   "names": null
+  },
+  {
+   "query": "name=a%",
+   "names": [
+    "a%"
+   ]
+  },
+  {
+   "query": "name=%zz",
+   "names": [
+    "%zz"
+   ]
+  },
+  {
+   "query": "%6Eame=a",
+   "names": [
+    "a"
+   ]
+  },
+  {
+   "query": "name=a=b",
+   "names": [
+    "a=b"
+   ]
+  },
+  {
+   "query": "name=a;b",
+   "names": [
+    "a;b"
+   ]
+  },
+  {
+   "query": "a=1&name=x&b=2",
+   "names": [
+    "x"
+   ]
+  },
+  {
+   "query": "name=%00",
+   "names": [
+    "\u0000"
+   ]
+  },
+  {
+   "query": "name=%C3%A9&x",
+   "names": [
+    "\u00e9"
+   ]
+  },
+  {
+   "query": "&&name=a&&",
+   "names": [
+    "a"
+   ]
+  }
+ ],
+ "unicode": "16.0.0"
+}

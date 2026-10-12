@@ -14,16 +14,21 @@
     "test:platform": "vitest run --config vitest.platform.config.ts",
     "test:account": "vitest run --config vitest.account.config.ts",
     "test:faults": "vitest run --config vitest.faults.config.ts",
+    "sandbox:image": "docker build -t minerva-cf-sandbox:local container",
+    "test:cm": "vitest run --config vitest.cm.config.ts",
     "secrets": "node scripts/secrets.ts generate",
     "secrets:test": "node scripts/secrets.ts generate --test",
     "deploy": "pnpm assets && node scripts/secrets.ts check && node scripts/resources.ts && cf build && node scripts/bundle.ts && cf deploy --prebuilt --secrets-file ../.env.cloudflare && pnpm deploy:files",
     "deploy:files": "node scripts/secrets.ts subset .secrets/files.env MINERVA_DOWNLOAD_KEY && cd files-worker && cf deploy --secrets-file ../.secrets/files.env; status=$?; rm -f ../.secrets/files.env; exit $status",
-    "deploy:test": "pnpm assets && node scripts/secrets.ts check --test && node scripts/resources.ts --test && cf build --mode faults && node scripts/bundle.ts --test && cf deploy --prebuilt --secrets-file ../.env.cloudflare-test"
+    "deploy:cm": "cd test/account/scripts-worker && cf deploy --secrets-file ../../../../.env.cloudflare-cm",
+    "deploy:test":"pnpm assets && node scripts/secrets.ts check --test && node scripts/resources.ts --test && cf build --mode faults && node scripts/bundle.ts --test && cf deploy --prebuilt --secrets-file ../.env.cloudflare-test"
   },
   "dependencies": {
     "@cloudflare/sandbox": "1.0.0",
     "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-codemode": "1.1.0",
     "@earendil-works/pi-durable": "1.1.0",
+    "acorn": "8.19.0",
     "agents": "0.28.0",
     "hono": "4.13.9",
     "zod": "4.3.6"

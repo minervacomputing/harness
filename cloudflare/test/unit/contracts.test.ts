@@ -13,7 +13,6 @@ import type {
 	RunOut,
 	RunView,
 	SandboxApi,
-	ScriptHostApi,
 	ScriptsApi,
 	WorkspaceApi,
 } from "../../src/contracts/index.ts";
@@ -30,7 +29,6 @@ export type SandboxIsRpcSafe = Assert<IsNever<Unserializable<SandboxApi>>>;
 export type WorkspaceIsRpcSafe = Assert<IsNever<Unserializable<WorkspaceApi>>>;
 export type ConversationIsRpcSafe = Assert<IsNever<Unserializable<ConversationApi>>>;
 export type ScriptsAreRpcSafe = Assert<IsNever<Unserializable<ScriptsApi>>>;
-export type ScriptHostIsRpcSafe = Assert<IsNever<Unserializable<ScriptHostApi>>>;
 
 /** What the API answers passes through unchanged: the typed views are the generated shapes. */
 export type ViewsAreApiShapes = [

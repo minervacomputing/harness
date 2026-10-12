@@ -233,7 +233,7 @@ export class Workspace extends DurableObject<Env> implements WorkspaceApi {
 		return this.#call((core) => core.deleteUpload(caller, id));
 	}
 
-	setConversationBytes(conversationId: ConversationId, total: number): Promise<{ ok: true } | { ok: false; limit: Extract<FolderLimit, "workspace"> }> {
-		return this.#call((core) => core.setConversationBytes(conversationId, total));
+	setConversationBytes(conversationId: ConversationId, total: number, revision?: number): Promise<{ ok: true } | { ok: false; limit: Extract<FolderLimit, "workspace"> }> {
+		return this.#call((core) => core.setConversationBytes(conversationId, total, revision));
 	}
 }

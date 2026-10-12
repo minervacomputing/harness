@@ -180,6 +180,8 @@ interface ConversationRow extends Row {
 	created_at: number;
 	updated_at: number;
 	bytes: number;
+	/** The newest byte report seen (`setConversationBytes`); 0 before the first with a revision. */
+	bytes_revision: number;
 	ready: number;
 	deleted_at: number | null;
 }
@@ -1435,10 +1437,16 @@ export class WorkspaceCore implements WorkspaceApi {
 		this.#dropUpload(caller, id);
 	}
 
-	async setConversationBytes(conversationId: ConversationId, total: number): Promise<{ ok: true } | { ok: false; limit: Extract<FolderLimit, "workspace"> }> {
+	async setConversationBytes(conversationId: ConversationId, total: number, revision?: number): Promise<{ ok: true } | { ok: false; limit: Extract<FolderLimit, "workspace"> }> {
+		if (revision !== undefined && !(Number.isSafeInteger(revision) && revision >= 1)) throw new TypeError("A byte report's revision is a positive integer.");
 		return this.#commit((): { ok: true } | { ok: false; limit: "workspace" } => {
 			const row = this.#conversationRow(conversationId);
 			if (row === null) return { ok: false, limit: "workspace" };
+			// Sent before a report already seen, by an instance of the conversation that has since reset: the
+			// newer one stands. Answered as accepted, since nobody acts on it.
+			// One without a revision, from an older caller, applies only until the first with one has been seen.
+			if (revision === undefined ? row.bytes_revision > 0 : revision <= row.bytes_revision) return { ok: true };
+			if (revision !== undefined) this.#sql.exec("UPDATE conversations SET bytes_revision = ? WHERE id = ?", revision, conversationId);
 			// The uploads a start of this conversation reserved are being copied into it, and are consumed when
 			// it is activated: counted once, as attaching them is today, not as the upload and its copy.
 			const moving = first<{ n: number }>(

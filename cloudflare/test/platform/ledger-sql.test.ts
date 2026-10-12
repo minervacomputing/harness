@@ -60,7 +60,8 @@ describe("durableSql", () => {
 describe("the ledger on a Durable Object's SQLite", () => {
 	test("its schema is one migration step, and the protocol runs as on node:sqlite", async () => {
 		await runInDurableObject(object(), (_, state) => {
-			expect(migrate(state.storage, [{ id: 1, sql: [...LEDGER_SCHEMA, ...PAGE_TOKEN_SCHEMA].join(";\n") }])).toEqual([1]);
+			// A step id of its own: the Scripts object these tests borrow applies its own step 1 when it is built.
+			expect(migrate(state.storage, [{ id: 100, sql: [...LEDGER_SCHEMA, ...PAGE_TOKEN_SCHEMA].join(";\n") }])).toEqual([100]);
 			const sql = durableSql(state.storage);
 			const ledger = new WriteLedger(sql, clock);
 			expect(ledger.dispatch({ runId: RUN, attempt: 1 }, K1, null)).toEqual({ kind: "dispatched", deadline: 1_060_000 });

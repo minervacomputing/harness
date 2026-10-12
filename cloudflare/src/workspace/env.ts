@@ -6,6 +6,7 @@ import { settings } from "../config.ts";
 import type { WorkspaceRef } from "../contracts/common.ts";
 import type { ConversationApi } from "../contracts/conversation.ts";
 import type { KeyRing } from "../lib/fernet.ts";
+import { conversationPrefix, deletePrefix } from "../files/objects.ts";
 import { asPayload } from "./credentials.ts";
 import type { ClientCredentials, ConversationClient, OAuthClients, ObjectStore, WorkspaceSettings } from "./ports.ts";
 
@@ -20,9 +21,13 @@ export function conversationClient(env: Env, workspace: () => WorkspaceRef): Con
 		init: (input) => object(input.conversationId).init(input),
 		cancel: (conversationId, runId, reason, entryId) => object(conversationId).cancel(runId, reason, entryId),
 		// The Conversation deletes its storage and then resets itself, so a call may break after it resolved;
-		// one that throws is tried again, and a second call on the emptied object resolves too.
+		// one that throws is tried again, and a second call on the emptied object resolves too. Its objects in
+		// R2 are deleted here too, after it: the second deletion an hour later finds an emptied object, which
+		// no longer knows its prefix, and a write still in flight may have landed since (plan: Files, Deletion).
 		destroy: async (conversationId) => {
 			await object(conversationId).destroy();
+			const ref = workspace();
+			await deletePrefix(filesBucket(env, ref), conversationPrefix(ref.id, conversationId));
 			return { done: true };
 		},
 	};

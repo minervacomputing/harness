@@ -194,6 +194,16 @@ describe("errors and aborts", () => {
 	});
 });
 
+describe("the fake's script", () => {
+	test("is read before the note on a message's attachments", async () => {
+		const { models } = setup();
+		const note = "\n\n[The user attached data.csv to this message, in your folder.]";
+		const content = `${JSON.stringify({ fake: { turns: [{ text: "From the script." }] } })}${note}`;
+		const message = await ask(models, [{ role: "user", content, timestamp: 1 }]);
+		expect(message.content).toEqual([{ type: "text", text: "From the script." }]);
+	});
+});
+
 describe("tool calls", () => {
 	test("arguments the provider's JSON.parse misread are read again from the model's text before pi gets them", async () => {
 		const first = "minerva_unit_escaped_key_probe";

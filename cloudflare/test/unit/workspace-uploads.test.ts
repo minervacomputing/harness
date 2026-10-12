@@ -78,6 +78,24 @@ describe("the workspace's quota (files 12.1)", () => {
 		expect(h.core.usedBytes()).toBe(8);
 	});
 
+	test("a report older than one the Workspace has seen changes nothing", async () => {
+		const h = await harness({ settings: { workspaceBytes: 100 } });
+		const chat = await conversation(h);
+		expect(await h.core.setConversationBytes(chat, 10, 2)).toEqual({ ok: true });
+		// Sent before it by an instance of the conversation that has since reset, and delivered late.
+		expect(await h.core.setConversationBytes(chat, 5, 1)).toEqual({ ok: true });
+		expect(h.core.usedBytes()).toBe(10);
+		// A refused growth is seen too: a report older than it changes nothing either.
+		expect(await h.core.setConversationBytes(chat, 101, 4)).toEqual({ ok: false, limit: "workspace" });
+		expect(await h.core.setConversationBytes(chat, 7, 3)).toEqual({ ok: true });
+		expect(h.core.usedBytes()).toBe(10);
+		expect(await h.core.setConversationBytes(chat, 4, 5)).toEqual({ ok: true });
+		expect(h.core.usedBytes()).toBe(4);
+		// A report without a revision, from a caller older than revisions, cannot undo a revised one.
+		expect(await h.core.setConversationBytes(chat, 1)).toEqual({ ok: true });
+		expect(h.core.usedBytes()).toBe(4);
+	});
+
 	test("conversations report absolute totals: growing past the limit is refused, shrinking never is", async () => {
 		const h = await harness({ settings: { workspaceBytes: 100 } });
 		const chat = await conversation(h);

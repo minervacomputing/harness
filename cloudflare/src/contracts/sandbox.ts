@@ -14,6 +14,7 @@ import type {
 	FileInfo,
 	LineScan,
 	ShellOutputSkip,
+	WatchTarget,
 } from "@earendil-works/pi-durable/env";
 import type { AttemptFence, ConversationId, EpochMs, Sha256, VersionId, WorkspaceRef } from "./common.ts";
 import type { FileMode, FolderLimit, FolderWarnings, WireManifest } from "./files.ts";
@@ -57,6 +58,11 @@ export interface SandboxSpec {
 	 * the folder's limit. The instance's memory must cover it (`standard-1`: 4 GiB).
 	 */
 	memoryBytes: number;
+	/**
+	 * The run's deadline: the container is destroyed a little after it even if nobody asks. Without one, a
+	 * container unused for an hour is destroyed.
+	 */
+	deadline?: EpochMs | null;
 }
 
 export type Refused = { refused: "stale" | "not_verified" | "busy"; message: string };
@@ -105,7 +111,10 @@ export interface ExecRequest {
 	 * TMPDIR=/tmp, LANG=C.UTF-8 and MPLCONFIGDIR=/tmp/matplotlib (files 8.5).
 	 */
 	env: { [name: string]: string };
-	/** Whole seconds, already cut to the run's deadline; the wrapper's `timeout` kills the command's processes. */
+	/**
+	 * Seconds, already cut to the run's deadline; 0 for none. The wrapper's `timeout` stops the command's
+	 * process group (TERM, then KILL 5 s later) and the result is `timeout`.
+	 */
 	timeoutSeconds: number;
 	/** Spill the complete output to a file under /tmp past either threshold (pi's ShellSpillOptions). */
 	spill?: { afterBytes: number; afterLines: number };
@@ -122,8 +131,14 @@ export type ExecResult =
 	| { ok: true; exitCode: number; spillPath?: string }
 	| { ok: false; code: ExecutionErrorCode; message: string; spillPath?: string };
 
-/** A file opened for positional reads: later reads fail `invalid` if the path no longer names this file. */
+/**
+ * A file opened for positional reads by a reader process that holds it open, so reads keep seeing the file
+ * that was opened even after a rename (pi's BinaryReader); `close` ends the process, and so does killing
+ * strays. A handle whose reader is gone answers `invalid`.
+ */
 export interface FileHandle {
+	/** The reader's id within the incarnation. */
+	id: string;
 	path: string;
 	dev: number;
 	ino: number;
@@ -144,6 +159,10 @@ export type FsRequest =
 	| { op: "open"; path: string; noFollow: boolean }
 	| { op: "read"; handle: FileHandle; offset: number; length: number }
 	| { op: "scanLines"; handle: FileHandle; startLine: number; endLine?: number }
+	| { op: "stat"; handle: FileHandle }
+	| { op: "close"; handle: FileHandle }
+	| { op: "opendir"; path: string }
+	| { op: "snapshot"; targets: WatchTarget[]; maxEntries: number }
 	| { op: "readText"; path: string; maxBytes: number }
 	| { op: "write"; path: string; content: Uint8Array; append: boolean }
 	| { op: "truncate"; path: string; size: number }
@@ -163,6 +182,10 @@ export interface FsAnswers {
 	open: FileHandle;
 	read: Uint8Array;
 	scanLines: LineScan;
+	stat: FileInfo;
+	close: null;
+	opendir: null;
+	snapshot: WatchSnapshot;
 	readText: string;
 	write: null;
 	truncate: null;
@@ -173,6 +196,13 @@ export interface FsAnswers {
 	remove: null;
 	mktemp: string;
 }
+
+/**
+ * What a watch's poll compares (the ExecutionEnv's `watch` polls): a signature per path under the targets
+ * (kind, size, mtime, ctime, inode; a symbolic link also by what it points to), excluded entries left out.
+ * `overflow` when the targets hold more than `maxEntries` entries.
+ */
+export type WatchSnapshot = { entries: { [path: string]: string } } | { overflow: true };
 
 /** The answer to a request: its value (`FsAnswers[op]`), or pi's error code. */
 export type FsResponse = { ok: true; value: FsAnswers[keyof FsAnswers] } | { ok: false; code: FileErrorCode; message: string };
@@ -202,14 +232,16 @@ export type ScanResult =
 /**
  * Files to save, each already recorded by the Conversation Durable Object under its R2 key before it is
  * written (plan: Files). The Sandbox streams each from the container into R2 with its claimed SHA-256,
- * which R2 checks, and reports what it stored.
+ * which R2 checks, and reports what it stored. A file without a key has contents the conversation already
+ * stores: its bytes are only hashed, as the proof that the run has them, and nothing is written (today's
+ * store_blob writes nothing for contents it has).
  */
 export interface CheckpointUploadPlan {
-	files: { path: string; sha256: Sha256; size: number; key: string }[];
+	files: { path: string; sha256: Sha256; size: number; key: string | null }[];
 }
 
 export type CheckpointUploadResult =
-	| { ok: true; stored: { path: string; sha256: Sha256; size: number; key: string }[] }
+	| { ok: true; stored: { path: string; sha256: Sha256; size: number; key: string | null }[] }
 	| { ok: false; reason: "changed" | "mismatch" | "failed"; path: string; message: string };
 
 /**

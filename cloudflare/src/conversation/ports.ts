@@ -5,15 +5,17 @@
 // object's SQLite through lib/sql.ts. Tests and the test build (src/faults/) set `PORTS.factory`; the tests
 // run in the Worker's isolate.
 
-import { workspaceObject } from "../addressing.ts";
+import { sandboxObject, workspaceObject } from "../addressing.ts";
 
 import type { AttachmentOut, FolderOut } from "../contracts/api.ts";
 import type { AttemptFence, ConversationId, EpochMs, Outcome, RunId, VersionId, WorkspaceRef } from "../contracts/common.ts";
 import type { DownloadTarget } from "../contracts/conversation.ts";
 import type { DispatchResult, Executor, ExecutorContext, RunStatePort, Settlement } from "../contracts/executor.ts";
-import type { FolderUsage } from "../contracts/files.ts";
+import type { CheckpointOutcome, CheckpointScan, FolderUsage } from "../contracts/files.ts";
 import type { RunStatus } from "../contracts/runs.ts";
+import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan } from "../contracts/sandbox.ts";
 import type { ReservedUpload, WorkspaceApi } from "../contracts/workspace.ts";
+import { conversationFolder } from "../files/folder.ts";
 import { systemClock } from "../gateway/clock.ts";
 import { createExecutor } from "../gateway/executor.ts";
 import { RUN_ENDED_MESSAGE, WriteLedger as GatewayLedger } from "../gateway/ledger.ts";
@@ -22,6 +24,7 @@ import type { Registry } from "../gateway/registry.ts";
 import { durableSql } from "../lib/sql.ts";
 import { type ModelRoute, type Upstream, upstreamOf } from "../model/route.ts";
 import type { GateDecision } from "./gate.ts";
+import type { SandboxPort } from "./local-run.ts";
 import type { RunStore } from "./store.ts";
 
 /** The part of the Workspace Durable Object's RPC surface a conversation calls. */
@@ -58,9 +61,10 @@ export interface LedgerRuns {
 }
 
 /**
- * The run's folder (files spec; plan: Starting a run, Files), built in step 3. The start protocol calls
- * `prepareAttachments` before its transaction (the copies into the conversation's blobs, recorded as
- * loose first) and `commitAttachments` inside it; `publish` runs in `finish`'s transaction.
+ * The run's folder (files spec; plan: Starting a run, Checkpoints, Files; src/files/). The start protocol
+ * calls `prepareAttachments` before its transaction (the copies into the conversation's blobs, recorded as
+ * loose first) and `commitAttachments` inside it; `publish` runs in `finish`'s transaction. The sandbox
+ * hydrates from `hydratePlan` and saves with `checkpoint`; `sweep` is the `files` Lifecycle job.
  */
 export interface FolderPort {
 	/** The folder a new run would start from, for `beginRun`'s limit checks. */
@@ -77,6 +81,17 @@ export interface FolderPort {
 	resolve(versionId: VersionId | null, path: string): DownloadTarget | null;
 	/** Deletes the conversation's objects in R2 (plan: Files, Deletion). */
 	deleteObjects(): Promise<void>;
+	/** What a new attempt of the run hydrates (files 7.1): its last checkpoint, else its base version, with each file's R2 key. */
+	hydratePlan(runId: RunId): HydratePlan;
+	/**
+	 * A checkpoint of the run's folder from the container's scan (files 7.3; plan: Checkpoints, steps 4 to
+	 * 6): validated, the files whose contents the run may not read uploaded by `upload` (the Sandbox's
+	 * `checkpoint`, under keys recorded here first), then recorded for the fence's attempt on top of its
+	 * last checkpoint. Outside pi's transactions; the caller releases held results only after `ok`.
+	 */
+	checkpoint(fence: AttemptFence, scan: CheckpointScan, upload: (plan: CheckpointUploadPlan) => Promise<CheckpointUploadResult>): Promise<CheckpointOutcome>;
+	/** The `files` job: deletes loose and unnamed objects (twice, a day apart) and reports the byte total; when to run next. */
+	sweep(): Promise<{ rescheduleAt: EpochMs } | undefined>;
 }
 
 export interface PreparedAttachments {
@@ -94,6 +109,10 @@ export interface PortsContext {
 	folderVersionId: () => VersionId | null;
 	/** The connector registry, loaded in the harness factory before any run's tools are built. */
 	connectors: () => Registry;
+	/** The object's records: its run checks, `outside` and its clock (the folder fences and commits through them). */
+	store: RunStore;
+	/** Runs the folder's sweep (`FolderPort.sweep`) at `at`, unless it is due earlier already. */
+	schedule(at: EpochMs): void;
 }
 
 export interface ConversationPorts {
@@ -106,6 +125,8 @@ export interface ConversationPorts {
 	upstream(route: ModelRoute, context: PortsContext): Upstream;
 	/** The network the executor's provider requests go out on. */
 	fetch(context: PortsContext): typeof fetch;
+	/** The conversation's Sandbox Durable Object (src/sandbox/), a new stub each time; the platform tests give a fake. */
+	sandbox(context: PortsContext): SandboxPort;
 	/**
 	 * The test build's fault points in the attempt gate (src/faults/); production has none. `decided`: a
 	 * decision is made, before its transaction. `committed`: after its transaction and the sync.
@@ -113,9 +134,16 @@ export interface ConversationPorts {
 	gate?(context: PortsContext, point: "decided" | "committed", decision: GateDecision["kind"]): Promise<void>;
 	/** The test build's count of what pi starts for a run: a model call or a tool's execution, before any check. */
 	entered?(context: PortsContext, kind: "model" | "tool", runId: RunId): void;
+	/**
+	 * The test build's fault points in the local tools and their checkpoints (src/faults/); production has
+	 * none. `local:prepared` (the container ready and hydrated), `checkpoint:scanned`, `checkpoint:uploaded`
+	 * (the files stored, the checkpoint not yet recorded), `checkpoint:recorded` (recorded, the results not
+	 * yet released), `local:released` (a call's result released, before pi has it).
+	 */
+	point?(context: PortsContext, name: string, detail?: string): Promise<void>;
 }
 
-/** No files until step 3: the folder stays as it is, and a message with attachments is refused. */
+/** No files: the folder stays as it is, and a message with attachments is refused (for tests of the rest). */
 export const emptyFolder = (context: PortsContext): FolderPort => ({
 	usage: () => ({ versionId: context.folderVersionId(), bytes: 0, entries: 0, rootNames: [] }),
 	prepareAttachments: async (_runId, uploads) =>
@@ -127,6 +155,9 @@ export const emptyFolder = (context: PortsContext): FolderPort => ({
 	list: (versionId) => (versionId === null || versionId === context.folderVersionId() ? { version_id: context.folderVersionId(), files: [], dirs: [] } : null),
 	resolve: () => null,
 	deleteObjects: async () => {},
+	hydratePlan: () => ({ versionId: context.folderVersionId(), files: [], dirs: [] }),
+	checkpoint: async () => ({ ok: false, code: "stale", message: "This attempt is no longer the run's current one." }),
+	sweep: async () => undefined,
 });
 
 /**
@@ -205,9 +236,10 @@ export const defaultPorts: ConversationPorts = {
 	workspace: ({ env, workspace }) => workspaceObject(env, workspace) as unknown as WorkspaceClient,
 	executor: gatewayExecutor,
 	ledger: (storage, runs) => gatewayLedger(storage, runs),
-	folder: emptyFolder,
+	folder: conversationFolder,
 	upstream: (route, { env }) => upstreamOf(route, (env as { AI?: Ai }).AI),
 	fetch: () => (input, init) => fetch(input, init),
+	sandbox: ({ env, ctx, workspace, conversationId }) => sandboxObject(env, ctx.exports, workspace, conversationId) as unknown as SandboxPort,
 };
 
 /** The ports every Conversation object uses; tests replace `factory`. */

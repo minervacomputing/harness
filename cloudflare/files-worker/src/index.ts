@@ -1,20 +1,12 @@
-// The minerva-cf-files Worker. Step 5 builds the signed download: verify the link's HMAC over the
-// download origin, workspace, conversation, version, path, user and expiry (five minutes), and that the
-// request's host is the download origin's, then stream the object from the workspace's bucket (FILES, or
-// FILES_EU for an EU workspace) with `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`,
-// `Content-Security-Policy: sandbox` and `Cache-Control: private, no-store` (files 11.2). Until then
-// every request is 404.
+// The minerva-cf-files Worker: the download origin (plan: Files, Downloads). It checks that a request came
+// to its own origin and carries a link the app signed with MINERVA_DOWNLOAD_KEY (src/files/links.ts), then
+// streams the object from the workspace's bucket (FILES, or FILES_EU for an EU workspace) as a sandboxed
+// attachment (src/files/download.ts). It holds no other secret and reaches nothing else.
+
+import { serveDownload } from "../../src/files/download.ts";
 
 export default {
-	async fetch(): Promise<Response> {
-		return new Response(JSON.stringify({ detail: "Not Found" }), {
-			status: 404,
-			headers: {
-				"Content-Type": "application/json; charset=utf-8",
-				"Cache-Control": "no-store",
-				"X-Content-Type-Options": "nosniff",
-				"Content-Security-Policy": "sandbox",
-			},
-		});
+	async fetch(request, env): Promise<Response> {
+		return serveDownload(request, env);
 	},
 } satisfies ExportedHandler<Env>;

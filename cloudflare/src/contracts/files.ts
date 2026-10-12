@@ -68,3 +68,35 @@ export interface FolderUsage {
 	/** First path segments of every file and directory at the root: what attachment names are numbered against (files 10). */
 	rootNames: string[];
 }
+
+/**
+ * What a checkpoint takes (files 7.3; plan: Checkpoints, steps 4 to 6): the scan's report as the container
+ * made it, untrusted (ScanResult's `manifest`, `sizes` and `warnings`), and the version the working copy
+ * was built on, which must still be the run's (its last checkpoint, else its base version).
+ */
+export interface CheckpointScan {
+	/**
+	 * The version the working copy was built on: the one the attempt hydrated (`HydratePlan.versionId`), then
+	 * each accepted checkpoint's `versionId`. Anything else is `conflict` (files 7.3), so a scan taken before
+	 * a newer checkpoint can never replace it.
+	 */
+	parent: VersionId | null;
+	manifest: WireManifest;
+	/** Bytes per path, as the scan measured them; only the files to upload are sized from it. */
+	sizes: { [path: string]: number };
+	/** Null or omitted: the run's warnings stay as they were; otherwise they replace them, also when nothing else changed. */
+	warnings?: FolderWarnings | null;
+}
+
+/** `CheckpointRefused`'s codes (files 7.3); `conflict` is the version the working copy was built on having moved. */
+export type CheckpointRefusalCode = "stale" | "conflict" | "invalid_manifest" | "unknown_blob" | "quota";
+
+/**
+ * A checkpoint's outcome. `versionId` is the run's version afterwards: the current one for an identical
+ * manifest (null for a run that never had files). A `quota` refusal names its limit and fails the turn with
+ * `folder_limit`; any other refusal, or a failed upload, ends the attempt (files 7.10).
+ */
+export type CheckpointOutcome =
+	| { ok: true; versionId: VersionId | null; uploaded: number }
+	| { ok: false; code: CheckpointRefusalCode; message: string; limit?: FolderLimit }
+	| { ok: false; code: "upload"; reason: "changed" | "mismatch" | "failed"; path: string; message: string };

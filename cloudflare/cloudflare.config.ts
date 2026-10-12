@@ -1,4 +1,4 @@
-import { bindings, defineConfig, exports } from "cf/config";
+import { bindings, defineConfig, defineContainer, exports } from "cf/config";
 import * as faultsEntrypoint from "./src/faults/index.ts" with { type: "cf-worker" };
 import * as entrypoint from "./src/index.ts" with { type: "cf-worker" };
 import { checkBuild, parse, type SettingsEnv } from "./src/config.ts";
@@ -105,11 +105,29 @@ function settingsFor(target: Target): SettingsEnv {
 	return values;
 }
 
+/**
+ * The sandbox's Container application (plan: The sandbox lifecycle): the image in container/, started by the
+ * Sandbox Durable Object (`durable_object` scheduling), which picks the instance, starts it with no route out
+ * and passes it nothing secret. Its name follows the Worker's, so the test Worker has an application of its
+ * own. The platform tests run in local workerd, which has no containers: there the class has none, and a
+ * start says so.
+ */
+function sandboxContainer(target: Target) {
+	return defineContainer({
+		name: `${target.name}-sandbox`,
+		schedulingPolicy: "durable-object",
+		images: { base: { dockerfile: "./container/Dockerfile" } },
+		observability: { enabled: true, logs: { enabled: true } },
+	});
+}
+
 export default defineConfig(({ mode }) => {
 	const target = targetFor(mode);
 	const values = settingsFor(target);
 	const setting = (name: keyof SettingsEnv) => bindings.text(values[name]);
+	const container = mode === "test" ? null : sandboxContainer(target);
 	return {
+		...(container ? { containers: [container] } : {}),
 		worker: {
 			name: target.name,
 			compatibilityDate: "2026-10-06",
@@ -139,8 +157,8 @@ export default defineConfig(({ mode }) => {
 				SCRIPTS: bindings.durableObject({ worker: target.name, exportName: "Scripts" }),
 				// The test build's fake provider (src/faults/provider.ts).
 				...(target.faults ? { FAULT_PROVIDER: bindings.durableObject({ worker: target.name, exportName: "FaultProvider" }) } : {}),
-				// The Sandbox class gets its container in step 3; a container class cannot be bound by its own
-				// Worker's name, so it is reached through ctx.exports.Sandbox instead of a binding.
+				// A container class cannot be bound by its own Worker's name, so the Sandbox is reached through
+				// ctx.exports.Sandbox instead of a binding (src/addressing.ts).
 
 				MINERVA_SITE_URL: setting("MINERVA_SITE_URL"),
 				MINERVA_DOWNLOAD_ORIGIN: setting("MINERVA_DOWNLOAD_ORIGIN"),
@@ -176,8 +194,7 @@ export default defineConfig(({ mode }) => {
 				Workspace: exports.durableObject({ storage: "sqlite" }),
 				Conversation: exports.durableObject({ storage: "sqlite" }),
 				Scripts: exports.durableObject({ storage: "sqlite" }),
-				Sandbox: exports.durableObject({ storage: "sqlite" }),
-				ScriptHost: exports.worker(),
+				Sandbox: container ? exports.durableObject({ storage: "sqlite", container }) : exports.durableObject({ storage: "sqlite" }),
 				...(target.faults ? { FaultProvider: exports.durableObject({ storage: "sqlite" }) } : {}),
 			},
 		},

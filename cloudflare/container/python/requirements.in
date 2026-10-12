@@ -1,0 +1,10 @@
+# Python packages for commands the agent runs in its folder. Locked with hashes in requirements.txt:
+#   uv pip compile requirements.in --generate-hashes --python-version 3.11 --python-platform linux -o requirements.txt
+# The image's Python is Debian bookworm's (3.11); pip installs only wheels, and only these.
+matplotlib
+openpyxl
+pandas
+pdfplumber
+pillow
+pypdf
+python-docx

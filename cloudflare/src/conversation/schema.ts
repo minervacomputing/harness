@@ -2,6 +2,7 @@
 // the Agents SDK under `cf_agents_`; the folder's versions and the script store add their own steps here as
 // they land (additive only, lib/sqlite.ts).
 
+import { FOLDER_REPORT_SCHEMA, FOLDER_SCHEMA } from "../files/schema.ts";
 import { LEDGER_SCHEMA, PAGE_TOKEN_SCHEMA } from "../gateway/schema.ts";
 
 /** lib/sqlite.ts `Migration`, written out so the account tests (Node) can read the ids without the Worker's types. */
@@ -143,4 +144,8 @@ CREATE TABLE run_snapshots (
 ) STRICT;
 `,
 	},
+	// The folder: versions, blobs, grants and the byte total (files/schema.ts).
+	{ id: 4, sql: FOLDER_SCHEMA },
+	// The revision of the folder's last byte report (files/store.ts `#report`).
+	{ id: 5, sql: FOLDER_REPORT_SCHEMA },
 ];

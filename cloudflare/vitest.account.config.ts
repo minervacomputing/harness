@@ -5,8 +5,8 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
 	test: {
 		include: ["test/account/**/*.test.ts"],
-		// The test Worker's fault tests have their own run (vitest.faults.config.ts).
-		exclude: ["test/account/faults.test.ts"],
+		// The test Worker's fault tests and code mode's lab have their own runs (vitest.faults.config.ts, vitest.cm.config.ts).
+		exclude: ["test/account/faults.test.ts", "test/account/sandbox.test.ts", "test/account/scripts.test.ts", "test/account/turns.test.ts"],
 		environment: "node",
 		testTimeout: 30_000,
 	},

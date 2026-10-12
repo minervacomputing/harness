@@ -48,11 +48,14 @@ describe("Python's formatting", () => {
 describe("schema steps", () => {
 	test("apply once, in order, in lib/sqlite.ts's table", () => {
 		const sql = nodeSql(database());
-		expect(migrate(sql, MIGRATIONS, 1)).toEqual([1]);
+		expect(migrate(sql, MIGRATIONS, 1)).toEqual([1, 2]);
 		expect(migrate(sql, MIGRATIONS, 2)).toEqual([]);
-		expect(sql.exec("SELECT id, applied_at FROM _migrations")).toEqual([{ id: 1, applied_at: 1 }]);
+		expect(sql.exec("SELECT id, applied_at FROM _migrations")).toEqual([
+			{ id: 1, applied_at: 1 },
+			{ id: 2, applied_at: 1 },
+		]);
 		// A failing step leaves nothing behind.
-		expect(() => migrate(sql, [...MIGRATIONS, { id: 2, sql: "CREATE TABLE u (a); CREATE TABLE workspace (b)" }], 3)).toThrow();
+		expect(() => migrate(sql, [...MIGRATIONS, { id: 3, sql: "CREATE TABLE u (a); CREATE TABLE workspace (b)" }], 3)).toThrow();
 		expect(sql.exec("SELECT count(*) AS n FROM sqlite_master WHERE name = 'u'")).toEqual([{ n: 0 }]);
 	});
 });
