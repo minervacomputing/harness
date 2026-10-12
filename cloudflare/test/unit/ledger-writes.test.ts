@@ -5,11 +5,11 @@
 
 import { afterAll, describe, expect, test } from "vitest";
 import { LOST_WRITE_GRACE_MS, WRITE_MESSAGES, WRITE_WINDOW_MS, WriteLedger, writeKey } from "../../src/gateway/ledger.ts";
-import { PageTokens } from "../../src/gateway/page-tokens.ts";
+import { PageTokens, queryHash } from "../../src/gateway/page-tokens.ts";
 import { LedgerRunState } from "../../src/gateway/run-state.ts";
+import { canonicalJson } from "../../src/lib/canonical.ts";
 import { sha256Hex } from "../../src/lib/hash.ts";
 import { parseJson } from "../../src/lib/json.ts";
-import vectors from "./vectors.ts";
 import { FakeClock, FakeRuns } from "./executor-fakes.ts";
 import { ledgerSql, openDatabase, scratchDirectory } from "./sqlite.ts";
 
@@ -33,16 +33,78 @@ function setup(deadline: number | null = null) {
 const scratch = scratchDirectory();
 afterAll(() => scratch.done());
 
-describe("write keys", () => {
+describe("write keys and query hashes", () => {
 	test("hash the tool and the normalized fields, keys sorted at every depth", async () => {
 		const a = await writeKey("todoist_create_task", { title: "x", project_id: "work", nested: { b: 1, a: [2, { d: 1, c: 2 }] } });
 		const b = await writeKey("todoist_create_task", { nested: { a: [2, { c: 2, d: 1 }], b: 1 }, project_id: "work", title: "x" });
 		expect(a).toBe(b);
 		expect(a).toMatch(/^[0-9a-f]{64}$/);
 		expect(await writeKey("todoist2_create_task", { title: "x", project_id: "work", nested: { b: 1, a: [2, { d: 1, c: 2 }] } })).not.toBe(a);
-		// The canonical text is today's Python's (lib/json.ts vectors), so keys equal today's for the same fields.
-		const vector = vectors.canonical[0] as { json: string; ascii: string };
-		expect(await writeKey("t", { v: parseJson(vector.json) })).toBe(await sha256Hex(`t:{"v":${vector.ascii}}`));
+	});
+
+	test("cover a purpose label and the canonical JSON (RFC 8785) of the value", async () => {
+		expect(await writeKey("t", { v: 1, a: "\u00e9" })).toBe(await sha256Hex('minerva:write-key:{"arguments":{"a":"\u00e9","v":1},"tool":"t"}'));
+		expect(await queryHash({ v: 1, cursor: "page-2" })).toBe(await sha256Hex('minerva:query:{"v":1}'));
+		// The same value hashed for another purpose is another hash.
+		expect(await queryHash({ arguments: { v: 1 }, tool: "t" })).not.toBe(await writeKey("t", { v: 1 }));
+	});
+
+	test("values the API treats as different never collide", async () => {
+		const distinct: [string, { [key: string]: unknown }][] = [
+			["t", {}],
+			["t", { a: null }],
+			["t", { a: 0 }],
+			["t", { a: "0" }],
+			["t", { a: false }],
+			["t", { a: "" }],
+			["t", { a: [] }],
+			["t", { a: {} }],
+			["t", { a: [null] }],
+			["t", { a: 1.5 }],
+			["t", { a: "1.5" }],
+			["t", { a: "x", b: "y" }],
+			["t", { a: "x,b:y" }],
+			["t", { 'a":"x","b': "y" }],
+			["t", { a: { b: "y" } }],
+			["t", { "a.b": "y" }],
+			["t", { a: ["x", "y"] }],
+			["t", { a: "x\u0000y" }],
+			["t", { a: "\u00e9" }],
+			["t", { a: "e\u0301" }],
+			["t", { a: "\\u00e9" }],
+			["t", { A: "x" }],
+			["t", { a: "X" }],
+			["t", { a: " x" }],
+			["t", { a: 9007199254740991 }],
+			["t", { a: 9007199254740990 }],
+			["t", JSON.parse('{"__proto__":{"a":"x"}}')],
+			["t:", {}],
+			["t", { tool: "t" }],
+			["u", {}],
+			["t_x", {}],
+		];
+		const keys = await Promise.all(distinct.map(([tool, fields]) => writeKey(tool, fields)));
+		expect(new Set(keys).size).toBe(distinct.length);
+		const hashes = await Promise.all(distinct.map(([, fields]) => queryHash(fields)));
+		// Query hashes leave the tool out (the token's row binds it), so only distinct fields count.
+		expect(new Set(hashes).size).toBe(new Set(distinct.map(([, fields]) => canonicalJson(fields))).size);
+		expect(new Set(hashes).size).toBe(distinct.length - 3);
+	});
+
+	test("refuse values whose identity is ambiguous rather than coerce them", async () => {
+		await expect(writeKey("t", { a: undefined })).rejects.toThrow(TypeError);
+		await expect(writeKey("t", { a: [undefined] })).rejects.toThrow(TypeError);
+		await expect(writeKey("t", { a: Number.NaN })).rejects.toThrow(TypeError);
+		await expect(writeKey("t", { a: Number.POSITIVE_INFINITY })).rejects.toThrow(TypeError);
+		await expect(writeKey("t", { a: "\ud800" })).rejects.toThrow(TypeError);
+		await expect(writeKey("t", { "\udc00": 1 })).rejects.toThrow(TypeError);
+		await expect(writeKey("t", { a: new Date(0) })).rejects.toThrow(TypeError);
+		await expect(writeKey("t", { a: 1n })).rejects.toThrow(TypeError);
+		// parseJson rounds both to 2^53, so they would hash alike: an identity refuses them.
+		expect(parseJson("9007199254740993")).toBe(parseJson("9007199254740992"));
+		await expect(writeKey("t", { a: parseJson("9007199254740993") })).rejects.toThrow(TypeError);
+		await expect(queryHash({ a: -(2 ** 53) })).rejects.toThrow(TypeError);
+		await expect(queryHash({ a: 1e300 })).rejects.toThrow(TypeError);
 	});
 });
 

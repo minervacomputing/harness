@@ -44,7 +44,7 @@ import { folderLimitMessage, type FolderLimits } from "../files/limits.ts";
 import type { Registry as ConnectorRegistry } from "../gateway/registry.ts";
 import { modelTools } from "../gateway/tools.ts";
 import { type About, identity } from "../lib/about.ts";
-import { KeyRing } from "../lib/fernet.ts";
+import { EncryptionKeys, credentialBinding } from "../lib/encryption.ts";
 import { parseJson } from "../lib/json.ts";
 import { isUuid, uuid7 } from "../lib/random.ts";
 import { appliedMigrations, migrate } from "../lib/sqlite.ts";
@@ -143,7 +143,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	readonly #stream: RunStream;
 	readonly #ports: ConversationPorts;
 	#ledgerInstance: WriteLedger | null = null;
-	#keyRing: Promise<KeyRing> | null = null;
+	#keyRing: Promise<EncryptionKeys> | null = null;
 	readonly #queues = new Map<RunId, ToolQueue>();
 	readonly #executors = new Map<RunId, Executor>();
 	readonly #controllers = new Map<RunId, AbortController>();
@@ -1145,7 +1145,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				return lease;
 			},
 			markUnauthorized: (connectionId, generation) => this.#workspace().markUnauthorized(connectionId, generation),
-			open: async (lease) => (await (await this.#keys()).decrypt(lease.sealed)) as unknown as CredentialPayload,
+			// Bound to the run's workspace and the leased connection: a lease of another row does not decrypt.
+			open: async (lease) => (await (await this.#keys()).decrypt(credentialBinding(snapshot.workspaceId, lease.connectionId), lease.sealed)) as unknown as CredentialPayload,
 		};
 	}
 
@@ -1369,8 +1370,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		};
 	}
 
-	#keys(): Promise<KeyRing> {
-		this.#keyRing ??= KeyRing.parse(this.env.MINERVA_ENCRYPTION_KEYS);
+	#keys(): Promise<EncryptionKeys> {
+		this.#keyRing ??= EncryptionKeys.parse(this.env.MINERVA_ENCRYPTION_KEYS);
 		return this.#keyRing;
 	}
 

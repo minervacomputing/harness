@@ -7,7 +7,15 @@
 // NFKC comes from the runtime's Unicode tables, Python's from its own (Unicode 16); a character assigned
 // since then could normalize differently. The connectors that read a link's query or host (slack, microsoft,
 // notion, atlassian, github, sentry, web) all use this port; `urlsplitStrict` raises ValueError with Python's
-// messages, `urlsplit` gives null instead.
+// messages, `urlsplit` gives null instead. Bracketed hosts are read as addresses by lib/ipaddress.ts (ipaddr.js).
+//
+// Kept, not replaced by the runtime's `URL`: WHATWG parsing repairs and re-spells what Python keeps (it
+// reads `\` as `/`, removes dot segments, percent-encodes spaces and a quote in a query, maps and encodes
+// hosts, reads `127.1` as an address, and refuses what Python only splits), and what these connectors show
+// or send is Python's spelling: links in Slack and Markdown text, Notion and Sentry ids read from links,
+// cursors read from `next` links' queries, the Web connector's addresses and `redirect_to`, and provider
+// query strings (`quote`, `urlencode`). The Web connector requests the runtime's serialization of the
+// address checked here (lib/sites.ts `WebURL.href`), so the host fetched is the host authorized.
 
 import { isIpAddress } from "./ipaddress.ts";
 import { pythonLower } from "./lower.ts";

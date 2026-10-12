@@ -14,6 +14,7 @@ import {
 	RotatingProvider,
 	attach,
 	begin,
+	binding,
 	column,
 	connectMixed,
 	credentials,
@@ -43,7 +44,7 @@ async function lent(h: Harness, id: string, purpose: Parameters<Harness["core"][
 }
 
 async function accessToken(h: Harness, lease: CredentialLease): Promise<unknown> {
-	return ((await h.keys.decrypt(lease.sealed)) as JsonObject).access_token;
+	return ((await h.keys.decrypt(binding(lease.connectionId), lease.sealed)) as JsonObject).access_token;
 }
 
 describe("leases", () => {

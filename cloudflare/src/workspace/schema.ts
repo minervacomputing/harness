@@ -23,9 +23,9 @@ CREATE TABLE workspace (
 	created_at INTEGER NOT NULL
 ) STRICT;
 
--- Credentials are a Fernet token of the JSON payload (connectors 9.1, 10). The scopes and expiry are kept
--- beside it in the clear (neither is secret), so a lease decides about consent and refresh without
--- decrypting. refresh_state: plan, Credentials and refresh.
+-- Credentials are an AES-GCM envelope of the JSON payload (lib/encryption.ts; connectors 9.1, 10) and
+-- key_version its key id. The scopes and expiry are kept beside it in the clear (neither is secret), so a
+-- lease decides about consent and refresh without decrypting. refresh_state: plan, Credentials and refresh.
 CREATE TABLE connections (
 	id TEXT PRIMARY KEY,
 	provider TEXT NOT NULL CHECK (length(provider) <= 64),

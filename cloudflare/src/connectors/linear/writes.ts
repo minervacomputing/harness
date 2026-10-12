@@ -12,7 +12,7 @@ import { strippedStr } from "../../lib/schema.ts";
 import { SINGLE_LINE, isSingleLine } from "../../lib/text.ts";
 import { type LinearClient, MAX_ISSUE_DEPTH, type ParentIssue, type State, type Written } from "./client.ts";
 import { issueLinks, redact, writtenProblem } from "./markdown.ts";
-import { isoDate } from "./python.ts";
+import { isoDate } from "../../lib/isoformat.ts";
 import {
 	CLOSED,
 	IssueName,

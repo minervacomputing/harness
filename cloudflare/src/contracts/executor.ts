@@ -123,7 +123,7 @@ export type WriteStatus = "dispatched" | "succeeded" | "uncertain";
 
 export interface WriteRecord {
 	runId: RunId;
-	/** `sha256(tool + ":" + canonicalAscii(normalized fields))`, page token included. */
+	/** SHA-256 of the canonical JSON of the tool and its normalized fields, page token included (gateway/ledger.ts `writeKey`). */
 	key: string;
 	status: WriteStatus;
 	/** For `succeeded`: what answers a repeat. */

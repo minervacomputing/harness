@@ -23,6 +23,18 @@ export const NLSET = new Set(["\n", "\r"]);
 export const SPECIALSNL = new Set([...SPECIALS, ...NLSET]);
 const HEXDIGITS = new Set([..."0123456789abcdefABCDEF"]);
 
+/**
+ * Whether an encoded word stands anywhere inside an addr-spec, where RFC 2047 (section 5) forbids one. Python's
+ * parser decodes it and reads the decoded text as the address; the connector refuses such a header instead, so
+ * no charset's decoding, whichever decoder reads it, can choose which address a message goes to.
+ */
+export function encodedInAddrSpec(token: Token, inside = false): boolean {
+	if (token.tokenType === "encoded-word") return inside;
+	if (token.terminal) return false;
+	const here = inside || token.tokenType === "addr-spec";
+	return (token as TokenList).items.some((item) => encodedInAddrSpec(item, here));
+}
+
 export function hasAny(text: string, set: ReadonlySet<string>): boolean {
 	for (const char of text) if (set.has(char)) return true;
 	return false;

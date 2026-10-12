@@ -27,7 +27,7 @@ import type { ToolExecutionApi, ToolExecutionResult, ToolRegistration } from "@e
 import type { AttemptFence, EpochMs, Json, RunId } from "../contracts/common.ts";
 import type { ToolCallOutcome, ToolDeclaration } from "../contracts/executor.ts";
 import { TOOL_RESULT_LIMITS as GATEWAY_RESULT_LIMITS } from "../gateway/results.ts";
-import { parseJson, pythonDumps } from "../lib/json.ts";
+import { parseJson, visibleJson } from "../lib/json.ts";
 import { untilAborted } from "./queue.ts";
 
 export const TOOL_RESULT_BYTES = 1024 * 1024;
@@ -56,7 +56,7 @@ export interface ToolHost {
 
 /** What the model sees of an outcome. */
 export function render(outcome: ToolCallOutcome): ToolExecutionResult {
-	if (outcome.ok) return { content: [{ type: "text", text: pythonDumps(outcome.result) }], isError: false };
+	if (outcome.ok) return { content: [{ type: "text", text: visibleJson(outcome.result) }], isError: false };
 	return { content: [{ type: "text", text: outcome.error.message }], isError: true };
 }
 

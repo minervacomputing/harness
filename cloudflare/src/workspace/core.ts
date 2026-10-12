@@ -43,7 +43,7 @@ import { ACCOUNT_KIND } from "../gateway/connector.ts";
 import { InvalidGrants, type LayerRows, checkChanges, planGrantChanges, resourceKey } from "../gateway/grants.ts";
 import type { Registry } from "../gateway/registry.ts";
 import { type ConnectionInfo, startSnapshot } from "../gateway/tools.ts";
-import type { KeyRing, Sealed } from "../lib/fernet.ts";
+import { type Binding, type EncryptionKeys, type Sealed, credentialBinding } from "../lib/encryption.ts";
 import { type JsonObject, parseJson } from "../lib/json.ts";
 import { compareCodePoints, sortByCodePoint } from "../lib/order.ts";
 import { uuid7 } from "../lib/random.ts";
@@ -258,7 +258,7 @@ type LeaseRefusal = Exclude<LeaseAnswer, CredentialLease>;
 export interface WorkspaceDeps {
 	sql: Sql;
 	timers: Timers;
-	keys: KeyRing;
+	keys: EncryptionKeys;
 	registry: Registry;
 	settings: WorkspaceSettings;
 	conversations: ConversationClient;
@@ -346,6 +346,11 @@ export class WorkspaceCore implements WorkspaceApi {
 				now,
 			);
 		});
+	}
+
+	/** What a connection's credentials are encrypted for: this workspace and the connection (lib/encryption.ts). */
+	#binding(connectionId: ConnectionId): Binding {
+		return credentialBinding(this.workspaceRef().id, connectionId);
 	}
 
 	#workspaceRow(): WorkspaceRow | null {
@@ -482,8 +487,12 @@ export class WorkspaceCore implements WorkspaceApi {
 		);
 	}
 
-	#insertConnection(fields: { provider: string; ownerId: UserId; label: string; accountId: string; sealed: Sealed; payload: JsonObject }, now: number): ConnectionId {
-		const id = uuid7(now);
+	/**
+	 * Inserts a connection under the id its credentials were encrypted for: the id is allocated before the
+	 * encryption, which binds the ciphertext to it (lib/encryption.ts).
+	 */
+	#insertConnection(fields: { id: ConnectionId; provider: string; ownerId: UserId; label: string; accountId: string; sealed: Sealed; payload: JsonObject }, now: number): ConnectionId {
+		const id = fields.id;
 		this.#sql.exec(
 			`INSERT INTO connections (id, provider, owner_id, label, external_account_id, status, ciphertext, key_version, generation,
 			 scopes, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, 1, ?, ?, ?, ?)`,
@@ -510,12 +519,13 @@ export class WorkspaceCore implements WorkspaceApi {
 		const found = this.#connectionByAccount(provider, caller.userId);
 		if (found !== null) return ok(this.#connectionOut(caller, found) as ConnectionOut);
 		const payload: JsonObject = { kind: "builtin" };
-		const sealed = await this.#deps.keys.encrypt(payload);
+		const id = uuid7(this.#now());
+		const sealed = await this.#deps.keys.encrypt(this.#binding(id), payload);
 		const now = this.#now();
 		const row = this.#commit(() => {
 			const raced = this.#connectionByAccount(provider, caller.userId);
 			if (raced !== null) return raced;
-			const id = this.#insertConnection({ provider, ownerId: caller.userId, label: connector.name, accountId: caller.userId, sealed, payload }, now);
+			this.#insertConnection({ id, provider, ownerId: caller.userId, label: connector.name, accountId: caller.userId, sealed, payload }, now);
 			return this.#connection(id) as ConnectionRow;
 		});
 		return ok(this.#connectionOut(caller, row) as ConnectionOut);
@@ -561,13 +571,15 @@ export class WorkspaceCore implements WorkspaceApi {
 				await refreshing.catch(() => null);
 				continue;
 			}
-			const payload = target === null ? tokens : keepRefreshToken(asPayload(await this.#deps.keys.decrypt(sealedOf(target))), tokens);
-			const sealed = await this.#deps.keys.encrypt(payload);
+			const payload = target === null ? tokens : keepRefreshToken(asPayload(await this.#deps.keys.decrypt(this.#binding(target.id), sealedOf(target))), tokens);
+			// A new connection's id is allocated here, so its credentials are encrypted for it.
+			const id = target === null ? uuid7(this.#now()) : target.id;
+			const sealed = await this.#deps.keys.encrypt(this.#binding(id), payload);
 			const now = this.#now();
 			const saved = this.#commit((): ConnectionId | null => {
 				if (target === null) {
 					if (this.#connectionByAccount(connector.slug, account.id) !== null) return null;
-					return this.#insertConnection({ provider: connector.slug, ownerId: caller.userId, label: account.label, accountId: account.id, sealed, payload }, now);
+					return this.#insertConnection({ id, provider: connector.slug, ownerId: caller.userId, label: account.label, accountId: account.id, sealed, payload }, now);
 				}
 				const current = this.#connection(target.id);
 				if (current === null || current.generation !== target.generation || current.owner_id !== target.owner_id) return null;
@@ -743,7 +755,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		const generation = row.generation;
 		const connector = this.#registry.find(row.provider);
 		if (connector === null) return { kind: "expired" };
-		const tokens = asPayload(await this.#deps.keys.decrypt(sealedOf(row)));
+		const tokens = asPayload(await this.#deps.keys.decrypt(this.#binding(connectionId), sealedOf(row)));
 		const plan = await planRefresh(connector, tokens, { clients: this.#deps.oauth, siteUrl: this.#deps.settings.siteUrl, fetch: this.#deps.fetch, now: () => this.#now(), log: this.#deps.log }, connectionId);
 		if (plan.kind === "invalid") return this.#settleRefresh(connectionId, generation, { kind: "invalid" });
 		// Recorded at generation g before the token endpoint is called, so a restart from here on knows the
@@ -757,7 +769,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		if (!marked) return { kind: "moved" };
 		const result = await plan.send();
 		if (result.kind !== "refreshed") return this.#settleRefresh(connectionId, generation, result);
-		const sealed = await this.#deps.keys.encrypt(result.payload);
+		const sealed = await this.#deps.keys.encrypt(this.#binding(connectionId), result.payload);
 		const now = this.#now();
 		return this.#commit((): RefreshOutcome => {
 			const current = this.#connection(connectionId);

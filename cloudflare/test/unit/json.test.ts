@@ -1,65 +1,40 @@
 import { describe, expect, test } from "vitest";
-import { MAX_JSON_DEPTH, canonicalAscii, canonicalUtf8, dumps, parseJson, parseModelJson, pythonDumps, pythonFloat } from "../../src/lib/json.ts";
-import { sha256Hex } from "../../src/lib/hash.ts";
-import { utf8Strict } from "../../src/lib/bytes.ts";
+import { MAX_JSON_DEPTH, parseJson, parseModelJson, pythonFloat, visibleJson } from "../../src/lib/json.ts";
 import vectors from "./vectors.ts";
 
-describe("canonical JSON matches today's Python", () => {
-	test("the variants are the ones the backend uses", () => {
-		expect(vectors.variants.fingerprint).toEqual({ sort_keys: true, separators: [",", ":"], default: "str" });
-		expect(vectors.variants.write_key).toEqual(vectors.variants.fingerprint);
-		expect(vectors.variants.manifest_digest).toEqual({ sort_keys: true, separators: [",", ":"], ensure_ascii: false });
-		expect(vectors.variants.credentials).toEqual({});
-	});
-
-	test.each(vectors.canonical)("$json", async (vector) => {
-		const value = parseJson(vector.json);
-		expect(canonicalAscii(value)).toBe(vector.ascii);
-		expect(canonicalUtf8(value)).toBe(vector.utf8);
-		expect(pythonDumps(value)).toBe(vector.default);
-		expect(await sha256Hex(canonicalAscii(value))).toBe(vector.ascii_sha256);
-		expect(await sha256Hex(utf8Strict(canonicalUtf8(value)))).toBe(vector.utf8_sha256);
+describe("visibleJson writes what the model and providers see as today's Python does", () => {
+	test.each(vectors.canonical)("$json", (vector) => {
+		expect(visibleJson(parseJson(vector.json))).toBe(vector.default);
 	});
 
 	test.each(vectors.floats)("repr($value)", ({ value, repr }) => {
 		expect(pythonFloat(value)).toBe(repr);
 	});
-});
 
-describe("dumps", () => {
-	test("sorts keys by code point, not UTF-16 unit", () => {
-		expect(canonicalUtf8({ "\uffff": 1, "\u{1f600}": 2 })).toBe('{"\uffff":1,"\u{1f600}":2}');
-		expect(JSON.stringify(Object.fromEntries(Object.entries({ "\uffff": 1, "\u{1f600}": 2 }).sort()))).toBe('{"\u{1f600}":2,"\uffff":1}');
+	test("sorts keys by code point, not UTF-16 unit, when asked", () => {
+		expect(visibleJson({ "\uffff": 1, "\u{1f600}": 2 }, { sortKeys: true })).toBe('{"\\uffff": 1, "\\ud83d\\ude00": 2}');
+		expect(visibleJson({ b: 1, a: 2 })).toBe('{"b": 1, "a": 2}');
 	});
 
 	test("escapes as Python does", () => {
-		expect(canonicalAscii("\u00e9\u{1f600}\u007f\u2028")).toBe('"\\u00e9\\ud83d\\ude00\\u007f\\u2028"');
-		expect(canonicalUtf8("\u00e9\u{1f600}\u007f\u2028")).toBe('"\u00e9\u{1f600}\u007f\u2028"');
-		expect(canonicalAscii("\ud800")).toBe('"\\ud800"');
+		expect(visibleJson("\u00e9\u{1f600}\u007f\u2028")).toBe('"\\u00e9\\ud83d\\ude00\\u007f\\u2028"');
+		expect(visibleJson("\ud800")).toBe('"\\ud800"');
 	});
 
 	test("leaves out undefined members and refuses what is not JSON", () => {
-		expect(canonicalAscii({ a: undefined, b: 1 })).toBe('{"b":1}');
-		expect(() => canonicalAscii([undefined])).toThrow(TypeError);
-		expect(() => canonicalAscii([, 1])).toThrow(TypeError);
-		expect(() => canonicalAscii(new Array(1))).toThrow(TypeError);
-		expect(() => canonicalAscii(Number.NaN)).toThrow(TypeError);
-		expect(() => canonicalAscii(1n)).toThrow(TypeError);
-		expect(() => canonicalAscii(new Date(0))).toThrow(TypeError);
-		expect(() => canonicalAscii(new Map())).toThrow(TypeError);
+		expect(visibleJson({ a: undefined, b: 1 })).toBe('{"b": 1}');
+		expect(() => visibleJson([undefined])).toThrow(TypeError);
+		expect(() => visibleJson([, 1])).toThrow(TypeError);
+		expect(() => visibleJson(new Array(1))).toThrow(TypeError);
+		expect(() => visibleJson(Number.NaN)).toThrow(TypeError);
+		expect(() => visibleJson(1n)).toThrow(TypeError);
+		expect(() => visibleJson(new Date(0))).toThrow(TypeError);
+		expect(() => visibleJson(new Map())).toThrow(TypeError);
 	});
 
-	test("writes integers as ints and other numbers as floats", () => {
-		expect(canonicalAscii([1, -0, 2 ** 53 - 1, 2 ** 53, 0.5])).toBe("[1,0,9007199254740991,9007199254740992.0,0.5]");
-	});
-
-	test("uses Python's default separators unless compact", () => {
-		expect(dumps({ b: [1, 2], a: null })).toBe('{"b": [1, 2], "a": null}');
-		expect(dumps({ b: [1, 2], a: null }, { sortKeys: true, compact: true })).toBe('{"a":null,"b":[1,2]}');
-	});
-
-	test("a UTF-8 digest refuses lone surrogates, as str.encode() does", () => {
-		expect(() => utf8Strict(canonicalUtf8({ path: "a\udc00" }))).toThrow(TypeError);
+	test("writes integers as ints and other numbers as floats, with Python's default separators", () => {
+		expect(visibleJson([1, -0, 2 ** 53 - 1, 2 ** 53, 0.5])).toBe("[1, 0, 9007199254740991, 9007199254740992.0, 0.5]");
+		expect(visibleJson({ b: [1, 2], a: null })).toBe('{"b": [1, 2], "a": null}');
 	});
 });
 
@@ -78,12 +53,11 @@ describe("parseJson", () => {
 		expect(Object.keys(parseJson(`{"${second}":0,"ab\\n":1,"\\u00e9":2}`) as object)).toEqual([second, "ab\n", "\u00e9"]);
 	});
 
-	test("hashes over parsed vectors match Python after poisoning", async () => {
+	test("parsed vectors are written as Python wrote them after poisoning", () => {
 		const vector = vectors.canonical.at(-1) as (typeof vectors.canonical)[number];
 		JSON.parse('{"\\\\":1}');
 		JSON.parse('{"ab\\\\":1}');
-		expect(canonicalAscii(parseJson(vector.json))).toBe(vector.ascii);
-		expect(await sha256Hex(utf8Strict(canonicalUtf8(parseJson(vector.json))))).toBe(vector.utf8_sha256);
+		expect(visibleJson(parseJson(vector.json))).toBe(vector.default);
 	});
 
 	test("agrees with JSON.parse on what it accepts and refuses", () => {

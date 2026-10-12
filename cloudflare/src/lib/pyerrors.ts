@@ -1,5 +1,5 @@
 // Python's built-in exceptions with Python's hierarchy, for ports whose callers catch some of them and let
-// others through as the Python code does (gmail's email package, lib/codecs.ts, lib/urlsplit.ts). Moved
+// others through as the Python code does (gmail's email package, lib/urlsplit.ts). Moved
 // here from connectors/gmail/email/errors.ts, which keeps the email package's own and re-exports these.
 
 export class PythonError extends Error {

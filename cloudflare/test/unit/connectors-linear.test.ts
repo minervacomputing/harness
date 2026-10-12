@@ -190,14 +190,14 @@ describe("connecting", () => {
  * a change of meaning, and bump `revision` when the declaration does not show one.
  */
 const FINGERPRINTS: { [operation: string]: string } = {
-	list_teams: "19b7f642c97928bc",
-	get_team: "3dfec1bd8a11da11",
-	list_issues: "d9428ee7b5f9871d",
-	search_issues: "f42b5553970c64ac",
-	get_issue: "f9a5122ea677fc5d",
-	create_issue: "17eb716cdaddd3fa",
-	add_comment: "291859da7c4a92bc",
-	update_issue: "fa44121785fcb0d5",
+	list_teams: "ad23616e6c157c11",
+	get_team: "21aec9431a2e420d",
+	list_issues: "19d6311c2186ae79",
+	search_issues: "360193e9ba60a18d",
+	get_issue: "ceaa7365274582d3",
+	create_issue: "1239a3b55271cef4",
+	add_comment: "d24e06a992ec7e60",
+	update_issue: "a8aa16aa03181ca2",
 };
 
 describe("runs", () => {

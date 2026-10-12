@@ -1,16 +1,44 @@
 // Python's `datetime.fromisoformat` and `date.fromisoformat` as CPython 3.14's C implementation reads them
-// (Modules/_datetimemodule.c), with its error messages, and the arithmetic the Microsoft connectors do with
-// the result: conversion to UTC, `strftime("%Y-%m-%dT%H:%M:%SZ")`, `isoformat()` and timedeltas. The C
-// parser works on the UTF-8 bytes of the text: the date and time are ASCII, and only the one character
-// between them may be anything. Instants are counted in BigInt microseconds, as Python's integers do.
+// (Modules/_datetimemodule.c), with its error messages, and the arithmetic the connectors do with the
+// result: conversion to UTC, `strftime("%Y-%m-%dT%H:%M:%SZ")`, `isoformat()` and timedeltas. The one
+// implementation of what Microsoft's, Slack's, Intercom's, Xero's, Linear's and Google Calendar's inputs are
+// checked with. The C parser works on the UTF-8 bytes of the text: the date and time are ASCII, and only the
+// one character between them may be anything. Instants are counted in BigInt microseconds, as Python's
+// integers do.
+//
+// No library reads this grammar. It takes more than RFC 3339 or ISO 8601's extended form: basic forms
+// (20261001T0900), ISO week dates (2026-W40-4), a comma as the decimal mark, an hour of 24, any one
+// character between the date and the time, and a time zone of seconds. `Temporal` is not in workerd at our
+// compatibility date (2026-10-06; test/platform/dates.test.ts watches for it). Its polyfills read part of
+// this (basic forms, say) but not ISO week dates, an hour of 24 or an arbitrary separator, and they word
+// every refusal their own way, where the model reads Python's.
+//
+// Local times: a datetime has no zone database behind it. A time without an offset stays "naive" (offset
+// null) and each caller decides what that means (docs/plans/cloudflare.md, "Dates and time zones"), so
+// there are no gaps or folds to resolve here.
 //
 // Errors are Python's (lib/pyerrors.ts): `ValueError`, which Pydantic reports as "Value error, ...", and
 // `OverflowError`, which it does not catch, so the call fails generically.
 
-import { utf8 } from "../../lib/bytes.ts";
-import { OverflowError, ValueError } from "../../lib/pyerrors.ts";
-import { pythonRepr } from "../../lib/text.ts";
-import { daysBeforeYear, isLeap, pad } from "../../lib/calendar.ts";
+import { utf8 } from "./bytes.ts";
+import { OverflowError, ValueError } from "./pyerrors.ts";
+import { pythonRepr } from "./text.ts";
+
+/** `calendar.isleap(year)`. */
+function isLeap(year: number): boolean {
+	return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+}
+
+/** `days_before_year`: the days from 0001-01-01 to January 1st of `year`. */
+function daysBeforeYear(year: number): number {
+	const y = year - 1;
+	return y * 365 + Math.floor(y / 4) - Math.floor(y / 100) + Math.floor(y / 400);
+}
+
+/** `String(value)` padded with zeros to at least `width` digits, as `%02d` and `%04d` write. */
+export function pad(value: number, width = 2): string {
+	return String(value).padStart(width, "0");
+}
 
 export interface PyDate {
 	year: number;
@@ -32,6 +60,8 @@ const MAXYEAR = 9999;
 const DAYS_IN_MONTH = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 const DAYS_BEFORE_MONTH = [0, 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
 export const MICROS_PER_DAY = 86_400_000_000n;
+/** Microseconds from 0001-01-01 (day 1) to 1970-01-01. */
+const EPOCH_MICROS = 719_163n * MICROS_PER_DAY;
 const DI400Y = 146097;
 const DI100Y = 36524;
 const DI4Y = 1461;
@@ -386,6 +416,21 @@ export function dateFromIsoFormat(text: string): PyDate {
 	return date;
 }
 
+/**
+ * Python's `date.fromisoformat(value).isoformat()`, or null where it raises: YYYY-MM-DD, YYYYMMDD and the ISO
+ * week forms YYYY-Www[-D] and YYYYWww[D], read from the UTF-8 bytes of a value of 7, 8 or 10 bytes, with ASCII
+ * digits only. As CPython does, it does not check that every byte was read, so "20261001xx" is 2026-10-01.
+ */
+export function isoDate(value: string): string | null {
+	try {
+		const { year, month, day } = dateFromIsoFormat(value);
+		return `${pad(year, 4)}-${pad(month)}-${pad(day)}`;
+	} catch (error) {
+		if (error instanceof ValueError) return null;
+		throw error;
+	}
+}
+
 /** Microseconds from 0001-01-01 of the wall clock, without the offset. */
 function wallMicros(value: PyDateTime): bigint {
 	const days = BigInt(ordinal(value.year, value.month, value.day));
@@ -397,6 +442,11 @@ function wallMicros(value: PyDateTime): bigint {
 export function instant(value: PyDateTime): bigint {
 	if (value.offset === null) throw new TypeError("A naive datetime has no instant.");
 	return wallMicros(value) - BigInt(value.offset);
+}
+
+/** Microseconds from 1970-01-01T00:00:00Z of the instant a datetime names, a naive one being read as UTC. */
+export function unixMicros(value: PyDateTime): bigint {
+	return wallMicros(value) - EPOCH_MICROS - BigInt(value.offset ?? 0);
 }
 
 /** A datetime at `micros` of wall clock with `offset`, or OverflowError outside years 1 to 9999. */

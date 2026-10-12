@@ -1,59 +1,26 @@
 """Writes python-vectors.json: what today's Python computes, for lib/'s cross-language tests.
 
-The canonical JSON variants are read from the backend's source rather than restated: each is the
-keyword set of the `json.dumps` call in the function that uses it. Backend modules that would load
-configuration (and with it .env) are never imported; the few pure helpers needed are loaded on their own.
+Backend modules that would load configuration (and with it .env) are never imported; the few pure helpers
+needed are loaded on their own. Hashed and encrypted values are no longer Python's (step 6b: canonical JSON
+and AES-GCM), so only what the model and providers see is pinned here: `json.dumps(value)` (`default`).
 
 Run from cloudflare/: cd ../backend && uv run python -I ../cloudflare/test/fixtures/generate.py
 """
 
-import ast
-import base64
-import builtins
 import hashlib
 import html
+import html.entities
+import html.parser as html_parser
 import importlib.util
 import json
 import sys
 from pathlib import Path
 from urllib.parse import unquote
 
-from cryptography.fernet import Fernet, InvalidToken
 from django.utils.crypto import salted_hmac
 
 HERE = Path(__file__).resolve().parent
 BACKEND = HERE.parents[2] / "backend"
-
-# Where each variant is defined: (file, function).
-VARIANTS = {
-    "fingerprint": ("connectors/registry.py", "fingerprint"),
-    "write_key": ("connectors/executor.py", "_canonical"),
-    "manifest_digest": ("files/manifest.py", "digest"),
-    "credentials": ("connections/crypto.py", "encrypt"),
-}
-
-
-def dumps_keywords(relative: str, function: str) -> dict:
-    tree = ast.parse((BACKEND / relative).read_text())
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == function:
-            for call in ast.walk(node):
-                if (
-                    isinstance(call, ast.Call)
-                    and isinstance(call.func, ast.Attribute)
-                    and call.func.attr == "dumps"
-                    and isinstance(call.func.value, ast.Name)
-                    and call.func.value.id == "json"
-                ):
-                    keywords = {}
-                    for keyword in call.keywords:
-                        if isinstance(keyword.value, ast.Name):
-                            keywords[keyword.arg] = getattr(builtins, keyword.value.id)
-                        else:
-                            keywords[keyword.arg] = ast.literal_eval(keyword.value)
-                    return keywords
-    raise SystemExit(f"No json.dumps call in {relative}:{function}")
-
 
 def load_text_module():
     spec = importlib.util.spec_from_file_location("minerva_text", BACKEND / "connectors" / "text.py")
@@ -117,6 +84,27 @@ UNESCAPED = [
     "&#55296;", "&#1114112;", "&#99999999999999999999;", "&#1;", "&#11;", "&#13;", "&#xFFFE;", "&#00000065",
     "&notit;", "&notin;", "&nosuchentity;", "&constructor;", "&__proto__;", "&toString", "a & b", "&#;", "&#x;",
     "&AElig", "&aeligx", "&Aacute;&aacute", "&\U0001f600;", "&" + "a" * 40 + ";", "&nbsp&nbsp;", "&frac12;",
+    # Numeric references: the Windows-1252 range, what is dropped, what is replaced, and the edges of each.
+    "&#127;", "&#x7f;", "&#x81;", "&#x8d;", "&#x9f;&#xa0;", "&#8;&#9;&#10;&#12;&#14;&#31;&#32;", "&#xfdcf;&#xfdd0;&#xfdef;&#xfdf0;",
+    "&#xffff;&#x1fffe;&#x10fffe;&#x10ffff;&#x10fffd;", "&#xd7ff;&#xd800;&#xdbff;&#xdfff;&#xe000;", "&#x110000;&#x7fffffff;",
+    "&#0000000000000065;", "&#X41g", "&#65a", "&#6g", "&#xg;", "&#x41;;", "&#" + "9" * 400 + ";", "&#x" + "f" * 400,
+    # Names: cut and extended at every point that matters, the table's longest, multi-character values.
+    "&NotEqualTilde;", "&CounterClockwiseContourIntegral;", "&ThickSpace;", "&nbsp;x", "&notinx", "&notin", "&notin;",
+    "&ampamp;", "&amp;amp;", "&AMP", "&Amp;", "&LT", "&lt=", "&lt;=", "&copy2", "&para;&para", "&sect=", "&" + "a" * 32,
+    "&" + "a" * 31 + ";", "&&amp;", "&amp&", "&#38;amp;", "&#38;#38;", "&amp;#38;", "a&amp;b&lt;c&gt;\n&quot;&apos;",
+    "&not;it", "&notit", "&notit;", "&isin;&isinv;&isinvx", "&Gt;&GT;&gt;&Gt", "&lsquo;&LSQUO&rsquo", "&ENG;&eng;&Eng",
+    "&\t&amp;", "&\n", "&amp\r", "&\u00e9;", "&amp\u00e9", "&amp\u0301",
+]
+
+# Attribute values as html.parser reads them: numeric references always, a name only whole and not before "=".
+ATTRIBUTES = [
+    "&amp;", "&amp", "&ampx", "&amp=", "&amp;=", "&amp-", "&amp.", "&amp ", "&amp&amp", "&ampé", "&AMP", "&Amp;",
+    "&notit;", "&notit", "&not;", "&not", "&notin", "&notin;", "&notin=", "&not=", "&copy=2", "&copy2", "&copy;2",
+    "&lt;b&gt;", "&lt", "&lt>", "&lt/", "&#65", "&#65=", "&#65;=", "&#x41g", "&#X41;", "&#0;", "&#x7f;", "&#1;", "&#128;",
+    "&#xd800;", "&#x110000;", "&#;", "&#x;", "&;", "&", "&&", "a&b", "a&b=c&d=e", "?a=1&copy=2&amp=3&lt;=4",
+    "https://example.com/?a=1&b=2", "https://example.com/?a=1&amp;b=2", "https://example.com/?a=1&copyright=2",
+    "&NotEqualTilde;", "&CounterClockwiseContourIntegral;", "&" + "a" * 40 + ";", "&nbsp&nbsp;", "&frac12", "&frac12;",
+    "&AElig", "&AElig=", "&aeligx", "&\U0001f600;", "&amp;amp;", "&#38;amp;", "x&", "&x",
 ]
 
 TRUNCATE = [["abc", 2], ["abc", 3], ["\U0001f600\U0001f600\U0001f600", 2], ["\u00e9", 1], [None, 3], ["", 0]]
@@ -191,9 +179,9 @@ RECORDS = [
 ]
 
 
-def pydantic_records(variant: dict) -> list:
+def pydantic_records() -> list:
     """How `dict[str, …]` validates in a connector input: keys stripped, "__proto__" an ordinary key, a
-    dict's length after validation. The output in the write-key variant, or the errors as Ninja and the
+    dict's length after validation. The output as JSON (compared as a value), or the errors as Ninja and the
     executor read them (`model_validate` of the parsed JSON)."""
     from typing import Annotated, Any
 
@@ -214,59 +202,24 @@ def pydantic_records(variant: dict) -> list:
         except ValidationError as error:
             cases.append({"json": source, "errors": error.errors(include_url=False, include_input=False)})
         else:
-            cases.append({"json": source, "canonical": json.dumps(data, **variant)})
+            cases.append({"json": source, "canonical": json.dumps(data, sort_keys=True, separators=(",", ":"))})
     return cases
+
+
+def entity_table() -> dict:
+    """The names of `html.entities.html5` with their values, as one digest the tests recompute from `entities`."""
+    names = sorted(html.entities.html5)
+    lines = "".join(f"{name}\t{' '.join(f'{ord(c):x}' for c in html.entities.html5[name])}\n" for name in names)
+    return {
+        "names": len(names),
+        "without_semicolon": sum(not name.endswith(";") for name in names),
+        "sha256": hashlib.sha256(lines.encode()).hexdigest(),
+    }
 
 
 def main() -> None:
     text = load_text_module()
-    variants = {name: dumps_keywords(*where) for name, where in VARIANTS.items()}
-    names = {"ascii": "write_key", "utf8": "manifest_digest", "default": "credentials"}
-    # The fingerprint uses the same variant as write keys and query hashes.
-    assert variants["fingerprint"] == variants["write_key"], variants
-    canonical = []
-    for source in VALUES:
-        value = json.loads(source)
-        case = {"json": source}
-        for label, variant in names.items():
-            out = json.dumps(value, **variants[variant])
-            case[label] = out
-            case[f"{label}_sha256"] = hashlib.sha256(out.encode()).hexdigest()
-        canonical.append(case)
-
-    keys = [base64.urlsafe_b64encode(bytes(range(32))).decode(), base64.urlsafe_b64encode(bytes(range(32, 64))).decode()]
-    plaintexts = [
-        b"",
-        b"x",
-        b"16 bytes exactly",
-        json.dumps({"kind": "oauth2", "access_token": "at", "refresh_token": None, "scopes": ["read"]}).encode(),
-        "za\u017c\u00f3\u0142\u0107 \U0001f600".encode(),
-        bytes(range(256)),
-    ]
-    fixed = []
-    for plaintext in plaintexts:
-        token = Fernet(keys[0])._encrypt_from_parts(plaintext, 1760000000, bytes(range(16)))  # noqa: SLF001
-        fixed.append({"key": keys[0], "time": 1760000000, "iv": bytes(range(16)).hex(), "plaintext": plaintext.hex(), "token": token.decode()})
-    random_tokens = [{"key": keys[0], "plaintext": p.hex(), "token": Fernet(keys[0]).encrypt(p).decode()} for p in plaintexts]
-    good = random_tokens[1]["token"]
-    invalid = [
-        good[:-2] + ("A" if good[-2] != "A" else "B") + good[-1],
-        base64.urlsafe_b64encode(b"\x81" + base64.urlsafe_b64decode(good)[1:]).decode(),
-        good[:40],
-        "not a token",
-        "",
-    ]
-    for token in invalid:
-        try:
-            Fernet(keys[0]).decrypt(token)
-        except InvalidToken:
-            continue
-        raise SystemExit(f"Expected InvalidToken for {token!r}")
-    try:
-        Fernet(keys[1]).decrypt(good)
-        raise SystemExit("Expected InvalidToken with the other key")
-    except InvalidToken:
-        pass
+    canonical = [{"json": source, "default": json.dumps(json.loads(source))} for source in VALUES]
 
     secret = "test-secret-not-a-real-key"
     hmacs = [
@@ -281,19 +234,19 @@ def main() -> None:
 
     vectors = {
         "python": sys.version.split()[0],
-        "variants": {name: {k: (v.__name__ if callable(v) else v) for k, v in kw.items()} for name, kw in variants.items()},
         "canonical": canonical,
         "floats": [{"value": value, "repr": repr(value)} for value in FLOATS],
-        "fernet": {"fixed": fixed, "random": random_tokens, "invalid": invalid, "other_key": keys[1], "other_key_token": good},
         "salted_hmac": hmacs,
         "decoded": [{"input": item, "output": text.decoded(item)} for item in DECODED],
         "unquote": [{"input": item, "output": unquote(item)} for item in UNQUOTED],
         "unescape": [{"input": item, "output": html.unescape(item)} for item in UNESCAPED],
+        "unescape_attribute": [{"input": item, "output": html_parser._unescape_attrvalue(item)} for item in ATTRIBUTES],
+        "entities": entity_table(),
         "truncate": [{"input": item, "limit": limit, "output": list(text.truncate(item, limit))} for item, limit in TRUNCATE],
         "sorted": sorted(SORTED),
         "sha256": [{"input": item, "hex": hashlib.sha256(item.encode()).hexdigest()} for item in ["", "abc", "\u00e9\U0001f600"]],
         "pydantic": pydantic_strings(),
-        "pydantic_records": pydantic_records(variants["write_key"]),
+        "pydantic_records": pydantic_records(),
         "repr": [{"input": item, "output": repr(item)} for item in REPR],
         "isspace": [c for c in range(0x110000) if chr(c).isspace()],
         "strip": [{"input": item, "output": item.strip()} for item in STRIPPED],

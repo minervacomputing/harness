@@ -2,27 +2,16 @@
 // Unicode patterns (`\w` and IGNORECASE; `\s` is PYTHON_SPACE_CLASS of lib/text.ts) that html.ts and reads.ts
 // are written with.
 //
-// `\w` comes from Python 3.14's own Unicode table (unicode.ts, Unicode 16.0), not the runtime's, which may be
-// newer and differ for characters assigned since. test/fixtures/connectors/intercom/ pins it, casefold (which
-// is lib/casefold.ts) and the IGNORECASE letters against Python for every code point.
+// `\w` is the runtime's letters and numbers without what Unicode 17 assigned, which is Python 3.14's table
+// (Unicode 16.0) for every code point (lib/unicode.ts). test/fixtures/connectors/intercom/ pins it and the
+// IGNORECASE letters against Python for every code point; casefold is lib/casefold.ts.
 
-import { WORD } from "./unicode.ts";
+import { pythonProperty } from "../../lib/unicode.ts";
 
 // re
 
-function unit(point: number): string {
-	return `\\u{${point.toString(16)}}`;
-}
-
-const words: string[] = [];
-for (let at = 0; at < WORD.length; at += 2) {
-	const first = WORD[at] as number;
-	const last = WORD[at + 1] as number;
-	words.push(first === last ? unit(first) : `${unit(first)}-${unit(last)}`);
-}
-
-/** The inside of a class for `re`'s `\w` in a str pattern (needs the `u` flag): `str.isalnum()` characters and the underscore. */
-export const RE_WORD = words.join("");
+/** One character of `re`'s `\w` in a str pattern (needs the `u` flag): `str.isalnum()` characters and the underscore. */
+export const RE_WORD_CHAR = pythonProperty("\\p{L}\\p{N}_");
 
 /**
  * `i` under IGNORECASE, for patterns compiled with JavaScript's `iu` flags. `re` matches U+0130 (whose

@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { Binding, ScopedRecord } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, denied } from "../../gateway/connector.ts";
-import { type JsonObject, pythonDumps } from "../../lib/json.ts";
+import { type JsonObject, visibleJson } from "../../lib/json.ts";
 import { strippedStr } from "../../lib/schema.ts";
 import { hostnameOf, urlsplit } from "../../lib/urlsplit.ts";
 import { type Block, type Comment, type DataSource, type Database, type NotionClient, type Page, type Parent, pageTitle, sourceDatabaseId, textOf } from "./client.ts";
@@ -68,10 +68,10 @@ export function dumpsLength(value: unknown): number {
 	if (typeof value === "object" && value !== null) {
 		const object = value as { [key: string]: unknown };
 		const keys = Object.keys(object);
-		const items = keys.reduce((length, key) => length + pythonDumps(key).length + 2 + dumpsLength(object[key]), 2);
+		const items = keys.reduce((length, key) => length + visibleJson(key).length + 2 + dumpsLength(object[key]), 2);
 		return items + 2 * Math.max(0, keys.length - 1);
 	}
-	return pythonDumps(value).length;
+	return visibleJson(value).length;
 }
 
 /** `json_size`: at most MAX_FILTER characters as `json.dumps` writes it. */

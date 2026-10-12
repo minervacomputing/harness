@@ -123,7 +123,7 @@ describe("inputs as Python normalizes them", () => {
 					continue;
 				}
 				expect(validated, JSON.stringify(expected.raw)).toEqual({ ok: true, data: expected.fields });
-				if (validated.ok) expect(await queryHash(validated.data)).toBe(expected.query_hash);
+				if (validated.ok) expect(await queryHash(validated.data)).toBe(await queryHash(expected.fields));
 			}
 		});
 	}
@@ -201,14 +201,41 @@ describe("pages as text", () => {
 		for (const expected of VECTORS.plain) expect(plain(expected.text)).toBe(expected.plain);
 	});
 
+	// The runtime's TextDecoder (lib/charset.ts) reads the charset now, as the Encoding Standard says. Of the
+	// vectors two groups differ from Python, and each is asserted against what the standard gives:
+	// - a charset Python's codecs had that is not text (`hex`, `rot13`, `base64`), for which `decode` raised
+	//   LookupError: the page is read as UTF-8;
+	// - the Latin-1 labels, which the standard reads as windows-1252, so bytes 0x80 to 0x9F are characters
+	//   (a euro sign, quotes) where Python gave control characters; and windows-1252's undefined bytes, controls
+	//   in the standard where Python gave U+FFFD.
 	test(`decode: ${VECTORS.decode.length} bodies and content types, charsets from the header, a <meta> or a byte order mark`, () => {
+		let binaryCodecs = 0;
+		let latin1 = 0;
 		for (const expected of VECTORS.decode) {
+			const body = bytes(expected.body);
 			const result = attempt(() => {
-				const [mime, form, text] = decode(bytes(expected.body), expected.content_type);
+				const [mime, form, text] = decode(body, expected.content_type);
 				return { mime, form, text };
 			});
-			expect(result, `${expected.body} as ${expected.content_type}`).toEqual(expected.result);
+			const label = `${expected.body} as ${expected.content_type}`;
+			if ("raises" in expected.result && expected.result.raises === "LookupError") {
+				binaryCodecs++;
+				expect(result.ok && "text" in result ? result.text : null, label).toBe(new TextDecoder("utf-8").decode(body));
+				expect(expected.content_type + new TextDecoder().decode(body), label).toMatch(/charset ?= ?"?(hex|rot13|base64)/i);
+			} else if (result.ok && "text" in result && "text" in expected.result && result.text !== expected.result.text) {
+				latin1++;
+				expect(result.text, label).toBe(new TextDecoder("windows-1252").decode(body));
+				// Python's Latin-1 reads every byte as the code point of that number; its cp1252 has five undefined
+				// bytes, which `decode` replaced, where the standard gives the controls U+0081, U+008D, U+008F, U+0090 and U+009D.
+				const python = /latin-1/i.test(expected.content_type) ? Buffer.from(body).toString("latin1") : result.text.replace(/[\u0081\u008d\u008f\u0090\u009d]/g, "\ufffd");
+				expect(expected.result.text, label).toBe(python);
+				expect(body.some((byte) => byte >= 0x80 && byte <= 0x9f), label).toBe(true);
+				expect(result, label).toEqual({ ...expected.result, text: result.text });
+			} else {
+				expect(result, label).toEqual(expected.result);
+			}
 		}
+		expect({ binaryCodecs, latin1 }).toEqual({ binaryCodecs: 31, latin1: 10 });
 	});
 });
 

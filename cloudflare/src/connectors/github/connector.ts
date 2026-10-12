@@ -28,7 +28,7 @@ import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
 import { casefold } from "../../lib/casefold.ts";
 import { pythonIsDigit } from "../../lib/digits.ts";
-import { dumps, isDict, type Json, type JsonObject, parseJson, pythonDumps } from "../../lib/json.ts";
+import { isDict, type Json, type JsonObject, parseJson, visibleJson } from "../../lib/json.ts";
 import { strippedStr } from "../../lib/schema.ts";
 import { PLAIN_TEXT, SINGLE_LINE, codePointLength, isPlainText, isSingleLine, truncate } from "../../lib/text.ts";
 import { fromUtf8 } from "../../lib/bytes.ts";
@@ -259,7 +259,7 @@ export function pageParams(cursor: string | null): { [key: string]: string } {
 
 /** `_cursor`: `json.dumps(params, sort_keys=True)`, or null for the last page. */
 export function pageCursor(params: { [key: string]: string } | null): string | null {
-	return params !== null && Object.keys(params).length > 0 ? dumps(params, { sortKeys: true }) : null;
+	return params !== null && Object.keys(params).length > 0 ? visibleJson(params, { sortKeys: true }) : null;
 }
 
 /**
@@ -321,7 +321,7 @@ async function repositoriesPage(client: GitHubClient, cursor: string | null, lim
 	let following: { installation: number; page: number } | null = null;
 	if (found.length === limit) following = { installation: first, page: page + 1 };
 	else if (remaining.length > 1) following = { installation: remaining[1] as number, page: 1 };
-	return [found, following !== null ? pythonDumps(following) : null];
+	return [found, following !== null ? visibleJson(following) : null];
 }
 
 /** `_item`: a repository as the settings page lists it. */

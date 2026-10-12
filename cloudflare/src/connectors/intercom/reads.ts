@@ -25,7 +25,7 @@ import {
 	resolveInbox,
 	unplaced,
 } from "./inboxes.ts";
-import { RE_WORD } from "./python.ts";
+import { RE_WORD_CHAR } from "./python.ts";
 
 export const MAX_SEARCH_WORDS = 5;
 export const CONCURRENCY = 5;
@@ -35,7 +35,7 @@ export const MAX_MESSAGES = 50;
 export const MAX_SHORT = 500;
 export const MAX_ATTACHMENTS = 20;
 
-const WORD = new RegExp(`[${RE_WORD}]+`, "gu");
+const WORD = new RegExp(`${RE_WORD_CHAR}+`, "gu");
 // Parts that carry a message. Others (assignments, state changes, tags, events) say who did what, which can
 // name teams and teammates elsewhere; they are left out.
 const MESSAGE_PARTS: ReadonlySet<string> = new Set(["comment", "note", "quick_reply", "close"]);

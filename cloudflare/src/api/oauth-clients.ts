@@ -13,6 +13,7 @@ import { TOKEN_TIMEOUT_MS, boundedText, type OAuth2, redirectUri } from "../work
 import { configuredClient, oauthClients } from "../workspace/env.ts";
 import type { ClientCredentials, OAuthClients } from "../workspace/ports.ts";
 import { ConnectionFlowError } from "./flows.ts";
+import { oauthClientBinding } from "../lib/encryption.ts";
 import { PROVIDER_NETWORK, encryptionKeys } from "./providers.ts";
 
 /** Where the flows' clients come from: the Worker's secrets and D1. The test build adds its fake provider's client (src/faults/). */
@@ -97,7 +98,7 @@ async function registerClient(env: Env, workspace: WorkspaceRef, connector: Conn
 	const clientId = field(body, "client_id");
 	const secret = field(body, "client_secret");
 	if (clientId === null || secret === null) throw failed("an answer without a client");
-	const sealed = await (await encryptionKeys(env)).encrypt({ secret });
+	const sealed = await (await encryptionKeys(env)).encrypt(oauthClientBinding(oauth.app, uri, clientId), { secret });
 	const stored = await env.DB.prepare(
 		"INSERT INTO oauth_clients (provider, redirect_uri, client_id, secret_ciphertext, secret_key_version, created_at) VALUES (?, ?, ?, ?, ?, ?) " +
 			"ON CONFLICT (provider, redirect_uri) DO NOTHING",

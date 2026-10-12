@@ -25,12 +25,12 @@
 // (zones.ts). Not supported: changing, deleting or answering events, attendees, recurrence, and group
 // calendars.
 //
-// Times are Python's datetime (microsoft/isoformat.ts), so what is accepted, refused and sent is today's.
+// Times are Python's datetime (lib/isoformat.ts), so what is accepted, refused and sent is today's.
 
 import { z } from "zod";
 import type { Binding, Connector, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
-import { type Json, parseJson, pythonDumps } from "../../lib/json.ts";
+import { type Json, parseJson, visibleJson } from "../../lib/json.ts";
 import { DIGIT_CLASS } from "../../lib/digits.ts";
 import { strippedStr } from "../../lib/schema.ts";
 import { sliceCodePoints, truncate } from "../../lib/text.ts";
@@ -48,7 +48,7 @@ import {
 	nowUtc,
 	plus,
 	toUtc,
-} from "../microsoft/isoformat.ts";
+} from "../../lib/isoformat.ts";
 import { type Calendar, CalendarClient, type Event, type Time } from "./client.ts";
 import { ZONES } from "./zones.ts";
 import { extend } from "../../lib/arrays.ts";
@@ -311,7 +311,7 @@ function listEvents(options: CalendarOptions) {
 					const [events, page] = await client.view(id, { start, end, limit: data.limit, cursor: state ? state.page : null });
 					let next: string | null = null;
 					if (page !== null) {
-						next = pythonDumps({ calendar: id, page, start, end });
+						next = visibleJson({ calendar: id, page, start, end });
 						if (next.length > 1000) throw new OperationError("PROVIDER_LIMIT", "Microsoft Graph returned a page token that is too long.");
 					}
 					return { records: events.map((event) => eventRecord(binding, id, event)), nextCursor: next };

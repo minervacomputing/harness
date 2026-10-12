@@ -20,11 +20,12 @@ import { casefold } from "../../lib/casefold.ts";
 import * as addresses from "../../lib/addresses.ts";
 import type { Part } from "./client.ts";
 import { b64decodeUrlsafeStrict } from "./email/base64.ts";
-import { decode } from "../../lib/codecs.ts";
-import { BinasciiError, IndexError, LookupError, PyTypeError, UnicodeError, ValueError } from "./email/errors.ts";
-import { ContentHeaders, decodeHeader, makeHeader } from "./email/legacy.ts";
+import { decodeWords } from "postal-mime";
+import { decodeCharset } from "../../lib/charset.ts";
+import { BinasciiError, IndexError, PyTypeError, ValueError } from "./email/errors.ts";
+import { ContentHeaders } from "./email/legacy.ts";
 import { type RawMessage, rawMessage } from "./email/message.ts";
-import { DOT_ATOM_ENDS, type TokenList, getAddressList, hasAny, quoteString } from "./email/parser.ts";
+import { DOT_ATOM_ENDS, type TokenList, encodedInAddrSpec, getAddressList, hasAny, quoteString } from "./email/parser.ts";
 import { htmlToText } from "../../lib/markdown.ts";
 
 export const MAX_DEPTH = 10;
@@ -60,14 +61,8 @@ const SPACES = new RegExp(`[${PYTHON_SPACE_CLASS}]+`, "g");
 /** A header's value for display: encoded words decoded, on one line, cut to a bounded length. */
 export function headerText(value: string | null): string | null {
 	if (value === null) return null;
-	try {
-		value = makeHeader(decodeHeader(value)).toString();
-	} catch (error) {
-		// suppress(ValueError, LookupError, UnicodeError); anything else (a HeaderParseError) escapes.
-		if (!(error instanceof ValueError || error instanceof LookupError || error instanceof UnicodeError)) throw error;
-	}
 	let shown = "";
-	for (const char of value) shown += char !== " " && UNPRINTABLE.test(char) ? " " : char;
+	for (const char of decodeWords(value)) shown += char !== " " && UNPRINTABLE.test(char) ? " " : char;
 	return sliceCodePoints(pythonStrip(shown.replace(SPACES, " ")), 0, MAX_HEADER);
 }
 
@@ -98,14 +93,8 @@ function decodeBody(part: Part): string | null {
 		if (error instanceof BinasciiError || error instanceof ValueError) return null;
 		throw error;
 	}
-	const charset = contentType(part).getContentCharset() || "utf-8";
-	try {
-		return decode(data, charset, "replace");
-	} catch (error) {
-		// The sender names the charset: one Python lacks, or a codec that cannot replace errors (idna).
-		if (error instanceof LookupError || error instanceof UnicodeError) return decode(data, "utf-8", "replace");
-		throw error;
-	}
+	// The sender names the charset: one the runtime lacks is read as UTF-8.
+	return decodeCharset(data, contentType(part).getContentCharset() || "utf-8") ?? (decodeCharset(data, "utf-8") as string);
 }
 
 function isAttachment(part: Part): boolean {
@@ -186,9 +175,10 @@ function addrSpec(username: string, domain: string): string {
 
 /**
  * `default.header_factory("reply-to", value)`: its defect count, its addresses' addr_specs, and their parts
- * (display name, user name, domain; the tests compare them with the standard library's).
+ * (display name, user name, domain; the tests compare them with the standard library's), and whether an
+ * encoded word stands inside an address (which Python decodes into it, and `mailboxes` refuses).
  */
-export function addressHeader(value: string): { defects: number; specs: string[]; parts: [string, string, string][] } {
+export function addressHeader(value: string): { defects: number; specs: string[]; parts: [string, string, string][]; encodedAddress: boolean } {
 	const list = getAddressList(value);
 	const specs: string[] = [];
 	const found: [string, string, string][] = [];
@@ -201,23 +191,26 @@ export function addressHeader(value: string): { defects: number; specs: string[]
 			found.push(parts as [string, string, string]);
 		}
 	}
-	return { defects: list.allDefects.length, specs, parts: found };
+	return { defects: list.allDefects.length, specs, parts: found, encodedAddress: encodedInAddrSpec(list) };
 }
 
 /**
  * The canonical addresses in one address header, or null when it appears more than once, the standard
- * library's parser finds any defect in it, an address is not one Minerva accepts, or it names no address.
+ * library's parser finds any defect in it, an encoded word stands inside an address, an address is not one
+ * Minerva accepts, or it names no address.
  */
 export function mailboxes(values: readonly string[]): string[] | null {
 	if (values.length !== 1) return null;
-	let parsed: { defects: number; specs: string[] };
+	let parsed: { defects: number; specs: string[]; encodedAddress: boolean };
 	try {
 		parsed = addressHeader(values[0] as string);
 	} catch (error) {
 		if (error instanceof ValueError || error instanceof IndexError || error instanceof PyTypeError) return null;
 		throw error;
 	}
-	if (parsed.defects) return null;
+	// A header with a defect, or with an encoded word inside an address (RFC 2047 forbids it, and Python decoded
+	// it into the address, which a different decoder could spell differently), is not guessed at.
+	if (parsed.defects || parsed.encodedAddress) return null;
 	const found: string[] = [];
 	for (const spec of parsed.specs) {
 		let address: string;

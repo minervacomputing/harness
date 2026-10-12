@@ -30,8 +30,8 @@ import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
 import { base64, hex, utf8 } from "../../src/lib/bytes.ts";
-import { KeyRing } from "../../src/lib/fernet.ts";
-import { type Json, type JsonObject, parseJson, pythonDumps } from "../../src/lib/json.ts";
+import { EncryptionKeys } from "../../src/lib/encryption.ts";
+import { type Json, type JsonObject, parseJson, visibleJson } from "../../src/lib/json.ts";
 import { unquote } from "../../src/lib/text.ts";
 import { WorkspaceCore } from "../../src/workspace/core.ts";
 import { EXPIRED, type OAuth2, tokenBody, tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
@@ -43,6 +43,7 @@ import {
 	ADA,
 	FakeConversations,
 	FakeOAuth,
+	binding,
 	FakeObjects,
 	FakeTimers,
 	KEYS,
@@ -305,7 +306,7 @@ describe("the connector and its settings page", () => {
 		const auth = githubConnector().auth as OAuth2;
 		expect(auth.app).toBe("github");
 		expect(auth.registrationUrl ?? null).toBeNull();
-		const keys = await KeyRing.parse(KEYS);
+		const keys = await EncryptionKeys.parse(KEYS);
 		const clients = (env: { [name: string]: string }) => oauthClients(env as unknown as Env, keys).configured(auth.app);
 		expect(clients({})).toBeNull();
 		expect(clients({ MINERVA_GITHUB_CLIENT_ID: "", MINERVA_GITHUB_CLIENT_SECRET: "s" })).toBeNull();
@@ -543,7 +544,7 @@ describe("tokens", () => {
 
 	async function workspace() {
 		const sql = nodeSql(database());
-		const keys = await KeyRing.parse(KEYS);
+		const keys = await EncryptionKeys.parse(KEYS);
 		const oauth = new FakeOAuth();
 		oauth.clients.set("github", { clientId: "id", clientSecret: "secret" });
 		const endpoint = new TokenEndpoint();
@@ -573,7 +574,7 @@ describe("tokens", () => {
 		const id = saved.value.id;
 		const stored = async (): Promise<JsonObject> => {
 			const row = sql.exec<{ ciphertext: string; key_version: string }>("SELECT ciphertext, key_version FROM connections WHERE id = ?", id)[0];
-			return (await keys.decrypt({ ciphertext: row?.ciphertext as string, version: row?.key_version as string })) as JsonObject;
+			return (await keys.decrypt(binding(id), { ciphertext: row?.ciphertext as string, version: row?.key_version as string })) as JsonObject;
 		};
 		const status = () => sql.exec<{ status: string }>("SELECT status FROM connections WHERE id = ?", id)[0]?.status;
 		return { core, endpoint, keys, logs, id, stored, status };
@@ -599,7 +600,7 @@ describe("tokens", () => {
 		w.endpoint.responses.push(tokens({ access_token: "new", refresh_token: "r2", expires_in: 28800 }));
 		const lease = await w.core.lease(w.id, { settings: ADA });
 		if ("refused" in lease) throw new Error(lease.message);
-		expect(((await w.keys.decrypt(lease.sealed)) as JsonObject).access_token).toBe("new");
+		expect(((await w.keys.decrypt(binding(w.id), lease.sealed)) as JsonObject).access_token).toBe("new");
 		expect((await w.stored()).refresh_token).toBe("r2");
 		expect(w.status()).toBe("active");
 	});
@@ -637,7 +638,7 @@ const vectors = raw as unknown as Vectors;
 
 /** The same value written as Python's `json.dumps` writes it, keys in order: what the model reads. */
 function sameJson(actual: unknown, expected: unknown): void {
-	expect(pythonDumps(actual)).toBe(pythonDumps(expected));
+	expect(visibleJson(actual)).toBe(visibleJson(expected));
 }
 
 function failure(run: () => unknown): [string, string] | null {
@@ -796,15 +797,15 @@ describe("the registry", () => {
 	// What each tool means, as runs snapshot it. A change here stops the tool in running runs
 	// (OPERATION_CHANGED), so it is made on purpose: update these when a declaration or zod changes.
 	const FINGERPRINTS = {
-		list_repositories: "1060c650a693ba2e",
-		get_repository: "7a4d371595b3eca9",
-		list_issues: "2f5b3cf14cbd7965",
-		get_issue: "056ba4945d80f091",
-		list_pull_requests: "9576d8b2780e524a",
-		get_pull_request: "3d74647a43e785d1",
-		read_file: "4a1fd9d262a6092d",
-		create_issue: "773c987be9b905f2",
-		add_comment: "d77a50b8783a2a81",
+		list_repositories: "b359c3e6cb40a008",
+		get_repository: "973309a795d2dcad",
+		list_issues: "cefce5c20112eb5e",
+		get_issue: "4b977afbc88a4855",
+		list_pull_requests: "410a70ffcfe8018d",
+		get_pull_request: "e05d17a1a943823b",
+		read_file: "c02c32d585a9a671",
+		create_issue: "583aa05f47f05f14",
+		add_comment: "420b10a3fe40a425",
 	};
 
 	test("accepts GitHub's declarations, and prints their fingerprints", async () => {

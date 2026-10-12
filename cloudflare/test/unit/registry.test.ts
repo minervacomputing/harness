@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { ActionSpec, Connector } from "../../src/contracts/connectors.ts";
 import { ACCOUNT_KIND, consentGiven, defineOperation, termsOf } from "../../src/gateway/connector.ts";
 import { InvalidConnector, LookupError, Registry, fingerprint, inputSchema, meaning, validate } from "../../src/gateway/registry.ts";
-import { parseJson, pythonDumps } from "../../src/lib/json.ts";
+import { parseJson, visibleJson } from "../../src/lib/json.ts";
 import { anyRecord, strictRecord, strippedStr, stripWhitespace } from "../../src/lib/schema.ts";
 import { FOLDER, FakeServer, LABEL, keyedConnector, mixedConnector, variant } from "./fakes.ts";
 
@@ -192,7 +192,7 @@ describe("inputs are as strict as OperationInput, at every depth", () => {
 	});
 
 	test("records: notion's dicts are accepted, with the JSON Schema the model sees", () => {
-		const json = (value: unknown) => pythonDumps(value).length <= 50;
+		const json = (value: unknown) => visibleJson(value).length <= 50;
 		const input = z.strictObject({
 			filter: anyRecord().refine(json, "must be at most 50 characters as JSON").nullable().default(null),
 			sorts: z.array(anyRecord()).max(10).nullable().default(null),

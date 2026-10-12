@@ -17,7 +17,7 @@ import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry, inputSchema } from "../../src/gateway/registry.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
-import { KeyRing } from "../../src/lib/fernet.ts";
+import { EncryptionKeys } from "../../src/lib/encryption.ts";
 import { WorkspaceCore } from "../../src/workspace/core.ts";
 import { tokenBody, tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
@@ -327,7 +327,7 @@ describe("connecting (test_slack.py)", () => {
 		const core = new WorkspaceCore({
 			sql: nodeSql(database()),
 			timers,
-			keys: await KeyRing.parse(KEYS),
+			keys: await EncryptionKeys.parse(KEYS),
 			registry: await Registry.create([slackConnector()]),
 			settings: SETTINGS,
 			conversations: new FakeConversations(),
@@ -497,7 +497,8 @@ describe("runs (test_slack.py)", () => {
 		slack.hook = null;
 		expect(await run.code("slack_post_message", { ...args, text: "e" })).toBe("WRITE_UNCERTAIN");
 		// Writes Slack refused are forgotten, so they may be sent again.
-		expect(run.writes().map((write) => write.status)).toEqual(["succeeded", "uncertain"]);
+		// The fake clock stands still, so they are listed in the order of their keys, which are hashes.
+		expect(run.writes().map((write) => write.status).sort()).toEqual(["succeeded", "uncertain"]);
 	});
 
 	test("reads with errors or too much data are refused", async () => {
@@ -715,11 +716,11 @@ describe("registry", () => {
 		expect(Object.values(fingerprints).every((value) => /^[0-9a-f]{16}$/.test(value))).toBe(true);
 		// Pinned: a change here means running runs fail the tool with OPERATION_CHANGED, so it must be meant.
 		expect(fingerprints).toEqual({
-			list_channels: "d5ff72ca63d77f60",
-			read_channel: "3df359d2cf860be5",
-			read_thread: "64ed6ed57893fbc1",
-			post_message: "cba1cf3e7c45f633",
-			reply: "93c0babaea45f451",
+			list_channels: "073b3dba6945a9e7",
+			read_channel: "281622e2b8560c6c",
+			read_thread: "69abd44c841ffc16",
+			post_message: "146ded8f64cd41e2",
+			reply: "70f271cdd3eb2059",
 		});
 	});
 

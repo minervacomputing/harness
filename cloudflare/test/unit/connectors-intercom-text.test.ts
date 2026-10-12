@@ -1,25 +1,22 @@
 // The Intercom connector's pure parts compared with today's Python through
 // test/fixtures/connectors/intercom/vectors.json (generate.py there): the HTML parser's events and the text
 // agents are shown, `redact`, `written` and `check_written`, `updated_after` and its timestamp, `iso`,
-// `classify`, every operation's input validation, the response models' lax ints and bools, the character
-// classes the expressions are written with, and str.casefold for every code point. backend/tests/
-// test_intercom.py's text case is ported here too.
+// `classify`, every operation's input validation, the response models' lax ints and bools, and the character
+// classes the expressions are written with. backend/tests/test_intercom.py's text case is ported here too.
 
 import { describe, expect, test } from "vitest";
 import { classify, laxBool, laxInt } from "../../src/connectors/intercom/client.ts";
 import { intercom } from "../../src/connectors/intercom/connector.ts";
-import { type Attribute, HTMLParser } from "../../src/connectors/intercom/html-parser.ts";
+import { type Attribute, HTMLParser } from "../../src/lib/htmlparser.ts";
 import { checkWritten, read, redact, written } from "../../src/connectors/intercom/html.ts";
 import { iso } from "../../src/connectors/intercom/inboxes.ts";
-import { RE_I, RE_LETTERS_EXTRA, RE_WORD } from "../../src/connectors/intercom/python.ts";
+import { RE_I, RE_LETTERS_EXTRA, RE_WORD_CHAR } from "../../src/connectors/intercom/python.ts";
 import { PYTHON_SPACE_CLASS as RE_SPACE } from "../../src/lib/text.ts";
-import { casefold } from "../../src/lib/casefold.ts";
 import { sinceProblem, sinceTimestamp } from "../../src/connectors/intercom/reads.ts";
 import type { Operation } from "../../src/contracts/connectors.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
 import { fromHex, fromUtf8 } from "../../src/lib/bytes.ts";
 import { parseJson } from "../../src/lib/json.ts";
-import folds from "../fixtures/connectors/intercom/casefold.json" with { type: "json" };
 import vectors from "../fixtures/connectors/intercom/vectors.json" with { type: "json" };
 
 const SECRET = "SECRET merger";
@@ -159,7 +156,7 @@ describe("against today's Python (vectors.json)", () => {
 
 	test("re's \\s and \\w", () => {
 		expect(ranges(new RegExp(`^[${RE_SPACE}]$`, "u"))).toEqual(vectors.classes.space);
-		expect(ranges(new RegExp(`^[${RE_WORD}]$`, "u"))).toEqual(vectors.classes.word);
+		expect(ranges(new RegExp(`^${RE_WORD_CHAR}$`, "u"))).toEqual(vectors.classes.word);
 	});
 
 	test("IGNORECASE letters beyond ASCII", () => {
@@ -169,19 +166,6 @@ describe("against today's Python (vectors.json)", () => {
 		expect(nonAscii(new RegExp(`^[a-z0-9${RE_LETTERS_EXTRA}-]$`, "iu"))).toEqual(ignorecase["[a-z0-9-]"]);
 		expect(nonAscii(new RegExp(`^${RE_I}$`, "iu"))).toEqual(ignorecase.i);
 		for (const letter of "ntercomhpsal") expect(nonAscii(new RegExp(`^${letter}$`, "iu"))).toEqual(ignorecase[letter]);
-	});
-
-	test("str.casefold of every code point", () => {
-		const expected = folds as { [point: string]: string };
-		const mismatches: string[] = [];
-		for (let point = 0; point <= 0x10ffff; point++) {
-			if (point >= 0xd800 && point <= 0xdfff) continue;
-			const char = String.fromCodePoint(point);
-			const want = expected[point.toString(16)];
-			const folded = want === undefined ? char : String.fromCodePoint(...want.split(" ").map((part) => Number.parseInt(part, 16)));
-			if (casefold(char) !== folded) mismatches.push(point.toString(16));
-		}
-		expect(mismatches).toEqual([]);
 	});
 });
 

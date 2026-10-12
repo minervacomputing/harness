@@ -8,7 +8,7 @@ The experiment of [docs/plans/cloudflare.md](../docs/plans/cloudflare.md): the s
 | `files-worker/` | Worker `minerva-cf-files`, the download origin: checks a signed link and streams the object from R2 (`src/files/download.ts`); the routes that issue links are step 5 |
 | `migrations/` | D1 `minerva-cf`: accounts and the workspace directory |
 | `src/index.ts`, `src/http/` | The router, error shapes, cookies, CSRF, security headers, JSON bodies, `/assets/`, the probe |
-| `src/lib/` | JSON (parsing and Python's dumps), Pydantic's strings for zod, Fernet, code point order, text helpers, hashes, ids, the SQL interface every object's logic runs on (`sql.ts`) and its schema steps |
+| `src/lib/` | JSON (parsing, and the format the model and providers read), canonical JSON (RFC 8785) for hashes, AES-GCM encryption at rest, Pydantic's strings for zod, code point order, text helpers, hashes, ids, the SQL interface every object's logic runs on (`sql.ts`) and its schema steps |
 | `src/contracts/` | The interfaces steps 2 to 6 build against (types only) |
 | `src/workspace/` | The Workspace Durable Object: connections and credentials with refresh, layers, grants, agents, the run registry, the revocation outbox, uploads, deletion (`core.ts` over `lib/sql.ts`; `workspace.ts` is the object) |
 | `src/conversation/` | The Conversation Durable Object: messages, runs, attempts and the gate, events and the stream's WebSocket, history replay, the run's tools, PiHarness, the local tools and their checkpoint barrier (`local.ts`, `local-run.ts`); `ports.ts` wires the Workspace, the executor, the ledger and the model |
@@ -21,7 +21,7 @@ The experiment of [docs/plans/cloudflare.md](../docs/plans/cloudflare.md): the s
 | `src/scripts/` | Code mode: `run_script` in the `minerva` extension, the Scripts Durable Object that loads each script as a Dynamic Worker, the guest's prelude, the conversation's side of a script (wall clock, caps, the reset after every script) |
 | `src/faults/` | The test build only: a fake connector and its provider object, fault points, the account tests' driver, and the sandbox lab (`lab.ts`, `sandbox.ts`: production's Sandbox object with fault seams, behind the driver) (below) |
 | `src/addressing.ts` | The one map from a workspace (id, jurisdiction) to its objects and its bucket |
-| `test/` | `unit/`, `platform/` (with the end-to-end fault tests, `protocols.test.ts`, and `frontend-auth.test.ts`, which runs the frontend's auth client, `frontend/src/lib/auth.ts`, against the Worker), `account/` (`deployed.test.ts` for `minerva-cf`; `faults.test.ts`, `sandbox.test.ts` and `turns.test.ts` for the test Worker; `scripts.test.ts` for the code mode lab), and `fixtures/` with the Python vectors |
+| `test/` | `unit/`, `platform/` (with the end-to-end fault tests, `protocols.test.ts`, and `frontend-auth.test.ts`, which runs the frontend's auth client, `frontend/src/lib/auth.ts`, against the Worker), `account/` (`deployed.test.ts` for `minerva-cf`; `faults.test.ts`, `sandbox.test.ts`, `turns.test.ts` and `web-egress.test.ts` for the test Worker; `scripts.test.ts` for the code mode lab), and `fixtures/` with the Python vectors |
 
 ## Setup
 
@@ -125,6 +125,7 @@ pnpm test:faults       # about 10 minutes, one file at a time (a memory-limit re
                        #   faults.test.ts   the fault rows, the local tools in the real Conversation and its container
                        #   sandbox.test.ts  the lab: probe, pi's conformance suite, hardening and Sandbox rows, timings
                        #   turns.test.ts    two end-to-end turns, fake model and Workers AI (skipped, with a message, if the model does not call the tools)
+                       #   web-egress.test.ts  the Web connector's fetch to names for private, mapped and redirected addresses (nip.io, sslip.io, httpbin.org)
 ```
 
 `MINERVA_SBX_TIMINGS=<file>` and `MINERVA_TURN_TIMINGS=<file>` make the sandbox and turn tests write their timings as JSON. `pnpm test:faults` does not run code mode's rows (`scripts.test.ts`); they need the lab Worker below.

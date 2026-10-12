@@ -23,8 +23,9 @@ import {
 	wireOf,
 } from "../../src/files/manifest.ts";
 import { sha256HexSync } from "../../src/files/sha256.ts";
-import { hex } from "../../src/lib/bytes.ts";
-import { canonicalUtf8, type Json, parseJson } from "../../src/lib/json.ts";
+import { hex, utf8 } from "../../src/lib/bytes.ts";
+import { canonicalJson } from "../../src/lib/canonical.ts";
+import { type Json, parseJson } from "../../src/lib/json.ts";
 import { filesVectors } from "./files-support.ts";
 
 const vectors = filesVectors();
@@ -73,11 +74,12 @@ describe("Python's vectors", () => {
 	});
 
 	test("digests and stored forms, whatever the input's order", () => {
-		for (const vector of vectors.digest as { data: Json; sizes: { [hash: string]: number }; entries: Json; digest: string; folder_bytes: number }[]) {
+		for (const vector of vectors.digest as { data: Json; sizes: { [hash: string]: number }; entries: Json; folder_bytes: number }[]) {
 			const entries = storedEntries(parseManifest(vector.data, 100), new Map(Object.entries(vector.sizes)));
 			expect(entries).toEqual(vector.entries);
 			expect(filesOf(entries).map(([path]) => path)).toEqual(filesOf(vector.entries as unknown as StoredEntries).map(([path]) => path));
-			expect(digestOf(entries)).toBe(vector.digest);
+			// Over the label and the canonical JSON (lib/canonical.ts) of the entries Python stored.
+			expect(digestOf(entries)).toBe(sha256HexSync(utf8(`minerva:folder-version:${canonicalJson(vector.entries)}`)));
 			expect(entriesBytes(entries)).toBe(vector.folder_bytes);
 		}
 	});
@@ -216,7 +218,7 @@ describe("the stored form", () => {
 		expect(Object.getPrototypeOf(entries.files)).toBe(Object.prototype);
 		// Code point order puts U+E000 before an emoji, which UTF-16 order would not; and "10" before "9".
 		expect(filesOf(entries).map(([path]) => path)).toEqual(["10", "9", "Z", "__proto__", "constructor", "", "\u{1F600}"]);
-		const text = canonicalUtf8(entries);
+		const text = canonicalJson(entries, { identity: true });
 		const again = parseJson(text) as unknown as StoredEntries;
 		expect(Object.hasOwn(again.files, "__proto__")).toBe(true);
 		expect(digestOf(again)).toBe(digestOf(entries));

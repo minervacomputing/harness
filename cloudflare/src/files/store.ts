@@ -24,7 +24,8 @@ import type { CheckpointOutcome, CheckpointRefusalCode, CheckpointScan, FolderLi
 import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan } from "../contracts/sandbox.ts";
 import type { ReservedUpload } from "../contracts/workspace.ts";
 import { utf8Strict } from "../lib/bytes.ts";
-import { canonicalUtf8, parseJson } from "../lib/json.ts";
+import { canonicalJson, hashLabel } from "../lib/canonical.ts";
+import { parseJson } from "../lib/json.ts";
 import { sortByCodePoint } from "../lib/order.ts";
 import { tokenHex, uuid7 } from "../lib/random.ts";
 import { first, type Sql, type SqlValue } from "../lib/sql.ts";
@@ -258,14 +259,14 @@ export class FolderStore {
 	}
 
 	/**
-	 * Stores a version: its entries as `canonicalUtf8` text, the digest's input, in parts under the 2 MB a
-	 * value or a row may have (a manifest at the limits is about 1.5 MB, files 15.3), with its size, counts
-	 * and digest. Inside the caller's transaction.
+	 * Stores a version: its entries as canonical JSON (lib/canonical.ts), the digest's input after its label
+	 * (manifest.ts `digestOf`), in parts under the 2 MB a value or a row may have (a manifest at the limits
+	 * is about 1.5 MB, files 15.3), with its size, counts and digest. Inside the caller's transaction.
 	 */
 	#insertVersion(input: { kind: VersionKind; parentId: VersionId | null; runId: RunId | null; attempt: number | null; entries: StoredEntries }): VersionRow {
 		const now = this.#deps.now();
 		const id = uuid7(now);
-		const text = canonicalUtf8(input.entries);
+		const text = canonicalJson(input.entries, { identity: true });
 		const parts = splitParts(text, VALUE_PART);
 		const row: VersionRow = {
 			id,
@@ -276,7 +277,7 @@ export class FolderStore {
 			size: entriesBytes(input.entries),
 			file_count: Object.keys(input.entries.files).length,
 			entry_count: entryCountOf(input.entries),
-			digest: sha256HexSync(utf8Strict(text)),
+			digest: sha256HexSync(utf8Strict(hashLabel("folder-version") + text)),
 			parts: parts.length,
 			created_at: now,
 		};

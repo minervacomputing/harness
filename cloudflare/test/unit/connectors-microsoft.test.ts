@@ -12,7 +12,7 @@ import { nextCursor as teamsNextCursor, pageParams as teamsPageParams } from "..
 import { teamsConnector } from "../../src/connectors/teams/connector.ts";
 import { consent, consentAll, classify, nextCursor, pageParam, segment } from "../../src/connectors/microsoft/index.ts";
 import { OverflowError, ValueError } from "../../src/lib/pyerrors.ts";
-import { dateFromIsoFormat, datetimeFromIsoFormat } from "../../src/connectors/microsoft/isoformat.ts";
+import { dateFromIsoFormat, datetimeFromIsoFormat } from "../../src/lib/isoformat.ts";
 import { outlookConnector } from "../../src/connectors/outlook/connector.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
 import { Registry } from "../../src/gateway/registry.ts";
@@ -59,26 +59,26 @@ describe("the declarations", () => {
 			for (const op of connector.operations) fingerprints[`${connector.slug}_${op.name}`] = registry.contract(connector.slug, op.name);
 		}
 		expect(fingerprints).toEqual({
-			onedrive_create_file: "243efa398d1a9734",
-			onedrive_get_file: "791f286781a12714",
-			onedrive_list_folder: "91b321635f0a5140",
-			onedrive_list_libraries: "0f09f31af80fcfa3",
-			onedrive_read_file: "ac027a0745556a37",
-			onedrive_search_files: "ddee839a5ea3848c",
-			outlook_calendar_create_event: "ae5958c0dc485158",
-			outlook_calendar_list_calendars: "2b661d1ffea8356a",
-			outlook_calendar_list_events: "2274a2d4562c43ca",
-			outlook_list_folders: "59c2b970200b4249",
-			outlook_list_messages: "04bf78167b124346",
-			outlook_read_message: "068755ea6f7f2ecd",
-			outlook_reply: "539162baa100acb3",
-			outlook_send_message: "e6486a493c3f4814",
-			teams_list_channels: "8dfad0fa72a6a193",
-			teams_list_teams: "985bf2372b919437",
-			teams_post_message: "ac4e2dd4dd791a64",
-			teams_read_channel: "46ebb01b1d42fc9e",
-			teams_read_thread: "6280bda44fe12eb9",
-			teams_reply: "94aacc0f014d17eb",
+			onedrive_create_file: "ace5b1784acf7040",
+			onedrive_get_file: "dc97e3cf4b855620",
+			onedrive_list_folder: "a9bc01e509202442",
+			onedrive_list_libraries: "e7b135cd6ce6d5cb",
+			onedrive_read_file: "d82848fab80c26e7",
+			onedrive_search_files: "253a8d92b20fa0cb",
+			outlook_calendar_create_event: "72bc5dd07a0e7b66",
+			outlook_calendar_list_calendars: "50607b185838c112",
+			outlook_calendar_list_events: "fda28b2ad5b8541d",
+			outlook_list_folders: "e5a516a3454808a1",
+			outlook_list_messages: "dd3fa98fd9b33255",
+			outlook_read_message: "bdc15accde5f4e5b",
+			outlook_reply: "35807430fc0f2828",
+			outlook_send_message: "5dd9a5c1db9fe2b5",
+			teams_list_channels: "606604a9944dc92a",
+			teams_list_teams: "796e73e780c5c66a",
+			teams_post_message: "8dd44fdb8a3902b6",
+			teams_read_channel: "5bf8b8c376a907dc",
+			teams_read_thread: "7f1ebcfa574725b2",
+			teams_reply: "79d2194696d17b29",
 		});
 	});
 });

@@ -17,7 +17,7 @@ export interface WireManifest {
 	dirs: string[];
 }
 
-/** A version's stored entries, sorted by code point (files 4.3). Hashed with `canonicalUtf8` for `digest`. */
+/** A version's stored entries, sorted by code point (files 4.3). Hashed as canonical JSON for `digest` (manifest.ts `digestOf`). */
 export interface StoredEntries {
 	files: { [path: string]: { sha256: Sha256; size: number; mode: FileMode; mtime: EpochMs } };
 	dirs: string[];

@@ -20,7 +20,7 @@
 //
 // The HTML is tokenized as Python's HTMLParser tokenizes it (lib/htmlparser.ts).
 
-import { type Attrs, HTMLParser } from "../../lib/htmlparser.ts";
+import { type Attribute, HTMLParser } from "../../lib/htmlparser.ts";
 import { PYTHON_SPACE_CLASS, decoded, plainText, pythonRstrip, pythonStrip } from "../../lib/text.ts";
 import { valueError } from "../microsoft/inputs.ts";
 import type { Mention } from "./client.ts";
@@ -96,7 +96,7 @@ class Reader extends HTMLParser {
 		if (target.length && !endsWithNewline(target[target.length - 1] as Piece)) target.push("\n");
 	}
 
-	handleStarttag(tag: string, attrs: Attrs): void {
+	override handleStartTag(tag: string, attrs: Attribute[]): void {
 		if (this.hidden !== null) {
 			const [name, depth] = this.hidden;
 			if (tag === name) this.hidden = [name, depth + 1];
@@ -127,17 +127,17 @@ class Reader extends HTMLParser {
 		} else if (BLOCKS.has(tag)) this.#newline();
 	}
 
-	override handleStartendtag(tag: string, attrs: Attrs): void {
+	override handleStartEndTag(tag: string, attrs: Attribute[]): void {
 		// Browsers ignore the slash on elements that are not void, so `<at/>` stays open.
 		if (tag === "emoji" && this.hidden === null) {
 			// `dict(attrs).get("alt") or ""`.
 			let alt: string | null = null;
 			for (const [key, value] of attrs) if (key === "alt") alt = value;
 			this.#emit(alt || "");
-		} else this.handleStarttag(tag, attrs);
+		} else this.handleStartTag(tag, attrs);
 	}
 
-	handleEndtag(tag: string): void {
+	override handleEndTag(tag: string): void {
 		if (this.hidden !== null) {
 			const [name, depth] = this.hidden;
 			if (tag === name) this.hidden = depth > 1 ? [name, depth - 1] : null;
@@ -151,7 +151,7 @@ class Reader extends HTMLParser {
 		else if (BLOCKS.has(tag)) this.#newline();
 	}
 
-	handleData(text: string): void {
+	override handleData(text: string): void {
 		if (this.hidden === null) this.#emit(text);
 	}
 

@@ -11,7 +11,7 @@ import { confluenceConnector, discoveryCursor } from "../../src/connectors/confl
 import { MAX_SPACE_PAGES, searchWords } from "../../src/connectors/confluence/reads.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
-import { type Json, type JsonObject, parseJson, pythonDumps } from "../../src/lib/json.ts";
+import { type Json, type JsonObject, parseJson, visibleJson } from "../../src/lib/json.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
 import { Scenario, USER, jsonResponse } from "./executor-fakes.ts";
 
@@ -65,7 +65,7 @@ function text(value: string, href?: string): JsonObject {
 
 /** A body as Confluence sends it: the ADF document as a JSON string (written here as Python's json.dumps). */
 function body(document: Json): JsonObject {
-	return { atlas_doc_format: { representation: "atlas_doc_format", value: pythonDumps(document) } };
+	return { atlas_doc_format: { representation: "atlas_doc_format", value: visibleJson(document) } };
 }
 
 function space(id: string, key: string, name: string, fields: JsonObject = {}): JsonObject {

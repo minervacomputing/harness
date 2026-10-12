@@ -9,7 +9,7 @@
 import { z } from "zod";
 import type { ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
-import { type Json, type JsonObject, parseJson, pythonDumps } from "../../lib/json.ts";
+import { type Json, type JsonObject, parseJson, visibleJson } from "../../lib/json.ts";
 import { parseQs, urlsplitStrict } from "../../lib/urlsplit.ts";
 import { AtlassianClient, segment } from "../atlassian/index.ts";
 import { laxInt, model, optionalStr } from "../atlassian/model.ts";
@@ -91,7 +91,7 @@ export function document(body: Body | null): Json | null {
 
 function writtenBody(adf: Json): JsonObject {
 	// As Python's json.dumps writes it.
-	return { representation: "atlas_doc_format", value: pythonDumps(adf) };
+	return { representation: "atlas_doc_format", value: visibleJson(adf) };
 }
 
 /** Thin client for the parts of Confluence's API the connector uses. */

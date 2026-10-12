@@ -6,8 +6,9 @@
 // 3.14 has Unicode 16, and V8 may be newer. Characters assigned since then (rare in addresses) can decode
 // differently; the vectors in test/fixtures pin the cases the connectors rely on.
 
+import { decodeHTML, replaceCodePoint } from "entities/decode";
 import { fromUtf8 } from "./bytes.ts";
-import { DROPPED, NAMED, REPLACED } from "./html-entities.ts";
+import { isUnicode17 } from "./unicode.ts";
 
 /** What a validator throws; its message becomes the validation error's. */
 export class TextError extends Error {
@@ -119,35 +120,36 @@ export function unquote(text: string): string {
 
 const CHARREF = /&(#[0-9]+;?|#[xX][0-9a-fA-F]+;?|[^\t\n\f <&#;]{1,32};?)/gu;
 
-/** Python's `html.unescape(text)`: named and numeric character references, with HTML5's rules. */
+/**
+ * Python's `html.unescape(text)`: named and numeric character references, with HTML5's rules.
+ *
+ * Names are the `entities` package's: the standard's table, which is what Python's `html.entities.html5`
+ * holds (test/unit/text.test.ts pins both to one digest), with the standard's rule for a name without ";"
+ * (the longest name that starts the reference). Numeric references are Python's, which differ from the
+ * standard's in what they drop: the `entities` package keeps those code points, so they are handled here.
+ */
 export function htmlUnescape(text: string): string {
 	if (!text.includes("&")) return text;
-	return text.replace(CHARREF, (_, reference: string) => {
-		if (reference[0] === "#") {
-			const hex = reference[1] === "x" || reference[1] === "X";
-			const digits = reference.slice(hex ? 2 : 1).replace(/;$/, "");
-			const point = Number.parseInt(digits, hex ? 16 : 10);
-			const replaced = REPLACED.get(point);
-			if (replaced !== undefined) return replaced;
-			if ((point >= 0xd800 && point <= 0xdfff) || point > 0x10ffff) return "\ufffd";
-			if (DROPPED.has(point)) return "";
-			return String.fromCodePoint(point);
-		}
-		const named = entity(reference);
-		if (named !== undefined) return named;
-		// The longest name that starts the reference, as the standard defines for names without `;`.
-		const points = Array.from(reference);
-		for (let length = points.length - 1; length > 1; length--) {
-			const prefix = points.slice(0, length).join("");
-			const value = entity(prefix);
-			if (value !== undefined) return value + points.slice(length).join("");
-		}
-		return `&${reference}`;
+	return text.replace(CHARREF, (whole, reference: string) => {
+		if (reference[0] !== "#") return decodeHTML(whole);
+		const hex = reference[1] === "x" || reference[1] === "X";
+		const point = Number.parseInt(reference.slice(hex ? 2 : 1).replace(/;$/, ""), hex ? 16 : 10);
+		// NUL, the surrogates and what is beyond Unicode become U+FFFD, and U+0080 to U+009F their Windows-1252 letters.
+		const replaced = replaceCodePoint(point);
+		return replaced === point && isDropped(point) ? "" : String.fromCodePoint(replaced);
 	});
 }
 
-function entity(name: string): string | undefined {
-	return Object.hasOwn(NAMED, name) ? NAMED[name] : undefined;
+/** The code points a numeric reference makes into nothing: most C0 controls, DEL, and the noncharacters. */
+function isDropped(point: number): boolean {
+	return (
+		(point >= 0x1 && point <= 0x8) ||
+		point === 0xb ||
+		(point >= 0xe && point <= 0x1f) ||
+		point === 0x7f ||
+		(point >= 0xfdd0 && point <= 0xfdef) ||
+		(point & 0xfffe) === 0xfffe
+	);
 }
 
 /**
@@ -167,7 +169,8 @@ export const PYTHON_SPACE_CLASS: string = PYTHON_WHITESPACE.map((point) => `\\u$
 /**
  * `re`'s `\w` in a str pattern, as the body of a character class (the `u` flag): letters, numbers and the
  * underscore. The runtime's Unicode tables (17 in Node 24) stand for Python's (16 in 3.14), so a character
- * assigned since differs. (Intercom's pinned table is connectors/intercom/unicode.ts.)
+ * assigned since differs, and only those (test/unit/unicode.test.ts). Intercom's pattern leaves them out
+ * (`pythonProperty` of lib/unicode.ts, in connectors/intercom/python.ts); a class body cannot.
  */
 export const WORD_CLASS = "\\p{L}\\p{N}_";
 
@@ -232,7 +235,8 @@ const UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Zs}]/u;
  * Python's `repr(text)`, as `f"{value!r}"` writes a string into a message: single quotes, or double ones
  * when the text has a single quote and no double quote; backslash escapes for the quote, backslash, tab,
  * newline and carriage return; `\xhh`, `\uhhhh` or `\Uhhhhhhhh` for other characters that are not
- * printable. Printability comes from the runtime's Unicode tables, which may be newer than Python's.
+ * printable. Printability comes from the runtime's Unicode tables, except that the code points Unicode 17
+ * assigned (lib/unicode.ts) are unprintable, as they are to Python 3.14, whose Unicode is 16.
  */
 export function pythonRepr(text: string): string {
 	const quote = text.includes("'") && !text.includes('"') ? '"' : "'";
@@ -244,7 +248,7 @@ export function pythonRepr(text: string): string {
 		else if (char === "\n") out += "\\n";
 		else if (char === "\r") out += "\\r";
 		else if (point < 0x20 || point === 0x7f) out += `\\x${hex(point, 2)}`;
-		else if (point < 0x7f || !UNPRINTABLE.test(char)) out += char;
+		else if (point < 0x7f || !(UNPRINTABLE.test(char) || isUnicode17(point))) out += char;
 		else if (point < 0x100) out += `\\x${hex(point, 2)}`;
 		else if (point < 0x10000) out += `\\u${hex(point, 4)}`;
 		else out += `\\U${hex(point, 8)}`;

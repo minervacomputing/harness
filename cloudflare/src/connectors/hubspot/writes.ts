@@ -10,6 +10,7 @@ import { z } from "zod";
 import type { Binding, Prepared, ProviderOutput, Requirement } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
+import { isoDate } from "../../lib/isoformat.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
 import { strippedStr } from "../../lib/schema.ts";
 import { PLAIN_TEXT, isPlainText } from "../../lib/text.ts";
@@ -47,7 +48,6 @@ export const NOTE_TO_CONTACT = 202;
 export const NOTE_TO_COMPANY = 190;
 export const NOTE_TO_DEAL = 214;
 const AMOUNT = /^[0-9]{1,13}(?:\.[0-9]{1,2})?$/;
-const ISO_DATE = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/;
 
 function clientOf(binding: Binding): HubSpotClient {
 	return binding.client as HubSpotClient;
@@ -55,18 +55,9 @@ function clientOf(binding: Binding): HubSpotClient {
 
 const text = (max: number, description: string) => Line(1, max).describe(description);
 
-/**
- * `date.fromisoformat(value).isoformat() == value`: exactly YYYY-MM-DD, a day of the proleptic Gregorian
- * calendar from year 1.
- */
+/** `date.fromisoformat(value).isoformat() == value`: exactly YYYY-MM-DD, a day of the proleptic Gregorian calendar from year 1. */
 export function isIsoDate(value: string): boolean {
-	const match = ISO_DATE.exec(value);
-	if (match === null) return false;
-	const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
-	if (year < 1 || month < 1 || month > 12 || day < 1) return false;
-	const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-	const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1] as number;
-	return day <= days;
+	return isoDate(value) === value;
 }
 
 const Email = () => text(254, "An email address.");

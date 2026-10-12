@@ -10,7 +10,7 @@ import { codePointLength, singleLine, sliceCodePoints } from "../../lib/text.ts"
 import { ID } from "../microsoft/index.ts";
 import { after, modelValidator, valueError } from "../microsoft/inputs.ts";
 import { ValueError } from "../../lib/pyerrors.ts";
-import { asUtc, datetimeFromIsoFormat, toUtc, utcStamp } from "../microsoft/isoformat.ts";
+import { asUtc, datetimeFromIsoFormat, toUtc, utcStamp } from "../../lib/isoformat.ts";
 import { FULL_FIELDS, type Folder, type GraphClient, type Message, type Recipient, ordinary } from "./client.ts";
 import { FOLDER, READ_CONSENT, Tree, confirmMessage, folderRef, locate, messageId } from "./mailbox.ts";
 

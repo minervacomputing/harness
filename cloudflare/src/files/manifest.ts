@@ -13,7 +13,7 @@
 import type { Sha256 } from "../contracts/common.ts";
 import type { FileMode, StoredEntries, WireManifest } from "../contracts/files.ts";
 import { utf8Strict } from "../lib/bytes.ts";
-import { canonicalUtf8 } from "../lib/json.ts";
+import { hashInput } from "../lib/canonical.ts";
 import { compareCodePoints, sortByCodePoint } from "../lib/order.ts";
 import { codePointLength, pythonRepr } from "../lib/text.ts";
 import {
@@ -197,11 +197,12 @@ export function filesOf(entries: StoredEntries): [string, StoredEntries["files"]
 }
 
 /**
- * `digest(entries)`: SHA-256 of `json.dumps(entries, sort_keys=True, separators=(",", ":"),
- * ensure_ascii=False)` as UTF-8, which does not depend on the order of the input.
+ * `digest(entries)`: SHA-256 over `minerva:folder-version:` and the canonical JSON (lib/canonical.ts) of the
+ * entries, as UTF-8, which does not depend on the order of the input. The store keeps that JSON as the
+ * version's text and hashes the same (store.ts `#insertVersion`).
  */
 export function digestOf(entries: StoredEntries): Sha256 {
-	return sha256HexSync(utf8Strict(canonicalUtf8(entries)));
+	return sha256HexSync(utf8Strict(hashInput("folder-version", entries)));
 }
 
 /** A version's size: Σ ceil(size/4096)·4096 over its files. */

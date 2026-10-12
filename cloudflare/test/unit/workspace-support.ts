@@ -13,7 +13,7 @@ import type { CancelAck, ConversationInit } from "../../src/contracts/conversati
 import type { CancelReason } from "../../src/contracts/runs.ts";
 import { ACCOUNT_KIND, defineOperation } from "../../src/gateway/connector.ts";
 import { Registry } from "../../src/gateway/registry.ts";
-import { KeyRing } from "../../src/lib/fernet.ts";
+import { type Binding, EncryptionKeys, credentialBinding } from "../../src/lib/encryption.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
 import { WorkspaceCore, type WorkspaceDeps } from "../../src/workspace/core.ts";
 import type { ClientCredentials, ConversationClient, Delay, OAuthClients, ObjectStore, Timers, WorkspaceSettings } from "../../src/workspace/ports.ts";
@@ -248,6 +248,11 @@ export function builtinConnector(): Connector {
 
 export const KEYS = "v1:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
 
+/** What a connection of the test workspace is encrypted for. */
+export function binding(connectionId: string): Binding {
+	return credentialBinding(WORKSPACE, connectionId);
+}
+
 export interface Harness {
 	db: Database;
 	sql: Sql;
@@ -257,7 +262,7 @@ export interface Harness {
 	oauth: FakeOAuth;
 	endpoint: TokenEndpoint;
 	server: FakeServer;
-	keys: KeyRing;
+	keys: EncryptionKeys;
 	registry: Registry;
 	settings: WorkspaceSettings;
 	logs: { message: string; fields: unknown }[];
@@ -273,7 +278,7 @@ export async function harness(options: { settings?: Partial<WorkspaceSettings>; 
 	const sql = nodeSql(db);
 	const server = new FakeServer();
 	const registry = await Registry.create([mixedConnector(server), keyedConnector(server), builtinConnector(), ...(options.connectors ?? [])]);
-	const keys = await KeyRing.parse(KEYS);
+	const keys = await EncryptionKeys.parse(KEYS);
 	const h = {
 		db,
 		sql,
@@ -321,7 +326,7 @@ export function accessOf(outcome: Outcome<AccessOut>): AccessOut {
 export async function credentials(h: Harness, connectionId: string): Promise<JsonObject> {
 	const row = h.sql.exec<{ ciphertext: string; key_version: string }>("SELECT ciphertext, key_version FROM connections WHERE id = ?", connectionId)[0];
 	if (!row) throw new Error("No such connection.");
-	return (await h.keys.decrypt({ ciphertext: row.ciphertext, version: row.key_version })) as JsonObject;
+	return (await h.keys.decrypt(binding(connectionId), { ciphertext: row.ciphertext, version: row.key_version })) as JsonObject;
 }
 
 /** A column of a connection. */
@@ -343,7 +348,7 @@ export async function connectMixed(h: Harness, payload: JsonObject, extra: { cal
 
 /** Replaces a connection's credentials in place (as `set_credentials` and save do in the Python tests). */
 export async function setCredentials(h: Harness, connectionId: string, payload: Json): Promise<void> {
-	const sealed = await h.keys.encrypt(payload);
+	const sealed = await h.keys.encrypt(binding(connectionId), payload);
 	const expiresAt = (payload as JsonObject).expires_at;
 	h.sql.exec(
 		"UPDATE connections SET ciphertext = ?, key_version = ?, generation = generation + 1, expires_at = ?, refresh_state = 'fresh', status = 'active' WHERE id = ?",

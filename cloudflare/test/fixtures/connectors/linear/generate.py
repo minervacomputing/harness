@@ -1,9 +1,9 @@
-"""Writes vectors.json and casefold.json: what today's Linear connector computes, for the port's tests.
+"""Writes vectors.json: what today's Linear connector computes, for the port's tests.
 
 Covers the text rules (redact, check_written, issue_links), team and issue names, due dates, the judge of
 writes, the mapping of GraphQL errors (`classify`, whose `error_for` reads use too), the validation of every
 operation's input (the normalized dump or the message the model sees), how the response models read bools
-and floats (Pydantic's lax mode), and str.casefold. The connector modules are pure: nothing that loads
+and floats (Pydantic's lax mode). The connector modules are pure: nothing that loads
 Django configuration is imported.
 
 Run from cloudflare/: cd ../backend && uv run python -I ../cloudflare/test/fixtures/connectors/linear/generate.py
@@ -575,15 +575,6 @@ def main() -> None:
         "models": [read_model(name, value) for name, value in MODELS],
     }
     (HERE / "vectors.json").write_text(json.dumps(vectors, indent=1, ensure_ascii=True) + "\n")
-
-    folds = {}
-    for point in range(0x110000):
-        if 0xD800 <= point <= 0xDFFF:
-            continue
-        char = chr(point)
-        if char.casefold() != char:
-            folds[f"{point:x}"] = " ".join(f"{ord(c):x}" for c in char.casefold())
-    (HERE / "casefold.json").write_text(json.dumps(folds) + "\n")
 
 
 if __name__ == "__main__":

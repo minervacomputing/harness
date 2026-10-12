@@ -18,9 +18,10 @@
 // The request goes out through the call's io (the executor's fetch), so it is refused once the run ended.
 // Differences from today: a name with both public and private addresses was refused, where the platform
 // decides by the address it connects to (a private one is never reached); the Host header and TLS name are
-// the URL's own (there is no checked address to connect to); the runtime adds `Cf-Worker` and may re-encode
-// a few characters the WHATWG URL parser treats differently (`'` in a query, dot segments in a path), always
-// on the same host; a header value that is not UTF-8 is read with replacement characters where httpx would
+// the URL's own (there is no checked address to connect to); the runtime adds `Cf-Worker`; what is requested
+// is the runtime URL parser's serialization of the checked address (`WebURL.href`, on every hop, checked to
+// name the authorized scheme and host on the default port), which differs from the address shown where
+// WHATWG and Python spell a path or query differently (`'` in a query, dot segments in a path); a header value that is not UTF-8 is read with replacement characters where httpx would
 // read every header as Latin-1; an invalid certificate is not told apart from any other failure; and an
 // origin that answers 403 from `server: cloudflare` with the platform's exact refusal text is reported as a
 // private site rather than as HTTP 403.
@@ -28,8 +29,8 @@
 import type { ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { NotSent, PhaseTimeout, ProgrammingError, platformRefusal } from "../../gateway/http.ts";
-import { decode as decodeBytes, lookup } from "../../lib/codecs.ts";
-import { LookupError, PythonError } from "../../lib/pyerrors.ts";
+import { charsetKnown, decodeCharset } from "../../lib/charset.ts";
+import { PythonError } from "../../lib/pyerrors.ts";
 import { type WebURL, parseUrl } from "../../lib/sites.ts";
 import { PYTHON_SPACE_CLASS, pythonStrip } from "../../lib/text.ts";
 import { Inflater, unsupportedEncoding } from "./inflate.ts";
@@ -140,29 +141,20 @@ function startsWith(bytes: Uint8Array, prefix: number[]): boolean {
 }
 
 /**
- * `_charset`: a byte order mark, else the first known charset the header or an HTML page's `<meta>` names,
- * else UTF-8. `codecs.lookup` finds a binary codec (base64, zlib) too, whose name is then returned and whose
- * decoding raises LookupError, as Python's `bytes.decode` does.
+ * The Encoding Standard's way to choose a charset (the runtime's decoders, lib/charset.ts): a byte order mark,
+ * else the first charset the header or an HTML page's `<meta>` names that the runtime has, else UTF-8.
+ * UTF-7, UTF-32, HZ and ISO-2022-KR have no decoder there, so a page that names one is read as UTF-8.
  */
 function charset(body: Uint8Array, declared: string | null, form: "html" | "text"): string {
-	if (startsWith(body, [0xef, 0xbb, 0xbf])) return "utf-8-sig";
-	if (startsWith(body, [0xff, 0xfe]) || startsWith(body, [0xfe, 0xff])) return "utf-16";
+	if (startsWith(body, [0xef, 0xbb, 0xbf])) return "utf-8";
+	if (startsWith(body, [0xff, 0xfe])) return "utf-16le";
+	if (startsWith(body, [0xfe, 0xff])) return "utf-16be";
 	const candidates = [declared];
 	if (form === "html") {
 		const match = META_CHARSET.exec(latin1(body.subarray(0, 4096)));
 		candidates.push(match ? (match[1] as string) : null);
 	}
-	for (const candidate of candidates) {
-		if (!candidate) continue;
-		try {
-			lookup(candidate);
-			return candidate;
-		} catch (error) {
-			if (error instanceof LookupError && error.message.includes("is not a text encoding")) return candidate;
-			if (error instanceof LookupError) continue;
-			throw error;
-		}
-	}
+	for (const candidate of candidates) if (candidate && charsetKnown(candidate)) return candidate;
 	return "utf-8";
 }
 
@@ -170,7 +162,7 @@ function charset(body: Uint8Array, declared: string | null, form: "html" | "text
 export function decode(body: Uint8Array, contentType: string): [mime: string, form: "html" | "text", text: string] {
 	const [mime, declared] = mediaType(contentType);
 	const form = formOf(mime, body);
-	return [mime, form, decodeBytes(body, charset(body, declared, form), "replace")];
+	return [mime, form, decodeCharset(body, charset(body, declared, form)) as string];
 }
 
 // The fetcher.
@@ -340,7 +332,7 @@ export class Fetcher {
 		try {
 			deadline.arm();
 			response = await race(
-				this.#io.fetch(url.text, {
+				this.#io.fetch(url.href, {
 					method: "GET",
 					headers,
 					// Never followed by the runtime: each hop is checked here first.
@@ -379,7 +371,7 @@ export class Fetcher {
 			if (error instanceof TotalTimeout) throw error;
 			// The run no longer admits requests, or a programming error: as they are.
 			if (error instanceof NotSent || error instanceof ProgrammingError) throw error;
-			// Owned errors, and what Python lets escape `_hop` (a binary codec's LookupError): as they are.
+			// Owned errors, and the parsers' own (Python-style) errors: as they are.
 			if (error instanceof OperationError || error instanceof PythonError) throw error;
 			// The network failed, or a wait outlasted its phase (httpx's HTTPError).
 			throw unreachable();

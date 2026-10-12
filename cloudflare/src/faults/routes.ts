@@ -5,7 +5,8 @@
 // under `sandbox/` drive a Sandbox object of their own (lab.ts). `emails` and `emails-clear` read and empty
 // the mailbox the build's emails go to (mailbox.ts); `download` serves a signed download link as the
 // download origin (files-worker/) would, from the test Worker's own buckets, for the browser walk
-// (test/account/browser.test.ts), since the test build has no download Worker of its own.
+// (test/account/browser.test.ts), since the test build has no download Worker of its own. `web/get` fetches a
+// web address as the Web connector does (web.ts), for test/account/web-egress.test.ts.
 
 import { conversationObject, filesBucket, sandboxObject, workspaceObject } from "../addressing.ts";
 import type { Caller, WorkspaceRef } from "../contracts/common.ts";
@@ -22,6 +23,7 @@ import type { Fault } from "./plan.ts";
 import type { FaultSandbox } from "./sandbox.ts";
 import { providerOf } from "./ports.ts";
 import { FAULTS_HEADER, faultsToken } from "./token.ts";
+import { webGet } from "./web.ts";
 
 const PREFIX = "/api/faults/";
 
@@ -87,6 +89,7 @@ async function operation(op: string, body: Body, env: Env, exports: Cloudflare.E
 	if (op.startsWith("sandbox/")) return new SandboxLab(env, exports).run(op.slice("sandbox/".length), body);
 	if (op === "emails") return { emails: await mailboxOf(env).list(typeof body.to === "string" ? body.to : null) };
 	if (op === "emails-clear") return { cleared: await mailboxOf(env).clear(typeof body.to === "string" ? body.to : null) };
+	if (op === "web/get") return webGet(String(body.url));
 	const ref = body.workspace;
 	const caller: Caller = { userId: body.userId, role: "owner" };
 	const ws = workspaceOf(env, ref);

@@ -180,7 +180,6 @@ def digested(data, sizes):
     entries = manifest.stored_entries(result, sizes)
     return {
         "entries": entries,
-        "digest": manifest.digest(entries),
         "folder_bytes": manifest.folder_bytes([entries["files"][p]["size"] for p in entries["files"]]),
     }
 

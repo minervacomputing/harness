@@ -13,7 +13,7 @@ import type { Binding, Connector, DiscoveryItem, DiscoveryPage, Prepared, Provid
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
 import { fromUtf8, utf8 } from "../../lib/bytes.ts";
-import { isDict, type Json, type JsonObject, parseJson, pythonDumps } from "../../lib/json.ts";
+import { isDict, type Json, type JsonObject, parseJson, visibleJson } from "../../lib/json.ts";
 import { strippedStr } from "../../lib/schema.ts";
 import { SINGLE_LINE, codePointLength, isSingleLine, sliceCodePoints } from "../../lib/text.ts";
 import { digitsOr, jsonInteger } from "../google/digits.ts";
@@ -297,7 +297,7 @@ function discoveryState(cursor: string): DiscoveryState {
 }
 
 function discoveryCursor(phase: string, page: string | null): string {
-	return pythonDumps({ phase, page: nextCursor(page) });
+	return visibleJson({ phase, page: nextCursor(page) });
 }
 
 /** A browsing cursor, valid only for the parent it was issued for. */
@@ -318,7 +318,7 @@ function browseState(cursor: string, parent: string | null): DiscoveryState {
 }
 
 function browseCursor(phase: string, page: string | null, parent: string | null): string {
-	return pythonDumps({ phase, page: nextCursor(page), parent });
+	return visibleJson({ phase, page: nextCursor(page), parent });
 }
 
 function item(file: DriveFile): DiscoveryItem {

@@ -36,7 +36,7 @@ import { inputSchema } from "../../src/gateway/registry.ts";
 import { queryHash } from "../../src/gateway/page-tokens.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
 import { sha256Hex } from "../../src/lib/hash.ts";
-import { type Json, type JsonObject, canonicalAscii, parseJson } from "../../src/lib/json.ts";
+import { type Json, type JsonObject, parseJson, visibleJson } from "../../src/lib/json.ts";
 
 interface InputVector {
 	op: string;
@@ -160,10 +160,9 @@ describe("inputs, as the executor validates them", () => {
 		if (vector.dump !== undefined) {
 			expect(validated).toEqual({ ok: true, data: vector.dump });
 			if (!validated.ok) return;
-			// Hashed over the normalized arguments, so a page token and a write key are today's.
-			expect(await queryHash(validated.data)).toBe(vector.query_hash);
-			if (vector.write_key !== undefined) expect(await writeKey(`hubspot_${vector.op}`, validated.data)).toBe(vector.write_key);
-			else expect(operation.mutates ?? false).toBe(false);
+			// Hashed over the normalized arguments, so a page token and a write key are those of Python's arguments.
+			expect(await queryHash(validated.data)).toBe(await queryHash(vector.dump as JsonObject));
+			if (operation.mutates) expect(await writeKey(`hubspot_${vector.op}`, validated.data)).toBe(await writeKey(`hubspot_${vector.op}`, vector.dump as JsonObject));
 		} else if (vector.message !== undefined) {
 			expect(validated).toEqual({ ok: false, message: vector.message });
 		} else {
@@ -277,6 +276,7 @@ describe("helpers", () => {
 		for (const [text, folded] of vectors.casefold) expect(casefold(text)).toBe(folded);
 		const all: string[] = [];
 		for (let point = 0; point < 0x110000; point++) if (point < 0xd800 || point > 0xdfff) all.push(casefold(String.fromCodePoint(point)));
-		expect(await sha256Hex(canonicalAscii(all))).toBe(vectors.casefold_all);
+		// Python's `json.dumps(all, separators=(",", ":"))`.
+		expect(await sha256Hex(`[${all.map((text) => visibleJson(text)).join(",")}]`)).toBe(vectors.casefold_all);
 	});
 });

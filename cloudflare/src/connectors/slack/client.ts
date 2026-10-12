@@ -18,7 +18,7 @@ import type { Effect, ProviderClient, ProviderIo } from "../../contracts/connect
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
-import { type Json, type JsonObject, parseJson, pythonDumps } from "../../lib/json.ts";
+import { type Json, type JsonObject, parseJson, visibleJson } from "../../lib/json.ts";
 import { dict, laxBool, laxInt } from "../../lib/lax.ts";
 
 export const API_URL = "https://slack.com/api";
@@ -390,7 +390,7 @@ export class SlackClient implements ProviderClient {
 			method: "POST",
 			path: "/chat.postMessage",
 			mutating: true,
-			body: pythonDumps(payload),
+			body: visibleJson(payload),
 			headers: { "Content-Type": "application/json; charset=utf-8" },
 		});
 		const answer = await responseText(response);

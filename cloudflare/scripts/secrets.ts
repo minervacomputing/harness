@@ -13,6 +13,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { OAUTH_APPS, clientSecretNames, connectorClientSecrets } from "../src/config.ts";
+import { EncryptionKeys } from "../src/lib/encryption.ts";
 
 const TEST = process.argv.includes("--test");
 const OFFLINE = process.argv.includes("--offline");
@@ -24,8 +25,10 @@ const FILE = fileURLToPath(new URL(OFFLINE ? `../${NAME}` : `../../${NAME}`, imp
 const REQUIRED: Record<string, () => string> = {
 	// Signs and keys our own values (as Django's SECRET_KEY: secrets.token_urlsafe(50)).
 	MINERVA_SECRET_KEY: () => urlsafe(50),
-	// Fernet keys for credentials at rest, `version:key`, comma separated; the first encrypts.
-	MINERVA_ENCRYPTION_KEYS: () => `v1:${randomBytes(32).toString("base64url")}=`,
+	// Keys for encryption at rest (src/lib/encryption.ts): `id:secret` entries, comma separated, a secret
+	// being 32 random bytes in URL-safe base64; the first encrypts. A key written before step 6b (Fernet,
+	// `v1:<44 characters ending in =>`) is still a valid secret, but data encrypted with Fernet is not read.
+	MINERVA_ENCRYPTION_KEYS: () => `v1:${urlsafe(32)}`,
 	// Signs download links; the download Worker holds it too.
 	MINERVA_DOWNLOAD_KEY: () => urlsafe(32),
 	// Makes its holder the instance's first admin, once (plan: Configuration; POST /api/setup). The operator
@@ -78,7 +81,7 @@ function generate(): void {
 	console.log(added.length ? `Added ${added.join(", ")} to ${NAME}.` : "All required secrets were already set.");
 }
 
-function check(): void {
+async function check(): Promise<void> {
 	if (!existsSync(FILE)) {
 		console.error(`${NAME} is missing: run \`pnpm secrets${OFFLINE ? ":offline" : TEST ? ":test" : ""}\`.`);
 		process.exit(1);
@@ -90,6 +93,17 @@ function check(): void {
 	const values = read(FILE);
 	const missing = Object.keys(REQUIRED).filter((name) => !values.get(name));
 	for (const name of Object.keys(REQUIRED)) console.log(`${name}: ${values.get(name) ? "set" : "missing"}`);
+	// A key list the Worker would refuse (a JSON list, a duplicate id, a short secret) stops a deploy here,
+	// with the Worker's own message, which never holds a secret.
+	const keys = values.get("MINERVA_ENCRYPTION_KEYS");
+	if (keys) {
+		try {
+			await EncryptionKeys.parse(keys);
+		} catch (error) {
+			console.error((error as Error).message);
+			process.exit(1);
+		}
+	}
 	let clients: string[] = [];
 	try {
 		clients = connectorClientSecrets(Object.fromEntries(values));
@@ -114,7 +128,7 @@ function subset(out: string, names: string[]): void {
 
 const [command, ...rest] = process.argv.slice(2).filter((arg) => arg !== "--test" && arg !== "--offline");
 if (command === "generate") generate();
-else if (command === "check") check();
+else if (command === "check") await check();
 else if (command === "subset" && rest.length >= 2) subset(rest[0] as string, rest.slice(1));
 else {
 	console.error("Usage: secrets.ts generate | check | subset OUT NAME...");

@@ -11,7 +11,7 @@ import type { GrantChange } from "../contracts/policy.ts";
 import type { RunStatus } from "../contracts/runs.ts";
 import type { BeginRunInput, BeginRunResult, ConnectionAccount, Registration, SaveConnectionInput, WorkspaceApi, WorkspaceInit } from "../contracts/workspace.ts";
 import { type About, identity } from "../lib/about.ts";
-import { KeyRing } from "../lib/fernet.ts";
+import { EncryptionKeys } from "../lib/encryption.ts";
 import { appliedMigrations } from "../lib/sqlite.ts";
 import { connectorRegistry } from "../connectors/index.ts";
 import { type LeaseAnswer, WorkspaceCore, type WorkspaceDeps } from "./core.ts";
@@ -45,7 +45,7 @@ export class Workspace extends DurableObject<Env> implements WorkspaceApi {
 	}
 
 	async #open(replaced: ReplaceablePorts): Promise<void> {
-		const keys = await KeyRing.parse(this.env.MINERVA_ENCRYPTION_KEYS);
+		const keys = await EncryptionKeys.parse(this.env.MINERVA_ENCRYPTION_KEYS);
 		const workspace = () => (this.#core as WorkspaceCore).workspaceRef();
 		const deps: WorkspaceDeps = {
 			sql: durableSql(this.ctx.storage),

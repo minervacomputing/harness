@@ -1,131 +1,49 @@
 {
  "python": "3.14.8",
- "variants": {
-  "fingerprint": {
-   "sort_keys": true,
-   "separators": [
-    ",",
-    ":"
-   ],
-   "default": "str"
-  },
-  "write_key": {
-   "sort_keys": true,
-   "separators": [
-    ",",
-    ":"
-   ],
-   "default": "str"
-  },
-  "manifest_digest": {
-   "sort_keys": true,
-   "separators": [
-    ",",
-    ":"
-   ],
-   "ensure_ascii": false
-  },
-  "credentials": {}
- },
  "canonical": [
   {
    "json": "{\"b\": 1, \"a\": 2}",
-   "ascii": "{\"a\":2,\"b\":1}",
-   "ascii_sha256": "d3626ac30a87e6f7a6428233b3c68299976865fa5508e4267c5415c76af7a772",
-   "utf8": "{\"a\":2,\"b\":1}",
-   "utf8_sha256": "d3626ac30a87e6f7a6428233b3c68299976865fa5508e4267c5415c76af7a772",
-   "default": "{\"b\": 1, \"a\": 2}",
-   "default_sha256": "6f21dfd78e16c0562728430c24f1064b9a2b169b376be1b918907673e5cea7ba"
+   "default": "{\"b\": 1, \"a\": 2}"
   },
   {
    "json": "{\"z\": {\"y\": [3, {\"b\": null, \"a\": true}]}, \"a\": \"x\", \"m\": false}",
-   "ascii": "{\"a\":\"x\",\"m\":false,\"z\":{\"y\":[3,{\"a\":true,\"b\":null}]}}",
-   "ascii_sha256": "a30c84de11326e8d6bb7f6c7e99c6a51022244a2d1a6e96a830d92ff913062fe",
-   "utf8": "{\"a\":\"x\",\"m\":false,\"z\":{\"y\":[3,{\"a\":true,\"b\":null}]}}",
-   "utf8_sha256": "a30c84de11326e8d6bb7f6c7e99c6a51022244a2d1a6e96a830d92ff913062fe",
-   "default": "{\"z\": {\"y\": [3, {\"b\": null, \"a\": true}]}, \"a\": \"x\", \"m\": false}",
-   "default_sha256": "60434d466830447083a3d0f7a42ae51a7912f37e2f611b754ae863b7bcbb9dea"
+   "default": "{\"z\": {\"y\": [3, {\"b\": null, \"a\": true}]}, \"a\": \"x\", \"m\": false}"
   },
   {
    "json": "{\"\\u00e9\": 1, \"e\": 2, \"\\ud83d\\ude00\": 3, \"\\uffff\": 4, \"\\ue000\": 5, \"Z\": 6, \"\": 7}",
-   "ascii": "{\"\":7,\"Z\":6,\"e\":2,\"\\u00e9\":1,\"\\ue000\":5,\"\\uffff\":4,\"\\ud83d\\ude00\":3}",
-   "ascii_sha256": "c8870bb82ac1834615c5402d8495c60bdaac25125f6afc987a56fcf5bb21f7e4",
-   "utf8": "{\"\":7,\"Z\":6,\"e\":2,\"\u00e9\":1,\"\ue000\":5,\"\uffff\":4,\"\ud83d\ude00\":3}",
-   "utf8_sha256": "fd144a4609fca6713cc103f7145d0530e1bb3160ccb6f0921c2231438179d284",
-   "default": "{\"\\u00e9\": 1, \"e\": 2, \"\\ud83d\\ude00\": 3, \"\\uffff\": 4, \"\\ue000\": 5, \"Z\": 6, \"\": 7}",
-   "default_sha256": "6def3f580129cb0d55b7aca22e15fb2969fd82db50e915cf64c98b885591386f"
+   "default": "{\"\\u00e9\": 1, \"e\": 2, \"\\ud83d\\ude00\": 3, \"\\uffff\": 4, \"\\ue000\": 5, \"Z\": 6, \"\": 7}"
   },
   {
    "json": "\"quote\\\" back\\\\ slash / tab\\t nl\\n cr\\r bs\\b ff\\f nul\\u0000 unit\\u001f del\\u007f \\u00e9 \\ud83d\\ude00 \\u2028 \\ufeff\"",
-   "ascii": "\"quote\\\" back\\\\ slash / tab\\t nl\\n cr\\r bs\\b ff\\f nul\\u0000 unit\\u001f del\\u007f \\u00e9 \\ud83d\\ude00 \\u2028 \\ufeff\"",
-   "ascii_sha256": "89b94cc38f4fa92d97dc23c53bcf25ad083772af53df4b42f1ebb24abc8c72b3",
-   "utf8": "\"quote\\\" back\\\\ slash / tab\\t nl\\n cr\\r bs\\b ff\\f nul\\u0000 unit\\u001f del\u007f \u00e9 \ud83d\ude00 \u2028 \ufeff\"",
-   "utf8_sha256": "2c05e69cb0315b6cad75caa4f085ef296177ed4a1aa09732a40b8380be476438",
-   "default": "\"quote\\\" back\\\\ slash / tab\\t nl\\n cr\\r bs\\b ff\\f nul\\u0000 unit\\u001f del\\u007f \\u00e9 \\ud83d\\ude00 \\u2028 \\ufeff\"",
-   "default_sha256": "89b94cc38f4fa92d97dc23c53bcf25ad083772af53df4b42f1ebb24abc8c72b3"
+   "default": "\"quote\\\" back\\\\ slash / tab\\t nl\\n cr\\r bs\\b ff\\f nul\\u0000 unit\\u001f del\\u007f \\u00e9 \\ud83d\\ude00 \\u2028 \\ufeff\""
   },
   {
    "json": "[0, -1, 1.5, 0.1, 1e-07, 1e16, 1.7976931348623157e308, 5e-324, -2.5e-08, 123.456, 9007199254740991, 0.0001, 0.00012345, 1e21, 123456789.125, -0.5]",
-   "ascii": "[0,-1,1.5,0.1,1e-07,1e+16,1.7976931348623157e+308,5e-324,-2.5e-08,123.456,9007199254740991,0.0001,0.00012345,1e+21,123456789.125,-0.5]",
-   "ascii_sha256": "7798c1d5c43cbfa3aafee135d97a6d0884fe4935e53561d2a55e6e4b3c980410",
-   "utf8": "[0,-1,1.5,0.1,1e-07,1e+16,1.7976931348623157e+308,5e-324,-2.5e-08,123.456,9007199254740991,0.0001,0.00012345,1e+21,123456789.125,-0.5]",
-   "utf8_sha256": "7798c1d5c43cbfa3aafee135d97a6d0884fe4935e53561d2a55e6e4b3c980410",
-   "default": "[0, -1, 1.5, 0.1, 1e-07, 1e+16, 1.7976931348623157e+308, 5e-324, -2.5e-08, 123.456, 9007199254740991, 0.0001, 0.00012345, 1e+21, 123456789.125, -0.5]",
-   "default_sha256": "fbd31be0a7cd8f150f7ec92ca97b711e92f6fed7c2a520b55817ecbde61a9ed1"
+   "default": "[0, -1, 1.5, 0.1, 1e-07, 1e+16, 1.7976931348623157e+308, 5e-324, -2.5e-08, 123.456, 9007199254740991, 0.0001, 0.00012345, 1e+21, 123456789.125, -0.5]"
   },
   {
    "json": "{\"a\": [], \"b\": {}, \"c\": [[]], \"d\": [{}]}",
-   "ascii": "{\"a\":[],\"b\":{},\"c\":[[]],\"d\":[{}]}",
-   "ascii_sha256": "c8f573c2e7a156b68e9ff578dd6e2cef481d35098f43c3f8aba2f082ae2def7e",
-   "utf8": "{\"a\":[],\"b\":{},\"c\":[[]],\"d\":[{}]}",
-   "utf8_sha256": "c8f573c2e7a156b68e9ff578dd6e2cef481d35098f43c3f8aba2f082ae2def7e",
-   "default": "{\"a\": [], \"b\": {}, \"c\": [[]], \"d\": [{}]}",
-   "default_sha256": "820b8ebbf25bcf26f15d1801cfc6aeabf7f5353729da47fb8cbf198b9fa8ffdf"
+   "default": "{\"a\": [], \"b\": {}, \"c\": [[]], \"d\": [{}]}"
   },
   {
    "json": "{\"project_id\": \"work\", \"title\": \"Buy milk\", \"limit\": 30, \"cursor\": null, \"search\": \"caf\\u00e9\"}",
-   "ascii": "{\"cursor\":null,\"limit\":30,\"project_id\":\"work\",\"search\":\"caf\\u00e9\",\"title\":\"Buy milk\"}",
-   "ascii_sha256": "ac02c4b7fbd83c82ce31f66ca7fbe17d435ca01860612adb4fdae9648377e5e9",
-   "utf8": "{\"cursor\":null,\"limit\":30,\"project_id\":\"work\",\"search\":\"caf\u00e9\",\"title\":\"Buy milk\"}",
-   "utf8_sha256": "c10fd0f48264a0b45ef412cc391a52c9a449da5bc4f5e4e7c3243c71273363f5",
-   "default": "{\"project_id\": \"work\", \"title\": \"Buy milk\", \"limit\": 30, \"cursor\": null, \"search\": \"caf\\u00e9\"}",
-   "default_sha256": "4e0c08b68064aa5c126f20738b0b3de1aca8074da4c5dc7ba1a0fd1748eada46"
+   "default": "{\"project_id\": \"work\", \"title\": \"Buy milk\", \"limit\": 30, \"cursor\": null, \"search\": \"caf\\u00e9\"}"
   },
   {
    "json": "{\"files\": {\"a.txt\": {\"sha256\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"size\": 5, \"mode\": 420, \"mtime\": 1700000000500}, \"\\u00e9.txt\": {\"sha256\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"size\": 0, \"mode\": 493, \"mtime\": 0}, \"\\ud83d\\ude00/x\": {\"sha256\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\", \"size\": 4097, \"mode\": 420, \"mtime\": 253402300799999}, \"\\ufeffbom.txt\": {\"sha256\": \"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\", \"size\": 1, \"mode\": 420, \"mtime\": 1}}, \"dirs\": [\"empty\", \"x/y\"]}",
-   "ascii": "{\"dirs\":[\"empty\",\"x/y\"],\"files\":{\"a.txt\":{\"mode\":420,\"mtime\":1700000000500,\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":5},\"\\u00e9.txt\":{\"mode\":493,\"mtime\":0,\"sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"size\":0},\"\\ufeffbom.txt\":{\"mode\":420,\"mtime\":1,\"sha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"size\":1},\"\\ud83d\\ude00/x\":{\"mode\":420,\"mtime\":253402300799999,\"sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"size\":4097}}}",
-   "ascii_sha256": "d07b3c513a2fa19a787285044f8c7cd82a2f442605cd8128bf7bf07583bc32be",
-   "utf8": "{\"dirs\":[\"empty\",\"x/y\"],\"files\":{\"a.txt\":{\"mode\":420,\"mtime\":1700000000500,\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":5},\"\u00e9.txt\":{\"mode\":493,\"mtime\":0,\"sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"size\":0},\"\ufeffbom.txt\":{\"mode\":420,\"mtime\":1,\"sha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"size\":1},\"\ud83d\ude00/x\":{\"mode\":420,\"mtime\":253402300799999,\"sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"size\":4097}}}",
-   "utf8_sha256": "5245caa571249e701d65cafc3f138f4446f82885afb032aecff92ad6de181ee9",
-   "default": "{\"files\": {\"a.txt\": {\"sha256\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"size\": 5, \"mode\": 420, \"mtime\": 1700000000500}, \"\\u00e9.txt\": {\"sha256\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"size\": 0, \"mode\": 493, \"mtime\": 0}, \"\\ud83d\\ude00/x\": {\"sha256\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\", \"size\": 4097, \"mode\": 420, \"mtime\": 253402300799999}, \"\\ufeffbom.txt\": {\"sha256\": \"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\", \"size\": 1, \"mode\": 420, \"mtime\": 1}}, \"dirs\": [\"empty\", \"x/y\"]}",
-   "default_sha256": "9118c40cc34c15d8c827f966615690161717bea69f05a6ef01105d6d9d16c888"
+   "default": "{\"files\": {\"a.txt\": {\"sha256\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"size\": 5, \"mode\": 420, \"mtime\": 1700000000500}, \"\\u00e9.txt\": {\"sha256\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"size\": 0, \"mode\": 493, \"mtime\": 0}, \"\\ud83d\\ude00/x\": {\"sha256\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\", \"size\": 4097, \"mode\": 420, \"mtime\": 253402300799999}, \"\\ufeffbom.txt\": {\"sha256\": \"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\", \"size\": 1, \"mode\": 420, \"mtime\": 1}}, \"dirs\": [\"empty\", \"x/y\"]}"
   },
   {
    "json": "{\"revision\": 1, \"input\": {\"type\": \"object\", \"properties\": {\"project_id\": {\"type\": \"string\", \"maxLength\": 160, \"description\": \"The project\\u2019s id\"}}, \"required\": [\"project_id\"], \"additionalProperties\": false}, \"needs\": [[\"project\", \"read\"]], \"output\": \"read\", \"consent\": null, \"mutates\": false, \"paginated\": true, \"requires\": {\"read\": [\"read\"]}, \"kinds\": {\"project\": {\"actions\": [\"create\", \"read\"], \"wildcard\": true, \"hierarchical\": false}}}",
-   "ascii": "{\"consent\":null,\"input\":{\"additionalProperties\":false,\"properties\":{\"project_id\":{\"description\":\"The project\\u2019s id\",\"maxLength\":160,\"type\":\"string\"}},\"required\":[\"project_id\"],\"type\":\"object\"},\"kinds\":{\"project\":{\"actions\":[\"create\",\"read\"],\"hierarchical\":false,\"wildcard\":true}},\"mutates\":false,\"needs\":[[\"project\",\"read\"]],\"output\":\"read\",\"paginated\":true,\"requires\":{\"read\":[\"read\"]},\"revision\":1}",
-   "ascii_sha256": "701caf42511fbd9579de91c1329c5dc98cebc21581f59ddff58342d1d3d884d3",
-   "utf8": "{\"consent\":null,\"input\":{\"additionalProperties\":false,\"properties\":{\"project_id\":{\"description\":\"The project\u2019s id\",\"maxLength\":160,\"type\":\"string\"}},\"required\":[\"project_id\"],\"type\":\"object\"},\"kinds\":{\"project\":{\"actions\":[\"create\",\"read\"],\"hierarchical\":false,\"wildcard\":true}},\"mutates\":false,\"needs\":[[\"project\",\"read\"]],\"output\":\"read\",\"paginated\":true,\"requires\":{\"read\":[\"read\"]},\"revision\":1}",
-   "utf8_sha256": "acde538191cfb3daa237dab38a25f96cd0ba59ee196c30cd3083eaeb3d0b5888",
-   "default": "{\"revision\": 1, \"input\": {\"type\": \"object\", \"properties\": {\"project_id\": {\"type\": \"string\", \"maxLength\": 160, \"description\": \"The project\\u2019s id\"}}, \"required\": [\"project_id\"], \"additionalProperties\": false}, \"needs\": [[\"project\", \"read\"]], \"output\": \"read\", \"consent\": null, \"mutates\": false, \"paginated\": true, \"requires\": {\"read\": [\"read\"]}, \"kinds\": {\"project\": {\"actions\": [\"create\", \"read\"], \"wildcard\": true, \"hierarchical\": false}}}",
-   "default_sha256": "c6550422d661c5e261a1fed346c4bed1c03dce821709b663f7aa7d866cfa307a"
+   "default": "{\"revision\": 1, \"input\": {\"type\": \"object\", \"properties\": {\"project_id\": {\"type\": \"string\", \"maxLength\": 160, \"description\": \"The project\\u2019s id\"}}, \"required\": [\"project_id\"], \"additionalProperties\": false}, \"needs\": [[\"project\", \"read\"]], \"output\": \"read\", \"consent\": null, \"mutates\": false, \"paginated\": true, \"requires\": {\"read\": [\"read\"]}, \"kinds\": {\"project\": {\"actions\": [\"create\", \"read\"], \"wildcard\": true, \"hierarchical\": false}}}"
   },
   {
    "json": "{\"kind\": \"oauth2\", \"access_token\": \"at\", \"refresh_token\": null, \"scopes\": [\"read\", \"write\"], \"expires_at\": 1760000000}",
-   "ascii": "{\"access_token\":\"at\",\"expires_at\":1760000000,\"kind\":\"oauth2\",\"refresh_token\":null,\"scopes\":[\"read\",\"write\"]}",
-   "ascii_sha256": "0cd881efdf0ee7a2689912376b3385d9310e19a780e2e3d13748b5d34c69da48",
-   "utf8": "{\"access_token\":\"at\",\"expires_at\":1760000000,\"kind\":\"oauth2\",\"refresh_token\":null,\"scopes\":[\"read\",\"write\"]}",
-   "utf8_sha256": "0cd881efdf0ee7a2689912376b3385d9310e19a780e2e3d13748b5d34c69da48",
-   "default": "{\"kind\": \"oauth2\", \"access_token\": \"at\", \"refresh_token\": null, \"scopes\": [\"read\", \"write\"], \"expires_at\": 1760000000}",
-   "default_sha256": "39d71324928a77c01a4f9c0015dfd911f3445886bab744c74091cf81a0ef42c1"
+   "default": "{\"kind\": \"oauth2\", \"access_token\": \"at\", \"refresh_token\": null, \"scopes\": [\"read\", \"write\"], \"expires_at\": 1760000000}"
   },
   {
    "json": "{\"\\\\\": 1, \"\\n\": 2, \"ab\\\\\": 3, \"ab\\n\": 4, \"\\u0041\": 5, \"\\t\": 6, \"\\u00e9\": 7, \"x\\\"y\": 8, \"__proto__\": {\"a\": 1}}",
-   "ascii": "{\"\\t\":6,\"\\n\":2,\"A\":5,\"\\\\\":1,\"__proto__\":{\"a\":1},\"ab\\n\":4,\"ab\\\\\":3,\"x\\\"y\":8,\"\\u00e9\":7}",
-   "ascii_sha256": "6b53715c433d0ccc2f8a5a8794981b83d6cec0617f932c654b08a1f5d53476da",
-   "utf8": "{\"\\t\":6,\"\\n\":2,\"A\":5,\"\\\\\":1,\"__proto__\":{\"a\":1},\"ab\\n\":4,\"ab\\\\\":3,\"x\\\"y\":8,\"\u00e9\":7}",
-   "utf8_sha256": "b0a10c6f1e672dce92f6ab7c4a8e65fa72344af84e4605261c6f1779b5c65b52",
-   "default": "{\"\\\\\": 1, \"\\n\": 2, \"ab\\\\\": 3, \"ab\\n\": 4, \"A\": 5, \"\\t\": 6, \"\\u00e9\": 7, \"x\\\"y\": 8, \"__proto__\": {\"a\": 1}}",
-   "default_sha256": "00cb346e796befdd0723ecac37b704c603ccb04270cd199b4b176090ecba832f"
+   "default": "{\"\\\\\": 1, \"\\n\": 2, \"ab\\\\\": 3, \"ab\\n\": 4, \"A\": 5, \"\\t\": 6, \"\\u00e9\": 7, \"x\\\"y\": 8, \"__proto__\": {\"a\": 1}}"
   }
  ],
  "floats": [
@@ -202,93 +120,6 @@
    "repr": "100.25"
   }
  ],
- "fernet": {
-  "fixed": [
-   {
-    "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
-    "time": 1760000000,
-    "iv": "000102030405060708090a0b0c0d0e0f",
-    "plaintext": "",
-    "token": "gAAAAABo53gAAAECAwQFBgcICQoLDA0OD7eteCFsVWnW2hqrh_bbxWGDeEpo4hgf-vwbd3KIOpmwQB9ijkxSeDcLIJkiDPtu_g=="
-   },
-   {
-    "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
-    "time": 1760000000,
-    "iv": "000102030405060708090a0b0c0d0e0f",
-    "plaintext": "78",
-    "token": "gAAAAABo53gAAAECAwQFBgcICQoLDA0ODwdMXh2dJmvmw5JlEH27retmF5f-VlQ_P9pk_QYNdKweRYXF6J_zlFMDSfL8RCFvFA=="
-   },
-   {
-    "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
-    "time": 1760000000,
-    "iv": "000102030405060708090a0b0c0d0e0f",
-    "plaintext": "31362062797465732065786163746c79",
-    "token": "gAAAAABo53gAAAECAwQFBgcICQoLDA0OD4UrmlKln6awRqq-t1s7nl5ohoQTXljdFiT6aShMctaGPvXrzYyAcoIuv9xartqqjlFCUjNU8WX2HYvVI7JH1Ts="
-   },
-   {
-    "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
-    "time": 1760000000,
-    "iv": "000102030405060708090a0b0c0d0e0f",
-    "plaintext": "7b226b696e64223a20226f6175746832222c20226163636573735f746f6b656e223a20226174222c2022726566726573685f746f6b656e223a206e756c6c2c202273636f706573223a205b2272656164225d7d",
-    "token": "gAAAAABo53gAAAECAwQFBgcICQoLDA0OD-uHL6q64TYCDSml6LG_1QZpQunbZJ8iw_j3FV_xeO9qJxcqoKC2ZxivH5klQL_Z2SpfQAGYVgpA8WzMvSs2msG0eMPgl4_BH4yn3Zf0lkI-vJ4XMe_zcQsNfMHL_Tj6StLNi-nC0UWeR2fCXaVgVmH4y8INuf1wxaQWz06ZU8nr"
-   },
-   {
-    "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
-    "time": 1760000000,
-    "iv": "000102030405060708090a0b0c0d0e0f",
-    "plaintext": "7a61c5bcc3b3c582c48720f09f9880",
-    "token": "gAAAAABo53gAAAECAwQFBgcICQoLDA0OD6Av1KCRlRxFkw3QFAcxxTk9ydlAUrtG6GVp0Q-yDERf16fUDuFgbs_UGyZDv2j2BA=="
-   },
-   {
-    "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
-    "time": 1760000000,
-    "iv": "000102030405060708090a0b0c0d0e0f",
-    "plaintext": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
-    "token": "gAAAAABo53gAAAECAwQFBgcICQoLDA0OD-2jMPkO7NFsAD5fsJvP81hOpGoeyHjBVWPcL3UYjXjjJJYURW58ykikp7B8U3idurbHaew6mVcngBEf-5oxJwbVqNnBqiWEzikZPiQfumH2gLWWGHFsZwS5lOO5Alai_IRq-0n0ffXivTok5qm-Xk6y8bFfqB3RaJRK_Q_urQfaBQFCIGdR8LujH119gqhdWiZDML59TloPhD_vK78xnQPsentxi4X3R_Ou3_-MGxGw-kCpaRZpsCPOKzvJENmZwcc3QAFgMZ8xgB3KI7Q7B7nRZqkXoVMJ7li9DnHJ1A92RnfeNoVS_uuUbVpaEj5qw-xzZk5BwhoUa41gjDlq2XqjZKJ_p7g8TW2Z1UYG70W2S_N51PpabXotbmm-FtdgoiU2OynNKmx5KaHobH5w47s="
-   }
-  ],
-  "random": [
-   {
-    "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
-    "plaintext": "",
-    "token": "gAAAAABqytCmTOlqEicu-4mVrUv0aSXBaMK_2R9CAr-KiHF8mipUUE6eIMOYQ4kVJuUBmjqQZDDLtDKhNhB2UlO9w1T5KyEYkA=="
-   },
-   {
-    "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
-    "plaintext": "78",
-    "token": "gAAAAABqytCmWxOzhOVNQtUYlJkU4q8ak7J--n7O5ZC8MMKFY5LXmgb69z4ecilsqPS9UNBbtDHo3b_eBXqt96N64wuVCpyr9g=="
-   },
-   {
-    "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
-    "plaintext": "31362062797465732065786163746c79",
-    "token": "gAAAAABqytCmJQPXrQgzL7elQa-nKmiEZht8NvnZsGDDEiCy6ahA02DlhT2dnaISCwlvrsiqQ1c6xr8pJSnCMMBCIL5gaNCDZLPvD-ixjs0kghWlave7Vp4="
-   },
-   {
-    "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
-    "plaintext": "7b226b696e64223a20226f6175746832222c20226163636573735f746f6b656e223a20226174222c2022726566726573685f746f6b656e223a206e756c6c2c202273636f706573223a205b2272656164225d7d",
-    "token": "gAAAAABqytCmsnvrg-A8T104W9bHwHIEpGCtiZRKWHmT5leHdkwiWLE79tRJC0PouxOOt9yp2f4U5wksFQp5FIYXYILL5v6lP4YDdj4V0JpCEquWN2uGIuoRM3JarPDoV9-EVVst7wx2T599OqyFQVjHn3dU6rEuw11HMExhaQW2D7PvLiiKcoW3GZGRFVxKtuhdryiJqjeb"
-   },
-   {
-    "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
-    "plaintext": "7a61c5bcc3b3c582c48720f09f9880",
-    "token": "gAAAAABqytCmTmGU18_urv0OWP5nCfd6KdHgz4TQJxgS7SZnk9KuRGVa1rBWDFsQZkTdiIo9RDbszEBh_Dx3oppv8fHobtfVgQ=="
-   },
-   {
-    "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
-    "plaintext": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
-    "token": "gAAAAABqytCm163Tdw0qVJTy_mdFZJ32WNoI3VU7wdt4oIH20i4m1GrTsgV2Av21x9hiYA3xrGTOPIDs-l0f_JnepXiK4S7FPl021-TVFrWg-ZB8vMLmrWyXGHZBbsQrKFNfCOPwFl-qVfmUuz1EK5WyjWccrj5na0txjZDIROq1az0gA1WnkEjzyVJ06HSo8T8-Be1CItHC-Ei-0Zpdb7pKYh83GDy1FeMyBxkVyRrtj7KwrPQvSQqRvyQgrjxOglESeLJjhHg4KPDAaaRywjUfbp1LcxQe-4qAz3S1qNqoSeI5XHQK9vDcPMY_YzXnwakNoayozwrIMfbPS4Z2is-DsBov6RZzJbDbqINtK1KDkFC9FPIEq6UVGLBTZU-Rj1GzWkXh47NAtj5Gb5G1urhWkDcIMpnmdlTEPiOqwmgOIXt6ocBx_yU="
-   }
-  ],
-  "invalid": [
-   "gAAAAABqytCmWxOzhOVNQtUYlJkU4q8ak7J--n7O5ZC8MMKFY5LXmgb69z4ecilsqPS9UNBbtDHo3b_eBXqt96N64wuVCpyr9gA=",
-   "gQAAAABqytCmWxOzhOVNQtUYlJkU4q8ak7J--n7O5ZC8MMKFY5LXmgb69z4ecilsqPS9UNBbtDHo3b_eBXqt96N64wuVCpyr9g==",
-   "gAAAAABqytCmWxOzhOVNQtUYlJkU4q8ak7J--n7O",
-   "not a token",
-   ""
-  ],
-  "other_key": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
-  "other_key_token": "gAAAAABqytCmWxOzhOVNQtUYlJkU4q8ak7J--n7O5ZC8MMKFY5LXmgb69z4ecilsqPS9UNBbtDHo3b_eBXqt96N64wuVCpyr9g=="
- },
  "salted_hmac": [
   {
    "salt": "minerva.gateway.write",
@@ -599,8 +430,491 @@
   {
    "input": "&frac12;",
    "output": "\u00bd"
+  },
+  {
+   "input": "&#127;",
+   "output": ""
+  },
+  {
+   "input": "&#x7f;",
+   "output": ""
+  },
+  {
+   "input": "&#x81;",
+   "output": "\u0081"
+  },
+  {
+   "input": "&#x8d;",
+   "output": "\u008d"
+  },
+  {
+   "input": "&#x9f;&#xa0;",
+   "output": "\u0178\u00a0"
+  },
+  {
+   "input": "&#8;&#9;&#10;&#12;&#14;&#31;&#32;",
+   "output": "\t\n\f "
+  },
+  {
+   "input": "&#xfdcf;&#xfdd0;&#xfdef;&#xfdf0;",
+   "output": "\ufdcf\ufdf0"
+  },
+  {
+   "input": "&#xffff;&#x1fffe;&#x10fffe;&#x10ffff;&#x10fffd;",
+   "output": "\udbff\udffd"
+  },
+  {
+   "input": "&#xd7ff;&#xd800;&#xdbff;&#xdfff;&#xe000;",
+   "output": "\ud7ff\ufffd\ufffd\ufffd\ue000"
+  },
+  {
+   "input": "&#x110000;&#x7fffffff;",
+   "output": "\ufffd\ufffd"
+  },
+  {
+   "input": "&#0000000000000065;",
+   "output": "A"
+  },
+  {
+   "input": "&#X41g",
+   "output": "Ag"
+  },
+  {
+   "input": "&#65a",
+   "output": "Aa"
+  },
+  {
+   "input": "&#6g",
+   "output": "g"
+  },
+  {
+   "input": "&#xg;",
+   "output": "&#xg;"
+  },
+  {
+   "input": "&#x41;;",
+   "output": "A;"
+  },
+  {
+   "input": "&#9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999;",
+   "output": "\ufffd"
+  },
+  {
+   "input": "&#xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+   "output": "\ufffd"
+  },
+  {
+   "input": "&NotEqualTilde;",
+   "output": "\u2242\u0338"
+  },
+  {
+   "input": "&CounterClockwiseContourIntegral;",
+   "output": "\u2233"
+  },
+  {
+   "input": "&ThickSpace;",
+   "output": "\u205f\u200a"
+  },
+  {
+   "input": "&nbsp;x",
+   "output": "\u00a0x"
+  },
+  {
+   "input": "&notinx",
+   "output": "\u00acinx"
+  },
+  {
+   "input": "&notin",
+   "output": "\u00acin"
+  },
+  {
+   "input": "&notin;",
+   "output": "\u2209"
+  },
+  {
+   "input": "&ampamp;",
+   "output": "&amp;"
+  },
+  {
+   "input": "&amp;amp;",
+   "output": "&amp;"
+  },
+  {
+   "input": "&AMP",
+   "output": "&"
+  },
+  {
+   "input": "&Amp;",
+   "output": "&Amp;"
+  },
+  {
+   "input": "&LT",
+   "output": "<"
+  },
+  {
+   "input": "&lt=",
+   "output": "<="
+  },
+  {
+   "input": "&lt;=",
+   "output": "<="
+  },
+  {
+   "input": "&copy2",
+   "output": "\u00a92"
+  },
+  {
+   "input": "&para;&para",
+   "output": "\u00b6\u00b6"
+  },
+  {
+   "input": "&sect=",
+   "output": "\u00a7="
+  },
+  {
+   "input": "&aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "output": "&aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+   "input": "&aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;",
+   "output": "&aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;"
+  },
+  {
+   "input": "&&amp;",
+   "output": "&&"
+  },
+  {
+   "input": "&amp&",
+   "output": "&&"
+  },
+  {
+   "input": "&#38;amp;",
+   "output": "&amp;"
+  },
+  {
+   "input": "&#38;#38;",
+   "output": "&#38;"
+  },
+  {
+   "input": "&amp;#38;",
+   "output": "&#38;"
+  },
+  {
+   "input": "a&amp;b&lt;c&gt;\n&quot;&apos;",
+   "output": "a&b<c>\n\"'"
+  },
+  {
+   "input": "&not;it",
+   "output": "\u00acit"
+  },
+  {
+   "input": "&notit",
+   "output": "\u00acit"
+  },
+  {
+   "input": "&notit;",
+   "output": "\u00acit;"
+  },
+  {
+   "input": "&isin;&isinv;&isinvx",
+   "output": "\u2208\u2208&isinvx"
+  },
+  {
+   "input": "&Gt;&GT;&gt;&Gt",
+   "output": "\u226b>>&Gt"
+  },
+  {
+   "input": "&lsquo;&LSQUO&rsquo",
+   "output": "\u2018&LSQUO&rsquo"
+  },
+  {
+   "input": "&ENG;&eng;&Eng",
+   "output": "\u014a\u014b&Eng"
+  },
+  {
+   "input": "&\t&amp;",
+   "output": "&\t&"
+  },
+  {
+   "input": "&\n",
+   "output": "&\n"
+  },
+  {
+   "input": "&amp\r",
+   "output": "&\r"
+  },
+  {
+   "input": "&\u00e9;",
+   "output": "&\u00e9;"
+  },
+  {
+   "input": "&amp\u00e9",
+   "output": "&\u00e9"
+  },
+  {
+   "input": "&amp\u0301",
+   "output": "&\u0301"
   }
  ],
+ "unescape_attribute": [
+  {
+   "input": "&amp;",
+   "output": "&"
+  },
+  {
+   "input": "&amp",
+   "output": "&"
+  },
+  {
+   "input": "&ampx",
+   "output": "&ampx"
+  },
+  {
+   "input": "&amp=",
+   "output": "&amp="
+  },
+  {
+   "input": "&amp;=",
+   "output": "&="
+  },
+  {
+   "input": "&amp-",
+   "output": "&-"
+  },
+  {
+   "input": "&amp.",
+   "output": "&."
+  },
+  {
+   "input": "&amp ",
+   "output": "& "
+  },
+  {
+   "input": "&amp&amp",
+   "output": "&&"
+  },
+  {
+   "input": "&amp\u00e9",
+   "output": "&\u00e9"
+  },
+  {
+   "input": "&AMP",
+   "output": "&"
+  },
+  {
+   "input": "&Amp;",
+   "output": "&Amp;"
+  },
+  {
+   "input": "&notit;",
+   "output": "&notit;"
+  },
+  {
+   "input": "&notit",
+   "output": "&notit"
+  },
+  {
+   "input": "&not;",
+   "output": "\u00ac"
+  },
+  {
+   "input": "&not",
+   "output": "\u00ac"
+  },
+  {
+   "input": "&notin",
+   "output": "&notin"
+  },
+  {
+   "input": "&notin;",
+   "output": "\u2209"
+  },
+  {
+   "input": "&notin=",
+   "output": "&notin="
+  },
+  {
+   "input": "&not=",
+   "output": "&not="
+  },
+  {
+   "input": "&copy=2",
+   "output": "&copy=2"
+  },
+  {
+   "input": "&copy2",
+   "output": "&copy2"
+  },
+  {
+   "input": "&copy;2",
+   "output": "\u00a92"
+  },
+  {
+   "input": "&lt;b&gt;",
+   "output": "<b>"
+  },
+  {
+   "input": "&lt",
+   "output": "<"
+  },
+  {
+   "input": "&lt>",
+   "output": "<>"
+  },
+  {
+   "input": "&lt/",
+   "output": "</"
+  },
+  {
+   "input": "&#65",
+   "output": "A"
+  },
+  {
+   "input": "&#65=",
+   "output": "A="
+  },
+  {
+   "input": "&#65;=",
+   "output": "A="
+  },
+  {
+   "input": "&#x41g",
+   "output": "Ag"
+  },
+  {
+   "input": "&#X41;",
+   "output": "A"
+  },
+  {
+   "input": "&#0;",
+   "output": "\ufffd"
+  },
+  {
+   "input": "&#x7f;",
+   "output": ""
+  },
+  {
+   "input": "&#1;",
+   "output": ""
+  },
+  {
+   "input": "&#128;",
+   "output": "\u20ac"
+  },
+  {
+   "input": "&#xd800;",
+   "output": "\ufffd"
+  },
+  {
+   "input": "&#x110000;",
+   "output": "\ufffd"
+  },
+  {
+   "input": "&#;",
+   "output": "&#;"
+  },
+  {
+   "input": "&#x;",
+   "output": "&#x;"
+  },
+  {
+   "input": "&;",
+   "output": "&;"
+  },
+  {
+   "input": "&",
+   "output": "&"
+  },
+  {
+   "input": "&&",
+   "output": "&&"
+  },
+  {
+   "input": "a&b",
+   "output": "a&b"
+  },
+  {
+   "input": "a&b=c&d=e",
+   "output": "a&b=c&d=e"
+  },
+  {
+   "input": "?a=1&copy=2&amp=3&lt;=4",
+   "output": "?a=1&copy=2&amp=3<=4"
+  },
+  {
+   "input": "https://example.com/?a=1&b=2",
+   "output": "https://example.com/?a=1&b=2"
+  },
+  {
+   "input": "https://example.com/?a=1&amp;b=2",
+   "output": "https://example.com/?a=1&b=2"
+  },
+  {
+   "input": "https://example.com/?a=1&copyright=2",
+   "output": "https://example.com/?a=1&copyright=2"
+  },
+  {
+   "input": "&NotEqualTilde;",
+   "output": "\u2242\u0338"
+  },
+  {
+   "input": "&CounterClockwiseContourIntegral;",
+   "output": "\u2233"
+  },
+  {
+   "input": "&aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;",
+   "output": "&aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;"
+  },
+  {
+   "input": "&nbsp&nbsp;",
+   "output": "\u00a0\u00a0"
+  },
+  {
+   "input": "&frac12",
+   "output": "\u00bd"
+  },
+  {
+   "input": "&frac12;",
+   "output": "\u00bd"
+  },
+  {
+   "input": "&AElig",
+   "output": "\u00c6"
+  },
+  {
+   "input": "&AElig=",
+   "output": "&AElig="
+  },
+  {
+   "input": "&aeligx",
+   "output": "&aeligx"
+  },
+  {
+   "input": "&\ud83d\ude00;",
+   "output": "&\ud83d\ude00;"
+  },
+  {
+   "input": "&amp;amp;",
+   "output": "&amp;"
+  },
+  {
+   "input": "&#38;amp;",
+   "output": "&amp;"
+  },
+  {
+   "input": "x&",
+   "output": "x&"
+  },
+  {
+   "input": "&x",
+   "output": "&x"
+  }
+ ],
+ "entities": {
+  "names": 2231,
+  "without_semicolon": 106,
+  "sha256": "4ae6b75f2a9138265d674df1f86a0cd3ce83ed7e5e05ee5f663324cdafad4ca4"
+ },
  "truncate": [
   {
    "input": "abc",

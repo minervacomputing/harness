@@ -1,27 +1,30 @@
-// Python's `idna.encode(text, uts46=True)` (the idna package 3.20, which backend/connectors/web/sites.py
-// encodes mail domains with): UTS #46 mapping without the STD3 rules, then IDNA 2008 for each label (NFC,
-// hyphens, no leading mark, every code point PVALID or valid in its CONTEXTJ or CONTEXTO context, the
-// Bidi rule) and Punycode. The tables are the package's own, with Python's unicodedata for bidirectional
-// classes, marks and viramas (idna-table.ts), so a domain is accepted, refused and encoded as today. NFC
-// comes from the runtime's Unicode tables.
+// Domain names in ASCII, for mail domains and site names (sites.ts `canonicalHost`). The runtime's WHATWG
+// domain to ASCII (`node:url`, UTS #46 mapping without the STD3 rules, non-transitional, then Punycode) maps
+// and encodes. On each label it gives, the rules of IDNA 2008 that UTS #46 leaves out are checked here, as
+// the backend's idna package checks them (`idna.encode(text, uts46=True)`):
+//
+// - every code point PVALID, derived from the runtime's Unicode properties as RFC 5892 derives it, or valid
+//   in its CONTEXTO context (RFC 5892 appendix A, with the runtime's scripts);
+// - the Bidi rule (RFC 5893) for a label that holds a right-to-left character;
+// - no hyphens in the third and fourth places, none first or last, no combining mark first, NFC;
+// - an A-label in the input is the canonical Punycode of a valid U-label;
+// - labels of at most 63 and names of at most 253 characters.
+//
+// Checked against the port of the idna package this replaced, for every code point alone, between letters,
+// between "l"s and inside a right-to-left label, in Node and in workerd (both Unicode 17), and on a million
+// random names: nothing it refused is accepted, and what both accept is encoded alike. What is refused now:
+// - U+200C ZERO WIDTH NON-JOINER where only its second CONTEXTJ rule would allow it (between letters that
+//   join, as in Persian): that rule needs joining types the runtime does not expose. After a virama, the
+//   rule both joiners share, it is allowed as before;
+// - in a label with a right-to-left character, the few neutral letters (Bidi class ON, such as U+02B9),
+//   which count as left-to-right here;
+// - 64 code points Unicode 18 adds that the port's newer tables accepted, which the runtime does not know;
+// - what the runtime refuses itself: a last label that is a number (an IPv4 address to it; sites.ts refuses
+//   these anyway), some recent right-to-left letters, marks and digits inside right-to-left labels (Arabic
+//   Extended-B, Garay and others its IDNA tables lack), and A-labels whose Punycode holds "xn--".
 
-import { PunycodeError, punycodeDecode } from "./punycode.ts";
-import {
-	BIDI_CLASSES,
-	BIDI_NAMES,
-	BIDI_RANGES,
-	CONTEXTJ,
-	CONTEXTO,
-	JOINING,
-	MARKS,
-	PVALID,
-	SCRIPTS,
-	UNNAMED,
-	UTS46_REPLACEMENTS,
-	UTS46_STARTS,
-	UTS46_STATUSES,
-	VIRAMA,
-} from "./idna-table.ts";
+import { domainToASCII, domainToUnicode } from "node:url";
+import { isUnicode17 } from "./unicode.ts";
 
 /** Python's IDNAError, a UnicodeError: the text cannot be encoded. */
 export class IdnaError extends Error {
@@ -32,397 +35,228 @@ export class IdnaError extends Error {
 }
 
 const MAX_INPUT = 1024;
+const MAX_LABEL = 63;
 const MAX_DOMAIN = 253;
 const PREFIX = "xn--";
 
-/** Half-open ranges, searched by bisection. */
-class Ranges {
-	readonly starts: number[] = [];
-	readonly ends: number[] = [];
-
-	find(point: number): number {
-		let low = 0;
-		let high = this.starts.length - 1;
-		while (low <= high) {
-			const mid = (low + high) >> 1;
-			if (point < (this.starts[mid] as number)) high = mid - 1;
-			else if (point >= (this.ends[mid] as number)) low = mid + 1;
-			else return mid;
-		}
-		return -1;
-	}
-
-	has(point: number): boolean {
-		return this.find(point) >= 0;
-	}
-}
-
-/** Ranges packed as base-36 gaps (start - previous end) and lengths. */
-function unpack(text: string): Ranges {
-	const ranges = new Ranges();
-	if (!text) return ranges;
-	const numbers = text.split(",").map((part) => Number.parseInt(part, 36));
-	let last = 0;
-	for (let i = 0; i + 1 < numbers.length; i += 2) {
-		const start = last + (numbers[i] as number);
-		const end = start + (numbers[i + 1] as number);
-		ranges.starts.push(start);
-		ranges.ends.push(end);
-		last = end;
-	}
-	return ranges;
-}
-
-interface Tables {
-	pvalid: Ranges;
-	contextj: Ranges;
-	contexto: Ranges;
-	scripts: Map<string, Ranges>;
-	joining: [string, Ranges][];
-	virama: Ranges;
-	unnamed: Ranges;
-	marks: Ranges;
-	bidi: Ranges;
-	starts: number[];
-	replacement: number[];
-}
-
-let tables: Tables | null = null;
-
-/** Decoded on first use, so a Worker that never encodes a domain does not pay for it. */
-function loaded(): Tables {
-	if (tables !== null) return tables;
-	const starts: number[] = [];
-	let start = 0;
-	for (const part of UTS46_STARTS.split(",")) {
-		start += Number.parseInt(part, 36);
-		starts.push(start);
-	}
-	const replacement: number[] = [];
-	let mapped = 0;
-	for (const status of UTS46_STATUSES) replacement.push(status === "M" ? mapped++ : -1);
-	tables = {
-		pvalid: unpack(PVALID),
-		contextj: unpack(CONTEXTJ),
-		contexto: unpack(CONTEXTO),
-		scripts: new Map(Object.entries(SCRIPTS).map(([name, packed]) => [name, unpack(packed)])),
-		joining: JOINING.map(([kind, packed]) => [kind, unpack(packed)]),
-		virama: unpack(VIRAMA),
-		unnamed: unpack(UNNAMED),
-		marks: unpack(MARKS),
-		bidi: unpack(BIDI_RANGES),
-		starts,
-		replacement,
-	};
-	return tables;
-}
+/** ASCII the name may hold; the rest is never valid, and would end the host for `domainToASCII` (`/`, `:`, `@`). */
+const ASCII_ALLOWED = /^[A-Za-z0-9.-]$/;
 
 function points(text: string): number[] {
 	return Array.from(text, (char) => char.codePointAt(0) as number);
 }
 
-function isAscii(text: string): boolean {
-	return /^[\u0000-\u007f]*$/.test(text);
+function inRange(point: number, low: number, high: number): boolean {
+	return point >= low && point <= high;
 }
 
-function unot(point: number): string {
-	return `U+${point.toString(16).toUpperCase().padStart(4, "0")}`;
+// RFC 5892 section 2: the categories that derive each code point's IDNA 2008 property.
+
+/** 2.6 Exceptions: PVALID, CONTEXTO or DISALLOWED whatever their properties say. */
+const EXCEPTIONS_PVALID: ReadonlySet<number> = new Set([0x00df, 0x03c2, 0x06fd, 0x06fe, 0x0f0b, 0x3007]);
+const EXCEPTIONS_DISALLOWED: ReadonlySet<number> = new Set([0x0640, 0x07fa, 0x302e, 0x302f, 0x3031, 0x3032, 0x3033, 0x3034, 0x3035, 0x303b]);
+function isContexto(point: number): boolean {
+	return point === 0x00b7 || point === 0x0375 || point === 0x05f3 || point === 0x05f4 || point === 0x30fb || isArabicIndic(point) || isExtendedArabicIndic(point);
+}
+/** 2.3 Unstable (NFKC_Casefold changes it), 2.4 IgnorableProperties. */
+const UNSTABLE_OR_IGNORABLE = /[\p{Changes_When_NFKC_Casefolded}\p{Default_Ignorable_Code_Point}\p{White_Space}\p{Noncharacter_Code_Point}]/u;
+/** 2.1 LetterDigits. */
+const LETTER_DIGITS = /[\p{Ll}\p{Lu}\p{Lo}\p{Nd}\p{Lm}\p{Mn}\p{Mc}]/u;
+const ASSIGNED = /\p{Assigned}/u;
+
+function isArabicIndic(point: number): boolean {
+	return inRange(point, 0x0660, 0x0669);
 }
 
-/** `uts46_remap(domain, std3_rules=False)`: each code point kept, mapped, ignored or refused; then NFC. */
-export function uts46Remap(domain: string): string {
-	if (points(domain).length > MAX_INPUT) throw new IdnaError("Domain too long");
-	if (isAscii(domain)) return domain.toLowerCase();
-	const { starts, replacement } = loaded();
-	let out = "";
-	let position = 0;
-	for (const point of points(domain)) {
-		position++;
-		let index: number;
-		if (point < 256) index = point;
-		else {
-			// bisect_right(starts, point) - 1
-			let low = 0;
-			let high = starts.length;
-			while (low < high) {
-				const mid = (low + high) >> 1;
-				if (point < (starts[mid] as number)) high = mid;
-				else low = mid + 1;
-			}
-			index = low - 1;
-		}
-		const status = UTS46_STATUSES[index];
-		if (status === "V" || status === "D") out += String.fromCodePoint(point);
-		else if (status === "M") out += UTS46_REPLACEMENTS[replacement[index] as number] as string;
-		else if (status !== "I") throw new IdnaError(`Codepoint ${unot(point)} not allowed at position ${position}`);
-	}
-	return out.normalize("NFC");
+function isExtendedArabicIndic(point: number): boolean {
+	return inRange(point, 0x06f0, 0x06f9);
 }
 
-function bidiOf(point: number): string {
-	const { bidi } = loaded();
-	const index = bidi.find(point);
-	if (index < 0) return "";
-	return BIDI_NAMES[Number.parseInt(BIDI_CLASSES[index] as string, 36)] as string;
+/** 2.5 IgnorableBlocks and 2.9 OldHangulJamo. */
+function inDisallowedBlock(point: number): boolean {
+	return (
+		inRange(point, 0x20d0, 0x20ff) ||
+		inRange(point, 0x1d100, 0x1d24f) ||
+		inRange(point, 0x1100, 0x11ff) ||
+		inRange(point, 0xa960, 0xa97f) ||
+		inRange(point, 0xd7b0, 0xd7ff)
+	);
 }
 
-function joiningOf(point: number): string | null {
-	for (const [kind, ranges] of loaded().joining) if (ranges.has(point)) return kind;
-	return null;
+type Property = "PVALID" | "CONTEXTJ" | "CONTEXTO" | "DISALLOWED";
+
+/** RFC 5892 section 3, in its order (BackwardCompatible is empty). */
+function property(point: number): Property {
+	if (EXCEPTIONS_PVALID.has(point)) return "PVALID";
+	if (isContexto(point)) return "CONTEXTO";
+	if (EXCEPTIONS_DISALLOWED.has(point)) return "DISALLOWED";
+	const char = String.fromCodePoint(point);
+	// What Unicode 17 assigned is refused: the idna package ran on Python 3.14's Unicode 16, which knows nothing of
+	// it, and so does lib/unicode.ts. Dropping that would accept it as Python 3.15 does: a visible change, for the
+	// user to approve. test/unit/unicode.test.ts fails when the runtime moves on, since its new scripts would need
+	// the same review (RIGHT_TO_LEFT too).
+	if (!ASSIGNED.test(char) || isUnicode17(point)) return "DISALLOWED";
+	if (inRange(point, 0x61, 0x7a) || inRange(point, 0x30, 0x39) || point === 0x2d) return "PVALID";
+	if (point === 0x200c || point === 0x200d) return "CONTEXTJ";
+	if (UNSTABLE_OR_IGNORABLE.test(char) || inDisallowedBlock(point)) return "DISALLOWED";
+	return LETTER_DIGITS.test(char) ? "PVALID" : "DISALLOWED";
 }
 
-/** `_combining_class(cp) == 9`; a code point without a name raises, which `check_label` reports. */
-function isVirama(point: number): boolean {
-	const { virama, unnamed } = loaded();
-	if (unnamed.has(point)) throw new IdnaError(`Unknown codepoint adjacent to joiner ${unot(point)}`);
-	return virama.has(point);
-}
+const GREEK = /\p{Script=Greek}/u;
+const HEBREW = /\p{Script=Hebrew}/u;
+const KANA_OR_HAN = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u;
 
-const RTL_FIRST = new Set(["R", "AL"]);
-const RTL_CATEGORIES = new Set(["R", "AL", "AN"]);
-const RTL_ALLOWED = new Set(["R", "AL", "AN", "EN", "ES", "CS", "ET", "ON", "BN", "NSM"]);
-const RTL_VALID_ENDING = new Set(["R", "AL", "EN", "AN"]);
-const RTL_NUMERIC = new Set(["AN", "EN"]);
-const LTR_ALLOWED = new Set(["L", "EN", "ES", "CS", "ET", "ON", "BN", "NSM"]);
-const LTR_VALID_ENDING = new Set(["L", "EN"]);
-
-/** `check_bidi(label)`: RFC 5893, for labels that hold a right-to-left character. */
-function checkBidi(label: number[]): void {
-	if (label.length > MAX_INPUT) throw new IdnaError("Label too long");
-	let bidiLabel = false;
-	for (const point of label) {
-		const direction = bidiOf(point);
-		if (direction === "") throw new IdnaError("Unknown directionality");
-		if (RTL_CATEGORIES.has(direction)) bidiLabel = true;
-	}
-	if (!bidiLabel) return;
-	const first = bidiOf(label[0] as number);
-	let rtl: boolean;
-	if (RTL_FIRST.has(first)) rtl = true;
-	else if (first === "L") rtl = false;
-	else throw new IdnaError("First codepoint must be directionality L, R or AL");
-	let validEnding = false;
-	let numberType: string | null = null;
-	for (const point of label) {
-		const direction = bidiOf(point);
-		if (rtl) {
-			if (!RTL_ALLOWED.has(direction)) throw new IdnaError("Invalid direction in a right-to-left label");
-			if (RTL_VALID_ENDING.has(direction)) validEnding = true;
-			else if (direction !== "NSM") validEnding = false;
-			if (RTL_NUMERIC.has(direction)) {
-				if (!numberType) numberType = direction;
-				else if (numberType !== direction) throw new IdnaError("Can not mix numeral types in a right-to-left label");
-			}
-		} else {
-			if (!LTR_ALLOWED.has(direction)) throw new IdnaError("Invalid direction in a left-to-right label");
-			if (LTR_VALID_ENDING.has(direction)) validEnding = true;
-			else if (direction !== "NSM") validEnding = false;
-		}
-	}
-	if (!validEnding) throw new IdnaError("Label ends with illegal codepoint directionality");
-}
-
-function validContextj(label: number[], pos: number): boolean {
-	const point = label[pos] as number;
-	if (point === 0x200c) {
-		if (pos > 0 && isVirama(label[pos - 1] as number)) return true;
-		let ok = false;
-		for (let i = pos - 1; i >= 0; i--) {
-			const type = joiningOf(label[i] as number);
-			if (type === "T") continue;
-			if (type === "L" || type === "D") ok = true;
-			break;
-		}
-		if (!ok) return false;
-		ok = false;
-		for (let i = pos + 1; i < label.length; i++) {
-			const type = joiningOf(label[i] as number);
-			if (type === "T") continue;
-			if (type === "R" || type === "D") ok = true;
-			break;
-		}
-		return ok;
-	}
-	if (point === 0x200d) return pos > 0 && isVirama(label[pos - 1] as number);
-	return false;
-}
-
-function inScript(point: number, script: string): boolean {
-	return loaded().scripts.get(script)?.has(point) ?? false;
-}
-
+/** RFC 5892 appendix A, rules 3 to 9. */
 function validContexto(label: number[], pos: number): boolean {
 	const point = label[pos] as number;
+	const at = (i: number): string => String.fromCodePoint(label[i] as number);
 	if (point === 0x00b7) return pos > 0 && pos < label.length - 1 && label[pos - 1] === 0x6c && label[pos + 1] === 0x6c;
-	if (point === 0x0375) return pos < label.length - 1 && label.length > 1 ? inScript(label[pos + 1] as number, "Greek") : false;
-	if (point === 0x05f3 || point === 0x05f4) return pos > 0 ? inScript(label[pos - 1] as number, "Hebrew") : false;
-	if (point === 0x30fb) {
-		for (const other of label) {
-			if (other === 0x30fb) continue;
-			if (inScript(other, "Hiragana") || inScript(other, "Katakana") || inScript(other, "Han")) return true;
-		}
-		return false;
-	}
-	if (point >= 0x660 && point <= 0x669) return !label.some((other) => other >= 0x6f0 && other <= 0x6f9);
-	if (point >= 0x6f0 && point <= 0x6f9) return !label.some((other) => other >= 0x660 && other <= 0x669);
-	return false;
+	if (point === 0x0375) return pos < label.length - 1 && GREEK.test(at(pos + 1));
+	if (point === 0x05f3 || point === 0x05f4) return pos > 0 && HEBREW.test(at(pos - 1));
+	if (point === 0x30fb) return label.some((other) => other !== 0x30fb && KANA_OR_HAN.test(String.fromCodePoint(other)));
+	if (isArabicIndic(point)) return !label.some(isExtendedArabicIndic);
+	return !label.some(isArabicIndic);
 }
 
-/** `check_label`: the IDNA 2008 rules for one label. */
+// The Bidi rule (RFC 5893 section 2) needs each code point's Bidi class, which the runtime does not expose.
+// For the code points a label may hold, the class follows from the general category and the script, with
+// the few exceptions below (checked against Python 3.14's unicodedata for every PVALID and CONTEXTO code
+// point): R and AL are told apart nowhere in the rule, so both are "R" here.
+
+/** Scripts written right to left: their letters and digits are R or AL. */
+const RIGHT_TO_LEFT = new RegExp(
+	`[${[
+		"Adlam",
+		"Arabic",
+		"Avestan",
+		"Chorasmian",
+		"Cypriot",
+		"Elymaic",
+		"Garay",
+		"Hanifi_Rohingya",
+		"Hatran",
+		"Hebrew",
+		"Imperial_Aramaic",
+		"Inscriptional_Pahlavi",
+		"Inscriptional_Parthian",
+		"Kharoshthi",
+		"Lydian",
+		"Mandaic",
+		"Manichaean",
+		"Mende_Kikakui",
+		"Meroitic_Cursive",
+		"Meroitic_Hieroglyphs",
+		"Nabataean",
+		"Nko",
+		"Old_Hungarian",
+		"Old_North_Arabian",
+		"Old_Sogdian",
+		"Old_South_Arabian",
+		"Old_Turkic",
+		"Old_Uyghur",
+		"Palmyrene",
+		"Phoenician",
+		"Psalter_Pahlavi",
+		"Samaritan",
+		"Sogdian",
+		"Syriac",
+		"Thaana",
+		"Yezidi",
+	]
+		.map((script) => `\\p{Script=${script}}`)
+		.join("")}]`,
+	"u",
+);
+const NONSPACING_MARK = /\p{Mn}/u;
+/** Nonspacing marks whose Bidi class is L, not NSM. */
+const LEFT_TO_RIGHT_MARKS: ReadonlySet<number> = new Set([0x0cbf, 0x0cc6, 0x11a07, 0x11a08, 0x11c3f]);
+
+type Direction = "L" | "R" | "AN" | "EN" | "ES" | "NSM";
+
+function direction(point: number): Direction {
+	if (point === 0x2d) return "ES";
+	if (inRange(point, 0x30, 0x39) || isExtendedArabicIndic(point)) return "EN";
+	// Arabic-Indic, Hanifi Rohingya and Garay digits.
+	if (isArabicIndic(point) || inRange(point, 0x10d30, 0x10d39) || inRange(point, 0x10d40, 0x10d49)) return "AN";
+	const char = String.fromCodePoint(point);
+	if (NONSPACING_MARK.test(char)) return LEFT_TO_RIGHT_MARKS.has(point) ? "L" : "NSM";
+	return RIGHT_TO_LEFT.test(char) ? "R" : "L";
+}
+
+/** `check_bidi`: a label with a right-to-left character must be a valid right-to-left label. */
+function checkBidi(label: number[]): void {
+	const directions = label.map(direction);
+	if (!directions.some((found) => found === "R" || found === "AN")) return;
+	// A label that starts left to right may not hold a right-to-left character at all.
+	if (directions[0] !== "R") throw new IdnaError("Invalid direction in a label");
+	if (directions.includes("L")) throw new IdnaError("Invalid direction in a right-to-left label");
+	if (directions.includes("AN") && directions.includes("EN")) throw new IdnaError("Can not mix numeral types in a right-to-left label");
+	const last = directions.findLast((found) => found !== "NSM");
+	if (last !== "R" && last !== "EN" && last !== "AN") throw new IdnaError("Label ends with illegal codepoint directionality");
+}
+
+/**
+ * Whether the code point's canonical combining class is 9 (a virama), read from the runtime's normalization:
+ * NFD puts marks in the order of their classes, so a mark of class 9 moves before U+05B0 (class 10) and
+ * stays where it is beside U+094D (class 9), in either order.
+ */
+function isVirama(point: number): boolean {
+	const mark = String.fromCodePoint(point);
+	const nfd = (text: string): string => text.normalize("NFD");
+	return (
+		nfd(mark) === mark &&
+		nfd(`a\u05b0${mark}`) === `a${mark}\u05b0` &&
+		nfd(`a\u094d${mark}`) === `a\u094d${mark}` &&
+		nfd(`a${mark}\u094d`) === `a${mark}\u094d`
+	);
+}
+
+const MARK = /^\p{M}/u;
+
+/** `check_label`: the IDNA 2008 rules for one label (a U-label, or an ASCII label that is no A-label). */
 function checkLabel(text: string): void {
 	const label = points(text);
-	if (label.length > MAX_INPUT) throw new IdnaError("Label too long");
 	if (label.length === 0) throw new IdnaError("Empty Label");
-	if (label.length > MAX_DOMAIN + 1) throw new IdnaError("Label too long");
 	if (text.normalize("NFC") !== text) throw new IdnaError("Label must be in Normalization Form C");
 	if (label[2] === 0x2d && label[3] === 0x2d) throw new IdnaError("Label has disallowed hyphens in 3rd and 4th position");
 	if (text.startsWith("-") || text.endsWith("-")) throw new IdnaError("Label must not start or end with a hyphen");
-	const { pvalid, contextj, contexto, marks } = loaded();
-	if (marks.has(label[0] as number)) throw new IdnaError("Label begins with an illegal combining character");
+	if (MARK.test(text)) throw new IdnaError("Label begins with an illegal combining character");
 	label.forEach((point, pos) => {
-		if (pvalid.has(point)) return;
-		if (contextj.has(point)) {
-			if (!validContextj(label, pos)) throw new IdnaError(`Joiner ${unot(point)} not allowed at position ${pos + 1}`);
-		} else if (contexto.has(point)) {
-			if (!validContexto(label, pos)) throw new IdnaError(`Codepoint ${unot(point)} not allowed at position ${pos + 1}`);
-		} else {
-			throw new IdnaError(`Codepoint ${unot(point)} at position ${pos + 1} not allowed`);
-		}
+		const found = property(point);
+		if (found === "PVALID" || (found === "CONTEXTO" && validContexto(label, pos))) return;
+		// RFC 5892 appendix A, rules 1 and 2: a joiner right after a virama.
+		if (found === "CONTEXTJ" && pos > 0 && isVirama(label[pos - 1] as number)) return;
+		throw new IdnaError(`Codepoint U+${point.toString(16).toUpperCase().padStart(4, "0")} at position ${pos + 1} not allowed`);
 	});
 	checkBidi(label);
 }
 
-// Punycode encoding (RFC 3492), as Python's codec writes it.
-
-const DIGITS = "abcdefghijklmnopqrstuvwxyz0123456789";
-
-function adapt(delta: number, first: boolean, numchars: number): number {
-	let d = first ? Math.floor(delta / 700) : Math.floor(delta / 2);
-	d += Math.floor(d / numchars);
-	let divisions = 0;
-	while (d > 455) {
-		d = Math.floor(d / 35);
-		divisions += 36;
-	}
-	return divisions + Math.floor((36 * d) / (d + 38));
-}
-
-/** `text.encode("punycode")`. */
-export function punycodeEncode(text: string): string {
-	const input = points(text);
-	const basic = input.filter((point) => point < 0x80);
-	let output = String.fromCharCode(...basic);
-	const extended = [...new Set(input.filter((point) => point >= 0x80))].sort((a, b) => a - b);
-	// insertion_unsort
-	const deltas: number[] = [];
-	let oldchar = 0x80;
-	let oldindex = -1;
-	for (const char of extended) {
-		let index = -1;
-		let pos = -1;
-		const curlen = input.filter((point) => point < char).length;
-		let delta = (curlen + 1) * (char - oldchar);
-		for (;;) {
-			// selective_find(str, char, index, pos)
-			let found = false;
-			for (;;) {
-				pos += 1;
-				if (pos === input.length) {
-					index = -1;
-					pos = -1;
-					break;
-				}
-				const c = input[pos] as number;
-				if (c === char) {
-					index += 1;
-					found = true;
-					break;
-				}
-				if (c < char) index += 1;
-			}
-			if (!found) break;
-			delta += index - oldindex;
-			deltas.push(delta - 1);
-			oldindex = index;
-			delta = 0;
-		}
-		oldchar = char;
-	}
-	// generate_integers
-	let bias = 72;
-	let generated = "";
-	deltas.forEach((delta, points) => {
-		let n = delta;
-		for (let j = 0; ; j++) {
-			const t = Math.min(26, Math.max(1, 36 * (j + 1) - bias));
-			if (n < t) {
-				generated += DIGITS[n];
-				break;
-			}
-			generated += DIGITS[t + ((n - t) % (36 - t))];
-			n = Math.floor((n - t) / (36 - t));
-		}
-		bias = adapt(delta, points === 0, basic.length + points + 1);
-	});
-	if (basic.length) output += "-";
-	return output + generated;
-}
-
-/** `ulabel(ascii)` for an ASCII label: an A-label decoded and checked to be canonical, else checked as is. */
+/** An ASCII label as the runtime wrote it: an A-label must decode to a valid U-label it is the encoding of. */
 function checkAscii(label: string): void {
-	if (label.length > MAX_INPUT) throw new IdnaError("Label too long");
-	const lowered = label.toLowerCase();
-	if (!lowered.startsWith(PREFIX)) {
-		checkLabel(lowered);
+	if (label.length > MAX_LABEL) throw new IdnaError("Label too long");
+	if (!label.startsWith(PREFIX)) {
+		checkLabel(label);
 		return;
 	}
-	const rest = lowered.slice(PREFIX.length);
-	if (!rest) throw new IdnaError("Malformed A-label, no Punycode eligible content found");
-	if (rest.endsWith("-")) throw new IdnaError("A-label must not end with a hyphen");
-	let decoded: string;
-	try {
-		decoded = punycodeDecode(Uint8Array.from(rest, (char) => char.charCodeAt(0)), "strict");
-	} catch (error) {
-		if (!(error instanceof PunycodeError)) throw error;
-		throw new IdnaError("Invalid A-label");
-	}
-	if (punycodeEncode(decoded) !== rest) throw new IdnaError("A-label is not the canonical Punycode encoding of its U-label");
+	const decoded = domainToUnicode(label);
+	if (!decoded || decoded.includes(".") || decoded === label || domainToASCII(decoded) !== label) throw new IdnaError("Invalid A-label");
 	checkLabel(decoded);
 }
 
-/** `alabel(label)`. */
-function alabel(label: string): string {
-	if (points(label).length > MAX_INPUT) throw new IdnaError("Label too long");
-	if (isAscii(label)) {
-		checkAscii(label);
-		if (label.length > 63) throw new IdnaError("Label too long");
-		return label;
-	}
-	checkLabel(label);
-	const encoded = PREFIX + punycodeEncode(label);
-	if (encoded.length > 63) throw new IdnaError("Label too long");
-	return encoded;
-}
-
-/** `idna.encode(text, uts46=True).decode("ascii")`. */
+/** `idna.encode(text, uts46=True).decode("ascii")`, or IdnaError. */
 export function idnaEncode(text: string): string {
 	if (points(text).length > MAX_INPUT) throw new IdnaError("Domain too long");
-	const mapped = uts46Remap(text);
-	if (points(mapped).length > MAX_DOMAIN + 1) throw new IdnaError("Domain too long");
-	const labels = mapped.split(/[.。．｡]/);
-	if (labels.length === 1 && labels[0] === "") throw new IdnaError("Empty domain");
-	let trailingDot = false;
-	if (labels[labels.length - 1] === "") {
-		labels.pop();
-		trailingDot = true;
+	for (const char of text) {
+		if (char.charCodeAt(0) < 0x80 && !ASCII_ALLOWED.test(char)) throw new IdnaError("Codepoint not allowed");
 	}
-	const result = labels.map((label) => {
-		const encoded = alabel(label);
-		if (!encoded) throw new IdnaError("Empty label");
-		return encoded;
-	});
-	if (trailingDot) result.push("");
-	const domain = result.join(".");
-	if (domain.length > MAX_DOMAIN + (trailingDot ? 1 : 0)) throw new IdnaError("Domain too long");
-	return domain;
+	// "" where the runtime refuses the name, and an IPv4 address where its last label is a number: neither
+	// is a domain name the package would give (which sites.ts refuses for its numeric last label anyway).
+	const encoded = domainToASCII(text);
+	if (!encoded || /^[0-9.]+$/.test(encoded)) throw new IdnaError("Invalid domain");
+	const labels = encoded.split(".");
+	const trailingDot = labels.length > 1 && labels[labels.length - 1] === "";
+	if (trailingDot) labels.pop();
+	for (const label of labels) checkAscii(label);
+	if (encoded.length > MAX_DOMAIN + (trailingDot ? 1 : 0)) throw new IdnaError("Domain too long");
+	return encoded;
 }

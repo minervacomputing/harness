@@ -9,7 +9,11 @@
 // Only names under a known public suffix are hosts: IP addresses (in any spelling: an odd IPv4 one such as
 // `127.1` or `0x7f.1` ends in a numeric label or under no public suffix), single-label names and
 // special-use names (`localhost`, `.internal`, `.local`, `.arpa`, `.onion`, ...) are refused before
-// anything resolves them.
+// anything resolves them. A host is a bare name: lib/idna.ts refuses any ASCII but letters, digits, hyphens
+// and dots before the runtime maps it, so a path, user name, port or percent sign never reaches the
+// runtime's host parser (which would cut it off). An address is split here as Python splits it and shown in
+// Python's spelling (`WebURL.text`); what is requested is the runtime's serialization of that
+// (`WebURL.href`), refused unless it names the same scheme and host on the default port.
 //
 // The Public Suffix List comes from tldts in place of Python's publicsuffixlist (with
 // `accept_unknown=False`, private domains included): a suffix tldts knows by no rule is unknown. Where the
@@ -150,13 +154,21 @@ export class WebURL {
 	readonly host: string;
 	/** Path and query, percent-encoded; never empty. */
 	readonly target: string;
+	/**
+	 * What is requested: `text` as the runtime's URL parser serializes it, which is what fetch would make of
+	 * `text` itself, checked when it was made to name the same scheme and host, on the default port, with no
+	 * user name. The parser may still remove dot segments from the path or encode a quote in the query.
+	 */
+	readonly href: string;
 
-	constructor(scheme: string, host: string, target: string) {
+	constructor(scheme: string, host: string, target: string, href: string) {
 		this.scheme = scheme;
 		this.host = host;
 		this.target = target;
+		this.href = href;
 	}
 
+	/** The address as the agent is shown it, Python's spelling. */
 	get text(): string {
 		return `${this.scheme}://${this.host}${this.target}`;
 	}
@@ -197,5 +209,10 @@ export function parseUrl(raw: string, base: WebURL | null = null): WebURL {
 	let path = quote(parts.path || "/", URL_SAFE);
 	if (!path.startsWith("/")) path = `/${path}`;
 	const target = path + (parts.query ? `?${quote(parts.query, URL_SAFE)}` : "");
-	return new WebURL(scheme, host, target);
+	// One serialization: the host authorized is the host of the very text fetch is given.
+	const parsed = URL.parse(`${scheme}://${host}${target}`);
+	if (parsed === null || parsed.protocol !== `${scheme}:` || parsed.hostname !== host || parsed.port !== "" || parsed.username !== "" || parsed.password !== "") {
+		throw invalidHost();
+	}
+	return new WebURL(scheme, host, target, parsed.href);
 }

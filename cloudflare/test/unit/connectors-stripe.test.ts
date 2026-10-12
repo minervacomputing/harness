@@ -17,7 +17,7 @@ import * as money from "../../src/connectors/stripe/money.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry, validate } from "../../src/gateway/registry.ts";
-import { KeyRing } from "../../src/lib/fernet.ts";
+import { EncryptionKeys } from "../../src/lib/encryption.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { WorkspaceCore } from "../../src/workspace/core.ts";
 import { ADA, EVE, FakeStripe, GONE, GRACE, KEY, LIVE_KEY, OTHER_KEY, SECRET } from "../fixtures/connectors/stripe/fake.ts";
@@ -94,13 +94,13 @@ describe("the declaration", () => {
 		console.log("stripe fingerprints", fingerprints);
 		// A change here is a change of what a tool means: running runs fail its calls with OPERATION_CHANGED.
 		expect(fingerprints).toEqual({
-			list_customers: "725187553a3e6b83",
-			get_customer: "540f6431d0407dd7",
-			list_payments: "7a22a12cc6e5a2d0",
-			list_invoices: "75f0e77395dac680",
-			list_subscriptions: "2c4d64a5714ed232",
-			refund_payment: "1ed8cb355fac0689",
-			credit_customer: "80e367d7f8cf45c7",
+			list_customers: "107f5a143d38669d",
+			get_customer: "b12b38a80143fa15",
+			list_payments: "8d3b516554968ef2",
+			list_invoices: "8b87b19aff425586",
+			list_subscriptions: "7cab78cb1c321e9b",
+			refund_payment: "a02d2def342712c3",
+			credit_customer: "bc21b6c026fe165b",
 		});
 	});
 
@@ -540,7 +540,7 @@ describe("credits", () => {
 async function workspace(): Promise<Pick<Harness, "core" | "sql" | "keys">> {
 	const db = database();
 	const sql = nodeSql(db);
-	const keys = await KeyRing.parse(KEYS);
+	const keys = await EncryptionKeys.parse(KEYS);
 	const timers = new FakeTimers();
 	const core = new WorkspaceCore({
 		sql,

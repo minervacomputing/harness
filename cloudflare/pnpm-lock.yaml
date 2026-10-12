@@ -20,6 +20,9 @@ importers:
       '@earendil-works/pi-durable':
         specifier: 1.1.0
         version: 1.1.0(@aws-sdk/credential-provider-node@3.972.85)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(@smithy/signature-v4@5.7.4)(undici@7.29.1)(ws@8.22.0)(zod@4.3.6)
+      '@zip.js/zip.js':
+        specifier: 2.23.0
+        version: 2.23.0
       acorn:
         specifier: 8.19.0
         version: 8.19.0
@@ -29,18 +32,27 @@ importers:
       better-auth:
         specifier: 1.7.7
         version: 1.7.7(vitest@4.1.11(@types/node@24.19.0)(vite@8.3.4(@types/node@24.19.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1)))
-      fflate:
-        specifier: 0.8.2
-        version: 0.8.2
+      canonicalize:
+        specifier: 5.1.0
+        version: 5.1.0
+      entities:
+        specifier: 8.1.0
+        version: 8.1.0
       hono:
         specifier: 4.13.9
         version: 4.13.9
+      ipaddr.js:
+        specifier: 2.5.0
+        version: 2.5.0
       oauth4webapi:
         specifier: 3.8.8
         version: 3.8.8
       pako:
         specifier: 2.1.0
         version: 2.1.0
+      postal-mime:
+        specifier: 4.0.5
+        version: 4.0.5
       saxes:
         specifier: 6.0.0
         version: 6.0.0
@@ -66,6 +78,9 @@ importers:
       cf:
         specifier: 1.0.0-beta.13
         version: 1.0.0-beta.13(@types/node@24.19.0)
+      fflate:
+        specifier: 0.8.2
+        version: 0.8.2
       playwright-core:
         specifier: 1.63.0
         version: 1.63.0
@@ -1407,6 +1422,10 @@ packages:
   '@vitest/utils@4.1.11':
     resolution: {integrity: sha512-zTCVGpyFsGWBhllOyKlTw/vnr6D9qxsfSDyfbyZmTyjHw5N/VuvzHpHoQjm2ZJzn4RJgx5w4r7V0er69CmLgPQ==}
 
+  '@zip.js/zip.js@2.23.0':
+    resolution: {integrity: sha512-K5obAqfrO7zhycnCupM9aaoZ9kx0SA0kv7+Z2oOUsdpWquv4s/Z4zyD7AdTqxrK3pgPM+ozaUi8kdRQbCWaIrQ==}
+    engines: {bun: '>=0.7.0', deno: '>=1.0.0', node: '>=18.0.0'}
+
   accepts@2.0.0:
     resolution: {integrity: sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==}
     engines: {node: '>= 0.6'}
@@ -1634,6 +1653,11 @@ packages:
   caniuse-lite@1.0.30001815:
     resolution: {integrity: sha512-uDybUEyfgbyJJ93J1vikTylBX31AkdVYeVPeffMQpf8XN7hSfr0oZOn4VFOIMNvtU5+rHvC5Udg2TgtJKHm23Q==}
 
+  canonicalize@5.1.0:
+    resolution: {integrity: sha512-bab9+WefZljqQ8jT0qRwVmTyzAUU63K97QIQD3agynIBrb6sa5M2eAy8Hv8K3p4V9+ONVYZKtGYl4Dg+/5Gumw==}
+    engines: {node: '>=22'}
+    hasBin: true
+
   capnweb@0.12.0:
     resolution: {integrity: sha512-jgZ/LMtMVTi+RVlooIslH78Gg23XbDTdvcLghWx3oz17D6u5GuJARt+uhZk/wcTo+f81eeabfnow4d3zLBj+JQ==}
 
@@ -1773,6 +1797,10 @@ packages:
   encodeurl@2.0.0:
     resolution: {integrity: sha512-Q0n9HRi4m6JuGIV1eFlmvJB7ZEVxu93IrMyiMsGC0lrMJMWzRgx6WGquyfQgZVb31vhGgXnfmPNNXmxnOkRBrg==}
     engines: {node: '>= 0.8'}
+
+  entities@8.1.0:
+    resolution: {integrity: sha512-kxL7msIffSuh9aaFAMD7rxAIuTRMAHMeBtgHW2yUdWw732ZNh4MehkF2gdjvtdmikkaIP9bFDDJOPlsvm7avrA==}
+    engines: {node: '>=20.19.0'}
 
   error-stack-parser-es@1.0.5:
     resolution: {integrity: sha512-5qucVt2XcuGMcEGgWI7i+yZpmpByQ8J1lHhcL7PwqCwu9FPP3VUXzT4ltHe5i2z9dePwEHcDVOAfSnHsOlCXRA==}
@@ -1984,6 +2012,10 @@ packages:
   ipaddr.js@1.9.1:
     resolution: {integrity: sha512-0KI/607xoxSToH7GjN1FfSbLoU0+btTicjsQSWQlh/hZykN8KpmMf7uYwPW3R+akZ6R/w18ZlXSHBYXiYUPO3g==}
     engines: {node: '>= 0.10'}
+
+  ipaddr.js@2.5.0:
+    resolution: {integrity: sha512-aq+t5NAc+cS6rZQQVWC2x98CPqGtKKTMDd4Gaodv0wShnItdKg/51djkGJ1hqH+Oy0ivDftCbSLCQob8zso01w==}
+    engines: {node: '>= 10'}
 
   is-docker@3.0.0:
     resolution: {integrity: sha512-eljcgEDlEns/7AXFosB5K/2nCM4P7FQPkGc/DWLy5rmFEWvZayGrik1d9/QIY5nJ4f9YsVvBkA6kJpHn9rISdQ==}
@@ -2335,6 +2367,10 @@ packages:
 
   postal-mime@2.7.6:
     resolution: {integrity: sha512-UUlyE2KlxmvwMGq060onF/VWU3zD6dVW31FwokQ5v26jWd35fbs2MoTFzh+jXnPwAyV2MULMKXcBInGOl5TO6Q==}
+
+  postal-mime@4.0.5:
+    resolution: {integrity: sha512-fWu1Cmo2ef6LCwgHU1fVrqo55eyFP31F7hH0j/wMWkQYYdh+H8zz3nBf3EYRQelkmTfDrbDfTvPUQEBT8DS/jw==}
+    engines: {node: '>=20'}
 
   postcss@8.5.29:
     resolution: {integrity: sha512-49cGhUbXj8Qenv0iTMxA1cFBzxXoctpC9Ujd77t1WcbJIr6nF/eI7g/8MgxrYldFRuAXvja7xQRwavoW7kgrxQ==}
@@ -4152,6 +4188,8 @@ snapshots:
       convert-source-map: 2.0.0
       tinyrainbow: 3.2.0
 
+  '@zip.js/zip.js@2.23.0': {}
+
   accepts@2.0.0:
     dependencies:
       mime-types: 3.0.2
@@ -4363,6 +4401,8 @@ snapshots:
 
   caniuse-lite@1.0.30001815: {}
 
+  canonicalize@5.1.0: {}
+
   capnweb@0.12.0: {}
 
   cf@1.0.0-beta.13(@types/node@24.19.0):
@@ -4470,6 +4510,8 @@ snapshots:
   empathic@2.1.0: {}
 
   encodeurl@2.0.0: {}
+
+  entities@8.1.0: {}
 
   error-stack-parser-es@1.0.5: {}
 
@@ -4737,6 +4779,8 @@ snapshots:
   ip-address@10.7.3: {}
 
   ipaddr.js@1.9.1: {}
+
+  ipaddr.js@2.5.0: {}
 
   is-docker@3.0.0: {}
 
@@ -5007,6 +5051,8 @@ snapshots:
   playwright-core@1.63.0: {}
 
   postal-mime@2.7.6: {}
+
+  postal-mime@4.0.5: {}
 
   postcss@8.5.29:
     dependencies:

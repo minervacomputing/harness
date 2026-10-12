@@ -11,7 +11,7 @@ import { OperationError } from "../gateway/connector.ts";
 import { secretOf, unauthorized } from "../gateway/executor.ts";
 import { CallIo } from "../gateway/http.ts";
 import { HttpError, detail } from "../http/errors.ts";
-import { KeyRing } from "../lib/fernet.ts";
+import { EncryptionKeys, credentialBinding } from "../lib/encryption.ts";
 import type { Member } from "./members.ts";
 
 /**
@@ -23,12 +23,12 @@ export const PROVIDER_NETWORK: { fetch: (env: Env, workspace: WorkspaceRef) => t
 	fetch: () => (input, init) => fetch(input, init),
 };
 
-let ring: { source: string; keys: Promise<KeyRing> } | null = null;
+let ring: { source: string; keys: Promise<EncryptionKeys> } | null = null;
 
 /** MINERVA_ENCRYPTION_KEYS, parsed once per isolate. */
-export function encryptionKeys(env: Env): Promise<KeyRing> {
+export function encryptionKeys(env: Env): Promise<EncryptionKeys> {
 	const source = env.MINERVA_ENCRYPTION_KEYS;
-	if (ring === null || ring.source !== source) ring = { source, keys: KeyRing.parse(source) };
+	if (ring === null || ring.source !== source) ring = { source, keys: EncryptionKeys.parse(source) };
 	return ring.keys;
 }
 
@@ -72,7 +72,8 @@ export async function keyAccount(env: Env, workspace: WorkspaceRef, connector: C
 export async function withConnection<T>(env: Env, member: Member, connector: Connector, connectionId: string, run: (client: ProviderClient) => Promise<T>): Promise<T> {
 	const lease = await member.object.lease(connectionId, { settings: member.caller });
 	if ("refused" in lease) throw new HttpError(detail(502, lease.message));
-	const payload = (await (await encryptionKeys(env)).decrypt(lease.sealed)) as unknown as CredentialPayload;
+	const binding = credentialBinding(member.workspace.id, connectionId);
+	const payload = (await (await encryptionKeys(env)).decrypt(binding, lease.sealed)) as unknown as CredentialPayload;
 	try {
 		return await call(env, member.workspace, connector, secretOf(payload), run);
 	} catch (error) {

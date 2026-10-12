@@ -7,7 +7,7 @@
 // means accepted, not delivered: delivery is asynchronous, and a bounce arrives later as mail.
 
 import type { ProviderIo } from "../../contracts/connectors.ts";
-import { type Json, pythonDumps } from "../../lib/json.ts";
+import { type Json, visibleJson } from "../../lib/json.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { API_URL, Graph, IMMUTABLE_IDS, User, pageParam, segment } from "../microsoft/index.ts";
 import { bool, int, list, model, nullable, optional, required, str } from "../microsoft/model.ts";
@@ -164,5 +164,5 @@ export class GraphClient extends Graph {
 
 /** `json.dumps(payload).encode()`, as the Microsoft clients send their writes. */
 export function pythonJson(payload: Json): string {
-	return pythonDumps(payload);
+	return visibleJson(payload);
 }

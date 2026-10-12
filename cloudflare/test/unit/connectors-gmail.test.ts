@@ -5,6 +5,7 @@
 // is patched; the OAuth reconnect flow itself belongs to the Worker's OAuth code, and the connector's part
 // of it (scopes asked for, consent) is tested here.
 
+import PostalMime from "postal-mime";
 import { describe, expect, test } from "vitest";
 import { Part, classify, pageToken } from "../../src/connectors/gmail/client.ts";
 import { gmailConnector } from "../../src/connectors/gmail/connector.ts";
@@ -807,6 +808,40 @@ describe("sending", () => {
 		expect(gmail.writes).toEqual([]);
 	});
 
+	test("a reply is refused when Reply-To is damaged or conflicting, though a tolerant parser would read an address from it", async () => {
+		const cases = [
+			["Evil <evil@example.net"],
+			["evil@example.net; grace@example.com"],
+			["a@example.com, bad"],
+			["evil@example.net", "grace@example.com"],
+			["grace@example.com", "grace@example.com"],
+		];
+		for (const values of cases) {
+			const gmail = new FakeGmail();
+			for (const value of values) gmail.headersOf(GRACE).push({ name: "Reply-To", value });
+			// Every recipient is granted: the refusal is the parser's, and From, which is fine, is not used instead.
+			const run = await start(gmail, { ...label_("INBOX"), ...recipient("*") });
+			expect(await run.code("gmail_reply", { message: GRACE, body: "x" }), JSON.stringify(values)).toBe("UNSUPPORTED_RECIPIENT");
+			expect(gmail.writes, JSON.stringify(values)).toEqual([]);
+		}
+	});
+
+	test("a reply to a message whose subject carries a line break is one header, read back by postal-mime", async () => {
+		const gmail = new FakeGmail();
+		const subject = gmail.headersOf(GRACE).find((header) => header.name === "Subject") as JsonObject;
+		subject.value = "Hi\r\nBcc: evil@example.net\u2028Cc: evil@example.net";
+		const run = await start(gmail, { ...label_("INBOX"), ...recipient("grace@example.com") });
+		items(await run.ok("gmail_reply", { message: GRACE, body: "Thanks" }));
+		const [, body, sent] = gmail.sent();
+		expect([sent.get("Bcc"), sent.get("Cc")]).toEqual([null, null]);
+		const raw = ((body.message as JsonObject | undefined) ?? body).raw as string;
+		const parsed = await PostalMime.parse(Buffer.from(raw, "base64url"));
+		expect(parsed.headers.map((header) => header.key)).toEqual(["to", "subject", "in-reply-to", "references", "content-type", "content-transfer-encoding", "mime-version"]);
+		expect(parsed.to?.map((address) => address.address)).toEqual(["grace@example.com"]);
+		expect([parsed.cc, parsed.bcc]).toEqual([undefined, undefined]);
+		expect(parsed.subject).toBe("Re: Hi Bcc: evil@example.net Cc: evil@example.net");
+	});
+
 	test("test_drafts_need_only_the_account", async () => {
 		const gmail = new FakeGmail();
 		let run = await start(gmail, DRAFTS);
@@ -851,14 +886,14 @@ describe("the declarations", () => {
 		// A change here is a change of what a tool means: running runs fail its calls with OPERATION_CHANGED.
 		// Bump `revision` when the meaning changed in a way the declaration does not show.
 		expect(fingerprints).toEqual({
-			"gmail.list_labels": "8f39a8a73094e193",
-			"gmail.list_messages": "a110c98a78ead863",
-			"gmail.read_message": "e5b5e3c58f918c7e",
-			"gmail.read_thread": "7965c0208bf36524",
-			"gmail.send_message": "bae6bfdfa8a83438",
-			"gmail.reply": "650303d2a9f4f7c2",
-			"gmail.create_draft": "e465af395ebed5ef",
-			"gmail.create_reply_draft": "e3ac2e0064e8582b",
+			"gmail.list_labels": "d30d85dd7a96ef61",
+			"gmail.list_messages": "43e2b7bfca5d5258",
+			"gmail.read_message": "21d8676f54e5a10a",
+			"gmail.read_thread": "c81ce841904ec917",
+			"gmail.send_message": "870688cee7e663ea",
+			"gmail.reply": "7cc966b1d68e1961",
+			"gmail.create_draft": "149b222a0a442e89",
+			"gmail.create_reply_draft": "b0593e8a19f3d0db",
 		});
 	});
 

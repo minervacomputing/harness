@@ -12,7 +12,7 @@ import type { Caller, WorkspaceRef } from "../../src/contracts/common.ts";
 import type { CancelAck, ConversationInit } from "../../src/contracts/conversation.ts";
 import type { CancelReason } from "../../src/contracts/runs.ts";
 import { Registry } from "../../src/gateway/registry.ts";
-import { KeyRing } from "../../src/lib/fernet.ts";
+import { EncryptionKeys, credentialBinding } from "../../src/lib/encryption.ts";
 import type { JsonObject } from "../../src/lib/json.ts";
 import type { ConversationClient, Timers } from "../../src/workspace/ports.ts";
 import { realTimers } from "../../src/workspace/ports.ts";
@@ -122,8 +122,8 @@ describe("the Workspace object", () => {
 		// The lease is sealed with the Worker's key; only the caller decrypts it.
 		const lease = await stub.lease(connection, { run: runId, userId: USER });
 		if ("refused" in lease) throw new Error(lease.message);
-		const keys = await KeyRing.parse(env.MINERVA_ENCRYPTION_KEYS);
-		expect(((await keys.decrypt(lease.sealed)) as JsonObject).access_token).toBe("a1");
+		const keys = await EncryptionKeys.parse(env.MINERVA_ENCRYPTION_KEYS);
+		expect(((await keys.decrypt(credentialBinding(ref.id, connection), lease.sealed)) as JsonObject).access_token).toBe("a1");
 		const changed = await stub.applyGrantChanges(ADA, connection, [{ kind: "folder", id: "archive", actions: ["read"] }], {});
 		expect(changed.ok && changed.value.revocation).toBe("acknowledged");
 		expect(conversations.cancels).toEqual([{ conversationId: created.value.id, runId, reason: "permissions_changed", entryId: 1 }]);

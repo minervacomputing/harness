@@ -1727,7 +1727,6 @@
      "z"
     ]
    },
-   "digest": "230310400d4659974c5c39e4209011352a0e0d6fa1aa3d9e8275fe947c22f3a8",
    "folder_bytes": 12288
   },
   {
@@ -1775,7 +1774,6 @@
      "z"
     ]
    },
-   "digest": "230310400d4659974c5c39e4209011352a0e0d6fa1aa3d9e8275fe947c22f3a8",
    "folder_bytes": 12288
   },
   {
@@ -1788,7 +1786,6 @@
     "files": {},
     "dirs": []
    },
-   "digest": "9d0efbd017188c3940fea7bf2439c6fd67e1bdec0492e1af779bb478c7640431",
    "folder_bytes": 0
   },
   {
@@ -1899,7 +1896,6 @@
      "\ud83d\ude01"
     ]
    },
-   "digest": "281c36e9c3aff14304dd17fe27126787d6aa2035cad49ee5d065a72ccd2c2cdc",
    "folder_bytes": 24576
   }
  ],

@@ -4,14 +4,16 @@
 import { z } from "zod";
 import type { Binding, Connector, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
-import { type Json, parseJson, pythonDumps } from "../../lib/json.ts";
+import { type Json, parseJson, visibleJson } from "../../lib/json.ts";
 import { strippedStr } from "../../lib/schema.ts";
 import { codePointLength, sliceCodePoints } from "../../lib/text.ts";
 import { casefold } from "../../lib/casefold.ts";
 import { oauth } from "../google/index.ts";
 import { setOwn } from "../google/model.ts";
 import { type EventTime, type GoogleCalendar, GoogleCalendarClient, type GoogleEvent, calendarName } from "./client.ts";
-import { DATE, TimeError, checkDateOrDateTime, checkDateTime, dateOrdinal, instant, nowIso, parseDate, parseDateTime } from "./times.ts";
+import { dateFromIsoFormat, datetimeFromIsoFormat, dateOrdinal, instant } from "../../lib/isoformat.ts";
+import { ValueError } from "../../lib/pyerrors.ts";
+import { DATE, checkDateOrDateTime, checkDateTime, nowIso } from "./times.ts";
 import { ZONES } from "../../lib/zones.ts";
 import { extend } from "../../lib/arrays.ts";
 
@@ -28,13 +30,13 @@ export const MAX_ATTENDEES = 50;
 export const READ_CONSENT = [[READ_SCOPE], [FULL_SCOPE]];
 export const WRITE_CONSENT = [[READ_SCOPE, EVENTS_SCOPE], [FULL_SCOPE]];
 
-/** An AfterValidator: `check` throws TimeError (Python's ValueError) with the message the model sees. */
+/** An AfterValidator: `check` throws ValueError with the message the model sees. */
 function after(check: (value: string) => unknown) {
 	return (value: string, ctx: z.RefinementCtx<string>) => {
 		try {
 			check(value);
 		} catch (error) {
-			if (!(error instanceof TimeError)) throw error;
+			if (!(error instanceof ValueError)) throw error;
 			ctx.addIssue({ code: "custom", message: error.message, input: value });
 		}
 	};
@@ -51,7 +53,7 @@ function passes(check: (value: string) => unknown, value: unknown): value is str
 		check(value);
 		return true;
 	} catch (error) {
-		if (error instanceof TimeError) return false;
+		if (error instanceof ValueError) return false;
 		throw error;
 	}
 }
@@ -158,7 +160,7 @@ const ListEvents = z
 		// `_ordered`, a model validator: only once every field passed.
 		if (!data.time_min || !data.time_max) return;
 		if (!passes(checkDateTime, data.time_min) || !passes(checkDateTime, data.time_max)) return;
-		if (instant(parseDateTime(data.time_max)) <= instant(parseDateTime(data.time_min))) {
+		if (instant(datetimeFromIsoFormat(data.time_max)) <= instant(datetimeFromIsoFormat(data.time_min))) {
 			ctx.addIssue({ code: "custom", message: "time_max must be after time_min", input: data });
 		}
 	});
@@ -187,8 +189,8 @@ const CreateEvent = z
 			return;
 		}
 		const ordered = allDay
-			? dateOrdinal(parseDate(data.end)) > dateOrdinal(parseDate(data.start))
-			: instant(parseDateTime(data.end)) > instant(parseDateTime(data.start));
+			? dateOrdinal(dateFromIsoFormat(data.end)) > dateOrdinal(dateFromIsoFormat(data.start))
+			: instant(datetimeFromIsoFormat(data.end)) > instant(datetimeFromIsoFormat(data.start));
 		if (!ordered) ctx.addIssue({ code: "custom", message: "end must be after start", input: data });
 	});
 
@@ -282,7 +284,7 @@ export function googleCalendarConnector(options: CalendarOptions = {}): Connecto
 						});
 						let nextCursor: string | null = null;
 						if (page.next_page_token) {
-							nextCursor = pythonDumps({ page: page.next_page_token, time_min: timeMin });
+							nextCursor = visibleJson({ page: page.next_page_token, time_min: timeMin });
 							if (codePointLength(nextCursor) > 1000) throw new OperationError("PROVIDER_LIMIT", "Google Calendar returned a page token that is too long.");
 						}
 						return { records: page.items.map((event) => eventRecord(binding, calendarId, event)), nextCursor };

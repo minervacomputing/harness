@@ -17,7 +17,8 @@ import type { AttemptFence, EpochMs, RunId } from "../contracts/common.ts";
 import type { DispatchResult, Settlement, ToolResult, WriteRecord, WriteStatus } from "../contracts/executor.ts";
 import { utf8 } from "../lib/bytes.ts";
 import { sha256Hex } from "../lib/hash.ts";
-import { canonicalAscii, parseJson } from "../lib/json.ts";
+import { hashInput } from "../lib/canonical.ts";
+import { parseJson } from "../lib/json.ts";
 import type { Sql } from "../lib/sql.ts";
 import type { Clock } from "./clock.ts";
 
@@ -53,12 +54,13 @@ export const WRITE_MESSAGES = {
 export { LEDGER_SCHEMA } from "./schema.ts";
 
 /**
- * A write's identity within its run: `sha256(tool + ":" + canonicalAscii(fields))` over the validated,
- * normalized arguments with their defaults, the page token included (connectors 7.1 step 6, risk 2).
- * Deduplication is by key, so it also catches a model that retries a write under a new call id.
+ * A write's identity within its run: SHA-256 over `minerva:write-key:` and the canonical JSON
+ * (lib/canonical.ts) of the tool name and the validated, normalized arguments with their defaults, the page
+ * token included (connectors 7.1 step 6, risk 2). Deduplication is by key, so it also catches a model that
+ * retries a write under a new call id.
  */
 export async function writeKey(tool: string, fields: { [key: string]: unknown }): Promise<string> {
-	return sha256Hex(`${tool}:${canonicalAscii(fields)}`);
+	return sha256Hex(hashInput("write-key", { tool, arguments: fields }));
 }
 
 interface WriteRow {

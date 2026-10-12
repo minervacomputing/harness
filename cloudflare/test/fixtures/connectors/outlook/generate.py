@@ -1,7 +1,7 @@
 """Writes what today's Python computes for the Outlook connector's port, as vectors.json: mail addresses
 (`connectors.addresses`), times (`reads._moment`), and the normalized arguments or validation message of
-Outlook's tool inputs. (The IDNA tables mail domains are encoded with are written by the Google generator,
-../google/generate.py, and the case folding table by the Xero one, into src/lib/.)
+Outlook's tool inputs. (Mail domains are encoded with the runtime's IDNA, src/lib/idna.ts; the case folding
+table is written by the Xero generator into src/lib/.)
 
 Only connector modules are imported, which load no configuration. Run from cloudflare/:
 cd ../backend && uv run python -I ../cloudflare/test/fixtures/connectors/outlook/generate.py

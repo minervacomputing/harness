@@ -11,7 +11,7 @@
 - `issues`, `events`: the records reads.py builds from an issue (`_issue`, `_issue_detail`) and an event
   (`_event`), on fixed and seeded random shapes.
 
-The executor's helpers (validation_message, _canonical, _hash) are read from executor.py's source, which
+The executor's `validation_message` is read from executor.py's source, which
 imports Django, rather than restated. Addresses and identifiers are made up, on reserved example domains.
 
 Run from cloudflare/:
@@ -56,9 +56,9 @@ CONNECTOR = SentryConnector()
 
 
 def executor_helpers() -> dict[str, Any]:
-    """validation_message, _canonical and _hash, compiled from executor.py on their own."""
+    """validation_message, compiled from executor.py on its own."""
     tree = ast.parse((BACKEND / "connectors" / "executor.py").read_text())
-    wanted = {"validation_message", "_canonical", "_hash"}
+    wanted = {"validation_message"}
     body = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in wanted]
     if {node.name for node in body} != wanted:
         raise SystemExit("executor.py no longer defines the helpers this generator reads.")
@@ -331,9 +331,7 @@ def inputs() -> dict[str, list[dict[str, Any]]]:
             except ValidationError as error:
                 cases.append({"raw": raw, "ok": False, "message": HELPERS["validation_message"](error)})
                 continue
-            fields = data.model_dump()
-            query_hash = HELPERS["_hash"](HELPERS["_canonical"]({k: v for k, v in fields.items() if k != "cursor"}))
-            cases.append({"raw": raw, "ok": True, "fields": fields, "query_hash": query_hash})
+            cases.append({"raw": raw, "ok": True, "fields": data.model_dump()})
         out[op.name] = cases
     return out
 

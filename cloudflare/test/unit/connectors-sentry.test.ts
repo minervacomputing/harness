@@ -73,10 +73,10 @@ describe("the declaration", () => {
 		// A change here is a change of what a tool means: running runs fail its calls with OPERATION_CHANGED.
 		// Bump `revision` when the meaning changed in a way the declaration does not show.
 		expect(fingerprints).toEqual({
-			list_projects: "7e1d2590853cab2f",
-			search_issues: "9ecb3771865e2814",
-			get_issue: "2f0bbfb75461c06d",
-			get_issue_event: "66fc9e0311cbc2be",
+			list_projects: "27cbca2c9362448b",
+			search_issues: "c88daf3f6af3cfeb",
+			get_issue: "bfa3bf2513fd2a29",
+			get_issue_event: "23fe0c581626c111",
 		});
 	});
 

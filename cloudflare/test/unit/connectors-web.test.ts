@@ -101,7 +101,7 @@ describe("the declaration", () => {
 		const fingerprints = Object.fromEntries(webConnector().operations.map((op) => [op.name, registry.contract("web", op.name)]));
 		console.log("web fingerprints", fingerprints);
 		// A change here is a change of what a tool means: running runs fail its calls with OPERATION_CHANGED.
-		expect(fingerprints).toEqual({ search: "68fa7415b50b732a", read_page: "528e37f323c1de9b" });
+		expect(fingerprints).toEqual({ search: "1bbf2acda18c2aa9", read_page: "094917eb283de259" });
 	});
 
 	test("the Worker's registry serves it", async () => {
@@ -276,6 +276,16 @@ describe("the fetcher", () => {
 		expect(await raised(fetcher(web).get(parseUrl("https://example.com/loop")))).toMatchObject({ code: "PAGE_ERROR", message: "The site redirected too many times." });
 		expect(web.requests.filter((request) => request.target === "/loop")).toHaveLength(6);
 		expect(web.sent.map((request) => request.host)).not.toContain("10.0.0.1");
+	});
+
+	test("each hop requests the serialization whose host was authorized, also after a redirect", async () => {
+		const web = new FakeWeb();
+		web.site("example.com");
+		web.page("example.com", "/b?q=%27x%27", { status: 302, headers: { location: "/c/%2e%2e/d?r='y'" } });
+		web.page("example.com", "/d?r=%27y%27", { status: 200, headers: { "content-type": "text/plain" }, body: "here" });
+		const got = await page(web, "https://example.com/a/../b?q='x'");
+		expect([got.url.text, got.url.href, got.text]).toEqual(["https://example.com/c/%2e%2e/d?r='y'", "https://example.com/d?r=%27y%27", "here"]);
+		expect(web.requests.map((request) => request.url)).toEqual(["https://example.com/b?q=%27x%27", "https://example.com/d?r=%27y%27"]);
 	});
 
 	test("bodies are capped before and after decompression", async () => {

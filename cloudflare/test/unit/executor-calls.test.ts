@@ -13,7 +13,7 @@ import {
 	modelContent,
 	writeId,
 } from "../../src/gateway/results.ts";
-import { pythonDumps } from "../../src/lib/json.ts";
+import { visibleJson } from "../../src/lib/json.ts";
 import vectors from "./vectors.ts";
 import { FakeClock, FakeTodoist, Gate, PROJECT, Scenario, TODOIST, todoistConnection, todoistConnector, userGrants } from "./executor-fakes.ts";
 
@@ -357,11 +357,11 @@ describe("what the chat and the model read", () => {
 
 	test("arguments are recorded whole up to 2000 characters of their JSON, else cut", () => {
 		const short = { title: "a".repeat(1980) };
-		expect(pythonDumps(short).length).toBeLessThanOrEqual(2000);
+		expect(visibleJson(short).length).toBeLessThanOrEqual(2000);
 		expect(argumentsSummary(short)).toBe(short);
 		const long = { title: "é".repeat(400) };
 		// Python's json.dumps escapes é as é, six characters each.
-		expect(argumentsSummary(long)).toEqual({ truncated: pythonDumps(long).slice(0, 2000) });
+		expect(argumentsSummary(long)).toEqual({ truncated: visibleJson(long).slice(0, 2000) });
 		expect((argumentsSummary(long) as { truncated: string }).truncated).toMatch(/^\{"title": "(\\u00e9)+\\u0/);
 		expect(argumentsSummary(undefined)).toEqual({});
 		expect(argumentsSummary(null)).toEqual({});

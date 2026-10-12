@@ -7,6 +7,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, test } from "vitest";
+import { type WorkspaceRow, ensureInitialized, workspaceOwner } from "../../src/accounts/provision.ts";
 import { workspaceObject } from "../../src/addressing.ts";
 import { PROVIDER_NETWORK } from "../../src/api/providers.ts";
 import { STILL_STOPPING, afterRevocation } from "../../src/api/members.ts";
@@ -44,8 +45,15 @@ function caller(a: Account, role: Role = "owner"): Caller {
 	return { userId: a.userId, role };
 }
 
-/** A Todoist connection of the account in a workspace, saved as the OAuth callback would save it. */
+/**
+ * A Todoist connection of the account in a workspace, saved as the OAuth callback would save it: after the
+ * member check has initialized the workspace's object (credentials are encrypted for the workspace it holds).
+ */
 async function todoistConnection(a: Account, ws = a.ws, account = { id: "u1", label: "Ada" }, role: Role = "owner"): Promise<string> {
+	const row = await env.DB.prepare("SELECT id, kind, name, jurisdiction, created_at, initialized_at FROM workspaces WHERE id = ?").bind(ws).first<WorkspaceRow>();
+	const owner = await workspaceOwner(env.DB, ws);
+	if (row === null || owner === null) throw new Error(`No workspace ${ws} with an owner`);
+	await ensureInitialized(env, row, owner);
 	const saved = await object(ws).saveConnection(caller(a, role), {
 		provider: "todoist",
 		account,

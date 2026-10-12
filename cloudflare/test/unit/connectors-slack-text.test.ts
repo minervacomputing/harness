@@ -9,7 +9,7 @@ import { describe, expect, test } from "vitest";
 import type { z } from "zod";
 import { decimalRanges, digitValue } from "../../src/lib/digits.ts";
 import { casefold } from "../../src/lib/casefold.ts";
-import { loweredPoints, pythonLower } from "../../src/lib/lower.ts";
+import { pythonLower } from "../../src/lib/lower.ts";
 import { Channel, Identity, Message, Posted, User, errorFor, judge, shownName } from "../../src/connectors/slack/client.ts";
 import { ValueError, channelName, isTs, isoTime, moment } from "../../src/connectors/slack/connector.ts";
 import { escape, redact, writtenProblem } from "../../src/connectors/slack/mrkdwn.ts";
@@ -166,9 +166,16 @@ describe("against Python", () => {
 	});
 
 	test("Unicode 16 as Python has it, whatever the runtime's: lower(), casefold() and the decimal digits", () => {
-		// Every code point Python lowercases, and what to: the runtime maps them alike (case pairs are stable).
-		expect(loweredPoints()).toEqual(vectors.lowered.map(([point]) => point));
-		for (const [point, lower] of vectors.lowered) expect(pythonLower(String.fromCodePoint(point)), point.toString(16)).toBe(lower);
+		// Every code point: the ones Python lowercases become what it makes of them, all others stay (the
+		// runtime lowercases Unicode 17's capitals too, which lib/unicode.ts leaves out).
+		const lowered = new Map(vectors.lowered);
+		const wrong: string[] = [];
+		for (let point = 0; point <= 0x10ffff; point++) {
+			if (point >= 0xd800 && point <= 0xdfff) continue;
+			const char = String.fromCodePoint(point);
+			if (pythonLower(char) !== (lowered.get(point) ?? char)) wrong.push(point.toString(16));
+		}
+		expect(wrong).toEqual([]);
 		// Characters cased since (Node 24 has Unicode 17) stay as they are, as in Python.
 		for (const { in: text, out, folded } of vectors.lower_words) {
 			expect(pythonLower(text), text).toBe(out);

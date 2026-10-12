@@ -5,9 +5,8 @@ connector computes, for the port's cross-language tests.
   each field with its default, so every user-facing and model-facing word is today's.
 - Schemas: each operation's input JSON Schema, what the model sees, without Pydantic's titles.
 - Inputs: each operation's input model on a list of raw arguments, as the executor validates them
-  (`model_validate`, the first five errors joined as `validation_message` words them), with the query hash
-  and, for writes, the write key of the normalized arguments (connectors/executor.py's `_canonical`, whose
-  `json.dumps` keywords are read from its source, and `_hash`).
+  (`model_validate`, the first five errors joined as `validation_message` words them), with the normalized
+  arguments.
 - Responses: the client's models on HubSpot's JSON, read as `_read` reads them (`model_validate_json`) and as
   `ProviderHTTP.parsed` does (`json.loads`, then `model_validate`); integers are written as strings.
 - The helpers whose words or arithmetic matter: `note_html`, `after`, `following`, `record_data`,
@@ -18,8 +17,6 @@ The backend's HubSpot modules load no configuration, so they are imported as the
 Run from cloudflare/: cd ../backend && uv run python -I ../cloudflare/test/fixtures/connectors/hubspot/generate.py
 """
 
-import ast
-import builtins
 import hashlib
 import json
 import sys
@@ -37,35 +34,6 @@ from connectors.base import OperationError  # noqa: E402
 from connectors.hubspot import client as hubspot_client  # noqa: E402
 from connectors.hubspot import connector as hubspot_connector  # noqa: E402
 from connectors.hubspot import reads, scope, writes  # noqa: E402
-
-
-def dumps_keywords(relative: str, function: str) -> dict:
-    tree = ast.parse((BACKEND / relative).read_text())
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == function:
-            for call in ast.walk(node):
-                if (
-                    isinstance(call, ast.Call)
-                    and isinstance(call.func, ast.Attribute)
-                    and call.func.attr == "dumps"
-                    and isinstance(call.func.value, ast.Name)
-                    and call.func.value.id == "json"
-                ):
-                    keywords = {}
-                    for keyword in call.keywords:
-                        if isinstance(keyword.value, ast.Name):
-                            keywords[keyword.arg] = getattr(builtins, keyword.value.id)
-                        else:
-                            keywords[keyword.arg] = ast.literal_eval(keyword.value)
-                    return keywords
-    raise SystemExit(f"No json.dumps call in {relative}:{function}")
-
-
-CANONICAL = dumps_keywords("connectors/executor.py", "_canonical")
-
-
-def canonical(data: dict) -> str:
-    return json.dumps(data, **CANONICAL)
 
 
 def sha256(text: str) -> str:
@@ -249,9 +217,6 @@ def input_vectors() -> list:
                 entry["raised"] = type(error).__name__
             else:
                 entry["dump"] = fields
-                entry["query_hash"] = sha256(canonical({k: v for k, v in fields.items() if k != "cursor"}))
-                if op.mutates:
-                    entry["write_key"] = sha256(f"hubspot_{name}:{canonical(fields)}")
             out.append(entry)
     return out
 

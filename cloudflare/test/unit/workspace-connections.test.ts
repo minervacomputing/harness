@@ -7,7 +7,8 @@ import { describe, expect, test } from "vitest";
 import { resourceKey } from "../../src/gateway/grants.ts";
 import { ALREADY_CONNECTED, NOT_FOUND, NOT_YOURS, UNKNOWN_PROVIDER } from "../../src/workspace/core.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
-import { ADA, GRACE, OTHER, USER, accessOf, column, connectMixed, credentials, grant, harness, setCredentials } from "./workspace-support.ts";
+import { EncryptionError } from "../../src/lib/encryption.ts";
+import { ADA, GRACE, OTHER, USER, accessOf, binding, column, connectMixed, credentials, grant, harness, setCredentials } from "./workspace-support.ts";
 
 const names = (...pairs: [string, string][]) => Object.fromEntries(pairs.map(([id, name]) => [resourceKey("folder", id), name]));
 
@@ -115,12 +116,17 @@ describe("saving connections", () => {
 		expect(column(h, saved.value.id, "scopes")).toBeNull();
 	});
 
-	test("ciphertext is Fernet under the first key's version, and the plaintext is Python's json.dumps", async () => {
+	test("ciphertext is an m2 envelope under the first key, bound to the connection, and the plaintext is canonical JSON", async () => {
 		const h = await harness();
 		const id = await connectMixed(h, { access_token: "a1", scopes: ["files"] });
+		const other = await connectMixed(h, { access_token: "a2" }, { account: "acct-2" });
 		expect(column(h, id, "key_version")).toBe("v1");
-		const plaintext = new TextDecoder().decode(await h.keys.decryptBytes({ ciphertext: column(h, id, "ciphertext") as string, version: "v1" }));
-		expect(plaintext).toBe('{"kind": "oauth2", "access_token": "a1", "refresh_token": null, "scopes": ["files"]}');
+		const sealed = { ciphertext: column(h, id, "ciphertext") as string, version: "v1" };
+		expect(sealed.ciphertext).toMatch(/^m2\.v1\.[A-Za-z0-9_-]+$/);
+		const plaintext = new TextDecoder().decode(await h.keys.decryptBytes(binding(id), sealed));
+		expect(plaintext).toBe('{"access_token":"a1","kind":"oauth2","refresh_token":null,"scopes":["files"]}');
+		// Encrypted for its own row: another connection's id does not decrypt it.
+		await expect(h.keys.decryptBytes(binding(other), sealed)).rejects.toBeInstanceOf(EncryptionError);
 	});
 });
 

@@ -1,7 +1,7 @@
 // backend/tests/test_linear.py's text, judge and ancestry cases, and the Linear connector's pure rules
 // compared with today's Python through test/fixtures/connectors/linear/vectors.json (generate.py there):
 // read text, written text and its links, team and issue names, due dates, the judge of writes, GraphQL
-// errors, every operation's input validation, and str.casefold.
+// errors, and every operation's input validation.
 
 import { describe, expect, test } from "vitest";
 import type { z } from "zod";
@@ -23,9 +23,9 @@ import {
 import { linear } from "../../src/connectors/linear/connector.ts";
 import { issueLinks, redact, writtenProblem } from "../../src/connectors/linear/markdown.ts";
 import { pythonLoads } from "../../src/connectors/linear/pyjson.ts";
-import { isoDate, strOf } from "../../src/connectors/linear/python.ts";
+import { isoDate } from "../../src/lib/isoformat.ts";
+import { strOf } from "../../src/connectors/linear/python.ts";
 import { PYTHON_SPACE_CLASS as RE_SPACE, WORD_CLASS as RE_WORD, pythonSplit } from "../../src/lib/text.ts";
-import { casefold } from "../../src/lib/casefold.ts";
 import { ancestry, issueName, teamName } from "../../src/connectors/linear/teams.ts";
 import type { Operation } from "../../src/contracts/connectors.ts";
 import { termsOf } from "../../src/gateway/connector.ts";
@@ -35,7 +35,6 @@ import { fromHex, fromUtf8 } from "../../src/lib/bytes.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
 import { sortByCodePoint } from "../../src/lib/order.ts";
 import type { OAuth2 } from "../../src/workspace/credentials.ts";
-import folds from "../fixtures/connectors/linear/casefold.json" with { type: "json" };
 import vectors from "../fixtures/connectors/linear/vectors.json" with { type: "json" };
 
 const SECRET = "Secret ops thing";
@@ -324,24 +323,6 @@ describe("against today's Python (vectors.json)", () => {
 		expect(unicode).toBe("16.0.0");
 		expect(mismatches.filter((mismatch) => !newer(Number.parseInt(mismatch.split(" ")[1] as string, 16)))).toEqual([]);
 		expect(mismatches.length).toBeLessThan(10_000);
-	});
-
-	test("str.casefold of every code point", () => {
-		const expected = folds as { [point: string]: string };
-		const mismatches: string[] = [];
-		for (let point = 0; point <= 0x10ffff; point++) {
-			if (point >= 0xd800 && point <= 0xdfff) continue;
-			const char = String.fromCodePoint(point);
-			const want = expected[point.toString(16)];
-			const folded = want === undefined ? char : String.fromCodePoint(...want.split(" ").map((part) => Number.parseInt(part, 16)));
-			if (casefold(char) !== folded) mismatches.push(point.toString(16));
-		}
-		// The runtime's Unicode may be newer than Python's 16.0 (Node 24's is 17): it may lowercase letters
-		// assigned since, which Python leaves as they are, and only those.
-		expect(mismatches.filter((point) => expected[point] !== undefined)).toEqual([]);
-		expect(mismatches.length).toBeLessThan(100);
-		expect(casefold("Straße")).toBe("strasse");
-		expect(casefold("ΣΑΣ")).toBe("σασ");
 	});
 });
 

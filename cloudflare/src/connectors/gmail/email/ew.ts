@@ -1,10 +1,12 @@
-// RFC 2047 encoded words as Python's email._encoded_words reads and writes them: `decode` for the header
-// parser (parser.ts) and `encode` for the folder (fold.ts), which always writes UTF-8 (or unknown-8bit).
+// RFC 2047 encoded words as Python's email._encoded_words reads and writes them: `decode` for the strict header
+// parser (parser.ts), which keeps its defects, and `encode` for the folder (fold.ts), which always writes UTF-8
+// (or unknown-8bit). Display text is decoded by postal-mime (mime.ts `headerText`); a word's charset here is read
+// by lib/charset.ts, strictly.
 
 import { utf8 } from "../../../lib/bytes.ts";
 import { a2bBase64, b64encode } from "./base64.ts";
-import { decode as decodeBytes } from "../../../lib/codecs.ts";
-import { BinasciiError, Defect, KeyError, LookupError, UnicodeDecodeError, UnicodeEncodeError, ValueError } from "./errors.ts";
+import { charsetKnown, decodeCharsetStrictly } from "../../../lib/charset.ts";
+import { BinasciiError, Defect, KeyError, LookupError, UnicodeEncodeError, ValueError } from "./errors.ts";
 
 /** `str.encode("ascii", "surrogateescape")`: ASCII, and U+DC80 to U+DCFF as the bytes they escape. */
 export function surrogateEscapeBytes(text: string): Uint8Array {
@@ -92,17 +94,16 @@ export function decodeEncodedWord(ew: string): DecodedWord {
 	else if (cte === "b") decoded = decodeB(bstring);
 	else throw new KeyError(cte);
 	const [bytes, defects] = decoded;
-	let text: string;
-	try {
-		text = decodeBytes(bytes, charset);
-	} catch (error) {
-		if (error instanceof UnicodeDecodeError) {
-			defects.push(new Defect("UndecodableBytesDefect", `Encoded word contains bytes not decodable using '${charset}' charset`));
-			text = decodeBytes(bytes, charset, "surrogateescape");
-		} else if (error instanceof LookupError || error instanceof UnicodeEncodeError) {
-			text = asciiSurrogateEscape(bytes);
-			if (charset.toLowerCase() !== "unknown-8bit") defects.push(new Defect("CharsetError", `Unknown charset '${charset}' in encoded word; decoded as unknown bytes`));
-		} else throw error;
+	// Text only where the bytes are cleanly the charset's (lib/charset.ts). Anything else is a defect, which
+	// refuses an address header; the word's text is then its ASCII with the other bytes escaped, never shown.
+	let text = decodeCharsetStrictly(bytes, charset);
+	if (text === null) {
+		text = asciiSurrogateEscape(bytes);
+		// "unknown-8bit" is how Python keeps bytes it has no charset for: not a defect.
+		if (charset.toLowerCase() !== "unknown-8bit") {
+			if (charsetKnown(charset)) defects.push(new Defect("UndecodableBytesDefect", `Encoded word contains bytes not decodable using '${charset}' charset`));
+			else defects.push(new Defect("CharsetError", `Unknown charset '${charset}' in encoded word; decoded as unknown bytes`));
+		}
 	}
 	return { text, charset, lang, defects };
 }

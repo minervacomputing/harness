@@ -5,7 +5,7 @@ import { conversationObject, filesBucket } from "../addressing.ts";
 import { clientSecretNames, settings } from "../config.ts";
 import type { WorkspaceRef } from "../contracts/common.ts";
 import type { ConversationApi } from "../contracts/conversation.ts";
-import type { KeyRing } from "../lib/fernet.ts";
+import { type EncryptionKeys, oauthClientBinding } from "../lib/encryption.ts";
 import { conversationPrefix, deletePrefix } from "../files/objects.ts";
 import { asPayload } from "./credentials.ts";
 import type { ClientCredentials, ConversationClient, OAuthClients, ObjectStore, WorkspaceSettings } from "./ports.ts";
@@ -54,9 +54,9 @@ export function configuredClient(env: Env, app: string): { clientId: string; cli
 /**
  * MINERVA_<APP>_CLIENT_ID and _SECRET (both required; an empty id counts as unset), then the clients
  * registered dynamically, in D1's `oauth_clients`, whose secrets are encrypted as `{"secret": …}`
- * (connectors 11.1).
+ * (connectors 11.1), bound to the row's provider, redirect URI and client id (lib/encryption.ts).
  */
-export function oauthClients(env: Env, keys: KeyRing): OAuthClients {
+export function oauthClients(env: Env, keys: EncryptionKeys): OAuthClients {
 	return {
 		configured: (app) => configuredClient(env, app),
 		async stored(app, redirectUri): Promise<ClientCredentials | null> {
@@ -66,7 +66,8 @@ export function oauthClients(env: Env, keys: KeyRing): OAuthClients {
 				.bind(app, redirectUri)
 				.first<{ client_id: string; secret_ciphertext: string; secret_key_version: string; redirect_uri: string }>();
 			if (row === null) return null;
-			const secret = asPayload(await keys.decrypt({ ciphertext: row.secret_ciphertext, version: row.secret_key_version })).secret;
+			const binding = oauthClientBinding(app, row.redirect_uri, row.client_id);
+			const secret = asPayload(await keys.decrypt(binding, { ciphertext: row.secret_ciphertext, version: row.secret_key_version })).secret;
 			return typeof secret === "string" ? { clientId: row.client_id, clientSecret: secret, redirectUri: row.redirect_uri } : null;
 		},
 	};

@@ -27,7 +27,7 @@ import { z } from "zod";
 import type { Binding, Connector, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
-import { type Json, parseJson, pythonDumps } from "../../lib/json.ts";
+import { type Json, parseJson, visibleJson } from "../../lib/json.ts";
 import { strippedStr } from "../../lib/schema.ts";
 import { fromUtf8 } from "../../lib/bytes.ts";
 import { codePointLength, pythonStrip, sliceCodePoints } from "../../lib/text.ts";
@@ -703,7 +703,7 @@ export function onedriveConnector(options: { baseUrl?: string } = {}): Connector
 			const names = await describe(client, ids);
 			return {
 				items: ids.filter((id) => Object.hasOwn(names, id)).map((id) => ({ id, name: names[id] as string })),
-				nextCursor: next ? pythonDumps({ page: next }) : null,
+				nextCursor: next ? visibleJson({ page: next }) : null,
 			};
 		},
 

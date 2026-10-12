@@ -19,7 +19,7 @@ import { SaxesParser, type SaxesAttributeNS, type SaxesTagNS } from "saxes";
 import { OperationError } from "../../gateway/connector.ts";
 import { codePointLength, sliceCodePoints } from "../../lib/text.ts";
 import { DIGIT_CLASS, decimalValue, isDigitOnly } from "../../lib/digits.ts";
-import { BadZip, DEFLATED, type EntryReader, STORED, type ZipEntry, openEntry, readDirectory } from "./zip.ts";
+import { BadZip, Zip } from "./zip.ts";
 
 export const MAX_ENTRIES = 5000;
 /** Bytes decompressed across every part read, whatever the text they yield. */
@@ -269,33 +269,27 @@ class ScopedParser extends SaxesParser<{ xmlns: true; position: false }> {
 }
 
 export class Archive {
-	readonly data: Uint8Array;
-	readonly infos: Map<string, ZipEntry>;
-	budget = MAX_EXPANDED;
+	readonly zip: Zip;
 
-	constructor(data: Uint8Array) {
-		this.data = data;
-		let entries: ZipEntry[];
+	constructor(zip: Zip) {
+		this.zip = zip;
+	}
+
+	/** The archive's directory; the limits on its entries and on what is inflated are zip.ts's. */
+	static async open(data: Uint8Array): Promise<Archive> {
 		try {
-			entries = readDirectory(data);
+			return new Archive(await Zip.open(data, { entries: MAX_ENTRIES, bytes: MAX_EXPANDED, overflow: tooLarge }));
 		} catch (error) {
 			if (error instanceof BadZip) throw unreadable();
 			throw error;
 		}
-		if (entries.length > MAX_ENTRIES) throw unreadable();
-		this.infos = new Map(entries.map((entry) => [entry.filename, entry]));
-		// Two entries with one name: which one is read is ambiguous.
-		if (this.infos.size !== entries.length) throw unreadable();
 	}
 
 	has(name: string): boolean {
-		return this.infos.has(name);
+		return this.zip.has(name);
 	}
 
-	parse(name: string, start: Start, end: End | null = null, chars: Chars | null = null): void {
-		const info = this.infos.get(name);
-		if (info === undefined) throw unreadable();
-		if (info.flagBits & 0x1 || (info.compressType !== STORED && info.compressType !== DEFLATED)) throw unreadable();
+	async parse(name: string, start: Start, end: End | null = null, chars: Chars | null = null): Promise<void> {
 		const parser = new ScopedParser({ xmlns: true, position: false });
 		parser.on("doctype", () => {
 			throw unreadable();
@@ -327,13 +321,8 @@ export class Archive {
 		}
 		const decoder = new Decoder();
 		try {
-			const part: EntryReader = openEntry(this.data, info);
 			let first = true;
-			for (;;) {
-				const chunk = part.read(CHUNK);
-				if (!chunk.length) break;
-				this.budget -= chunk.length;
-				if (this.budget < 0) throw tooLarge();
+			await this.zip.read(name, CHUNK, (chunk) => {
 				let text = decoder.write(chunk, false);
 				if (first) {
 					// A second byte order mark is text before the root; saxes would skip it.
@@ -344,7 +333,7 @@ export class Archive {
 				}
 				parser.write(text);
 				if (chars !== null) flushText(parser, chars);
-			}
+			});
 			parser.write(decoder.write(new Uint8Array(0), true));
 			parser.close();
 		} catch (error) {
@@ -356,12 +345,12 @@ export class Archive {
 	}
 
 	/** The part's internal relationships: id -> [type, the target part's name]. */
-	relationships(part: string): Map<string, [string, string]> {
+	async relationships(part: string): Promise<Map<string, [string, string]>> {
 		const [folder, base] = split(part);
 		const rels = join(folder, "_rels", `${base}.rels`);
 		const found = new Map<string, [string, string]>();
 		if (!this.has(rels)) return found;
-		this.parse(rels, (name, attrs) => {
+		await this.parse(rels, (name, attrs) => {
 			if (name !== "Relationship" || attrs.get("TargetMode") === "External") return;
 			const rid = attrs.get("Id");
 			const kind = attrs.get("Type");
@@ -375,8 +364,8 @@ export class Archive {
 	}
 
 	/** The package's main part (the document, presentation or workbook). */
-	main(): string {
-		for (const [kind, target] of this.relationships("").values()) {
+	async main(): Promise<string> {
+		for (const [kind, target] of (await this.relationships("")).values()) {
 			if (kind.endsWith("/officeDocument")) return target;
 		}
 		throw unreadable();
@@ -384,9 +373,9 @@ export class Archive {
 }
 
 /** The text of `t` elements, a newline after each paragraph, and `marks` for the elements they name. */
-function paragraphs(archive: Archive, part: string, text: Text, marks: Map<string, string>): void {
+async function paragraphs(archive: Archive, part: string, text: Text, marks: Map<string, string>): Promise<void> {
 	let inside = false;
-	archive.parse(
+	await archive.parse(
 		part,
 		(name) => {
 			if (name === "t") inside = true;
@@ -402,10 +391,10 @@ function paragraphs(archive: Archive, part: string, text: Text, marks: Map<strin
 	);
 }
 
-function word(archive: Archive, text: Text): void {
-	paragraphs(
+async function word(archive: Archive, text: Text): Promise<void> {
+	await paragraphs(
 		archive,
-		archive.main(),
+		await archive.main(),
 		text,
 		new Map([
 			["tab", "\t"],
@@ -415,11 +404,11 @@ function word(archive: Archive, text: Text): void {
 	);
 }
 
-function slides(archive: Archive): string[] {
-	const main = archive.main();
-	const relationships = archive.relationships(main);
+async function slides(archive: Archive): Promise<string[]> {
+	const main = await archive.main();
+	const relationships = await archive.relationships(main);
 	const order: string[] = [];
-	archive.parse(main, (name, attrs) => {
+	await archive.parse(main, (name, attrs) => {
 		if (name !== "sldId" || order.length >= MAX_SLIDES) return;
 		const rid = relationshipId(attrs);
 		if (rid) order.push(rid);
@@ -427,22 +416,22 @@ function slides(archive: Archive): string[] {
 	return order.filter((rid) => relationships.has(rid)).map((rid) => (relationships.get(rid) as [string, string])[1]);
 }
 
-function powerpoint(archive: Archive, text: Text): void {
+async function powerpoint(archive: Archive, text: Text): Promise<void> {
 	let number = 0;
-	for (const slide of slides(archive)) {
+	for (const slide of await slides(archive)) {
 		number += 1;
 		if (text.full) return;
 		text.add(`${number > 1 ? "\n" : ""}Slide ${number}\n`);
-		paragraphs(archive, slide, text, new Map([["br", "\n"]]));
+		await paragraphs(archive, slide, text, new Map([["br", "\n"]]));
 	}
 }
 
-function sharedStrings(archive: Archive, part: string): string[] {
+async function sharedStrings(archive: Archive, part: string): Promise<string[]> {
 	const strings: string[] = [];
 	let current: string[] = [];
 	let total = 0;
 	const depth = { t: 0, rPh: 0 };
-	archive.parse(
+	await archive.parse(
 		part,
 		(name) => {
 			if (name === "si") current = [];
@@ -506,11 +495,11 @@ export function csvRow(cells: readonly string[]): string {
 }
 
 /** The first worksheet, in workbook order, as CSV. */
-function excel(archive: Archive, text: Text): void {
-	const main = archive.main();
-	const relationships = archive.relationships(main);
+async function excel(archive: Archive, text: Text): Promise<void> {
+	const main = await archive.main();
+	const relationships = await archive.relationships(main);
 	const first: string[] = [];
-	archive.parse(main, (name, attrs) => {
+	await archive.parse(main, (name, attrs) => {
 		if (name !== "sheet" || first.length) return;
 		const rid = relationshipId(attrs);
 		if (rid) first.push(rid);
@@ -523,7 +512,7 @@ function excel(archive: Archive, text: Text): void {
 			break;
 		}
 	}
-	const strings = shared && archive.has(shared) ? sharedStrings(archive, shared) : [];
+	const strings = shared && archive.has(shared) ? await sharedStrings(archive, shared) : [];
 
 	const row = new Map<number, string>();
 	// The cell being read; it stays set after the cell ends, as office.py's dict does.
@@ -531,7 +520,7 @@ function excel(archive: Archive, text: Text): void {
 	let value: string[] = [];
 	const state = { v: false, is: false, t: false };
 	const isState = (name: string): name is keyof typeof state => name === "v" || name === "is" || name === "t";
-	archive.parse(
+	await archive.parse(
 		(relationships.get(first[0] as string) as [string, string])[1],
 		(name, attrs) => {
 			if (name === "row") row.clear();
@@ -568,15 +557,15 @@ function excel(archive: Archive, text: Text): void {
 	);
 }
 
-const READERS: { [kind in Kind]: (archive: Archive, text: Text) => void } = { docx: word, pptx: powerpoint, xlsx: excel };
+const READERS: { [kind in Kind]: (archive: Archive, text: Text) => Promise<void> } = { docx: word, pptx: powerpoint, xlsx: excel };
 
 export function isKind(value: string): value is Kind {
 	return value === "docx" || value === "pptx" || value === "xlsx";
 }
 
 /** The text of a .docx, .pptx or .xlsx file, at most `limit` characters. */
-export function extract(kind: Kind, data: Uint8Array, limit: number): string {
+export async function extract(kind: Kind, data: Uint8Array, limit: number): Promise<string> {
 	const text = new Text(limit);
-	READERS[kind](new Archive(data), text);
+	await READERS[kind](await Archive.open(data), text);
 	return text.value();
 }

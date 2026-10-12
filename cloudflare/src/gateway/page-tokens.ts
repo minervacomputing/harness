@@ -5,7 +5,7 @@
 
 import type { EpochMs, RunId } from "../contracts/common.ts";
 import { sha256Hex } from "../lib/hash.ts";
-import { canonicalAscii } from "../lib/json.ts";
+import { hashInput } from "../lib/canonical.ts";
 import { tokenUrlsafe } from "../lib/random.ts";
 import type { Sql } from "../lib/sql.ts";
 import { codePointLength } from "../lib/text.ts";
@@ -23,12 +23,13 @@ export const INVALID_CURSOR_MESSAGE = "This page token is invalid or belongs to 
 export { PAGE_TOKEN_SCHEMA } from "./schema.ts";
 
 /**
- * `sha256(canonicalAscii(fields without "cursor"))` over the validated, normalized arguments with their
- * defaults (connectors 7.1 step 4, risk 2), so a token is valid only for the same query.
+ * SHA-256 over `minerva:query:` and the canonical JSON (lib/canonical.ts) of the validated, normalized
+ * arguments with their defaults, without "cursor" (connectors 7.1 step 4, risk 2), so a token is valid only
+ * for the same query. The tool name is bound beside it, in the token's row.
  */
 export async function queryHash(fields: { [key: string]: unknown }): Promise<string> {
 	// Object.fromEntries defines own properties, so every key stays a key.
-	return sha256Hex(canonicalAscii(Object.fromEntries(Object.entries(fields).filter(([name]) => name !== "cursor"))));
+	return sha256Hex(hashInput("query", Object.fromEntries(Object.entries(fields).filter(([name]) => name !== "cursor"))));
 }
 
 export class PageTokens {

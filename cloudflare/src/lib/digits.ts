@@ -1,7 +1,12 @@
-// Python 3.14's decimal digits (category Nd, Unicode 16.0.0), pinned: the runtime's own tables may be newer
-// (Node 24 has 17.0). Which characters `\d` matches in a str pattern and `int()` and `float()` read, and what
-// each is worth. A character made a digit after Unicode 16 is no digit here, as it is none to Python. The
-// tests check the table against test/fixtures/connectors/slack/vectors.json and sentry's.
+// Python 3.14's decimal digits (category Nd, Unicode 16.0.0): which characters `\d` matches in a str pattern and
+// `int()` and `float()` read, and what each is worth. They are the runtime's `\p{Nd}` without the ten digits
+// Unicode 17 added (U+11DE0 to U+11DE9, lib/unicode.ts), so a character made a digit after Unicode 16 is no
+// digit here, as it is none to Python. They are written out as a table because the connectors build their
+// patterns from it when they load, and a script cannot list a property's code points without scanning the
+// whole code space: the table is ten lines, a scan at every start would cost more. test/unit/unicode.test.ts
+// compares it with Python's `\d` and with the runtime's `\p{Nd}` for every code point.
+
+import { hexRanges } from "./unicode.ts";
 
 /** Ranges of the decimal digits (category Nd), in hex; each starts a run of digits 0 to 9. */
 const DECIMAL_RANGES =
@@ -12,15 +17,6 @@ const DECIMAL_RANGES =
 	"11450-11459,114d0-114d9,11650-11659,116c0-116c9,116d0-116e3,11730-11739,118e0-118e9,11950-11959,11bf0-11bf9," +
 	"11c50-11c59,11d50-11d59,11da0-11da9,11f50-11f59,16130-16139,16a60-16a69,16ac0-16ac9,16b50-16b59,16d70-16d79," +
 	"1ccf0-1ccf9,1d7ce-1d7ff,1e140-1e149,1e2f0-1e2f9,1e4f0-1e4f9,1e5f1-1e5fa,1e950-1e959,1fbf0-1fbf9";
-
-/** Ranges in a table: `<first>-<last>` (or one code point), `/2` for every other one, in hex. */
-export function hexRanges(table: string): [first: number, last: number, step: number][] {
-	return table.split(",").map((entry) => {
-		const [span = "", step = "1"] = entry.split("/");
-		const [first = "", last = first] = span.split("-");
-		return [Number.parseInt(first, 16), Number.parseInt(last, 16), Number(step)];
-	});
-}
 
 const DECIMALS = hexRanges(DECIMAL_RANGES);
 

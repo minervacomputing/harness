@@ -602,9 +602,9 @@ describe("creating files", () => {
 });
 
 describe("Office files", () => {
-	const unreadable = (call: () => unknown) => {
+	const unreadable = async (call: () => Promise<unknown>) => {
 		try {
-			call();
+			await call();
 		} catch (error) {
 			if (error instanceof OperationError) return error.code;
 			throw error;
@@ -612,39 +612,39 @@ describe("Office files", () => {
 		return null;
 	};
 
-	test("test_office_files_that_declare_a_doctype_are_refused", () => {
+	test("test_office_files_that_declare_a_doctype_are_refused", async () => {
 		const bomb =
 			'<?xml version="1.0"?><!DOCTYPE d [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;">]>' +
 			`<w:document xmlns:w="${W}"><w:body><w:p><w:r><w:t>&b;</w:t></w:r></w:p></w:body></w:document>`;
 		const data = zipped({ "_rels/.rels": rels(["rId1", "officeDocument", "word/document.xml"]), "word/document.xml": bomb });
-		expect(unreadable(() => extract("docx", data, 1000))).toBe("UNSUPPORTED_FILE");
+		expect(await unreadable(() => extract("docx", data, 1000))).toBe("UNSUPPORTED_FILE");
 	});
 
-	test("test_office_archives_are_bounded", () => {
+	test("test_office_archives_are_bounded", async () => {
 		const padding = " ".repeat(MAX_EXPANDED + 1);
 		const expanding = zipped({
 			"_rels/.rels": rels(["rId1", "officeDocument", "word/document.xml"]),
 			"word/document.xml": `<w:document xmlns:w="${W}">${padding}</w:document>`,
 		});
 		expect(expanding.length).toBeLessThan(1024 * 1024);
-		expect(unreadable(() => extract("docx", expanding, 1000))).toBe("FILE_TOO_LARGE");
+		expect(await unreadable(() => extract("docx", expanding, 1000))).toBe("FILE_TOO_LARGE");
 
 		const crowded = zipped(Object.fromEntries(Array.from({ length: MAX_ENTRIES + 1 }, (_, n) => [`part${n}.xml`, ""])));
-		expect(unreadable(() => extract("docx", crowded, 1000))).toBe("UNSUPPORTED_FILE");
+		expect(await unreadable(() => extract("docx", crowded, 1000))).toBe("UNSUPPORTED_FILE");
 		// A real document among too many parts is refused for their number alone.
 		const document = { "_rels/.rels": rels(["rId1", "officeDocument", "word/document.xml"]), "word/document.xml": "<d><p><t>crowd</t></p></d>" };
 		const filler = (count: number) => Object.fromEntries(Array.from({ length: count }, (_, n) => [`part${n}.xml`, ""]));
-		expect(extract("docx", zipped({ ...document, ...filler(MAX_ENTRIES - 2) }), 1000)).toBe("crowd\n");
-		expect(unreadable(() => extract("docx", zipped({ ...document, ...filler(MAX_ENTRIES - 1) }), 1000))).toBe("UNSUPPORTED_FILE");
+		expect(await extract("docx", zipped({ ...document, ...filler(MAX_ENTRIES - 2) }), 1000)).toBe("crowd\n");
+		expect(await unreadable(() => extract("docx", zipped({ ...document, ...filler(MAX_ENTRIES - 1) }), 1000))).toBe("UNSUPPORTED_FILE");
 
-		for (const data of [text("not a zip"), zipped({ "word/document.xml": "<x/>" })]) expect(unreadable(() => extract("docx", data, 1000))).toBe("UNSUPPORTED_FILE");
+		for (const data of [text("not a zip"), zipped({ "word/document.xml": "<x/>" })]) expect(await unreadable(() => extract("docx", data, 1000))).toBe("UNSUPPORTED_FILE");
 
 		// Reading stops at the limit, however much text the file holds.
 		const long = docx(`<w:p><w:r><w:t>${"word ".repeat(100_000)}</w:t></w:r></w:p>`);
-		expect(extract("docx", long, 12)).toBe("word word wo");
+		expect(await extract("docx", long, 12)).toBe("word word wo");
 	});
 
-	test("test_excel_rows_are_cut_before_they_are_built", () => {
+	test("test_excel_rows_are_cut_before_they_are_built", async () => {
 		// One long shared string in every cell of a row would make a row hundreds of megabytes long.
 		const long = "x".repeat(3 * 1024 * 1024);
 		const cells = '<c t="s"><v>0</v></c>'.repeat(200);
@@ -658,7 +658,7 @@ describe("Office files", () => {
 		});
 		const before = process.memoryUsage().heapUsed;
 		const started = performance.now();
-		expect(extract("xlsx", data, 1000)).toBe("x".repeat(1000));
+		expect(await extract("xlsx", data, 1000)).toBe("x".repeat(1000));
 		// Python bounds the peak at 64 MiB; here the time and the heap growth stand for it.
 		expect(performance.now() - started).toBeLessThan(10_000);
 		expect(process.memoryUsage().heapUsed - before).toBeLessThan(256 * 1024 * 1024);
@@ -670,8 +670,8 @@ describe("Office files", () => {
 			"xl/_rels/workbook.xml.rels": rels(["rId1", "worksheet", "worksheets/sheet1.xml"]),
 			"xl/worksheets/sheet1.xml": `<worksheet xmlns="${S}"><sheetData><row r="1"><c r="A1"><v>12345</v></c><c r="B1"><v>67890</v></c></row></sheetData></worksheet>`,
 		});
-		expect(extract("xlsx", short, 8)).toBe("12345,67");
-		expect(extract("xlsx", short, 100)).toBe("12345,67890\n");
+		expect(await extract("xlsx", short, 8)).toBe("12345,67");
+		expect(await extract("xlsx", short, 100)).toBe("12345,67890\n");
 	});
 });
 
@@ -683,26 +683,26 @@ describe("bounds the Python tests leave to the library (zip bombs and entity exp
 		return data;
 	};
 
-	test("a zip inside a zip is not a Word file", () => {
-		expect(() => extract("docx", nested(3), 1000)).toThrow(expect.objectContaining({ code: "UNSUPPORTED_FILE" }));
+	test("a zip inside a zip is not a Word file", async () => {
+		await expect(extract("docx", nested(3), 1000)).rejects.toMatchObject({ code: "UNSUPPORTED_FILE" });
 	});
 
-	test("an entity declared in a DOCTYPE is never expanded: the file is refused before any text is read", () => {
+	test("an entity declared in a DOCTYPE is never expanded: the file is refused before any text is read", async () => {
 		const entities = Array.from({ length: 9 }, (_, n) => `<!ENTITY e${n + 1} "${`&e${n};`.repeat(10)}">`).join("");
 		const laughs = `<!DOCTYPE d [<!ENTITY e0 "lol">${entities}]>`;
 		const started = performance.now();
 		const data = zipped({ "_rels/.rels": rels(["rId1", "officeDocument", "word/document.xml"]), "word/document.xml": `${laughs}<w:document xmlns:w="${W}"><w:body><w:p><w:r><w:t>&e9;</w:t></w:r></w:p></w:body></w:document>` });
-		expect(() => extract("docx", data, 1000)).toThrow(expect.objectContaining({ code: "UNSUPPORTED_FILE" }));
+		await expect(extract("docx", data, 1000)).rejects.toMatchObject({ code: "UNSUPPORTED_FILE" });
 		expect(performance.now() - started).toBeLessThan(2000);
 	});
 
-	test("a DOCTYPE the size of the whole budget is refused in bounded time", () => {
+	test("a DOCTYPE the size of the whole budget is refused in bounded time", async () => {
 		const started = performance.now();
 		const subset = `<!ENTITY a "${"a".repeat(1000)}">`.repeat(Math.floor(MAX_EXPANDED / 1030));
 		const data = zipped({ "_rels/.rels": rels(["rId1", "officeDocument", "word/document.xml"]), "word/document.xml": `<!DOCTYPE d [${subset}]><d/>` });
-		const code = (() => {
+		const code = await (async () => {
 			try {
-				extract("docx", data, 1000);
+				await extract("docx", data, 1000);
 			} catch (error) {
 				return (error as OperationError).code;
 			}
@@ -712,30 +712,30 @@ describe("bounds the Python tests leave to the library (zip bombs and entity exp
 		expect(performance.now() - started).toBeLessThan(10_000);
 	});
 
-	test("deep nesting is read in about linear time, with Python's text", () => {
+	test("deep nesting is read in about linear time, with Python's text", async () => {
 		// Before: saxes walked every open element to resolve each prefix; 100,000 levels took about 30 seconds.
 		const depth = 100_000;
 		const plain = docx(`<w:p><w:r>${"<w:x>".repeat(depth)}<w:t>deep</w:t>${"</w:x>".repeat(depth)}</w:r></w:p><w:p><w:r><w:t>after</w:t></w:r></w:p>`);
 		const started = performance.now();
-		expect(extract("docx", plain, 1000)).toBe("deep\nafter\n");
+		expect(await extract("docx", plain, 1000)).toBe("deep\nafter\n");
 		const declared = Array.from({ length: depth / 2 }, (_, i) => `<w:x xmlns:p${i}="urn:example:${i}">`).join("");
-		expect(extract("docx", docx(`<w:p><w:r>${declared}<w:t>deep</w:t>${"</w:x>".repeat(depth / 2)}</w:r></w:p>`), 1000)).toBe("deep\n");
+		expect(await extract("docx", docx(`<w:p><w:r>${declared}<w:t>deep</w:t>${"</w:x>".repeat(depth / 2)}</w:r></w:p>`), 1000)).toBe("deep\n");
 		expect(performance.now() - started).toBeLessThan(3000);
 	});
 
-	test("prefixes resolve as saxes resolves them when bindings are shadowed and restored", () => {
+	test("prefixes resolve as saxes resolves them when bindings are shadowed and restored", async () => {
 		const body =
 			'<w:p><w:r><w:t>one</w:t></w:r></w:p><w:p xmlns:w="urn:example:other"><w:r><w:t>hidden</w:t></w:r></w:p>' +
 			`<w:p><w:r><w:t>two</w:t></w:r><x:r xmlns:x="${W}"><x:t>three</x:t></x:r></w:p><d xmlns="${W}"><p><r><t>four</t></r></p></d>`;
-		expect(extract("docx", docx(body), 1000)).toBe("one\nhidden\ntwothree\nfour\n");
+		expect(await extract("docx", docx(body), 1000)).toBe("one\nhidden\ntwothree\nfour\n");
 	});
 
-	test("an unterminated DOCTYPE past the budget is refused as too large", () => {
+	test("an unterminated DOCTYPE past the budget is refused as too large", async () => {
 		const data = zipped({ "_rels/.rels": rels(["rId1", "officeDocument", "word/document.xml"]), "word/document.xml": `<!DOCTYPE d [${" ".repeat(MAX_EXPANDED + 1)}` });
-		expect(() => extract("docx", data, 1000)).toThrow(expect.objectContaining({ code: "FILE_TOO_LARGE" }));
+		await expect(extract("docx", data, 1000)).rejects.toMatchObject({ code: "FILE_TOO_LARGE" });
 	});
 
-	test("the expansion budget is shared by all the parts of a file", () => {
+	test("the expansion budget is shared by all the parts of a file", async () => {
 		const half = " ".repeat(MAX_EXPANDED / 2 + 1024);
 		const data = zipped({
 			"_rels/.rels": rels(["rId1", "officeDocument", "xl/workbook.xml"]),
@@ -743,10 +743,10 @@ describe("bounds the Python tests leave to the library (zip bombs and entity exp
 			"xl/_rels/workbook.xml.rels": rels(["rId1", "worksheet", "worksheets/sheet1.xml"]),
 			"xl/worksheets/sheet1.xml": `<worksheet xmlns="${S}"><sheetData><row><c><v>1</v></c></row></sheetData>${half}</worksheet>`,
 		});
-		expect(() => extract("xlsx", data, 1000)).toThrow(expect.objectContaining({ code: "FILE_TOO_LARGE" }));
+		await expect(extract("xlsx", data, 1000)).rejects.toMatchObject({ code: "FILE_TOO_LARGE" });
 	});
 
-	test("more than a thousand slides: the first thousand are read", () => {
+	test("more than a thousand slides: the first thousand are read", async () => {
 		const count = MAX_SLIDES + 5;
 		const parts: { [name: string]: string } = {
 			"_rels/.rels": rels(["rId1", "officeDocument", "ppt/presentation.xml"]),
@@ -754,12 +754,12 @@ describe("bounds the Python tests leave to the library (zip bombs and entity exp
 			"ppt/_rels/presentation.xml.rels": rels(...Array.from({ length: count }, (_, n): [string, string, string] => [`r${n}`, "slide", `slides/s${n}.xml`])),
 		};
 		for (let n = 0; n < count; n++) parts[`ppt/slides/s${n}.xml`] = slide(`text ${n}`);
-		const result = extract("pptx", zipped(parts), 10_000_000);
+		const result = await extract("pptx", zipped(parts), 10_000_000);
 		expect(result.includes(`Slide ${MAX_SLIDES}\n`)).toBe(true);
 		expect(result.includes(`Slide ${MAX_SLIDES + 1}\n`)).toBe(false);
 	});
 
-	test("more shared strings than the table holds are refused", () => {
+	test("more shared strings than the table holds are refused", async () => {
 		const strings = "<si/>".repeat(MAX_SHARED_STRINGS + 1);
 		const data = zipped({
 			"_rels/.rels": rels(["rId1", "officeDocument", "xl/workbook.xml"]),
@@ -768,10 +768,10 @@ describe("bounds the Python tests leave to the library (zip bombs and entity exp
 			"xl/sharedStrings.xml": `<sst xmlns="${S}">${strings}</sst>`,
 			"xl/worksheets/sheet1.xml": `<worksheet xmlns="${S}"><sheetData><row><c><v>1</v></c></row></sheetData></worksheet>`,
 		});
-		expect(() => extract("xlsx", data, 1000)).toThrow(expect.objectContaining({ code: "FILE_TOO_LARGE" }));
+		await expect(extract("xlsx", data, 1000)).rejects.toMatchObject({ code: "FILE_TOO_LARGE" });
 	});
 
-	test("a row has at most MAX_COLUMNS cells", () => {
+	test("a row has at most MAX_COLUMNS cells", async () => {
 		const cells = Array.from({ length: MAX_COLUMNS + 50 }, (_, n) => `<c><v>${n}</v></c>`).join("");
 		const data = zipped({
 			"_rels/.rels": rels(["rId1", "officeDocument", "xl/workbook.xml"]),
@@ -779,7 +779,7 @@ describe("bounds the Python tests leave to the library (zip bombs and entity exp
 			"xl/_rels/workbook.xml.rels": rels(["rId1", "worksheet", "worksheets/sheet1.xml"]),
 			"xl/worksheets/sheet1.xml": `<worksheet xmlns="${S}"><sheetData><row>${cells}</row></sheetData></worksheet>`,
 		});
-		const row = extract("xlsx", data, 1_000_000).trimEnd();
+		const row = (await extract("xlsx", data, 1_000_000)).trimEnd();
 		expect(row.split(",")).toHaveLength(MAX_COLUMNS);
 	});
 });

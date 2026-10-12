@@ -94,8 +94,8 @@ export type CancelReason = RevocationReason | "cancelled" | "emergency_stop";
  * A tool as a run snapshots it, with today's field names (runs 3.3). `name` is `{alias}_{operation}`, the
  * alias numbering usable connections per provider in `created_at` order (`todoist`, `todoist2`). The
  * model never names a connection; the executor takes it from here. `contract` is the operation's
- * fingerprint: `sha256(canonicalAscii(meaning))[:16]` (connectors 2.2; gateway/registry.ts); a mismatch
- * at call time is `OPERATION_CHANGED`. Built by gateway/tools.ts `toolsFor`.
+ * fingerprint: 16 hex of SHA-256 over the canonical JSON of its meaning (connectors 2.2;
+ * gateway/registry.ts); a mismatch at call time is `OPERATION_CHANGED`. Built by gateway/tools.ts `toolsFor`.
  */
 export interface ToolRef {
 	name: string;

@@ -7,7 +7,7 @@ import type { $ZodLazy, $ZodType, $ZodTypes } from "zod/v4/core";
 import type { Json, JsonObject } from "../lib/json.ts";
 import type { Connector, Operation } from "../contracts/connectors.ts";
 import { sha256Hex } from "../lib/hash.ts";
-import { canonicalAscii } from "../lib/json.ts";
+import { hashInput } from "../lib/canonical.ts";
 import { sortByCodePoint } from "../lib/order.ts";
 import { countsCodePoints, isStrictRecord, stripWhitespace } from "../lib/schema.ts";
 import { pythonRepr } from "../lib/text.ts";
@@ -300,12 +300,12 @@ export function meaning(connector: Connector, op: Operation<never>): JsonObject 
 }
 
 /**
- * Identifies what a tool means: 16 hex of SHA-256 over the canonical JSON of `meaning`. Runs snapshot it,
- * and a tool whose meaning changed stops working (OPERATION_CHANGED). Not equal to today's Python value,
- * since zod writes the input schema differently from Pydantic (connectors 2.2).
+ * Identifies what a tool means: 16 hex of SHA-256 over `minerva:operation:` and the canonical JSON
+ * (lib/canonical.ts) of `meaning`, consent included. Runs snapshot it, and a tool whose meaning changed stops
+ * working (OPERATION_CHANGED). Not equal to today's Python value (connectors 2.2).
  */
 export async function fingerprint(connector: Connector, op: Operation<never>): Promise<string> {
-	return (await sha256Hex(canonicalAscii(meaning(connector, op)))).slice(0, 16);
+	return (await sha256Hex(hashInput("operation", meaning(connector, op)))).slice(0, 16);
 }
 
 /** What a registered connector cannot change: what it declares, and the slug it is found by. */

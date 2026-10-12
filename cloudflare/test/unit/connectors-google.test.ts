@@ -128,15 +128,15 @@ describe("the declarations", () => {
 		// A change here is a change of what a tool means: running runs fail its calls with OPERATION_CHANGED.
 		// Bump `revision` when the meaning changed in a way the declaration does not show.
 		expect(fingerprints).toEqual({
-			"google_calendar.list_calendars": "e11eb3d6b42995e4",
-			"google_calendar.list_events": "b363ad0fe8fbe9f8",
-			"google_calendar.get_event": "8c36751a475131b4",
-			"google_calendar.create_event": "b47e51fcb4fed2bc",
-			"google_drive.list_folder": "2a8336b0238d41f1",
-			"google_drive.search_files": "01bc9e47ca8a0db2",
-			"google_drive.get_file": "204f2bec3b821d2a",
-			"google_drive.read_file": "7d3b0621f7cc20c2",
-			"google_drive.create_file": "04fe66ec7a2b4db2",
+			"google_calendar.list_calendars": "e94743d67c44c4c1",
+			"google_calendar.list_events": "0067aff7c6455171",
+			"google_calendar.get_event": "a3813759a0b6fb2e",
+			"google_calendar.create_event": "a9eb92c43f394971",
+			"google_drive.list_folder": "3c015eac4245360a",
+			"google_drive.search_files": "82467db04682a722",
+			"google_drive.get_file": "7d23844bd59d8ab5",
+			"google_drive.read_file": "23f9e0ecbf050334",
+			"google_drive.create_file": "7c21d8bcc6928b4b",
 		});
 	});
 

@@ -9,7 +9,7 @@ import type { ToolCallAllowed, ToolCallRefused } from "../contracts/events.ts";
 import type { DeniedCode, ToolCallOutcome, ToolResult } from "../contracts/executor.ts";
 import type { ToolRef } from "../contracts/runs.ts";
 import { saltedHmacHex } from "../lib/hash.ts";
-import { type Json, type JsonObject, pythonDumps } from "../lib/json.ts";
+import { type Json, type JsonObject, visibleJson } from "../lib/json.ts";
 import { sliceCodePoints } from "../lib/text.ts";
 import { OperationError } from "./connector.ts";
 import type { Registry } from "./registry.ts";
@@ -72,7 +72,7 @@ export function argumentsSummary(args: Json | undefined): { [key: string]: Json 
 	// come from parsed JSON; anything else is recorded by its text, as `default=str` would.
 	let text: string;
 	try {
-		text = pythonDumps(value);
+		text = visibleJson(value);
 	} catch {
 		return { truncated: String(value).slice(0, 2000) };
 	}
@@ -125,7 +125,7 @@ export interface CallToolResult {
 
 /** What the loop hands the model for an outcome: the result's JSON as Python writes it plus the result, or the message. */
 export function callToolResult(outcome: ToolCallOutcome): CallToolResult {
-	if (outcome.ok) return { content: [{ type: "text", text: pythonDumps(outcome.result) }], structuredContent: outcome.result, isError: false };
+	if (outcome.ok) return { content: [{ type: "text", text: visibleJson(outcome.result) }], structuredContent: outcome.result, isError: false };
 	return { content: [{ type: "text", text: outcome.error.message }], isError: true };
 }
 

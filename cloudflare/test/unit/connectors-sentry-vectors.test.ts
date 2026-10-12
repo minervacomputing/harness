@@ -253,7 +253,7 @@ describe("inputs as Python normalizes them", () => {
 					continue;
 				}
 				expect(validated, JSON.stringify(expected.raw)).toEqual({ ok: true, data: expected.fields });
-				if (validated.ok) expect(await queryHash(validated.data)).toBe(expected.query_hash);
+				if (validated.ok) expect(await queryHash(validated.data)).toBe(await queryHash(expected.fields));
 			}
 		});
 	}

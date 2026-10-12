@@ -12,11 +12,11 @@
 // Written text is escaped and sent as HTML paragraphs, so it is shown literally: it cannot format anything or
 // mention a teammate. It may not address Intercom in any encoding.
 //
-// The HTML is read with a port of Python's HTMLParser (html-parser.ts), so the text is today's.
+// The HTML is read with a port of Python's HTMLParser (lib/htmlparser.ts), so the text is today's.
 
 import { decoded, plainText, PYTHON_SPACE_CLASS, pythonRstrip, pythonStrip, TextError } from "../../lib/text.ts";
+import { type Attribute, HTMLParser } from "../../lib/htmlparser.ts";
 import { endsWithNewline, linkText, type Piece, written as writtenOut } from "../../lib/linktext.ts";
-import { type Attribute, HTMLParser } from "./html-parser.ts";
 import { RE_I, RE_LETTERS_EXTRA } from "./python.ts";
 
 // Intercom's hosts: the app and API, file hosts (intercomcdn, intercomassets, intercomusercontent,
@@ -133,8 +133,7 @@ class Reader extends HTMLParser {
 export function read(content: string | null | undefined): string {
 	if (!content) return "";
 	const reader = new Reader();
-	reader.feed(content);
-	reader.close();
+	reader.run(content);
 	return reader.text();
 }
 

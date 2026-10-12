@@ -6,7 +6,7 @@
 // carry data out when shown. Moved here from connectors/gmail/html.ts.
 
 import { DIGIT_CLASS } from "./digits.ts";
-import { type Attrs, HTMLParser } from "./htmlparser.ts";
+import { type Attribute, HTMLParser } from "./htmlparser.ts";
 import { PYTHON_SPACE_CLASS, codePointLength, pythonRstrip, pythonStrip } from "./text.ts";
 import { urljoin, urlsplit } from "./urlsplit.ts";
 
@@ -119,7 +119,7 @@ class Converter extends HTMLParser {
 		return ["p", "table", "blockquote", "pre"].includes(tag) ? 2 : 1;
 	}
 
-	handleStarttag(tag: string, attrs: Attrs): void {
+	override handleStartTag(tag: string, attrs: Attribute[]): void {
 		if (SKIPPED.has(tag)) {
 			if (!VOID.has(tag)) {
 				this.skip.push(tag);
@@ -171,12 +171,12 @@ class Converter extends HTMLParser {
 		}
 	}
 
-	override handleStartendtag(tag: string, attrs: Attrs): void {
-		this.handleStarttag(tag, attrs);
-		if (!VOID.has(tag)) this.handleEndtag(tag);
+	override handleStartEndTag(tag: string, attrs: Attribute[]): void {
+		this.handleStartTag(tag, attrs);
+		if (!VOID.has(tag)) this.handleEndTag(tag);
 	}
 
-	handleEndtag(tag: string): void {
+	override handleEndTag(tag: string): void {
 		if (this.skip.length) {
 			if (this.skipOpen.get(tag)) {
 				// Unbalanced markup closes everything opened after the nearest matching tag.
@@ -210,7 +210,7 @@ class Converter extends HTMLParser {
 		else this.out.push(text);
 	}
 
-	handleData(data: string): void {
+	override handleData(data: string): void {
 		if (this.inTitle) {
 			this.title.push(data);
 			return;

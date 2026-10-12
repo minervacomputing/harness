@@ -179,11 +179,11 @@ describe("connecting and discovery", () => {
 
 /** What each operation means today; a change here makes running runs' tools fail with OPERATION_CHANGED. */
 const FINGERPRINTS: { [operation: string]: string } = {
-	list_inboxes: "f89c46badcadeeb6",
-	search_conversations: "f50eefa83a6a818e",
-	get_conversation: "034870bbe3c6c7c9",
-	add_note: "9dd0683b88f7d80d",
-	reply: "d31ec2a5bc7e59c4",
+	list_inboxes: "b139269685507f12",
+	search_conversations: "297e3bd691041759",
+	get_conversation: "54f910a8a614f10f",
+	add_note: "de083cccf00a35c6",
+	reply: "36c938f5dfcf6975",
 };
 
 describe("reading", () => {

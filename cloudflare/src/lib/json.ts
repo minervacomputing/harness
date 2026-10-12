@@ -1,12 +1,7 @@
 // JSON read and written for this port. Reading: `parseJson` replaces `JSON.parse` everywhere (see below).
-// Writing: exactly as Python's `json.dumps` writes it, for hashes that must be stable and, where noted,
-// equal to the ones today's Python computes. Each Python variant has a name here:
-//
-// | Function         | Python                                                                        | Used for |
-// |------------------|-------------------------------------------------------------------------------|----------|
-// | `canonicalAscii` | `json.dumps(x, sort_keys=True, separators=(",", ":"), default=str)`             | operation fingerprints (connectors/registry.py), write keys and query hashes (connectors/executor.py) |
-// | `canonicalUtf8`  | `json.dumps(x, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`      | folder version digests (files/manifest.py), hashed as UTF-8 |
-// | `pythonDumps`    | `json.dumps(x)`                                                               | credential plaintext before encryption (connections/crypto.py) |
+// Writing: `visibleJson` writes what the model and providers see exactly as Python's `json.dumps` writes it
+// (tool results and their summaries, request bodies, cursors, sizes measured in its characters). Hashed and
+// encrypted values are not written here: they are stored formats, in lib/canonical.ts's canonical JSON.
 //
 // Values are plain JSON: null, booleans, finite numbers, strings, arrays and plain objects. An object
 // member whose value is `undefined` is left out, as JSON.stringify does; anything else (undefined in an
@@ -15,15 +10,10 @@
 // Numbers. Python tells `1` (int) from `1.0` (float); a parsed JavaScript number cannot. Integers up to
 // 2^53 are written as Python writes ints; every other number as Python writes floats (`repr`): `0.5`,
 // `1e-07`, `1e+16`, `1.5e+300`. So a float that is integral and below 2^53, such as `2.0`, comes out as
-// `2`, and an int of 2^53 or more as a float; neither occurs in the values these hashes cover. Worse,
-// parsing has already rounded an integer beyond 2^53 before anything here sees it, so two different such
-// integers would hash alike: inputs whose numbers can be that large (provider ids) declare them as
-// strings. Byte equality with Python matters only for folder digests; fingerprints, write keys and query
-// hashes need only be deterministic within the port (connectors spec 2.2, 7.3).
+// `2`, and an int of 2^53 or more as a float.
 //
-// Key order. Sorted output follows code points, as Python's does. Unsorted output (`pythonDumps`) follows
-// JavaScript's property order, which puts integer-like keys first; Python keeps insertion order. The
-// payloads written unsorted (credentials) have no such keys.
+// Key order. Sorted output follows code points, as Python's does. Unsorted output follows JavaScript's
+// property order, which puts integer-like keys first; Python keeps insertion order.
 
 import { compareCodePoints } from "./order.ts";
 
@@ -46,53 +36,17 @@ export function truthy(value: unknown): boolean {
 	return true;
 }
 
-export interface DumpOptions {
-	/** Sort object keys by code point, as `sort_keys=True` does. */
-	sortKeys?: boolean;
-	/** `separators=(",", ":")` instead of Python's default `(", ", ": ")`. */
-	compact?: boolean;
-	/** Escape everything outside printable ASCII as `\uXXXX`, as `ensure_ascii=True` (the default) does. */
-	ensureAscii?: boolean;
-}
-
-/** `json.dumps(value, **options)`. */
-export function dumps(value: unknown, options: DumpOptions = {}): string {
+/**
+ * The JSON the model and providers see: Python's `json.dumps(value)` (ASCII only, `", "` and `": "` between
+ * items), or `json.dumps(value, sort_keys=True)` with `sortKeys`.
+ */
+export function visibleJson(value: unknown, options: { sortKeys?: boolean } = {}): string {
 	const out: string[] = [];
-	write(value, out, {
-		sortKeys: options.sortKeys ?? false,
-		item: options.compact ? "," : ", ",
-		key: options.compact ? ":" : ": ",
-		ensureAscii: options.ensureAscii ?? true,
-	});
+	write(value, out, options.sortKeys ?? false);
 	return out.join("");
 }
 
-/** Fingerprints, write keys and query hashes. */
-export function canonicalAscii(value: unknown): string {
-	return dumps(value, { sortKeys: true, compact: true, ensureAscii: true });
-}
-
-/**
- * Folder version digests. Hash the result's UTF-8 bytes (`utf8Strict` in bytes.ts refuses lone
- * surrogates, where Python's `str.encode()` raises).
- */
-export function canonicalUtf8(value: unknown): string {
-	return dumps(value, { sortKeys: true, compact: true, ensureAscii: false });
-}
-
-/** Python's default `json.dumps(value)`. */
-export function pythonDumps(value: unknown): string {
-	return dumps(value);
-}
-
-interface Format {
-	sortKeys: boolean;
-	item: string;
-	key: string;
-	ensureAscii: boolean;
-}
-
-function write(value: unknown, out: string[], format: Format): void {
+function write(value: unknown, out: string[], sortKeys: boolean): void {
 	if (value === null) {
 		out.push("null");
 	} else if (value === true) {
@@ -102,25 +56,25 @@ function write(value: unknown, out: string[], format: Format): void {
 	} else if (typeof value === "number") {
 		out.push(formatNumber(value));
 	} else if (typeof value === "string") {
-		out.push(quote(value, format.ensureAscii));
+		out.push(quote(value));
 	} else if (Array.isArray(value)) {
 		out.push("[");
 		// Every index, so a hole in a sparse array throws like an explicit undefined.
 		for (let index = 0; index < value.length; index++) {
-			if (index > 0) out.push(format.item);
+			if (index > 0) out.push(", ");
 			const item: unknown = value[index];
 			if (item === undefined) throw new TypeError("An array holds undefined, which is not JSON.");
-			write(item, out, format);
+			write(item, out, sortKeys);
 		}
 		out.push("]");
 	} else if (isPlainObject(value)) {
 		const keys = Object.keys(value).filter((key) => value[key] !== undefined);
-		if (format.sortKeys) keys.sort(compareCodePoints);
+		if (sortKeys) keys.sort(compareCodePoints);
 		out.push("{");
 		keys.forEach((key, index) => {
-			if (index > 0) out.push(format.item);
-			out.push(quote(key, format.ensureAscii), format.key);
-			write(value[key], out, format);
+			if (index > 0) out.push(", ");
+			out.push(quote(key), ": ");
+			write(value[key], out, sortKeys);
 		});
 		out.push("}");
 	} else {
@@ -150,13 +104,11 @@ const ESCAPES: Record<string, string> = {
 	"\t": "\\t",
 };
 
-// Python's ESCAPE_ASCII is [\\"]|[^\ -~]: everything outside space to tilde, DEL included. ESCAPE (for
-// ensure_ascii=False) is only quotes, backslashes and C0 controls.
+// Python's ESCAPE_ASCII is [\\"]|[^\ -~]: everything outside space to tilde, DEL included.
 const ASCII_UNSAFE = /["\\]|[^ -~]/g;
-const UNSAFE = /["\\\u0000-\u001f]/g;
 
-function quote(text: string, ensureAscii: boolean): string {
-	const escaped = text.replace(ensureAscii ? ASCII_UNSAFE : UNSAFE, (char) => {
+function quote(text: string): string {
+	const escaped = text.replace(ASCII_UNSAFE, (char) => {
 		return ESCAPES[char] ?? `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`;
 	});
 	return `"${escaped}"`;
