@@ -168,7 +168,7 @@ The gateway exposes an OpenAI-compatible endpoint to the worker and routes it th
 
 ## 7. Agent files
 
-Built 2026-10-07 to 2026-10-09; [docs/plans/agent-files.md](docs/plans/agent-files.md) records each step and how it differs from its outline.
+Built 2026-10-07 to 2026-10-09. The plan that recorded each step and how it differed from its outline, `docs/plans/agent-files.md`, was removed on 2026-10-13 and remains in git history.
 
 Each conversation has a folder that the agent works in as on a laptop: pi's ordinary `read`, `write`, `edit` and `bash` tools on a real directory, called in parallel. Sandboxes stay one per turn.
 
