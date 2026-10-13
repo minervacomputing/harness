@@ -27,9 +27,7 @@ const client = createAuthClient({
 export type AuthUser = { id: string; email: string }
 export type FlowId = 'verify_email' | 'login_by_code' | 'mfa_authenticate' | 'password_reset_by_code'
 
-export type AuthState =
-  | { kind: 'authenticated'; user: AuthUser }
-  | { kind: 'anonymous'; pending: FlowId | null; mfaTypes: string[] }
+export type AuthState = { kind: 'authenticated'; user: AuthUser } | { kind: 'anonymous'; pending: FlowId | null; mfaTypes: string[] }
 
 type FieldError = { message: string; code: string; param?: string }
 
@@ -69,7 +67,9 @@ function readPending(): Pending | null {
   try {
     const raw = sessionStorage.getItem(PENDING_KEY)
     if (raw) stored = JSON.parse(raw) as Pending
-  } catch { /* Storage can be blocked; the copy in memory serves. */ }
+  } catch {
+    /* Storage can be blocked; the copy in memory serves. */
+  }
   if (stored && stored.until > Date.now()) return stored
   clearPending()
   return null
@@ -77,12 +77,20 @@ function readPending(): Pending | null {
 
 function setPending(step: FlowId, email: string, methods: string[] = []) {
   pendingInMemory = { step, email, methods, until: Date.now() + PENDING_MS[step] }
-  try { sessionStorage.setItem(PENDING_KEY, JSON.stringify(pendingInMemory)) } catch { /* see readPending */ }
+  try {
+    sessionStorage.setItem(PENDING_KEY, JSON.stringify(pendingInMemory))
+  } catch {
+    /* see readPending */
+  }
 }
 
 function clearPending() {
   pendingInMemory = null
-  try { sessionStorage.removeItem(PENDING_KEY) } catch { /* see readPending */ }
+  try {
+    sessionStorage.removeItem(PENDING_KEY)
+  } catch {
+    /* see readPending */
+  }
 }
 
 function anonymous(): AuthState {
@@ -137,21 +145,35 @@ type Fields = { code?: string; password?: string; wrongPassword?: { param: strin
 function failure(error: Failure, fields: Fields = {}): AuthError {
   const one = (message: string, param?: string) => new AuthError([{ message, code: error.code ?? 'error', param }])
   switch (error.code) {
-    case 'INVALID_EMAIL_OR_PASSWORD': return one('The email address and/or password you specified are not correct.', 'password')
-    case 'INVALID_EMAIL': return one('Enter a valid email address.', 'email')
+    case 'INVALID_EMAIL_OR_PASSWORD':
+      return one('The email address and/or password you specified are not correct.', 'password')
+    case 'INVALID_EMAIL':
+      return one('Enter a valid email address.', 'email')
     case 'INVALID_PASSWORD':
       return fields.wrongPassword ? one(fields.wrongPassword.message, fields.wrongPassword.param) : one('Incorrect password.')
-    case 'PASSWORD_TOO_SHORT': case 'PASSWORD_TOO_LONG': case 'PASSWORD_TOO_COMMON':
-    case 'PASSWORD_TOO_SIMILAR': case 'PASSWORD_ENTIRELY_NUMERIC':
+    case 'PASSWORD_TOO_SHORT':
+    case 'PASSWORD_TOO_LONG':
+    case 'PASSWORD_TOO_COMMON':
+    case 'PASSWORD_TOO_SIMILAR':
+    case 'PASSWORD_ENTIRELY_NUMERIC':
       return one(error.message ?? 'Choose a different password.', fields.password ?? 'password')
-    case 'INVALID_OTP': case 'INVALID_CODE': case 'INVALID_BACKUP_CODE':
+    case 'INVALID_OTP':
+    case 'INVALID_CODE':
+    case 'INVALID_BACKUP_CODE':
       return one('Incorrect code.', fields.code ?? 'code')
-    case 'OTP_EXPIRED': case 'OTP_HAS_EXPIRED': return one('That code has expired. Request a new one.', fields.code ?? 'code')
-    case 'TOO_MANY_ATTEMPTS': return one('Too many incorrect codes. Request a new one.', fields.code ?? 'code')
-    case 'TOO_MANY_LOGIN_ATTEMPTS': case 'TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE': case 'ACCOUNT_TEMPORARILY_LOCKED':
+    case 'OTP_EXPIRED':
+    case 'OTP_HAS_EXPIRED':
+      return one('That code has expired. Request a new one.', fields.code ?? 'code')
+    case 'TOO_MANY_ATTEMPTS':
+      return one('Too many incorrect codes. Request a new one.', fields.code ?? 'code')
+    case 'TOO_MANY_LOGIN_ATTEMPTS':
+    case 'TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE':
+    case 'ACCOUNT_TEMPORARILY_LOCKED':
       return one(LOCKED)
-    case 'INVALID_TWO_FACTOR_COOKIE': return one('Your sign-in timed out. Sign in again.')
-    case 'EMAIL_PASSWORD_SIGN_UP_DISABLED': return one('Sign-up is not open on this server.')
+    case 'INVALID_TWO_FACTOR_COOKIE':
+      return one('Your sign-in timed out. Sign in again.')
+    case 'EMAIL_PASSWORD_SIGN_UP_DISABLED':
+      return one('Sign-up is not open on this server.')
     // Better Auth's own request check, which is stricter about addresses than the browser's.
     case 'VALIDATION_ERROR':
       return error.message?.includes('email') ? one('Enter a valid email address.', 'email') : one('Enter a valid value.')
@@ -197,9 +219,11 @@ export const authQuery = queryOptions({
     const response = await fetch('/api/me', { credentials: 'same-origin', signal })
     if (response.status === 401) return anonymous()
     if (!response.ok) {
-      throw new Error(response.status >= 502 && response.status <= 504
-        ? 'Minerva is briefly unavailable, probably restarting. Try again in a moment.'
-        : 'Something went wrong on the server. Try again.')
+      throw new Error(
+        response.status >= 502 && response.status <= 504
+          ? 'Minerva is briefly unavailable, probably restarting. Try again in a moment.'
+          : 'Something went wrong on the server. Try again.',
+      )
     }
     const me = (await response.json()) as MeOut
     // A request that was cancelled (the cache was cleared by a sign-out or a new sign-in) must not refill it.
@@ -213,11 +237,16 @@ export const authQuery = queryOptions({
 /** Where a pending authentication step continues in the UI. */
 export function pendingPath(pending: FlowId | null): string | null {
   switch (pending) {
-    case 'verify_email': return '/verify-email'
-    case 'login_by_code': return '/login/code'
-    case 'mfa_authenticate': return '/login/mfa'
-    case 'password_reset_by_code': return '/reset-password'
-    default: return null
+    case 'verify_email':
+      return '/verify-email'
+    case 'login_by_code':
+      return '/login/code'
+    case 'mfa_authenticate':
+      return '/login/mfa'
+    case 'password_reset_by_code':
+      return '/reset-password'
+    default:
+      return null
   }
 }
 
@@ -307,20 +336,24 @@ export const auth = {
     const address = normalize(email)
     const key = setupKey?.trim()
     // Better Auth wants a name; the account has none yet. A taken address looks like a new one (the owner is emailed).
-    const result = await call(client.signUp.email({
-      email: address,
-      password,
-      name: '',
-      ...(key ? { fetchOptions: { headers: { [SETUP_KEY_HEADER]: key } } } : {}),
-    }))
+    const result = await call(
+      client.signUp.email({
+        email: address,
+        password,
+        name: '',
+        ...(key ? { fetchOptions: { headers: { [SETUP_KEY_HEADER]: key } } } : {}),
+      }),
+    )
     if (!result.ok) {
       // With a key, "closed" means the key did not open it: it is wrong, or the server is already set up.
       if (key && result.error.code === 'EMAIL_PASSWORD_SIGN_UP_DISABLED') {
-        throw new AuthError([{
-          message: 'Sign-up is not open, and this setup key does not open it. It is not valid, or the server is already set up.',
-          code: result.error.code,
-          param: 'setup_key',
-        }])
+        throw new AuthError([
+          {
+            message: 'Sign-up is not open, and this setup key does not open it. It is not valid, or the server is already set up.',
+            code: result.error.code,
+            param: 'setup_key',
+          },
+        ])
       }
       throw failure(result.error)
     }
@@ -369,9 +402,9 @@ export const auth = {
   async mfaAuthenticate({ code }: { code: string }): Promise<AuthState> {
     const email = pendingEmail('mfa_authenticate')
     const typed = code.replace(/\s+/g, '')
-    const result = await call(/^\d{6}$/.test(typed)
-      ? client.twoFactor.verifyTotp({ code: typed })
-      : client.twoFactor.verifyBackupCode({ code: backupCode(typed) }))
+    const result = await call(
+      /^\d{6}$/.test(typed) ? client.twoFactor.verifyTotp({ code: typed }) : client.twoFactor.verifyBackupCode({ code: backupCode(typed) }),
+    )
     if (!result.ok) throw stepFailure(result.error)
     return signedIn(userOf(result.data, email))
   },

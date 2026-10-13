@@ -58,14 +58,15 @@ function useOpenConnections(workspaceId: string, initiallyOpen?: string) {
       // Not remembering is fine.
     }
   }, [open, storageKey])
-  const toggle = (id: string) => setOpen(previous => {
-    const next = new Set(previous)
-    if (!next.delete(id)) next.add(id)
-    return next
-  })
+  const toggle = (id: string) =>
+    setOpen(previous => {
+      const next = new Set(previous)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
   // A connection made with a key or added in place arrives without reloading the page.
   useEffect(() => {
-    if (initiallyOpen) setOpen(previous => previous.has(initiallyOpen) ? previous : new Set(previous).add(initiallyOpen))
+    if (initiallyOpen) setOpen(previous => (previous.has(initiallyOpen) ? previous : new Set(previous).add(initiallyOpen)))
   }, [initiallyOpen])
   return [open, toggle] as const
 }
@@ -118,11 +119,13 @@ function ConnectionsPage() {
     <div>
       <PageHeader
         title="Connections"
-        description={visitor
-          ? 'The apps this workspace has connected, and exactly what its agent may see and do in each. Open one to see the details. Agents never receive the credentials.'
-          : 'Connect your apps, then choose exactly what your agents may see and do in them. Agents never receive your credentials.'}
+        description={
+          visitor
+            ? 'The apps this workspace has connected, and exactly what its agent may see and do in each. Open one to see the details. Agents never receive the credentials.'
+            : 'Connect your apps, then choose exactly what your agents may see and do in them. Agents never receive your credentials.'
+        }
       />
-      <div className="max-w-3xl space-y-10 px-4 md:px-8 py-6">
+      <div className="max-w-3xl space-y-10 px-4 py-6 md:px-8">
         {(search.error || search.connected) && (
           <div className="space-y-3">
             {search.error && <ErrorNote>{search.error}</ErrorNote>}
@@ -157,13 +160,15 @@ function ConnectionsPage() {
           </div>
         )}
 
-        {!visitor && <AddApps
-          workspaceId={workspaceId}
-          connectors={connectors.data}
-          pending={connectors.isPending}
-          connections={connections.data ?? []}
-          firstTime={connections.data?.length === 0}
-        />}
+        {!visitor && (
+          <AddApps
+            workspaceId={workspaceId}
+            connectors={connectors.data}
+            pending={connectors.isPending}
+            connections={connections.data ?? []}
+            firstTime={connections.data?.length === 0}
+          />
+        )}
       </div>
     </div>
   )
@@ -175,7 +180,13 @@ function describeConnector(kinds: KindOut[], actions: ActionOut[]) {
   return per.length ? `${what.charAt(0).toUpperCase()}${what.slice(1)}, chosen per ${per.join(' and ')}.` : `${what.charAt(0).toUpperCase()}${what.slice(1)}.`
 }
 
-function AddApps({ workspaceId, connectors, pending, connections, firstTime }: {
+function AddApps({
+  workspaceId,
+  connectors,
+  pending,
+  connections,
+  firstTime,
+}: {
   workspaceId: string
   connectors?: ConnectorOut[]
   pending: boolean
@@ -209,9 +220,7 @@ function AddApps({ workspaceId, connectors, pending, connections, firstTime }: {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="space-y-0.5">
           <h2 className="text-xl font-medium tracking-[-0.015em]">{firstTime ? 'Connect your first app' : 'Add an app'}</h2>
-          <p className="text-[13px] text-muted-foreground">
-            {connectors ? `${connectors.length} apps available.` : ' '}
-          </p>
+          <p className="text-[13px] text-muted-foreground">{connectors ? `${connectors.length} apps available.` : ' '}</p>
         </div>
         <div className="relative w-full sm:w-72">
           <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -282,19 +291,24 @@ function AddApps({ workspaceId, connectors, pending, connections, firstTime }: {
                       hint={connector.key_hint}
                       submit={`Connect ${connector.name}`}
                       pending={connectKey.isPending && connectKey.variables?.path.provider === connector.slug}
-                      onSubmit={(key, done) => connectKey.mutate(
-                        { path: { ...path, provider: connector.slug }, body: { key } },
-                        { onSuccess: () => { done(); setKeying(null) } },
-                      )}
+                      onSubmit={(key, done) =>
+                        connectKey.mutate(
+                          { path: { ...path, provider: connector.slug }, body: { key } },
+                          {
+                            onSuccess: () => {
+                              done()
+                              setKeying(null)
+                            },
+                          },
+                        )
+                      }
                     />
                   </div>
                 )}
               </div>
             )
           })}
-          {shown.length === 0 && (
-            <p className="px-4 py-3 text-[13px] text-muted-foreground">No apps match “{query.trim()}”.</p>
-          )}
+          {shown.length === 0 && <p className="px-4 py-3 text-[13px] text-muted-foreground">No apps match “{query.trim()}”.</p>}
           {!needle && apps.length > SUGGESTED && (
             <div className="border-t px-2 py-1.5">
               <Button variant="ghost" size="sm" onClick={() => setShowAll(!showAll)}>
@@ -312,7 +326,13 @@ function AddApps({ workspaceId, connectors, pending, connections, firstTime }: {
 }
 
 /** A field for an API key. The key is cleared once it is accepted, and never shown again. */
-function KeyForm({ label, hint, submit, pending, onSubmit }: {
+function KeyForm({
+  label,
+  hint,
+  submit,
+  pending,
+  onSubmit,
+}: {
   label: string
   hint?: string | null
   submit: string
@@ -338,14 +358,24 @@ function KeyForm({ label, hint, submit, pending, onSubmit }: {
           value={key}
           onChange={event => setKey(event.target.value)}
         />
-        <Button type="submit" variant="outline" disabled={pending || !key.trim()}>{submit}</Button>
+        <Button type="submit" variant="outline" disabled={pending || !key.trim()}>
+          {submit}
+        </Button>
       </div>
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
     </form>
   )
 }
 
-function ConnectionRow({ workspaceId, connection, setup, open, onToggle, first, last }: {
+function ConnectionRow({
+  workspaceId,
+  connection,
+  setup,
+  open,
+  onToggle,
+  first,
+  last,
+}: {
   workspaceId: string
   connection: ConnectionOut
   setup: Setup
@@ -369,11 +399,7 @@ function ConnectionRow({ workspaceId, connection, setup, open, onToggle, first, 
   return (
     <div
       id={`connection-${connection.id}`}
-      className={cn(
-        'scroll-mt-6 border-x border-t border-border-strong bg-card',
-        !first && 'border-t-border',
-        last && 'border-b',
-      )}
+      className={cn('scroll-mt-6 border-x border-t border-border-strong bg-card', !first && 'border-t-border', last && 'border-b')}
     >
       <button
         type="button"
@@ -389,10 +415,13 @@ function ConnectionRow({ workspaceId, connection, setup, open, onToggle, first, 
           <span className="flex min-w-0 items-baseline gap-2">
             <span className="shrink-0 font-medium">{connection.provider_name}</span>
             <span className="truncate font-mono text-[12px] text-muted-foreground">
-              {connection.label}{connection.personal ? '' : ' · shared with the workspace'}
+              {connection.label}
+              {connection.personal ? '' : ' · shared with the workspace'}
             </span>
           </span>
-          <span className="block truncate text-[13px] text-muted-foreground" title={summary}>{summary}</span>
+          <span className="block truncate text-[13px] text-muted-foreground" title={summary}>
+            {summary}
+          </span>
         </span>
         <Status tone={setup.tone}>{setup.label}</Status>
         <ChevronDownIcon className={cn('size-4 shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')} />
@@ -428,8 +457,13 @@ function ConnectionPanel({ workspaceId, connection }: { workspaceId: string; con
   const active = connection.status === 'active'
   const reconnectPath = { workspace_id: workspaceId, connection_id: connection.id }
   const actionLabels = useQuery({ ...listConnectorsOptions({ path: { workspace_id: workspaceId } }), enabled: connection.consent_needed.length > 0 })
-  const neededLabels = connection.consent_needed.map(id =>
-    actionLabels.data?.find(c => c.slug === connection.provider)?.actions.find(a => a.id === id)?.label.toLowerCase() ?? id)
+  const neededLabels = connection.consent_needed.map(
+    id =>
+      actionLabels.data
+        ?.find(c => c.slug === connection.provider)
+        ?.actions.find(a => a.id === id)
+        ?.label.toLowerCase() ?? id,
+  )
 
   return (
     <div className="space-y-5">
@@ -449,7 +483,8 @@ function ConnectionPanel({ workspaceId, connection }: { workspaceId: string; con
         <Alert tone="warning">
           <div className="flex flex-wrap items-center gap-3">
             <span className="flex-1">
-              {connection.provider_name} stopped accepting this {keyed ? 'key. Paste a new key for the same account' : 'connection. Reconnect it'}; your access choices are kept.
+              {connection.provider_name} stopped accepting this {keyed ? 'key. Paste a new key for the same account' : 'connection. Reconnect it'}; your access
+              choices are kept.
             </span>
             {!keyed && (
               <Button size="sm" disabled={reconnect.isPending} onClick={() => reconnect.mutate({ path: reconnectPath, body: {} })}>
@@ -474,10 +509,17 @@ function ConnectionPanel({ workspaceId, connection }: { workspaceId: string; con
           label="New key"
           submit="Replace key"
           pending={replaceKey.isPending}
-          onSubmit={(key, done) => replaceKey.mutate(
-            { path: reconnectPath, body: { key } },
-            { onSuccess: () => { done(); setReplacing(false) } },
-          )}
+          onSubmit={(key, done) =>
+            replaceKey.mutate(
+              { path: reconnectPath, body: { key } },
+              {
+                onSuccess: () => {
+                  done()
+                  setReplacing(false)
+                },
+              },
+            )
+          }
         />
       )}
       {reconnect.error && <ErrorNote>{errorMessage(reconnect.error)}</ErrorNote>}
@@ -485,7 +527,9 @@ function ConnectionPanel({ workspaceId, connection }: { workspaceId: string; con
       {remove.error && <ErrorNote>{errorMessage(remove.error)}</ErrorNote>}
       <div className="flex items-center justify-end gap-2 border-t pt-3">
         {keyed && active && (
-          <Button variant="ghost" size="sm" onClick={() => setReplacing(!replacing)}>{replacing ? 'Keep current key' : 'Replace key'}</Button>
+          <Button variant="ghost" size="sm" onClick={() => setReplacing(!replacing)}>
+            {replacing ? 'Keep current key' : 'Replace key'}
+          </Button>
         )}
         <Button
           variant="ghost-destructive"
@@ -512,8 +556,8 @@ function AllowedList({ connection }: { connection: ConnectionOut }) {
         <table className="w-full border border-border-strong text-[13px]">
           <thead className="bg-secondary text-left">
             <tr>
-              <th className="label border-b px-3 py-2 font-normal">The agent may</th>
-              <th className="label border-b px-3 py-2 font-normal">Where</th>
+              <th className="border-b px-3 py-2 label font-normal">The agent may</th>
+              <th className="border-b px-3 py-2 label font-normal">Where</th>
             </tr>
           </thead>
           <tbody className="divide-y">
@@ -533,8 +577,7 @@ function AllowedList({ connection }: { connection: ConnectionOut }) {
         </table>
       )}
       <p className="text-xs text-muted-foreground">
-        Everything else in {connection.provider_name} is off limits to the agent. In your own workspace, you choose
-        this per app, folder, project or label.
+        Everything else in {connection.provider_name} is off limits to the agent. In your own workspace, you choose this per app, folder, project or label.
       </p>
     </div>
   )

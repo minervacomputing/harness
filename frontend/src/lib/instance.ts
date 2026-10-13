@@ -23,8 +23,7 @@ export const SETUP_KEY_HEADER = 'X-Minerva-Setup-Key'
 /** Whether the first-run setup is still open. Public: the sign-up page reads it to offer the setup key. */
 export const setupQuery = queryOptions({
   queryKey: ['instance', 'setup'],
-  queryFn: async ({ signal }): Promise<SetupStatus> =>
-    (await client.get<{ 200: SetupStatus }, unknown, true>({ url: '/api/setup', signal })).data,
+  queryFn: async ({ signal }): Promise<SetupStatus> => (await client.get<{ 200: SetupStatus }, unknown, true>({ url: '/api/setup', signal })).data,
   staleTime: 30_000,
 })
 
@@ -51,20 +50,24 @@ export async function claimSetup(key: string): Promise<void> {
 
 /** `null` follows the server's configuration. */
 export async function updateSignupOpen(signupOpen: boolean | null): Promise<InstanceSettings> {
-  return (await client.patch<{ 200: InstanceSettings }, unknown, true>({
-    url: '/api/instance/settings',
-    body: { signup_open: signupOpen },
-    headers: { 'Content-Type': 'application/json' },
-  })).data
+  return (
+    await client.patch<{ 200: InstanceSettings }, unknown, true>({
+      url: '/api/instance/settings',
+      body: { signup_open: signupOpen },
+      headers: { 'Content-Type': 'application/json' },
+    })
+  ).data
 }
 
 /** Makes the user with this address an admin; answers the admins. */
 export async function addAdmin(email: string): Promise<InstanceAdmin[]> {
-  return (await client.post<{ 200: InstanceAdmin[] }, unknown, true>({
-    url: '/api/instance/admins',
-    body: { email },
-    headers: { 'Content-Type': 'application/json' },
-  })).data
+  return (
+    await client.post<{ 200: InstanceAdmin[] }, unknown, true>({
+      url: '/api/instance/admins',
+      body: { email },
+      headers: { 'Content-Type': 'application/json' },
+    })
+  ).data
 }
 
 /** The server refuses to remove the last admin (422). */

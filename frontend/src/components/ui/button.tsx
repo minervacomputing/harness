@@ -5,12 +5,14 @@ import { cn } from '@/lib/utils'
 
 // Label and icon are the only flex children, so the content stays centred. Never add pseudo-elements here.
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-[7px] whitespace-nowrap border text-[13px] font-medium transition-[color,background-color,border-color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/25 disabled:pointer-events-none disabled:opacity-45 disabled:shadow-none [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0",
+  "inline-flex shrink-0 items-center justify-center gap-[7px] border text-[13px] font-medium whitespace-nowrap transition-[color,background-color,border-color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/25 disabled:pointer-events-none disabled:opacity-45 disabled:shadow-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
-        default: 'border-primary bg-primary bg-(image:--sheen) text-primary-foreground shadow-(--raise-solid) hover:bg-primary/88 active:bg-none active:shadow-(--press-solid)',
-        destructive: 'border-destructive bg-destructive bg-(image:--sheen) text-destructive-foreground shadow-(--raise-solid) hover:bg-destructive/88 active:bg-none active:shadow-(--press-solid)',
+        default:
+          'border-primary bg-primary bg-(image:--sheen) text-primary-foreground shadow-(--raise-solid) hover:bg-primary/88 active:bg-none active:shadow-(--press-solid)',
+        destructive:
+          'border-destructive bg-destructive bg-(image:--sheen) text-destructive-foreground shadow-(--raise-solid) hover:bg-destructive/88 active:bg-none active:shadow-(--press-solid)',
         outline: 'border-border-strong bg-card text-foreground shadow-(--raise-surface) hover:bg-secondary active:shadow-(--press-surface)',
         secondary: 'border-transparent bg-secondary text-secondary-foreground shadow-(--raise-surface) hover:bg-secondary/70 active:shadow-(--press-surface)',
         ghost: 'border-transparent hover:bg-accent hover:text-accent-foreground',

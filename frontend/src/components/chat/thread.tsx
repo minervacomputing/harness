@@ -49,7 +49,7 @@ function ThreadView({ empty }: { empty?: ReactNode }) {
     <ThreadPrimitive.Root className="flex h-full flex-col">
       {/* The scrollbar's space is kept, so the centred column does not shift when the thread starts to scroll
           (opening a tall tool card, with scrollbars that take space). */}
-      <ThreadPrimitive.Viewport className="flex flex-1 flex-col overflow-y-auto px-4 [scrollbar-gutter:stable] md:px-6">
+      <ThreadPrimitive.Viewport className="flex flex-1 [scrollbar-gutter:stable] flex-col overflow-y-auto px-4 md:px-6">
         <div className="mx-auto w-full max-w-3xl flex-1 space-y-6 py-8">
           <ThreadPrimitive.Empty>{empty}</ThreadPrimitive.Empty>
           <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />
@@ -94,7 +94,12 @@ function FileChip({ name, size, path, version }: { name: string; size: number; p
     </>
   )
   const className = 'flex max-w-full min-w-0 items-center gap-1.5 border bg-card px-2.5 py-1.5 text-[13px]'
-  if (!href || !version) return <span className={className} title={name}>{body}</span>
+  if (!href || !version)
+    return (
+      <span className={className} title={name}>
+        {body}
+      </span>
+    )
   return (
     <a href={href(path, version)} download className={cn(className, 'hover:bg-secondary')} title={`Download ${name}`}>
       {body}
@@ -183,7 +188,15 @@ function appOf(toolName: string, result: ToolCallResult | undefined): string {
 }
 
 /** A disclosure, not `<details>`: the tool cards inside use the `group-open` variant for their own chevrons. */
-export function WorkGroup({ tools, failed, apps, live, open, onOpenChange, children }: {
+export function WorkGroup({
+  tools,
+  failed,
+  apps,
+  live,
+  open,
+  onOpenChange,
+  children,
+}: {
   tools: number
   failed: number
   apps: string[]
@@ -210,7 +223,11 @@ export function WorkGroup({ tools, failed, apps, live, open, onOpenChange, child
         <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-muted-foreground">{apps.join(', ')}</span>
         {failed > 0 && <Status tone="danger">{failed} failed</Status>}
       </button>
-      {open && <div id={id} className="space-y-2 border-t p-2">{children}</div>}
+      {open && (
+        <div id={id} className="space-y-2 border-t p-2">
+          {children}
+        </div>
+      )}
     </div>
   )
 }
@@ -220,7 +237,7 @@ function MarkdownText({ quiet }: { quiet?: boolean }) {
     <MarkdownTextPrimitive
       remarkPlugins={[remarkGfm]}
       components={{ img: UnloadedImage }}
-      className={cn('prose prose-sm prose-minerva max-w-none [overflow-wrap:anywhere]', quiet && 'prose-quiet')}
+      className={cn('prose prose-sm max-w-none prose-minerva [overflow-wrap:anywhere]', quiet && 'prose-quiet')}
     />
   )
 }
@@ -230,7 +247,8 @@ function UnloadedImage({ src, alt }: ComponentProps<'img'>) {
   const url = typeof src === 'string' ? src : ''
   return (
     <span className="border bg-secondary px-1 font-mono text-xs text-muted-foreground">
-      [image not loaded{alt ? `: ${alt}` : ''}{url ? ` (${url})` : ''}]
+      [image not loaded{alt ? `: ${alt}` : ''}
+      {url ? ` (${url})` : ''}]
     </span>
   )
 }
@@ -272,15 +290,17 @@ export const ToolCall: ToolCallMessagePartComponent = ({ toolName, args, result 
         <ChevronRightIcon className="size-3.5 text-muted-foreground transition-transform group-open:rotate-90" />
         <WrenchIcon className={cn('size-3.5', outcome ? DECISION_ICON[outcome.decision] : 'text-info')} />
         <span className="flex-1 truncate font-mono text-[12.5px]">{outcome?.label ?? describeTool(toolName)}</span>
-        {outcome
-          ? <Status tone={DECISION_TONE[outcome.decision]}>{DECISION_LABEL[outcome.decision]}</Status>
-          : <Status tone="info" live>Running</Status>}
+        {outcome ? (
+          <Status tone={DECISION_TONE[outcome.decision]}>{DECISION_LABEL[outcome.decision]}</Status>
+        ) : (
+          <Status tone="info" live>
+            Running
+          </Status>
+        )}
       </summary>
       <div className="space-y-2 border-t px-3 py-2 text-xs text-muted-foreground">
         {outcome?.message && <p className="text-foreground">{outcome.message}</p>}
-        {hasArgs
-          ? <pre className="overflow-x-auto border bg-secondary p-2 font-mono">{JSON.stringify(args, null, 2)}</pre>
-          : <p>No arguments.</p>}
+        {hasArgs ? <pre className="overflow-x-auto border bg-secondary p-2 font-mono">{JSON.stringify(args, null, 2)}</pre> : <p>No arguments.</p>}
       </div>
     </details>
   )
@@ -297,16 +317,21 @@ function LocalToolCall({ local, decision }: { local: LocalTool; decision: ToolCa
       <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3 py-2 [&::-webkit-details-marker]:hidden">
         <ChevronRightIcon className="size-3.5 text-muted-foreground transition-transform group-open:rotate-90" />
         <Icon className={cn('size-3.5', DECISION_ICON[decision])} />
-        <span className="flex-1 truncate font-mono text-[12.5px]">{LOCAL_VERB[local.tool] ?? ''}{local.summary || local.tool}</span>
+        <span className="flex-1 truncate font-mono text-[12.5px]">
+          {LOCAL_VERB[local.tool] ?? ''}
+          {local.summary || local.tool}
+        </span>
         {decision === 'error' && <Status tone="danger">Failed</Status>}
       </summary>
       <div className="border-t px-3 py-2 text-xs text-muted-foreground">
         {local.tool === 'bash' && local.summary && (
           <pre className="mb-2 overflow-x-auto border bg-secondary p-2 font-mono whitespace-pre-wrap text-foreground">{local.summary}</pre>
         )}
-        {local.excerpt
-          ? <pre className="max-h-72 overflow-auto border bg-secondary p-2 font-mono whitespace-pre-wrap">{local.excerpt}</pre>
-          : <p>No output.</p>}
+        {local.excerpt ? (
+          <pre className="max-h-72 overflow-auto border bg-secondary p-2 font-mono whitespace-pre-wrap">{local.excerpt}</pre>
+        ) : (
+          <p>No output.</p>
+        )}
       </div>
     </details>
   )
@@ -327,9 +352,7 @@ const WARNING_REASON: Record<string, string> = {
 function TurnFilesCard({ files }: { files: TurnFiles }) {
   const href = useContext(FileHrefContext)
   const changes = files.changes
-  const rows = changes
-    ? (['added', 'modified', 'deleted'] as const).flatMap(kind => changes[kind].map(file => ({ kind, ...file })))
-    : []
+  const rows = changes ? (['added', 'modified', 'deleted'] as const).flatMap(kind => changes[kind].map(file => ({ kind, ...file }))) : []
   const listed = changes ? rows.length : 0
   const total = changes ? (changes.counts.added ?? 0) + (changes.counts.modified ?? 0) + (changes.counts.deleted ?? 0) : 0
   const warnings = files.warnings
@@ -345,9 +368,20 @@ function TurnFilesCard({ files }: { files: TurnFiles }) {
           {rows.map(row => (
             <li key={`${row.kind}:${row.path}`} className="flex items-center gap-3 px-3 py-1.5 text-[13px]">
               <span className="w-16 shrink-0 text-xs text-muted-foreground">{CHANGE_LABEL[row.kind]}</span>
-              {row.kind !== 'deleted' && href && files.version
-                ? <a href={href(row.path, files.version)} download className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-info hover:underline" title={`Download ${row.path}`}>{row.path}</a>
-                : <span className={cn('min-w-0 flex-1 truncate font-mono text-[12.5px]', row.kind === 'deleted' && 'text-muted-foreground line-through')}>{row.path}</span>}
+              {row.kind !== 'deleted' && href && files.version ? (
+                <a
+                  href={href(row.path, files.version)}
+                  download
+                  className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-info hover:underline"
+                  title={`Download ${row.path}`}
+                >
+                  {row.path}
+                </a>
+              ) : (
+                <span className={cn('min-w-0 flex-1 truncate font-mono text-[12.5px]', row.kind === 'deleted' && 'text-muted-foreground line-through')}>
+                  {row.path}
+                </span>
+              )}
               {row.kind !== 'deleted' && <span className="shrink-0 text-xs text-muted-foreground">{formatSize(row.size)}</span>}
             </li>
           ))}
@@ -359,7 +393,9 @@ function TurnFilesCard({ files }: { files: TurnFiles }) {
           <p className="text-warning">{warnings.total === 1 ? '1 entry was not kept:' : `${warnings.total} entries were not kept:`}</p>
           <ul className="space-y-0.5">
             {warnings.items.map(item => (
-              <li key={item.path} className="truncate"><span className="font-mono">{item.path}</span>: {WARNING_REASON[item.reason] ?? item.reason}</li>
+              <li key={item.path} className="truncate">
+                <span className="font-mono">{item.path}</span>: {WARNING_REASON[item.reason] ?? item.reason}
+              </li>
             ))}
             {warnings.total > warnings.items.length && <li>and {warnings.total - warnings.items.length} more</li>}
           </ul>
@@ -375,16 +411,22 @@ function ComposerAttachment({ attachment }: { attachment: Attachment }) {
   return (
     <AttachmentPrimitive.Root
       className={cn('flex max-w-60 min-w-0 items-center gap-1.5 border bg-card py-1 pr-1 pl-2.5 text-[13px]', failed && 'border-destructive/50')}
-      title={failed ? status.message ?? 'The file could not be uploaded.' : attachment.name}
+      title={failed ? (status.message ?? 'The file could not be uploaded.') : attachment.name}
     >
-      {status.type === 'running'
-        ? <Spinner className="size-3.5" />
-        : <FileIcon className={cn('size-3.5 shrink-0', failed ? 'text-destructive' : 'text-muted-foreground')} />}
-      <span className="min-w-0 truncate"><AttachmentPrimitive.Name /></span>
+      {status.type === 'running' ? (
+        <Spinner className="size-3.5" />
+      ) : (
+        <FileIcon className={cn('size-3.5 shrink-0', failed ? 'text-destructive' : 'text-muted-foreground')} />
+      )}
+      <span className="min-w-0 truncate">
+        <AttachmentPrimitive.Name />
+      </span>
       {status.type === 'running' && <span className="shrink-0 text-xs text-muted-foreground">{Math.round(status.progress * 100)}%</span>}
       {failed && <span className="shrink-0 text-xs text-destructive">Failed</span>}
       <AttachmentPrimitive.Remove asChild>
-        <Button size="icon-sm" variant="ghost" className="size-6" aria-label={`Remove ${attachment.name}`}><XIcon className="size-3.5" /></Button>
+        <Button size="icon-sm" variant="ghost" className="size-6" aria-label={`Remove ${attachment.name}`}>
+          <XIcon className="size-3.5" />
+        </Button>
       </AttachmentPrimitive.Remove>
     </AttachmentPrimitive.Root>
   )
@@ -410,7 +452,9 @@ function Composer() {
           <div className="flex items-end gap-2 p-2">
             {canAttach && (
               <ComposerPrimitive.AddAttachment asChild multiple>
-                <Button size="icon-sm" variant="ghost" aria-label="Attach files" title="Attach files"><PaperclipIcon /></Button>
+                <Button size="icon-sm" variant="ghost" aria-label="Attach files" title="Attach files">
+                  <PaperclipIcon />
+                </Button>
               </ComposerPrimitive.AddAttachment>
             )}
             <ComposerPrimitive.Input
@@ -421,19 +465,25 @@ function Composer() {
             />
             <AuiIf condition={s => !s.thread.isRunning}>
               <ComposerPrimitive.Send asChild>
-                <Button size="icon-sm" aria-label="Send"><ArrowUpIcon /></Button>
+                <Button size="icon-sm" aria-label="Send">
+                  <ArrowUpIcon />
+                </Button>
               </ComposerPrimitive.Send>
             </AuiIf>
             <AuiIf condition={s => s.thread.isRunning}>
               <ComposerPrimitive.Cancel asChild>
-                <Button size="icon-sm" variant="outline" aria-label="Stop"><SquareIcon className="size-3" /></Button>
+                <Button size="icon-sm" variant="outline" aria-label="Stop">
+                  <SquareIcon className="size-3" />
+                </Button>
               </ComposerPrimitive.Cancel>
             </AuiIf>
           </div>
         </ComposerPrimitive.Root>
       </ComposerPrimitive.AttachmentDropzone>
       {failure?.status.type === 'incomplete' && (
-        <ErrorNote>{failure.name}: {failure.status.message ?? 'The file could not be uploaded.'}</ErrorNote>
+        <ErrorNote>
+          {failure.name}: {failure.status.message ?? 'The file could not be uploaded.'}
+        </ErrorNote>
       )}
       <p className="text-center text-xs text-muted-foreground">
         {visitor ? 'The agent only reaches what the owner allowed under Connections.' : 'Agents only reach what you allow under Connections.'}

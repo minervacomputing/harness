@@ -37,7 +37,14 @@ function SignupPage() {
     <AuthLayout
       title="Create your account"
       description="You get a personal workspace with one assistant to start."
-      footer={<>Already have an account? <Link to="/login" search={{ next }} className="text-foreground underline-offset-4 hover:underline">Sign in</Link></>}
+      footer={
+        <>
+          Already have an account?{' '}
+          <Link to="/login" search={{ next }} className="text-foreground underline-offset-4 hover:underline">
+            Sign in
+          </Link>
+        </>
+      }
     >
       <form className="grid gap-4" onSubmit={submitForm(form)}>
         <form.Field name="email" validators={{ onBlur: ({ value }) => (!value.includes('@') ? 'Enter your email address.' : undefined) }}>

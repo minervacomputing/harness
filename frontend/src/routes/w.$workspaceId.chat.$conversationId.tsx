@@ -16,14 +16,7 @@ import {
 import { AppIcons, connectionsOf } from '@/components/agents/agent-apps'
 import { AgentIntro } from '@/components/chat/agent-intro'
 import { FilesPanel } from '@/components/chat/files-panel'
-import {
-  buildMessages,
-  messageText,
-  pendingMessages,
-  refusedMessage,
-  sendingAttachments,
-  toThreadMessage,
-} from '@/components/chat/model'
+import { buildMessages, messageText, pendingMessages, refusedMessage, sendingAttachments, toThreadMessage } from '@/components/chat/model'
 import { Thread } from '@/components/chat/thread'
 import { Button } from '@/components/ui/button'
 import { ErrorNote, Spinner } from '@/components/ui/misc'
@@ -36,10 +29,13 @@ import { cn } from '@/lib/utils'
 import { downloadUrl, useUploadAdapter, type Uploaded } from '@/lib/uploads'
 
 export const Route = createFileRoute('/w/$workspaceId/chat/$conversationId')({
-  loader: ({ context, params }) => context.queryClient.ensureQueryData(
-    getConversationOptions({ path: { workspace_id: params.workspaceId, conversation_id: params.conversationId } }),
+  loader: ({ context, params }) =>
+    context.queryClient.ensureQueryData(getConversationOptions({ path: { workspace_id: params.workspaceId, conversation_id: params.conversationId } })),
+  pendingComponent: () => (
+    <div className="p-8">
+      <Spinner />
+    </div>
   ),
-  pendingComponent: () => <div className="p-8"><Spinner /></div>,
   component: ConversationPage,
 })
 
@@ -62,7 +58,9 @@ function ConversationPage() {
 
   const latest = conversation.data?.runs.at(-1)
   const liveRun = latest && ACTIVE_STATUSES.has(latest.status) ? latest : undefined
-  const events = useRunEvents(workspaceId, liveRun, () => { void refresh() })
+  const events = useRunEvents(workspaceId, liveRun, () => {
+    void refresh()
+  })
   const settled = events.some(e => e.type === 'status' && !ACTIVE_STATUSES.has(e.data.status as never))
 
   const post = useMutation({
@@ -125,11 +123,14 @@ function ConversationPage() {
     <AssistantRuntimeProvider runtime={runtime}>
       <div className="flex h-full flex-col">
         <header className="flex min-h-12 shrink-0 items-center gap-4 border-b px-4 py-2 md:px-6">
-          <h1 className="min-w-0 flex-1 truncate text-sm font-medium" title={title}>{title}</h1>
+          <h1 className="min-w-0 flex-1 truncate text-sm font-medium" title={title}>
+            {title}
+          </h1>
           {agent && (
             <div className="flex min-w-0 items-center gap-2.5">
               <span className="flex min-w-0 items-center gap-1.5 text-[13px] text-muted-foreground" title="Agent">
-                <BotIcon className="size-3.5 shrink-0" /><span className="truncate">{agent.name}</span>
+                <BotIcon className="size-3.5 shrink-0" />
+                <span className="truncate">{agent.name}</span>
               </span>
               <AppIcons connections={connectionsOf(agent, connections.data)} size="xs" className="hidden sm:flex" />
             </div>
@@ -142,7 +143,8 @@ function ConversationPage() {
             aria-controls="conversation-files"
             onClick={() => (filesOpen ? closeFiles() : setFilesOpen(true))}
           >
-            <FolderIcon />Files
+            <FolderIcon />
+            Files
           </Button>
         </header>
         {error && <ErrorNote className="mx-4 mt-4 md:mx-6">{errorMessage(error)}</ErrorNote>}

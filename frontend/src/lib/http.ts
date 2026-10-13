@@ -30,9 +30,12 @@ export function installClientInterceptors(onUnauthorized: () => void) {
   // Django's bare 500 page; the client throws it as raw text, so it is replaced by a sentence.
   client.interceptors.error.use((error, response) => {
     if (typeof error !== 'string' || !response) return error
-    return { detail: response.status >= 502 && response.status <= 504
-      ? 'Minerva is briefly unavailable, probably restarting. Try again in a moment.'
-      : 'Something went wrong on the server. Try again.' }
+    return {
+      detail:
+        response.status >= 502 && response.status <= 504
+          ? 'Minerva is briefly unavailable, probably restarting. Try again in a moment.'
+          : 'Something went wrong on the server. Try again.',
+    }
   })
 }
 

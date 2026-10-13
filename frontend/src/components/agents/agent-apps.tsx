@@ -15,7 +15,12 @@ export function connectionsOf(agent: AgentOut, connections: ConnectionOut[] | un
 const named = (connection: ConnectionOut) => `${connection.provider_name} · ${connection.label}`
 
 /** Up to `max` icons; past that, the last place says how many more. */
-export function AppIcons({ connections, size = 'sm', max = 4, className }: {
+export function AppIcons({
+  connections,
+  size = 'sm',
+  max = 4,
+  className,
+}: {
   connections: ConnectionOut[]
   size?: 'xs' | 'sm'
   max?: number
@@ -43,11 +48,7 @@ export function AppIcons({ connections, size = 'sm', max = 4, className }: {
 }
 
 /** Apps the agent cannot use until the user acts. Each row opens that app under Connections. */
-export function AttentionList({ workspaceId, connections, className }: {
-  workspaceId: string
-  connections: ConnectionOut[]
-  className?: string
-}) {
+export function AttentionList({ workspaceId, connections, className }: { workspaceId: string; connections: ConnectionOut[]; className?: string }) {
   return (
     <ul className={cn('divide-y divide-border border border-border-strong bg-card text-left', className)}>
       {connections.map(connection => {

@@ -34,7 +34,13 @@ export function TextField({ field, label, hint, serverError, ...props }: FieldPr
   )
 }
 
-export function TextAreaField({ field, label, hint, serverError, ...props }: FieldProps & Omit<ComponentProps<'textarea'>, 'value' | 'onChange' | 'onBlur' | 'name'>) {
+export function TextAreaField({
+  field,
+  label,
+  hint,
+  serverError,
+  ...props
+}: FieldProps & Omit<ComponentProps<'textarea'>, 'value' | 'onChange' | 'onBlur' | 'name'>) {
   const error = fieldError(field, serverError)
   return (
     <div className="grid gap-1.5">

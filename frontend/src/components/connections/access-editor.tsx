@@ -26,8 +26,9 @@ export function invalidateConnections(queryClient: QueryClient, workspaceId: str
 }
 
 /** Every cached listing of a connection's resources: at the top, inside folders, and searches. */
-const resourcesKey = (workspaceId: string, connectionId: string) =>
-  [{ _id: 'listAccessResources', path: { workspace_id: workspaceId, connection_id: connectionId } }]
+const resourcesKey = (workspaceId: string, connectionId: string) => [
+  { _id: 'listAccessResources', path: { workspace_id: workspaceId, connection_id: connectionId } },
+]
 
 export function refreshResources(queryClient: QueryClient, workspaceId: string, connectionId: string) {
   return queryClient.invalidateQueries({ queryKey: resourcesKey(workspaceId, connectionId) })
@@ -126,9 +127,7 @@ export function AccessEditor({ workspaceId, connectionId }: { workspaceId: strin
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
-        <p className="text-[13px] text-muted-foreground">
-          Agents can use only what you allow here. Everything else stays invisible to them.
-        </p>
+        <p className="text-[13px] text-muted-foreground">Agents can use only what you allow here. Everything else stays invisible to them.</p>
         {listsResources && (
           <Button
             variant="ghost"
@@ -193,7 +192,17 @@ type KindAccessProps = {
 }
 
 /** One resource and a checkbox per action. Actions allowed around it show checked and cannot be cleared here. */
-function AccessRow({ name, own, inherited, actions, onChange, depth = 0, open, onToggle, icon }: {
+function AccessRow({
+  name,
+  own,
+  inherited,
+  actions,
+  onChange,
+  depth = 0,
+  open,
+  onToggle,
+  icon,
+}: {
   name: string
   own: Set<string>
   inherited: Inherited
@@ -208,19 +217,19 @@ function AccessRow({ name, own, inherited, actions, onChange, depth = 0, open, o
     <TableRow>
       <TableCell>
         <div className="flex min-w-0 items-center gap-1.5" style={{ paddingLeft: depth * 20 }}>
-          {onToggle
-            ? (
-                <button
-                  type="button"
-                  aria-expanded={open}
-                  aria-label={`${open ? 'Collapse' : 'Expand'} ${name}`}
-                  className="grid size-5 shrink-0 place-items-center text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/25"
-                  onClick={onToggle}
-                >
-                  <ChevronRightIcon className={cn('size-3.5 transition-transform', open && 'rotate-90')} />
-                </button>
-              )
-            : depth > 0 || icon ? <span className="size-5 shrink-0" /> : null}
+          {onToggle ? (
+            <button
+              type="button"
+              aria-expanded={open}
+              aria-label={`${open ? 'Collapse' : 'Expand'} ${name}`}
+              className="grid size-5 shrink-0 place-items-center text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/25"
+              onClick={onToggle}
+            >
+              <ChevronRightIcon className={cn('size-3.5 transition-transform', open && 'rotate-90')} />
+            </button>
+          ) : depth > 0 || icon ? (
+            <span className="size-5 shrink-0" />
+          ) : null}
           {icon}
           <span className="truncate">{name}</span>
         </div>
@@ -297,7 +306,11 @@ function KindAccess({ workspaceId, connectionId, kind, actions, grants, pending,
         {rows.map(r => (
           <AccessRow key={r.id} name={r.name} own={current(r.id)} inherited={fromAll} actions={actions} onChange={next => onChange(r.id, next, r.name)} />
         ))}
-        {resources.isPending && <NoteRow span={span}><Spinner /></NoteRow>}
+        {resources.isPending && (
+          <NoteRow span={span}>
+            <Spinner />
+          </NoteRow>
+        )}
         {resources.data && rows.length === 0 && (kind.listed || search) && (
           <NoteRow span={span}>{search ? `No ${plural} match “${search}”.` : `No ${plural} found in this account.`}</NoteRow>
         )}
@@ -312,17 +325,22 @@ function KindAccess({ workspaceId, connectionId, kind, actions, grants, pending,
     )
   }
 
-
   return (
     <section className="space-y-2">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="space-y-0.5">
           <h3 className="text-sm font-medium">{heading}</h3>
-          {kind.note
-            ? <p className="text-xs text-muted-foreground">{kind.note}</p>
-            : kind.browsable
-              ? <p className="text-xs text-muted-foreground">Access to a folder covers everything inside it. Open a folder to see what is in it, or search to find a single file.</p>
-              : kind.hierarchical && <p className="text-xs text-muted-foreground">Access to a folder covers everything inside it, even where the boxes below do not show it.</p>}
+          {kind.note ? (
+            <p className="text-xs text-muted-foreground">{kind.note}</p>
+          ) : kind.browsable ? (
+            <p className="text-xs text-muted-foreground">
+              Access to a folder covers everything inside it. Open a folder to see what is in it, or search to find a single file.
+            </p>
+          ) : (
+            kind.hierarchical && (
+              <p className="text-xs text-muted-foreground">Access to a folder covers everything inside it, even where the boxes below do not show it.</p>
+            )
+          )}
         </div>
         {searchable && (
           <form
@@ -343,9 +361,19 @@ function KindAccess({ workspaceId, connectionId, kind, actions, grants, pending,
                 onChange={event => setDraft(event.target.value)}
               />
             </div>
-            <Button type="submit" size="sm" variant="outline">{kind.listed ? 'Search' : 'Find'}</Button>
+            <Button type="submit" size="sm" variant="outline">
+              {kind.listed ? 'Search' : 'Find'}
+            </Button>
             {search && (
-              <Button type="button" size="sm" variant="ghost" onClick={() => { setDraft(''); setSearch('') }}>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setDraft('')
+                  setSearch('')
+                }}
+              >
                 <XIcon className="size-3.5" />
                 Clear
               </Button>
@@ -357,41 +385,62 @@ function KindAccess({ workspaceId, connectionId, kind, actions, grants, pending,
         <TableHeader>
           <TableRow>
             <TableHead>{kind.id === ACCOUNT ? '' : kind.label}</TableHead>
-            {actions.map(action => <TableHead key={action.id} className="w-28">{action.label}</TableHead>)}
+            {actions.map(action => (
+              <TableHead key={action.id} className="w-28">
+                {action.label}
+              </TableHead>
+            ))}
           </TableRow>
         </TableHeader>
         <TableBody>
           {kind.wildcard && (
-            <AccessRow name={`All ${plural}, including new ones`} own={all} inherited={new Map()} actions={actions} onChange={next => onChange(ALL, next, `All ${plural}`)} />
+            <AccessRow
+              name={`All ${plural}, including new ones`}
+              own={all}
+              inherited={new Map()}
+              actions={actions}
+              onChange={next => onChange(ALL, next, `All ${plural}`)}
+            />
           )}
-          {browsing
-            ? (
+          {browsing ? (
+            <>
+              {chosen.length > 0 && (
                 <>
-                  {chosen.length > 0 && (
-                    <>
-                      <NoteRow span={span} className="label pt-3">Allowed</NoteRow>
-                      {chosen.map(r => (
-                        <AccessRow key={r.id} name={r.name} own={current(r.id)} inherited={fromAll} actions={actions} onChange={next => onChange(r.id, next, r.name)} />
-                      ))}
-                      <NoteRow span={span} className="label pt-3">Browse</NoteRow>
-                    </>
-                  )}
-                  <TreeLevel
-                    workspaceId={workspaceId}
-                    connectionId={connectionId}
-                    kind={kind}
-                    parent={null}
-                    pathKey=""
-                    depth={0}
-                    inherited={fromAll}
-                    actions={actions}
-                    span={span}
-                    current={current}
-                    onChange={onChange}
-                  />
+                  <NoteRow span={span} className="pt-3 label">
+                    Allowed
+                  </NoteRow>
+                  {chosen.map(r => (
+                    <AccessRow
+                      key={r.id}
+                      name={r.name}
+                      own={current(r.id)}
+                      inherited={fromAll}
+                      actions={actions}
+                      onChange={next => onChange(r.id, next, r.name)}
+                    />
+                  ))}
+                  <NoteRow span={span} className="pt-3 label">
+                    Browse
+                  </NoteRow>
                 </>
-              )
-            : flat()}
+              )}
+              <TreeLevel
+                workspaceId={workspaceId}
+                connectionId={connectionId}
+                kind={kind}
+                parent={null}
+                pathKey=""
+                depth={0}
+                inherited={fromAll}
+                actions={actions}
+                span={span}
+                current={current}
+                onChange={onChange}
+              />
+            </>
+          ) : (
+            flat()
+          )}
         </TableBody>
       </Table>
       {resources.error && <ErrorNote>{errorMessage(resources.error, `Could not load your ${plural}.`)}</ErrorNote>}
@@ -454,27 +503,38 @@ function TreeLevel(props: TreeLevelProps) {
               depth={depth}
               open={isOpen}
               icon={item.expandable ? <FolderIcon className="size-3.5 shrink-0 text-muted-foreground" /> : undefined}
-              onToggle={item.expandable
-                ? () => setOpen(previous => {
-                    const next = new Set(previous)
-                    if (!next.delete(item.id)) next.add(item.id)
-                    return next
-                  })
-                : undefined}
+              onToggle={
+                item.expandable
+                  ? () =>
+                      setOpen(previous => {
+                        const next = new Set(previous)
+                        if (!next.delete(item.id)) next.add(item.id)
+                        return next
+                      })
+                  : undefined
+              }
             />
             {isOpen && <TreeLevel {...props} parent={item.id} pathKey={key} depth={depth + 1} inherited={inside} />}
           </Fragment>
         )
       })}
-      {level.isPending && <NoteRow span={span} depth={depth}><Spinner /></NoteRow>}
+      {level.isPending && (
+        <NoteRow span={span} depth={depth}>
+          <Spinner />
+        </NoteRow>
+      )}
       {level.error && (
         <NoteRow span={span} depth={depth} className="text-destructive">
           {errorMessage(level.error, 'Could not load this folder.')}{' '}
-          <Button variant="link" size="sm" className="h-auto px-0" onClick={() => level.refetch()}>Try again</Button>
+          <Button variant="link" size="sm" className="h-auto px-0" onClick={() => level.refetch()}>
+            Try again
+          </Button>
         </NoteRow>
       )}
       {level.data && items.length === 0 && (
-        <NoteRow span={span} depth={depth}>{parent === null ? `No ${kind.label.toLowerCase()}s found in this account.` : 'No folders inside.'}</NoteRow>
+        <NoteRow span={span} depth={depth}>
+          {parent === null ? `No ${kind.label.toLowerCase()}s found in this account.` : 'No folders inside.'}
+        </NoteRow>
       )}
       {level.hasNextPage && (
         <NoteRow span={span} depth={depth}>

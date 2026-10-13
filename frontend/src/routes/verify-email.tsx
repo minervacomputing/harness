@@ -24,11 +24,7 @@ function VerifyEmailPage() {
   const [resendError, setResendError] = useState<string | null>(null)
 
   return (
-    <AuthLayout
-      title="Check your email"
-      description="We sent you a verification code. Enter it to finish creating your account."
-      back
-    >
+    <AuthLayout title="Check your email" description="We sent you a verification code. Enter it to finish creating your account." back>
       <CodeForm
         numeric
         label="Verification code"

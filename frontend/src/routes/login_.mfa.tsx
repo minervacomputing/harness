@@ -18,17 +18,8 @@ function MfaPage() {
   const continueAuth = useContinueAuth()
   const verify = useAuthStep(auth.mfaAuthenticate)
   return (
-    <AuthLayout
-      title="Two-factor authentication"
-      description="Enter the code from your authenticator app, or one of your recovery codes."
-      back
-    >
-      <CodeForm
-        label="Code"
-        submitLabel="Continue"
-        error={verify.error}
-        onSubmit={async code => continueAuth(await verify.mutateAsync({ code }), next)}
-      />
+    <AuthLayout title="Two-factor authentication" description="Enter the code from your authenticator app, or one of your recovery codes." back>
+      <CodeForm label="Code" submitLabel="Continue" error={verify.error} onSubmit={async code => continueAuth(await verify.mutateAsync({ code }), next)} />
     </AuthLayout>
   )
 }

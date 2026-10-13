@@ -52,7 +52,15 @@ function collect(events: EventOut[]): { parts: Part[]; callOf: WeakMap<Part, unk
     if (isRestart(event)) {
       parts = parts.filter(part => part.type === 'tool-call')
     } else if (event.type === 'tool_call') {
-      const data = event.data as { tool: string; label?: string; decision: ToolCallResult['decision']; message?: string; arguments?: Record<string, never>; repeat?: boolean; write?: string }
+      const data = event.data as {
+        tool: string
+        label?: string
+        decision: ToolCallResult['decision']
+        message?: string
+        arguments?: Record<string, never>
+        repeat?: boolean
+        write?: string
+      }
       // The write's own event may be missing, if its worker died before the gateway recorded it.
       if (data.repeat && data.write && writes.has(data.write)) continue
       if (data.decision === 'allowed' && data.write) writes.add(data.write)
@@ -221,10 +229,19 @@ export function toThreadMessage(message: ChatMessage): ThreadMessageLike {
     case 'progress':
       return { role: 'assistant', id: message.id, content: message.parts, status: { type: 'running' }, metadata: { custom: { phase: message.phase } } }
     case 'failure':
-      return { role: 'assistant', id: message.id, content: message.parts, status: { type: 'complete', reason: 'stop' }, metadata: { custom: { failure: message.text } } }
+      return {
+        role: 'assistant',
+        id: message.id,
+        content: message.parts,
+        status: { type: 'complete', reason: 'stop' },
+        metadata: { custom: { failure: message.text } },
+      }
   }
 }
 
 export function messageText(message: AppendMessage): string {
-  return message.content.map(part => (part.type === 'text' ? part.text : '')).join('').trim()
+  return message.content
+    .map(part => (part.type === 'text' ? part.text : ''))
+    .join('')
+    .trim()
 }

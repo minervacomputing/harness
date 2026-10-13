@@ -25,9 +25,13 @@ export function AppIcon({ slug, size = 'md', className }: { slug: string; size?:
   const { tile, mark } = SIZES[size]
   return (
     <span aria-hidden className={cn('grid shrink-0 place-items-center border border-border-strong bg-card text-foreground', tile, className)}>
-      {path
-        ? <svg viewBox="0 0 24 24" className={mark} fill="currentColor"><path d={path} /></svg>
-        : <Glyph className={mark} strokeWidth={1.75} />}
+      {path ? (
+        <svg viewBox="0 0 24 24" className={mark} fill="currentColor">
+          <path d={path} />
+        </svg>
+      ) : (
+        <Glyph className={mark} strokeWidth={1.75} />
+      )}
     </span>
   )
 }

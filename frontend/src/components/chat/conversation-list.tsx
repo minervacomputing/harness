@@ -2,12 +2,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
 import { TrashIcon } from 'lucide-react'
-import {
-  deleteConversationMutation,
-  getConversationQueryKey,
-  listConversationsOptions,
-  listConversationsQueryKey,
-} from '@/api/@tanstack/react-query.gen'
+import { deleteConversationMutation, getConversationQueryKey, listConversationsOptions, listConversationsQueryKey } from '@/api/@tanstack/react-query.gen'
 import type { ConversationOut } from '@/api/types.gen'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/misc'
@@ -54,12 +49,19 @@ export function ConversationList({ workspaceId }: { workspaceId: string }) {
     },
   })
 
-  if (conversations.isPending) return <div className="px-2 py-2"><Spinner /></div>
+  if (conversations.isPending)
+    return (
+      <div className="px-2 py-2">
+        <Spinner />
+      </div>
+    )
   if (conversations.error) {
     return (
       <div className="space-y-1 px-2 py-2 text-xs text-muted-foreground">
         <p>{errorMessage(conversations.error, 'Could not load your conversations.')}</p>
-        <Button variant="link" size="sm" className="h-auto px-0" onClick={() => conversations.refetch()}>Try again</Button>
+        <Button variant="link" size="sm" className="h-auto px-0" onClick={() => conversations.refetch()}>
+          Try again
+        </Button>
       </div>
     )
   }
@@ -71,7 +73,7 @@ export function ConversationList({ workspaceId }: { workspaceId: string }) {
       {remove.error && <p className="px-2 text-xs text-destructive">{errorMessage(remove.error, 'Could not delete the conversation.')}</p>}
       {grouped(conversations.data).map(group => (
         <div key={group.label}>
-          <h3 className="label px-2 pb-1">{group.label}</h3>
+          <h3 className="px-2 pb-1 label">{group.label}</h3>
           <ul className="space-y-px">
             {group.items.map(conversation => {
               const title = conversation.title || 'New conversation'
@@ -89,7 +91,7 @@ export function ConversationList({ workspaceId }: { workspaceId: string }) {
                   <Button
                     variant="ghost"
                     size="icon-sm"
-                    className="mr-1 size-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 group-has-[[aria-current=page]]:opacity-100 [@media(hover:none)]:opacity-100"
+                    className="mr-1 size-6 opacity-0 group-hover:opacity-100 group-has-[[aria-current=page]]:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
                     aria-label={`Delete ${title}`}
                     title="Delete conversation"
                     disabled={deleting}

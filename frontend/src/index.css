@@ -177,8 +177,14 @@
   --tw-prose-pre-bg: var(--secondary);
   --tw-prose-th-borders: var(--border-strong);
   --tw-prose-td-borders: var(--border);
-  & :where(pre) { border-radius: 0; border: 1px solid var(--border); }
-  & :where(h1, h2, h3, h4) { font-weight: 500; letter-spacing: -0.015em; }
+  & :where(pre) {
+    border-radius: 0;
+    border: 1px solid var(--border);
+  }
+  & :where(h1, h2, h3, h4) {
+    font-weight: 500;
+    letter-spacing: -0.015em;
+  }
 }
 
 /* The agent's reasoning: quieter than its replies. A second class, so it wins over prose-minerva. */

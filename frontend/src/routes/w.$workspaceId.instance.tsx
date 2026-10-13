@@ -10,15 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Segmented, SegmentedItem } from '@/components/ui/tabs'
 import { requireInstanceAdmin } from '@/lib/guards'
 import { errorMessage } from '@/lib/http'
-import {
-  addAdmin,
-  type InstanceAdmin,
-  instanceAdminsQuery,
-  type InstanceSettings,
-  instanceSettingsQuery,
-  removeAdmin,
-  updateSignupOpen,
-} from '@/lib/instance'
+import { addAdmin, type InstanceAdmin, instanceAdminsQuery, type InstanceSettings, instanceSettingsQuery, removeAdmin, updateSignupOpen } from '@/lib/instance'
 
 export const Route = createFileRoute('/w/$workspaceId/instance')({
   beforeLoad: ({ context }) => requireInstanceAdmin(context.queryClient),
@@ -61,15 +53,25 @@ function SignupSetting() {
           : 'Whether anyone can create an account.'
       }
       action={
-        current
-          ? (
-            <Segmented aria-label="Sign-up" value={save.isPending && save.variables ? save.variables : choiceOf(current)} onValueChange={choice => save.mutate(choice as SignupChoice)}>
-              <SegmentedItem value="open" disabled={save.isPending}>Open</SegmentedItem>
-              <SegmentedItem value="closed" disabled={save.isPending}>Closed</SegmentedItem>
-              <SegmentedItem value="default" disabled={save.isPending}>Default</SegmentedItem>
-            </Segmented>
-          )
-          : settings.isPending ? <Spinner /> : null
+        current ? (
+          <Segmented
+            aria-label="Sign-up"
+            value={save.isPending && save.variables ? save.variables : choiceOf(current)}
+            onValueChange={choice => save.mutate(choice as SignupChoice)}
+          >
+            <SegmentedItem value="open" disabled={save.isPending}>
+              Open
+            </SegmentedItem>
+            <SegmentedItem value="closed" disabled={save.isPending}>
+              Closed
+            </SegmentedItem>
+            <SegmentedItem value="default" disabled={save.isPending}>
+              Default
+            </SegmentedItem>
+          </Segmented>
+        ) : settings.isPending ? (
+          <Spinner />
+        ) : null
       }
     >
       {settings.isError && <ErrorNote>{errorMessage(settings.error)}</ErrorNote>}
@@ -119,7 +121,9 @@ function AdminsSetting() {
               <tr>
                 <TableHead>Email</TableHead>
                 <TableHead className="hidden sm:table-cell">Name</TableHead>
-                <TableHead><span className="sr-only">Actions</span></TableHead>
+                <TableHead>
+                  <span className="sr-only">Actions</span>
+                </TableHead>
               </tr>
             </TableHeader>
             <TableBody>
@@ -152,19 +156,20 @@ function AdminsSetting() {
       )}
       {remove.isError && <ErrorNote className="mt-3">{errorMessage(remove.error)}</ErrorNote>}
       <form className="mt-4 grid max-w-md gap-3" onSubmit={submitForm(form)}>
-        <form.Field name="email" validators={{ onSubmit: ({ value }) => (!value.includes('@') ? 'Enter the email address of an existing account.' : undefined) }}>
+        <form.Field
+          name="email"
+          validators={{ onSubmit: ({ value }) => (!value.includes('@') ? 'Enter the email address of an existing account.' : undefined) }}
+        >
           {field => (
-            <TextField
-              field={field}
-              label="Add an administrator"
-              type="email"
-              autoComplete="off"
-              hint="They need an account on this server already."
-            />
+            <TextField field={field} label="Add an administrator" type="email" autoComplete="off" hint="They need an account on this server already." />
           )}
         </form.Field>
         {add.isError && <ErrorNote>{errorMessage(add.error)}</ErrorNote>}
-        <div><SubmitButton form={form} size="sm" variant="outline">Add administrator</SubmitButton></div>
+        <div>
+          <SubmitButton form={form} size="sm" variant="outline">
+            Add administrator
+          </SubmitButton>
+        </div>
       </form>
     </Setting>
   )

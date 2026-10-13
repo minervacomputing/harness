@@ -9,7 +9,9 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b",
-    "gen:api": "uv run --project ../backend python ../backend/devtools/export_openapi.py > openapi.json && openapi-ts"
+    "gen:api": "uv run --project ../backend python ../backend/devtools/export_openapi.py > openapi.json && openapi-ts",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.15.22",
@@ -40,6 +42,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
+    "oxfmt": "0.71.0",
     "typescript": "^5.9.3",
     "vite": "^8.3.1"
   }

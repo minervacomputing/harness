@@ -25,7 +25,8 @@ export const Route = createFileRoute('/w/$workspaceId')({
   component: AppShell,
 })
 
-const LINK = 'flex items-center gap-2.5 px-2 py-[7px] text-[13px] text-muted-foreground outline-none hover:bg-secondary hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/25 focus-visible:ring-inset'
+const LINK =
+  'flex items-center gap-2.5 px-2 py-[7px] text-[13px] text-muted-foreground outline-none hover:bg-secondary hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/25 focus-visible:ring-inset'
 const ACTIVE = { className: 'bg-secondary font-medium text-foreground' }
 const DESKTOP = '(min-width: 48rem)'
 
@@ -45,7 +46,9 @@ function AppShell() {
   useEffect(() => setMenuOpen(false), [pathname])
   useEffect(() => {
     const desktop = window.matchMedia(DESKTOP)
-    const close = () => { if (desktop.matches) setMenuOpen(false) }
+    const close = () => {
+      if (desktop.matches) setMenuOpen(false)
+    }
     desktop.addEventListener('change', close)
     return () => desktop.removeEventListener('change', close)
   }, [])
@@ -60,7 +63,9 @@ function AppShell() {
       <header className="flex shrink-0 items-center gap-2 border-b bg-sidebar px-2 py-2 md:hidden">
         <Dialog.Root open={menuOpen} onOpenChange={setMenuOpen}>
           <Dialog.Trigger asChild>
-            <Button variant="ghost" size="icon" aria-label="Open menu"><MenuIcon /></Button>
+            <Button variant="ghost" size="icon" aria-label="Open menu">
+              <MenuIcon />
+            </Button>
           </Dialog.Trigger>
           <Dialog.Portal>
             <Dialog.Overlay className="fixed inset-0 z-40 bg-foreground/25" />
@@ -72,7 +77,9 @@ function AppShell() {
               <Dialog.Title className="sr-only">Menu</Dialog.Title>
               <Sidebar workspace={workspace} user={user} />
               <Dialog.Close asChild>
-                <Button variant="ghost" size="icon-sm" className="absolute top-4 right-3" aria-label="Close menu"><XIcon /></Button>
+                <Button variant="ghost" size="icon-sm" className="absolute top-4 right-3" aria-label="Close menu">
+                  <XIcon />
+                </Button>
               </Dialog.Close>
             </Dialog.Content>
           </Dialog.Portal>
@@ -109,7 +116,7 @@ function Sidebar({ workspace, user }: { workspace: WorkspaceOut; user: AuthUser 
     <>
       <div className="space-y-2.5 px-4 pt-5 pb-4">
         <Logo height={24} />
-        <p className="label truncate">{workspace.name}</p>
+        <p className="truncate label">{workspace.name}</p>
       </div>
       <nav aria-label="Main" className="space-y-px px-2">
         <Link to="/w/$workspaceId/chat" params={params} activeOptions={{ exact: true, includeSearch: false }} className={LINK} activeProps={ACTIVE}>
@@ -164,12 +171,12 @@ function DemoBanner() {
   if (!demo?.visitor) return null
   return (
     <p className="shrink-0 border-b bg-secondary px-4 py-2 text-[13px] text-muted-foreground md:px-8">
-      <span className="font-medium text-foreground">Demo workspace.</span>{' '}
-      Fernhill Labs and its data are made up. You can look around and chat, but not change the setup.{' '}
+      <span className="font-medium text-foreground">Demo workspace.</span> Fernhill Labs and its data are made up. You can look around and chat, but not change
+      the setup.{' '}
       <span className="font-mono text-[12px] whitespace-nowrap text-foreground">
         {demo.turns_left}/{demo.turns_per_day} messages left today
-      </span>
-      {' '}· chats are deleted after {demo.chat_retention_hours} hours
+      </span>{' '}
+      · chats are deleted after {demo.chat_retention_hours} hours
     </p>
   )
 }

@@ -11,7 +11,9 @@ function read(): ThemeChoice {
   try {
     const value = localStorage.getItem(KEY)
     if (value === 'light' || value === 'dark') return value
-  } catch { /* storage blocked: follow the system */ }
+  } catch {
+    /* storage blocked: follow the system */
+  }
   return 'system'
 }
 
@@ -28,7 +30,9 @@ export function setTheme(choice: ThemeChoice) {
   try {
     if (choice === 'system') localStorage.removeItem(KEY)
     else localStorage.setItem(KEY, choice)
-  } catch { /* storage blocked: applies for this page only */ }
+  } catch {
+    /* storage blocked: applies for this page only */
+  }
   apply()
 }
 

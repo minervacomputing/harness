@@ -45,14 +45,22 @@ function AccountPage() {
             <Setting
               title="Set up this server"
               description="Nobody administers this server yet. If you run it, claim it with the setup key."
-              action={<Button variant="outline" size="sm" asChild><Link to="/setup">Enter setup key</Link></Button>}
+              action={
+                <Button variant="outline" size="sm" asChild>
+                  <Link to="/setup">Enter setup key</Link>
+                </Button>
+              }
             />
           )}
           <Setting title="Appearance" description="Light, dark, or the same as your system." action={<ThemeToggle labelled />} />
           <Setting
             title="Sign out"
             description="Sign out of Minerva in this browser."
-            action={<Button variant="outline" size="sm" onClick={signOut}>Sign out</Button>}
+            action={
+              <Button variant="outline" size="sm" onClick={signOut}>
+                Sign out
+              </Button>
+            }
           />
         </SettingsList>
       </div>
@@ -78,7 +86,10 @@ function PasswordSetting() {
   const fields = fieldErrors(change.error)
   const form = useForm({
     defaultValues: { current_password: '', new_password: '' },
-    onSubmit: async ({ value, formApi }) => { await change.mutateAsync(value); formApi.reset() },
+    onSubmit: async ({ value, formApi }) => {
+      await change.mutateAsync(value)
+      formApi.reset()
+    },
   })
   const toggle = () => {
     setOpen(!open)
@@ -90,19 +101,40 @@ function PasswordSetting() {
     <Setting
       title="Password"
       description="Changing your password keeps you signed in here."
-      action={<Button ref={button} variant={open ? 'ghost' : 'outline'} size="sm" aria-expanded={open} onClick={toggle}>{open ? 'Cancel' : 'Change password'}</Button>}
+      action={
+        <Button ref={button} variant={open ? 'ghost' : 'outline'} size="sm" aria-expanded={open} onClick={toggle}>
+          {open ? 'Cancel' : 'Change password'}
+        </Button>
+      }
     >
-      {done && <Alert tone="info" role="status">{done}</Alert>}
+      {done && (
+        <Alert tone="info" role="status">
+          {done}
+        </Alert>
+      )}
       {open && (
         <form className="grid max-w-md gap-4" onSubmit={submitForm(form)}>
           <form.Field name="current_password">
-            {field => <TextField field={field} label="Current password" type="password" autoComplete="current-password" autoFocus serverError={fields.current_password} />}
+            {field => (
+              <TextField
+                field={field}
+                label="Current password"
+                type="password"
+                autoComplete="current-password"
+                autoFocus
+                serverError={fields.current_password}
+              />
+            )}
           </form.Field>
           <form.Field name="new_password" validators={{ onBlur: ({ value }) => (value && value.length < 10 ? 'Use at least 10 characters.' : undefined) }}>
             {field => <TextField field={field} label="New password" type="password" autoComplete="new-password" serverError={fields.new_password} />}
           </form.Field>
           {change.error && !Object.keys(fields).length && <ErrorNote>{change.error.message}</ErrorNote>}
-          <div><Button type="submit" size="sm" disabled={change.isPending}>Change password</Button></div>
+          <div>
+            <Button type="submit" size="sm" disabled={change.isPending}>
+              Change password
+            </Button>
+          </div>
         </form>
       )}
     </Setting>

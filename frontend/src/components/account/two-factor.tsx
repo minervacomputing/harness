@@ -26,26 +26,39 @@ export function TwoFactorSetting() {
     <Setting
       title="Two-factor authentication"
       description="Ask for a code from an authenticator app when you sign in."
-      action={(
+      action={
         <>
           {status.isPending && <Spinner />}
           {loaded && <Status tone={enabled ? 'success' : 'neutral'}>{enabled ? 'On' : 'Off'}</Status>}
-          {loaded && !enabled && (setup
-            ? <Button variant="ghost" size="sm" onClick={() => setSetup(false)}>Cancel</Button>
-            : <Button variant="outline" size="sm" onClick={() => setSetup(true)}>Set up</Button>)}
-          {enabled && (turningOff
-            ? <Button variant="ghost" size="sm" onClick={() => setTurningOff(false)}>Cancel</Button>
-            : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => { if (confirm('Turn off two-factor authentication?')) setTurningOff(true) }}
-                >
-                  Turn off
-                </Button>
-              ))}
+          {loaded &&
+            !enabled &&
+            (setup ? (
+              <Button variant="ghost" size="sm" onClick={() => setSetup(false)}>
+                Cancel
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" onClick={() => setSetup(true)}>
+                Set up
+              </Button>
+            ))}
+          {enabled &&
+            (turningOff ? (
+              <Button variant="ghost" size="sm" onClick={() => setTurningOff(false)}>
+                Cancel
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (confirm('Turn off two-factor authentication?')) setTurningOff(true)
+                }}
+              >
+                Turn off
+              </Button>
+            ))}
         </>
-      )}
+      }
     >
       {status.error && <ErrorNote>{status.error.message}</ErrorNote>}
       {turningOff && (
@@ -96,12 +109,25 @@ function TotpConfirm({ started, onDone }: { started: Started; onDone: () => Prom
       <QRCodeSVG value={started.uri} size={144} className="border bg-white p-2" />
       <form className="grid content-start gap-3" onSubmit={submitForm(form)}>
         <p className="text-sm">Scan the code with your authenticator app, or enter this key:</p>
-        <code className="break-all border bg-secondary px-2 py-1 font-mono text-xs">{started.secret}</code>
+        <code className="border bg-secondary px-2 py-1 font-mono text-xs break-all">{started.secret}</code>
         <form.Field name="code">
-          {field => <TextField field={field} label="Code from the app" autoComplete="one-time-code" inputMode="numeric" className="font-mono tracking-widest" serverError={fields.code} />}
+          {field => (
+            <TextField
+              field={field}
+              label="Code from the app"
+              autoComplete="one-time-code"
+              inputMode="numeric"
+              className="font-mono tracking-widest"
+              serverError={fields.code}
+            />
+          )}
         </form.Field>
         {activate.error && !fields.code && <ErrorNote>{activate.error.message}</ErrorNote>}
-        <div><Button type="submit" size="sm" disabled={activate.isPending}>Turn on</Button></div>
+        <div>
+          <Button type="submit" size="sm" disabled={activate.isPending}>
+            Turn on
+          </Button>
+        </div>
       </form>
     </div>
   )
@@ -110,16 +136,25 @@ function TotpConfirm({ started, onDone }: { started: Started; onDone: () => Prom
 function RecoveryCodes() {
   const [asking, setAsking] = useState(false)
   const [codes, setCodes] = useState<string[] | null>(null)
-  if (codes) return <RecoveryCodeList codes={codes} onDone={() => { setCodes(null); setAsking(false) }} replaced />
+  if (codes)
+    return (
+      <RecoveryCodeList
+        codes={codes}
+        onDone={() => {
+          setCodes(null)
+          setAsking(false)
+        }}
+        replaced
+      />
+    )
   if (!asking) {
-    return <Button variant="outline" size="sm" onClick={() => setAsking(true)}>New recovery codes</Button>
+    return (
+      <Button variant="outline" size="sm" onClick={() => setAsking(true)}>
+        New recovery codes
+      </Button>
+    )
   }
-  return (
-    <PasswordPrompt
-      submitLabel="Make new codes"
-      onSubmit={async password => setCodes(await auth.account.newRecoveryCodes(password))}
-    />
-  )
+  return <PasswordPrompt submitLabel="Make new codes" onSubmit={async password => setCodes(await auth.account.newRecoveryCodes(password))} />
 }
 
 function RecoveryCodeList({ codes, onDone, replaced }: { codes: string[]; onDone: () => void; replaced?: boolean }) {
@@ -130,9 +165,13 @@ function RecoveryCodeList({ codes, onDone, replaced }: { codes: string[]; onDone
         {replaced && ' Your earlier recovery codes no longer work.'}
       </p>
       <div className="grid grid-cols-2 gap-1 border bg-secondary p-3 font-mono text-sm sm:grid-cols-4">
-        {codes.map(code => <span key={code}>{code}</span>)}
+        {codes.map(code => (
+          <span key={code}>{code}</span>
+        ))}
       </div>
-      <Button variant="outline" size="sm" onClick={onDone}>I have saved them</Button>
+      <Button variant="outline" size="sm" onClick={onDone}>
+        I have saved them
+      </Button>
     </div>
   )
 }
@@ -148,7 +187,11 @@ function PasswordPrompt({ onSubmit, submitLabel }: { onSubmit: (password: string
         {field => <TextField field={field} label="Current password" type="password" autoComplete="current-password" autoFocus />}
       </form.Field>
       {confirm.error && <ErrorNote>{confirm.error.message}</ErrorNote>}
-      <div><Button type="submit" size="sm" disabled={confirm.isPending}>{submitLabel}</Button></div>
+      <div>
+        <Button type="submit" size="sm" disabled={confirm.isPending}>
+          {submitLabel}
+        </Button>
+      </div>
     </form>
   )
 }

@@ -75,16 +75,29 @@ export class UploadAdapter implements AttachmentAdapter {
     let wake = () => {}
     let done = false
     let failure: unknown
-    const upload = this.upload(entry, file, fraction => { progress.push(fraction); wake() })
-      .then(uploaded => {
-        entry.uploaded = uploaded
-        // Removed while it uploaded: nothing will send it.
-        if (entry.removed) void this.delete(uploaded)
-      }, error => { failure = error })
-      .finally(() => { done = true; wake() })
+    const upload = this.upload(entry, file, fraction => {
+      progress.push(fraction)
+      wake()
+    })
+      .then(
+        uploaded => {
+          entry.uploaded = uploaded
+          // Removed while it uploaded: nothing will send it.
+          if (entry.removed) void this.delete(uploaded)
+        },
+        error => {
+          failure = error
+        },
+      )
+      .finally(() => {
+        done = true
+        wake()
+      })
     try {
       while (!done) {
-        await new Promise<void>(resolve => { wake = resolve })
+        await new Promise<void>(resolve => {
+          wake = resolve
+        })
         const fraction = progress.at(-1)
         if (!done && fraction != null) yield { ...base, status: { type: 'running', reason: 'uploading', progress: fraction } }
       }
@@ -116,12 +129,16 @@ export class UploadAdapter implements AttachmentAdapter {
 
   private async delete(uploaded: Uploaded): Promise<void> {
     // An upload this fails to delete expires within a day.
-    await ensureCsrf().then(() => fetch(`/api/workspaces/${this.workspaceId}/uploads/${uploaded.id}`, {
-      method: 'DELETE',
-      credentials: 'same-origin',
-      headers: { 'X-CSRFToken': csrfToken() },
-      keepalive: true,
-    })).catch(() => {})
+    await ensureCsrf()
+      .then(() =>
+        fetch(`/api/workspaces/${this.workspaceId}/uploads/${uploaded.id}`, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+          headers: { 'X-CSRFToken': csrfToken() },
+          keepalive: true,
+        }),
+      )
+      .catch(() => {})
   }
 
   private async upload(entry: Entry, file: File, onProgress: (fraction: number) => void): Promise<Uploaded> {
@@ -137,7 +154,9 @@ export class UploadAdapter implements AttachmentAdapter {
         request.setRequestHeader('X-CSRFToken', csrfToken())
         request.setRequestHeader('Content-Type', 'application/octet-stream')
         request.responseType = 'json'
-        request.upload.onprogress = event => { if (event.lengthComputable) onProgress(event.loaded / event.total) }
+        request.upload.onprogress = event => {
+          if (event.lengthComputable) onProgress(event.loaded / event.total)
+        }
         request.onload = () => {
           if (request.status === 201) resolve(request.response as Uploaded)
           else reject(request.response ?? { detail: uploadFailure(request.status) })
@@ -160,7 +179,9 @@ export function useUploadAdapter(workspaceId: string): UploadAdapter {
   useEffect(() => {
     adapter.open()
     // A page kept in the back-forward cache may be shown again, chips and all.
-    const leave = (event: PageTransitionEvent) => { if (!event.persisted) adapter.close() }
+    const leave = (event: PageTransitionEvent) => {
+      if (!event.persisted) adapter.close()
+    }
     addEventListener('pagehide', leave)
     return () => {
       removeEventListener('pagehide', leave)

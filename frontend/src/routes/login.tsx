@@ -27,9 +27,8 @@ function LoginPage() {
   const form = useForm({
     defaultValues: { email: '', password: '' },
     onSubmit: async ({ value }) => {
-      const state = mode === 'password'
-        ? await login.mutateAsync({ email: value.email, password: value.password })
-        : await requestCode.mutateAsync({ email: value.email })
+      const state =
+        mode === 'password' ? await login.mutateAsync({ email: value.email, password: value.password }) : await requestCode.mutateAsync({ email: value.email })
       await continueAuth(state, next)
     },
   })
@@ -38,12 +37,16 @@ function LoginPage() {
     <AuthLayout
       title="Sign in"
       description={mode === 'code' ? 'We will email you a one-time sign-in code.' : undefined}
-      footer={<>No account yet? <Link to="/signup" search={{ next }} className="text-foreground underline-offset-4 hover:underline">Create one</Link></>}
+      footer={
+        <>
+          No account yet?{' '}
+          <Link to="/signup" search={{ next }} className="text-foreground underline-offset-4 hover:underline">
+            Create one
+          </Link>
+        </>
+      }
     >
-      <form
-        className="grid gap-4"
-        onSubmit={submitForm(form)}
-      >
+      <form className="grid gap-4" onSubmit={submitForm(form)}>
         {/* An empty field is not flagged on blur: the message would push the links below it down mid-click
             ("Sign in with a code", "Forgot password?"), and the click would be lost. Submitting still checks it. */}
         <form.Field
@@ -61,14 +64,21 @@ function LoginPage() {
           </form.Field>
         )}
         <ErrorNote>{step.error && !Object.keys(fields).length ? step.error.message : null}</ErrorNote>
-        <SubmitButton form={form}>
-          {mode === 'password' ? 'Sign in' : 'Email me a code'}
-        </SubmitButton>
+        <SubmitButton form={form}>{mode === 'password' ? 'Sign in' : 'Email me a code'}</SubmitButton>
         <div className="flex justify-between text-sm">
-          <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => { step.reset(); setMode(mode === 'password' ? 'code' : 'password') }}>
+          <button
+            type="button"
+            className="text-muted-foreground hover:text-foreground"
+            onClick={() => {
+              step.reset()
+              setMode(mode === 'password' ? 'code' : 'password')
+            }}
+          >
             {mode === 'password' ? 'Sign in with a code' : 'Sign in with a password'}
           </button>
-          <Link to="/reset-password" className="text-muted-foreground hover:text-foreground">Forgot password?</Link>
+          <Link to="/reset-password" className="text-muted-foreground hover:text-foreground">
+            Forgot password?
+          </Link>
         </div>
       </form>
     </AuthLayout>

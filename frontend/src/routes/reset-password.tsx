@@ -20,9 +20,7 @@ function ResetPasswordPage() {
   return (
     <AuthLayout
       title="Reset your password"
-      description={awaitingCode
-        ? 'If an account exists for that address, we emailed it a reset code.'
-        : 'Enter your email and we will send you a reset code.'}
+      description={awaitingCode ? 'If an account exists for that address, we emailed it a reset code.' : 'Enter your email and we will send you a reset code.'}
       back
     >
       {awaitingCode ? <ChooseNewPassword /> : <RequestReset />}
@@ -35,7 +33,9 @@ function RequestReset() {
   const fields = fieldErrors(request.error)
   const form = useForm({
     defaultValues: { email: '' },
-    onSubmit: async ({ value }) => { await request.mutateAsync(value) },
+    onSubmit: async ({ value }) => {
+      await request.mutateAsync(value)
+    },
   })
   return (
     <form className="grid gap-4" onSubmit={submitForm(form)}>
@@ -62,7 +62,17 @@ function ChooseNewPassword() {
   return (
     <form className="grid gap-4" onSubmit={submitForm(form)}>
       <form.Field name="key">
-        {field => <TextField field={field} label="Reset code" autoComplete="one-time-code" inputMode="numeric" autoFocus className="font-mono tracking-widest" serverError={fields.key} />}
+        {field => (
+          <TextField
+            field={field}
+            label="Reset code"
+            autoComplete="one-time-code"
+            inputMode="numeric"
+            autoFocus
+            className="font-mono tracking-widest"
+            serverError={fields.key}
+          />
+        )}
       </form.Field>
       <form.Field name="password" validators={{ onBlur: ({ value }) => (value.length < 10 ? 'Use at least 10 characters.' : undefined) }}>
         {field => <TextField field={field} label="New password" type="password" autoComplete="new-password" serverError={fields.password} />}

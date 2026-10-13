@@ -33,7 +33,10 @@ export function useRunEvents(workspaceId: string, run: RunOut | undefined, onSet
     }
     const listeners = EVENT_TYPES.map(type => [type, onEvent(type)] as const)
     for (const [type, listener] of listeners) source.addEventListener(type, listener)
-    source.addEventListener('end', () => { source.close(); settled.current() })
+    source.addEventListener('end', () => {
+      source.close()
+      settled.current()
+    })
     return () => source.close()
     // `after` is only the starting point; later snapshot refreshes must not restart the stream.
     // eslint-disable-next-line react-hooks/exhaustive-deps

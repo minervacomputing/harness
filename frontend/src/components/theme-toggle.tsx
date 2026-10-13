@@ -13,13 +13,7 @@ export function ThemeToggle({ labelled = false, className }: { labelled?: boolea
   return (
     <Segmented value={choice} onValueChange={value => setTheme(value as ThemeChoice)} aria-label="Theme" className={className}>
       {CHOICES.map(c => (
-        <SegmentedItem
-          key={c.value}
-          value={c.value}
-          aria-label={labelled ? undefined : c.label}
-          title={labelled ? undefined : c.label}
-          className="flex-1 px-2"
-        >
+        <SegmentedItem key={c.value} value={c.value} aria-label={labelled ? undefined : c.label} title={labelled ? undefined : c.label} className="flex-1 px-2">
           <c.icon />
           {labelled && c.label}
         </SegmentedItem>

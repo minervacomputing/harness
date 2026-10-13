@@ -33,18 +33,21 @@ function AgentsPage() {
   const connections = useQuery(listConnectionsOptions({ path }))
   const [editing, setEditing] = useState<string | 'new' | null>(null)
   const visitor = useDemoVisitor()
-  const form = (agent?: AgentOut) => (
-    <AgentForm workspaceId={workspaceId} agent={agent} connections={connections.data ?? []} onDone={() => setEditing(null)} />
-  )
+  const form = (agent?: AgentOut) => <AgentForm workspaceId={workspaceId} agent={agent} connections={connections.data ?? []} onDone={() => setEditing(null)} />
 
   return (
     <div>
       <PageHeader
         title="Agents"
         description={`Each agent has its own instructions and the connections it may use. What it can do inside them is limited by the access ${visitor ? 'the owner set' : 'you set'} under Connections.`}
-        actions={editing !== 'new' && !visitor && (
-          <Button variant={editing ? 'outline' : 'default'} onClick={() => setEditing('new')}><PlusIcon /> New agent</Button>
-        )}
+        actions={
+          editing !== 'new' &&
+          !visitor && (
+            <Button variant={editing ? 'outline' : 'default'} onClick={() => setEditing('new')}>
+              <PlusIcon /> New agent
+            </Button>
+          )
+        }
       />
       <div className="max-w-3xl space-y-4 px-4 py-6 md:px-8">
         {agents.isPending && <Spinner />}
@@ -82,39 +85,52 @@ function AgentsPage() {
   )
 }
 
-function AgentRow({ workspaceId, agent, connections, editing, onEdit }: {
+function AgentRow({
+  workspaceId,
+  agent,
+  connections,
+  editing,
+  onEdit,
+}: {
   workspaceId: string
   agent: AgentOut
   connections: ConnectionOut[]
   editing: boolean
   onEdit: () => void
 }) {
-  const summary = agent.instructions.split('\n').find(line => line.trim())?.trim() || 'No extra instructions.'
+  const summary =
+    agent.instructions
+      .split('\n')
+      .find(line => line.trim())
+      ?.trim() || 'No extra instructions.'
   return (
     <div className="flex items-center gap-3 px-4 py-3">
       <div className="min-w-0 flex-1">
         <p className="truncate font-medium">{agent.name}</p>
-        <p className="truncate text-[13px] text-muted-foreground" title={agent.instructions || undefined}>{summary}</p>
+        <p className="truncate text-[13px] text-muted-foreground" title={agent.instructions || undefined}>
+          {summary}
+        </p>
       </div>
-      {connections.length
-        ? <AppIcons connections={connections} size="xs" className="hidden sm:flex" />
-        : <span className="hidden font-mono text-[11px] text-muted-foreground sm:inline">No apps</span>}
+      {connections.length ? (
+        <AppIcons connections={connections} size="xs" className="hidden sm:flex" />
+      ) : (
+        <span className="hidden font-mono text-[11px] text-muted-foreground sm:inline">No apps</span>
+      )}
       <Button variant="outline" size="sm" asChild>
-        <Link to="/w/$workspaceId/chat" params={{ workspaceId }} search={{ agent: agent.id }}>Chat</Link>
+        <Link to="/w/$workspaceId/chat" params={{ workspaceId }} search={{ agent: agent.id }}>
+          Chat
+        </Link>
       </Button>
       {agent.can_edit && (
-        <Button variant="ghost" size="sm" aria-expanded={editing} onClick={onEdit}>{editing ? 'Close' : 'Edit'}</Button>
+        <Button variant="ghost" size="sm" aria-expanded={editing} onClick={onEdit}>
+          {editing ? 'Close' : 'Edit'}
+        </Button>
       )}
     </div>
   )
 }
 
-function AgentForm({ workspaceId, agent, connections, onDone }: {
-  workspaceId: string
-  agent?: AgentOut
-  connections: ConnectionOut[]
-  onDone: () => void
-}) {
+function AgentForm({ workspaceId, agent, connections, onDone }: { workspaceId: string; agent?: AgentOut; connections: ConnectionOut[]; onDone: () => void }) {
   const queryClient = useQueryClient()
   const path = { workspace_id: workspaceId }
   const invalidate = () => queryClient.invalidateQueries({ queryKey: listAgentsQueryKey({ path }) })
@@ -166,7 +182,10 @@ function AgentForm({ workspaceId, agent, connections, onDone }: {
             {connections.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 Nothing connected yet. Add one under{' '}
-                <Link to="/w/$workspaceId/connections" params={{ workspaceId }} className="underline underline-offset-4">Connections</Link>.
+                <Link to="/w/$workspaceId/connections" params={{ workspaceId }} className="underline underline-offset-4">
+                  Connections
+                </Link>
+                .
               </p>
             ) : (
               <ul className="divide-y divide-border border border-border-strong">
@@ -175,16 +194,19 @@ function AgentForm({ workspaceId, agent, connections, onDone }: {
                     key={connection.id}
                     connection={connection}
                     selected={field.state.value.includes(connection.id)}
-                    onChange={selected => field.handleChange(selected
-                      ? [...field.state.value, connection.id]
-                      : field.state.value.filter(id => id !== connection.id))}
+                    onChange={selected =>
+                      field.handleChange(selected ? [...field.state.value, connection.id] : field.state.value.filter(id => id !== connection.id))
+                    }
                   />
                 ))}
               </ul>
             )}
             <p className="text-xs text-muted-foreground">
               The agent can do only what each connection allows. Change that under{' '}
-              <Link to="/w/$workspaceId/connections" params={{ workspaceId }} className="underline underline-offset-4">Connections</Link>.
+              <Link to="/w/$workspaceId/connections" params={{ workspaceId }} className="underline underline-offset-4">
+                Connections
+              </Link>
+              .
             </p>
           </fieldset>
         )}
@@ -209,37 +231,35 @@ function AgentForm({ workspaceId, agent, connections, onDone }: {
           )}
         </div>
         <div className="flex gap-2">
-          <Button type="button" variant="ghost" size="sm" onClick={onDone}>Cancel</Button>
-          <SubmitButton form={form} size="sm">{agent ? 'Save' : 'Create agent'}</SubmitButton>
+          <Button type="button" variant="ghost" size="sm" onClick={onDone}>
+            Cancel
+          </Button>
+          <SubmitButton form={form} size="sm">
+            {agent ? 'Save' : 'Create agent'}
+          </SubmitButton>
         </div>
       </div>
     </form>
   )
 }
 
-function ConnectionChoice({ connection, selected, onChange }: {
-  connection: ConnectionOut
-  selected: boolean
-  onChange: (selected: boolean) => void
-}) {
+function ConnectionChoice({ connection, selected, onChange }: { connection: ConnectionOut; selected: boolean; onChange: (selected: boolean) => void }) {
   const setup = setupOf(connection)
   const summary = summarize(connection.allowed)
   return (
     <li>
       <label className="flex cursor-pointer items-center gap-3 px-3 py-2.5 hover:bg-secondary/60 has-disabled:cursor-default has-disabled:hover:bg-transparent">
         {/* One that stopped working can stay on the agent, but cannot be added. */}
-        <Checkbox
-          checked={selected}
-          disabled={connection.status !== 'active' && !selected}
-          onCheckedChange={checked => onChange(checked === true)}
-        />
+        <Checkbox checked={selected} disabled={connection.status !== 'active' && !selected} onCheckedChange={checked => onChange(checked === true)} />
         <AppIcon slug={connection.provider} size="sm" />
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-baseline gap-2">
             <span className="shrink-0 text-[13px] font-medium">{connection.provider_name}</span>
             <span className="truncate font-mono text-[11px] text-muted-foreground">{connection.label}</span>
           </span>
-          <span className="block truncate text-xs text-muted-foreground" title={summary}>{summary}</span>
+          <span className="block truncate text-xs text-muted-foreground" title={summary}>
+            {summary}
+          </span>
         </span>
         {setup.attention && <Status tone={setup.tone}>{setup.label}</Status>}
       </label>

@@ -18,11 +18,7 @@ function LoginCodePage() {
   const continueAuth = useContinueAuth()
   const confirm = useAuthStep(auth.confirmLoginCode)
   return (
-    <AuthLayout
-      title="Enter your sign-in code"
-      description="If an account exists for that address, we emailed it a one-time code."
-      back
-    >
+    <AuthLayout title="Enter your sign-in code" description="If an account exists for that address, we emailed it a one-time code." back>
       <CodeForm
         numeric
         label="Sign-in code"

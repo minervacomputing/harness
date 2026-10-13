@@ -10,7 +10,7 @@ export function CardHeader({ className, ...props }: ComponentProps<'div'>) {
 }
 
 export function CardTitle({ className, ...props }: ComponentProps<'h3'>) {
-  return <h3 className={cn('font-semibold leading-tight', className)} {...props} />
+  return <h3 className={cn('leading-tight font-semibold', className)} {...props} />
 }
 
 export function CardDescription({ className, ...props }: ComponentProps<'p'>) {

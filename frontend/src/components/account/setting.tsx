@@ -5,12 +5,7 @@ export function SettingsList({ children }: { children: ReactNode }) {
   return <div className="divide-y divide-border border border-border-strong bg-card">{children}</div>
 }
 
-export function Setting({ title, description, action, children }: {
-  title: string
-  description?: ReactNode
-  action?: ReactNode
-  children?: ReactNode
-}) {
+export function Setting({ title, description, action, children }: { title: string; description?: ReactNode; action?: ReactNode; children?: ReactNode }) {
   return (
     <section className="px-4 py-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

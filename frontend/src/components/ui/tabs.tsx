@@ -25,7 +25,13 @@ export function TabsContent({ className, ...props }: ComponentProps<typeof TabsP
 }
 
 /** A compact switch between two to four views, such as Light and Dark. */
-export function Segmented({ value, onValueChange, className, children, ...props }: {
+export function Segmented({
+  value,
+  onValueChange,
+  className,
+  children,
+  ...props
+}: {
   value: string
   onValueChange: (value: string) => void
   className?: string
@@ -36,7 +42,9 @@ export function Segmented({ value, onValueChange, className, children, ...props 
     <ToggleGroupPrimitive.Root
       type="single"
       value={value}
-      onValueChange={next => { if (next) onValueChange(next) }}
+      onValueChange={next => {
+        if (next) onValueChange(next)
+      }}
       className={cn('inline-flex gap-0.5 border bg-secondary p-0.5 shadow-(--inset-track)', className)}
       {...props}
     >
@@ -49,7 +57,7 @@ export function SegmentedItem({ className, ...props }: ComponentProps<typeof Tog
   return (
     <ToggleGroupPrimitive.Item
       className={cn(
-        'inline-flex items-center justify-center gap-1.5 px-2.5 py-1 font-mono text-xs tracking-[0.1em] text-muted-foreground uppercase outline-none focus-visible:ring-[3px] focus-visible:ring-ring/25 transition-[color,background-color,box-shadow] data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-(--raise-surface) data-[state=on]:ring-1 data-[state=on]:ring-border [&_svg]:size-3.5',
+        'inline-flex items-center justify-center gap-1.5 px-2.5 py-1 font-mono text-xs tracking-[0.1em] text-muted-foreground uppercase transition-[color,background-color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/25 data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-(--raise-surface) data-[state=on]:ring-1 data-[state=on]:ring-border [&_svg]:size-3.5',
         className,
       )}
       {...props}

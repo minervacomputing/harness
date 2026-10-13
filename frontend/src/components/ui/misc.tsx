@@ -33,7 +33,12 @@ const STATUS_DOT = {
 export type StatusTone = keyof typeof STATUS_DOT
 
 /** State as a dot and a word. Never colour a whole row or add a side stripe. */
-export function Status({ tone = 'neutral', live = false, className, children }: {
+export function Status({
+  tone = 'neutral',
+  live = false,
+  className,
+  children,
+}: {
   tone?: StatusTone
   live?: boolean
   className?: string
@@ -41,10 +46,7 @@ export function Status({ tone = 'neutral', live = false, className, children }: 
 }) {
   return (
     <span className={cn('inline-flex h-5 items-center gap-[7px] text-[13px] whitespace-nowrap text-foreground', className)}>
-      <span
-        aria-hidden
-        className={cn('size-2 shrink-0 rounded-full ring-1 ring-foreground/70', STATUS_DOT[tone], live && 'animate-pulse')}
-      />
+      <span aria-hidden className={cn('size-2 shrink-0 rounded-full ring-1 ring-foreground/70', STATUS_DOT[tone], live && 'animate-pulse')} />
       {children}
     </span>
   )
@@ -69,11 +71,19 @@ export function Alert({ tone = 'info', className, children, ...props }: Componen
 
 export function ErrorNote({ children, className }: { children: ReactNode; className?: string }) {
   if (!children) return null
-  return <Alert tone="danger" role="alert" className={className}>{children}</Alert>
+  return (
+    <Alert tone="danger" role="alert" className={className}>
+      {children}
+    </Alert>
+  )
 }
 
 export function Notice({ children, className }: { children: ReactNode; className?: string }) {
-  return <Alert tone="info" className={className}>{children}</Alert>
+  return (
+    <Alert tone="info" className={className}>
+      {children}
+    </Alert>
+  )
 }
 
 export function Checkbox({ className, ...props }: ComponentProps<typeof CheckboxPrimitive.Root>) {
@@ -96,7 +106,7 @@ export function Switch({ className, ...props }: ComponentProps<typeof SwitchPrim
   return (
     <SwitchPrimitive.Root
       className={cn(
-        'peer inline-flex h-5 w-9 shrink-0 items-center bg-border-strong p-[3px] shadow-(--inset-track) outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/25 disabled:cursor-not-allowed disabled:opacity-45 data-[state=checked]:bg-info',
+        'peer inline-flex h-5 w-9 shrink-0 items-center bg-border-strong p-[3px] shadow-(--inset-track) transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/25 disabled:cursor-not-allowed disabled:opacity-45 data-[state=checked]:bg-info',
         className,
       )}
       {...props}
@@ -127,7 +137,10 @@ export function RadioItem({ className, ...props }: ComponentProps<typeof RadioGr
 export function Kbd({ className, ...props }: ComponentProps<'kbd'>) {
   return (
     <kbd
-      className={cn('inline-flex h-5 items-center border border-b-2 border-border-strong bg-card px-1.5 shadow-(--raise-surface) font-mono text-[11px] text-muted-foreground', className)}
+      className={cn(
+        'inline-flex h-5 items-center border border-b-2 border-border-strong bg-card px-1.5 font-mono text-[11px] text-muted-foreground shadow-(--raise-surface)',
+        className,
+      )}
       {...props}
     />
   )

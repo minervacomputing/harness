@@ -5,7 +5,14 @@ import { ErrorNote } from '@/components/ui/misc'
 import { fieldErrors } from '@/lib/auth'
 
 /** One code input with submit, shared by email verification, sign-in codes, and two-factor codes. */
-export function CodeForm({ label, submitLabel, onSubmit, error, extra, numeric }: {
+export function CodeForm({
+  label,
+  submitLabel,
+  onSubmit,
+  error,
+  extra,
+  numeric,
+}: {
   label: string
   submitLabel: string
   onSubmit: (code: string) => Promise<unknown>
@@ -17,7 +24,9 @@ export function CodeForm({ label, submitLabel, onSubmit, error, extra, numeric }
   const fields = fieldErrors(error)
   const form = useForm({
     defaultValues: { code: '' },
-    onSubmit: async ({ value }) => { await onSubmit(value.code.trim()) },
+    onSubmit: async ({ value }) => {
+      await onSubmit(value.code.trim())
+    },
   })
   return (
     <form className="grid gap-4" onSubmit={submitForm(form)}>

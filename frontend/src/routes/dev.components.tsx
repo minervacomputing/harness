@@ -8,21 +8,7 @@ import { ThemeToggle } from '@/components/theme-toggle'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input, Label, Select, Textarea } from '@/components/ui/input'
-import {
-  Alert,
-  Badge,
-  Checkbox,
-  ErrorNote,
-  Kbd,
-  Notice,
-  PageHeader,
-  Progress,
-  RadioGroup,
-  RadioItem,
-  Spinner,
-  Status,
-  Switch,
-} from '@/components/ui/misc'
+import { Alert, Badge, Checkbox, ErrorNote, Kbd, Notice, PageHeader, Progress, RadioGroup, RadioItem, Spinner, Status, Switch } from '@/components/ui/misc'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Segmented, SegmentedItem, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
@@ -53,14 +39,18 @@ function ComponentsPage() {
           {layout === 'single' && <ThemeToggle />}
         </div>
       </header>
-      {layout === 'single'
-        ? <Catalogue />
-        : (
-            <div className="grid xl:grid-cols-2">
-              <div className="light bg-background text-foreground"><Catalogue /></div>
-              <div className="dark border-l bg-background text-foreground"><Catalogue /></div>
-            </div>
-          )}
+      {layout === 'single' ? (
+        <Catalogue />
+      ) : (
+        <div className="grid xl:grid-cols-2">
+          <div className="light bg-background text-foreground">
+            <Catalogue />
+          </div>
+          <div className="dark border-l bg-background text-foreground">
+            <Catalogue />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -136,10 +126,14 @@ function Catalogue() {
           ))}
         </Row>
         <Row className="gap-3">
-          {['google_drive', 'github', 'slack'].map(slug => <AppIcon key={slug} slug={slug} size="sm" />)}
+          {['google_drive', 'github', 'slack'].map(slug => (
+            <AppIcon key={slug} slug={slug} size="sm" />
+          ))}
         </Row>
         <Row className="gap-1">
-          {['google_drive', 'github', 'slack'].map(slug => <AppIcon key={slug} slug={slug} size="xs" />)}
+          {['google_drive', 'github', 'slack'].map(slug => (
+            <AppIcon key={slug} slug={slug} size="xs" />
+          ))}
         </Row>
       </Section>
 
@@ -169,7 +163,11 @@ function Catalogue() {
       <PageHeader
         title="Page header"
         description="Title, description and actions at the top of each page."
-        actions={<Button><PlusIcon /> Action</Button>}
+        actions={
+          <Button>
+            <PlusIcon /> Action
+          </Button>
+        }
       />
 
       <Section title="Buttons" note="Content is always centred. Primary once per view; outline for everything else.">
@@ -179,17 +177,27 @@ function Catalogue() {
           <Button variant="secondary">Secondary</Button>
           <Button variant="ghost">Ghost</Button>
           <Button variant="destructive">Delete</Button>
-          <Button variant="ghost-destructive"><TrashIcon /> Remove</Button>
+          <Button variant="ghost-destructive">
+            <TrashIcon /> Remove
+          </Button>
           <Button variant="link">Link</Button>
         </Row>
         <Row>
           <Button size="lg">Large</Button>
           <Button size="sm">Small</Button>
-          <Button size="sm" variant="outline"><SearchIcon /> Search</Button>
-          <Button size="icon" aria-label="Send"><ArrowUpIcon /></Button>
-          <Button size="icon-sm" variant="outline" aria-label="Add"><PlusIcon /></Button>
+          <Button size="sm" variant="outline">
+            <SearchIcon /> Search
+          </Button>
+          <Button size="icon" aria-label="Send">
+            <ArrowUpIcon />
+          </Button>
+          <Button size="icon-sm" variant="outline" aria-label="Add">
+            <PlusIcon />
+          </Button>
           <Button disabled>Disabled</Button>
-          <Button variant="outline" className="w-56">Full width</Button>
+          <Button variant="outline" className="w-56">
+            Full width
+          </Button>
         </Row>
       </Section>
 
@@ -226,14 +234,26 @@ function Catalogue() {
           <label className="flex items-center gap-2 text-[13px]">
             <Checkbox checked={checked} onCheckedChange={value => setChecked(value === true)} /> Read tasks
           </label>
-          <label className="flex items-center gap-2 text-[13px]"><Checkbox /> Create tasks</label>
-          <label className="flex items-center gap-2 text-[13px]"><Checkbox checked disabled /> Inherited</label>
-          <label className="flex items-center gap-2 text-[13px]"><Switch defaultChecked /> Enabled</label>
-          <label className="flex items-center gap-2 text-[13px]"><Switch /> Off</label>
+          <label className="flex items-center gap-2 text-[13px]">
+            <Checkbox /> Create tasks
+          </label>
+          <label className="flex items-center gap-2 text-[13px]">
+            <Checkbox checked disabled /> Inherited
+          </label>
+          <label className="flex items-center gap-2 text-[13px]">
+            <Switch defaultChecked /> Enabled
+          </label>
+          <label className="flex items-center gap-2 text-[13px]">
+            <Switch /> Off
+          </label>
         </Row>
         <RadioGroup defaultValue="personal" className="flex gap-6">
-          <label className="flex items-center gap-2 text-[13px]"><RadioItem value="personal" /> Personal</label>
-          <label className="flex items-center gap-2 text-[13px]"><RadioItem value="shared" /> Shared with the workspace</label>
+          <label className="flex items-center gap-2 text-[13px]">
+            <RadioItem value="personal" /> Personal
+          </label>
+          <label className="flex items-center gap-2 text-[13px]">
+            <RadioItem value="shared" /> Shared with the workspace
+          </label>
         </RadioGroup>
       </Section>
 
@@ -244,7 +264,9 @@ function Catalogue() {
             <TabsTrigger value="active">Active</TabsTrigger>
             <TabsTrigger value="revoked">Revoked</TabsTrigger>
           </TabsList>
-          <TabsContent value={tab} className="text-[13px] text-muted-foreground">Showing {tab} connections.</TabsContent>
+          <TabsContent value={tab} className="text-[13px] text-muted-foreground">
+            Showing {tab} connections.
+          </TabsContent>
         </Tabs>
         <Row>
           <Segmented value="week" onValueChange={() => {}} aria-label="Range">
@@ -261,7 +283,9 @@ function Catalogue() {
           <Status tone="success">Active</Status>
           <Status tone="warning">Needs reconnecting</Status>
           <Status tone="danger">Revoked</Status>
-          <Status tone="info" live>Running</Status>
+          <Status tone="info" live>
+            Running
+          </Status>
           <Status>Off</Status>
         </Row>
         <Row>
@@ -296,8 +320,12 @@ function Catalogue() {
           </CardHeader>
           <CardContent className="pt-4 text-[13px] text-muted-foreground">Minerva sees only what Todoist lets it see.</CardContent>
           <CardFooter className="gap-2">
-            <Button variant="outline" size="sm">Choose access</Button>
-            <Button variant="ghost-destructive" size="sm">Disconnect</Button>
+            <Button variant="outline" size="sm">
+              Choose access
+            </Button>
+            <Button variant="ghost-destructive" size="sm">
+              Disconnect
+            </Button>
           </CardFooter>
         </Card>
       </Section>
@@ -313,11 +341,19 @@ function Catalogue() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {[['Inbox', true, true, 42], ['Work', true, false, 1204], ['Garden', false, false, 7]].map(([name, read, write, count]) => (
+            {[
+              ['Inbox', true, true, 42],
+              ['Work', true, false, 1204],
+              ['Garden', false, false, 7],
+            ].map(([name, read, write, count]) => (
               <TableRow key={String(name)}>
                 <TableCell>{name}</TableCell>
-                <TableCell><Checkbox defaultChecked={Boolean(read)} aria-label={`Read ${name}`} /></TableCell>
-                <TableCell><Checkbox defaultChecked={Boolean(write)} aria-label={`Write ${name}`} /></TableCell>
+                <TableCell>
+                  <Checkbox defaultChecked={Boolean(read)} aria-label={`Read ${name}`} />
+                </TableCell>
+                <TableCell>
+                  <Checkbox defaultChecked={Boolean(write)} aria-label={`Write ${name}`} />
+                </TableCell>
                 <TableCell className="text-right font-mono">{count.toLocaleString()}</TableCell>
               </TableRow>
             ))}
@@ -325,55 +361,93 @@ function Catalogue() {
         </Table>
       </Section>
 
-      <Section title="Chat" note="Tool cards show state in the icon colour and a status word. The agent's work (reasoning, tool calls and what it wrote between them) folds into one row; a call our policies refused stays a card of its own.">
+      <Section
+        title="Chat"
+        note="Tool cards show state in the icon colour and a status word. The agent's work (reasoning, tool calls and what it wrote between them) folds into one row; a call our policies refused stays a card of its own."
+      >
         <div className="grid max-w-3xl gap-4">
           <div className="flex justify-end">
             <div className="max-w-[80%] border bg-secondary px-3.5 py-2.5 text-sm">What is due this week?</div>
           </div>
-          <Work tools={3} failed={1} apps={['Todoist', 'GitHub']}>{null}</Work>
+          <Work tools={3} failed={1} apps={['Todoist', 'GitHub']}>
+            {null}
+          </Work>
           <Work tools={2} failed={0} apps={['Todoist']} defaultOpen>
-            <div className={QUIET}><p>The user wants this week's tasks. I will list them, then check open issues.</p></div>
+            <div className={QUIET}>
+              <p>The user wants this week's tasks. I will list them, then check open issues.</p>
+            </div>
             <TOOL toolName="todoist_list_tasks" args={{ filter: 'due before: next monday' }} result={{ decision: 'allowed', label: 'Todoist: list tasks' }} />
-            <div className="prose prose-sm prose-minerva max-w-none"><p>Three tasks are due. Adding the reminder now.</p></div>
+            <div className="prose prose-sm max-w-none prose-minerva">
+              <p>Three tasks are due. Adding the reminder now.</p>
+            </div>
             <TOOL toolName="todoist_create_task" args={{}} result={{ decision: 'error', label: 'Todoist: create task' }} />
           </Work>
           <Work tools={0} failed={0} apps={[]} live defaultOpen>
-            <div className={QUIET}><p><strong>Checking the calendar.</strong> The offsite may clash with the board meeting.</p></div>
+            <div className={QUIET}>
+              <p>
+                <strong>Checking the calendar.</strong> The offsite may clash with the board meeting.
+              </p>
+            </div>
           </Work>
-          <Work tools={0} failed={0} apps={[]}>{null}</Work>
+          <Work tools={0} failed={0} apps={[]}>
+            {null}
+          </Work>
           <TOOL toolName="todoist_list_tasks" args={{ filter: 'due before: next monday' }} result={{ decision: 'allowed', label: 'Todoist: list tasks' }} />
-          <TOOL toolName="todoist_delete_task" args={{ id: '8812' }} result={{ decision: 'denied', label: 'Todoist: delete task', message: 'This connection does not allow deleting tasks.' }} />
+          <TOOL
+            toolName="todoist_delete_task"
+            args={{ id: '8812' }}
+            result={{ decision: 'denied', label: 'Todoist: delete task', message: 'This connection does not allow deleting tasks.' }}
+          />
           <TOOL toolName="todoist_create_task" args={{}} result={{ decision: 'error', label: 'Todoist: create task' }} />
           <TOOL toolName="github_search_issues" args={{ q: 'is:open' }} />
-          <div className="prose prose-sm prose-minerva max-w-none">
-            <p>You have <strong>three tasks</strong> due this week:</p>
-            <ul><li>Send the board report</li><li>Renew the domain</li><li>Plan the offsite</li></ul>
-            <pre><code>due before: next monday</code></pre>
+          <div className="prose prose-sm max-w-none prose-minerva">
+            <p>
+              You have <strong>three tasks</strong> due this week:
+            </p>
+            <ul>
+              <li>Send the board report</li>
+              <li>Renew the domain</li>
+              <li>Plan the offsite</li>
+            </ul>
+            <pre>
+              <code>due before: next monday</code>
+            </pre>
           </div>
           <div className="flex items-end gap-2 border border-border-strong bg-card p-2 shadow-(--inset-well)">
             <span className="min-h-9 flex-1 px-2 py-2 text-sm text-faint">Message your agent</span>
-            <Button size="icon-sm" aria-label="Send"><ArrowUpIcon /></Button>
+            <Button size="icon-sm" aria-label="Send">
+              <ArrowUpIcon />
+            </Button>
           </div>
         </div>
       </Section>
 
       <Section title="Depth" note="Raise what you press or slide, set in what holds a value, float what sits above the page. Everything else stays flat.">
         <Row className="items-start gap-6">
-          {([
-            ['Raised', 'shadow-(--raise-surface) border-border-strong'],
-            ['Set in', 'shadow-(--inset-well) border-input'],
-            ['Floating', 'shadow-(--raise-float) border-border-strong'],
-          ] as const).map(([name, cls]) => (
-            <div key={name} className={cn('grid h-20 w-40 place-items-center border bg-card text-[13px]', cls)}>{name}</div>
+          {(
+            [
+              ['Raised', 'shadow-(--raise-surface) border-border-strong'],
+              ['Set in', 'shadow-(--inset-well) border-input'],
+              ['Floating', 'shadow-(--raise-float) border-border-strong'],
+            ] as const
+          ).map(([name, cls]) => (
+            <div key={name} className={cn('grid h-20 w-40 place-items-center border bg-card text-[13px]', cls)}>
+              {name}
+            </div>
           ))}
         </Row>
       </Section>
 
       <Section title="Small parts">
         <Row className="gap-6">
-          <span className="flex items-center gap-1.5 text-[13px] text-muted-foreground">Search <Kbd>⌘</Kbd><Kbd>K</Kbd></span>
+          <span className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
+            Search <Kbd>⌘</Kbd>
+            <Kbd>K</Kbd>
+          </span>
           <Spinner />
-          <span className="flex items-center gap-2 text-xs text-muted-foreground"><Spinner className="size-3.5" /> Thinking</span>
+          <span className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Spinner className="size-3.5" /> Thinking
+          </span>
           <Progress value={62} className="w-48" />
         </Row>
       </Section>
