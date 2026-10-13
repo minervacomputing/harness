@@ -218,10 +218,9 @@ function AgentForm({ workspaceId, agent, connections, onDone }: { workspaceId: s
                 variant="ghost-destructive"
                 size="sm"
                 disabled={remove.isPending}
-                onClick={async () => {
+                onClick={() => {
                   if (!confirm(`Delete ${agent.name}? Its conversations are deleted too.`)) return
-                  await remove.mutateAsync({ path: { ...path, agent_id: agent.id } })
-                  onDone()
+                  remove.mutate({ path: { ...path, agent_id: agent.id } }, { onSuccess: onDone })
                 }}
               >
                 Delete
