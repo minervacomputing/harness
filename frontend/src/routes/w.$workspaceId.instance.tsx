@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { Setting, SettingsList } from '@/components/account/setting'
 import { useAppForm } from '@/components/form'
 import { Button } from '@/components/ui/button'
-import { ErrorNote, PageHeader, Spinner } from '@/components/ui/misc'
+import { ErrorNote, Notice, PageHeader, Spinner } from '@/components/ui/misc'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Segmented, SegmentedItem } from '@/components/ui/tabs'
 import { requireInstanceAdmin } from '@/lib/guards'
@@ -22,11 +22,15 @@ export const Route = createFileRoute('/w/$workspaceId/instance')({
 function InstancePage() {
   return (
     <div>
-      <PageHeader title="Instance" description="The administrators of this Minerva server, and whether anyone may create an account on it." />
+      <PageHeader
+        title="Instance"
+        description="The administrators of this Minerva server, whether anyone may create an account on it, and recovering an account from someone else's two-factor."
+      />
       <div className="max-w-3xl px-4 py-6 md:px-8">
         <SettingsList>
           <SignupSetting />
           <AdminsSetting />
+          <RemoveTwoFactorSetting />
         </SettingsList>
       </div>
     </div>
@@ -117,7 +121,7 @@ function AdminsSetting() {
   return (
     <Setting
       title="Administrators"
-      description="They can add and remove administrators and change the sign-up setting. They get no access to anyone's workspace."
+      description="They can add and remove administrators, change the sign-up setting and remove a user's two-factor. They get no access to anyone's workspace."
     >
       {admins.isError && <ErrorNote>{errorMessage(admins.error)}</ErrorNote>}
       {admins.isPending && <Spinner />}
@@ -171,6 +175,41 @@ function AdminsSetting() {
           <div>
             <form.SubmitButton size="sm" variant="outline">
               Add administrator
+            </form.SubmitButton>
+          </div>
+        </form.Form>
+      </form.AppForm>
+    </Setting>
+  )
+}
+
+function RemoveTwoFactorSetting() {
+  const remove = useMutation({ mutationFn: (email: string) => orpc.instance.users.removeTwoFactor.call({ email }) })
+  const form = useAppForm({
+    // Its own field name: a field's name is its input's id, and the administrators' form above has `email`.
+    defaultValues: { twoFactorAccount: '' },
+    onSubmit: async ({ value, formApi }) => {
+      const email = value.twoFactorAccount.trim()
+      if (!confirm(`Remove two-factor from ${email}? They are signed out everywhere and sign in with their password alone until they set it up again.`)) return
+      await remove.mutateAsync(email)
+      formApi.reset()
+    },
+  })
+  return (
+    <Setting
+      title="Remove two-factor"
+      description="For a user who lost their authenticator, or whose account someone else set up theirs on. Their authenticator, recovery codes and trusted devices go, and they are signed out everywhere. Afterwards their password alone signs in, so if someone else may know it, have them reset it first. Turn off your own on your account page."
+    >
+      <form.AppForm>
+        <form.Form className="grid max-w-md gap-3">
+          <form.AppField name="twoFactorAccount" validators={{ onSubmit: anAccount }}>
+            {field => <field.TextField label="Email address" type="email" autoComplete="off" />}
+          </form.AppField>
+          {remove.isError && <ErrorNote>{errorMessage(remove.error)}</ErrorNote>}
+          {remove.isSuccess && <Notice>Two-factor removed from {remove.variables}. They are signed out everywhere.</Notice>}
+          <div>
+            <form.SubmitButton size="sm" variant="outline">
+              Remove two-factor
             </form.SubmitButton>
           </div>
         </form.Form>

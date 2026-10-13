@@ -258,6 +258,7 @@ describe("outside a workspace", () => {
 			expect([name, answer(await visitor.call("PATCH", "/api/instance/settings", body, headers))]).toEqual([name, UNAUTHORIZED]);
 			expect([name, answer(await visitor.call("POST", "/api/setup", body, { "X-Minerva-Setup-Key": "k", ...headers }))]).toEqual([name, UNAUTHORIZED]);
 			expect([name, answer(await visitor.call("POST", "/api/me/password", body, headers))]).toEqual([name, UNAUTHORIZED]);
+			expect([name, answer(await visitor.call("POST", "/api/instance/users/remove-two-factor", body, headers))]).toEqual([name, UNAUTHORIZED]);
 		}
 		const slow = endless();
 		const response = await visitor.fetch(`${ORIGIN}/api/instance/admins`, { method: "POST", headers: JSON_TYPE, body: slow.body, duplex: "half" } as RequestInit);
@@ -274,7 +275,11 @@ describe("outside a workspace", () => {
 		const grace = await account("grace");
 		for (const [name, body, headers] of BAD_BODIES) {
 			expect([name, answer(await grace.browser.call("PATCH", "/api/instance/settings", body, headers))]).toEqual([name, ADMINS_ONLY]);
+			expect([name, answer(await grace.browser.call("POST", "/api/instance/users/remove-two-factor", body, headers))]).toEqual([name, ADMINS_ONLY]);
 		}
+		const slowRemoval = endless();
+		const removal = await grace.browser.fetch(`${ORIGIN}/api/instance/users/remove-two-factor`, { method: "POST", headers: JSON_TYPE, body: slowRemoval.body, duplex: "half" } as RequestInit);
+		expect([removal.status, await removal.json(), slowRemoval.pulled() < 3]).toEqual([403, ADMINS_ONLY.body, true]);
 		const slow = endless();
 		const response = await grace.browser.fetch(`${ORIGIN}/api/instance/admins`, { method: "POST", headers: JSON_TYPE, body: slow.body, duplex: "half" } as RequestInit);
 		expect([response.status, await response.json(), slow.pulled() < 3]).toEqual([403, ADMINS_ONLY.body, true]);

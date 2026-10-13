@@ -86,4 +86,16 @@ export const instance = {
       .input(z.object({ userId: uuid() }))
       .output(type<void>()),
   },
+  users: {
+    /**
+     * Removes two-factor from the account with this address, for an owner who lost their authenticator or, after a password reset, one
+     * someone else put their own authenticator on: its authenticator and backup codes, its pending sign-in challenges and trusted
+     * devices, and every session it has (whoever took it over is signed out). The password stays, and alone signs in afterwards. Also for an account without two-factor, which is only signed out. `NO_SUCH_USER` if no
+     * account has the address; `OWN_TWO_FACTOR` for the caller's own, which they turn off with their password on their account page.
+     */
+    removeTwoFactor: api
+      .route({ method: 'POST', path: '/instance/users/remove-two-factor', successStatus: 204 })
+      .input(z.object({ email: z.string().min(1).max(254) }))
+      .output(type<void>()),
+  },
 }

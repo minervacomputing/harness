@@ -23,6 +23,8 @@ export const REFUSALS = {
   INSTANCE_ADMINS_ONLY: 403,
   NO_SUCH_USER: 404,
   KEEP_ONE_ADMIN: 422,
+  /** An admin's own two-factor is turned off with their password, not by the instance's administration. */
+  OWN_TWO_FACTOR: 422,
   // Agents.
   CANNOT_CHANGE_AGENT: 403,
   CHOOSE_CONNECTIONS: 422,

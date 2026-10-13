@@ -23,6 +23,7 @@ export const ALREADY_SET_UP = "This instance is already set up.";
 export const ADMINS_ONLY = "Only instance admins can do this.";
 export const LAST_ADMIN = "Keep at least one instance admin.";
 export const NO_SUCH_USER = "No user has this email address.";
+export const OWN_TWO_FACTOR = "Turn off your own two-factor on your account page, with your password.";
 
 /** A key shorter than this (a misconfiguration) admits nothing (src/config.ts). */
 const MIN_KEY_LENGTH = MIN_SETUP_KEY_LENGTH;

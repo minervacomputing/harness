@@ -1,14 +1,14 @@
 // The instance's administration (src/accounts/instance.ts, api/accounts.ts): the first-run setup claimed
 // once, also by concurrent requests, the instance admin apart from organization and workspace roles (and
 // without the admin plugin's endpoints), the admins' list and sign-up setting, and the setup key admitting
-// the operator's sign-up by email code on a closed instance until setup is done.
+// the operator's sign-up by email code on a closed instance until setup is done, and an admin removing a user's two-factor.
 
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, test } from "vitest";
-import { ADMINS_ONLY, ALREADY_SET_UP, INVALID_KEY, LAST_ADMIN, NO_SUCH_USER, SETUP_KEY_HEADER, claimSetup } from "../../src/accounts/instance.ts";
+import { ADMINS_ONLY, ALREADY_SET_UP, INVALID_KEY, LAST_ADMIN, NO_SUCH_USER, OWN_TWO_FACTOR, SETUP_KEY_HEADER, claimSetup } from "../../src/accounts/instance.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import type { RefusalCode } from "../../src/shared/rpc.ts";
-import { type Answer, Browser, contractError, emailsTo, installEmailLog, lastCode, signedIn, uniqueEmail } from "./accounts-helpers.ts";
+import { type Answer, Browser, PASSWORD, contractError, emailsTo, enableTwoFactor, installEmailLog, lastCode, signedIn, totp, uniqueEmail } from "./accounts-helpers.ts";
 
 installEmailLog();
 
@@ -228,5 +228,115 @@ describe("the instance admin", () => {
 		expect((await ada.browser.call("PATCH", "/api/instance/settings", {})).status).toBe(422);
 		expectRefusal(await grace.browser.call("PATCH", "/api/instance/settings", { signupOpen: false }), 403, "INSTANCE_ADMINS_ONLY", ADMINS_ONLY);
 		expect((await ada.browser.call("GET", "/api/instance/settings")).body.signupOpen).toBe(true);
+	});
+});
+
+describe("an admin removes a user's two-factor", () => {
+	const REMOVE = "/api/instance/users/remove-two-factor";
+
+	/** What the user's two-factor left in D1: authenticators, pending challenges, trusted devices, sessions, and the flag. */
+	async function stored(userId: string) {
+		const count = async (sql: string) => (await env.DB.prepare(sql).bind(userId).first<{ n: number }>())!.n;
+		return {
+			authenticators: await count(`SELECT count(*) AS n FROM "twoFactor" WHERE "userId" = ?`),
+			challenges: await count(`SELECT count(*) AS n FROM verification WHERE identifier LIKE '2fa-%' AND value = ?`),
+			trustedDevices: await count(`SELECT count(*) AS n FROM verification WHERE identifier LIKE 'trust-device-%' AND value = ?`),
+			sessions: await count(`SELECT count(*) AS n FROM session WHERE "userId" = ?`),
+			enabled: Boolean(await count(`SELECT coalesce("twoFactorEnabled", 0) AS n FROM "user" WHERE id = ?`)),
+		};
+	}
+
+	/** A first factor by password in a new browser (or the one given): whether the second factor is asked for. */
+	async function passwordStep(email: string, browser = new Browser()): Promise<{ browser: Browser; challenged: boolean }> {
+		const step = await browser.auth("/sign-in/email", { email, password: PASSWORD });
+		expect(step.status, JSON.stringify(step.body)).toBe(200);
+		return { browser, challenged: step.body.twoFactorRedirect === true };
+	}
+
+	test("removes the authenticator, backup codes, challenges, trusted devices and sessions; the password alone signs in", async () => {
+		const ada = await user();
+		await setUp(ada);
+		const grace = await user("grace");
+		const { uri, backupCodes } = await enableTwoFactor(grace.browser);
+		const alan = await user("alan");
+		await enableTwoFactor(alan.browser);
+		// A device trusted for 30 days (Better Auth's `trustDevice`, which our client never sends), and a challenge left open.
+		const trusted = await passwordStep(grace.email);
+		expect(trusted.challenged).toBe(true);
+		expect((await trusted.browser.auth("/two-factor/verify-totp", { code: await totp(uri), trustDevice: true })).status).toBe(200);
+		const pending = await passwordStep(grace.email);
+		expect(pending.challenged).toBe(true);
+		expect(await stored(grace.userId)).toEqual({ authenticators: 1, challenges: 1, trustedDevices: 1, sessions: 2, enabled: true });
+		const alanBefore = await stored(alan.userId);
+
+		expect((await ada.browser.call("POST", REMOVE, { email: ` ${grace.email.toUpperCase()} ` })).status).toBe(204);
+		expect(await stored(grace.userId)).toEqual({ authenticators: 0, challenges: 0, trustedDevices: 0, sessions: 0, enabled: false });
+		for (const browser of [grace.browser, trusted.browser]) expect((await browser.call("GET", "/api/me")).status).toBe(401);
+		const refused = await pending.browser.auth("/two-factor/verify-totp", { code: await totp(uri) });
+		expect([refused.status, refused.body.code]).toEqual([401, "INVALID_TWO_FACTOR_COOKIE"]);
+		// Only Grace's: Alan, the admin and their sessions are as they were.
+		expect(await stored(alan.userId)).toEqual(alanBefore);
+		expect((await ada.browser.call("GET", "/api/me")).status).toBe(200);
+
+		const again = await passwordStep(grace.email);
+		expect(again.challenged).toBe(false);
+		expect((await again.browser.call("GET", "/api/me")).status).toBe(200);
+		// Set up again, the old device is no longer trusted and the old backup codes are gone.
+		const { uri: newUri } = await enableTwoFactor(again.browser);
+		const returning = await passwordStep(grace.email, trusted.browser);
+		expect(returning.challenged).toBe(true);
+		expect((await returning.browser.auth("/two-factor/verify-backup-code", { code: backupCodes[1] })).status).not.toBe(200);
+		expect((await returning.browser.auth("/two-factor/verify-totp", { code: await totp(newUri) })).status).toBe(200);
+
+		// For an account without two-factor it only signs out.
+		expect((await ada.browser.call("POST", REMOVE, { email: alan.email })).status).toBe(204);
+		expect((await ada.browser.call("POST", REMOVE, { email: alan.email })).status).toBe(204);
+		expect(await stored(alan.userId)).toEqual({ authenticators: 0, challenges: 0, trustedDevices: 0, sessions: 0, enabled: false });
+	});
+
+	test("refuses an unknown address, the caller's own account, a user who is not an admin, and another site", async () => {
+		const ada = await user();
+		await setUp(ada);
+		const grace = await user("grace");
+		await enableTwoFactor(grace.browser);
+		await enableTwoFactor(ada.browser);
+		expectRefusal(await ada.browser.call("POST", REMOVE, { email: "nobody@example.com" }), 404, "NO_SUCH_USER", NO_SUCH_USER);
+		expectRefusal(await ada.browser.call("POST", REMOVE, { email: ada.email.toUpperCase() }), 422, "OWN_TWO_FACTOR", OWN_TWO_FACTOR);
+		expectRefusal(await grace.browser.call("POST", REMOVE, { email: ada.email }), 403, "INSTANCE_ADMINS_ONLY", ADMINS_ONLY);
+		expectRefusal(await new Browser().call("POST", REMOVE, { email: grace.email }), 401, "UNAUTHORIZED", "Unauthorized");
+		expectRefusal(await ada.browser.call("POST", REMOVE, { email: grace.email }, { Origin: "https://evil.example" }), 403, "CROSS_SITE", "Cross-site request refused.");
+		expect((await ada.browser.call("POST", REMOVE, { email: "" })).status).toBe(422);
+		for (const u of [ada, grace]) {
+			expect(await stored(u.userId)).toMatchObject({ authenticators: 1, enabled: true, sessions: 1 });
+			expect((await u.browser.call("GET", "/api/me")).status).toBe(200);
+		}
+	});
+
+	test("does nothing once its caller lost the role, even past the role check", async () => {
+		const ada = await user();
+		await setUp(ada);
+		const grace = await user("grace");
+		const alan = await user("alan");
+		await enableTwoFactor(alan.browser);
+		expect((await ada.browser.call("POST", "/api/instance/admins", { email: grace.email })).status).toBe(200);
+		let release!: () => void;
+		const released = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const body = new ReadableStream<Uint8Array>({
+			async start(controller) {
+				await released;
+				controller.enqueue(new TextEncoder().encode(JSON.stringify({ email: alan.email })));
+				controller.close();
+			},
+		});
+		const headers = { "Content-Type": "application/json" };
+		const pending = ada.browser.fetch(REMOVE, { method: "POST", body, headers, duplex: "half" } as RequestInit);
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		expect((await grace.browser.call("DELETE", `/api/instance/admins/${ada.userId}`)).status).toBe(204);
+		release();
+		const answer = await pending;
+		expect([answer.status, await answer.json()]).toEqual([403, contractError("INSTANCE_ADMINS_ONLY", ADMINS_ONLY)]);
+		expect(await stored(alan.userId)).toMatchObject({ authenticators: 1, enabled: true, sessions: 1 });
 	});
 });

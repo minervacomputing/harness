@@ -3,12 +3,16 @@
 // the setup's status, and a caller who is not an instance admin under /api/instance, before the body is read.
 // Every change an admin makes requires the role again in its own statement, so a role removed a moment ago
 // counts, even for a request already past the mount's check.
+//
+// An admin can remove another user's two-factor (docs/plans/auth-fixes.md, C3): someone with a user's password and a session can
+// put their own authenticator on the account, and no password reset undoes that. The owner resets the password first (ending the
+// sessions and the password the attacker knew), then an admin removes the authenticator and any session left.
 
 import { type InstanceAdmin, type InstanceSettings, REFUSALS } from "@minerva/contract";
 import { ORPCError } from "@orpc/server";
 import { isAPIError } from "better-auth/api";
 import { getAuth } from "../accounts/auth.ts";
-import { ADMINS_ONLY, ALREADY_SET_UP, INVALID_KEY, LAST_ADMIN, NO_SUCH_USER, claimSetup, isInstanceAdmin, isSetUp, setupKeyValid, signupOverride } from "../accounts/instance.ts";
+import { ADMINS_ONLY, ALREADY_SET_UP, INVALID_KEY, LAST_ADMIN, NO_SUCH_USER, OWN_TWO_FACTOR, claimSetup, isInstanceAdmin, isSetUp, setupKeyValid, signupOverride } from "../accounts/instance.ts";
 import { ensureProvisioned, listWorkspaces } from "../accounts/provision.ts";
 import { settings as config } from "../config.ts";
 import { api, instanceAdmin, refusal, signedIn } from "./procedures.ts";
@@ -129,6 +133,34 @@ export const instanceProcedures = instance.router({
 			await stillAdmin(env, user.id);
 			if (!(await isInstanceAdmin(env.DB, userId))) throw refusal("NOT_FOUND", "Not found.");
 			throw refusal("KEEP_ONE_ADMIN", LAST_ADMIN);
+		}),
+	},
+
+	users: {
+		removeTwoFactor: instance.users.removeTwoFactor.handler(async ({ context: { env, user }, input: { email } }) => {
+			const target = await env.DB.prepare(`SELECT id FROM "user" WHERE email = ?`).bind(email.trim().toLowerCase()).first<{ id: string }>();
+			if (target === null) throw refusal("NO_SUCH_USER", NO_SUCH_USER);
+			// Better Auth's own route turns it off with the password. Here a session alone would do, so a stolen session could
+			// strip its own account's second factor; and an admin who lost their authenticator has no session to call this with.
+			if (target.id === user.id) throw refusal("OWN_TWO_FACTOR", OWN_TWO_FACTOR);
+			// One batch, one transaction, each statement requiring the caller's role. Removed: the authenticator with its backup
+			// codes (Better Auth's `twoFactor` row), the flag its sign-in hook reads, pending challenges (`2fa-<random>` holding the
+			// user's id) and trusted devices (`trust-device-…`, which would skip a second factor set up again), and every session.
+			// The challenges' attempt counters hold a number, not the id, and expire with them.
+			const now = new Date().toISOString();
+			const results = await env.DB.batch([
+				env.DB.prepare(`DELETE FROM "twoFactor" WHERE "userId" = ? AND ${CALLER_IS_ADMIN}`).bind(target.id, user.id),
+				env.DB.prepare(`DELETE FROM verification WHERE (identifier LIKE '2fa-%' OR identifier LIKE 'trust-device-%') AND value = ? AND ${CALLER_IS_ADMIN}`).bind(
+					target.id,
+					user.id,
+				),
+				env.DB.prepare(`DELETE FROM session WHERE "userId" = ? AND ${CALLER_IS_ADMIN}`).bind(target.id, user.id),
+				env.DB.prepare(`UPDATE "user" SET "twoFactorEnabled" = 0, "updatedAt" = ? WHERE id = ? AND ${CALLER_IS_ADMIN}`).bind(now, target.id, user.id),
+			]);
+			if ((results.at(-1)?.meta.changes ?? 0) > 0) return;
+			await stillAdmin(env, user.id);
+			// Deleted since it was looked up.
+			throw refusal("NO_SUCH_USER", NO_SUCH_USER);
 		}),
 	},
 });
