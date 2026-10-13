@@ -1,4 +1,3 @@
-import { useForm } from '@tanstack/react-form'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { PlusIcon } from 'lucide-react'
@@ -16,7 +15,7 @@ import type { AgentOut, ConnectionOut } from '@/api/types.gen'
 import { AppIcons, connectionsOf } from '@/components/agents/agent-apps'
 import { AppIcon } from '@/components/connections/app-icon'
 import { setupOf, summarize } from '@/components/connections/summary'
-import { SubmitButton, submitForm, TextAreaField, TextField } from '@/components/form'
+import { useAppForm } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { Checkbox, ErrorNote, PageHeader, Spinner, Status } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
@@ -143,7 +142,7 @@ function AgentForm({ workspaceId, agent, connections, onDone }: { workspaceId: s
   })
   const error = create.error ?? update.error ?? remove.error
 
-  const form = useForm({
+  const form = useAppForm({
     defaultValues: {
       name: agent?.name ?? '',
       instructions: agent?.instructions ?? '',
@@ -157,86 +156,85 @@ function AgentForm({ workspaceId, agent, connections, onDone }: { workspaceId: s
   })
 
   return (
-    <form className="grid gap-4" onSubmit={submitForm(form)}>
-      <form.Field name="name" validators={{ onBlur: ({ value }) => (!value.trim() ? 'Give the agent a name.' : undefined) }}>
-        {field => <TextField field={field} label="Name" autoFocus maxLength={120} />}
-      </form.Field>
-      <form.Field name="instructions">
-        {field => (
-          <TextAreaField
-            field={field}
-            label="Instructions"
-            rows={5}
-            maxLength={8000}
-            hint="How the agent should behave, for example: answer briefly and in English."
-          />
-        )}
-      </form.Field>
-      <form.Field name="connection_ids">
-        {field => (
-          <fieldset className="grid gap-2">
-            <legend className="mb-2 text-[13px] font-medium">Connections</legend>
-            {connections.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                Nothing connected yet. Add one under{' '}
+    <form.AppForm>
+      <form.Form className="grid gap-4">
+        <form.AppField name="name" validators={{ onBlur: ({ value }) => (!value.trim() ? 'Give the agent a name.' : undefined) }}>
+          {field => <field.TextField label="Name" autoFocus maxLength={120} />}
+        </form.AppField>
+        <form.AppField name="instructions">
+          {field => (
+            <field.TextAreaField
+              label="Instructions"
+              rows={5}
+              maxLength={8000}
+              hint="How the agent should behave, for example: answer briefly and in English."
+            />
+          )}
+        </form.AppField>
+        <form.Field name="connection_ids">
+          {field => (
+            <fieldset className="grid gap-2">
+              <legend className="mb-2 text-[13px] font-medium">Connections</legend>
+              {connections.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Nothing connected yet. Add one under{' '}
+                  <Link to="/w/$workspaceId/connections" params={{ workspaceId }} className="underline underline-offset-4">
+                    Connections
+                  </Link>
+                  .
+                </p>
+              ) : (
+                <ul className="divide-y divide-border border border-border-strong">
+                  {connections.map(connection => (
+                    <ConnectionChoice
+                      key={connection.id}
+                      connection={connection}
+                      selected={field.state.value.includes(connection.id)}
+                      onChange={selected =>
+                        field.handleChange(selected ? [...field.state.value, connection.id] : field.state.value.filter(id => id !== connection.id))
+                      }
+                    />
+                  ))}
+                </ul>
+              )}
+              <p className="text-xs text-muted-foreground">
+                The agent can do only what each connection allows. Change that under{' '}
                 <Link to="/w/$workspaceId/connections" params={{ workspaceId }} className="underline underline-offset-4">
                   Connections
                 </Link>
                 .
               </p>
-            ) : (
-              <ul className="divide-y divide-border border border-border-strong">
-                {connections.map(connection => (
-                  <ConnectionChoice
-                    key={connection.id}
-                    connection={connection}
-                    selected={field.state.value.includes(connection.id)}
-                    onChange={selected =>
-                      field.handleChange(selected ? [...field.state.value, connection.id] : field.state.value.filter(id => id !== connection.id))
-                    }
-                  />
-                ))}
-              </ul>
-            )}
-            <p className="text-xs text-muted-foreground">
-              The agent can do only what each connection allows. Change that under{' '}
-              <Link to="/w/$workspaceId/connections" params={{ workspaceId }} className="underline underline-offset-4">
-                Connections
-              </Link>
-              .
-            </p>
-          </fieldset>
-        )}
-      </form.Field>
-      {error && <ErrorNote>{errorMessage(error)}</ErrorNote>}
-      <div className="flex items-center justify-between gap-2">
-        <div>
-          {agent && (
-            <Button
-              type="button"
-              variant="ghost-destructive"
-              size="sm"
-              disabled={remove.isPending}
-              onClick={async () => {
-                if (!confirm(`Delete ${agent.name}? Its conversations are deleted too.`)) return
-                await remove.mutateAsync({ path: { ...path, agent_id: agent.id } })
-                onDone()
-              }}
-            >
-              Delete
-            </Button>
+            </fieldset>
           )}
+        </form.Field>
+        {error && <ErrorNote>{errorMessage(error)}</ErrorNote>}
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            {agent && (
+              <Button
+                type="button"
+                variant="ghost-destructive"
+                size="sm"
+                disabled={remove.isPending}
+                onClick={async () => {
+                  if (!confirm(`Delete ${agent.name}? Its conversations are deleted too.`)) return
+                  await remove.mutateAsync({ path: { ...path, agent_id: agent.id } })
+                  onDone()
+                }}
+              >
+                Delete
+              </Button>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Button type="button" variant="ghost" size="sm" onClick={onDone}>
+              Cancel
+            </Button>
+            <form.SubmitButton size="sm">{agent ? 'Save' : 'Create agent'}</form.SubmitButton>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Button type="button" variant="ghost" size="sm" onClick={onDone}>
-            Cancel
-          </Button>
-          <SubmitButton form={form} size="sm">
-            {agent ? 'Save' : 'Create agent'}
-          </SubmitButton>
-        </div>
-      </div>
-    </form>
+      </form.Form>
+    </form.AppForm>
   )
 }
 

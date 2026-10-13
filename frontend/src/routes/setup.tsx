@@ -1,9 +1,8 @@
-import { useForm } from '@tanstack/react-form'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { meQueryKey } from '@/api/@tanstack/react-query.gen'
 import { AuthLayout } from '@/components/auth-layout'
-import { SubmitButton, submitForm, TextField } from '@/components/form'
+import { useAppForm } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { Alert, ErrorNote, Spinner } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
@@ -29,7 +28,7 @@ function SetupPage() {
       await queryClient.invalidateQueries({ queryKey: meQueryKey() })
     },
   })
-  const form = useForm({
+  const form = useAppForm({
     defaultValues: { key: '' },
     onSubmit: async ({ value }) => {
       await claim.mutateAsync(value.key.trim())
@@ -88,24 +87,25 @@ function SetupPage() {
         </Link>
       }
     >
-      <form className="grid gap-4" onSubmit={submitForm(form)}>
-        <form.Field name="key" validators={{ onSubmit: ({ value }) => (!value.trim() ? 'Enter the setup key.' : undefined) }}>
-          {field => (
-            <TextField
-              field={field}
-              label="Setup key"
-              type="password"
-              autoComplete="off"
-              autoFocus
-              spellCheck={false}
-              hint="The key generated with this server's secrets (MINERVA_SETUP_KEY). Whoever deployed the server has it."
-            />
-          )}
-        </form.Field>
-        <Alert tone="info">It works once. Everyone who signs in after you stays an ordinary user.</Alert>
-        <ErrorNote>{claim.error ? errorMessage(claim.error) : null}</ErrorNote>
-        <SubmitButton form={form}>Claim this server</SubmitButton>
-      </form>
+      <form.AppForm>
+        <form.Form className="grid gap-4">
+          <form.AppField name="key" validators={{ onSubmit: ({ value }) => (!value.trim() ? 'Enter the setup key.' : undefined) }}>
+            {field => (
+              <field.TextField
+                label="Setup key"
+                type="password"
+                autoComplete="off"
+                autoFocus
+                spellCheck={false}
+                hint="The key generated with this server's secrets (MINERVA_SETUP_KEY). Whoever deployed the server has it."
+              />
+            )}
+          </form.AppField>
+          <Alert tone="info">It works once. Everyone who signs in after you stays an ordinary user.</Alert>
+          <ErrorNote>{claim.error ? errorMessage(claim.error) : null}</ErrorNote>
+          <form.SubmitButton>Claim this server</form.SubmitButton>
+        </form.Form>
+      </form.AppForm>
     </AuthLayout>
   )
 }

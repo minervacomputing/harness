@@ -1,10 +1,9 @@
 /** Two-factor authentication on the account page: setting up an authenticator app, recovery codes, turning it off. */
-import { useForm } from '@tanstack/react-form'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { QRCodeSVG } from 'qrcode.react'
 import { useState } from 'react'
 import { Setting } from '@/components/account/setting'
-import { submitForm, TextField } from '@/components/form'
+import { useAppForm } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { ErrorNote, Spinner, Status } from '@/components/ui/misc'
 import { auth, fieldErrors } from '@/lib/auth'
@@ -102,33 +101,34 @@ function TotpConfirm({ started, onDone }: { started: Started; onDone: () => Prom
       await onDone()
     },
   })
-  const form = useForm({ defaultValues: { code: '' }, onSubmit: ({ value }) => activate.mutateAsync(value.code.trim()) })
+  const form = useAppForm({ defaultValues: { code: '' }, onSubmit: ({ value }) => activate.mutateAsync(value.code.trim()) })
   const fields = fieldErrors(activate.error)
   return (
     <div className="grid gap-4 border p-4 sm:grid-cols-[auto_1fr]">
       <QRCodeSVG value={started.uri} size={144} className="border bg-white p-2" />
-      <form className="grid content-start gap-3" onSubmit={submitForm(form)}>
-        <p className="text-sm">Scan the code with your authenticator app, or enter this key:</p>
-        <code className="border bg-secondary px-2 py-1 font-mono text-xs break-all">{started.secret}</code>
-        <form.Field name="code">
-          {field => (
-            <TextField
-              field={field}
-              label="Code from the app"
-              autoComplete="one-time-code"
-              inputMode="numeric"
-              className="font-mono tracking-widest"
-              serverError={fields.code}
-            />
-          )}
-        </form.Field>
-        {activate.error && !fields.code && <ErrorNote>{activate.error.message}</ErrorNote>}
-        <div>
-          <Button type="submit" size="sm" disabled={activate.isPending}>
-            Turn on
-          </Button>
-        </div>
-      </form>
+      <form.AppForm>
+        <form.Form className="grid content-start gap-3">
+          <p className="text-sm">Scan the code with your authenticator app, or enter this key:</p>
+          <code className="border bg-secondary px-2 py-1 font-mono text-xs break-all">{started.secret}</code>
+          <form.AppField name="code">
+            {field => (
+              <field.TextField
+                label="Code from the app"
+                autoComplete="one-time-code"
+                inputMode="numeric"
+                className="font-mono tracking-widest"
+                serverError={fields.code}
+              />
+            )}
+          </form.AppField>
+          {activate.error && !fields.code && <ErrorNote>{activate.error.message}</ErrorNote>}
+          <div>
+            <Button type="submit" size="sm" disabled={activate.isPending}>
+              Turn on
+            </Button>
+          </div>
+        </form.Form>
+      </form.AppForm>
     </div>
   )
 }
@@ -179,19 +179,21 @@ function RecoveryCodeList({ codes, onDone, replaced }: { codes: string[]; onDone
 /** The server asks for the password again before it turns two-factor on or off or makes new recovery codes. */
 function PasswordPrompt({ onSubmit, submitLabel }: { onSubmit: (password: string) => Promise<unknown>; submitLabel: string }) {
   const confirm = useMutation({ mutationFn: onSubmit })
-  const form = useForm({ defaultValues: { password: '' }, onSubmit: ({ value }) => confirm.mutateAsync(value.password) })
+  const form = useAppForm({ defaultValues: { password: '' }, onSubmit: ({ value }) => confirm.mutateAsync(value.password) })
   return (
-    <form className="grid gap-3 border p-4" onSubmit={submitForm(form)}>
-      <p className="text-sm">For your security, confirm your password first.</p>
-      <form.Field name="password">
-        {field => <TextField field={field} label="Current password" type="password" autoComplete="current-password" autoFocus />}
-      </form.Field>
-      {confirm.error && <ErrorNote>{confirm.error.message}</ErrorNote>}
-      <div>
-        <Button type="submit" size="sm" disabled={confirm.isPending}>
-          {submitLabel}
-        </Button>
-      </div>
-    </form>
+    <form.AppForm>
+      <form.Form className="grid gap-3 border p-4">
+        <p className="text-sm">For your security, confirm your password first.</p>
+        <form.AppField name="password">
+          {field => <field.TextField label="Current password" type="password" autoComplete="current-password" autoFocus />}
+        </form.AppField>
+        {confirm.error && <ErrorNote>{confirm.error.message}</ErrorNote>}
+        <div>
+          <Button type="submit" size="sm" disabled={confirm.isPending}>
+            {submitLabel}
+          </Button>
+        </div>
+      </form.Form>
+    </form.AppForm>
   )
 }

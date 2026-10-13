@@ -1,8 +1,7 @@
-import { useForm } from '@tanstack/react-form'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { AuthLayout, useContinueAuth } from '@/components/auth-layout'
-import { SubmitButton, submitForm, TextField } from '@/components/form'
+import { newPassword, useAppForm } from '@/components/form'
 import { ErrorNote } from '@/components/ui/misc'
 import { auth, authQuery, fieldErrors, useAuthStep } from '@/lib/auth'
 import { redirectIfSignedIn } from '@/lib/guards'
@@ -31,20 +30,22 @@ function ResetPasswordPage() {
 function RequestReset() {
   const request = useAuthStep(auth.requestPasswordReset)
   const fields = fieldErrors(request.error)
-  const form = useForm({
+  const form = useAppForm({
     defaultValues: { email: '' },
     onSubmit: async ({ value }) => {
       await request.mutateAsync(value)
     },
   })
   return (
-    <form className="grid gap-4" onSubmit={submitForm(form)}>
-      <form.Field name="email">
-        {field => <TextField field={field} label="Email" type="email" autoComplete="email" autoFocus serverError={fields.email} />}
-      </form.Field>
-      <ErrorNote>{request.error && !fields.email ? request.error.message : null}</ErrorNote>
-      <SubmitButton form={form}>Send reset code</SubmitButton>
-    </form>
+    <form.AppForm>
+      <form.Form className="grid gap-4">
+        <form.AppField name="email">
+          {field => <field.TextField label="Email" type="email" autoComplete="email" autoFocus serverError={fields.email} />}
+        </form.AppField>
+        <ErrorNote>{request.error && !fields.email ? request.error.message : null}</ErrorNote>
+        <form.SubmitButton>Send reset code</form.SubmitButton>
+      </form.Form>
+    </form.AppForm>
   )
 }
 
@@ -52,7 +53,7 @@ function ChooseNewPassword() {
   const continueAuth = useContinueAuth()
   const reset = useAuthStep(auth.resetPassword)
   const fields = fieldErrors(reset.error)
-  const form = useForm({
+  const form = useAppForm({
     defaultValues: { key: '', password: '' },
     onSubmit: async ({ value }) => {
       // Resetting ends every session, so the way on is signing in.
@@ -60,25 +61,26 @@ function ChooseNewPassword() {
     },
   })
   return (
-    <form className="grid gap-4" onSubmit={submitForm(form)}>
-      <form.Field name="key">
-        {field => (
-          <TextField
-            field={field}
-            label="Reset code"
-            autoComplete="one-time-code"
-            inputMode="numeric"
-            autoFocus
-            className="font-mono tracking-widest"
-            serverError={fields.key}
-          />
-        )}
-      </form.Field>
-      <form.Field name="password" validators={{ onBlur: ({ value }) => (value.length < 10 ? 'Use at least 10 characters.' : undefined) }}>
-        {field => <TextField field={field} label="New password" type="password" autoComplete="new-password" serverError={fields.password} />}
-      </form.Field>
-      <ErrorNote>{reset.error && !fields.key && !fields.password ? reset.error.message : null}</ErrorNote>
-      <SubmitButton form={form}>Set new password</SubmitButton>
-    </form>
+    <form.AppForm>
+      <form.Form className="grid gap-4">
+        <form.AppField name="key">
+          {field => (
+            <field.TextField
+              label="Reset code"
+              autoComplete="one-time-code"
+              inputMode="numeric"
+              autoFocus
+              className="font-mono tracking-widest"
+              serverError={fields.key}
+            />
+          )}
+        </form.AppField>
+        <form.AppField name="password" validators={{ onBlur: newPassword }}>
+          {field => <field.TextField label="New password" type="password" autoComplete="new-password" serverError={fields.password} />}
+        </form.AppField>
+        <ErrorNote>{reset.error && !fields.key && !fields.password ? reset.error.message : null}</ErrorNote>
+        <form.SubmitButton>Set new password</form.SubmitButton>
+      </form.Form>
+    </form.AppForm>
   )
 }

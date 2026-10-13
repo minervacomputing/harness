@@ -1,8 +1,7 @@
-import { useForm } from '@tanstack/react-form'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { AuthLayout, useContinueAuth } from '@/components/auth-layout'
-import { SubmitButton, submitForm, TextField } from '@/components/form'
+import { emailAddress, newPassword, useAppForm } from '@/components/form'
 import { ErrorNote } from '@/components/ui/misc'
 import { auth, fieldErrors, useAuthStep } from '@/lib/auth'
 import { nextSearch, redirectIfSignedIn } from '@/lib/guards'
@@ -24,7 +23,7 @@ function SignupPage() {
   // A server nobody administers yet takes the operator's setup key here, for when its sign-up is closed.
   const setupNeeded = useQuery(setupQuery).data?.needed === true
 
-  const form = useForm({
+  const form = useAppForm({
     defaultValues: { email: '', password: '', setupKey: '' },
     onSubmit: async ({ value }) => {
       const state = await signup.mutateAsync({ email: value.email, password: value.password, setupKey: setupNeeded ? value.setupKey : '' })
@@ -46,31 +45,32 @@ function SignupPage() {
         </>
       }
     >
-      <form className="grid gap-4" onSubmit={submitForm(form)}>
-        <form.Field name="email" validators={{ onBlur: ({ value }) => (!value.includes('@') ? 'Enter your email address.' : undefined) }}>
-          {field => <TextField field={field} label="Email" type="email" autoComplete="email" autoFocus serverError={fields.email} />}
-        </form.Field>
-        <form.Field name="password" validators={{ onBlur: ({ value }) => (value.length < 10 ? 'Use at least 10 characters.' : undefined) }}>
-          {field => <TextField field={field} label="Password" type="password" autoComplete="new-password" serverError={fields.password} />}
-        </form.Field>
-        {setupNeeded && (
-          <form.Field name="setupKey">
-            {field => (
-              <TextField
-                field={field}
-                label="Setup key (optional)"
-                type="password"
-                autoComplete="off"
-                spellCheck={false}
-                hint="Only for the person who runs this server: it lets you create the first account while sign-up is closed."
-                serverError={fields.setup_key}
-              />
-            )}
-          </form.Field>
-        )}
-        <ErrorNote>{signup.error && !Object.keys(fields).length ? signup.error.message : null}</ErrorNote>
-        <SubmitButton form={form}>Create account</SubmitButton>
-      </form>
+      <form.AppForm>
+        <form.Form className="grid gap-4">
+          <form.AppField name="email" validators={{ onBlur: emailAddress }}>
+            {field => <field.TextField label="Email" type="email" autoComplete="email" autoFocus serverError={fields.email} />}
+          </form.AppField>
+          <form.AppField name="password" validators={{ onBlur: newPassword }}>
+            {field => <field.TextField label="Password" type="password" autoComplete="new-password" serverError={fields.password} />}
+          </form.AppField>
+          {setupNeeded && (
+            <form.AppField name="setupKey">
+              {field => (
+                <field.TextField
+                  label="Setup key (optional)"
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  hint="Only for the person who runs this server: it lets you create the first account while sign-up is closed."
+                  serverError={fields.setup_key}
+                />
+              )}
+            </form.AppField>
+          )}
+          <ErrorNote>{signup.error && !Object.keys(fields).length ? signup.error.message : null}</ErrorNote>
+          <form.SubmitButton>Create account</form.SubmitButton>
+        </form.Form>
+      </form.AppForm>
     </AuthLayout>
   )
 }

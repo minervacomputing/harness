@@ -1,9 +1,9 @@
-import { useForm } from '@tanstack/react-form'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { z } from 'zod'
 import { meOptions } from '@/api/@tanstack/react-query.gen'
 import { Setting, SettingsList } from '@/components/account/setting'
-import { SubmitButton, submitForm, TextField } from '@/components/form'
+import { useAppForm } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { ErrorNote, PageHeader, Spinner } from '@/components/ui/misc'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -80,6 +80,9 @@ function SignupSetting() {
   )
 }
 
+// The address of someone who already has an account; the server says if there is none.
+const anAccount = z.string().includes('@', { message: 'Enter the email address of an existing account.' })
+
 function AdminsSetting() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
@@ -98,7 +101,7 @@ function AdminsSetting() {
       if (!error && id === me?.id) await navigate({ to: '/' })
     },
   })
-  const form = useForm({
+  const form = useAppForm({
     defaultValues: { email: '' },
     onSubmit: async ({ value, formApi }) => {
       await add.mutateAsync(value.email.trim())
@@ -155,22 +158,19 @@ function AdminsSetting() {
         </div>
       )}
       {remove.isError && <ErrorNote className="mt-3">{errorMessage(remove.error)}</ErrorNote>}
-      <form className="mt-4 grid max-w-md gap-3" onSubmit={submitForm(form)}>
-        <form.Field
-          name="email"
-          validators={{ onSubmit: ({ value }) => (!value.includes('@') ? 'Enter the email address of an existing account.' : undefined) }}
-        >
-          {field => (
-            <TextField field={field} label="Add an administrator" type="email" autoComplete="off" hint="They need an account on this server already." />
-          )}
-        </form.Field>
-        {add.isError && <ErrorNote>{errorMessage(add.error)}</ErrorNote>}
-        <div>
-          <SubmitButton form={form} size="sm" variant="outline">
-            Add administrator
-          </SubmitButton>
-        </div>
-      </form>
+      <form.AppForm>
+        <form.Form className="mt-4 grid max-w-md gap-3">
+          <form.AppField name="email" validators={{ onSubmit: anAccount }}>
+            {field => <field.TextField label="Add an administrator" type="email" autoComplete="off" hint="They need an account on this server already." />}
+          </form.AppField>
+          {add.isError && <ErrorNote>{errorMessage(add.error)}</ErrorNote>}
+          <div>
+            <form.SubmitButton size="sm" variant="outline">
+              Add administrator
+            </form.SubmitButton>
+          </div>
+        </form.Form>
+      </form.AppForm>
     </Setting>
   )
 }

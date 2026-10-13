@@ -1,8 +1,7 @@
-import { useForm } from '@tanstack/react-form'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { AuthLayout, useContinueAuth } from '@/components/auth-layout'
-import { SubmitButton, submitForm, TextField } from '@/components/form'
+import { emailAddress, useAppForm } from '@/components/form'
 import { ErrorNote } from '@/components/ui/misc'
 import { auth, fieldErrors, useAuthStep } from '@/lib/auth'
 import { nextSearch, redirectIfSignedIn } from '@/lib/guards'
@@ -24,7 +23,7 @@ function LoginPage() {
   const step = mode === 'password' ? login : requestCode
   const fields = fieldErrors(step.error)
 
-  const form = useForm({
+  const form = useAppForm({
     defaultValues: { email: '', password: '' },
     onSubmit: async ({ value }) => {
       const state =
@@ -46,41 +45,43 @@ function LoginPage() {
         </>
       }
     >
-      <form className="grid gap-4" onSubmit={submitForm(form)}>
-        {/* An empty field is not flagged on blur: the message would push the links below it down mid-click
-            ("Sign in with a code", "Forgot password?"), and the click would be lost. Submitting still checks it. */}
-        <form.Field
-          name="email"
-          validators={{
-            onBlur: ({ value }) => (value && !value.includes('@') ? 'Enter your email address.' : undefined),
-            onSubmit: ({ value }) => (!value.includes('@') ? 'Enter your email address.' : undefined),
-          }}
-        >
-          {field => <TextField field={field} label="Email" type="email" autoComplete="email" autoFocus serverError={fields.email} />}
-        </form.Field>
-        {mode === 'password' && (
-          <form.Field name="password">
-            {field => <TextField field={field} label="Password" type="password" autoComplete="current-password" serverError={fields.password} />}
-          </form.Field>
-        )}
-        <ErrorNote>{step.error && !Object.keys(fields).length ? step.error.message : null}</ErrorNote>
-        <SubmitButton form={form}>{mode === 'password' ? 'Sign in' : 'Email me a code'}</SubmitButton>
-        <div className="flex justify-between text-sm">
-          <button
-            type="button"
-            className="text-muted-foreground hover:text-foreground"
-            onClick={() => {
-              step.reset()
-              setMode(mode === 'password' ? 'code' : 'password')
+      <form.AppForm>
+        <form.Form className="grid gap-4">
+          {/* An empty field is not flagged on blur: the message would push the links below it down mid-click
+              ("Sign in with a code", "Forgot password?"), and the click would be lost. Submitting still checks it. */}
+          <form.AppField
+            name="email"
+            validators={{
+              onBlur: ({ value, fieldApi }) => (value ? fieldApi.parseValueWithSchema(emailAddress) : undefined),
+              onSubmit: emailAddress,
             }}
           >
-            {mode === 'password' ? 'Sign in with a code' : 'Sign in with a password'}
-          </button>
-          <Link to="/reset-password" className="text-muted-foreground hover:text-foreground">
-            Forgot password?
-          </Link>
-        </div>
-      </form>
+            {field => <field.TextField label="Email" type="email" autoComplete="email" autoFocus serverError={fields.email} />}
+          </form.AppField>
+          {mode === 'password' && (
+            <form.AppField name="password">
+              {field => <field.TextField label="Password" type="password" autoComplete="current-password" serverError={fields.password} />}
+            </form.AppField>
+          )}
+          <ErrorNote>{step.error && !Object.keys(fields).length ? step.error.message : null}</ErrorNote>
+          <form.SubmitButton>{mode === 'password' ? 'Sign in' : 'Email me a code'}</form.SubmitButton>
+          <div className="flex justify-between text-sm">
+            <button
+              type="button"
+              className="text-muted-foreground hover:text-foreground"
+              onClick={() => {
+                step.reset()
+                setMode(mode === 'password' ? 'code' : 'password')
+              }}
+            >
+              {mode === 'password' ? 'Sign in with a code' : 'Sign in with a password'}
+            </button>
+            <Link to="/reset-password" className="text-muted-foreground hover:text-foreground">
+              Forgot password?
+            </Link>
+          </div>
+        </form.Form>
+      </form.AppForm>
     </AuthLayout>
   )
 }
