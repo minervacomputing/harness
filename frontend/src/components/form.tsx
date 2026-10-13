@@ -7,8 +7,8 @@ import { Input, Label, Textarea } from '@/components/ui/input'
 /** An address to sign in, sign up or reset with. The server checks it properly; this catches a typo early. */
 export const emailAddress = z.string().includes('@', { message: 'Enter your email address.' })
 
-/** A password being chosen. The server enforces the same length. */
-export const newPassword = z.string().min(10, { message: 'Use at least 10 characters.' })
+/** A password being chosen. The server enforces the same lengths (Better Auth's minimum of ours, and its maximum). */
+export const newPassword = z.string().min(10, { message: 'Use at least 10 characters.' }).max(128, { message: 'Use at most 128 characters.' })
 
 const { fieldContext, formContext, useFieldContext, useFormContext } = createFormHookContexts()
 

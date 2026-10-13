@@ -32,10 +32,12 @@ const expected = expectedSchema(MIGRATIONS);
 
 describe("what the migrations build", () => {
 	test("is the accounts, the workspace directory and Better Auth's tables, with their indexes", () => {
-		for (const table of ["user", "session", "account", "verification", "twoFactor", "organization", "member", "workspaces", "memberships", "oauth_flows", "oauth_clients", "instance_settings", "instance_setup", "invitation", "rateLimit", "rate_limits", "totp_steps"]) {
+		for (const table of ["user", "session", "account", "verification", "twoFactor", "organization", "member", "workspaces", "memberships", "oauth_flows", "oauth_clients", "instance_settings", "instance_setup", "invitation", "rateLimit"]) {
 			expect([...expected.tables.keys()], table).toContain(table);
 		}
-		expect(expected.tables.get("session")?.get("credentialStamp")).toEqual({ type: "TEXT", notNull: false, default: null, primaryKey: 0 });
+		expect(expected.tables.get("session")?.get("ipAddress")).toEqual({ type: "TEXT", notNull: false, default: null, primaryKey: 0 });
+		for (const gone of ["rate_limits", "totp_steps"]) expect(expected.tables.has(gone), gone).toBe(false);
+		expect(expected.tables.get("session")?.has("credentialStamp")).toBe(false);
 		expect(expected.tables.get("user")?.get("id")?.primaryKey).toBe(1);
 		expect([...expected.objects.keys()].some((key) => key.startsWith("index "))).toBe(true);
 		for (const hidden of ["d1_migrations", "_cf_KV", "sqlite_sequence"]) expect(expected.tables.has(hidden), hidden).toBe(false);
@@ -61,10 +63,10 @@ describe("the comparison", () => {
 	});
 
 	test("finds a missing column, an extra column, and a column of another shape", () => {
-		expect(compareSchemas(expected, deployed((db) => db.exec('ALTER TABLE "session" DROP COLUMN "credentialStamp"')))).toEqual(["Column session.credentialStamp is missing."]);
+		expect(compareSchemas(expected, deployed((db) => db.exec('ALTER TABLE "session" DROP COLUMN "ipAddress"')))).toEqual(["Column session.ipAddress is missing."]);
 		expect(compareSchemas(expected, deployed((db) => db.exec("ALTER TABLE workspaces ADD COLUMN scratch TEXT")))).toEqual(["Column workspaces.scratch is not made by any migration."]);
-		const changed = compareSchemas(expected, deployed((db) => db.exec('ALTER TABLE "session" RENAME COLUMN "credentialStamp" TO "stamp"')));
-		expect(changed).toEqual(["Column session.credentialStamp is missing.", "Column session.stamp is not made by any migration."]);
+		const changed = compareSchemas(expected, deployed((db) => db.exec('ALTER TABLE "session" RENAME COLUMN "ipAddress" TO "stamp"')));
+		expect(changed).toEqual(["Column session.ipAddress is missing.", "Column session.stamp is not made by any migration."]);
 	});
 
 	test("finds a column whose type, NOT NULL, default or primary key differs", () => {
@@ -90,7 +92,7 @@ describe("the comparison", () => {
 	});
 
 	test("finds a missing index, an extra one, and one that is not unique any more", () => {
-		const unique = [...expected.objects].find(([, shape]) => shape.type === "index" && shape.statement.startsWith("create unique index"));
+		const unique = [...expected.objects].find(([key]) => key === "index member_organization_user");
 		expect(unique, "the migrations make a unique index").toBeDefined();
 		const [key, shape] = unique as [string, { type: string; table: string; statement: string }];
 		const name = key.slice("index ".length);
@@ -148,7 +150,7 @@ describe("the comparison", () => {
 	});
 
 	test("reports every difference, not the first", () => {
-		const found = compareSchemas(expected, deployed((db) => db.exec('DROP TABLE twoFactor; CREATE TABLE scratch (id TEXT); ALTER TABLE "session" DROP COLUMN "credentialStamp"')));
+		const found = compareSchemas(expected, deployed((db) => db.exec('DROP TABLE twoFactor; CREATE TABLE scratch (id TEXT); ALTER TABLE "session" DROP COLUMN "ipAddress"')));
 		expect(found.length).toBeGreaterThanOrEqual(3);
 	});
 });
@@ -255,7 +257,7 @@ if (args[0] === "d1" && args[1] === "list") {
 		const result = run(() => {});
 		expect(result.err.replace(/\(node:\d+\)[^\n]*\n/g, "").replace(/\(Use `node --trace[^\n]*\n/g, "")).toBe("");
 		expect(result.status).toBe(0);
-		expect(result.out).toMatch(/^The schema of minerva-cf matches the migrations \(\d+ tables, \d+ columns, \d+ indexes and other objects, 6 migrations\)\.\n$/);
+		expect(result.out).toMatch(/^The schema of minerva-cf matches the migrations \(\d+ tables, \d+ columns, \d+ indexes and other objects, 7 migrations\)\.\n$/);
 		expect(result.calls.map((call) => call.slice(0, 2).join(" "))).toEqual(["d1 list", ...Array(6).fill("d1 query")]);
 		for (const call of result.calls.slice(1)) expect(call[4], call[4]).toMatch(/^SELECT /);
 		expect(result.out + result.err).not.toContain(DATABASE_ID);
@@ -270,12 +272,12 @@ if (args[0] === "d1" && args[1] === "list") {
 
 	test("fails on a missing column and an unapplied migration, naming both and nothing of the id", () => {
 		const result = run((db) => {
-			db.exec('ALTER TABLE "session" DROP COLUMN "credentialStamp"');
+			db.exec('ALTER TABLE "session" DROP COLUMN "ipAddress"');
 			db.exec(`DELETE FROM d1_migrations WHERE name = '${FILES.at(-1)}'`);
 		});
 		expect(result.status).toBe(1);
 		expect(result.err).toContain("The schema of minerva-cf is not what the migrations make:");
-		expect(result.err).toContain("- Column session.credentialStamp is missing.");
+		expect(result.err).toContain("- Column session.ipAddress is missing.");
 		expect(result.err).toContain(`- Migration ${FILES.at(-1)} is not applied.`);
 		expect(result.out + result.err).not.toContain(DATABASE_ID);
 	});

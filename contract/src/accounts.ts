@@ -27,8 +27,9 @@ export const InstanceAdmin = z.object({ id: z.string(), email: z.string(), name:
 export type InstanceAdmin = z.infer<typeof InstanceAdmin>
 
 /**
- * The header that carries the operator's setup key: to claim the setup, and on Better Auth's sign-up, where it admits the operator's
- * account on a server whose sign-up is closed until setup is done. A header, so the key is never in a body, a URL or a stored step.
+ * The header that carries the operator's setup key: to claim the setup, and on Better Auth's email-code requests that sign up, where it
+ * admits the operator's account on a server whose sign-up is closed until setup is done. A header, so the key is never in a body, a URL
+ * or a stored step.
  */
 export const SETUP_KEY_HEADER = 'X-Minerva-Setup-Key'
 
@@ -36,6 +37,18 @@ const api = oc.errors(ERRORS)
 
 /** Who is signed in; `UNAUTHORIZED` for a visitor. */
 export const me = api.route({ method: 'GET', path: '/me' }).output(Me)
+
+export const password = {
+  /**
+   * The first password of a user an email code signed up: the sign-up form's password, sent once the code has signed the user in.
+   * `PASSWORD_ALREADY_SET` when the account has one (it is changed with the current one, or reset by email code); a password the server's
+   * rules refuse is `VALIDATION_FAILED` on `password`.
+   */
+  set: api
+    .route({ method: 'POST', path: '/me/password', successStatus: 204 })
+    .input(z.object({ password: z.string() }))
+    .output(type<void>()),
+}
 
 export const setup = {
   /** Whether the first-run setup is still open. The one route a visitor may call; it says nothing else about the server. */

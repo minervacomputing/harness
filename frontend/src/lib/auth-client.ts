@@ -6,7 +6,7 @@ import { createAuthClient } from 'better-auth/client'
 import { emailOTPClient, twoFactorClient } from 'better-auth/client/plugins'
 
 // Only the plugins the Worker enables and the UI uses; the Worker answers a fixed list of Better Auth's routes
-// (cloudflare/src/accounts/policy.ts, BROWSER_ROUTES). A request that fails throws `BetterFetchError`.
+// (cloudflare/src/accounts/auth.ts, BROWSER_ROUTES). A request that fails throws `BetterFetchError`.
 export const client = createAuthClient({
   baseURL: window.location.origin,
   basePath: '/api/auth',
@@ -15,7 +15,7 @@ export const client = createAuthClient({
 })
 
 /** The form fields an error can belong to. */
-type Field = 'email' | 'password' | 'currentPassword' | 'code' | 'setupKey'
+type Field = 'email' | 'password' | 'currentPassword' | 'code'
 
 /** A step that failed: the sentence to show, the field it belongs to, and whether the step is over. */
 export class AuthError extends Error {
@@ -58,12 +58,9 @@ const KNOWN: Record<string, { message: string; field?: Field; ends?: boolean }> 
   INVALID_BACKUP_CODE: WRONG_CODE,
   OTP_EXPIRED: { message: 'That code has expired. Request a new one.', field: 'code', ends: true },
   TOO_MANY_ATTEMPTS: { message: 'Too many incorrect codes. Request a new one.', field: 'code', ends: true },
-  TOO_MANY_LOGIN_ATTEMPTS: { message: LOCKED },
   TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE: { message: LOCKED, ends: true },
   ACCOUNT_TEMPORARILY_LOCKED: { message: LOCKED, ends: true },
   INVALID_TWO_FACTOR_COOKIE: { message: 'Your sign-in timed out. Sign in again.', ends: true },
-  EMAIL_PASSWORD_SIGN_UP_DISABLED: { message: 'Sign-up is not open on this server.' },
-  EMAIL_ALREADY_VERIFIED: { message: 'This email address is already verified. Sign in instead.', field: 'code' },
 }
 
 /** A failed request as the pages show it. The password rules' sentences are the server's own. */
@@ -82,8 +79,8 @@ function authError(error: unknown, keepsStep: boolean): AuthError {
 }
 
 /**
- * `run`, with its failures thrown as `AuthError`. `keepsStep` is for verifying an address, whose page has "Send a
- * new code", so an expired or used-up code leaves the step open.
+ * `run`, with its failures thrown as `AuthError`. `keepsStep` is for the email code, whose page has "Send a new
+ * code", so an expired or used-up code leaves the step open.
  */
 export function withAuthErrors<Args extends unknown[], Result>(run: (...args: Args) => Promise<Result>, keepsStep = false) {
   return async (...args: Args): Promise<Result> => {

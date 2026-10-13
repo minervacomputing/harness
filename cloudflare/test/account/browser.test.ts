@@ -534,16 +534,17 @@ describe("the browser walk on the test Worker", () => {
 		await page.getByRole("heading", { name: "Create your account" }).waitFor();
 		await field("Email").fill(EMAIL);
 		await field("Password").fill(PASSWORD);
-		// A server nobody administers offers the setup key at sign-up; with it, verifying leads on to /setup.
+		// A server nobody administers offers the setup key at sign-up; with it, the emailed code leads on to /setup.
 		await field("Setup key (optional)").fill(worker.setupKey);
 		await screenshot("signup");
 		await button("Create account").click();
-		await page.waitForURL(/\/verify-email/);
-		await field("Verification code").waitFor();
-		await screenshot("verify-email");
-		await field("Verification code").fill(await emailedCode(EMAIL, /Please Confirm Your Email Address/));
-		// Verifying signs in.
-		await button("Verify email").click();
+		await page.waitForURL(/\/login\/code/);
+		await field("Code").waitFor();
+		await screenshot("signup-code");
+		await field("Code").fill(await emailedCode(EMAIL, /sign-in code/));
+		// The code signs in (making the account), and the page then sets the password from the form.
+		await paced("/sign-in/email-otp");
+		await button("Create account").click();
 
 		// The first-run setup, claimed with the key on its page.
 		await page.waitForURL(/\/setup(\?|$)/, { timeout: 30_000 });
@@ -616,7 +617,7 @@ describe("the browser walk on the test Worker", () => {
 		await page.waitForURL(/\/login\/code/);
 		await field("Sign-in code").waitFor();
 		await screenshot("login-code");
-		await field("Sign-in code").fill(await emailedCode(EMAIL, /Sign-In Code/));
+		await field("Sign-in code").fill(await emailedCode(EMAIL, /sign-in code/));
 		await paced("/sign-in/email-otp");
 		await button("Sign in").click();
 		await twoFactor(recovery[0] as string);
@@ -632,7 +633,7 @@ describe("the browser walk on the test Worker", () => {
 		await button("Send reset code").click();
 		await field("Reset code").waitFor();
 		await screenshot("reset-password-code");
-		await field("Reset code").fill(await emailedCode(EMAIL, /Password Reset Code/));
+		await field("Reset code").fill(await emailedCode(EMAIL, /password reset code/));
 		await field("New password").fill(NEW_PASSWORD);
 		await button("Set new password").click();
 		await page.waitForURL(/\/login/);

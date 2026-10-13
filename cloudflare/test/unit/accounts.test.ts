@@ -1,12 +1,9 @@
-// Accounts: emails, password rules, scrypt hashes and the mailer.
+// Accounts: the emails, the mailer and the options Better Auth runs with.
 
 import { describe, expect, test, vi } from "vitest";
-import { MAIL_TRANSPORT, checkMailer, type EmailKind, parseFrom, render, sendEmail } from "../../src/accounts/emails.ts";
-import { type AuthPolicy, authOptions } from "../../src/accounts/auth-options.ts";
-import { hashPassword, needsRehash, quickRatio, SCRYPT, validatePassword, verifyPassword } from "../../src/accounts/passwords.ts";
+import { authOptions } from "../../src/accounts/auth-options.ts";
+import { MAIL_TRANSPORT, checkMailer, codeEmail, parseFrom, sendEmail } from "../../src/accounts/emails.ts";
 import type { SettingsEnv } from "../../src/config.ts";
-
-const FAST = { logN: 10, r: 8, p: 1 };
 
 function settingsEnv(overrides: Partial<SettingsEnv> = {}): SettingsEnv {
 	return {
@@ -35,27 +32,19 @@ function settingsEnv(overrides: Partial<SettingsEnv> = {}): SettingsEnv {
 
 describe("emails", () => {
 	const SITE = "https://app.example.com";
-	const signature = "\n\nThank you for using Minerva!\napp.example.com";
 
-	test.each([
-		["verify_signup", "[Minerva] Please Confirm Your Email Address", ["user ada@example.com has given your email address", "account on app.example.com", "\n\n123456"]],
-		["verify_login", "[Minerva] Please Confirm Your Email Address", ["\n\n123456"]],
-		["already_exists", "[Minerva] Account Already Exists", ["\n\nada@example.com\n\n", "https://app.example.com/reset-password"]],
-		["login_code", "[Minerva] Sign-In Code", ["Your sign-in code", "\n\n123456\n\n", "safely ignored"]],
-		["unknown_account", "[Minerva] Unknown Account", ["account with email ada@example.com", "https://app.example.com/signup"]],
-		["password_reset_code", "[Minerva] Password Reset Code", ["Your password reset code", "\n\n123456\n\n", "safely ignored"]],
-	] as const)("%s", (kind, subject, fragments) => {
-		const email = render(kind as EmailKind, "ada@example.com", SITE, "123456");
-		expect([email.to, email.subject]).toEqual(["ada@example.com", subject]);
-		expect(email.body.startsWith("Hello from Minerva!\n\n") && email.body.endsWith(signature)).toBe(true);
-		for (const fragment of fragments) expect(email.body).toContain(fragment);
+	test("a sign-in code, which is also how a new address signs up", () => {
+		expect(codeEmail("sign-in", "ada@example.com", "123456", SITE, 5)).toEqual({
+			to: "ada@example.com",
+			subject: "Your Minerva sign-in code",
+			body: "Enter this code to sign in to Minerva at app.example.com:\n\n123456\n\nIt expires in 5 minutes. If you did not ask for it, you can ignore this email.\n",
+		});
 	});
 
-	test("a code email in full", () => {
-		expect(render("login_code", "ada@example.com", SITE, "123456").body).toBe(
-			"Hello from Minerva!\n\nYour sign-in code is listed below. Please enter it in your open browser window.\n\n123456\n\n" +
-				"This mail can be safely ignored if you did not initiate this action.\n\nThank you for using Minerva!\napp.example.com",
-		);
+	test("a password reset code", () => {
+		const email = codeEmail("password-reset", "ada@example.com", "654321", SITE, 5);
+		expect(email.subject).toBe("Your Minerva password reset code");
+		expect(email.body).toContain("reset your Minerva password at app.example.com:\n\n654321\n\n");
 	});
 
 	test("the sender is MINERVA_EMAIL_FROM", () => {
@@ -71,11 +60,11 @@ describe("the mailer", () => {
 		const send = vi.fn(async () => ({ messageId: "m" }));
 		const env = { ...settingsEnv(), EMAIL: { send } as unknown as SendEmail };
 		expect(() => checkMailer(env)).not.toThrow();
-		await sendEmail(env, { to: "ada@example.com", subject: "[Minerva] Sign-In Code", body: "123456" });
+		await sendEmail(env, { to: "ada@example.com", subject: "Your Minerva sign-in code", body: "123456" });
 		expect(send).toHaveBeenCalledWith({
 			from: { name: "Minerva", email: "noreply@app.example.com" },
 			to: "ada@example.com",
-			subject: "[Minerva] Sign-In Code",
+			subject: "Your Minerva sign-in code",
 			text: "123456",
 		});
 	});
@@ -86,7 +75,7 @@ describe("the mailer", () => {
 		MAIL_TRANSPORT.send = captured;
 		try {
 			expect(() => checkMailer(settingsEnv())).not.toThrow();
-			const email = { to: "ada@example.com", subject: "[Minerva] Sign-In Code", body: "123456" };
+			const email = { to: "ada@example.com", subject: "Your Minerva sign-in code", body: "123456" };
 			await sendEmail({ ...settingsEnv(), EMAIL: { send } as unknown as SendEmail }, email);
 			expect(captured).toHaveBeenCalledWith(expect.anything(), email);
 			expect(send).not.toHaveBeenCalled();
@@ -109,115 +98,23 @@ describe("the mailer", () => {
 	});
 });
 
-describe("password rules", () => {
-	const SHORT = "password_too_short";
-	const COMMON = "password_too_common";
-	const NUMERIC = "password_entirely_numeric";
-	const SIMILAR = "password_too_similar";
-
-	test.each([
-		["", [SHORT], [SHORT]],
-		["short", [SHORT], [SHORT]],
-		["password", [SHORT, COMMON], [SHORT, COMMON]],
-		["123456789", [SHORT, COMMON, NUMERIC], [SHORT, COMMON, NUMERIC]],
-		["1234567890", [COMMON, NUMERIC], [COMMON, NUMERIC]],
-		["abcdefghij", [COMMON], [COMMON]],
-		["aaaaaaaaaa", [COMMON], [COMMON]],
-		// The common list is compared in lowercase, without surrounding spaces.
-		["PASSWORD1234", [COMMON], [COMMON]],
-		["  password  ", [COMMON], [COMMON]],
-		["qwertyuiop", [COMMON], [COMMON]],
-		["correct horse battery staple", [], []],
-		["trustno1trustno1", [], []],
-		// Numbers in any script are numbers; lengths count characters, not UTF-16 units.
-		["\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669\u0660", [NUMERIC], [NUMERIC]],
-		["\u00b2".repeat(10), [NUMERIC], [NUMERIC]],
-		["\u{1f600}".repeat(9), [SHORT], [SHORT]],
-		["\u{1f600}".repeat(10), [], []],
-		["\u00e9".repeat(10), [], []],
-		// Similarity to the address, only once the user is known.
-		["ada@example.com", [], [SIMILAR]],
-		["adaexample", [], [SIMILAR]],
-		["example.com1", [], [SIMILAR]],
-		["ada@example.comx", [], [SIMILAR]],
-		["Ada Lovelace!", [], []],
-		["lovelace-ada-1815", [], []],
-	])("%j", (password, signup, withUser) => {
-		expect(validatePassword(password).map((error) => error.code)).toEqual(signup);
-		expect(validatePassword(password, { email: "ada@example.com" }).map((error) => error.code)).toEqual(withUser);
-	});
-
-	test("every failing rule is listed, with its message, the similar one first", () => {
-		expect(validatePassword("123", { email: "123@example.com" })).toEqual([
-			{ message: "The password is too similar to the email.", code: SIMILAR },
-			{ message: "This password is too short. It must contain at least 10 characters.", code: SHORT },
-			{ message: "This password is too common.", code: COMMON },
-			{ message: "This password is entirely numeric.", code: NUMERIC },
-		]);
-	});
-
-	test("the similarity ratio counts the characters two texts share", () => {
-		expect(quickRatio("", "")).toBe(1);
-		expect(quickRatio("abcd", "bcde")).toBe(0.75);
-		expect(quickRatio("a", "a".repeat(10))).toBeCloseTo(0.18181818181818182, 15);
-	});
-});
-
-describe("scrypt hashes", () => {
-	test("the production parameters, recorded in the hash", async () => {
-		expect(SCRYPT).toEqual({ logN: 15, r: 8, p: 3 });
-		const hash = await hashPassword("correct horse battery staple");
-		expect(hash).toMatch(/^scrypt\$15\$8\$3\$[A-Za-z0-9+/]{22}\$[A-Za-z0-9+/]{43}$/);
-		expect(await verifyPassword("correct horse battery staple", hash)).toBe(true);
-		expect(needsRehash(hash)).toBe(false);
-	});
-
-	test("verification, salts and older parameters", async () => {
-		const hash = await hashPassword("password", FAST);
-		expect(await verifyPassword("password", hash)).toBe(true);
-		expect(await verifyPassword("Password", hash)).toBe(false);
-		expect(await hashPassword("password", FAST)).not.toBe(hash);
-		expect(needsRehash(hash)).toBe(true);
-		// Non-ASCII passwords are hashed as UTF-8.
-		const unicode = await hashPassword("zażółć gęślą jaźń", FAST);
-		expect(await verifyPassword("zażółć gęślą jaźń", unicode)).toBe(true);
-	});
-
-	test("an unknown or malformed hash matches nothing", async () => {
-		for (const hash of ["", "!unusable", "pbkdf2_sha256$1500000$salt$hash", "scrypt$15$8$3$c2FsdA$", "scrypt$40$8$1$c2FsdHNhbHRzYWx0c2FsdA$" + "A".repeat(43)]) {
-			expect(await verifyPassword("password", hash)).toBe(false);
-			expect(needsRehash(hash)).toBe(true);
-		}
-	});
-});
-
-
-describe("Better Auth's custom hash", () => {
+describe("Better Auth's options", () => {
 	const never = async (): Promise<never> => {
 		throw new Error("unused");
 	};
-	// The hashes the policy is told were verified (policy.ts: a session takes the stamp of the checked hash).
-	let verified: string[] = [];
-	const policy = new Proxy({} as AuthPolicy, { get: (_target, name) => (name === "passwordVerified" ? (hash: string) => verified.push(hash) : never) });
-	const hasher = (rehashed: (old: string, hash: string) => Promise<boolean>) =>
-		authOptions({ siteUrl: "http://localhost", secret: "s".repeat(32), debug: true, hashCode: never, sendCode: never, userCreated: never, sessionCreated: never, rehashed, policy })
-			.emailAndPassword.password;
+	const options = (allowSignUp: boolean) => authOptions({ siteUrl: "http://localhost", secret: "s".repeat(32), debug: true, allowSignUp, sendCode: never, userCreated: never, sessionCreated: never });
+	const plugin = (allowSignUp: boolean, id: string) => options(allowSignUp).plugins.find((candidate) => candidate.id === id);
 
-	test("hashes with the production parameters verify without a rehash; older ones are replaced, and refused if the stored hash changed meanwhile", async () => {
-		verified = [];
-		const calls: string[] = [];
-		const current = await hashPassword("password");
-		expect(await hasher(never).verify({ hash: current, password: "password" })).toBe(true);
-		expect(await hasher(never).verify({ hash: current, password: "wrong" })).toBe(false);
-		expect(verified).toEqual([current]);
-		const old = await hashPassword("password", FAST);
-		let replacement = "";
-		const replaced = hasher(async (from, to) => (calls.push(from), (replacement = to), expect(to).toMatch(/^scrypt\$15\$8\$3\$/), true));
-		expect(await replaced.verify({ hash: old, password: "password" })).toBe(true);
-		expect(calls).toEqual([old]);
-		expect(verified).toEqual([current, replacement]);
-		expect(await hasher(async () => false).verify({ hash: old, password: "password" })).toBe(false);
-		expect(await hasher(never).verify({ hash: old, password: "wrong" })).toBe(false);
-		expect(verified).toEqual([current, replacement]);
+	test("no user is made from a password; an email code makes one only when sign-up is allowed", () => {
+		expect(options(true).emailAndPassword).toMatchObject({ disableSignUp: true, requireEmailVerification: true, minPasswordLength: 10, revokeSessionsOnPasswordReset: true });
+		expect((plugin(true, "email-otp") as { options: { disableSignUp: boolean } }).options).toMatchObject({ disableSignUp: false, storeOTP: "encrypted", allowedAttempts: 3 });
+		expect((plugin(false, "email-otp") as { options: { disableSignUp: boolean } }).options.disableSignUp).toBe(true);
+	});
+
+	test("the second factor follows a password and an email code", () => {
+		const twoFactor = plugin(false, "two-factor") as { hooks: { after: { matcher(ctx: { path?: string }): boolean }[] } };
+		const matches = (path: string) => twoFactor.hooks.after.some((hook) => hook.matcher({ path }));
+		expect(["/sign-in/email", "/sign-in/email-otp"].filter(matches)).toEqual(["/sign-in/email", "/sign-in/email-otp"]);
+		expect(["/sign-up/email", "/get-session", "/two-factor/verify-totp"].filter(matches)).toEqual([]);
 	});
 });

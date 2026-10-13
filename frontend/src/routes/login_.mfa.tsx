@@ -11,7 +11,7 @@ export const Route = createFileRoute('/login_/mfa')({
   validateSearch: nextSearch,
   beforeLoad: async ({ context }) => {
     const state = await redirectIfSignedIn(context.queryClient)
-    if (state.pending !== 'second-factor') throw redirect({ to: '/login' })
+    if (state.kind !== 'anonymous' || state.pending !== 'second-factor') throw redirect({ to: '/login' })
   },
   component: MfaPage,
 })

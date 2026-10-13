@@ -8,13 +8,15 @@ export const REFUSALS = {
   CROSS_SITE: 403,
   NOT_FOUND: 404,
   METHOD_NOT_ALLOWED: 405,
-  TOO_MANY_SESSION_COOKIES: 400,
   INTERNAL_SERVER_ERROR: 500,
   // Bodies and query strings.
   INVALID_JSON: 400,
   PAYLOAD_TOO_LARGE: 413,
   UNSUPPORTED_MEDIA_TYPE: 415,
   VALIDATION_FAILED: 422,
+  // The signed-in user's own account.
+  /** The account already has a password; it is changed with the current one, or reset by email code. */
+  PASSWORD_ALREADY_SET: 409,
   // The instance's setup and administration.
   INVALID_SETUP_KEY: 403,
   ALREADY_SET_UP: 409,

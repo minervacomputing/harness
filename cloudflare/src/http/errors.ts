@@ -2,8 +2,8 @@
 // `{"defined": true, "code": …, "status": …, "message": …}` (`errorAnswer`): every route of the contract
 // (api/orpc.ts), the routes beside it whose paths it names (the upload, downloads, the run stream, the OAuth
 // callback), our reader in front of Better Auth, and what the router answers before or instead of a route
-// (CSRF, the declared body cap, no such route, a crash, too many session cookies). Better Auth answers
-// /api/auth in its own format, `{code, message}`. Every JSON response is `no-store`.
+// (CSRF, the declared body cap, no such route, a crash). Better Auth answers /api/auth in its own format,
+// `{code, message}`. Every JSON response is `no-store`.
 
 import { REFUSALS, type RefusalCode } from "../shared/rpc.ts";
 

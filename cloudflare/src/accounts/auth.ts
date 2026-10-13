@@ -1,5 +1,5 @@
-// Better Auth in the Worker (plan: The web API): an instance for each request, with its security
-// policy (policy.ts), its handler at /api/auth/*, and the session helper our own routes use.
+// Better Auth in the Worker (plan: The web API): an instance for each request, its handler at /api/auth/*
+// behind our list of the routes the browser may use, and the session helpers our own routes use.
 
 import { createHmac } from "node:crypto";
 import { betterAuth } from "better-auth";
@@ -7,72 +7,64 @@ import { settings } from "../config.ts";
 import { UNPARSEABLE, readJson } from "../http/body.ts";
 import { HttpError, errorAnswer, noRoute } from "../http/errors.ts";
 import type { Json } from "../lib/json.ts";
-import { AUTH_BASE_PATH, type OtpType, authOptions } from "./auth-options.ts";
-import { type EmailKind, render, sendEmail } from "./emails.ts";
+import { AUTH_BASE_PATH, CODE_SECONDS, authOptions } from "./auth-options.ts";
+import { codeEmail, sendEmail } from "./emails.ts";
 import { signupAllowed } from "./instance.ts";
-import { BROWSER_ROUTES, Policy, withoutTrustedDevice } from "./policy.ts";
 import { ensureProvisioned, provision } from "./provision.ts";
-import { RateLimits } from "./rate-limits.ts";
-import { runInScope } from "./scope.ts";
+
+/**
+ * Better Auth's endpoints the browser may call, as `METHOD /path` under /api/auth. Every other one (more
+ * organizations, invitations, admin, impersonation, email changes, account deletion, sign-up with a
+ * password) answers 404: Better Auth's `disabledPaths` lists what is closed, so an endpoint an upgrade
+ * adds would be open there.
+ */
+export const BROWSER_ROUTES: ReadonlySet<string> = new Set([
+	"POST /sign-in/email",
+	"POST /sign-out",
+	"GET /get-session",
+	"POST /change-password",
+	"POST /email-otp/send-verification-otp",
+	"POST /sign-in/email-otp",
+	"POST /email-otp/request-password-reset",
+	"POST /email-otp/reset-password",
+	"POST /two-factor/enable",
+	"POST /two-factor/disable",
+	"POST /two-factor/get-totp-uri",
+	"POST /two-factor/verify-totp",
+	"POST /two-factor/verify-backup-code",
+	"POST /two-factor/generate-backup-codes",
+	"GET /organization/list",
+	"GET /organization/get-full-organization",
+]);
+
+/** The routes where an email code can make a new user, so the only ones that ask whether sign-up is open. */
+const SIGN_UP_ROUTES: ReadonlySet<string> = new Set(["/email-otp/send-verification-otp", "/sign-in/email-otp"]);
 
 /** A key of its own for Better Auth, derived from MINERVA_SECRET_KEY. */
 function derive(secretKey: string, purpose: string): string {
 	return createHmac("sha256", secretKey).update(`minerva/${purpose}`).digest("base64url");
 }
 
-const OTP_EMAILS: Record<OtpType, EmailKind> = {
-	"email-verification": "verify_signup",
-	"sign-in": "login_code",
-	"forget-password": "password_reset_code",
-	"change-email": "verify_signup",
-};
-
-function policyFor(env: Env): Policy {
+function build(env: Env, allowSignUp: boolean) {
 	const config = settings(env);
-	return new Policy({
-		db: env.DB,
-		limits: new RateLimits(env.DB, derive(env.MINERVA_SECRET_KEY, "rate-limits")),
-		stampKey: derive(env.MINERVA_SECRET_KEY, "session-stamp"),
-		signupAllowed: (headers) => signupAllowed(env, headers),
-		sendAlreadyExists: (email) => sendEmail(env, render("already_exists", email, config.siteUrl)),
-	});
-}
-
-function build(env: Env, policy: Policy) {
-	const config = settings(env);
-	const codeKey = derive(env.MINERVA_SECRET_KEY, "email-code");
 	return betterAuth(
 		authOptions({
 			siteUrl: config.siteUrl,
+			// Not to be changed: it encrypts the two-factor secrets and backup codes already stored.
 			secret: derive(env.MINERVA_SECRET_KEY, "better-auth"),
 			debug: config.debug,
 			database: env.DB,
-			hashCode: async (code) => createHmac("sha256", codeKey).update(code).digest("hex"),
-			sendCode: (email, code, type) => sendEmail(env, render(OTP_EMAILS[type], email, config.siteUrl, code)),
+			allowSignUp,
+			sendCode: async (email, code, type) => {
+				// The two codes our pages ask for; any other kind Better Auth can make here has no use, and is not sent.
+				const kind = type === "sign-in" ? "sign-in" : type === "forget-password" ? "password-reset" : null;
+				if (kind) await sendEmail(env, codeEmail(kind, email, code, config.siteUrl, CODE_SECONDS / 60));
+			},
 			userCreated: async (userId) => {
 				// The user exists whatever happens here; a failure leaves provisioning pending (provision.ts).
 				await provision(env, userId).catch((error: unknown) => console.error("Provisioning failed; it is retried on the next sign-in", userId, error));
 			},
 			sessionCreated: (userId) => ensureProvisioned(env, userId),
-			// Conditional on the old hash, so a password changed meanwhile is never overwritten. The user's
-			// sessions move to the new hash's stamp in the same batch, so a rehash signs nobody out.
-			rehashed: async (old, hash) => {
-				const owner = await env.DB.prepare(
-					`SELECT a."userId" AS user_id, u.email FROM account a JOIN "user" u ON u.id = a."userId" WHERE a."providerId" = 'credential' AND a.password = ?`,
-				)
-					.bind(old)
-					.first<{ user_id: string; email: string }>();
-				if (!owner) return false;
-				const [updated] = await env.DB.batch([
-					env.DB.prepare(`UPDATE account SET password = ?, "updatedAt" = ? WHERE "providerId" = 'credential' AND password = ?`).bind(hash, new Date().toISOString(), old),
-					env.DB.prepare(
-						`UPDATE "session" SET "credentialStamp" = ? WHERE "userId" = ? AND "credentialStamp" = ? ` +
-							`AND EXISTS (SELECT 1 FROM account WHERE "userId" = ? AND "providerId" = 'credential' AND password = ?)`,
-					).bind(policy.stamp(owner.user_id, owner.email, hash), owner.user_id, policy.stamp(owner.user_id, owner.email, old), owner.user_id, hash),
-				]);
-				return (updated?.meta.changes ?? 0) > 0;
-			},
-			policy,
 		}),
 	);
 }
@@ -86,14 +78,15 @@ export type Auth = ReturnType<typeof build>;
 // waited until it timed out. Building one takes well under a millisecond. Each caller builds it just
 // before using it, so that no instance is left starting (its adapter's imports) for a request that
 // has already answered.
-export function getAuth(env: Env, policy: Policy = policyFor(env)): Auth {
-	return build(env, policy);
+//
+// Sign-up is off unless asked for: only handleAuth asks, for a browser's email code while it is open.
+export function getAuth(env: Env, { allowSignUp = false }: { allowSignUp?: boolean } = {}): Auth {
+	return build(env, allowSignUp);
 }
 
 /**
- * Better Auth's own routes, those the browser may use (policy.ts); the rest answer 404. Trusted-device
- * cookies are dropped and sessions whose credentials changed are deleted before Better Auth reads them,
- * and the request runs in a scope of its own for the policy's hooks.
+ * Better Auth's routes the browser may use (BROWSER_ROUTES); the rest answer 404. On the two email-code
+ * routes, a new address may sign up while sign-up is open, or with the setup key before setup (instance.ts).
  *
  * A body is read with the API's JSON reader (http/body.ts `readJson`: `application/json` only, so no
  * form reaches Better Auth) before Better Auth sees it, and passed on re-serialized: Better Auth parses
@@ -103,11 +96,9 @@ export function getAuth(env: Env, policy: Policy = policyFor(env)): Auth {
  */
 export async function handleAuth(env: Env, request: Request): Promise<Response> {
 	const path = new URL(request.url).pathname;
-	if (!path.startsWith(`${AUTH_BASE_PATH}/`) || !BROWSER_ROUTES.has(`${request.method} ${path.slice(AUTH_BASE_PATH.length)}`)) return noRoute();
+	const route = path.slice(AUTH_BASE_PATH.length);
+	if (!path.startsWith(`${AUTH_BASE_PATH}/`) || !BROWSER_ROUTES.has(`${request.method} ${route}`)) return noRoute();
 	const headers = new Headers(request.headers);
-	const cookies = withoutTrustedDevice(headers.get("Cookie"));
-	if (cookies) headers.set("Cookie", cookies);
-	else headers.delete("Cookie");
 	let body: string | null = null;
 	if (request.body) {
 		const read = await readJson(request);
@@ -115,11 +106,8 @@ export async function handleAuth(env: Env, request: Request): Promise<Response> 
 		headers.set("Content-Type", "application/json");
 		if (read.value !== undefined) body = plainJson(read.value);
 	}
-	const policy = policyFor(env);
-	await policy.revokeStale(headers.get("Cookie"));
-	const forwarded = new Request(request.url, { method: request.method, headers, body });
-	const auth = getAuth(env, policy);
-	return runInScope({ holder: null }, () => auth.handler(forwarded));
+	const allowSignUp = SIGN_UP_ROUTES.has(route) && (await signupAllowed(env, request.headers));
+	return getAuth(env, { allowSignUp }).handler(new Request(request.url, { method: request.method, headers, body }));
 }
 
 const PLAIN_KEY = /^[A-Za-z0-9_.:-]*$/;
@@ -154,14 +142,9 @@ export interface CurrentSession {
 	headers: Headers;
 }
 
-/**
- * The request's session for our own routes, read from D1 on every request (no cookie cache), after
- * sessions whose credentials changed are deleted (policy.ts).
- */
+/** The request's session for our own routes, read from D1 on every request (no cookie cache). */
 export async function currentSession(env: Env, request: Request): Promise<CurrentSession> {
-	const policy = policyFor(env);
-	await policy.revokeStale(request.headers.get("Cookie"));
-	const { headers, response } = await getAuth(env, policy).api.getSession({ headers: request.headers, returnHeaders: true });
+	const { headers, response } = await getAuth(env).api.getSession({ headers: request.headers, returnHeaders: true });
 	if (!response) return { user: null, sessionId: null, headers };
 	const { user, session } = response;
 	return {

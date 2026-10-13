@@ -1,10 +1,13 @@
-// The procedures outside a workspace (contract/src/accounts.ts): who is signed in, the first-run setup and the
-// instance's administration (accounts/instance.ts). The mount (api/orpc.ts) refuses a visitor everywhere but
+// The procedures outside a workspace (contract/src/accounts.ts): who is signed in, their first password, the
+// first-run setup and the instance's administration (accounts/instance.ts). The mount (api/orpc.ts) refuses a visitor everywhere but
 // the setup's status, and a caller who is not an instance admin under /api/instance, before the body is read.
 // Every change an admin makes requires the role again in its own statement, so a role removed a moment ago
 // counts, even for a request already past the mount's check.
 
-import type { InstanceAdmin, InstanceSettings } from "@minerva/contract";
+import { type InstanceAdmin, type InstanceSettings, REFUSALS } from "@minerva/contract";
+import { ORPCError } from "@orpc/server";
+import { isAPIError } from "better-auth/api";
+import { getAuth } from "../accounts/auth.ts";
 import { ADMINS_ONLY, ALREADY_SET_UP, INVALID_KEY, LAST_ADMIN, NO_SUCH_USER, claimSetup, isInstanceAdmin, isSetUp, setupKeyValid, signupOverride } from "../accounts/instance.ts";
 import { ensureProvisioned, listWorkspaces } from "../accounts/provision.ts";
 import { settings as config } from "../config.ts";
@@ -35,6 +38,41 @@ export const meProcedure = api.me.use(signedIn).handler(async ({ context: { env,
 		user: { id: user.id, email: user.email, name: user.name, role: user.role === "admin" ? ("admin" as const) : ("user" as const) },
 		workspaces: await listWorkspaces(env, user.id),
 	};
+});
+
+export const PASSWORD_ALREADY_SET = "This account already has a password.";
+
+/** Whether the user has a password: Better Auth's credential account, with a hash. */
+async function hasPassword(db: D1Database, userId: string): Promise<boolean> {
+	const row = await db.prepare(`SELECT 1 AS found FROM account WHERE "userId" = ? AND "providerId" = 'credential' AND password IS NOT NULL`).bind(userId).first();
+	return row !== null;
+}
+
+/** A password Better Auth's rules refuse, as the contract's 422 on `password`. */
+function passwordRefused(code: "PASSWORD_TOO_SHORT" | "PASSWORD_TOO_LONG", message: string): ORPCError<"VALIDATION_FAILED", unknown> {
+	const issues = [{ path: ["password"], message, code: code === "PASSWORD_TOO_SHORT" ? "too_small" : "too_big" }];
+	return new ORPCError("VALIDATION_FAILED", { defined: true, status: REFUSALS.VALIDATION_FAILED, message: `password: ${message}`, data: { issues } });
+}
+
+// The first password of a user an email code signed up (plan: plain Better Auth). A password already set is changed with the
+// current one or reset by email code, so this refuses it, before Better Auth spends a hash on it (its limiter does not count
+// `auth.api` calls). The mount's CSRF check and JSON reader apply, as to every procedure.
+export const passwordProcedures = api.password.router({
+	set: api.password.set.use(signedIn).handler(async ({ context: { env, request, user }, input: { password } }) => {
+		if (await hasPassword(env.DB, user.id)) throw refusal("PASSWORD_ALREADY_SET", PASSWORD_ALREADY_SET);
+		try {
+			await getAuth(env).api.setPassword({ body: { newPassword: password }, headers: request.headers });
+		} catch (error) {
+			// Set by a request that raced this one past the check above: Better Auth's own check, or the unique index on the
+			// credential account (migration 0007) refusing the second insert.
+			if (await hasPassword(env.DB, user.id)) throw refusal("PASSWORD_ALREADY_SET", PASSWORD_ALREADY_SET);
+			if (!isAPIError(error)) throw error;
+			const { code, message } = (error.body ?? {}) as { code?: string; message?: string };
+			if (code === "PASSWORD_TOO_SHORT" || code === "PASSWORD_TOO_LONG") throw passwordRefused(code, message ?? code);
+			if (error.statusCode === 401) throw refusal("UNAUTHORIZED", "Unauthorized");
+			throw error;
+		}
+	}),
 });
 
 export const setupProcedures = api.setup.router({

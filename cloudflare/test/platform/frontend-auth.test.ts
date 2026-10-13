@@ -1,34 +1,35 @@
 // The frontend's auth client (frontend/src/lib/auth.ts, auth-client.ts and account.ts) against the Worker: the
-// steps the sign-in, sign-up, verification, code, two-factor, reset and account pages take, the step each leaves
-// pending, and the field a failure names; the operator's setup key at sign-up, and the instance pages' guard
-// (lib/guards.ts). The instance's own rules are instance.test.ts's. No page is rendered. Signing in and signing out load a whole page in
-// the app, which cannot happen here: a step answers `signed-in`, and a sign-out resolves only once the server
-// has ended the session; the pages act on those. The browser walk (test/account/browser.test.ts) drives the pages.
+// steps the sign-in, sign-up, code, two-factor, reset and account pages take, the step each leaves pending, and
+// the field a failure names; the operator's setup key at sign-up, and the instance pages' guard (lib/guards.ts).
+// The instance's own rules are instance.test.ts's. No page is rendered. Signing in and signing out load a whole
+// page in the app, which cannot happen here: a step answers `signed-in`, and a sign-out resolves only once the
+// server has ended the session; the pages act on those. The browser walk (test/account/browser.test.ts) drives
+// the pages.
 // The client reaches the Worker through a Browser's cookie jar in place of `fetch`.
 
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { useCheapHashing } from "./cheap-hashing.ts";
-import { Browser, ORIGIN, PASSWORD, installEmailLog, lastCode, emailsTo, nextTotp, totp, uniqueEmail } from "./accounts-helpers.ts";
+import { Browser, ORIGIN, PASSWORD, installEmailLog, lastCode, emailsTo, nextTotp, signInWithCode, totp, uniqueEmail } from "./accounts-helpers.ts";
 
 installEmailLog();
 
 type Anonymous = { kind: "anonymous"; pending: string | null };
-type State = { kind: "authenticated"; user: { id: string; email: string } } | Anonymous;
-type StepResult = { kind: "signed-in" } | Anonymous;
+type State = { kind: "authenticated"; user: { id: string; email: string } } | Anonymous | { kind: "setting-password" };
+type StepResult = { kind: "signed-in" } | Anonymous | { kind: "setting-password" };
 interface Frontend {
 	auth: {
 		login(v: { email: string; password: string }): Promise<StepResult>;
 		signup(v: { email: string; password: string; setupKey?: string }): Promise<StepResult>;
-		verifyEmail(v: { code: string }): Promise<StepResult>;
-		resendVerification(): Promise<void>;
 		requestLoginCode(v: { email: string }): Promise<StepResult>;
+		resendCode(): Promise<void>;
 		confirmLoginCode(v: { code: string }): Promise<StepResult>;
+		setSignUpPassword(): Promise<"set" | "kept">;
 		confirmSecondFactor(v: { code: string }): Promise<StepResult>;
 		requestPasswordReset(v: { email: string }): Promise<StepResult>;
 		resetPassword(v: { code: string; password: string }): Promise<StepResult>;
 		logout(): Promise<void>;
 	};
+	signingUp(): boolean;
 	account: {
 		changePassword(v: { current: string; next: string }): Promise<void>;
 		twoFactorEnabled(): Promise<boolean>;
@@ -68,23 +69,25 @@ let browser: Browser;
 let frontend: Frontend;
 let query: Query;
 let storage: MemoryStorage;
-/** What the next sign-out request meets: the server, no network, or a server error. */
-let signOutFails: "no" | "network" | "server" = "no";
+/** Paths whose next requests do not reach the server (`network`) or meet a proxy's error page (`server`). */
+const failing = new Map<string, "network" | "server">();
+/** The requests the page sent since it loaded: where, the setup key header, and the body. */
+let sent: Array<{ path: string; key: string | null; body: string }>;
 
 /** The client as a page loads it: fresh module state, the browser's cookies behind `fetch`. */
 async function load(next = new Browser()): Promise<void> {
 	browser = next;
-	signOutFails = "no";
+	failing.clear();
+	sent = [];
 	vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
 		const request = new Request(typeof input === "string" ? new URL(input, ORIGIN) : input, init);
-		if (new URL(request.url).pathname === "/api/auth/sign-out") {
-			if (signOutFails === "network") throw new TypeError("fetch failed");
-			if (signOutFails === "server") return new Response("<html>restarting</html>", { status: 502, headers: { "Content-Type": "text/html" } });
-		}
+		sent.push({ path: new URL(request.url).pathname, key: request.headers.get("X-Minerva-Setup-Key"), body: await request.clone().text() });
+		const fails = failing.get(new URL(request.url).pathname);
+		if (fails === "network") throw new TypeError("fetch failed");
+		if (fails === "server") return new Response("<html>restarting</html>", { status: 502, headers: { "Content-Type": "text/html" } });
 		return browser.fetch(request);
 	});
 	vi.resetModules();
-	await useCheapHashing();
 	const [auth, client, account, tanstack] = await Promise.all([
 		// @ts-expect-error The frontend is outside this project's types; the vitest alias resolves it (vitest.platform.config.ts).
 		import("@/lib/auth.ts"),
@@ -114,6 +117,10 @@ afterEach(() => {
 const state = () => new query.QueryClient().fetchQuery(frontend.authQuery);
 const signedIn = { kind: "signed-in" };
 const noStep = { kind: "anonymous", pending: null };
+const codeStep = { kind: "anonymous", pending: "sign-in-code" };
+const settingPassword = { kind: "setting-password" };
+const incorrect = { message: "Incorrect code.", fields: { code: "Incorrect code." } };
+const ANOTHER = "another long enough passphrase";
 
 /** What a failing step throws, as the pages read it. */
 async function failure(step: Promise<unknown>): Promise<{ message: string; fields: Record<string, string> }> {
@@ -125,10 +132,10 @@ async function failure(step: Promise<unknown>): Promise<{ message: string; field
 	return { message: (error as Error).message, fields: frontend.fieldErrors(error) };
 }
 
-/** Signs up and verifies through the client; verifying signs in. */
+/** A new account with a password, signed in in this page's browser: an email code, then the password. */
 async function newAccount(email = uniqueEmail()): Promise<string> {
-	expect(await frontend.auth.signup({ email, password: PASSWORD })).toEqual({ kind: "anonymous", pending: "verify-email" });
-	expect(await frontend.auth.verifyEmail({ code: lastCode(email) })).toEqual(signedIn);
+	await signInWithCode(email, {}, browser);
+	expect((await browser.call("POST", "/api/me/password", { password: PASSWORD })).status).toBe(204);
 	return email;
 }
 
@@ -138,24 +145,31 @@ async function withTwoFactor(email: string): Promise<{ uri: string; recoveryCode
 	return started;
 }
 
-describe("sign-up, verification and sign-in", () => {
-	test("sign-up waits for the emailed code, which verifies the address and signs in", async () => {
+/** Whether a password signs this address in, from a browser of its own. */
+async function passwordWorks(email: string, password: string): Promise<boolean> {
+	return (await new Browser().auth("/sign-in/email", { email, password })).status === 200;
+}
+
+describe("sign-up and sign-in", () => {
+	test("sign-up sends a code, which signs in; the form's password is set next, and the app opens", async () => {
 		const email = uniqueEmail();
 		expect(await state()).toEqual(noStep);
-		expect(await frontend.auth.signup({ email, password: PASSWORD })).toEqual({ kind: "anonymous", pending: "verify-email" });
-		// The step survives a reload (a new module, the same sessionStorage), which holds the address and no secret.
-		await load(browser);
-		expect(await state()).toEqual({ kind: "anonymous", pending: "verify-email" });
+		expect(await frontend.auth.signup({ email, password: PASSWORD })).toEqual(codeStep);
+		expect(frontend.signingUp()).toBe(true);
+		// The stored step holds the address and no secret.
 		expect(storage.contents).toContain(email);
 		expect(storage.contents).not.toContain(PASSWORD);
 
-		expect(await failure(frontend.auth.verifyEmail({ code: "000000" }))).toEqual({ message: "Incorrect code.", fields: { code: "Incorrect code." } });
-		await frontend.auth.resendVerification();
-		// Verifying signs in, after a reload too: the page holds no password.
-		expect(await frontend.auth.verifyEmail({ code: lastCode(email) })).toEqual(signedIn);
+		expect(await failure(frontend.auth.confirmLoginCode({ code: "000000" }))).toEqual(incorrect);
+		expect(await frontend.auth.confirmLoginCode({ code: lastCode(email) })).toEqual(settingPassword);
+		// Signed in, with the password still to set: a state of its own, which a fresh read keeps (/api/me is not asked).
+		expect(await state()).toEqual(settingPassword);
 		expect(storage.contents).not.toContain(email);
+		expect(await frontend.auth.setSignUpPassword()).toBe("set");
+		expect(await passwordWorks(email, PASSWORD)).toBe(true);
 
-		// /api/me is the source of the state, and fills the `me` query the app reads.
+		// The app's page loads: /api/me is the source of the state, and fills the `me` query the app reads.
+		await load(browser);
 		const queryClient = new query.QueryClient();
 		expect(await queryClient.fetchQuery(frontend.authQuery)).toMatchObject({ kind: "authenticated", user: { email } });
 		const cached = queryClient.getQueryCache().getAll().map((entry) => entry.state.data);
@@ -163,18 +177,57 @@ describe("sign-up, verification and sign-in", () => {
 	});
 
 	test("sign-up errors name the field", async () => {
-		const weak = await failure(frontend.auth.signup({ email: uniqueEmail(), password: "short" }));
-		expect(weak.fields.password).toMatch(/too short/);
-		const numeric = await failure(frontend.auth.signup({ email: uniqueEmail(), password: "12345678901234" }));
-		expect(Object.keys(numeric.fields)).toEqual(["password"]);
 		expect(await failure(frontend.auth.signup({ email: "not an address", password: PASSWORD }))).toEqual({ message: "Enter a valid email address.", fields: { email: "Enter a valid email address." } });
 	});
 
-	test("a taken address looks like a new one, and no code ever works for it", async () => {
+	test("a password that does not reach the server is tried again, and the code is not asked for again", async () => {
+		const email = uniqueEmail();
+		await frontend.auth.signup({ email, password: PASSWORD });
+		await frontend.auth.confirmLoginCode({ code: lastCode(email) });
+		failing.set("/api/me/password", "network");
+		expect(await failure(frontend.auth.setSignUpPassword())).toEqual({ message: "The server could not be reached.", fields: {} });
+		failing.set("/api/me/password", "server");
+		expect((await failure(frontend.auth.setSignUpPassword())).message).toMatch(/briefly unavailable/);
+		expect(await state()).toEqual(settingPassword);
+		failing.clear();
+		expect(await frontend.auth.setSignUpPassword()).toBe("set");
+		expect(await passwordWorks(email, PASSWORD)).toBe(true);
+	});
+
+	test("a sign-up into an address that has a password signs in to that account, and keeps its password", async () => {
 		const email = await newAccount();
 		await load();
-		expect(await frontend.auth.signup({ email, password: PASSWORD })).toEqual({ kind: "anonymous", pending: "verify-email" });
-		expect((await failure(frontend.auth.verifyEmail({ code: "123456" }))).fields).toEqual({ code: "Incorrect code." });
+		expect(await frontend.auth.signup({ email, password: ANOTHER })).toEqual(codeStep);
+		expect(await frontend.auth.confirmLoginCode({ code: lastCode(email) })).toEqual(settingPassword);
+		expect(await frontend.auth.setSignUpPassword()).toBe("kept");
+		expect((await browser.call("GET", "/api/me")).body.user.email).toBe(email);
+		expect(await passwordWorks(email, PASSWORD)).toBe(true);
+		expect(await passwordWorks(email, ANOTHER)).toBe(false);
+	});
+
+	test("a reload between the code and the password: the user is signed in without one, which a reset sets", async () => {
+		const email = uniqueEmail();
+		await frontend.auth.signup({ email, password: PASSWORD });
+		await frontend.auth.confirmLoginCode({ code: lastCode(email) });
+		await load(browser);
+		expect(await state()).toMatchObject({ kind: "authenticated", user: { email } });
+		expect((await failure(frontend.auth.setSignUpPassword())).message).toMatch(/Forgot password/);
+		expect(await passwordWorks(email, PASSWORD)).toBe(false);
+
+		await load();
+		await frontend.auth.requestPasswordReset({ email });
+		expect(await frontend.auth.resetPassword({ code: lastCode(email), password: PASSWORD })).toEqual(noStep);
+		expect(await passwordWorks(email, PASSWORD)).toBe(true);
+	});
+
+	test("a reload before the code: the step goes on, and its code signs the new account in without the password", async () => {
+		const email = uniqueEmail();
+		await frontend.auth.signup({ email, password: PASSWORD });
+		await load(browser);
+		expect([await state(), frontend.signingUp()]).toEqual([codeStep, false]);
+		expect(await frontend.auth.confirmLoginCode({ code: lastCode(email) })).toEqual(signedIn);
+		expect(await state()).toMatchObject({ kind: "authenticated", user: { email } });
+		expect(await passwordWorks(email, PASSWORD)).toBe(false);
 	});
 
 	test("a wrong password and an unknown address get the same answer, on the password field", async () => {
@@ -185,90 +238,60 @@ describe("sign-up, verification and sign-in", () => {
 		expect(await failure(frontend.auth.login({ email: uniqueEmail("nobody"), password: PASSWORD }))).toEqual(expected);
 	});
 
-	test("an unverified account that signs in with its password is sent a code by the server and goes on to verify", async () => {
-		const email = uniqueEmail();
-		expect((await new Browser().auth("/sign-up/email", { email, password: PASSWORD, name: "" })).status).toBe(200);
-		// Later: the sign-up's code has expired.
-		await env.DB.prepare(`DELETE FROM verification WHERE identifier = ?`).bind(`email-verification-otp-${email}`).run();
-		const before = emailsTo(email).length;
-		expect(await frontend.auth.login({ email, password: PASSWORD })).toEqual({ kind: "anonymous", pending: "verify-email" });
-		expect(emailsTo(email).length).toBe(before + 1);
-		// Signing in again while that code is usable sends no other.
-		expect(await frontend.auth.login({ email, password: PASSWORD })).toEqual({ kind: "anonymous", pending: "verify-email" });
-		expect(emailsTo(email).length).toBe(before + 1);
-		expect(await frontend.auth.verifyEmail({ code: lastCode(email) })).toEqual(signedIn);
-		expect(await state()).toMatchObject({ kind: "authenticated", user: { email } });
-	});
-
-	test("an address someone else signed up with: its owner verifies it and is signed in without that password", async () => {
-		const email = uniqueEmail("owner");
-		const attacker = "the attacker's own passphrase";
-		expect((await new Browser().auth("/sign-up/email", { email, password: attacker, name: "" })).status).toBe(200);
-		expect(await frontend.auth.signup({ email, password: PASSWORD })).toEqual({ kind: "anonymous", pending: "verify-email" });
-		// Past the 10 s between codes that the "Account Already Exists" email started.
-		vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 11_000 });
-		await frontend.auth.resendVerification();
-		expect(await frontend.auth.verifyEmail({ code: lastCode(email) })).toEqual(signedIn);
-		expect(await state()).toMatchObject({ kind: "authenticated", user: { email } });
-		await load();
-		const refused = { message: "The email address or password is not correct.", fields: { password: "The email address or password is not correct." } };
-		expect(await failure(frontend.auth.login({ email, password: attacker }))).toEqual(refused);
-		expect(await failure(frontend.auth.login({ email, password: PASSWORD }))).toEqual(refused);
-	});
-
-	test("a code for an address already verified does not sign in, and says so", async () => {
-		const email = await newAccount();
-		await load();
-		expect(await frontend.auth.signup({ email, password: PASSWORD })).toEqual({ kind: "anonymous", pending: "verify-email" });
-		vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 11_000 });
-		await frontend.auth.resendVerification();
-		const already = "This email address is already verified. Sign in instead.";
-		expect(await failure(frontend.auth.verifyEmail({ code: lastCode(email) }))).toEqual({ message: already, fields: { code: already } });
-		expect(await state()).toEqual({ kind: "anonymous", pending: "verify-email" });
-	});
-
-	test("an expired verification code leaves the step open, and a new code finishes it", async () => {
+	test("an expired code leaves the step open, and a new code, which starts the step's time again, finishes it", async () => {
 		const email = uniqueEmail();
 		await frontend.auth.signup({ email, password: PASSWORD });
-		const stale = lastCode(email);
-		vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 6 * 60_000 });
+		await env.DB.prepare(`UPDATE verification SET "expiresAt" = ? WHERE identifier = ?`).bind(new Date(Date.now() - 1_000).toISOString(), `sign-in-otp-${email}`).run();
 		const expired = "That code has expired. Request a new one.";
-		expect(await failure(frontend.auth.verifyEmail({ code: stale }))).toEqual({ message: expired, fields: { code: expired } });
-		expect(await state()).toEqual({ kind: "anonymous", pending: "verify-email" });
-		await frontend.auth.resendVerification();
-		expect(await frontend.auth.verifyEmail({ code: lastCode(email) })).toEqual(signedIn);
+		expect(await failure(frontend.auth.confirmLoginCode({ code: lastCode(email) }))).toEqual({ message: expired, fields: { code: expired } });
+		expect(await state()).toEqual(codeStep);
+		vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 4 * 60_000 });
+		await frontend.auth.resendCode();
+		vi.setSystemTime(Date.now() + 2 * 60_000);
+		expect(await state()).toEqual(codeStep);
+		expect(await frontend.auth.confirmLoginCode({ code: lastCode(email) })).toEqual(settingPassword);
 	});
 
-	test("asking again at once is fine (a code just went out); the limit per IP is an error, not a sent code", async () => {
+	test("every new code is sent; the limit per IP is an error, not a sent code", async () => {
 		const email = uniqueEmail();
 		await frontend.auth.signup({ email, password: PASSWORD });
-		const sent = emailsTo(email).length;
-		await frontend.auth.resendVerification(); // sends
-		await frontend.auth.resendVerification(); // our 10 s limit per address: the code from a moment ago stands
-		expect(emailsTo(email).length).toBe(sent + 1);
-		// The IP limit on code requests is ten in a minute (ip-limits.ts): the next eight pass, the eleventh is refused.
-		for (let request = 3; request <= 10; request++) await frontend.auth.resendVerification();
-		expect(await failure(frontend.auth.resendVerification())).toEqual({ message: "Too many attempts. Wait a moment and try again.", fields: {} });
-		expect(emailsTo(email).length).toBe(sent + 1);
+		// The IP limit on code requests is ten in a minute (ip-limits.ts): nine more pass, the eleventh is refused.
+		for (let request = 2; request <= 10; request++) await frontend.auth.resendCode();
+		expect(emailsTo(email)).toHaveLength(10);
+		expect(await failure(frontend.auth.resendCode())).toEqual({ message: "Too many attempts. Wait a moment and try again.", fields: {} });
+		expect(emailsTo(email)).toHaveLength(10);
+		expect(await frontend.auth.confirmLoginCode({ code: lastCode(email) })).toEqual(settingPassword);
 	});
 });
 
 describe("sign-in by email code", () => {
-	test("a code signs in, a wrong one is an incorrect code, and an unknown address looks the same", async () => {
+	test("a code signs in, and a wrong one is an incorrect code; an unknown address is signed up by its code, without a password", async () => {
 		const email = await newAccount();
 		await load();
 		const before = emailsTo(email).length;
-		expect(await frontend.auth.requestLoginCode({ email })).toEqual({ kind: "anonymous", pending: "sign-in-code" });
+		expect(await frontend.auth.requestLoginCode({ email })).toEqual(codeStep);
+		expect(frontend.signingUp()).toBe(false);
 		expect(emailsTo(email).length).toBe(before + 1);
-		expect(await failure(frontend.auth.confirmLoginCode({ code: "000000" }))).toEqual({ message: "Incorrect code.", fields: { code: "Incorrect code." } });
+		expect(await failure(frontend.auth.confirmLoginCode({ code: "000000" }))).toEqual(incorrect);
 		expect(await frontend.auth.confirmLoginCode({ code: lastCode(email) })).toEqual(signedIn);
 		expect(await state()).toMatchObject({ kind: "authenticated", user: { email } });
 
+		// Sign-up is open here (a closed server's answer: frontend-instance.test.ts).
 		await load();
-		const stranger = uniqueEmail("nobody");
-		expect(await frontend.auth.requestLoginCode({ email: stranger })).toEqual({ kind: "anonymous", pending: "sign-in-code" });
-		expect(emailsTo(stranger)).toEqual([]);
-		expect((await failure(frontend.auth.confirmLoginCode({ code: "123456" }))).fields).toEqual({ code: "Incorrect code." });
+		const stranger = uniqueEmail("new");
+		expect(await frontend.auth.requestLoginCode({ email: stranger })).toEqual(codeStep);
+		expect(await frontend.auth.confirmLoginCode({ code: lastCode(stranger) })).toEqual(signedIn);
+		expect(await state()).toMatchObject({ kind: "authenticated", user: { email: stranger } });
+		expect(await passwordWorks(stranger, PASSWORD)).toBe(false);
+	});
+
+	test("a code asked for to sign in does not finish a sign-up begun before it", async () => {
+		const email = uniqueEmail();
+		await frontend.auth.signup({ email, password: PASSWORD });
+		await frontend.auth.requestLoginCode({ email });
+		expect(frontend.signingUp()).toBe(false);
+		expect(await frontend.auth.confirmLoginCode({ code: lastCode(email) })).toEqual(signedIn);
+		expect(await passwordWorks(email, PASSWORD)).toBe(false);
 	});
 
 	test("a step goes on while storage refuses it (full, say), and ends even when storage cannot forget it", async () => {
@@ -278,8 +301,8 @@ describe("sign-in by email code", () => {
 		};
 		storage.setItem = full;
 		await load();
-		expect(await frontend.auth.requestLoginCode({ email })).toEqual({ kind: "anonymous", pending: "sign-in-code" });
-		expect(await state()).toEqual({ kind: "anonymous", pending: "sign-in-code" });
+		expect(await frontend.auth.requestLoginCode({ email })).toEqual(codeStep);
+		expect(await state()).toEqual(codeStep);
 		expect(await frontend.auth.confirmLoginCode({ code: lastCode(email) })).toEqual(signedIn);
 
 		storage = new MemoryStorage();
@@ -299,21 +322,23 @@ describe("sign-in by email code", () => {
 		expect(await state()).toEqual(noStep);
 		const timedOut = await failure(frontend.auth.confirmLoginCode({ code: lastCode(email) }));
 		expect(timedOut.message).toBe("That step timed out. Go back to sign in and start again.");
-		expect((await failure(frontend.auth.verifyEmail({ code: "123456" }))).message).toBe(timedOut.message);
+		expect((await failure(frontend.auth.resendCode())).message).toBe(timedOut.message);
 	});
 
-	test("as a mutation, a step's answer becomes the cached state, and three wrong codes take the step out of it", async () => {
+	test("as a mutation, a step's answer becomes the cached state; a used-up code keeps the step, and one that timed out takes it out", async () => {
 		const email = await newAccount();
 		await load();
 		const queryClient = new query.QueryClient();
 		const step = (run: (vars: never) => Promise<StepResult>) => new query.MutationObserver(queryClient, frontend.authStep(run));
 		await step(frontend.auth.requestLoginCode).mutate({ email });
-		expect(queryClient.getQueryData(frontend.authQuery.queryKey)).toEqual({ kind: "anonymous", pending: "sign-in-code" });
+		expect(queryClient.getQueryData(frontend.authQuery.queryKey)).toEqual(codeStep);
 		for (let attempt = 0; attempt < 3; attempt++) await failure(step(frontend.auth.confirmLoginCode).mutate({ code: "000000" }));
-		// Better Auth also limits sign-ins per address to three in ten seconds; the fourth try comes from another IP.
-		browser = new Browser();
 		const code = lastCode(email);
-		await expect(step(frontend.auth.confirmLoginCode).mutate({ code })).rejects.toMatchObject({ message: "Too many incorrect codes. Request a new one.", endsStep: true });
+		await expect(step(frontend.auth.confirmLoginCode).mutate({ code })).rejects.toMatchObject({ message: "Too many incorrect codes. Request a new one.", endsStep: false });
+		expect(queryClient.getQueryData(frontend.authQuery.queryKey)).toEqual(codeStep);
+
+		vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 5 * 60_000 + 1_000 });
+		await expect(step(frontend.auth.confirmLoginCode).mutate({ code })).rejects.toMatchObject({ endsStep: true });
 		expect(queryClient.getQueryData(frontend.authQuery.queryKey)).toEqual(noStep);
 		expect(await state()).toEqual(noStep);
 	});
@@ -354,20 +379,21 @@ describe("two-factor", () => {
 		expect((await failure(frontend.auth.confirmSecondFactor({ code: recovery }))).fields).toEqual({ code: "Incorrect code." });
 	});
 
-	test("an email code and a verification that signs in go on to the second factor too", async () => {
+	test("an email code goes on to the second factor too, and so does a sign-up into an account that has one, which keeps its password", async () => {
 		const email = await newAccount();
-		await withTwoFactor(email);
+		const { uri } = await withTwoFactor(email);
 		await load();
 		await frontend.auth.requestLoginCode({ email });
 		expect(await frontend.auth.confirmLoginCode({ code: lastCode(email) })).toEqual({ kind: "anonymous", pending: "second-factor" });
 		expect(await state()).toEqual({ kind: "anonymous", pending: "second-factor" });
 
-		// An address that must be verified again: the sign-in after verifying asks for the second factor as well.
-		await env.DB.prepare(`UPDATE "user" SET "emailVerified" = 0 WHERE email = ?`).bind(email).run();
 		await load();
-		expect(await frontend.auth.login({ email, password: PASSWORD })).toEqual({ kind: "anonymous", pending: "verify-email" });
-		expect(await frontend.auth.verifyEmail({ code: lastCode(email) })).toEqual({ kind: "anonymous", pending: "second-factor" });
+		await frontend.auth.signup({ email, password: ANOTHER });
+		expect(await frontend.auth.confirmLoginCode({ code: lastCode(email) })).toEqual({ kind: "anonymous", pending: "second-factor" });
 		expect(await state()).toEqual({ kind: "anonymous", pending: "second-factor" });
+		expect(await frontend.auth.confirmSecondFactor({ code: await nextTotp(uri) })).toEqual(signedIn);
+		expect(await failure(frontend.auth.setSignUpPassword())).toMatchObject({ message: expect.stringMatching(/Forgot password/) });
+		expect(await passwordWorks(email, ANOTHER)).toBe(false);
 	});
 
 	test("a sign-in that waited too long for its second factor is over", async () => {
@@ -405,11 +431,10 @@ describe("password reset and change", () => {
 		const { auth } = frontend;
 		expect(await auth.requestPasswordReset({ email })).toEqual({ kind: "anonymous", pending: "password-reset" });
 		const code = lastCode(email);
-		const another = "another long enough passphrase";
-		expect(await failure(auth.resetPassword({ code: "000000", password: another }))).toEqual({ message: "Incorrect code.", fields: { code: "Incorrect code." } });
+		expect(await failure(auth.resetPassword({ code: "000000", password: ANOTHER }))).toEqual({ message: "Incorrect code.", fields: { code: "Incorrect code." } });
 		expect((await failure(auth.resetPassword({ code, password: "short" }))).fields.password).toMatch(/too short/);
-		expect(await auth.resetPassword({ code, password: another })).toEqual(noStep);
-		expect(await auth.login({ email, password: another })).toEqual(signedIn);
+		expect(await auth.resetPassword({ code, password: ANOTHER })).toEqual(noStep);
+		expect(await auth.login({ email, password: ANOTHER })).toEqual(signedIn);
 
 		await load(signedInBrowser);
 		expect(await state()).toEqual(noStep);
@@ -425,13 +450,12 @@ describe("password reset and change", () => {
 		const email = await newAccount();
 		const other = new Browser();
 		await other.auth("/sign-in/email", { email, password: PASSWORD });
-		const another = "another long enough passphrase";
-		expect(await failure(frontend.account.changePassword({ current: "not the password", next: another }))).toEqual({
+		expect(await failure(frontend.account.changePassword({ current: "not the password", next: ANOTHER }))).toEqual({
 			message: "That password is not correct.",
 			fields: { currentPassword: "That password is not correct." },
 		});
 		expect((await failure(frontend.account.changePassword({ current: PASSWORD, next: "short" }))).fields.password).toMatch(/too short/);
-		await frontend.account.changePassword({ current: PASSWORD, next: another });
+		await frontend.account.changePassword({ current: PASSWORD, next: ANOTHER });
 		expect((await state()).kind).toBe("authenticated");
 		expect((await other.call("GET", "/api/me")).status).toBe(401);
 	});
@@ -443,20 +467,60 @@ describe("the setup key and the instance pages", () => {
 	beforeEach(reset);
 	afterEach(reset);
 
-	test("on a closed server, sign-up sends the key in its one header and keeps it nowhere; without it, or a wrong one, sign-up stays closed", async () => {
-		await env.DB.prepare("INSERT INTO instance_settings (id, signup_open, updated_at) VALUES (1, 0, ?)").bind(Date.now()).run();
+	const users = async (email: string) => (await env.DB.prepare(`SELECT count(*) AS n FROM "user" WHERE email = ?`).bind(email).first<{ n: number }>())!.n;
+	const close = () => env.DB.prepare("INSERT INTO instance_settings (id, signup_open, updated_at) VALUES (1, 0, ?)").bind(Date.now()).run();
+
+	test("on a closed server, without the key or with a wrong one, an unknown address is answered as any other, and no code makes it an account", async () => {
+		await close();
 		const email = uniqueEmail("operator");
-		expect(await failure(frontend.auth.signup({ email, password: PASSWORD }))).toEqual({ message: "Sign-up is not open on this server.", fields: {} });
-		// A key that does not open it is said to be the problem, on the key's own field.
-		expect((await failure(frontend.auth.signup({ email, password: PASSWORD, setupKey: "wrong" }))).fields).toEqual({
-			setupKey: expect.stringContaining("setup key does not open it"),
-		});
-		expect(await env.DB.prepare(`SELECT 1 FROM "user" WHERE email = ?`).bind(email).first()).toBeNull();
-		// Only spaces around the key are the page's doing.
-		expect(await frontend.auth.signup({ email, password: PASSWORD, setupKey: ` ${KEY} ` })).toEqual({ kind: "anonymous", pending: "verify-email" });
+		expect(await frontend.auth.signup({ email, password: PASSWORD })).toEqual(codeStep);
+		expect(await frontend.auth.signup({ email, password: PASSWORD, setupKey: "wrong" })).toEqual(codeStep);
+		await frontend.auth.resendCode();
+		expect(emailsTo(email)).toEqual([]);
+		expect(await failure(frontend.auth.confirmLoginCode({ code: "123456" }))).toEqual(incorrect);
+		expect(await users(email)).toBe(0);
+	});
+
+	test("with the key, a resend and the code make the account and set its password; the key travels in one header and is kept nowhere", async () => {
+		await close();
+		const email = uniqueEmail("operator");
+		// Only spaces around the key are the page's doing; the key itself is the server's.
+		expect(await frontend.auth.signup({ email, password: PASSWORD, setupKey: ` ${KEY} ` })).toEqual(codeStep);
+		await frontend.auth.resendCode();
+		expect(emailsTo(email)).toHaveLength(2);
+		expect(await frontend.auth.confirmLoginCode({ code: lastCode(email) })).toEqual(settingPassword);
+		expect(await frontend.auth.setSignUpPassword()).toBe("set");
+		expect(await passwordWorks(email, PASSWORD)).toBe(true);
+
+		// Each code request and the code's sign-in carried it in the header; nothing else did, and no body.
+		const codes = ["/api/auth/email-otp/send-verification-otp", "/api/auth/sign-in/email-otp"];
+		expect(sent.filter((request) => codes.includes(request.path)).map((request) => request.key)).toEqual([KEY, KEY, KEY]);
+		expect(sent.filter((request) => !codes.includes(request.path) && request.key !== null)).toEqual([]);
+		expect(sent.map((request) => request.body).join("\n")).not.toContain(KEY);
 		expect(storage.contents).not.toContain(KEY);
 		expect(JSON.stringify([...browser.cookies]) + browser.setCookies.join("\n")).not.toContain(KEY);
-		expect(await frontend.auth.verifyEmail({ code: lastCode(email) })).toEqual(signedIn);
+	});
+
+	test("a reload between the code and the password: the operator is signed in without one, claims the setup once, and the key then admits nobody", async () => {
+		await close();
+		const email = uniqueEmail("operator");
+		await frontend.auth.signup({ email, password: PASSWORD, setupKey: KEY });
+		await frontend.auth.confirmLoginCode({ code: lastCode(email) });
+		await load(browser);
+		expect(await state()).toMatchObject({ kind: "authenticated", user: { email } });
+		expect(storage.contents).not.toContain("sign-in-code");
+
+		// The setup page's claim; its client is contract.test.ts's and instance.test.ts's.
+		const claim = () => browser.call("POST", "/api/setup", undefined, { "X-Minerva-Setup-Key": KEY });
+		expect((await claim()).status).toBe(204);
+		expect((await claim()).body).toMatchObject({ code: "ALREADY_SET_UP" });
+		expect((await browser.call("GET", "/api/me")).body.user.role).toBe("admin");
+
+		await load();
+		const late = uniqueEmail("late");
+		await frontend.auth.signup({ email: late, password: PASSWORD, setupKey: KEY });
+		expect(emailsTo(late)).toEqual([]);
+		expect(await users(late)).toBe(0);
 	});
 
 	test("the guard reads the role from the server on every visit; everyone else gets page-not-found, a visitor the 401", async () => {
@@ -488,9 +552,9 @@ describe("signing out", () => {
 
 	test("a sign-out the server cannot be asked for, or that it fails, leaves the user signed in", async () => {
 		await newAccount();
-		signOutFails = "network";
+		failing.set("/api/auth/sign-out", "network");
 		expect(await failure(frontend.auth.logout())).toEqual({ message: "The server could not be reached.", fields: {} });
-		signOutFails = "server";
+		failing.set("/api/auth/sign-out", "server");
 		expect(await failure(frontend.auth.logout())).toEqual({ message: "The server could not complete this step.", fields: {} });
 		expect((await state()).kind).toBe("authenticated");
 	});
@@ -517,13 +581,11 @@ test("a form whose submit handler fails does not leave an unhandled rejection (a
 	expect([prevented, submitted]).toEqual([true, 1]);
 }, 30_000);
 
-test("too many sign-ins in a short time say to wait", async () => {
+test("too many sign-ins from one IP in a short time say to wait", async () => {
 	const email = await newAccount();
 	await load();
-	let last = "";
-	for (let attempt = 0; attempt < 8; attempt++) {
-		last = (await failure(frontend.auth.login({ email, password: "not the password" }))).message;
-		if (last !== "The email address or password is not correct.") break;
-	}
-	expect(["Too many attempts. Wait a moment and try again.", "Too many failed sign-in attempts. Try again later."]).toContain(last);
+	// The IP limit on password sign-ins is ten in ten seconds (ip-limits.ts); there is none per account.
+	const wrong = "The email address or password is not correct.";
+	for (let attempt = 0; attempt < 10; attempt++) expect((await failure(frontend.auth.login({ email, password: "not the password" }))).message).toBe(wrong);
+	expect(await failure(frontend.auth.login({ email, password: PASSWORD }))).toEqual({ message: "Too many attempts. Wait a moment and try again.", fields: {} });
 });

@@ -32,7 +32,7 @@ import { HttpError, SERVER_ERROR, errorAnswer, noRoute, serverError, unauthorize
 import { UUID } from "../http/paths.ts";
 import type { App } from "../http/router.ts";
 import type { Json } from "../lib/json.ts";
-import { instanceProcedures, meProcedure, setupProcedures } from "./accounts.ts";
+import { instanceProcedures, meProcedure, passwordProcedures, setupProcedures } from "./accounts.ts";
 import { agentProcedures } from "./agents.ts";
 import { connectionProcedures, connectorProcedures } from "./connections.ts";
 import { conversationProcedures, runProcedures, uploadProcedures } from "./conversations.ts";
@@ -41,6 +41,7 @@ import { type ApiContext, api, refusal } from "./procedures.ts";
 
 const router = api.router({
 	me: meProcedure,
+	password: passwordProcedures,
 	setup: setupProcedures,
 	instance: instanceProcedures,
 	agents: agentProcedures,

@@ -5,7 +5,7 @@
 
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, test } from "vitest";
-import { MAIL_TRANSPORT, render, sendEmail } from "../../src/accounts/emails.ts";
+import { MAIL_TRANSPORT, codeEmail, sendEmail } from "../../src/accounts/emails.ts";
 import { signDownload } from "../../src/files/links.ts";
 import { FAULTS_HEADER, faultsToken } from "../../src/faults/token.ts";
 import { hex } from "../../src/lib/bytes.ts";
@@ -44,14 +44,14 @@ describe("the test build's mailbox", () => {
 		const other = `mailbox-${uuid7()}@example.com`;
 		// Debug off, as on the deployed test Worker: the email goes to the mailbox, not the log.
 		const quiet = { ...env, MINERVA_DEBUG: "false" };
-		await sendEmail(quiet, render("login_code", to, ORIGIN, "123456"));
-		await sendEmail(quiet, render("password_reset_code", to.toUpperCase(), ORIGIN, "654321"));
-		await sendEmail(quiet, render("login_code", other, ORIGIN, "111111"));
+		await sendEmail(quiet, codeEmail("sign-in", to, "123456", ORIGIN, 5));
+		await sendEmail(quiet, codeEmail("password-reset", to.toUpperCase(), "654321", ORIGIN, 5));
+		await sendEmail(quiet, codeEmail("sign-in", other, "111111", ORIGIN, 5));
 
 		const listed = (await (await driver("emails", { to })).json()) as { emails: Captured[] };
 		expect(listed.emails.map((email) => [email.to, email.subject, /\n\n([0-9]{6})\n/.exec(email.body)?.[1]])).toEqual([
-			[to, "[Minerva] Sign-In Code", "123456"],
-			[to, "[Minerva] Password Reset Code", "654321"],
+			[to, "Your Minerva sign-in code", "123456"],
+			[to, "Your Minerva password reset code", "654321"],
 		]);
 		expect(listed.emails[0]!.seq).toBeLessThan(listed.emails[1]!.seq);
 

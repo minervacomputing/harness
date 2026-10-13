@@ -257,6 +257,7 @@ describe("outside a workspace", () => {
 		for (const [name, body, headers] of BAD_BODIES) {
 			expect([name, answer(await visitor.call("PATCH", "/api/instance/settings", body, headers))]).toEqual([name, UNAUTHORIZED]);
 			expect([name, answer(await visitor.call("POST", "/api/setup", body, { "X-Minerva-Setup-Key": "k", ...headers }))]).toEqual([name, UNAUTHORIZED]);
+			expect([name, answer(await visitor.call("POST", "/api/me/password", body, headers))]).toEqual([name, UNAUTHORIZED]);
 		}
 		const slow = endless();
 		const response = await visitor.fetch(`${ORIGIN}/api/instance/admins`, { method: "POST", headers: JSON_TYPE, body: slow.body, duplex: "half" } as RequestInit);
@@ -313,10 +314,11 @@ describe("outside a workspace", () => {
 		expect(gone.response.headers.getSetCookie().some((cookie) => cookie.startsWith(`${SESSION_COOKIE}=`) && /Max-Age=0/.test(cookie))).toBe(true);
 	});
 
-	test("the typed client reads who is signed in and carries the setup key in its header", async () => {
+	test("the typed client reads who is signed in, is told a password is set, and carries the setup key in its header", async () => {
 		const ada = await account();
 		const api = client(ada.browser);
 		expect(await api.me()).toMatchObject({ user: { id: ada.userId, role: "user" }, workspaces: [{ id: ada.ws, kind: "personal", role: "owner" }] });
+		expect(await api.password.set({ password: "a long enough passphrase" }).catch((error: unknown) => error)).toMatchObject({ defined: true, code: "PASSWORD_ALREADY_SET", status: 409 });
 		const wrong = await api.setup.claim({ headers: { "x-minerva-setup-key": "not the key" } }).catch((error: unknown) => error);
 		expect(wrong).toMatchObject({ defined: true, code: "INVALID_SETUP_KEY", status: 403 });
 		const empty = await api.setup.claim({ headers: { "x-minerva-setup-key": "" } }).catch((error: unknown) => error);

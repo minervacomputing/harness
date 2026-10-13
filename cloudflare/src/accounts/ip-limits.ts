@@ -1,28 +1,27 @@
-// Better Auth's per-IP limit for each route the browser reaches (policy.ts BROWSER_ROUTES), replacing its
-// defaults, which stop people: 3 requests per 10 s on every sign-in, sign-up and password route, 3 per
-// minute on the code routes and on every second-factor route. Four wrong codes in 10 s, or a few people
-// signing in at once from one office, got a 429.
+// Better Auth's per-IP limit for each route the browser reaches (auth.ts BROWSER_ROUTES), replacing its
+// defaults, which stop people: 3 requests per 10 s on every sign-in and password route, 3 per minute on
+// the code routes and on every second-factor route. Four wrong codes in 10 s, or a few people signing in
+// at once from one office, got a 429.
 //
 // What a rule means. The limiter (better-auth/api/rate-limiter, storage "database") keys a row by the
 // client's address and the path. A request is allowed while fewer than `max` have been allowed in a row,
 // each less than `window` seconds after the one before; a refused request counts for nothing, so a client
 // that hammers is refused until `window` seconds after its last allowed request, then gets `max` more. It
-// is a brake on volume from one address (IPv6 by its /64), not the guard against guessing: that is
-// per address, per code and per user, and none of it depends on these numbers:
+// is a brake on volume from one address (IPv6 by its /64). Besides it, Better Auth's own guards hold
+// whatever these numbers are:
 //
-// - sign-in by password: 5 failed attempts per address in 300 s (rate-limits.ts `login_failed`);
-// - email codes: 3 attempts per code (`allowedAttempts`), and 3 codes per address per minute
-//   (`request_login_code`), 5 resets per address per minute (`reset_password`), one verification email per
-//   address per 10 s (`confirm_email`);
-// - second factor: Better Auth's own lockout of the user after 10 failed codes for 15 minutes, 5 attempts
-//   per challenge, and a TOTP step is used once (totp.ts);
-// - password and two-factor changes: 5 password changes and 10 password re-checks per user per minute.
+// - email codes: 3 wrong guesses use a code up (`allowedAttempts`), and a code expires after 5 minutes;
+// - second factor: Better Auth's lockout of the user after 10 failed codes for 15 minutes, and 5 attempts
+//   per challenge.
+//
+// Passwords have no limit per account, and code emails none per address (docs/plans/plain-better-auth.md,
+// Accepted trade-offs).
 //
 // Routes are tiered by what they cost and what they guard:
 //
 //   reads (session, sign-out, organizations)  generous    100 to 300 per 10 s
 //   passwords and codes being checked         moderate    10 per 10 s
-//   sign-up and code requests (they send mail) moderate   10 per 60 s
+//   code requests (they send mail)            moderate    10 per 60 s
 //
 // The IP is `CF-Connecting-IP` (auth-options.ts), which Cloudflare sets; without it everyone shares one
 // bucket per path. A new route in BROWSER_ROUTES needs a line here (a test checks).
@@ -47,7 +46,6 @@ export const IP_RULES: Readonly<Record<string, IpRule>> = {
 
 	"/sign-in/email": CHECK,
 	"/sign-in/email-otp": CHECK,
-	"/email-otp/verify-email": CHECK,
 	"/email-otp/reset-password": CHECK,
 	"/change-password": CHECK,
 	"/two-factor/enable": CHECK,
@@ -57,7 +55,6 @@ export const IP_RULES: Readonly<Record<string, IpRule>> = {
 	"/two-factor/verify-backup-code": CHECK,
 	"/two-factor/generate-backup-codes": CHECK,
 
-	"/sign-up/email": MAIL,
 	"/email-otp/send-verification-otp": MAIL,
 	"/email-otp/request-password-reset": MAIL,
 };

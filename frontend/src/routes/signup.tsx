@@ -30,7 +30,7 @@ function SignupPage() {
     defaultValues: { email: '', password: '', setupKey: '' },
     onSubmit: async ({ value }) => {
       const state = await signup.mutateAsync({ email: value.email, password: value.password, setupKey: setupNeeded ? value.setupKey : '' })
-      // With the key, the next stop after verifying the address is claiming the setup.
+      // The emailed code comes next; with the key, the stop after it is claiming the setup.
       await continueAuth(state, setupNeeded && value.setupKey.trim() ? '/setup' : next)
     },
   })
@@ -54,7 +54,7 @@ function SignupPage() {
             {field => <field.TextField label="Email" type="email" autoComplete="email" autoFocus serverError={fields.email} />}
           </form.AppField>
           <form.AppField name="password" validators={{ onBlur: newPassword }}>
-            {field => <field.TextField label="Password" type="password" autoComplete="new-password" serverError={fields.password} />}
+            {field => <field.TextField label="Password" type="password" autoComplete="new-password" />}
           </form.AppField>
           {setupNeeded && (
             <form.AppField name="setupKey">
@@ -65,7 +65,6 @@ function SignupPage() {
                   autoComplete="off"
                   spellCheck={false}
                   hint="Only for the person who runs this server: it lets you create the first account while sign-up is closed."
-                  serverError={fields.setupKey}
                 />
               )}
             </form.AppField>

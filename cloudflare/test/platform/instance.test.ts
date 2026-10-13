@@ -1,19 +1,26 @@
 // The instance's administration (src/accounts/instance.ts, api/accounts.ts): the first-run setup claimed
 // once, also by concurrent requests, the instance admin apart from organization and workspace roles (and
 // without the admin plugin's endpoints), the admins' list and sign-up setting, and the setup key admitting
-// the operator's sign-up on a closed instance until setup is done.
+// the operator's sign-up by email code on a closed instance until setup is done.
 
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, test } from "vitest";
 import { ADMINS_ONLY, ALREADY_SET_UP, INVALID_KEY, LAST_ADMIN, NO_SUCH_USER, SETUP_KEY_HEADER, claimSetup } from "../../src/accounts/instance.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import type { RefusalCode } from "../../src/shared/rpc.ts";
-import { type Answer, Browser, PASSWORD, contractError, installEmailLog, lastCode, signedIn, uniqueEmail } from "./accounts-helpers.ts";
+import { type Answer, Browser, contractError, emailsTo, installEmailLog, lastCode, signedIn, uniqueEmail } from "./accounts-helpers.ts";
 
 installEmailLog();
 
 const KEY = env.MINERVA_SETUP_KEY;
-const SIGN_UP_DISABLED = { code: "EMAIL_PASSWORD_SIGN_UP_DISABLED", message: "Email and password sign up is not enabled" };
+
+/** Signs up by email code as the sign-up page does (the headers on both requests): the code sign-in's status. */
+async function signUp(email: string, headers: Record<string, string> = {}, browser = new Browser()): Promise<number> {
+	expect((await browser.auth("/email-otp/send-verification-otp", { email, type: "sign-in" }, headers)).status).toBe(200);
+	// While sign-up is closed no code is sent; a guess stands in for it.
+	const sent = emailsTo(email).length > 0;
+	return (await browser.auth("/sign-in/email-otp", { email, otp: sent ? lastCode(email) : "000000" }, headers)).status;
+}
 
 beforeEach(async () => {
 	await env.DB.batch([
@@ -106,25 +113,17 @@ describe("first-run setup", () => {
 	test("on a closed instance the setup key admits the operator's sign-up until setup is done", async () => {
 		await env.DB.prepare("INSERT INTO instance_settings (id, signup_open, updated_at) VALUES (1, 0, ?)").bind(Date.now()).run();
 		const email = uniqueEmail("operator");
+		expect(await signUp(email)).toBe(400);
+		expect(await signUp(email, { [SETUP_KEY_HEADER]: "wrong" })).toBe(400);
 		const browser = new Browser();
-		const body = { email, password: PASSWORD, name: "" };
-		const refused = await browser.auth("/sign-up/email", body);
-		expect([refused.status, refused.body]).toEqual([400, SIGN_UP_DISABLED]);
-		expect((await browser.auth("/sign-up/email", body, { [SETUP_KEY_HEADER]: "wrong" })).status).toBe(400);
-		const admitted = await browser.auth("/sign-up/email", body, { [SETUP_KEY_HEADER]: KEY });
-		expect(admitted.status, JSON.stringify(admitted.body)).toBe(200);
-		// The address is verified as any other's before the operator can sign in and claim the setup.
-		expect((await browser.auth("/sign-in/email", { email, password: PASSWORD })).status).toBe(403);
-		expect((await browser.auth("/email-otp/verify-email", { email, otp: lastCode(email) })).status).toBe(200);
-		const signIn = await browser.auth("/sign-in/email", { email, password: PASSWORD });
-		expect(signIn.status).toBe(200);
-		const operator = { browser, userId: signIn.body.user.id as string, email };
+		expect(await signUp(email, { [SETUP_KEY_HEADER]: KEY }, browser)).toBe(200);
+		const operator = { browser, userId: (await browser.call("GET", "/api/me")).body.user.id as string, email };
 		await setUp(operator);
 		expect(await isStaff(operator)).toBe(true);
 		// Setup done: the key admits nobody any more.
-		const late = await new Browser().auth("/sign-up/email", { ...body, email: uniqueEmail("late") }, { [SETUP_KEY_HEADER]: KEY });
-		expect([late.status, late.body]).toEqual([400, SIGN_UP_DISABLED]);
-		const created = await env.DB.prepare(`SELECT count(*) AS n FROM "user" WHERE email IN (?, ?)`).bind(email, uniqueEmail("late")).first<{ n: number }>();
+		const late = uniqueEmail("late");
+		expect(await signUp(late, { [SETUP_KEY_HEADER]: KEY })).toBe(400);
+		const created = await env.DB.prepare(`SELECT count(*) AS n FROM "user" WHERE email IN (?, ?)`).bind(email, late).first<{ n: number }>();
 		expect(created?.n).toBe(1);
 	});
 });
@@ -146,7 +145,9 @@ describe("the instance admin", () => {
 		expect((await ada.browser.auth("/admin/list-users")).status).toBe(404);
 		// Nobody names themselves admin through sign-up or their profile.
 		const email = uniqueEmail("mallory");
-		await new Browser().auth("/sign-up/email", { email, password: PASSWORD, name: "", role: "admin" });
+		const mallory = new Browser();
+		await mallory.auth("/email-otp/send-verification-otp", { email, type: "sign-in" });
+		await mallory.auth("/sign-in/email-otp", { email, otp: lastCode(email), role: "admin" });
 		const row = await env.DB.prepare(`SELECT role FROM "user" WHERE email = ?`).bind(email).first<{ role: string | null }>();
 		expect(row?.role ?? null).not.toBe("admin");
 		await grace.browser.auth("/update-user", { role: "admin" });
@@ -218,14 +219,11 @@ describe("the instance admin", () => {
 		const closed = await ada.browser.call("PATCH", "/api/instance/settings", { signupOpen: false });
 		expect(closed.body).toEqual({ signupOpen: false, signupOpenOverride: false, signupOpenConfigured: true });
 		const email = uniqueEmail("late");
-		const refused = await new Browser().auth("/sign-up/email", { email, password: PASSWORD, name: "" });
-		expect([refused.status, refused.body]).toEqual([400, SIGN_UP_DISABLED]);
+		expect(await signUp(email)).toBe(400);
 		expect(await env.DB.prepare(`SELECT 1 FROM "user" WHERE email = ?`).bind(email).first()).toBeNull();
-		// A weak password is still refused first, as before.
-		expect((await new Browser().auth("/sign-up/email", { email, password: "short", name: "" })).body.code).not.toBe(SIGN_UP_DISABLED.code);
 
 		expect((await ada.browser.call("PATCH", "/api/instance/settings", { signupOpen: null })).body.signupOpen).toBe(true);
-		expect((await new Browser().auth("/sign-up/email", { email, password: PASSWORD, name: "" })).status).toBe(200);
+		expect(await signUp(email)).toBe(200);
 		expect((await ada.browser.call("PATCH", "/api/instance/settings", { signupOpen: "no" })).status).toBe(422);
 		expect((await ada.browser.call("PATCH", "/api/instance/settings", {})).status).toBe(422);
 		expectRefusal(await grace.browser.call("PATCH", "/api/instance/settings", { signupOpen: false }), 403, "INSTANCE_ADMINS_ONLY", ADMINS_ONLY);
