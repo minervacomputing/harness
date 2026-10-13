@@ -12,7 +12,7 @@ The line between the two is cloudflare.md's (Instance and control plane): what a
 ## Where things stand
 
 - On the `cloudflare` branch, steps 1 to 7 are done, and so are the backend cleanup, the sandbox's move to the Sandbox SDK, plain Better Auth and its fixes. The frontend cleanup ([frontend-cleanup.md](frontend-cleanup.md)) has A3's last step (TypeScript 7 and the type-aware lint rules) and A4 left, and the first message's design is in [first-message.md](first-message.md). Production `minerva-cf` is deployed and its first admin has claimed it.
-- The branch is not pushed. `main`, and so the public repository, is still Django, and `.github/workflows/main.yml` tests Django, builds its images and deploys staging to the VPS.
+- The branch is pushed (2026-10-13) but not merged. `main` is still Django, and `.github/workflows/main.yml` tests Django, builds its images and deploys staging to the VPS.
 - A self-hoster today would edit `minerva-cf` out of about 200 lines in 48 files, run six `cf` commands by hand (`cloudflare/README.md`, First deploy), write two env files, and need a zone on Cloudflare for email: the operator's own sign-up must verify its address by an emailed code before it can claim the instance (`src/accounts/instance.ts`). The zone stays a requirement (unit 3).
 - Operator state is per checkout, not per instance: `.env.cloudflare`, `.env.cloudflare.vars` and `.cloudflare/deployed.json` have fixed paths, and `deployed.json` is a local record for `deploy:files`, not a release history.
 
