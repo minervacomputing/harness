@@ -39,7 +39,7 @@ describe("the Sandbox object", () => {
 		expect(await stub.harden(fence)).toMatchObject({ refused: "stale" });
 		expect(await stub.verify(fence)).toMatchObject({ refused: "stale" });
 		expect(await stub.exec(fence, { execId: "x", command: "true", cwd: WORKSPACE, env: {}, timeoutSeconds: 1 }, null)).toMatchObject({ refused: "stale" });
-		expect(await stub.fs(fence, { op: "exists", path: "/workspace" })).toMatchObject({ refused: "stale" });
+		expect(await stub.fs(fence, { op: "lstat", path: "/workspace" })).toMatchObject({ refused: "stale" });
 		expect(await stub.scan(fence, { rehashAll: false })).toMatchObject({ refused: "stale" });
 		expect(await stub.killStrays(fence)).toMatchObject({ refused: "stale" });
 		expect(await stub.destroy(fence, "late")).toMatchObject({ refused: "stale" });

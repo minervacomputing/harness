@@ -1,8 +1,9 @@
 // A local stand-in for `ctx.container`: the sandbox image (cloudflare/container/) in a Docker container,
-// driven through `docker exec`, so the Sandbox's logic, the wrapper, the hardening, minerva-fs and the
-// ExecutionEnv run for real in Docker tests (test/docker/sandbox-local.test.ts). It behaves as the platform's
-// does where the Sandbox depends on it: exec'd processes are root, session leaders with no parent, have
-// only the environment they are given, and an aborted exec kills its process (exit 137).
+// driven through `docker exec`, so the Sandbox's logic, the wrapper, the hardening, the sandbox-shim,
+// minerva-fs and the ExecutionEnv run for real in Docker tests (test/docker/sandbox-local.test.ts). It
+// behaves as the platform's does where the Sandbox depends on it: exec'd processes are root unless given a
+// user, session leaders with no parent, have only the environment they are given, and an aborted exec kills
+// its process (exit 137).
 //
 // The container is privileged (the hardening mounts and remounts) and shares the Docker host's cgroup tree,
 // since Docker's own cgroup cannot hold a child with controllers while its processes live in it; the agent
@@ -16,10 +17,15 @@ import { type BucketPort, CHECK_MISMATCH, type ContainerPort } from "../../src/s
 interface NodeStream {
 	on(event: string, listener: (...args: unknown[]) => void): void;
 }
+interface NodeReadable extends NodeStream {
+	pause(): void;
+	resume(): void;
+	destroy(): void;
+}
 interface Child {
 	stdin: NodeStream | null;
-	stdout: NodeStream | null;
-	stderr: NodeStream | null;
+	stdout: NodeReadable | null;
+	stderr: NodeReadable | null;
 	on(event: "close", listener: (code: number | null, signal: string | null) => void): void;
 	on(event: "error", listener: (error: Error) => void): void;
 }
@@ -34,7 +40,6 @@ interface NodeModules {
 		spawnSync(command: string, args: string[], options?: { input?: Uint8Array; timeout?: number }): Spawned;
 	};
 	getBuiltinModule(id: "node:stream"): {
-		Readable: { toWeb(stream: NodeStream): ReadableStream<Uint8Array> };
 		Writable: { toWeb(stream: NodeStream): WritableStream<Uint8Array> };
 	};
 	getBuiltinModule(id: "node:crypto"): { createHash(name: "sha256"): { update(data: Uint8Array): void; digest(encoding: "hex"): string } };
@@ -48,6 +53,43 @@ export const LOCAL_IMAGE = node.env.MINERVA_SANDBOX_IMAGE ?? "minerva-cf-sandbox
 
 function docker(args: string[], input?: Uint8Array): Spawned {
 	return node.getBuiltinModule("node:child_process").spawnSync("docker", args, { ...(input ? { input } : {}), timeout: 120_000 });
+}
+
+/**
+ * A child's output as a web stream. Node's `Readable.toWeb` can enqueue a chunk after the stream is cancelled,
+ * which throws from the socket's event; a cancel here destroys the output and drops what still arrives.
+ */
+function readable(stream: NodeReadable): ReadableStream<Uint8Array> {
+	let open = true;
+	return new ReadableStream<Uint8Array>(
+		{
+			start(controller) {
+				stream.on("data", (chunk) => {
+					if (!open) return;
+					// A plain view of Node's Buffer, as the platform's streams give.
+					const bytes = chunk as Uint8Array;
+					controller.enqueue(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+					if ((controller.desiredSize ?? 1) <= 0) stream.pause();
+				});
+				stream.on("end", () => {
+					if (open) controller.close();
+					open = false;
+				});
+				stream.on("error", (error) => {
+					if (open) controller.error(error);
+					open = false;
+				});
+			},
+			pull() {
+				stream.resume();
+			},
+			cancel() {
+				open = false;
+				stream.destroy();
+			},
+		},
+		{ highWaterMark: 16 },
+	);
 }
 
 /** Whether Docker runs and has the local sandbox image (`pnpm sandbox:image` builds it). */
@@ -100,10 +142,10 @@ export class DockerContainer implements ContainerPort {
 	async exec(argv: string[], options: ContainerExecOptions): Promise<ExecProcess> {
 		if (!this.#running) throw new Error("exec() cannot be called on a container that is not running");
 		const { spawn } = node.getBuiltinModule("node:child_process");
-		const { Readable, Writable } = node.getBuiltinModule("node:stream");
+		const { Writable } = node.getBuiltinModule("node:stream");
 		const pidFile = `/dev/shm/minerva-exec-${++this.#execs}`;
 		const stdin = options.stdin !== undefined;
-		const args = ["exec", ...(stdin ? ["-i"] : []), ...(options.cwd ? ["-w", options.cwd] : [])];
+		const args = ["exec", ...(stdin ? ["-i"] : []), ...(options.cwd ? ["-w", options.cwd] : []), ...(options.user ? ["-u", options.user] : [])];
 		for (const [name, value] of Object.entries(options.env ?? {})) args.push("-e", `${name}=${value}`);
 		args.push(this.name, "/bin/sh", "-c", `echo $$ > ${pidFile}; exec "$@"`, "sh", ...argv);
 		const child = spawn("docker", args, {
@@ -130,12 +172,13 @@ export class DockerContainer implements ContainerPort {
 			const target = readPid();
 			if (target > 1) docker(["exec", name, "kill", `-${signal}`, String(target)]);
 		};
-		options.signal?.addEventListener("abort", () => kill(9), { once: true });
+		if (options.signal?.aborted) kill(9);
+		else options.signal?.addEventListener("abort", () => kill(9), { once: true });
 		let stdinStream: WritableStream | null = null;
 		if (options.stdin === "pipe") stdinStream = Writable.toWeb(child.stdin as NodeStream);
 		else if (options.stdin) void (options.stdin as ReadableStream).pipeTo(Writable.toWeb(child.stdin as NodeStream)).catch(() => undefined);
-		const stdout = child.stdout ? Readable.toWeb(child.stdout) : null;
-		const stderr = child.stderr ? Readable.toWeb(child.stderr) : null;
+		const stdout = child.stdout ? readable(child.stdout) : null;
+		const stderr = child.stderr ? readable(child.stderr) : null;
 		const proc: ExecProcess = {
 			stdin: stdinStream,
 			stdout,

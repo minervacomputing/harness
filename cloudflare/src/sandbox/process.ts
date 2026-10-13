@@ -3,7 +3,7 @@
 // the command started.
 
 import { ByteReader, drain } from "./bytes.ts";
-import { COMMAND_PATH, FILE_OPERATION_SECONDS, HOME, MINERVA_FS, PYTHON, TMP } from "./constants.ts";
+import { COMMAND_PATH, HOME, MINERVA_FS, PYTHON, TMP } from "./constants.ts";
 import type { ContainerPort } from "./ports.ts";
 import { type Admission, readAdmission, type WrappedCommand, wrapperArgv } from "./wrapper.ts";
 
@@ -31,7 +31,8 @@ export function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function spawn(machine: Machine, argv: string[], options: ContainerExecOptions): Promise<ExecProcess> {
+/** An exec in the incarnation's container; ContainerGone when the incarnation is over or the exec cannot start. */
+export async function spawn(machine: Machine, argv: string[], options: ContainerExecOptions): Promise<ExecProcess> {
 	if (machine.live && !machine.live()) throw new ContainerGone("The incarnation is over.");
 	try {
 		return await machine.container.exec(argv, options);
@@ -92,13 +93,15 @@ export interface Wrapped {
 	stdout: ByteReader;
 }
 
-/** Starts `command` through the wrapper and reads its prefix. */
+/** Starts `command` through the wrapper and reads its prefix. An abort of `signal` kills it, at any point. */
 export async function startWrapped(
 	machine: Machine,
 	command: WrappedCommand,
-	options: { stdin?: ReadableStream | "pipe"; stderr?: "pipe" | "ignore" } = {},
+	options: { stdin?: ReadableStream | "pipe"; stderr?: "pipe" | "ignore"; signal?: AbortSignal } = {},
 ): Promise<Wrapped> {
 	const controller = new AbortController();
+	if (options.signal?.aborted) controller.abort();
+	else options.signal?.addEventListener("abort", () => controller.abort(), { once: true });
 	const argv = wrapperArgv(machine.cgroup, command);
 	const admitted = await machine.gate?.();
 	try {
@@ -136,13 +139,13 @@ export async function startWrapped(
 	}
 }
 
-/** The environment of the file helper: what Python needs, nothing else. */
+/** The environment of file commands and the folder helper: what coreutils and Python need, nothing else. */
 export function helperEnvironment(): { [name: string]: string } {
 	return { PATH: COMMAND_PATH, HOME, TMPDIR: TMP, LANG: "C.UTF-8" };
 }
 
 /** minerva-fs `op` with `args`, through the wrapper. */
-export function helper(op: string, args: readonly string[], timeoutSeconds = FILE_OPERATION_SECONDS): WrappedCommand {
+export function helper(op: string, args: readonly string[], timeoutSeconds: number): WrappedCommand {
 	return { command: [PYTHON, "-I", "-S", MINERVA_FS, op, ...args], cwd: "/", env: helperEnvironment(), timeoutSeconds };
 }
 

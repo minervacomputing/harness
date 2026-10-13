@@ -1,10 +1,10 @@
 // The ExecutionEnv adapter (src/sandbox/env.ts) over a fake Sandbox: what it checks itself as pi does,
 // what it sends, how answers map to pi's Results, and that a refused or failed call loses the sandbox once.
 
-import { ExecutionError, FileError } from "@earendil-works/pi-durable/env";
+import { type BinaryReader, ExecutionError, FileError, type FileInfo } from "@earendil-works/pi-durable/env";
 import { describe, expect, test } from "vitest";
 import type { ExecOutputSink, ExecRequest, ExecResult } from "../../src/sandbox/commands.ts";
-import { commandEnvironment, MAX_READ_BYTES } from "../../src/sandbox/constants.ts";
+import { commandEnvironment, MAX_BINARY_BYTES } from "../../src/sandbox/constants.ts";
 import type { Refused, SandboxFence } from "../../src/sandbox/core.ts";
 import { type SandboxClient, SandboxExecutionEnv } from "../../src/sandbox/env.ts";
 import type { FsRequest, FsResponse } from "../../src/sandbox/files.ts";
@@ -13,6 +13,11 @@ import type { Delivered } from "../../src/sandbox/output.ts";
 type Context = Parameters<SandboxExecutionEnv["readTextFile"]>[1];
 const NONE = {} as Context;
 const FENCE: SandboxFence = { runId: "r", attempt: 1, incarnation: "i1" };
+const encoder = new TextEncoder();
+
+function info(path: string, size = 1): FileInfo {
+	return { name: path.slice(path.lastIndexOf("/") + 1), path, kind: "file", size, mtimeMs: 4 };
+}
 
 function abortedContext(): Context {
 	const controller = new AbortController();
@@ -57,14 +62,14 @@ function env(sandbox: FakeSandbox, options: { deadline?: number | null; now?: ()
 describe("file operations", () => {
 	test("paths resolve against /workspace as pi resolves them, and the id is the incarnation's", async () => {
 		const sandbox = new FakeSandbox();
-		sandbox.fsAnswer = () => ({ ok: true, value: "text" });
+		sandbox.fsAnswer = () => ({ ok: true, value: encoder.encode("text") });
 		const { env: made } = env(sandbox);
 		expect(made.id).toBe("sandbox:i1");
 		expect(made.cwd).toBe("/workspace");
 		expect(await made.absolutePath("~/notes", NONE)).toEqual({ ok: true, value: "/tmp/home/notes" });
 		expect(await made.joinPath(["/workspace/a", ".."], NONE)).toEqual({ ok: true, value: "/workspace" });
-		await made.readTextFile("a/../b.txt", NONE);
-		expect(sandbox.calls).toEqual([{ op: "readText", path: "/workspace/b.txt", maxBytes: 8 * 1024 * 1024 }]);
+		expect(await made.readTextFile("a/../b.txt", NONE)).toEqual({ ok: true, value: "text" });
+		expect(sandbox.calls).toEqual([{ op: "readFile", path: "/workspace/b.txt", maxBytes: 8 * 1024 * 1024 }]);
 	});
 
 	test("an aborted context is refused before anything is sent", async () => {
@@ -92,12 +97,13 @@ describe("file operations", () => {
 
 	test("pi's own argument checks, before anything is sent", async () => {
 		const sandbox = new FakeSandbox();
-		sandbox.fsAnswer = (request) => (request.op === "open" ? { ok: true, value: { id: "r1", path: "/workspace/a", dev: 1, ino: 2, size: 3, mtimeMs: 4 } } : { ok: true, value: null });
+		sandbox.fsAnswer = (request) => (request.op === "open" ? { ok: true, value: info("/workspace/a", 3) } : { ok: true, value: null });
 		const { env: made } = env(sandbox);
 		expect(await made.truncateFile("a", -1, NONE)).toMatchObject({ ok: false, error: { code: "invalid", message: "File size must be a non-negative safe integer" } });
-		const reader = (await made.openBinaryReader("a", undefined, NONE)) as { ok: true; value: import("@earendil-works/pi-durable/env").BinaryReader };
+		const reader = (await made.openBinaryReader("a", undefined, NONE)) as { ok: true; value: BinaryReader };
 		expect(await reader.value.read(-1, 1, NONE)).toMatchObject({ ok: false, error: { code: "invalid" } });
 		expect(await reader.value.read(0, 1.5, NONE)).toMatchObject({ ok: false, error: { code: "invalid" } });
+		expect(await reader.value.read(0, MAX_BINARY_BYTES + 1, NONE)).toMatchObject({ ok: false, error: { code: "invalid" } });
 		expect(await reader.value.read(3, 0, NONE)).toEqual({ ok: true, value: new Uint8Array(0) });
 		expect(await reader.value.scanLines({ startLine: 2, endLine: 2 }, NONE)).toMatchObject({ ok: false, error: { code: "invalid", message: "Invalid line range" } });
 		expect(await reader.value.scanLines({ startLine: -1 }, NONE)).toMatchObject({ ok: false, error: { code: "invalid" } });
@@ -105,62 +111,69 @@ describe("file operations", () => {
 		await reader.value.close(NONE);
 		expect(await reader.value.read(0, 1, NONE)).toMatchObject({ ok: false, error: { code: "invalid", message: "Binary reader is closed" } });
 		expect(await reader.value.info(NONE)).toMatchObject({ ok: false, error: { code: "invalid" } });
-		expect(sandbox.calls.map((call) => ("op" in call ? call.op : "exec"))).toEqual(["open", "close"]);
+		expect(sandbox.calls.map((call) => ("op" in call ? call.op : "exec"))).toEqual(["open"]);
 	});
 
-	test("a positional read longer than one answer is read in pieces until it is complete or the file ends", async () => {
+	test("a reader reads its path again with what it saw at open", async () => {
 		const sandbox = new FakeSandbox();
-		const size = MAX_READ_BYTES * 2 + 10;
 		sandbox.fsAnswer = (request) => {
-			if (request.op === "open") return { ok: true, value: { id: "r1", path: "/workspace/big", dev: 1, ino: 2, size, mtimeMs: 4 } };
-			if (request.op === "read") return { ok: true, value: new Uint8Array(Math.max(0, Math.min(request.length, size - request.offset))).fill(7) };
-			return { ok: true, value: null };
+			if (request.op === "open") return { ok: true, value: info("/workspace/a", 3) };
+			if (request.op === "read") return { ok: true, value: new Uint8Array([1, 2]) };
+			return { ok: true, value: info("/workspace/a", 3) };
 		};
 		const { env: made } = env(sandbox);
-		const bytes = await made.readBinaryFile("big", NONE);
-		expect(bytes.ok && bytes.value.length).toBe(size);
-		const reads = sandbox.calls.filter((call): call is FsRequest & { op: "read" } => "op" in call && call.op === "read");
-		expect(reads.map((call) => [call.offset, call.length])).toEqual([
-			[0, MAX_READ_BYTES],
-			[MAX_READ_BYTES, MAX_READ_BYTES],
-			[MAX_READ_BYTES * 2, MAX_READ_BYTES],
-			// A short answer is read on from where it stopped; an empty one is the end.
-			[size, MAX_READ_BYTES - 10],
-			[size, MAX_READ_BYTES],
+		const reader = (await made.openBinaryReader("a", { noFollow: true }, NONE)) as { ok: true; value: BinaryReader };
+		expect(await reader.value.read(1, 10, NONE)).toEqual({ ok: true, value: new Uint8Array([1, 2]) });
+		await reader.value.info(NONE);
+		await reader.value.scanLines({ startLine: 1 }, NONE);
+		const opened = { size: 3, mtimeMs: 4, noFollow: true };
+		expect(sandbox.calls).toEqual([
+			{ op: "open", path: "/workspace/a", noFollow: true },
+			{ op: "read", path: "/workspace/a", opened, offset: 1, length: 10 },
+			{ op: "stat", path: "/workspace/a", opened },
+			{ op: "scanLines", path: "/workspace/a", opened, startLine: 1 },
 		]);
 	});
 
-	test("a directory reader pages with a cursor and refuses use after close", async () => {
+	test("a directory reader lists the names at once and reads each page's entries as it is asked for", async () => {
 		const sandbox = new FakeSandbox();
-		const pages = [
-			{ entries: [{ name: "a", path: "/workspace/a", kind: "file" as const, size: 1, mtimeMs: 1 }], next: "61" },
-			{ entries: [{ name: "b", path: "/workspace/b", kind: "file" as const, size: 1, mtimeMs: 1 }], next: null },
-		];
-		sandbox.fsAnswer = (request) => (request.op === "list" ? { ok: true, value: pages.shift() as (typeof pages)[number] } : { ok: true, value: null });
+		sandbox.fsAnswer = (request) => {
+			if (request.op === "readDirectory") return { ok: true, value: ["a", "b", "c"] };
+			// b went away after it was listed.
+			if (request.op === "entries") return { ok: true, value: request.paths.map((path) => (path.endsWith("/b") ? null : info(path))) };
+			return { ok: true, value: null };
+		};
 		const { env: made } = env(sandbox);
 		const listed = await made.listDir(".", NONE);
-		expect(listed.ok && listed.value.map((entry) => entry.name)).toEqual(["a", "b"]);
-		const lists = sandbox.calls.filter((call): call is FsRequest & { op: "list" } => "op" in call && call.op === "list");
-		expect(lists.map((call) => call.after)).toEqual([null, "61"]);
+		expect(listed.ok && listed.value.map((entry) => entry.name)).toEqual(["a", "c"]);
 		const reader = await made.openDirReader(".", NONE);
 		if (!reader.ok) throw reader.error;
+		expect(await reader.value.next(2, NONE)).toEqual({ ok: true, value: { entries: [info("/workspace/a")], done: false } });
+		expect(await reader.value.next(2, NONE)).toEqual({ ok: true, value: { entries: [info("/workspace/c")], done: true } });
+		expect(await reader.value.next(2, NONE)).toEqual({ ok: true, value: { entries: [], done: true } });
+		expect(sandbox.calls.filter((call) => "op" in call && call.op === "entries")).toEqual([
+			{ op: "entries", paths: ["/workspace/a", "/workspace/b", "/workspace/c"] },
+			{ op: "entries", paths: ["/workspace/a", "/workspace/b"] },
+			{ op: "entries", paths: ["/workspace/c"] },
+		]);
 		expect(await reader.value.next(0, NONE)).toMatchObject({ ok: false, error: { code: "invalid" } });
 		await reader.value.close(NONE);
 		expect(await reader.value.next(1, NONE)).toMatchObject({ ok: false, error: { code: "invalid", message: "Directory reader is closed" } });
 	});
 
-	test("a whole listing is bounded, its last page included", async () => {
+	test("a listing is bounded by its entries and by its full paths' length", async () => {
 		const sandbox = new FakeSandbox();
-		const entry = { name: "n".repeat(200), path: `/${"p".repeat(3899)}`, kind: "file" as const, size: 0, mtimeMs: 0 };
-		let page = 0;
-		sandbox.fsAnswer = (request) => (request.op === "list" ? { ok: true, value: { entries: Array(1000).fill(entry), next: ++page === 5 ? null : `c${page}` } } : { ok: true, value: null });
-		const listed = await env(sandbox).env.listDir("/", NONE);
-		expect(listed).toMatchObject({ ok: false, error: { code: "unknown" } });
+		sandbox.fsAnswer = () => ({ ok: true, value: Array.from({ length: 100_001 }, (_, index) => `f${index}`) });
+		expect(await env(sandbox).env.listDir("/", NONE)).toMatchObject({ ok: false, error: { code: "unknown" } });
+		// 5,000 one-letter names under a 4,000-character directory are 20 million units of paths.
+		sandbox.fsAnswer = () => ({ ok: true, value: Array.from({ length: 5000 }, () => "a") });
+		expect(await env(sandbox).env.listDir(`/${"d".repeat(3999)}`, NONE)).toMatchObject({ ok: false, error: { code: "unknown" } });
+		expect(await env(sandbox).env.listDir(`/${"d".repeat(99)}`, NONE)).not.toMatchObject({ ok: false });
 	});
 
 	test("text lines drop a leading byte order mark and know their last line's ending", async () => {
 		const sandbox = new FakeSandbox();
-		sandbox.fsAnswer = () => ({ ok: true, value: "﻿one\ntwo\nthree" });
+		sandbox.fsAnswer = () => ({ ok: true, value: encoder.encode("﻿one\ntwo\nthree") });
 		const { env: made } = env(sandbox);
 		expect(await made.readTextLines("a", undefined, NONE)).toEqual({ ok: true, value: ["one", "two", "three"] });
 		expect(await made.readTextLines("a", { maxLines: 2 }, NONE)).toEqual({ ok: true, value: ["one", "two"] });
@@ -178,8 +191,10 @@ describe("file operations", () => {
 			{ text: "two", terminated: true },
 			{ text: "three", terminated: false },
 		]);
-		// readTextFile keeps the mark, as Node's readFile does.
+		// readTextFile keeps the mark, as Node's readFile does, and invalid bytes become U+FFFD.
 		expect(await made.readTextFile("a", NONE)).toEqual({ ok: true, value: "﻿one\ntwo\nthree" });
+		sandbox.fsAnswer = () => ({ ok: true, value: new Uint8Array([0x61, 0xff, 0x62]) });
+		expect(await made.readTextFile("a", NONE)).toEqual({ ok: true, value: "a\ufffdb" });
 	});
 
 	test("expected failures keep pi's code; a refusal or a failed call loses the sandbox once", async () => {
@@ -189,6 +204,9 @@ describe("file operations", () => {
 		const missing = await made.fileInfo("a", NONE);
 		expect(missing).toMatchObject({ ok: false, error: { code: "not_found", path: "/workspace/a" } });
 		expect((missing as { error: unknown }).error).toBeInstanceOf(FileError);
+		expect(await made.exists("a", NONE)).toEqual({ ok: true, value: false });
+		sandbox.fsAnswer = () => ({ ok: false, code: "invalid", message: "Unsupported file type: /workspace/a" });
+		expect(await made.exists("a", NONE)).toMatchObject({ ok: false, error: { code: "invalid" } });
 		expect(lost).toEqual([]);
 		sandbox.fsAnswer = () => ({ refused: "stale", message: "This sandbox belongs to another incarnation, run or attempt." });
 		expect(await made.fileInfo("a", NONE)).toMatchObject({ ok: false, error: { code: "unknown" } });

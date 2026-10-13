@@ -1,6 +1,7 @@
 // The test build's Sandbox (src/faults/): production's class (src/sandbox/sandbox.ts) with the seams the
 // account tests need for the plan's Sandbox row, reachable only through the test build's token-gated driver
-// (lab.ts): faults in its container port (a hardening step that fails, destroys that fail), a reset of the
+// (lab.ts): faults in its container port (a hardening step that fails, destroys that fail), a shorter limit
+// for file operations, a reset of the
 // object that leaves its container running, a root shell for the tests' checks, and whether the container
 // runs. Never part of the production Worker.
 
@@ -14,6 +15,8 @@ export interface SandboxFaults {
 	failHardeningAt?: string | null;
 	/** How many destroys fail before one goes through. */
 	failDestroys?: number;
+	/** A file operation's limit in seconds, shorter than production's so a FIFO's read ends soon. */
+	fileSeconds?: number;
 }
 
 const TABLE = "CREATE TABLE IF NOT EXISTS fault_sandbox (id INTEGER PRIMARY KEY, value TEXT NOT NULL)";
@@ -57,7 +60,14 @@ export class FaultSandbox extends Sandbox {
 			},
 			setInactivityTimeout: (ms) => real.setInactivityTimeout(ms),
 		};
-		return { ...base, container };
+		const faults = () => this.#faults();
+		return {
+			...base,
+			container,
+			get fileSeconds() {
+				return faults().fileSeconds;
+			},
+		};
 	}
 
 	async faultSet(faults: SandboxFaults): Promise<void> {

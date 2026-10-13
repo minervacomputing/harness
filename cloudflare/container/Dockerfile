@@ -1,11 +1,12 @@
 # The sandbox image: one Firecracker VM per turn, started by the Sandbox Durable Object (src/sandbox/) with
 # no route out. It holds no agent loop: the loop runs in the Conversation Durable Object, and every agent
-# command and file operation arrives as an exec, run through the wrapper in src/sandbox/wrapper.ts as uid 1000
-# with no capabilities, inside the agent cgroup the hardening exec creates. It has Python with the packages in
-# python/requirements.txt, installed from hashed wheels only and compiled at build time, the command-line tools
-# agent commands use, what the hardening needs (util-linux's setpriv and mount, coreutils' timeout, procps)
-# and tini as PID 1. Built for linux/amd64 by `cf build` (cloudflare.config.ts). Nothing is added at run time:
-# the hardening remounts / read-only before any agent command runs.
+# command arrives as an exec, run through the wrapper in src/sandbox/wrapper.ts as uid 1000 with no
+# capabilities, inside the agent cgroup the hardening exec creates. pi's file operations run as uid 1000 too,
+# through @cloudflare/sandbox's Files and its sandbox-shim, or through the wrapper. It has Python with the
+# packages in python/requirements.txt, installed from hashed wheels only and compiled at build time, the
+# command-line tools agent commands use, what the hardening needs (util-linux's setpriv and mount, coreutils'
+# timeout, procps) and tini as PID 1. Built for linux/amd64 by `cf build` (cloudflare.config.ts). Nothing is
+# added at run time: the hardening remounts / read-only before any agent command runs.
 
 # Debian bookworm, whose Python is 3.11, the version python/requirements.txt is compiled for. Pinned by the
 # digest of its image index (amd64 for the platform, arm64 for local tests).
@@ -42,8 +43,11 @@ RUN groupadd --gid 1000 agent \
     && useradd --uid 1000 --gid 1000 --create-home --home-dir /home/agent --shell /bin/bash agent \
     && mkdir -p /workspace && chown 1000:1000 /workspace \
     && for tool in setpriv timeout mount mountpoint tini python3 bash; do command -v "$tool" >/dev/null || exit 1; done
-# minerva-fs and the probe, root's and read-only once the hardening has run. Python runs them isolated
-# (-I -S), so nothing the agent writes changes them.
+# The sandbox-shim @cloudflare/sandbox's Files runs, from the image of the package's version, pinned by digest
+# (a single linux/amd64 static binary, which local arm64 tests run under emulation).
+COPY --from=docker.io/cloudflare/sandbox:1.0.0@sha256:5bc187515bad0d9d486a4f1476f7d8ad39fe97c57965f044e4b0a0dcc93eac06 /usr/local/bin/sandbox-shim /usr/local/bin/sandbox-shim
+# minerva-fs (the folder's scan, hydrate and pull) and the probe, root's and read-only once the hardening has
+# run. Python runs them isolated (-I -S), so nothing the agent writes changes them.
 COPY minerva/ /opt/minerva/
 RUN chmod 0755 /opt/minerva && chmod 0644 /opt/minerva/* \
     && /usr/bin/python3 -I -S -c "import ast; [ast.parse(open(f'/opt/minerva/{name}').read()) for name in ('minerva-fs', 'probe')]"

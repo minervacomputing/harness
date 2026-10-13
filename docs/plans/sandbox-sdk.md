@@ -59,6 +59,7 @@ One fresh agent per unit, in sequence, on the `sandbox-sdk` branch (worktree `.c
 - **Errors**: `SandboxFileError.code` maps to pi's `FileErrorCode` in one table, with short messages of our own.
 - **`minerva-fs`** loses everything except `scan`, `hydrate` and `pull-many`.
 - **Tests**: pi's conformance suite in `test:docker`, minus the documented cases; a unit test of the error table; the Docker tests updated.
+- **Measured** (S1, `test:docker` on an arm64 Mac, one `docker exec` per call, the amd64 shim under emulation): pi's read tool takes 450 to 550 ms on a small file (eight calls in sequence) and 1.3 to 1.6 s on a 50 MB file (0.7 to 0.9 s from line 1,000,000); `writeFile` of a small file takes 30 to 45 ms.
 
 **S2. The folder through standard tools; `minerva-fs` goes.**
 - **Hydration**: the Sandbox object writes a tar of the version's files (regular files and directories only, PAX headers for long paths, mode and mtime from the plan) into `tar -x --no-same-owner -C /workspace`, run through the wrapper as uid 1000. Each blob is read from R2 once and its SHA-256 checked as it streams. A blob shared by several paths is either buffered once, when small, or read again for each later path, when large; the extracted files stay independent. Before extracting, `Files.readDirectory` checks that the folder is empty.

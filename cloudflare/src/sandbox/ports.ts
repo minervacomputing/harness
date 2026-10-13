@@ -60,6 +60,8 @@ export interface SandboxPorts {
 	 * of their own under the host's cgroup tree, which Docker's own cgroup cannot hold a child of.
 	 */
 	cgroup?: string;
+	/** A file operation's limit in seconds; FILE_OPERATION_SECONDS unless a test needs it shorter. */
+	fileSeconds?: number;
 }
 
 /** R2 as a BucketPort: a put of a known length, its SHA-256 checked by R2. */

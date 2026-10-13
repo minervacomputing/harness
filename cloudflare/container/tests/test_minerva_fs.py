@@ -1,9 +1,7 @@
 """Unit tests for minerva-fs, run as `python3 -I -m unittest discover -s container/tests` (vitest runs them
-from test/unit/sandbox-python.test.ts, with the image's Python in Docker as well when it is available).
+from test/docker/sandbox-python.test.ts, with the image's Python in Docker as well when it is available).
 
-The scan cases are worker/test/folder.test.ts's, ported case by case; the file operation cases follow
-WorkspaceEnv's FIFO-safe semantics and pi's error codes. Each case runs the helper as a separate process,
-as the sandbox does."""
+Each case runs the helper as a separate process, as the sandbox does."""
 
 import hashlib
 import json
@@ -39,20 +37,6 @@ def run(op, *arguments, stdin=b"", timeout=10):
     except ValueError:
         head = None
     return process.returncode, head, rest, process.stderr
-
-
-def value(op, *arguments, stdin=b""):
-    status, head, _, stderr = run(op, *arguments, stdin=stdin)
-    if status != 0 or not head or not head.get("ok"):
-        raise AssertionError(f"{op} failed: {status} {head} {stderr!r}")
-    return head["value"]
-
-
-def refused(op, *arguments, stdin=b""):
-    status, head, _, stderr = run(op, *arguments, stdin=stdin)
-    if status != 0 or not head or head.get("ok"):
-        raise AssertionError(f"{op} did not refuse: {status} {head} {stderr!r}")
-    return head["code"], head["message"]
 
 
 def lines(data):
@@ -106,233 +90,6 @@ class Case(unittest.TestCase):
         with open(path, "wb") as file:
             file.write(data)
         return path
-
-
-class FileOperations(Case):
-    def test_write_creates_parents_and_truncates(self):
-        path = self.path("a", "b", "c.txt")
-        self.assertIsNone(value("write", path, "write", stdin=b"hello world"))
-        self.assertIsNone(value("write", path, "write", stdin=b"short"))
-        with open(path, "rb") as file:
-            self.assertEqual(file.read(), b"short")
-        self.assertEqual(os.stat(path).st_mode & 0o777, 0o644)
-        self.assertIsNone(value("write", path, "append", stdin=b"+more"))
-        with open(path, "rb") as file:
-            self.assertEqual(file.read(), b"short+more")
-
-    def test_info_exists_and_codes(self):
-        path = self.write("x.txt", b"12345")
-        info = value("info", path)
-        self.assertEqual({key: info[key] for key in ("name", "path", "kind", "size")}, {"name": "x.txt", "path": path, "kind": "file", "size": 5})
-        self.assertAlmostEqual(info["mtimeMs"], os.stat(path).st_mtime_ns / 1e6, places=3)
-        self.assertTrue(value("exists", path))
-        self.assertFalse(value("exists", self.path("missing")))
-        code, message = refused("info", self.path("missing"))
-        self.assertEqual(code, "not_found")
-        self.assertEqual(message, f"ENOENT: no such file or directory, lstat '{self.path('missing')}'")
-        self.assertEqual(refused("exists", self.path("x.txt", "below"))[0], "not_directory")
-        os.symlink("nowhere", self.path("dangling"))
-        self.assertTrue(value("exists", self.path("dangling")))
-        self.assertEqual(value("info", self.path("dangling"))["kind"], "symlink")
-
-    def test_fifos_never_hang_and_are_refused(self):
-        os.makedirs(self.root)
-        fifo = self.path("pipe")
-        os.mkfifo(fifo)
-        started = time.monotonic()
-        self.assertEqual(refused("read-text", fifo, 1000), ("invalid", "Not a regular file"))
-        self.assertEqual(refused("write", fifo, "write", stdin=b"x")[0], "invalid")
-        self.assertEqual(refused("reader", fifo, 0), ("invalid", "Not a regular file"))
-        self.assertEqual(refused("exists", fifo), ("invalid", "Unsupported file type"))
-        self.assertEqual(refused("info", fifo), ("invalid", "Unsupported file type"))
-        self.assertLess(time.monotonic() - started, 5)
-
-    def test_a_socket_is_invalid_for_text_and_unknown_elsewhere(self):
-        # WorkspaceEnv maps ENXIO (opening a socket) to "invalid" for the text reads and writes it overrides;
-        # pi's other operations map it to "unknown".
-        import socket
-
-        os.makedirs(self.root)
-        path = self.path("sock")
-        server = socket.socket(socket.AF_UNIX)
-        server.bind(path)
-        try:
-            self.assertEqual(refused("read-text", path, 100)[0], "invalid")
-            self.assertEqual(refused("write", path, "write", stdin=b"x")[0], "invalid")
-            self.assertEqual(refused("write", path, "append", stdin=b"x")[0], "unknown")
-            self.assertEqual(refused("truncate", path, 0)[0], "unknown")
-            self.assertEqual(refused("info", path), ("invalid", "Unsupported file type"))
-        finally:
-            server.close()
-
-    def test_snapshot_signs_the_watched_paths(self):
-        self.write("skills/a/SKILL.md", b"one")
-        self.write("skills/.hidden/x", b"x")
-        self.write("skills/node_modules/dep/SKILL.md", b"dep")
-        self.write("data/real.md", b"real")
-        os.symlink("data/real.md", self.path("link.md"))
-        targets = [
-            {"path": self.path("skills"), "recursive": True, "exclude": {"hidden": True, "names": ["node_modules"]}},
-            {"path": self.path("link.md")},
-            {"path": self.path("missing.md")},
-        ]
-        snapshot = value("snapshot", stdin=json.dumps({"targets": targets, "maxEntries": 100}).encode())
-        self.assertEqual(sorted(snapshot["entries"]), [self.path("link.md"), self.path("skills"), self.path("skills/a"), self.path("skills/a/SKILL.md")])
-        self.assertTrue(snapshot["entries"][self.path("link.md")].startswith("l:data/real.md:f:4:"))
-        self.write("data/real.md", b"changed")
-        again = value("snapshot", stdin=json.dumps({"targets": targets, "maxEntries": 100}).encode())
-        self.assertNotEqual(again["entries"][self.path("link.md")], snapshot["entries"][self.path("link.md")])
-        self.assertEqual(again["entries"][self.path("skills/a/SKILL.md")], snapshot["entries"][self.path("skills/a/SKILL.md")])
-        self.assertEqual(value("snapshot", stdin=json.dumps({"targets": targets, "maxEntries": 2}).encode()), {"overflow": True})
-
-    def test_a_server_answers_as_each_operation_alone_would(self):
-        path = self.path("served", "x.txt")
-        requests = [
-            ({"op": "write", "args": [path, "write"], "stdin": 5}, b"hello"),
-            ({"op": "read-text", "args": [path, 100], "stdin": 0}, b""),
-            ({"op": "exists", "args": [self.path("missing")], "stdin": 0}, b""),
-            ({"op": "info", "args": [self.path("missing")], "stdin": 0}, b""),
-            ({"op": "reader", "args": [path, "0"], "stdin": 0}, b""),
-            ({"op": "exists", "args": [], "stdin": 0}, b""),
-        ]
-        stdin = b"".join(json.dumps(request).encode() + b"\n" + data for request, data in requests)
-        process = subprocess.run([sys.executable, "-I", "-S", FS, "serve"], input=stdin, capture_output=True, timeout=10)
-        self.assertEqual(process.returncode, 0, process.stderr)
-        answers = []
-        rest = process.stdout
-        while rest:
-            line, _, rest = rest.partition(b"\n")
-            length = json.loads(line)["length"]
-            answers.append(rest[:length])
-            rest = rest[length:]
-        self.assertEqual(answers[0], b'{"ok":true,"value":null}\n')
-        self.assertEqual(answers[1], b'{"ok":true,"value":{"length":5}}\nhello')
-        self.assertEqual(answers[2], b'{"ok":true,"value":false}\n')
-        self.assertEqual(json.loads(answers[3])["code"], "not_found")
-        # Readers, scans and the like run in processes of their own.
-        self.assertEqual(json.loads(answers[4]), {"ok": False, "code": "unknown", "message": "reader is not served"})
-        self.assertEqual(json.loads(answers[5])["code"], "unknown")
-
-    def test_read_text_and_directories(self):
-        path = self.write("t.txt", b"\xef\xbb\xbfhi\xff")
-        status, head, rest, _ = run("read-text", path, 100)
-        self.assertEqual((status, head), (0, {"ok": True, "value": {"length": 6}}))
-        self.assertEqual(rest, b"\xef\xbb\xbfhi\xff")
-        self.assertEqual(refused("read-text", self.root, 100), ("is_directory", "Is a directory"))
-        self.assertEqual(refused("read-text", path, 5)[0], "unknown")
-        self.assertEqual(refused("read-text", self.path("missing"), 5)[0], "not_found")
-
-    def test_reader_reads_ranges_and_keeps_its_file(self):
-        path = self.write("a.txt", b"one")
-        requests = [
-            {"op": "read", "offset": 0, "length": 2},
-            {"op": "stat"},
-            {"op": "read", "offset": 1, "length": 100},
-            {"op": "read", "offset": 50, "length": 1},
-            {"op": "read", "offset": -1, "length": 1},
-            {"op": "read", "offset": 0, "length": 1.5},
-            {"op": "scan", "start": 2, "end": 2},
-        ]
-        process = subprocess.Popen([sys.executable, "-I", "-S", FS, "reader", path, "0"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-        out = process.stdout
-        opened = json.loads(out.readline())
-        self.assertEqual(opened["value"]["size"], 3)
-        os.rename(path, self.path("b.txt"))
-        self.write("a.txt", b"two!")
-        answers = []
-        for request in requests:
-            process.stdin.write(json.dumps(request).encode() + b"\n")
-            process.stdin.flush()
-            head = json.loads(out.readline())
-            body = out.read(head["value"]["length"]) if head.get("ok") and request["op"] == "read" else None
-            answers.append((head, body))
-        process.stdin.close()
-        self.assertEqual(process.wait(timeout=5), 0)
-        process.stdout.close()
-        self.assertEqual(answers[0][1], b"on")
-        self.assertEqual(answers[1][0]["value"]["size"], 3)
-        self.assertEqual(answers[2][1], b"ne")
-        self.assertEqual(answers[3][1], b"")
-        self.assertEqual(answers[4][0]["code"], "invalid")
-        self.assertEqual(answers[5][0]["code"], "invalid")
-        self.assertEqual(answers[6][0], {"ok": False, "code": "invalid", "message": "Invalid line range"})
-
-    def test_reader_refuses_directories_and_final_symlinks(self):
-        os.makedirs(self.path("dir"))
-        self.write("target.txt", b"t")
-        os.symlink("target.txt", self.path("link.txt"))
-        self.assertEqual(refused("reader", self.path("dir"), 0), ("is_directory", "EISDIR: illegal operation on a directory, read"))
-        self.assertEqual(refused("reader", self.path("missing"), 0)[0], "not_found")
-        self.assertEqual(refused("reader", self.path("link.txt"), 1), ("invalid", "Refusing to follow a symbolic link"))
-        status, head, _, _ = run("reader", self.path("link.txt"), 0)
-        self.assertEqual((status, head["ok"]), (0, True))
-
-    def test_reader_scans_lines(self):
-        data = bytes([0xEF, 0xBB, 0xBF, 0x61, 0x0A, 0xE2, 0x82, 0x0A, 0x0A, 0xEF, 0xBB, 0xBF, 0x62, 0x0A, 0xC3, 0xA9])
-        path = self.write("lines.txt", data)
-        lines = data.decode("utf-8", "replace")[1:].split("\n")
-        process = subprocess.Popen([sys.executable, "-I", "-S", FS, "reader", path, "0"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-        json.loads(process.stdout.readline())
-        for start, end in [(0, None), (0, 1), (1, 3), (2, 3), (3, None), (4, 9)]:
-            process.stdin.write(json.dumps({"op": "scan", "start": start, "end": end}).encode() + b"\n")
-            process.stdin.flush()
-            scanned = json.loads(process.stdout.readline())["value"]
-            selected = lines[start:end]
-            self.assertEqual(scanned["newlines"], len(lines) - 1)
-            piece = data[scanned["start"] : scanned["end"]]
-            if scanned["start"] == 0:
-                piece = piece[3:]
-            self.assertEqual(piece.decode("utf-8", "replace"), "\n".join(selected))
-            self.assertEqual(scanned["selectedBytes"], len("\n".join(selected).encode()))
-            self.assertEqual(scanned["firstLineBytes"], len(lines[start].encode()))
-        process.stdin.close()
-        process.wait(timeout=5)
-        process.stdout.close()
-
-    def test_list_pages_in_byte_order(self):
-        for name in ["c", "a", "b", "é", "d"]:
-            self.write(name, name.encode())
-        os.makedirs(self.path("sub"))
-        os.mkfifo(self.path("pipe"))
-        names = []
-        cursor = ""
-        for _ in range(10):
-            page = value("list", self.root, cursor, 2)
-            self.assertLessEqual(len(page["entries"]), 2)
-            names.extend(entry["name"] for entry in page["entries"])
-            if page["next"] is None:
-                break
-            cursor = page["next"]
-        self.assertEqual(names, ["a", "b", "c", "d", "sub", "é"])
-        self.assertEqual(refused("opendir", self.path("a"))[0], "not_directory")
-        self.assertEqual(refused("opendir", self.path("missing"))[0], "not_found")
-        self.assertIsNone(value("opendir", self.root))
-
-    def test_mkdir_remove_rename_truncate_flush(self):
-        self.assertIsNone(value("mkdir", self.path("x", "y"), 1))
-        self.assertEqual(refused("mkdir", self.path("x", "y"), 0)[0], "unknown")
-        self.write("x/y/f", b"abc")
-        self.assertEqual(refused("remove", self.path("x"), 0, 0)[0], "unknown")
-        self.assertIsNone(value("remove", self.path("missing"), 0, 1))
-        self.assertEqual(refused("remove", self.path("missing"), 0, 0)[0], "not_found")
-        self.assertIsNone(value("truncate", self.path("x", "y", "f"), 10))
-        self.assertEqual(os.stat(self.path("x", "y", "f")).st_size, 10)
-        self.assertIsNone(value("flush", self.path("x", "y", "f")))
-        self.assertEqual(refused("flush", self.path("x"))[0], "is_directory")
-        self.assertIsNone(value("rename", self.path("x", "y", "f"), self.path("g")))
-        code, message = refused("rename", self.path("nope"), self.path("g2"))
-        self.assertEqual(code, "not_found")
-        self.assertEqual(message, f"ENOENT: no such file or directory, rename '{self.path('nope')}' -> '{self.path('g2')}'")
-        self.assertIsNone(value("remove", self.path("x"), 1, 0))
-        self.assertFalse(os.path.exists(self.path("x")))
-        self.assertEqual(value("canonical", self.path("g")), self.path("g"))
-
-    def test_spill_appends(self):
-        os.makedirs(self.root)
-        path = self.write("spill.log")
-        self.assertIsNone(value("spill", path, stdin=b"a" * 100_000))
-        self.assertIsNone(value("spill", path, stdin=b"b"))
-        self.assertEqual(os.path.getsize(path), 100_001)
 
 
 class Scan(Case):
@@ -527,51 +284,42 @@ class Hydrate(Case):
 
 
 class Pull(Case):
-    def pull(self, path, size):
-        process = subprocess.run([sys.executable, "-I", "-S", FS, "pull", self.root, path, str(size)], capture_output=True, timeout=10)
+    CHANGED = b'{"ok":false,"reason":"changed"}\n'
+
+    def pull(self, *files):
+        process = subprocess.run(
+            [sys.executable, "-I", "-S", FS, "pull-many", self.root],
+            input=json.dumps({"files": [list(file) for file in files]}).encode() + b"\n",
+            capture_output=True,
+            timeout=10,
+        )
         return process.returncode, process.stdout
 
     def test_writes_exactly_the_file(self):
         data = os.urandom(3 * 1024 * 1024 + 5)
         self.write("d/big.bin", data)
-        self.assertEqual(self.pull("d/big.bin", len(data)), (0, data))
+        self.assertEqual(self.pull(("d/big.bin", len(data))), (0, b'{"ok":true}\n' + data))
 
     def test_many_files_in_order_stopping_at_one_that_changed(self):
         self.write("a", b"alpha")
         self.write("d/b", b"")
         self.write("c", b"gamma")
-        files = [["a", 5], ["d/b", 0], ["c", 4], ["a", 5]]
-        process = subprocess.run(
-            [sys.executable, "-I", "-S", FS, "pull-many", self.root],
-            input=json.dumps({"files": files}).encode() + b"\n",
-            capture_output=True,
-            timeout=10,
-        )
-        self.assertEqual(process.returncode, 0)
-        self.assertEqual(process.stdout, b'{"ok":true}\nalpha{"ok":true}\n{"ok":false,"reason":"changed"}\n')
-        os.symlink(self.path("d"), self.path("linked"))
-        process = subprocess.run(
-            [sys.executable, "-I", "-S", FS, "pull-many", self.root],
-            input=json.dumps({"files": [["linked/b", 0]]}).encode() + b"\n",
-            capture_output=True,
-            timeout=10,
-        )
-        self.assertEqual(process.stdout, b'{"ok":false,"reason":"changed"}\n')
+        self.assertEqual(self.pull(("a", 5), ("d/b", 0), ("c", 4), ("a", 5)), (0, b'{"ok":true}\nalpha{"ok":true}\n' + self.CHANGED))
 
     def test_refuses_a_changed_file_a_fifo_and_symlinks(self):
         self.write("a", b"abc")
-        self.assertEqual(self.pull("a", 4)[0], 3)
+        self.assertEqual(self.pull(("a", 4)), (0, self.CHANGED))
         os.mkfifo(self.path("pipe"))
-        self.assertEqual(self.pull("pipe", 0)[0], 3)
+        self.assertEqual(self.pull(("pipe", 0)), (0, self.CHANGED))
         os.symlink("a", self.path("link"))
-        self.assertEqual(self.pull("link", 3)[0], 3)
+        self.assertEqual(self.pull(("link", 3)), (0, self.CHANGED))
         outside = os.path.join(self.base, "outside")
         os.makedirs(outside)
         with open(os.path.join(outside, "secret"), "wb") as file:
             file.write(b"abc")
         os.symlink(outside, self.path("parent"))
-        self.assertEqual(self.pull("parent/secret", 3), (3, b""))
-        self.assertEqual(self.pull("../outside/secret", 3), (3, b""))
+        self.assertEqual(self.pull(("parent/secret", 3)), (0, self.CHANGED))
+        self.assertEqual(self.pull(("../outside/secret", 3)), (0, self.CHANGED))
 
 
 if __name__ == "__main__":

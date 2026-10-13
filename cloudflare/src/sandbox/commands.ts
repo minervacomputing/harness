@@ -5,11 +5,11 @@
 // background process holding a pipe cannot hold the call.
 
 import type { ExecutionErrorCode, ShellOutputSkip } from "@earendil-works/pi-durable/env";
-import { parseJson } from "../lib/json.ts";
 import { ByteReader } from "./bytes.ts";
-import { KILL_AFTER_SECONDS, TMP } from "./constants.ts";
+import { FILE_OPERATION_SECONDS, KILL_AFTER_SECONDS } from "./constants.ts";
+import { appendCommand, makeTemp } from "./files.ts";
 import { OutputPump, SpillCounter, type Stream, StreamText } from "./output.ts";
-import { ContainerGone, helper, killGroup, type Machine, sleep, startWrapped, type Wrapped } from "./process.ts";
+import { ContainerGone, helperEnvironment, killGroup, type Machine, sleep, startWrapped, type Wrapped } from "./process.ts";
 
 export interface ExecRequest {
 	/** Chosen by the caller, unique within the incarnation; `cancel` names it. */
@@ -49,7 +49,7 @@ const STDIO_GRACE_MS = 100;
  * long after it: pi would wait for 100 ms of quiet forever.
  */
 const AFTER_EXIT_MS = 10_000;
-/** A spill write the spill helper does not take within this long fails the spill. */
+/** A spill write the spill's `dd` does not take within this long fails the spill. */
 const SPILL_WRITE_MS = 30_000;
 /** After `timeout`'s KILL, how long the Sandbox waits before it kills the group itself. */
 const BACKSTOP_MS = 10_000;
@@ -92,8 +92,8 @@ class Spill {
 			return;
 		}
 		try {
-			this.path = await makeTemp(this.#machine, "file", "pi-output-", ".log");
-			this.#process = await startWrapped(this.#machine, helper("spill", [this.path], 0), { stdin: "pipe" });
+			this.path = await makeTemp(this.#machine, "file", "pi-output-", ".log", FILE_OPERATION_SECONDS);
+			this.#process = await startWrapped(this.#machine, { command: appendCommand(this.path), cwd: "/", env: helperEnvironment(), timeoutSeconds: 0 }, { stdin: "pipe", stderr: "ignore" });
 			if (!this.#process.admission.started) throw new Error("The spill file could not be written.");
 			this.#writer = (this.#process.proc.stdin as WritableStream<Uint8Array>).getWriter();
 		} catch (error) {
@@ -130,20 +130,20 @@ class Spill {
 		}
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const writer = this.#writer;
-		const helperProcess = this.#process;
+		const spilling = this.#process;
 		try {
-			// The deadline covers closing the helper's input too: a stopped helper takes neither.
-			const line = await Promise.race([
+			// The deadline covers closing the input too: a stopped `dd` takes neither.
+			const exitCode = await Promise.race([
 				(async () => {
 					await writer.close();
-					return await helperProcess.stdout.line(64 * 1024);
+					await spilling.stdout.cancel();
+					return await spilling.proc.exitCode;
 				})(),
 				new Promise<never>((_, reject) => {
 					timer = setTimeout(() => reject(new Error("The spill file was not finished.")), SPILL_WRITE_MS);
 				}),
 			]);
-			const answer = line && (parseJson(new TextDecoder().decode(line)) as { ok?: unknown; message?: unknown });
-			if (!answer || answer.ok !== true) this.error ??= typeof answer?.message === "string" ? answer.message : "The spill file could not be written.";
+			if (exitCode !== 0) this.error ??= "The spill file could not be written.";
 		} catch (error) {
 			this.error ??= error instanceof Error ? error.message : String(error);
 			this.#process.stop();
@@ -155,19 +155,6 @@ class Spill {
 	abort(): void {
 		this.#process?.stop();
 	}
-}
-
-/** A temporary file or directory under /tmp, made by the agent's user (pi's createTempFile and createTempDir). */
-export async function makeTemp(machine: Machine, kind: "file" | "dir", prefix: string, suffix: string): Promise<string> {
-	const wrapped = await startWrapped(machine, helper("mktemp", [kind, prefix, suffix]));
-	if (!wrapped.admission.started) throw new Error("A temporary file could not be made.");
-	const line = await wrapped.stdout.line(64 * 1024);
-	await wrapped.proc.exitCode.catch(() => undefined);
-	const answer = line && (parseJson(new TextDecoder().decode(line)) as { ok?: unknown; value?: unknown; message?: unknown });
-	if (!answer || answer.ok !== true || typeof answer.value !== "string" || !answer.value.startsWith(`${TMP}/`)) {
-		throw new Error(typeof answer?.message === "string" ? answer.message : "A temporary file could not be made.");
-	}
-	return answer.value;
 }
 
 export async function runCommand(machine: Machine, request: ExecRequest, sink: ExecOutputSink | null, hooks: CommandHooks): Promise<ExecResult> {

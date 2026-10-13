@@ -1,10 +1,8 @@
 // minerva-fs (cloudflare/container/minerva/) in the image's own Python: its unit tests
-// (container/tests/test_minerva_fs.py), and randomized comparisons of what it computes with what pi and
-// the Node worker (worker/) compute: line scans against pi's
-// LineScanner, the manifest policy for a path against worker/src/folder.ts's refusedPath, and a skipped
-// path's display against its displayPath. Skipped without Docker or the image (`pnpm sandbox:image`).
+// (container/tests/test_minerva_fs.py), and randomized comparisons of its manifest policy for a path and
+// its display of a skipped path with the same rules stated in TypeScript below. Skipped without Docker or
+// the image (`pnpm sandbox:image`).
 
-import { LineScanner } from "@earendil-works/pi-durable/env";
 import { describe, expect, test } from "vitest";
 import { parseJson } from "../../src/lib/json.ts";
 import { dockerReady, LOCAL_IMAGE } from "./sandbox-docker.ts";
@@ -39,7 +37,7 @@ function random(seed: number): () => number {
 	};
 }
 
-// The Node worker's manifest policy and display, from worker/src/folder.ts.
+// The manifest policy and the display of a skipped path.
 const encoder = new TextEncoder();
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 function refusedName(name: string, pathBytes: number, depth: number): string | null {
@@ -50,7 +48,7 @@ function refusedName(name: string, pathBytes: number, depth: number): string | n
 	return null;
 }
 function refusedPath(path: string): string | null {
-	// Python cannot encode a lone surrogate, so it refuses the name; folder.ts never sees one, as its names
+	// Python cannot encode a lone surrogate, so it refuses the name; a scan never sees one, as its names
 	// come from the file system's bytes.
 	if (!path.isWellFormed()) return "invalid_name";
 	let bytes = 0;
@@ -79,19 +77,9 @@ describe.skipIf(!READY)("minerva-fs in the image's Python", () => {
 		expect(result.status).toBe(0);
 	});
 
-	test("it computes what pi and the Node worker compute", { timeout: 300_000 }, () => {
+	test("its manifest policy and display agree with the TypeScript rules", { timeout: 300_000 }, () => {
 		const next = random(7);
 		const pieces = [[0x0a], [0x0d, 0x0a], [0x61], [0xc3, 0xa9], [0xe2, 0x82, 0xac], [0xf0, 0x9f, 0x98, 0x80], [0xef, 0xbb, 0xbf], [0xe2, 0x82], [0xff], [0x80], [0xed, 0xa0, 0x80], [0xf4, 0x90, 0x80, 0x80], [0xc0, 0xaf], [0x20]];
-		const scans: { hex: string; start: number; end?: number; chunk: number; bytes: Uint8Array }[] = [];
-		for (let i = 0; i < 600; i++) {
-			const parts: number[] = [];
-			const length = Math.floor(next() * 40);
-			for (let j = 0; j < length; j++) parts.push(...(pieces[Math.floor(next() * pieces.length)] as number[]));
-			const bytes = Uint8Array.from(parts);
-			const start = Math.floor(next() * 6);
-			const end = next() < 0.4 ? undefined : start + Math.floor(next() * 5);
-			scans.push({ hex: hex(bytes), start, ...(end === undefined ? {} : { end }), chunk: 1 + Math.floor(next() * 7), bytes });
-		}
 		const alphabet = ["a", "é", "é", "/", "//", ".", "..", "\t", "\u0085", "﻿", "😀", "\ud800", " ", "x".repeat(200), "é".repeat(130)];
 		const paths: string[] = [];
 		for (let i = 0; i < 600; i++) {
@@ -108,21 +96,10 @@ describe.skipIf(!READY)("minerva-fs in the image's Python", () => {
 			for (let j = 0; j < length; j++) parts.push(...(pieces[Math.floor(next() * pieces.length)] as number[]), ...(next() < 0.1 ? [0x09] : []));
 			displays.push(Uint8Array.from(parts));
 		}
-		const cases = { scans: scans.map(({ bytes: _, ...rest }) => rest), paths, displays: displays.map(hex) };
+		const cases = { paths, displays: displays.map(hex) };
 		const result = python(["/src/tests/vectors.py"], JSON.stringify(cases));
 		expect(result.stderr).toBe("");
-		const answers = parseJson(result.stdout) as { scans: unknown[]; paths: (string | null)[]; displays: string[] };
-		const expectedScans = scans.map((entry) => {
-			let scanner: LineScanner;
-			try {
-				scanner = new LineScanner(entry.start, entry.end);
-			} catch {
-				return null;
-			}
-			for (let at = 0; at < entry.bytes.length; at += entry.chunk) scanner.push(entry.bytes.subarray(at, at + entry.chunk));
-			return scanner.finish();
-		});
-		expect(answers.scans).toEqual(expectedScans);
+		const answers = parseJson(result.stdout) as { paths: (string | null)[]; displays: string[] };
 		expect(answers.paths).toEqual(paths.map(refusedPath));
 		expect(answers.displays).toEqual(displays.map(displayPath));
 	});

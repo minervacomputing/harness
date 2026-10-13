@@ -4,13 +4,18 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@cloudflare/sandbox@1.0.0':
+    hash: f53473af8f6894a2a771d0f5d9ce224ad6e11ab1186664c7278d34636617fbc8
+    path: patches/@cloudflare__sandbox@1.0.0.patch
+
 importers:
 
   .:
     dependencies:
       '@cloudflare/sandbox':
         specifier: 1.0.0
-        version: 1.0.0
+        version: 1.0.0(patch_hash=f53473af8f6894a2a771d0f5d9ce224ad6e11ab1186664c7278d34636617fbc8)
       '@earendil-works/pi-ai':
         specifier: 1.1.0
         version: 1.1.0(@aws-sdk/credential-provider-node@3.972.85)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(@smithy/signature-v4@5.7.4)(undici@7.29.1)(ws@8.22.0)(zod@4.3.6)
@@ -3513,7 +3518,7 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@cloudflare/sandbox@1.0.0':
+  '@cloudflare/sandbox@1.0.0(patch_hash=f53473af8f6894a2a771d0f5d9ce224ad6e11ab1186664c7278d34636617fbc8)':
     dependencies:
       aws4fetch: 1.0.20
       zod: 4.5.4

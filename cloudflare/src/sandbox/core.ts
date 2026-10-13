@@ -18,13 +18,14 @@ import {
 	AGENT_CGROUP,
 	CLEANUP_RETRY_MS,
 	DEADLINE_GRACE_MS,
+	FILE_OPERATION_SECONDS,
 	IDLE_MS,
 	INSTANCE,
 	MAX_INACTIVITY_MS,
 	type SandboxSpec,
 	workspaceBytes,
 } from "./constants.ts";
-import { fileOperation, type FsRequest, type FsResponse, Readers, Servers } from "./files.ts";
+import { fileOperation, type FsRequest, type FsResponse } from "./files.ts";
 import {
 	type CheckpointUploadPlan,
 	type CheckpointUploadResult,
@@ -126,8 +127,7 @@ interface PendingCommand {
 }
 
 /**
- * What belongs to one incarnation's container and dies with it: its commands, file readers and servers,
- * and the scan's index. Work admitted for an incarnation holds its generation, and nothing it does after
+ * What belongs to one incarnation's container and dies with it: its commands and the scan's index. Work admitted for an incarnation holds its generation, and nothing it does after
  * the generation ended reaches the next one.
  */
 class Generation {
@@ -146,8 +146,6 @@ class Generation {
 	#starting = 0;
 	#settled: (() => void)[] = [];
 	readonly commands = new Map<string, PendingCommand>();
-	readonly readers = new Readers();
-	readonly servers = new Servers();
 	index: IndexEntry[] = [];
 
 	readonly incarnation: string;
@@ -187,8 +185,6 @@ class Generation {
 			pending.running?.cancel();
 		}
 		this.commands.clear();
-		this.readers.forget();
-		this.servers.forget();
 	}
 }
 
@@ -259,7 +255,7 @@ export class SandboxCore {
 		else await this.#ports.alarm(null);
 	}
 
-	/** Ends the incarnation's generation: its commands are cancelled, its readers and servers forgotten. */
+	/** Ends the incarnation's generation: its commands are cancelled. */
 	#forget(): void {
 		this.#generation?.end();
 		this.#generation = null;
@@ -567,7 +563,7 @@ export class SandboxCore {
 	}
 
 	fs(fence: SandboxFence, request: FsRequest): Promise<FsResponse | Refused> {
-		return this.#admitted(fence, false, (machine, generation) => fileOperation(machine, generation, request));
+		return this.#admitted(fence, false, (machine) => fileOperation(machine, request, this.#ports.fileSeconds ?? FILE_OPERATION_SECONDS));
 	}
 
 	hydrate(fence: SandboxFence, plan: HydratePlan): Promise<HydrateResult | Refused> {
@@ -598,7 +594,7 @@ export class SandboxCore {
 
 	/**
 	 * `cgroup.kill` the agent cgroup, then wait until it is empty: commands that other calls run die too.
-	 * No call is admitted meanwhile. Every reader and file server of the incarnation ends with it.
+	 * No call is admitted meanwhile. File operations already running through Files are outside the cgroup and go on.
 	 */
 	killStrays(fence: SandboxFence): Promise<{ ok: true } | { ok: false; message: string } | Refused> {
 		return this.#admitted(fence, false, async (machine, generation) => {
@@ -620,8 +616,6 @@ export class SandboxCore {
 			generation.killing = killing;
 			try {
 				const result = await killing;
-				generation.readers.forget();
-				generation.servers.forget();
 				if (result?.exitCode === 0) return { ok: true as const };
 				return { ok: false as const, message: "Processes left by commands could not be stopped." };
 			} finally {

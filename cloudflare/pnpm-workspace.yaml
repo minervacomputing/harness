@@ -5,3 +5,8 @@ onlyBuiltDependencies:
 allowBuilds:
   esbuild: true
   workerd: true
+
+# Bounds what a forged sandbox-shim answer can make the Worker allocate: a data frame at 16 MiB (45 bytes for a
+# stat) instead of up to 4 GiB, and a directory listing at 100,000 entries.
+patchedDependencies:
+  '@cloudflare/sandbox@1.0.0': patches/@cloudflare__sandbox@1.0.0.patch

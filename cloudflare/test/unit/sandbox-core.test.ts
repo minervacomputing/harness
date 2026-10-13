@@ -383,7 +383,7 @@ describe("calls", () => {
 		const made = rig();
 		const fence = await ready(made);
 		made.container.lostOnExec = true;
-		expect(await made.core.fs(fence, { op: "exists", path: "/workspace/a" })).toEqual({ refused: "not_verified", message: "The sandbox stopped." });
+		expect(await made.core.fs(fence, { op: "lstat", path: "/workspace/a" })).toEqual({ refused: "not_verified", message: "The sandbox stopped." });
 		expect(made.core.status()).toMatchObject({ state: "none" });
 		expect(await command(made, fence)).toMatchObject({ refused: "stale" });
 	});
@@ -489,11 +489,11 @@ describe("calls", () => {
 		let fail: (error: Error) => void = () => {};
 		const original = made.container.exec.bind(made.container);
 		made.container.exec = async (argv) => {
-			// The file server's start, held until the next incarnation exists.
-			if ((argv[2] ?? "").includes("cgroup.procs") && argv.includes("serve")) return new Promise<ExecProcess>((_, reject) => (fail = reject));
+			// The file operation's exec, held until the next incarnation exists.
+			if (argv[0] === "/usr/local/bin/sandbox-shim") return new Promise<ExecProcess>((_, reject) => (fail = reject));
 			return original(argv);
 		};
-		const late = made.core.fs(first, { op: "exists", path: "/workspace/a" });
+		const late = made.core.fs(first, { op: "lstat", path: "/workspace/a" });
 		await new Promise((resolve) => setTimeout(resolve, 10));
 		const second = await ready(made, SPEC, 2, runId);
 		made.container.exec = original;

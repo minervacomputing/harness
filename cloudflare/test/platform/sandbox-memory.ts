@@ -16,7 +16,7 @@ import { uuid7 } from "../../src/lib/random.ts";
 import type { ExecOutputSink, ExecRequest, ExecResult } from "../../src/sandbox/commands.ts";
 import type { SandboxSpec } from "../../src/sandbox/constants.ts";
 import type { Refused, SandboxFence, SandboxStatus } from "../../src/sandbox/core.ts";
-import type { FileHandle, FsRequest, FsResponse } from "../../src/sandbox/files.ts";
+import type { FsRequest, FsResponse } from "../../src/sandbox/files.ts";
 import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan, HydrateResult, ScanResult } from "../../src/sandbox/folder.ts";
 import type { HardeningReport, VerificationReport } from "../../src/sandbox/hardening.ts";
 import type { AttemptFence } from "../../src/shared/rpc.ts";
@@ -70,7 +70,6 @@ export class MemorySandbox implements SandboxPort {
 	#spec: SandboxSpec | null = null;
 	#state: SandboxStatus["state"] = "none";
 	#startedAt: number | null = null;
-	readonly #handles = new Map<string, Uint8Array>();
 	readonly #holds = new Map<string, (cancelled: boolean) => void>();
 	readonly #bucket: () => R2Bucket;
 
@@ -99,7 +98,6 @@ export class MemorySandbox implements SandboxPort {
 		this.release();
 		this.files.clear();
 		this.dirs.clear();
-		this.#handles.clear();
 		const incarnation = uuid7();
 		this.#fence = { ...fence, incarnation };
 		this.#spec = spec;
@@ -181,28 +179,25 @@ export class MemorySandbox implements SandboxPort {
 	async fs(fence: SandboxFence, request: FsRequest): Promise<FsResponse | Refused> {
 		if (!this.#owns(fence)) return STALE;
 		this.log.push(`fs ${request.op}`);
+		const missing = () => failure("not_found", "No such file or directory");
 		switch (request.op) {
 			case "canonical":
-			case "absolute":
 				return { ok: true, value: request.path };
-			case "exists": {
-				const path = relative(request.path);
-				return { ok: true, value: path !== null && this.#info(path) !== null };
-			}
-			case "info": {
+			case "lstat": {
 				const path = relative(request.path);
 				const info = path === null ? null : this.#info(path);
-				return info ? { ok: true, value: info } : failure("not_found", "No such file or directory");
+				return info ? { ok: true, value: info } : missing();
 			}
-			case "readText": {
+			case "readFile": {
 				const path = relative(request.path);
 				const file = path === null ? undefined : this.files.get(path);
-				return file ? { ok: true, value: decoder.decode(file.data) } : failure("not_found", "No such file or directory");
+				return file ? { ok: true, value: file.data } : missing();
 			}
-			case "write": {
+			case "writeFile":
+			case "appendFile": {
 				const path = relative(request.path);
 				if (path === null) return failure("permission_denied", "Permission denied");
-				this.#write(path, request.content, request.append);
+				this.#write(path, request.content, request.op === "appendFile");
 				return { ok: true, value: null };
 			}
 			case "mkdir": {
@@ -210,35 +205,26 @@ export class MemorySandbox implements SandboxPort {
 				if (path !== null) this.dirs.add(path);
 				return { ok: true, value: null };
 			}
-			case "open": {
-				const path = relative(request.path);
-				const file = path === null ? undefined : this.files.get(path);
-				if (!file) return failure("not_found", "No such file or directory");
-				const id = uuid7();
-				this.#handles.set(id, file.data);
-				const handle: FileHandle = { id, path: request.path, dev: 1, ino: 1, size: file.data.length, mtimeMs: file.mtime };
-				return { ok: true, value: handle };
-			}
+			case "open":
 			case "stat": {
-				const data = this.#handles.get(request.handle.id);
-				if (!data) return failure("invalid", "The reader is gone.");
-				return { ok: true, value: { name: request.handle.path.split("/").pop() ?? "", path: request.handle.path, kind: "file", size: data.length, mtimeMs: request.handle.mtimeMs } };
+				const path = relative(request.path);
+				const info = path === null ? null : this.#info(path);
+				if (!info) return missing();
+				return info.kind === "file" ? { ok: true, value: info } : failure("is_directory", "Is a directory");
 			}
 			case "read": {
-				const data = this.#handles.get(request.handle.id);
-				if (!data) return failure("invalid", "The reader is gone.");
-				return { ok: true, value: data.slice(request.offset, request.offset + request.length) };
+				const path = relative(request.path);
+				const file = path === null ? undefined : this.files.get(path);
+				return file ? { ok: true, value: file.data.slice(request.offset, request.offset + request.length) } : missing();
 			}
 			case "scanLines": {
-				const data = this.#handles.get(request.handle.id);
-				if (!data) return failure("invalid", "The reader is gone.");
+				const path = relative(request.path);
+				const file = path === null ? undefined : this.files.get(path);
+				if (!file) return missing();
 				const scanner = new LineScanner(request.startLine, request.endLine);
-				scanner.push(data);
+				scanner.push(file.data);
 				return { ok: true, value: scanner.finish() };
 			}
-			case "close":
-				this.#handles.delete(request.handle.id);
-				return { ok: true, value: null };
 			default:
 				return failure("unknown", `${request.op} is not part of the memory sandbox.`);
 		}
