@@ -43,7 +43,7 @@ export const MAX_TEXT = 4_000;
 export const MAX_READ_TEXT = 4_000;
 export const MAX_SUBJECT = 500;
 export const MAX_TEAMS = 100;
-/** `DISCOVERY_PAGE` is mutable so that tests can lower it. */
+/** Mutable so that tests can lower the discovery page. */
 export const LIMITS = { discoveryPage: 10 };
 export const DISCOVERY_SCAN = 25;
 export const CONCURRENCY = 8;
@@ -87,7 +87,7 @@ function clientOf(binding: Binding): TeamsClient {
 	return binding.client as TeamsClient;
 }
 
-/** `_joined`: the teams the account is in, by id, with ids in lower case. */
+/** The teams the account is in, by id, with ids in lower case. */
 async function joined(client: TeamsClient): Promise<Team[]> {
 	const teams = new Map<string, Team>();
 	for (const team of await client.joinedTeams()) {
@@ -97,7 +97,7 @@ async function joined(client: TeamsClient): Promise<Team[]> {
 	return [...teams.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
-/** `_channels`: the channels a team hosts that the account can see, or null for a team it cannot see. */
+/** The channels a team hosts that the account can see, or null for a team it cannot see. */
 async function channelsOf(client: TeamsClient, teamId: string): Promise<Channel[] | null> {
 	let channels: Channel[];
 	try {
@@ -110,7 +110,7 @@ async function channelsOf(client: TeamsClient, teamId: string): Promise<Channel[
 }
 
 /**
- * `_resolve`: the channel a call names, in its team. A channel the team does not host is refused like a
+ * The channel a call names, in its team. A channel the team does not host is refused like a
  * channel without a grant.
  */
 async function resolve(binding: Binding, teamId: string, channelId: string): Promise<Resource> {
@@ -133,7 +133,7 @@ async function confirmForWriting(binding: Binding, resource: Resource): Promise<
 	}
 }
 
-/** `_in`: whether Graph says the message is in this channel. */
+/** Whether Graph says the message is in this channel. */
 function isIn(message: Message, resource: Resource): boolean {
 	const identity = message.channelIdentity;
 	return identity !== null && teamKey(identity.teamId) === resource.within[0] && identity.channelId === resource.id && MESSAGE_ID.test(message.id);
@@ -196,7 +196,7 @@ function messageData(message: Message, resource: Resource): { [key: string]: Jso
 	return record;
 }
 
-/** `_messages`: user messages Graph places in this channel; system events (members added, renames) left out. */
+/** User messages Graph places in this channel; system events (members added, renames) left out. */
 function messageRecords(messages: readonly Message[], resource: Resource): ScopedRecord[] {
 	return messages.filter((m) => m.messageType === "message" && isIn(m, resource)).map((m) => ({ resource, data: messageData(m, resource) }));
 }
@@ -205,7 +205,7 @@ function notAThread(): OperationError {
 	return new OperationError("INVALID_ARGUMENTS", "message_id must be the first message of a thread in this channel.");
 }
 
-/** `_root`: the message that starts a thread in this channel, or INVALID_ARGUMENTS. */
+/** The message that starts a thread in this channel, or INVALID_ARGUMENTS. */
 async function threadRoot(binding: Binding, resource: Resource, messageId: string): Promise<Message> {
 	let message: Message;
 	try {
@@ -218,7 +218,7 @@ async function threadRoot(binding: Binding, resource: Resource, messageId: strin
 	return message;
 }
 
-export const ListTeams = z.strictObject({}).meta({ title: "ListTeams" });
+export const ListTeams = z.strictObject({});
 
 const LIST_TEAMS = defineOperation<z.output<typeof ListTeams>>({
 	name: "list_teams",
@@ -238,8 +238,7 @@ const LIST_TEAMS = defineOperation<z.output<typeof ListTeams>>({
 });
 
 export const ListChannels = z
-	.strictObject({ team_id: TeamId().nullable().default(null).describe("A team's id; without one, all teams.") })
-	.meta({ title: "ListChannels" });
+	.strictObject({ team_id: TeamId().nullable().default(null).describe("A team's id; without one, all teams.") });
 
 const LIST_CHANNELS = defineOperation<z.output<typeof ListChannels>>({
 	name: "list_channels",
@@ -281,8 +280,7 @@ export const ReadChannel = z
 		channel_id: ChannelId(),
 		limit: z.int().min(1).max(50).default(20),
 		cursor: Cursor().nullable().default(null),
-	})
-	.meta({ title: "ReadChannel" });
+	});
 
 const READ_CHANNEL = defineOperation<z.output<typeof ReadChannel>>({
 	name: "read_channel",
@@ -314,8 +312,7 @@ export const ReadThread = z
 		message_id: MessageId().describe("The id of the message that starts the thread."),
 		limit: z.int().min(1).max(50).default(20),
 		cursor: Cursor().nullable().default(null),
-	})
-	.meta({ title: "ReadThread" });
+	});
 
 const READ_THREAD = defineOperation<z.output<typeof ReadThread>>({
 	name: "read_thread",
@@ -367,7 +364,7 @@ function posted(binding: Binding, resource: Resource, message: Message, replyTo:
 	};
 }
 
-export const PostMessage = z.strictObject({ team_id: TeamId(), channel_id: ChannelId(), text: WrittenText() }).meta({ title: "PostMessage" });
+export const PostMessage = z.strictObject({ team_id: TeamId(), channel_id: ChannelId(), text: WrittenText() });
 
 const POST_MESSAGE = defineOperation<z.output<typeof PostMessage>>({
 	name: "post_message",
@@ -396,8 +393,7 @@ export const Reply = z
 		channel_id: ChannelId(),
 		message_id: MessageId().describe("The id of the message that starts the thread."),
 		text: WrittenText(),
-	})
-	.meta({ title: "Reply" });
+	});
 
 const REPLY = defineOperation<z.output<typeof Reply>>({
 	name: "reply",
@@ -499,15 +495,14 @@ export function teamsConnector(options: { baseUrl?: string } = {}): Connector<Te
 			const wanted = new Set(ids);
 			if (![...wanted].some((id) => GUID.test(id) || CHANNEL_ID.test(id))) return {};
 			const teams = (await joined(client)).slice(0, MAX_TEAMS);
-			const names: { [id: string]: string } = {};
-			const name = (id: string, value: string) => Object.defineProperty(names, id, { value, enumerable: true, writable: true, configurable: true });
-			for (const team of teams) if (wanted.has(team.id)) name(team.id, teamName(team));
+			const names = new Map<string, string>();
+			for (const team of teams) if (wanted.has(team.id)) names.set(team.id, teamName(team));
 			if ([...wanted].some((id) => CHANNEL_ID.test(id))) {
 				for (const [team, channels] of await teamItems(client, teams)) {
-					for (const channel of channels) if (wanted.has(channel.id)) name(channel.id, `${teamName(team)} / ${channel.displayName || channel.id}`);
+					for (const channel of channels) if (wanted.has(channel.id)) names.set(channel.id, `${teamName(team)} / ${channel.displayName || channel.id}`);
 				}
 			}
-			return names;
+			return Object.fromEntries(names);
 		},
 	};
 }

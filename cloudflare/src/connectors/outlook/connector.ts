@@ -125,9 +125,7 @@ export function outlookConnector(): Connector<GraphClient> {
 
 		async describe(client, kind, ids) {
 			if (kind === RECIPIENT) {
-				const names: { [id: string]: string } = {};
-				for (const id of ids) if (addresses.validId(id)) Object.defineProperty(names, id, { value: addresses.name(id), enumerable: true, writable: true, configurable: true });
-				return names;
+				return Object.fromEntries(ids.filter((id) => addresses.validId(id)).map((id) => [id, addresses.name(id)]));
 			}
 			const tree = new Tree(client);
 			await tree.root();
@@ -145,12 +143,12 @@ export function outlookConnector(): Connector<GraphClient> {
 				if (within === null || folder.id !== folderId) return null;
 				return tree.path(folder, within);
 			});
-			const names: { [id: string]: string } = {};
-			wanted.forEach((id, index) => {
-				const name = found[index];
-				if (name !== null && name !== undefined) Object.defineProperty(names, id, { value: name, enumerable: true, writable: true, configurable: true });
-			});
-			return names;
+			return Object.fromEntries(
+				wanted.flatMap((id, index) => {
+					const name = found[index];
+					return typeof name === "string" ? [[id, name]] : [];
+				}),
+			);
 		},
 	};
 }

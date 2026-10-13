@@ -7,7 +7,7 @@ import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
 import type { User } from "../microsoft/index.ts";
-import { after, modelValidator, plainTextOf, singleLineOf } from "../microsoft/inputs.ts";
+import { after, objectCheck, plainTextOf, singleLineOf } from "../microsoft/inputs.ts";
 import * as addresses from "../../lib/addresses.ts";
 import { type GraphClient, type Message, REPLY_FIELDS, type Recipient } from "./client.ts";
 import { FOLDER, RECIPIENT, SEND_CONSENT, Tree, confirmMessage, locate, messageId } from "./mailbox.ts";
@@ -55,13 +55,12 @@ export const SendMessage = z
 		body: Body(),
 	})
 	.check(
-		modelValidator((data: { to: string[]; cc: string[]; bcc: string[] }) => {
+		objectCheck((data: { to: string[]; cc: string[]; bcc: string[] }) => {
 			const everyone = [...data.to, ...data.cc, ...data.bcc];
 			if (new Set(everyone).size !== everyone.length) throw new TextError("each address may appear only once");
 			if (everyone.length > MAX_RECIPIENTS) throw new TextError(`a message may go to at most ${MAX_RECIPIENTS} addresses`);
 		}),
-	)
-	.meta({ title: "SendMessage" });
+	);
 
 export const SEND_MESSAGE = defineOperation<z.output<typeof SendMessage>>({
 	name: "send_message",
@@ -106,7 +105,7 @@ function parsedOrNull(raw: string | null): string | null {
 }
 
 /**
- * `_reply_targets`: the addresses Graph sends a reply to, the original's reply-to addresses if it has any,
+ * The addresses Graph sends a reply to, the original's reply-to addresses if it has any,
  * otherwise its sender (RFC 5322). One Minerva cannot name as an address makes the whole reply unsupported.
  */
 export function replyTargets(message: Message): string[] {
@@ -122,7 +121,7 @@ export function replyTargets(message: Message): string[] {
 }
 
 /**
- * `_own_addresses`: the account's mail and sign-in names, and its aliases (Exchange lists them as `SMTP:` or
+ * The account's mail and sign-in names, and its aliases (Exchange lists them as `SMTP:` or
  * `smtp:` proxy addresses, beside other kinds such as `X500:`).
  */
 export function ownAddresses(user: User): Set<string> {
@@ -139,7 +138,7 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
 	return a.length === b.length && a.every((item, index) => item === b[index]);
 }
 
-export const Reply = z.strictObject({ message: messageId(), body: Body() }).meta({ title: "Reply" });
+export const Reply = z.strictObject({ message: messageId(), body: Body() });
 
 export const REPLY = defineOperation<z.output<typeof Reply>>({
 	name: "reply",

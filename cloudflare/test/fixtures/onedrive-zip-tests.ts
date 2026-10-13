@@ -2,8 +2,8 @@
 // number of entries, the output budget on what is actually inflated, a zip read as an entry, damaged archives and
 // the CRC-32. zip.js inflates through the runtime's DecompressionStream and checks each CRC-32 through its gzip
 // form, so these run in Node (test/unit/onedrive-zip.test.ts) and in workerd, where production runs
-// (test/platform/onedrive-zip.test.ts). What zip.js parses is not retested here; connectors-onedrive-vectors.test.ts
-// reads CPython's archives and connectors-onedrive.test.ts the Office files.
+// (test/platform/onedrive-zip.test.ts), with the runtime's decoding of parts. What zip.js parses is not retested
+// here; connectors-onedrive.test.ts reads the Office files.
 
 import { constants, crc32, deflateRawSync } from "node:zlib";
 import { configure } from "@zip.js/zip.js/lib/zip-core-custom.js";
@@ -182,6 +182,22 @@ export function zipTests(): void {
 				});
 			}
 		}
+
+		test("a part in UTF-16 after a byte order mark is read; one declaring an encoding other than its own is refused", async () => {
+			const utf16 = (text: string, bigEndian: boolean) => {
+				const units = `\ufeff${text}`;
+				const bytes = new Uint8Array(2 * units.length);
+				const view = new DataView(bytes.buffer);
+				for (let at = 0; at < units.length; at++) view.setUint16(2 * at, units.charCodeAt(at), !bigEndian);
+				return bytes;
+			};
+			const word = (document: Uint8Array) => zipSync({ "_rels/.rels": strToU8(rels(["rId1", "officeDocument", "word/document.xml"])), "word/document.xml": document });
+			for (const bigEndian of [false, true]) expect(await extract("docx", word(utf16(DOCUMENT("zażółć \u{1f600}"), bigEndian)), 1000)).toBe("zażółć \u{1f600}\n");
+			expect(await extract("docx", word(strToU8(`<?xml version="1.0" encoding="utf8"?>${DOCUMENT("hello")}`)), 1000)).toBe("hello\n");
+			for (const declared of ["ISO-8859-1", "UTF-16"]) {
+				expect(await refusal("docx", word(strToU8(`<?xml version="1.0" encoding="${declared}"?>${DOCUMENT("hello")}`)))).toBe("UNSUPPORTED_FILE");
+			}
+		});
 
 		test("a truncated archive is refused, wherever it is cut", async () => {
 			for (const level of [0, 9] as const) {

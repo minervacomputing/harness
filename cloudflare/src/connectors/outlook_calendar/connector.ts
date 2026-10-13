@@ -29,9 +29,9 @@ import { z } from "zod";
 import type { Binding, Connector, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
-import { sliceText, truncate, TextError } from "../../lib/text.ts";
+import { truncate, TextError } from "../../lib/text.ts";
 import { ID, accountLabel, consent, oauth } from "../microsoft/index.ts";
-import { after, modelValidator, plainTextOf, singleLineOf } from "../microsoft/inputs.ts";
+import { after, objectCheck, plainTextOf, singleLineOf } from "../microsoft/inputs.ts";
 import { DAY_MICROS, formatUtc, isDate, parseDate, parseInstant, parseZonedDateTime } from "../../lib/dates.ts";
 import { type Calendar, CalendarClient, type Event, type Time } from "./client.ts";
 import { ZONES } from "./zones.ts";
@@ -127,11 +127,11 @@ async function calendarId(client: CalendarClient, ref: string): Promise<string> 
 /** How an event's start or end is shown. */
 export function shownTime(value: Time | null, allDay: boolean): string | null {
 	if (value === null) return null;
-	const moment = sliceText(value.dateTime, 0, 19);
+	const moment = value.dateTime.slice(0, 19);
 	// Graph answers all-day events at midnight UTC, whatever zone was asked for (see the module).
-	if (allDay) return sliceText(moment, 0, 10);
+	if (allDay) return moment.slice(0, 10);
 	if ((value.timeZone || "").toUpperCase() === "UTC") return `${moment}Z`;
-	return `${moment} ${value.timeZone === null ? "None" : value.timeZone}`;
+	return value.timeZone ? `${moment} ${value.timeZone}` : moment;
 }
 
 function eventRecord(binding: Binding, calendar: string, event: Event): ScopedRecord {
@@ -174,7 +174,7 @@ function clientOf(binding: Binding): CalendarClient {
 	return binding.client as CalendarClient;
 }
 
-export const ListCalendars = z.strictObject({}).meta({ title: "ListCalendars" });
+export const ListCalendars = z.strictObject({});
 
 const LIST_CALENDARS = defineOperation<z.output<typeof ListCalendars>>({
 	name: "list_calendars",
@@ -208,15 +208,14 @@ export const ListEvents = z
 		cursor: z.string().trim().max(1000).nullable().default(null),
 	})
 	.check(
-		modelValidator((data: { time_min: string | null; time_max: string | null }) => {
+		objectCheck((data: { time_min: string | null; time_max: string | null }) => {
 			if (data.time_min && data.time_max) {
 				const span = instantOf(data.time_max) - instantOf(data.time_min);
 				if (span <= 0n) throw new TextError("time_max must be after time_min");
 				if (span > MAX_WINDOW) throw new TextError("time_min and time_max may be at most 366 days apart");
 			}
 		}),
-	)
-	.meta({ title: "ListEvents" });
+	);
 
 /** A listing's window in UTC: as given, or 30 days from or to the one bound given, or from now. */
 export function windowOf(data: { time_min: string | null; time_max: string | null }, nowMs: number): [string, string] {
@@ -233,26 +232,21 @@ export function windowOf(data: { time_min: string | null; time_max: string | nul
 	return [formatUtc(now), formatUtc(now + DEFAULT_WINDOW)];
 }
 
-const PAGE_KEYS = ["calendar", "page", "start", "end"];
+/** Minerva's cursor: Graph's page and the window the first page used, for the calendar it was for. */
+const PageState = z.strictObject({ calendar: z.string(), page: z.string(), start: z.string(), end: z.string() });
+type PageState = z.output<typeof PageState>;
 
-/** Minerva's cursor, Graph's page and the window the first page used, for the calendar it was for. */
-export function pageState(cursor: string, calendar: string): { calendar: string; page: string; start: string; end: string } {
-	let state: Json = null;
+/** The state a cursor holds, refused unless it is one for this calendar. */
+export function pageState(cursor: string, calendar: string): PageState {
+	let parsed: unknown = null;
 	try {
-		state = parseJson(cursor);
+		parsed = parseJson(cursor);
 	} catch {
-		state = null;
+		// Not JSON: refused below.
 	}
-	const valid =
-		typeof state === "object" &&
-		state !== null &&
-		!Array.isArray(state) &&
-		Object.keys(state).length === PAGE_KEYS.length &&
-		PAGE_KEYS.every((key) => Object.hasOwn(state as object, key) && typeof (state as { [key: string]: Json })[key] === "string") &&
-		(state as { calendar: string }).calendar === calendar;
-	if (!valid) throw new OperationError("INVALID_CURSOR", "This page token is invalid or belongs to another request.");
-	const { page, start, end } = state as { [key: string]: string };
-	return { calendar, page: page as string, start: start as string, end: end as string };
+	const found = PageState.safeParse(parsed);
+	if (!found.success || found.data.calendar !== calendar) throw new OperationError("INVALID_CURSOR", "This page token is invalid or belongs to another request.");
+	return found.data;
 }
 
 export interface CalendarOptions {
@@ -322,15 +316,14 @@ export const CreateEvent = z
 		location: singleLineOf(z.string().trim().max(500)).nullable().default(null),
 	})
 	.check(
-		modelValidator((data: CreateEventData) => {
+		objectCheck((data: CreateEventData) => {
 			const allDay = isDate(data.start);
 			if (allDay !== isDate(data.end)) throw new TextError("start and end must both be dates or both be date-times");
 			if (allDay && data.time_zone === null) throw new TextError("time_zone is required for all-day events");
 			if (!allDay && data.time_zone !== null) throw new TextError("time_zone is only for all-day events; give timed events an offset");
 			if (instantOf(data.end) <= instantOf(data.start)) throw new TextError("end must be after start");
 		}),
-	)
-	.meta({ title: "CreateEvent" });
+	);
 
 /** The event Graph is sent. */
 export function eventPayload(data: CreateEventData): { [key: string]: Json } {
@@ -382,12 +375,6 @@ const CREATE_EVENT = defineOperation<z.output<typeof CreateEvent>>({
 	},
 });
 
-function named(entries: [string, string][]): { [id: string]: string } {
-	const names: { [id: string]: string } = {};
-	for (const [id, name] of entries) Object.defineProperty(names, id, { value: name, enumerable: true, writable: true, configurable: true });
-	return names;
-}
-
 export function outlookCalendarConnector(options: CalendarOptions = {}): Connector<CalendarClient> {
 	return {
 		slug: "outlook_calendar",
@@ -431,7 +418,7 @@ export function outlookCalendarConnector(options: CalendarOptions = {}): Connect
 
 		async describe(client, _kind, ids) {
 			const wanted = new Set(ids);
-			return named((await allCalendars(client)).filter((c) => wanted.has(c.id)).map((c) => [c.id, c.name]));
+			return Object.fromEntries((await allCalendars(client)).filter((c) => wanted.has(c.id)).map((c) => [c.id, c.name]));
 		},
 	};
 }

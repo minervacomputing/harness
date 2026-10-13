@@ -7,7 +7,7 @@ import { defineOperation } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
 import { singleLine, sliceText, TextError } from "../../lib/text.ts";
 import { ID } from "../microsoft/index.ts";
-import { after, modelValidator } from "../microsoft/inputs.ts";
+import { after, objectCheck } from "../microsoft/inputs.ts";
 import { formatUtc, parseInstant } from "../../lib/dates.ts";
 import { FULL_FIELDS, type Folder, type GraphClient, type Message, type Recipient, ordinary } from "./client.ts";
 import { FOLDER, READ_CONSENT, Tree, confirmMessage, folderRef, locate, messageId } from "./mailbox.ts";
@@ -85,8 +85,7 @@ export const ListFolders = z
 		parent: folderRef().nullable().default(null).describe("List this folder's subfolders; leave out for the top-level folders."),
 		limit: z.int().min(1).max(100).default(50),
 		cursor: Cursor().nullable().default(null),
-	})
-	.meta({ title: "ListFolders" });
+	});
 
 export const LIST_FOLDERS = defineOperation<z.output<typeof ListFolders>>({
 	name: "list_folders",
@@ -149,17 +148,16 @@ export const ListMessages = z
 		cursor: Cursor().nullable().default(null),
 	})
 	.check(
-		modelValidator((data: { query: string | null; unread_only: boolean; after: string | null; before: string | null }) => {
+		objectCheck((data: { query: string | null; unread_only: boolean; after: string | null; before: string | null }) => {
 			if (data.query !== null && (data.unread_only || data.after || data.before)) {
 				throw new TextError("query cannot be combined with unread_only, after or before");
 			}
 		}),
-	)
-	.meta({ title: "ListMessages" });
+	);
 
 type ListMessagesData = z.output<typeof ListMessages>;
 
-/** `_filter`: Graph's $filter for the time and unread limits, or null without any. */
+/** Graph's $filter for the time and unread limits, or null without any. */
 export function messageFilter(data: Pick<ListMessagesData, "unread_only" | "after" | "before">): string | null {
 	if (!(data.unread_only || data.after || data.before)) return null;
 	const parts = [`receivedDateTime ge ${data.after || EPOCH}`];
@@ -209,8 +207,7 @@ export const ReadMessage = z
 		max_chars: z.int().min(500).max(50_000).default(20_000),
 		// Where to start in the body, to continue a long message.
 		offset: z.int().min(0).max(10_000_000).default(0),
-	})
-	.meta({ title: "ReadMessage" });
+	});
 
 export const READ_MESSAGE = defineOperation<z.output<typeof ReadMessage>>({
 	name: "read_message",

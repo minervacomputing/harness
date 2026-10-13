@@ -28,7 +28,6 @@ import type { Binding, Connector, Prepared, ProviderOutput, ScopedRecord } from 
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
-import { fromUtf8 } from "../../lib/bytes.ts";
 import { sliceText, TextError } from "../../lib/text.ts";
 import { accountLabel, consent, oauth, pageParam } from "../microsoft/index.ts";
 import { after, singleLineOf } from "../microsoft/inputs.ts";
@@ -55,8 +54,7 @@ const DRIVE_PART = "[A-Za-z0-9!_=-]{1,200}";
 const ITEM_PART = "[A-Za-z0-9!_.=-]{1,200}";
 const DRIVE_FULL = new RegExp(`^${DRIVE_PART}$`);
 const ITEM_FULL = new RegExp(`^${ITEM_PART}$`);
-/** `^...$` as Python reads it, where `$` also matches before a final newline. */
-const ITEM_ID = new RegExp(`^(${DRIVE_PART}):(${ITEM_PART})\\n?$`);
+const ITEM_ID = new RegExp(`^(${DRIVE_PART}):(${ITEM_PART})$`);
 const OFFICE: ReadonlyMap<string, Kind> = new Map([
 	["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"],
 	["application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx"],
@@ -267,7 +265,7 @@ function clientOf(binding: Binding): DriveClient {
 }
 
 /**
- * `_libraries`: the root folders of the account's OneDrive and of the libraries of the SharePoint sites it
+ * The root folders of the account's OneDrive and of the libraries of the SharePoint sites it
  * follows, each with a name, and whether sites were left out.
  */
 async function libraries(client: DriveClient): Promise<[[DriveItem, string][], boolean]> {
@@ -315,7 +313,7 @@ async function libraries(client: DriveClient): Promise<[[DriveItem, string][], b
 	return [found, more];
 }
 
-export const ListLibraries = z.strictObject({}).meta({ title: "ListLibraries" });
+export const ListLibraries = z.strictObject({});
 
 const LIST_LIBRARIES = defineOperation<z.output<typeof ListLibraries>>({
 	name: "list_libraries",
@@ -346,8 +344,7 @@ export const ListFolder = z
 		folder_id: FolderId(),
 		limit: z.int().min(1).max(100).default(50),
 		cursor: Cursor().nullable().default(null),
-	})
-	.meta({ title: "ListFolder" });
+	});
 
 const LIST_FOLDER = defineOperation<z.output<typeof ListFolder>>({
 	name: "list_folder",
@@ -393,10 +390,9 @@ export const SearchFiles = z
 		text: singleLineOf(z.string().trim().min(1).max(200)),
 		limit: z.int().min(1).max(25).default(10),
 		cursor: Cursor().nullable().default(null),
-	})
-	.meta({ title: "SearchFiles" });
+	});
 
-/** `_search`: the ids of the items a search hits, in Microsoft's order, and the next page's cursor. */
+/** The ids of the items a search hits, in Microsoft's order, and the next page's cursor. */
 async function search(client: DriveClient, text: string, limit: number, cursor: string | null): Promise<[string[], string | null]> {
 	const mine = await client.myDrive();
 	let items: DriveItem[];
@@ -463,7 +459,7 @@ const SEARCH_FILES = defineOperation<z.output<typeof SearchFiles>>({
 	},
 });
 
-export const GetFile = z.strictObject({ file_id: ItemId() }).meta({ title: "GetFile" });
+export const GetFile = z.strictObject({ file_id: ItemId() });
 
 const GET_FILE = defineOperation<z.output<typeof GetFile>>({
 	name: "get_file",
@@ -489,24 +485,20 @@ export const ReadFile = z
 	.strictObject({
 		file_id: ItemId(),
 		max_chars: z.int().min(1).max(100_000).default(20_000),
-	})
-	.meta({ title: "ReadFile" });
+	});
 
-/** `posixpath.splitext(name)[1]`: the extension, from the last dot that is not one of the name's leading dots. */
-export function extensionOf(name: string): string {
-	const slash = name.lastIndexOf("/");
+/** A file name's extension in lower case, with its dot: none for a name that only starts with a dot. */
+function extensionOf(name: string): string {
 	const dot = name.lastIndexOf(".");
-	if (dot <= slash) return "";
-	for (let at = slash + 1; at < dot; at++) if (name[at] !== ".") return name.slice(dot);
-	return "";
+	return dot > 0 ? name.slice(dot).toLowerCase() : "";
 }
 
-/** `_readable`: how a file is read, "text" or the Office format whose text is extracted. */
+/** How a file is read, "text" or the Office format whose text is extracted. */
 export function readable(item: DriveItem): Kind | "text" {
 	if (item.remoteItem !== null) throw new OperationError("UNSUPPORTED_FILE", `This points to an item in another drive. Use its id instead: ${target(item)}.`);
 	if (item.file === null) throw new OperationError("UNSUPPORTED_FILE", "This is not a file.");
 	const mime = ((item.file.mimeType || "").split(";")[0] as string).trim().toLowerCase();
-	const extension = extensionOf(item.name).toLowerCase();
+	const extension = extensionOf(item.name);
 	const office = OFFICE.get(mime);
 	if (office !== undefined) return office;
 	const bare = extension.startsWith(".") ? extension.slice(1) : extension;
@@ -515,7 +507,7 @@ export function readable(item: DriveItem): Kind | "text" {
 	throw new OperationError("UNSUPPORTED_FILE", "Minerva can read Word (.docx), PowerPoint (.pptx), Excel (.xlsx) and text files, not this type of file.");
 }
 
-/** `_text`: the file's text, at most `limit` characters for Office files. */
+/** The file's text, at most `limit` characters for Office files. */
 async function textOf(client: DriveClient, item: DriveItem, limit: number): Promise<string> {
 	const kind = readable(item);
 	const sizeLimit = kind === "text" ? MAX_TEXT_BYTES : LIMITS.maxOfficeBytes;
@@ -523,10 +515,8 @@ async function textOf(client: DriveClient, item: DriveItem, limit: number): Prom
 	const url = item["@microsoft.graph.downloadUrl"];
 	if (!url) throw new OperationError("PROVIDER_FORBIDDEN", "OneDrive does not offer this file for download.");
 	const body = await client.content(url, sizeLimit);
-	if (kind === "text") {
-		const text = fromUtf8(body);
-		return text.startsWith("\ufeff") ? text.slice(1) : text;
-	}
+	// Text files are read as UTF-8, a byte order mark dropped and invalid sequences replaced.
+	if (kind === "text") return new TextDecoder().decode(body);
 	return extract(kind, body, limit);
 }
 
@@ -556,13 +546,12 @@ const READ_FILE = defineOperation<z.output<typeof ReadFile>>({
 	},
 });
 
-/** `_upload_size`. */
 function uploadSize(value: string): string {
 	if (new TextEncoder().encode(value).length > MAX_UPLOAD_BYTES) throw new TextError(`must be at most ${MAX_UPLOAD_BYTES} bytes as UTF-8`);
 	return value;
 }
 
-/** `_file_name`. */
+/** Refuses the names OneDrive and SharePoint refuse. */
 function fileName(value: string): string {
 	if (INVALID_NAME.test(value)) throw new TextError('must not contain any of " * : < > ? / \\ |');
 	const lowered = value.toLowerCase();
@@ -578,8 +567,7 @@ export const CreateFile = z
 		folder_id: FolderId(),
 		name: after(singleLineOf(z.string().trim().min(1).max(200).describe("The new file's name, with its extension.")), fileName),
 		content: after(z.string().trim().max(MAX_UPLOAD_BYTES), uploadSize),
-	})
-	.meta({ title: "CreateFile" });
+	});
 
 const CREATE_FILE = defineOperation<z.output<typeof CreateFile>>({
 	name: "create_file",
@@ -614,24 +602,19 @@ const CREATE_FILE = defineOperation<z.output<typeof CreateFile>>({
 	},
 });
 
-/** `_search_cursor`: the page a discovery cursor holds. */
-export function searchCursor(cursor: string): string {
-	let state: Json = null;
-	try {
-		state = parseJson(cursor);
-	} catch {
-		state = null;
-	}
-	if (typeof state !== "object" || state === null || Array.isArray(state) || Object.keys(state).length !== 1 || !Object.hasOwn(state, "page") || typeof state.page !== "string") {
-		throw new OperationError("INVALID_CURSOR", "This page token is invalid.");
-	}
-	return state.page;
-}
+const SearchCursor = z.strictObject({ page: z.string() });
 
-function named(entries: [string, string][]): { [id: string]: string } {
-	const names: { [id: string]: string } = {};
-	for (const [id, name] of entries) Object.defineProperty(names, id, { value: name, enumerable: true, writable: true, configurable: true });
-	return names;
+/** The page a discovery cursor holds. */
+export function searchCursor(cursor: string): string {
+	let parsed: unknown = null;
+	try {
+		parsed = parseJson(cursor);
+	} catch {
+		// Not JSON: refused below.
+	}
+	const found = SearchCursor.safeParse(parsed);
+	if (!found.success) throw new OperationError("INVALID_CURSOR", "This page token is invalid.");
+	return found.data.page;
 }
 
 async function describe(client: DriveClient, ids: readonly string[]): Promise<{ [id: string]: string }> {
@@ -653,7 +636,12 @@ async function describe(client: DriveClient, ids: readonly string[]): Promise<{ 
 		if (mine !== null && driveKey(drive.id) === driveKey(mine.id)) return "OneDrive";
 		return `${drive.name} (library)`;
 	});
-	return named(wanted.flatMap((id, index): [string, string][] => (names[index] === null || names[index] === undefined ? [] : [[id, names[index] as string]])));
+	return Object.fromEntries(
+		wanted.flatMap((id, index) => {
+			const name = names[index];
+			return typeof name === "string" ? [[id, name]] : [];
+		}),
+	);
 }
 
 export function onedriveConnector(options: { baseUrl?: string } = {}): Connector<DriveClient> {

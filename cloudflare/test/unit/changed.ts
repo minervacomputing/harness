@@ -14,11 +14,6 @@ const PATTERNS = [
 	/T24:|\d{4}-?W\d|\d{8}xx|"0000-01-01"|"0001-01-01T00:00:00\+01:00"/,
 ];
 
-/** Whether text holds a control other than tab, CR or LF, or a noncharacter: `decoded` drops these now. */
-export function hasInvisible(text: unknown): boolean {
-	return typeof text === "string" && /[\0-\x08\v\f\x0e-\x1f\x7f-\x9f\p{Noncharacter_Code_Point}]/u.test(text);
-}
-
 /** Whether a vector's input (as it is, or its JSON text) is one of those cases. */
 export function changedOnPurpose(input: unknown): boolean {
 	const text = typeof input === "string" ? input : JSON.stringify(input) ?? "";

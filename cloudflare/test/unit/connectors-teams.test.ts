@@ -1,17 +1,18 @@
-// backend/tests/test_teams.py, case by case: the Microsoft Teams connector against an in-memory Microsoft Graph
-// behind an injected `fetch`, and runs through the executor. Text, addresses and tool inputs are compared with
-// vectors from today's Python in connectors-teams-vectors.test.ts (test/fixtures/connectors/teams/generate.py).
-// The OAuth flow itself (the authorize URL, the token exchange) belongs to the Worker; the scopes a connector asks
-// for and the consent it needs are tested here as test_scopes_follow_the_allowed_actions tests them.
+// The Microsoft Teams connector against an in-memory Microsoft Graph behind an injected `fetch`, and runs through
+// the executor; how message text is read and what agents may write. The OAuth flow itself (the authorize URL, the
+// token exchange) belongs to the Worker; the scopes a connector asks for and the consent it needs are tested here.
 
 import { afterEach, describe, expect, test } from "vitest";
 import { LIMITS as CLIENT_LIMITS, Mention, nextCursor, pageParams } from "../../src/connectors/teams/client.ts";
 import { LIMITS, teamsConnector } from "../../src/connectors/teams/connector.ts";
-import { read } from "../../src/connectors/teams/html.ts";
+import { TEAMS, checkWritten, read, redact, toTeams, written } from "../../src/connectors/teams/html.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import type { Json } from "../../src/lib/json.ts";
+import { TextError } from "../../src/lib/text.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
-import { ceilingRow, jsonResponse, received, startRun, type Received } from "../fixtures/connectors/microsoft/runs.ts";
+import { type Received, received } from "../fixtures/connectors/microsoft/fake.ts";
+import { ceilingRow, startRun, validated } from "./connector-runs.ts";
+import { jsonResponse } from "./executor-fakes.ts";
 
 type JsonObject = { [key: string]: Json };
 
@@ -51,7 +52,7 @@ function message(id: string, channel: string, content: string, team: string = EN
 type Hook = (method: string, path: string, params: { [name: string]: string }) => Response | null;
 
 /**
- * Microsoft Graph's Teams API (test_teams.py `FakeGraph`). Engineering hosts General, Private (private) and Shared
+ * Microsoft Graph's Teams API. Engineering hosts General, Private (private) and Shared
  * (shared); Finance hosts Budget. Graph spells Engineering's id in upper case in some answers.
  */
 class FakeGraph {
@@ -197,7 +198,7 @@ afterEach(() => {
 });
 
 describe("connecting and discovery", () => {
-	test("test_only_work_and_school_accounts_connect", async () => {
+	test("only work and school accounts connect", async () => {
 		const graph = new FakeGraph();
 		const connector = teamsConnector();
 		const account = await connector.account(graph.client());
@@ -206,7 +207,7 @@ describe("connecting and discovery", () => {
 		await expect(connector.account(graph.client())).rejects.toMatchObject({ code: "UNSUPPORTED_ACCOUNT" });
 	});
 
-	test("test_discovery_lists_whole_teams_and_names_only_canonical_ids", async () => {
+	test("discovery lists whole teams and names only canonical ids", async () => {
 		const graph = new FakeGraph();
 		const connector = teamsConnector();
 		const client = graph.client();
@@ -242,7 +243,7 @@ describe("connecting and discovery", () => {
 		}
 	});
 
-	test("test_channel_listings_follow_teams_page_tokens_up_to_a_cap", async () => {
+	test("channel listings follow Teams' page tokens up to a cap", async () => {
 		const graph = new FakeGraph();
 		graph.pageSize = 2;
 		const page = await teamsConnector().discover(graph.client(), "channel", { query: null, cursor: null });
@@ -252,7 +253,7 @@ describe("connecting and discovery", () => {
 		await expect(teamsConnector().discover(graph.client(), "channel", { query: null, cursor: null })).rejects.toMatchObject({ code: "PROVIDER_LIMIT" });
 	});
 
-	test("test_cursors_are_checked", () => {
+	test("cursors are checked", () => {
 		expect(pageParams(`t:${TOKEN}`)).toEqual({ $skiptoken: TOKEN });
 		for (const cursor of ["token:abc", "t:", "t:a b", `t:${"a".repeat(991)}`, "t:\u00e9"]) {
 			expect(() => pageParams(cursor), cursor).toThrow(expect.objectContaining({ code: "INVALID_CURSOR" }));
@@ -263,7 +264,7 @@ describe("connecting and discovery", () => {
 		}
 	});
 
-	test("test_scopes_follow_the_allowed_actions", () => {
+	test("scopes follow the allowed actions", () => {
 		const connector = teamsConnector();
 		const base = ["offline_access", "User.Read", "Team.ReadBasic.All", "Channel.ReadBasic.All"];
 		expect(requestedScopes(connector, new Set(["read"]))).toEqual([...base, "ChannelMessage.Read.All"]);
@@ -276,7 +277,7 @@ describe("connecting and discovery", () => {
 });
 
 describe("reading", () => {
-	test("test_a_team_grant_covers_its_channels", async () => {
+	test("a team grant covers its channels", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { [ENG]: ["read"] });
 		expect(await ids(run, "teams_list_teams", {})).toEqual([ENG]);
@@ -303,7 +304,7 @@ describe("reading", () => {
 		}
 	});
 
-	test("test_a_channel_is_reached_only_through_the_team_hosting_it", async () => {
+	test("a channel is reached only through the team hosting it", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { "*": ["read"] });
 		// Graph would answer for a channel under any team; Minerva asks only teams that host it.
@@ -311,7 +312,7 @@ describe("reading", () => {
 		expect(graph.reads("/messages")).toEqual([]);
 	});
 
-	test("test_denies_hold_inside_an_allowed_team_and_under_any_case", async () => {
+	test("denies hold inside an allowed team and under any case", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { "*": ["read"] }, { ceiling: [ceilingRow("channel", PRIVATE, "deny"), ceilingRow("channel", FIN, "deny")] });
 		expect(await ids(run, "teams_list_teams", {})).toEqual([ENG]);
@@ -326,7 +327,7 @@ describe("reading", () => {
 		expect(graph.reads("/messages")).toEqual([]);
 	});
 
-	test("test_messages_leave_out_events_strays_and_deleted_text", async () => {
+	test("messages leave out events, strays and deleted text", async () => {
 		const graph = new FakeGraph();
 		const first = graph.messages[GENERAL]?.[0] as JsonObject;
 		first.attachments = [
@@ -362,7 +363,7 @@ describe("reading", () => {
 		expect(graph.reads("/messages").at(-1)?.params.$top).toBe("20");
 	});
 
-	test("test_channel_pages_are_run_bound", async () => {
+	test("channel pages are run bound", async () => {
 		const graph = new FakeGraph();
 		graph.pageSize = 1;
 		const run = await start(graph, { [ENG]: ["read"] });
@@ -376,7 +377,7 @@ describe("reading", () => {
 		expect(await run.code("teams_read_channel", other)).toBe("INVALID_CURSOR");
 	});
 
-	test("test_threads_start_with_their_root_and_keep_only_its_replies", async () => {
+	test("threads start with their root and keep only its replies", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { [ENG]: ["read"] });
 		const args = { team_id: ENG, channel_id: GENERAL, message_id: "1001" };
@@ -393,7 +394,6 @@ describe("reading", () => {
 		}
 	});
 
-	// Beyond test_teams.py: these pin what the Python code does and its tests leave to chance.
 	test("a message Graph puts in another team's channel of the same id, a channel with an id Teams does not use, and a reaction without a type are left out", async () => {
 		const graph = new FakeGraph();
 		(graph.messages[GENERAL] as JsonObject[]).push(message("1005", GENERAL, SECRET, FIN), message("1006", GENERAL, "kept"));
@@ -410,7 +410,7 @@ describe("reading", () => {
 		expect(page.items.map((item) => item.id)).toEqual([ENG, GENERAL, PRIVATE, SHARED, FIN, BUDGET]);
 	});
 
-	test("test_text_hides_channels_teams_links_and_quotes", () => {
+	test("text hides channels, Teams links and quotes", () => {
 		const found = mentions(
 			[0, { user: { id: "u", displayName: "Ada" } }],
 			[1, { conversation: { id: "19:x@thread.tacv2", displayName: SECRET } }],
@@ -440,7 +440,7 @@ describe("reading", () => {
 		expect(read(null, "html", [])).toBe("");
 	});
 
-	test("test_hidden_elements_hide_what_they_nest_and_what_is_never_closed", () => {
+	test("hidden elements hide what they nest and what is never closed", () => {
 		const nested = `<a href="https://teams.microsoft.com/x"><a href="https://example.com">${SECRET}</a>${SECRET}</a> after`;
 		expect(read(nested, "html", [])).toBe("[Teams link] after");
 		expect(read(`before <at id="9">${SECRET}`, "html", [])).toBe("before @[channel]");
@@ -449,7 +449,7 @@ describe("reading", () => {
 		expect(read('<a href="https://example.com">open', "html", [])).toBe("open");
 	});
 
-	test("test_text_hides_repeated_attributes_plain_quotes_and_bare_teams_addresses", () => {
+	test("text hides repeated attributes, plain quotes and bare Teams addresses", () => {
 		const shown = mentions([0, { user: { id: "u", displayName: "Ada" } }]);
 		// Readers disagree on which of two values counts, so neither does.
 		expect(read(`<at id="0" id="1">${SECRET}</at>`, "html", shown)).toBe("@[channel]");
@@ -530,7 +530,7 @@ describe("reading", () => {
 });
 
 describe("writing", () => {
-	test("test_posts_are_escaped_and_never_mention_or_link_to_teams", async () => {
+	test("posts are escaped and never mention or link to Teams", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { [ENG]: ["read", "post", "reply"] });
 		const outcome = await items(run, "teams_post_message", { team_id: ENG, channel_id: GENERAL, text: '<at id="0">x</at> & <b>bold</b>\nnext' });
@@ -557,7 +557,7 @@ describe("writing", () => {
 		expect(graph.writes).toHaveLength(1);
 	});
 
-	test("test_replies_go_only_to_live_thread_roots_in_the_channel", async () => {
+	test("replies go only to live thread roots in the channel", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { [ENG]: ["read", "reply"] });
 		const args = { team_id: ENG, channel_id: GENERAL, message_id: "1001", text: "thanks" };
@@ -573,7 +573,7 @@ describe("writing", () => {
 		expect(graph.writes).toHaveLength(1);
 	});
 
-	test("test_tools_are_offered_with_their_consent", async () => {
+	test("tools are offered with their consent", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { [ENG]: ["read", "post", "reply"] }, { scopes: ["ChannelMessage.Send", "User.Read"] });
 		// Reading and replying need ChannelMessage.Read.All; listing and posting do not.
@@ -582,7 +582,7 @@ describe("writing", () => {
 		expect(graph.writes).toHaveLength(1);
 	});
 
-	test("test_shared_and_unknown_channels_are_not_written_to", async () => {
+	test("shared and unknown channels are not written to", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { [ENG]: ["read", "post", "reply"] });
 		expect(await run.code("teams_post_message", { team_id: ENG, channel_id: SHARED, text: "hello" })).toBe("EXTERNAL_CHANNEL");
@@ -594,7 +594,7 @@ describe("writing", () => {
 		expect(graph.writes).toEqual([]);
 	});
 
-	test("test_channels_are_checked_again_just_before_writing", async () => {
+	test("channels are checked again just before writing", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { [ENG]: ["read", "post", "reply"] });
 		let listings = 0;
@@ -619,7 +619,7 @@ describe("writing", () => {
 		expect(graph.writes).toEqual([]);
 	});
 
-	test("test_a_channel_denied_read_is_not_written_to", async () => {
+	test("a channel denied read is not written to", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { [ENG]: ["read", "post", "reply"] }, { ceiling: [ceilingRow("channel", GENERAL, "deny", ["read"])] });
 		expect(await ids(run, "teams_list_channels", {})).toEqual([PRIVATE, SHARED]);
@@ -630,7 +630,7 @@ describe("writing", () => {
 		expect(graph.writes).toEqual([]);
 	});
 
-	test("test_a_post_graph_places_elsewhere_counts_without_a_result", async () => {
+	test("a post Graph places elsewhere counts without a result", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { [ENG]: ["read", "post"] });
 		graph.hook = (method, path) => {
@@ -642,5 +642,543 @@ describe("writing", () => {
 		expect(outcome.result.outcome).toBe("applied_without_result");
 		expect(outcome.result.items).toEqual([]);
 		expect(graph.writes).toHaveLength(1);
+	});
+});
+
+// Addresses to Teams: a Teams link the agent cannot see behind may show a message or channel it may not read.
+const REPLACED: [string, string][] = [
+	["teams.microsoft.com", "[Teams link]"],
+	["TEAMS.MICROSOFT.COM", "[Teams link]"],
+	["Teams.Microsoft.Com", "[Teams link]"],
+	["teams.microsoft.us", "[Teams link]"],
+	["teams.live.com", "[Teams link]"],
+	["teams.cloud.microsoft", "[Teams link]"],
+	["teams.microsoftonline.cn", "[Teams link]"],
+	["teams.office.com", "[Teams link]"],
+	["msteams:", "[Teams link]"],
+	["MSTEAMS:", "[Teams link]"],
+	["msteams://x", "[Teams link]"],
+	["xteams.microsoft.com", "[Teams link]"],
+	["teams.microsoft.comx", "[Teams link]"],
+	["teams.microsoft.com.evil.example", "[Teams link]"],
+	["teams.microsoft\\.com", "[Teams link]"],
+	["teams\\.microsoft.com", "[Teams link]"],
+	["teams%2Emicrosoft%2Ecom", "[Teams link]"],
+	["teams%2emicrosoft%2ecom", "[Teams link]"],
+	["teams%252Emicrosoft%252Ecom", "[Teams link]"],
+	["teams%25252Emicrosoft%25252Ecom", "[Teams link]"],
+	["%74eams.microsoft.com", "[Teams link]"],
+	["%54EAMS.microsoft.com", "[Teams link]"],
+	["teams.microsoft.%63om", "[Teams link]"],
+	["teams.microsoft.c%6fm", "[Teams link]"],
+	["msteams%3A", "[Teams link]"],
+	["msteams%3a//x", "[Teams link]"],
+	["msteams%253A", "[Teams link]"],
+	["teams&#46;microsoft&#46;com", "[Teams link]"],
+	["teams&#x2E;microsoft&#x2E;com", "[Teams link]"],
+	["teams&period;microsoft&period;com", "[Teams link]"],
+	["teams&amp;#46;microsoft&amp;#46;com", "[Teams link]"],
+	["te&#97;ms.microsoft.com", "[Teams link]"],
+	["teams&NewLine;.microsoft.com", "[Teams link]"],
+	["teams.microsoft.com&nbsp;x", "[Teams link]"],
+	["mste&#97;ms:", "[Teams link]"],
+	["&#109;steams:", "[Teams link]"],
+	["teams\uff0emicrosoft\uff0ecom", "[Teams link]"],
+	["teams\u3002microsoft\u3002com", "[Teams link]"],
+	["teams\uff61microsoft\uff61com", "[Teams link]"],
+	["teams\uff0emicrosoft.com", "[Teams link]"],
+	["\uff54\uff45\uff41\uff4d\uff53.microsoft.com", "[Teams link]"],
+	["\u{1d42d}\u{1d41e}\u{1d41a}\u{1d426}\u{1d42c}.microsoft.com", "[Teams link]"],
+	["teams.microsoft.\u{1d41c}\u{1d428}\u{1d426}", "[Teams link]"],
+	["te\u200bams.microsoft.com", "[Teams link]"],
+	["te\u200cams.microsoft.com", "[Teams link]"],
+	["te\u200dams.microsoft.com", "[Teams link]"],
+	["te\u00adams.microsoft.com", "[Teams link]"],
+	["te\u2060ams.microsoft.com", "[Teams link]"],
+	["te\ufeffams.microsoft.com", "[Teams link]"],
+	["te\u202eams.microsoft.com", "[Teams link]"],
+	["te\u{e0041}ams.microsoft.com", "[Teams link]"],
+	["te\\ams.microsoft.com", "[Teams link]"],
+	["te%09ams.microsoft.com", "[Teams link]"],
+	["te%0Aams.microsoft.com", "[Teams link]"],
+	["te%0dams.microsoft.com", "[Teams link]"],
+	["te&#9;ams.microsoft.com", "[Teams link]"],
+	["te&#10;ams.microsoft.com", "[Teams link]"],
+	["te&Tab;ams.microsoft.com", "[Teams link]"],
+	["te%2509ams.microsoft.com", "[Teams link]"],
+	["TEAM\u017f.microsoft.com", "[Teams link]"],
+	["teams.m\u0130crosoft.com", "[Teams link]"],
+	["teams.m\u0131crosoft.com", "[Teams link]"],
+	["teams.mIcrosoft.com", "[Teams link]"],
+	["teams.m\uff49crosoft.com", "[Teams link]"],
+	["teams.m\u2170crosoft.com", "[Teams link]"],
+	["teams.m\u2148crosoft.com", "[Teams link]"],
+	["teams.m\u{1d422}crosoft.com", "[Teams link]"],
+	["\ufb06eams.microsoft.com", "[Teams link]"],
+	["\ufb05eams.microsoft.com", "[Teams link]"],
+	["teams.microsoft\u2024com", "[Teams link]"],
+	["teams.microsoft\ufe52com", "[Teams link]"],
+	["teams.microsoft.c\uff4fm", "[Teams link]"],
+	["teams.microsoft.\u24d2om", "[Teams link]"],
+	["teams.microsoft.com\uff0f", "[Teams link]"],
+	["teams.microsoft.com/l/channel/19%3aabc@thread.tacv2", "[Teams link]"],
+	["https://teams.microsoft.com/l/channel/x", "[Teams link]"],
+	["https://dod.teams.microsoft.us/l/x", "[Teams link]"],
+	["https://teams.microsoftonline.cn/l/x", "[Teams link]"],
+	["https://TEAMS.LIVE.COM/x", "[Teams link]"],
+	["http://teams.microsoft.com", "[Teams link]"],
+	["//teams.microsoft.com", "[Teams link]"],
+	["teams.microsoft.com:443/x", "[Teams link]"],
+	["user@teams.microsoft.com", "[Teams link]"],
+	["https://user:pw@teams.microsoft.com/x", "[Teams link]"],
+	["?u=teams.microsoft.com", "[Teams link]"],
+	["#teams.microsoft.com", "[Teams link]"],
+	["x.y/teams.microsoft.com", "[Teams link]"],
+	["msteams:x:y", "[Teams link]"],
+	["teamsmsteams:", "[Teams link]"],
+	["teams.microsoft.com\u0300", "[Teams link]"],
+	["teams.microsoft.com\u200b", "[Teams link]"],
+	["\u{1f600}teams.microsoft.com\u{1f600}", "[Teams link]"],
+	["see teams.microsoft.com ok", "see [Teams link] ok"],
+	["see MSTEAMS: ok", "see [Teams link] ok"],
+	["see teams%25252Emicrosoft%25252Ecom ok", "see [Teams link] ok"],
+	["see teams.microsoft.com, ok", "see [Teams link] ok"],
+	["see MSTEAMS:, ok", "see [Teams link] ok"],
+	["see teams%25252Emicrosoft%25252Ecom, ok", "see [Teams link] ok"],
+	["see (teams.microsoft.com) ok", "see [Teams link] ok"],
+	["see (MSTEAMS:) ok", "see [Teams link] ok"],
+	["see (teams%25252Emicrosoft%25252Ecom) ok", "see [Teams link] ok"],
+	["xMSTEAMS:", "[Teams link]"],
+	["xteams%25252Emicrosoft%25252Ecom", "[Teams link]"],
+	["MSTEAMS:x", "[Teams link]"],
+	["teams%25252Emicrosoft%25252Ecomx", "[Teams link]"],
+	["a teams.microsoft.com b teams.microsoft.com c", "a [Teams link] b [Teams link] c"],
+	["a MSTEAMS: b MSTEAMS: c", "a [Teams link] b [Teams link] c"],
+	["a teams%25252Emicrosoft%25252Ecom b teams%25252Emicrosoft%25252Ecom c", "a [Teams link] b [Teams link] c"],
+	["line one\nteams.microsoft.com\nline three", "line one\n[Teams link]\nline three"],
+	["line one\nMSTEAMS:\nline three", "line one\n[Teams link]\nline three"],
+	["line one\nteams%25252Emicrosoft%25252Ecom\nline three", "line one\n[Teams link]\nline three"],
+	["teams.microsoft.com\tteams.microsoft.com", "[Teams link]\t[Teams link]"],
+	["MSTEAMS:\tMSTEAMS:", "[Teams link]\t[Teams link]"],
+	["teams%25252Emicrosoft%25252Ecom\tteams%25252Emicrosoft%25252Ecom", "[Teams link]\t[Teams link]"],
+	["a\u00a0teams.microsoft.com\u00a0b", "a\u00a0[Teams link]\u00a0b"],
+	["a\u00a0MSTEAMS:\u00a0b", "a\u00a0[Teams link]\u00a0b"],
+	["a\u00a0teams%25252Emicrosoft%25252Ecom\u00a0b", "a\u00a0[Teams link]\u00a0b"],
+	["  teams.microsoft.com  ", "  [Teams link]  "],
+	["  MSTEAMS:  ", "  [Teams link]  "],
+	["  teams%25252Emicrosoft%25252Ecom  ", "  [Teams link]  "],
+	["a teams.microsoft.com\r\nb", "a [Teams link]\r\nb"],
+	["a MSTEAMS:\r\nb", "a [Teams link]\r\nb"],
+	["a teams%25252Emicrosoft%25252Ecom\r\nb", "a [Teams link]\r\nb"],
+	["a  teams.microsoft.com  b", "a  [Teams link]  b"],
+	["a  MSTEAMS:  b", "a  [Teams link]  b"],
+	["a  teams%25252Emicrosoft%25252Ecom  b", "a  [Teams link]  b"],
+	["(a)teams.microsoft.com(b)", "[Teams link]"],
+	["(a)MSTEAMS:(b)", "[Teams link]"],
+	["(a)teams%25252Emicrosoft%25252Ecom(b)", "[Teams link]"],
+	["a\u2003teams.microsoft.com\u2003b", "a\u2003[Teams link]\u2003b"],
+	["a\u2003MSTEAMS:\u2003b", "a\u2003[Teams link]\u2003b"],
+	["a\u2003teams%25252Emicrosoft%25252Ecom\u2003b", "a\u2003[Teams link]\u2003b"],
+	["see teams.microsoft.com and plain words and msteams: here", "see [Teams link] and plain words and [Teams link] here"],
+	["\ufeff teams.microsoft.com", "\ufeff [Teams link]"],
+	["x\u200bteams.microsoft.com", "[Teams link]"],
+	["word\u200bword teams.microsoft.com", "word\u200bword [Teams link]"],
+	["line one\nteams.m\uff49croso\u200bft.com\nline three", "line one\n[Teams link]\nline three"],
+	["http s://dod.teams.microsoft.us/l/x\thttp s://dod.teams.microsoft.us/l/x", "http [Teams link]\thttp [Teams link]"],
+	["line one\nmsteams:/\u00ad/x\nline three", "line one\n[Teams link]\nline three"],
+	["see \u00adteams%252Emicrosoft%252Ecom, ok", "see [Teams link] ok"],
+	["(a)teams.microsoft.com/l/channe\tl/19%3aabc@thread.tacv2(b)", "[Teams link]\tl/19%3aabc@thread.tacv2(b)"],
+	["xT&#10;eams.Microsoft.Com", "[Teams link]"],
+	["a teams\uff61\u200bmicrosoft\uff61com\r\nb", "a [Teams link]\r\nb"],
+	["see teams\uff0emi\u00adcrosoft.com ok", "see [Teams link] ok"],
+	["https\uff0e://TEAMS.LIVE.COM/xx", "[Teams link]"],
+	["see (te\u00adams.micros\u200boft.com) ok", "see [Teams link] ok"],
+	["a te\u00ad\u{e0041}ams.microsoft.com b te\u00ad\u{e0041}ams.microsoft.com c", "a [Teams link] b [Teams link] c"],
+	["&#10;teams.m\u2170crosoft.com\t&#10;teams.m\u2170crosoft.com", "[Teams link]\t[Teams link]"],
+	["see teams.microsoft.c\\om:443/x, ok", "see [Teams link] ok"],
+	["a \nmsteams%253A b \nmsteams%253A c", "a \n[Teams link] b \n[Teams link] c"],
+	["a\u00a0&#10;te\u00adams.microsoft.com\u00a0b", "a\u00a0[Teams link]\u00a0b"],
+	["line one\nteams.microsoftonline.\u00adcn\nline three", "line one\n[Teams link]\nline three"],
+	["a\u2003teams%2Emi\u200bcrosoft%2Ecom\u2003b", "a\u2003[Teams link]\u2003b"],
+	["a\u2003teams&#46;micros\\oft&#46;com\u2003b", "a\u2003[Teams link]\u2003b"],
+	["http:/%25/teams.microsoft.com", "[Teams link]"],
+	["xte\u{e0041}ams.mi\u00adcrosoft.com", "[Teams link]"],
+	["a \uff54\uff45\uff41\uff4d\uff53.microsoft.com%\r\nb", "a [Teams link]\r\nb"],
+	["a  teams\u00ad.microsoft.us  b", "a  [Teams link]  b"],
+	["teams%252Emicrosof&#10;t%252Ecom", "[Teams link]"],
+	["te\ufeff&#10;ams.microsoft.com", "[Teams link]"],
+	["user@teams.microsoft.co\u200bm", "[Teams link]"],
+];
+
+/** Addresses broken across lines: hidden by nothing, but refused in what agents write. */
+const SPLIT = [
+	"te\tams.microsoft.com",
+	"te\nams.microsoft.com",
+	"te\rams.microsoft.com",
+	"te\r\nams.microsoft.com",
+	"teams.m\uff49cros\noft.comx",
+	"a\u00a0te\ram\ns.microsoft.com\u00a0b",
+	"a \ufb06eams.\nmicrosoft.com\r\nb",
+	"see xteams.micro\rsoft.com ok",
+	"a  x.y/teams.micro\nsoft.com  b",
+	"TEAMS.M\nICROSOFT.COMx",
+	"line one\nte\u2060ams.mic\trosoft.com\nline three",
+	"a\u2003team\ts.live.com\u2003b",
+	"te&#9;ams.micr\nosoft.com\tte&#9;ams.micr\nosoft.com",
+	"a %54EAMS\r.microsoft.com\r\nb",
+];
+
+/** Text that is no address to Teams. */
+const KEPT = [
+	"teams.microsoft.org",
+	"teams.microsoftonline.com",
+	"teams.microsoft",
+	"teams.microsof",
+	"eams.microsoft.com",
+	"teams microsoft com",
+	"teams-microsoft.com",
+	"teams_microsoft.com",
+	"teamsXmicrosoft.com",
+	"msteams",
+	"msteams;",
+	"ms-teams:",
+	"msteam:",
+	"teams%2525252Emicrosoft%2525252Ecom",
+	"te\u00a0ams.microsoft.com",
+	"te\u2028ams.microsoft.com",
+	"te ams.microsoft.com",
+	"te%0009ams.microsoft.com",
+	"\u212aams.microsoft.com",
+	"teams.\u212aicrosoft.com",
+	"teams.mi\u212arosoft.com",
+	"\u017feams.microsoft.com",
+	"te\ufb06.microsoft.com",
+	"teams.microsoft\u2025com",
+	"teams.micro\ufb06.com",
+	"\u212b",
+	"\u2126",
+	"mi\u{1d4e2}rosoft",
+	"teams.microsoft.\u33c7m",
+	"example.com",
+	"https://example.com/a?b=c",
+	"plain",
+	"",
+	" ",
+	"see",
+	"ms",
+	"teams",
+	"microsoft",
+	"com",
+	".",
+	":",
+	"t.e.a.m.s",
+	"caf\u00e9",
+	"%",
+	"%%",
+	"%2",
+	"%2E",
+	"%zz",
+	"%e0%a4%a",
+	"%ff%fe",
+	"&",
+	"&#",
+	"&#x;",
+	"&#9999999999;",
+	"&bogus;",
+	"&amp",
+	"&amp;amp;amp;amp;",
+	"%2525252525252E",
+	"see teams_microsoft.com ok",
+	"see ms-teams: ok",
+	"see teams_microsoft.com, ok",
+	"see ms-teams:, ok",
+	"see (teams_microsoft.com) ok",
+	"see (ms-teams:) ok",
+	"xteams_microsoft.com",
+	"xms-teams:",
+	"teams_microsoft.comx",
+	"ms-teams:x",
+	"a teams_microsoft.com b teams_microsoft.com c",
+	"a ms-teams: b ms-teams: c",
+	"line one\nteams_microsoft.com\nline three",
+	"line one\nms-teams:\nline three",
+	"teams_microsoft.com\tteams_microsoft.com",
+	"ms-teams:\tms-teams:",
+	"a\u00a0teams_microsoft.com\u00a0b",
+	"a\u00a0ms-teams:\u00a0b",
+	"  teams_microsoft.com  ",
+	"  ms-teams:  ",
+	"a teams_microsoft.com\r\nb",
+	"a ms-teams:\r\nb",
+	"a  teams_microsoft.com  b",
+	"a  ms-teams:  b",
+	"(a)teams_microsoft.com(b)",
+	"(a)ms-teams:(b)",
+	"a\u2003teams_microsoft.com\u2003b",
+	"a\u2003ms-teams:\u2003b",
+	"\u180e x",
+	"a\u180eb",
+	"a\u1680b",
+	"a\u205fb",
+	"a\u3000b",
+	"a\u202fb",
+	"a\u200ab",
+	"a\u2007b",
+	"a\u00a0b",
+	"a\u00a0te ams.m\ticrosoft.com\u00a0b",
+	"line one\n&;#109;steams:\nline three",
+	"  #teams.microsof#t.com  ",
+	"tea%25ms.mIcrosoft.com\ttea%25ms.mIcrosoft.com",
+	"xteams.microsof\uff0et.comx",
+	"see (%25ms) ok",
+	"te\u00a0ams#.microsoft.comx",
+	"tea\u00adms microsoft comx",
+	"a\u2003 \n\u2003b",
+	"(a)ms-teams\t:(b)",
+	"microsof&tx",
+	"teamsXmicroso\rft.com\tteamsXmicroso\rft.com",
+	" teams.micro\ufb06.com\t teams.micro\ufb06.com",
+	"a\u2003teamxs.microsoft\u2024com\u2003b",
+	"see example.co%0am, ok",
+	"a t%eams.mIcrosoft.com\r\nb",
+	"a teams.mIcrosoft.#com\r\nb",
+	"a\u00a0te%0Aams.microsoft.co;m\u00a0b",
+	"xteamsXmicro%0asoft.com",
+	"MSTEA%MS:",
+	"line one\nte%&0dams.microsoft.com\nline three",
+	"a  Teams.%Microsoft.Com  b",
+	"xs\uff0eee",
+	"see  &#10;, ok",
+	"see teams.micros\uff0eoft.org ok",
+	"(a)te\r%\nams.microsoft.com(b)",
+	"teams.m\u0131cxrosoft.com",
+	"a Teams.Microsoft.Co%m b Teams.Microsoft.Co%m c",
+	"x\ufb06eams.microsoft.cxom",
+	"see teams.clo&ud.microsoft ok",
+	"a team%25s.microsoft.com/l/channel/19%3aabc@thread.tacv2\r\nb",
+	"mi\u{1d4e2}roso\\ftx",
+	"see (t eams.mIcrosoft.com) ok",
+	"xte#\rams.microsoft.com",
+	"(a)teams &#x2E;microsoft&#x2E;com(b)",
+	"(a)teams%25(b)",
+	"a  https://user:pw@teams.microsoft.c\uff0eom/x  b",
+	"xcom&#10;",
+	"line one\nte\u200dam.s.microsoft.com\nline three",
+	"see (tex\u00a0ams.microsoft.com) ok",
+	"a te\u2060am;s.microsoft.com b te\u2060am;s.microsoft.com c",
+	"(a)Teams.Micr.osoft.Com(b)",
+	"see (teams&period;microsof&t&period;com) ok",
+	"see teams&%#46;microsoft&#46;com ok",
+	"see te\u2028ams.micr\\osoft.com ok",
+	"see https://teams.microsoft.co.m/l/channel/x ok",
+	"a teams%2&#10;Emicrosoft%2Ecom\r\nb",
+	"see msteams%25.3A ok",
+	"line one\nteams.m#icrosoft.%63om\nline three",
+	"m%icrosoft",
+	"  c\\om  ",
+	"a teams microsoft com\u200b\r\nb",
+	"a teams.mx\u{1d422}crosoft.com b teams.mx\u{1d422}crosoft.com c",
+	"a te%ams.microsoft.com&nbsp;x\r\nb",
+	"see msteams\u00ad, ok",
+	"a  tea#ms  b",
+	"a\u00a0ht#tps://example.com/a?b=c\u00a0b",
+	"see (teams.%25microsoft.\u33c7m) ok",
+	"see (te%0xAams.microsoft.com) ok",
+	"line one\nteams&#46;m icrosoft&#46;com\nline three",
+	"line one\nteams.m%icrosoft\nline three",
+	"  \u212b   ",
+	"a teams.micro%25softonline.cn\r\nb",
+	"xmi\u200b\u{1d4e2}rosoft",
+	"tea&ms.m\uff49crosoft.comx",
+];
+
+/** Control characters other than tab and line breaks, which checkWritten refuses first. */
+const CONTROLS = /[\0-\x08\v\f\x0e-\x1f\x7f]/;
+
+describe("addresses to Teams", () => {
+	test("are replaced in any spelling browsers, Teams or decoders read as one", () => {
+		expect(REPLACED.filter(([text, shown]) => redact(text) !== shown || !toTeams(text))).toEqual([]);
+		// Long text around them, and many of them.
+		const address = "teams.microsoft.com";
+		for (const text of [address.repeat(100), `${"x".repeat(10_000)}${address}`, `${address}${"x".repeat(10_000)}`]) expect(redact(text)).toBe("[Teams link]");
+	});
+
+	test("broken across lines, count as addresses but are left as they are", () => {
+		expect(SPLIT.filter((text) => redact(text) !== text || !toTeams(text))).toEqual([]);
+	});
+
+	test("other text is left alone", () => {
+		expect(KEPT.filter((text) => redact(text) !== text || toTeams(text))).toEqual([]);
+		expect(redact("%25".repeat(2000))).toBe("%25".repeat(2000));
+	});
+
+	test("each letter of an address matches itself in either case, ſ for s (Unicode folds it), and İ and ı for i (which readers may take for it)", () => {
+		const extra: { [letter: string]: number[] } = { i: [0x130, 0x131], s: [0x17f] };
+		const wrong: string[] = [];
+		for (const address of ["msteams:", "teams.cloud.microsoft", "teams.live.com", "teams.microsoft.com", "teams.microsoftonline.cn", "teams.office.com"]) {
+			for (let at = 0; at < address.length; at++) {
+				const letter = address.charAt(at);
+				const expected = new Set([letter.toLowerCase(), letter.toUpperCase()].map((char) => char.codePointAt(0) as number).concat(extra[letter] ?? []));
+				for (let point = 0; point < 0x30000; point++) {
+					if (point >= 0xd800 && point <= 0xdfff) continue;
+					const matched = TEAMS.test(address.slice(0, at) + String.fromCodePoint(point) + address.slice(at + 1));
+					if (matched !== expected.has(point)) wrong.push(`${address}[${at}] U+${point.toString(16)}`);
+				}
+			}
+		}
+		expect(wrong).toEqual([]);
+	});
+});
+
+describe("text agents write", () => {
+	const LINK = "must not link to Teams: Teams may show the linked message or channel, which may be one you may not read";
+	const CONTROL = "must not contain control characters other than tabs and newlines";
+	const checked = (text: string) => {
+		try {
+			return checkWritten(text);
+		} catch (error) {
+			if (error instanceof TextError) return error.message;
+			throw error;
+		}
+	};
+
+	test("refuses every address to Teams, split ones included, and control characters other than tabs and line breaks", () => {
+		const addresses = [...REPLACED.map(([text]) => text), ...SPLIT].filter((text) => !CONTROLS.test(text));
+		expect(addresses.filter((text) => checked(text) !== LINK)).toEqual([]);
+		for (const text of ["\0", "\x01", "\x07", "\b", "\v", "\f", "\x0e", "\x1f", "\x7f", "bell \x07", "teams.microsoft.com\x07"]) expect(checked(text), JSON.stringify(text)).toBe(CONTROL);
+	});
+
+	test("accepts the rest as it is", () => {
+		const accepted = [
+			...KEPT.filter((text) => !CONTROLS.test(text)),
+			"",
+			"a & b",
+			'<at id="0">x</at>',
+			"'single' \"double\"",
+			"line one\r\nline two\rthree\n",
+			"tab\tchar",
+			"\u0080\u0085 ​ \u{1f600}",
+			"&amp;&lt;&#65;",
+			"te ams.microsoft.com",
+			"x".repeat(4001),
+		];
+		expect(accepted.filter((text) => checked(text) !== text)).toEqual([]);
+	});
+
+	test("is sent as HTML: escaped, with line breaks as <br>", () => {
+		const cases: [string, string][] = [
+			["a & b", "a &amp; b"],
+			['<at id="0">x</at>', "&lt;at id=&quot;0&quot;&gt;x&lt;/at&gt;"],
+			["'single' \"double\"", "&#x27;single&#x27; &quot;double&quot;"],
+			["line one\nline two", "line one<br>line two"],
+			["a\r\n\r\nb", "a<br><br>b"],
+			["a\rb\tc", "a\rb\tc"],
+			["&amp; &#65; &", "&amp;amp; &amp;#65; &amp;"],
+			["t\te\na\rm\ts.microsoft.com", "t\te<br>a\rm\ts.microsoft.com"],
+			["<".repeat(4000), "&lt;".repeat(4000)],
+			["café \u{1f600}", "café \u{1f600}"],
+		];
+		expect(cases.map(([text]) => [text, written(text)])).toEqual(cases);
+	});
+});
+
+describe("tool inputs", () => {
+	const THREAD = { team_id: ENG, channel_id: GENERAL };
+
+	test("team ids are GUIDs, read in lower case", async () => {
+		for (const team_id of [ENG, ENG.toUpperCase(), ` ${ENG} `, `${ENG}\n`]) {
+			expect(await validated(teamsConnector(), "list_channels", { team_id })).toEqual({ ok: { team_id: ENG } });
+		}
+		expect(await validated(teamsConnector(), "list_channels", {})).toEqual({ ok: { team_id: null } });
+		expect(await validated(teamsConnector(), "list_channels", { team_id: "AAAAAAAA-0000-0000-0000-00000000000A" })).toEqual({ ok: { team_id: "aaaaaaaa-0000-0000-0000-00000000000a" } });
+		for (const team_id of [
+			"",
+			"eng",
+			ENG.slice(0, -1),
+			`${ENG}0`,
+			ENG.replaceAll("-", ""),
+			"gggggggg-0000-0000-0000-000000000001",
+			`${ENG.slice(0, -1)}١`,
+			`ａ${ENG.slice(1)}`,
+			`K${ENG.slice(1)}`,
+			`А${ENG.slice(1).toUpperCase()}`,
+			"a".repeat(36),
+			"-".repeat(36),
+			" ".repeat(36),
+			5,
+		]) {
+			expect(await validated(teamsConnector(), "list_channels", { team_id }), JSON.stringify(team_id)).toEqual({ refused: expect.stringContaining("team_id") });
+		}
+	});
+
+	test("channel ids are Teams' 19:…@thread ids, as given", async () => {
+		for (const channel_id of [GENERAL, "19:GENERAL0001@thread.tacv2", "19:x@thread.tacv2", "19:a@thread.x", "19:a@thread.tacv2x", "19:a.b_c=d+e-f@thread.skype", "19:a@thread.v2"]) {
+			expect(await validated(teamsConnector(), "read_channel", { team_id: ENG, channel_id }), channel_id).toEqual({ ok: { team_id: ENG, channel_id, limit: 20, cursor: null } });
+		}
+		expect(await validated(teamsConnector(), "read_channel", { team_id: ENG, channel_id: ` ${GENERAL}\n` })).toEqual({ ok: { team_id: ENG, channel_id: GENERAL, limit: 20, cursor: null } });
+		for (const channel_id of [
+			"",
+			"bad",
+			"General",
+			"19:GENERAL0001@THREAD.TACV2",
+			"19:@thread.tacv2",
+			"19:a@thread.",
+			"19:a@thread.TACV2",
+			"19:a@thread.tac_v2",
+			"19:a b@thread.tacv2",
+			"19:aé@thread.tacv2",
+			"18:a@thread.tacv2",
+			"19:a%40thread.tacv2",
+			"19:a@Thread.tacv2",
+			"19:a@thread.١",
+			null,
+			5,
+		]) {
+			expect(await validated(teamsConnector(), "read_channel", { team_id: ENG, channel_id }), JSON.stringify(channel_id)).toEqual({ refused: expect.stringContaining("channel_id") });
+		}
+	});
+
+	test("limits, cursors and message ids", async () => {
+		const thread = (args: { [key: string]: Json }) => validated(teamsConnector(), "read_thread", { ...THREAD, message_id: "1001", ...args });
+		expect(await thread({ limit: 50, cursor: " t:abc " })).toEqual({ ok: { ...THREAD, message_id: "1001", limit: 50, cursor: "t:abc" } });
+		expect(await thread({ cursor: `t:${"a".repeat(990)}` })).toEqual({ ok: { ...THREAD, message_id: "1001", limit: 20, cursor: `t:${"a".repeat(990)}` } });
+		expect(await thread({ message_id: "1".repeat(20) })).toEqual({ ok: { ...THREAD, message_id: "1".repeat(20), limit: 20, cursor: null } });
+		for (const limit of [0, 51, -1, null, "5", 5.5, true, [], {}]) expect(await thread({ limit }), JSON.stringify(limit)).toEqual({ refused: expect.stringContaining("limit") });
+		for (const cursor of ["x".repeat(1001), 5, {}]) expect(await thread({ cursor }), JSON.stringify(cursor)).toEqual({ refused: expect.stringContaining("cursor") });
+		for (const message_id of ["", " ", "1".repeat(21), "abc", "-1", "+1", "1.5", "1e3", "1 2", "1_0", "1²", "١", "0x10", null, 1001, true]) {
+			expect(await thread({ message_id }), JSON.stringify(message_id)).toEqual({ refused: expect.stringContaining("message_id") });
+		}
+		expect(await thread({ extra: 1 })).toEqual({ refused: expect.stringContaining("extra") });
+		expect(await validated(teamsConnector(), "list_teams", [])).toEqual({ refused: expect.stringContaining("input") });
+	});
+
+	test("posts are trimmed, at most 4000 UTF-16 units, and checked as written text", async () => {
+		const post = (text: Json) => validated(teamsConnector(), "post_message", { ...THREAD, text });
+		expect(await post(" hello ")).toEqual({ ok: { ...THREAD, text: "hello" } });
+		for (const text of ["a\nb", "a\tb", "a\rb", "<b>x</b>", "x".repeat(4000), "\u{1f600}".repeat(2000)]) expect(await post(text)).toEqual({ ok: { ...THREAD, text } });
+		for (const text of ["", " ", "x".repeat(4001), "\u{1f600}".repeat(2001), "a\u0000b", "a\u001bb", "a\vb", "see teams.microsoft.com/x", "msteams://x", 5]) {
+			expect(await post(text), JSON.stringify(text).slice(0, 40)).toEqual({ refused: expect.stringContaining("text") });
+		}
+		expect(await validated(teamsConnector(), "reply", { ...THREAD, message_id: "1001", text: "see TEAMS.LIVE.COM/x" })).toEqual({ refused: expect.stringContaining("must not link to Teams") });
+	});
+});
+
+describe("bounds", () => {
+	test("a link never closed around two hundred thousand pieces of text is shown", () => {
+		// Before: the label's pieces were spread into push(), and that many arguments overflow the stack.
+		const text = read(`<a href="https://example.com/">${"y<br>".repeat(200_000)}`, "html", []);
+		expect(text.startsWith("y\ny\n")).toBe(true);
+	});
+
+	test("nested links show each address after its label, in about linear time", () => {
+		const H = "https://example.com/";
+		expect(read(`<a href=" ${H} ">a<a href="${H}b">  b <b>c</b>  </a>  </a>tail`, "html", [])).toBe(`ab c (${H}b) ( ${H} )tail`);
+		expect(read(`<a href="">  </a>q<a href="${H}"> </a>`, "html", [])).toBe(`q${H}`);
+		// Before: each closing link joined its whole label again, so the text was copied once per level.
+		const depth = 100_000;
+		const started = performance.now();
+		const text = read(`${`<a href="${H}">`.repeat(depth)}x${"</a>".repeat(depth)}`, "html", []);
+		expect(performance.now() - started).toBeLessThan(2000);
+		expect(text === `x${` (${H})`.repeat(depth)}`).toBe(true);
 	});
 });
