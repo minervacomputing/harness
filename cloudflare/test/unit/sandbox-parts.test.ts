@@ -3,8 +3,7 @@
 // the image must agree with (cloudflare/container/Dockerfile).
 
 import { describe, expect, test } from "vitest";
-import type { SandboxSpec } from "../../src/contracts/sandbox.ts";
-import { COMMAND_PATH, sandboxSpec, workspaceBytes } from "../../src/sandbox/constants.ts";
+import { COMMAND_PATH, type SandboxSpec, sandboxSpec, workspaceBytes } from "../../src/sandbox/constants.ts";
 import { hardeningArgv, hardeningReport, mounts, verificationReport } from "../../src/sandbox/hardening.ts";
 import { type Delivered, newlines, OutputPump, SpillCounter, splitTail, StreamText, utf8Length } from "../../src/sandbox/output.ts";
 import { join, normalize, resolve, resolvePath } from "../../src/sandbox/paths.ts";

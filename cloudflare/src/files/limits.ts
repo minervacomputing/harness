@@ -1,8 +1,10 @@
 // The constants and messages of agent files. The limits that are settings come from config.ts
 // (`Settings.files`); the rest are constants.
 
-import type { FolderLimit } from "../contracts/files.ts";
 import { NO_LONGER_AVAILABLE, NO_ROOM, sizeText } from "../workspace/limits.ts";
+
+/** The four limits a folder can hit; the same strings everywhere. */
+export type FolderLimit = "folder_bytes" | "folder_entries" | "run_uploads" | "workspace";
 
 export { NO_LONGER_AVAILABLE, NO_ROOM, sizeText };
 

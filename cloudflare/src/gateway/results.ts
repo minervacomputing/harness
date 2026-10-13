@@ -2,17 +2,70 @@
 // cards, and how a result becomes the model's content. The text the model reads is the result's JSON, or
 // the error's message.
 
-import type { RunId } from "../contracts/common.ts";
-import type { CoreErrorCode, ErrorCode } from "../contracts/connectors.ts";
-import type { ToolCallAllowed, ToolCallRefused } from "../contracts/events.ts";
-import type { DeniedCode, ToolCallOutcome, ToolResult } from "../contracts/executor.ts";
-import type { ToolRef } from "../contracts/runs.ts";
 import { saltedHmacHex } from "../lib/hash.ts";
 import { isDict, type Json, type JsonObject } from "../lib/json.ts";
 import { sliceText } from "../lib/text.ts";
-import { OperationError } from "./connector.ts";
+import type { RunId } from "../shared/rpc.ts";
+import { type CoreErrorCode, type ErrorCode, OperationError } from "./connector.ts";
+import type { ToolCallOutcome } from "./executor.ts";
 import type { Registry } from "./registry.ts";
-import { toolLabel } from "./tools.ts";
+import { type ToolRef, toolLabel } from "./tools.ts";
+
+/**
+ * `tool_call`: a connector tool call that **finished** (there is no "started" event), appended only while
+ * the run is active, also for a call started by a replaced attempt, and never for `RUN_ENDED`.
+ * The chat uses `tool`, `label`, `arguments`, `decision`, `message`, `write` and `repeat`.
+ */
+export type ToolCallEventData = ToolCallAllowed | ToolCallRefused;
+
+type ToolCallBase = {
+	/** The tool name cut to 64 characters, e.g. `todoist2_list_tasks`. */
+	tool: string;
+	/** `Todoist (2): List tasks`; the bare (cut) name for an unknown tool. */
+	label: string;
+	/** The arguments, or `{truncated: <first 2000 characters of their JSON>}` when their JSON is longer. */
+	arguments: { [key: string]: Json } | { truncated: string };
+};
+
+export type ToolCallAllowed = ToolCallBase & {
+	decision: "allowed";
+	title: string;
+	count: number | null;
+	/** For a write: 32 hex, a keyed hash of (run, write key); the same for a write and its repeat, different across runs. */
+	write?: string;
+	/** The same write asked for again, answered from the run's record. */
+	repeat?: true;
+};
+
+export type ToolCallRefused = ToolCallBase & {
+	/** `denied` exactly for the codes in `DeniedCode`, `error` for every other failure. */
+	decision: "denied" | "error";
+	code: string;
+	message: string;
+};
+
+/**
+ * Every tool's result, also declared to the model and to scripts as each tool's output schema, with
+ * `additionalProperties: false`; `{items: [], count: 0, total: 3}` must fail it.
+ */
+export interface ToolResult {
+	/** Records this run may see; their fields depend on the tool. */
+	items: { [key: string]: Json }[];
+	/** Items in this result after filtering, not a total across pages. */
+	count: number;
+	/** A provider or connector limit left something out. */
+	incomplete?: true;
+	/** An opaque, run-bound page token: repeat the call with the same arguments and this as `cursor`. */
+	next_cursor?: string;
+	/** The write took effect, but its result could not be read back. */
+	outcome?: "applied_without_result";
+}
+
+/** The codes whose refusal is `denied` in the chat; every other failure is `error`. */
+export type DeniedCode = Extract<
+	CoreErrorCode,
+	"POLICY_DENIED" | "LIMIT_REACHED" | "WRITE_UNCERTAIN" | "WRITE_IN_PROGRESS" | "INVALID_CURSOR" | "CONSENT_REQUIRED" | "OPERATION_CHANGED"
+>;
 
 function frozen<T>(value: T): T {
 	if (typeof value === "object" && value !== null) {

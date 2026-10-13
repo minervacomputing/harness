@@ -2,17 +2,17 @@
 // counter, and a conversation's folder over node:sqlite with the Conversation's own schema, its runs and a
 // `finish` that publishes as conversation/store.ts does.
 
-import type { AttemptFence, RunId, Sha256, VersionId } from "../../src/contracts/common.ts";
-import type { CheckpointScan, FileMode, FolderWarnings } from "../../src/contracts/files.ts";
-import type { CheckpointUploadPlan, CheckpointUploadResult } from "../../src/contracts/sandbox.ts";
-import type { ReservedUpload } from "../../src/contracts/workspace.ts";
 import { MIGRATIONS } from "../../src/conversation/schema.ts";
+import type { FileMode, FolderWarnings } from "../../src/files/manifest.ts";
+import type { ReservedUpload } from "../../src/files/uploads.ts";
+import type { CheckpointUploadPlan, CheckpointUploadResult } from "../../src/sandbox/folder.ts";
 import { CHECK_MISMATCH } from "../../src/sandbox/ports.ts";
 import type { Bucket, StoredObject } from "../../src/files/objects.ts";
-import { type ByteCounter, type FolderDeps, FolderStore } from "../../src/files/store.ts";
+import { type ByteCounter, type CheckpointScan, type FolderDeps, FolderStore } from "../../src/files/store.ts";
 import { hex } from "../../src/lib/bytes.ts";
 import { type Json, parseJson } from "../../src/lib/json.ts";
 import { migrate, type Sql, sqliteSql } from "../../src/lib/sql.ts";
+import type { AttemptFence, RunId, Sha256, VersionId } from "../../src/shared/rpc.ts";
 import { openDatabase } from "./sqlite.ts";
 
 export const WORKSPACE = "0199a000-0000-7000-8000-00000000f0a1";

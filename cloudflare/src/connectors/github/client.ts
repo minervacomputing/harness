@@ -5,9 +5,8 @@
 // dropped). The next page is taken from the Link header's query, never its address.
 
 import { z } from "zod";
-import type { OperationErrorShape, ProviderClient, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
-import { ProviderHTTP, defaultForbidden, segment } from "../../gateway/http.ts";
+import { OperationError, type OperationErrorShape, type ProviderClient } from "../../gateway/connector.ts";
+import { ProviderHTTP, type ProviderIo, type ProviderRequest, defaultForbidden, segment } from "../../gateway/http.ts";
 import { isDict, type Json, parseJson, parseJsonBytes } from "../../lib/json.ts";
 
 export const API_URL = "https://api.github.com";

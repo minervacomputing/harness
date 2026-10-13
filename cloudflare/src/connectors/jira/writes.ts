@@ -2,8 +2,7 @@
 // changing their status.
 
 import { z } from "zod";
-import type { Consent, Prepared, ProviderOutput } from "../../contracts/connectors.ts";
-import { OperationError, defineOperation } from "../../gateway/connector.ts";
+import { type Consent, OperationError, type Prepared, type ProviderOutput, defineOperation } from "../../gateway/connector.ts";
 import type { JsonObject } from "../../lib/json.ts";
 import { PLAIN_TEXT, SINGLE_LINE, isPlainText, isSingleLine } from "../../lib/text.ts";
 import * as adf from "../atlassian/adf.ts";

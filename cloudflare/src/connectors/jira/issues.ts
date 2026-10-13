@@ -2,9 +2,8 @@
 // names, and where issues sit.
 
 import { z } from "zod";
-import type { Binding } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, denied } from "../../gateway/connector.ts";
+import { type Binding, OperationError, denied } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import { CLOUD_ID, type Site } from "../atlassian/index.ts";
 import type { Issue, JiraClient, Project } from "./client.ts";
 

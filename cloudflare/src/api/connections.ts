@@ -6,15 +6,13 @@
 
 import { z } from "zod";
 import { connectorRegistry } from "../connectors/index.ts";
-import type { AccessOut, ConnectorOut, ResourceOut } from "../contracts/api.ts";
-import type { Connector, DiscoveryPage } from "../contracts/connectors.ts";
-import type { GrantChange } from "../contracts/policy.ts";
-import { ACCOUNT_KIND, kindOf } from "../gateway/connector.ts";
-import { InvalidGrants, MAX_CHANGES, checkChanges, resourceKey } from "../gateway/grants.ts";
+import { ACCOUNT_KIND, type Connector, type DiscoveryPage, kindOf } from "../gateway/connector.ts";
+import { type GrantChange, InvalidGrants, MAX_CHANGES, checkChanges, resourceKey } from "../gateway/grants.ts";
 import { ANY } from "../gateway/policy.ts";
 import { HttpError, detail, json } from "../http/errors.ts";
 import { UUID } from "../http/paths.ts";
 import type { App } from "../http/router.ts";
+import type { AccessOut, ConnectorOut, ResourceOut } from "../shared/api.ts";
 import { actionsOut, authOf, isAdmin, kindsOut, requestedScopes } from "../workspace/out.ts";
 import { CONNECTION_FLOWS, ConnectionFlowError, type FlowStart } from "./flows.ts";
 import { available } from "./oauth-clients.ts";

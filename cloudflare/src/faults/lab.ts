@@ -9,15 +9,17 @@
 import { getOrThrow } from "@earendil-works/pi-durable/env";
 import { createEnvConformance } from "@earendil-works/pi-durable/testing";
 import { sandboxObject } from "../addressing.ts";
-import type { WorkspaceRef } from "../contracts/common.ts";
-import type { ExecRequest, ExecResult, HydratePlan, Refused, SandboxFence, SandboxSpec } from "../contracts/sandbox.ts";
 import { hex } from "../lib/bytes.ts";
 import { uuid7 } from "../lib/random.ts";
-import { commandEnvironment, sandboxSpec, WORKSPACE } from "../sandbox/constants.ts";
+import type { ExecRequest, ExecResult } from "../sandbox/commands.ts";
+import { commandEnvironment, sandboxSpec, type SandboxSpec, WORKSPACE } from "../sandbox/constants.ts";
+import type { Refused, SandboxFence } from "../sandbox/core.ts";
 import { SandboxExecutionEnv } from "../sandbox/env.ts";
+import type { HydratePlan } from "../sandbox/folder.ts";
 import type { Delivered } from "../sandbox/output.ts";
 import { prepareSandbox } from "../sandbox/session.ts";
 import { outputSink } from "../sandbox/sink.ts";
+import type { WorkspaceRef } from "../shared/rpc.ts";
 import type { FaultSandbox, SandboxFaults } from "./sandbox.ts";
 
 /** The lab's sandboxes belong to a workspace of their own; their objects in R2 go under `lab/`. */

@@ -2,10 +2,10 @@
 // turn changed.
 
 import { describe, expect, test } from "vitest";
-import type { StoredEntries } from "../../src/contracts/files.ts";
 import { MAX_MTIME, QuotaExceeded, folderBytes } from "../../src/files/limits.ts";
 import {
 	InvalidManifest,
+	type StoredEntries,
 	digestOf,
 	directories,
 	entriesBytes,

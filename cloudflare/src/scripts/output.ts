@@ -12,10 +12,24 @@
 // that is counted where both pieces crossed whole. Across a measured rest it cannot be, and only there could
 // the counts, or whether the result is cut at all, differ from pi's.)
 
-import type { ScriptText, TextSize } from "../contracts/scripts.ts";
 import { HEAD_CHARS } from "./limits.ts";
 
-export type { ScriptText, TextSize };
+/** The size of the part of a text that did not cross, as UTF-8. */
+export interface TextSize {
+	bytes: number;
+	newlines: number;
+	/** Whether the text ends with a newline. */
+	last: boolean;
+}
+
+/** A text as it crossed: whole, or its head and the size of the rest (long outputs and values). */
+export interface ScriptText {
+	text: string;
+	rest?: TextSize;
+}
+
+/** One printed item; an image is shown to the model as "[image omitted]", so its data never crosses. */
+export type ScriptOutputItem = ({ type: "text" } & ScriptText) | { type: "image" };
 
 export const EMPTY: TextSize = Object.freeze({ bytes: 0, newlines: 0, last: false });
 

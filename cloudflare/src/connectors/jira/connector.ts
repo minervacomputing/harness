@@ -27,8 +27,7 @@
 // This module assembles the connector. The operations are in `reads.ts` and `writes.ts`; what they share
 // (sites, names, where issues sit) is in `issues.ts`.
 
-import type { Connector, DiscoveryItem, DiscoveryPage } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
+import { type Connector, type DiscoveryItem, type DiscoveryPage, OperationError } from "../../gateway/connector.ts";
 import { CLOUD_ID, type Site, oauth } from "../atlassian/index.ts";
 import { JiraClient, type Project } from "./client.ts";
 import { ID, PROJECT, projectId, unseen } from "./issues.ts";

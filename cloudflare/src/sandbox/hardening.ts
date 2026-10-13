@@ -6,9 +6,35 @@
 // facts alone, in the Durable Object: any check that fails, or a report it cannot read, destroys the
 // container. Values are arguments of the scripts, never interpolated into them.
 
-import type { HardeningReport, SandboxSpec, VerificationReport } from "../contracts/sandbox.ts";
 import { parseJson } from "../lib/json.ts";
-import { AGENT_GID, AGENT_UID, HOME, MPLCONFIGDIR, PYTHON, TMP, WORKSPACE, workspaceBytes } from "./constants.ts";
+import { AGENT_GID, AGENT_UID, HOME, MPLCONFIGDIR, PYTHON, type SandboxSpec, TMP, WORKSPACE, workspaceBytes } from "./constants.ts";
+
+/**
+ * One root exec with `set -eu`: tmpfs `/workspace` (size, nr_inodes, uid 1000), tmpfs `/tmp` noexec,
+ * `/tmp/home` and `/tmp/matplotlib` owned by uid 1000 (bash's HOME and MPLCONFIGDIR), the
+ * cgroup `/sys/fs/cgroup/agent` with pids.max and memory.max (SandboxSpec), `mount -o remount,ro /`. Any
+ * failure destroys the container and fails the turn.
+ */
+export interface HardeningReport {
+	ok: boolean;
+	failed: "workspace" | "tmp" | "home_dirs" | "cgroup" | "readonly_root" | null;
+	output: string;
+}
+
+/**
+ * A second exec checks each postcondition; any failure, or any doubt, destroys the container: the mounts'
+ * options and sizes, `/tmp` not executable, the home directories owned by uid 1000, `/` read-only,
+ * `pids.max` and `memory.max` equal to the spec's, and that the dropped wrapper reports no capabilities
+ * and `NoNewPrivs: 1`.
+ */
+export interface VerificationReport {
+	ok: boolean;
+	checks: {
+		name: "workspace_mount" | "tmp_noexec" | "home_dirs" | "root_readonly" | "cgroup_limits" | "dropped_privileges";
+		ok: boolean;
+		detail: string;
+	}[];
+}
 
 export type HardeningStep = Exclude<HardeningReport["failed"], null>;
 const STEPS: readonly HardeningStep[] = ["workspace", "tmp", "home_dirs", "cgroup", "readonly_root"];
@@ -172,7 +198,7 @@ export function cgroupLine(cgroup: string): string {
 	return `0::${cgroup.replace(/^\/sys\/fs\/cgroup/, "") || "/"}`;
 }
 
-/** Decides each postcondition from the verification's facts (contracts/sandbox.ts VerificationReport). */
+/** Decides each postcondition from the verification's facts (`VerificationReport`). */
 export function verificationReport(spec: SandboxSpec, cgroup: string, exitCode: number, stdout: string): VerificationReport {
 	let facts: { [name: string]: unknown };
 	try {

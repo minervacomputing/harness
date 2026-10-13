@@ -8,22 +8,21 @@
 
 import { crc32, gzipSync, deflateRawSync, deflateSync } from "node:zlib";
 import { afterEach, describe, expect, test } from "vitest";
-import type { ConnectionId } from "../../src/contracts/common.ts";
-import type { ToolCallOutcome } from "../../src/contracts/executor.ts";
-import type { GrantRow } from "../../src/contracts/policy.ts";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
 import { SEARCH, webConnector } from "../../src/connectors/web/connector.ts";
 import { ACCEPT, Body, Fetcher, LIMITS, MAX_BODY, Moved, Page, USER_AGENT, decode } from "../../src/connectors/web/fetch.ts";
 import { Inflater } from "../../src/connectors/web/inflate.ts";
 import { plain } from "../../src/connectors/web/search.ts";
 import { OperationError, binding, offered, termsOf } from "../../src/gateway/connector.ts";
-import { resourceKey } from "../../src/gateway/grants.ts";
+import type { ToolCallOutcome } from "../../src/gateway/executor.ts";
+import { type GrantRow, resourceKey } from "../../src/gateway/grants.ts";
 import { CallIo, NotSent, settingsIo } from "../../src/gateway/http.ts";
 import { Registry, inputSchema, validate } from "../../src/gateway/registry.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { htmlToText } from "../../src/lib/markdown.ts";
 import { ancestors, canonicalHost, choices, name, parseUrl, registrable, validId } from "../../src/lib/sites.ts";
+import type { ConnectionId } from "../../src/shared/rpc.ts";
 import { FakeWeb, PUBLIC, type Served, privateAddress, refusalPage, stalled, trickle } from "../fixtures/connectors/web/fake.ts";
 import { Scenario, userGrants } from "./executor-fakes.ts";
 import { kindsOut } from "../../src/workspace/out.ts";

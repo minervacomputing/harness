@@ -16,8 +16,8 @@
 // initialized workspaces, so a half-made one is never shown.
 
 import { workspaceObject } from "../addressing.ts";
-import type { WorkspaceRef } from "../contracts/common.ts";
 import { uuid7 } from "../lib/random.ts";
+import type { WorkspaceRef } from "../shared/rpc.ts";
 
 export interface WorkspaceRow {
 	id: string;

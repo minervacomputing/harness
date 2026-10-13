@@ -44,9 +44,9 @@ import {
 	type SimpleStreamOptions,
 	type TranscriptContext,
 } from "@earendil-works/pi-ai";
-import type { AttemptFence } from "../contracts/common.ts";
 import { parseJson } from "../lib/json.ts";
 import { tokenHex } from "../lib/random.ts";
+import type { AttemptFence } from "../shared/rpc.ts";
 import { forcePayload, isCompaction, outputCap, refusal } from "./policy.ts";
 import { CONTEXT_WINDOW, type ModelRoute, QUIET_MS, type Upstream } from "./route.ts";
 import { DeltaBuffer, errorClass, failureSummary, PROVIDER_ERROR, reportedUsage, type Segment, screened, screenedEvent, TEXT_FLUSH_MS } from "./tap.ts";

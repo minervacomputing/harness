@@ -3,8 +3,6 @@
 
 import { describe, expect, test } from "vitest";
 import type { ToolExecutionApi, ToolRegistration } from "@earendil-works/pi-durable";
-import type { AttemptFence, Json } from "../../src/contracts/common.ts";
-import type { ToolCallOutcome, ToolDeclaration } from "../../src/contracts/executor.ts";
 import { CALLS_AT_ONCE, ToolQueue, untilAborted } from "../../src/conversation/queue.ts";
 import {
 	argumentsOf,
@@ -16,6 +14,9 @@ import {
 	TOOL_RESULT_BYTES,
 	type ToolHost,
 } from "../../src/conversation/tools.ts";
+import type { ToolCallOutcome, ToolDeclaration } from "../../src/gateway/executor.ts";
+import type { Json } from "../../src/lib/json.ts";
+import type { AttemptFence } from "../../src/shared/rpc.ts";
 
 const FENCE: AttemptFence = { runId: "0199a000-0000-7000-8000-000000000001", attempt: 1 };
 

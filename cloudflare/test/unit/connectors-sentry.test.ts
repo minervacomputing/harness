@@ -4,22 +4,21 @@
 // most eight projects at a time; the rules for inputs, Link headers and what an event shows.
 
 import { describe, expect, test } from "vitest";
-import type { ConnectionId } from "../../src/contracts/common.ts";
-import type { Connector } from "../../src/contracts/connectors.ts";
-import type { ToolCallOutcome } from "../../src/contracts/executor.ts";
-import type { GrantRow } from "../../src/contracts/policy.ts";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
 import { Issue, Project, type SentryClient, linkCursor, nextCursor } from "../../src/connectors/sentry/client.ts";
 import { requestAddress } from "../../src/connectors/sentry/address.ts";
 import { CONCURRENCY, sentryConnector } from "../../src/connectors/sentry/connector.ts";
 import { numberOf, short } from "../../src/connectors/sentry/reads.ts";
-import { OperationError, termsOf } from "../../src/gateway/connector.ts";
+import { type Connector, OperationError, termsOf } from "../../src/gateway/connector.ts";
+import type { ToolCallOutcome } from "../../src/gateway/executor.ts";
+import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry, validate } from "../../src/gateway/registry.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
 import { utf8 } from "../../src/lib/bytes.ts";
 import type { Json } from "../../src/lib/json.ts";
 import type { z } from "zod";
+import type { ConnectionId } from "../../src/shared/rpc.ts";
 import { tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
 import { consentNeeded, kindsOut, requestedScopes } from "../../src/workspace/out.ts";
 import { FakeSentry, LEAKS, PAYROLL, SCOPES, SECRET, type SentryObject, TOKEN, WEB, event } from "../fixtures/connectors/sentry/fake.ts";

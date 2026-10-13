@@ -8,12 +8,13 @@
 import { getOrThrow } from "@earendil-works/pi-durable/env";
 import { createEnvConformance } from "@earendil-works/pi-durable/testing";
 import { afterAll, assert, beforeAll, describe, expect, test } from "vitest";
-import type { ExecRequest, HydratePlan, SandboxFence, SandboxSpec, ScanResult } from "../../src/contracts/sandbox.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { migrate, type Sql, sqliteSql } from "../../src/lib/sql.ts";
-import { commandEnvironment, sandboxSpec, WORKSPACE } from "../../src/sandbox/constants.ts";
-import { SandboxCore } from "../../src/sandbox/core.ts";
+import type { ExecRequest } from "../../src/sandbox/commands.ts";
+import { commandEnvironment, sandboxSpec, type SandboxSpec, WORKSPACE } from "../../src/sandbox/constants.ts";
+import { SandboxCore, type SandboxFence } from "../../src/sandbox/core.ts";
 import { SandboxExecutionEnv } from "../../src/sandbox/env.ts";
+import type { HydratePlan, ScanResult } from "../../src/sandbox/folder.ts";
 import type { Delivered } from "../../src/sandbox/output.ts";
 import type { ContainerPort, SandboxPorts } from "../../src/sandbox/ports.ts";
 import { prepareSandbox } from "../../src/sandbox/session.ts";

@@ -1,21 +1,19 @@
-// Shared shapes of the contracts. Contracts are types and doc comments only: the interfaces the objects,
-// the executor and the connectors build against. They cite docs/plans/cloudflare.md's sections a rule comes from.
+// The shapes every Durable Object's RPC and the Worker share: ids, the workspace a call is addressed to,
+// the verified caller, the attempt fence, a run's status and refusals. Types that belong to one object or module live with
+// it; only what crosses between all of them is here.
 //
-// RPC rule: a Durable Object method's argument and return types must be structured-cloneable and must not
-// contain `unknown` (Workers' RPC types turn an object with an `unknown` field into `never`). Use `Json`
-// for free-form values.
-
-export type { Json } from "../lib/json.ts";
+// A Durable Object method's argument and return types must be structured-cloneable and must not contain
+// `unknown` (Workers' RPC types turn an object with an `unknown` field into `never`). Use lib/json.ts's
+// `Json` for free-form values.
 
 /** Lowercase hyphenated UUIDv7, as every id in the API. */
-export type Uuid = string;
+type Uuid = string;
 export type UserId = Uuid;
 export type WorkspaceId = Uuid;
 export type ConversationId = Uuid;
 export type AgentId = Uuid;
 export type ConnectionId = Uuid;
 export type RunId = Uuid;
-export type MessageId = Uuid;
 export type UploadId = Uuid;
 export type VersionId = Uuid;
 
@@ -53,6 +51,9 @@ export interface AttemptFence {
 	attempt: number;
 }
 
+/** `queued → provisioning → running → completed | failed | cancelled | timed_out`. */
+export type RunStatus = "queued" | "provisioning" | "running" | "completed" | "failed" | "cancelled" | "timed_out";
+
 /** A refusal an API endpoint answers with: `{"detail": message}` and this status. */
 export interface Refusal {
 	status: 400 | 403 | 404 | 405 | 408 | 409 | 411 | 413 | 422 | 429 | 502 | 503;
@@ -60,11 +61,3 @@ export interface Refusal {
 }
 
 export type Outcome<T> = { ok: true; value: T } | { ok: false; refusal: Refusal };
-
-/**
- * How a change that revokes runs was delivered (plan: Strict revocation). `acknowledged`: every affected
- * run's Conversation Durable Object has acknowledged the cancel, so the API may answer. `pending`: the
- * change is saved, but some acknowledgement did not arrive within 10 seconds; the API answers 503 and the
- * Workspace's alarm keeps delivering.
- */
-export type Revocation = "acknowledged" | "pending";

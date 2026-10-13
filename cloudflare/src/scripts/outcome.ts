@@ -1,13 +1,33 @@
-// What the Scripts object makes of a guest's answer (contracts/scripts.ts `GuestOutcome`). The guest is
+// What the Scripts object makes of a guest's answer (`GuestOutcome`). The guest is
 // hostile and its answer arrives as structured data, so every field is checked here as pi-codemode's host
 // checked its bridge's JSON: an answer that does not decode fails the script as a sandbox error ("Sandbox
 // bridge broken: …"). The platform's own failures of the guest (its CPU and memory limits, a guest that
 // waits on nothing) become sandbox or script errors, in words of their own.
 
-import type { GuestOutcome, ScriptError, ScriptStoreWrites, ScriptText, TextSize } from "../contracts/scripts.ts";
 import { parseJson } from "../lib/json.ts";
 import { BRIDGE_BROKEN, CPU_STOPPED, ERROR_CHARS, HEAD_CHARS, MAX_STORE_TOTAL_CHARS, MAX_STORE_VALUE_CHARS, MEMORY_STOPPED, SANDBOX_FAILED, STALLED, STORE_DELETES_CHARS } from "./limits.ts";
-import { headUnits } from "./output.ts";
+import { type ScriptText, type TextSize, headUnits } from "./output.ts";
+
+/**
+ * What a guest answered, as the Scripts object checked it (the guest is hostile). `value` is the returned
+ * value's text (a string as is, else its JSON). `writes` are the keys `store()` set (with their JSON) and
+ * deleted, reported only when `ok`. `unsettled` counts the calls the script started that had not settled
+ * when it ended, as the script saw them, including ones that never reached the host.
+ */
+export type GuestOutcome =
+	| { ok: true; value?: ScriptText; writes: ScriptStoreWrites; unsettled: number }
+	| { ok: false; error: ScriptError; unsettled: number };
+
+export interface ScriptStoreWrites {
+	set: [string, string][];
+	delete: string[];
+}
+
+export interface ScriptError {
+	kind: "script" | "timeout" | "aborted" | "sandbox";
+	message: string;
+	stack?: string;
+}
 
 class BridgeError extends Error {}
 

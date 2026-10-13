@@ -2,13 +2,34 @@
 // starts with, built from the Workspace Durable Object's rows, and the checks and plan of a grant edit.
 // Storing the rows, bumping the layer's version and revoking runs are the Workspace's (workspace/core.ts).
 
-import type { ConnectionId, UserId } from "../contracts/common.ts";
-import type { Connector } from "../contracts/connectors.ts";
-import type { GrantChange, GrantRow } from "../contracts/policy.ts";
-import { ACCOUNT_KIND, actionOf, kindOf, requiresOf } from "./connector.ts";
+import type { ConnectionId, UserId } from "../shared/rpc.ts";
+import { ACCOUNT_KIND, type Connector, actionOf, kindOf, requiresOf } from "./connector.ts";
 import { ANY, Layer, type LayerName, Policy } from "./policy.ts";
 import type { Registry } from "./registry.ts";
 import { compareText } from "../lib/arrays.ts";
+
+/** A grant row in the Workspace Durable Object. */
+export interface GrantRow {
+	layer: "ceiling" | "user" | "agent";
+	/** The user of a user layer, the agent of an agent layer. */
+	subject: string | null;
+	connectionId: ConnectionId;
+	kind: string;
+	/** ≤200 characters, or `*`. */
+	resourceId: string;
+	/** Display only, ≤300 characters. */
+	resourceName: string;
+	/** Sorted, unique. */
+	actions: string[];
+	effect: "allow" | "deny";
+}
+
+/** One change of `PATCH …/access` (≤100 per request; empty actions remove the grant). */
+export interface GrantChange {
+	kind: string;
+	id: string;
+	actions: string[];
+}
 
 export type Level = GrantRow["layer"];
 

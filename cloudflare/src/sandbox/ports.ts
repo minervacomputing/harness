@@ -2,9 +2,9 @@
 // clock and ids. The object (sandbox.ts) passes `ctx.container`, `ctx.storage.sql` and the workspace's
 // bucket; unit tests pass fakes, and the local container tests a Docker container (test/docker/).
 
-import type { WorkspaceRef } from "../contracts/common.ts";
 import { hex } from "../lib/bytes.ts";
 import type { Sql } from "../lib/sql.ts";
+import type { WorkspaceRef } from "../shared/rpc.ts";
 
 /** The part of `ctx.container` the Sandbox uses. */
 export interface ContainerPort {

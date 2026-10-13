@@ -5,8 +5,7 @@
 // first) reads them for 403s; a 403 it does not name falls through to the default PROVIDER_FORBIDDEN.
 
 import { z } from "zod";
-import type { Auth, OperationErrorShape } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
+import { type Auth, OperationError, type OperationErrorShape } from "../../gateway/connector.ts";
 import { parseJson } from "../../lib/json.ts";
 
 export const USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo";

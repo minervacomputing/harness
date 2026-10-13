@@ -3,10 +3,10 @@
 
 import { conversationObject, filesBucket } from "../addressing.ts";
 import { clientSecretNames, settings } from "../config.ts";
-import type { WorkspaceRef } from "../contracts/common.ts";
-import type { ConversationApi } from "../contracts/conversation.ts";
+import type { ConversationApi } from "../conversation/conversation.ts";
 import { type EncryptionKeys, oauthClientBinding } from "../lib/encryption.ts";
 import { conversationPrefix, deletePrefix } from "../files/objects.ts";
+import type { WorkspaceRef } from "../shared/rpc.ts";
 import { asPayload } from "./credentials.ts";
 import type { ClientCredentials, ConversationClient, OAuthClients, ObjectStore, WorkspaceSettings } from "./ports.ts";
 
@@ -14,7 +14,7 @@ type ConversationCalls = Pick<ConversationApi, "init" | "cancel" | "destroy">;
 
 /** The Conversation objects of the workspace, reached by typed RPC (addressing.ts). */
 export function conversationClient(env: Env, workspace: () => WorkspaceRef): ConversationClient {
-	// The Conversation class implements these methods (contracts/conversation.ts); its stub is typed by
+	// The Conversation class implements these methods (`ConversationApi`); its stub is typed by
 	// the class, so the contract is named here.
 	const object = (id: string) => conversationObject(env, workspace(), id) as unknown as ConversationCalls;
 	return {

@@ -23,9 +23,20 @@
 // was granted.
 
 import { z } from "zod";
-import type { Account, Binding, Connector, DiscoveryItem, DiscoveryPage, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
+import {
+	type Account,
+	type Binding,
+	type Connector,
+	type DiscoveryItem,
+	type DiscoveryPage,
+	OperationError,
+	type Prepared,
+	type ProviderOutput,
+	type ScopedRecord,
+	defineOperation,
+	denied,
+} from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import type { JsonObject } from "../../lib/json.ts";
 import { PLAIN_TEXT, TextError, isPlainText, truncate } from "../../lib/text.ts";
 import { type Channel, type Message, NOT_IN_CHANNEL_MESSAGE, SlackClient, isConversationChannel, shownName } from "./client.ts";

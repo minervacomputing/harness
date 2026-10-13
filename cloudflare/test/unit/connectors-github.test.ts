@@ -3,8 +3,6 @@
 // files, 403s, records), and the registry with its fingerprints.
 
 import { describe, expect, test } from "vitest";
-import type { Connector, ProviderClient } from "../../src/contracts/connectors.ts";
-import type { GrantRow } from "../../src/contracts/policy.ts";
 import { CONNECTORS } from "../../src/connectors/index.ts";
 import { API_URL, Entry, Issue, Pull, Repository, forbidden, nextPage } from "../../src/connectors/github/client.ts";
 import {
@@ -20,7 +18,8 @@ import {
 	repositoriesCursor,
 	repositoryRecord,
 } from "../../src/connectors/github/connector.ts";
-import { OperationError } from "../../src/gateway/connector.ts";
+import { type Connector, OperationError, type ProviderClient } from "../../src/gateway/connector.ts";
+import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import { validateInput } from "../../src/gateway/validation.ts";

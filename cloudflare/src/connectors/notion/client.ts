@@ -5,9 +5,8 @@
 // a property named "__proto__" is an ordinary key.
 
 import { z } from "zod";
-import type { OperationErrorShape, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
-import { ProviderHTTP } from "../../gateway/http.ts";
+import { OperationError, type OperationErrorShape } from "../../gateway/connector.ts";
+import { ProviderHTTP, type ProviderIo, type ProviderRequest } from "../../gateway/http.ts";
 import { type Json, type JsonObject, isDict, parseJsonBytes } from "../../lib/json.ts";
 
 export const API_URL = "https://api.notion.com/v1";

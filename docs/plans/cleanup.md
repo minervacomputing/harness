@@ -56,7 +56,7 @@ One unit per fresh agent, in sequence, each committed on `cloudflare` after `pnp
 
 ## Outcome (2026-10-13)
 
-Units 0 to 9 are committed on `cloudflare`; unit 10 (contracts) is pending.
+Units 0 to 10 are committed on `cloudflare`.
 
 | Unit | Commit |
 |---|---|
@@ -78,11 +78,13 @@ Units 0 to 9 are committed on `cloudflare`; unit 10 (contracts) is pending.
 | 8g | Cloudflare cleanup 8g: Todoist and Web without parity tests |
 | 8h | Cloudflare cleanup 8h: shared leftovers |
 | 9 | Cloudflare cleanup 9: docs |
+| 10 | Cloudflare cleanup 10: types live with their modules |
 
 Numbers (from `193f5e3`, the plan, to unit 8h):
 
 - **Lines.** `cloudflare/src`: 251 files, +4,216 −12,495 (about 59,100 lines to 50,800). `cloudflare/test`: 189 files, +6,547 −70,896, of which fixtures +532 −63,583.
 - **Tests.** Unit 6,842 in 53 s wall to 2,684 in 6 s, without Docker; the Docker-backed suites (45 tests, about 50 s) run in `pnpm test:docker`. Platform 488 in 85 s to 420 in 82 s.
+- **Contracts.** `src/contracts/` (2,056 lines in 13 files) is gone: each type lives with the module that implements or produces it (a Durable Object's RPC surface with its logic, `WorkspaceApi` in `workspace/core.ts`, `SandboxApi` in `sandbox/core.ts`, `ConversationApi` in `conversation/conversation.ts`, `ScriptsApi` in `scripts/scripts.ts`). `src/shared/` keeps only what every object and the Worker share: ids, the caller, the attempt fence, run status and refusals (`rpc.ts`) and the frontend's API shapes (`api.ts`).
 - **Fixtures.** `test/fixtures` 6.5 MB to 164 KB: no generated vectors and no Python generators; `jcs-vectors.json` (RFC 8785's) stays.
 
 What users and the model see differently (each unit's commit lists the details):
@@ -110,4 +112,3 @@ Still open:
 - Comments that cite the old Node `worker/` remain where they name a real constraint: `container/` (its scan follows `worker/src/folder.ts`'s manifest policy) and the tests that read `../worker` (`sandbox-parts`, `test/docker/sandbox-python`). Bare plan-step references and provenance-only `worker/` citations in `src/` and `test/` were removed in unit 9; references to the plan's protocol steps ("plan: Checkpoints, steps 4 to 6") stay. `lib/encryption.ts`'s error message for a Fernet token still says "from before step 6b".
 - `quickRatio` in `accounts/passwords.ts`, the password-similarity rule, is still a port of difflib's quick ratio.
 - `frontend-auth` platform tests reload the Worker's modules for every test (about 49 s, the bulk of platform time).
-- Unit 10 (contracts): pending.

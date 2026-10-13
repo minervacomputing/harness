@@ -11,8 +11,7 @@
 // through a float.
 
 import { z } from "zod";
-import type { Binding, Prepared, ProviderOutput } from "../../contracts/connectors.ts";
-import { OperationError, defineOperation } from "../../gateway/connector.ts";
+import { type Binding, OperationError, type Prepared, type ProviderOutput, defineOperation } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
 import { PLAIN_TEXT, SINGLE_LINE, isPlainText, isSingleLine } from "../../lib/text.ts";
 import { type Contact, type Invoice, invoiceDate, messages, uuid } from "./client.ts";

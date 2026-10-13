@@ -2,8 +2,8 @@
 // header): the same message sent again with it within a day answers for the run the first one started.
 // Kept apart from the object's module so the Worker's routes can check a key without importing it.
 
-import type { MessageIn } from "../contracts/api.ts";
 import { hex } from "../lib/bytes.ts";
+import type { MessageIn } from "../shared/api.ts";
 
 /** A message sent again with a key the client used for another message. */
 export const KEY_REUSED = "This Idempotency-Key was used for a different message.";

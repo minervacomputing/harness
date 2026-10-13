@@ -7,22 +7,21 @@
 
 import { sandboxObject, workspaceObject } from "../addressing.ts";
 
-import type { AttachmentOut, FolderOut } from "../contracts/api.ts";
-import type { AttemptFence, ConversationId, EpochMs, Outcome, RunId, VersionId, WorkspaceRef } from "../contracts/common.ts";
-import type { DownloadTarget } from "../contracts/conversation.ts";
-import type { DispatchResult, Executor, ExecutorContext, RunStatePort, Settlement } from "../contracts/executor.ts";
-import type { CheckpointOutcome, CheckpointScan, FolderUsage } from "../contracts/files.ts";
-import type { RunStatus } from "../contracts/runs.ts";
-import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan } from "../contracts/sandbox.ts";
-import type { ReservedUpload, WorkspaceApi } from "../contracts/workspace.ts";
 import { conversationFolder } from "../files/folder.ts";
+import type { CheckpointOutcome, CheckpointScan, DownloadTarget, FolderUsage } from "../files/store.ts";
+import type { ReservedUpload } from "../files/uploads.ts";
 import { systemClock } from "../gateway/clock.ts";
-import { createExecutor } from "../gateway/executor.ts";
-import { RUN_ENDED_MESSAGE, WriteLedger as GatewayLedger } from "../gateway/ledger.ts";
+import { type Executor, type ExecutorContext, createExecutor } from "../gateway/executor.ts";
+import { type DispatchResult, RUN_ENDED_MESSAGE, type Settlement, WriteLedger as GatewayLedger } from "../gateway/ledger.ts";
 import { PageTokens } from "../gateway/page-tokens.ts";
 import type { Registry } from "../gateway/registry.ts";
+import type { RunStatePort } from "../gateway/run-state.ts";
 import { durableSql } from "../lib/sql.ts";
 import { type ModelRoute, type Upstream, upstreamOf } from "../model/route.ts";
+import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan } from "../sandbox/folder.ts";
+import type { AttachmentOut, FolderOut } from "../shared/api.ts";
+import type { AttemptFence, ConversationId, EpochMs, Outcome, RunId, RunStatus, VersionId, WorkspaceRef } from "../shared/rpc.ts";
+import type { WorkspaceApi } from "../workspace/core.ts";
 import type { GateDecision } from "./gate.ts";
 import type { SandboxPort } from "./local-run.ts";
 import type { RunStore } from "./store.ts";
@@ -205,7 +204,7 @@ export function gatewayLedger(storage: DurableObjectStorage, runs: LedgerRuns): 
 }
 
 /**
- * The executor's RunStatePort for a Conversation (contracts/executor.ts): the store's checks, synchronous,
+ * The executor's RunStatePort for a Conversation: the store's checks, synchronous,
  * and the ledger's records. A claim and a settlement wait until no asynchronous transaction of pi's is open
  * (store.ts `outside`): made inside one, they would roll back with it, and a claim the executor was told
  * was dispatched would leave nothing for the restart gate to mark uncertain, so the same write could be sent

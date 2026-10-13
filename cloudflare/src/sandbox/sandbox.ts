@@ -1,4 +1,4 @@
-// The Sandbox Durable Object (contracts/sandbox.ts SandboxApi): one per conversation, with the container
+// The Sandbox Durable Object (core.ts `SandboxApi`): one per conversation, with the container
 // cloudflare.config.ts gives its class (cloudflare/container/: `durable_object` scheduling, no route out,
 // no outbound intercepts, nothing secret in its environment). It is reached as `ctx.exports.Sandbox`, since
 // a container class cannot be bound by its own Worker's name (src/addressing.ts). The logic is core.ts's;
@@ -6,31 +6,17 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { filesBucket } from "../addressing.ts";
-import type { AttemptFence } from "../contracts/common.ts";
-import type {
-	CheckpointUploadPlan,
-	CheckpointUploadResult,
-	ExecOutputSink,
-	ExecRequest,
-	ExecResult,
-	FsRequest,
-	FsResponse,
-	HardeningReport,
-	HydratePlan,
-	HydrateResult,
-	Refused,
-	SandboxApi,
-	SandboxFence,
-	SandboxSpec,
-	SandboxStatus,
-	ScanResult,
-	VerificationReport,
-} from "../contracts/sandbox.ts";
 import { type About, identity } from "../lib/about.ts";
 import { uuid7 } from "../lib/random.ts";
 import { durableSql } from "../lib/sql.ts";
 import { appliedMigrations, migrate } from "../lib/sqlite.ts";
-import { SandboxCore } from "./core.ts";
+import type { AttemptFence } from "../shared/rpc.ts";
+import type { ExecOutputSink, ExecRequest, ExecResult } from "./commands.ts";
+import type { SandboxSpec } from "./constants.ts";
+import { type Refused, type SandboxApi, SandboxCore, type SandboxFence, type SandboxStatus } from "./core.ts";
+import type { FsRequest, FsResponse } from "./files.ts";
+import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan, HydrateResult, ScanResult } from "./folder.ts";
+import type { HardeningReport, VerificationReport } from "./hardening.ts";
 import { type ContainerPort, r2Bucket, type SandboxPorts } from "./ports.ts";
 import { SANDBOX_MIGRATIONS } from "./store.ts";
 

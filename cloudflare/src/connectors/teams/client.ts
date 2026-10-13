@@ -6,11 +6,10 @@
 // enough to store, and sent back as a query parameter on a request Minerva builds.
 
 import { z } from "zod";
-import type { ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { API_URL, Graph, queryOf } from "../microsoft/index.ts";
 import { extend } from "../../lib/arrays.ts";
-import { segment } from "../../gateway/http.ts";
+import { type ProviderIo, segment } from "../../gateway/http.ts";
 
 export const CHANNEL_FIELDS = "id,displayName,description,membershipType,webUrl";
 /** Mutable so that tests can lower it. */

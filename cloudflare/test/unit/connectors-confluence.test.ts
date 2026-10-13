@@ -2,10 +2,10 @@
 // the executor.
 
 import { afterEach, describe, expect, test } from "vitest";
-import type { GrantRow } from "../../src/contracts/policy.ts";
 import { BodyModel, ConfluenceClient, ListingModel, document, nextCursor, pageParams } from "../../src/connectors/confluence/client.ts";
 import { confluenceConnector, discoveryCursor } from "../../src/connectors/confluence/connector.ts";
 import { MAX_SPACE_PAGES, searchWords } from "../../src/connectors/confluence/reads.ts";
+import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";

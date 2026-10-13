@@ -6,25 +6,40 @@
 // its account.
 
 import { z } from "zod";
-import type { AttemptFence, ConnectionId, RunId } from "../../src/contracts/common.ts";
-import type { Connector, CredentialPayload, Operation, Prepared, ProviderOutput, Requirement } from "../../src/contracts/connectors.ts";
-import type { CredentialLease, CredentialPort, RunStatePort, ToolCallOutcome, ToolCallRequest } from "../../src/contracts/executor.ts";
-import type { GrantRow } from "../../src/contracts/policy.ts";
-import type { ToolRef } from "../../src/contracts/runs.ts";
-import type { ToolCallEventData } from "../../src/contracts/events.ts";
 import type { Clock } from "../../src/gateway/clock.ts";
-import { ACCOUNT_KIND, OperationError, defineOperation } from "../../src/gateway/connector.ts";
-import { type ExecutorHost, type ExecutorLog, type ToolExecutor, createExecutor } from "../../src/gateway/executor.ts";
-import { type RunLayers, effectivePolicy } from "../../src/gateway/grants.ts";
+import {
+	ACCOUNT_KIND,
+	type Connector,
+	type CredentialPayload,
+	type Operation,
+	OperationError,
+	type Prepared,
+	type ProviderOutput,
+	type Requirement,
+	defineOperation,
+} from "../../src/gateway/connector.ts";
+import {
+	type CredentialLease,
+	type CredentialPort,
+	type ExecutorHost,
+	type ExecutorLog,
+	type ToolCallOutcome,
+	type ToolCallRequest,
+	type ToolExecutor,
+	createExecutor,
+} from "../../src/gateway/executor.ts";
+import { type GrantRow, type RunLayers, effectivePolicy } from "../../src/gateway/grants.ts";
 import { ProviderHTTP } from "../../src/gateway/http.ts";
 import { WriteLedger } from "../../src/gateway/ledger.ts";
 import { PageTokens } from "../../src/gateway/page-tokens.ts";
 import { Registry } from "../../src/gateway/registry.ts";
-import { LedgerRunState, type RunState, type RunTable } from "../../src/gateway/run-state.ts";
-import { type ConnectionInfo, toolsFor } from "../../src/gateway/tools.ts";
+import type { ToolCallEventData } from "../../src/gateway/results.ts";
+import { LedgerRunState, type RunState, type RunStatePort, type RunTable } from "../../src/gateway/run-state.ts";
+import { type ConnectionInfo, type ToolRef, toolsFor } from "../../src/gateway/tools.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { parseJson } from "../../src/lib/json.ts";
 import type { Sql } from "../../src/lib/sql.ts";
+import type { AttemptFence, ConnectionId, RunId } from "../../src/shared/rpc.ts";
 import { ledgerSql } from "./sqlite.ts";
 
 export const USER = "0199a000-0000-7000-8000-0000000000aa";

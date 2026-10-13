@@ -1,8 +1,16 @@
 // Stripe's read operations: customers, and the payments, invoices and subscriptions billed to them.
 
 import { z } from "zod";
-import type { Binding, Prepared, ProviderOutput, Requirement, ScopedRecord } from "../../contracts/connectors.ts";
-import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
+import {
+	type Binding,
+	OperationError,
+	type Prepared,
+	type ProviderOutput,
+	type Requirement,
+	type ScopedRecord,
+	defineOperation,
+	denied,
+} from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
 import { SINGLE_LINE, isSingleLine, truncate } from "../../lib/text.ts";
 import { CUSTOMER_ID, type Charge, type Customer, type Invoice, type Page, type StripeClient, type Subscription, nextCursor } from "./client.ts";

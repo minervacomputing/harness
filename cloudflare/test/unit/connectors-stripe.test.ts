@@ -3,22 +3,21 @@
 // Connecting with a key goes through the Workspace's saveConnection after the connector's account().
 
 import { describe, expect, test } from "vitest";
-import type { Caller, ConnectionId } from "../../src/contracts/common.ts";
-import type { ConnectionOut } from "../../src/contracts/api.ts";
-import type { Outcome } from "../../src/contracts/common.ts";
-import type { GrantRow } from "../../src/contracts/policy.ts";
-import type { ToolCallOutcome } from "../../src/contracts/executor.ts";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
 import { Charge, Customer, Invoice, StripeClient, Subscription, classify } from "../../src/connectors/stripe/client.ts";
 import { stripeConnector } from "../../src/connectors/stripe/connector.ts";
 import * as money from "../../src/connectors/stripe/money.ts";
 import { chargeData, customerData, invoiceData, subscriptionData } from "../../src/connectors/stripe/reads.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
+import type { ToolCallOutcome } from "../../src/gateway/executor.ts";
+import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry, validate } from "../../src/gateway/registry.ts";
 import { fromUtf8 } from "../../src/lib/bytes.ts";
 import { EncryptionKeys } from "../../src/lib/encryption.ts";
 import type { Json } from "../../src/lib/json.ts";
+import type { ConnectionOut } from "../../src/shared/api.ts";
+import type { Caller, ConnectionId, Outcome } from "../../src/shared/rpc.ts";
 import { WorkspaceCore } from "../../src/workspace/core.ts";
 import { ADA, EVE, FakeStripe, GONE, GRACE, KEY, LIVE_KEY, OTHER_KEY, SECRET } from "../fixtures/connectors/stripe/fake.ts";
 import { validated } from "./connector-runs.ts";

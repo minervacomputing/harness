@@ -5,10 +5,9 @@
 // answers 201 with the event.
 
 import { z } from "zod";
-import type { ProviderIo } from "../../contracts/connectors.ts";
 import type { Json } from "../../lib/json.ts";
 import { API_URL, Graph, IMMUTABLE_IDS, pageParam } from "../microsoft/index.ts";
-import { segment } from "../../gateway/http.ts";
+import { type ProviderIo, segment } from "../../gateway/http.ts";
 
 export const EVENT_READ = `${IMMUTABLE_IDS}, outlook.timezone="UTC", outlook.body-content-type="text"`;
 export const CALENDAR_FIELDS = "id,name,isDefaultCalendar,canEdit,owner";

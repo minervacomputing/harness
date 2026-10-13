@@ -1,8 +1,16 @@
 // Google Calendar. Resources are calendars; what is allowed on a calendar covers its events.
 
 import { z } from "zod";
-import type { Binding, Connector, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
-import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
+import {
+	type Binding,
+	type Connector,
+	OperationError,
+	type Prepared,
+	type ProviderOutput,
+	type ScopedRecord,
+	defineOperation,
+	denied,
+} from "../../gateway/connector.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
 import { sliceText } from "../../lib/text.ts";
 import { oauth } from "../google/index.ts";

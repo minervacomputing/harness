@@ -6,9 +6,8 @@
 // data.
 
 import type { z } from "zod";
-import type { ProviderClient, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
-import { ProviderHTTP } from "../../gateway/http.ts";
+import { OperationError, type ProviderClient } from "../../gateway/connector.ts";
+import { ProviderHTTP, type ProviderIo, type ProviderRequest } from "../../gateway/http.ts";
 import { type Json, type JsonObject, isDict, parseJson, parseJsonBytes } from "../../lib/json.ts";
 import { Batch, Details, HubRecord, Pipeline, Pipelines, SearchPage } from "./models.ts";
 

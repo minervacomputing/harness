@@ -11,9 +11,8 @@
 // string, an integer beyond 2^53) makes the response unexpected.
 
 import { z } from "zod";
-import type { OperationErrorShape, ProviderClient, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
-import { ProviderHTTP } from "../../gateway/http.ts";
+import { OperationError, type OperationErrorShape, type ProviderClient } from "../../gateway/connector.ts";
+import { ProviderHTTP, type ProviderIo, type ProviderRequest } from "../../gateway/http.ts";
 import { isDict, type Json, parseJson, parseJsonBytes } from "../../lib/json.ts";
 
 export const API_URL = "https://api.stripe.com/v1";

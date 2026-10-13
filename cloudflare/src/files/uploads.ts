@@ -14,13 +14,30 @@
 // there is no cap on uploads in progress beyond the Workspace's. The runtime's URL parser has already
 // escaped a query that was not ASCII, so it is read as UTF-8.
 
-import type { UploadOut } from "../contracts/api.ts";
-import type { Caller, Outcome, Refusal, Sha256, UploadId } from "../contracts/common.ts";
 import { hex } from "../lib/bytes.ts";
+import type { UploadOut } from "../shared/api.ts";
+import type { Caller, Outcome, Refusal, Sha256, UploadId } from "../shared/rpc.ts";
 import { BODY_LONGER, BODY_SHORTER, INVALID_LENGTH, NAME_THE_FILE, SEND_LENGTH, SNIFF_BYTES, TOO_SLOW, UPLOAD_DEADLINE_MS, UPLOAD_SETTLE_MS, USE_POST, uploadTooLarge } from "./limits.ts";
 import { cleanName, sniff, uploadName } from "./names.ts";
 
-/** The Workspace's side of an upload (contracts/workspace.ts). */
+/**
+ * An unattached upload a run start reserved. The Conversation Durable Object copies its object into a blob
+ * of its own before the start's transaction (plan: Starting a run, step 3) and adds that to the folder:
+ * `uploads/` objects are deleted by the bucket's lifecycle rule a day after they were written, attached or
+ * not, so nothing may keep naming one.
+ */
+export interface ReservedUpload {
+	id: UploadId;
+	/** The cleaned name; numbered against the folder's root names when added. */
+	name: string;
+	size: number;
+	mediaType: string;
+	sha256: Sha256;
+	/** `uploads/<ws>/<user>/<id>` in R2. */
+	key: string;
+}
+
+/** The Workspace's side of an upload (workspace/core.ts `WorkspaceApi`). */
 export interface UploadRecorder {
 	reserveUpload(caller: Caller, upload: { name: string; size: number }): Promise<Outcome<{ id: UploadId; key: string }>>;
 	completeUpload(caller: Caller, id: UploadId, stored: { sha256: Sha256; size: number; mediaType: string }): Promise<Outcome<UploadOut>>;

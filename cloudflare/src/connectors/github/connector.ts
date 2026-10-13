@@ -23,9 +23,19 @@
 // client, leave it unchanged.
 
 import { z } from "zod";
-import type { Binding, Connector, DiscoveryItem, DiscoveryPage, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
+import {
+	type Binding,
+	type Connector,
+	type DiscoveryItem,
+	type DiscoveryPage,
+	OperationError,
+	type Prepared,
+	type ProviderOutput,
+	type ScopedRecord,
+	defineOperation,
+	denied,
+} from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import { type Json, type JsonObject, parseJson } from "../../lib/json.ts";
 import { PLAIN_TEXT, SINGLE_LINE, isPlainText, isSingleLine, truncate } from "../../lib/text.ts";
 import { type Comment, type Entry, GitHubClient, type Issue, MAX_INLINE_FILE, type Pull, type Repository } from "./client.ts";

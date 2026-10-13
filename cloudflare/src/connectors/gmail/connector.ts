@@ -40,8 +40,7 @@
 // The operations are in reads.ts and writes.ts; what they share (consent, ids, labels and where messages sit)
 // is in mailbox.ts, and MIME handling is in mime.ts.
 
-import type { Connector } from "../../contracts/connectors.ts";
-import { ACCOUNT_KIND } from "../../gateway/connector.ts";
+import { ACCOUNT_KIND, type Connector } from "../../gateway/connector.ts";
 import { oauth } from "../google/index.ts";
 import * as addresses from "../../lib/addresses.ts";
 import { GmailClient } from "./client.ts";

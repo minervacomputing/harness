@@ -4,12 +4,12 @@
 
 import { describe, expect, test } from "vitest";
 import type { z } from "zod";
-import type { ToolCallOutcome } from "../../src/contracts/executor.ts";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
 import { SlackClient, judge } from "../../src/connectors/slack/client.ts";
 import { CHANNEL, slackConnector } from "../../src/connectors/slack/connector.ts";
 import { escape, redact, writtenProblem } from "../../src/connectors/slack/mrkdwn.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
+import type { ToolCallOutcome } from "../../src/gateway/executor.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import { validateInput } from "../../src/gateway/validation.ts";

@@ -15,8 +15,16 @@
 // the body, PKCE).
 
 import { z } from "zod";
-import type { Binding, Connector, DiscoveryItem, Prepared, ScopedRecord } from "../../contracts/connectors.ts";
-import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
+import {
+	type Binding,
+	type Connector,
+	type DiscoveryItem,
+	OperationError,
+	type Prepared,
+	type ScopedRecord,
+	defineOperation,
+	denied,
+} from "../../gateway/connector.ts";
 import { TodoistClient, type TodoistTask } from "./client.ts";
 import { extend } from "../../lib/arrays.ts";
 

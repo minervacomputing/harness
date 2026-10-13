@@ -3,14 +3,13 @@
 
 import { describe, expect, test } from "vitest";
 import { z } from "zod";
-import type { Connector, Prepared } from "../../src/contracts/connectors.ts";
-import type { RunStatePort, ToolResult } from "../../src/contracts/executor.ts";
-import { ACCOUNT_KIND, OperationError, defineOperation } from "../../src/gateway/connector.ts";
+import { ACCOUNT_KIND, type Connector, OperationError, type Prepared, defineOperation } from "../../src/gateway/connector.ts";
 import { visibleResult } from "../../src/gateway/executor.ts";
 import { ProgrammingError } from "../../src/gateway/http.ts";
 import { Layer, Policy, resource } from "../../src/gateway/policy.ts";
 import { Registry } from "../../src/gateway/registry.ts";
-import { RESULT_SCHEMA, appliedWithoutResult } from "../../src/gateway/results.ts";
+import { RESULT_SCHEMA, type ToolResult, appliedWithoutResult } from "../../src/gateway/results.ts";
+import type { RunStatePort } from "../../src/gateway/run-state.ts";
 import {
 	FOLDER,
 	FakeServer,

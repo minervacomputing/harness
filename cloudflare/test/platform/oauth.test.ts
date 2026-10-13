@@ -10,10 +10,10 @@ import { workspaceObject } from "../../src/addressing.ts";
 import { EXPIRED_FLOW } from "../../src/api/flows.ts";
 import { FLOW_CLIENTS } from "../../src/api/oauth-clients.ts";
 import { PROVIDER_NETWORK } from "../../src/api/providers.ts";
-import type { Role } from "../../src/contracts/common.ts";
 import { providerOf } from "../../src/faults/ports.ts";
 import { NOTES_ACCOUNT } from "../../src/faults/provider.ts";
 import { uuid7 } from "../../src/lib/random.ts";
+import type { Role } from "../../src/shared/rpc.ts";
 import { type Answer, Browser, installEmailLog, signedIn } from "./accounts-helpers.ts";
 
 installEmailLog();

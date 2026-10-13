@@ -2,8 +2,7 @@
 
 import { describe, expect, test } from "vitest";
 import { z } from "zod";
-import type { ActionSpec, Connector } from "../../src/contracts/connectors.ts";
-import { ACCOUNT_KIND, consentGiven, defineOperation, termsOf } from "../../src/gateway/connector.ts";
+import { ACCOUNT_KIND, type ActionSpec, type Connector, consentGiven, defineOperation, termsOf } from "../../src/gateway/connector.ts";
 import { InvalidConnector, LookupError, Registry, fingerprint, inputSchema, meaning, validate } from "../../src/gateway/registry.ts";
 import { parseJson } from "../../src/lib/json.ts";
 import { record } from "../../src/lib/schema.ts";

@@ -7,9 +7,16 @@
 // contact, from the domain of the contact's email address, when the account is set up that way.
 
 import { z } from "zod";
-import type { Binding, Prepared, ProviderOutput, Requirement } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
+import {
+	type Binding,
+	OperationError,
+	type Prepared,
+	type ProviderOutput,
+	type Requirement,
+	defineOperation,
+	denied,
+} from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import { DATE_MESSAGE, isDate } from "../../lib/dates.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
 import { PLAIN_TEXT, isPlainText } from "../../lib/text.ts";

@@ -11,14 +11,34 @@
 // script waits for that reset (the lane), within its own wall clock, so a late reset cannot tear it down.
 // The result does not wait for the reset.
 
-import type { ToolDeclaration } from "../contracts/executor.ts";
-import type { GuestOutcome, ScriptControl, ScriptError, ScriptFence, ScriptRequest, ScriptResult, ScriptTools } from "../contracts/scripts.ts";
 import { toCodemodeIdentifier } from "@earendil-works/pi-codemode/declarations";
+import type { ToolDeclaration } from "../gateway/executor.ts";
 import { RUN_ENDED_MESSAGE } from "../gateway/ledger.ts";
 import { ABORTED, CALL_TIMEOUT_MS, ERROR_CHARS, RESET_FAILED, RESET_REASON, SANDBOX_FAILED, SCRIPT_CALLS_OPEN, SCRIPT_CPU_MS, SCRIPT_TIMEOUT_MS, TIMED_OUT } from "./limits.ts";
-import { headUnits } from "./output.ts";
+import type { GuestOutcome, ScriptError, ScriptStoreWrites } from "./outcome.ts";
+import { type ScriptText, headUnits } from "./output.ts";
+import type { ScriptFence, ScriptRequest } from "./scripts.ts";
 import { type ScriptCallPort, type ScriptCalls, ScriptSession, type Stop } from "./session.ts";
 import { syntaxError } from "./syntax.ts";
+import type { ScriptControl, ScriptTools } from "./target.ts";
+
+/**
+ * pi-codemode's result contract, which `run_script`'s rendering reads: notes first (a
+ * failure clipped to 30,000 characters, then cancelled calls), the printed output, then the returned value,
+ * or "The script printed and returned nothing." A script stopped for CPU or memory loses what it printed
+ * since it last yielded.
+ */
+export interface ScriptResult {
+	ok: boolean;
+	value?: ScriptText;
+	error?: ScriptError;
+	/** The printed items, images as "[image omitted]"; a long output's head, then the size of the rest. */
+	output: ScriptText[];
+	/** How many calls had not settled when the script ended: they are reported as cancelled. */
+	cancelled: number;
+	/** Saved only when `ok`. */
+	storeWrites: ScriptStoreWrites;
+}
 
 /** The Scripts Durable Object as the conversation calls it: a new stub for each call, since a reset breaks the old one. */
 export interface ScriptsClient {

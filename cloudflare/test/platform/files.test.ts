@@ -9,9 +9,8 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import { conversationObject, filesBucket, workspaceObject } from "../../src/addressing.ts";
 import { CONNECTORS, CONNECTOR_SOURCE } from "../../src/connectors/index.ts";
-import type { Caller, RunId, WorkspaceRef } from "../../src/contracts/common.ts";
-import type { RunHead } from "../../src/contracts/runs.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
+import type { RunHead } from "../../src/conversation/store.ts";
 import { notesConnector } from "../../src/faults/connector.ts";
 import type { Conversation, Workspace } from "../../src/faults/index.ts";
 import { faultConversationPorts, faultWorkspacePorts } from "../../src/faults/ports.ts";
@@ -26,6 +25,7 @@ import { receiveUpload, type UploadBucket, type UploadRecorder } from "../../src
 import { hex } from "../../src/lib/bytes.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { durableSql } from "../../src/lib/sql.ts";
+import type { Caller, RunId, WorkspaceRef } from "../../src/shared/rpc.ts";
 import { WORKSPACE_PORTS } from "../../src/workspace/workspace.ts";
 
 const USER = "0199a000-0000-7000-8000-00000000f11e";

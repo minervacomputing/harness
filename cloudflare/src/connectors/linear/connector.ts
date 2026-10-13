@@ -29,8 +29,7 @@
 // This module assembles the connector. The operations are in `reads` and `writes`; what they share (team
 // and issue names, where teams sit, page tokens) is in `teams`.
 
-import type { Connector, DiscoveryItem, DiscoveryPage } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
+import { type Connector, type DiscoveryItem, type DiscoveryPage, OperationError } from "../../gateway/connector.ts";
 import { LinearClient, type Team } from "./client.ts";
 import { GET_ISSUE, GET_TEAM, LIST_ISSUES, LIST_TEAMS, SEARCH_ISSUES } from "./reads.ts";
 import { TEAM, UUID, checkedCursor, nextCursor } from "./teams.ts";

@@ -19,12 +19,11 @@ import { calculatePKCECodeChallenge, generateRandomCodeVerifier, generateRandomS
 import { type CurrentSession, currentSession, withSessionCookies } from "../accounts/auth.ts";
 import { settings } from "../config.ts";
 import { connectorRegistry } from "../connectors/index.ts";
-import type { WorkspaceRef } from "../contracts/common.ts";
-import type { Connector, CredentialPayload } from "../contracts/connectors.ts";
-import { OperationError } from "../gateway/connector.ts";
+import { type Connector, type CredentialPayload, OperationError } from "../gateway/connector.ts";
 import { HttpError } from "../http/errors.ts";
 import type { App } from "../http/router.ts";
 import { timingSafeEqual } from "../lib/hash.ts";
+import type { WorkspaceRef } from "../shared/rpc.ts";
 import { TOKEN_TIMEOUT_MS, answerJson, boundedBody, issuingClient, tokenBody, tokenPayload, tokenRequest } from "../workspace/credentials.ts";
 import { NOT_YOURS } from "../workspace/core.ts";
 import { isAdmin } from "../workspace/out.ts";

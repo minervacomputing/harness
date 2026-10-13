@@ -19,21 +19,102 @@
 //   throwing; `platformRefusal` lets the Web connector recognise it.
 
 import type { z } from "zod";
-import type {
-	Effect,
-	OperationErrorShape,
-	ProviderClient,
-	ProviderHttp,
-	ProviderHttpOptions,
-	ProviderIo,
-	ProviderRequest,
-	WriteAttempt,
-} from "../contracts/connectors.ts";
 import { concatAll, fromUtf8, utf8 } from "../lib/bytes.ts";
 import { type Json, parseJsonBytes } from "../lib/json.ts";
 import { percentEncode } from "../lib/text.ts";
-import { OperationError } from "./connector.ts";
+import { OperationError, type OperationErrorShape, type ProviderClient } from "./connector.ts";
 import { RUN_ENDED_MESSAGE } from "./ledger.ts";
+
+/**
+ * What a write did to the provider. Starts unknown when sent: 2xx is applied; 400, 401, 403, 404, 409,
+ * 412, 422 and 429 are not applied (refused); anything else (5xx, 418, 3xx) and every transport error stay
+ * unknown, since `fetch` cannot tell "never connected" from "dropped after sending".
+ */
+export type Effect = "not_applied" | "applied" | "unknown";
+
+/**
+ * The one write a mutating operation may send, opened by the executor around `execute()` with the deadline
+ * fixed at dispatch (a monotonic `performance.now()` instant). A request after the attempt is closed (a
+ * promise the connector left running) is refused.
+ */
+export interface WriteAttempt {
+	readonly deadline: number;
+	sent: boolean;
+	effect: Effect | null;
+	closed: boolean;
+}
+
+/** What the executor hands a connector's client: `fetch` (injected in tests) and the open write attempt. */
+export interface ProviderIo {
+	fetch: typeof fetch;
+	/** The write attempt the executor opened for this call's `execute()`, or null outside it. */
+	currentWrite(): WriteAttempt | null;
+	/** Monotonic milliseconds, for write deadlines. */
+	now(): number;
+}
+
+export interface ProviderRequest {
+	method: string;
+	/** Relative to the client's base URL. */
+	path: string;
+	query?: { [name: string]: string | number | boolean | null | undefined };
+	headers?: { [name: string]: string };
+	json?: Json;
+	form?: { [name: string]: string };
+	body?: BodyInit;
+	/** Whether the request writes. Defaults to POST, PUT, PATCH and DELETE; a read sent with POST passes false. */
+	mutating?: boolean;
+	/** Return a 3xx for the caller to judge instead of failing. Never for a write. */
+	redirects?: boolean;
+}
+
+/**
+ * A provider's HTTP client. Never follows redirects (`redirect: "manual"`).
+ * Allows one mutating request, only inside an open write attempt, only with at least 2 s left (else
+ * TIMED_OUT, not sent), with a timeout of min(20 s, time left). Maps errors: `classify` first, then 401
+ * CONNECTION_UNAUTHORIZED "The {provider} connection is no longer authorized.", 403 `forbidden` (default
+ * PROVIDER_FORBIDDEN "{provider} refused this request for the connected account."), 404 NOT_FOUND "{provider}
+ * did not find this object.", 429 PROVIDER_RATE_LIMITED "{provider} is rate limiting requests. Try again
+ * later.", other 4xx PROVIDER_REJECTED "{provider} rejected this request.", anything else PROVIDER_FAILED
+ * "{provider} could not complete this request."; a transport error is PROVIDER_UNAVAILABLE "{provider}
+ * could not be reached." `judge` decides a write's effect before the status does.
+ */
+export interface ProviderHttp {
+	readonly provider: string;
+	request(request: ProviderRequest): Promise<Response>;
+	/** The body as JSON; a body that does not parse is PROVIDER_FAILED "{provider} returned an unexpected response." */
+	json(request: ProviderRequest): Promise<Json>;
+	/** The body validated by a schema; a mismatch is the same unexpected-response error. */
+	parsed<T>(request: ProviderRequest, schema: z.ZodType<T>): Promise<T>;
+	/**
+	 * The body streamed up to `limit` bytes; more raises `tooLarge`. An error response is read up to 64 KiB
+	 * and mapped with only content-type, retry-after and x-ratelimit-* kept. Never accounted as a write.
+	 */
+	bounded(request: ProviderRequest, limit: number, tooLarge: OperationErrorShape): Promise<Response>;
+	/** `bounded` with FILE_TOO_LARGE "This file is larger than Minerva reads ({limit} bytes)." */
+	download(request: ProviderRequest, limit: number): Promise<Response>;
+}
+
+export interface ProviderHttpOptions {
+	provider: string;
+	baseUrl: string;
+	headers: { [name: string]: string };
+	/** Seconds; default 20. */
+	timeout?: number;
+	forbidden?(provider: string, response: Response): OperationErrorShape;
+	/**
+	 * Names the error for a failed response when its status does not; null keeps the status's meaning.
+	 * `body` is the text decoded leniently (U+FFFD for invalid bytes), on purpose: a provider's reason is
+	 * still found in an error body with stray bytes. `bytes` is what was received, for a connector that reads
+	 * it strictly with parseJsonBytes.
+	 */
+	classify?(provider: string, response: Response, body: string, bytes: Uint8Array): OperationErrorShape | null;
+	/**
+	 * What a response did to a write when its status does not tell (GraphQL answers failures with 200); null
+	 * goes by the status. `body` and `bytes` as for `classify`.
+	 */
+	judge?(response: Response, body: string, bytes: Uint8Array): Effect | null;
+}
 
 /**
  * One segment of a provider API path, `percentEncode`d. "", "." and ".." are refused with an ordinary

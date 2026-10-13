@@ -6,12 +6,11 @@
 // the same query again; the address itself is never followed.
 
 import { z } from "zod";
-import type { ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { type Json, type JsonObject, parseJson } from "../../lib/json.ts";
 import { AtlassianClient } from "../atlassian/index.ts";
 import { extend } from "../../lib/arrays.ts";
-import { segment } from "../../gateway/http.ts";
+import { type ProviderIo, segment } from "../../gateway/http.ts";
 
 export const MAX_PAGES = 10;
 export const BATCH_LIMIT = 250;

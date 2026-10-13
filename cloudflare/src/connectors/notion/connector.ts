@@ -24,8 +24,7 @@
 // This module assembles the connector. The operations are in `reads` and `writes`; what they share (ids,
 // where pages and databases sit, how they are shown) is in `pages`.
 
-import type { Connector, DiscoveryItem, DiscoveryPage } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
+import { type Connector, type DiscoveryItem, type DiscoveryPage, OperationError } from "../../gateway/connector.ts";
 import { DataSource, NotionClient, type NotionClientOptions, Page, databaseName, own, pageTitle, sourceDatabaseId, sourceName } from "./client.ts";
 import { PAGE, canonical } from "./pages.ts";
 import { GET_DATABASE, GET_PAGE, LIST_COMMENTS, QUERY_DATABASE, READ_PAGE, SEARCH } from "./reads.ts";

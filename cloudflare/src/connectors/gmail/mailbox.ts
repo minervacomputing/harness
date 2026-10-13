@@ -5,9 +5,8 @@
 // hides it (see connector.ts).
 
 import { z } from "zod";
-import type { Binding } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, denied } from "../../gateway/connector.ts";
+import { type Binding, OperationError, denied } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import { type Format, type GmailClient, ID, type Label, type Message } from "./client.ts";
 
 export const LABEL = "label";

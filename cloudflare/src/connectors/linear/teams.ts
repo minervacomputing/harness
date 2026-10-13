@@ -1,9 +1,8 @@
 // What Linear's operations share: team and issue names, where teams sit, and page tokens.
 
 import { z } from "zod";
-import type { Binding } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, denied } from "../../gateway/connector.ts";
+import { type Binding, OperationError, denied } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import { type LinearClient, MAX_TEAM_DEPTH, type PageInfo, type State, type Team, type TeamRef } from "./client.ts";
 import { IDENTIFIER } from "./markdown.ts";
 

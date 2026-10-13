@@ -19,8 +19,7 @@
 // or credit needs its action on both the customer and the amount. Caps are per call: Minerva keeps no budget
 // across calls, so each refund or credit is capped but their number is not, in a run or across runs.
 
-import type { Account, Connector, DiscoveryItem, DiscoveryPage } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
+import { type Account, type Connector, type DiscoveryItem, type DiscoveryPage, OperationError } from "../../gateway/connector.ts";
 import { sliceText } from "../../lib/text.ts";
 import { CUSTOMER_ID, type Customer, KEY, SEARCH_PAGE, StripeClient, nextCursor } from "./client.ts";
 import * as money from "./money.ts";

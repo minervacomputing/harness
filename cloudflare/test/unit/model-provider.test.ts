@@ -5,12 +5,12 @@
 
 import { type AssistantMessage, type AssistantMessageEvent, createModels, isContextOverflow, type Message, type Models, type SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, test } from "vitest";
-import type { AttemptFence } from "../../src/contracts/common.ts";
 import { type FakeOptions, type FakeScript, fakeUpstream } from "../../src/model/fake.ts";
 import { COMPACTION_PROMPT_START } from "../../src/model/policy.ts";
 import { minervaModel, minervaProvider, type ModelHost, REASONING_SUMMARY, RUN_ENDED_TEXT, SUMMARY_REFUSED_HINT } from "../../src/model/provider.ts";
 import { type ModelRoute, upstreamOf } from "../../src/model/route.ts";
 import { CONTEXT_OVERFLOW, PROVIDER_ERROR, type Segment } from "../../src/model/tap.ts";
+import type { AttemptFence } from "../../src/shared/rpc.ts";
 
 const FENCE: AttemptFence = { runId: "0199a000-0000-7000-8000-000000000001", attempt: 2 };
 const ROUTE: ModelRoute = { provider: "fake", name: "fake", gateway: "minerva-cf", api: "chat", cap: 1000, reasoningEffort: "", reasoningSummary: "" };

@@ -2,9 +2,8 @@
 // databases sit, and how they are shown.
 
 import { z } from "zod";
-import type { Binding, ScopedRecord } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, denied } from "../../gateway/connector.ts";
+import { type Binding, OperationError, type ScopedRecord, denied } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import { type JsonObject } from "../../lib/json.ts";
 import { type Block, type Comment, type DataSource, type Database, type NotionClient, type Page, type Parent, pageTitle, sourceDatabaseId, textOf } from "./client.ts";
 

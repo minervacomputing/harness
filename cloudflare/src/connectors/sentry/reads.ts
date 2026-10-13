@@ -19,9 +19,8 @@
 // beyond 2^53 included, is left out (null) rather than shown rounded.
 
 import { z } from "zod";
-import type { Binding, Prepared, ProviderOutput } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
+import { type Binding, OperationError, type Prepared, type ProviderOutput, defineOperation, denied } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import type { Json } from "../../lib/json.ts";
 import { SINGLE_LINE, isSingleLine, truncate } from "../../lib/text.ts";
 import { requestAddress } from "./address.ts";

@@ -4,7 +4,6 @@
 // registry takes it.
 
 import { afterEach, describe, expect, test } from "vitest";
-import type { GrantRow } from "../../src/contracts/policy.ts";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
 import { MAX_MARKDOWN_BYTES, NOTION_VERSION, Page, SearchPage, textOf } from "../../src/connectors/notion/client.ts";
 import { notionConnector } from "../../src/connectors/notion/connector.ts";
@@ -12,6 +11,7 @@ import { SYNCED_HIDDEN, planEdits, redact, writtenRefusal } from "../../src/conn
 import { canonical, objectId } from "../../src/connectors/notion/pages.ts";
 import { checkFilter, mentionsHidden, readable, schema, writable } from "../../src/connectors/notion/properties.ts";
 import { OperationError, offered, termsOf } from "../../src/gateway/connector.ts";
+import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry, fingerprint } from "../../src/gateway/registry.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";

@@ -3,8 +3,8 @@
 // strings and its priorities 1 to 4.
 
 import { z } from "zod";
-import type { ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
-import { ProviderHTTP } from "../../gateway/http.ts";
+import type { ProviderClient } from "../../gateway/connector.ts";
+import { ProviderHTTP, type ProviderIo } from "../../gateway/http.ts";
 
 export const API_URL = "https://api.todoist.com/api/v1";
 

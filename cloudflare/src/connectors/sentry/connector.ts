@@ -13,8 +13,7 @@
 //
 // This module assembles the connector. The operations are in reads.ts.
 
-import type { Connector } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
+import { type Connector, OperationError } from "../../gateway/connector.ts";
 import { ID, ONE_ORGANISATION, type Project, SentryClient } from "./client.ts";
 import { GET_ISSUE, GET_ISSUE_EVENT, LIST_PROJECTS, PROJECT, SEARCH_ISSUES, short, unseen } from "./reads.ts";
 

@@ -13,9 +13,19 @@
 // without a Brave Search key (MINERVA_BRAVE_SEARCH_API_KEY) the connector withholds search (`offered`).
 
 import { z } from "zod";
-import type { Binding, Connector, Prepared, ProviderClient, ProviderIo, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { ACCOUNT_KIND, OperationError, defineOperation } from "../../gateway/connector.ts";
+import {
+	ACCOUNT_KIND,
+	type Binding,
+	type Connector,
+	OperationError,
+	type Prepared,
+	type ProviderClient,
+	type ProviderOutput,
+	type ScopedRecord,
+	defineOperation,
+} from "../../gateway/connector.ts";
+import type { ProviderIo } from "../../gateway/http.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import { htmlToText } from "../../lib/markdown.ts";
 import { MAX_URL, ancestors, canonicalHost, choices, name, parseUrl, validId } from "../../lib/sites.ts";
 import { SINGLE_LINE, isSingleLine, sliceText } from "../../lib/text.ts";

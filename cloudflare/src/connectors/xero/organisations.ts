@@ -2,9 +2,8 @@
 // calls name them, and how records show text. How they show money is in decimal.ts.
 
 import { z } from "zod";
-import type { Binding } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, denied } from "../../gateway/connector.ts";
+import { type Binding, OperationError, denied } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import { truncate } from "../../lib/text.ts";
 import { UUID, type Connection, type XeroClient, uuid } from "./client.ts";
 

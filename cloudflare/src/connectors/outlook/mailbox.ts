@@ -2,9 +2,8 @@
 // and message ids, and where folders sit.
 
 import { z } from "zod";
-import type { Binding } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, denied } from "../../gateway/connector.ts";
+import { type Binding, OperationError, denied } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import { after } from "../microsoft/inputs.ts";
 import { ID, consent } from "../microsoft/index.ts";
 import { type Folder, type GraphClient, type Message, ordinary } from "./client.ts";

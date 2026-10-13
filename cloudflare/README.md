@@ -11,7 +11,6 @@ The experiment of [docs/plans/cloudflare.md](../docs/plans/cloudflare.md): the s
 | `migrations/` | D1 `minerva-cf`: accounts and the workspace directory |
 | `src/index.ts`, `src/http/` | The router, error shapes, cookies, CSRF, security headers, JSON bodies, `/assets/`, the probe |
 | `src/lib/` | JSON parsing (`parseJson`, which the runtime's key bug needs), canonical JSON (RFC 8785) for hashes, AES-GCM encryption at rest, zod records without prototype keys, text, dates, HTML, hosts and addresses, hashes, ids, the SQL interface every object's logic runs on (`sql.ts`) and its schema steps |
-| `src/contracts/` | The interfaces steps 2 to 6 build against (types only) |
 | `src/workspace/` | The Workspace Durable Object: connections and credentials with refresh, layers, grants, agents, the run registry, the revocation outbox, uploads, deletion (`core.ts` over `lib/sql.ts`; `workspace.ts` is the object) |
 | `src/conversation/` | The Conversation Durable Object: messages, runs, attempts and the gate, events and the stream's WebSocket, history replay, the run's tools, PiHarness, the local tools and their checkpoint barrier (`local.ts`, `local-run.ts`); `ports.ts` wires the Workspace, the executor, the ledger and the model |
 | `src/gateway/` | The permission pipeline: policy, grants, the connector contract and registry, run-start tool lists, the executor, provider HTTP, the write ledger and page tokens, strict validation, results |
@@ -23,6 +22,7 @@ The experiment of [docs/plans/cloudflare.md](../docs/plans/cloudflare.md): the s
 | `src/scripts/` | Code mode: `run_script` in the `minerva` extension, the Scripts Durable Object that loads each script as a Dynamic Worker, the guest's prelude, the conversation's side of a script (wall clock, caps, the reset after every script) |
 | `src/faults/` | The test build only: a fake connector and its provider object, fault points, the account tests' driver, and the sandbox lab (`lab.ts`, `sandbox.ts`: production's Sandbox object with fault seams, behind the driver) (below) |
 | `src/addressing.ts` | The one map from a workspace (id, jurisdiction) to its objects and its bucket |
+| `src/shared/` | The types every object and the Worker share: ids, the verified caller, the attempt fence and refusals (`rpc.ts`), and the JSON API's shapes from the frontend's generated types (`api.ts`). Every other type lives with the module that owns it |
 | `test/` | `unit/`, `platform/` (with the end-to-end fault tests, `protocols.test.ts`, and `frontend-auth.test.ts`, which runs the frontend's auth client, `frontend/src/lib/auth.ts`, against the Worker), `account/` (`deployed.test.ts` for `minerva-cf`; `faults.test.ts`, `sandbox.test.ts`, `turns.test.ts` and `web-egress.test.ts` for the test Worker; `scripts.test.ts` for the code mode lab), `docker/` (the Sandbox against the real image), and `fixtures/` with shared test suites and provider fakes |
 
 ## Setup

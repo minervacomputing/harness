@@ -5,9 +5,8 @@
 // rate limits and an API that is not enabled come as Google's usual 403s (see connectors/google).
 
 import { z } from "zod";
-import type { OperationErrorShape, ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
-import { ProviderHTTP, segment } from "../../gateway/http.ts";
+import { OperationError, type OperationErrorShape, type ProviderClient } from "../../gateway/connector.ts";
+import { ProviderHTTP, type ProviderIo, segment } from "../../gateway/http.ts";
 import { type Json, parseJsonBytes } from "../../lib/json.ts";
 import { GoogleUser, USERINFO_URL, classify as googleClassify, reasons } from "../google/index.ts";
 

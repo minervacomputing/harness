@@ -7,8 +7,7 @@
 // the write.
 
 import { z } from "zod";
-import type { Binding, Prepared, ProviderOutput } from "../../contracts/connectors.ts";
-import { defineOperation } from "../../gateway/connector.ts";
+import { type Binding, type Prepared, type ProviderOutput, defineOperation } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
 import { PLAIN_TEXT, isPlainText } from "../../lib/text.ts";
 import type { Conversation } from "./client.ts";

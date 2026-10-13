@@ -3,10 +3,11 @@
 // and the plan belongs to the API.
 
 import { describe, expect, test } from "vitest";
-import type { GrantChange, GrantRow } from "../../src/contracts/policy.ts";
 import { ACCOUNT_KIND } from "../../src/gateway/connector.ts";
 import {
 	DEFAULT_RESTRICTED,
+	type GrantChange,
+	type GrantRow,
 	InvalidGrants,
 	MAX_GRANTS_PER_CONNECTION,
 	allowedActions,

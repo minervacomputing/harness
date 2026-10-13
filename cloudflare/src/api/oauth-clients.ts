@@ -5,9 +5,9 @@
 
 import { customFetch, dynamicClientRegistrationRequest } from "oauth4webapi";
 import { settings } from "../config.ts";
-import type { Connector } from "../contracts/connectors.ts";
-import type { WorkspaceRef } from "../contracts/common.ts";
+import type { Connector } from "../gateway/connector.ts";
 import type { Json } from "../lib/json.ts";
+import type { WorkspaceRef } from "../shared/rpc.ts";
 import { TOKEN_TIMEOUT_MS, answerJson, boundedBody, type OAuth2, redirectUri } from "../workspace/credentials.ts";
 import { configuredClient, oauthClients } from "../workspace/env.ts";
 import type { ClientCredentials, OAuthClients } from "../workspace/ports.ts";

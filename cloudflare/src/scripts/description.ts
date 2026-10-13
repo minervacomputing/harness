@@ -5,7 +5,7 @@
 // pi-codemode's rendering of the tools' schemas.
 
 import { DEFAULT_INPUT_SCHEMA_MAX_CHARS, schemaToType, toCodemodeIdentifier } from "@earendil-works/pi-codemode/declarations";
-import type { ToolDeclaration } from "../contracts/executor.ts";
+import type { ToolDeclaration } from "../gateway/executor.ts";
 import { CALLS_AT_ONCE, SCRIPT_CALLS_OPEN, SCRIPT_CPU_MS, SCRIPT_MEMORY_LABEL, SCRIPT_TIMEOUT_MS, STORE_BYTES } from "./limits.ts";
 
 type CodemodeJsonSchema = Parameters<typeof schemaToType>[0];

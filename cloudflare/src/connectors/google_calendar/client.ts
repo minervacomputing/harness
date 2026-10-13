@@ -1,8 +1,8 @@
 // A thin client for the Google Calendar API v3. Responses are validated before use.
 
 import { z } from "zod";
-import type { ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
-import { ProviderHTTP, segment } from "../../gateway/http.ts";
+import type { ProviderClient } from "../../gateway/connector.ts";
+import { ProviderHTTP, type ProviderIo, segment } from "../../gateway/http.ts";
 import type { Json } from "../../lib/json.ts";
 import { GoogleUser, USERINFO_URL, classify } from "../google/index.ts";
 

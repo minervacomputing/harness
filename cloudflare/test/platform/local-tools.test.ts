@@ -13,10 +13,9 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import { conversationObject, filesBucket, workspaceObject } from "../../src/addressing.ts";
 import { CONNECTORS, CONNECTOR_SOURCE } from "../../src/connectors/index.ts";
-import type { Caller, RunId, WorkspaceRef } from "../../src/contracts/common.ts";
-import type { RunEvent } from "../../src/contracts/events.ts";
-import type { RunHead } from "../../src/contracts/runs.ts";
+import type { RunEvent } from "../../src/conversation/events.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
+import type { RunHead } from "../../src/conversation/store.ts";
 import { notesConnector } from "../../src/faults/connector.ts";
 import type { Conversation, Workspace } from "../../src/faults/index.ts";
 import type { Fault } from "../../src/faults/plan.ts";
@@ -24,6 +23,7 @@ import { faultConversationPorts, faultWorkspacePorts } from "../../src/faults/po
 import { setUpWorkspace } from "../../src/faults/routes.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import type { FakeTurn } from "../../src/model/fake.ts";
+import type { Caller, RunId, WorkspaceRef } from "../../src/shared/rpc.ts";
 import { WORKSPACE_PORTS } from "../../src/workspace/workspace.ts";
 import { MemorySandbox } from "./sandbox-memory.ts";
 

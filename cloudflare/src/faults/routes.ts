@@ -12,13 +12,13 @@
 // so the request's CPU time is the hash's (plan: Step 7, the scrypt measurement).
 
 import { conversationObject, filesBucket, sandboxObject, workspaceObject } from "../addressing.ts";
-import type { Caller, WorkspaceRef } from "../contracts/common.ts";
-import type { GrantChange } from "../contracts/policy.ts";
 import { hashPassword } from "../accounts/passwords.ts";
+import type { GrantChange } from "../gateway/grants.ts";
 import { timingSafeEqual } from "../lib/hash.ts";
 import { serveDownload } from "../files/download.ts";
 import { receiveUpload } from "../files/uploads.ts";
 import { type Json, parseJson } from "../lib/json.ts";
+import type { Caller, WorkspaceRef } from "../shared/rpc.ts";
 import { FOLDER, NOTES, NOTES_CLIENT, NOTES_TOKEN_URL } from "./connector.ts";
 import type { Conversation, Workspace } from "./index.ts";
 import { SandboxLab } from "./lab.ts";

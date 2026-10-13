@@ -9,7 +9,7 @@ import { checkWritten, read, redact, written } from "../../src/connectors/interc
 import { INBOX } from "../../src/connectors/intercom/inboxes.ts";
 import { MAX_MESSAGES, messages } from "../../src/connectors/intercom/reads.ts";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
-import type { GrantRow } from "../../src/contracts/policy.ts";
+import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import type { JsonObject } from "../../src/lib/json.ts";

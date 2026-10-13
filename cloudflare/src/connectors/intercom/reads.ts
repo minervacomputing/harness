@@ -1,8 +1,7 @@
 // Intercom's read operations: inboxes, conversation search and single conversations.
 
 import { z } from "zod";
-import type { Binding, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
-import { OperationError, defineOperation } from "../../gateway/connector.ts";
+import { type Binding, OperationError, type Prepared, type ProviderOutput, type ScopedRecord, defineOperation } from "../../gateway/connector.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
 import { SINGLE_LINE, WORD_CLASS, isSingleLine, truncate } from "../../lib/text.ts";
 import { type Attachment, type Author, type Conversation, type IntercomClient, type Part, idNumber } from "./client.ts";

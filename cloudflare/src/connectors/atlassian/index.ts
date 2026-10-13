@@ -12,9 +12,8 @@
 // reach the model.
 
 import { z } from "zod";
-import type { Auth, ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
-import { OperationError, denied } from "../../gateway/connector.ts";
-import { ProviderHTTP, segment } from "../../gateway/http.ts";
+import { type Auth, OperationError, type ProviderClient, denied } from "../../gateway/connector.ts";
+import { ProviderHTTP, type ProviderIo, segment } from "../../gateway/http.ts";
 import { type Json, parseJsonBytes } from "../../lib/json.ts";
 
 export const API_URL = "https://api.atlassian.com";

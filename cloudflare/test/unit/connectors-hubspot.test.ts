@@ -3,8 +3,6 @@
 // limits; its tokens; and the inputs each operation accepts.
 
 import { describe, expect, test } from "vitest";
-import type { GrantRow } from "../../src/contracts/policy.ts";
-import type { ToolCallOutcome } from "../../src/contracts/executor.ts";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
 import { classify } from "../../src/connectors/hubspot/client.ts";
 import { SCOPES, hubspotConnector } from "../../src/connectors/hubspot/connector.ts";
@@ -12,6 +10,8 @@ import { HubRecord, SearchPage } from "../../src/connectors/hubspot/models.ts";
 import { DEAL_PROPERTIES, after, following, recordData } from "../../src/connectors/hubspot/scope.ts";
 import { noteHtml } from "../../src/connectors/hubspot/writes.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
+import type { ToolCallOutcome } from "../../src/gateway/executor.ts";
+import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { MAX_ALIAS_SUFFIX, MAX_TOOL_NAME, Registry } from "../../src/gateway/registry.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";

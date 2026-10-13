@@ -29,8 +29,7 @@
 // This module assembles the connector. The operations are in reads.ts and writes.ts; what they share (Graph
 // consent, folder and message ids, where folders sit) is in mailbox.ts.
 
-import type { Connector, DiscoveryItem, DiscoveryPage } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
+import { type Connector, type DiscoveryItem, type DiscoveryPage, OperationError } from "../../gateway/connector.ts";
 import { ID, accountLabel, oauth } from "../microsoft/index.ts";
 import { mapLimited } from "../microsoft/limit.ts";
 import * as addresses from "../../lib/addresses.ts";

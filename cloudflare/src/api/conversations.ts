@@ -18,14 +18,14 @@ import { z } from "zod";
 import { currentSession, withSessionCookies } from "../accounts/auth.ts";
 import { conversationObject } from "../addressing.ts";
 import { settings } from "../config.ts";
-import type { ConversationId, RunId } from "../contracts/common.ts";
-import type { ConversationHead, RunHead } from "../contracts/runs.ts";
 import type { Conversation } from "../conversation/conversation.ts";
 import { START_KEY } from "../conversation/start-keys.ts";
+import type { ConversationHead, RunHead } from "../conversation/store.ts";
 import { downloadLinkFor } from "../files/links.ts";
 import { HttpError, detail, json, notFound, unauthorized, validationError } from "../http/errors.ts";
 import { UUID } from "../http/paths.ts";
 import type { App, AppEnv } from "../http/router.ts";
+import type { ConversationId, RunId } from "../shared/rpc.ts";
 import { canonicalUuid, readBody, readQuery, uuid } from "./input.ts";
 import { type Member, afterRevocation, member, memberRoute, param, valueOf } from "./members.ts";
 

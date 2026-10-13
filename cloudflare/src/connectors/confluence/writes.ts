@@ -6,8 +6,7 @@
 // on where a page is.
 
 import { z } from "zod";
-import type { Prepared, ProviderOutput } from "../../contracts/connectors.ts";
-import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
+import { OperationError, type Prepared, type ProviderOutput, defineOperation, denied } from "../../gateway/connector.ts";
 import type { JsonObject } from "../../lib/json.ts";
 import { PLAIN_TEXT, SINGLE_LINE, isPlainText, isSingleLine } from "../../lib/text.ts";
 import * as adf from "../atlassian/adf.ts";

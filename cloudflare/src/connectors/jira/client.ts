@@ -4,12 +4,11 @@
 // printable and short enough to store, and sends it back as a query parameter. Other lists page by offset.
 
 import { z } from "zod";
-import type { ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
 import { AtlassianClient } from "../atlassian/index.ts";
 import { extend } from "../../lib/arrays.ts";
-import { segment } from "../../gateway/http.ts";
+import { type ProviderIo, segment } from "../../gateway/http.ts";
 
 export const MAX_PAGES = 10;
 export const BULK_LIMIT = 100;

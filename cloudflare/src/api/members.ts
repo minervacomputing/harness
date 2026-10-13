@@ -10,9 +10,10 @@ import type { Context } from "hono";
 import { type CurrentSession, currentSession, withSessionCookies } from "../accounts/auth.ts";
 import { type WorkspaceRow, ensureInitialized, workspaceOwner } from "../accounts/provision.ts";
 import { workspaceObject } from "../addressing.ts";
-import type { Caller, Outcome, Refusal, Revocation, Role, WorkspaceRef } from "../contracts/common.ts";
 import { HttpError, detail, unauthorized } from "../http/errors.ts";
 import type { AppEnv } from "../http/router.ts";
+import type { Caller, Outcome, Refusal, Role, WorkspaceRef } from "../shared/rpc.ts";
+import type { Revocation } from "../workspace/core.ts";
 import type { Workspace } from "../workspace/workspace.ts";
 
 export interface Member {

@@ -1,4 +1,4 @@
-// The Scripts Durable Object (contracts/scripts.ts `ScriptsApi`; plan: Code mode), one per conversation.
+// The Scripts Durable Object (`ScriptsApi`; plan: Code mode), one per conversation.
 // It loads each script as a Dynamic Worker with no network (`globalOutbound: null`), no `env` and a CPU
 // limit, and runs it. A guest runs on the thread of the object that loaded it, so a CPU-bound script blocks
 // this object, never the conversation, which keeps the wall clock and answers its other requests meanwhile.
@@ -18,15 +18,68 @@
 // and the conversation's next script has a newer id.
 
 import { DurableObject } from "cloudflare:workers";
-import type { AttemptFence } from "../contracts/common.ts";
-import type { GuestOutcome, ScriptControl, ScriptFence, ScriptRequest, ScriptsApi, ScriptTools } from "../contracts/scripts.ts";
 import { type About, identity } from "../lib/about.ts";
 import { isUuid } from "../lib/random.ts";
 import { appliedMigrations, migrate } from "../lib/sqlite.ts";
+import type { AttemptFence } from "../shared/rpc.ts";
 import { GUEST_COMPATIBILITY_DATE, PRELUDE_MODULE, RESET_REASON } from "./limits.ts";
-import { guestOutcome, thrownOutcome } from "./outcome.ts";
+import { type GuestOutcome, guestOutcome, thrownOutcome } from "./outcome.ts";
 import { guestModules } from "./prelude.ts";
 import { MIGRATIONS } from "./schema.ts";
+import type { ScriptControl, ScriptTools } from "./target.ts";
+
+export interface ScriptFence extends AttemptFence {
+	/** Unique per script within the run. */
+	scriptId: string;
+}
+
+export interface ScriptRequest {
+	/** The body of an async function: top-level await and return work. */
+	code: string;
+	/**
+	 * The run's connector tools, in the order the run lists them, with the identifier scripts call each by
+	 * (pi-codemode's `toCodemodeIdentifier`; the first tool wins an identifier). Each is also `tools["<name>"]`.
+	 */
+	tools: { name: string; identifier: string }[];
+	/**
+	 * `store()` values kept between the turn's scripts, as `[key, JSON text]`, up to 1 MiB of UTF-8 JSON in
+	 * all. Pairs, not an object, so a key such as `__proto__` stays a key.
+	 */
+	store: [string, string][];
+	/** The guest's CPU limit; the platform stops it a few seconds late. */
+	cpuMs: number;
+}
+
+/**
+ * The Scripts Durable Object (one per conversation, named by its id, in its workspace's jurisdiction).
+ * The Conversation Durable Object enforces the wall clock (120 s, cut to the deadline) and resets this
+ * object after every script, the next script waiting for the reset.
+ *
+ * Fences order by run id (UUIDv7, so a later run sorts later), then attempt. The object keeps the newest it
+ * has seen in storage, so the order survives its own resets.
+ */
+export interface ScriptsApi {
+	/**
+	 * Loads and runs one guest and answers what it answered, checked. Refused as stale for a fence older than
+	 * the newest. When `control` says the script was stopped, or breaks, the object resets itself, which
+	 * breaks this call.
+	 */
+	run(fence: ScriptFence, script: ScriptRequest, tools: ScriptTools, control: ScriptControl): Promise<GuestOutcome | { refused: "stale" }>;
+	/**
+	 * After the script of `fence`: tears down every guest this object loaded (`ctx.abort()`); the next script
+	 * starts in a new instance. Refused as stale when a later run or attempt has used the object since, or a
+	 * later script has loaded in this instance, so a late reset cannot stop a newer script. Answers at once
+	 * when this instance loaded nothing. Unless `answered` (its run came back), the script is remembered as
+	 * ended first, so a run of it still on its way is refused. The reset breaks the call itself: a call that
+	 * fails because the object was reset is the reset done.
+	 */
+	reset(fence: ScriptFence, answered?: boolean): Promise<{ reset: true } | { refused: "stale" }>;
+	/**
+	 * For the conversation's deletion (plan: Files, Deletion), once it refuses new runs: deletes the fence and
+	 * resets the object, which breaks the call once done.
+	 */
+	destroy(): Promise<void>;
+}
 
 /** Fences in order: by run id (UUIDv7, so a later run sorts later), then attempt. */
 export function compareFences(a: AttemptFence, b: AttemptFence): number {

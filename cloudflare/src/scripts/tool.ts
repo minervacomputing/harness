@@ -16,19 +16,19 @@
 
 import type { TSchema } from "@earendil-works/pi-ai";
 import { defineDoc, type ToolExecutionApi, type ToolExecutionResult, type ToolRegistration } from "@earendil-works/pi-durable";
-import type { AttemptFence, EpochMs, RunId } from "../contracts/common.ts";
-import type { ToolDeclaration } from "../contracts/executor.ts";
-import type { ScriptControl, ScriptResult, ScriptText, ScriptTools } from "../contracts/scripts.ts";
 import { clip } from "../conversation/history.ts";
+import type { ToolDeclaration } from "../gateway/executor.ts";
 import { TOOL_RESULT_LIMITS } from "../gateway/results.ts";
 import { RUN_ENDED_MESSAGE } from "../gateway/ledger.ts";
 import { parseJson } from "../lib/json.ts";
 import { uuid7 } from "../lib/random.ts";
+import type { AttemptFence, EpochMs, RunId } from "../shared/rpc.ts";
 import { scriptDescription } from "./description.ts";
 import { CANCELLED_NOTE, NOTHING, SCRIPT_TOOL, STORE_BYTES, STORE_TOO_LARGE, STORE_UNCONVERTIBLE } from "./limits.ts";
-import { bound, sizeOf } from "./output.ts";
-import { executeScript, type ScriptLane, type ScriptsClient, scriptCpuMs, scriptTimeoutMs } from "./run.ts";
+import { type ScriptText, bound, sizeOf } from "./output.ts";
+import { executeScript, type ScriptLane, type ScriptResult, type ScriptsClient, scriptCpuMs, scriptTimeoutMs } from "./run.ts";
 import type { ScriptCallPort, ScriptCalls, ScriptSession } from "./session.ts";
+import type { ScriptControl, ScriptTools } from "./target.ts";
 
 type Context = Parameters<ToolRegistration["execute"]>[2];
 

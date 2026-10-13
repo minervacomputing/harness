@@ -5,8 +5,17 @@
 // executor's tests put it behind ProviderHttp and an injected `fetch`.
 
 import { z } from "zod";
-import type { Connector, DiscoveryPage, Operation, Prepared, ProviderClient, Requirement } from "../../src/contracts/connectors.ts";
-import { ACCOUNT_KIND, OperationError, defineOperation } from "../../src/gateway/connector.ts";
+import {
+	ACCOUNT_KIND,
+	type Connector,
+	type DiscoveryPage,
+	type Operation,
+	OperationError,
+	type Prepared,
+	type ProviderClient,
+	type Requirement,
+	defineOperation,
+} from "../../src/gateway/connector.ts";
 
 export const FOLDER = "folder";
 export const LABEL = "label";

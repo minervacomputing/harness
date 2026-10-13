@@ -2,8 +2,7 @@
 // single messages.
 
 import { z } from "zod";
-import type { Binding, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
-import { defineOperation } from "../../gateway/connector.ts";
+import { type Binding, type Prepared, type ProviderOutput, type ScopedRecord, defineOperation } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
 import { singleLine, sliceText, TextError } from "../../lib/text.ts";
 import { ID } from "../microsoft/index.ts";

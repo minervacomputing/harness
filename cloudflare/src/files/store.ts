@@ -16,22 +16,20 @@
 // Every change someone acts on (a claim, a checkpoint, warnings, a charge) is made outside pi's open
 // transactions (`outside`, conversation/store.ts), in one synchronous transaction with its checks.
 
-import type { AttachmentOut, FolderOut } from "../contracts/api.ts";
-import type { AttemptFence, ConversationId, EpochMs, Outcome, Refusal, RunId, Sha256, VersionId, WorkspaceId } from "../contracts/common.ts";
-import type { DownloadTarget } from "../contracts/conversation.ts";
-import type { CheckpointOutcome, CheckpointRefusalCode, CheckpointScan, FolderLimit, FolderUsage, StoredEntries, VersionKind } from "../contracts/files.ts";
-import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan } from "../contracts/sandbox.ts";
-import type { ReservedUpload } from "../contracts/workspace.ts";
 import { utf8Strict } from "../lib/bytes.ts";
 import { canonicalJson, hashLabel } from "../lib/canonical.ts";
 import { parseJson } from "../lib/json.ts";
 import { tokenHex, uuid7 } from "../lib/random.ts";
 import { first, type Sql, type SqlValue } from "../lib/sql.ts";
 import { splitParts, VALUE_PART } from "../lib/text.ts";
+import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan } from "../sandbox/folder.ts";
+import type { AttachmentOut, FolderOut } from "../shared/api.ts";
+import type { AttemptFence, ConversationId, EpochMs, Outcome, Refusal, RunId, Sha256, VersionId, WorkspaceId } from "../shared/rpc.ts";
 import { overFolder } from "../workspace/limits.ts";
 import {
 	BLOB_GONE,
 	CONFLICT,
+	type FolderLimit,
 	LOOSE_GRACE_MS,
 	NO_LONGER_AVAILABLE,
 	NO_ROOM,
@@ -44,9 +42,12 @@ import {
 } from "./limits.ts";
 import {
 	type FolderChanges,
+	type FolderWarnings,
 	InvalidManifest,
 	type Manifest,
+	type StoredEntries,
 	type StoredWarnings,
+	type WireManifest,
 	entriesBytes,
 	entryCountOf,
 	filesOf,
@@ -61,13 +62,73 @@ import {
 import { numbered } from "./names.ts";
 import { type Bucket, blobKey, conversationPrefix, deletePrefix } from "./objects.ts";
 import { sha256HexSync } from "./sha256.ts";
+import type { ReservedUpload } from "./uploads.ts";
+
+/** A file a signed download link may name (plan: Files, Downloads). */
+export interface DownloadTarget {
+	versionId: VersionId;
+	path: string;
+	/** `blobs/<ws>/<conv>/<sha256>/<random>`. */
+	key: string;
+	sha256: Sha256;
+	size: number;
+}
+
+/**
+ * `base`: a message's attachments added to the folder. `checkpoint`: a run's last saved state (at most one
+ * per run, transient). `turn`: a checkpoint its run published. Contents are immutable; `kind` and `parent`
+ * may change when a checkpoint is published.
+ */
+export type VersionKind = "base" | "checkpoint" | "turn";
+
+/** A conversation's folder as a new run sees it: its current version and how full it is. */
+export interface FolderUsage {
+	versionId: VersionId | null;
+	/** In pages, as the store counts it. */
+	bytes: number;
+	entries: number;
+	/** First path segments of every file and directory at the root: what attachment names are numbered against. */
+	rootNames: string[];
+}
+
+/**
+ * What a checkpoint takes (plan: Checkpoints, steps 4 to 6): the scan's report as the container
+ * made it, untrusted (ScanResult's `manifest`, `sizes` and `warnings`), and the version the working copy
+ * was built on, which must still be the run's (its last checkpoint, else its base version).
+ */
+export interface CheckpointScan {
+	/**
+	 * The version the working copy was built on: the one the attempt hydrated (`HydratePlan.versionId`), then
+	 * each accepted checkpoint's `versionId`. Anything else is `conflict`, so a scan taken before
+	 * a newer checkpoint can never replace it.
+	 */
+	parent: VersionId | null;
+	manifest: WireManifest;
+	/** Bytes per path, as the scan measured them; only the files to upload are sized from it. */
+	sizes: { [path: string]: number };
+	/** Null or omitted: the run's warnings stay as they were; otherwise they replace them, also when nothing else changed. */
+	warnings?: FolderWarnings | null;
+}
+
+/** `CheckpointRefused`'s codes; `conflict` is the version the working copy was built on having moved. */
+export type CheckpointRefusalCode = "stale" | "conflict" | "invalid_manifest" | "unknown_blob" | "quota";
+
+/**
+ * A checkpoint's outcome. `versionId` is the run's version afterwards: the current one for an identical
+ * manifest (null for a run that never had files). A `quota` refusal names its limit and fails the turn with
+ * `folder_limit`; any other refusal, or a failed upload, ends the attempt.
+ */
+export type CheckpointOutcome =
+	| { ok: true; versionId: VersionId | null; uploaded: number }
+	| { ok: false; code: CheckpointRefusalCode; message: string; limit?: FolderLimit }
+	| { ok: false; code: "upload"; reason: "changed" | "mismatch" | "failed"; path: string; message: string };
 
 /** The keys a checkpoint's plan writes: not those of contents only hashed. */
 function keysOf(plan: CheckpointUploadPlan): string[] {
 	return plan.files.flatMap((file) => (file.key === null ? [] : [file.key]));
 }
 
-/** The Workspace's byte counter (contracts/workspace.ts `setConversationBytes`). */
+/** The Workspace's byte counter (workspace/core.ts `setConversationBytes`). */
 export interface ByteCounter {
 	setConversationBytes(conversationId: ConversationId, total: number, revision: number): Promise<{ ok: true } | { ok: false; limit: Extract<FolderLimit, "workspace"> }>;
 }
@@ -667,7 +728,7 @@ export class FolderStore {
 		});
 	}
 
-	// Checkpoints (plan: Checkpoints, steps 4 to 6).
+	// Checkpoints (plan: Checkpoints).
 
 	/**
 	 * Records the run's folder as the scan reports it, on top of its last checkpoint (or its base version):

@@ -3,8 +3,8 @@
 // partial entries never reach the next turn (plan: Events and the stream). Each run is a fresh pi session
 // seeded with this history when it is created; a resumed attempt keeps what its session holds.
 
-import type { AttachmentOut, FolderChangesOut } from "../contracts/api.ts";
 import { sliceText } from "../lib/text.ts";
+import type { AttachmentOut, FolderChangesOut } from "../shared/api.ts";
 
 /** Earlier messages the gateway hands the loop. */
 export const HISTORY_LIMIT = 20;

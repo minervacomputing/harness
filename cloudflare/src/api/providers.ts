@@ -1,17 +1,16 @@
 // The provider calls of the connection settings: the account behind a new API key, and the
-// access editor's discover, children and describe. They run here, in the Worker, as the contract has it
-// (contracts/workspace.ts): the Workspace lends the caller's credential (`lease` for `settings`, refreshed
+// access editor's discover, children and describe. They run here, in the Worker, as the Workspace's API has it
+// (workspace/core.ts `WorkspaceApi`): the Workspace lends the caller's credential (`lease` for `settings`, refreshed
 // first when it is about to expire), it is decrypted for the one call only, as the Conversation's executor
 // does for a run, and it is never stored or returned. A token the provider rejects marks the connection
 // Needs reconnecting, unless it got new credentials meanwhile.
 
-import type { WorkspaceRef } from "../contracts/common.ts";
-import type { Account, Connector, CredentialPayload, ProviderClient } from "../contracts/connectors.ts";
-import { OperationError } from "../gateway/connector.ts";
+import { type Account, type Connector, type CredentialPayload, OperationError, type ProviderClient } from "../gateway/connector.ts";
 import { secretOf, unauthorized } from "../gateway/executor.ts";
 import { CallIo } from "../gateway/http.ts";
 import { HttpError, detail } from "../http/errors.ts";
 import { EncryptionKeys, credentialBinding } from "../lib/encryption.ts";
+import type { WorkspaceRef } from "../shared/rpc.ts";
 import type { Member } from "./members.ts";
 
 /**

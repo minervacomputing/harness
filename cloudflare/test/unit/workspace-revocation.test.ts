@@ -5,7 +5,7 @@
 // Conversation that cannot be reached, and a second change while a cancel is still owed.
 
 import { describe, expect, test } from "vitest";
-import type { Caller } from "../../src/contracts/common.ts";
+import type { Caller } from "../../src/shared/rpc.ts";
 import { BARRIER_MS } from "../../src/workspace/core.ts";
 import { ADA, GRACE, accessOf, attach, begin, conversation, connectMixed, defaultAgent, grant, harness, outbox, registered, running, settle, type Harness } from "./workspace-support.ts";
 

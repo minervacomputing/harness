@@ -2,9 +2,8 @@
 // Responses are validated before use.
 
 import { z } from "zod";
-import type { ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
-import { ProviderHTTP, segment } from "../../gateway/http.ts";
+import { OperationError, type ProviderClient } from "../../gateway/connector.ts";
+import { ProviderHTTP, type ProviderIo, segment } from "../../gateway/http.ts";
 import { concat, utf8 } from "../../lib/bytes.ts";
 import { type JsonObject } from "../../lib/json.ts";
 import { tokenHex } from "../../lib/random.ts";

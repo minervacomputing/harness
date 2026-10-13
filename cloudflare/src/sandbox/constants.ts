@@ -3,8 +3,31 @@
 // Durable Object applies. The image (cloudflare/container/Dockerfile) must agree with the paths and with
 // COMMAND_PATH; a unit test reads the Dockerfile to check it.
 
-import type { ConversationId, EpochMs, WorkspaceRef } from "../contracts/common.ts";
-import type { SandboxSpec } from "../contracts/sandbox.ts";
+import type { ConversationId, EpochMs, WorkspaceRef } from "../shared/rpc.ts";
+
+export interface SandboxSpec {
+	workspace: WorkspaceRef;
+	conversationId: ConversationId;
+	/** `/workspace` tmpfs: `size` the folder limit rounded down to pages, `nr_inodes` the entry limit plus one, uid 1000. */
+	folderBytes: number;
+	folderEntries: number;
+	/** `/tmp` tmpfs, noexec; 256 MiB. */
+	tmpBytes: number;
+	/** The agent cgroup's `pids.max`: 256. */
+	pidsMax: number;
+	/**
+	 * The agent cgroup's `memory.max`: the base (1 GiB) plus both tmpfs sizes, `/workspace`'s rounded
+	 * down to pages. Pages the agent writes to a tmpfs are charged to its cgroup, so with the base
+	 * alone a growing folder would OOM-kill commands, and stay charged, instead of failing with ENOSPC at
+	 * the folder's limit. The instance's memory must cover it (`standard-1`: 4 GiB).
+	 */
+	memoryBytes: number;
+	/**
+	 * The run's deadline: the container is destroyed a little after it even if nobody asks. Without one, a
+	 * container unused for an hour is destroyed.
+	 */
+	deadline?: EpochMs | null;
+}
 
 /** The agent's user and group: every command and file operation runs as them, with no capabilities. */
 export const AGENT_UID = 1000;
@@ -43,7 +66,7 @@ export const PIDS_MAX = 256;
 /** The instance every sandbox runs on: `lite` takes about 100 ms per exec (plan: The sandbox lifecycle). */
 export const INSTANCE = "standard-1" as const;
 
-/** A positional read answers at most this much; a caller asking for more reads again (contracts/sandbox.ts). */
+/** A positional read answers at most this much; a caller asking for more reads again. */
 export const MAX_READ_BYTES = 4 * 1024 * 1024;
 /**
  * The largest file `readTextFile` reads whole (the edit tool's read):

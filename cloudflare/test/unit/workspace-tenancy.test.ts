@@ -2,7 +2,7 @@
 // invariants, and agents.
 
 import { describe, expect, test } from "vitest";
-import type { AgentIn } from "../../src/contracts/api.ts";
+import type { AgentIn } from "../../src/shared/api.ts";
 import { CHOOSE_CONNECTIONS, DEFAULT_AGENT, KEEP_ONE_AGENT, NOT_FOUND } from "../../src/workspace/core.ts";
 import { ADA, GRACE, OTHER, USER, WORKSPACE, attach, connectMixed, conversation, database, defaultAgent, harness } from "./workspace-support.ts";
 

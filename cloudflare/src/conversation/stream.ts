@@ -1,6 +1,6 @@
-// The event stream's Durable Object side (plan: Events and the stream; contracts/conversation.ts,
-// StreamRequest). The Worker checks the session and the run's owner, then opens a hibernatable WebSocket
-// here with `after`; the Worker's SSE relay writes each frame as `id`, `event`, `data`.
+// The event stream's Durable Object side (plan: Events and the stream). The Worker checks the session and
+// the run's owner, then opens a hibernatable WebSocket here with `after`; the Worker's SSE relay writes each
+// frame as `id`, `event`, `data`.
 //
 // The backlog after `after` is sent and the socket subscribed in one synchronous step, so no event falls
 // between them: the socket is accepted (and so reached by every later broadcast) in the same turn that
@@ -19,10 +19,9 @@
 // reconnects from its Last-Event-ID and gets the backlog, then `end`, from the new socket.
 
 import type { LifecycleCapability } from "agents/lifecycle";
-import type { RunId } from "../contracts/common.ts";
-import type { RunEvent } from "../contracts/events.ts";
 import { isUuid } from "../lib/random.ts";
-import { ACTIVE } from "./events.ts";
+import type { RunId } from "../shared/rpc.ts";
+import { ACTIVE, type RunEvent } from "./events.ts";
 import type { RunStore } from "./store.ts";
 
 export const STREAM_PATH = "/stream";

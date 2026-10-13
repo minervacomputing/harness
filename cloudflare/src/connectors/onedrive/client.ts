@@ -10,9 +10,8 @@
 // their own OneDrive and what was shared with them (`/me/drive/search`).
 
 import { z } from "zod";
-import type { ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
-import { ProviderHTTP, segment } from "../../gateway/http.ts";
+import { ProviderHTTP, type ProviderIo, segment } from "../../gateway/http.ts";
 import { type Json, parseJsonBytes } from "../../lib/json.ts";
 import { API_URL, type Classify, Graph, MAX_RESPONSE_BYTES, classify, errorCode, pageParam } from "../microsoft/index.ts";
 import { percentEncode } from "../../lib/text.ts";

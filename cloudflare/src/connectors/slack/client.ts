@@ -7,9 +7,8 @@
 // which pauses further writes. Slack's own error texts never reach the model.
 
 import { z } from "zod";
-import type { Effect, ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
-import { ProviderHTTP } from "../../gateway/http.ts";
+import { OperationError, type ProviderClient } from "../../gateway/connector.ts";
+import { type Effect, ProviderHTTP, type ProviderIo } from "../../gateway/http.ts";
 import { isDict, type Json, type JsonObject, parseJsonBytes } from "../../lib/json.ts";
 
 export const API_URL = "https://slack.com/api";

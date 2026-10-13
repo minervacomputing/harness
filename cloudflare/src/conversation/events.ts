@@ -1,9 +1,127 @@
-// Run events and how runs end: their payloads, as the frontend reads them.
-// Appending, with seq numbers and fences, is the store's (store.ts).
+// Run events and how runs end: their payloads, as the frontend reads them. Events are appended to the
+// Conversation Durable Object's `run_events` with dense per-run sequence numbers from 1; a refused
+// (fenced) append takes no number. Appending, with seq numbers and fences, is the store's (store.ts). The
+// stream sends each as `id: <seq>\nevent: <type>\ndata: <compact JSON on one line>\n\n`. Payloads are type
+// aliases, not interfaces, so they stay assignable to the generated `EventOut`.
 
-import type { NewRunEvent, PhaseText, StatusEventData } from "../contracts/events.ts";
-import type { CancelReason, RunEnd, RunStatus } from "../contracts/runs.ts";
+import type { ToolCallEventData } from "../gateway/results.ts";
 import { sliceText } from "../lib/text.ts";
+import type { RunStatus } from "../shared/rpc.ts";
+
+/**
+ * `status`. The frontend relies on its order (ordering invariants):
+ * - `queued` is always seq 1, when the message is posted;
+ * - the first `provisioning` has no `attempt`;
+ * - a restart marker carries `attempt` (n ≥ 2) and makes the chat drop the text and reasoning streamed
+ *   before it: `{status: "running", attempt}` (plan: Attempts and recovery) or `{status: "provisioning",
+ *   attempt}`, which shows "Restarting the agent";
+ * - a terminal status has `message` (≤500 characters) only when the run has an error message; `completed`
+ *   never does. The chat reads `run.error_message` after a refetch, never this `message`.
+ */
+export type StatusEventData =
+	| { status: "queued" }
+	| { status: "provisioning" }
+	| { status: "running" }
+	| { status: "provisioning" | "running"; attempt: number }
+	| { status: "completed" }
+	| { status: Exclude<TerminalStatus, "completed">; message?: string };
+
+type TerminalStatus = Exclude<RunStatus, "queued" | "provisioning" | "running">;
+
+/** `phase`: what the agent is doing, ≤300 characters, emitted only when it changes. */
+export type PhaseEventData = {
+	text: PhaseText | string;
+};
+
+/** The phases the loop reports, in the UI's order of precedence after start-up. */
+export type PhaseText =
+	| "Starting the agent"
+	| "Resuming the agent"
+	| "Preparing files"
+	| "Saving files"
+	| "Running a script"
+	| "Running commands"
+	| "Using tools"
+	| "Thinking";
+
+/**
+ * `text_delta` and `reasoning_delta`: what streamed since the last flush (every 0.25 s per model call).
+ * `call` is 8 lowercase hex characters, fixed per model call and shared by its reasoning and text; the chat
+ * joins deltas only within one call. Never stored for a replaced attempt.
+ */
+export type DeltaEventData = {
+	text: string;
+	call: string;
+};
+
+/**
+ * `local_tool`: a read, write, edit or bash call in the folder finished, reported after its result was
+ * released by the checkpoint barrier; an aborted call is not reported. NUL removed, lone
+ * surrogates replaced; `summary` is the command or path cut to 300 characters (299 plus `…`), `excerpt`
+ * the end of the output or error cut to 2,000 (`…` plus the last 1,999), never splitting a surrogate pair.
+ */
+export type LocalToolEventData = {
+	tool: "read" | "write" | "edit" | "bash";
+	summary: string;
+	ok: boolean;
+	excerpt: string;
+};
+
+/** `message`: the final answer, always immediately followed by `status: completed`, committed together. */
+export type MessageEventData = {
+	/** The assistant message's id. */
+	id: string;
+	content: string;
+};
+
+export type RunEvent =
+	| { seq: number; type: "status"; data: StatusEventData }
+	| { seq: number; type: "phase"; data: PhaseEventData }
+	| { seq: number; type: "text_delta"; data: DeltaEventData }
+	| { seq: number; type: "reasoning_delta"; data: DeltaEventData }
+	| { seq: number; type: "tool_call"; data: ToolCallEventData }
+	| { seq: number; type: "local_tool"; data: LocalToolEventData }
+	| { seq: number; type: "message"; data: MessageEventData };
+
+export type RunEventType = RunEvent["type"];
+
+/** An event before it is appended: the Conversation Durable Object assigns `seq`. */
+export type NewRunEvent = RunEvent extends infer E ? (E extends { seq: number } ? Omit<E, "seq"> : never) : never;
+
+/**
+ * Why a run ended: the internal code, its status and the message users see (`RunOut.error_message`,
+ * ≤500 characters). The worker's own failure text and provider diagnostics are only logged.
+ */
+export type RunEnd =
+	| { status: "completed"; code: ""; message: "" }
+	| { status: "cancelled"; code: "cancelled"; message: "Stopped." }
+	| { status: "cancelled"; code: RevocationReason; message: "Stopped because permissions changed." }
+	/** An operator's emergency stop (plan: Strict revocation, Emergency stop). */
+	| { status: "cancelled"; code: "emergency_stop"; message: "Stopped." }
+	| { status: "timed_out"; code: "timed_out"; message: "The run took too long." }
+	| { status: "failed"; code: "sandbox_failed"; message: "The isolated worker could not start." }
+	| { status: "failed"; code: "worker_silent"; message: "The worker did not start." }
+	| { status: "failed"; code: "worker_exited"; message: "The worker stopped unexpectedly." }
+	| { status: "failed"; code: "worker_failed"; message: "The agent could not finish this run. Try again." }
+	/** The run was stored, but the Workspace expired its start before `activate` reached it (plan: Starting a run). */
+	| { status: "failed"; code: "start_expired"; message: "The agent could not finish this run. Try again." }
+	| { status: "failed"; code: "folder_limit"; message: string }
+	| { status: "failed"; code: "state_too_large"; message: "This run's saved state grew too large." }
+	| { status: "failed"; code: "state_unreadable"; message: "This run's saved state could not be read." };
+
+/**
+ * Strict revocation's reasons: a user's grant change cancels all of that user's
+ * active runs, queued included; deleting a connection, the deleting user's; changing an agent's connection
+ * set, that agent's. Deleting an agent or a conversation is a plain cancel ("Stopped.").
+ */
+export type RevocationReason = "permissions_changed" | "connection_removed" | "agent_connections_changed";
+
+/**
+ * Why a Conversation Durable Object is asked to stop a run from outside it, and so how the run ends:
+ * `cancelled` (deleting an agent or a conversation) and `emergency_stop` with "Stopped.", a revocation
+ * reason with "Stopped because permissions changed.", each with its own code (RunEnd).
+ */
+export type CancelReason = RevocationReason | "cancelled" | "emergency_stop";
 
 /** `error_message` and a terminal status's `message` are cut to this many characters. */
 export const ERROR_MESSAGE_CHARS = 500;

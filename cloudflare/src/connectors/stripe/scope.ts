@@ -6,9 +6,8 @@
 // never moves an object to another customer, but writes still check the customer again just before sending.
 
 import { z } from "zod";
-import type { Binding } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError } from "../../gateway/connector.ts";
+import { type Binding, OperationError } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import { CHARGE_ID, CUSTOMER_ID, OBJECT_ID } from "./client.ts";
 import * as money from "./money.ts";
 

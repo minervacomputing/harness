@@ -1,5 +1,5 @@
 // The permission executor: every connector tool call of a run goes through this one pipeline, in this
-// order (contracts/executor.ts `Executor`):
+// order:
 //
 // count the call and take a slot → current attempt → tool lookup and contract → strict validation →
 // query hash → page token → write key and known write → open the client (a credential lease fenced by
@@ -16,30 +16,162 @@
 // backstop.
 
 import type { z } from "zod";
-import type { EpochMs, RunId } from "../contracts/common.ts";
-import type { Connector, CredentialPayload, Operation, Prepared, ProviderOutput, Requirement } from "../contracts/connectors.ts";
-import type {
-	CredentialLease,
-	CredentialPort,
-	Executor,
-	ExecutorContext,
-	RunStatePort,
-	ToolCallOutcome,
-	ToolCallRequest,
-	ToolDeclaration,
-	ToolResult,
-} from "../contracts/executor.ts";
-import type { Resource } from "../contracts/policy.ts";
-import type { ToolRef } from "../contracts/runs.ts";
+import type { Json } from "../lib/json.ts";
+import type { AttemptFence, ConnectionId, EpochMs, RunId, UserId } from "../shared/rpc.ts";
 import { type Clock, systemClock } from "./clock.ts";
-import { ACCOUNT_KIND, OperationError, type OperationTerms, binding, consentGiven, denied, kindOf, nests, requiresOf, termsOf } from "./connector.ts";
+import {
+	ACCOUNT_KIND,
+	type Connector,
+	type CredentialPayload,
+	type ErrorCode,
+	type Operation,
+	OperationError,
+	type OperationTerms,
+	type Prepared,
+	type ProviderOutput,
+	type Requirement,
+	binding,
+	consentGiven,
+	denied,
+	kindOf,
+	nests,
+	requiresOf,
+	termsOf,
+} from "./connector.ts";
 import { CallIo } from "./http.ts";
 import { RUN_ENDED_MESSAGE, WRITE_MESSAGES, knownAnswer, writeKey } from "./ledger.ts";
 import { INVALID_CURSOR_MESSAGE, LIMIT_REACHED_MESSAGE, queryHash } from "./page-tokens.ts";
-import { ANY, Policy } from "./policy.ts";
+import { ANY, Policy, type PolicySnapshot, type Resource } from "./policy.ts";
 import { type Registry, inputSchema } from "./registry.ts";
-import { RESULT_SCHEMA, type ShownCall, allowedEvent, appliedWithoutResult, publicError, refusedEvent, shownCall, writeId } from "./results.ts";
+import {
+	RESULT_SCHEMA,
+	type ShownCall,
+	type ToolCallEventData,
+	type ToolResult,
+	allowedEvent,
+	appliedWithoutResult,
+	publicError,
+	refusedEvent,
+	shownCall,
+	writeId,
+} from "./results.ts";
+import type { RunStatePort } from "./run-state.ts";
+import type { ToolRef } from "./tools.ts";
 import { validateInput } from "./validation.ts";
+
+/** A tool as the model sees it: `readOnlyHint` false marks a write. */
+export interface ToolDeclaration {
+	name: string;
+	title: string;
+	description: string;
+	inputSchema: { [key: string]: Json };
+	outputSchema: { [key: string]: Json };
+	annotations: { readOnlyHint: boolean };
+}
+
+export interface ToolCallRequest {
+	fence: AttemptFence;
+	/** As the model named it. */
+	name: string;
+	/** As the model sent them; `null` or absent validate as `{}`. */
+	arguments: Json | undefined;
+	/**
+	 * pi's abort for the call (`context.abortSignal`): the call answers at once and starts nothing more. A
+	 * write already dispatched still settles, under the host's `waitUntil`.
+	 */
+	signal?: AbortSignal;
+	/**
+	 * Called once with the call's outcome when its pipeline finishes, also after the caller stopped waiting:
+	 * a write already sent when the call was cancelled still gets its `tool_call` event from it.
+	 */
+	settled?: (outcome: ToolCallOutcome) => void;
+}
+
+/**
+ * The outcome of `invoke`. The model sees the result's JSON as text plus the structured result, or the
+ * error's message with `isError`.
+ */
+export type ToolCallOutcome =
+	| {
+			ok: true;
+			result: ToolResult;
+			title: string;
+			/** The same write was asked for earlier in this run and is answered from its record. */
+			repeat: boolean;
+			/** Set for a write; identical writes of a run share it. */
+			writeKey: string | null;
+			/** The event to append, or null when the run is no longer active. */
+			event: ToolCallEventData | null;
+	  }
+	| {
+			ok: false;
+			error: { code: ErrorCode; message: string };
+			/** Null for RUN_ENDED, which is never recorded. */
+			event: ToolCallEventData | null;
+	  };
+
+/**
+ * The pipeline, in order: current attempt (RUN_ENDED "This run is no longer active."),
+ * tool lookup (UNKNOWN_OPERATION "This operation is not available.", OPERATION_CHANGED "This operation
+ * changed after the run started. Send a new message to use it."), strict validation (INVALID_ARGUMENTS
+ * "Invalid arguments. " plus up to 5 `loc: msg` joined by "; "), query hash, page token (INVALID_CURSOR
+ * "This page token is invalid or belongs to another request."), write key and known write, open the
+ * client (CONNECTION_UNAUTHORIZED "The connection expired. Reconnect it in Minerva."), consent
+ * (CONSENT_REQUIRED, before prepare), prepare, authorize (declaration check, then policy), current attempt
+ * again, execute or the write protocol, still active (the attempt is not compared), close the client,
+ * page token issue (LIMIT_REACHED "This run has reached its pagination limit." after the provider call).
+ *
+ * Revocation: the executor checks the run's local `revoked` flag and its state synchronously, with no
+ * await in between, immediately before it dispatches any provider request, and again before it returns
+ * a result (plan: Strict revocation).
+ */
+export interface Executor {
+	invoke(request: ToolCallRequest): Promise<ToolCallOutcome>;
+	/** The tools whose contract still resolves, as the model sees them. */
+	declarations(): ToolDeclaration[];
+}
+
+/** What the executor runs against: one run's snapshot and the ports. */
+export interface ExecutorContext {
+	runId: RunId;
+	userId: UserId;
+	permissions: PolicySnapshot;
+	tools: ToolRef[];
+	run: RunStatePort;
+	credentials: CredentialPort;
+	/** Injected in tests. */
+	fetch: typeof fetch;
+	/** The snapshot's deadline, which bounds a call's wait for one of the run's slots; null or absent for none. */
+	deadline?: EpochMs | null;
+}
+
+/** What the Workspace Durable Object lends for one provider call (plan: Credentials and refresh). */
+export interface CredentialLease {
+	connectionId: ConnectionId;
+	provider: string;
+	/** The credential generation; `markUnauthorized` compares it. */
+	generation: number;
+	/** Decrypted only by the caller, for this one call; never stored in pi's state, events or logs. */
+	sealed: { ciphertext: string; version: string };
+	/** The scopes of the current credentials, for consent checks; null when unknown. */
+	scopes: string[] | null;
+}
+
+export interface CredentialPort {
+	/**
+	 * For the call's attempt: refused with RUN_ENDED when the fence is not current, before the Workspace is
+	 * asked and again after it answers (it knows the run, not its attempts). Refreshes first when needed
+	 * (single-flight per connection). Also refused: CONNECTION_UNAUTHORIZED or PROVIDER_UNAVAILABLE.
+	 */
+	lease(
+		fence: AttemptFence,
+		connectionId: ConnectionId,
+	): Promise<CredentialLease | { refused: "RUN_ENDED" | "CONNECTION_UNAUTHORIZED" | "PROVIDER_UNAVAILABLE"; message: string }>;
+	/** The provider rejected the token: mark the connection "Needs reconnecting" only if still active at this generation. */
+	markUnauthorized(connectionId: ConnectionId, generation: number): Promise<void>;
+	/** Decrypts a lease's payload with MINERVA_ENCRYPTION_KEYS. */
+	open(lease: CredentialLease): Promise<CredentialPayload>;
+}
 
 /** The provider client enforces the write's deadline; this only stops a connector that ignores it. */
 export const BACKSTOP_MS = 5000;
@@ -536,7 +668,7 @@ export class ToolExecutor implements Executor {
 		prepared: Prepared,
 		io: CallIo,
 	): Promise<[ToolResult, boolean]> {
-		// The port may wait before it claims (contracts/executor.ts RunStatePort); nothing is sent before it answers.
+		// The port may wait before it claims (run-state.ts RunStatePort); nothing is sent before it answers.
 		const dispatch = await this.#run.dispatchWrite(request.fence, key);
 		if (dispatch.kind === "cached") return [dispatch.result, true];
 		if (dispatch.kind === "refused") throw new OperationError(dispatch.code, dispatch.message);

@@ -6,8 +6,7 @@
 // of the same call. Never part of the production Worker: only src/faults/index.ts and the tests import it.
 
 import { z } from "zod";
-import type { Connector, Prepared, ProviderOutput } from "../contracts/connectors.ts";
-import { defineOperation } from "../gateway/connector.ts";
+import { type Connector, type Prepared, type ProviderOutput, defineOperation } from "../gateway/connector.ts";
 import { ProviderHTTP } from "../gateway/http.ts";
 import type { Json } from "../lib/json.ts";
 import { record } from "../lib/schema.ts";

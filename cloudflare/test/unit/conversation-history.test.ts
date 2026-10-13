@@ -1,7 +1,6 @@
 // History replay: the turns, their files and what they changed, `clip` and `recentHistory`.
 
 import { describe, expect, test } from "vitest";
-import type { FolderChangesOut } from "../../src/contracts/api.ts";
 import {
 	CLIPPED,
 	FOLDER_INSTRUCTIONS,
@@ -16,6 +15,7 @@ import {
 	type StoredMessage,
 	withFiles,
 } from "../../src/conversation/history.ts";
+import type { FolderChangesOut } from "../../src/shared/api.ts";
 
 const RUN = "0199a000-0000-7000-8000-000000000001";
 

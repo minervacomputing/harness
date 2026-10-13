@@ -1,4 +1,4 @@
-// The Conversation Durable Object (contracts/conversation.ts; plan: Data placement, Protocols): one per chat.
+// The Conversation Durable Object (`ConversationApi`; plan: Data placement, Protocols): one per chat.
 // It extends the Agents SDK's Agent and runs pi-durable through PiHarness, one pi session per run, with the
 // `minerva` extension's tools and the model wrapper of src/model/. It owns its messages, runs, attempts and
 // run events, and the start protocol's side of the Workspace's registry. Nothing routes to it but our own
@@ -30,22 +30,17 @@ import { Agent } from "agents";
 import { PiHarness } from "agents/harness/pi";
 import { scriptsObject } from "../addressing.ts";
 import { settings } from "../config.ts";
-import type { FolderOut, MessageIn, MessageOut } from "../contracts/api.ts";
-import type { AttemptFence, Caller, Json, Outcome, Refusal, RunId, VersionId } from "../contracts/common.ts";
-import type { CancelAck, ConversationApi, ConversationInit, DownloadTarget, EventPage } from "../contracts/conversation.ts";
-import type { RunEvent } from "../contracts/events.ts";
-import type { CredentialPort, Executor, RunStatePort, ToolCallOutcome, ToolDeclaration } from "../contracts/executor.ts";
-import type { CancelReason, ConversationHead, PostedView, RunEnd, RunHead, RunSnapshot } from "../contracts/runs.ts";
-import type { ScriptsApi } from "../contracts/scripts.ts";
-import type { CredentialPayload } from "../contracts/connectors.ts";
-import type { FolderLimit } from "../contracts/files.ts";
 import { connectorRegistry } from "../connectors/index.ts";
-import { folderLimitMessage, type FolderLimits } from "../files/limits.ts";
+import { type FolderLimit, folderLimitMessage, type FolderLimits } from "../files/limits.ts";
+import type { DownloadTarget } from "../files/store.ts";
+import type { CredentialPayload } from "../gateway/connector.ts";
+import type { CredentialPort, Executor, ToolCallOutcome, ToolDeclaration } from "../gateway/executor.ts";
 import type { Registry as ConnectorRegistry } from "../gateway/registry.ts";
+import type { RunStatePort } from "../gateway/run-state.ts";
 import { modelTools } from "../gateway/tools.ts";
 import { type About, identity } from "../lib/about.ts";
 import { EncryptionKeys, credentialBinding } from "../lib/encryption.ts";
-import { parseJson } from "../lib/json.ts";
+import { type Json, parseJson } from "../lib/json.ts";
 import { isUuid, uuid7 } from "../lib/random.ts";
 import { appliedMigrations, migrate } from "../lib/sqlite.ts";
 import { sliceText } from "../lib/text.ts";
@@ -55,17 +50,23 @@ import { sandboxSpec } from "../sandbox/constants.ts";
 import { outputSink } from "../sandbox/sink.ts";
 import { ScriptRuns, scriptToolHost } from "../scripts/host.ts";
 import { isReset, type ScriptsClient } from "../scripts/run.ts";
+import type { ScriptsApi } from "../scripts/scripts.ts";
 import { scriptTool } from "../scripts/tool.ts";
+import type { FolderOut, MessageIn, MessageOut } from "../shared/api.ts";
+import type { AttemptFence, Caller, Outcome, Refusal, RunId, VersionId } from "../shared/rpc.ts";
 import { START_FAILED } from "../workspace/core.ts";
 import {
 	ACTING,
 	ACTIVE,
 	CANCELLED,
+	type CancelReason,
 	COMPLETED,
 	endFor,
 	localToolEvent,
 	phaseEvent,
 	phaseOf,
+	type RunEnd,
+	type RunEvent,
 	START_EXPIRED,
 	statusEvent,
 	TIMED_OUT,
@@ -80,9 +81,104 @@ import { type ConversationPorts, type FolderPort, PORTS, type PortsContext, runS
 import { ToolQueue, untilAborted } from "./queue.ts";
 import { MIGRATIONS } from "./schema.ts";
 import { KEY_REUSED, START_KEY, START_KEY_TTL_MS, messageDigest } from "./start-keys.ts";
-import { type RunRow, RunStore, type StartRow } from "./store.ts";
+import {
+	type ConversationHead,
+	type ConversationInit,
+	type EventPage,
+	type RunHead,
+	type RunRow,
+	type RunSnapshot,
+	RunStore,
+	type RunView,
+	type StartRow,
+} from "./store.ts";
 import { RunStream } from "./stream.ts";
 import { connectorTool, isWrite, REPLAY_REFUSED, REPLAYS_ALLOWED, RUN_ENDED_MESSAGE, type ToolHost } from "./tools.ts";
+
+/** What a Conversation Durable Object answers to a cancel from outside: the acknowledgement the Workspace's outbox waits for. */
+export interface CancelAck {
+	runId: RunId;
+	/**
+	 * `stopping`: the run's local revoked flag is set and the run is being stopped. `tombstoned`: the run is
+	 * not stored yet, so a start that is still in flight stores it as cancelled (plan: Strict revocation,
+	 * step 4). `ended`: it had already ended.
+	 */
+	state: "stopping" | "tombstoned" | "ended";
+}
+
+/**
+ * The Conversation Durable Object's RPC surface. One object per chat, named by the conversation's id, in
+ * its workspace's jurisdiction. Authoritative for its owner, workspace and agent (fixed at creation),
+ * messages, runs and attempts, run events, the write ledger, page tokens, folder versions, the run's
+ * checkpoint, the script store, and pi's `pi_*` tables. Every method that takes a `Caller` answers "not
+ * found" (null, or a 404 refusal) for a caller who is not the conversation's owner, so another user's chat
+ * looks like none.
+ *
+ * Workers RPC refuses an argument or result over 32 MiB, and a conversation's events grow without bound,
+ * so no method returns more than one run's page of events: conversations and runs come back as heads, and
+ * the Worker streams the API's body (each run with all its events by seq), paging each run's events with
+ * `getRunEvents` up to its head's `eventSeq`.
+ */
+export interface ConversationApi {
+	/** Fixes the owner, workspace and agent. Idempotent; refuses a different identity. */
+	init(input: ConversationInit): Promise<void>;
+
+	/** Messages by (created_at, id); runs by created_at, as heads. */
+	getConversation(caller: Caller): Promise<ConversationHead | null>;
+	/** One page of a run's events by seq; null for another user's run or an unknown one. */
+	getRunEvents(caller: Caller, runId: RunId, page: EventPage): Promise<RunEvent[] | null>;
+
+	/**
+	 * Starts a turn (plan: Starting a run): 404, 400 "Write a message or attach a file.", 409 "Wait
+	 * for the current answer to finish, or stop it.", or the attachment refusals of `beginRun`. Every
+	 * refusal leaves nothing behind (no message, no run, uploads untouched), which the composer relies on.
+	 * Before its transaction it copies each reserved upload whose contents the conversation does not hold
+	 * yet into a blob of its own (`blobs/<ws>/<conv>/<sha256>/<random>`, recorded as loose first, `get` then
+	 * `put` with the upload's SHA-256, which R2 checks), so the folder never names an `uploads/` key: those
+	 * expire a day after they were written. An upload gone by then is "An attached file is no longer
+	 * available. Remove it and attach it again." Success stores the message, the run (`queued`, attempt 1,
+	 * event seq 1 `status: queued`) and the base version together, and sets the title from the first message
+	 * (`content[:80]`, else the attachment paths joined by ", "); then it calls `activate`.
+	 *
+	 * `key` is the client's Idempotency-Key, if it sent one (1 to 255 visible ASCII characters): the same
+	 * message sent again with it within a day answers for the run the first one started (joining the start in
+	 * flight, or the stored message and run with its first page of events), before the 409 check, so a
+	 * retried request never starts a second run; another message with the key is 422 "This
+	 * Idempotency-Key was used for a different message." A refused start forgets its key.
+	 */
+	postMessage(caller: Caller, input: Required<MessageIn>, key?: string | null): Promise<Outcome<PostedView>>;
+
+	getRun(caller: Caller, runId: RunId): Promise<RunHead | null>;
+	/** The user's stop: idempotent, a finished run stays as it was; the refreshed run. */
+	cancelRun(caller: Caller, runId: RunId): Promise<RunHead | null>;
+	/**
+	 * A cancel from the Workspace's outbox (revocation, deletion, emergency stop): sets the run's local
+	 * revoked flag synchronously and stops it with the reason's code and message (CancelReason, RunEnd), or
+	 * leaves a tombstone for a run not stored yet. Idempotent by run id. Returning is the acknowledgement.
+	 */
+	cancel(runId: RunId, reason: CancelReason, entryId: number): Promise<CancelAck>;
+
+	/**
+	 * The current folder (no version), or a non-checkpoint version of this conversation; null is 404.
+	 * `{version_id: null, files: [], dirs: []}` when there is no folder yet.
+	 */
+	listFiles(caller: Caller, versionId: VersionId | null): Promise<FolderOut | null>;
+	/** A file of a non-checkpoint version (or of the current folder), for a signed link; null is 404. */
+	resolveDownload(caller: Caller, versionId: VersionId | null, path: string): Promise<DownloadTarget | null>;
+
+	/**
+	 * Tombstone, cancel and wait, then delete storage and the R2 prefix (plan: Files, Deletion). Driven by the
+	 * Workspace, which calls it again until it resolves. It overrides the Agents SDK's own `destroy()`, which
+	 * resets the object after it deletes the storage, so the caller may see the connection break once the
+	 * deletion is done: a broken call after a resolved one, or a second call that finds nothing, is done.
+	 */
+	destroy(): Promise<void>;
+}
+
+export interface PostedView {
+	message: MessageOut;
+	run: RunView;
+}
 
 /** chord's background context: never cancelled, no values. */
 const BG = Object.freeze({ abortSignal: undefined, value: () => undefined, toString: () => "[Context minerva-conversation]" });
@@ -1128,7 +1224,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		return executor;
 	}
 
-	/** The executor's view of the run (contracts/executor.ts): our checks and the ledger's records (ports.ts `runStatePort`). */
+	/** The executor's view of the run (gateway/run-state.ts `RunStatePort`): our checks and the ledger's records (ports.ts `runStatePort`). */
 	#runState(): RunStatePort {
 		return runStatePort(this.#store, () => this.#ledger(), (runId) => this.#scheduleSweep(runId));
 	}

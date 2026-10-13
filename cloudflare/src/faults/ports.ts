@@ -29,8 +29,8 @@
 // A conversation whose plan sets `model` to `workers-ai` gets Workers AI instead of the fake model. Never
 // part of the production Worker.
 
-import type { ExecutorContext } from "../contracts/executor.ts";
 import type { ConversationPorts, PortsContext, WorkspaceClient } from "../conversation/ports.ts";
+import type { ExecutorContext } from "../gateway/executor.ts";
 import type { ConversationClient, OAuthClients } from "../workspace/ports.ts";
 import type { WorkspaceDeps } from "../workspace/core.ts";
 import type { ReplaceablePorts } from "../workspace/workspace.ts";

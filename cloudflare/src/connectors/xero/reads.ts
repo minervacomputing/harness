@@ -2,8 +2,8 @@
 // bills, accounts and tax rates.
 
 import { z } from "zod";
-import type { Prepared, ProviderOutput, ProviderRequest } from "../../contracts/connectors.ts";
-import { OperationError, defineOperation } from "../../gateway/connector.ts";
+import { OperationError, type Prepared, type ProviderOutput, defineOperation } from "../../gateway/connector.ts";
+import type { ProviderRequest } from "../../gateway/http.ts";
 import type { Json } from "../../lib/json.ts";
 import { SINGLE_LINE, isSingleLine, truncate } from "../../lib/text.ts";
 import { type Address, type Contact, type Invoice, type Invoices, type Outstanding, invoiceDate, moment, nextPage, page, uuid } from "./client.ts";

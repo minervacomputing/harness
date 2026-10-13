@@ -12,9 +12,8 @@
 // Linear refused it before running it (see `judge`).
 
 import { z } from "zod";
-import type { Effect, OperationErrorShape, ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
-import { ProviderHTTP } from "../../gateway/http.ts";
+import { OperationError, type OperationErrorShape, type ProviderClient } from "../../gateway/connector.ts";
+import { type Effect, ProviderHTTP, type ProviderIo } from "../../gateway/http.ts";
 import { utf8 } from "../../lib/bytes.ts";
 import { isDict, type Json, type JsonObject, parseJsonBytes } from "../../lib/json.ts";
 import { extend } from "../../lib/arrays.ts";

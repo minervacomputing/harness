@@ -1,9 +1,8 @@
 // Linear's write operations: creating and updating issues, and commenting.
 
 import { z } from "zod";
-import type { Prepared, ProviderOutput } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, defineOperation } from "../../gateway/connector.ts";
+import { OperationError, type Prepared, type ProviderOutput, defineOperation } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
 import { SINGLE_LINE, isSingleLine } from "../../lib/text.ts";
 import { type LinearClient, MAX_ISSUE_DEPTH, type ParentIssue, type State, type Written } from "./client.ts";

@@ -6,7 +6,8 @@
 // digits counts as 0.
 //
 // Each event is written as `id: <seq>\nevent: <type>\ndata: <JSON on one line>\n\n`, `event: end\ndata: {}`
-// once the run is inactive and every event was sent, and `: keepalive` after 15 s of silence. The object
+// once the run is inactive and every event was sent, and `: keepalive` after 15 s of silence; never an
+// unnamed `data:` frame, which the browser would dispatch as `message` and settle the turn. The object
 // sends the backlog and subscribes in one synchronous step, so nothing falls between them; the relay skips
 // any seq it already sent, so nothing is sent twice either. When the object closes its socket with 1013
 // (a backlog over its limit, or a socket inherited by a new instance that cannot know what the old one
@@ -18,13 +19,13 @@
 import type { Context } from "hono";
 import { currentSession, withSessionCookies } from "../accounts/auth.ts";
 import { conversationObject } from "../addressing.ts";
-import type { RunId, UserId } from "../contracts/common.ts";
 import type { Conversation } from "../conversation/conversation.ts";
 import { STREAM_PATH } from "../conversation/stream.ts";
 import { HttpError, detail, unauthorized } from "../http/errors.ts";
 import { UUID } from "../http/paths.ts";
 import type { App, AppEnv } from "../http/router.ts";
 import { parseJson } from "../lib/json.ts";
+import type { RunId, UserId } from "../shared/rpc.ts";
 import { type Member, member, param } from "./members.ts";
 
 /** Timings and limits of a relayed stream; the tests shorten them. */

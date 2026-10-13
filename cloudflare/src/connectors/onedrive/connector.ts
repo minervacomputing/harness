@@ -24,9 +24,17 @@
 // Office files are read in the Worker (office.ts), within its limits.
 
 import { z } from "zod";
-import type { Binding, Connector, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
+import {
+	type Binding,
+	type Connector,
+	OperationError,
+	type Prepared,
+	type ProviderOutput,
+	type ScopedRecord,
+	defineOperation,
+	denied,
+} from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
 import { sliceText, TextError } from "../../lib/text.ts";
 import { accountLabel, consent, oauth, pageParam } from "../microsoft/index.ts";

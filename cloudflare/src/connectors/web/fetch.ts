@@ -25,9 +25,8 @@
 // that answers 403 from `server: cloudflare` with the platform's exact refusal text is reported as a
 // private site rather than as HTTP 403.
 
-import type { ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
-import { NotSent, PhaseTimeout, ProgrammingError, platformRefusal } from "../../gateway/http.ts";
+import { NotSent, PhaseTimeout, ProgrammingError, type ProviderIo, platformRefusal } from "../../gateway/http.ts";
 import { charsetKnown, decodeCharset } from "../../lib/charset.ts";
 import { type WebURL, parseUrl } from "../../lib/sites.ts";
 import { Inflater, unsupportedEncoding } from "./inflate.ts";

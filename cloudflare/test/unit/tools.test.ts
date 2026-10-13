@@ -3,10 +3,8 @@
 // the worker's 128-tool rule.
 
 import { beforeAll, describe, expect, test } from "vitest";
-import type { Connector } from "../../src/contracts/connectors.ts";
-import type { GrantRow } from "../../src/contracts/policy.ts";
-import type { ToolRef } from "../../src/contracts/runs.ts";
-import { type RunLayers, effectivePolicy } from "../../src/gateway/grants.ts";
+import type { Connector } from "../../src/gateway/connector.ts";
+import { type GrantRow, type RunLayers, effectivePolicy } from "../../src/gateway/grants.ts";
 import { ANY, Policy } from "../../src/gateway/policy.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import {
@@ -14,6 +12,7 @@ import {
 	MODEL_TOOLS_MAX,
 	SAFETY_INSTRUCTIONS,
 	type StartInput,
+	type ToolRef,
 	modelTools,
 	runInstructions,
 	startSnapshot,

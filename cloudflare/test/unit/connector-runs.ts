@@ -1,13 +1,12 @@
 // What OAuth connector tests share: a run of one connection with the user's grants and ceiling rows, a
 // connector's client outside a run, and the arguments an operation accepts.
 
-import type { ConnectionId } from "../../src/contracts/common.ts";
-import type { Connector, Operation } from "../../src/contracts/connectors.ts";
-import type { GrantRow } from "../../src/contracts/policy.ts";
-import { ACCOUNT_KIND } from "../../src/gateway/connector.ts";
+import { ACCOUNT_KIND, type Connector, type Operation } from "../../src/gateway/connector.ts";
+import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
 import type { Json } from "../../src/lib/json.ts";
+import type { ConnectionId } from "../../src/shared/rpc.ts";
 import { Scenario, USER } from "./executor-fakes.ts";
 
 export const CONNECTION = "0199a000-0000-7000-8000-0000000000e1";

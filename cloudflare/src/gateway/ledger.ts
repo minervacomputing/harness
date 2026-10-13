@@ -4,20 +4,52 @@
 // outcome is unknown is uncertain, which pauses every later write in the run for good.
 //
 // The pause is not a column of its own: a run is paused exactly when it has an uncertain write, since
-// uncertain rows are never deleted or changed (a late settle only touches `dispatched` rows).
-// `RunRecord.writesUncertain` reads `paused()`.
+// uncertain rows are never deleted or changed (a late settle only touches `dispatched` rows). The
+// Conversation mirrors it in its run's `writes_uncertain` (conversation/ports.ts `gatewayLedger`).
 //
 // Every method is synchronous and each is atomic: run it in the same synchronous stretch as the run-state
 // check it depends on (gateway/run-state.ts), with no await between.
 
-import type { AttemptFence, EpochMs, RunId } from "../contracts/common.ts";
-import type { DispatchResult, Settlement, ToolResult, WriteRecord, WriteStatus } from "../contracts/executor.ts";
 import { utf8 } from "../lib/bytes.ts";
 import { sha256Hex } from "../lib/hash.ts";
 import { hashInput } from "../lib/canonical.ts";
 import { parseJson } from "../lib/json.ts";
 import type { Sql } from "../lib/sql.ts";
+import type { AttemptFence, EpochMs, RunId } from "../shared/rpc.ts";
 import type { Clock } from "./clock.ts";
+import type { Effect } from "./http.ts";
+import type { ToolResult } from "./results.ts";
+
+export type WriteStatus = "dispatched" | "succeeded" | "uncertain";
+
+export interface WriteRecord {
+	runId: RunId;
+	/** SHA-256 of the canonical JSON of the tool and its normalized fields, page token included (`writeKey`). */
+	key: string;
+	status: WriteStatus;
+	/** For `succeeded`: what answers a repeat. */
+	result: ToolResult | null;
+	/** The attempt that dispatched it; a later attempt still settles it. */
+	attempt: number;
+	dispatchedAt: EpochMs;
+	/** min(dispatch + 60 s, run deadline). An alarm marks writes still dispatched 30 s past it uncertain. */
+	deadlineAt: EpochMs;
+}
+
+export type DispatchResult =
+	/** Dispatched: send it, and settle it whatever happens. `deadline` is monotonic. */
+	| { kind: "dispatched"; deadline: number }
+	/** An identical write already succeeded: answer from its record, nothing is sent. */
+	| { kind: "cached"; result: ToolResult }
+	| { kind: "refused"; code: "RUN_ENDED" | "WRITE_UNCERTAIN" | "WRITE_IN_PROGRESS"; message: string };
+
+export type Settlement =
+	/** Forgotten: the row is deleted, so the same write may be tried again. */
+	| { effect: Extract<Effect, "not_applied"> }
+	/** `result` is APPLIED_WITHOUT_RESULT when the response was unusable. */
+	| { effect: Extract<Effect, "applied">; result: ToolResult }
+	/** Pauses every later write in the run. */
+	| { effect: Extract<Effect, "unknown"> };
 
 /** How long one write may take; the run's own deadline shortens it. */
 export const WRITE_WINDOW_MS = 60_000;

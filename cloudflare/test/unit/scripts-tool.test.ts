@@ -3,11 +3,11 @@
 // store's persistence.
 
 import { describe, expect, test } from "vitest";
-import type { ToolDeclaration } from "../../src/contracts/executor.ts";
-import type { ScriptResult } from "../../src/contracts/scripts.ts";
+import type { ToolDeclaration } from "../../src/gateway/executor.ts";
 import { scriptDeclarations, scriptDescription } from "../../src/scripts/description.ts";
 import { HEAD_CHARS } from "../../src/scripts/limits.ts";
 import { piece } from "../../src/scripts/output.ts";
+import type { ScriptResult } from "../../src/scripts/run.ts";
 import { loadStore, render, saveStore, SCRIPT_STORE, scriptTool, type ScriptToolHost } from "../../src/scripts/tool.ts";
 import { declaration } from "./scripts-support.ts";
 

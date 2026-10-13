@@ -5,9 +5,8 @@
 // user's connection needs attention, so its errors never mark the connection for reconnecting.
 
 import { z } from "zod";
-import type { ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
-import { ProviderHTTP } from "../../gateway/http.ts";
+import { ProviderHTTP, type ProviderIo } from "../../gateway/http.ts";
 import { htmlUnescape } from "../../lib/text.ts";
 
 export const BASE_URL = "https://api.search.brave.com/res/v1/";

@@ -10,10 +10,10 @@
 // deployed Worker never falls back. The account tests check the real jurisdictions (`/api/probe`).
 
 import { settings, type SettingsEnv } from "./config.ts";
-import type { ConversationId, WorkspaceRef } from "./contracts/common.ts";
 import type { Conversation } from "./conversation/conversation.ts";
 import type { Sandbox } from "./sandbox/sandbox.ts";
 import type { Scripts } from "./scripts/scripts.ts";
+import type { ConversationId, WorkspaceRef } from "./shared/rpc.ts";
 import type { Workspace } from "./workspace/workspace.ts";
 
 function object<T extends Rpc.DurableObjectBranded>(env: SettingsEnv, binding: unknown, workspace: WorkspaceRef, name: string): DurableObjectStub<T> {

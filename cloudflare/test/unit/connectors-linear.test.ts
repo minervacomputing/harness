@@ -8,7 +8,7 @@ import { DESCRIBE_BATCH, MAX_DISCOVERY_PAGES, linear } from "../../src/connector
 import { issueLinks, redact, writtenProblem } from "../../src/connectors/linear/markdown.ts";
 import { TEAM, ancestry } from "../../src/connectors/linear/teams.ts";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
-import type { GrantRow } from "../../src/contracts/policy.ts";
+import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import { type JsonObject, parseJson } from "../../src/lib/json.ts";

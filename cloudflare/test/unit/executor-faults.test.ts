@@ -7,9 +7,8 @@
 
 import { afterAll, afterEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
-import type { Connector, Prepared } from "../../src/contracts/connectors.ts";
-import type { ToolCallOutcome } from "../../src/contracts/executor.ts";
-import { OperationError, defineOperation } from "../../src/gateway/connector.ts";
+import { type Connector, OperationError, type Prepared, defineOperation } from "../../src/gateway/connector.ts";
+import type { ToolCallOutcome } from "../../src/gateway/executor.ts";
 import type { ProviderHTTP } from "../../src/gateway/http.ts";
 import { WRITE_MESSAGES, writeKey } from "../../src/gateway/ledger.ts";
 import { appliedWithoutResult } from "../../src/gateway/results.ts";

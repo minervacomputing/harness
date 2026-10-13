@@ -3,9 +3,6 @@
 // the workspace ceiling and the connection's scopes (executor-fakes.ts `Scenario`).
 
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { ConnectionId } from "../../src/contracts/common.ts";
-import type { GrantRow } from "../../src/contracts/policy.ts";
-import type { ToolCallOutcome } from "../../src/contracts/executor.ts";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
 import { MAX_PAGE, Message, Pagination, ZERO_UUID, classify, date, invoiceDate, judge, messages, moment, nextPage, page } from "../../src/connectors/xero/client.ts";
 import { fromNumber, money, number } from "../../src/connectors/xero/decimal.ts";
@@ -13,9 +10,12 @@ import { short } from "../../src/connectors/xero/organisations.ts";
 import { xeroConnector } from "../../src/connectors/xero/connector.ts";
 import { DraftBill, DraftInvoice, body } from "../../src/connectors/xero/writes.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
+import type { ToolCallOutcome } from "../../src/gateway/executor.ts";
+import type { GrantRow } from "../../src/gateway/grants.ts";
 import { Registry, validate } from "../../src/gateway/registry.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
+import type { ConnectionId } from "../../src/shared/rpc.ts";
 import { planRefresh } from "../../src/workspace/credentials.ts";
 import { ACME, ARCHIVED, BETA, CUSTOMER, FakeXero, INVOICE, SECRET, SUPPLIER, TOKEN, UNREACHED, contactOf, invoiceOf, jsonResponse } from "../fixtures/connectors/xero/fake.ts";
 import { Scenario, userGrants } from "./executor-fakes.ts";

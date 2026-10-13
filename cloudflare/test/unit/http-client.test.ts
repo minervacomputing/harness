@@ -4,10 +4,10 @@
 
 import { describe, expect, test } from "vitest";
 import { z } from "zod";
-import type { Effect } from "../../src/contracts/connectors.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
 import {
 	CallIo,
+	type Effect,
 	MAX_ERROR_BODY,
 	MAX_RESPONSE_BODY,
 	NotSent,

@@ -6,15 +6,15 @@
 
 import { expect } from "vitest";
 import { z } from "zod";
-import type { AccessOut } from "../../src/contracts/api.ts";
-import type { Caller, ConversationId, Outcome, RunId, UserId } from "../../src/contracts/common.ts";
-import type { Connector, Prepared } from "../../src/contracts/connectors.ts";
-import type { CancelAck, ConversationInit } from "../../src/contracts/conversation.ts";
-import type { CancelReason } from "../../src/contracts/runs.ts";
-import { ACCOUNT_KIND, defineOperation } from "../../src/gateway/connector.ts";
+import type { CancelAck } from "../../src/conversation/conversation.ts";
+import type { CancelReason } from "../../src/conversation/events.ts";
+import type { ConversationInit } from "../../src/conversation/store.ts";
+import { ACCOUNT_KIND, type Connector, type Prepared, defineOperation } from "../../src/gateway/connector.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import { type Binding, EncryptionKeys, credentialBinding } from "../../src/lib/encryption.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
+import type { AccessOut } from "../../src/shared/api.ts";
+import type { Caller, ConversationId, Outcome, RunId, UserId } from "../../src/shared/rpc.ts";
 import { WorkspaceCore, type WorkspaceDeps } from "../../src/workspace/core.ts";
 import type { ClientCredentials, ConversationClient, Delay, OAuthClients, ObjectStore, Timers, WorkspaceSettings } from "../../src/workspace/ports.ts";
 import { type Sql, type SqlValue, sqliteSql } from "../../src/lib/sql.ts";

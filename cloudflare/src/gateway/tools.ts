@@ -2,14 +2,53 @@
 // Pure functions: the Workspace Durable Object's `beginRun` calls `startSnapshot` in
 // the same synchronous step that registers the run (plan: Starting a run).
 
-import type { AgentId, ConnectionId, ConversationId, EpochMs, UserId, WorkspaceId } from "../contracts/common.ts";
-import type { StartSnapshot, ToolRef } from "../contracts/runs.ts";
 import { runStartLabel } from "../lib/dates.ts";
+import type { AgentId, ConnectionId, ConversationId, EpochMs, UserId, WorkspaceId } from "../shared/rpc.ts";
 import { consentGiven, nests, offered, operationOf, requiresOf } from "./connector.ts";
 import { effectivePolicy, type ProviderOf, type RunLayers } from "./grants.ts";
-import type { Policy } from "./policy.ts";
+import type { Policy, PolicySnapshot } from "./policy.ts";
 import type { Registry } from "./registry.ts";
 import { compareText } from "../lib/arrays.ts";
+
+/**
+ * A tool as a run snapshots it. `name` is `{alias}_{operation}`, the
+ * alias numbering usable connections per provider in `created_at` order (`todoist`, `todoist2`). The
+ * model never names a connection; the executor takes it from here. `contract` is the operation's
+ * fingerprint: 16 hex of SHA-256 over the canonical JSON of its meaning (registry.ts); a mismatch at call time is `OPERATION_CHANGED`. Built by `toolsFor`.
+ */
+export interface ToolRef {
+	name: string;
+	connection_id: ConnectionId;
+	provider: string;
+	operation: string;
+	contract: string;
+}
+
+/**
+ * What the Workspace Durable Object's `beginRun` computes, in one synchronous step with registering the
+ * run as active, so a grant change processed afterwards revokes it (plan: Starting a run).
+ */
+export interface StartSnapshot {
+	workspaceId: WorkspaceId;
+	conversationId: ConversationId;
+	userId: UserId;
+	agentId: AgentId;
+	/** Layers in the order ceiling, user, agent. */
+	permissions: PolicySnapshot;
+	tools: ToolRef[];
+	/**
+	 * `SAFETY_INSTRUCTIONS`, `The run started on {Monday, 2026-10-10 14:03} UTC.`, a blank line and the
+	 * agent's instructions, stripped. The folder paragraph is appended at turn start.
+	 */
+	instructions: string;
+	/** Always `default`. */
+	modelAlias: string;
+	/** Fixed at start from MINERVA_RUN_TIMEOUT_SECONDS; never changes across attempts; null for none. */
+	deadline: EpochMs | null;
+	createdAt: EpochMs;
+	/** The connections the run's tools use, in tool order, for revocation by connection. */
+	connectionIds: ConnectionId[];
+}
 
 export const SAFETY_INSTRUCTIONS =
 	"You are an agent inside Minerva. Use the provided tools for all facts about connected accounts and for " +

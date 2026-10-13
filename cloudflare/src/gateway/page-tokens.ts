@@ -2,11 +2,11 @@
 // tool name (alias included) and the hash of the other normalized arguments, so a token cannot be replayed
 // against another query. At most 200 per run; tokens are never deleted while the run is active.
 
-import type { EpochMs, RunId } from "../contracts/common.ts";
 import { sha256Hex } from "../lib/hash.ts";
 import { hashInput } from "../lib/canonical.ts";
 import { tokenUrlsafe } from "../lib/random.ts";
 import type { Sql } from "../lib/sql.ts";
+import type { EpochMs, RunId } from "../shared/rpc.ts";
 import { MAX_TOOL_NAME, MAX_UPSTREAM_CURSOR } from "./schema.ts";
 
 export const MAX_PAGE_TOKENS = 200;

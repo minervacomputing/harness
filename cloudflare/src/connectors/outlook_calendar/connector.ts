@@ -26,8 +26,16 @@
 // calendars.
 
 import { z } from "zod";
-import type { Binding, Connector, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
-import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
+import {
+	type Binding,
+	type Connector,
+	OperationError,
+	type Prepared,
+	type ProviderOutput,
+	type ScopedRecord,
+	defineOperation,
+	denied,
+} from "../../gateway/connector.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
 import { truncate, TextError } from "../../lib/text.ts";
 import { ID, accountLabel, consent, oauth } from "../microsoft/index.ts";

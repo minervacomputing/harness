@@ -9,8 +9,8 @@ import { type WorkspaceRow, ensureInitialized, workspaceOwner } from "../../src/
 import { workspaceObject } from "../../src/addressing.ts";
 import { PROVIDER_NETWORK } from "../../src/api/providers.ts";
 import { STILL_STOPPING, afterRevocation } from "../../src/api/members.ts";
-import type { Caller, Role } from "../../src/contracts/common.ts";
 import { uuid7 } from "../../src/lib/random.ts";
+import type { Caller, Role } from "../../src/shared/rpc.ts";
 import { type Answer, Browser, installEmailLog, signedIn } from "./accounts-helpers.ts";
 
 installEmailLog();

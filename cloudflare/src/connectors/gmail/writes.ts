@@ -1,9 +1,16 @@
 // Gmail's write operations: sending mail, replying, and saving drafts.
 
 import { z } from "zod";
-import type { Binding, Prepared, ProviderOutput, Requirement } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { ACCOUNT_KIND, OperationError, defineOperation } from "../../gateway/connector.ts";
+import {
+	ACCOUNT_KIND,
+	type Binding,
+	OperationError,
+	type Prepared,
+	type ProviderOutput,
+	type Requirement,
+	defineOperation,
+} from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import type { JsonObject } from "../../lib/json.ts";
 import { PLAIN_TEXT, SINGLE_LINE, isPlainText, isSingleLine } from "../../lib/text.ts";
 import * as addresses from "../../lib/addresses.ts";

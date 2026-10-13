@@ -4,10 +4,9 @@
 // task Todoist created in a project the run may not read.
 
 import { describe, expect, test } from "vitest";
-import type { ToolResult } from "../../src/contracts/executor.ts";
-import type { GrantRow } from "../../src/contracts/policy.ts";
 import { todoistConnector } from "../../src/connectors/todoist/connector.ts";
-import { RESULT_SCHEMA, callToolResult } from "../../src/gateway/results.ts";
+import type { GrantRow } from "../../src/gateway/grants.ts";
+import { RESULT_SCHEMA, type ToolResult, callToolResult } from "../../src/gateway/results.ts";
 import { parseJson } from "../../src/lib/json.ts";
 import { FakeTodoist, PROJECT, Scenario, TODOIST, jsonResponse, todoistConnection, userGrants } from "./executor-fakes.ts";
 

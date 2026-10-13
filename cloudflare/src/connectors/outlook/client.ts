@@ -7,11 +7,10 @@
 // means accepted, not delivered: delivery is asynchronous, and a bounce arrives later as mail.
 
 import { z } from "zod";
-import type { ProviderIo } from "../../contracts/connectors.ts";
 import { type Json } from "../../lib/json.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { API_URL, Graph, IMMUTABLE_IDS, User, pageParam } from "../microsoft/index.ts";
-import { segment } from "../../gateway/http.ts";
+import { type ProviderIo, segment } from "../../gateway/http.ts";
 
 export const TEXT_BODY = `${IMMUTABLE_IDS}, outlook.body-content-type="text"`;
 

@@ -2,9 +2,8 @@
 // it.
 
 import { z } from "zod";
-import type { Binding, Prepared, ProviderOutput } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, defineOperation } from "../../gateway/connector.ts";
+import { type Binding, OperationError, type Prepared, type ProviderOutput, defineOperation } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import type { Json } from "../../lib/json.ts";
 import type { User } from "../microsoft/index.ts";
 import { after, objectCheck, plainTextOf, singleLineOf } from "../microsoft/inputs.ts";

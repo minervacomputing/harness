@@ -15,11 +15,14 @@
 // takes no checkpoint, and its container is destroyed when the run ends.
 
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
-import type { AttemptFence, EpochMs, VersionId } from "../contracts/common.ts";
-import type { CheckpointUploadPlan, CheckpointUploadResult, ExecOutputSink, Refused, SandboxApi, SandboxFence, SandboxSpec } from "../contracts/sandbox.ts";
+import type { ExecOutputSink } from "../sandbox/commands.ts";
+import type { SandboxSpec } from "../sandbox/constants.ts";
+import type { Refused, SandboxApi, SandboxFence } from "../sandbox/core.ts";
 import { SandboxExecutionEnv } from "../sandbox/env.ts";
+import type { CheckpointUploadPlan, CheckpointUploadResult } from "../sandbox/folder.ts";
 import type { Delivered } from "../sandbox/output.ts";
 import { prepareSandbox } from "../sandbox/session.ts";
+import type { AttemptFence, EpochMs, VersionId } from "../shared/rpc.ts";
 import { FolderOverLimit, FolderUnavailable, LocalCalls, type LocalToolEvent, LocalToolStuck, SandboxRefused } from "./local.ts";
 import type { FolderPort } from "./ports.ts";
 

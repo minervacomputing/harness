@@ -7,10 +7,9 @@
 //
 // NFC and the Cc category come from the runtime's Unicode tables. Paths are sorted by UTF-16 code unit.
 
-import type { Sha256 } from "../contracts/common.ts";
-import type { FileMode, StoredEntries, WireManifest } from "../contracts/files.ts";
 import { utf8Strict } from "../lib/bytes.ts";
 import { hashInput } from "../lib/canonical.ts";
+import type { EpochMs, Sha256 } from "../shared/rpc.ts";
 import {
 	CHANGES_KEPT,
 	FILE_MODES,
@@ -25,6 +24,34 @@ import {
 	folderBytes,
 } from "./limits.ts";
 import { sha256HexSync } from "./sha256.ts";
+
+/** 0o644 or 0o755: the owner execute bit decides. */
+export type FileMode = 420 | 493;
+
+/**
+ * The manifest a scan reports and a checkpoint carries. Sizes are never taken from it: they
+ * come from the store's own records. `dirs` lists empty directories only. Every path passes the path
+ * check: NFC, no Cc, ≤1,024 UTF-8 bytes, ≤32 segments of ≤255 bytes, none empty, `.` or `..`.
+ */
+export interface WireManifest {
+	files: { path: string; sha256: Sha256; mode: FileMode; mtime: EpochMs }[];
+	dirs: string[];
+}
+
+/** A version's stored entries, sorted by UTF-16 code unit. Hashed as canonical JSON for `digest` (`digestOf`). */
+export interface StoredEntries {
+	files: { [path: string]: { sha256: Sha256; size: number; mode: FileMode; mtime: EpochMs } };
+	dirs: string[];
+}
+
+/** Why the scan left an entry out. */
+export type WarningReason = "symlink" | "special" | "invalid_name" | "too_long" | "too_deep" | "unreadable";
+
+/** What the scan could not keep: the first 100 by path bytes, `total` counting all. */
+export interface FolderWarnings {
+	total: number;
+	items: { path: string; reason: WarningReason }[];
+}
 
 /** What `parse` refuses: a malformed manifest or warnings. */
 export class InvalidManifest extends Error {

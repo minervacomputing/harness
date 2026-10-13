@@ -15,10 +15,9 @@
 
 import type { ToolExecutionApi, ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
-import type { FolderLimit } from "../contracts/files.ts";
-import type { LocalToolEventData } from "../contracts/events.ts";
+import type { FolderLimit } from "../files/limits.ts";
 import { commandEnvironment } from "../sandbox/constants.ts";
-import { EXCERPT_CHARS, head, storable, SUMMARY_CHARS, tail } from "./events.ts";
+import { EXCERPT_CHARS, head, type LocalToolEventData, storable, SUMMARY_CHARS, tail } from "./events.ts";
 import { untilAborted } from "./queue.ts";
 
 export const LOCAL_TOOLS = ["read", "write", "edit", "bash"] as const;

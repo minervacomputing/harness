@@ -3,7 +3,7 @@
 // `auth` declaration describes, through an injected `fetch`. Storing the result, the single flight and the
 // generation fence are the Workspace's (core.ts).
 
-import type { Auth, Connector } from "../contracts/connectors.ts";
+import type { Auth, Connector } from "../gateway/connector.ts";
 import { base64, concatAll, utf8 } from "../lib/bytes.ts";
 import { type Json, type JsonObject, parseJsonBytes } from "../lib/json.ts";
 import type { ClientCredentials, Log, OAuthClients } from "./ports.ts";

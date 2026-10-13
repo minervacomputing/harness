@@ -5,11 +5,10 @@
 import { z } from "zod";
 import type { $ZodLazy, $ZodType, $ZodTypes } from "zod/v4/core";
 import type { Json, JsonObject } from "../lib/json.ts";
-import type { Connector, Operation } from "../contracts/connectors.ts";
 import { sha256Hex } from "../lib/hash.ts";
 import { hashInput } from "../lib/canonical.ts";
 import { isRecord } from "../lib/schema.ts";
-import { ACCOUNT_KIND, actionOf, kindOf, nests, operationOf, requiresOf, termsOf } from "./connector.ts";
+import { ACCOUNT_KIND, type Connector, type Operation, actionOf, kindOf, nests, operationOf, requiresOf, termsOf } from "./connector.ts";
 import { compareLists } from "./policy.ts";
 
 /** No digits: a second connection of a provider gets a numeric suffix (todoist2), which then cannot collide. */

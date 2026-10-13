@@ -4,12 +4,11 @@
 // requests the declaration makes. Runs through the executor are in connectors-todoist-executor.test.ts.
 
 import { describe, expect, test } from "vitest";
-import type { Connector, ProviderOutput, Requirement } from "../../src/contracts/connectors.ts";
-import type { GrantRow } from "../../src/contracts/policy.ts";
 import { CONNECTORS } from "../../src/connectors/index.ts";
 import type { TodoistClient } from "../../src/connectors/todoist/client.ts";
 import { MAX_PROJECT_PAGES, TOO_MANY_PROJECTS, todoistConnector } from "../../src/connectors/todoist/connector.ts";
-import { OperationError, binding, termsOf } from "../../src/gateway/connector.ts";
+import { type Connector, OperationError, type ProviderOutput, type Requirement, binding, termsOf } from "../../src/gateway/connector.ts";
+import type { GrantRow } from "../../src/gateway/grants.ts";
 import { CallIo, settingsIo } from "../../src/gateway/http.ts";
 import { Registry, inputSchema } from "../../src/gateway/registry.ts";
 import { validateInput } from "../../src/gateway/validation.ts";

@@ -3,7 +3,7 @@
 // both read the same contracts. A test build (src/faults/)
 // and the platform tests add fake connectors through `CONNECTOR_SOURCE` before any object reads it.
 
-import type { Connector } from "../contracts/connectors.ts";
+import type { Connector } from "../gateway/connector.ts";
 import { Registry } from "../gateway/registry.ts";
 import { todoistConnector } from "./todoist/connector.ts";
 import { stripeConnector } from "./stripe/connector.ts";

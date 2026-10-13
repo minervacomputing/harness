@@ -11,9 +11,8 @@
 // integral amount of 2^53 or more, which JSON parsing may already have rounded) makes the response unexpected.
 
 import { z } from "zod";
-import type { Effect, OperationErrorShape, ProviderClient, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
-import { ProviderHTTP } from "../../gateway/http.ts";
+import { OperationError, type OperationErrorShape, type ProviderClient } from "../../gateway/connector.ts";
+import { type Effect, ProviderHTTP, type ProviderIo, type ProviderRequest } from "../../gateway/http.ts";
 import { isDict, type Json, parseJson, parseJsonBytes } from "../../lib/json.ts";
 import { truncate } from "../../lib/text.ts";
 import { type Decimal, fromNumber } from "./decimal.ts";

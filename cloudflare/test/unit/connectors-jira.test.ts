@@ -2,12 +2,12 @@
 // executor. The ADF cases are in connectors-atlassian.test.ts.
 
 import { afterEach, describe, expect, test } from "vitest";
-import type { GrantRow } from "../../src/contracts/policy.ts";
 import { MAX_SITES } from "../../src/connectors/atlassian/index.ts";
 import { JiraClient, nextCursor, pageParams } from "../../src/connectors/jira/client.ts";
 import { discoveryCursor, jiraConnector } from "../../src/connectors/jira/connector.ts";
 import { MAX_PROJECT_PAGES, searchWords } from "../../src/connectors/jira/reads.ts";
 import { names } from "../../src/connectors/jira/writes.ts";
+import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";

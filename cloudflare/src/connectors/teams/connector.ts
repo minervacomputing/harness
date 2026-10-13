@@ -21,9 +21,18 @@
 // and channels and posting do not.
 
 import { z } from "zod";
-import type { Binding, Connector, DiscoveryItem, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
+import {
+	type Binding,
+	type Connector,
+	type DiscoveryItem,
+	OperationError,
+	type Prepared,
+	type ProviderOutput,
+	type ScopedRecord,
+	defineOperation,
+	denied,
+} from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import type { Json } from "../../lib/json.ts";
 import { truncate, TextError } from "../../lib/text.ts";
 import { accountLabel, consent, consentAll, oauth } from "../microsoft/index.ts";

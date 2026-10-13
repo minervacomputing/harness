@@ -1,9 +1,9 @@
 // The host's side of a script (src/scripts/session.ts): the admission of scripted calls, the guest treated as hostile, and calls and prints after the end.
 
 import { describe, expect, test } from "vitest";
-import type { Json } from "../../src/contracts/common.ts";
-import type { ToolCallOutcome, ToolDeclaration } from "../../src/contracts/executor.ts";
 import { ToolQueue } from "../../src/conversation/queue.ts";
+import type { ToolCallOutcome, ToolDeclaration } from "../../src/gateway/executor.ts";
+import type { Json } from "../../src/lib/json.ts";
 import { HEAD_CHARS, IMAGE_OMITTED, LATE_PENDING, MAX_OUTPUT_ITEMS, OUTPUT_LIMIT, SCRIPT_ARGS_BYTES } from "../../src/scripts/limits.ts";
 import { ScriptCalls, ScriptSession } from "../../src/scripts/session.ts";
 import { declaration, ok } from "./scripts-support.ts";

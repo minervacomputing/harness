@@ -15,10 +15,8 @@
 //   guest that awaits one stops, and one that loops on answers given at once cannot keep the host busy.
 //   Past `LATE_PENDING` of them, more are answered at once, so they cannot fill the host's memory either.
 
-import type { Json } from "../contracts/common.ts";
-import type { ToolCallOutcome, ToolDeclaration } from "../contracts/executor.ts";
-import type { ScriptCallAnswer, ScriptError, TextSize } from "../contracts/scripts.ts";
-import { parseJson } from "../lib/json.ts";
+import type { ToolCallOutcome, ToolDeclaration } from "../gateway/executor.ts";
+import { type Json, parseJson } from "../lib/json.ts";
 import {
 	ARGS_TOO_LARGE,
 	ARGS_UNCONVERTIBLE,
@@ -37,7 +35,9 @@ import {
 	SCRIPT_REFUSALS,
 	UNKNOWN_TOOL,
 } from "./limits.ts";
-import { OutputRecord, sizeOf } from "./output.ts";
+import type { ScriptError } from "./outcome.ts";
+import { OutputRecord, type TextSize, sizeOf } from "./output.ts";
+import type { ScriptCallAnswer } from "./target.ts";
 
 /** One scripted call through the run's queue and the executor (the Conversation's `#invoke`). */
 export interface ScriptCallPort {

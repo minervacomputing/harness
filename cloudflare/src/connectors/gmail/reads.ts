@@ -1,9 +1,8 @@
 // Gmail's read operations: labels, message lists, messages and threads.
 
 import { z } from "zod";
-import type { Binding, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, defineOperation } from "../../gateway/connector.ts";
+import { type Binding, OperationError, type Prepared, type ProviderOutput, type ScopedRecord, defineOperation } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
 import { SINGLE_LINE, htmlUnescape, isSingleLine, sliceText } from "../../lib/text.ts";
 import { type GmailClient, ID, type Message, type MessageRef, headersOf } from "./client.ts";

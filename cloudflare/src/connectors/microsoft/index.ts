@@ -10,9 +10,8 @@
 // error texts never reach the model.
 
 import { z } from "zod";
-import type { Auth, Consent, OperationErrorShape, ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
-import { ProviderHTTP, defaultForbidden } from "../../gateway/http.ts";
+import { type Auth, type Consent, OperationError, type OperationErrorShape, type ProviderClient } from "../../gateway/connector.ts";
+import { ProviderHTTP, type ProviderIo, defaultForbidden } from "../../gateway/http.ts";
 import { isDict, type Json, type JsonObject, parseJsonBytes } from "../../lib/json.ts";
 
 export const GRAPH = "https://graph.microsoft.com";

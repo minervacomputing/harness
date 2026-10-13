@@ -2,11 +2,11 @@
 // result shapes the chat and the model read.
 
 import { describe, expect, test } from "vitest";
-import type { ToolCallAllowed } from "../../src/contracts/events.ts";
 import { inputSchema } from "../../src/gateway/registry.ts";
 import {
 	RESULT_SCHEMA,
 	TOOL_RESULT_LIMITS,
+	type ToolCallAllowed,
 	argumentsSummary,
 	callToolResult,
 	modelContent,

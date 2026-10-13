@@ -6,8 +6,7 @@
 // is left to refund at that moment, so an agent cannot ask Stripe for more than the payment has.
 
 import { z } from "zod";
-import type { Prepared, ProviderOutput } from "../../contracts/connectors.ts";
-import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
+import { OperationError, type Prepared, type ProviderOutput, defineOperation, denied } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
 import { SINGLE_LINE, isSingleLine } from "../../lib/text.ts";
 import type { Charge, Customer, StripeClient } from "./client.ts";

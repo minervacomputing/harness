@@ -8,9 +8,8 @@
 // that moved is refused (`DEAL_MOVED`).
 
 import { z } from "zod";
-import type { Binding } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, denied } from "../../gateway/connector.ts";
+import { type Binding, OperationError, denied } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
 import { SINGLE_LINE, isSingleLine, truncate } from "../../lib/text.ts";
 import { type HubSpotClient, MAX_SEARCH_RESULTS, PIPELINE_ID, RECORD_ID, SEARCH_AFTER } from "./client.ts";

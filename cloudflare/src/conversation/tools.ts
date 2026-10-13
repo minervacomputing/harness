@@ -24,10 +24,10 @@
 
 import { type TSchema, type ToolCall, validateToolArguments } from "@earendil-works/pi-ai";
 import type { ToolExecutionApi, ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
-import type { AttemptFence, EpochMs, Json, RunId } from "../contracts/common.ts";
-import type { ToolCallOutcome, ToolDeclaration } from "../contracts/executor.ts";
+import type { ToolCallOutcome, ToolDeclaration } from "../gateway/executor.ts";
 import { TOOL_RESULT_LIMITS as GATEWAY_RESULT_LIMITS } from "../gateway/results.ts";
-import { parseJson } from "../lib/json.ts";
+import { type Json, parseJson } from "../lib/json.ts";
+import type { AttemptFence, EpochMs, RunId } from "../shared/rpc.ts";
 import { untilAborted } from "./queue.ts";
 
 export const TOOL_RESULT_BYTES = 1024 * 1024;

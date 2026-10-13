@@ -2,7 +2,7 @@
 // applies the decision in one transaction, syncs storage, and only then lets pi open
 // (conversation.ts, the harness factory).
 
-import type { RunStatus } from "../contracts/runs.ts";
+import type { RunStatus } from "../shared/rpc.ts";
 import { ACTIVE } from "./events.ts";
 
 /** At most attempts 1, 2 and 3 exist (MAX_RESTARTS = 2). */

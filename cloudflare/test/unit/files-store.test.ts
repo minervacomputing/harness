@@ -7,9 +7,8 @@
 // contents the run may not read under a key recorded first, so "an upload" below is a checkpoint's.
 
 import { describe, expect, test } from "vitest";
-import type { FolderWarnings, WireManifest } from "../../src/contracts/files.ts";
 import { BLOB_GONE, CONFLICT, LOOSE_GRACE_MS, NO_LONGER_AVAILABLE, NO_ROOM, QuotaExceeded, SECOND_DELETION_MS, STALE } from "../../src/files/limits.ts";
-import { digestOf, parseManifest } from "../../src/files/manifest.ts";
+import { type FolderWarnings, type WireManifest, digestOf, parseManifest } from "../../src/files/manifest.ts";
 import { StaleParent, UnknownBlob } from "../../src/files/store.ts";
 import { parseJson } from "../../src/lib/json.ts";
 import { CHECKSUM_MISMATCH, CONVERSATION, DAY, START, WORKSPACE, World, sandboxUpload, sha } from "./files-support.ts";

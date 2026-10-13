@@ -5,13 +5,48 @@
 // the SHA-256 R2 checks. File contents never cross an RPC. The container's claims (the scan's manifest,
 // warnings and sizes) are only checked for their shape here; the Conversation validates them.
 
-import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan, HydrateResult, ScanResult } from "../contracts/sandbox.ts";
-import type { FileMode, WarningReason } from "../contracts/files.ts";
+import type { FolderLimit } from "../files/limits.ts";
+import type { FileMode, FolderWarnings, WarningReason, WireManifest } from "../files/manifest.ts";
 import { type Json, parseJson } from "../lib/json.ts";
+import type { EpochMs, Sha256, VersionId } from "../shared/rpc.ts";
 import { WORKSPACE } from "./constants.ts";
 import type { BucketPort } from "./ports.ts";
 import { setOwn } from "./files.ts";
 import { helper, type Machine, startWrapped } from "./process.ts";
+
+/** What a run starts from: the hydrate version's files, each read from R2 once per distinct hash. */
+export interface HydratePlan {
+	versionId: VersionId | null;
+	files: { path: string; sha256: Sha256; size: number; mode: FileMode; mtime: EpochMs; key: string }[];
+	dirs: string[];
+}
+
+export type HydrateResult = { ok: true } | { ok: false; reason: "not_empty" | "invalid_path" | "blob_missing" | "mismatch" | "failed"; message: string };
+
+/**
+ * The scan, run in the container as the dropped user, walking `/workspace` one component at a time with
+ * O_NOFOLLOW: every entry counts against the entry limit, sizes in pages are checked before
+ * hashing, three tries if the folder changes, results sorted by code point. Its claims are untrusted: the
+ * Conversation Durable Object validates the manifest and warnings again.
+ */
+export type ScanResult =
+	| { ok: true; manifest: WireManifest; sizes: { [path: string]: number }; warnings: FolderWarnings }
+	| { ok: false; limit: Extract<FolderLimit, "folder_bytes" | "folder_entries"> }
+	| { ok: false; reason: "changed" | "failed"; message: string };
+
+/**
+ * Files to save, each already recorded by the Conversation Durable Object under its R2 key before it is
+ * written (plan: Files). The Sandbox streams each from the container into R2 with its claimed SHA-256,
+ * which R2 checks, and reports what it stored. A file without a key has contents the conversation already
+ * stores: its bytes are only hashed, as the proof that the run has them, and nothing is written.
+ */
+export interface CheckpointUploadPlan {
+	files: { path: string; sha256: Sha256; size: number; key: string | null }[];
+}
+
+export type CheckpointUploadResult =
+	| { ok: true; stored: { path: string; sha256: Sha256; size: number; key: string | null }[] }
+	| { ok: false; reason: "changed" | "mismatch" | "failed"; path: string; message: string };
 
 /** One file of the scan's index, as minerva-fs writes it: path, size, mtime ns, ctime ns, ino, dev, sha256, mtime, racy. */
 export type IndexEntry = [string, number, string, string, string, string, string, number, boolean];

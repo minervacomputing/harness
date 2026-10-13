@@ -3,9 +3,9 @@
 // fetch, the loader's CommonJS) is in test/platform/scripts.test.ts.
 
 import { describe, expect, test } from "vitest";
-import type { ScriptCallAnswer, ScriptOutputItem, ScriptTools } from "../../src/contracts/scripts.ts";
 import { ERROR_CHARS, HEAD_CHARS, MAX_OUTPUT_ITEMS, OUTPUT_LIMIT } from "../../src/scripts/limits.ts";
-import { sizeOf } from "../../src/scripts/output.ts";
+import { type ScriptOutputItem, sizeOf } from "../../src/scripts/output.ts";
+import type { ScriptCallAnswer, ScriptTools } from "../../src/scripts/target.ts";
 import { runInRealm, toolList } from "./scripts-support.ts";
 
 interface Host extends ScriptTools {

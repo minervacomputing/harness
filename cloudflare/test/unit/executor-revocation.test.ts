@@ -8,8 +8,7 @@
 
 import { describe, expect, test } from "vitest";
 import { z } from "zod";
-import type { Connector, Prepared, ProviderOutput } from "../../src/contracts/connectors.ts";
-import { defineOperation } from "../../src/gateway/connector.ts";
+import { type Connector, type Prepared, type ProviderOutput, defineOperation } from "../../src/gateway/connector.ts";
 import { ProviderHTTP } from "../../src/gateway/http.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { FOLDER, MIXED, Scenario, jsonResponse, userGrants } from "./executor-fakes.ts";
