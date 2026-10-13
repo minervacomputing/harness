@@ -1,4 +1,4 @@
-// Gmail's write operations, ported from backend/connectors/gmail/writes.py: sending mail, replying, and saving
+// Gmail's write operations: sending mail, replying, and saving
 // drafts.
 
 import { z } from "zod";
@@ -6,7 +6,6 @@ import type { Binding, Prepared, ProviderOutput, Requirement } from "../../contr
 import type { Resource } from "../../contracts/policy.ts";
 import { ACCOUNT_KIND, OperationError, defineOperation } from "../../gateway/connector.ts";
 import type { JsonObject } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { PLAIN_TEXT, SINGLE_LINE, isPlainText, isSingleLine } from "../../lib/text.ts";
 import * as addresses from "../../lib/addresses.ts";
 import { type GmailClient, type Message, REPLY_HEADERS, headersOf } from "./client.ts";
@@ -31,14 +30,14 @@ const REPLY_FETCH: Fetch = { format: "metadata", headers: REPLY_HEADERS };
 
 /** The canonical address (`addresses.checked` as an AfterValidator). */
 const Address = () =>
-	strippedStr({ min: 3, max: addresses.MAX_ADDRESS }).transform((value, ctx) => {
+	z.string().trim().min(3).max(addresses.MAX_ADDRESS).transform((value, ctx) => {
 		const result = addresses.checked(value);
 		if (result.ok) return result.address;
 		ctx.addIssue({ code: "custom", message: result.message, input: value });
 		return z.NEVER;
 	});
-const Subject = () => strippedStr({ min: 1, max: 255 }).refine(isSingleLine, SINGLE_LINE);
-const Body = () => strippedStr({ min: 1, max: MAX_BODY }).describe("Plain text; sent as it is, not as HTML.").refine(isPlainText, PLAIN_TEXT);
+const Subject = () => z.string().trim().min(1).max(255).refine(isSingleLine, SINGLE_LINE);
+const Body = () => z.string().trim().min(1).max(MAX_BODY).describe("Plain text; sent as it is, not as HTML.").refine(isPlainText, PLAIN_TEXT);
 
 const SEND_NOTE =
 	"Mail is sent as plain text from the account's default address and kept in Sent. Gmail accepts it before delivering it; a bounce arrives later as mail.";

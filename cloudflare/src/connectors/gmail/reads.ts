@@ -1,4 +1,4 @@
-// Gmail's read operations, ported from backend/connectors/gmail/reads.py: labels, message lists, messages
+// Gmail's read operations: labels, message lists, messages
 // and threads.
 
 import { z } from "zod";
@@ -6,7 +6,6 @@ import type { Binding, Prepared, ProviderOutput, ScopedRecord } from "../../cont
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation } from "../../gateway/connector.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { SINGLE_LINE, htmlUnescape, isSingleLine, sliceCodePoints } from "../../lib/text.ts";
 import { digitsOr } from "../google/digits.ts";
 import { type GmailClient, ID, type Message, type MessageRef, headersOf } from "./client.ts";
@@ -34,7 +33,7 @@ function labelRef(value: string, ctx: z.RefinementCtx): string {
 }
 
 /** The run's own page token; the executor swaps it for Gmail's before the call is prepared. */
-const Cursor = () => strippedStr({ max: 1000 });
+const Cursor = () => z.string().trim().max(1000);
 
 function first(message: Message, name: string): string | null {
 	return mime.headerText(headersOf(message, name)[0] ?? null);
@@ -96,13 +95,13 @@ const LIST_LABELS = defineOperation<z.output<typeof ListLabels>>({
 });
 
 const ListMessages = z.strictObject({
-	label: strippedStr({ min: 1, max: 64 })
+	label: z.string().trim().min(1).max(64)
 		.describe(`A label id from list_labels, or a system label: ${[...SYSTEM_LABELS.keys()].join(", ")}.`)
 		.transform(labelRef)
 		.nullable()
 		.default(null)
 		.describe("Only mail with this label; leave out to search all mail."),
-	query: strippedStr({ min: 1, max: 200 })
+	query: z.string().trim().min(1).max(200)
 		.nullable()
 		.superRefine((value, ctx) => {
 			// AfterValidator(single_line) on `str | None`: Python iterates None and raises TypeError, which no

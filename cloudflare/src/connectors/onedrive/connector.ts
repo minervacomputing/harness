@@ -1,4 +1,4 @@
-// OneDrive and SharePoint, ported from backend/connectors/onedrive/connector.py. Resources are files and
+// OneDrive and SharePoint. Resources are files and
 // folders in drives: the account's OneDrive, and SharePoint document libraries. What is allowed on a folder
 // covers everything inside it, and a library's root folder stands for the whole library.
 //
@@ -21,14 +21,13 @@
 // Sites are not resources: their libraries are. Without a search, the libraries offered are those of the
 // SharePoint sites the account follows.
 //
-// Office files are read in the Worker (office.ts), with today's limits.
+// Office files are read in the Worker (office.ts), within its limits.
 
 import { z } from "zod";
 import type { Binding, Connector, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
-import { type Json, parseJson, visibleJson } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
+import { type Json, parseJson } from "../../lib/json.ts";
 import { fromUtf8 } from "../../lib/bytes.ts";
 import { codePointLength, pythonStrip, sliceCodePoints } from "../../lib/text.ts";
 import { decimalValue } from "../../lib/digits.ts";
@@ -260,9 +259,9 @@ function folderOf(item: DriveItem): DriveItem {
 }
 
 const ID_PATTERN = new RegExp(`^(${ROOT}|${DRIVE_PART}:${ITEM_PART})$`);
-const ItemId = () => strippedStr({ max: 420 }).regex(ID_PATTERN).describe("A file's id from a record.");
-const FolderId = () => strippedStr({ max: 420 }).regex(ID_PATTERN).describe('A folder\'s or library\'s id from a record, or "root" for your own OneDrive.');
-const Cursor = () => strippedStr({ max: 1000 });
+const ItemId = () => z.string().trim().max(420).regex(ID_PATTERN).describe("A file's id from a record.");
+const FolderId = () => z.string().trim().max(420).regex(ID_PATTERN).describe('A folder\'s or library\'s id from a record, or "root" for your own OneDrive.');
+const Cursor = () => z.string().trim().max(1000);
 
 function clientOf(binding: Binding): DriveClient {
 	return binding.client as DriveClient;
@@ -392,7 +391,7 @@ const LIST_FOLDER = defineOperation<z.output<typeof ListFolder>>({
 
 export const SearchFiles = z
 	.strictObject({
-		text: singleLineOf(strippedStr({ min: 1, max: 200 })),
+		text: singleLineOf(z.string().trim().min(1).max(200)),
 		limit: z.int().min(1).max(25).default(10),
 		cursor: Cursor().nullable().default(null),
 	})
@@ -577,8 +576,8 @@ function fileName(value: string): string {
 export const CreateFile = z
 	.strictObject({
 		folder_id: FolderId(),
-		name: after(singleLineOf(strippedStr({ min: 1, max: 200 }).describe("The new file's name, with its extension.")), fileName),
-		content: after(strippedStr({ max: MAX_UPLOAD_BYTES }), uploadSize),
+		name: after(singleLineOf(z.string().trim().min(1).max(200).describe("The new file's name, with its extension.")), fileName),
+		content: after(z.string().trim().max(MAX_UPLOAD_BYTES), uploadSize),
 	})
 	.meta({ title: "CreateFile" });
 
@@ -703,7 +702,7 @@ export function onedriveConnector(options: { baseUrl?: string } = {}): Connector
 			const names = await describe(client, ids);
 			return {
 				items: ids.filter((id) => Object.hasOwn(names, id)).map((id) => ({ id, name: names[id] as string })),
-				nextCursor: next ? visibleJson({ page: next }) : null,
+				nextCursor: next ? JSON.stringify({ page: next }) : null,
 			};
 		},
 

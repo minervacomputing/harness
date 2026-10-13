@@ -10,7 +10,7 @@ import type { Connector, Prepared, ProviderOutput } from "../contracts/connector
 import { defineOperation } from "../gateway/connector.ts";
 import { ProviderHTTP } from "../gateway/http.ts";
 import type { Json } from "../lib/json.ts";
-import { strictRecord, strippedStr } from "../lib/schema.ts";
+import { record } from "../lib/schema.ts";
 
 export const NOTES = "notes";
 /** The provider's origin: any `*.fake.invalid` request of the test build goes to its FaultProvider. */
@@ -19,10 +19,10 @@ export const NOTES_TOKEN_URL = `${NOTES_ORIGIN}/token`;
 export const FOLDER = "folder";
 export const NOTES_CLIENT = { clientId: "notes-client", clientSecret: "notes-client-secret" };
 
-const Id = () => strippedStr({ min: 1, max: 40 }).regex(/^[a-z0-9-]+$/);
+const Id = () => z.string().trim().min(1).max(40).regex(/^[a-z0-9-]+$/);
 const ListNotes = z.strictObject({ folder: Id() });
-const SaveNote = z.strictObject({ folder: Id(), title: strippedStr({ min: 1, max: 200 }), meta: strictRecord(strippedStr({ max: 200 }), { max: 10 }).optional() });
-const FileNote = z.strictObject({ folder: Id(), title: strippedStr({ min: 1, max: 200 }) });
+const SaveNote = z.strictObject({ folder: Id(), title: z.string().trim().min(1).max(200), meta: record(z.string().trim().max(200), { max: 10 }).optional() });
+const FileNote = z.strictObject({ folder: Id(), title: z.string().trim().min(1).max(200) });
 const Notes = z.array(z.object({ id: z.string(), title: z.string() }));
 const Note = z.object({ id: z.string(), title: z.string() });
 

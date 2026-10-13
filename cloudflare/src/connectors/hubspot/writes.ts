@@ -1,4 +1,4 @@
-// HubSpot's write operations: contacts, deals and notes (ported from backend/connectors/hubspot/writes.py).
+// HubSpot's write operations: contacts, deals and notes.
 //
 // A deal is created in a pipeline the agent names and may be associated with contacts and companies the
 // agent may read. A deal is edited only within its pipeline: a stage must belong to it, and a deal that moved
@@ -12,7 +12,6 @@ import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
 import { isoDate } from "../../lib/isoformat.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { PLAIN_TEXT, isPlainText } from "../../lib/text.ts";
 import { CONFLICT, type HubSpotClient, association } from "./client.ts";
 import type { Pipeline } from "./models.ts";
@@ -67,11 +66,11 @@ const CompanyName = () => text(200, "A company name, as text; it does not associ
 const JobTitle = () => text(200, "A job title.");
 const DealName = () => text(200, "The deal's name.");
 const Amount = () =>
-	strippedStr({ max: 16 })
+	z.string().trim().max(16)
 		.refine((value) => AMOUNT.test(value), { message: "must be a number such as 1500 or 1500.50, without a currency or separators" })
 		.describe("The amount in the deal's currency (the account's currency for a new deal), such as 1500 or 1500.50.");
 const CloseDate = () =>
-	strippedStr({ max: 10 }).refine(isIsoDate, { message: "must be a date such as 2026-12-31" }).describe("The expected close date, such as 2026-12-31.");
+	z.string().trim().max(10).refine(isIsoDate, { message: "must be a date such as 2026-12-31" }).describe("The expected close date, such as 2026-12-31.");
 
 function closeDate(value: string): string {
 	return `${value}T00:00:00Z`;
@@ -302,7 +301,7 @@ const AddNote = z
 		contact_id: ContactId().nullable().default(null).describe("The contact to log the note on."),
 		company_id: CompanyId().nullable().default(null).describe("The company to log the note on."),
 		deal_id: DealId().nullable().default(null).describe("The deal to log the note on."),
-		body: strippedStr({ min: 1, max: MAX_NOTE }).refine(isPlainText, { message: PLAIN_TEXT }).describe("The note, as plain text."),
+		body: z.string().trim().min(1).max(MAX_NOTE).refine(isPlainText, { message: PLAIN_TEXT }).describe("The note, as plain text."),
 	})
 	.refine((data) => [data.contact_id, data.company_id, data.deal_id].filter((value) => value !== null).length === 1, {
 		message: "give exactly one of contact_id, company_id and deal_id",

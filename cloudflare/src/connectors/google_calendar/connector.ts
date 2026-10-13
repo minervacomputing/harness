@@ -1,11 +1,10 @@
-// Google Calendar, ported from backend/connectors/google_calendar/connector.py. Resources are calendars;
+// Google Calendar. Resources are calendars;
 // what is allowed on a calendar covers its events.
 
 import { z } from "zod";
 import type { Binding, Connector, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
-import { type Json, parseJson, visibleJson } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
+import { type Json, parseJson } from "../../lib/json.ts";
 import { codePointLength, sliceCodePoints } from "../../lib/text.ts";
 import { casefold } from "../../lib/casefold.ts";
 import { oauth } from "../google/index.ts";
@@ -64,16 +63,16 @@ function notDots(value: string): boolean {
 }
 
 const CalendarId = () =>
-	strippedStr({ min: 1, max: 200 })
+	z.string().trim().min(1).max(200)
 		.regex(/^[A-Za-z0-9._%+#@-]+$/)
 		.refine(notDots, { message: "is not a valid id" })
 		.describe('A calendar id from list_calendars, or "primary" for the main calendar.');
 const EventId = () =>
-	strippedStr({ min: 1, max: 1024 })
+	z.string().trim().min(1).max(1024)
 		.regex(/^[A-Za-z0-9_@.-]+$/)
 		.refine(notDots, { message: "is not a valid id" });
-const DateTime = () => strippedStr({ max: 40 }).superRefine(after(checkDateTime));
-const DateOrDateTime = () => strippedStr({ max: 40 }).superRefine(after(checkDateOrDateTime));
+const DateTime = () => z.string().trim().max(40).superRefine(after(checkDateTime));
+const DateOrDateTime = () => z.string().trim().max(40).superRefine(after(checkDateOrDateTime));
 
 export interface CalendarOptions {
 	/** How many pages of the calendar list a call may read (Python's MAX_CALENDAR_PAGES). */
@@ -152,9 +151,9 @@ const ListEvents = z
 		calendar_id: CalendarId(),
 		time_min: DateTime().nullable().default(null).describe("Only events that end after this time."),
 		time_max: DateTime().nullable().default(null).describe("Only events that start before this time."),
-		search: strippedStr({ min: 1, max: 200 }).nullable().default(null),
+		search: z.string().trim().min(1).max(200).nullable().default(null),
 		limit: z.int().min(1).max(50).default(25),
-		cursor: strippedStr({ max: 300 }).nullable().default(null),
+		cursor: z.string().trim().max(300).nullable().default(null),
 	})
 	.superRefine((data, ctx) => {
 		// `_ordered`, a model validator: only once every field passed.
@@ -170,15 +169,15 @@ const GetEvent = z.strictObject({ calendar_id: CalendarId(), event_id: EventId()
 const CreateEvent = z
 	.strictObject({
 		calendar_id: CalendarId(),
-		summary: strippedStr({ min: 1, max: 300 }),
+		summary: z.string().trim().min(1).max(300),
 		start: DateOrDateTime().describe("YYYY-MM-DD for an all-day event, or an RFC 3339 date-time with an offset."),
 		end: DateOrDateTime().describe("Same format as start. For all-day events, the day after the last day."),
-		time_zone: strippedStr({ max: 64 })
+		time_zone: z.string().trim().max(64)
 			.refine((value) => ZONES.has(value), { message: "must be an IANA time zone, like Europe/Berlin" })
 			.nullable()
 			.default(null),
-		description: strippedStr({ max: 8000 }).nullable().default(null),
-		location: strippedStr({ max: 500 }).nullable().default(null),
+		description: z.string().trim().max(8000).nullable().default(null),
+		location: z.string().trim().max(500).nullable().default(null),
 	})
 	.superRefine((data, ctx) => {
 		// `_consistent`, a model validator.
@@ -284,7 +283,7 @@ export function googleCalendarConnector(options: CalendarOptions = {}): Connecto
 						});
 						let nextCursor: string | null = null;
 						if (page.next_page_token) {
-							nextCursor = visibleJson({ page: page.next_page_token, time_min: timeMin });
+							nextCursor = JSON.stringify({ page: page.next_page_token, time_min: timeMin });
 							if (codePointLength(nextCursor) > 1000) throw new OperationError("PROVIDER_LIMIT", "Google Calendar returned a page token that is too long.");
 						}
 						return { records: page.items.map((event) => eventRecord(binding, calendarId, event)), nextCursor };

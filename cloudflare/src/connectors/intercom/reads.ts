@@ -1,12 +1,10 @@
-// Intercom's read operations: inboxes, conversation search and single conversations
-// (backend/connectors/intercom/reads.py).
+// Intercom's read operations: inboxes, conversation search and single conversations.
 
 import { z } from "zod";
 import type { Binding, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
 import { OperationError, defineOperation } from "../../gateway/connector.ts";
 import { casefold } from "../../lib/casefold.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { SINGLE_LINE, isSingleLine, truncate } from "../../lib/text.ts";
 import { type Attachment, type Author, type Conversation, type IntercomClient, type Part, idNumber } from "./client.ts";
 import { fromIsoFormat, timestamp } from "./dates.ts";
@@ -47,7 +45,7 @@ export const NOT_ISO = "must be an ISO 8601 date or time such as 2026-10-01T09:0
 export const NOT_IN_RANGE = "must be a time between the years 2000 and 2100";
 
 /** `Cursor | None = None`: a page token, at most 1000 characters. */
-const Cursor = () => strippedStr({ max: 1000 }).nullable().default(null);
+const Cursor = () => z.string().trim().max(1000).nullable().default(null);
 
 /** Text shown to agents, links to Intercom hidden, at most `limit` characters; null for none. */
 export function short(value: string | null | undefined, limit: number = MAX_SHORT): string | null {
@@ -139,12 +137,12 @@ export function sinceTimestamp(value: string): number {
 }
 
 const SearchText = () =>
-	strippedStr({ min: 1, max: 200 })
+	z.string().trim().min(1).max(200)
 		.refine(isSingleLine, SINGLE_LINE)
 		.describe(`Up to ${MAX_SEARCH_WORDS} words, all of which the conversation's first message contains.`);
 
 const Since = () =>
-	strippedStr({ min: 1, max: 40 })
+	z.string().trim().min(1).max(40)
 		.refine((value) => sinceProblem(value) !== NOT_ISO, NOT_ISO)
 		.refine((value) => sinceProblem(value) !== NOT_IN_RANGE, NOT_IN_RANGE)
 		.describe("Only conversations updated at or after this ISO 8601 time; times without a zone are UTC.");

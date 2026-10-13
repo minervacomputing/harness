@@ -12,10 +12,9 @@ import type { Connector, Prepared, ProviderOutput } from "../../src/contracts/co
 import { defineOperation } from "../../src/gateway/connector.ts";
 import { ProviderHTTP } from "../../src/gateway/http.ts";
 import type { Json } from "../../src/lib/json.ts";
-import { strippedStr } from "../../src/lib/schema.ts";
 import { FOLDER, MIXED, Scenario, jsonResponse, userGrants } from "./executor-fakes.ts";
 
-const Id = () => strippedStr({ min: 1, max: 40 }).regex(/^[a-z0-9-]+$/);
+const Id = () => z.string().trim().min(1).max(40).regex(/^[a-z0-9-]+$/);
 const Both = z.strictObject({ first: Id(), second: Id() });
 const Found = z.strictObject({ name: Id() });
 const Folder = z.object({ id: z.string(), name: z.string() });

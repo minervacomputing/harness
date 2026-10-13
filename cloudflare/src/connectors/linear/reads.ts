@@ -1,5 +1,4 @@
-// Linear's read operations: teams, issue lists and search, and single issues
-// (backend/connectors/linear/reads.py).
+// Linear's read operations: teams, issue lists and search, and single issues.
 
 import { z } from "zod";
 import type { Binding, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
@@ -7,7 +6,6 @@ import type { Resource } from "../../contracts/policy.ts";
 import { defineOperation } from "../../gateway/connector.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
 import { compareCodePoints } from "../../lib/order.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { SINGLE_LINE, isSingleLine, pythonSplit, truncate } from "../../lib/text.ts";
 import { type IssueSummary, type Label, type Team, authorOf } from "./client.ts";
 import { redact } from "./markdown.ts";
@@ -181,7 +179,7 @@ export const LIST_ISSUES = defineOperation<z.output<typeof ListIssues>>({
 const SearchIssues = z
 	.strictObject({
 		team: TeamName(),
-		query: strippedStr({ min: 1, max: 200 }).describe("Words that must all appear in the title.").refine(isSingleLine, SINGLE_LINE),
+		query: z.string().trim().min(1).max(200).describe("Words that must all appear in the title.").refine(isSingleLine, SINGLE_LINE),
 		state: StateFilter().default("all"),
 		limit: z.int().min(1).max(50).default(25),
 		cursor: Cursor(),

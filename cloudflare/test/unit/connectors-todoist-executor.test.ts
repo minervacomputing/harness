@@ -73,7 +73,7 @@ describe("test_executor.py with the Todoist connector", () => {
 		const run = await start(todoist, { work: ["read"] });
 		expect(await run.error("todoist_list_tasks", { project_id: "work", connection_id: "other" })).toEqual({
 			code: "INVALID_ARGUMENTS",
-			message: "Invalid arguments. connection_id: Extra inputs are not permitted",
+			message: 'Invalid arguments. input: Unrecognized key: "connection_id"',
 		});
 		expect(await run.code("github_list_repos", {})).toBe("UNKNOWN_OPERATION");
 		expect(todoist.calls).toEqual([]);

@@ -55,15 +55,6 @@ test("nothing in src lowers the cost of password hashes", () => {
 	expect(users.map(({ path }) => path)).toEqual([]);
 });
 
-test("string limits count code points (lib/schema.ts)", () => {
-	// zod's .min/.max/.length/.trim on strings count UTF-16 units and strip U+FEFF; Pydantic does neither.
-	const offenders: string[] = [];
-	for (const path of sources("src")) {
-		for (const [line, number] of code(path)) if (/z\.string\(\)[^;]*\.(min|max|length|trim)\(/.test(line)) offenders.push(`${path}:${number}`);
-	}
-	expect(offenders).toEqual([]);
-});
-
 /**
  * What a module imports or re-exports, as TypeScript's own pre-processor reads it: `import … from`,
  * `export … from`, a bare `import "…"` (run for its side effects, as src/faults/index.ts is) and

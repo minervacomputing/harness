@@ -1,4 +1,4 @@
-// Slack's Web API, with a bot token, ported from backend/connectors/slack/client.py.
+// Slack's Web API, with a bot token.
 //
 // Slack answers most failed requests with HTTP 200 and `{"ok": false, "error": "<code>"}`. Reads fail
 // closed: any such answer refuses the call. A post counts as applied only when Slack answers `ok: true`, and
@@ -18,7 +18,7 @@ import type { Effect, ProviderClient, ProviderIo } from "../../contracts/connect
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
-import { type Json, type JsonObject, parseJson, visibleJson } from "../../lib/json.ts";
+import { type Json, type JsonObject, parseJson } from "../../lib/json.ts";
 import { dict, laxBool, laxInt } from "../../lib/lax.ts";
 
 export const API_URL = "https://slack.com/api";
@@ -385,12 +385,11 @@ export class SlackClient implements ProviderClient {
 			payload.thread_ts = options.threadTs;
 			payload.reply_broadcast = false;
 		}
-		// As Python sends it: `json.dumps(payload)`, ASCII with its default separators.
 		const response = await this.#http.request({
 			method: "POST",
 			path: "/chat.postMessage",
 			mutating: true,
-			body: visibleJson(payload),
+			body: JSON.stringify(payload),
 			headers: { "Content-Type": "application/json; charset=utf-8" },
 		});
 		const answer = await responseText(response);

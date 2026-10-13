@@ -1,10 +1,10 @@
-// What Outlook's operations share, ported from backend/connectors/outlook/mailbox.py: Graph consent, folder
+// What Outlook's operations share: Graph consent, folder
 // and message ids, and where folders sit.
 
+import { z } from "zod";
 import type { Binding } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, denied } from "../../gateway/connector.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { after, valueError } from "../microsoft/inputs.ts";
 import { ID, consent } from "../microsoft/index.ts";
 import { type Folder, type GraphClient, type Message, ordinary } from "./client.ts";
@@ -30,7 +30,7 @@ function moved(): OperationError {
 }
 
 export function folderRef() {
-	return after(strippedStr({ min: 1, max: 512 }), (value: string) => {
+	return after(z.string().trim().min(1).max(512), (value: string) => {
 		if (WELL_KNOWN.includes(value.toLowerCase())) return value.toLowerCase();
 		if (ID.test(value)) return value;
 		throw valueError(`must be a folder id, or one of: ${WELL_KNOWN.join(", ")}`);
@@ -38,7 +38,7 @@ export function folderRef() {
 }
 
 export function messageId() {
-	return after(strippedStr({ min: 10, max: 512 }), (value: string) => {
+	return after(z.string().trim().min(10).max(512), (value: string) => {
 		if (!ID.test(value)) throw valueError("must be a message id from list_messages");
 		return value;
 	});

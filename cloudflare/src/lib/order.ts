@@ -1,9 +1,7 @@
-// String order by code point, which is Python's `sorted()`, `json.dumps(sort_keys=True)` and UTF-8 byte
-// order. JavaScript's `<` and `Array.prototype.sort()` compare UTF-16 code units instead, which puts
-// astral characters (emoji) before U+E000–U+FFFF. Manifests, folder listings, changes and warnings use
-// this order (files spec, risk 1), and so do the keys of `visibleJson(…, { sortKeys: true })`; canonical
-// JSON does not (lib/canonical.ts: RFC 8785 sorts by UTF-16 code unit). Lone surrogates count as the code
-// point they encode, as in Python.
+// String order by code point, which is UTF-8 byte order. JavaScript's `<` and `Array.prototype.sort()`
+// compare UTF-16 code units instead, which puts astral characters (emoji) before U+E000–U+FFFF. Manifests,
+// folder listings, changes and warnings use this order; canonical JSON does not (lib/canonical.ts: RFC 8785
+// sorts by UTF-16 code unit). Lone surrogates count as the code point they encode.
 
 /** Negative, zero or positive as `a` sorts before, with or after `b` by code point. */
 export function compareCodePoints(a: string, b: string): number {

@@ -2,13 +2,13 @@
 //
 // - `after(schema, fn)` is `Annotated[..., AfterValidator(fn)]`: `fn` runs on the value once its own checks
 //   passed, may change it (a well-known folder name lowercased, a time put in UTC) or refuse it with a
-//   ValueError, which Pydantic reports as "Value error, <message>".
+//   ValueError, which is the field's message.
 // - `modelValidator(fn)` is `@model_validator(mode="after")`: it runs only once every field passed, and its
 //   ValueError is reported at the input as a whole.
 // - `pythonPattern` is `Field(pattern=...)` where Python's `\d` (any decimal digit) differs from JavaScript's.
 //
 // Any other exception a validator raises (a TypeError, an OverflowError) is not a validation error: it
-// propagates, and the call fails generically, as it does today.
+// propagates, and the call fails generically.
 
 import { z } from "zod";
 import type * as core from "zod/v4/core";

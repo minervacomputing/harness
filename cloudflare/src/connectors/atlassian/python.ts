@@ -1,5 +1,5 @@
 // Python's string semantics that the Atlassian connectors rely on and JavaScript does not share, each
-// checked per code point against today's Python in test/unit/connectors-atlassian.test.ts (vectors from
+// checked per code point against Python in test/unit/connectors-atlassian.test.ts (vectors from
 // test/fixtures/connectors/atlassian/generate.py):
 //
 // - `re`'s `\w`, `\d` and `\s` are Unicode-aware for str patterns: `\w` is [\p{L}\p{N}_], `\d` is the decimal
@@ -18,7 +18,6 @@
 // vectors cover the code points Python has assigned. A character assigned since matches here and not there.
 // (The digits and the whitespace are Python's own tables.)
 
-import { stripWhitespace } from "../../lib/schema.ts";
 import { DIGIT_CLASS, digitValue } from "../../lib/digits.ts";
 
 /** What `re.IGNORECASE` matches for "i", which `/iu` would not complete: dotted capital and dotless i. */
@@ -38,7 +37,7 @@ export function pythonInt(value: unknown): bigint | null {
 	if (typeof value === "boolean") return value ? 1n : 0n;
 	if (typeof value === "number") return Number.isFinite(value) ? BigInt(Math.trunc(value)) : null;
 	if (typeof value !== "string") return null;
-	const match = INT_TEXT.exec(stripWhitespace(value));
+	const match = INT_TEXT.exec(value.trim());
 	if (match === null) return null;
 	const digits = Array.from((match[2] as string).replaceAll("_", ""));
 	if (digits.length > MAX_STR_DIGITS) return null;

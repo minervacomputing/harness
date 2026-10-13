@@ -59,15 +59,15 @@ export function operation(connector: Connector, name: string): Operation<never> 
 	return op;
 }
 
-/** Each case's outcome under the executor's strict validation, next to Python's. */
+/** Each case's outcome under the executor's strict validation (normalized arguments, or refused), next to the expected one. */
 export async function validationOutcomes(op: Operation<never>, cases: { [key: string]: InputCase }): Promise<{ actual: unknown[]; expected: unknown[] }> {
 	const actual: unknown[] = [];
 	const expected: unknown[] = [];
 	for (const [key, item] of Object.entries(cases)) {
-		expected.push({ key, ...(item.ok ? { ok: item.ok } : item.error ? { error: item.error } : { raises: true }) });
+		expected.push({ key, ...(item.ok ? { ok: item.ok } : item.error ? { refused: true } : { raises: true }) });
 		try {
 			const result = await validateInput(op.input as never, item.input as Json);
-			actual.push({ key, ...(result.ok ? { ok: result.data } : { error: result.message }) });
+			actual.push({ key, ...(result.ok ? { ok: result.data } : { refused: true }) });
 		} catch {
 			actual.push({ key, raises: true });
 		}

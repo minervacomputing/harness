@@ -1,11 +1,11 @@
-// What Jira's operations share, ported from backend/connectors/jira/issues.py: sites, project and issue
+// What Jira's operations share: sites, project and issue
 // names, and where issues sit.
 
+import { z } from "zod";
 import type { Binding } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, denied } from "../../gateway/connector.ts";
 import { DIGIT_CLASS } from "../../lib/digits.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { CLOUD_ID, type Site } from "../atlassian/index.ts";
 import type { Issue, JiraClient, Project } from "./client.ts";
 
@@ -21,7 +21,7 @@ export const SITE_ID_DESCRIPTION = "The site's id, from list_projects. Needed on
 
 /** A site's cloud id, in lower case. */
 export function siteId() {
-	return strippedStr({ min: 36, max: 36 })
+	return z.string().trim().min(36).max(36)
 		.describe(SITE_ID_DESCRIPTION)
 		.refine((value) => CLOUD_ID.test(value.toLowerCase()), "must be a site id from list_projects")
 		.transform((value) => value.toLowerCase());
@@ -29,7 +29,7 @@ export function siteId() {
 
 /** A project key (upper-cased) or id. */
 export function projectName() {
-	return strippedStr({ min: 1, max: 255 })
+	return z.string().trim().min(1).max(255)
 		.describe('A project key such as "ENG", or a project id.')
 		.refine((value) => ID.test(value) || PROJECT_KEY.test(value.toUpperCase()), 'must be a project key such as "ENG", or a project id')
 		.transform((value) => value.toUpperCase());
@@ -37,7 +37,7 @@ export function projectName() {
 
 /** An issue key (upper-cased) or id. */
 export function issueName() {
-	return strippedStr({ min: 1, max: 266 })
+	return z.string().trim().min(1).max(266)
 		.describe('An issue key such as "ENG-123", or an issue id.')
 		.refine((value) => ID.test(value) || ISSUE_KEY.test(value.toUpperCase()), 'must be an issue key such as "ENG-123", or an issue id')
 		.transform((value) => value.toUpperCase());

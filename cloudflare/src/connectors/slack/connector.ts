@@ -1,4 +1,4 @@
-// Slack, ported from backend/connectors/slack/connector.py. Resources are channels; Minerva acts as the
+// Slack. Resources are channels; Minerva acts as the
 // operator's Slack app, with its bot token.
 //
 // Only bot tokens (`xoxb-`) are accepted: user tokens and organization-wide installs are refused, and the
@@ -31,7 +31,6 @@ import type { Account, Binding, Connector, DiscoveryItem, DiscoveryPage, Prepare
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
 import type { JsonObject } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { PLAIN_TEXT, PYTHON_SPACE_CLASS, isPlainText, truncate } from "../../lib/text.ts";
 import { casefold } from "../../lib/casefold.ts";
 import { DIGIT_CLASS, digitValue } from "../../lib/digits.ts";
@@ -102,7 +101,7 @@ export function moment(value: string): string {
 	}
 }
 
-/** An AfterValidator that returns a new value, raising "Value error, <message>" as Pydantic words it. */
+/** An AfterValidator that returns a new value, whose ValueError is the field's message. */
 function after(convert: (value: string) => string) {
 	return (value: string, ctx: z.RefinementCtx): string => {
 		try {
@@ -116,8 +115,8 @@ function after(convert: (value: string) => string) {
 }
 
 const ChannelName = () =>
-	strippedStr({ min: 1, max: 81 }).describe('A channel name such as "#general", or a channel id.').transform(after(channelName));
-const Ts = () => strippedStr({ min: 1, max: 20 }).refine(isTs, TS_MESSAGE);
+	z.string().trim().min(1).max(81).describe('A channel name such as "#general", or a channel id.').transform(after(channelName));
+const Ts = () => z.string().trim().min(1).max(20).refine(isTs, TS_MESSAGE);
 
 /** Whether `moment` reads the value. */
 function isMoment(value: string): boolean {
@@ -134,15 +133,15 @@ function isMoment(value: string): boolean {
  * A time, checked here and turned into a Slack timestamp by `withMoments` on the whole input: zod's JSON
  * Schema leaves out the default of a field that transforms, which Pydantic's shows (`"default": null`).
  */
-const Moment = () => strippedStr({ min: 1, max: 40 }).describe("An ISO 8601 time.").refine(isMoment, MOMENT_MESSAGE);
+const Moment = () => z.string().trim().min(1).max(40).describe("An ISO 8601 time.").refine(isMoment, MOMENT_MESSAGE);
 
 /** `_moment` applied to the times of a validated input, as the AfterValidator applied it to each. */
 function withMoments<T extends { after: string | null; before: string | null }>(data: T): T {
 	return { ...data, after: data.after === null ? null : moment(data.after), before: data.before === null ? null : moment(data.before) };
 }
-const Cursor = () => strippedStr({ max: 500 });
+const Cursor = () => z.string().trim().max(500);
 const WrittenText = () =>
-	strippedStr({ min: 1, max: MAX_TEXT })
+	z.string().trim().min(1).max(MAX_TEXT)
 		.refine(isPlainText, PLAIN_TEXT)
 		.refine((value) => !linksToSlack(value), NO_SLACK_LINKS)
 		.describe("Slack mrkdwn (*bold*, _italic_, `code`, lists). Shown literally: no mentions or links with labels.");

@@ -11,7 +11,7 @@ import { confluenceConnector, discoveryCursor } from "../../src/connectors/confl
 import { MAX_SPACE_PAGES, searchWords } from "../../src/connectors/confluence/reads.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
-import { type Json, type JsonObject, parseJson, visibleJson } from "../../src/lib/json.ts";
+import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
 import { Scenario, USER, jsonResponse } from "./executor-fakes.ts";
 
@@ -63,9 +63,9 @@ function text(value: string, href?: string): JsonObject {
 	return href === undefined ? { type: "text", text: value } : { type: "text", text: value, marks: [{ type: "link", attrs: { href } }] };
 }
 
-/** A body as Confluence sends it: the ADF document as a JSON string (written here as Python's json.dumps). */
+/** A body as Confluence sends it: the ADF document as a JSON string. */
 function body(document: Json): JsonObject {
-	return { atlas_doc_format: { representation: "atlas_doc_format", value: visibleJson(document) } };
+	return { atlas_doc_format: { representation: "atlas_doc_format", value: JSON.stringify(document) } };
 }
 
 function space(id: string, key: string, name: string, fields: JsonObject = {}): JsonObject {
@@ -473,19 +473,19 @@ describe("reading", () => {
 		const run = await start(confluence, { [ACME]: ["read"] });
 		expect(await run.error("confluence_get_page", { site_id: "x".repeat(36), page: "500" })).toEqual({
 			code: "INVALID_ARGUMENTS",
-			message: "Invalid arguments. site_id: Value error, must be a site id from list_spaces",
+			message: "Invalid arguments. site_id: must be a site id from list_spaces",
 		});
 		expect(await run.error("confluence_get_page", { site_id: ACME, page: "0500" })).toEqual({
 			code: "INVALID_ARGUMENTS",
-			message: "Invalid arguments. page: Value error, must be a page id",
+			message: "Invalid arguments. page: must be a page id",
 		});
 		expect(await run.error("confluence_search_pages", { site_id: ACME, space: "0101" })).toEqual({
 			code: "INVALID_ARGUMENTS",
-			message: 'Invalid arguments. space: Value error, must be a space key such as "ENG", or a space id',
+			message: 'Invalid arguments. space: must be a space key such as "ENG", or a space id',
 		});
 		expect(await run.error("confluence_search_pages", { site_id: ACME, space: "ENG", text: "a\tb" })).toEqual({
 			code: "INVALID_ARGUMENTS",
-			message: "Invalid arguments. text: Value error, must be a single line without control characters",
+			message: "Invalid arguments. text: must be a single line without control characters",
 		});
 	});
 
@@ -662,9 +662,8 @@ describe("writing", () => {
 		const written = sent.body as JsonObject;
 		expect([path, sent.pageId, written.representation]).toEqual(["footer-comments", "500", "atlas_doc_format"]);
 		expect(parseJson(written.value as string)).toEqual(doc(paragraph(text("Done.")), paragraph(text("**not bold**"))));
-		// As Python's json.dumps writes it.
 		expect(written.value).toBe(
-			'{"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Done."}]}, {"type": "paragraph", "content": [{"type": "text", "text": "**not bold**"}]}]}',
+			'{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"Done."}]},{"type":"paragraph","content":[{"type":"text","text":"**not bold**"}]}]}',
 		);
 		for (const value of ["see https://acme.atlassian.net/wiki/x/501", "ACME%2EATLASSIAN%2ENET/x", "bell \x07"]) {
 			expect(await run.code("confluence_add_comment", { page: "500", text: value }), value).toBe("INVALID_ARGUMENTS");

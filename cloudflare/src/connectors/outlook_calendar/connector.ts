@@ -1,4 +1,4 @@
-// Outlook Calendar through Microsoft Graph, ported from backend/connectors/outlook_calendar/connector.py.
+// Outlook Calendar through Microsoft Graph.
 // Resources are calendars; what is allowed on a calendar covers its events.
 //
 // Minerva connects through the Entra app the Microsoft connectors share (connectors/microsoft). The base
@@ -25,14 +25,13 @@
 // (zones.ts). Not supported: changing, deleting or answering events, attendees, recurrence, and group
 // calendars.
 //
-// Times are Python's datetime (lib/isoformat.ts), so what is accepted, refused and sent is today's.
+// Times are Python's datetime (lib/isoformat.ts), which decides what is accepted, refused and sent.
 
 import { z } from "zod";
 import type { Binding, Connector, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
-import { type Json, parseJson, visibleJson } from "../../lib/json.ts";
+import { type Json, parseJson } from "../../lib/json.ts";
 import { DIGIT_CLASS } from "../../lib/digits.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { sliceCodePoints, truncate } from "../../lib/text.ts";
 import { casefold } from "../../lib/casefold.ts";
 import { ID, accountLabel, consent, oauth } from "../microsoft/index.ts";
@@ -103,9 +102,9 @@ function checkCalendarRef(value: string): string {
 }
 
 const CalendarRef = () =>
-	after(strippedStr({ min: 1, max: 512 }).describe('A calendar id from list_calendars, or "primary" for the default calendar.'), checkCalendarRef);
-const DateTime = () => after(strippedStr({ max: 40 }), checkDateTime);
-const DateOrDateTime = () => after(strippedStr({ max: 40 }), checkDateOrDateTime);
+	after(z.string().trim().min(1).max(512).describe('A calendar id from list_calendars, or "primary" for the default calendar.'), checkCalendarRef);
+const DateTime = () => after(z.string().trim().max(40), checkDateTime);
+const DateOrDateTime = () => after(z.string().trim().max(40), checkDateOrDateTime);
 
 /** The time in UTC without its offset, as `astimezone(UTC).replace(tzinfo=None)` gives it. */
 function naiveUtc(value: PyDateTime): PyDateTime {
@@ -228,7 +227,7 @@ export const ListEvents = z
 		time_min: DateTime().nullable().default(null).describe("Only events that end after this time."),
 		time_max: DateTime().nullable().default(null).describe("Only events that start before this time."),
 		limit: z.int().min(1).max(50).default(25),
-		cursor: strippedStr({ max: 1000 }).nullable().default(null),
+		cursor: z.string().trim().max(1000).nullable().default(null),
 	})
 	.check(
 		modelValidator((data: { time_min: string | null; time_max: string | null }) => {
@@ -311,7 +310,7 @@ function listEvents(options: CalendarOptions) {
 					const [events, page] = await client.view(id, { start, end, limit: data.limit, cursor: state ? state.page : null });
 					let next: string | null = null;
 					if (page !== null) {
-						next = visibleJson({ calendar: id, page, start, end });
+						next = JSON.stringify({ calendar: id, page, start, end });
 						if (next.length > 1000) throw new OperationError("PROVIDER_LIMIT", "Microsoft Graph returned a page token that is too long.");
 					}
 					return { records: events.map((event) => eventRecord(binding, id, event)), nextCursor: next };
@@ -334,15 +333,15 @@ interface CreateEventData {
 export const CreateEvent = z
 	.strictObject({
 		calendar_id: CalendarRef(),
-		subject: singleLineOf(strippedStr({ min: 1, max: 255 })),
+		subject: singleLineOf(z.string().trim().min(1).max(255)),
 		start: DateOrDateTime().describe("YYYY-MM-DD for an all-day event, or an RFC 3339 date-time with an offset."),
 		end: DateOrDateTime().describe("Same format as start. For all-day events, the day after the last day."),
-		time_zone: after(strippedStr({ max: 64 }), checkZone)
+		time_zone: after(z.string().trim().max(64), checkZone)
 			.nullable()
 			.default(null)
 			.describe("Required for all-day events, and only for them: the calendar owner's IANA time zone, like Europe/Berlin."),
-		body: plainTextOf(strippedStr({ max: 8000 })).nullable().default(null),
-		location: singleLineOf(strippedStr({ max: 500 })).nullable().default(null),
+		body: plainTextOf(z.string().trim().max(8000)).nullable().default(null),
+		location: singleLineOf(z.string().trim().max(500)).nullable().default(null),
 	})
 	.check(
 		modelValidator((data: CreateEventData) => {

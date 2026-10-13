@@ -24,7 +24,6 @@ import { LedgerRunState, type RunState, type RunTable } from "../../src/gateway/
 import { type ConnectionInfo, toolsFor } from "../../src/gateway/tools.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { parseJson } from "../../src/lib/json.ts";
-import { strippedStr } from "../../src/lib/schema.ts";
 import type { Sql } from "../../src/lib/sql.ts";
 import { ledgerSql } from "./sqlite.ts";
 
@@ -153,9 +152,9 @@ export class FakeServer {
 	};
 }
 
-const Id = () => strippedStr({ min: 1, max: 40 }).regex(/^[a-z0-9-]+$/);
+const Id = () => z.string().trim().min(1).max(40).regex(/^[a-z0-9-]+$/);
 const ListInput = z.strictObject({});
-const CopyFile = z.strictObject({ source: Id(), dest: Id(), name: strippedStr({ min: 1, max: 100 }) });
+const CopyFile = z.strictObject({ source: Id(), dest: Id(), name: z.string().trim().min(1).max(100) });
 const Folders = z.array(z.object({ id: z.string(), name: z.string() }));
 
 function client(server: FakeServer, provider: string, base: string, headers: { [name: string]: string }) {
@@ -384,7 +383,7 @@ export class FakeTodoist {
 	};
 }
 
-const ObjectId = () => strippedStr({ min: 1, max: 160 }).regex(/^[A-Za-z0-9_-]+$/);
+const ObjectId = () => z.string().trim().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/);
 const TodoistTask = z.object({
 	id: z.string(),
 	project_id: z.string(),
@@ -398,12 +397,12 @@ const Page = <T extends z.ZodType>(item: T) => z.object({ results: z.array(item)
 const TodoistProject = z.object({ id: z.string(), name: z.string() });
 const ListTasks = z.strictObject({
 	project_id: ObjectId(),
-	search: strippedStr({ min: 1, max: 200 }).nullable().default(null),
+	search: z.string().trim().min(1).max(200).nullable().default(null),
 	limit: z.int().min(1).max(50).default(30),
-	cursor: strippedStr({ max: 300 }).nullable().default(null),
+	cursor: z.string().trim().max(300).nullable().default(null),
 });
 const GetTask = z.strictObject({ task_id: ObjectId() });
-const CreateTask = z.strictObject({ project_id: ObjectId(), title: strippedStr({ min: 1, max: 300 }) });
+const CreateTask = z.strictObject({ project_id: ObjectId(), title: z.string().trim().min(1).max(300) });
 
 function taskRecord(binding: Parameters<Operation["prepare"]>[0], task: z.output<typeof TodoistTask>) {
 	return {

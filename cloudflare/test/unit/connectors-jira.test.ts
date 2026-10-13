@@ -453,15 +453,15 @@ describe("reading", () => {
 		const run = await start(jira, { [ACME]: ["read"] });
 		expect(await run.error("jira_get_issue", { site_id: "x".repeat(36), issue: "ENG-1" })).toEqual({
 			code: "INVALID_ARGUMENTS",
-			message: "Invalid arguments. site_id: Value error, must be a site id from list_projects",
+			message: "Invalid arguments. site_id: must be a site id from list_projects",
 		});
 		expect(await run.error("jira_get_issue", { issue: "ENG 1" })).toEqual({
 			code: "INVALID_ARGUMENTS",
-			message: 'Invalid arguments. issue: Value error, must be an issue key such as "ENG-123", or an issue id',
+			message: 'Invalid arguments. issue: must be an issue key such as "ENG-123", or an issue id',
 		});
 		expect(await run.error("jira_search_issues", { project: "e-g" })).toEqual({
 			code: "INVALID_ARGUMENTS",
-			message: 'Invalid arguments. project: Value error, must be a project key such as "ENG", or a project id',
+			message: 'Invalid arguments. project: must be a project key such as "ENG", or a project id',
 		});
 	});
 
@@ -646,7 +646,7 @@ describe("writing", () => {
 		expect(await run.error("jira_add_comment", { issue: "ENG-1", text: "atl.so/x" })).toEqual({
 			code: "INVALID_ARGUMENTS",
 			message:
-				"Invalid arguments. text: Value error, must not contain Atlassian addresses: Atlassian may show them as previews of issues or pages you may not read",
+				"Invalid arguments. text: must not contain Atlassian addresses: Atlassian may show them as previews of issues or pages you may not read",
 		});
 		expect(jira.writes).toHaveLength(1);
 	});

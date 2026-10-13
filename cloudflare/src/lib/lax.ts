@@ -4,7 +4,6 @@
 // where Python's float would be refused (unless a connector passes a `below` bound).
 
 import { z } from "zod";
-import { stripWhitespace } from "./schema.ts";
 
 const INVALID: unique symbol = Symbol("invalid");
 
@@ -99,7 +98,7 @@ export function laxIntValue(value: unknown, below = Number.POSITIVE_INFINITY): n
 	if (typeof value === "boolean") return value ? 1 : 0;
 	if (typeof value === "number") return Number.isInteger(value) && Math.abs(value) < below ? value + 0 : null;
 	if (typeof value !== "string") return null;
-	const text = stripWhitespace(value);
+	const text = value.trim();
 	// Python refuses an int of more than 4300 digits, leading zeros not counted; a double holds fewer.
 	const fraction = withoutZeroFraction(text);
 	const found = intText(text) ?? (fraction === null ? null : intText(fraction));

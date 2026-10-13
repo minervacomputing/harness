@@ -23,6 +23,7 @@ import { validateInput } from "../../src/gateway/validation.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
 import { ceilingRow, jsonResponse, operation, received, startRun, vectors, type Received } from "../fixtures/connectors/microsoft/runs.ts";
+import { changedOnPurpose } from "./changed.ts";
 
 type JsonObject = { [key: string]: Json };
 
@@ -318,15 +319,16 @@ describe("times and tool inputs, as today's Python reads them", () => {
 		["list_events", "list_events"],
 		["create_event", "create_event"],
 	] as const) {
-		test(`inputs of ${name}: normalized arguments, Pydantic's messages, the window and the payload`, async () => {
+		test(`inputs of ${name}: normalized arguments, refusals, the window and the payload`, async () => {
 			const cases = vectors("outlook_calendar")[key] as { args: Json; data?: JsonObject; message?: string; window?: string[]; payload?: JsonObject }[];
 			expect(cases.length).toBeGreaterThan(30);
 			const op = operation(outlookCalendarConnector(), name);
 			const actual = [];
-			for (const { args } of cases) {
+			const wanted = cases.filter((item) => !changedOnPurpose(item.args)).map(({ message, ...rest }) => (message !== undefined ? { args: rest.args, refused: true } : rest));
+			for (const { args } of wanted) {
 				const result = await validateInput(op.input as never, args);
 				if (!result.ok) {
-					actual.push({ args, message: result.message });
+					actual.push({ args, refused: true });
 					continue;
 				}
 				const data = result.data as { time_min?: string | null; time_max?: string | null };
@@ -335,7 +337,7 @@ describe("times and tool inputs, as today's Python reads them", () => {
 				if (name === "create_event") entry.payload = eventPayload(result.data as never);
 				actual.push(entry);
 			}
-			expect(actual).toEqual(cases);
+			expect(actual).toEqual(wanted);
 		});
 	}
 });
@@ -594,13 +596,13 @@ describe("creating", () => {
 		expect(await run.code("outlook_calendar_create_event", { ...event, subject: "e" })).toBe("WRITE_UNCERTAIN");
 	});
 
-	test("the write is one POST with an ASCII JSON body, as json.dumps writes it", async () => {
+	test("the write is one POST with a UTF-8 JSON body", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { [WORK]: ["read", "create"] });
 		await run.ok("outlook_calendar_create_event", { calendar_id: WORK, subject: "Grüße 😀", start: "2026-10-05T10:00:00Z", end: "2026-10-05T11:00:00Z" });
 		const post = graph.requests.filter((request) => request.method === "POST");
 		expect(post).toHaveLength(1);
 		expect(post[0]?.headers.get("content-type")).toBe("application/json; charset=utf-8");
-		expect(post[0]?.body).toContain('"subject": "Gr\\u00fc\\u00dfe \\ud83d\\ude00"');
+		expect(post[0]?.body).toContain('"subject":"Grüße 😀"');
 	});
 });

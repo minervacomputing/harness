@@ -1,4 +1,4 @@
-// Confluence's read operations, ported from backend/connectors/confluence/reads.py: spaces, page search and
+// Confluence's read operations: spaces, page search and
 // single pages.
 
 import { z } from "zod";
@@ -6,7 +6,6 @@ import type { Prepared, ProviderOutput, ScopedRecord } from "../../contracts/con
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation } from "../../gateway/connector.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { SINGLE_LINE, WORD_CLASS, isSingleLine, truncate } from "../../lib/text.ts";
 import * as adf from "../atlassian/adf.ts";
 import type { Site } from "../atlassian/index.ts";
@@ -21,7 +20,7 @@ export const MAX_COMMENT = 4_000;
 export const MAX_COMMENTS = 30;
 export const MAX_SHORT = 500;
 
-const cursor = () => strippedStr({ max: 1000 }).nullable().default(null);
+const cursor = () => z.string().trim().max(1000).nullable().default(null);
 const WORD = new RegExp(`[${WORD_CLASS}]+`, "gu");
 
 export function short(value: string | null, siteHosts: readonly string[]): string | null {
@@ -88,7 +87,7 @@ export function searchWords(text: string): string {
 const SearchPages = z.strictObject({
 	site_id: siteId().nullable().default(null),
 	space: spaceName(),
-	text: strippedStr({ min: 1, max: 200 })
+	text: z.string().trim().min(1).max(200)
 		.describe("Words to find in page titles (page bodies are not searched).")
 		.refine(isSingleLine, SINGLE_LINE)
 		.nullable()

@@ -17,7 +17,7 @@
 // null) and each caller decides what that means (docs/plans/cloudflare.md, "Dates and time zones"), so
 // there are no gaps or folds to resolve here.
 //
-// Errors are Python's (lib/pyerrors.ts): `ValueError`, which Pydantic reports as "Value error, ...", and
+// Errors are Python's (lib/pyerrors.ts): `ValueError`, which a tool input reports as the field's message, and
 // `OverflowError`, which it does not catch, so the call fails generically.
 
 import { utf8 } from "./bytes.ts";

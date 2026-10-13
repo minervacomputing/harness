@@ -1,11 +1,9 @@
-// What Linear's operations share: team and issue names, where teams sit, and page tokens
-// (backend/connectors/linear/teams.py).
+// What Linear's operations share: team and issue names, where teams sit, and page tokens.
 
 import { z } from "zod";
 import type { Binding } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, denied } from "../../gateway/connector.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { type LinearClient, MAX_TEAM_DEPTH, type PageInfo, type State, type Team, type TeamRef } from "./client.ts";
 import { IDENTIFIER } from "./markdown.ts";
 
@@ -36,7 +34,7 @@ export function issueName(value: string): string | null {
 
 /** `TeamName`: a team key such as "ENG", or a team id. */
 export function TeamName() {
-	return strippedStr({ min: 1, max: 36 })
+	return z.string().trim().min(1).max(36)
 		.describe('A team key such as "ENG", or a team id.')
 		.refine((value) => teamName(value) !== null, TEAM_NAME)
 		.transform((value) => teamName(value) as string);
@@ -44,7 +42,7 @@ export function TeamName() {
 
 /** `IssueName`: an issue identifier such as "ENG-123", or an issue id. */
 export function IssueName() {
-	return strippedStr({ min: 1, max: 36 })
+	return z.string().trim().min(1).max(36)
 		.describe('An issue identifier such as "ENG-123", or an issue id.')
 		.refine((value) => issueName(value) !== null, ISSUE_NAME)
 		.transform((value) => issueName(value) as string);
@@ -52,7 +50,7 @@ export function IssueName() {
 
 /** `Cursor`: a page token, at most 500 characters. */
 export function Cursor() {
-	return strippedStr({ max: 500 }).nullable().default(null);
+	return z.string().trim().max(500).nullable().default(null);
 }
 
 export type Cursor = z.output<ReturnType<typeof Cursor>>;

@@ -15,6 +15,7 @@ import * as addresses from "../../src/lib/addresses.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { moment, messageFilter } from "../../src/connectors/outlook/reads.ts";
 import { ceilingRow, jsonResponse, operation, received, startRun, vectors, type Received } from "../fixtures/connectors/microsoft/runs.ts";
+import { changedOnPurpose } from "./changed.ts";
 
 type JsonObject = { [key: string]: Json };
 
@@ -291,23 +292,25 @@ describe("times and tool inputs, as today's Python reads them", () => {
 		["reply", "reply"],
 	];
 	for (const [key, name] of tools) {
-		test(`inputs of ${name}: normalized arguments and Pydantic's messages`, async () => {
+		test(`inputs of ${name}: normalized arguments, and refusals`, async () => {
 			const cases = (vectors("outlook").inputs as { [tool: string]: { args: Json; data?: Json; message?: string; raises?: string }[] })[key] as { args: Json; data?: Json; message?: string; raises?: string }[];
 			expect(cases.length).toBeGreaterThan(1);
 			const op = operation(outlookConnector(), name);
 			const actual = [];
-			for (const { args } of cases) {
+			const wanted = [];
+			for (const { args, data, raises } of cases.filter((item) => !changedOnPurpose(item.args))) {
+				wanted.push(raises !== undefined ? { args, raises } : data !== undefined ? { args, data } : { args, refused: true });
 				try {
 					const result = await validateInput(op.input as never, args);
-					actual.push(result.ok ? { args, data: result.data } : { args, message: result.message });
+					actual.push(result.ok ? { args, data: result.data } : { args, refused: true });
 				} catch (error) {
-					// Pydantic only turns a ValueError into a validation error: Python's OverflowError and TypeError escape it.
+					// A time beyond the calendar's range fails the call rather than refusing the argument.
 					if (error instanceof OverflowError) actual.push({ args, raises: "OverflowError" });
 					else if (error instanceof TypeError) actual.push({ args, raises: "TypeError" });
 					else throw error;
 				}
 			}
-			expect(actual).toEqual(cases);
+			expect(actual).toEqual(wanted);
 		});
 	}
 });
@@ -661,15 +664,15 @@ describe("sending", () => {
 		expect(graph.writes).toHaveLength(1);
 	});
 
-	test("the write is one POST with an ASCII JSON body, as json.dumps writes it", async () => {
+	test("the write is one POST with a UTF-8 JSON body", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, recipient("*@example.com"));
 		await run.ok("outlook_send_message", { to: ["grace@example.com"], subject: "Grüße 😀", body: "x" });
 		const post = graph.requests.filter((request) => request.method === "POST");
 		expect(post).toHaveLength(1);
 		expect(post[0]?.headers.get("content-type")).toBe("application/json; charset=utf-8");
-		expect(post[0]?.body).toContain('"subject": "Gr\\u00fc\\u00dfe \\ud83d\\ude00"');
-		expect(post[0]?.body).toContain('"saveToSentItems": true');
+		expect(post[0]?.body).toContain('"subject":"Grüße 😀"');
+		expect(post[0]?.body).toContain('"saveToSentItems":true');
 	});
 
 	test("test_write_outcomes_follow_graphs_status", async () => {

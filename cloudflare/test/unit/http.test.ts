@@ -83,36 +83,15 @@ describe("error shapes", () => {
 		expect(await notFound("no such agent", true).json()).toEqual({ detail: "Not Found: no such agent" });
 	});
 
-	test("a wrong type is not a missing field, and a list reports its length, without zod's reportInput", () => {
-		const schema = z.object({ name: z.string(), ids: z.array(z.string()).max(2) });
-		const input = { name: 123, ids: ["a", "b", "c", "d"] };
-		const items = validationItems(schema.safeParse(input).error?.issues ?? [], "body", input);
-		expect(items).toContainEqual({ type: "string_type", loc: ["body", "payload", "name"], msg: "Input should be a valid string" });
-		expect(items).toContainEqual({
-			type: "too_long",
-			loc: ["body", "payload", "ids"],
-			msg: "List should have at most 2 items after validation, not 4",
-			ctx: { field_type: "List", max_length: 2, actual_length: 4 },
-		});
-		const absent = {};
-		expect(validationItems(schema.safeParse(absent).error?.issues ?? [], "body", absent)).toContainEqual({ type: "missing", loc: ["body", "payload", "name"], msg: "Field required" });
-	});
-
-	test("validation errors in Pydantic's words", () => {
-		const schema = z.object({ name: z.string().min(1).max(120), connection_ids: z.array(z.uuid()).max(2), instructions: z.string() });
-		const input = { name: "x".repeat(121), connection_ids: ["a", "b", "c"] };
-		const result = schema.safeParse(input);
-		expect(result.success).toBe(false);
-		const items = validationItems(result.error?.issues ?? [], "body", input);
-		expect(items).toContainEqual({ type: "string_too_long", loc: ["body", "payload", "name"], msg: "String should have at most 120 characters", ctx: { max_length: 120 } });
-		expect(items).toContainEqual({
-			type: "too_long",
-			loc: ["body", "payload", "connection_ids"],
-			msg: "List should have at most 2 items after validation, not 3",
-			ctx: { field_type: "List", max_length: 2, actual_length: 3 },
-		});
-		expect(items).toContainEqual({ type: "missing", loc: ["body", "payload", "instructions"], msg: "Field required" });
-		expect(items).toContainEqual({ type: "uuid_parsing", loc: ["body", "payload", "connection_ids", 0], msg: "Input should be a valid UUID" });
+	test("validation errors are zod's issues, located where the value came from", () => {
+		const schema = z.object({ name: z.string().min(1).max(3), ids: z.array(z.string()).max(2) });
+		const input = { name: "toolong", ids: ["a", "b", "c", 4] };
+		expect(validationItems(schema.safeParse(input).error?.issues ?? [], "body")).toEqual([
+			{ type: "too_big", loc: ["body", "name"], msg: "Too big: expected string to have <=3 characters" },
+			{ type: "invalid_type", loc: ["body", "ids", 3], msg: "Invalid input: expected string, received number" },
+			{ type: "too_big", loc: ["body", "ids"], msg: "Too big: expected array to have <=2 items" },
+		]);
+		expect(validationItems(schema.safeParse({}).error?.issues ?? [], "query")[0]).toEqual({ type: "invalid_type", loc: ["query", "name"], msg: "Invalid input: expected string, received undefined" });
 	});
 });
 

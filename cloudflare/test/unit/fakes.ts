@@ -7,13 +7,12 @@
 
 import { z } from "zod";
 import type { Connector, DiscoveryPage, Operation, Prepared, ProviderClient, Requirement } from "../../src/contracts/connectors.ts";
-import { strippedStr } from "../../src/lib/schema.ts";
 import { ACCOUNT_KIND, OperationError, defineOperation } from "../../src/gateway/connector.ts";
 
 export const FOLDER = "folder";
 export const LABEL = "label";
 
-const Id = () => strippedStr({ min: 1, max: 40 }).regex(/^[a-z0-9-]+$/);
+const Id = () => z.string().trim().min(1).max(40).regex(/^[a-z0-9-]+$/);
 
 /** One in-memory provider. */
 export class FakeServer {
@@ -34,7 +33,7 @@ function fakeClient(server: FakeServer, secret: string): FakeClient {
 }
 
 const ListInput = z.strictObject({});
-const CopyFile = z.strictObject({ source: Id(), dest: Id(), name: strippedStr({ min: 1, max: 100 }) });
+const CopyFile = z.strictObject({ source: Id(), dest: Id(), name: z.string().trim().min(1).max(100) });
 
 function mixedOperations(server: FakeServer): Operation<never>[] {
 	return [

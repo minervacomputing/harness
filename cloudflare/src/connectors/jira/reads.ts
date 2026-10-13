@@ -1,4 +1,4 @@
-// Jira's read operations, ported from backend/connectors/jira/reads.py: projects, issue search and single
+// Jira's read operations: projects, issue search and single
 // issues.
 
 import { z } from "zod";
@@ -6,7 +6,6 @@ import type { Binding, Prepared, ProviderOutput, ScopedRecord } from "../../cont
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation } from "../../gateway/connector.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { SINGLE_LINE, WORD_CLASS, isSingleLine, truncate } from "../../lib/text.ts";
 import * as adf from "../atlassian/adf.ts";
 import type { Site } from "../atlassian/index.ts";
@@ -28,7 +27,7 @@ export const ISSUE_FIELDS =
 	"summary,status,issuetype,priority,assignee,reporter,labels,created,updated,duedate,resolution,description,parent,subtasks,issuelinks,attachment,project";
 export const RELATED_FIELDS = ["summary", "status", "project"];
 
-const cursor = () => strippedStr({ max: 1000 }).nullable().default(null);
+const cursor = () => z.string().trim().max(1000).nullable().default(null);
 const WORD = new RegExp(`[${WORD_CLASS}]+`, "gu");
 
 function short(value: string | null, siteHosts: readonly string[]): string | null {
@@ -99,7 +98,7 @@ export function searchWords(text: string): string {
 const SearchIssues = z.strictObject({
 	site_id: siteId().nullable().default(null),
 	project: projectName(),
-	text: strippedStr({ min: 1, max: 200 })
+	text: z.string().trim().min(1).max(200)
 		.describe("Words to find in the summary (descriptions and comments are not searched).")
 		.refine(isSingleLine, SINGLE_LINE)
 		.nullable()

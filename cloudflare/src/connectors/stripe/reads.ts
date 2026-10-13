@@ -1,11 +1,9 @@
-// Stripe's read operations: customers, and the payments, invoices and subscriptions billed to them, ported
-// from backend/connectors/stripe/reads.py.
+// Stripe's read operations: customers, and the payments, invoices and subscriptions billed to them.
 
 import { z } from "zod";
 import type { Binding, Prepared, ProviderOutput, Requirement, ScopedRecord } from "../../contracts/connectors.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { SINGLE_LINE, isSingleLine, truncate } from "../../lib/text.ts";
 import { CUSTOMER_ID, type Charge, type Customer, type Invoice, type Page, type StripeClient, type Subscription, nextCursor } from "./client.ts";
 import * as money from "./money.ts";
@@ -135,7 +133,7 @@ function scopeOf(binding: Binding, customerId: string | null): Requirement[] {
 }
 
 const ListCustomers = z.strictObject({
-	email: strippedStr({ min: 3, max: 512 })
+	email: z.string().trim().min(3).max(512)
 		.refine(isSingleLine, SINGLE_LINE)
 		.nullable()
 		.default(null)

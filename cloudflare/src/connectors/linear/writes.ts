@@ -1,5 +1,4 @@
-// Linear's write operations: creating and updating issues, and commenting
-// (backend/connectors/linear/writes.py).
+// Linear's write operations: creating and updating issues, and commenting.
 
 import { z } from "zod";
 import type { Prepared, ProviderOutput } from "../../contracts/connectors.ts";
@@ -8,7 +7,6 @@ import { OperationError, defineOperation } from "../../gateway/connector.ts";
 import { casefold } from "../../lib/casefold.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
 import { sortByCodePoint } from "../../lib/order.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { SINGLE_LINE, isSingleLine } from "../../lib/text.ts";
 import { type LinearClient, MAX_ISSUE_DEPTH, type ParentIssue, type State, type Written } from "./client.ts";
 import { issueLinks, redact, writtenProblem } from "./markdown.ts";
@@ -40,15 +38,15 @@ export const SUB_ISSUE_DEPTH = 3;
 export const NOT_AN_ID = "must be a Linear id";
 export const NOT_A_DATE = "must be a date such as 2026-10-01";
 
-const Title = () => strippedStr({ min: 1, max: MAX_TITLE }).refine(isSingleLine, SINGLE_LINE);
-const ShortName = () => strippedStr({ min: 1, max: 200 }).refine(isSingleLine, SINGLE_LINE);
+const Title = () => z.string().trim().min(1).max(MAX_TITLE).refine(isSingleLine, SINGLE_LINE);
+const ShortName = () => z.string().trim().min(1).max(200).refine(isSingleLine, SINGLE_LINE);
 const Priority = () => z.int().min(0).max(4).describe("0 no priority, 1 urgent, 2 high, 3 medium, 4 low.");
 /**
  * `DueDate | None = None`. Optional and defaulted inside the transform, so that the JSON Schema still shows
  * the default: zod leaves out the default of a field whose transform comes first.
  */
 const DueDate = () =>
-	strippedStr({ max: 10 })
+	z.string().trim().max(10)
 		.describe("YYYY-MM-DD.")
 		.nullable()
 		.default(null)
@@ -57,14 +55,14 @@ const DueDate = () =>
 
 /** Markdown an agent writes, refused if it would do more than add words to Linear (`check_written`). */
 const Markdown = (max: number, description: string) =>
-	strippedStr({ min: 1, max })
+	z.string().trim().min(1).max(max)
 		.describe(description)
 		.superRefine((value, ctx) => {
 			const problem = writtenProblem(value);
 			if (problem !== null) ctx.addIssue({ code: "custom", message: problem });
 		});
 
-const Assignee = () => strippedStr({ min: 1, max: 200 }).describe('"me", or a team member\'s name or display name.').refine(isSingleLine, SINGLE_LINE);
+const Assignee = () => z.string().trim().min(1).max(200).describe('"me", or a team member\'s name or display name.').refine(isSingleLine, SINGLE_LINE);
 const LabelNames = () =>
 	z
 		.array(ShortName())
@@ -214,7 +212,7 @@ export const CREATE_ISSUE = defineOperation<z.output<typeof CreateIssue>>({
 const AddComment = z.strictObject({
 	issue: IssueName(),
 	body: Markdown(MAX_COMMENT, "Markdown."),
-	reply_to: strippedStr({ max: 36 })
+	reply_to: z.string().trim().max(36)
 		.describe("The id of a comment on this issue to reply to.")
 		.nullable()
 		.default(null)

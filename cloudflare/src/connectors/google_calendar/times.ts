@@ -1,7 +1,6 @@
-// Dates and times as Google Calendar's inputs check them (backend/connectors/google_calendar/connector.py
-// `_date_time`, `_date_or_date_time`): a pattern first, then Python's `date.fromisoformat` and
+// Dates and times as Google Calendar's inputs check them: a pattern first, then Python's `date.fromisoformat` and
 // `datetime.fromisoformat` (lib/isoformat.ts: CPython's C implementation), whose error messages reach the
-// model as "Value error, ...". Both patterns use Python's `\d`, which matches any Unicode decimal digit
+// model as the field's message. Both patterns use Python's `\d`, which matches any Unicode decimal digit
 // (Unicode 16, as lib/digits.ts pins it); the parsers then refuse non-ASCII digits as an invalid isoformat
 // string.
 //

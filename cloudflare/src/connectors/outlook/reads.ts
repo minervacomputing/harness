@@ -1,11 +1,10 @@
-// Outlook's read operations, ported from backend/connectors/outlook/reads.py: folders, message lists and
+// Outlook's read operations: folders, message lists and
 // single messages.
 
 import { z } from "zod";
 import type { Binding, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
 import { defineOperation } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { codePointLength, singleLine, sliceCodePoints } from "../../lib/text.ts";
 import { ID } from "../microsoft/index.ts";
 import { after, modelValidator, valueError } from "../microsoft/inputs.ts";
@@ -43,12 +42,12 @@ export function moment(value: string): string {
 		throw error;
 	}
 	if (parsed.offset === null) parsed = asUtc(parsed);
-	// An OverflowError (a time that leaves the years 1 to 9999 in UTC) propagates, as it does today.
+	// An OverflowError (a time that leaves the years 1 to 9999 in UTC) propagates, and the call fails generically.
 	return utcStamp(toUtc(parsed));
 }
 
-const Moment = () => after(strippedStr({ min: 1, max: 40 }).describe("An ISO 8601 time."), moment);
-const Cursor = () => strippedStr({ max: 1000 });
+const Moment = () => after(z.string().trim().min(1).max(40).describe("An ISO 8601 time."), moment);
+const Cursor = () => z.string().trim().max(1000);
 
 function person(recipient: Recipient | null): Json {
 	if (recipient === null || recipient.email_address === null) return null;
@@ -148,7 +147,7 @@ export const ListMessages = z
 		after: Moment().nullable().default(null).describe("Only mail received at or after this time."),
 		before: Moment().nullable().default(null).describe("Only mail received before this time."),
 		query: after(
-			strippedStr({ min: 1, max: 200 })
+			z.string().trim().min(1).max(200)
 				.nullable()
 				.describe(
 					"Words to search for in this folder's mail. Results are ordered by Outlook; cannot " + "be combined with unread_only, after or before.",

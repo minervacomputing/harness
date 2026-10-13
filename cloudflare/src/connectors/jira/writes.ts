@@ -1,4 +1,4 @@
-// Jira's write operations, ported from backend/connectors/jira/writes.py: commenting, creating issues and
+// Jira's write operations: commenting, creating issues and
 // changing their status.
 
 import { z } from "zod";
@@ -7,7 +7,6 @@ import { OperationError, defineOperation } from "../../gateway/connector.ts";
 import { casefold } from "../../lib/casefold.ts";
 import type { JsonObject } from "../../lib/json.ts";
 import { sortByCodePoint } from "../../lib/order.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { PLAIN_TEXT, SINGLE_LINE, isPlainText, isSingleLine } from "../../lib/text.ts";
 import * as adf from "../atlassian/adf.ts";
 import { ID, PROJECT, confirmIssue, hosts, issueName, link, projectName, projectResource, resolveIssue, resolveProject, siteId } from "./issues.ts";
@@ -20,13 +19,13 @@ export const MAX_LISTED = 30;
 
 const WRITE_CONSENT: Consent = [["write:jira-work"]];
 
-const shortName = () => strippedStr({ min: 1, max: 200 }).refine(isSingleLine, SINGLE_LINE);
+const shortName = () => z.string().trim().min(1).max(200).refine(isSingleLine, SINGLE_LINE);
 /** Text that only adds words (adf.check_written): plain text, without an address to Atlassian. */
 const written = (schema: z.ZodString) => schema.refine(isPlainText, PLAIN_TEXT).refine(adf.namesNoAtlassian, adf.ATLASSIAN_ADDRESS);
 export const TEXT_DESCRIPTION = "Plain text, shown literally: no formatting, mentions or links to Atlassian.";
-const summary = () => written(strippedStr({ min: 1, max: MAX_SUMMARY }).refine(isSingleLine, SINGLE_LINE));
-const description = () => written(strippedStr({ min: 1, max: MAX_DESCRIPTION }).describe(TEXT_DESCRIPTION));
-const commentText = () => written(strippedStr({ min: 1, max: MAX_COMMENT }).describe(TEXT_DESCRIPTION));
+const summary = () => written(z.string().trim().min(1).max(MAX_SUMMARY).refine(isSingleLine, SINGLE_LINE));
+const description = () => written(z.string().trim().min(1).max(MAX_DESCRIPTION).describe(TEXT_DESCRIPTION));
+const commentText = () => written(z.string().trim().min(1).max(MAX_COMMENT).describe(TEXT_DESCRIPTION));
 
 export const WRITE_NOTE =
 	"Everyone who can browse the project sees what you write, posted as the signed-in user; watchers are notified, and the project's automation rules in Jira may make further changes.";

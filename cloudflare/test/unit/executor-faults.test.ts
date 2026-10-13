@@ -13,7 +13,7 @@ import { OperationError, defineOperation } from "../../src/gateway/connector.ts"
 import type { ProviderHTTP } from "../../src/gateway/http.ts";
 import { WRITE_MESSAGES, writeKey } from "../../src/gateway/ledger.ts";
 import { appliedWithoutResult } from "../../src/gateway/results.ts";
-import { strictRecord, strippedStr } from "../../src/lib/schema.ts";
+import { record } from "../../src/lib/schema.ts";
 import { FOLDER, FakeServer, Gate, MIXED, Scenario, mixedConnection, mixedConnector, userGrants } from "./executor-fakes.ts";
 import { ledgerSql, openDatabase, scratchDirectory } from "./sqlite.ts";
 
@@ -249,7 +249,7 @@ describe("deadlines", () => {
 /** A connector whose write takes free-form tags, a record whose keys keep the order they were sent in. */
 function taggedConnector(server: FakeServer): Connector {
 	const base = mixedConnector(server);
-	const Input = z.strictObject({ dest: strippedStr({ min: 1, max: 40 }), tags: strictRecord(strippedStr({ max: 40 }), { max: 10 }) });
+	const Input = z.strictObject({ dest: z.string().trim().min(1).max(40), tags: record(z.string().trim().max(40), { max: 10 }) });
 	return {
 		...base,
 		slug: "tagged",
@@ -280,7 +280,7 @@ function taggedConnector(server: FakeServer): Connector {
 /** A connector whose write ignores the client's timeout: after its request it waits forever. */
 function stubbornConnector(server: FakeServer, swallow: boolean): Connector {
 	const base = mixedConnector(server);
-	const Input = z.strictObject({ name: strippedStr({ min: 1 }) });
+	const Input = z.strictObject({ name: z.string().trim().min(1) });
 	return {
 		...base,
 		slug: "stubborn",

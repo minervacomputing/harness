@@ -1,5 +1,5 @@
-// The run's connector tools in the `minerva` extension (harness 5, 6; runs 4.5, 5.3), from the executor's
-// declarations (names, descriptions and input schemas from the registry, by the run's snapshot):
+// The run's connector tools in the `minerva` extension, from the executor's declarations (names,
+// descriptions and input schemas from the registry, by the run's snapshot):
 //
 // - a tool whose `readOnlyHint` is true is a read: replayed after a crash (`replay: "safe"`) and run in
 //   parallel; any other is a write: never replayed (`unsafe`) and `sequential`, which makes its whole round
@@ -8,26 +8,26 @@
 // - a safe call pi replays more than twice is answered with an error instead of running again (the replay
 //   cap; the counter is in SQLite, so it survives the restarts it counts);
 // - every call goes through the run's queue (4 at once, writes one at a time) and then the executor;
-// - what the model sees is today's: the result's JSON as Python's `json.dumps` writes it, or the error's
-//   message with `isError`; the `tool_call` event comes from the executor's outcome, appended when the call
-//   completes while the run is active, never for RUN_ENDED.
+// - what the model sees is the result's JSON, or the error's message with `isError`; the `tool_call` event
+//   comes from the executor's outcome, appended when the call completes while the run is active, never
+//   for RUN_ENDED.
 //
 // pi-ai parsed the arguments with `JSON.parse`; the model wrapper already put `parseJson`'s reading of the
 // model's text into the call before pi validated and stored it (model/provider.ts). pi reads its stored
 // calls back with `JSON.parse`, though, so a read replayed after a restart reads the text again here, from
-// SQLite, with `parseJson` and pi-ai's own validation (which coerces, as it did in today's worker). The text
+// SQLite, with `parseJson` and pi-ai's own validation (which coerces). The text
 // is kept only when it holds a backslash, since a key without an escape parses right either way. Without it
 // (a provider that sent no deltas), pi's parse is used.
 //
-// Local tools (read, write, edit, bash) come in step 3 and `run_script` in step 4: `modelTools` in
-// gateway/tools.ts orders them with these, and `run_script` shares the run's queue.
+// `modelTools` in gateway/tools.ts orders the local tools (read, write, edit, bash, `run_script`) with
+// these, and `run_script` shares the run's queue.
 
 import { type TSchema, type ToolCall, validateToolArguments } from "@earendil-works/pi-ai";
 import type { ToolExecutionApi, ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
 import type { AttemptFence, EpochMs, Json, RunId } from "../contracts/common.ts";
 import type { ToolCallOutcome, ToolDeclaration } from "../contracts/executor.ts";
 import { TOOL_RESULT_LIMITS as GATEWAY_RESULT_LIMITS } from "../gateway/results.ts";
-import { parseJson, visibleJson } from "../lib/json.ts";
+import { parseJson } from "../lib/json.ts";
 import { untilAborted } from "./queue.ts";
 
 export const TOOL_RESULT_BYTES = 1024 * 1024;
@@ -56,7 +56,7 @@ export interface ToolHost {
 
 /** What the model sees of an outcome. */
 export function render(outcome: ToolCallOutcome): ToolExecutionResult {
-	if (outcome.ok) return { content: [{ type: "text", text: visibleJson(outcome.result) }], isError: false };
+	if (outcome.ok) return { content: [{ type: "text", text: JSON.stringify(outcome.result) }], isError: false };
 	return { content: [{ type: "text", text: outcome.error.message }], isError: true };
 }
 

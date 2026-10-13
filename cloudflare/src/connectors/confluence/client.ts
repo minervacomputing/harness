@@ -1,5 +1,4 @@
-// Confluence Cloud's REST API, reached per site through api.atlassian.com, ported from
-// backend/connectors/confluence/client.py.
+// Confluence Cloud's REST API, reached per site through api.atlassian.com.
 //
 // The v2 API serves spaces, pages and comments; search is v1's CQL search, the only one Confluence has. Both
 // page with an opaque cursor in the `_links.next` address. This client takes only the `cursor` parameter from
@@ -9,7 +8,7 @@
 import { z } from "zod";
 import type { ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
-import { type Json, type JsonObject, parseJson, visibleJson } from "../../lib/json.ts";
+import { type Json, type JsonObject, parseJson } from "../../lib/json.ts";
 import { parseQs, urlsplitStrict } from "../../lib/urlsplit.ts";
 import { AtlassianClient, segment } from "../atlassian/index.ts";
 import { laxInt, model, optionalStr } from "../atlassian/model.ts";
@@ -90,8 +89,7 @@ export function document(body: Body | null): Json | null {
 }
 
 function writtenBody(adf: Json): JsonObject {
-	// As Python's json.dumps writes it.
-	return { representation: "atlas_doc_format", value: visibleJson(adf) };
+	return { representation: "atlas_doc_format", value: JSON.stringify(adf) };
 }
 
 /** Thin client for the parts of Confluence's API the connector uses. */

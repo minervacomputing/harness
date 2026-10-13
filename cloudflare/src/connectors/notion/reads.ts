@@ -1,4 +1,4 @@
-// Notion's read operations, ported from backend/connectors/notion/reads.py: search, pages, databases and
+// Notion's read operations: search, pages, databases and
 // comments.
 
 import { z } from "zod";
@@ -6,7 +6,7 @@ import type { Binding, Prepared, ProviderOutput, ScopedRecord } from "../../cont
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation } from "../../gateway/connector.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
-import { anyRecord, strippedStr } from "../../lib/schema.ts";
+import { record } from "../../lib/schema.ts";
 import { SINGLE_LINE, codePointLength, isSingleLine } from "../../lib/text.ts";
 import { DataSource, type Database, type NotionClient, Page, databaseName, searchIncomplete, sourceDatabaseId, sourceName } from "./client.ts";
 import { redact } from "./markdown.ts";
@@ -30,7 +30,7 @@ import { has } from "./python.ts";
 
 export const MAX_CURSOR = 1000;
 
-const cursorField = () => strippedStr({ max: MAX_CURSOR }).nullable().default(null);
+const cursorField = () => z.string().trim().max(MAX_CURSOR).nullable().default(null);
 
 function nextCursor(cursor: string | null, hasMore: boolean): string | null {
 	if (!hasMore || !cursor) return null;
@@ -64,7 +64,7 @@ function sliceCodePoints(text: string, start: number, end: number): string {
 
 const Search = z
 	.strictObject({
-		text: strippedStr({ max: 200 }).refine(isSingleLine, SINGLE_LINE).nullable().default(null),
+		text: z.string().trim().max(200).refine(isSingleLine, SINGLE_LINE).nullable().default(null),
 		limit: z.int().min(1).max(50).default(20),
 		cursor: cursorField(),
 	})
@@ -213,8 +213,8 @@ const QueryDatabase = z
 	.strictObject({
 		database_id: objectIdField(),
 		data_source_id: optionalObjectIdField(),
-		filter: anyRecord().refine(jsonSizeOk, JSON_SIZE_ERROR).describe("A Notion data source query filter.").nullable().default(null),
-		sorts: z.array(anyRecord()).max(10).refine(jsonSizeOk, JSON_SIZE_ERROR).describe("Notion data source query sorts.").nullable().default(null),
+		filter: record(z.unknown()).refine(jsonSizeOk, JSON_SIZE_ERROR).describe("A Notion data source query filter.").nullable().default(null),
+		sorts: z.array(record(z.unknown())).max(10).refine(jsonSizeOk, JSON_SIZE_ERROR).describe("Notion data source query sorts.").nullable().default(null),
 		limit: z.int().min(1).max(100).default(25),
 		cursor: cursorField(),
 	})

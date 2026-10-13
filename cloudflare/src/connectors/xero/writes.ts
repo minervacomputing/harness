@@ -1,4 +1,4 @@
-// Xero's write operations, ported from backend/connectors/xero/writes.py: draft sales invoices and draft bills.
+// Xero's write operations: draft sales invoices and draft bills.
 //
 // Both create one invoice with status DRAFT, which Xero neither sends nor posts to the accounts: a person
 // approves it in Xero. Nothing else is written. The request is built field by field from checked input, the
@@ -14,7 +14,6 @@ import { z } from "zod";
 import type { Binding, Prepared, ProviderOutput } from "../../contracts/connectors.ts";
 import { OperationError, defineOperation } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { PLAIN_TEXT, SINGLE_LINE, isPlainText, isSingleLine } from "../../lib/text.ts";
 import { type Contact, type Invoice, invoiceDate, messages, uuid } from "./client.ts";
 import { type Decimal, type JsonBody, JsonNumber, compare, isZero, jsonText, money, number, parsePlain, plain } from "./decimal.ts";
@@ -43,7 +42,7 @@ export function checkedDecimal(value: string, pattern: RegExp, bounds: Bounds = 
 	return { value: number(found) };
 }
 
-/** `AfterValidator(_decimal(...))`: a refusal is the validator's ValueError, "Value error, ...". */
+/** `AfterValidator(_decimal(...))`: a refusal is the validator's ValueError. */
 function decimalField(pattern: RegExp, bounds: Bounds = {}) {
 	return (value: string, ctx: Pick<z.RefinementCtx, "issues">): string => {
 		const checked = checkedDecimal(value, pattern, bounds);
@@ -58,27 +57,27 @@ const UNIT_AMOUNT = /^-?[0-9]{1,10}(\.[0-9]{1,4})?$/;
 const DISCOUNT_RATE = /^[0-9]{1,3}(\.[0-9]{1,2})?$/;
 
 const quantity = () =>
-	strippedStr({ min: 1, max: 15 })
+	z.string().trim().min(1).max(15)
 		.describe("A decimal string, more than 0, up to 4 decimal places.")
 		.transform(decimalField(QUANTITY, { positive: true }));
 const unitAmount = () =>
-	strippedStr({ min: 1, max: 16 })
+	z.string().trim().min(1).max(16)
 		.describe("A decimal string, up to 4 decimal places; negative for a discount line.")
 		.transform(decimalField(UNIT_AMOUNT));
 /** `DiscountRate | None = None`, defaulted before the transform so the JSON Schema shows the default. */
 const discountRate = () => {
 	const check = decimalField(DISCOUNT_RATE, { most: HUNDRED });
-	return strippedStr({ min: 1, max: 6 })
+	return z.string().trim().min(1).max(6)
 		.describe("A percentage, 0 to 100, as a decimal string.")
 		.nullable()
 		.default(null)
 		.transform((value, ctx) => (value === null ? null : check(value, ctx)));
 };
-const code = () => strippedStr({ min: 1, max: 50 }).refine(isSingleLine, SINGLE_LINE);
-const description = () => strippedStr({ min: 1, max: 4000 }).refine(isPlainText, PLAIN_TEXT);
-const reference = () => strippedStr({ min: 1, max: 255 }).refine(isSingleLine, SINGLE_LINE);
+const code = () => z.string().trim().min(1).max(50).refine(isSingleLine, SINGLE_LINE);
+const description = () => z.string().trim().min(1).max(4000).refine(isPlainText, PLAIN_TEXT);
+const reference = () => z.string().trim().min(1).max(255).refine(isSingleLine, SINGLE_LINE);
 const currency = () =>
-	strippedStr()
+	z.string().trim()
 		.regex(/^[A-Z]{3}$/)
 		.describe("An ISO 4217 code, such as EUR.");
 
@@ -192,7 +191,7 @@ export function createdRecord(created: Invoice): { [key: string]: Json } {
 
 function prepareDraft(kind: InvoiceKind, action: string) {
 	return async (binding: Binding, data: DraftInvoice | DraftBill): Promise<Prepared> => {
-		// The dates as they were sent, compared as text, as today.
+		// The dates as they were sent, compared as text.
 		if (data.date && data.due_date && data.due_date < data.date) throw new OperationError("INVALID_ARGUMENTS", "due_date must not be before date.");
 		const [resource, tenant] = await resolveOrganisation(binding, data.organisation);
 		return {

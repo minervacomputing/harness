@@ -1,4 +1,4 @@
-// Confluence's write operations, ported from backend/connectors/confluence/writes.py: commenting on pages
+// Confluence's write operations: commenting on pages
 // and creating them.
 //
 // Each write reads its page (or the new page's parent) again just before sending, and refuses one that
@@ -9,7 +9,6 @@ import { z } from "zod";
 import type { Prepared, ProviderOutput } from "../../contracts/connectors.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
 import type { JsonObject } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { PLAIN_TEXT, SINGLE_LINE, isPlainText, isSingleLine } from "../../lib/text.ts";
 import * as adf from "../atlassian/adf.ts";
 import type { ConfluenceClient } from "./client.ts";
@@ -22,9 +21,9 @@ export const MAX_COMMENT = 20_000;
 export const TEXT_DESCRIPTION = "Plain text, shown literally: no formatting, mentions or links to Atlassian.";
 /** Text that only adds words (adf.check_written): plain text, without an address to Atlassian. */
 const written = (schema: z.ZodString) => schema.refine(isPlainText, PLAIN_TEXT).refine(adf.namesNoAtlassian, adf.ATLASSIAN_ADDRESS);
-const title = () => written(strippedStr({ min: 1, max: MAX_TITLE }).describe("The page's title, unique in its space.").refine(isSingleLine, SINGLE_LINE));
-const bodyText = () => written(strippedStr({ min: 1, max: MAX_BODY }).describe(TEXT_DESCRIPTION));
-const commentText = () => written(strippedStr({ min: 1, max: MAX_COMMENT }).describe(TEXT_DESCRIPTION));
+const title = () => written(z.string().trim().min(1).max(MAX_TITLE).describe("The page's title, unique in its space.").refine(isSingleLine, SINGLE_LINE));
+const bodyText = () => written(z.string().trim().min(1).max(MAX_BODY).describe(TEXT_DESCRIPTION));
+const commentText = () => written(z.string().trim().min(1).max(MAX_COMMENT).describe(TEXT_DESCRIPTION));
 
 export const WRITE_NOTE =
 	"Everyone who can view the space sees what you write, posted as the signed-in user; watchers are notified, and the space's automation rules in Confluence may make further changes.";

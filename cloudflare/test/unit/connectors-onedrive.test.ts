@@ -583,10 +583,9 @@ describe("creating files", () => {
 		for (const folder of [`${ME}:private`, "root"]) expect(await run.code("onedrive_create_file", { ...args, folder_id: folder })).toBe("POLICY_DENIED");
 		expect(await run.code("onedrive_create_file", { ...args, folder_id: `${ME}:plan` })).toBe("UNSUPPORTED_FILE");
 		expect(graph.uploads).toHaveLength(2);
-		// A lone surrogate is refused as pydantic-core refuses it (string_unicode), before the size check could
-		// encode it with U+FFFD; nothing is uploaded.
+		// A lone surrogate is refused before the size check could encode it as U+FFFD; nothing is uploaded.
 		const lone = await run.error("onedrive_create_file", { ...args, content: "a\ud800b" });
-		expect(lone.message).toContain("content: Input should be a valid string, unable to parse raw data as a unicode string");
+		expect(lone.message).toBe("Invalid arguments. content: Invalid string: lone surrogate");
 		expect(graph.uploads).toHaveLength(2);
 	});
 

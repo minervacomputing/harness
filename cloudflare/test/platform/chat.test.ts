@@ -302,19 +302,20 @@ describe("a chat turn", () => {
 		const a = await account();
 		const nowhere = "0199a000-0000-7000-8000-0000000000ff";
 		const long = await post(a, nowhere, "x".repeat(20_001));
-		expect([long.status, long.body.detail[0].type, long.body.detail[0].loc]).toEqual([422, "string_too_long", ["body", "payload", "content"]]);
-		// An emoji is one character, as Python counts.
-		expect((await post(a, nowhere, "😀".repeat(20_000))).status).toBe(404);
+		expect([long.status, long.body.detail[0].type, long.body.detail[0].loc]).toEqual([422, "too_big", ["body", "content"]]);
+		// Lengths count UTF-16 units: an emoji is two.
+		expect((await post(a, nowhere, "😀".repeat(10_000))).status).toBe(404);
+		expect((await post(a, nowhere, "😀".repeat(10_001))).status).toBe(422);
 		const surrogate = await a.browser.call("POST", `/api/workspaces/${a.ws}/conversations/${nowhere}/messages`, '{"content": "\\ud800"}');
-		expect([surrogate.status, surrogate.body.detail[0].type]).toEqual([422, "string_unicode"]);
+		expect([surrogate.status, surrogate.body.detail[0].type]).toEqual([422, "invalid_format"]);
 		const ids = await post(a, nowhere, "x", ["nope"]);
-		expect([ids.status, ids.body.detail[0].type, ids.body.detail[0].loc]).toEqual([422, "uuid_parsing", ["body", "payload", "attachments", 0]]);
+		expect([ids.status, ids.body.detail[0].type, ids.body.detail[0].loc]).toEqual([422, "invalid_format", ["body", "attachments", 0]]);
 		const missing = await a.browser.call("POST", `/api/workspaces/${a.ws}/conversations`, {});
-		expect([missing.status, missing.body.detail[0].type]).toEqual([422, "missing"]);
+		expect([missing.status, missing.body.detail[0].type]).toEqual([422, "invalid_type"]);
 		const unknownAgent = await a.browser.call("POST", `/api/workspaces/${a.ws}/conversations`, { agent_id: nowhere });
 		expect(unknownAgent.status).toBe(404);
 		const version = await a.browser.call("GET", `/api/workspaces/${a.ws}/conversations/${nowhere}/files?version=nope`);
-		expect([version.status, version.body.detail[0].type]).toEqual([422, "uuid_parsing"]);
+		expect([version.status, version.body.detail[0].type]).toEqual([422, "invalid_format"]);
 		const key = await post(a, nowhere, "x", [], { "Idempotency-Key": "has space" });
 		expect([key.status, key.body]).toEqual([400, { detail: "The Idempotency-Key header must be 1 to 255 visible ASCII characters." }]);
 	});
@@ -678,7 +679,7 @@ describe("files and downloads", () => {
 		const folder = await a.browser.call("GET", files);
 		expect(folder.body).toEqual({ version_id: expect.any(String), files: [{ path: "zażółć report.html", size: 25, mtime: expect.any(Number) }], dirs: [] });
 		expect((await a.browser.call("GET", `${files}?version=${base}`)).body.version_id).toBe(base);
-		// Pydantic's lax UUID forms name the same version.
+		// The lax UUID forms name the same version.
 		expect((await a.browser.call("GET", `${files}?version=${base.toUpperCase()}`)).body.version_id).toBe(base);
 		const empty = await newConversation(a);
 		expect((await a.browser.call("GET", `/api/workspaces/${a.ws}/conversations/${empty}/files`)).body).toEqual({ version_id: null, files: [], dirs: [] });

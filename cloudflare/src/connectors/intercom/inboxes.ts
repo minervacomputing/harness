@@ -1,10 +1,9 @@
-// What Intercom's operations share: inboxes, conversation names, and where conversations are
-// (backend/connectors/intercom/inboxes.py).
+// What Intercom's operations share: inboxes, conversation names, and where conversations are.
 
+import { z } from "zod";
 import type { Binding } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, denied } from "../../gateway/connector.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { type Conversation, ID, type IntercomClient } from "./client.ts";
 import { isoOf } from "./dates.ts";
 
@@ -19,14 +18,14 @@ export const CONVERSATION_NAME = "must be a conversation id";
 
 /** `InboxName`: a team inbox's id, or "none". */
 export function InboxName() {
-	return strippedStr({ min: 1, max: 20 })
+	return z.string().trim().min(1).max(20)
 		.refine((value) => value === NO_TEAM || ID.test(value), INBOX_NAME)
 		.describe('A team inbox\'s id, from list_inboxes, or "none" for conversations with no team.');
 }
 
 /** `ConversationId`: a conversation's id. */
 export function ConversationId() {
-	return strippedStr({ min: 1, max: 20 })
+	return z.string().trim().min(1).max(20)
 		.refine((value) => ID.test(value), CONVERSATION_NAME)
 		.describe("A conversation's id, from search_conversations.");
 }

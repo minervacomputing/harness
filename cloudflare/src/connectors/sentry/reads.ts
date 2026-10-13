@@ -1,4 +1,4 @@
-// Sentry's operations, all reads, ported from backend/connectors/sentry/reads.py: projects, issue search,
+// Sentry's operations, all reads: projects, issue search,
 // single issues and their events.
 //
 // Issues are named by id or short id ("WEB-1A3"). `prepare` reads the issue, which tells its project, and
@@ -27,7 +27,6 @@ import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
 import { DIGIT_CLASS, digitValue } from "../../lib/digits.ts";
 import type { Json } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { SINGLE_LINE, isSingleLine, pythonCollapse, truncate } from "../../lib/text.ts";
 import { requestAddress } from "./address.ts";
 import { EVENT_ID, ID, type Issue, type Project, SLUG, type SentryClient, type SentryEvent } from "./client.ts";
@@ -106,7 +105,7 @@ class RustPattern extends RegExp {
 const ENVIRONMENT = new RustPattern("^[^\\s/]+$", /^[^\p{White_Space}/]+$/u);
 
 const projectName = () =>
-	strippedStr({ min: 1, max: 100 })
+	z.string().trim().min(1).max(100)
 		.describe("A project's id or slug, from list_projects.")
 		.transform((value, ctx) => {
 			const folded = value.toLowerCase();
@@ -116,7 +115,7 @@ const projectName = () =>
 		});
 
 const issueName = () =>
-	strippedStr({ min: 1, max: 80 })
+	z.string().trim().min(1).max(80)
 		.describe('An issue\'s id, or its short id such as "WEB-1A3".')
 		.transform((value, ctx) => {
 			const upper = value.toUpperCase();
@@ -130,7 +129,7 @@ const issueName = () =>
  * the transform keeps "latest" as it is, so the value is Pydantic's default, which it does not validate.
  */
 const eventName = () =>
-	strippedStr({ min: 1, max: 36 })
+	z.string().trim().min(1).max(36)
 		.default("latest")
 		.describe('"latest" (default), "oldest", "recommended" (Sentry\'s pick), or an event id.')
 		.transform((value, ctx) => {
@@ -141,17 +140,17 @@ const eventName = () =>
 		});
 
 /** The run's own page token; the executor swaps it for Sentry's cursor before the call is prepared. */
-const pageCursor = () => strippedStr({ max: 200 }).nullable().default(null).meta({ title: "Cursor" });
+const pageCursor = () => z.string().trim().max(200).nullable().default(null).meta({ title: "Cursor" });
 
-const projectQuery = () => strippedStr({ min: 1, max: 100 }).refine(isSingleLine, SINGLE_LINE).describe("Words in the project's name or slug.");
+const projectQuery = () => z.string().trim().min(1).max(100).refine(isSingleLine, SINGLE_LINE).describe("Words in the project's name or slug.");
 
 const phrase = () =>
-	strippedStr({ min: 1, max: 200 })
+	z.string().trim().min(1).max(200)
 		.refine(isSingleLine, SINGLE_LINE)
 		.refine((value) => !value.includes('"') && !value.includes("\\"), "must not contain quotes or backslashes")
 		.describe("A phrase the issue's message or title contains; no quotes or backslashes.");
 
-const environment = () => strippedStr({ min: 1, max: 64 }).regex(ENVIRONMENT).refine(isSingleLine, SINGLE_LINE).describe("An environment's name.");
+const environment = () => z.string().trim().min(1).max(64).regex(ENVIRONMENT).refine(isSingleLine, SINGLE_LINE).describe("An environment's name.");
 
 // Reading what Sentry sent.
 

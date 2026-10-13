@@ -6,9 +6,8 @@
 // Category data come from the runtime's Unicode tables, as Python's come from its own (Python 3.14 has
 // Unicode 16). (`str.casefold()` is lib/casefold.ts.)
 
-import { pythonFloat } from "../../lib/json.ts";
 import type { Json } from "../../lib/json.ts";
-import { pythonRepr } from "../../lib/text.ts";
+import { pythonFloat, pythonRepr } from "../../lib/text.ts";
 
 // str()
 

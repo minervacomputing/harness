@@ -1,4 +1,4 @@
-// Google Drive, ported from backend/connectors/google_drive/connector.py. Resources are files and folders;
+// Google Drive. Resources are files and folders;
 // what is allowed on a folder covers everything inside it.
 //
 // Each call resolves where the files it touches sit (their chain of parent folders) and hands that to the
@@ -13,8 +13,7 @@ import type { Binding, Connector, DiscoveryItem, DiscoveryPage, Prepared, Provid
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
 import { fromUtf8, utf8 } from "../../lib/bytes.ts";
-import { isDict, type Json, type JsonObject, parseJson, visibleJson } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
+import { isDict, type Json, type JsonObject, parseJson } from "../../lib/json.ts";
 import { SINGLE_LINE, codePointLength, isSingleLine, sliceCodePoints } from "../../lib/text.ts";
 import { digitsOr, jsonInteger } from "../google/digits.ts";
 import { oauth } from "../google/index.ts";
@@ -78,13 +77,13 @@ export interface DriveOptions {
 	uploadUrl?: string;
 }
 
-const FileId = () => strippedStr({ min: 1, max: 200 }).regex(/^[A-Za-z0-9_-]+$/);
+const FileId = () => z.string().trim().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/);
 const FolderId = () =>
-	strippedStr({ min: 1, max: 200 })
+	z.string().trim().min(1).max(200)
 		.regex(/^[A-Za-z0-9_-]+$/)
 		.describe('A folder id, or "root" for My Drive.');
-const Cursor = () => strippedStr({ max: 1000 });
-const SingleLine = (limits: { min?: number; max?: number }) => strippedStr(limits).refine(isSingleLine, { message: SINGLE_LINE });
+const Cursor = () => z.string().trim().max(1000);
+const SingleLine = () => z.string().trim().min(1).max(200).refine(isSingleLine, { message: SINGLE_LINE });
 
 function moved(): OperationError {
 	return new OperationError("FILE_MOVED", "This file or folder moved while Minerva was using it. Try again.");
@@ -245,7 +244,7 @@ const ListFolder = z.strictObject({
 	cursor: Cursor().nullable().default(null),
 });
 const SearchFiles = z.strictObject({
-	text: SingleLine({ min: 1, max: 200 }),
+	text: SingleLine(),
 	limit: z.int().min(1).max(50).default(20),
 	cursor: Cursor().nullable().default(null),
 });
@@ -253,8 +252,8 @@ const GetFile = z.strictObject({ file_id: FileId() });
 const ReadFile = z.strictObject({ file_id: FileId(), max_chars: z.int().min(1).max(100_000).default(20_000) });
 const CreateFile = z.strictObject({
 	folder_id: FolderId(),
-	name: SingleLine({ min: 1, max: 200 }),
-	content: strippedStr({ max: MAX_UPLOAD_BYTES }).refine((value) => utf8(value).length <= MAX_UPLOAD_BYTES, {
+	name: SingleLine(),
+	content: z.string().trim().max(MAX_UPLOAD_BYTES).refine((value) => utf8(value).length <= MAX_UPLOAD_BYTES, {
 		message: `must be at most ${MAX_UPLOAD_BYTES} bytes as UTF-8`,
 	}),
 	as_document: z.boolean().default(false).describe("Convert the text into a Google Doc instead of a plain text file."),
@@ -297,7 +296,7 @@ function discoveryState(cursor: string): DiscoveryState {
 }
 
 function discoveryCursor(phase: string, page: string | null): string {
-	return visibleJson({ phase, page: nextCursor(page) });
+	return JSON.stringify({ phase, page: nextCursor(page) });
 }
 
 /** A browsing cursor, valid only for the parent it was issued for. */
@@ -318,7 +317,7 @@ function browseState(cursor: string, parent: string | null): DiscoveryState {
 }
 
 function browseCursor(phase: string, page: string | null, parent: string | null): string {
-	return visibleJson({ phase, page: nextCursor(page), parent });
+	return JSON.stringify({ phase, page: nextCursor(page), parent });
 }
 
 function item(file: DriveFile): DiscoveryItem {

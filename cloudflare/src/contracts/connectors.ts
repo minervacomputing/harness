@@ -1,4 +1,4 @@
-// The connector contract, ported from backend/connectors/base.py and http.py (connectors 1, 7.6, 9, 11).
+// The connector contract.
 // A connector declares resource kinds, the actions on them, how it authenticates and its operations. Each
 // operation validates its input strictly and declares the (kind, action) pairs it needs; `prepare()`
 // resolves the real resources a call touches before anything is authorized; returned records carry their
@@ -36,7 +36,7 @@ export interface ResourceKind {
 /**
  * The call touches this concrete resource and needs this action (and its `requires` chain) on it.
  * `enumerate`: a listing that passes if some resource of the kind could be allowed; its records are then
- * filtered one by one. Writes never enumerate (connectors 1.3).
+ * filtered one by one. Writes never enumerate.
  */
 export type Requirement = { need: Resource; action: string } | { enumerate: string; action: string };
 
@@ -72,7 +72,7 @@ export interface Binding<Client = ProviderClient> {
 /**
  * Provider scopes an operation works with: any one of these sets, granted in full; the first is the one
  * requested. Unknown scopes (`null`) pass every check, so the provider refuses; `[]` (known, none) fails
- * every operation with consent (connectors 11.7, risk 16).
+ * every operation with consent.
  */
 export type Consent = string[][];
 
@@ -83,19 +83,14 @@ export interface Operation<Input = Json> {
 	/** Model-facing; not part of the fingerprint (field descriptions are, through the schema). */
 	description: string;
 	/**
-	 * Strict input: unknown fields refused (the model must never pick a connection), no coercion, every
-	 * string stripped before its limits. `null` or missing arguments validate as `{}`. The executor hashes the
-	 * normalized output, defaults included (connectors 1.2). Its JSON Schema, zod's own of the input with
-	 * zod pinned (gateway/registry.ts `inputSchema`), is what the model sees and what the fingerprint
-	 * covers. The registry refuses an input that is not strict at every depth, as Pydantic's config applies
-	 * to nested models too (gateway/registry.ts `checkStrict`): every object `z.strictObject`, every
-	 * `dict[str, …]` `strictRecord` or `anyRecord` (never `z.record`, which mishandles a "__proto__" key),
-	 * every string `strippedStr`, no `z.coerce`, no transform before validation.
-	 *
-	 * Strings are `strippedStr({min, max})` from lib/schema.ts, never zod's `.trim()`, `.min()` or `.max()`:
-	 * Pydantic strips Unicode White_Space (U+0085 included, U+FEFF not) and counts code points, so an emoji
-	 * is one character, and the normalized arguments (and the write keys hashed from them) stay today's.
-	 * The arguments are parsed from the model's text with `parseJson` (lib/json.ts), not `JSON.parse`.
+	 * Strict input: unknown fields refused at every depth (the model must never pick a connection), no
+	 * coercion, no transform before validation. `null` or missing arguments validate as `{}`. The executor
+	 * hashes the normalized output, defaults included. Its JSON Schema, zod's own of the input with zod
+	 * pinned (gateway/registry.ts `inputSchema`), is what the model sees and what the fingerprint covers.
+	 * The registry refuses an input that is not strict at every depth (gateway/registry.ts `checkStrict`):
+	 * every object `z.strictObject`, every record lib/schema.ts's `record` (never `z.record`, which drops a
+	 * "__proto__" key), no `z.coerce`. Strings are usually `z.string().trim()` with their limits. The
+	 * arguments are parsed from the model's text with `parseJson` (lib/json.ts), not `JSON.parse`.
 	 */
 	input: z.ZodType<Input>;
 	prepare(binding: Binding, input: Input): Promise<Prepared>;
@@ -184,7 +179,7 @@ export interface Connector<Client extends ProviderClient = ProviderClient> {
 	manageLink?(): [label: string, url: string] | null;
 }
 
-/** Errors the core raises (connectors 1.5). Only an error's message reaches the model or the UI. */
+/** Errors the core raises. Only an error's message reaches the model or the UI. */
 export type CoreErrorCode =
 	| "POLICY_DENIED"
 	| "INVALID_ARGUMENTS"
@@ -210,7 +205,7 @@ export type CoreErrorCode =
 	/** Any error that is not an operation error; its message is the generic one (runs 5.3). */
 	| "FAILED";
 
-/** Errors connectors raise (connectors 1.5). */
+/** Errors connectors raise. */
 export type ConnectorErrorCode =
 	| "PROVIDER_LIMIT"
 	| "RESPONSE_TOO_LARGE"
@@ -266,20 +261,20 @@ export interface OperationErrorShape {
 	message: string;
 }
 
-// Provider HTTP (connectors 7.6). Step 2 implements `ProviderHttp` over `fetch`; connectors build their
+// Provider HTTP. `ProviderHttp` is implemented over `fetch`; connectors build their
 // clients on it.
 
 /**
  * What a write did to the provider. Starts unknown when sent: 2xx is applied; 400, 401, 403, 404, 409,
  * 412, 422 and 429 are not applied (refused); anything else (5xx, 418, 3xx) and every transport error stay
- * unknown, since `fetch` cannot tell "never connected" from "dropped after sending" (connectors risk 9).
+ * unknown, since `fetch` cannot tell "never connected" from "dropped after sending".
  */
 export type Effect = "not_applied" | "applied" | "unknown";
 
 /**
  * The one write a mutating operation may send, opened by the executor around `execute()` with the deadline
  * fixed at dispatch (a monotonic `performance.now()` instant). A request after the attempt is closed (a
- * promise the connector left running) is refused (connectors 7.6, risk 7).
+ * promise the connector left running) is refused.
  */
 export interface WriteAttempt {
 	readonly deadline: number;
@@ -359,7 +354,7 @@ export interface ProviderHttpOptions {
 	judge?(response: Response, body: string, bytes: Uint8Array): Effect | null;
 }
 
-// Credentials (connectors 9.1). Existing ciphertext decrypts to these payloads.
+// Credentials. Existing ciphertext decrypts to these payloads.
 
 export type CredentialPayload =
 	| {

@@ -4,8 +4,8 @@
 // Keys that come from Notion or from the agent (property names, option names, a property's type) are read
 // only as own properties, so "constructor" or "__proto__" is an ordinary key, as it is in a dict.
 
-import { type Json, type JsonObject, pythonFloat } from "../../lib/json.ts";
-import { pythonRepr } from "../../lib/text.ts";
+import { type Json, type JsonObject } from "../../lib/json.ts";
+import { pythonFloat, pythonRepr } from "../../lib/text.ts";
 
 /** `value.get(key)`: the own property, or null when there is none. */
 export function own(value: JsonObject, key: string): Json {

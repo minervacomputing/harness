@@ -676,10 +676,10 @@ describe("tools", () => {
 		]);
 		const calls = (await eventsOf(stub, runId)).filter((event) => event.type === "tool_call").map((event) => event.data);
 		expect(calls.map((call) => (call as { decision: string }).decision)).toEqual(["allowed", "denied"]);
-		// The tool results as the model saw them: Python's json.dumps of the result, and the error's message.
+		// The tool results as the model saw them: the result's JSON, and the error's message.
 		const results = (fakes.contexts.at(-1)?.messages ?? []).filter((message) => message.role === "toolResult");
 		expect(results.map((message) => [message.content, message.isError])).toEqual([
-			[[{ type: "text", text: '{"items": [{"title": "\\u00dcn\\u00efcode"}], "count": 1}' }], false],
+			[[{ type: "text", text: '{"items":[{"title":"Ünïcode"}],"count":1}' }], false],
 			[[{ type: "text", text: "This resource or action is not available under the current permissions." }], true],
 		]);
 		const phases = (await eventsOf(stub, runId)).filter((event) => event.type === "phase").map((event) => (event.data as { text: string }).text);

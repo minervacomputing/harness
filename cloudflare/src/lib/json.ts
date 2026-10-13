@@ -1,21 +1,5 @@
-// JSON read and written for this port. Reading: `parseJson` replaces `JSON.parse` everywhere (see below).
-// Writing: `visibleJson` writes what the model and providers see exactly as Python's `json.dumps` writes it
-// (tool results and their summaries, request bodies, cursors, sizes measured in its characters). Hashed and
-// encrypted values are not written here: they are stored formats, in lib/canonical.ts's canonical JSON.
-//
-// Values are plain JSON: null, booleans, finite numbers, strings, arrays and plain objects. An object
-// member whose value is `undefined` is left out, as JSON.stringify does; anything else (undefined in an
-// array, functions, bigints, dates, maps, NaN, infinities) throws, where Python would have called `str()`.
-//
-// Numbers. Python tells `1` (int) from `1.0` (float); a parsed JavaScript number cannot. Integers up to
-// 2^53 are written as Python writes ints; every other number as Python writes floats (`repr`): `0.5`,
-// `1e-07`, `1e+16`, `1.5e+300`. So a float that is integral and below 2^53, such as `2.0`, comes out as
-// `2`, and an int of 2^53 or more as a float.
-//
-// Key order. Sorted output follows code points, as Python's does. Unsorted output follows JavaScript's
-// property order, which puts integer-like keys first; Python keeps insertion order.
-
-import { compareCodePoints } from "./order.ts";
+// JSON values, and reading JSON text: `parseJson` replaces `JSON.parse` everywhere (see below). Writing is
+// `JSON.stringify`; hashed and encrypted values use lib/canonical.ts's canonical JSON instead.
 
 export type Json = null | boolean | number | string | JsonArray | JsonObject;
 export interface JsonArray extends Array<Json> {}
@@ -23,122 +7,17 @@ export interface JsonObject {
 	[key: string]: Json;
 }
 
-/** Python's `isinstance(value, dict)` for a parsed JSON value. */
+/** Whether a parsed JSON value is an object (not an array or null). */
 export function isDict(value: unknown): value is JsonObject {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Python's truthiness of a JSON value: null, false, 0, "", [] and {} are false. */
+/** Whether a JSON value is non-empty: null, false, 0, "", [] and {} are not. */
 export function truthy(value: unknown): boolean {
 	if (value === null || value === undefined || value === false || value === 0 || value === "") return false;
 	if (Array.isArray(value)) return value.length > 0;
 	if (typeof value === "object") return Object.keys(value).length > 0;
 	return true;
-}
-
-/**
- * The JSON the model and providers see: Python's `json.dumps(value)` (ASCII only, `", "` and `": "` between
- * items), or `json.dumps(value, sort_keys=True)` with `sortKeys`.
- */
-export function visibleJson(value: unknown, options: { sortKeys?: boolean } = {}): string {
-	const out: string[] = [];
-	write(value, out, options.sortKeys ?? false);
-	return out.join("");
-}
-
-function write(value: unknown, out: string[], sortKeys: boolean): void {
-	if (value === null) {
-		out.push("null");
-	} else if (value === true) {
-		out.push("true");
-	} else if (value === false) {
-		out.push("false");
-	} else if (typeof value === "number") {
-		out.push(formatNumber(value));
-	} else if (typeof value === "string") {
-		out.push(quote(value));
-	} else if (Array.isArray(value)) {
-		out.push("[");
-		// Every index, so a hole in a sparse array throws like an explicit undefined.
-		for (let index = 0; index < value.length; index++) {
-			if (index > 0) out.push(", ");
-			const item: unknown = value[index];
-			if (item === undefined) throw new TypeError("An array holds undefined, which is not JSON.");
-			write(item, out, sortKeys);
-		}
-		out.push("]");
-	} else if (isPlainObject(value)) {
-		const keys = Object.keys(value).filter((key) => value[key] !== undefined);
-		if (sortKeys) keys.sort(compareCodePoints);
-		out.push("{");
-		keys.forEach((key, index) => {
-			if (index > 0) out.push(", ");
-			out.push(quote(key), ": ");
-			write(value[key], out, sortKeys);
-		});
-		out.push("}");
-	} else {
-		throw new TypeError(`A ${describe(value)} is not JSON.`);
-	}
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-	if (typeof value !== "object" || value === null) return false;
-	const prototype = Object.getPrototypeOf(value);
-	return prototype === Object.prototype || prototype === null;
-}
-
-function describe(value: unknown): string {
-	if (value === undefined) return "undefined value";
-	if (typeof value === "object") return (value as object).constructor?.name ?? "object";
-	return typeof value;
-}
-
-const ESCAPES: Record<string, string> = {
-	'"': '\\"',
-	"\\": "\\\\",
-	"\b": "\\b",
-	"\f": "\\f",
-	"\n": "\\n",
-	"\r": "\\r",
-	"\t": "\\t",
-};
-
-// Python's ESCAPE_ASCII is [\\"]|[^\ -~]: everything outside space to tilde, DEL included.
-const ASCII_UNSAFE = /["\\]|[^ -~]/g;
-
-function quote(text: string): string {
-	const escaped = text.replace(ASCII_UNSAFE, (char) => {
-		return ESCAPES[char] ?? `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`;
-	});
-	return `"${escaped}"`;
-}
-
-function formatNumber(value: number): string {
-	if (!Number.isFinite(value)) throw new TypeError(`${value} is not JSON.`);
-	if (Number.isSafeInteger(value)) return String(value === 0 ? 0 : value);
-	return pythonFloat(value);
-}
-
-/**
- * `repr(float)`: the shortest digits that read back as the same double (JavaScript finds the same
- * ones), in fixed notation when the decimal exponent is in [-4, 16), else as `d.ddde±XX`.
- */
-export function pythonFloat(value: number): string {
-	if (!Number.isFinite(value)) throw new TypeError(`${value} is not a finite number.`);
-	if (value === 0) return Object.is(value, -0) ? "-0.0" : "0.0";
-	const sign = value < 0 ? "-" : "";
-	const [mantissa = "", exponent = "0"] = Math.abs(value).toExponential().split("e");
-	const digits = mantissa.replace(".", "");
-	const point = Number(exponent) + 1; // digits are 0.d1d2... × 10^point
-	if (point <= -4 || point > 16) {
-		const fraction = digits.length > 1 ? `.${digits.slice(1)}` : "";
-		const power = point - 1;
-		return `${sign}${digits[0]}${fraction}e${power < 0 ? "-" : "+"}${String(Math.abs(power)).padStart(2, "0")}`;
-	}
-	if (point <= 0) return `${sign}0.${"0".repeat(-point)}${digits}`;
-	if (point >= digits.length) return `${sign}${digits}${"0".repeat(point - digits.length)}.0`;
-	return `${sign}${digits.slice(0, point)}.${digits.slice(point)}`;
 }
 
 // Reading. V8's JSON parser (Node 24's V8 13.6 and workerd 1.20261006.1 alike) can return the wrong name
@@ -150,12 +29,11 @@ export function pythonFloat(value: number): string {
 // trustworthy. `JSON.parse`, `Response.json()` and `c.req.json()` are all affected; values are not, and
 // neither are keys without escapes. test/platform/worker.test.ts keeps the bug visible.
 //
-// So every JSON text this port reads goes through `parseJson`: text with no backslash cannot hold an
+// So every JSON text Minerva reads goes through `parseJson`: text with no backslash cannot hold an
 // escaped key and goes to `JSON.parse`; other text is parsed here, with the structure walked in
 // JavaScript, each string token decoded natively on its own (a lone string is not affected) and each key
-// set by its decoded name. The grammar is JSON.parse's (no NaN or Infinity, which Python's `json.loads`
-// accepts), duplicate keys keep the last value, as both do, and nesting deeper than 1,000 is refused, about
-// where Python's recursion limit stops `json.loads`.
+// set by its decoded name. The grammar is JSON.parse's, duplicate keys keep the last value, and nesting
+// deeper than 1,000 is refused.
 
 /** How deep arrays and objects may nest in `parseJson`. */
 export const MAX_JSON_DEPTH = 1000;
@@ -174,15 +52,14 @@ export function parseJson(text: string): Json {
 	return value;
 }
 
-/** How many non-empty arrays and objects may nest in the JSON Pydantic reads (jiter's recursion limit). */
+/** How many non-empty arrays and objects may nest in a provider's answer that `parseModelJson` reads. */
 export const MAX_MODEL_JSON_DEPTH = 200;
 
 /**
- * The JSON text `model_validate_json` reads (already decoded from strict UTF-8, a byte order mark kept so
- * that it is refused): `parseJson`, then refused as jiter refuses it when any string token holds a lone
- * surrogate, keys and the values of keys repeated later included (which the parsed value no longer shows),
- * or when more than 200 non-empty arrays and objects nest (an empty one does not count). NaN and Infinity,
- * which jiter takes, stay refused as `parseJson` refuses them. Throws SyntaxError.
+ * A provider's JSON answer (already decoded from strict UTF-8, a byte order mark kept so that it is
+ * refused): `parseJson`, then refused when any string token holds a lone surrogate, keys and the values of
+ * keys repeated later included (which the parsed value no longer shows), or when more than 200 non-empty
+ * arrays and objects nest (an empty one does not count). Throws SyntaxError.
  */
 export function parseModelJson(text: string): Json {
 	const value = parseJson(text);

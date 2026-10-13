@@ -1,4 +1,4 @@
-// GitHub's REST API (v3), as a GitHub App acting for a user, ported from backend/connectors/github/client.py.
+// GitHub's REST API (v3), as a GitHub App acting for a user.
 // Repositories are addressed by id (`/repositories/{id}`), so a rename between two requests cannot change
 // which repository a request reaches. Responses are validated before use.
 //
@@ -7,11 +7,11 @@
 //   synchronously), so `classify` words every 403 instead; it sees the same headers and body. The body is
 //   UTF-8 with invalid bytes replaced, where Python's `response.json()` refused such a body and so ignored
 //   its message.
-// - Response models are zod's objects with today's defaults; unknown fields are dropped, as with Pydantic's
+// - Response models are zod's objects with defaults; unknown fields are dropped, as with Pydantic's
 //   `extra="ignore"`. Pydantic's lax coercions (a number sent as a string, 1 for true) are not made: such a
 //   response is an unexpected one.
 // - Pagination's Link header and the base64 of file contents are read with Python's own rules (`re`'s `\s`,
-//   `urlsplit`, `parse_qs`, non-validating `b64decode`), so a cursor and a file read as they do today. A
+//   `urlsplit`, `parse_qs`, non-validating `b64decode`), so a cursor and a file read as they did in Python. A
 //   redirect's Location is decoded as httpx decodes headers. (A Link header that is not ASCII failed every
 //   listing in Python, whose `bounded` re-encodes kept headers as ASCII; here it is read as Latin-1.)
 
@@ -20,9 +20,9 @@ import type { OperationErrorShape, ProviderClient, ProviderIo, ProviderRequest }
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP, defaultForbidden } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
-import { isDict, type Json, parseJson, pythonFloat } from "../../lib/json.ts";
+import { isDict, type Json, parseJson } from "../../lib/json.ts";
 import { DIGIT_CLASS } from "../../lib/digits.ts";
-import { PYTHON_SPACE_CLASS, pythonRepr } from "../../lib/text.ts";
+import { PYTHON_SPACE_CLASS, pythonFloat, pythonRepr } from "../../lib/text.ts";
 import { parseQs, quoteSegment, urlsplitStrict } from "../../lib/urlsplit.ts";
 
 export const API_URL = "https://api.github.com";

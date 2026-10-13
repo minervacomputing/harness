@@ -1,4 +1,4 @@
-// Sentry's REST API on sentry.io, ported from backend/connectors/sentry/client.py.
+// Sentry's REST API on sentry.io.
 //
 // A token reaches one organisation, the one the user chose on Sentry's consent screen, and the organisation
 // list shows only that one. The list is read on sentry.io, and the organisation's API calls go to its region
@@ -28,7 +28,6 @@ import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
 import { type Json, parseJson, parseModelJson } from "../../lib/json.ts";
-import { stripWhitespace } from "../../lib/schema.ts";
 import { PYTHON_SPACE_CLASS } from "../../lib/text.ts";
 
 export const PROVIDER = "Sentry";
@@ -69,7 +68,7 @@ export function laxInt(value: unknown): number | null {
 	if (typeof value === "boolean") return value ? 1 : 0;
 	if (typeof value === "number") return exactInt(value);
 	if (typeof value !== "string") return null;
-	const text = stripWhitespace(value);
+	const text = value.trim();
 	if (!INT_TEXT.test(text)) return null;
 	return exactInt(Number(text.replace(/\.0+$/, "").replaceAll("_", "")));
 }

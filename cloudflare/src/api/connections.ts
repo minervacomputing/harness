@@ -1,4 +1,4 @@
-// Connectors, connections and access (web-api 8.5), ported from backend/connections/api.py. The Workspace
+// Connectors, connections and access. The Workspace
 // Durable Object holds connections and grants and their rules (`_usable`, who may change a shared
 // connection, saving credentials, grant plans and the revocation they cause); the routes here check in
 // Python's order, make the provider calls (providers.ts) and answer. OAuth flows are flows.ts's, their
@@ -15,7 +15,6 @@ import { ANY } from "../gateway/policy.ts";
 import { HttpError, detail, json } from "../http/errors.ts";
 import { UUID } from "../http/paths.ts";
 import type { App } from "../http/router.ts";
-import { str } from "../lib/schema.ts";
 import { pythonRepr } from "../lib/text.ts";
 import { actionsOut, authOf, isAdmin, kindsOut, requestedScopes } from "../workspace/out.ts";
 import { CONNECTION_FLOWS, ConnectionFlowError, type FlowStart } from "./flows.ts";
@@ -26,17 +25,17 @@ import { keyAccount, withConnection } from "./providers.ts";
 
 export const UNKNOWN_PROVIDER = "Unknown provider.";
 
-const KeyIn = z.object({ key: str({ min: 1, max: 500 }) });
-/** An action id: any string, as Pydantic's `str` (an unknown one is refused with the connector's words). */
+const KeyIn = z.object({ key: z.string().min(1).max(500) });
+/** An action id: any string (an unknown one is refused with the connector's words). */
 const Action = z.string();
 const ConsentIn = z.object({ actions: z.array(Action).max(10).default([]) });
-const ChangeIn = z.object({ kind: str({ min: 1, max: 64 }), id: str({ min: 1, max: 200 }), actions: z.array(Action).max(10) });
+const ChangeIn = z.object({ kind: z.string().min(1).max(64), id: z.string().min(1).max(200), actions: z.array(Action).max(10) });
 const AccessChangesIn = z.object({ changes: z.array(ChangeIn).min(1).max(MAX_CHANGES) });
 const ResourceQuery = z.object({
-	kind: str({ min: 1, max: 64 }),
-	q: str({ max: 100 }).optional(),
-	cursor: str({ max: 1000 }).optional(),
-	parent: str({ min: 1, max: 200 }).optional(),
+	kind: z.string().min(1).max(64),
+	q: z.string().max(100).optional(),
+	cursor: z.string().max(1000).optional(),
+	parent: z.string().min(1).max(200).optional(),
 });
 
 const BASE = `/api/workspaces/:workspace${UUID}`;

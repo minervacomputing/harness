@@ -10,7 +10,7 @@ import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
 import { MAX_MARKDOWN_BYTES, NOTION_VERSION } from "../../src/connectors/notion/client.ts";
 import { notionConnector } from "../../src/connectors/notion/connector.ts";
 import { SYNCED_HIDDEN, planEdits, redact, writtenRefusal } from "../../src/connectors/notion/markdown.ts";
-import { canonical, dumpsLength, objectId } from "../../src/connectors/notion/pages.ts";
+import { canonical, objectId } from "../../src/connectors/notion/pages.ts";
 import { checkFilter, readable, writable } from "../../src/connectors/notion/properties.ts";
 import { OperationError, offered, termsOf } from "../../src/gateway/connector.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
@@ -1016,11 +1016,9 @@ describe("beyond test_notion.py", () => {
 	});
 
 	test("a number too large for a double is no number", () => {
-		// parseJson reads "1e400" as an infinity, as Python's json.loads does; json.dumps writes it Infinity.
+		// parseJson reads "1e400" as an infinity.
 		const huge = parseJson('{"Score": 1e400}') as JsonObject;
 		const numbers: JsonObject = { Score: { id: "sc", type: "number", number: {} } };
 		expect(refused(() => writable(numbers, huge))).toMatchObject({ code: "INVALID_ARGUMENTS", message: "'Score' takes a number, or null." });
-		expect(dumpsLength(huge)).toBe('{"Score": Infinity}'.length);
-		expect(dumpsLength({ a: [Number.NEGATIVE_INFINITY] })).toBe('{"a": [-Infinity]}'.length);
 	});
 });

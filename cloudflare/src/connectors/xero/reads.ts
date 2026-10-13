@@ -1,11 +1,10 @@
-// Xero's read operations, ported from backend/connectors/xero/reads.py: organisations, contacts, invoices and
+// Xero's read operations: organisations, contacts, invoices and
 // bills, accounts and tax rates.
 
 import { z } from "zod";
 import type { Prepared, ProviderOutput, ProviderRequest } from "../../contracts/connectors.ts";
 import { OperationError, defineOperation } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { SINGLE_LINE, isSingleLine, truncate } from "../../lib/text.ts";
 import { type Address, type Contact, type Invoice, type Invoices, type Outstanding, invoiceDate, moment, nextPage, page, uuid } from "./client.ts";
 import { dayProblem, fromIsoFormat } from "./dates.ts";
@@ -20,13 +19,13 @@ export const NEXT_PAGE = "To get the next page, repeat the call with identical a
 
 type Fields = { [key: string]: Json };
 
-const cursor = () => strippedStr({ max: 1000 }).nullable().default(null);
-const searchText = () => strippedStr({ min: 1, max: 100 }).refine(isSingleLine, SINGLE_LINE);
+const cursor = () => z.string().trim().max(1000).nullable().default(null);
+const searchText = () => z.string().trim().min(1).max(100).refine(isSingleLine, SINGLE_LINE);
 const limit = () => z.int().min(1).max(50).default(20);
 
 /** `Day`: YYYY-MM-DD as Python's `date.fromisoformat` reads it (dates.ts), kept as it was sent. */
 export function day() {
-	return strippedStr({ min: 10, max: 10 })
+	return z.string().trim().min(10).max(10)
 		.describe("YYYY-MM-DD.")
 		.check((payload) => {
 			const problem = dayProblem(payload.value);
@@ -239,7 +238,7 @@ export const SEARCH_INVOICES = defineOperation<SearchInvoicesInput>({
 	needs: [[ORGANISATION, "read"]],
 	paginated: true,
 	async prepare(binding, data): Promise<Prepared> {
-		// The dates as they were sent, compared as text, as today.
+		// The dates as they were sent, compared as text.
 		if (data.date_from && data.date_to && data.date_from > data.date_to) throw new OperationError("INVALID_ARGUMENTS", "date_from must not be after date_to.");
 		const [resource, tenant] = await resolveOrganisation(binding, data.organisation);
 		return {

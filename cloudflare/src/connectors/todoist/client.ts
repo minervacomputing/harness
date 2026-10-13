@@ -1,4 +1,4 @@
-// The Todoist API v1 client, ported from backend/connectors/todoist/client.py: a thin client on
+// The Todoist API v1 client: a thin client on
 // ProviderHTTP whose responses are validated before use, with the models' rules.
 //
 // The Python models validate the decoded JSON in Pydantic's lax mode, so the schemas here accept what
@@ -21,8 +21,7 @@
 import { z } from "zod";
 import type { ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
-import { pythonFloat } from "../../lib/json.ts";
-import { stripWhitespace } from "../../lib/schema.ts";
+import { pythonFloat } from "../../lib/text.ts";
 
 export const API_URL = "https://api.todoist.com/api/v1";
 
@@ -41,7 +40,7 @@ export function laxInt(value: unknown): number | null {
 	if (typeof value === "boolean") return value ? 1 : 0;
 	if (typeof value === "number") return exactInt(value);
 	if (typeof value !== "string") return null;
-	const text = stripWhitespace(value);
+	const text = value.trim();
 	if (!INT_TEXT.test(text)) return null;
 	return exactInt(Number(text.replace(/\.0+$/, "").replaceAll("_", "")));
 }

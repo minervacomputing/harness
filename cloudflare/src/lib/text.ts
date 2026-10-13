@@ -1,4 +1,4 @@
-// The text helpers of backend/connectors/text.py, with Python's semantics: input validators, cutting
+// Text helpers, with Python's semantics: input validators, cutting
 // long text by code point, and undoing the encodings a browser or renderer undoes in an address. Also
 // Python's `urllib.parse.unquote` and `html.unescape`, which `decoded` is built from.
 //
@@ -153,8 +153,8 @@ function isDropped(point: number): boolean {
 }
 
 /**
- * Python's `str.isspace()` set, which `str.strip()` removes: Unicode White_Space (lib/schema.ts's
- * WHITE_SPACE) and the information separators U+001C to U+001F, which Python counts and Pydantic does not.
+ * Python's `str.isspace()` set, which `str.strip()` removes: Unicode White_Space and the information
+ * separators U+001C to U+001F.
  */
 export const PYTHON_WHITESPACE: readonly number[] = [
 	0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x85, 0xa0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004,
@@ -226,6 +226,27 @@ export function pythonIsSpace(text: string): boolean {
 	if (text.length === 0) return false;
 	for (let i = 0; i < text.length; i++) if (!PYTHON_SPACE.has(text.charCodeAt(i))) return false;
 	return true;
+}
+
+/**
+ * Python's `repr(float)`: the shortest digits that read back as the same double (JavaScript finds the same
+ * ones), in fixed notation when the decimal exponent is in [-4, 16), else as `d.ddde±XX`.
+ */
+export function pythonFloat(value: number): string {
+	if (!Number.isFinite(value)) throw new TypeError(`${value} is not a finite number.`);
+	if (value === 0) return Object.is(value, -0) ? "-0.0" : "0.0";
+	const sign = value < 0 ? "-" : "";
+	const [mantissa = "", exponent = "0"] = Math.abs(value).toExponential().split("e");
+	const digits = mantissa.replace(".", "");
+	const point = Number(exponent) + 1; // digits are 0.d1d2... × 10^point
+	if (point <= -4 || point > 16) {
+		const fraction = digits.length > 1 ? `.${digits.slice(1)}` : "";
+		const power = point - 1;
+		return `${sign}${digits[0]}${fraction}e${power < 0 ? "-" : "+"}${String(Math.abs(power)).padStart(2, "0")}`;
+	}
+	if (point <= 0) return `${sign}0.${"0".repeat(-point)}${digits}`;
+	if (point >= digits.length) return `${sign}${digits}${"0".repeat(point - digits.length)}.0`;
+	return `${sign}${digits.slice(0, point)}.${digits.slice(point)}`;
 }
 
 // What `str.isprintable()` refuses: categories Other and Separator, except the ASCII space.

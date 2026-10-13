@@ -1,10 +1,10 @@
-// What Xero's operations share, ported from backend/connectors/xero/organisations.py: organisations, how
+// What Xero's operations share: organisations, how
 // calls name them, and how records show text. How they show money is in decimal.ts.
 
+import { z } from "zod";
 import type { Binding } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, denied } from "../../gateway/connector.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { pythonCollapse, truncate } from "../../lib/text.ts";
 import { UUID, type Connection, type XeroClient, uuid } from "./client.ts";
 
@@ -22,7 +22,7 @@ function isId(value: string): boolean {
 
 /** organisations.py's `_uuid` on a required id: checked, then kept in lower case. */
 function requiredId(description: string) {
-	return strippedStr({ min: 36, max: 36 })
+	return z.string().trim().min(36).max(36)
 		.describe(description)
 		.refine(isId, NOT_AN_ID)
 		.transform((value) => value.toLowerCase());
@@ -33,7 +33,7 @@ function requiredId(description: string) {
  * leaves out the default of a field whose transform comes first.
  */
 function optionalId(description: string) {
-	return strippedStr({ min: 36, max: 36 })
+	return z.string().trim().min(36).max(36)
 		.describe(description)
 		.nullable()
 		.default(null)

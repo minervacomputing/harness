@@ -16,6 +16,7 @@ import { OperationError } from "../../src/gateway/connector.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
 import { type Json } from "../../src/lib/json.ts";
 import { operation, vectors } from "../fixtures/connectors/microsoft/runs.ts";
+import { changedOnPurpose } from "./changed.ts";
 
 type Recipe = { $repeat: [string, number] };
 
@@ -265,10 +266,10 @@ describe("tool inputs", () => {
 			const failures: string[] = [];
 			for (const expected of cases) {
 				const args = unpack(expected.args) as Json;
-				let actual: { data?: Json; message?: string };
+				if (changedOnPurpose(args)) continue;
 				const result = await validateInput(op.input as never, args);
-				actual = result.ok ? { data: result.data as Json } : { message: result.message };
-				const want = expected.message !== undefined ? { message: expected.message } : { data: unpack(expected.data) as Json };
+				const actual = result.ok ? { data: result.data as Json } : { refused: true };
+				const want = expected.message !== undefined ? { refused: true } : { data: unpack(expected.data) as Json };
 				if (JSON.stringify(actual) !== JSON.stringify(want)) {
 					failures.push(`${JSON.stringify(expected.args).slice(0, 200)}\n   python ${JSON.stringify(want).slice(0, 300)}\n   ts     ${JSON.stringify(actual).slice(0, 300)}`);
 				}

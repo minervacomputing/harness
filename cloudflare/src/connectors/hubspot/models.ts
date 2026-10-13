@@ -1,7 +1,7 @@
 // HubSpot's responses as client.py's Pydantic models read them: `extra="ignore"`, fields found under their
 // camelCase alias first and their own name otherwise (`alias_generator=to_camel, populate_by_name=True`),
 // defaults for missing fields, and Pydantic's lax types (test/fixtures/connectors/hubspot/vectors.json pins
-// each rule against today's Python):
+// each rule against Python):
 //
 // - `str` takes only a string; `str | None` also null.
 // - `int` takes an integer (1.0 and 1e3 too, not 1.5), a boolean (as 0 or 1), or a string that is one once
@@ -24,7 +24,6 @@
 // keeps it. `fromJsonText` is the reads' parsing. Both accept NaN and Infinity, which parseJson refuses.
 
 import { isDict, type Json, type JsonObject, parseModelJson } from "../../lib/json.ts";
-import { stripWhitespace } from "../../lib/schema.ts";
 
 /** A response that does not fit its model. */
 export class Mismatch extends Error {
@@ -66,7 +65,7 @@ export const int: Reader<bigint> = (value) => {
 		return BigInt(value);
 	}
 	if (typeof value === "string") {
-		const text = stripWhitespace(value);
+		const text = value.trim();
 		if (!INT_TEXT.test(text)) throw new Mismatch("an integer");
 		return BigInt(text.replace(/\.0+$/, "").replaceAll("_", ""));
 	}

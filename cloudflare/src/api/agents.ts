@@ -1,4 +1,4 @@
-// Agents (web-api 8.3), ported from backend/agents/api.py over the Workspace Durable Object, which holds
+// Agents, over the Workspace Durable Object, which holds
 // the rules: who may edit (`_editable`), which connections may be added (`_connections`), the full
 // replace, the revocation of the agent's runs when its connection set changes, and the last agent kept.
 
@@ -7,14 +7,13 @@ import { settings } from "../config.ts";
 import { json, notFound } from "../http/errors.ts";
 import { UUID } from "../http/paths.ts";
 import type { App } from "../http/router.ts";
-import { str } from "../lib/schema.ts";
 import { readBody, uuid } from "./input.ts";
 import { afterRevocation, memberRoute, param, valueOf } from "./members.ts";
 
 /** `AgentIn`: a PUT is a full replace, so omitted fields take these defaults. */
 export const AgentIn = z.object({
-	name: str({ min: 1, max: 120 }),
-	instructions: str({ max: 8000 }).default(""),
+	name: z.string().min(1).max(120),
+	instructions: z.string().max(8000).default(""),
 	connection_ids: z.array(uuid()).max(20).default([]),
 });
 

@@ -1,4 +1,4 @@
-// Notion's write operations, ported from backend/connectors/notion/writes.py: creating and editing pages
+// Notion's write operations: creating and editing pages
 // and rows, and commenting. Each sends exactly one write, from its execute step.
 
 import { z } from "zod";
@@ -6,7 +6,7 @@ import type { Prepared, ProviderOutput } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation } from "../../gateway/connector.ts";
 import type { JsonObject } from "../../lib/json.ts";
-import { anyRecord, strippedStr } from "../../lib/schema.ts";
+import { record } from "../../lib/schema.ts";
 import { PLAIN_TEXT, SINGLE_LINE, isPlainText, isSingleLine } from "../../lib/text.ts";
 import type { Page } from "./client.ts";
 import { planEdits, showsSyncedContent, writtenRefusal } from "./markdown.ts";
@@ -37,10 +37,10 @@ function writtenOnly(value: string, ctx: z.RefinementCtx<string>): void {
 	if (refused !== null) ctx.addIssue({ code: "custom", message: refused, input: value });
 }
 
-const titleField = () => strippedStr({ min: 1, max: 2000 }).refine(isSingleLine, SINGLE_LINE);
+const titleField = () => z.string().trim().min(1).max(2000).refine(isSingleLine, SINGLE_LINE);
 const markdownField = () =>
-	strippedStr({ min: 1, max: MAX_MARKDOWN }).describe("Notion-flavored markdown.").refine(isPlainText, PLAIN_TEXT).superRefine(writtenOnly);
-const propertiesField = () => anyRecord({ min: 1, max: MAX_PROPERTIES }).refine(jsonSizeOk, JSON_SIZE_ERROR);
+	z.string().trim().min(1).max(MAX_MARKDOWN).describe("Notion-flavored markdown.").refine(isPlainText, PLAIN_TEXT).superRefine(writtenOnly);
+const propertiesField = () => record(z.unknown(), { min: 1, max: MAX_PROPERTIES }).refine(jsonSizeOk, JSON_SIZE_ERROR);
 
 export const WRITE_TEXT_NOTE =
 	"Text is Notion-flavored markdown without images, embeds, media, child page or database tags, synced blocks, or mentions of people.";
@@ -157,8 +157,8 @@ export const UPDATE_PAGE_PROPERTIES = defineOperation<z.output<typeof UpdateProp
 
 const Edit = z
 	.strictObject({
-		old: strippedStr({ min: 1, max: 10_000 }).describe("Text to replace, as read_page shows it."),
-		new: strippedStr({ max: MAX_MARKDOWN }).describe("Its replacement, in Notion-flavored markdown.").refine(isPlainText, PLAIN_TEXT).superRefine(writtenOnly),
+		old: z.string().trim().min(1).max(10_000).describe("Text to replace, as read_page shows it."),
+		new: z.string().trim().max(MAX_MARKDOWN).describe("Its replacement, in Notion-flavored markdown.").refine(isPlainText, PLAIN_TEXT).superRefine(writtenOnly),
 	})
 	.meta({ title: "Edit" });
 
@@ -228,7 +228,7 @@ export const APPEND_TO_PAGE = defineOperation<z.output<typeof AppendToPage>>({
 const AddComment = z
 	.strictObject({
 		page_id: objectIdField(),
-		text: strippedStr({ min: 1, max: MAX_COMMENT }).describe("Inline Notion-flavored markdown.").refine(isPlainText, PLAIN_TEXT).superRefine(writtenOnly),
+		text: z.string().trim().min(1).max(MAX_COMMENT).describe("Inline Notion-flavored markdown.").refine(isPlainText, PLAIN_TEXT).superRefine(writtenOnly),
 	})
 	.meta({ title: "AddComment" });
 

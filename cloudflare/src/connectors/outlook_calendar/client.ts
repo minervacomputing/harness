@@ -1,4 +1,4 @@
-// Microsoft Graph for the signed-in user's calendars, ported from backend/connectors/outlook_calendar/client.py.
+// Microsoft Graph for the signed-in user's calendars.
 //
 // Event reads ask for times in UTC and bodies as text. Graph answers all-day events at midnight UTC whatever
 // the requested zone (see the connector for their dates). Creating an event is judged by status: Graph
@@ -6,7 +6,6 @@
 
 import type { ProviderIo } from "../../contracts/connectors.ts";
 import type { Json } from "../../lib/json.ts";
-import { visibleJson } from "../../lib/json.ts";
 import { API_URL, Graph, IMMUTABLE_IDS, pageParam, segment } from "../microsoft/index.ts";
 import { Invalid, bool, list, model, nullable, optional, required, str } from "../microsoft/model.ts";
 
@@ -97,8 +96,7 @@ export class CalendarClient extends Graph {
 		const body = await this.http.json({
 			method: "POST",
 			path: `/me/calendars/${segment(calendarId)}/events`,
-			// json.dumps(event).encode(): ASCII only, ", " and ": " between items.
-			body: visibleJson(event),
+			body: JSON.stringify(event),
 			headers: { "Content-Type": "application/json; charset=utf-8", Prefer: EVENT_READ },
 		});
 		try {

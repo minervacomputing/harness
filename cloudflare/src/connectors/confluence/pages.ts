@@ -1,11 +1,11 @@
-// What Confluence's operations share, ported from backend/connectors/confluence/pages.py: sites, space and
+// What Confluence's operations share: sites, space and
 // page names, and where pages sit.
 
+import { z } from "zod";
 import type { Binding } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, denied } from "../../gateway/connector.ts";
 import { DIGIT_CLASS } from "../../lib/digits.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { CLOUD_ID, type Site } from "../atlassian/index.ts";
 import type { ConfluenceClient, Page, Space } from "./client.ts";
 
@@ -23,7 +23,7 @@ const PAGE_DESCRIPTION = "A page id, from search_pages or a page's link.";
 
 /** A site's cloud id, in lower case. */
 export function siteId() {
-	return strippedStr({ min: 36, max: 36 })
+	return z.string().trim().min(36).max(36)
 		.describe(SITE_ID_DESCRIPTION)
 		.refine((value) => CLOUD_ID.test(value.toLowerCase()), "must be a site id from list_spaces")
 		.transform((value) => value.toLowerCase());
@@ -31,14 +31,14 @@ export function siteId() {
 
 /** A space key (the key's own case) or id; digits alone are an id. */
 export function spaceName() {
-	return strippedStr({ min: 1, max: 256 })
+	return z.string().trim().min(1).max(256)
 		.describe('A space key such as "ENG" (keys are case-sensitive), or a space id. Digits alone are an id.')
 		.refine((value) => CANONICAL_ID.test(value) || (SPACE_KEY.test(value) && !/^[0-9]+$/.test(value)), 'must be a space key such as "ENG", or a space id');
 }
 
 /** A page id, as Confluence writes it. */
 export function pageName() {
-	return strippedStr({ min: 1, max: 18 }).describe(PAGE_DESCRIPTION).refine((value) => CANONICAL_ID.test(value), "must be a page id");
+	return z.string().trim().min(1).max(18).describe(PAGE_DESCRIPTION).refine((value) => CANONICAL_ID.test(value), "must be a page id");
 }
 
 export function unseen(error: unknown): boolean {

@@ -1,4 +1,4 @@
-// The Web, ported from backend/connectors/web/connector.py: searching it and reading pages, with access
+// The Web: searching it and reading pages, with access
 // chosen per site.
 //
 // Opening an address sends whatever is in it to that site, so the sites an agent may read are also where it
@@ -19,7 +19,6 @@ import { ACCOUNT_KIND, OperationError, defineOperation } from "../../gateway/con
 import { decimalValue, isDigitOnly, pythonIsDigit } from "../../lib/digits.ts";
 import { htmlToText } from "../../lib/markdown.ts";
 import { ValueError } from "../../lib/pyerrors.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { MAX_URL, ancestors, canonicalHost, choices, name, parseUrl, validId } from "../../lib/sites.ts";
 import { SINGLE_LINE, codePointLength, isSingleLine, pythonStrip, sliceCodePoints } from "../../lib/text.ts";
 import { Fetcher, Moved } from "./fetch.ts";
@@ -52,16 +51,16 @@ function site(binding: Binding, host: string): Resource {
 
 const Search = z
 	.strictObject({
-		query: strippedStr({ min: 1, max: 400 }).refine(isSingleLine, SINGLE_LINE).meta({ title: "Query" }),
+		query: z.string().trim().min(1).max(400).refine(isSingleLine, SINGLE_LINE).meta({ title: "Query" }),
 		limit: z.int().min(1).max(20).default(10).meta({ title: "Limit" }),
 		// Where results should come from, as a two-letter country code (CH, DE, US).
-		country: strippedStr()
+		country: z.string().trim()
 			.regex(/^[A-Z]{2}$/)
 			.nullable()
 			.default(null)
 			.meta({ title: "Country" }),
 		freshness: z.enum(["day", "week", "month", "year"]).nullable().default(null).meta({ title: "Freshness" }),
-		cursor: strippedStr({ max: 300 }).nullable().default(null).meta({ title: "Cursor" }),
+		cursor: z.string().trim().max(300).nullable().default(null).meta({ title: "Cursor" }),
 	})
 	.meta({ title: "Search" });
 
@@ -128,7 +127,7 @@ export const SEARCH = defineOperation<z.output<typeof Search>>({
 
 const ReadPage = z
 	.strictObject({
-		url: strippedStr({ min: 1, max: MAX_URL }).meta({ title: "Url" }),
+		url: z.string().trim().min(1).max(MAX_URL).meta({ title: "Url" }),
 		max_chars: z.int().min(500).max(100_000).default(20_000).meta({ title: "Max Chars" }),
 		// Where to start in the page's text, to continue a long page.
 		offset: z.int().min(0).max(10_000_000).default(0).meta({ title: "Offset" }),

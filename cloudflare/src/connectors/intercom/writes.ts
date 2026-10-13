@@ -1,4 +1,4 @@
-// Intercom's write operations: internal notes and replies to customers (backend/connectors/intercom/writes.py).
+// Intercom's write operations: internal notes and replies to customers.
 //
 // Both are sent as the connected teammate. Each write reads its conversation again just before sending, and
 // refuses one that moved to another inbox (`CONVERSATION_MOVED`). That cannot stop a reassignment that lands
@@ -10,7 +10,6 @@ import { z } from "zod";
 import type { Binding, Prepared, ProviderOutput } from "../../contracts/connectors.ts";
 import { defineOperation } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { PLAIN_TEXT, isPlainText } from "../../lib/text.ts";
 import type { Conversation } from "./client.ts";
 import * as html from "./html.ts";
@@ -20,7 +19,7 @@ export const MAX_TEXT = 10_000;
 
 /** html.py `check_written` as refinements: the first that fails is the one reported, as Python raises it. */
 const WrittenText = () =>
-	strippedStr({ min: 1, max: MAX_TEXT })
+	z.string().trim().min(1).max(MAX_TEXT)
 		.refine(isPlainText, PLAIN_TEXT)
 		.refine((text) => !html.toIntercom(text), html.NOT_INTERCOM)
 		.describe("Plain text, shown literally: no formatting, mentions or links to Intercom.");

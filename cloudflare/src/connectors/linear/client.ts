@@ -1,4 +1,4 @@
-// Linear's GraphQL API (backend/connectors/linear/client.py).
+// Linear's GraphQL API.
 //
 // GraphQL answers with 200 even when a request failed, and reports why in `errors`. Reads fail closed: a
 // response with any error is refused as a whole, so partial data is never used. A write counts as applied
@@ -20,7 +20,6 @@ import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
 import { fromUtf8Strict, utf8 } from "../../lib/bytes.ts";
 import { isDict, type Json, type JsonObject, parseJson, truthy } from "../../lib/json.ts";
-import { stripWhitespace } from "../../lib/schema.ts";
 import { pythonLoads } from "./pyjson.ts";
 import { strOf } from "./python.ts";
 import { extend } from "../../lib/arrays.ts";
@@ -58,7 +57,7 @@ const FLOAT = /^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/;
  * leads, trails or follows another ("1_000.5" is 1000.5, "_1" is refused), then Rust's parse.
  */
 function floatOf(text: string): number | null {
-	const trimmed = stripWhitespace(text);
+	const trimmed = text.trim();
 	if (trimmed.startsWith("_") || trimmed.endsWith("_") || trimmed.includes("__")) return null;
 	const bare = trimmed.replaceAll("_", "");
 	return FLOAT.test(bare) ? Number(bare) : null;

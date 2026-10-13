@@ -185,8 +185,7 @@ describe("the connector outside a run", () => {
 			await expect(connector.discover(client, "file", { query: null, cursor })).rejects.toMatchObject({ code: "INVALID_CURSOR" });
 		}
 		expect(await connector.describe(client, "file", [ROOT, "team", "drafts", "gone"])).toEqual({ [ROOT]: "My Drive", team: "Team (shared drive)", drafts: "Drafts/" });
-		// The cursor is Python's json.dumps.
-		expect(first.nextCursor).toBe('{"phase": "folders", "page": null}');
+		expect(first.nextCursor).toBe('{"phase":"folders","page":null}');
 	});
 
 	test("test_browsing_lists_top_level_folders_then_what_is_inside", async () => {
@@ -376,8 +375,7 @@ describe("runs through the executor", () => {
 		expect(upload.searchParams.get("supportsAllDrives")).toBe("true");
 		expect(google.files.new1?.mimeType).toBe(GOOGLE_DOC);
 		expect(google.contents.new1).toBe("Zażółć\nline two");
-		// The metadata part is Python's json.dumps, non-ASCII escaped.
-		expect(body).toContain('{"name": "Idea", "parents": ["drafts"], "mimeType": "application/vnd.google-apps.document"}');
+		expect(body).toContain('{"name":"Idea","parents":["drafts"],"mimeType":"application/vnd.google-apps.document"}');
 
 		expect(await run.code("google_drive_create_file", { ...args, folder_id: "private" })).toBe("POLICY_DENIED");
 		expect(await run.code("google_drive_create_file", { ...args, folder_id: "notes" })).toBe("UNSUPPORTED_FILE");
@@ -504,7 +502,7 @@ describe("runs through the executor", () => {
 		const [[, body]] = google.uploads as [[URL, string]];
 		const boundary = /^--(minerva-[0-9a-f]{32})\r\n/.exec(body)?.[1] as string;
 		expect(body).toBe(
-			`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{"name": "plain", "parents": ["docs"]}\r\n--${boundary}\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\none\r\ntwo\r\n--${boundary}--`,
+			`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{"name":"plain","parents":["docs"]}\r\n--${boundary}\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\none\r\ntwo\r\n--${boundary}--`,
 		);
 		expect(fromUtf8(new TextEncoder().encode(google.contents.new1))).toBe("one\r\ntwo");
 	});

@@ -1,4 +1,4 @@
-// A thin client for the Google Drive API v3, ported from backend/connectors/google_drive/client.py.
+// A thin client for the Google Drive API v3.
 // Responses are validated before use.
 
 import { z } from "zod";
@@ -6,7 +6,7 @@ import type { ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
 import { concat, utf8 } from "../../lib/bytes.ts";
-import { type JsonObject, visibleJson } from "../../lib/json.ts";
+import { type JsonObject } from "../../lib/json.ts";
 import { tokenHex } from "../../lib/random.ts";
 import { GoogleUser, USERINFO_URL, classify, segment } from "../google/index.ts";
 import { laxBool, model } from "../google/model.ts";
@@ -156,7 +156,7 @@ export class GoogleDriveClient implements ProviderClient {
 		if (contains(content, utf8(boundary))) throw new OperationError("PROVIDER_REJECTED", "The file content could not be encoded. Try again.");
 		const body = concat(
 			utf8(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`),
-			utf8(visibleJson(metadata)),
+			utf8(JSON.stringify(metadata)),
 			utf8(`\r\n--${boundary}\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n`),
 			content,
 			utf8(`\r\n--${boundary}--`),

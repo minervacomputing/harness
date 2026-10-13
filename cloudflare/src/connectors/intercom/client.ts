@@ -1,5 +1,4 @@
-// Intercom's REST API, at a pinned version, so response shapes do not change under Minerva
-// (backend/connectors/intercom/client.py).
+// Intercom's REST API, at a pinned version, so response shapes do not change under Minerva.
 //
 // Requests go to api.intercom.io, which Intercom routes to the workspace's region (US, EU or Australia).
 // Responses are validated before use, and read with a byte limit: a conversation carries up to 500 parts.
@@ -17,7 +16,6 @@ import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
 import { type Json, parseJson, parseModelJson } from "../../lib/json.ts";
-import { stripWhitespace } from "../../lib/schema.ts";
 
 export const API_URL = "https://api.intercom.io";
 export const VERSION = "2.16";
@@ -64,7 +62,7 @@ export function laxInt(): z.ZodType<number, unknown> {
 		if (typeof value === "number" && Number.isInteger(value)) number = value;
 		else if (typeof value === "boolean") number = value ? 1 : 0;
 		else if (typeof value === "string") {
-			const trimmed = stripWhitespace(value);
+			const trimmed = value.trim();
 			// Leading zeros are stripped after the sign.
 			const sign = trimmed[0] === "+" || trimmed[0] === "-" ? (trimmed[0] as string) : "";
 			const stripped = stripLeadingZeros(trimmed.slice(sign.length));

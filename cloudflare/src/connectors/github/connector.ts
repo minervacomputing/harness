@@ -1,4 +1,4 @@
-// GitHub, through a GitHub App acting for the user, ported from backend/connectors/github/connector.py.
+// GitHub, through a GitHub App acting for the user.
 // Resources are repositories, by GitHub's numeric id.
 //
 // Tokens are user-to-server tokens, which expire and rotate. The App has no scopes: what a token can reach
@@ -28,8 +28,7 @@ import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
 import { casefold } from "../../lib/casefold.ts";
 import { pythonIsDigit } from "../../lib/digits.ts";
-import { isDict, type Json, type JsonObject, parseJson, visibleJson } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
+import { isDict, type Json, type JsonObject, parseJson } from "../../lib/json.ts";
 import { PLAIN_TEXT, SINGLE_LINE, codePointLength, isPlainText, isSingleLine, truncate } from "../../lib/text.ts";
 import { fromUtf8 } from "../../lib/bytes.ts";
 import { type Comment, type Entry, GitHubClient, type Issue, MAX_INLINE_FILE, type Pull, type Repository } from "./client.ts";
@@ -59,15 +58,15 @@ function partition(value: string): [before: string, after: string] {
 }
 
 function repositoryName() {
-	return strippedStr({ min: 3, max: 140 })
+	return z.string().trim().min(3).max(140)
 		.regex(/^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/)
 		.refine((value) => ![".", ".."].includes(partition(value)[1]), 'must be "owner/name"')
 		.describe('The repository as "owner/name".');
 }
 
 const number = () => z.int().min(1).max(10 ** 9);
-const cursor = () => strippedStr({ max: 1000 }).nullable().default(null);
-const state = () => strippedStr().regex(/^(open|closed|all)$/).default("open");
+const cursor = () => z.string().trim().max(1000).nullable().default(null);
+const state = () => z.string().trim().regex(/^(open|closed|all)$/).default("open");
 
 const PATH_MESSAGE = 'must be a path inside the repository, like "docs/intro.md", or "" for the top';
 
@@ -116,12 +115,12 @@ const GetPullRequest = z.strictObject({
 
 const ReadFile = z.strictObject({
 	repository: repositoryName(),
-	path: strippedStr({ max: 1000 })
+	path: z.string().trim().max(1000)
 		.refine((value) => value === "" || isSingleLine(value), SINGLE_LINE)
 		.refine(pathParts, PATH_MESSAGE)
 		.describe('A path inside the repository, like "src/app.py"; "" lists the top.')
 		.default(""),
-	ref: strippedStr({ min: 1, max: 255 })
+	ref: z.string().trim().min(1).max(255)
 		.regex(/^[A-Za-z0-9._/-]+$/)
 		.refine(validRef, "is not a valid branch, tag, or commit")
 		.describe("A branch, tag, or commit. Defaults to the default branch.")
@@ -132,14 +131,14 @@ const ReadFile = z.strictObject({
 
 const CreateIssue = z.strictObject({
 	repository: repositoryName(),
-	title: strippedStr({ min: 1, max: 256 }).refine(isSingleLine, SINGLE_LINE),
-	body: strippedStr({ max: MAX_BODY }).refine(isPlainText, PLAIN_TEXT).nullable().default(null),
+	title: z.string().trim().min(1).max(256).refine(isSingleLine, SINGLE_LINE),
+	body: z.string().trim().max(MAX_BODY).refine(isPlainText, PLAIN_TEXT).nullable().default(null),
 }).meta({ title: "CreateIssue" });
 
 const AddComment = z.strictObject({
 	repository: repositoryName(),
 	number: number().describe("The issue or pull request number."),
-	body: strippedStr({ min: 1, max: MAX_BODY }).refine(isPlainText, PLAIN_TEXT),
+	body: z.string().trim().min(1).max(MAX_BODY).refine(isPlainText, PLAIN_TEXT),
 }).meta({ title: "AddComment" });
 
 // Records.
@@ -257,9 +256,9 @@ export function pageParams(cursor: string | null): { [key: string]: string } {
 	return state as { [key: string]: string };
 }
 
-/** `_cursor`: `json.dumps(params, sort_keys=True)`, or null for the last page. */
+/** The cursor of the next page: its query parameters as JSON, or null for the last page. */
 export function pageCursor(params: { [key: string]: string } | null): string | null {
-	return params !== null && Object.keys(params).length > 0 ? visibleJson(params, { sortKeys: true }) : null;
+	return params !== null && Object.keys(params).length > 0 ? JSON.stringify(params) : null;
 }
 
 /**
@@ -321,7 +320,7 @@ async function repositoriesPage(client: GitHubClient, cursor: string | null, lim
 	let following: { installation: number; page: number } | null = null;
 	if (found.length === limit) following = { installation: first, page: page + 1 };
 	else if (remaining.length > 1) following = { installation: remaining[1] as number, page: 1 };
-	return [found, following !== null ? visibleJson(following) : null];
+	return [found, following !== null ? JSON.stringify(following) : null];
 }
 
 /** `_item`: a repository as the settings page lists it. */

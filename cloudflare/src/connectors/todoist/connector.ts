@@ -1,5 +1,5 @@
-// Todoist, ported from backend/connectors/todoist/connector.py: the smallest whole connector, one flat
-// kind (projects, with wildcard grants) and OAuth with dynamic client registration (connectors 12.1).
+// Todoist: the smallest whole connector, one flat
+// kind (projects, with wildcard grants) and OAuth with dynamic client registration.
 //
 // - Tasks are read and created in projects; a task's project is its resource. `get_task` only learns the
 //   project by fetching the task, so it fetches in prepare, and a task that is missing or forbidden is
@@ -17,7 +17,6 @@
 import { z } from "zod";
 import type { Binding, Connector, DiscoveryItem, Prepared, ScopedRecord } from "../../contracts/connectors.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { pythonStrip } from "../../lib/text.ts";
 import { casefold } from "../../lib/casefold.ts";
 import { TodoistClient, type TodoistTask } from "./client.ts";
@@ -28,11 +27,10 @@ export const MAX_PROJECT_PAGES = 20;
 export const TOO_MANY_PROJECTS = "This Todoist account has more projects than Minerva can list.";
 
 /**
- * Inputs carry Pydantic's titles, each field's ("project_id" is "Project Id") and the model's at the root,
- * so the input schema the model sees is today's, and arguments that are not an object are refused with
- * the model's name, as Pydantic refuses them.
+ * Inputs carry titles, each field's ("project_id" is "Project Id") and the input's at the root, in the
+ * input schema the model sees.
  */
-const ObjectId = (title: string) => strippedStr({ min: 1, max: 160 }).regex(/^[A-Za-z0-9_-]+$/).meta({ title });
+const ObjectId = (title: string) => z.string().trim().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/).meta({ title });
 /** Todoist's filter operators, which a search must not use: replaced with spaces (connector.py `_prepare_list_tasks`). */
 const FILTER_OPERATORS = /[&|!()#@,\\]/g;
 
@@ -92,9 +90,9 @@ const LIST_PROJECTS = defineOperation<z.output<typeof ListProjects>>({
 const ListTasks = z
 	.strictObject({
 		project_id: ObjectId("Project Id"),
-		search: strippedStr({ min: 1, max: 200 }).nullable().default(null).meta({ title: "Search" }),
+		search: z.string().trim().min(1).max(200).nullable().default(null).meta({ title: "Search" }),
 		limit: z.int().min(1).max(50).default(30).meta({ title: "Limit" }),
-		cursor: strippedStr({ max: 300 }).nullable().default(null).meta({ title: "Cursor" }),
+		cursor: z.string().trim().max(300).nullable().default(null).meta({ title: "Cursor" }),
 	})
 	.meta({ title: "ListTasks" });
 
@@ -162,7 +160,7 @@ const GET_TASK = defineOperation<z.output<typeof GetTask>>({
 });
 
 const CreateTask = z
-	.strictObject({ project_id: ObjectId("Project Id"), title: strippedStr({ min: 1, max: 300 }).meta({ title: "Title" }) })
+	.strictObject({ project_id: ObjectId("Project Id"), title: z.string().trim().min(1).max(300).meta({ title: "Title" }) })
 	.meta({ title: "CreateTask" });
 
 const CREATE_TASK = defineOperation<z.output<typeof CreateTask>>({

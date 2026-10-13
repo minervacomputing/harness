@@ -1,12 +1,11 @@
-// What Notion's operations share, ported from backend/connectors/notion/pages.py: ids, where pages and
+// What Notion's operations share: ids, where pages and
 // databases sit, and how they are shown.
 
 import { z } from "zod";
 import type { Binding, ScopedRecord } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, denied } from "../../gateway/connector.ts";
-import { type JsonObject, visibleJson } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
+import { type JsonObject } from "../../lib/json.ts";
 import { hostnameOf, urlsplit } from "../../lib/urlsplit.ts";
 import { type Block, type Comment, type DataSource, type Database, type NotionClient, type Page, type Parent, pageTitle, sourceDatabaseId, textOf } from "./client.ts";
 
@@ -57,31 +56,14 @@ export function objectId(value: string): string | null {
 	return match === null ? null : canonical(match[1]);
 }
 
-/**
- * `len(json.dumps(value))`, with Python's default separators and ASCII escapes (so UTF-16 units and code
- * points count alike), including the infinity that a number too large for a double ("1e400") parses as,
- * which `json.dumps` writes as `Infinity`.
- */
-export function dumpsLength(value: unknown): number {
-	if (typeof value === "number" && !Number.isFinite(value)) return Number.isNaN(value) ? 3 : value > 0 ? 8 : 9;
-	if (Array.isArray(value)) return value.reduce((length: number, item) => length + dumpsLength(item), 2) + 2 * Math.max(0, value.length - 1);
-	if (typeof value === "object" && value !== null) {
-		const object = value as { [key: string]: unknown };
-		const keys = Object.keys(object);
-		const items = keys.reduce((length, key) => length + visibleJson(key).length + 2 + dumpsLength(object[key]), 2);
-		return items + 2 * Math.max(0, keys.length - 1);
-	}
-	return visibleJson(value).length;
-}
-
-/** `json_size`: at most MAX_FILTER characters as `json.dumps` writes it. */
+/** At most MAX_FILTER characters as JSON. */
 export function jsonSizeOk(value: unknown): boolean {
-	return dumpsLength(value) <= MAX_FILTER;
+	return JSON.stringify(value).length <= MAX_FILTER;
 }
 
 export const JSON_SIZE_ERROR = `must be at most ${MAX_FILTER} characters as JSON`;
 
-const idString = () => strippedStr({ min: 32, max: 300 }).describe("A Notion id, or a link to the page or database.");
+const idString = () => z.string().trim().min(32).max(300).describe("A Notion id, or a link to the page or database.");
 
 /** `_object_id` as the AfterValidator of a validated string. */
 function toObjectId<T>(value: string, ctx: z.core.$RefinementCtx<T>): string {

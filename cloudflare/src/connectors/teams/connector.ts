@@ -1,4 +1,4 @@
-// Microsoft Teams, ported from backend/connectors/teams/connector.py. Resources are teams and their channels;
+// Microsoft Teams. Resources are teams and their channels;
 // agents read channel messages, post and reply.
 //
 // Only work and school accounts have Teams in Graph: a personal Microsoft account is refused when connecting.
@@ -25,7 +25,6 @@ import type { Binding, Connector, DiscoveryItem, Prepared, ProviderOutput, Scope
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { truncate } from "../../lib/text.ts";
 import { casefold } from "../../lib/casefold.ts";
 import { DIGIT_CLASS, decimalValue } from "../../lib/digits.ts";
@@ -46,7 +45,7 @@ export const MAX_TEXT = 4_000;
 export const MAX_READ_TEXT = 4_000;
 export const MAX_SUBJECT = 500;
 export const MAX_TEAMS = 100;
-/** `DISCOVERY_PAGE` is mutable so that tests can lower it, as backend/tests/test_teams.py patches it. */
+/** `DISCOVERY_PAGE` is mutable so that tests can lower it. */
 export const LIMITS = { discoveryPage: 10 };
 export const DISCOVERY_SCAN = 25;
 export const CONCURRENCY = 8;
@@ -70,12 +69,12 @@ function checkChannelId(value: string): string {
 	return value;
 }
 
-const TeamId = () => after(strippedStr({ min: 36, max: 36 }).describe("A team's id."), checkTeamId);
-const ChannelId = () => after(strippedStr({ min: 1, max: 240 }).describe("A channel's id."), checkChannelId);
-const MessageId = () => strippedStr().regex(pythonPattern("^\\d{1,20}$", MESSAGE_ID));
-const Cursor = () => strippedStr({ max: 1000 });
+const TeamId = () => after(z.string().trim().min(36).max(36).describe("A team's id."), checkTeamId);
+const ChannelId = () => after(z.string().trim().min(1).max(240).describe("A channel's id."), checkChannelId);
+const MessageId = () => z.string().trim().regex(pythonPattern("^\\d{1,20}$", MESSAGE_ID));
+const Cursor = () => z.string().trim().max(1000);
 const WrittenText = () =>
-	after(strippedStr({ min: 1, max: MAX_TEXT }).describe("Plain text, shown literally: no formatting, mentions or links to Teams."), html.checkWritten);
+	after(z.string().trim().min(1).max(MAX_TEXT).describe("Plain text, shown literally: no formatting, mentions or links to Teams."), html.checkWritten);
 
 function unseen(error: unknown): boolean {
 	return error instanceof OperationError && HIDDEN.has(error.code);

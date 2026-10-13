@@ -1,5 +1,4 @@
-// Conversations, messages, runs and a conversation's files (web-api 8.4, 10.4), ported from
-// backend/conversations/api.py and backend/files/views.py over the Workspace Durable Object (the index of
+// Conversations, messages, runs and a conversation's files, over the Workspace Durable Object (the index of
 // conversations, the run registry, uploads) and each Conversation Durable Object (messages, runs, events,
 // the folder). Every route checks membership first (members.ts), then the request's schema (422), then
 // the conversation or run in the URL against the workspace's own index before its object is addressed:
@@ -10,7 +9,7 @@
 // the objects answer heads and the body is streamed here, each run's events paged up to the seq its head
 // was read with (plan: Events and the stream, Reading runs).
 //
-// Downloads (web-api 10.4; plan: Files, Downloads) are checked here as today, then redirected to a link
+// Downloads are checked here, then redirected to a link
 // signed for the download Worker (minerva-cf-files, files/links.ts), which serves the object from its own
 // origin as a sandboxed attachment. Agent files are never served from this origin.
 
@@ -27,7 +26,6 @@ import { downloadLinkFor } from "../files/links.ts";
 import { HttpError, detail, json, notFound, unauthorized, validationError } from "../http/errors.ts";
 import { UUID } from "../http/paths.ts";
 import type { App, AppEnv } from "../http/router.ts";
-import { str } from "../lib/schema.ts";
 import { canonicalUuid, readBody, readQuery, uuid } from "./input.ts";
 import { type Member, afterRevocation, member, memberRoute, param, valueOf } from "./members.ts";
 
@@ -35,7 +33,7 @@ export const ConversationIn = z.object({ agent_id: uuid() });
 
 /** `MessageIn`: at most 20,000 characters and 100 uploads. */
 export const MessageIn = z.object({
-	content: str({ max: 20_000 }),
+	content: z.string().max(20_000),
 	attachments: z.array(uuid()).max(100).default([]),
 });
 
@@ -72,12 +70,10 @@ async function ownRun(c: Context<AppEnv>, m: Member, runId: RunId): Promise<Conv
 	return conversationObject(c.env, m.workspace, located.conversationId);
 }
 
-/** Pydantic refuses a string holding a lone surrogate (`string_unicode`), which JSON can carry. */
+/** Refuses content holding a lone surrogate, which JSON can carry but is not text. */
 function wellFormed(content: string): void {
 	if (content.isWellFormed()) return;
-	throw new HttpError(
-		validationError([{ type: "string_unicode", loc: ["body", "payload", "content"], msg: "Input should be a valid string, unable to parse raw data as a unicode string" }]),
-	);
+	throw new HttpError(validationError([{ type: "invalid_format", loc: ["body", "content"], msg: "Invalid string: lone surrogate" }]));
 }
 
 /** The client's Idempotency-Key, if it sent one; 400 for one the object would not take. */
@@ -141,7 +137,7 @@ function conversationBody(stub: ConversationStub, m: Member, head: ConversationH
 }
 
 /**
- * `GET …/files/download?path=&version=` (web-api 10.4): signed out 401; anything else wrong 404 "Not Found"
+ * `GET …/files/download?path=&version=`: signed out 401; anything else wrong 404 "Not Found"
  * (not a member, an invalid version, another user's conversation, a checkpoint, no such path). A file
  * found is a 302 to a link signed for the download origin, good for five minutes.
  */

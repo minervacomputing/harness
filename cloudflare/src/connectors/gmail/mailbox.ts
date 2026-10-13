@@ -1,14 +1,14 @@
-// What Gmail's operations share, ported from backend/connectors/gmail/mailbox.py: consent, ids, labels and
+// What Gmail's operations share: consent, ids, labels and
 // where messages sit.
 //
 // A message is not a resource users choose. It is authorized as `message:<id>` inside every grantable label
 // it carries, and inside those labels' parents, so a grant on any of them covers it and a deny on any of them
 // hides it (see connector.ts).
 
+import { z } from "zod";
 import type { Binding } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, denied } from "../../gateway/connector.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { casefold } from "../../lib/casefold.ts";
 import { type Format, type GmailClient, ID, type Label, type Message } from "./client.ts";
 
@@ -66,7 +66,7 @@ function unsupportedMessage(): OperationError {
 
 /** A message or thread id from list_messages. */
 export function messageIdInput() {
-	return strippedStr({ min: 1, max: 64 }).refine((value) => ID.test(value), { message: "must be an id from list_messages" });
+	return z.string().trim().min(1).max(64).refine((value) => ID.test(value), { message: "must be an id from list_messages" });
 }
 
 export function sameResource(a: Resource, b: Resource): boolean {

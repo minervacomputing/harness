@@ -1,4 +1,4 @@
-// Microsoft Graph, for the signed-in user's mailbox, ported from backend/connectors/outlook/client.py. What
+// Microsoft Graph, for the signed-in user's mailbox. What
 // Microsoft connectors share is in connectors/microsoft.
 //
 // Every request asks for immutable ids (`Prefer: IdType="ImmutableId"`), so a message keeps its id when it
@@ -7,7 +7,7 @@
 // means accepted, not delivered: delivery is asynchronous, and a bounce arrives later as mail.
 
 import type { ProviderIo } from "../../contracts/connectors.ts";
-import { type Json, visibleJson } from "../../lib/json.ts";
+import { type Json } from "../../lib/json.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { API_URL, Graph, IMMUTABLE_IDS, User, pageParam, segment } from "../microsoft/index.ts";
 import { bool, int, list, model, nullable, optional, required, str } from "../microsoft/model.ts";
@@ -147,8 +147,7 @@ export class GraphClient extends Graph {
 			method: "POST",
 			path,
 			mutating: true,
-			// json.dumps: ASCII only, ", " and ": " between items.
-			body: pythonJson(payload),
+			body: JSON.stringify(payload),
 			headers: { "Content-Type": "application/json; charset=utf-8" },
 		});
 	}
@@ -160,9 +159,4 @@ export class GraphClient extends Graph {
 	async reply(messageId: string, message: { [key: string]: Json }): Promise<void> {
 		await this.#post(`/me/messages/${segment(messageId)}/reply`, { message });
 	}
-}
-
-/** `json.dumps(payload).encode()`, as the Microsoft clients send their writes. */
-export function pythonJson(payload: Json): string {
-	return visibleJson(payload);
 }

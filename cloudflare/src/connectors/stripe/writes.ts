@@ -1,5 +1,4 @@
-// Stripe's write operations: refunding a payment and crediting a customer's balance, ported from
-// backend/connectors/stripe/writes.py.
+// Stripe's write operations: refunding a payment and crediting a customer's balance.
 //
 // Each needs its action on the customer (and Read on it) and on the amount. The amount is authorized in the
 // currency the agent names, before Minerva has said anything about the payment or customer; the currency is
@@ -10,7 +9,6 @@ import { z } from "zod";
 import type { Prepared, ProviderOutput } from "../../contracts/connectors.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { SINGLE_LINE, isSingleLine } from "../../lib/text.ts";
 import type { Charge, Customer, StripeClient } from "./client.ts";
 import * as money from "./money.ts";
@@ -116,7 +114,7 @@ const CreditCustomer = z
 		amount: amountText("How much to credit, in the currency's usual unit, as a decimal string: 12.50."),
 		currency: currencyCode("The customer's currency, such as usd. A customer has one currency once billed."),
 		customer: customerId(),
-		description: strippedStr({ min: 1, max: 350 }).refine(isSingleLine, SINGLE_LINE).describe("Why the credit is given; the customer may see it."),
+		description: z.string().trim().min(1).max(350).refine(isSingleLine, SINGLE_LINE).describe("Why the credit is given; the customer may see it."),
 	})
 	.superRefine(exact)
 	.meta({ title: "CreditCustomer" });

@@ -1,5 +1,4 @@
-// What Stripe's operations share: the kinds, ids, and where an object sits, ported from
-// backend/connectors/stripe/scope.py.
+// What Stripe's operations share: the kinds, ids, and where an object sits.
 //
 // Customers are one hierarchical kind. A customer's charges, invoices and subscriptions are resources of the
 // same kind inside it, keyed by their own id, so a grant on a customer covers what is billed to it. An object
@@ -10,7 +9,6 @@ import { z } from "zod";
 import type { Binding } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError } from "../../gateway/connector.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import { CHARGE_ID, CUSTOMER_ID, OBJECT_ID } from "./client.ts";
 import * as money from "./money.ts";
 
@@ -21,21 +19,21 @@ export const CUSTOMER_ID_NOTE = "A customer id from list_customers, such as cus_
 
 /** scope.py `CustomerId`. */
 export function customerId(): z.ZodString {
-	return strippedStr({ min: 5, max: 110 })
+	return z.string().trim().min(5).max(110)
 		.refine((value) => CUSTOMER_ID.test(value), "must be a customer id such as cus_123")
 		.describe(CUSTOMER_ID_NOTE);
 }
 
 /** scope.py `PaymentId`. */
 export function paymentId(): z.ZodString {
-	return strippedStr({ min: 4, max: 110 })
+	return z.string().trim().min(4).max(110)
 		.refine((value) => CHARGE_ID.test(value), "must be a payment id from list_payments, such as ch_123")
 		.describe("A payment id from list_payments, such as ch_123.");
 }
 
 /** scope.py `Currency` (with the description each operation gives it): lowercased, as money.py's `currency` does. */
 export function currencyCode(description: string) {
-	return strippedStr({ min: 3, max: 3 })
+	return z.string().trim().min(3).max(3)
 		.transform((value, ctx) => {
 			try {
 				return money.currency(value);
@@ -50,12 +48,12 @@ export function currencyCode(description: string) {
 
 /** scope.py `Amount` (with the description each operation gives it). */
 export function amountText(description: string): z.ZodString {
-	return strippedStr({ min: 1, max: 16 }).describe(description);
+	return z.string().trim().min(1).max(16).describe(description);
 }
 
 /** The run's own page token; the executor swaps it for Stripe's before the call is prepared. */
 export function pageCursor() {
-	return strippedStr({ max: 200 }).nullable().default(null);
+	return z.string().trim().max(200).nullable().default(null);
 }
 
 export function customer(binding: Binding, id: string): Resource {

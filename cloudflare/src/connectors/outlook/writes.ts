@@ -1,4 +1,4 @@
-// Outlook's write operations, ported from backend/connectors/outlook/writes.py: sending mail and replying to
+// Outlook's write operations: sending mail and replying to
 // it.
 
 import { z } from "zod";
@@ -6,7 +6,6 @@ import type { Binding, Prepared, ProviderOutput } from "../../contracts/connecto
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
-import { strippedStr } from "../../lib/schema.ts";
 import type { User } from "../microsoft/index.ts";
 import { after, modelValidator, plainTextOf, singleLineOf, valueError } from "../microsoft/inputs.ts";
 import * as addresses from "../../lib/addresses.ts";
@@ -23,8 +22,8 @@ function checkedAddress(raw: string): string {
 	return checked.address;
 }
 
-const Address = () => after(strippedStr({ min: 3, max: addresses.MAX_ADDRESS }), checkedAddress);
-const Body = () => plainTextOf(strippedStr({ min: 1, max: MAX_BODY }).describe("Plain text; sent as it is, not as HTML."));
+const Address = () => after(z.string().trim().min(3).max(addresses.MAX_ADDRESS), checkedAddress);
+const Body = () => plainTextOf(z.string().trim().min(1).max(MAX_BODY).describe("Plain text; sent as it is, not as HTML."));
 
 export const WRITE_NOTE =
 	"Mail is sent as plain text from the connected account and saved to Sent Items. Outlook accepts it " +
@@ -51,7 +50,7 @@ export const SendMessage = z
 		to: z.array(Address()).min(1).max(MAX_RECIPIENTS),
 		cc: z.array(Address()).max(MAX_RECIPIENTS).default([]),
 		bcc: z.array(Address()).max(MAX_RECIPIENTS).default([]),
-		subject: singleLineOf(strippedStr({ min: 1, max: 255 })),
+		subject: singleLineOf(z.string().trim().min(1).max(255)),
 		body: Body(),
 	})
 	.check(

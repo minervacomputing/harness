@@ -9,13 +9,12 @@ import { settings } from "../config.ts";
 import { HttpError, detail, json, unauthorized } from "../http/errors.ts";
 import { UUID } from "../http/paths.ts";
 import type { App, AppEnv } from "../http/router.ts";
-import { str } from "../lib/schema.ts";
 import { type CurrentSession, currentSession, withSessionCookies } from "./auth.ts";
 import { ADMINS_ONLY, ALREADY_SET_UP, INVALID_KEY, LAST_ADMIN, NO_SUCH_USER, claimSetup, isSetUp, setupKeyValid, signupOverride } from "./instance.ts";
 
-const SetupIn = z.object({ key: str({ min: 1, max: 500 }) });
+const SetupIn = z.object({ key: z.string().min(1).max(500) });
 const SettingsIn = z.object({ signup_open: z.boolean().nullable() });
-const AdminIn = z.object({ email: str({ min: 1, max: 254 }) });
+const AdminIn = z.object({ email: z.string().min(1).max(254) });
 
 interface AdminOut {
 	id: string;

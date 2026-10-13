@@ -88,9 +88,9 @@ describe("registration", () => {
 });
 
 describe("what the model sees", () => {
-	test("a result is its JSON as Python's json.dumps writes it; an error is its message", () => {
+	test("a result is its JSON; an error is its message", () => {
 		expect(render(ALLOWED)).toEqual({
-			content: [{ type: "text", text: '{"items": [{"id": "1", "content": "Caf\\u00e9 \\u2615"}], "count": 1, "next_cursor": "tok"}' }],
+			content: [{ type: "text", text: '{"items":[{"id":"1","content":"Café ☕"}],"count":1,"next_cursor":"tok"}' }],
 			isError: false,
 		});
 		const denied: ToolCallOutcome = { ok: false, error: { code: "POLICY_DENIED", message: "This resource or action is not available under the current permissions." }, event: null };

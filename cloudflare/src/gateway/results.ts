@@ -1,7 +1,6 @@
-// What a tool call shows: the result as the model sees it, and the `tool_call` event the chat folds into
-// cards (backend/gateway/mcp.py `call_tool`, `_label`, `_summary`, `_write_id`; runs 5.2, 5.3, 6.2;
-// frontend 4.4), and how a result becomes the model's content (worker/src/main.ts `gatewayTool`; harness
-// 6). The text the model reads is today's: the result as Python's `json.dumps`, or the error's message.
+// What a tool call shows: the result as the model sees it, the `tool_call` event the chat folds into
+// cards, and how a result becomes the model's content. The text the model reads is the result's JSON, or
+// the error's message.
 
 import type { RunId } from "../contracts/common.ts";
 import type { CoreErrorCode, ErrorCode } from "../contracts/connectors.ts";
@@ -9,7 +8,7 @@ import type { ToolCallAllowed, ToolCallRefused } from "../contracts/events.ts";
 import type { DeniedCode, ToolCallOutcome, ToolResult } from "../contracts/executor.ts";
 import type { ToolRef } from "../contracts/runs.ts";
 import { saltedHmacHex } from "../lib/hash.ts";
-import { type Json, type JsonObject, visibleJson } from "../lib/json.ts";
+import { isDict, type Json, type JsonObject } from "../lib/json.ts";
 import { sliceCodePoints } from "../lib/text.ts";
 import { OperationError } from "./connector.ts";
 import type { Registry } from "./registry.ts";
@@ -46,7 +45,7 @@ export function appliedWithoutResult(): ToolResult {
 	return { items: [], count: 0, outcome: "applied_without_result" };
 }
 
-/** The codes whose refusal the chat shows as "Not allowed"; every other failure is `error` (mcp.py DENIAL_CODES). */
+/** The codes whose refusal the chat shows as "Not allowed"; every other failure is `error`. */
 export const DENIAL_CODES: ReadonlySet<string> = new Set<DeniedCode>([
 	"POLICY_DENIED",
 	"LIMIT_REACHED",
@@ -65,19 +64,16 @@ export function publicError(error: unknown): { code: ErrorCode | Extract<CoreErr
 	return { code: "FAILED", message: FAILED_MESSAGE };
 }
 
-/** The arguments as recorded: themselves when their JSON is at most 2000 characters, else its first 2000. */
+/**
+ * The arguments as recorded: themselves when their JSON is at most 2000 UTF-16 units, else its first 2000,
+ * one fewer where the cut would split a surrogate pair.
+ */
 export function argumentsSummary(args: Json | undefined): { [key: string]: Json } | { truncated: string } {
-	const value = args === undefined || args === null ? {} : args;
-	// json.dumps(arguments, default=str): ASCII only, so its length is the same in code points. Arguments
-	// come from parsed JSON; anything else is recorded by its text, as `default=str` would.
-	let text: string;
-	try {
-		text = visibleJson(value);
-	} catch {
-		return { truncated: String(value).slice(0, 2000) };
-	}
-	if (text.length <= 2000 && typeof value === "object" && !Array.isArray(value)) return value;
-	return { truncated: text.slice(0, 2000) };
+	const value = args ?? {};
+	const text = JSON.stringify(value);
+	if (text.length <= 2000 && isDict(value)) return value;
+	const cut = text.slice(0, 2000);
+	return { truncated: cut.isWellFormed() ? cut : cut.slice(0, -1) };
 }
 
 /**
@@ -116,16 +112,16 @@ export function refusedEvent(shown: ShownCall, code: string, message: string): T
 	return { ...shown, decision: DENIAL_CODES.has(code) ? "denied" : "error", code, message };
 }
 
-/** The result a call returns, in MCP's shape (mcp.py `CallToolResult`). */
+/** The result a call returns, in MCP's shape (`CallToolResult`). */
 export interface CallToolResult {
 	content: { type: string; text?: string }[];
 	structuredContent?: ToolResult;
 	isError: boolean;
 }
 
-/** What the loop hands the model for an outcome: the result's JSON as Python writes it plus the result, or the message. */
+/** What the loop hands the model for an outcome: the result's JSON plus the result, or the message. */
 export function callToolResult(outcome: ToolCallOutcome): CallToolResult {
-	if (outcome.ok) return { content: [{ type: "text", text: visibleJson(outcome.result) }], structuredContent: outcome.result, isError: false };
+	if (outcome.ok) return { content: [{ type: "text", text: JSON.stringify(outcome.result) }], structuredContent: outcome.result, isError: false };
 	return { content: [{ type: "text", text: outcome.error.message }], isError: true };
 }
 
