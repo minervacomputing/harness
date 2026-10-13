@@ -1,15 +1,14 @@
 import { useEffect, useEffectEvent, useState } from 'react'
-import type { EventOut, RunOut } from '@/api/types.gen'
+import { RUN_EVENT_TYPES, type Run, type RunEvent, type RunStatus, runEventsPath } from '@minerva/contract'
 
-export const ACTIVE_STATUSES = new Set<RunOut['status']>(['queued', 'provisioning', 'running'])
-const EVENT_TYPES: EventOut['type'][] = ['status', 'phase', 'text_delta', 'reasoning_delta', 'tool_call', 'local_tool', 'message']
+export const ACTIVE_STATUSES = new Set<RunStatus>(['queued', 'provisioning', 'running'])
 
 /**
  * Follows one run's events over server-sent events, starting after what the page already has.
  * The browser reconnects on its own and resumes from the last event id, so nothing is lost.
  */
-export function useRunEvents(workspaceId: string, run: RunOut | undefined, onSettled: () => void): EventOut[] {
-  const [live, setLive] = useState<{ runId: string; events: EventOut[] }>({ runId: '', events: [] })
+export function useRunEvents(workspaceId: string, run: Run | undefined, onSettled: () => void): RunEvent[] {
+  const [live, setLive] = useState<{ runId: string; events: RunEvent[] }>({ runId: '', events: [] })
   const settled = useEffectEvent(onSettled)
 
   const runId = run?.id
@@ -20,19 +19,19 @@ export function useRunEvents(workspaceId: string, run: RunOut | undefined, onSet
 
   useEffect(() => {
     if (!runId || !active) return
-    const source = new EventSource(`/api/workspaces/${workspaceId}/runs/${runId}/stream?after=${startAfter()}`)
-    const onEvent = (type: EventOut['type']) => (message: MessageEvent<string>) => {
-      const event: EventOut = { seq: Number(message.lastEventId), type, data: JSON.parse(message.data) }
+    const source = new EventSource(runEventsPath(workspaceId, runId, startAfter()))
+    const onEvent = (type: RunEvent['type']) => (message: MessageEvent<string>) => {
+      const event: RunEvent = { seq: Number(message.lastEventId), type, data: JSON.parse(message.data) }
       setLive(current => {
         const events = current.runId === runId ? current.events : []
         if (events.some(e => e.seq === event.seq)) return current
         return { runId, events: [...events, event] }
       })
-      if (type === 'message' || (type === 'status' && !ACTIVE_STATUSES.has(event.data.status as RunOut['status']))) {
+      if (type === 'message' || (type === 'status' && !ACTIVE_STATUSES.has(event.data.status as RunStatus))) {
         settled()
       }
     }
-    const listeners = EVENT_TYPES.map(type => [type, onEvent(type)] as const)
+    const listeners = RUN_EVENT_TYPES.map(type => [type, onEvent(type)] as const)
     for (const [type, listener] of listeners) source.addEventListener(type, listener)
     source.addEventListener('end', () => {
       source.close()

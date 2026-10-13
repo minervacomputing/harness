@@ -10,8 +10,7 @@ import { type About, identity } from "../lib/about.ts";
 import { EncryptionKeys } from "../lib/encryption.ts";
 import { appliedMigrations } from "../lib/sqlite.ts";
 import { connectorRegistry } from "../connectors/index.ts";
-import type { Agent, NewAgent } from "@minerva/contract";
-import type { AccessOut, ConnectionOut, ConversationOut, UploadOut } from "../shared/api.ts";
+import type { Access, Agent, Connection, ConversationSummary, NewAgent, Upload } from "@minerva/contract";
 import type { AgentId, Caller, ConnectionId, ConversationId, Outcome, RunId, RunStatus, Sha256, UploadId, UserId } from "../shared/rpc.ts";
 import {
 	type BeginRunInput,
@@ -147,15 +146,15 @@ export class Workspace extends DurableObject<Env> implements WorkspaceApi {
 		return this.#call((core) => core.deleteAgent(caller, agentId));
 	}
 
-	listConnections(caller: Caller): Promise<ConnectionOut[]> {
+	listConnections(caller: Caller): Promise<Connection[]> {
 		return this.#call((core) => core.listConnections(caller));
 	}
 
-	enableBuiltin(caller: Caller, provider: string): Promise<Outcome<ConnectionOut>> {
+	enableBuiltin(caller: Caller, provider: string): Promise<Outcome<Connection>> {
 		return this.#call((core) => core.enableBuiltin(caller, provider));
 	}
 
-	saveConnection(caller: Caller, input: SaveConnectionInput): Promise<Outcome<ConnectionOut>> {
+	saveConnection(caller: Caller, input: SaveConnectionInput): Promise<Outcome<Connection>> {
 		return this.#call((core) => core.saveConnection(caller, input));
 	}
 
@@ -163,7 +162,7 @@ export class Workspace extends DurableObject<Env> implements WorkspaceApi {
 		return this.#call((core) => core.deleteConnection(caller, connectionId));
 	}
 
-	getAccess(caller: Caller, connectionId: ConnectionId): Promise<Outcome<AccessOut>> {
+	getAccess(caller: Caller, connectionId: ConnectionId): Promise<Outcome<Access>> {
 		return this.#call((core) => core.getAccess(caller, connectionId));
 	}
 
@@ -172,7 +171,7 @@ export class Workspace extends DurableObject<Env> implements WorkspaceApi {
 		connectionId: ConnectionId,
 		changes: GrantChange[],
 		names: { [key: string]: string },
-	): Promise<Outcome<{ access: AccessOut; revocation: Revocation }>> {
+	): Promise<Outcome<{ access: Access; revocation: Revocation }>> {
 		return this.#call((core) => core.applyGrantChanges(caller, connectionId, changes, names));
 	}
 
@@ -216,11 +215,11 @@ export class Workspace extends DurableObject<Env> implements WorkspaceApi {
 		return this.#call((core) => core.emergencyStop(reason));
 	}
 
-	createConversation(caller: Caller, agentId: AgentId): Promise<Outcome<ConversationOut>> {
+	createConversation(caller: Caller, agentId: AgentId): Promise<Outcome<ConversationSummary>> {
 		return this.#call((core) => core.createConversation(caller, agentId));
 	}
 
-	listConversations(caller: Caller): Promise<ConversationOut[]> {
+	listConversations(caller: Caller): Promise<ConversationSummary[]> {
 		return this.#call((core) => core.listConversations(caller));
 	}
 
@@ -240,7 +239,7 @@ export class Workspace extends DurableObject<Env> implements WorkspaceApi {
 		return this.#call((core) => core.reserveUpload(caller, upload));
 	}
 
-	completeUpload(caller: Caller, id: UploadId, stored: { sha256: Sha256; size: number; mediaType: string }): Promise<Outcome<UploadOut>> {
+	completeUpload(caller: Caller, id: UploadId, stored: { sha256: Sha256; size: number; mediaType: string }): Promise<Outcome<Upload>> {
 		return this.#call((core) => core.completeUpload(caller, id, stored));
 	}
 

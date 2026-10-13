@@ -5,8 +5,7 @@ import { type Connector, type Operation, actionOf, consentGiven, kindOf } from "
 import type { GrantRow } from "../gateway/grants.ts";
 import { ANY } from "../gateway/policy.ts";
 import { isoTime } from "../lib/dates.ts";
-import type { Agent } from "@minerva/contract";
-import type { AccessOut, ActionOut, AllowedOut, ConnectionOut, ConversationOut, GrantOut, KindOut } from "../shared/api.ts";
+import type { Access, Agent, Allowed, Connection, ConnectorAction, ConversationSummary, Grant, ResourceKind } from "@minerva/contract";
 import type { Caller, UserId } from "../shared/rpc.ts";
 
 /** Names of resources shown per allowed action in a connection's summary. */
@@ -16,15 +15,15 @@ export function isAdmin(caller: Caller): boolean {
 	return caller.role === "owner" || caller.role === "admin";
 }
 
-export function authOf(connector: Connector): ConnectionOut["auth"] {
+export function authOf(connector: Connector): Connection["auth"] {
 	return connector.auth.type;
 }
 
-export function actionsOut(connector: Connector): ActionOut[] {
+export function actionsOut(connector: Connector): ConnectorAction[] {
 	return connector.actions.map((action) => ({ id: action.id, label: action.label, requires: action.requires ?? null }));
 }
 
-export function kindsOut(connector: Connector): KindOut[] {
+export function kindsOut(connector: Connector): ResourceKind[] {
 	const browsable = new Set(connector.browsable ?? []);
 	return connector.kinds.map((kind) => ({
 		id: kind.id,
@@ -66,7 +65,7 @@ function lacking(connector: Connector, scopes: readonly string[], actions: Reado
 }
 
 /**
- * `consent_needed`: allowed actions some operation cannot perform yet because the provider did not grant
+ * `consentNeeded`: allowed actions some operation cannot perform yet because the provider did not grant
  * its scopes, in the connector's order. Unknown scopes need nothing: the provider is then the one to refuse.
  */
 export function consentNeeded(connector: Connector, scopes: readonly string[] | null, actions: ReadonlySet<string>): string[] {
@@ -76,7 +75,7 @@ export function consentNeeded(connector: Connector, scopes: readonly string[] | 
 }
 
 /**
- * `requested_scopes`: the connector's base scopes, then what the operations behind `actions` need (the first
+ * The scopes a reconnect asks for: the connector's base scopes, then what the operations behind `actions` need (the first
  * option of each), sorted. Stored scopes are not trusted to be current: the user may have revoked access at
  * the provider since. For the reconnect flow.
  */
@@ -90,8 +89,8 @@ export function requestedScopes(connector: Connector, actions: ReadonlySet<strin
 }
 
 /** The user's grants by action, in the connector's order of kinds and actions. `grants` are in (kind, id) order. */
-export function allowedOut(connector: Connector, grants: readonly GrantRow[]): AllowedOut[] {
-	const allowed: AllowedOut[] = [];
+export function allowedOut(connector: Connector, grants: readonly GrantRow[]): Allowed[] {
+	const allowed: Allowed[] = [];
 	for (const kind of connector.kinds) {
 		for (const actionId of kind.actions) {
 			const on = grants.filter((grant) => grant.kind === kind.id && grant.actions.includes(actionId));
@@ -99,9 +98,9 @@ export function allowedOut(connector: Connector, grants: readonly GrantRow[]): A
 			const some = on.filter((grant) => grant.resourceId !== ANY);
 			allowed.push({
 				kind: kind.id,
-				kind_label: kind.label,
+				kindLabel: kind.label,
 				action: actionId,
-				action_label: actionOf(connector, actionId)?.label ?? actionId,
+				actionLabel: actionOf(connector, actionId)?.label ?? actionId,
 				all: some.length < on.length,
 				count: some.length,
 				names: some.slice(0, SUMMARY_NAMES).map((grant) => grant.resourceName || grant.resourceId),
@@ -117,34 +116,34 @@ export interface ConnectionView {
 	provider: string;
 	ownerId: UserId | null;
 	label: string;
-	status: ConnectionOut["status"];
+	status: Connection["status"];
 	createdAt: number;
 	scopes: string[] | null;
 }
 
 /** A connection as the API shows it. `grants` are the caller's allow grants on the connection, in (kind, id) order. */
-export function connectionOut(connector: Connector, connection: ConnectionView, grants: readonly GrantRow[]): ConnectionOut {
+export function connectionOut(connector: Connector, connection: ConnectionView, grants: readonly GrantRow[]): Connection {
 	const actions = new Set(grants.flatMap((grant) => grant.actions));
 	const manage = connector.manageLink ? connector.manageLink() : null;
 	return {
 		id: connection.id,
 		provider: connection.provider,
-		provider_name: connector.name,
+		providerName: connector.name,
 		auth: authOf(connector),
 		label: connection.label,
 		status: connection.status,
 		personal: connection.ownerId !== null,
-		created_at: isoTime(connection.createdAt),
-		consent_needed: consentNeeded(connector, connection.scopes, actions),
-		manage_label: manage ? manage[0] : null,
-		manage_url: manage ? manage[1] : null,
+		createdAt: isoTime(connection.createdAt),
+		consentNeeded: consentNeeded(connector, connection.scopes, actions),
+		manageLabel: manage ? manage[0] : null,
+		manageUrl: manage ? manage[1] : null,
 		allowed: allowedOut(connector, grants),
 	};
 }
 
-/** `get_access`: only grants on kinds the connector still declares. */
-export function accessOut(connector: Connector, connection: ConnectionView, grants: readonly GrantRow[]): AccessOut {
-	const listed: GrantOut[] = grants
+/** The access editor's view: only grants on kinds the connector still declares. */
+export function accessOut(connector: Connector, connection: ConnectionView, grants: readonly GrantRow[]): Access {
+	const listed: Grant[] = grants
 		.filter((grant) => kindOf(connector, grant.kind) !== null)
 		.map((grant) => ({ kind: grant.kind, id: grant.resourceId, name: grant.resourceName || null, actions: [...grant.actions] }));
 	return { connection: connectionOut(connector, connection, grants), kinds: kindsOut(connector), actions: actionsOut(connector), grants: listed };
@@ -171,6 +170,6 @@ export function agentOut(caller: Caller, agent: AgentView): Agent {
 	};
 }
 
-export function conversationOut(row: { id: string; agent_id: string; title: string; updated_at: number }): ConversationOut {
-	return { id: row.id, agent_id: row.agent_id, title: row.title, updated_at: isoTime(row.updated_at) };
+export function conversationOut(row: { id: string; agent_id: string; title: string; updated_at: number }): ConversationSummary {
+	return { id: row.id, agentId: row.agent_id, title: row.title, updatedAt: isoTime(row.updated_at) };
 }

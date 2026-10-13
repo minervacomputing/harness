@@ -2,8 +2,8 @@
 // move to the contract (contract/, api/orpc.ts):
 //
 // - the contract's, `{"defined": true, "code": …, "status": …, "message": …}` (`errorAnswer`): every route of
-//   the contract, and what the router answers before or instead of a route (CSRF, the declared body cap, no
-//   such route, a crash);
+//   the contract, the routes beside it whose paths it names (the upload, downloads, the run stream), and what
+//   the router answers before or instead of a route (CSRF, the declared body cap, no such route, a crash);
 // - `{"code": …, "detail": …}` (`refused`): the Hono routes not yet moved.
 //
 // Better Auth answers /api/auth in its own format. Every JSON response is `no-store`.
@@ -21,8 +21,8 @@ export function json(status: number, body: unknown, headers?: HeadersInit): Resp
 }
 
 /** A refusal in the contract's error shape (above), which its clients read as a declared error. */
-export function errorAnswer(code: RefusalCode, message: string): Response {
-	return json(REFUSALS[code], { defined: true, code, status: REFUSALS[code], message });
+export function errorAnswer(code: RefusalCode, message: string, headers?: HeadersInit): Response {
+	return json(REFUSALS[code], { defined: true, code, status: REFUSALS[code], message }, headers);
 }
 
 /** A refusal with this code and text, in the shape of the routes not yet moved to the contract. */

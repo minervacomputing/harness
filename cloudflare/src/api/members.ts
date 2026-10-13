@@ -1,19 +1,17 @@
-// Membership of the workspace in the URL, for every `/api/workspaces/{ws}/…` JSON route, in
-// this order: CSRF on unsafe methods (the router, before any route), then a session
-// (401), then a membership row in D1 for (workspace, user) (401 as well, never 403 or 404, so a workspace
-// that is not yours looks like one that does not exist), and only then the Workspace Durable Object. Its
-// name comes from D1's row, never from the client (addressing.ts), and it is given the verified user and
-// role as its `Caller`; it never takes a user from the request. Schema validation (422) comes after this,
-// in the route.
+// Membership of the workspace in the URL, for every `/api/workspaces/{ws}/…` route (the contract's mount in
+// api/orpc.ts, and the routes beside it), in this order: CSRF on unsafe methods (the router, before any route),
+// then a session (401), then a membership row in D1 for (workspace, user) (401 as well, never 403 or 404, so a
+// workspace that is not yours looks like one that does not exist), and only then the Workspace Durable Object.
+// Its name comes from D1's row, never from the client (addressing.ts), and it is given the verified user and
+// role as its `Caller`; it never takes a user from the request. Schema validation (422) comes after this.
 
 import type { Context } from "hono";
-import { type CurrentSession, currentSession, withSessionCookies } from "../accounts/auth.ts";
+import type { CurrentSession } from "../accounts/auth.ts";
 import { type WorkspaceRow, ensureInitialized, workspaceOwner } from "../accounts/provision.ts";
 import { workspaceObject } from "../addressing.ts";
-import { HttpError, refused, unauthorized } from "../http/errors.ts";
+import { HttpError, unauthorized } from "../http/errors.ts";
 import type { AppEnv } from "../http/router.ts";
-import type { Caller, Outcome, Role, WorkspaceRef } from "../shared/rpc.ts";
-import type { Revocation } from "../workspace/core.ts";
+import type { Caller, Role, WorkspaceRef } from "../shared/rpc.ts";
 import type { Workspace } from "../workspace/workspace.ts";
 
 export interface Member {
@@ -23,26 +21,6 @@ export interface Member {
 	object: DurableObjectStub<Workspace>;
 	/** Better Auth's session id (`oauth_flows` are kept per session). */
 	sessionId: string;
-}
-
-export type MemberHandler = (c: Context<AppEnv>, member: Member) => Promise<Response>;
-
-/**
- * A route of the workspace named by its `:workspace` parameter. Better Auth's cookies from reading the
- * session (a refresh, or clearing a stale cookie) go on whatever the route answers, refusals included.
- */
-export function memberRoute(handler: MemberHandler): (c: Context<AppEnv>) => Promise<Response> {
-	return async (c) => {
-		const session = await currentSession(c.env, c.req.raw);
-		let response: Response;
-		try {
-			response = await handler(c, await member(c.env, session, param(c, "workspace")));
-		} catch (error) {
-			if (!(error instanceof HttpError)) throw error;
-			response = error.response;
-		}
-		return withSessionCookies(response, session);
-	};
 }
 
 /** A parameter of the route's path, which its pattern guarantees. */
@@ -73,19 +51,10 @@ export async function member(env: Env, session: CurrentSession, workspaceId: str
 	return { caller: { userId: user.id, role: row.role }, workspace, object: workspaceObject(env, workspace), sessionId: session.sessionId };
 }
 
-/** The value of an outcome, or its refusal thrown as the answer. */
-export function valueOf<T>(outcome: Outcome<T>): T {
-	if (!outcome.ok) throw new HttpError(refused(outcome.refusal.code, outcome.refusal.detail));
-	return outcome.value;
-}
-
 /**
  * A change that stopped runs is answered only once every stop is acknowledged (plan: Strict revocation).
  * When that takes more than 10 seconds the change stays saved, the runs stop shortly after, and the
- * request answers 503 `RUNS_STILL_STOPPING` with this.
+ * request answers 503 `RUNS_STILL_STOPPING` with this (procedures.ts `checkStopped`).
  */
 export const STILL_STOPPING = "Your change was saved, but some running chats have not stopped yet. They will stop shortly.";
 
-export function afterRevocation(revocation: Revocation, response: Response): Response {
-	return revocation === "pending" ? refused("RUNS_STILL_STOPPING", STILL_STOPPING) : response;
-}

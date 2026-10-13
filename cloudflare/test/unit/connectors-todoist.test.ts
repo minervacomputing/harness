@@ -551,8 +551,8 @@ describe("the settings page", () => {
 			effect: "allow",
 		});
 		expect(allowedOut(todoistConnector(), [row("*", "", ["read"]), row("work", "Work", ["create", "read"])])).toEqual([
-			{ kind: "project", kind_label: "Project", action: "read", action_label: "Read tasks", all: true, count: 1, names: ["Work"] },
-			{ kind: "project", kind_label: "Project", action: "create", action_label: "Create tasks", all: false, count: 1, names: ["Work"] },
+			{ kind: "project", kindLabel: "Project", action: "read", actionLabel: "Read tasks", all: true, count: 1, names: ["Work"] },
+			{ kind: "project", kindLabel: "Project", action: "create", actionLabel: "Create tasks", all: false, count: 1, names: ["Work"] },
 		]);
 	});
 });

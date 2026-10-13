@@ -2,31 +2,23 @@
 import { type QueryClient, useInfiniteQuery, useIsFetching, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronRightIcon, FolderIcon, RefreshCwIcon, SearchIcon, XIcon } from 'lucide-react'
 import { Fragment, type ReactNode, useEffect, useState } from 'react'
-import {
-  changeAccessMutation,
-  getAccessOptions,
-  getAccessQueryKey,
-  listAccessResourcesInfiniteOptions,
-  listConnectionsQueryKey,
-} from '@/api/@tanstack/react-query.gen'
-import type { ActionOut, ChangeIn, GrantOut, KindOut } from '@/api/types.gen'
+import { type AccessChange, type ConnectorAction, type Grant, MAX_ACCESS_CHANGES, type ResourceKind } from '@minerva/contract'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Checkbox, ErrorNote, Spinner } from '@/components/ui/misc'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { errorMessage } from '@/lib/http'
+import { orpc } from '@/lib/orpc'
 import { cn } from '@/lib/utils'
 import { ACCOUNT, toggle } from './access'
 
 /** Refetches the workspace's connections, whose status and missing consent follow from access and errors. */
 export function invalidateConnections(queryClient: QueryClient, workspaceId: string) {
-  return queryClient.invalidateQueries({ queryKey: listConnectionsQueryKey({ path: { workspace_id: workspaceId } }) })
+  return queryClient.invalidateQueries({ queryKey: orpc.connections.list.key({ input: { workspaceId } }) })
 }
 
 /** Every cached listing of a connection's resources: at the top, inside folders, and searches. */
-const resourcesKey = (workspaceId: string, connectionId: string) => [
-  { _id: 'listAccessResources', path: { workspace_id: workspaceId, connection_id: connectionId } },
-]
+const resourcesKey = (workspaceId: string, connectionId: string) => orpc.connections.resources.key({ input: { workspaceId, connectionId } })
 
 export function refreshResources(queryClient: QueryClient, workspaceId: string, connectionId: string) {
   return queryClient.invalidateQueries({ queryKey: resourcesKey(workspaceId, connectionId) })
@@ -35,8 +27,6 @@ export function refreshResources(queryClient: QueryClient, workspaceId: string, 
 // Listings come from the provider. Reopening a connection reuses them; Refresh asks again.
 const RESOURCES_STALE_MS = 5 * 60_000
 
-// The access API accepts at most this many changes per save (MAX_CHANGES in cloudflare/src/gateway/grants.ts).
-const MAX_CHANGES = 100
 const ALL = '*'
 const keyOf = (kind: string, id: string) => `${kind}\u0000${id}`
 
@@ -50,8 +40,8 @@ type Inherited = Map<string, string>
 
 export function AccessEditor({ workspaceId, connectionId }: { workspaceId: string; connectionId: string }) {
   const queryClient = useQueryClient()
-  const path = { workspace_id: workspaceId, connection_id: connectionId }
-  const access = useQuery(getAccessOptions({ path }))
+  const ids = { workspaceId, connectionId }
+  const access = useQuery(orpc.connections.access.queryOptions({ input: ids }))
   const refreshing = useIsFetching({ queryKey: resourcesKey(workspaceId, connectionId) }) > 0
   // What the user changed since the last save, by kind and resource.
   const [edits, setEdits] = useState<Edits>(new Map())
@@ -60,15 +50,15 @@ export function AccessEditor({ workspaceId, connectionId }: { workspaceId: strin
   const [saved, setSaved] = useState(false)
 
   const save = useMutation({
-    ...changeAccessMutation(),
-    onSuccess: (data, { body }) => {
-      queryClient.setQueryData(getAccessQueryKey({ path }), data)
+    ...orpc.connections.changeAccess.mutationOptions(),
+    onSuccess: (data, input) => {
+      queryClient.setQueryData(orpc.connections.access.queryKey({ input: ids }), data)
       // Newly allowed actions can need access the provider has not given yet; the summary changes too.
       invalidateConnections(queryClient, workspaceId)
       // Keep what the user changed while the save was in flight.
       setEdits(previous => {
         const next = new Map(previous)
-        for (const change of body.changes) {
+        for (const change of input.changes) {
           const key = keyOf(change.kind, change.id)
           if (sameActions(next.get(key) ?? new Set(), change.actions)) next.delete(key)
         }
@@ -95,7 +85,7 @@ export function AccessEditor({ workspaceId, connectionId }: { workspaceId: strin
       return edited
     })
   }
-  const changes: ChangeIn[] = [...edits]
+  const changes: AccessChange[] = [...edits]
     .filter(([key, next]) => !sameActions(next, granted.get(key) ?? []))
     .map(([key, next]) => {
       const [kind, id] = key.split('\u0000')
@@ -139,14 +129,14 @@ export function AccessEditor({ workspaceId, connectionId }: { workspaceId: strin
       <div className="flex items-center gap-3">
         <Button
           size="sm"
-          disabled={save.isPending || changes.length === 0 || changes.length > MAX_CHANGES}
-          onClick={() => save.mutate({ path, body: { changes } })}
+          disabled={save.isPending || changes.length === 0 || changes.length > MAX_ACCESS_CHANGES}
+          onClick={() => save.mutate({ ...ids, changes })}
         >
           Save access
         </Button>
         <span className="text-xs text-muted-foreground">
-          {changes.length > MAX_CHANGES
-            ? `Save at most ${MAX_CHANGES} changes at a time; you have ${changes.length}.`
+          {changes.length > MAX_ACCESS_CHANGES
+            ? `Save at most ${MAX_ACCESS_CHANGES} changes at a time; you have ${changes.length}.`
             : saved
               ? 'Saved.'
               : changes.length > 0
@@ -161,9 +151,9 @@ export function AccessEditor({ workspaceId, connectionId }: { workspaceId: strin
 type KindAccessProps = {
   workspaceId: string
   connectionId: string
-  kind: KindOut
-  actions: ActionOut[]
-  grants: GrantOut[]
+  kind: ResourceKind
+  actions: ConnectorAction[]
+  grants: Grant[]
   // Resources newly allowed but not saved yet.
   pending: { id: string; name: string }[]
   current: (id: string) => Set<string>
@@ -185,7 +175,7 @@ function AccessRow({
   name: string
   own: Set<string>
   inherited: Inherited
-  actions: ActionOut[]
+  actions: ConnectorAction[]
   onChange: (next: Set<string>) => void
   depth?: number
   open?: boolean
@@ -247,19 +237,15 @@ function KindAccess({ workspaceId, connectionId, kind, actions, grants, pending,
   const [draft, setDraft] = useState('')
   const [search, setSearch] = useState('')
   const browsing = kind.browsable && !search
-  const request = {
-    path: { workspace_id: workspaceId, connection_id: connectionId },
-    query: { kind: kind.id, q: search || null },
-  }
-  const resources = useInfiniteQuery({
-    ...listAccessResourcesInfiniteOptions(request),
-    // The first page carries no cursor. The request itself, not null: the generated query function
-    // reads any object as page options, and null is an object.
-    initialPageParam: request,
-    getNextPageParam: page => page.next_cursor,
-    staleTime: RESOURCES_STALE_MS,
-    enabled: !browsing,
-  })
+  const resources = useInfiniteQuery(
+    orpc.connections.resources.infiniteOptions({
+      input: (cursor: string | undefined) => ({ workspaceId, connectionId, kind: kind.id, q: search || undefined, cursor }),
+      initialPageParam: undefined,
+      getNextPageParam: page => page.nextCursor ?? undefined,
+      staleTime: RESOURCES_STALE_MS,
+      enabled: !browsing,
+    }),
+  )
   useEffect(() => {
     // The connection may have stopped working; its row then offers to reconnect.
     if (resources.error) invalidateConnections(queryClient, workspaceId)
@@ -430,13 +416,13 @@ function KindAccess({ workspaceId, connectionId, kind, actions, grants, pending,
 type TreeLevelProps = {
   workspaceId: string
   connectionId: string
-  kind: KindOut
+  kind: ResourceKind
   parent: string | null
   // The ids from the top down to `parent`; a folder can appear in more than one place.
   pathKey: string
   depth: number
   inherited: Inherited
-  actions: ActionOut[]
+  actions: ConnectorAction[]
   span: number
   current: (id: string) => Set<string>
   onChange: (id: string, next: Set<string>, name: string) => void
@@ -447,16 +433,14 @@ function TreeLevel(props: TreeLevelProps) {
   const { workspaceId, connectionId, kind, parent, pathKey, depth, inherited, actions, span, current, onChange } = props
   const queryClient = useQueryClient()
   const [open, setOpen] = useState<Set<string>>(new Set())
-  const request = {
-    path: { workspace_id: workspaceId, connection_id: connectionId },
-    query: { kind: kind.id, parent },
-  }
-  const level = useInfiniteQuery({
-    ...listAccessResourcesInfiniteOptions(request),
-    initialPageParam: request,
-    getNextPageParam: page => page.next_cursor,
-    staleTime: RESOURCES_STALE_MS,
-  })
+  const level = useInfiniteQuery(
+    orpc.connections.resources.infiniteOptions({
+      input: (cursor: string | undefined) => ({ workspaceId, connectionId, kind: kind.id, parent: parent ?? undefined, cursor }),
+      initialPageParam: undefined,
+      getNextPageParam: page => page.nextCursor ?? undefined,
+      staleTime: RESOURCES_STALE_MS,
+    }),
+  )
   useEffect(() => {
     if (level.error) invalidateConnections(queryClient, workspaceId)
   }, [level.error, queryClient, workspaceId])

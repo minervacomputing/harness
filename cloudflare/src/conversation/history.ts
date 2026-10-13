@@ -4,7 +4,7 @@
 // seeded with this history when it is created; a resumed attempt keeps what its session holds.
 
 import { sliceText } from "../lib/text.ts";
-import type { AttachmentOut, FolderChangesOut } from "../shared/api.ts";
+import type { Attachment, FolderChanges } from "@minerva/contract";
 
 /** Earlier messages the gateway hands the loop. */
 export const HISTORY_LIMIT = 20;
@@ -37,11 +37,11 @@ export interface StoredMessage {
 	id: string;
 	role: "user" | "assistant";
 	content: string;
-	attachments: AttachmentOut[];
+	attachments: Attachment[];
 	runId: string | null;
 	createdAt: number;
 	/** The folder changes of the message's run, for an assistant message; null when none were recorded. */
-	changes: FolderChangesOut | null;
+	changes: FolderChanges | null;
 }
 
 export interface Replayed {

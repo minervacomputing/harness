@@ -1,19 +1,18 @@
 /** The apps an agent can reach: shared by the agents list, the chat header and a new chat. */
 import { Link } from '@tanstack/react-router'
 import { ChevronRightIcon } from 'lucide-react'
-import type { Agent } from '@minerva/contract'
-import type { ConnectionOut } from '@/api/types.gen'
+import type { Agent, Connection } from '@minerva/contract'
 import { AppIcon } from '@/components/connections/app-icon'
 import { setupOf } from '@/components/connections/summary'
 import { Status } from '@/components/ui/misc'
 import { cn } from '@/lib/utils'
 
 /** The agent's connections in the order of the Connections page. Ones that no longer exist are left out. */
-export function connectionsOf(agent: Agent, connections: ConnectionOut[] | undefined) {
+export function connectionsOf(agent: Agent, connections: Connection[] | undefined) {
   return (connections ?? []).filter(connection => agent.connectionIds.includes(connection.id))
 }
 
-const named = (connection: ConnectionOut) => `${connection.provider_name} · ${connection.label}`
+const named = (connection: Connection) => `${connection.providerName} · ${connection.label}`
 
 /** Up to `max` icons; past that, the last place says how many more. */
 export function AppIcons({
@@ -22,7 +21,7 @@ export function AppIcons({
   max = 4,
   className,
 }: {
-  connections: ConnectionOut[]
+  connections: Connection[]
   size?: 'xs' | 'sm'
   max?: number
   className?: string
@@ -49,7 +48,7 @@ export function AppIcons({
 }
 
 /** Apps the agent cannot use until the user acts. Each row opens that app under Connections. */
-export function AttentionList({ workspaceId, connections, className }: { workspaceId: string; connections: ConnectionOut[]; className?: string }) {
+export function AttentionList({ workspaceId, connections, className }: { workspaceId: string; connections: Connection[]; className?: string }) {
   return (
     <ul className={cn('divide-y divide-border border border-border-strong bg-card text-left', className)}>
       {connections.map(connection => {
@@ -62,12 +61,12 @@ export function AttentionList({ workspaceId, connections, className }: { workspa
               search={{ open: [connection.id] }}
               hash={`connection-${connection.id}`}
               hashScrollIntoView={false}
-              title={`Open ${connection.provider_name} under Connections`}
+              title={`Open ${connection.providerName} under Connections`}
               className="flex items-center gap-3 px-3 py-2 outline-none hover:bg-secondary/60 focus-visible:ring-[3px] focus-visible:ring-ring/25 focus-visible:ring-inset"
             >
               <AppIcon slug={connection.provider} size="sm" />
               <span className="flex min-w-0 flex-1 items-baseline gap-2">
-                <span className="shrink-0 text-[13px] font-medium">{connection.provider_name}</span>
+                <span className="shrink-0 text-[13px] font-medium">{connection.providerName}</span>
                 <span className="truncate font-mono text-[11px] text-muted-foreground">{connection.label}</span>
               </span>
               <Status tone={setup.tone}>{setup.label}</Status>

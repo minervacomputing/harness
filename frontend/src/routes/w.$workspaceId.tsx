@@ -3,7 +3,7 @@ import { createFileRoute, Link, notFound, Outlet, useRouterState } from '@tansta
 import { BotIcon, LogOutIcon, MenuIcon, PlugIcon, ShieldCheckIcon, SquarePenIcon, UserIcon, XIcon } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { type MouseEvent, useEffect, useState } from 'react'
-import { listConnectionsOptions, meOptions } from '@/api/@tanstack/react-query.gen'
+import { meOptions } from '@/api/@tanstack/react-query.gen'
 import type { WorkspaceOut } from '@/api/types.gen'
 import { Logo } from '@/components/brand/logo'
 import { ConversationList } from '@/components/chat/conversation-list'
@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Status } from '@/components/ui/misc'
 import { authQuery, type AuthUser, signOut } from '@/lib/auth'
 import { requireSignedIn } from '@/lib/guards'
+import { orpc } from '@/lib/orpc'
 
 export const Route = createFileRoute('/w/$workspaceId')({
   beforeLoad: async ({ context, params, location }) => {
@@ -150,7 +151,7 @@ function Sidebar({ workspace, user }: { workspace: WorkspaceOut; user: AuthUser 
 
 /** How many connections need the user, as on the Connections page. */
 function Attention({ workspaceId }: { workspaceId: string }) {
-  const connections = useQuery(listConnectionsOptions({ path: { workspace_id: workspaceId } }))
+  const connections = useQuery(orpc.connections.list.queryOptions({ input: { workspaceId } }))
   const setups = (connections.data ?? []).map(setupOf).filter(setup => setup.attention)
   if (!setups.length) return null
   const urgent = setups.some(setup => setup.tone === 'warning' || setup.tone === 'danger')

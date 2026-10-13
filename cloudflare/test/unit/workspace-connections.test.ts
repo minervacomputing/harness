@@ -109,7 +109,7 @@ describe("saving connections", () => {
 		const h = await harness();
 		const saved = await h.core.saveConnection(ADA, { provider: "keyed", account: { id: "acct-1", label: "Fake account" }, credentials: { kind: "api_key", key: "secret-key" }, connectionId: null });
 		if (!saved.ok) throw new Error(saved.refusal.detail);
-		expect(saved.value).toMatchObject({ provider: "keyed", provider_name: "Keyed", auth: "api_key", label: "Fake account", status: "active", personal: true, consent_needed: [] });
+		expect(saved.value).toMatchObject({ provider: "keyed", providerName: "Keyed", auth: "api_key", label: "Fake account", status: "active", personal: true, consentNeeded: [] });
 		expect(await credentials(h, saved.value.id)).toEqual({ kind: "api_key", key: "secret-key" });
 		expect(column(h, saved.value.id, "scopes")).toBeNull();
 	});
@@ -134,7 +134,7 @@ describe("built-in services", () => {
 		const first = await h.core.enableBuiltin(ADA, "webby");
 		const again = await h.core.enableBuiltin(ADA, "webby");
 		expect(first.ok && again.ok && first.value.id === again.value.id).toBe(true);
-		expect(first.ok && first.value).toMatchObject({ provider: "webby", auth: "builtin", label: "Webby", allowed: [], consent_needed: [] });
+		expect(first.ok && first.value).toMatchObject({ provider: "webby", auth: "builtin", label: "Webby", allowed: [], consentNeeded: [] });
 		const graces = await h.core.enableBuiltin(GRACE, "webby");
 		expect(graces.ok && first.ok && graces.value.id !== first.value.id).toBe(true);
 		expect(await h.core.enableBuiltin(ADA, "mixed")).toEqual({ ok: false, refusal: { code: "WRONG_CONNECTION_METHOD", detail: "Mixed is connected through its own sign-in." } });
@@ -246,8 +246,8 @@ describe("access settings", () => {
 			names(["inbox", "Inbox"]),
 		);
 		expect((await h.core.listConnections(ADA))[0]?.allowed).toEqual([
-			{ kind: "folder", kind_label: "Folder", action: "read", action_label: "Read", all: true, count: 1, names: ["Inbox"] },
-			{ kind: "folder", kind_label: "Folder", action: "create", action_label: "Create", all: false, count: 1, names: ["Inbox"] },
+			{ kind: "folder", kindLabel: "Folder", action: "read", actionLabel: "Read", all: true, count: 1, names: ["Inbox"] },
+			{ kind: "folder", kindLabel: "Folder", action: "create", actionLabel: "Create", all: false, count: 1, names: ["Inbox"] },
 		]);
 		// Another user's summary of a shared connection is their own.
 		h.sql.exec("UPDATE connections SET owner_id = NULL");
@@ -301,7 +301,7 @@ describe("access settings", () => {
 });
 
 describe("consent", () => {
-	test("consent_needed lists allowed actions whose scopes are missing; unknown scopes need nothing", async () => {
+	test("consentNeeded lists allowed actions whose scopes are missing; unknown scopes need nothing", async () => {
 		const h = await harness();
 		const mixed = h.registry.get("mixed");
 		expect(consentNeeded(mixed, ["files"], new Set(["read"]))).toEqual(["read"]);
@@ -313,7 +313,7 @@ describe("consent", () => {
 		expect(requestedScopes(mixed, new Set(["read"]))).toEqual(["files", "labels"]);
 		const id = await connectMixed(h, { scopes: ["files"] });
 		await h.core.applyGrantChanges(ADA, id, [{ kind: "label", id: "red", actions: ["read"] }], {});
-		expect((await h.core.listConnections(ADA))[0]?.consent_needed).toEqual(["read"]);
+		expect((await h.core.listConnections(ADA))[0]?.consentNeeded).toEqual(["read"]);
 	});
 });
 

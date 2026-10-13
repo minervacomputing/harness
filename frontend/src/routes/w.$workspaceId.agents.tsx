@@ -1,10 +1,8 @@
-import type { Agent } from '@minerva/contract'
+import type { Agent, Connection } from '@minerva/contract'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { PlusIcon } from 'lucide-react'
 import { useState } from 'react'
-import { listConnectionsOptions, listConversationsQueryKey } from '@/api/@tanstack/react-query.gen'
-import type { ConnectionOut } from '@/api/types.gen'
 import { AppIcons, connectionsOf } from '@/components/agents/agent-apps'
 import { AppIcon } from '@/components/connections/app-icon'
 import { setupOf, summarize } from '@/components/connections/summary'
@@ -22,9 +20,8 @@ export const Route = createFileRoute('/w/$workspaceId/agents')({
 
 function AgentsPage() {
   const { workspaceId } = Route.useParams()
-  const path = { workspace_id: workspaceId }
   const agents = useQuery(orpc.agents.list.queryOptions({ input: { workspaceId } }))
-  const connections = useQuery(listConnectionsOptions({ path }))
+  const connections = useQuery(orpc.connections.list.queryOptions({ input: { workspaceId } }))
   const [editing, setEditing] = useState<string | 'new' | null>(null)
   const form = (agent?: Agent) => <AgentForm workspaceId={workspaceId} agent={agent} connections={connections.data ?? []} onDone={() => setEditing(null)} />
 
@@ -86,7 +83,7 @@ function AgentRow({
 }: {
   workspaceId: string
   agent: Agent
-  connections: ConnectionOut[]
+  connections: Connection[]
   editing: boolean
   onEdit: () => void
 }) {
@@ -122,7 +119,7 @@ function AgentRow({
   )
 }
 
-function AgentForm({ workspaceId, agent, connections, onDone }: { workspaceId: string; agent?: Agent; connections: ConnectionOut[]; onDone: () => void }) {
+function AgentForm({ workspaceId, agent, connections, onDone }: { workspaceId: string; agent?: Agent; connections: Connection[]; onDone: () => void }) {
   const queryClient = useQueryClient()
   const invalidate = () => queryClient.invalidateQueries({ queryKey: orpc.agents.key() })
   const create = useMutation(orpc.agents.create.mutationOptions({ onSuccess: invalidate }))
@@ -131,8 +128,8 @@ function AgentForm({ workspaceId, agent, connections, onDone }: { workspaceId: s
   const remove = useMutation(
     orpc.agents.delete.mutationOptions({
       onSuccess: () => {
-        queryClient.removeQueries({ queryKey: [{ _id: 'getConversation' }] })
-        return Promise.all([invalidate(), queryClient.invalidateQueries({ queryKey: listConversationsQueryKey({ path: { workspace_id: workspaceId } }) })])
+        queryClient.removeQueries({ queryKey: orpc.conversations.get.key() })
+        return Promise.all([invalidate(), queryClient.invalidateQueries({ queryKey: orpc.conversations.list.key({ input: { workspaceId } }) })])
       },
     }),
   )
@@ -233,7 +230,7 @@ function AgentForm({ workspaceId, agent, connections, onDone }: { workspaceId: s
   )
 }
 
-function ConnectionChoice({ connection, selected, onChange }: { connection: ConnectionOut; selected: boolean; onChange: (selected: boolean) => void }) {
+function ConnectionChoice({ connection, selected, onChange }: { connection: Connection; selected: boolean; onChange: (selected: boolean) => void }) {
   const setup = setupOf(connection)
   const summary = summarize(connection.allowed)
   return (
@@ -244,7 +241,7 @@ function ConnectionChoice({ connection, selected, onChange }: { connection: Conn
         <AppIcon slug={connection.provider} size="sm" />
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-baseline gap-2">
-            <span className="shrink-0 text-[13px] font-medium">{connection.provider_name}</span>
+            <span className="shrink-0 text-[13px] font-medium">{connection.providerName}</span>
             <span className="truncate font-mono text-[11px] text-muted-foreground">{connection.label}</span>
           </span>
           <span className="block truncate text-xs text-muted-foreground" title={summary}>

@@ -26,8 +26,8 @@ describe("recording uploads", () => {
 		const { id, key } = await reserve(h, 9);
 		expect(key).toBe(`uploads/${WORKSPACE}/${USER}/${id}`);
 		expect(h.sql.exec("SELECT state, size FROM uploads")).toEqual([{ state: "pending", size: 9 }]);
-		expect(await complete(h, id, 9)).toEqual({ id, name: "notes.txt", size: 9, media_type: "text/plain" });
-		expect(await complete(h, id, 9)).toEqual({ id, name: "notes.txt", size: 9, media_type: "text/plain" });
+		expect(await complete(h, id, 9)).toEqual({ id, name: "notes.txt", size: 9, mediaType: "text/plain" });
+		expect(await complete(h, id, 9)).toEqual({ id, name: "notes.txt", size: 9, mediaType: "text/plain" });
 		expect(await h.core.completeUpload(GRACE, id, { sha256: "c".repeat(64), size: 9, mediaType: "text/plain" })).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: NOT_FOUND } });
 	});
 

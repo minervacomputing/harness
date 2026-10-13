@@ -13,7 +13,7 @@ The line between the two is cloudflare.md's (Instance and control plane): what a
 
 - On the `cloudflare` branch, steps 1 to 7 are done, the backend cleanup ([cleanup.md](cleanup.md)) is done, and the frontend cleanup ([frontend-cleanup.md](frontend-cleanup.md)) has F0 to F3, A1 and A2's `message` event done, with A3 and A4 left and the first message's design in [first-message.md](first-message.md). The sandbox's move to the Sandbox SDK is under way on the `sandbox-sdk` branch. Production `minerva-cf` is deployed and its first admin has claimed it.
 - The branch is not pushed. `main`, and so the public repository, is still Django, and `.github/workflows/main.yml` tests Django, builds its images and deploys staging to the VPS.
-- A self-hoster today would edit `minerva-cf` out of about 200 lines in 48 files, run six `cf` commands by hand (`cloudflare/README.md`, First deploy), write two env files, and need a zone on Cloudflare for email: the operator's own sign-up must verify its address by an emailed code before it can claim the instance (`src/accounts/instance.ts`).
+- A self-hoster today would edit `minerva-cf` out of about 200 lines in 48 files, run six `cf` commands by hand (`cloudflare/README.md`, First deploy), write two env files, and need a zone on Cloudflare for email: the operator's own sign-up must verify its address by an emailed code before it can claim the instance (`src/accounts/instance.ts`). The zone stays a requirement (unit 3).
 - Operator state is per checkout, not per instance: `.env.cloudflare`, `.env.cloudflare.vars` and `.cloudflare/deployed.json` have fixed paths, and `deployed.json` is a local record for `deploy:files`, not a release history.
 
 ## Part 1: self-hosting
@@ -28,16 +28,14 @@ One unit per fresh agent, in order. Each ends like the earlier steps: its tests 
    - the Durable Object class names, since a renamed or retired class loses its storage.
 
    Each entry says who owns it and how it may change. Additive migrations are not enough on their own: two versions run side by side after a deploy, so each version must read what the other writes. Dependency updates (pi-durable, the Agents SDK, Better Auth) are checked against the inventory. After the first release, instances no longer start fresh.
-2. **Instances by name.** One setting from which every resource name is derived: both Workers, D1, both buckets, the AI Gateway and the container application. The test, offline and platform-test modes derive theirs from it too. Operator state is per instance: each instance has its own secrets file, vars file and deploy record, and the deploy and reset scripts check derived names and the account instead of literals. Our instances keep `minerva-cf` by setting it.
-3. **Starting and recovering without email.** Whoever holds the setup key is the operator, so the setup key's sign-up needs no emailed code, and claims the instance in the same step.
-   - Instance admins can issue invitation links and password-reset links to copy, so an instance without any email can add people and recover accounts. A link is single-use, expires, and is recorded in the audit log once there is one.
-   - An HTTP provider (Resend, Postmark or SES, chosen by a setting, with its key in the secrets) sends email for an instance that has no zone.
-   - What an address created by a link proves is decided in the unit.
-
-   This comes before setup, because setup's own test is a claim on an instance with no email.
+2. **Instances by name** ([instance-names.md](instance-names.md)). Every resource name is derived from the instance's name: both Workers, D1, both buckets, the AI Gateway and the container application. Operator state moves into a directory per instance outside the checkout (secrets, vars, deploy record, account, whether it is a test instance), and the deploy and reset scripts check derived names, the kind and the account instead of literals. The local modes keep fixed names of their own. Our instances keep `minerva-cf` and `minerva-cf-test`.
+3. **Email through the operator's zone.** Decided 2026-10-13: a self-hoster's domain must have its DNS on Cloudflare, and the instance sends through Email Sending from a subdomain of it, as ours does. Starting without email, copyable invitation and reset links, and an HTTP email provider are not planned.
+   - Sending subdomains belong to a zone, so the instance's directory records the zone. Setup (unit 4) shows the records `cf email-sending subdomains preview` would add (MX, SPF and DKIM on a bounce subdomain, and DMARC), stops on a conflict, creates the subdomain, and waits until `dns status` says it is verified, which can take minutes or, rarely, a day. Until setup exists, the README gives the commands.
+   - The deploy of a production build checks that `MINERVA_EMAIL_FROM`'s domain is a verified sending subdomain of that zone, in the instance's account, since the operator's claim waits for an emailed code. The claim is also the first proof that mail arrives. Test builds have no `EMAIL` binding and skip the check.
 4. **`pnpm run setup`.**
    - It creates D1 (location hint asked at setup), both buckets with their jurisdiction and lifecycle rules, and the AI Gateway.
-   - It writes the instance's secrets and vars files; the workers.dev subdomain is read from the account, not asked.
+   - It creates the Email Sending subdomain in the zone the operator names (unit 3).
+   - It writes the instance's directory (unit 2). The workers.dev subdomain is read from the account, or registered when a fresh account has none yet.
    - It applies the migrations, deploys, and prints the URL where the operator claims the instance.
    - A second run creates only what is missing. It refuses an existing resource whose settings differ from what it would create, and never resets anything.
 
@@ -50,15 +48,15 @@ One unit per fresh agent, in order. Each ends like the earlier steps: its tests 
 6. **Releases and upgrades.** Tagged releases with notes. An upgrade is checking out a newer tag and running `pnpm run deploy`.
    - The instance records in D1 the release it runs and the schema steps it has applied. The deploy refuses to downgrade across a schema step or a change of Durable Object classes.
    - Each release's CI deploys the previous release to the test instance, starts runs, deploys the new one while those runs are busy (so busy objects keep the old code), and checks that they finish and that the new code reads what the old one wrote.
-7. **Off pre-release tooling.** `cf` 1.0.0-beta.13 and a commit build of `@cloudflare/vite-plugin` move to released versions before the first public release, or the guide pins them and says why. Email Sending (beta) is optional after unit 3.
+7. **Off pre-release tooling.** `cf` 1.0.0-beta.13 and a commit build of `@cloudflare/vite-plugin` move to released versions before the first public release, or the guide pins them and says why. Email Sending is in beta and required (unit 3); the guide says so.
 8. **A self-hosting guide and a rehearsal.** `docs/self-hosting.md` covers:
-   - requirements: Workers Paid, and Node 24, pnpm and Docker on the deploying machine;
-   - setup and the claim, and email or none;
+   - requirements: Workers Paid, a domain whose DNS is on Cloudflare, and Node 24, pnpm and Docker on the deploying machine;
+   - setup and the claim, the sending subdomain, and backing up the instance's directory;
    - models: Workers AI by default, or OpenAI and Anthropic keys held by the AI Gateway;
    - connectors: each instance registers its own OAuth apps, the largest effort for a self-hoster, so `docs/connectors.md` becomes steps per provider for the instance's callback URLs;
    - upgrades, export and restore, reset, and costs.
 
-   Then someone follows only the guide in a fresh Cloudflare account with no zone, through a chat turn, an upgrade and a restore. What they had to work out alone goes back into the guide.
+   Then someone follows only the guide in a fresh Cloudflare account with only a zone, through a chat turn, an upgrade and a restore. What they had to work out alone goes back into the guide.
 9. **CI and staging on Workers**, before the VPS retires. A workflow for the instance keeps every check that exists now:
    - the frontend's `pnpm check`, the Worker's typecheck, unit, platform and Docker tests, and the container's Python tests;
    - `deploy:test`, then `test:faults`, the browser walk and code mode's rows (`test:cm`). `pnpm test:account` alone also probes production, so the workflow names its suites.
@@ -68,7 +66,7 @@ One unit per fresh agent, in order. Each ends like the earlier steps: its tests 
 
 A "Deploy to Cloudflare" button is not possible yet. Its documentation (updated 2026-10-12) lists D1, R2, Durable Objects and Workers AI, but not Containers, and it needs the app self-contained in its directory, while `cloudflare/` builds `../frontend`. Revisit when Containers are listed.
 
-After Part 1, a self-hoster needs a Cloudflare account on Workers Paid ($5 a month plus usage), Node 24, pnpm and Docker on the machine that deploys, and, optionally, a zone or an email provider.
+After Part 1, a self-hoster needs a Cloudflare account on Workers Paid ($5 a month plus usage), a domain whose DNS is on Cloudflare, and Node 24, pnpm and Docker on the machine that deploys.
 
 ## Part 2: what the instance needs for Minerva Cloud
 
@@ -83,7 +81,7 @@ A cloud instance is an instance with sign-up open and many organizations. Everyt
 | Deleting an organization across D1, its objects and R2, verified | Offboarding, and the law | Wanted |
 | The audit log, and the support-access switch an organization controls (cloudflare.md's table) | Operator access must be visible and consented | Wanted |
 | Retention: run events, the write ledger, page tokens and pi's state (cloudflare.md's open questions 3 and 5) | Storage grows with every turn | Wanted |
-| Email at volume | Email Sending allows 1,000 messages a day in its beta | Unit 3's providers |
+| Email at volume | Email Sending's quotas are per account, start low and rise with reputation (ours: 1,000 a day), or on request | Usually within the quota |
 | Limits for open sign-up: per-organization rate limits, a default free quota, suspension | Free compute invites abuse | No |
 | The executor and the decryption key in a Worker of their own (cloudflare.md's open question 1) | One shared Worker holds every customer's credentials | Optional |
 | Queries across objects (cloudflare.md's open question 9) | Support and cost: which organization uses what | Partly |
@@ -129,8 +127,8 @@ Considered and not chosen: TypeScript on Workers with PlanetScale Postgres throu
 
 ## Order
 
-1. Frontend cleanup A3 and the first message (first-message.md), the sandbox on the Sandbox SDK, then Part 1, unit 1 (with A4): the compatibility baseline.
-2. Part 1, units 2 and 3: instances by name, then starting and recovering without email.
+1. Frontend cleanup A3, then Part 1, unit 2 (instances by name), which adds one table to D1 and changes no stored format.
+2. The first message (first-message.md), A4 and the sandbox on the Sandbox SDK, then unit 1: the compatibility baseline. Then unit 3, email through the operator's zone.
 3. Units 4 to 8: setup, export and restore, releases, tooling, the guide and its rehearsal.
 4. Unit 9, CI and staging on Workers, verified; then unit 10, the merge into `main`.
 5. Part 2: organizations and teams, usage records, quotas, deletion, audit and support access, retention, email; then the management API and the executor's own Worker; then the gates before open sign-up.
@@ -138,7 +136,7 @@ Considered and not chosen: TypeScript on Workers with PlanetScale Postgres throu
 
 ## Open questions
 
-1. Which HTTP email provider, or more than one.
+1. Email at volume for Minerva Cloud: a higher Email Sending quota, or a provider beside it (Part 2).
 2. Residency of a cloud instance's accounts: one EU cloud instance with D1 in the EU jurisdiction, or one instance per region; and the container's and the model's placement (cloudflare.md, open question 8).
 3. Import into another instance: whether credentials are re-encrypted under the new instance's keys or reconnected.
 4. The free tier: its quotas, and whether its model is the default Workers AI model.

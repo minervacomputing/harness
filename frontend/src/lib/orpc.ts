@@ -10,20 +10,24 @@ import { OpenAPILink } from '@orpc/openapi-client/fetch'
 import { createTanstackQueryUtils } from '@orpc/tanstack-query'
 import { NetworkError, noteAnswer } from '@/lib/http'
 
+/** What a call may ask of its request: `keepalive` lets it finish after the page is gone (a delete as the page closes). */
+type CallContext = { keepalive?: boolean }
+
 /** The client of a Minerva instance's API, at its origin. */
-function apiClient(instanceUrl: string): JsonifiedClient<ContractRouterClient<typeof contract>> {
-  const link = new OpenAPILink(contract, {
+function apiClient(instanceUrl: string): JsonifiedClient<ContractRouterClient<typeof contract, CallContext>> {
+  const link = new OpenAPILink<CallContext>(contract, {
     url: `${instanceUrl}/api`,
-    fetch: async (request, init) => {
+    fetch: async (request, init, { context }) => {
       let response: Response
-      let text: string | null
+      let body: ArrayBuffer | null
       try {
-        response = await fetch(request, { ...init, credentials: 'same-origin' })
+        response = await fetch(request, { ...init, credentials: 'same-origin', ...(context.keepalive && { keepalive: true }) })
         // oRPC asks fetch not to follow redirects, which the API never sends: one comes from something in front of it (a sign-in proxy).
         if (response.type === 'opaqueredirect') throw new TypeError('Redirected')
         noteAnswer(response)
-        // An error answer cut short keeps its status (below); a success cut short did not arrive.
-        text = await response.text().catch((error: unknown) => {
+        // The whole answer is read here, so one cut short is fetch's failure (a success, a streamed read included, did not arrive) or,
+        // for an error answer, keeps its status (below).
+        body = await response.arrayBuffer().catch((error: unknown) => {
           if (response.ok || request.signal.aborted) throw error
           return null
         })
@@ -31,7 +35,7 @@ function apiClient(instanceUrl: string): JsonifiedClient<ContractRouterClient<ty
         if (request.signal.aborted) throw error
         throw new NetworkError({ cause: error })
       }
-      return response.ok ? new Response(text || null, response) : keepStatus(response, text)
+      return response.ok ? new Response(body?.byteLength ? body : null, response) : keepStatus(response, body)
     },
   })
   return createORPCClient(link)
@@ -41,9 +45,10 @@ function apiClient(instanceUrl: string): JsonifiedClient<ContractRouterClient<ty
  * An error answer whose body cannot be read as JSON (cut short, or labelled JSON by a proxy when it is not) comes out of the link as a parse
  * error without its status; it is passed on without a body instead, which the link reads as an undeclared error with the status.
  */
-function keepStatus(response: Response, text: string | null): Response {
+function keepStatus(response: Response, body: ArrayBuffer | null): Response {
   try {
-    JSON.parse(text ?? '')
+    const text = new TextDecoder().decode(body ?? new ArrayBuffer(0))
+    JSON.parse(text)
     return new Response(text, response)
   } catch {
     return new Response(null, { status: response.status, statusText: response.statusText })

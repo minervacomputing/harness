@@ -55,7 +55,7 @@ function say(script: FakeScript): string {
 const SLOW: FakeScript = { chunkChars: 1, delayMs: 50, turns: [{ text: "y".repeat(400) }] };
 
 async function newConversation(a: Account, ws = a.ws, agent = a.agent): Promise<string> {
-	const created = await a.browser.call("POST", `/api/workspaces/${ws}/conversations`, { agent_id: agent });
+	const created = await a.browser.call("POST", `/api/workspaces/${ws}/conversations`, { agentId: agent });
 	expect(created.status, JSON.stringify(created.body)).toBe(201);
 	return created.body.id;
 }
@@ -67,7 +67,7 @@ function post(a: Account, conversation: string, content: string, attachments: st
 async function posted(a: Account, conversation: string, content: string, attachments: string[] = []): Promise<{ run: string; base: string | null }> {
 	const answer = await post(a, conversation, content, attachments);
 	expect(answer.status, JSON.stringify(answer.body)).toBe(201);
-	return { run: answer.body.run.id, base: answer.body.run.base_version_id };
+	return { run: answer.body.run.id, base: answer.body.run.baseVersionId };
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -222,12 +222,12 @@ describe("a chat turn", () => {
 	test("a message starts a run whose events stream over SSE to the end; the conversation then holds them all", async () => {
 		const a = await account();
 		const conversation = await newConversation(a);
-		expect((await a.browser.call("GET", `/api/workspaces/${a.ws}/conversations`)).body).toEqual([{ id: conversation, agent_id: a.agent, title: "", updated_at: expect.any(String) }]);
+		expect((await a.browser.call("GET", `/api/workspaces/${a.ws}/conversations`)).body).toEqual([{ id: conversation, agentId: a.agent, title: "", updatedAt: expect.any(String) }]);
 		const content = say({ turns: [{ thinking: "Let me think.", text: "Hello there, friend." }] });
 		const answer = await post(a, conversation, content);
 		expect(answer.status).toBe(201);
-		expect(answer.body.message).toMatchObject({ role: "user", content, attachments: [], run_id: answer.body.run.id });
-		expect(answer.body.run).toMatchObject({ status: "queued", error_message: "", finished_at: null, events: [{ seq: 1, type: "status", data: { status: "queued" } }] });
+		expect(answer.body.message).toMatchObject({ role: "user", content, attachments: [], runId: answer.body.run.id });
+		expect(answer.body.run).toMatchObject({ status: "queued", errorMessage: "", finishedAt: null, events: [{ seq: 1, type: "status", data: { status: "queued" } }] });
 		const run = answer.body.run.id as string;
 
 		const sse = await stream(a, run, { after: 1 });
@@ -243,20 +243,20 @@ describe("a chat turn", () => {
 
 		const detail = await a.browser.call("GET", `/api/workspaces/${a.ws}/conversations/${conversation}`);
 		expect(detail.status).toBe(200);
-		expect(Object.keys(detail.body)).toEqual(["id", "agent_id", "title", "updated_at", "messages", "runs"]);
+		expect(Object.keys(detail.body)).toEqual(["id", "agentId", "title", "updatedAt", "messages", "runs"]);
 		expect(detail.body.title).toBe([...content].slice(0, 80).join(""));
 		expect(detail.body.messages.map((message: { role: string }) => message.role)).toEqual(["user", "assistant"]);
 		expect(detail.body.messages[1].content).toBe("Hello there, friend.");
 		expect(Object.keys(detail.body.runs[0])).toEqual([
 			"id",
 			"status",
-			"error_message",
-			"created_at",
-			"finished_at",
-			"base_version_id",
-			"result_version_id",
-			"folder_changes",
-			"folder_warnings",
+			"errorMessage",
+			"createdAt",
+			"finishedAt",
+			"baseVersionId",
+			"resultVersionId",
+			"folderChanges",
+			"folderWarnings",
 			"events",
 		]);
 		expect(detail.body.runs[0].events).toEqual([{ seq: 1, type: "status", data: { status: "queued" } }, ...streamed]);
@@ -273,9 +273,9 @@ describe("a chat turn", () => {
 		const first = await post(a, conversation, say(SLOW));
 		expect(first.status).toBe(201);
 		const busy = await post(a, conversation, "again");
-		expect([busy.status, busy.body]).toEqual([409, { code: "CONVERSATION_BUSY", detail: "Wait for the current answer to finish, or stop it." }]);
+		expect([busy.status, busy.body]).toEqual([409, contractError("CONVERSATION_BUSY", "Wait for the current answer to finish, or stop it.")]);
 		const empty = await post(a, conversation, "  \n ");
-		expect([empty.status, empty.body]).toEqual([400, { code: "EMPTY_MESSAGE", detail: "Write a message or attach a file." }]);
+		expect([empty.status, empty.body]).toEqual([400, contractError("EMPTY_MESSAGE", "Write a message or attach a file.")]);
 		const detail = await a.browser.call("GET", `/api/workspaces/${a.ws}/conversations/${conversation}`);
 		expect([detail.body.messages.length, detail.body.runs.length]).toEqual([1, 1]);
 		await a.browser.call("POST", `/api/workspaces/${a.ws}/runs/${first.body.run.id}/cancel`);
@@ -299,22 +299,22 @@ describe("a chat turn", () => {
 		const a = await account();
 		const nowhere = "0199a000-0000-7000-8000-0000000000ff";
 		const long = await post(a, nowhere, "x".repeat(20_001));
-		expect([long.status, long.body.detail[0].type, long.body.detail[0].loc]).toEqual([422, "too_big", ["body", "content"]]);
+		expect([long.status, long.body.code, long.body.data.issues[0].code, long.body.data.issues[0].path]).toEqual([422, "VALIDATION_FAILED", "too_big", ["body", "content"]]);
 		// Lengths count UTF-16 units: an emoji is two.
 		expect((await post(a, nowhere, "😀".repeat(10_000))).status).toBe(404);
 		expect((await post(a, nowhere, "😀".repeat(10_001))).status).toBe(422);
 		const surrogate = await a.browser.call("POST", `/api/workspaces/${a.ws}/conversations/${nowhere}/messages`, '{"content": "\\ud800"}');
-		expect([surrogate.status, surrogate.body.detail[0].type]).toEqual([422, "invalid_format"]);
+		expect([surrogate.status, surrogate.body.message]).toEqual([422, "content: Invalid string: lone surrogate"]);
 		const ids = await post(a, nowhere, "x", ["nope"]);
-		expect([ids.status, ids.body.detail[0].type, ids.body.detail[0].loc]).toEqual([422, "invalid_format", ["body", "attachments", 0]]);
+		expect([ids.status, ids.body.data.issues[0].code, ids.body.data.issues[0].path]).toEqual([422, "invalid_format", ["body", "attachments", 0]]);
 		const missing = await a.browser.call("POST", `/api/workspaces/${a.ws}/conversations`, {});
-		expect([missing.status, missing.body.detail[0].type]).toEqual([422, "invalid_type"]);
-		const unknownAgent = await a.browser.call("POST", `/api/workspaces/${a.ws}/conversations`, { agent_id: nowhere });
+		expect([missing.status, missing.body.data.issues[0].code, missing.body.data.issues[0].path]).toEqual([422, "invalid_type", ["agentId"]]);
+		const unknownAgent = await a.browser.call("POST", `/api/workspaces/${a.ws}/conversations`, { agentId: nowhere });
 		expect(unknownAgent.status).toBe(404);
 		const version = await a.browser.call("GET", `/api/workspaces/${a.ws}/conversations/${nowhere}/files?version=nope`);
-		expect([version.status, version.body.detail[0].type]).toEqual([422, "invalid_format"]);
+		expect([version.status, version.body.data.issues[0].code, version.body.data.issues[0].path]).toEqual([422, "invalid_format", ["version"]]);
 		const key = await post(a, nowhere, "x", [], { "Idempotency-Key": "has space" });
-		expect([key.status, key.body]).toEqual([400, { code: "INVALID_IDEMPOTENCY_KEY", detail: "The Idempotency-Key header must be 1 to 255 visible ASCII characters." }]);
+		expect([key.status, key.body]).toEqual([400, contractError("INVALID_IDEMPOTENCY_KEY", "The Idempotency-Key header must be 1 to 255 visible ASCII characters.")]);
 	});
 });
 
@@ -351,7 +351,7 @@ describe("the event stream", () => {
 		for (let frame = await sse.next(); frame?.event !== "text_delta"; frame = await sse.next()) expect(frame).not.toBeNull();
 		const cancelled = await a.browser.call("POST", `/api/workspaces/${a.ws}/runs/${run}/cancel`);
 		expect(cancelled.status).toBe(200);
-		expect(cancelled.body).toMatchObject({ id: run, status: "cancelled", error_message: "Stopped.", finished_at: expect.any(String) });
+		expect(cancelled.body).toMatchObject({ id: run, status: "cancelled", errorMessage: "Stopped.", finishedAt: expect.any(String) });
 		expect(cancelled.body.events.at(-1)).toMatchObject({ type: "status", data: { status: "cancelled", message: "Stopped." } });
 		const rest = await sse.rest();
 		expect(rest.at(-1)).toEqual({ event: "end", data: "{}" });
@@ -378,7 +378,7 @@ describe("the event stream", () => {
 		// Cut off without `end`: the browser reconnects, and a signed-out reconnect is 401.
 		expect([rest.some((item) => item.event === "end"), sse.failure]).toEqual([false, null]);
 		const again = await stream(a, run, { lastEventId: "1" });
-		expect([again.response.status, await again.response.json()]).toEqual([401, { code: "UNAUTHORIZED", detail: "Unauthorized" }]);
+		expect([again.response.status, await again.response.json()]).toEqual([401, contractError("UNAUTHORIZED", "Unauthorized")]);
 	});
 
 	test("a member removed from the workspace loses the stream at the next check", async () => {
@@ -449,7 +449,7 @@ describe("a start retried with the same key", () => {
 		expect([one.status, two.status]).toEqual([201, 201]);
 		expect([two.body.run.id, two.body.message.id]).toEqual([one.body.run.id, one.body.message.id]);
 		const other = await post(a, conversation, "Something else", [], key);
-		expect([other.status, other.body]).toEqual([422, { code: "IDEMPOTENCY_KEY_REUSED", detail: "This Idempotency-Key was used for a different message." }]);
+		expect([other.status, other.body]).toEqual([422, contractError("IDEMPOTENCY_KEY_REUSED", "This Idempotency-Key was used for a different message.")]);
 		expect((await post(a, conversation, content)).status).toBe(409);
 		await settled(a, one.body.run.id);
 		const later = await post(a, conversation, content, [], key);
@@ -478,19 +478,19 @@ describe("tenancy", () => {
 			["POST", `/runs/${run}/cancel`],
 			["DELETE", `/uploads/${upload}`],
 		] as const) {
-			const answer = await ada.browser.call(method, `${base}${path}`, method === "POST" ? { content: "x", agent_id: grace.agent } : undefined);
-			expect([method, path, answer.status, answer.body]).toEqual([method, path, 401, { code: "UNAUTHORIZED", detail: "Unauthorized" }]);
+			const answer = await ada.browser.call(method, `${base}${path}`, method === "POST" ? { content: "x", agentId: grace.agent } : undefined);
+			expect([method, path, answer.status, answer.body]).toEqual([method, path, 401, contractError("UNAUTHORIZED", "Unauthorized")]);
 		}
 		expect((await upload_(ada, grace.ws)).status).toBe(401);
 		const sse = await stream(ada, run, { ws: grace.ws });
-		expect([sse.response.status, await sse.response.json()]).toEqual([404, { code: "NOT_FOUND", detail: "Not found." }]);
+		expect([sse.response.status, await sse.response.json()]).toEqual([404, contractError("NOT_FOUND", "Not found.")]);
 		const download = await ada.browser.call("GET", `${base}/conversations/${theirs}/files/download?path=x`);
-		expect([download.status, download.body]).toEqual([404, { code: "NOT_FOUND", detail: "Not found." }]);
+		expect([download.status, download.body]).toEqual([404, contractError("NOT_FOUND", "Not found.")]);
 		// Anonymous.
 		const anonymous = new Browser();
 		for (const path of [`/api/workspaces/${ada.ws}/conversations`, `${base}/runs/${run}/stream`, `${base}/conversations/${theirs}/files/download?path=x`]) {
 			const answer = await anonymous.call("GET", path);
-			expect([path, answer.status, answer.body]).toEqual([path, 401, { code: "UNAUTHORIZED", detail: "Unauthorized" }]);
+			expect([path, answer.status, answer.body]).toEqual([path, 401, contractError("UNAUTHORIZED", "Unauthorized")]);
 		}
 		// Their upload is still theirs.
 		expect((await grace.browser.call("DELETE", `${base}/uploads/${upload}`)).status).toBe(204);
@@ -512,10 +512,10 @@ describe("tenancy", () => {
 			["POST", `/runs/${run}/cancel`],
 		] as const) {
 			const answer = await ada.browser.call(method, `${mine}${path}`, method === "POST" ? { content: "x" } : undefined);
-			expect([method, path, answer.status, answer.body]).toEqual([method, path, 404, { code: "NOT_FOUND", detail: "Not found." }]);
+			expect([method, path, answer.status, answer.body]).toEqual([method, path, 404, contractError("NOT_FOUND", "Not found.")]);
 		}
 		const sse = await stream(ada, run);
-		expect([sse.response.status, await sse.response.json()]).toEqual([404, { code: "NOT_FOUND", detail: "Not found." }]);
+		expect([sse.response.status, await sse.response.json()]).toEqual([404, contractError("NOT_FOUND", "Not found.")]);
 		expect((await settled(grace, run)).body.status).toBe("completed");
 		const detail = await grace.browser.call("GET", `/api/workspaces/${grace.ws}/conversations/${theirs}`);
 		expect(detail.body.messages.map((message: { content: string }) => message.content)).toEqual(["secret", "Done."]);
@@ -557,7 +557,7 @@ describe("uploads", () => {
 		const a = await account();
 		const answer = await upload(a, "%PDF-1.7 hello", "../Q3 report.pdf");
 		expect(answer.status).toBe(201);
-		expect(answer.body).toEqual({ id: expect.any(String), name: "Q3 report.pdf", size: 14, media_type: "application/pdf" });
+		expect(answer.body).toEqual({ id: expect.any(String), name: "Q3 report.pdf", size: 14, mediaType: "application/pdf" });
 		expect(answer.response.headers.get("Cache-Control")).toBe("no-store");
 		const listed = await env.FILES.list({ prefix: `uploads/${a.ws}/${a.userId}/` });
 		expect(listed.objects.map((object) => object.key)).toEqual([`uploads/${a.ws}/${a.userId}/${answer.body.id}`]);
@@ -574,9 +574,9 @@ describe("uploads", () => {
 		const cookies = (browser: Browser) => [...browser.cookies].map(([name, value]) => `${name}=${value}`).join("; ");
 		const good = (browser: Browser) => ({ Cookie: cookies(browser), Origin: ORIGIN });
 		const refused = contractError("CROSS_SITE", "Cross-site request refused.");
-		const usePost = { code: "METHOD_NOT_ALLOWED", detail: "Use POST." };
-		const nameIt = { code: "FILE_NAME_MISSING", detail: "Name the file with ?name=." };
-		const unauthorized = { code: "UNAUTHORIZED", detail: "Unauthorized" };
+		const usePost = contractError("METHOD_NOT_ALLOWED", "Use POST.");
+		const nameIt = contractError("FILE_NAME_MISSING", "Name the file with ?name=.");
+		const unauthorized = contractError("UNAUTHORIZED", "Unauthorized");
 		const cases: [string, Response, number, object][] = [
 			["no origin", await send(a.browser, "", { Cookie: cookies(a.browser) }), 403, refused],
 			["foreign origin", await send(a.browser, "", { ...good(a.browser), Origin: "https://evil.example" }), 403, refused],
@@ -599,7 +599,7 @@ describe("uploads", () => {
 				body: new Uint8Array(52_428_801),
 			}),
 		);
-		expect([big.status, await big.json()]).toEqual([413, { code: "FILE_TOO_LARGE", detail: "A file can be at most 50 MB." }]);
+		expect([big.status, await big.json()]).toEqual([413, contractError("FILE_TOO_LARGE", "A file can be at most 50 MB.")]);
 		expect((await env.FILES.list({ prefix: `uploads/${a.ws}/` })).objects).toEqual([]);
 	});
 
@@ -626,7 +626,7 @@ describe("uploads", () => {
 		const arriving = async () => (await env.FILES.list({ prefix: `uploads/${a.ws}/` })).objects.length;
 		await sleep(300);
 		const fourth = await upload(a, "fast");
-		expect([fourth.status, fourth.body]).toEqual([429, { code: "TOO_MANY_UPLOADS_AT_ONCE", detail: "You are uploading too many files at once." }]);
+		expect([fourth.status, fourth.body]).toEqual([429, contractError("TOO_MANY_UPLOADS_AT_ONCE", "You are uploading too many files at once.")]);
 		for (const hold of held) hold.resolve();
 		expect((await Promise.all(slow)).map((response) => response.status)).toEqual([201, 201, 201]);
 		expect(await arriving()).toBe(3);
@@ -634,7 +634,7 @@ describe("uploads", () => {
 		for (let i = 0; i < 25; i++) await uploaded(a, `n${i}`, `n${i}.txt`);
 		const racing = await Promise.all([0, 1, 2].map((i) => upload(a, `r${i}`, `r${i}.txt`)));
 		expect(racing.map((answer) => answer.status).sort()).toEqual([201, 201, 429]);
-		expect(racing.find((answer) => answer.status === 429)?.body).toEqual({ code: "TOO_MANY_UPLOADS_WAITING", detail: "You have too many files waiting to be sent. Send or remove some, or try again tomorrow." });
+		expect(racing.find((answer) => answer.status === 429)?.body).toEqual(contractError("TOO_MANY_UPLOADS_WAITING", "You have too many files waiting to be sent. Send or remove some, or try again tomorrow."));
 		expect((await upload(a, "one more")).status).toBe(429);
 	}, 60_000);
 
@@ -644,13 +644,13 @@ describe("uploads", () => {
 		const ids = [];
 		for (let i = 0; i < 11; i++) ids.push(await uploaded(a, `file ${i}`, `f${i}.txt`));
 		const tooMany = await post(a, conversation, "", ids);
-		expect([tooMany.status, tooMany.body]).toEqual([400, { code: "TOO_MANY_ATTACHMENTS", detail: "Attach at most 10 files to a message." }]);
+		expect([tooMany.status, tooMany.body]).toEqual([400, contractError("TOO_MANY_ATTACHMENTS", "Attach at most 10 files to a message.")]);
 		const twice = await post(a, conversation, "hi", [ids[0] as string, ids[0] as string]);
-		expect([twice.status, twice.body]).toEqual([400, { code: "ATTACHED_TWICE", detail: "A file is attached twice." }]);
+		expect([twice.status, twice.body]).toEqual([400, contractError("ATTACHED_TWICE", "A file is attached twice.")]);
 		const grace = await account("grace");
 		const theirs = await uploaded(grace, "theirs");
 		const foreign = await post(a, conversation, "hi", [theirs]);
-		expect([foreign.status, foreign.body]).toEqual([400, { code: "ATTACHMENT_UNAVAILABLE", detail: "An attached file is no longer available. Remove it and attach it again." }]);
+		expect([foreign.status, foreign.body]).toEqual([400, contractError("ATTACHMENT_UNAVAILABLE", "An attached file is no longer available. Remove it and attach it again.")]);
 		const detail = await a.browser.call("GET", `/api/workspaces/${a.ws}/conversations/${conversation}`);
 		expect([detail.body.title, detail.body.messages, detail.body.runs]).toEqual(["", [], []]);
 		const answer = await post(a, conversation, "", ids.slice(0, 2));
@@ -659,7 +659,7 @@ describe("uploads", () => {
 			{ path: "f0.txt", size: 6, media_type: "text/plain" },
 			{ path: "f1.txt", size: 6, media_type: "text/plain" },
 		]);
-		expect(answer.body.run.base_version_id).toEqual(expect.any(String));
+		expect(answer.body.run.baseVersionId).toEqual(expect.any(String));
 		await settled(a, answer.body.run.id);
 		expect((await a.browser.call("GET", `/api/workspaces/${a.ws}/conversations/${conversation}`)).body.title).toBe("f0.txt, f1.txt");
 	});
@@ -681,12 +681,12 @@ describe("files and downloads", () => {
 		const { conversation, base } = await withFile(a);
 		const files = `/api/workspaces/${a.ws}/conversations/${conversation}/files`;
 		const folder = await a.browser.call("GET", files);
-		expect(folder.body).toEqual({ version_id: expect.any(String), files: [{ path: "zażółć report.html", size: 25, mtime: expect.any(Number) }], dirs: [] });
-		expect((await a.browser.call("GET", `${files}?version=${base}`)).body.version_id).toBe(base);
+		expect(folder.body).toEqual({ versionId: expect.any(String), files: [{ path: "zażółć report.html", size: 25, mtime: expect.any(Number) }], dirs: [] });
+		expect((await a.browser.call("GET", `${files}?version=${base}`)).body.versionId).toBe(base);
 		// The lax UUID forms name the same version.
-		expect((await a.browser.call("GET", `${files}?version=${base.toUpperCase()}`)).body.version_id).toBe(base);
+		expect((await a.browser.call("GET", `${files}?version=${base.toUpperCase()}`)).body.versionId).toBe(base);
 		const empty = await newConversation(a);
-		expect((await a.browser.call("GET", `/api/workspaces/${a.ws}/conversations/${empty}/files`)).body).toEqual({ version_id: null, files: [], dirs: [] });
+		expect((await a.browser.call("GET", `/api/workspaces/${a.ws}/conversations/${empty}/files`)).body).toEqual({ versionId: null, files: [], dirs: [] });
 		expect((await a.browser.call("GET", `/api/workspaces/${a.ws}/conversations/${empty}/files?version=${base}`)).status).toBe(404);
 
 		const query = new URLSearchParams({ path: "zażółć report.html", version: base });
@@ -717,7 +717,7 @@ describe("files and downloads", () => {
 		const download = `/api/workspaces/${a.ws}/conversations/${conversation}/files/download`;
 		for (const query of ["path=missing.txt", "path=notes.txt&version=nope", `path=notes.txt&version=${other.base}`, ""]) {
 			const answer = await a.browser.call("GET", `${download}?${query}`);
-			expect([query, answer.status, answer.body]).toEqual([query, 404, { code: "NOT_FOUND", detail: "Not found." }]);
+			expect([query, answer.status, answer.body]).toEqual([query, 404, contractError("NOT_FOUND", "Not found.")]);
 		}
 		const link = (await a.browser.fetch(`${download}?path=notes.txt`, { redirect: "manual" })).headers.get("Location") as string;
 		const now = Date.now();

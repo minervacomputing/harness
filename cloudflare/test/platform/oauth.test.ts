@@ -13,8 +13,8 @@ import { PROVIDER_NETWORK } from "../../src/api/providers.ts";
 import { providerOf } from "../../src/faults/ports.ts";
 import { NOTES_ACCOUNT } from "../../src/faults/provider.ts";
 import { uuid7 } from "../../src/lib/random.ts";
-import type { RefusalCode, Role } from "../../src/shared/rpc.ts";
-import { type Answer, Browser, installEmailLog, signedIn } from "./accounts-helpers.ts";
+import { REFUSALS, type RefusalCode, type Role } from "../../src/shared/rpc.ts";
+import { type Answer, Browser, contractError, installEmailLog, signedIn } from "./accounts-helpers.ts";
 
 installEmailLog();
 
@@ -66,13 +66,14 @@ async function teamWorkspace(members: [Account, Role][]): Promise<string> {
 	return ws;
 }
 
-function expectRefusal(answer: Answer, status: number, code: RefusalCode, detail: string): void {
-	expect([answer.status, answer.body], JSON.stringify(answer.body)).toEqual([status, { code, detail }]);
+function expectDeclared(answer: Answer, code: RefusalCode, message: string): void {
+	expect([answer.status, answer.body], JSON.stringify(answer.body)).toEqual([REFUSALS[code], contractError(code, message)]);
 }
 
-/** The authorization URL the API answers for a new connection (`path` "notes/authorize") or a reconnect. */
+/** The authorization URL the API answers for a new connection (`path` "notes/authorize", under connectors) or a reconnect (`<id>/reconnect`). */
 async function start(a: Account, ws = a.ws, path = "notes/authorize", body: unknown = path.endsWith("/reconnect") ? {} : undefined): Promise<URL> {
-	const answer = await a.browser.call("POST", `/api/workspaces/${ws}/connections/${path}`, body);
+	const under = path.endsWith("/authorize") ? "connectors" : "connections";
+	const answer = await a.browser.call("POST", `/api/workspaces/${ws}/${under}/${path}`, body);
 	expect(answer.status, JSON.stringify(answer.body)).toBe(200);
 	return new URL(answer.body.url);
 }
@@ -428,13 +429,13 @@ describe("Todoist registers Minerva dynamically", () => {
 	test("a failed registration is 503 and stores nothing; an app with neither a client nor registration is not offered", async () => {
 		const ada = await account();
 		const todoist = new FakeTodoistAuth().install();
-		const base = `/api/workspaces/${ada.ws}/connections`;
+		const base = `/api/workspaces/${ada.ws}/connectors`;
 		for (const failure of [() => Response.json({ error: "nope" }, { status: 500 }), () => Response.json({ client_id: "x" }), () => new Response("not json"), () => Promise.reject(new TypeError("Network connection lost."))]) {
 			todoist.answer = failure;
-			expectRefusal(await ada.browser.call("POST", `${base}/todoist/authorize`), 503, "CONNECT_UNAVAILABLE", "Could not register Minerva with Todoist. Try again later.");
+			expectDeclared(await ada.browser.call("POST", `${base}/todoist/authorize`), "CONNECT_UNAVAILABLE", "Could not register Minerva with Todoist. Try again later.");
 		}
 		expect(await storedTodoistClients()).toEqual([]);
-		expectRefusal(await ada.browser.call("POST", `${base}/github/authorize`), 503, "CONNECT_UNAVAILABLE", "GitHub is not configured on this instance.");
+		expectDeclared(await ada.browser.call("POST", `${base}/github/authorize`), "CONNECT_UNAVAILABLE", "GitHub is not configured on this instance.");
 		const listed = (await ada.browser.call("GET", `/api/workspaces/${ada.ws}/connectors`)).body.map((connector: { slug: string }) => connector.slug);
 		expect(listed).not.toContain("github");
 		FLOW_CLIENTS.of = (e) => {

@@ -24,14 +24,27 @@ import { UUID } from "../http/paths.ts";
 import type { App } from "../http/router.ts";
 import type { Json } from "../lib/json.ts";
 import { agentProcedures } from "./agents.ts";
+import { connectionProcedures, connectorProcedures } from "./connections.ts";
+import { conversationProcedures, runProcedures, uploadProcedures } from "./conversations.ts";
 import { type Member, member } from "./members.ts";
 import { type ApiContext, api, refusal } from "./procedures.ts";
 
-const router = api.router({ agents: agentProcedures });
+const router = api.router({
+	agents: agentProcedures,
+	connectors: connectorProcedures,
+	connections: connectionProcedures,
+	conversations: conversationProcedures,
+	runs: runProcedures,
+	uploads: uploadProcedures,
+});
 
-/** The request's JSON body, undefined without one; a body `readJson` refuses, or that breaks off, is thrown as a refusal. */
+/**
+ * The request's JSON body, undefined without one; a body `readJson` refuses, or that breaks off, is thrown as a refusal.
+ * A browser sends a POST without a body (the link's, for a procedure whose input is all in the path) with
+ * `Content-Length: 0` and no type, which arrives with an empty body: that is no body too.
+ */
 async function jsonBody(request: Request): Promise<Json | undefined> {
-	if (request.body === null) return undefined;
+	if (request.body === null || (!request.headers.has("Content-Type") && request.headers.get("Content-Length")?.trim() === "0")) return undefined;
 	let read: Awaited<ReturnType<typeof readJson>>;
 	try {
 		read = await readJson(request);
@@ -119,7 +132,7 @@ export function contractRoutes(app: App): void {
 		// Hono answers HEAD with the GET route and drops the body; oRPC matches the method it is given.
 		const request = c.req.method === "HEAD" ? new Request(c.req.raw, { method: "GET" }) : c.req.raw;
 		if (workspace === undefined) {
-			const { matched, response } = await handler.handle(request, { prefix: "/api", context: { request, member: null } });
+			const { matched, response } = await handler.handle(request, { prefix: "/api", context: { request, env: c.env, member: null } });
 			return matched ? noStore(response) : next();
 		}
 		const session = await currentSession(c.env, c.req.raw);
@@ -131,7 +144,7 @@ export function contractRoutes(app: App): void {
 				if (error instanceof HttpError) return errorAnswer("UNAUTHORIZED", "Unauthorized");
 				throw error;
 			}
-			const { matched, response } = await handler.handle(request, { prefix: "/api", context: { request, member: caller } });
+			const { matched, response } = await handler.handle(request, { prefix: "/api", context: { request, env: c.env, member: caller } });
 			return matched ? noStore(response) : noRoute();
 		};
 		// The cookies Better Auth set go on every answer, a crash's 500 too.
@@ -146,7 +159,9 @@ export function contractRoutes(app: App): void {
 	});
 }
 
+/** Every answer is kept out of caches. oRPC labels JSON it wrote itself; a streamed read's body (api/conversations.ts) is JSON too. */
 function noStore(response: Response): Response {
 	if (!response.headers.has("Cache-Control")) response.headers.set("Cache-Control", "no-store");
+	if (response.body !== null && !response.headers.has("Content-Type")) response.headers.set("Content-Type", "application/json; charset=utf-8");
 	return response;
 }

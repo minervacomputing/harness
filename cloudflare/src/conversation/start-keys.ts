@@ -3,7 +3,7 @@
 // Kept apart from the object's module so the Worker's routes can check a key without importing it.
 
 import { hex } from "../lib/bytes.ts";
-import type { MessageIn } from "../shared/api.ts";
+import type { NewMessage } from "@minerva/contract";
 
 /** A message sent again with a key the client used for another message. */
 export const KEY_REUSED = "This Idempotency-Key was used for a different message.";
@@ -13,7 +13,7 @@ export const START_KEY_TTL_MS = 24 * 60 * 60 * 1000;
 export const START_KEY = /^[\x21-\x7e]{1,255}$/;
 
 /** What a key is checked against: the message's text and attachments. */
-export async function messageDigest(input: Required<MessageIn>): Promise<string> {
+export async function messageDigest(input: Required<NewMessage>): Promise<string> {
 	const text = JSON.stringify([input.content, input.attachments]);
 	return hex(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))));
 }

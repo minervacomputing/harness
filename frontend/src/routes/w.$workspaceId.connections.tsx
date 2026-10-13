@@ -3,18 +3,7 @@ import { createFileRoute, useLocation } from '@tanstack/react-router'
 import { ChevronDownIcon, SearchIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
-import {
-  authorizeMutation,
-  connectKeyMutation,
-  deleteConnectionMutation,
-  enableMutation,
-  getAccessOptions,
-  listConnectionsOptions,
-  listConnectorsOptions,
-  reconnectMutation,
-  replaceKeyMutation,
-} from '@/api/@tanstack/react-query.gen'
-import type { ActionOut, ConnectionOut, ConnectorOut, KindOut } from '@/api/types.gen'
+import type { Connection, Connector, ConnectorAction, ResourceKind } from '@minerva/contract'
 import { ACCOUNT } from '@/components/connections/access'
 import { AccessEditor, invalidateConnections, refreshResources } from '@/components/connections/access-editor'
 import { AppIcon } from '@/components/connections/app-icon'
@@ -23,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Alert, ErrorNote, Notice, PageHeader, Spinner, Status } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
+import { orpc } from '@/lib/orpc'
 import { pageHead } from '@/lib/title'
 import { cn } from '@/lib/utils'
 
@@ -77,19 +67,14 @@ function usePinnedSections(rows: { id: string; attention: boolean }[], open: Set
   return next
 }
 
-function useAuthorize() {
-  return useMutation({
-    ...authorizeMutation(),
-    onSuccess: ({ url }) => window.location.assign(url),
-  })
-}
+/** Sends the browser to the provider's sign-in; it comes back to the OAuth callback, which opens the connection here. */
+const signIn = ({ url }: { url: string }) => window.location.assign(url)
 
 function ConnectionsPage() {
   const { workspaceId } = Route.useParams()
   const search = Route.useSearch()
-  const path = { workspace_id: workspaceId }
-  const connectors = useQuery(listConnectorsOptions({ path }))
-  const connections = useQuery(listConnectionsOptions({ path }))
+  const connectors = useQuery(orpc.connectors.list.queryOptions({ input: { workspaceId } }))
+  const connections = useQuery(orpc.connections.list.queryOptions({ input: { workspaceId } }))
   const hash = useLocation({ select: location => location.hash })
   const open = openIds(search)
   const toggle = useToggleConnection()
@@ -173,7 +158,7 @@ function ConnectionsPage() {
   )
 }
 
-function describeConnector(kinds: KindOut[], actions: ActionOut[]) {
+function describeConnector(kinds: ResourceKind[], actions: ConnectorAction[]) {
   const per = kinds.filter(k => k.id !== ACCOUNT).map(k => k.label.toLowerCase())
   const what = actions.map(a => a.label.toLowerCase()).join(', ')
   return per.length ? `${what.charAt(0).toUpperCase()}${what.slice(1)}, chosen per ${per.join(' and ')}.` : `${what.charAt(0).toUpperCase()}${what.slice(1)}.`
@@ -187,21 +172,20 @@ function AddApps({
   firstTime,
 }: {
   workspaceId: string
-  connectors?: ConnectorOut[]
+  connectors?: Connector[]
   pending: boolean
-  connections: ConnectionOut[]
+  connections: Connection[]
   firstTime: boolean
 }) {
-  const path = { workspace_id: workspaceId }
   const navigate = Route.useNavigate()
   const queryClient = useQueryClient()
-  const authorize = useAuthorize()
-  const onConnected = (connection: ConnectionOut) => {
+  const authorize = useMutation(orpc.connections.authorize.mutationOptions({ onSuccess: signIn }))
+  const onConnected = (connection: Connection) => {
     void navigate({ search: previous => ({ connected: connection.id, open: [...openIds(previous)] }) })
     invalidateConnections(queryClient, workspaceId)
   }
-  const enable = useMutation({ ...enableMutation(), onSuccess: onConnected })
-  const connectKey = useMutation({ ...connectKeyMutation(), onSuccess: onConnected })
+  const enable = useMutation(orpc.connections.enable.mutationOptions({ onSuccess: onConnected }))
+  const connectKey = useMutation(orpc.connections.connectKey.mutationOptions({ onSuccess: onConnected }))
   const [query, setQuery] = useState('')
   const [showAll, setShowAll] = useState(false)
   const [keying, setKeying] = useState<string | null>(null)
@@ -255,7 +239,7 @@ function AddApps({
                       size="sm"
                       aria-label={`${count ? 'Add another account for' : 'Connect'} ${connector.name}`}
                       disabled={authorize.isPending}
-                      onClick={() => authorize.mutate({ path: { ...path, provider: connector.slug } })}
+                      onClick={() => authorize.mutate({ workspaceId, provider: connector.slug })}
                     >
                       {count ? 'Add account' : 'Connect'}
                     </Button>
@@ -277,7 +261,7 @@ function AddApps({
                       size="sm"
                       aria-label={`Add ${connector.name}`}
                       disabled={enable.isPending}
-                      onClick={() => enable.mutate({ path: { ...path, provider: connector.slug } })}
+                      onClick={() => enable.mutate({ workspaceId, provider: connector.slug })}
                     >
                       Add
                     </Button>
@@ -286,13 +270,13 @@ function AddApps({
                 {connector.auth === 'api_key' && keying === connector.slug && (
                   <div className="border-t bg-background px-4 py-3 sm:pl-16">
                     <KeyForm
-                      label={connector.key_label ?? 'API key'}
-                      hint={connector.key_hint}
+                      label={connector.keyLabel ?? 'API key'}
+                      hint={connector.keyHint}
                       submit={`Connect ${connector.name}`}
-                      pending={connectKey.isPending && connectKey.variables?.path.provider === connector.slug}
+                      pending={connectKey.isPending && connectKey.variables?.provider === connector.slug}
                       onSubmit={(key, done) =>
                         connectKey.mutate(
-                          { path: { ...path, provider: connector.slug }, body: { key } },
+                          { workspaceId, provider: connector.slug, key },
                           {
                             onSuccess: () => {
                               done()
@@ -376,7 +360,7 @@ function ConnectionRow({
   last,
 }: {
   workspaceId: string
-  connection: ConnectionOut
+  connection: Connection
   setup: Setup
   open: boolean
   onToggle: () => void
@@ -387,8 +371,7 @@ function ConnectionRow({
   // Once opened, the panel stays mounted while closed, so unsaved choices survive closing it.
   const [mounted, setMounted] = useState(open)
   if (open && !mounted) setMounted(true)
-  const reconnectPath = { workspace_id: workspaceId, connection_id: connection.id }
-  const prefetch = () => queryClient.prefetchQuery(getAccessOptions({ path: reconnectPath }))
+  const prefetch = () => queryClient.prefetchQuery(orpc.connections.access.queryOptions({ input: { workspaceId, connectionId: connection.id } }))
   const summary = summarize(connection.allowed)
   const panelId = `connection-panel-${connection.id}`
 
@@ -409,7 +392,7 @@ function ConnectionRow({
         <AppIcon slug={connection.provider} />
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-baseline gap-2">
-            <span className="shrink-0 font-medium">{connection.provider_name}</span>
+            <span className="shrink-0 font-medium">{connection.providerName}</span>
             <span className="truncate font-mono text-[12px] text-muted-foreground">
               {connection.label}
               {connection.personal ? '' : ' · shared with the workspace'}
@@ -431,29 +414,24 @@ function ConnectionRow({
   )
 }
 
-function ConnectionPanel({ workspaceId, connection }: { workspaceId: string; connection: ConnectionOut }) {
+function ConnectionPanel({ workspaceId, connection }: { workspaceId: string; connection: Connection }) {
   const queryClient = useQueryClient()
-  const remove = useMutation({
-    ...deleteConnectionMutation(),
-    onSuccess: () => invalidateConnections(queryClient, workspaceId),
-  })
-  const reconnect = useMutation({
-    ...reconnectMutation(),
-    onSuccess: ({ url }) => window.location.assign(url),
-  })
-  const replaceKey = useMutation({
-    ...replaceKeyMutation(),
-    onSuccess: () => {
-      invalidateConnections(queryClient, workspaceId)
-      refreshResources(queryClient, workspaceId, connection.id)
-    },
-  })
+  const remove = useMutation(orpc.connections.delete.mutationOptions({ onSuccess: () => invalidateConnections(queryClient, workspaceId) }))
+  const reconnect = useMutation(orpc.connections.reconnect.mutationOptions({ onSuccess: signIn }))
+  const replaceKey = useMutation(
+    orpc.connections.replaceKey.mutationOptions({
+      onSuccess: () => {
+        invalidateConnections(queryClient, workspaceId)
+        refreshResources(queryClient, workspaceId, connection.id)
+      },
+    }),
+  )
   const [replacing, setReplacing] = useState(false)
   const keyed = connection.auth === 'api_key'
   const active = connection.status === 'active'
-  const reconnectPath = { workspace_id: workspaceId, connection_id: connection.id }
-  const actionLabels = useQuery({ ...listConnectorsOptions({ path: { workspace_id: workspaceId } }), enabled: connection.consent_needed.length > 0 })
-  const neededLabels = connection.consent_needed.map(
+  const ids = { workspaceId, connectionId: connection.id }
+  const actionLabels = useQuery(orpc.connectors.list.queryOptions({ input: { workspaceId }, enabled: connection.consentNeeded.length > 0 }))
+  const neededLabels = connection.consentNeeded.map(
     id =>
       actionLabels.data
         ?.find(c => c.slug === connection.provider)
@@ -463,14 +441,14 @@ function ConnectionPanel({ workspaceId, connection }: { workspaceId: string; con
 
   return (
     <div className="space-y-5">
-      {active && connection.consent_needed.length > 0 && (
+      {active && connection.consentNeeded.length > 0 && (
         <Alert tone="warning">
           <div className="flex flex-wrap items-center gap-3">
             <span className="flex-1">
-              {connection.provider_name} has not allowed Minerva to {neededLabels.join(', ')} yet, so agents cannot do it.
+              {connection.providerName} has not allowed Minerva to {neededLabels.join(', ')} yet, so agents cannot do it.
             </span>
-            <Button size="sm" disabled={reconnect.isPending} onClick={() => reconnect.mutate({ path: reconnectPath, body: {} })}>
-              Allow in {connection.provider_name}
+            <Button size="sm" disabled={reconnect.isPending} onClick={() => reconnect.mutate(ids)}>
+              Allow in {connection.providerName}
             </Button>
           </div>
         </Alert>
@@ -479,22 +457,22 @@ function ConnectionPanel({ workspaceId, connection }: { workspaceId: string; con
         <Alert tone="warning">
           <div className="flex flex-wrap items-center gap-3">
             <span className="flex-1">
-              {connection.provider_name} stopped accepting this {keyed ? 'key. Paste a new key for the same account' : 'connection. Reconnect it'}; your access
+              {connection.providerName} stopped accepting this {keyed ? 'key. Paste a new key for the same account' : 'connection. Reconnect it'}; your access
               choices are kept.
             </span>
             {!keyed && (
-              <Button size="sm" disabled={reconnect.isPending} onClick={() => reconnect.mutate({ path: reconnectPath, body: {} })}>
+              <Button size="sm" disabled={reconnect.isPending} onClick={() => reconnect.mutate(ids)}>
                 Reconnect
               </Button>
             )}
           </div>
         </Alert>
       )}
-      {active && connection.manage_url && (
+      {active && connection.manageUrl && (
         <p className="text-xs text-muted-foreground">
-          Minerva sees only what {connection.provider_name} lets it see.{' '}
-          <a className="font-medium text-foreground underline underline-offset-4" href={connection.manage_url} target="_blank" rel="noreferrer">
-            {connection.manage_label ?? `Manage in ${connection.provider_name}`}
+          Minerva sees only what {connection.providerName} lets it see.{' '}
+          <a className="font-medium text-foreground underline underline-offset-4" href={connection.manageUrl} target="_blank" rel="noreferrer">
+            {connection.manageLabel ?? `Manage in ${connection.providerName}`}
           </a>
           , then come back and press Refresh.
         </p>
@@ -507,7 +485,7 @@ function ConnectionPanel({ workspaceId, connection }: { workspaceId: string; con
           pending={replaceKey.isPending}
           onSubmit={(key, done) =>
             replaceKey.mutate(
-              { path: reconnectPath, body: { key } },
+              { ...ids, key },
               {
                 onSuccess: () => {
                   done()
@@ -532,8 +510,8 @@ function ConnectionPanel({ workspaceId, connection }: { workspaceId: string; con
           size="sm"
           disabled={remove.isPending}
           onClick={() => {
-            if (confirm(`Remove ${connection.provider_name}? Agents lose access to it immediately.`)) {
-              remove.mutate({ path: { workspace_id: workspaceId, connection_id: connection.id } })
+            if (confirm(`Remove ${connection.providerName}? Agents lose access to it immediately.`)) {
+              remove.mutate(ids)
             }
           }}
         >

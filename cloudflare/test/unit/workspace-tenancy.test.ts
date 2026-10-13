@@ -158,7 +158,7 @@ describe("the conversation index", () => {
 		expect(await h.core.createConversation(ADA, "0199a000-0000-7000-8000-0000000000ff")).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: NOT_FOUND } });
 		const agent = await defaultAgent(h);
 		const created = await h.core.createConversation(ADA, agent);
-		expect(created).toEqual({ ok: true, value: { id: expect.any(String), agent_id: agent, title: "", updated_at: new Date(h.timers.now()).toISOString() } });
+		expect(created).toEqual({ ok: true, value: { id: expect.any(String), agentId: agent, title: "", updatedAt: new Date(h.timers.now()).toISOString() } });
 		expect(h.conversations.inits).toEqual([
 			{ conversationId: created.ok && created.value.id, workspace: { id: WORKSPACE, jurisdiction: null }, userId: USER, agentId: agent, createdAt: h.timers.now() },
 		]);
@@ -180,7 +180,7 @@ describe("the conversation index", () => {
 		// An older touch does not move it back.
 		await h.core.conversationTouched(ids[0] as string, { title: "Back on top", updatedAt: 0 });
 		expect((await h.core.listConversations(ADA))[0]?.id).toBe(ids[0]);
-		expect((await h.core.listConversations(GRACE)).map((row) => row.agent_id)).toEqual([agent]);
+		expect((await h.core.listConversations(GRACE)).map((row) => row.agentId)).toEqual([agent]);
 	});
 
 	test("another user's conversation is not found", async () => {

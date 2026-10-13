@@ -8,10 +8,10 @@
 import { type Account, type Connector, type CredentialPayload, OperationError, type ProviderClient } from "../gateway/connector.ts";
 import { secretOf, unauthorized } from "../gateway/executor.ts";
 import { CallIo } from "../gateway/http.ts";
-import { HttpError, refused } from "../http/errors.ts";
 import { EncryptionKeys, credentialBinding } from "../lib/encryption.ts";
 import type { WorkspaceRef } from "../shared/rpc.ts";
 import type { Member } from "./members.ts";
+import { refusal } from "./procedures.ts";
 
 /**
  * The network provider calls go out on: the Worker's `fetch`. The test build (src/faults/) replaces it with
@@ -64,7 +64,7 @@ export async function keyAccount(env: Env, workspace: WorkspaceRef, connector: C
 	try {
 		return await providerAccount(env, workspace, connector, key);
 	} catch (error) {
-		if (error instanceof OperationError) throw new HttpError(refused(PROVIDER_DOWN.has(error.code) ? "PROVIDER_FAILED" : "KEY_REFUSED", error.message));
+		if (error instanceof OperationError) throw refusal(PROVIDER_DOWN.has(error.code) ? "PROVIDER_FAILED" : "KEY_REFUSED", error.message);
 		throw error;
 	}
 }
@@ -77,7 +77,7 @@ export async function keyAccount(env: Env, workspace: WorkspaceRef, connector: C
  */
 export async function withConnection<T>(env: Env, member: Member, connector: Connector, connectionId: string, run: (client: ProviderClient) => Promise<T>): Promise<T> {
 	const lease = await member.object.lease(connectionId, { settings: member.caller });
-	if ("refused" in lease) throw new HttpError(refused(lease.refused === "CONNECTION_UNAUTHORIZED" ? "RECONNECT_NEEDED" : "PROVIDER_FAILED", lease.message));
+	if ("refused" in lease) throw refusal(lease.refused === "CONNECTION_UNAUTHORIZED" ? "RECONNECT_NEEDED" : "PROVIDER_FAILED", lease.message);
 	const binding = credentialBinding(member.workspace.id, connectionId);
 	const payload = (await (await encryptionKeys(env)).decrypt(binding, lease.sealed)) as unknown as CredentialPayload;
 	try {
@@ -92,7 +92,7 @@ export async function withConnection<T>(env: Env, member: Member, connector: Con
 		}
 		if (error instanceof OperationError) {
 			const code = unauthorized(error) ? "RECONNECT_NEEDED" : (CALLER_MISTAKES[error.code] ?? "PROVIDER_FAILED");
-			throw new HttpError(refused(code, error.message));
+			throw refusal(code, error.message);
 		}
 		throw error;
 	}

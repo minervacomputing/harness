@@ -95,7 +95,7 @@ The integration tests stay in `cloudflare/test/platform` for now, because that i
 
 ## Units
 
-Status (2026-10-13): F0–F3, S, A1 and A2's `message` event are done and merged into `cloudflare`; the test Worker runs A1 (browser walk and fault suites pass). A2's first-message change moved out (below). A3 goes in four units: A3a (the contract package, the Worker's mount, the integration matrix, and the agents end to end) is done on `frontend-cleanup`; next are A3b (conversations, messages and files), A3c (connections), and A3d (instance, me and workspaces, then the deletions).
+Status (2026-10-13): F0–F3, S, A1 and A2's `message` event are done and merged into `cloudflare`; the test Worker runs A1 (browser walk and fault suites pass). A2's first-message change moved out (below). A3 goes in four units: A3a (the contract package, the Worker's mount, the integration matrix, and the agents end to end), A3b (conversations, messages and files) and A3c (connectors, connections and access; the OAuth callback stays a redirect outside the contract) are done on `frontend-cleanup`; next is A3d (instance, me and workspaces, then the deletions).
 
 The frontend units (F) touch `frontend/`, the four frontend tests, and for F0 the Makefile and AGENTS.md. They can start now. Work on them in a git worktree off the `cloudflare` branch, because the main checkout holds the other agent's uncommitted work.
 

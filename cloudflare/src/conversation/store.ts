@@ -20,7 +20,7 @@ import type { StartSnapshot } from "../gateway/tools.ts";
 import { type Json, parseJson } from "../lib/json.ts";
 import { VALUE_PART, sliceText, splitParts } from "../lib/text.ts";
 import { isoTime } from "../lib/dates.ts";
-import type { AttachmentOut, ConversationDetail, FolderChangesOut, FolderWarningsOut, MessageOut, RunOut } from "../shared/api.ts";
+import type { Attachment, Conversation, FolderChanges, FolderWarnings, Message, Run } from "@minerva/contract";
 import type { AgentId, AttemptFence, ConversationId, EpochMs, RunId, RunStatus, UserId, VersionId, WorkspaceRef } from "../shared/rpc.ts";
 import {
 	ACTIVE,
@@ -57,15 +57,15 @@ export interface RunSnapshot extends StartSnapshot {
 	/** The version the run starts from: the conversation's folder, or a new `base` with the attachments. */
 	baseVersionId: VersionId | null;
 	/** As added to the folder: final, possibly numbered names at the root, in upload order. */
-	attachments: AttachmentOut[];
+	attachments: Attachment[];
 	limits: { folderBytes: number; folderEntries: number; runUploadBytes: number };
 }
 
 /**
- * `RunOut` with its events typed. The API answers this shape; the type exists because RPC types cannot
- * carry the generated `EventOut`'s `unknown` data.
+ * The contract's `Run` with its events typed. The API answers this shape; the type exists because RPC types
+ * cannot carry the contract's `unknown` event data.
  */
-export type RunView = Omit<RunOut, "events"> & { events: RunEvent[] };
+export type RunView = Omit<Run, "events"> & { events: RunEvent[] };
 
 /**
  * A run as a Durable Object returns it: `RunView` without its events. A run's events have no size bound
@@ -73,9 +73,9 @@ export type RunView = Omit<RunOut, "events"> & { events: RunEvent[] };
  * with `getRunEvents` up to `eventSeq` while it streams the response. `eventSeq` is read with the status in
  * one synchronous step, and events are append-only, so the body it assembles is consistent.
  */
-export type RunHead = Omit<RunOut, "events"> & { eventSeq: number };
+export type RunHead = Omit<Run, "events"> & { eventSeq: number };
 
-export type ConversationHead = Omit<ConversationDetail, "runs"> & { runs: RunHead[] };
+export type ConversationHead = Omit<Conversation, "runs"> & { runs: RunHead[] };
 
 /** A page of events stops at this much JSON, whatever its limit (`EventPage`). */
 export const PAGE_BYTES = 4 * 1024 * 1024;
@@ -382,7 +382,7 @@ export class RunStore {
 
 	// Messages.
 
-	insertMessage(message: { id: string; role: "user" | "assistant"; content: string; attachments: AttachmentOut[]; runId: RunId | null; createdAt: EpochMs }): void {
+	insertMessage(message: { id: string; role: "user" | "assistant"; content: string; attachments: Attachment[]; runId: RunId | null; createdAt: EpochMs }): void {
 		this.#sql.exec(
 			"INSERT INTO messages (id, role, content, attachments, run_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
 			message.id,
@@ -394,7 +394,7 @@ export class RunStore {
 		);
 	}
 
-	messages(): MessageOut[] {
+	messages(): Message[] {
 		return this.#sql
 			.exec<MessageRow>("SELECT * FROM messages ORDER BY created_at, id")
 			.toArray()
@@ -402,12 +402,12 @@ export class RunStore {
 	}
 
 	/** The user message that started a run. */
-	runMessage(runId: RunId): MessageOut | null {
+	runMessage(runId: RunId): Message | null {
 		const row = this.#sql.exec<MessageRow>("SELECT * FROM messages WHERE run_id = ? AND role = 'user' ORDER BY created_at, id LIMIT 1", runId).toArray()[0];
 		return row ? messageOut(row) : null;
 	}
 
-	message(id: string): MessageOut | null {
+	message(id: string): Message | null {
 		const row = this.#sql.exec<MessageRow>("SELECT * FROM messages WHERE id = ?", id).toArray()[0];
 		return row ? messageOut(row) : null;
 	}
@@ -430,10 +430,10 @@ export class RunStore {
 			id: row.id,
 			role: row.role,
 			content: row.content,
-			attachments: parseJson(row.attachments) as unknown as AttachmentOut[],
+			attachments: parseJson(row.attachments) as unknown as Attachment[],
 			runId: row.run_id,
 			createdAt: row.created_at,
-			changes: row.role === "assistant" && row.folder_changes ? (parseJson(row.folder_changes) as unknown as FolderChangesOut) : null,
+			changes: row.role === "assistant" && row.folder_changes ? (parseJson(row.folder_changes) as unknown as FolderChanges) : null,
 		}));
 	}
 
@@ -786,13 +786,13 @@ export class RunStore {
 		return {
 			id: row.id,
 			status: row.status,
-			error_message: row.error_message,
-			created_at: isoTime(row.created_at),
-			finished_at: row.finished_at === null ? null : isoTime(row.finished_at),
-			base_version_id: row.base_version_id,
-			result_version_id: row.result_version_id,
-			folder_changes: row.folder_changes === null ? null : (parseJson(row.folder_changes) as unknown as FolderChangesOut),
-			folder_warnings: row.folder_warnings === null ? null : (parseJson(row.folder_warnings) as unknown as FolderWarningsOut),
+			errorMessage: row.error_message,
+			createdAt: isoTime(row.created_at),
+			finishedAt: row.finished_at === null ? null : isoTime(row.finished_at),
+			baseVersionId: row.base_version_id,
+			resultVersionId: row.result_version_id,
+			folderChanges: row.folder_changes === null ? null : (parseJson(row.folder_changes) as unknown as FolderChanges),
+			folderWarnings: row.folder_warnings === null ? null : (parseJson(row.folder_warnings) as unknown as FolderWarnings),
 			eventSeq: row.event_seq,
 		};
 	}
@@ -800,23 +800,23 @@ export class RunStore {
 	conversationHead(row: ConversationRow): ConversationHead {
 		return {
 			id: row.id,
-			agent_id: row.agent_id,
+			agentId: row.agent_id,
 			title: row.title,
-			updated_at: isoTime(row.updated_at),
+			updatedAt: isoTime(row.updated_at),
 			messages: this.messages(),
 			runs: this.runs().map((run) => this.runHead(run)),
 		};
 	}
 }
 
-function messageOut(row: MessageRow): MessageOut {
+function messageOut(row: MessageRow): Message {
 	return {
 		id: row.id,
 		role: row.role,
 		content: row.content,
-		attachments: parseJson(row.attachments) as unknown as AttachmentOut[],
-		run_id: row.run_id,
-		created_at: isoTime(row.created_at),
+		attachments: parseJson(row.attachments) as unknown as Attachment[],
+		runId: row.run_id,
+		createdAt: isoTime(row.created_at),
 	};
 }
 

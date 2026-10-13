@@ -3,6 +3,7 @@
 // `auth` declaration describes, through an injected `fetch`. Storing the result, the single flight and the
 // generation fence are the Workspace's (core.ts).
 
+import { oauthCallbackPath } from "@minerva/contract";
 import type { Auth, Connector } from "../gateway/connector.ts";
 import { base64, concatAll, utf8 } from "../lib/bytes.ts";
 import { type Json, type JsonObject, parseJsonBytes } from "../lib/json.ts";
@@ -130,7 +131,7 @@ export function keepRefreshToken(previous: JsonObject, tokens: JsonObject): Json
 }
 
 export function redirectUri(siteUrl: string, slug: string): string {
-	return `${siteUrl}/api/oauth/${slug}/callback`;
+	return `${siteUrl}${oauthCallbackPath(slug)}`;
 }
 
 /**
