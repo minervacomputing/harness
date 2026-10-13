@@ -1,6 +1,7 @@
 import { defineConfig } from "vitest/config";
 
-// Fault tests on the account: the test instance (`pnpm run deploy:test`), driven through its
+// Fault tests on the account: a test instance (`pnpm run deploy:test`; `pnpm test:faults` runs scripts/suite.ts,
+// which names it in MINERVA_INSTANCE, or it is the only test instance), driven through its
 // token-gated /api/faults/ (src/faults/routes.ts), and its sandbox lab (src/faults/lab.ts) with the real
 // container. Two groups, one after the other: first every file but the memory-limit resets, at once, with
 // their tests at once within them; then resets.test.ts alone, since a memory-limit reset takes every object of

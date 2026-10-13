@@ -5,24 +5,23 @@
 // platform: a CPU-bound guest while the conversation answers, a timeout during a write, calls after return,
 // more than ten scripts in a row, a late reset from a replaced attempt, and a conversation that dies during a
 // script. `pnpm run deploy:cm` deploys the lab, `pnpm test:cm` runs this, and the lab is deleted after
-// (cloudflare/README.md, Code mode).
+// (cloudflare/README.md, Code mode's lab).
 
-import { existsSync, readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
 import { beforeAll, describe, expect, test } from "vitest";
-import { fetchDeployed } from "./client.ts";
+import { readInstanceEnv } from "../../scripts/instance.ts";
+import { fetchDeployed, suiteInstance } from "./client.ts";
+import { instanceOrigin } from "./origins.ts";
 
-/** The lab's token and origin, in ../.env.cloudflare-cm and ../.env.cloudflare-cm.vars (gitignored), or under MINERVA_ENV_DIR. */
-const DIR = process.env.MINERVA_ENV_DIR ? pathToFileURL(`${process.env.MINERVA_ENV_DIR.replace(/\/$/, "")}/`) : new URL("../../../", import.meta.url);
-
+/**
+ * The lab's token and origin, in the test instance's cm.env and cm.vars.env (MINERVA_INSTANCE, or the only test
+ * instance). The origin must be the instance's own lab, `<name>-cm`, before the token is sent anywhere.
+ */
 function lab(): { origin: string; token: string } {
-	const secrets = new URL(".env.cloudflare-cm", DIR);
-	const vars = new URL(".env.cloudflare-cm.vars", DIR);
-	if (!existsSync(secrets) || !existsSync(vars)) throw new Error("The lab's token and origin are in .env.cloudflare-cm and .env.cloudflare-cm.vars (cloudflare/README.md, Code mode).");
-	const token = /^CM_TOKEN="(.+)"$/m.exec(readFileSync(secrets, "utf8"))?.[1];
-	const origin = /^CM_ORIGIN=(\S+)$/m.exec(readFileSync(vars, "utf8"))?.[1]?.replace(/\/$/, "");
-	if (!token || !origin?.startsWith("https://")) throw new Error("Set CM_TOKEN and an https CM_ORIGIN for the lab.");
-	return { origin, token };
+	const instance = suiteInstance(true);
+	const token = readInstanceEnv(instance, "cm")?.CM_TOKEN;
+	const vars = readInstanceEnv(instance, "cmVars");
+	if (!token || !vars) throw new Error(`The lab's token and origin are in ${instance.files.cm} and ${instance.files.cmVars} (cloudflare/README.md, Code mode's lab).`);
+	return { origin: instanceOrigin(vars.CM_ORIGIN, instance.names.lab, `CM_ORIGIN in ${instance.name}'s cm.vars.env`), token };
 }
 
 const { origin, token } = lab();

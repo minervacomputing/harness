@@ -1,9 +1,9 @@
 // The names of an instance (scripts/instance.ts): the rules a name must pass, and the one derivation of every
-// resource name from it. The instances here are fixtures (`acme`); the last tests state the names today's flags
-// give to ours, which must not change (production holds data under them).
+// resource name from it. The instances here are fixtures (`acme`). The instance directory is tested in
+// instance-directory.test.ts.
 
 import { describe, expect, test } from "vitest";
-import { LOCAL_INSTANCES, MAX_NAME_LENGTH, RESERVED_SUFFIXES, instanceName, nameProblem, namesOf, todaysInstance } from "../../scripts/instance.ts";
+import { LOCAL_INSTANCES, MAX_NAME_LENGTH, RESERVED_SUFFIXES, instanceName, nameProblem, namesOf } from "../../scripts/instance.ts";
 
 describe("what an instance's name may be", () => {
 	test.each(["acme", "a", "acme-2", "acme-prod", "a1b2", "eu", "files", "cm", "sandbox", "default-2", "defaults", "x-y-z", "acme-files-2"])("%s is accepted", (name) => {
@@ -111,35 +111,5 @@ describe("the modes that reach no account", () => {
 		for (const name of Object.values(LOCAL_INSTANCES)) expect(nameProblem(name)).toBeNull();
 		expect(namesOf(LOCAL_INSTANCES.offline).bucket).toBe("minerva-dev-files");
 		expect(namesOf(LOCAL_INSTANCES.test).container).toBe("minerva-local-sandbox");
-	});
-});
-
-describe("today's two instances", () => {
-	test("production keeps every name it holds data under", () => {
-		expect(namesOf(todaysInstance(false))).toEqual({
-			name: "minerva-cf",
-			app: "minerva-cf",
-			d1: "minerva-cf",
-			gateway: "minerva-cf",
-			download: "minerva-cf-files",
-			bucket: "minerva-cf-files",
-			bucketEu: "minerva-cf-files-eu",
-			container: "minerva-cf-sandbox",
-			lab: "minerva-cf-cm",
-		});
-	});
-
-	test("the test instance keeps its data names; its download Worker and its lab are renamed", () => {
-		expect(namesOf(todaysInstance(true))).toEqual({
-			name: "minerva-cf-test",
-			app: "minerva-cf-test",
-			d1: "minerva-cf-test",
-			gateway: "minerva-cf-test",
-			download: "minerva-cf-test-files",
-			bucket: "minerva-cf-test-files",
-			bucketEu: "minerva-cf-test-files-eu",
-			container: "minerva-cf-test-sandbox",
-			lab: "minerva-cf-test-cm",
-		});
 	});
 });

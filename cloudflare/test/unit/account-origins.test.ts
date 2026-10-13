@@ -1,9 +1,9 @@
-// The account suites' check of where they send requests (test/account/origins.ts): only the test instance's
+// The account suites' check of where they send requests (test/account/origins.ts): only the chosen instance's
 // own Workers on workers.dev, both on one subdomain, and never a message that repeats the configured value.
 
 import { describe, expect, test } from "vitest";
 import { namesOf } from "../../scripts/instance.ts";
-import { chromeFailure, testOrigin, testOrigins } from "../account/origins.ts";
+import { chromeFailure, instanceOrigin, instanceOrigins } from "../account/origins.ts";
 
 /** A subdomain no message may contain. */
 const SUB = "acct7q";
@@ -25,10 +25,10 @@ function refusal(run: () => unknown): string {
 
 describe("the test instance's origins", () => {
 	test("the test Workers' workers.dev origins are accepted, as origins", () => {
-		expect(testOrigin(APP, TEST_APP, "MINERVA_SITE_URL")).toBe(APP);
-		expect(testOrigin(`${APP}/`, TEST_APP, "MINERVA_SITE_URL")).toBe(APP);
-		expect(testOrigin(` ${FILES}\n`, TEST_FILES, "MINERVA_DOWNLOAD_ORIGIN")).toBe(FILES);
-		expect(testOrigin(APP.toUpperCase().replace("HTTPS", "https"), TEST_APP, "MINERVA_SITE_URL")).toBe(APP);
+		expect(instanceOrigin(APP, TEST_APP, "MINERVA_SITE_URL")).toBe(APP);
+		expect(instanceOrigin(`${APP}/`, TEST_APP, "MINERVA_SITE_URL")).toBe(APP);
+		expect(instanceOrigin(` ${FILES}\n`, TEST_FILES, "MINERVA_DOWNLOAD_ORIGIN")).toBe(FILES);
+		expect(instanceOrigin(APP.toUpperCase().replace("HTTPS", "https"), TEST_APP, "MINERVA_SITE_URL")).toBe(APP);
 	});
 
 	test.each([
@@ -51,7 +51,7 @@ describe("the test instance's origins", () => {
 		["nothing", undefined, TEST_APP],
 		["not a URL", `acme-test.${SUB}.workers.dev`, TEST_APP],
 	] as const)("%s is refused, without repeating the value", (_case, value, name) => {
-		const message = refusal(() => testOrigin(value, name, "SETTING"));
+		const message = refusal(() => instanceOrigin(value, name, "SETTING"));
 		expect(message).toMatch(/^SETTING /);
 		expect(message).not.toContain(SUB);
 		expect(message).not.toContain("acme-test.");
@@ -59,13 +59,13 @@ describe("the test instance's origins", () => {
 
 	test("the two origins must be on one subdomain", () => {
 		const names = { site: "SITE", download: "DOWNLOAD" };
-		expect(testOrigins(APP, FILES, names, TEST)).toEqual({ origin: APP, downloadOrigin: FILES });
-		const message = refusal(() => testOrigins(APP, "https://acme-test-files.other7q.workers.dev", names, TEST));
+		expect(instanceOrigins(APP, FILES, names, TEST)).toEqual({ origin: APP, downloadOrigin: FILES });
+		const message = refusal(() => instanceOrigins(APP, "https://acme-test-files.other7q.workers.dev", names, TEST));
 		expect(message).toMatch(/^SITE and DOWNLOAD /);
 		expect(message).not.toContain(SUB);
 		expect(message).not.toContain("other7q");
-		expect(refusal(() => testOrigins(APP, `https://acme-files.${SUB}.workers.dev`, names, TEST))).toMatch(/^DOWNLOAD /);
-		expect(refusal(() => testOrigins(`https://acme.${SUB}.workers.dev`, FILES, names, TEST))).toMatch(/^SITE /);
+		expect(refusal(() => instanceOrigins(APP, `https://acme-files.${SUB}.workers.dev`, names, TEST))).toMatch(/^DOWNLOAD /);
+		expect(refusal(() => instanceOrigins(`https://acme.${SUB}.workers.dev`, FILES, names, TEST))).toMatch(/^SITE /);
 	});
 
 	test("Chrome failing to start names neither host", () => {

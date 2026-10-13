@@ -2,15 +2,31 @@
 // applies D1's migrations (migrations/) before `cf deploy` uploads code that may need them. Migrations are
 // additive, so the running version keeps working (plan: Versions). cf would otherwise create a missing D1
 // database or bucket with default settings on deploy (no lifecycle rule, no schema, no jurisdiction), so a
-// missing one stops the deploy here. Resource ids are never printed. `pnpm run deploy` runs it (through
-// scripts/deploy.ts), and `pnpm run deploy:test` with `--test` for the test instance's own resources (their
-// names come from scripts/instance.ts); `--check` only checks, for a deploy of the download origin alone.
+// missing one stops the deploy here. Resource ids are never printed. scripts/deploy.ts runs it for the instance it
+// deploys (MINERVA_INSTANCE; by hand, `--instance <name>`, or `--test` for the only test instance, as
+// scripts/instance.ts chooses), whose names come from scripts/instance.ts; `--check` only checks, for a deploy of
+// the download origin alone. Its cf commands go to the instance's recorded account (scripts/run.ts, pinAccount),
+// and run by hand it takes the deploy's locks before applying migrations (under scripts/deploy.ts, which holds
+// them, it does not).
 
 import { execFileSync } from "node:child_process";
-import { namesOf, todaysInstance } from "./instance.ts";
+import { type Names, chooseInstance, parseInstanceArgs } from "./instance.ts";
 import { type LifecycleRule, lifecycleProblems } from "./lifecycle.ts";
+import { ROOT, lockOperationUnlessParentHolds, pinAccount } from "./run.ts";
 
-const NAMES = namesOf(todaysInstance(process.argv.includes("--test")));
+let NAMES: Names;
+try {
+	const { flag, rest } = parseInstanceArgs(process.argv.slice(2));
+	const unknown = rest.filter((arg) => arg !== "--test" && arg !== "--check");
+	if (unknown.length) throw new Error(`Unknown arguments: ${unknown.join(" ")}. Usage: resources.ts [--instance <name> | --test] [--check]`);
+	const instance = chooseInstance({ flag, test: rest.includes("--test") });
+	if (!rest.includes("--check")) lockOperationUnlessParentHolds(instance);
+	pinAccount([ROOT], [], instance, { record: false });
+	NAMES = instance.names;
+} catch (error) {
+	console.error(error instanceof Error ? error.message : String(error));
+	process.exit(2);
+}
 const D1 = NAMES.d1;
 const BUCKETS: { name: string; jurisdiction: string | null }[] = [
 	{ name: NAMES.bucket, jurisdiction: null },

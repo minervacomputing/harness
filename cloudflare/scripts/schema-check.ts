@@ -1,17 +1,19 @@
 // Before a deploy: checks that the deployed D1 database has the tables, columns and indexes the migrations
-// make (scripts/schema.ts), with their UNIQUE and FOREIGN KEY constraints, and the same list of applied migrations. `pnpm run deploy` runs it right after
-// scripts/resources.ts, which has applied any new migration, and before `cf deploy`; `deploy:test` runs it with
-// `--test` for the test instance. It only reads: `cf d1 query` with SELECT statements (`readOnly`). Drift stops
+// make (scripts/schema.ts), with their UNIQUE and FOREIGN KEY constraints, and the same list of applied migrations.
+// scripts/deploy.ts runs it right after scripts/resources.ts, which has applied any new migration, and before `cf
+// deploy`, for the instance it deploys (MINERVA_INSTANCE; by hand, `--instance <name>`, or `--test` for the only
+// test instance, as scripts/instance.ts chooses), on its recorded account (scripts/run.ts, pinAccount). It only
+// reads: `cf d1 query` with SELECT statements (`readOnly`). Drift stops
 // the deploy (exit 1); a database it cannot find or read, or an answer it cannot parse, exits 2, so that
 // scripts/reset.ts can accept drift but not a check that did not run. The database's id is never printed.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { namesOf, todaysInstance } from "./instance.ts";
+import { chooseInstance, parseInstanceArgs } from "./instance.ts";
+import { ROOT, pinAccount } from "./run.ts";
 import { APPLIED_SQL, COLUMNS_SQL, FOREIGN_KEYS_SQL, OBJECTS_SQL, TABLES_SQL, UNIQUES_SQL, compareMigrations, compareSchemas, expectedSchema, readOnly, rowsFrom, schemaOf } from "./schema.ts";
 
-const NAME = namesOf(todaysInstance(process.argv.includes("--test"))).d1;
 const MIGRATIONS = fileURLToPath(new URL("../migrations/", import.meta.url));
 
 /** The database's id, once known: it is replaced in everything printed. */
@@ -29,6 +31,12 @@ function fail(message: string, code: number = FAILED): never {
 // Node exits 1 on an error nothing caught (an answer of an unexpected shape, say), which would read as drift.
 process.on("uncaughtException", (error) => fail(`The schema check stopped: ${error instanceof Error ? error.message : String(error)}`));
 process.on("unhandledRejection", (error) => fail(`The schema check stopped: ${error instanceof Error ? error.message : String(error)}`));
+
+const { flag, rest } = parseInstanceArgs(process.argv.slice(2));
+if (rest.some((arg) => arg !== "--test")) fail(`Unknown arguments: ${rest.filter((arg) => arg !== "--test").join(" ")}. Usage: schema-check.ts [--instance <name> | --test]`);
+const INSTANCE = chooseInstance({ flag, test: rest.includes("--test") });
+pinAccount([ROOT], [], INSTANCE, { record: false });
+const NAME = INSTANCE.names.d1;
 
 function cf(args: string[]): string {
 	try {

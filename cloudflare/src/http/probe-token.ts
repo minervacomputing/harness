@@ -8,7 +8,7 @@ import { hmacSha256Hex } from "../lib/hash.ts";
 
 export const PROBE_HEADER = "X-Minerva-Probe-Token";
 
-/** HMAC-SHA256 of a purpose label under MINERVA_SECRET_KEY; the account tests compute it from ../.env.cloudflare. */
+/** HMAC-SHA256 of a purpose label under MINERVA_SECRET_KEY; the account tests compute it from the instance's secrets.env. */
 export function probeToken(secretKey: string): Promise<string> {
 	return hmacSha256Hex(secretKey, "minerva.probe-token");
 }

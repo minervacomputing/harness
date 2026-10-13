@@ -1,12 +1,13 @@
 // Checks a built Worker (`cf build`, in .cloudflare/output/) for the test build's code (src/faults/ and the
 // fake model it uses, src/model/fake.ts): the production build must contain none of it, the test build all
-// of it. `pnpm run deploy` runs it on the
-// production build before uploading it, `pnpm run deploy:test` (with `--test`) on the test build.
+// of it. scripts/deploy.ts and scripts/reset.ts run it on the build of the instance they work on
+// (MINERVA_INSTANCE; by hand, `--instance <name>`, or `--test` for the only test instance): the build must be
+// that instance's, and the test build exactly when it is a test instance.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { namesOf, todaysInstance } from "./instance.ts";
+import { type Instance, chooseInstance, parseInstanceArgs } from "./instance.ts";
 
 const OUTPUT = fileURLToPath(new URL("../.cloudflare/output/v0/workers/default/", import.meta.url));
 // Strings only the test build has: src/faults/'s objects (the fake provider and the mailbox that captures
@@ -14,9 +15,18 @@ const OUTPUT = fileURLToPath(new URL("../.cloudflare/output/v0/workers/default/"
 // (`X-Minerva-Faults-Token`), and the fake model's API name.
 const MARKERS = ["FaultProvider", "FaultMailbox", "fault_plan", "notes.fake.invalid", "minerva.faults", "X-Minerva-Faults", "minerva-fake"];
 
-const test = process.argv.includes("--test");
+let instance: Instance;
+try {
+	const { flag, rest } = parseInstanceArgs(process.argv.slice(2));
+	if (rest.some((arg) => arg !== "--test")) throw new Error("Usage: bundle.ts [--instance <name> | --test]");
+	instance = chooseInstance({ flag, test: rest.includes("--test") });
+} catch (error) {
+	console.error(error instanceof Error ? error.message : String(error));
+	process.exit(1);
+}
+const test = instance.test;
 const config = JSON.parse(readFileSync(join(OUTPUT, "worker.config.json"), "utf8")) as { name: string };
-const expected = namesOf(todaysInstance(test)).app;
+const expected = instance.names.app;
 if (config.name !== expected) {
 	console.error(`The build in .cloudflare/output/ is ${config.name}, not ${expected}.`);
 	process.exit(1);

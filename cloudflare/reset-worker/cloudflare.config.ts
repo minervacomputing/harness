@@ -1,6 +1,6 @@
 import { defineConfig, exports } from "cf/config";
 import * as entrypoint from "./src/index.ts" with { type: "cf-worker" };
-import { namesOf, todaysInstance } from "../scripts/instance.ts";
+import { instanceForMode } from "../scripts/instance.ts";
 
 // The quiesced instance, deployed by scripts/reset.ts in place of an instance's app while its data is reset
 // (cloudflare/README.md, Resetting an instance). It takes the app's name and retires every Durable Object
@@ -10,9 +10,10 @@ import { namesOf, todaysInstance } from "../scripts/instance.ts";
 // the classes afresh.
 //
 // The name and the classes are read from the app's build in ../.cloudflare/output/ (`cf build`, which
-// scripts/reset.ts runs first), never from a pattern, and only for the instance the mode names: mode
-// `reset-faults` for the test instance and `reset-production` for production (scripts/instance.ts names
-// both). Any other mode, cf's default included, stops the build.
+// scripts/reset.ts runs first), never from a pattern, and only for the instance being reset (scripts/instance.ts,
+// `instanceForMode`: MINERVA_INSTANCE, which scripts/reset.ts sets), whose kind must be the mode's: mode
+// `reset-faults` for a test instance and `reset-production` for a production one. Any other mode, cf's default
+// included, stops the build.
 
 // This file runs in Node but is type-checked with the Worker's runtime types, which lack Node's.
 const here = (import.meta as unknown as { url: string }).url;
@@ -21,7 +22,8 @@ interface BuildProcess {
 }
 const build = (globalThis as unknown as { process: BuildProcess }).process;
 
-const TARGETS: Record<string, string> = { "reset-faults": namesOf(todaysInstance(true)).app, "reset-production": namesOf(todaysInstance(false)).app };
+/** The app's mode for each of this Worker's. */
+const MODES: Record<string, "faults" | "production"> = { "reset-faults": "faults", "reset-production": "production" };
 
 interface BuiltWorker {
 	name?: string;
@@ -29,8 +31,9 @@ interface BuiltWorker {
 }
 
 export default defineConfig(({ mode }) => {
-	const name = mode ? TARGETS[mode] : undefined;
-	if (!name) throw new Error("The quiesced instance is built by scripts/reset.ts, with mode reset-faults or reset-production.");
+	const appMode = mode ? MODES[mode] : undefined;
+	if (!appMode) throw new Error("The quiesced instance is built by scripts/reset.ts, with mode reset-faults or reset-production.");
+	const name = instanceForMode(appMode).names.app;
 	let built: BuiltWorker;
 	try {
 		built = JSON.parse(build.getBuiltinModule("node:fs").readFileSync(new URL("../.cloudflare/output/v0/workers/default/worker.config.json", here), "utf8")) as BuiltWorker;

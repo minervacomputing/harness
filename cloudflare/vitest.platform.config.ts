@@ -6,7 +6,7 @@ import { defineConfig } from "vitest/config";
 // Objects, D1 and R2 simulated locally. Remote bindings stay off, so nothing reaches the account.
 process.env.MINERVA_DEBUG ??= "true";
 process.env.MINERVA_SITE_URL ??= "http://localhost";
-// Throwaway values for local runs; the deployed Workers' secrets are in ../.env.cloudflare.
+// Throwaway values for local runs; a deployed instance's secrets are in its secrets.env (scripts/instance.ts).
 process.env.MINERVA_SECRET_KEY ??= "test-secret-key-for-local-platform-tests-only";
 process.env.MINERVA_ENCRYPTION_KEYS ??= "v1:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
 process.env.MINERVA_DOWNLOAD_KEY ??= "test-download-key-for-local-platform-tests-only";

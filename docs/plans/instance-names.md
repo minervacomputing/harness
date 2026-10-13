@@ -1,6 +1,6 @@
 # Plan: instances by name
 
-Status: plan, 2026-10-13; sub-unit 2a (derived names) is done, 2026-10-14, and the rest is not built. This is unit 2 of [self-hosting-and-cloud.md](self-hosting-and-cloud.md), Part 1. It starts after frontend cleanup A3 is committed, because A3 also changes `test/account/browser.test.ts`. opencode reviewed a first draft, and its findings are folded in.
+Status: plan, 2026-10-13; sub-units 2a (derived names) and 2b (the instance directory) are done, 2026-10-14, and the rest is not built. This is unit 2 of [self-hosting-and-cloud.md](self-hosting-and-cloud.md), Part 1. It starts after frontend cleanup A3 is committed, because A3 also changes `test/account/browser.test.ts`. opencode reviewed a first draft, and its findings are folded in.
 
 ## Why
 
@@ -150,6 +150,7 @@ One fresh agent works on each sub-unit, in order. Every commit leaves `deploy:te
      - a vars file that sets the gateway;
      - origins that belong to another instance.
    - Then the same account runs as in 2a.
+   - As built: `pnpm build` and `pnpm startup` build in mode `standalone` (vite reserves `local`) under the local name, with no instance, and no instance may take a local name. Online `pnpm exec vite` (mode `development`) stays local but sends model turns through a test instance's gateway (`MINERVA_INSTANCE`, or the only test instance). `reset.ts` already requires `--test` or `--production` to match `instance.json`'s kind; 2c adds the agreement with the identity row. The account suites run through `scripts/suite.ts` (vitest takes no flag of ours) and pin the recorded account without recording one.
 3. **2c. Identity on the account.**
    - The `instance_identity` migration, and the identity check in the deploy (before the migrations) and in the reset (before the dry run's listing).
    - The reset's flags.

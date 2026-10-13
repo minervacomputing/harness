@@ -13,16 +13,16 @@
 // driver (`provider-authorize`). Each walk claims the setup: the driver first deletes an earlier walk's claim
 // (`setup-reopen`; the admins it made stay admins).
 //
-// Run after `pnpm run deploy:test`: `pnpm test:account test/account/browser.test.ts`. Both origins must be the
-// test instance's own (origins.ts), or it fails before sending anything. It fails too, rather than skip, without
-// the test Worker's settings and secrets (../.env.cloudflare-test.vars, ../.env.cloudflare-test) or when Google
-// Chrome does not start. MINERVA_BROWSER_SHOTS=<dir> saves a screenshot of every page there, with every field
+// Run after `pnpm run deploy:test`: `pnpm test:browser`, against the test instance (MINERVA_INSTANCE, or the only
+// test instance; never a production one). Both origins must be the test instance's own (origins.ts), or it fails
+// before sending anything. It fails too, rather than skip, without the test instance's settings and secrets (its
+// vars.env and secrets.env) or when Google Chrome does not start. MINERVA_BROWSER_SHOTS=<dir> saves a screenshot of every page there, with every field
 // masked.
 
 import { execFileSync } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { lookup, Resolver } from "node:dns/promises";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Browser, type BrowserContext, chromium, type Page, type Request } from "playwright-core";
@@ -30,21 +30,17 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { FAULTS_HEADER, faultsToken } from "../../src/faults/token.ts";
 import { LINK_LIFETIME_MS } from "../../src/files/limits.ts";
 import { signDownload } from "../../src/files/links.ts";
-import { FALLBACK_RESOLVERS, fetchDeployed, secret, testVar, testWorker } from "./client.ts";
-import { chromeFailure, testNames, testOrigins } from "./origins.ts";
-
-const TEST_SECRETS = new URL("../../../.env.cloudflare-test", import.meta.url);
-const TEST_VARS = new URL("../../../.env.cloudflare-test.vars", import.meta.url);
+import { FALLBACK_RESOLVERS, fetchDeployed, instanceSecret, testWorker } from "./client.ts";
+import { chromeFailure, originsOf } from "./origins.ts";
 
 /**
  * The test Worker's origin, keys and download origin. Missing files, and origins that are not the test instance's
  * own (origins.ts), throw: the walk fails rather than skip.
  */
 function setting(): { origin: string; secretKey: string; setupKey: string; downloadOrigin: string; downloadKey: string } {
-	if (!existsSync(TEST_VARS) || !existsSync(TEST_SECRETS)) throw new Error("The browser walk needs the test Worker's settings and secrets (cloudflare/README.md, The test Worker).");
-	const { origin, secretKey } = testWorker();
-	const { downloadOrigin } = testOrigins(origin, testVar("MINERVA_DOWNLOAD_ORIGIN"), { site: "MINERVA_SITE_URL", download: "MINERVA_DOWNLOAD_ORIGIN" }, testNames());
-	return { origin, secretKey, setupKey: secret("MINERVA_SETUP_KEY", TEST_SECRETS), downloadOrigin, downloadKey: secret("MINERVA_DOWNLOAD_KEY", TEST_SECRETS) };
+	const { instance, origin, secretKey } = testWorker();
+	const { downloadOrigin } = originsOf(instance);
+	return { origin, secretKey, setupKey: instanceSecret(instance, "MINERVA_SETUP_KEY"), downloadOrigin, downloadKey: instanceSecret(instance, "MINERVA_DOWNLOAD_KEY") };
 }
 
 /**

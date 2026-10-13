@@ -1,57 +1,57 @@
 // A small HTTPS client for the deployed Workers. Some resolvers fail on *.workers.dev now and then
 // (ENOTFOUND; 1.1.1.1 itself answers SERVFAIL at times), so a failed lookup is retried against public
-// resolvers directly, Google's first. Also the Workers' secrets and cf's
-// view of the account, for the checks that need them; neither is ever printed.
+// resolvers directly, Google's first. Also the instance a suite runs against, with its secrets and settings, and
+// cf's view of its account, for the checks that need them; neither is ever printed.
 
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { Resolver } from "node:dns/promises";
 import { lookup as systemLookup, type LookupAddress } from "node:dns";
+import { Resolver } from "node:dns/promises";
 import { request } from "node:https";
-import { testNames, testOrigin } from "./origins.ts";
+import { type Instance, chooseInstance, readInstanceEnv } from "../../scripts/instance.ts";
+import { ROOT, cfJson, pinAccount } from "../../scripts/run.ts";
+import { instanceOrigin } from "./origins.ts";
 
-const VARS = new URL("../../../.env.cloudflare.vars", import.meta.url);
-if (existsSync(VARS)) process.loadEnvFile(VARS);
-
-const SECRETS = new URL("../../../.env.cloudflare", import.meta.url);
-const TEST_SECRETS = new URL("../../../.env.cloudflare-test", import.meta.url);
-const TEST_VARS = new URL("../../../.env.cloudflare-test.vars", import.meta.url);
-
-/** A secret from ../.env.cloudflare (or the test Worker's ../.env.cloudflare-test), as scripts/secrets.ts writes it. */
-export function secret(name: string, file: URL = SECRETS): string {
-	for (const line of readFileSync(file, "utf8").split("\n")) {
-		const match = /^([A-Z0-9_]+)="(.*)"$/.exec(line.trim());
-		if (match?.[1] === name && match[2]) return match[2];
-	}
-	throw new Error(`${name} is not set in ${file.pathname.split("/").pop()}.`);
+/**
+ * The instance an account suite runs against (scripts/instance.ts, `chooseInstance`): MINERVA_INSTANCE, which
+ * scripts/suite.ts sets from --instance, or for a test instance's suite the only test instance. A test
+ * instance's suite refuses a production instance.
+ */
+export function suiteInstance(test: boolean): Instance {
+	return chooseInstance({ test });
 }
 
-/** A setting of ../.env.cloudflare-test.vars, or undefined. */
-export function testVar(name: string): string | undefined {
-	if (!existsSync(TEST_VARS)) throw new Error("The test Worker's settings are in .env.cloudflare-test.vars (cloudflare/README.md, The test Worker).");
-	return new RegExp(`^${name}=(.*)$`, "m").exec(readFileSync(TEST_VARS, "utf8"))?.[1]?.trim().replace(/^"|"$/g, "");
+/** A secret of the instance's secrets.env, never printed; a missing one throws. */
+export function instanceSecret(instance: Instance, name: string): string {
+	const value = readInstanceEnv(instance, "secrets")?.[name];
+	if (!value) throw new Error(`${name} is not set in ${instance.files.secrets}.`);
+	return value;
 }
 
 /**
- * The test instance's app Worker: its origin from ../.env.cloudflare-test.vars, checked to be the test
- * Worker's own before any request is sent (origins.ts), and its secret key.
+ * The test instance's app Worker: its origin from its vars.env, checked to be its own before any request is
+ * sent (origins.ts), and its secret key.
  */
-export function testWorker(): { origin: string; secretKey: string } {
-	const origin = testOrigin(testVar("MINERVA_SITE_URL"), testNames().app, "MINERVA_SITE_URL in .env.cloudflare-test.vars");
-	return { origin, secretKey: secret("MINERVA_SECRET_KEY", TEST_SECRETS) };
+export function testWorker(): { instance: Instance; origin: string; secretKey: string } {
+	const instance = suiteInstance(true);
+	const vars = readInstanceEnv(instance, "vars");
+	if (!vars) throw new Error(`The test instance's settings are in ${instance.files.vars} (cloudflare/README.md, The test Worker).`);
+	const origin = instanceOrigin(vars.MINERVA_SITE_URL, instance.names.app, `MINERVA_SITE_URL in ${instance.name}'s vars.env`);
+	return { instance, origin, secretKey: instanceSecret(instance, "MINERVA_SECRET_KEY") };
 }
 
-/** cf's JSON answer to a read-only command (cf must be signed in). */
+/**
+ * Pins the cf commands of this suite to the instance's account, as the deploy does (scripts/run.ts, pinAccount):
+ * the one its instance.json records, which its first deploy wrote.
+ */
+export function pinSuite(instance: Instance): void {
+	pinAccount([ROOT], [], instance, { record: false });
+	pinned = true;
+}
+let pinned = false;
+
+/** cf's JSON answer to a read-only command, on the account `pinSuite` pinned. */
 export function cf<T>(args: string[]): T {
-	return JSON.parse(execFileSync("cf", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })) as T;
-}
-
-export function origin(name: "MINERVA_SITE_URL" | "MINERVA_DOWNLOAD_ORIGIN"): string {
-	const value = process.env[name];
-	if (!value?.startsWith("https://")) {
-		throw new Error(`Set ${name} to the deployed Worker's https origin, in the environment or in .env.cloudflare.vars.`);
-	}
-	return value.replace(/\/$/, "");
+	if (!pinned) throw new Error("The suite's cf commands are pinned to its instance's account first (pinSuite).");
+	return cfJson<T>(args);
 }
 
 /** The resolvers a failed lookup is retried against, in order (c-ares moves on after a server's failure). */

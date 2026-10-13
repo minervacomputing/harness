@@ -2,19 +2,24 @@
 // Resetting an instance). For an instance that holds nothing worth keeping, such as after a change of a stored
 // format; it cannot be undone.
 //
-//   node scripts/reset.ts --test                 lists what a reset of the test instance deletes; changes nothing
-//   node scripts/reset.ts --test --yes           resets it; then `pnpm run deploy:test`
-//   node scripts/reset.ts --production [--yes]   the same for production; then `pnpm run deploy`
+//   node scripts/reset.ts --test                                lists what a reset of the test instance deletes (the only
+//                                                               one, or the one --instance names); changes nothing
+//   node scripts/reset.ts --test --yes                          resets it; then `pnpm run deploy:test`
+//   node scripts/reset.ts --instance <name> --production [--yes]  the same for a production instance, which needs both
+//                                                               its name and --production; then `pnpm run deploy --instance <name>`
 //
-// `pnpm assets` first. In order:
-// 1. Pins every cf command to one account (scripts/run.ts, pinAccount), then builds the app and the quiesced
+// The instance comes from scripts/instance.ts (`chooseInstance`), and its kind (instance.json) must be the flag's:
+// --test for a test instance, --production for any other, which is never chosen by default. `pnpm assets` first.
+// In order:
+// 1. Takes the checkout's lock and the instance's, and pins every cf command to the instance's account
+//    (scripts/run.ts, lockOperation and pinAccount; a first run records the account), then builds the app and the quiesced
 //    instance (reset-worker/), locally. Every name below comes from the app's build, and each must be the
 //    instance's own (scripts/instance.ts: its database, its two buckets, its container), or nothing happens.
 // 2. Checks that the Worker, the database and the buckets the build binds exist on that account, that the
 //    Worker has no Durable Object namespace of a class the build does not export, and that the container
 //    applications linked to its namespaces are the build's own, by exact name. Nothing identifying is
-//    printed: ids and the workers.dev subdomain are replaced in all output. One deploy or reset runs at a time
-//    from a checkout (lock), and only the checked quiesced build is uploaded.
+//    printed: ids and the workers.dev subdomain are replaced in all output. Only the checked quiesced build is
+//    uploaded.
 // 3. Runs the read-only schema check (drift is expected and reported; a check that did not finish stops the
 //    reset) and lists what the reset deletes: objects per class, objects per bucket and prefix, rows per table.
 // With --yes:
@@ -36,24 +41,40 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildAccount, buildDigest, ownContainer, readBuild } from "./builds.ts";
-import { namesOf, todaysInstance } from "./instance.ts";
+import { type Instance, chooseInstance, parseInstanceArgs } from "./instance.ts";
 import { type LifecycleRule, lifecycleExtras, lifecycleMatches, lifecycleProblems } from "./lifecycle.ts";
-import { CommandFailed, ROOT, cfJson, hide, hideOrigin, lock, pinAccount, redact, run } from "./run.ts";
+import { CommandFailed, ROOT, cfJson, hide, hideOrigin, lockOperation, pinAccount, redact, run } from "./run.ts";
 import { readOnly, rowsFrom } from "./schema.ts";
 
-const args = process.argv.slice(2);
-const unknown = args.filter((arg) => !["--test", "--production", "--yes"].includes(arg));
-const TEST = args.includes("--test");
-if (unknown.length || TEST === args.includes("--production")) {
-	console.error("Usage: reset.ts --test | --production [--yes]");
-	process.exit(2);
+const USAGE = "Usage: reset.ts --test [--instance <name>] [--yes] | reset.ts --instance <name> --production [--yes]";
+let INSTANCE: Instance;
+let YES: boolean;
+try {
+	const { flag, rest } = parseInstanceArgs(process.argv.slice(2));
+	const unknown = rest.filter((arg) => !["--test", "--production", "--yes"].includes(arg));
+	const test = rest.includes("--test");
+	const production = rest.includes("--production");
+	if (unknown.length || test === production) {
+		console.error(USAGE);
+		process.exit(2);
+	}
+	// A production instance's name is given on the command line, never taken from the environment alone.
+	if (production && flag === undefined) throw new Error(`A production instance is reset only by name: ${USAGE}`);
+	INSTANCE = chooseInstance({ flag, test });
+	if (production && INSTANCE.test) throw new Error(`${INSTANCE.name} is a test instance: reset it with --test.`);
+	YES = rest.includes("--yes");
+} catch (error) {
+	console.error(error instanceof Error ? error.message : String(error));
+	process.exit(1);
 }
-const YES = args.includes("--yes");
-const INSTANCE = todaysInstance(TEST);
-const NAMES = namesOf(INSTANCE);
+const NAMES = INSTANCE.names;
 const NAME = NAMES.app;
+const TEST = INSTANCE.test;
 const MODE = TEST ? "faults" : "production";
-const FLAG = TEST ? ["--test"] : [];
+/** This reset's own command line, for its messages. */
+const COMMAND = `node scripts/reset.ts --instance ${INSTANCE.name} ${TEST ? "--test" : "--production"}`;
+// Every command run below (cf build, the checks) chooses this instance.
+process.env.MINERVA_INSTANCE = INSTANCE.name;
 /** The only names a reset touches. */
 const OWN = new Set([NAMES.d1, NAMES.bucket, NAMES.bucketEu]);
 const RESET_DIR = join(ROOT, "reset-worker");
@@ -165,15 +186,15 @@ const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 
 let current = "taking the lock";
 try {
-	lock();
+	lockOperation(INSTANCE);
 	current = "pinning the account";
-	const account = pinAccount([ROOT, RESET_DIR], [MODE, `reset-${MODE}`]);
+	const account = pinAccount([ROOT, RESET_DIR], [MODE, `reset-${MODE}`], INSTANCE, { record: true });
 	// 1. The builds, locally.
 	current = "building";
 	step("Building the app and the quiesced instance (local only)");
 	if (!existsSync(join(ROOT, ".assets", "index.html"))) stop("Run `pnpm assets` first: the app's build needs the frontend in .assets/.");
 	run("cf", ["build", "--mode", MODE]);
-	run("node", ["scripts/bundle.ts", ...FLAG], { print: true });
+	run(process.execPath, ["scripts/bundle.ts"], { print: true });
 	run("cf", ["build", "--mode", `reset-${MODE}`], { cwd: RESET_DIR });
 	// The quiesced build is the one uploaded: its digest, taken now, is checked once it is checked and right
 	// before the upload.
@@ -204,7 +225,7 @@ try {
 			.filter((name): name is string => typeof name === "string"),
 	);
 	const foreign = [d1Name, ...buckets.map((bucket) => bucket.name)].filter((name) => !OWN.has(name));
-	const foreignContainers = [...containers].filter((name) => !ownContainer(INSTANCE, name));
+	const foreignContainers = [...containers].filter((name) => !ownContainer(INSTANCE.name, name));
 	if (foreign.length || foreignContainers.length) stop(`The app's build of ${NAME} names resources that are not its own: ${[...foreign, ...foreignContainers].join(", ")}.`);
 	const tombstones = Object.entries(quiet.exports ?? {});
 	const retired = tombstones
@@ -248,7 +269,7 @@ try {
 	// 3. The schema check and what the reset deletes.
 	current = "the schema check";
 	step(`The schema check of ${d1Name}, read-only (drift is expected before a reset)`);
-	const schema = run("node", ["scripts/schema-check.ts", ...FLAG], { print: true, allowFailure: true });
+	const schema = run(process.execPath, ["scripts/schema-check.ts"], { print: true, allowFailure: true });
 	if (schema.status === 1 && schema.output.includes(`The schema of ${NAME} is not what the migrations make:`)) console.log("Drift, as expected after a change of the stored formats: the reset recreates the database.");
 	else if (schema.status !== 0) stop("The schema check could not run: fix it before the reset, which deletes what it reads.");
 
@@ -272,7 +293,7 @@ try {
 	} else console.log(`D1 ${d1Name}: no tables`);
 
 	if (!YES) {
-		console.log(`\nRead-only: nothing was changed. \`node scripts/reset.ts ${TEST ? "--test" : "--production"} --yes\` deletes all of the above.`);
+		console.log(`\nRead-only: nothing was changed. \`${COMMAND} --yes\` deletes all of the above.`);
 		process.exit(0);
 	}
 
@@ -358,7 +379,7 @@ try {
 	console.log(`Recreated ${d1Name} (${databaseInfo.jurisdiction ?? region ?? "default location"}, replication ${databaseInfo.read_replication?.mode ?? "disabled"}); it has no tables.`);
 
 	console.log(
-		`\n${NAME} is reset and answers 503 until it is deployed: run \`pnpm run deploy${TEST ? ":test" : ""}\`, which applies the migrations to the empty database and provisions every Durable Object class afresh, then \`node scripts/schema-check.ts${TEST ? " --test" : ""}\`, which must pass.`,
+		`\n${NAME} is reset and answers 503 until it is deployed: run \`pnpm run deploy --instance ${INSTANCE.name}\`, which applies the migrations to the empty database and provisions every Durable Object class afresh, then \`node scripts/schema-check.ts --instance ${INSTANCE.name}\`, which must pass.`,
 	);
 } catch (error) {
 	console.error(`\nThe reset stopped while ${current}:\n${redact(error instanceof Error ? error.message : String(error))}`);

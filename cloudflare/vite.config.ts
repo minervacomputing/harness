@@ -6,7 +6,8 @@ import { defineConfig, type Plugin } from "vite";
 // builds no client of its own.
 //
 // `vite` (mode development) runs the Worker with the account's Workers AI and AI Gateway as remote
-// bindings, so it needs CLOUDFLARE_API_TOKEN. `vite --mode offline` (pnpm dev:offline) needs no account: the
+// bindings, so it needs CLOUDFLARE_API_TOKEN and a test instance, whose gateway it uses (MINERVA_INSTANCE, or the
+// only test instance: cloudflare.config.ts). `vite --mode offline` (pnpm dev:offline) needs no account: the
 // Worker's mode `offline` (cloudflare.config.ts) has no AI binding and runs the fake model, and remote
 // bindings are off. Only the dev server marks the process for that mode, so a build in it stops there.
 

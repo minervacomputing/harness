@@ -3,10 +3,13 @@
 // and can still exit 0 when it would have asked) counts as a failure.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, linkSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { closeSync, constants, existsSync, linkSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
+import { type Instance, checkDirectory } from "./instance.ts";
+import { recordAccount } from "./instance-files.ts";
 
 /** cloudflare/, where the app's cloudflare.config.ts is. */
 export const ROOT = fileURLToPath(new URL("../", import.meta.url));
@@ -74,24 +77,38 @@ function cfEnvFiles(dir: string, modes: string[]): string[] {
 }
 
 /**
- * Pins every cf command of this run to one account: the one in CLOUDFLARE_ACCOUNT_ID, which cf must reach, or
- * else the only account cf reaches. It is put in this process's environment, which every command inherits and
- * which cf prefers to .env files; a .env file that sets a CLOUDFLARE_ variable where cf runs (`dirs`, for
- * `modes`) stops the run instead. The accounts' ids are hidden from all output; nothing identifying is printed.
- * Returns the account's id.
+ * Pins every cf command of this run to the instance's account, put in this process's environment, which every
+ * command inherits and which cf prefers to .env files; a .env file that sets a CLOUDFLARE_ variable where cf
+ * runs (`dirs`, for `modes`) stops the run instead.
+ *
+ * Once recorded in the instance's instance.json, the account is the instance's: CLOUDFLARE_ACCOUNT_ID, if set,
+ * must be the same, and cf must reach it. Before that, it is the account in CLOUDFLARE_ACCOUNT_ID, which cf must
+ * reach, or else the only account cf reaches; with `record` (the caller holds the instance's lock and is about
+ * to change the account) it is written into instance.json before anything changes, and without it the run
+ * stops, since the instance was never deployed. The accounts' ids are hidden from all output; nothing
+ * identifying is printed. Returns the account's id.
  */
-export function pinAccount(dirs: string[], modes: string[]): string {
+export function pinAccount(dirs: string[], modes: string[], instance: Instance, options: { record: boolean }): string {
 	for (const file of dirs.flatMap((dir) => cfEnvFiles(dir, modes))) {
 		if (/^\s*(export\s+)?CLOUDFLARE_/m.test(readFileSync(file, "utf8"))) throw new CommandFailed(`${file} sets a CLOUDFLARE_ variable for cf: remove it, and set CLOUDFLARE_ACCOUNT_ID in the environment instead.`);
 	}
+	hide(instance.account ?? undefined);
+	const wanted = process.env.CLOUDFLARE_ACCOUNT_ID;
+	hide(wanted);
 	const who = cfJson<{ authenticated?: boolean; tokenValid?: boolean; accounts?: { id: string }[] }>(["auth", "whoami"]);
 	const accounts = (who.accounts ?? []).map((account) => account.id);
 	for (const id of accounts) hide(id);
-	const wanted = process.env.CLOUDFLARE_ACCOUNT_ID;
-	hide(wanted);
 	if (!who.authenticated || who.tokenValid === false) throw new CommandFailed("cf is not signed in: run `cf auth login`.");
+	if (instance.account !== null) {
+		if (wanted && wanted !== instance.account) throw new CommandFailed(`CLOUDFLARE_ACCOUNT_ID is not the account ${instance.name} is on (${instance.files.instance}).`);
+		if (!accounts.includes(instance.account)) throw new CommandFailed(`cf cannot reach the account ${instance.name} is on (${instance.files.instance}): sign in to it.`);
+		process.env.CLOUDFLARE_ACCOUNT_ID = instance.account;
+		return instance.account;
+	}
 	const account = wanted ? accounts.find((id) => id === wanted) : accounts.length === 1 ? accounts[0] : undefined;
 	if (!account) throw new CommandFailed(wanted ? "cf cannot reach the account in CLOUDFLARE_ACCOUNT_ID." : `cf reaches ${accounts.length} accounts: set CLOUDFLARE_ACCOUNT_ID to the instance's.`);
+	if (!options.record) throw new CommandFailed(`${instance.name} has no account recorded yet (${instance.files.instance}): its first deploy records it.`);
+	recordAccount(instance, account);
 	process.env.CLOUDFLARE_ACCOUNT_ID = account;
 	return account;
 }
@@ -116,23 +133,32 @@ export function hideSecrets(file: string): void {
 	}
 }
 
-const LOCK = join(ROOT, ".cloudflare", "operations.lock");
+/** The checkout's lock: one deploy or reset at a time builds into this checkout's .cloudflare/output/. */
+export const CHECKOUT_LOCK = join(ROOT, ".cloudflare", "operations.lock");
 
 /**
- * Holds the lock that lets one deploy or reset run at a time from this checkout (both build into the same
- * .cloudflare/output/ directories, which a second run would replace between another's check and upload). The
- * lock file appears with its holder's pid in it (a hard link of a finished file), and is removed on exit,
- * Ctrl-C included. One left behind (a run killed outright) is never taken over: the run stops and says so.
+ * Holds lock files, in order: each appears with its holder's pid in it (a hard link of a finished file), and is
+ * removed on exit, Ctrl-C included. A lock someone else holds stops the run before the next is tried, and one
+ * left behind (a run killed outright) is never taken over: the run stops and says which file to remove.
  */
-export function lock(): void {
-	mkdirSync(join(ROOT, ".cloudflare"), { recursive: true });
-	const mine = `${LOCK}.${process.pid}`;
-	writeFileSync(mine, String(process.pid), { mode: 0o600 });
+export function holdLocks(files: string[]): void {
+	for (const file of files) holdLock(file);
+}
+
+function holdLock(file: string): void {
+	// A fresh file of this run's own, never one that was there (or a link someone left in its place).
+	const mine = `${file}.${process.pid}.${randomBytes(6).toString("hex")}`;
+	const fd = openSync(mine, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
 	try {
-		linkSync(mine, LOCK);
+		writeSync(fd, String(process.pid));
+	} finally {
+		closeSync(fd);
+	}
+	try {
+		linkSync(mine, file);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-		const holder = Number(readFileSync(LOCK, "utf8"));
+		const holder = Number(readFileSync(file, "utf8"));
 		let alive = true;
 		try {
 			process.kill(holder, 0);
@@ -141,19 +167,68 @@ export function lock(): void {
 		}
 		throw new CommandFailed(
 			alive && Number.isInteger(holder) && holder > 0
-				? `Another deploy or reset is running (process ${holder}): wait for it to finish.`
-				: `A deploy or reset (process ${holder || "unknown"}) stopped without removing its lock: if none is running, remove ${LOCK} and run this again.`,
+				? `Another command holds ${file} (process ${holder}): wait for it to finish.`
+				: `A command (process ${holder || "unknown"}) stopped without removing its lock: if none is running, remove ${file} and run this again.`,
 		);
 	} finally {
 		rmSync(mine, { force: true });
 	}
 	process.on("exit", () => {
 		try {
-			if (readFileSync(LOCK, "utf8") === String(process.pid)) rmSync(LOCK);
+			if (readFileSync(file, "utf8") === String(process.pid)) rmSync(file);
 		} catch {}
 	});
 	// Exiting on a signal runs the handler above; a script with handlers of its own exits from them.
 	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) if (process.listenerCount(signal) === 0) process.on(signal, () => process.exit(130));
+}
+
+/**
+ * The locks of a command that changes an instance's account (a deploy, a reset): the checkout's first (both
+ * build into the same .cloudflare/output/ directories, which a second run would replace between another's
+ * check and upload), then the instance's, which stops two checkouts on one machine from changing one instance
+ * at once. Always in that order, so two commands never wait on each other.
+ */
+export function lockOperation(instance: Instance): void {
+	holdLocks(operationLocks(instance));
+}
+
+/** The lock files of `lockOperation`, in their order. */
+function operationLocks(instance: Instance): string[] {
+	mkdirSync(join(ROOT, ".cloudflare"), { recursive: true });
+	checkDirectory(instance.dir, `The directory of ${instance.name}`);
+	return [CHECKOUT_LOCK, instance.files.lock];
+}
+
+/**
+ * For a script that changes the account both alone and under scripts/deploy.ts (scripts/resources.ts): nothing
+ * when the process that ran it holds the locks of `lockOperation`, as a deploy does while it runs its steps;
+ * otherwise those locks, as a command of its own.
+ */
+export function lockOperationUnlessParentHolds(instance: Instance): void {
+	holdLocksUnlessParentHolds(operationLocks(instance));
+}
+
+/**
+ * `holdLocks`, unless the process that ran this one holds every one of the files. A lock left by a dead run
+ * whose pid the parent now has reads as the parent's; it still stops every other command, so this one runs
+ * alone all the same.
+ */
+export function holdLocksUnlessParentHolds(files: string[]): void {
+	const parentHolds = (file: string) => {
+		try {
+			return readFileSync(file, "utf8") === String(process.ppid);
+		} catch {
+			return false;
+		}
+	};
+	if (files.every(parentHolds)) return;
+	holdLocks(files);
+}
+
+/** The instance's lock alone, for a command that writes its directory and builds nothing (scripts/secrets.ts). */
+export function lockInstance(instance: Instance): void {
+	checkDirectory(instance.dir, `The directory of ${instance.name}`);
+	holdLocks([instance.files.lock]);
 }
 
 /** `cf …` with its answer parsed as JSON; a failure throws (with the output redacted). */

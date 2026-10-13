@@ -3,72 +3,77 @@ import * as faultsEntrypoint from "./src/faults/index.ts" with { type: "cf-worke
 import * as entrypoint from "./src/index.ts" with { type: "cf-worker" };
 import { parseFrom } from "./src/accounts/emails.ts";
 import { checkBuild, connectorClientSecrets, parse, type SettingsEnv } from "./src/config.ts";
-import { LOCAL_INSTANCES, type Names, namesOf, todaysInstance } from "./scripts/instance.ts";
+import { type Instance, LOCAL_INSTANCES, type Names, chooseInstance, instanceForMode, instanceVars, namesOf, readInstanceEnv } from "./scripts/instance.ts";
 
 // Plain settings are text bindings, read when the Worker is built and checked then with src/config.ts's
 // parser, so a malformed value fails the build. Development and tests read the environment, with the
-// defaults below. A production build (cf build, cf deploy) reads ../.env.cloudflare.vars alone, which is
-// gitignored because it names the deployed origins: the shell's MINERVA_* are ignored there (the Django
-// app uses the same names), the file must exist, both origins must be https, and MINERVA_DEBUG must be
-// off. No build but the test build's accepts the fake model, which only its entry contains. Secrets never
-// go here: they are in ../.env.cloudflare.
+// defaults below. A deployed build (mode production or faults) reads its instance's vars.env alone
+// (scripts/instance.ts, The instance directory, outside the checkout): the shell's MINERVA_* are ignored there
+// (the Django app uses the same names), the file must exist, both origins must be https, and MINERVA_DEBUG must
+// be off. No build but the test build's accepts the fake model, which only its entry contains. Secrets never go
+// here: they are in the instance's secrets.env.
 
-// Every name comes from scripts/instance.ts (`namesOf`): the Worker, the database, the AI Gateway, the buckets
-// and the container application all follow the instance's name, and MINERVA_MODEL_GATEWAY is derived from it
-// (a vars file that sets it is refused).
+// Every name comes from scripts/instance.ts: the instance a build is for (`instanceForMode`: MINERVA_INSTANCE,
+// which the deploy scripts set, or for mode faults the only test instance), and through it the Worker, the
+// database, the AI Gateway, the buckets and the container application (`namesOf`). MINERVA_MODEL_GATEWAY is
+// derived from the name (a vars file that sets it is refused).
 
-// The test instance (mode `faults`, `pnpm run deploy:test`) is the same code built from src/faults/index.ts,
-// which adds a fake connector, its provider object, fault points and a token-gated driver for the account
-// tests, with resources of its own and its settings from ../.env.cloudflare-test.vars, under the same rules as
-// production's. The platform tests (mode `test`, under a local name, locally) run that entry too. Production
-// builds src/index.ts, which imports nothing of src/faults/.
+// Mode `production` builds a production instance, which is never chosen by default. Mode `faults` builds a test
+// instance (`pnpm run deploy:test`): the same code built from src/faults/index.ts, which adds a fake connector,
+// its provider object, fault points and a token-gated driver for the account tests, with resources of its own,
+// under the same rules as production's. A mode that disagrees with the instance's kind stops the build. The
+// platform tests (mode `test`, under a local name, locally) run that entry too. Production builds
+// src/index.ts, which imports nothing of src/faults/.
 
 // Mode `offline` is the dev server's (`pnpm dev:offline`, cloudflare/README.md, Local development): the test
 // build's entry (it has the fake model), debug on, no AI binding (Workers AI and the AI Gateway need an
 // account) and the container only if Docker runs, under a local name (LOCAL_INSTANCES.offline). It exists only
 // under `vite --mode offline`, which marks the process (vite.config.ts); `cf build` or `cf deploy` in that mode
-// stops, so a local build cannot be deployed by accident. Any other mode (cf's default, which `cf workers
-// types` uses, and `development`, which `pnpm startup` builds in) builds production's entry with the
-// environment's settings under the platform tests' local name, which reaches no instance. `cf build` itself
-// is mode `production`.
+// stops, so a local build cannot be deployed by accident. Mode `development` is vite's own dev server
+// (`pnpm exec vite`), which reaches the account's Workers AI and AI Gateway as remote bindings: production's
+// entry under the local name, with a test instance's gateway (MINERVA_INSTANCE, or the only test instance).
+// Any other mode (`standalone`, which `pnpm build` and `pnpm startup` build in, and the mode of `cf workers
+// types`, which has none) builds production's entry with the environment's settings under the platform tests'
+// local name, which reaches no instance. (Vite reserves the mode name `local`.) `cf build` without a mode is
+// mode `production`, so it needs an instance.
 
 // This file runs in Node but is type-checked with the Worker's runtime types, which lack Node's.
-const here = (import.meta as unknown as { url: string }).url;
-
 interface Target {
 	names: Names;
-	/** The settings file of a deployed build; null reads the environment. */
-	vars: URL | null;
-	/** The secrets file `cf deploy --secrets-file` uploads, for a deployed build; null reads the environment. */
-	secrets: URL | null;
+	/** The instance a deployed build is for, whose vars.env and secrets.env it reads; null reads the environment. */
+	instance: Instance | null;
 	faults: boolean;
 	/** The dev server's mode `offline`: no AI binding, the container only if Docker runs, local defaults. */
 	offline: boolean;
 }
 
 function targetFor(mode: string | undefined): Target {
-	if (mode === "production") return { names: namesOf(todaysInstance(false)), vars: new URL("../.env.cloudflare.vars", here), secrets: new URL("../.env.cloudflare", here), faults: false, offline: false };
-	if (mode === "faults") {
-		return { names: namesOf(todaysInstance(true)), vars: new URL("../.env.cloudflare-test.vars", here), secrets: new URL("../.env.cloudflare-test", here), faults: true, offline: false };
+	if (mode === "production" || mode === "faults") {
+		const instance = instanceForMode(mode);
+		return { names: instance.names, instance, faults: instance.test, offline: false };
 	}
 	if (mode === "offline") {
 		// Only the dev server, which vite.config.ts marks: a build or deploy in this mode would carry the
 		// fake model and the debug settings into an account.
 		if (build.env.MINERVA_DEV_OFFLINE !== "1") throw new Error("Mode offline is the dev server's (pnpm dev:offline); it cannot be built or deployed.");
-		return { names: namesOf(LOCAL_INSTANCES.offline), vars: null, secrets: null, faults: true, offline: true };
+		return { names: namesOf(LOCAL_INSTANCES.offline), instance: null, faults: true, offline: true };
 	}
 	if (mode === "test") {
 		// The platform tests' (vitest sets VITEST): the test build's entry under a local name, never an
 		// instance's, so even a deploy in this mode could not put the fault code in one.
 		if (build.env.VITEST !== "true") throw new Error("Mode test is the platform tests' (vitest); deploy the test build with mode faults.");
-		return { names: namesOf(LOCAL_INSTANCES.test), vars: null, secrets: null, faults: true, offline: false };
+		return { names: namesOf(LOCAL_INSTANCES.test), instance: null, faults: true, offline: false };
 	}
-	return { names: namesOf(LOCAL_INSTANCES.test), vars: null, secrets: null, faults: false, offline: false };
+	if (mode === "development") {
+		// Its model turns go through the account's AI Gateway, which only an instance has: a test instance's,
+		// never production's. Everything else stays local, under the local name.
+		const gateway = chooseInstance({ test: true }).names.gateway;
+		return { names: { ...namesOf(LOCAL_INSTANCES.test), gateway }, instance: null, faults: false, offline: false };
+	}
+	return { names: namesOf(LOCAL_INSTANCES.test), instance: null, faults: false, offline: false };
 }
 interface BuildProcess {
 	env: Record<string, string | undefined>;
-	getBuiltinModule(id: "node:fs"): { readFileSync(path: URL, encoding: "utf8"): string };
-	getBuiltinModule(id: "node:util"): { parseEnv(content: string): Record<string, string> };
 	getBuiltinModule(id: "node:child_process"): { spawnSync(command: string, args: string[], options: { stdio: "ignore"; timeout: number }): { status: number | null } };
 }
 const build = (globalThis as unknown as { process: BuildProcess }).process;
@@ -109,49 +114,25 @@ const OFFLINE_DEFAULTS: Partial<Omit<SettingsEnv, "MINERVA_MODEL_GATEWAY">> = {
 	MINERVA_MODEL_NAME: "fake-1",
 };
 
-/** A deployed build's settings: its vars file and nothing else. */
-function deployedVars(file: URL): Record<string, string | undefined> {
-	const name = file.pathname.split("/").pop();
-	let text: string;
-	try {
-		text = build.getBuiltinModule("node:fs").readFileSync(file, "utf8");
-	} catch (error) {
-		if ((error as { code?: string }).code !== "ENOENT") throw error;
-		throw new Error(`A deployed build reads its settings from ../${name}, which is missing (cloudflare/README.md).`);
-	}
-	return build.getBuiltinModule("node:util").parseEnv(text);
-}
-
 /**
  * The connector clients the operator configured, declared so the deploy uploads them (src/config.ts
- * `connectorClientSecrets`): read by name from the deployed build's secrets file (a missing file declares
- * none; `pnpm run deploy` checks it first), or from the environment. Values are never read here.
+ * `connectorClientSecrets`): read by name from the deployed build's instance's secrets.env (a missing file
+ * declares none; `pnpm run deploy` checks it first), or from the environment. Values are never used here.
  */
 function connectorSecrets(target: Target) {
-	let source: Record<string, string | undefined> = build.env;
-	if (target.secrets) {
-		try {
-			source = build.getBuiltinModule("node:util").parseEnv(build.getBuiltinModule("node:fs").readFileSync(target.secrets, "utf8"));
-		} catch (error) {
-			if ((error as { code?: string }).code !== "ENOENT") throw error;
-			source = {};
-		}
-	}
+	const source: Record<string, string | undefined> = target.instance ? (readInstanceEnv(target.instance, "secrets") ?? {}) : build.env;
 	return Object.fromEntries(connectorClientSecrets(source).map((name) => [name, bindings.secret()]));
 }
 
 function settingsFor(target: Target): SettingsEnv {
-	const source = target.vars ? deployedVars(target.vars) : build.env;
-	// The gateway is the instance's own, whatever a file or the shell says: a vars file that sets it is a
-	// mistake that would send the model's requests through another gateway, so it stops the build.
-	if (target.vars && source.MINERVA_MODEL_GATEWAY !== undefined) {
-		throw new Error(`MINERVA_MODEL_GATEWAY is not a setting: the build sets it to the instance's name. Remove it from ../${target.vars.pathname.split("/").pop()}.`);
-	}
+	// The gateway is the instance's own, whatever the shell says; a vars file that sets it stops the build
+	// (`instanceVars`), since it would send the model's requests through another gateway.
+	const source: Record<string, string | undefined> = target.instance ? instanceVars(target.instance) : build.env;
 	const defaults = target.offline ? { ...DEFAULTS, ...OFFLINE_DEFAULTS } : DEFAULTS;
 	const settings = Object.fromEntries(Object.entries(defaults).map(([name, fallback]) => [name, source[name] ?? fallback]));
 	const values = { ...settings, MINERVA_MODEL_GATEWAY: target.names.gateway } as unknown as SettingsEnv;
 	const parsed = parse(values);
-	checkBuild(parsed, { deployed: target.vars !== null, testBuild: target.faults });
+	checkBuild(parsed, { deployed: target.instance !== null, testBuild: target.faults });
 	return values;
 }
 
@@ -251,7 +232,7 @@ export default defineConfig(({ mode }) => {
 				MINERVA_FILES_UPLOAD_BYTES: setting("MINERVA_FILES_UPLOAD_BYTES"),
 				MINERVA_FILES_MESSAGE_ATTACHMENTS: setting("MINERVA_FILES_MESSAGE_ATTACHMENTS"),
 
-				// Uploaded from ../.env.cloudflare by `pnpm run deploy`. A declared secret is required, so model
+				// Uploaded from the instance's secrets.env by `pnpm run deploy`. A declared secret is required, so model
 				// keys (MINERVA_MODEL_API_KEY, MINERVA_BRAVE_SEARCH_API_KEY) join this list in the steps that use
 				// them; until then they are commented-out placeholders in that file. MINERVA_SETUP_KEY claims the
 				// instance's first admin, once (src/accounts/instance.ts).

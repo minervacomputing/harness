@@ -209,14 +209,14 @@ test("every refusal code is sent somewhere", () => {
 	expect(Object.keys(REFUSALS).filter((code) => !used.has(code))).toEqual([]);
 });
 
-test("only scripts/instance.ts names one of our instances: every other resource name is derived from it", () => {
-	// Comments included, so that a message or a note cannot go stale when a name changes. The unit test of the
-	// derivation is the one other place that states them.
+test("no code names one of our instances: an instance is chosen by name (scripts/instance.ts), never written in", () => {
+	// Comments included, so that a message or a note cannot go stale when a name changes. Our instances' names are
+	// in their directories (instance.json) and in the README only.
 	const ours = ["minerva", "cf"].join("-");
-	const own = new Set(["scripts/instance.ts", "test/unit/instance.test.ts"]);
 	const roots = readdirSync(ROOT).filter((file) => /^vitest\..+\.ts$/.test(file));
 	const paths = [...["src", "scripts", "test", "files-worker", "reset-worker"].flatMap(sources), ...roots, "cloudflare.config.ts", "vite.config.ts", "package.json"];
-	const offenders = paths.filter((path) => !path.includes("node_modules") && !own.has(path) && readFileSync(join(ROOT, path), "utf8").includes(ours));
+	const offenders = paths.filter((path) => !path.includes("node_modules") && readFileSync(join(ROOT, path), "utf8").includes(ours));
+	expect(paths.length).toBeGreaterThan(100);
 	expect(offenders).toEqual([]);
 });
 

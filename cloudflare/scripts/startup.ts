@@ -31,8 +31,9 @@ if (unknown.length) {
 	console.error(`Unknown arguments: ${unknown.join(" ")}. Usage: startup.ts [--build]`);
 	process.exit(2);
 }
-// Mode development builds src/index.ts with the defaults of cloudflare.config.ts, so it needs no settings file.
-if (process.argv.includes("--build")) run("cf", ["build", "--mode", "development"]);
+// Mode standalone builds src/index.ts with the defaults of cloudflare.config.ts under a local name, so it needs no
+// instance and no settings file.
+if (process.argv.includes("--build")) run("cf", ["build", "--mode", "standalone"]);
 
 const dir = mkdtempSync(join(tmpdir(), "minerva-startup-"));
 const checks: Check[] = [];

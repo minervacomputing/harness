@@ -1,22 +1,17 @@
-// Where the test instance's account suites may send requests. The browser walk signs up, claims the setup and
-// writes files; the fault suites drive fault points and write data. They run only against the test instance,
-// so an origin is checked before anything is sent (with the driver's token, the setup key or the download key):
-// an https origin, nothing else in the URL, whose host is the test instance's own workers.dev name,
-// `<Worker>.<subdomain>.workers.dev` (both Workers are on workers.dev, README: The test Worker), and the two
-// origins on the same subdomain, one account's. A settings file that names production (or anything else) stops
-// the run instead of signing up there. The subdomain itself is the operator's settings file's to name: nothing
-// here can tell it from another account's. The messages never repeat the value, which names the account's
-// subdomain. No side effects, so the unit tests import it (test/unit/account-origins.test.ts).
+// Where the account suites may send requests. The browser walk signs up, claims the setup and writes files; the
+// fault suites drive fault points and write data; deployed.test.ts sends the probe's token. So an origin is checked
+// before anything is sent (with the driver's token, the setup key or the download key): an https origin, nothing
+// else in the URL, whose host is the chosen instance's own workers.dev name, `<Worker>.<subdomain>.workers.dev`
+// (both Workers are on workers.dev, README: The test Worker), and the two origins on the same subdomain, one
+// account's. A vars file that names another instance (production, or anything else) stops the run instead of
+// signing up there. The subdomain itself is the operator's settings file's to name: nothing here can tell it from
+// another account's. The messages never repeat the value, which names the account's subdomain. No side effects,
+// so the unit tests import it (test/unit/account-origins.test.ts).
 
-import { type Names, namesOf, todaysInstance } from "../../scripts/instance.ts";
-
-/** The test instance's names: its app Worker and its download origin's (cloudflare.config.ts and files-worker/, mode faults). */
-export function testNames(): Names {
-	return namesOf(todaysInstance(true));
-}
+import { type Instance, type Names, instanceVars } from "../../scripts/instance.ts";
 
 /** `value` as an origin of the Worker `name`, or an error naming the setting (never its value). */
-export function testOrigin(value: string | undefined, name: string, setting: string): string {
+export function instanceOrigin(value: string | undefined, name: string, setting: string): string {
 	let url: URL;
 	try {
 		url = new URL((value ?? "").trim());
@@ -27,17 +22,24 @@ export function testOrigin(value: string | undefined, name: string, setting: str
 	if (url.username || url.password || url.port || url.pathname !== "/" || url.search || url.hash) throw new Error(`${setting} must be an origin alone (no path, port, query or credentials).`);
 	const labels = url.hostname.split(".");
 	if (labels.length !== 4 || labels[0] !== name || !labels[1] || labels[2] !== "workers" || labels[3] !== "dev") {
-		throw new Error(`${setting} is not the test instance's ${name} on workers.dev: the account suites run only against it.`);
+		throw new Error(`${setting} is not ${name} on workers.dev: the account suites run only against the chosen instance's own Workers.`);
 	}
 	return url.origin;
 }
 
-/** The app's and the download origin's of the instance `names`, checked as `testOrigin` does and on one subdomain, or an error naming the settings. */
-export function testOrigins(site: string | undefined, download: string | undefined, settings: { site: string; download: string }, names: Names): { origin: string; downloadOrigin: string } {
-	const origin = testOrigin(site, names.app, settings.site);
-	const downloadOrigin = testOrigin(download, names.download, settings.download);
-	if (subdomain(origin) !== subdomain(downloadOrigin)) throw new Error(`${settings.site} and ${settings.download} are on different workers.dev subdomains: both must be the test instance's.`);
+/** The app's and the download origin's of the instance `names`, checked as `instanceOrigin` does and on one subdomain, or an error naming the settings. */
+export function instanceOrigins(site: string | undefined, download: string | undefined, settings: { site: string; download: string }, names: Names): { origin: string; downloadOrigin: string } {
+	const origin = instanceOrigin(site, names.app, settings.site);
+	const downloadOrigin = instanceOrigin(download, names.download, settings.download);
+	if (subdomain(origin) !== subdomain(downloadOrigin)) throw new Error(`${settings.site} and ${settings.download} are on different workers.dev subdomains: both must be the instance's.`);
 	return { origin, downloadOrigin };
+}
+
+/** The instance's app and download origins, from its vars.env, checked by `instanceOrigins`. */
+export function originsOf(instance: Instance): { origin: string; downloadOrigin: string } {
+	const vars = instanceVars(instance);
+	const where = `in ${instance.name}'s vars.env`;
+	return instanceOrigins(vars.MINERVA_SITE_URL, vars.MINERVA_DOWNLOAD_ORIGIN, { site: `MINERVA_SITE_URL ${where}`, download: `MINERVA_DOWNLOAD_ORIGIN ${where}` }, instance.names);
 }
 
 function subdomain(origin: string): string {

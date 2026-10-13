@@ -1,43 +1,65 @@
-// Deploys an instance: the app and its download origin (cloudflare/README.md, Deploy).
+// Deploys an instance: the app and its download origin (cloudflare/README.md, Deploy), or code mode's lab.
 //
-//   node scripts/deploy.ts                 production's app and download origin (`pnpm run deploy`)
-//   node scripts/deploy.ts --test          the test instance's (`pnpm run deploy:test`)
-//   … --files-only                         only the download origin, after a deploy whose last step failed
+//   node scripts/deploy.ts --instance <name>   the instance's app and download origin (`pnpm run deploy --instance <name>`)
+//   node scripts/deploy.ts --test              the test instance's: the only one, or the one --instance names (`pnpm run deploy:test`)
+//   … --files-only                             only the download origin, after a deploy whose last step failed
+//   node scripts/deploy.ts --lab               the test instance's code mode lab (`pnpm run deploy:cm`), with its cm.env
 //
-// One deploy or reset runs at a time from a checkout, and every cf command goes to one account (`lock` and
-// `pinAccount` in scripts/run.ts). Everything that can fail locally runs before anything on the account
-// changes: the secrets are checked, both Workers are built, the app's bundle is checked for the test build's
-// code (scripts/bundle.ts) and its startup CPU measured locally (scripts/startup.ts), and the download origin's build is checked against the app's (its name, its
-// buckets, its origin); with --files-only, against the app actually deployed as well, and against this
-// checkout's record of that deploy (its version and link key, in .cloudflare/deployed.json). Only then are the
-// resources checked and D1's migrations applied (scripts/resources.ts), the deployed schema compared with the
-// migrations (scripts/schema-check.ts) and the two checked builds uploaded, the app first (a build that
-// changed since its check stops the deploy). The download origin gets only MINERVA_DOWNLOAD_KEY, through an
-// owner-only file in a fresh temporary directory that is removed whatever happens. `pnpm assets` (the
-// frontend) runs before this script.
+// The instance comes from scripts/instance.ts (`chooseInstance`): --instance, then MINERVA_INSTANCE, then the only
+// test instance with --test or --lab; a production instance is never chosen by default. Its kind (instance.json)
+// gives the build: mode `faults` for a test instance, `production` for any other. Every command run here gets
+// MINERVA_INSTANCE.
+//
+// A deploy takes the checkout's lock and then the instance's, and every cf command goes to the instance's account
+// (`lockOperation` and `pinAccount` in scripts/run.ts; the first deploy records the account). Everything that can
+// fail locally runs before anything on the account changes: the secrets are checked, both Workers are built, the
+// app's bundle is checked for the test build's code (scripts/bundle.ts) and its startup CPU measured locally
+// (scripts/startup.ts), and the download origin's build is checked against the app's (its name, its buckets, its
+// origin); with --files-only, against the app actually deployed as well, and against the instance's record of
+// that deploy (its version and link key, in its deployed.json). Only then are the resources checked and D1's
+// migrations applied (scripts/resources.ts), the deployed schema compared with the migrations
+// (scripts/schema-check.ts) and the two checked builds uploaded, the app first (a build that changed since its
+// check stops the deploy). The download origin gets only MINERVA_DOWNLOAD_KEY, through an owner-only file in a
+// fresh temporary directory that is removed whatever happens. `pnpm assets` (the frontend) runs before this
+// script.
 
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type LiveBinding, buildAccount, buildDigest, fileDigest, filesBuildProblems, liveAppProblems, readBuild } from "./builds.ts";
-import { namesOf, todaysInstance } from "./instance.ts";
-import { CommandFailed, ROOT, cfJson, hide, hideOrigin, hideSecrets, lock, pinAccount, readEnv, run } from "./run.ts";
+import { type Instance, checkFile, chooseInstance, parseInstanceArgs, readInstanceEnv } from "./instance.ts";
+import { readDeployed, writeDeployed } from "./instance-files.ts";
+import { CommandFailed, ROOT, cfJson, hide, hideOrigin, hideSecrets, lockOperation, pinAccount, run } from "./run.ts";
 
-const args = process.argv.slice(2);
-const unknown = args.filter((arg) => arg !== "--test" && arg !== "--files-only");
-if (unknown.length) {
-	console.error(`Unknown arguments: ${unknown.join(" ")}. Usage: deploy.ts [--test] [--files-only]`);
-	process.exit(2);
+const USAGE = "Usage: deploy.ts [--instance <name>] [--test] [--files-only | --lab]";
+let INSTANCE: Instance;
+let FLAGS: string[];
+try {
+	const { flag, rest } = parseInstanceArgs(process.argv.slice(2));
+	const unknown = rest.filter((arg) => !["--test", "--files-only", "--lab"].includes(arg));
+	if (unknown.length || (rest.includes("--files-only") && rest.includes("--lab"))) {
+		console.error(`${unknown.length ? `Unknown arguments: ${unknown.join(" ")}. ` : ""}${USAGE}`);
+		process.exit(2);
+	}
+	FLAGS = rest;
+	INSTANCE = chooseInstance({ flag, test: rest.includes("--test") || rest.includes("--lab") });
+} catch (error) {
+	console.error(error instanceof Error ? error.message : String(error));
+	process.exit(1);
 }
-const TEST = args.includes("--test");
-const FILES_ONLY = args.includes("--files-only");
+const FILES_ONLY = FLAGS.includes("--files-only");
+const LAB = FLAGS.includes("--lab");
+const TEST = INSTANCE.test;
 const MODE = TEST ? "faults" : "production";
-const INSTANCE = todaysInstance(TEST);
-const { app: APP, download: FILES } = namesOf(INSTANCE);
-const SECRETS = join(ROOT, "..", TEST ? ".env.cloudflare-test" : ".env.cloudflare");
-const FLAG = TEST ? ["--test"] : [];
+const { app: APP, download: FILES, lab: LAB_NAME } = INSTANCE.names;
+const SECRETS = INSTANCE.files.secrets;
 const FILES_DIR = join(ROOT, "files-worker");
+const LAB_DIR = join(ROOT, "test", "account", "scripts-worker");
+/** How to run this again for the same instance. */
+const AGAIN = `node scripts/deploy.ts --instance ${INSTANCE.name}`;
+// Every command run below (cf build, the checks) chooses this instance.
+process.env.MINERVA_INSTANCE = INSTANCE.name;
 
 function step(message: string): void {
 	console.log(`\n== ${message}`);
@@ -53,26 +75,31 @@ function liveApp(): { version: string; env: Record<string, LiveBinding> | undefi
 	return { version: version.version_id, env: cfJson<{ env?: Record<string, LiveBinding> }>(["workers", "versions", "get", version.version_id, "--worker-id", APP]).env };
 }
 
-/**
- * What a deploy of the app records for a later --files-only from the same checkout, in .cloudflare/ (ignored by
- * git): the version it made and a digest of the link key it uploaded, which cannot be read back from the
- * account. The download origin alone is deployed only when both still hold.
- */
-const RECORD = join(ROOT, ".cloudflare", "deployed.json");
-type Deployed = Record<string, { version: string; key: string }>;
-
+/** A digest of the link key the app is deployed with, which cannot be read back from the account. */
 function keyDigest(): string {
-	const key = readEnv(SECRETS).MINERVA_DOWNLOAD_KEY;
+	const key = readInstanceEnv(INSTANCE, "secrets")?.MINERVA_DOWNLOAD_KEY;
 	if (!key) throw new CommandFailed(`${SECRETS} has no MINERVA_DOWNLOAD_KEY.`);
 	return createHash("sha256").update(`minerva download key\0${key}`).digest("hex");
 }
 
-function deployed(): Deployed {
-	try {
-		return JSON.parse(readFileSync(RECORD, "utf8")) as Deployed;
-	} catch {
-		return {};
-	}
+/** Builds and deploys code mode's lab (`<name>-cm`) with the instance's cm.env, its token. */
+function deployLab(account: string): void {
+	checkFile(INSTANCE.files.cm);
+	if (!readInstanceEnv(INSTANCE, "cm")?.CM_TOKEN) throw new CommandFailed(`${INSTANCE.files.cm} must set CM_TOKEN, the lab's driver token (cloudflare/README.md, Code mode's lab).`);
+	hideSecrets(INSTANCE.files.cm);
+	const token = fileDigest(INSTANCE.files.cm);
+	step(`Building ${LAB_NAME}`);
+	run("cf", ["build"], { cwd: LAB_DIR, print: false });
+	const digest = buildDigest(LAB_DIR);
+	const named = buildAccount(LAB_DIR);
+	if (named !== undefined && named !== account) throw new CommandFailed("The lab's build names an account other than the one this deploy is pinned to.");
+	const lab = readBuild(LAB_DIR);
+	if (lab.name !== LAB_NAME) throw new CommandFailed(`The lab's build is ${lab.name ?? "unnamed"}, not ${LAB_NAME}.`);
+	step(`Deploying ${LAB_NAME}`);
+	if (buildDigest(LAB_DIR) !== digest) throw new CommandFailed(`The build in ${LAB_DIR} changed after it was made: run the deploy again.`);
+	if (fileDigest(INSTANCE.files.cm) !== token) throw new CommandFailed(`${INSTANCE.files.cm} changed during the deploy: run it again.`);
+	run("cf", ["deploy", "--prebuilt", "--secrets-file", INSTANCE.files.cm], { cwd: LAB_DIR, print: true });
+	console.log(`\nDeployed ${LAB_NAME}. Delete it once its tests have run: cf workers delete ${LAB_NAME} --force (read the output: an aborted delete exits 0).`);
 }
 
 let secretsDir: string | null = null;
@@ -88,11 +115,18 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
 }
 
 try {
-	lock();
-	const account = pinAccount([ROOT, FILES_DIR], [MODE]);
+	lockOperation(INSTANCE);
+	if (LAB) {
+		deployLab(pinAccount([LAB_DIR], ["production"], INSTANCE, { record: true }));
+		process.exit(0);
+	}
+	const account = pinAccount([ROOT, FILES_DIR], [MODE], INSTANCE, { record: true });
+	// A record that does not parse stops the deploy before anything changes (a full deploy replaces it).
+	const record = readDeployed(INSTANCE);
+	checkFile(SECRETS);
 	hideSecrets(SECRETS);
-	step(`Checking ${TEST ? "the test Worker's" : "the"} secrets`);
-	run("node", ["scripts/secrets.ts", "check", ...FLAG], { print: true });
+	step(`Checking ${INSTANCE.name}'s secrets`);
+	run(process.execPath, ["scripts/secrets.ts", "check"], { print: true });
 	const secrets = fileDigest(SECRETS);
 	/** Stops when the secrets file changed after its check, so that both Workers get the same link key. */
 	const sameSecrets = () => {
@@ -104,8 +138,8 @@ try {
 	// before its upload: only the build that was checked goes up.
 	run("cf", ["build", "--mode", MODE], { print: false });
 	const built = { app: buildDigest(ROOT), files: "" };
-	run("node", ["scripts/bundle.ts", ...FLAG], { print: true });
-	run("node", ["scripts/startup.ts"], { print: true });
+	run(process.execPath, ["scripts/bundle.ts"], { print: true });
+	run(process.execPath, ["scripts/startup.ts"], { print: true });
 	run("cf", ["build", "--mode", MODE], { cwd: FILES_DIR, print: false });
 	built.files = buildDigest(FILES_DIR);
 	/** Stops when a build changed since it was built (another `cf build` in the same directory). */
@@ -119,38 +153,37 @@ try {
 	const app = readBuild(ROOT);
 	hideOrigin(app.env?.MINERVA_SITE_URL?.value);
 	hideOrigin(app.env?.MINERVA_DOWNLOAD_ORIGIN?.value);
-	const problems = filesBuildProblems(app, readBuild(FILES_DIR), INSTANCE);
+	const problems = filesBuildProblems(app, readBuild(FILES_DIR), INSTANCE.name);
 	if (problems.length) throw new CommandFailed(problems.join("\n"));
 	unchanged(ROOT, built.app);
 	unchanged(FILES_DIR, built.files);
-	console.log(`Both builds are ${TEST ? "the test instance's" : "production's"}, with the same buckets and download origin.`);
+	console.log(`Both builds are ${INSTANCE.name}'s (${TEST ? "the test build" : "the production build"}), with the same buckets and download origin.`);
 
 	// cf deploy would create a missing database or bucket with default settings (it resolves the bindings'
 	// names to ids that way, so it cannot be turned off), hence the check of the resources right before.
 	if (FILES_ONLY) {
 		step("Checking the resources");
-		run("node", ["scripts/resources.ts", "--check", ...FLAG], { print: true });
-		step(`Checking ${APP} as deployed against the local build and this checkout's record of its deploy`);
+		run(process.execPath, ["scripts/resources.ts", "--check"], { print: true });
+		step(`Checking ${APP} as deployed against the local build and the record of its last deploy`);
 		const live = liveApp();
 		const differences = liveAppProblems(live.env, app);
-		const record = deployed()[APP];
-		if (!record || record.version !== live.version) differences.push(`${APP}'s deployed version is not the one this checkout last deployed.`);
+		if (!record || record.version !== live.version) differences.push(`${APP}'s deployed version is not the one ${INSTANCE.files.deployed} records.`);
 		else if (record.key !== keyDigest()) differences.push(`MINERVA_DOWNLOAD_KEY in ${SECRETS} is not the key ${APP} was deployed with.`);
-		if (differences.length) throw new CommandFailed(`${differences.join("\n")}\nDeploy both (\`node scripts/deploy.ts${TEST ? " --test" : ""}\`) rather than the download origin alone.`);
+		if (differences.length) throw new CommandFailed(`${differences.join("\n")}\nDeploy both (\`${AGAIN}\`) rather than the download origin alone.`);
 		console.log(`It shares its buckets, download origin and link key with ${FILES}'s build.`);
 	} else {
 		step("Checking the resources and applying D1's migrations (the first change on the account)");
-		run("node", ["scripts/resources.ts", ...FLAG], { print: true });
-		run("node", ["scripts/schema-check.ts", ...FLAG], { print: true });
+		run(process.execPath, ["scripts/resources.ts"], { print: true });
+		run(process.execPath, ["scripts/schema-check.ts"], { print: true });
 		step(`Deploying ${APP}`);
 		unchanged(ROOT, built.app);
 		sameSecrets();
 		const key = keyDigest();
 		run("cf", ["deploy", "--prebuilt", "--secrets-file", SECRETS], { print: true });
 		try {
-			writeFileSync(RECORD, JSON.stringify({ ...deployed(), [APP]: { version: liveApp().version, key } }, null, "\t"), { mode: 0o600 });
+			writeDeployed(INSTANCE, { version: liveApp().version, key });
 		} catch (error) {
-			console.error(`Could not record the deploy in ${RECORD}, so a later --files-only will refuse: ${error instanceof Error ? error.message : String(error)}`);
+			console.error(`Could not record the deploy in ${INSTANCE.files.deployed}, so a later --files-only will refuse: ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
 
@@ -158,13 +191,13 @@ try {
 	sameSecrets();
 	secretsDir = mkdtempSync(join(tmpdir(), "minerva-files-"));
 	const subset = join(secretsDir, "files.env");
-	run("node", ["scripts/secrets.ts", "subset", subset, "MINERVA_DOWNLOAD_KEY", ...FLAG], { print: true });
+	run(process.execPath, ["scripts/secrets.ts", "subset", subset, "MINERVA_DOWNLOAD_KEY"], { print: true });
 	try {
 		sameSecrets();
 		unchanged(FILES_DIR, built.files);
 		run("cf", ["deploy", "--prebuilt", "--secrets-file", subset], { cwd: FILES_DIR, print: true });
 	} catch (error) {
-		if (!FILES_ONLY) console.error(`\n${APP} is deployed, ${FILES} is not: run \`node scripts/deploy.ts ${TEST ? "--test " : ""}--files-only\` (cloudflare/README.md, Deploy).`);
+		if (!FILES_ONLY) console.error(`\n${APP} is deployed, ${FILES} is not: run \`${AGAIN} --files-only\` (cloudflare/README.md, Deploy).`);
 		throw error;
 	} finally {
 		removeSecrets();

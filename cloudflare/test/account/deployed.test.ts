@@ -5,11 +5,18 @@ import { MIGRATIONS as SCRIPTS_MIGRATIONS } from "../../src/scripts/schema.ts";
 import { MIGRATIONS as WORKSPACE_MIGRATIONS } from "../../src/workspace/schema.ts";
 import { PROBE_HEADER, probeToken } from "../../src/http/probe-token.ts";
 import { SANDBOX_MIGRATIONS } from "../../src/sandbox/schema.ts";
-import { namesOf, todaysInstance } from "../../scripts/instance.ts";
-import { cf, fetchDeployed, origin, secret } from "./client.ts";
+import { cf, fetchDeployed, instanceSecret, pinSuite, suiteInstance } from "./client.ts";
+import { originsOf } from "./origins.ts";
 
-/** The instance this suite probes: production (`pnpm test:account`). */
-const NAMES = namesOf(todaysInstance(false));
+/**
+ * The instance this suite probes, of either kind, which must be named (`pnpm test:deployed --instance <name>`, or
+ * MINERVA_INSTANCE): its origins from its vars.env, checked to be its own Workers before any request, and cf's
+ * commands on its account.
+ */
+const INSTANCE = suiteInstance(false);
+const NAMES = INSTANCE.names;
+const { origin: SITE, downloadOrigin: DOWNLOAD } = originsOf(INSTANCE);
+pinSuite(INSTANCE);
 
 const NIL = "00000000-0000-0000-0000-000000000000";
 
@@ -28,7 +35,7 @@ function expectSecurityHeaders(headers: Headers) {
 }
 
 describe(NAMES.app, () => {
-	const site = origin("MINERVA_SITE_URL");
+	const site = SITE;
 
 	test("/api/health answers with the security headers", async () => {
 		const reply = await fetchDeployed(`${site}/api/health`);
@@ -87,7 +94,7 @@ describe(NAMES.app, () => {
 });
 
 describe(`inside ${NAMES.app} (/api/probe)`, () => {
-	const site = origin("MINERVA_SITE_URL");
+	const site = SITE;
 
 	test("without its token it is a plain 404", async () => {
 		for (const headers of [{}, { [PROBE_HEADER]: "0".repeat(64) }] as Record<string, string>[]) {
@@ -100,7 +107,7 @@ describe(`inside ${NAMES.app} (/api/probe)`, () => {
 	test("every Durable Object class answers, in the EU jurisdiction too; D1 has every migration; JSON keys", async () => {
 		// Right after a deploy (or a reset) the first probe builds eight objects in fresh namespaces, which has
 		// taken longer than the 5 s Node's agent waits by default.
-		const reply = await fetchDeployed(`${site}/api/probe`, { headers: { [PROBE_HEADER]: await probeToken(secret("MINERVA_SECRET_KEY")) }, timeoutMs: 25_000 });
+		const reply = await fetchDeployed(`${site}/api/probe`, { headers: { [PROBE_HEADER]: await probeToken(instanceSecret(INSTANCE, "MINERVA_SECRET_KEY")) }, timeoutMs: 25_000 });
 		expect(reply.status).toBe(200);
 		const body = JSON.parse(reply.text) as {
 			objects: Record<string, unknown>;
@@ -136,7 +143,7 @@ describe("preview URLs", () => {
 	});
 
 	test("no version of the download Worker answers at its preview origin", async () => {
-		const host = new URL(origin("MINERVA_DOWNLOAD_ORIGIN")).host;
+		const host = new URL(DOWNLOAD).host;
 		const versions = cf<{ id: string; urls?: string[] }[]>(["workers", "versions", "list", "--worker-id", NAMES.download]);
 		expect(versions.length).toBeGreaterThan(0);
 		for (const version of versions) {
@@ -150,7 +157,7 @@ describe("preview URLs", () => {
 
 describe(NAMES.download, () => {
 	test("answers 404 until downloads are built, as a sandboxed response", async () => {
-		const reply = await fetchDeployed(`${origin("MINERVA_DOWNLOAD_ORIGIN")}/anything`);
+		const reply = await fetchDeployed(`${DOWNLOAD}/anything`);
 		expect(reply.status).toBe(404);
 		expect(JSON.parse(reply.text)).toEqual({ detail: "Not Found" });
 		expect(reply.headers.get("content-security-policy")).toBe("sandbox");

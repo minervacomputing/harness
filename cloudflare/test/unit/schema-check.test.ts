@@ -3,12 +3,12 @@
 // run on real SQLite; D1 itself is never asked here (deploys run scripts/schema-check.ts against the account).
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, test } from "vitest";
-import { namesOf, todaysInstance } from "../../scripts/instance.ts";
+import { namesOf } from "../../scripts/instance.ts";
 import { APPLIED_SQL, COLUMNS_SQL, FOREIGN_KEYS_SQL, OBJECTS_SQL, TABLES_SQL, UNIQUES_SQL, compareMigrations, compareSchemas, expectedSchema, normalized, readOnly, rowsFrom, schemaOf } from "../../scripts/schema.ts";
 
 const DIR = new URL("../../migrations/", import.meta.url);
@@ -212,17 +212,23 @@ describe("what may be sent to the database", () => {
 
 describe("scripts/schema-check.ts, with a stand-in for cf that answers from a local SQLite file", () => {
 	const SCRIPT = new URL("../../scripts/schema-check.ts", import.meta.url).pathname;
-	// The database each flag reads (scripts/instance.ts: today's flags choose the instance).
-	const PRODUCTION = namesOf(todaysInstance(false)).d1;
-	const TEST = namesOf(todaysInstance(true)).d1;
+	// Two instances, in a directory of their own (scripts/instance.ts): a production one, named, and the only test one.
+	const PRODUCTION = namesOf("acme").d1;
+	const TEST = namesOf("acme-test").d1;
 	const DATABASE_ID = "11111111-2222-4333-8444-555555555555";
-	// `cf d1 list` and `cf d1 query` as a node script: the answers come from the file in FAKE_D1, every call is logged.
+	// The account both instances are recorded on, and another; neither is ever printed.
+	const ACCOUNT = "0123456789abcdef0123456789abcdef";
+	const OTHER = "fedcba9876543210fedcba9876543210";
+	// `cf auth whoami`, `cf d1 list` and `cf d1 query` as a node script: the answers come from FAKE_ACCOUNTS and the
+	// file in FAKE_D1, every call is logged.
 	const FAKE_CF = `#!/usr/bin/env node
 const { appendFileSync } = require("node:fs");
 const { DatabaseSync } = require("node:sqlite");
 const args = process.argv.slice(2);
 appendFileSync(process.env.FAKE_LOG, JSON.stringify(args) + "\\n");
-if (args[0] === "d1" && args[1] === "list") {
+if (args[0] === "auth" && args[1] === "whoami") {
+	console.log(JSON.stringify({ authenticated: true, accounts: process.env.FAKE_ACCOUNTS.split(",").map((id) => ({ id })) }));
+} else if (args[0] === "d1" && args[1] === "list") {
 	if (process.env.FAKE_GARBAGE) { console.log("not JSON for ${DATABASE_ID}"); process.exit(0); }
 	console.log(JSON.stringify(process.env.FAKE_NO_DATABASE ? [] : [{ uuid: "${DATABASE_ID}", name: args[3] }]));
 } else if (args[0] === "d1" && args[1] === "query" && args[3] === "--sql") {
@@ -235,9 +241,18 @@ if (args[0] === "d1" && args[1] === "list") {
 }
 `;
 
-	function run(change: (db: DatabaseSync) => void, extra: Record<string, string> = {}, flags: string[] = []) {
+	function run(change: (db: DatabaseSync) => void, extra: Record<string, string> = {}, flags: string[] = ["--instance", "acme"]) {
 		const dir = mkdtempSync(join(tmpdir(), "schema-check-"));
 		try {
+			const instances = join(dir, "instances");
+			mkdirSync(instances, { mode: 0o700 });
+			for (const [name, test] of [
+				["acme", false],
+				["acme-test", true],
+			] as const) {
+				mkdirSync(join(instances, name), { mode: 0o700 });
+				writeFileSync(join(instances, name, "instance.json"), JSON.stringify({ name, test, account: ACCOUNT }), { mode: 0o600 });
+			}
 			const file = join(dir, "d1.sqlite");
 			const db = new DatabaseSync(file);
 			for (const migration of MIGRATIONS) db.exec(migration.sql);
@@ -249,7 +264,8 @@ if (args[0] === "d1" && args[1] === "list") {
 			chmodSync(join(dir, "cf"), 0o755);
 			const log = join(dir, "calls.log");
 			writeFileSync(log, "");
-			const result = spawnSync(process.execPath, [SCRIPT, ...flags], { encoding: "utf8", env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, FAKE_D1: file, FAKE_LOG: log, ...extra } });
+			const env: Record<string, string | undefined> = { ...process.env, MINERVA_INSTANCE: undefined, MINERVA_INSTANCES_DIR: instances, CLOUDFLARE_ACCOUNT_ID: undefined, PATH: `${dir}:${process.env.PATH}`, FAKE_ACCOUNTS: ACCOUNT, FAKE_D1: file, FAKE_LOG: log, ...extra };
+			const result = spawnSync(process.execPath, [SCRIPT, ...flags], { encoding: "utf8", env: env as NodeJS.ProcessEnv });
 			const calls = readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[]);
 			return { status: result.status, out: result.stdout, err: result.stderr, calls };
 		} finally {
@@ -262,16 +278,51 @@ if (args[0] === "d1" && args[1] === "list") {
 		expect(result.err.replace(/\(node:\d+\)[^\n]*\n/g, "").replace(/\(Use `node --trace[^\n]*\n/g, "")).toBe("");
 		expect(result.status).toBe(0);
 		expect(result.out).toMatch(new RegExp(`^The schema of ${PRODUCTION} matches the migrations \\(\\d+ tables, \\d+ columns, \\d+ indexes and other objects, 8 migrations\\)\\.\\n$`));
-		expect(result.calls.map((call) => call.slice(0, 2).join(" "))).toEqual(["d1 list", ...Array(6).fill("d1 query")]);
-		for (const call of result.calls.slice(1)) expect(call[4], call[4]).toMatch(/^SELECT /);
+		expect(result.calls.map((call) => call.slice(0, 2).join(" "))).toEqual(["auth whoami", "d1 list", ...Array(6).fill("d1 query")]);
+		for (const call of result.calls.slice(2)) expect(call[4], call[4]).toMatch(/^SELECT /);
 		expect(result.out + result.err).not.toContain(DATABASE_ID);
+		expect(result.out + result.err).not.toContain(ACCOUNT);
 	});
 
-	test("with --test it reads the test instance's database", () => {
-		const result = run(() => {}, {}, ["--test"]);
-		expect(result.status).toBe(0);
-		expect(result.calls[0]).toEqual(["d1", "list", "--name", TEST]);
-		expect(result.out).toContain(`The schema of ${TEST} matches`);
+	test("with --test it reads the only test instance's database; MINERVA_INSTANCE names one too", () => {
+		for (const [extra, flags] of [
+			[{}, ["--test"]],
+			[{ MINERVA_INSTANCE: "acme-test" }, []],
+			[{ MINERVA_INSTANCE: "acme-test" }, ["--instance", "acme-test"]],
+		] as const) {
+			const result = run(() => {}, extra, [...flags]);
+			expect(result.status).toBe(0);
+			expect(result.calls[1]).toEqual(["d1", "list", "--name", TEST]);
+			expect(result.out).toContain(`The schema of ${TEST} matches`);
+		}
+	});
+
+	test("it reads nothing without an instance it can tell: no name for production, or a flag MINERVA_INSTANCE contradicts", () => {
+		const unnamed = run(() => {}, {}, []);
+		expect(unnamed.status).toBe(2);
+		expect(unnamed.err).toContain("a production instance is never chosen by default");
+		expect(unnamed.calls).toEqual([]);
+		const contradicted = run(() => {}, { MINERVA_INSTANCE: "acme" }, ["--instance", "acme-test"]);
+		expect(contradicted.status).toBe(2);
+		expect(contradicted.err).toContain("--instance acme-test and MINERVA_INSTANCE=acme name different instances.");
+		expect(contradicted.calls).toEqual([]);
+		const production = run(() => {}, { MINERVA_INSTANCE: "acme" }, ["--test"]);
+		expect(production.status).toBe(2);
+		expect(production.err).toContain("acme is a production instance, and this runs only against a test instance.");
+	});
+
+	test("it reads nothing on any account but the instance's", () => {
+		const elsewhere = run(() => {}, { CLOUDFLARE_ACCOUNT_ID: OTHER, FAKE_ACCOUNTS: `${ACCOUNT},${OTHER}` });
+		expect(elsewhere.status).toBe(2);
+		expect(elsewhere.err).toContain("CLOUDFLARE_ACCOUNT_ID is not the account acme is on");
+		const unreachable = run(() => {}, { FAKE_ACCOUNTS: OTHER });
+		expect(unreachable.status).toBe(2);
+		expect(unreachable.err).toContain("cf cannot reach the account acme is on");
+		for (const result of [elsewhere, unreachable]) {
+			expect(result.calls.map((call) => call.slice(0, 2).join(" "))).toEqual(["auth whoami"]);
+			expect(result.out + result.err).not.toContain(ACCOUNT);
+			expect(result.out + result.err).not.toContain(OTHER);
+		}
 	});
 
 	test("fails on a missing column and an unapplied migration, naming both and nothing of the id", () => {
@@ -300,7 +351,7 @@ if (args[0] === "d1" && args[1] === "list") {
 		const missing = run(() => {}, { FAKE_NO_DATABASE: "1" });
 		expect(missing.status).toBe(2);
 		expect(missing.err).toContain(`No D1 database named ${PRODUCTION}.`);
-		expect(missing.calls).toHaveLength(1);
+		expect(missing.calls).toHaveLength(2);
 		// An answer it cannot parse throws where nothing catches it: still 2, never drift's 1.
 		const garbage = run(() => {}, { FAKE_GARBAGE: "1" });
 		expect(garbage.status).toBe(2);
@@ -311,15 +362,18 @@ if (args[0] === "d1" && args[1] === "list") {
 		const scripts = (JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { scripts: Record<string, string> }).scripts;
 		expect(scripts.deploy).toBe("pnpm assets && node scripts/deploy.ts");
 		expect(scripts["deploy:test"]).toBe("pnpm assets && node scripts/deploy.ts --test");
-		// scripts/deploy.ts: everything local first, then the first change on the account (the migrations).
+		// scripts/deploy.ts: the locks (the checkout's, then the instance's) and the account, everything local, then
+		// the first change on the account (the migrations).
 		const deploy = readFileSync(new URL("../../scripts/deploy.ts", import.meta.url), "utf8");
 		const order = [
+			"lockOperation(INSTANCE);",
+			"const account = pinAccount(",
 			'"scripts/secrets.ts", "check"',
 			'run("cf", ["build", "--mode", MODE], { print: false })',
 			'"scripts/bundle.ts"',
 			'run("cf", ["build", "--mode", MODE], { cwd: FILES_DIR',
 			"filesBuildProblems(",
-			'"scripts/resources.ts", ...FLAG',
+			'run(process.execPath, ["scripts/resources.ts"]',
 			'"scripts/schema-check.ts"',
 			'run("cf", ["deploy", "--prebuilt", "--secrets-file", SECRETS]',
 			'run("cf", ["deploy", "--prebuilt", "--secrets-file", subset], { cwd: FILES_DIR',
