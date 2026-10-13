@@ -87,7 +87,7 @@ describe("saving connections", () => {
 		await expect(connectMixed(h, {}, { caller: GRACE, connectionId: id })).rejects.toThrow(NOT_YOURS);
 	});
 
-	test("reconnecting keeps a refresh token only from the same client (test_contract)", async () => {
+	test("reconnecting keeps a refresh token only from the same client", async () => {
 		const h = await harness();
 		const id = await connectMixed(h, { access_token: "a", refresh_token: "r1", client_id: "id" });
 		const reconnect = async (clientId: string) => {
@@ -189,7 +189,7 @@ describe("access settings", () => {
 		expect(await h.core.getAccess(GRACE, id)).toEqual({ ok: false, refusal: { status: 404, detail: "Not found." } });
 	});
 
-	test("invalid changes are refused, all or nothing (test_api)", async () => {
+	test("invalid changes are refused, all or nothing", async () => {
 		const h = await harness();
 		const id = await connectMixed(h, {});
 		const bad: [{ kind: string; id: string; actions: string[] }[], string][] = [
@@ -218,7 +218,7 @@ describe("access settings", () => {
 		expect(await h.core.applyGrantChanges(GRACE, id, [{ kind: "folder", id: "inbox", actions: ["read"] }], {})).toEqual({ ok: false, refusal: { status: 404, detail: NOT_YOURS } });
 	});
 
-	test("wildcards: a requirement may rest on one, which then cannot be removed (test_contract)", async () => {
+	test("wildcards: a requirement may rest on one, which then cannot be removed", async () => {
 		const h = await harness();
 		const id = await connectMixed(h, {});
 		await grant(h, id, { "*": ["read"] });
@@ -232,7 +232,7 @@ describe("access settings", () => {
 		expect((await h.core.applyGrantChanges(ADA, id, [{ kind: "folder", id: "*", actions: [] }], {})).ok).toBe(true);
 	});
 
-	test("the summary of what the user allows (test_api)", async () => {
+	test("the summary of what the user allows", async () => {
 		const h = await harness();
 		const id = await connectMixed(h, {});
 		expect((await h.core.listConnections(ADA))[0]?.allowed).toEqual([]);
@@ -254,7 +254,7 @@ describe("access settings", () => {
 		expect((await h.core.listConnections(GRACE))[0]?.allowed).toEqual([]);
 	});
 
-	test("a connection has at most 500 grants (test_contract)", async () => {
+	test("a connection has at most 500 grants", async () => {
 		const h = await harness();
 		const id = await connectMixed(h, {});
 		for (let i = 0; i < 500; i++) {
@@ -266,7 +266,7 @@ describe("access settings", () => {
 		expect((await add()).ok).toBe(true);
 	});
 
-	test("account grants are named with the connection's label, without the provider (test_contract)", async () => {
+	test("account grants are named with the connection's label, without the provider", async () => {
 		const h = await harness();
 		const saved = await h.core.saveConnection(ADA, { provider: "keyed", account: { id: "acct-1", label: "Fake account" }, credentials: { kind: "api_key", key: "secret-key" }, connectionId: null });
 		if (!saved.ok) throw new Error(saved.refusal.detail);

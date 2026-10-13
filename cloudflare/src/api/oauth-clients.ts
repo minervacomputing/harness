@@ -1,15 +1,14 @@
-// The OAuth clients connection flows use (web-api 9.1, connectors 11.1), from backend/connections/oauth.py:
-// the operator's MINERVA_<APP>_CLIENT_ID and _SECRET, else a client registered dynamically (RFC 7591) at
+// The OAuth clients connection flows use: the operator's MINERVA_<APP>_CLIENT_ID and _SECRET, else a client registered dynamically (RFC 7591) at
 // the connector's registration URL (Todoist), kept in D1's `oauth_clients` with its secret encrypted, one
 // per (app, redirect URI). The Workspace object reads the same two sources to refresh tokens
 // (workspace/env.ts `oauthClients`), so the client that issued a connection's tokens is found again there.
 
 import { customFetch, dynamicClientRegistrationRequest } from "oauth4webapi";
 import { settings } from "../config.ts";
-import type { Connector } from "../contracts/connectors.ts";
-import type { WorkspaceRef } from "../contracts/common.ts";
-import { type Json, parseJson } from "../lib/json.ts";
-import { TOKEN_TIMEOUT_MS, boundedText, type OAuth2, redirectUri } from "../workspace/credentials.ts";
+import type { Connector } from "../gateway/connector.ts";
+import type { Json } from "../lib/json.ts";
+import type { WorkspaceRef } from "../shared/rpc.ts";
+import { TOKEN_TIMEOUT_MS, answerJson, boundedBody, type OAuth2, redirectUri } from "../workspace/credentials.ts";
 import { configuredClient, oauthClients } from "../workspace/env.ts";
 import type { ClientCredentials, OAuthClients } from "../workspace/ports.ts";
 import { ConnectionFlowError } from "./flows.ts";
@@ -24,19 +23,19 @@ export const FLOW_CLIENTS: { of: (env: Env) => OAuthClients } = {
 	}),
 };
 
-/** `_oauth`: the connector's OAuth declaration. */
+/** The connector's OAuth declaration. */
 export function oauthOf(connector: Connector): OAuth2 {
 	if (connector.auth.type !== "oauth2") throw new ConnectionFlowError(`${connector.name} does not connect through OAuth.`);
 	return connector.auth;
 }
 
-/** `oauth.available`: whether this instance can connect accounts of the provider. */
+/** Whether this instance can connect accounts of the provider. */
 export function available(env: Env, connector: Connector): boolean {
 	if (connector.auth.type !== "oauth2") return true;
 	return Boolean(connector.auth.registrationUrl) || FLOW_CLIENTS.of(env).configured(connector.auth.app) !== null;
 }
 
-/** `client_credentials`: the client new authorizations use: the operator's, else a registered one, registering it first if needed. */
+/** The client new authorizations use: the operator's, else a registered one, registering it first if needed. */
 export async function clientCredentials(env: Env, workspace: WorkspaceRef, connector: Connector): Promise<ClientCredentials> {
 	const oauth = oauthOf(connector);
 	const uri = redirectUri(settings(env).siteUrl, connector.slug);
@@ -54,12 +53,11 @@ function field(body: Json, name: string): string | null {
 }
 
 /**
- * `_register_client`: registers Minerva at the connector's registration URL, as a confidential client of
- * the authorization-code and refresh-token grants for this redirect URI, and stores it. Of two concurrent
- * registrations the first stored wins and the other is answered with it, as Python's IntegrityError branch.
- * The request is oauth4webapi's; the answer is read as Python reads it (any status below 400, a JSON
- * object with string `client_id` and `client_secret`), and anything else, an unreachable server included,
- * is "Could not register" (Python lets a malformed answer fail the request).
+ * Registers Minerva at the connector's registration URL, as a confidential client of the
+ * authorization-code and refresh-token grants for this redirect URI, and stores it. Of two concurrent
+ * registrations the first stored wins and the other is answered with it. The request is oauth4webapi's;
+ * the answer must have a status below 400 and be a JSON object with string `client_id` and
+ * `client_secret`. Anything else, an unreachable server included, is "Could not register".
  */
 async function registerClient(env: Env, workspace: WorkspaceRef, connector: Connector, oauth: OAuth2, uri: string): Promise<ClientCredentials> {
 	if (!oauth.registrationUrl) throw new ConnectionFlowError(`${connector.name} is not configured on this instance.`);
@@ -70,7 +68,7 @@ async function registerClient(env: Env, workspace: WorkspaceRef, connector: Conn
 	};
 	const endpoint = new URL(oauth.registrationUrl);
 	let response: Response;
-	let text: string | null;
+	let bytes: Uint8Array | null;
 	try {
 		response = await dynamicClientRegistrationRequest(
 			{ issuer: endpoint.origin, registration_endpoint: endpoint.href },
@@ -84,17 +82,12 @@ async function registerClient(env: Env, workspace: WorkspaceRef, connector: Conn
 			},
 			{ [customFetch]: PROVIDER_NETWORK.fetch(env, workspace), signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS) },
 		);
-		text = await boundedText(response);
+		bytes = await boundedBody(response);
 	} catch (error) {
 		throw failed(error instanceof Error ? error.name : "no answer");
 	}
 	if (response.status >= 400) throw failed(`HTTP ${response.status}`);
-	let body: Json = null;
-	try {
-		body = text === null ? null : parseJson(text);
-	} catch {
-		// Not JSON: refused below.
-	}
+	const body = bytes === null ? null : (answerJson(bytes) ?? null);
 	const clientId = field(body, "client_id");
 	const secret = field(body, "client_secret");
 	if (clientId === null || secret === null) throw failed("an answer without a client");

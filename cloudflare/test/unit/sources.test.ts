@@ -37,16 +37,17 @@ test("no schema coerces: tool inputs are the types they name", () => {
 	expect(users.map(({ path }) => path)).toEqual([]);
 });
 
-// NFKC folds look-alikes (fullwidth letters, ligatures, "①") into other characters. It is used to refuse and
-// to redact, never to match: `decoded` finds an address hidden in an encoded link, and `checkNetloc` refuses
-// a host that NFKC would turn into a delimiter. Identities, grants, names and searches are compared as typed.
+// NFKC folds look-alikes (fullwidth letters, ligatures, "①") into other characters. It is used to redact,
+// never to match: `decoded` finds an address hidden in an encoded link. Host names are mapped by the
+// runtime's IDNA only where the result is the name as written (lib/sites.ts). Identities, grants, names and
+// searches are compared as typed.
 test("compatibility normalization decides who or what something is nowhere", () => {
 	const compatibility = sourceCode().filter(({ code }) => /["'`]NFK[CD]["'`]/.test(code));
-	expect(compatibility.map(({ path }) => path).sort()).toEqual(["lib/text.ts", "lib/urlsplit.ts"]);
+	expect(compatibility.map(({ path }) => path).sort()).toEqual(["lib/text.ts"]);
 	// Whatever its argument: a form held in a variable normalizes as well, and the default is NFC. NFC is for
-	// file names and manifest paths, NFD is in IDNA's rules, NFKC above; nothing else normalizes.
+	// file names and manifest paths, NFKC above; nothing else normalizes.
 	const normalizing = sourceCode().filter(({ code }) => /\.normalize\s*\(/.test(code));
-	expect(normalizing.map(({ path }) => path).sort()).toEqual(["files/manifest.ts", "files/names.ts", "lib/idna.ts", "lib/text.ts", "lib/urlsplit.ts"]);
+	expect(normalizing.map(({ path }) => path).sort()).toEqual(["files/manifest.ts", "files/names.ts", "lib/text.ts"]);
 });
 
 test("nothing in src lowers the cost of password hashes", () => {

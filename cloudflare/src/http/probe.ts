@@ -11,9 +11,9 @@
 import type { Context } from "hono";
 import { conversationObject, sandboxObject, scriptsObject, workspaceObject } from "../addressing.ts";
 import { settings } from "../config.ts";
-import type { WorkspaceRef } from "../contracts/common.ts";
 import { timingSafeEqual } from "../lib/hash.ts";
 import { escapedKeyCheck } from "../lib/json.ts";
+import type { WorkspaceRef } from "../shared/rpc.ts";
 import { json, notFound } from "./errors.ts";
 import { PROBE_HEADER, probeToken } from "./probe-token.ts";
 import type { AppEnv } from "./router.ts";

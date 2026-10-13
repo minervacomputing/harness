@@ -6,9 +6,8 @@
 // never moves an object to another customer, but writes still check the customer again just before sending.
 
 import { z } from "zod";
-import type { Binding } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError } from "../../gateway/connector.ts";
+import { type Binding, OperationError } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import { CHARGE_ID, CUSTOMER_ID, OBJECT_ID } from "./client.ts";
 import * as money from "./money.ts";
 
@@ -17,21 +16,19 @@ export const AMOUNT = money.AMOUNT;
 
 export const CUSTOMER_ID_NOTE = "A customer id from list_customers, such as cus_123.";
 
-/** scope.py `CustomerId`. */
 export function customerId(): z.ZodString {
 	return z.string().trim().min(5).max(110)
 		.refine((value) => CUSTOMER_ID.test(value), "must be a customer id such as cus_123")
 		.describe(CUSTOMER_ID_NOTE);
 }
 
-/** scope.py `PaymentId`. */
 export function paymentId(): z.ZodString {
 	return z.string().trim().min(4).max(110)
 		.refine((value) => CHARGE_ID.test(value), "must be a payment id from list_payments, such as ch_123")
 		.describe("A payment id from list_payments, such as ch_123.");
 }
 
-/** scope.py `Currency` (with the description each operation gives it): lowercased, as money.py's `currency` does. */
+/** A currency code, lowercased (with the description each operation gives it). */
 export function currencyCode(description: string) {
 	return z.string().trim().min(3).max(3)
 		.transform((value, ctx) => {
@@ -46,7 +43,7 @@ export function currencyCode(description: string) {
 		.describe(description);
 }
 
-/** scope.py `Amount` (with the description each operation gives it). */
+/** An amount as a decimal string (with the description each operation gives it); writes.ts checks it against the currency. */
 export function amountText(description: string): z.ZodString {
 	return z.string().trim().min(1).max(16).describe(description);
 }

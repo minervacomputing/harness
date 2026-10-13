@@ -1,29 +1,31 @@
-// backend/tests/test_web.py, case by case: site names, the fetcher, page text, search, and runs through the
-// executor, against test/fixtures/connectors/web/fake.ts, which stands for what a Worker's fetch reaches
-// (Cloudflare's checks in front of public DNS and web servers, as measured). Also: the registry accepts the
-// declaration, with its fingerprints pinned, and the Worker serves it; the built-in connection and its
-// access settings in the Workspace (the API routes that call discover and describe are the Worker's);
-// and adversarial cases for what the fetcher may reach: IP literals in every spelling, names that resolve
-// to private addresses or change their answer, redirects to private addresses, and decompression bombs.
+// The Web connector against test/fixtures/connectors/web/fake.ts, which stands for what a Worker's fetch
+// reaches (Cloudflare's checks in front of public DNS and web servers, as measured): the declaration and its
+// pinned fingerprints, inputs, site names and patterns, the fetcher (requests, redirects, bodies, bounded
+// decompression, charsets), page text, search, runs through the executor, and the built-in connection's
+// settings. Then adversarial cases for what the fetcher may reach: IP literals in every spelling, names that
+// resolve to private addresses or change their answer, redirects to private addresses, and decompression
+// bombs.
 
-import { gzipSync, deflateRawSync, deflateSync } from "node:zlib";
+import { crc32, gzipSync, deflateRawSync, deflateSync } from "node:zlib";
 import { afterEach, describe, expect, test } from "vitest";
-import type { ConnectionId } from "../../src/contracts/common.ts";
-import type { ToolCallOutcome } from "../../src/contracts/executor.ts";
-import type { GrantRow } from "../../src/contracts/policy.ts";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
-import { webConnector } from "../../src/connectors/web/connector.ts";
-import { ACCEPT, Body, Fetcher, LIMITS, MAX_BODY, Moved, Page, USER_AGENT } from "../../src/connectors/web/fetch.ts";
+import { SEARCH, webConnector } from "../../src/connectors/web/connector.ts";
+import { ACCEPT, Body, Fetcher, LIMITS, MAX_BODY, Moved, Page, USER_AGENT, decode } from "../../src/connectors/web/fetch.ts";
 import { Inflater } from "../../src/connectors/web/inflate.ts";
-import { OperationError } from "../../src/gateway/connector.ts";
-import { resourceKey } from "../../src/gateway/grants.ts";
+import { plain } from "../../src/connectors/web/search.ts";
+import { OperationError, binding, offered, termsOf } from "../../src/gateway/connector.ts";
+import type { ToolCallOutcome } from "../../src/gateway/executor.ts";
+import { type GrantRow, resourceKey } from "../../src/gateway/grants.ts";
 import { CallIo, NotSent, settingsIo } from "../../src/gateway/http.ts";
-import { Registry, validate } from "../../src/gateway/registry.ts";
+import { Registry, inputSchema, validate } from "../../src/gateway/registry.ts";
+import { validateInput } from "../../src/gateway/validation.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { htmlToText } from "../../src/lib/markdown.ts";
-import { ancestors, canonicalHost, choices, name, parseUrl, validId } from "../../src/lib/sites.ts";
+import { ancestors, canonicalHost, choices, name, parseUrl, registrable, validId } from "../../src/lib/sites.ts";
+import type { ConnectionId } from "../../src/shared/rpc.ts";
 import { FakeWeb, PUBLIC, type Served, privateAddress, refusalPage, stalled, trickle } from "../fixtures/connectors/web/fake.ts";
 import { Scenario, userGrants } from "./executor-fakes.ts";
+import { kindsOut } from "../../src/workspace/out.ts";
 import { ADA, GRACE, accessOf, harness } from "./workspace-support.ts";
 
 const WEB: ConnectionId = "0199a000-0000-7000-8000-0000000000f1";
@@ -68,7 +70,7 @@ function html(body: string | Uint8Array, headers: { [name: string]: string } = {
 
 async function page(web: FakeWeb, url: string): Promise<Page> {
 	const outcome = await fetcher(web).get(parseUrl(url));
-	if (!(outcome instanceof Page)) throw new Error(`${url} moved to ${outcome.target.text}`);
+	if (!(outcome instanceof Page)) throw new Error(`${url} moved to ${outcome.target.href}`);
 	return outcome;
 }
 
@@ -76,7 +78,7 @@ function items(outcome: Ok): { [key: string]: Json }[] {
 	return outcome.result.items;
 }
 
-/** test_web.py `start`: a run with the user's Web connection, holding `grants` ([kind, id, actions]); with the operator's Brave key unless `braveKey` says otherwise. */
+/** A run with the user's Web connection, holding `grants` ([kind, id, actions]); with the operator's Brave key unless `braveKey` says otherwise. */
 function start(web: FakeWeb, grants: [string, string, string[]][], options: { ceiling?: GrantRow[]; braveKey?: string | null } = {}): Promise<Scenario> {
 	const keyed = options.braveKey === undefined;
 	const connector = webConnector({ braveKey: () => (keyed ? "test-key" : (options.braveKey ?? null)) });
@@ -90,7 +92,7 @@ function start(web: FakeWeb, grants: [string, string, string[]][], options: { ce
 	});
 }
 
-/** connector_runs.py `ceiling`: a grant of the workspace ceiling on the Web connection. */
+/** A grant of the workspace ceiling on the Web connection. */
 function ceiling(kind: string, resourceId: string, effect: GrantRow["effect"], actions: string[] = ["read"]): GrantRow {
 	return { layer: "ceiling", subject: null, connectionId: WEB, kind, resourceId, resourceName: "", actions, effect };
 }
@@ -101,7 +103,7 @@ describe("the declaration", () => {
 		const fingerprints = Object.fromEntries(webConnector().operations.map((op) => [op.name, registry.contract("web", op.name)]));
 		console.log("web fingerprints", fingerprints);
 		// A change here is a change of what a tool means: running runs fail its calls with OPERATION_CHANGED.
-		expect(fingerprints).toEqual({ search: "1bbf2acda18c2aa9", read_page: "094917eb283de259" });
+		expect(fingerprints).toEqual({ search: "00a4f383da21caed", read_page: "abe6e7be4e1d8f5a" });
 	});
 
 	test("the Worker's registry serves it", async () => {
@@ -109,11 +111,114 @@ describe("the declaration", () => {
 		const served = await connectorRegistry();
 		for (const op of served.get("web").operations) expect(served.contract("web", op.name)).toBe(registry.contract("web", op.name));
 	});
+
+	test("two kinds, builtin auth, and search offered only with a key", () => {
+		const withoutKey = webConnector({ braveKey: () => null });
+		const withKey = webConnector({ braveKey: () => "k" });
+		expect(kindsOut(withoutKey).map((kind) => [kind.id, kind.actions, kind.wildcard, kind.hierarchical, kind.listed])).toEqual([
+			["account", ["search"], false, false, true],
+			["site", ["read"], true, true, false],
+		]);
+		expect(withoutKey.actions).toEqual([
+			{ id: "search", label: "Search the web" },
+			{ id: "read", label: "Read pages" },
+		]);
+		expect(withoutKey.auth).toEqual({ type: "builtin" });
+		expect([withoutKey.browsable ?? [], withoutKey.manageLink]).toEqual([[], undefined]);
+		expect(withoutKey.operations.map((op) => [op.name, op.needs, termsOf(op).outputAction, termsOf(op).paginated, offered(withoutKey, op)])).toEqual([
+			["search", [["account", "search"]], "search", true, false],
+			["read_page", [["site", "read"]], "read", false, true],
+		]);
+		expect(withKey.operations.map((op) => offered(withKey, op))).toEqual([true, true]);
+		for (const op of withoutKey.operations) expect(JSON.stringify(inputSchema(op)), op.name).not.toContain('"title"');
+	});
+});
+
+describe("inputs", () => {
+	async function accepted(op: (typeof SEARCH) | undefined, args: Json): Promise<unknown> {
+		const result = await validateInput(op?.input as never, args);
+		return result.ok ? result.data : `refused: ${result.message}`;
+	}
+	const readPage = webConnector().operations.find((op) => op.name === "read_page") as typeof SEARCH;
+
+	test("search: a single line of text, trimmed; bounded limits; a country code; a freshness", async () => {
+		expect(await accepted(SEARCH, { query: "  python  " })).toEqual({ query: "python", limit: 10, country: null, freshness: null, cursor: null });
+		expect(await accepted(SEARCH, { query: "café 😀", limit: 20, country: " DE ", freshness: "year", cursor: " 2 " })).toEqual({
+			query: "café 😀",
+			limit: 20,
+			country: "DE",
+			freshness: "year",
+			cursor: "2",
+		});
+		expect(await accepted(SEARCH, { query: ` ${"x".repeat(400)} ` })).toMatchObject({ query: "x".repeat(400) });
+		for (const args of [
+			{},
+			{ query: "" },
+			{ query: "   " },
+			{ query: "a\tb" },
+			{ query: "a\nb" },
+			{ query: "x".repeat(401) },
+			{ query: 5 },
+			{ query: "q", limit: 0 },
+			{ query: "q", limit: 21 },
+			{ query: "q", limit: "5" },
+			{ query: "q", limit: null },
+			{ query: "q", country: "ch" },
+			{ query: "q", country: "CHE" },
+			{ query: "q", country: "İT" },
+			{ query: "q", country: "" },
+			{ query: "q", freshness: "hour" },
+			{ query: "q", freshness: "Day" },
+			{ query: "q", cursor: "c".repeat(301) },
+			{ query: "q", page: 2 },
+			[],
+			"q",
+		] as Json[]) {
+			expect(await accepted(SEARCH, args), JSON.stringify(args)).toMatch(/^refused: Invalid arguments\./);
+		}
+	});
+
+	test("read_page: an address of at most 2000 characters, a window into the text", async () => {
+		expect(await accepted(readPage, { url: "  https://example.com/  " })).toEqual({ url: "https://example.com/", max_chars: 20_000, offset: 0 });
+		expect(await accepted(readPage, { url: "u".repeat(2000), max_chars: 100_000, offset: 10_000_000 })).toMatchObject({ max_chars: 100_000, offset: 10_000_000 });
+		for (const args of [
+			{},
+			{ url: "" },
+			{ url: "   " },
+			{ url: "u".repeat(2001) },
+			{ url: 1 },
+			{ url: "https://example.com/", max_chars: 499 },
+			{ url: "https://example.com/", max_chars: 100_001 },
+			{ url: "https://example.com/", max_chars: "600" },
+			{ url: "https://example.com/", offset: -1 },
+			{ url: "https://example.com/", offset: 10_000_001 },
+			{ url: "https://example.com/", offset: null },
+			{ url: "https://example.com/", extra: 1 },
+		] as Json[]) {
+			expect(await accepted(readPage, args), JSON.stringify(args)).toMatch(/^refused: Invalid arguments\./);
+		}
+	});
+
+	test("search cursors name the pages Minerva hands out, 1 to 9, in ASCII digits", async () => {
+		const prepared = async (cursor: string | null) => {
+			try {
+				await SEARCH.prepare(binding(WEB, null as never), { query: "q", limit: 10, country: null, freshness: null, cursor } as never);
+				return "ok";
+			} catch (error) {
+				if (error instanceof OperationError) return `${error.code}: ${error.message}`;
+				throw error;
+			}
+		};
+		for (const cursor of [null, "", "1", "9", "01", "09"]) expect(await prepared(cursor), String(cursor)).toBe("ok");
+		for (const cursor of ["0", "10", "1".repeat(40), "x", "-1", "+1", "1.0", " 1", "٣", "𝟙", "１", "²", "①"]) {
+			expect(await prepared(cursor), cursor).toBe("INVALID_ARGUMENTS: Invalid arguments. cursor: unknown page");
+		}
+	});
 });
 
 describe("site names", () => {
 	test("hosts are canonical public names", () => {
-		expect(canonicalHost("Docs.Python.ORG.")).toBe("docs.python.org");
+		expect(canonicalHost("Docs.Python.ORG")).toBe("docs.python.org");
 		expect(canonicalHost("bücher.ch")).toBe("xn--bcher-kva.ch");
 		for (const refused of [
 			"localhost",
@@ -130,6 +235,7 @@ describe("site names", () => {
 			"2130706433",
 			"-bad-.com",
 			"a..com",
+			"docs.python.org.",
 			`${"x".repeat(64)}.com`,
 			"",
 		]) {
@@ -150,13 +256,40 @@ describe("site names", () => {
 		expect(name("*.python.org")).toBe("python.org, including subdomains");
 	});
 
+	test("site ids: a canonical host, or a pattern of a domain within a registrable domain, public and private suffixes alike", () => {
+		for (const valid of ["python.org", "*.a.docs.python.org", "ada.github.io", "*.ada.github.io", "xn--bcher-kva.ch", "*.xn--bcher-kva.ch", "*.city.kobe.jp", "shop.example.co.uk", "*.example.co.uk"]) {
+			expect(validId(valid), valid).toBe(true);
+		}
+		for (const invalid of ["*.kobe.jp", "*.", "**.python.org", "10.0.0.1", "bücher.ch", "site.example", "*.site.example", "python.org.", " python.org", ""]) {
+			expect(validId(invalid), invalid).toBe(false);
+		}
+		// Names are shown for any id, valid or not.
+		expect([name("*.city.kobe.jp"), name("*.*.python.org"), name("*."), name("*")]).toEqual([
+			"city.kobe.jp, including subdomains",
+			"*.python.org, including subdomains",
+			", including subdomains",
+			"*",
+		]);
+		expect(ancestors("x.y.city.kobe.jp")).toEqual(["*.x.y.city.kobe.jp", "*.y.city.kobe.jp", "*.city.kobe.jp"]);
+		expect(choices("city.kobe.jp")).toEqual(["city.kobe.jp", "*.city.kobe.jp"]);
+		expect(ancestors("a.b.c.d.e.f.example.com")).toHaveLength(7);
+		// A name under a special-use suffix has no patterns and no registrable domain.
+		expect([ancestors("a.site.example"), choices("a.site.example"), registrable("a.site.example")]).toEqual([[], ["a.site.example"], null]);
+		expect([registrable("a.docs.python.org"), registrable("ada.github.io"), registrable("shop.example.co.uk"), registrable("city.kobe.jp")]).toEqual([
+			"python.org",
+			"ada.github.io",
+			"example.co.uk",
+			"city.kobe.jp",
+		]);
+	});
+
 	test("addresses are parsed into what is requested", () => {
 		const url = parseUrl("HTTPS://Docs.Python.org/3/library/os.html?q=a%20b#frag");
-		expect([url.scheme, url.host, url.target]).toEqual(["https", "docs.python.org", "/3/library/os.html?q=a%20b"]);
-		expect(parseUrl("http://example.com").text).toBe("http://example.com/");
-		expect(parseUrl("https://example.com:443/x").text).toBe("https://example.com/x");
-		expect(parseUrl("/next", url).text).toBe("https://docs.python.org/next");
-		expect(parseUrl("//other.org/y", url).text).toBe("https://other.org/y");
+		expect([url.scheme, url.host, url.href]).toEqual(["https", "docs.python.org", "https://docs.python.org/3/library/os.html?q=a%20b"]);
+		expect(parseUrl("http://example.com").href).toBe("http://example.com/");
+		expect(parseUrl("https://example.com:443/x").href).toBe("https://example.com/x");
+		expect(parseUrl("/next", url).href).toBe("https://docs.python.org/next");
+		expect(parseUrl("//other.org/y", url).href).toBe("https://other.org/y");
 		for (const refused of [
 			"ftp://example.com/",
 			"file:///etc/passwd",
@@ -172,6 +305,8 @@ describe("site names", () => {
 			"https://exa mple.com/",
 			"https://example.com/\n",
 			"https:///path",
+			"https:example.com/",
+			"https://example.com./",
 			`https://${"a".repeat(2000)}.com/`,
 		]) {
 			expect(code(() => parseUrl(refused)), refused).toBe("INVALID_URL");
@@ -179,8 +314,8 @@ describe("site names", () => {
 	});
 
 	test("only public addresses are opened: the platform refuses the rest, and the fetcher says so", async () => {
-		// test_web.py `public_address` decided this before connecting; a Worker cannot pin the address it
-		// connects to, so the platform refuses private ones (the fake models it) and the fetcher reports it.
+		// A Worker cannot pin the address it connects to, so the platform refuses private ones (the fake
+		// models it) and the fetcher reports it.
 		for (const address of [PUBLIC, "2606:4700::1111", "::ffff:8.8.8.8", "64:ff9b::808:808"]) {
 			const web = new FakeWeb();
 			web.site("example.com", address);
@@ -225,7 +360,7 @@ describe("the fetcher", () => {
 		web.site("example.com", PUBLIC);
 		web.page("example.com", "/a?b=1", html("<p>Hello</p>"));
 		const got = await page(web, "https://example.com/a?b=1");
-		expect([got.form, got.text, got.url.text]).toEqual(["html", "<p>Hello</p>", "https://example.com/a?b=1"]);
+		expect([got.form, got.text, got.url.href]).toEqual(["html", "<p>Hello</p>", "https://example.com/a?b=1"]);
 		const [request] = web.requests;
 		expect(request?.url).toBe("https://example.com/a?b=1");
 		expect(request?.method).toBe("GET");
@@ -245,8 +380,8 @@ describe("the fetcher", () => {
 			expect(await acode(fetcher(web).get(parseUrl("https://sneaky.example.com/"))), addresses.join()).toBe("SITE_NOT_PUBLIC");
 			expect(web.requests).toEqual([]);
 		}
-		// Deviation: today a name with any private address is refused; the platform decides by the address it
-		// connects to (the fake: the first), so a private address is never reached, but the public one may be.
+		// The platform decides by the address it connects to (the fake: the first), so a private address is
+		// never reached, but the public one of a name with both may be.
 		const web = new FakeWeb();
 		web.site("mixed.example.com", PUBLIC, "10.0.0.5");
 		web.page("mixed.example.com", "/", html("<p>public</p>"));
@@ -263,9 +398,9 @@ describe("the fetcher", () => {
 		web.page("example.com", "/inside", { status: 302, headers: { location: "http://10.0.0.1/" } });
 		web.page("example.com", "/loop", { status: 302, headers: { location: "/loop" } });
 		const got = await page(web, "https://example.com/old");
-		expect([got.url.text, got.text]).toEqual(["https://example.com/new", "moved"]);
+		expect([got.url.href, got.text]).toEqual(["https://example.com/new", "moved"]);
 		const away = await fetcher(web).get(parseUrl("https://example.com/away"));
-		expect(away instanceof Moved && away.target.text).toBe("https://evil.example.org/x");
+		expect(away instanceof Moved && away.target.href).toBe("https://evil.example.org/x");
 		expect(web.resolved).not.toContain("evil.example.org");
 		const down = await fetcher(web).get(parseUrl("https://example.com/down"));
 		expect(down instanceof Moved && down.target.scheme).toBe("http");
@@ -278,13 +413,13 @@ describe("the fetcher", () => {
 		expect(web.sent.map((request) => request.host)).not.toContain("10.0.0.1");
 	});
 
-	test("each hop requests the serialization whose host was authorized, also after a redirect", async () => {
+	test("each hop requests the serialization whose host was authorized, and shows it, also after a redirect", async () => {
 		const web = new FakeWeb();
 		web.site("example.com");
 		web.page("example.com", "/b?q=%27x%27", { status: 302, headers: { location: "/c/%2e%2e/d?r='y'" } });
 		web.page("example.com", "/d?r=%27y%27", { status: 200, headers: { "content-type": "text/plain" }, body: "here" });
 		const got = await page(web, "https://example.com/a/../b?q='x'");
-		expect([got.url.text, got.url.href, got.text]).toEqual(["https://example.com/c/%2e%2e/d?r='y'", "https://example.com/d?r=%27y%27", "here"]);
+		expect([got.url.href, got.text]).toEqual(["https://example.com/d?r=%27y%27", "here"]);
 		expect(web.requests.map((request) => request.url)).toEqual(["https://example.com/b?q=%27x%27", "https://example.com/d?r=%27y%27"]);
 	});
 
@@ -323,6 +458,65 @@ describe("the fetcher", () => {
 });
 
 describe("page text", () => {
+	test("search snippets lose their markup and references", () => {
+		for (const [text, expected] of [
+			["The &amp; official <strong>docs</strong>", "The & official docs"],
+			["  a\n\tb c\u3000d  ", "a b c d"],
+			["<b>unclosed", "unclosed"],
+			["a < b > c", "a c"],
+			["&lt;script&gt;", "<script>"],
+			["&#x1F600; &notin; &notit; &amp", "😀 ∉ ¬it; &"],
+			["", ""],
+		]) {
+			expect(plain(text as string), text).toBe(expected);
+		}
+	});
+
+	test("bodies are read by their media type and charset: a byte order mark, the header, an HTML <meta>, else UTF-8", () => {
+		const bytes = (text: string) => Uint8Array.from(text, (char) => char.charCodeAt(0));
+		const read = (body: string, contentType: string) => {
+			try {
+				return decode(bytes(body), contentType);
+			} catch (error) {
+				if (error instanceof OperationError) return error.code;
+				throw error;
+			}
+		};
+		const zurich = "Z\u00fcrich";
+		const utf8 = "Z\u00c3\u00bcrich";
+		for (const [body, contentType, expected] of [
+			["<p>Hello</p>", "TEXT/HTML ; Charset=\"latin-1\"", ["text/html", "html", "<p>Hello</p>"]],
+			[zurich, "text/plain; charset=latin-1", ["text/plain", "text", "Zürich"]],
+			[zurich, "text/plain; charset = koi8-r", ["text/plain", "text", "ZЭrich"]],
+			[zurich, "text/csv;charset=cp1252", ["text/csv", "text", "Zürich"]],
+			// The charset parameter's name is ASCII: a long s does not spell it.
+			[zurich, "text/markdown; char\u017fet=latin-1", ["text/markdown", "text", "Z\ufffdrich"]],
+			// A charset the runtime lacks, or one that is not text, is read as UTF-8.
+			[utf8, "text/plain; charset=bogus", ["text/plain", "text", "Zürich"]],
+			[utf8, "text/plain; charset=rot13", ["text/plain", "text", "Zürich"]],
+			[`<meta charset='iso-8859-1'><p>${zurich}</p>`, "text/html", ["text/html", "html", "<meta charset='iso-8859-1'><p>Zürich</p>"]],
+			[`<META CHARSET = "windows-1252"><p>\u0080</p>`, "text/html", ["text/html", "html", '<META CHARSET = "windows-1252"><p>€</p>']],
+			// The header wins over a <meta>, which only HTML is read for.
+			[`<meta charset='iso-8859-1'>${utf8}`, "text/html; charset=utf-8", ["text/html", "html", "<meta charset='iso-8859-1'>Zürich"]],
+			[`<meta charset='iso-8859-1'>${zurich}`, "text/plain", ["text/plain", "text", "<meta charset='iso-8859-1'>Z\ufffdrich"]],
+			// A byte order mark wins over both, and is dropped.
+			["\u00ef\u00bb\u00bfbom", "text/plain; charset=latin-1", ["text/plain", "text", "bom"]],
+			["\u00ff\u00feu\u0000t\u0000f\u0000", "text/html; charset=latin-1", ["text/html", "html", "utf"]],
+			["\u00fe\u00ff\u0000a", "application/json", ["application/json", "text", "a"]],
+			["{}", "application/ld+json", ["application/ld+json", "text", "{}"]],
+			["<svg/>", "image/svg+xml", ["image/svg+xml", "text", "<svg/>"]],
+			["%PDF", "application/pdf", "UNSUPPORTED_CONTENT"],
+			// Without a media type: HTML by its start, text unless it holds a NUL byte.
+			["  \n<!DOCTYPE html><p>x</p>", "", ["", "html", "  \n<!DOCTYPE html><p>x</p>"]],
+			["<HTML><p>x</p>", "  ", ["", "html", "<HTML><p>x</p>"]],
+			["plain words", "", ["", "text", "plain words"]],
+			["\u0000u\u0000t\u0000f", "", "UNSUPPORTED_CONTENT"],
+			["\u00ff\u00feu\u0000", "", "UNSUPPORTED_CONTENT"],
+		] as [string, string, unknown][]) {
+			expect(read(body, contentType), `${JSON.stringify(body)} as ${contentType}`).toEqual(expected);
+		}
+	});
+
 	test("pages become readable text without active content", () => {
 		const page = `<html><head><title> The  Title </title><style>p{}</style></head><body>
     <nav><a href="/home">Home</a></nav>
@@ -366,6 +560,30 @@ describe("page text", () => {
 		}
 		// Links do not nest.
 		expect(htmlToText('<a href="/a">one <a href="/b">two</a></a>', "https://example.com/")[0]).toBe("[one](https://example.com/a)[two](https://example.com/b)");
+	});
+
+	test("active and embedded content stays out however the markup is written", () => {
+		const base = "https://example.com/";
+		for (const page of [
+			"<SCRIPT>steal()</script>ok",
+			"<script/>steal()</script>ok",
+			"<style>p{}</style >ok",
+			"<noembed><b>steal()</b></noembed>ok",
+			"<svg><text>steal()</text></svg>ok",
+			"<svg/>ok",
+			"<!-- steal() -->ok<![CDATA[steal()]]>",
+			"<template><p>steal()</p></template>ok",
+		]) {
+			expect(htmlToText(page, base)[0], page).toBe("ok");
+		}
+		expect(htmlToText("ok<script>steal()</script", base)[0]).toBe("ok");
+		expect(htmlToText("ok<script>steal()</script steal()", base)[0]).toBe("ok");
+		for (const href of ["&#x6a;avascript:steal()", "java&#9;script:steal()", " data:text/html,x", "//evil.example.org:99999/"]) {
+			expect(htmlToText(`<a href="${href}">label</a>`, base)[0], href).toBe("label");
+		}
+		expect(htmlToText('<img src="https://evil.example.org/x.png"><image src="https://evil.example.org/y.png">', base)[0]).toBe("");
+		// Without a base address (Gmail), only absolute links are kept.
+		expect(htmlToText('<a href="/rel">a</a> <a href="https://example.com/x">b</a>')[0]).toBe("a [b](https://example.com/x)");
 	});
 });
 
@@ -481,7 +699,7 @@ describe("runs through the executor", () => {
 		expect(run.tools).toEqual(["web_read_page"]);
 	});
 
-	test("an empty key is set, as Python's empty SecretStr: search is offered, then unavailable", async () => {
+	test("an empty key is set: search is offered, then unavailable", async () => {
 		const web = new FakeWeb();
 		const run = await start(web, [["account", WEB, ["search"]]], { braveKey: "" });
 		expect(run.tools).toEqual(["web_search"]);
@@ -528,7 +746,7 @@ describe("settings", () => {
 			"*.python.org",
 		]);
 		expect(await acode(Promise.resolve().then(() => connector.discover?.(client, "site", { query: "http://10.0.0.1/", cursor: null })))).toBe("INVALID_URL");
-		// The route names what is allowed with describe and refuses what it cannot name (connections/api.py).
+		// The route names what is allowed with describe and refuses what it cannot name.
 		const refused = ["*.org", "*.github.io", "localhost", "10.0.0.1", "Python.org", "*.*.python.org"];
 		expect(await connector.describe?.(client, "site", ["*.python.org", ...refused])).toEqual({ "*.python.org": "python.org, including subdomains" });
 		expect(web.sent).toEqual([]);
@@ -545,6 +763,127 @@ describe("settings", () => {
 			]),
 		);
 		expect(grants).toHaveLength(2);
+	});
+});
+
+describe("bodies", () => {
+	const PAGE = new TextEncoder().encode(`<p>${"hello world ".repeat(20)}</p>`);
+	const gzip = new Uint8Array(gzipSync(PAGE));
+	const zlib = new Uint8Array(deflateSync(PAGE));
+	const raw = new Uint8Array(deflateRawSync(PAGE));
+
+	/** The body read from these chunks, as the fetcher reads it, or the error's code and message. */
+	function read(encoding: string | null, ...chunks: Uint8Array[]): Uint8Array | string {
+		try {
+			const body = new Body(encoding);
+			for (const chunk of chunks) body.feed(chunk);
+			return body.bytes();
+		} catch (error) {
+			if (error instanceof OperationError) return `${error.code}: ${error.message}`;
+			throw error;
+		}
+	}
+
+	function changed(bytes: Uint8Array, at: number, value: number): Uint8Array {
+		const copy = bytes.slice();
+		copy[at < 0 ? copy.length + at : at] = value;
+		return copy;
+	}
+
+	/** The bytes with one bit of the byte at `at` (from the end when negative) flipped. */
+	function flipped(bytes: Uint8Array, at: number): Uint8Array {
+		const copy = bytes.slice();
+		const index = at < 0 ? copy.length + at : at;
+		copy[index] = (copy[index] as number) ^ 1;
+		return copy;
+	}
+
+	const concat = (...parts: Uint8Array[]) => Uint8Array.from(parts.flatMap((part) => [...part]));
+	const text = (value: string) => new TextEncoder().encode(value);
+	const DAMAGED = "UNSUPPORTED_CONTENT: This site sent a damaged page.";
+	const ENCODING = "UNSUPPORTED_CONTENT: This site sent its page in an encoding Minerva cannot read.";
+	const TOO_LARGE = `PAGE_TOO_LARGE: This page is larger than Minerva reads (${MAX_BODY} bytes).`;
+
+	test("gzip and deflate read the same however the body is split", () => {
+		// A gzip header with every optional field: FEXTRA, FNAME, FCOMMENT and its CRC (FHCRC).
+		const fields = concat(Uint8Array.of(0x1f, 0x8b, 8, 0x1e, 0, 0, 0, 0, 0, 0xff, 2, 0, 0x78, 0x79), text("page.html\0c\0"));
+		const headerCrc = crc32(fields) & 0xffff;
+		const full = concat(fields, Uint8Array.of(headerCrc & 0xff, headerCrc >> 8), gzip.subarray(10));
+		const wrongCrc = flipped(full, fields.length);
+		for (const [encoding, body] of [
+			["gzip", gzip],
+			["gzip", full],
+			["deflate", zlib],
+		] as const) {
+			for (let at = 0; at <= body.length; at++) expect(read(encoding, body.subarray(0, at), body.subarray(at)), `${encoding} at ${at}`).toEqual(PAGE);
+		}
+		for (let at = 0; at <= wrongCrc.length; at++) expect(read("gzip", wrongCrc.subarray(0, at), wrongCrc.subarray(at)), `wrong header CRC at ${at}`).toBe(DAMAGED);
+		// Raw DEFLATE is recognised when zlib fails on the first chunk, so a first chunk of one byte is too little.
+		for (let at = 2; at <= raw.length; at++) expect(read("deflate", raw.subarray(0, at), raw.subarray(at)), `raw at ${at}`).toEqual(PAGE);
+		expect(read("deflate", raw.subarray(0, 1), raw.subarray(1))).toBe(DAMAGED);
+	});
+
+	test("one Content-Encoding is read, in any case, beside identity; others and stacks are refused", () => {
+		for (const encoding of ["x-gzip", "GZIP", " gzip ", "gzip, identity", "identity, gzip"]) expect(read(encoding, gzip), encoding).toEqual(PAGE);
+		for (const encoding of ["identity", "", null]) expect(read(encoding, PAGE), String(encoding)).toEqual(PAGE);
+		for (const encoding of ["gzip, gzip", "gzip, br", "br", "compress", "zstd"]) expect(read(encoding, gzip), encoding).toBe(ENCODING);
+	});
+
+	test("damaged streams are refused; one cut short gives what was decoded; what follows the end is ignored", () => {
+		const header = gzip.subarray(0, 10);
+		const deflated = gzip.subarray(10, -8);
+		const trailer = gzip.subarray(-8);
+		// FEXTRA, FNAME and FCOMMENT, and the same with a wrong header CRC (FHCRC).
+		const named = concat(changed(header, 3, 0x1c), Uint8Array.of(2, 0, 0x78, 0x79), text("page.html\0c\0"), deflated, trailer);
+		const crc = concat(changed(header, 3, 0x1e), Uint8Array.of(2, 0, 0x78, 0x79), text("page.html\0c\0"), Uint8Array.of(0, 0), deflated, trailer);
+		for (const [label, encoding, body, expected] of [
+			["gzip with names", "gzip", named, PAGE],
+			["gzip, wrong header CRC", "gzip", crc, DAMAGED],
+			["gzip, wrong CRC-32", "gzip", flipped(gzip, -8), DAMAGED],
+			["gzip, wrong length", "gzip", flipped(gzip, -4), DAMAGED],
+			["gzip, reserved flags", "gzip", changed(gzip, 3, 0xe0), DAMAGED],
+			["gzip, wrong magic", "gzip", changed(gzip, 1, 0x8c), DAMAGED],
+			["gzip, wrong method", "gzip", changed(gzip, 2, 7), DAMAGED],
+			["zlib sent as gzip", "gzip", zlib, DAMAGED],
+			["text sent as gzip", "gzip", PAGE, DAMAGED],
+			["gzip without its length", "gzip", gzip.subarray(0, -4), PAGE],
+			["gzip header only", "gzip", gzip.subarray(0, 5), new Uint8Array()],
+			["empty gzip", "gzip", new Uint8Array(), new Uint8Array()],
+			["gzip, then a second member", "gzip", concat(gzip, gzipSync(text("second"))), PAGE],
+			["gzip, then garbage", "gzip", concat(gzip, text("trailing garbage")), PAGE],
+			["zlib, wrong Adler-32", "deflate", flipped(zlib, -1), DAMAGED],
+			["zlib, wrong header", "deflate", concat(Uint8Array.of(0x78, 0xbb), raw), DAMAGED],
+			["text sent as deflate", "deflate", PAGE, DAMAGED],
+			["gzip sent as deflate", "deflate", gzip, DAMAGED],
+			["zlib without its Adler-32", "deflate", zlib.subarray(0, -4), PAGE],
+			["zlib header byte only", "deflate", zlib.subarray(0, 1), new Uint8Array()],
+			["zlib, then garbage", "deflate", concat(zlib, text("trailing")), PAGE],
+			["raw DEFLATE, then garbage", "deflate", concat(raw, text("trailing")), PAGE],
+		] as [string, string, Uint8Array, Uint8Array | string][]) {
+			expect(read(encoding, body), label).toEqual(expected);
+		}
+		const cut = read("gzip", gzip.subarray(0, 20)) as Uint8Array;
+		expect(cut.length).toBeGreaterThan(0);
+		expect(cut).toEqual(PAGE.subarray(0, cut.length));
+		expect(read("gzip", new Uint8Array(), new Uint8Array())).toEqual(new Uint8Array());
+	});
+
+	test("a page may reach the cap exactly in every wrapper, in any pieces; one byte more is too large", () => {
+		const exact = new Uint8Array(MAX_BODY);
+		const over = new Uint8Array(MAX_BODY + 1);
+		const pieces = (body: Uint8Array) => Array.from({ length: Math.ceil(body.length / 997) }, (_, i) => body.subarray(i * 997, (i + 1) * 997));
+		for (const [encoding, compress] of [
+			["gzip", gzipSync],
+			["deflate", deflateSync],
+			["deflate", deflateRawSync],
+		] as const) {
+			const fits = compress(exact);
+			const tooBig = compress(over);
+			expect((read(encoding, fits) as Uint8Array).length, compress.name).toBe(MAX_BODY);
+			expect((read(encoding, ...pieces(fits)) as Uint8Array).length, compress.name).toBe(MAX_BODY);
+			expect(read(encoding, tooBig), compress.name).toBe(TOO_LARGE);
+			expect(read(encoding, ...pieces(tooBig)), compress.name).toBe(TOO_LARGE);
+		}
 	});
 });
 
@@ -687,7 +1026,7 @@ describe("what the fetcher may reach (adversarial)", () => {
 				message: `This page is larger than Minerva reads (${MAX_BODY} bytes).`,
 			});
 			// Raw DEFLATE is told from zlib only when zlib fails on the first chunk, which one byte cannot do:
-			// Python reads that body as damaged too.
+			// that body reads as damaged.
 			expect(await acode(fetcher(web).get(parseUrl(`https://example.com${target}/bytes`))), `${target}/bytes`).toBe(target === "/raw" ? "UNSUPPORTED_CONTENT" : "PAGE_TOO_LARGE");
 		}
 		const nested = await page(web, "https://example.com/nested");
@@ -707,8 +1046,8 @@ describe("what the fetcher may reach (adversarial)", () => {
 			expect(error).toBeInstanceOf(OperationError);
 			expect(produced).toBe(0);
 		}
-		// The room is a hard limit, as `decompress(data, max_length)`'s: a page that fills it exactly still
-		// ends (zlib reads the trailer without room to write), one byte more is left over and too large.
+		// The room is a hard limit: a page that fills it exactly still ends (zlib reads the trailer without
+		// room to write), one byte more is left over and too large.
 		const tooLarge = () => new OperationError("PAGE_TOO_LARGE", "too large");
 		const length = (parts: Uint8Array[]) => parts.reduce((sum, part) => sum + part.length, 0);
 		expect(length(new Inflater("gzip", tooLarge).feed(gzipSync(new Uint8Array(1000)), 1000))).toBe(1000);
@@ -724,7 +1063,7 @@ describe("what the fetcher may reach (adversarial)", () => {
 		expect((await page(web, "https://example.com/exact")).text).toHaveLength(MAX_BODY);
 		expect(await acode(fetcher(web).get(parseUrl("https://example.com/over")))).toBe("PAGE_TOO_LARGE");
 		expect(await acode(fetcher(web).get(parseUrl("https://example.com/zipped-over")))).toBe("PAGE_TOO_LARGE");
-		// br is not read, as today: the runtime would decode it before any cap.
+		// br is not read: the runtime would decode it before any cap.
 		web.page("example.com", "/br", html("x", { "content-encoding": "br" }));
 		expect(await raised(fetcher(web).get(parseUrl("https://example.com/br")))).toMatchObject({
 			code: "UNSUPPORTED_CONTENT",
@@ -783,8 +1122,7 @@ describe("what the fetcher may reach (adversarial)", () => {
 	});
 
 	test("a refusal body that never comes ends with the fetch's total time, as the error response it is", async () => {
-		// Before: the read waited its own second past the total time. Python reads no error body, so the answer
-		// is PAGE_ERROR (the response came in time), not SITE_TIMEOUT.
+		// The response came in time, so the answer is PAGE_ERROR, not SITE_TIMEOUT.
 		Object.assign(LIMITS, { totalMs: 50 });
 		const web = new FakeWeb();
 		web.site("example.com");

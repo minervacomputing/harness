@@ -1,14 +1,35 @@
 // Layers and grants, the pure parts: the policy a run
 // starts with, built from the Workspace Durable Object's rows, and the checks and plan of a grant edit.
-// Storing the rows, bumping the layer's version and revoking runs are the Workspace's (step 2b).
+// Storing the rows, bumping the layer's version and revoking runs are the Workspace's (workspace/core.ts).
 
-import type { ConnectionId, UserId } from "../contracts/common.ts";
-import type { Connector } from "../contracts/connectors.ts";
-import type { GrantChange, GrantRow } from "../contracts/policy.ts";
-import { ACCOUNT_KIND, actionOf, kindOf, requiresOf } from "./connector.ts";
+import type { ConnectionId, UserId } from "../shared/rpc.ts";
+import { ACCOUNT_KIND, type Connector, actionOf, kindOf, requiresOf } from "./connector.ts";
 import { ANY, Layer, type LayerName, Policy } from "./policy.ts";
 import type { Registry } from "./registry.ts";
 import { compareText } from "../lib/arrays.ts";
+
+/** A grant row in the Workspace Durable Object. */
+export interface GrantRow {
+	layer: "ceiling" | "user" | "agent";
+	/** The user of a user layer, the agent of an agent layer. */
+	subject: string | null;
+	connectionId: ConnectionId;
+	kind: string;
+	/** ≤200 characters, or `*`. */
+	resourceId: string;
+	/** Display only, ≤300 characters. */
+	resourceName: string;
+	/** Sorted, unique. */
+	actions: string[];
+	effect: "allow" | "deny";
+}
+
+/** One change of `PATCH …/access` (≤100 per request; empty actions remove the grant). */
+export interface GrantChange {
+	kind: string;
+	id: string;
+	actions: string[];
+}
 
 export type Level = GrantRow["layer"];
 
@@ -46,7 +67,7 @@ export type ProviderOf = (connectionId: ConnectionId) => string | null;
 
 /**
  * Denies always apply. An allow counts only for a kind the connector still declares, and a wildcard allow
- * only where the kind supports one, so a hand-edited row cannot widen access (connectors 4.3).
+ * only where the kind supports one, so a hand-edited row cannot widen access.
  */
 export function enforceable(grant: GrantRow, registry: Registry, providerOf: ProviderOf): boolean {
 	if (grant.effect === "deny") return true;
@@ -91,7 +112,7 @@ function label(connector: Connector, actionId: string): string {
 	return actionOf(connector, actionId)?.label ?? actionId;
 }
 
-/** Rejects changes the connector cannot enforce, before anything asks the provider about them (connectors 4.5). */
+/** Rejects changes the connector cannot enforce, before anything asks the provider about them. */
 export function checkChanges(connector: Connector, connectionId: ConnectionId, changes: readonly GrantChange[]): void {
 	if (changes.length === 0) throw new InvalidGrants("Nothing to change.");
 	if (changes.length > MAX_CHANGES) throw new InvalidGrants(`Change at most ${MAX_CHANGES} resources at once.`);

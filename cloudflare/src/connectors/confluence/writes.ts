@@ -6,8 +6,7 @@
 // on where a page is.
 
 import { z } from "zod";
-import type { Prepared, ProviderOutput } from "../../contracts/connectors.ts";
-import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
+import { OperationError, type Prepared, type ProviderOutput, defineOperation, denied } from "../../gateway/connector.ts";
 import type { JsonObject } from "../../lib/json.ts";
 import { PLAIN_TEXT, SINGLE_LINE, isPlainText, isSingleLine } from "../../lib/text.ts";
 import * as adf from "../atlassian/adf.ts";
@@ -19,7 +18,7 @@ export const MAX_BODY = 50_000;
 export const MAX_COMMENT = 20_000;
 
 export const TEXT_DESCRIPTION = "Plain text, shown literally: no formatting, mentions or links to Atlassian.";
-/** Text that only adds words (adf.check_written): plain text, without an address to Atlassian. */
+/** Text that only adds words: plain text, without an address to Atlassian. */
 const written = (schema: z.ZodString) => schema.refine(isPlainText, PLAIN_TEXT).refine(adf.namesNoAtlassian, adf.ATLASSIAN_ADDRESS);
 const title = () => written(z.string().trim().min(1).max(MAX_TITLE).describe("The page's title, unique in its space.").refine(isSingleLine, SINGLE_LINE));
 const bodyText = () => written(z.string().trim().min(1).max(MAX_BODY).describe(TEXT_DESCRIPTION));
@@ -51,7 +50,7 @@ export const ADD_COMMENT = defineOperation<z.output<typeof AddComment>>({
 					written: true,
 					id: comment.id,
 					page_id: page.id,
-					created: comment.version ? comment.version.created_at : null,
+					created: comment.version ? comment.version.createdAt : null,
 					link: link(site, page.id),
 				};
 				return { records: [{ resource, data: record }] };
@@ -110,10 +109,10 @@ export const CREATE_PAGE = defineOperation<z.output<typeof CreatePage>>({
 					written: true,
 					id: page.id,
 					site_id: site.id,
-					space_id: page.space_id,
+					space_id: page.spaceId,
 					link: link(site, page.id),
 				};
-				return { records: [{ resource: spaceResource(binding, site, page.space_id), data: record }] };
+				return { records: [{ resource: spaceResource(binding, site, page.spaceId), data: record }] };
 			},
 		};
 	},

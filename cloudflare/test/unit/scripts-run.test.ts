@@ -4,12 +4,12 @@
 // the next script waits in, cancelled calls, and writes that settle after their script stopped.
 
 import { describe, expect, test } from "vitest";
-import type { Json } from "../../src/contracts/common.ts";
-import type { ToolCallOutcome, ToolDeclaration } from "../../src/contracts/executor.ts";
-import type { ScriptFence } from "../../src/contracts/scripts.ts";
 import { ToolQueue } from "../../src/conversation/queue.ts";
+import type { ToolCallOutcome, ToolDeclaration } from "../../src/gateway/executor.ts";
+import type { Json } from "../../src/lib/json.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { executeScript, type ExecuteOptions, remainingMs, resetScripts, ScriptLane, scriptCpuMs, scriptTimeoutMs } from "../../src/scripts/run.ts";
+import type { ScriptFence } from "../../src/scripts/scripts.ts";
 import { ScriptCalls, type ScriptSession } from "../../src/scripts/session.ts";
 import { declaration, FakeScripts, ok } from "./scripts-support.ts";
 
@@ -238,7 +238,7 @@ describe("the reset after every script and the lane", () => {
 	});
 });
 
-describe("time helpers (harness 5.2, 7.4)", () => {
+describe("time helpers", () => {
 	test("remainingMs, the wall clock and the CPU limit", () => {
 		expect(remainingMs(null)).toBe(600_000);
 		expect(remainingMs(Number.NaN)).toBe(60_000);

@@ -3,22 +3,23 @@
 // class with fault seams) named by the test, through the same calls the Conversation makes: prepare a
 // container (start, harden, verify), commands and file operations through the ExecutionEnv with output
 // coming back through an RpcTarget, pi's ExecutionEnv conformance suite, the probe, hydration, scans and
-// checkpoints of a large folder, and the plan's Sandbox fault rows (test/account/sandbox.test.ts). Ported
-// from step 3's lab Worker minerva-cf-sbx, which ran the same with a Worker of its own. The test keeps the fence
+// checkpoints of a large folder, and the plan's Sandbox fault rows (test/account/sandbox.test.ts). The test keeps the fence
 // a prepare answered and sends it back with each later operation. Never part of the production Worker.
 
 import { getOrThrow } from "@earendil-works/pi-durable/env";
 import { createEnvConformance } from "@earendil-works/pi-durable/testing";
 import { sandboxObject } from "../addressing.ts";
-import type { WorkspaceRef } from "../contracts/common.ts";
-import type { ExecRequest, ExecResult, HydratePlan, Refused, SandboxFence, SandboxSpec } from "../contracts/sandbox.ts";
 import { hex } from "../lib/bytes.ts";
 import { uuid7 } from "../lib/random.ts";
-import { commandEnvironment, sandboxSpec, WORKSPACE } from "../sandbox/constants.ts";
+import type { ExecRequest, ExecResult } from "../sandbox/commands.ts";
+import { commandEnvironment, sandboxSpec, type SandboxSpec, WORKSPACE } from "../sandbox/constants.ts";
+import type { Refused, SandboxFence } from "../sandbox/core.ts";
 import { SandboxExecutionEnv } from "../sandbox/env.ts";
+import type { HydratePlan } from "../sandbox/folder.ts";
 import type { Delivered } from "../sandbox/output.ts";
 import { prepareSandbox } from "../sandbox/session.ts";
 import { outputSink } from "../sandbox/sink.ts";
+import type { WorkspaceRef } from "../shared/rpc.ts";
 import type { FaultSandbox, SandboxFaults } from "./sandbox.ts";
 
 /** The lab's sandboxes belong to a workspace of their own; their objects in R2 go under `lab/`. */

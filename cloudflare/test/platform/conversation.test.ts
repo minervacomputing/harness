@@ -1,30 +1,30 @@
 // The Conversation Durable Object in local workerd: the start protocol against a fake Workspace, runs and
 // their events, cancels and revocations, the deadline, paging, the stream's WebSocket, tools through a fake
-// executor, history replay, and restarts through the attempt gate with the fake model. Ported from
-// backend/tests/test_api.py (runs and messages), test_gateway.py and test_attempts.py (events, fencing,
-// tools, model calls), test_supervisor.py (restarts) and worker/test/resume.test.ts (recovery).
+// executor, history replay, fencing, model calls, and restarts and recovery through the attempt gate with
+// the fake model.
 
 import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import type { TranscriptContext } from "@earendil-works/pi-ai";
 import { conversationObject } from "../../src/addressing.ts";
-import type { Caller, Json, RunId } from "../../src/contracts/common.ts";
-import type { RunEvent } from "../../src/contracts/events.ts";
-import type { DispatchResult, ExecutorContext, ToolCallOutcome, ToolCallRequest, ToolDeclaration, ToolResult } from "../../src/contracts/executor.ts";
-import type { CancelReason, RunHead, StartSnapshot } from "../../src/contracts/runs.ts";
-import type { CancelAck } from "../../src/contracts/conversation.ts";
-import type { BeginRunInput, BeginRunResult, Registration } from "../../src/contracts/workspace.ts";
-import type { Conversation } from "../../src/conversation/conversation.ts";
-import { CANCELLED, WORKER_FAILED } from "../../src/conversation/events.ts";
+import type { CancelAck, Conversation } from "../../src/conversation/conversation.ts";
+import { CANCELLED, type CancelReason, type RunEvent, WORKER_FAILED } from "../../src/conversation/events.ts";
 import { FOLDER_INSTRUCTIONS } from "../../src/conversation/history.ts";
-import { RunStore } from "../../src/conversation/store.ts";
+import { type RunHead, RunStore } from "../../src/conversation/store.ts";
 import { RunStream } from "../../src/conversation/stream.ts";
 import { type ConversationPorts, defaultPorts, emptyFolder, gatewayLedger, PORTS, runStatePort, type WorkspaceClient, type WriteLedger } from "../../src/conversation/ports.ts";
+import type { ExecutorContext, ToolCallOutcome, ToolCallRequest, ToolDeclaration } from "../../src/gateway/executor.ts";
+import type { DispatchResult } from "../../src/gateway/ledger.ts";
+import type { ToolResult } from "../../src/gateway/results.ts";
+import type { StartSnapshot } from "../../src/gateway/tools.ts";
+import type { Json } from "../../src/lib/json.ts";
 import { PROVIDER_ERROR } from "../../src/model/tap.ts";
 import { type FakeOptions, type FakeScript, fakeUpstream } from "../../src/model/fake.ts";
 import { type ModelRoute, type Upstream, upstreamOf } from "../../src/model/route.ts";
 import { uuid7 } from "../../src/lib/random.ts";
+import type { Caller, RunId } from "../../src/shared/rpc.ts";
+import type { BeginRunInput, BeginRunResult, Registration } from "../../src/workspace/core.ts";
 
 const WS = "0199a000-0000-7000-8000-00000000c0aa";
 const USER = "0199a000-0000-7000-8000-00000000c0bb";
@@ -320,7 +320,6 @@ describe("starting a run", () => {
 	test("an upload the folder cannot take refuses the start, and the Workspace releases it", async () => {
 		const { stub, fakes } = await conversation();
 		const upload = "0199a000-0000-7000-8000-0000000000ff";
-		// The default folder takes no attachments until step 3.
 		expect(await post(stub, "", [upload])).toEqual({
 			ok: false,
 			refusal: { status: 400, detail: "An attached file is no longer available. Remove it and attach it again." },
@@ -734,7 +733,7 @@ describe("the model", () => {
 		// pi adds the instructions as a positional system section; providers that take no mid-conversation
 		// system messages fold it into the leading one.
 		const system = context.messages.filter((message) => message.role === "system");
-		// With the local tools, the folder's paragraph follows the agent's instructions after a blank line (harness 3.3).
+		// With the local tools, the folder's paragraph follows the agent's instructions after a blank line.
 		expect(JSON.stringify(system)).toContain(JSON.stringify(`<instructions>\nYou are a test agent.\n\n${FOLDER_INSTRUCTIONS}\n</instructions>`).slice(1, -1));
 	});
 

@@ -1,4 +1,4 @@
-// Security headers on every API response, as Caddy adds them today (frontend-runtime spec 11). Static
+// Security headers on every API response. Static
 // assets get the same set from public/_headers, which does not apply to responses the Worker makes.
 // The Content-Security-Policy is a default: a response with its own keeps it, so downloads keep
 // `sandbox`. Cache-Control is `no-store` unless the response says otherwise.

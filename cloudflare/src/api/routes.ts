@@ -1,4 +1,4 @@
-// The JSON API's routes outside accounts (web-api 8, 9, 10, 12): agents, connectors, connections and
+// The JSON API's routes outside accounts: agents, connectors, connections and
 // access, the OAuth callback (flows.ts), conversations, runs and files (conversations.ts), the run event
 // stream (stream.ts), the upload (uploads.ts), and the demo's off answers. Every workspace route checks
 // membership first (members.ts).

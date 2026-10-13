@@ -20,8 +20,7 @@
 // This module assembles the connector. The operations are in `reads` and `writes`; what they share (inboxes,
 // conversation names, where conversations are) is in `inboxes`.
 
-import type { Connector, DiscoveryItem, DiscoveryPage } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
+import { type Connector, type DiscoveryItem, type DiscoveryPage, OperationError } from "../../gateway/connector.ts";
 import { ID, IntercomClient } from "./client.ts";
 import { INBOX, NO_TEAM, NO_TEAM_NAME } from "./inboxes.ts";
 import { GET_CONVERSATION, LIST_INBOXES, SEARCH_CONVERSATIONS, short } from "./reads.ts";

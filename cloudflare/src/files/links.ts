@@ -57,7 +57,7 @@ export async function signDownload(secret: string, origin: string, link: Omit<Do
 }
 
 /**
- * The link for a file `resolveDownload` found (the web API's download route, step 5): signed for the caller,
+ * The link for a file `resolveDownload` found (the web API's download route): signed for the caller,
  * on the download origin, in the workspace's jurisdiction.
  */
 export function downloadLinkFor(
@@ -84,7 +84,7 @@ export function downloadLinkFor(
 
 /**
  * The link a request carries, checked against the origin it arrived at: `unsigned` without a signature
- * (401, as a request without a session is today), `invalid` for anything else wrong, expired included (404,
+ * (401, as for a request without a session), `invalid` for anything else wrong, expired included (404,
  * the same for every refusal).
  */
 export async function verifyDownload(secret: string, url: URL, now = Date.now()): Promise<{ ok: true; link: DownloadLink } | { ok: false; reason: "unsigned" | "invalid" }> {
@@ -116,28 +116,11 @@ export async function verifyDownload(secret: string, url: URL, now = Date.now())
 }
 
 /**
- * Django's `content_disposition_header(True, name)`: `attachment; filename="…"` with `\` and `"` escaped
- * when the name is ASCII of tabs and printable characters (its `$` also lets one trailing newline through),
- * else `attachment; filename*=utf-8''…` percent-encoded as `urllib.parse.quote` does, with no fallback.
+ * `attachment`, with the name: quoted (`\` and `"` escaped) when it is printable ASCII, else as
+ * `filename*=utf-8''…`, its UTF-8 percent-encoded (RFC 8187), with no fallback.
  */
 export function contentDisposition(name: string): string {
 	if (name === "") return "attachment";
-	if (/^[\t \x21-\x7e]*\n?$/.test(name)) return `attachment; filename="${name.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
-	return `attachment; filename*=utf-8''${quote(name)}`;
-}
-
-const ENCODER = new TextEncoder();
-const UNRESERVED = /^[A-Za-z0-9_.\-~/]$/;
-
-/** `urllib.parse.quote(text)`: UTF-8, with letters, digits, `_.-~` and `/` kept and every other byte as `%XX`. */
-export function quote(text: string): string {
-	let out = "";
-	for (const char of text) {
-		if (UNRESERVED.test(char)) {
-			out += char;
-			continue;
-		}
-		for (const byte of ENCODER.encode(char)) out += `%${byte.toString(16).toUpperCase().padStart(2, "0")}`;
-	}
-	return out;
+	if (/^[\x20-\x7e]*$/.test(name)) return `attachment; filename="${name.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+	return `attachment; filename*=utf-8''${encodeURIComponent(name).replace(/['()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)}`;
 }

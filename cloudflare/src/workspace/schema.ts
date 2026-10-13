@@ -1,5 +1,5 @@
 // The Workspace Durable Object's tables (plan: Data placement). Steps are additive only and never edited
-// once deployed (lib/sqlite.ts). There are no foreign keys: deletes that cascade today (a connection's
+// once deployed (lib/sqlite.ts). There are no foreign keys: deletes that cascade (a connection's
 // grants, an agent's layer) are done by the code in the same transaction, the same way in workerd and in
 // node:sqlite. Times are epoch milliseconds, except `connections.expires_at` (epoch seconds, as the
 // credential payload has it).
@@ -23,7 +23,7 @@ CREATE TABLE workspace (
 	created_at INTEGER NOT NULL
 ) STRICT;
 
--- Credentials are an AES-GCM envelope of the JSON payload (lib/encryption.ts; connectors 9.1, 10) and
+-- Credentials are an AES-GCM envelope of the JSON payload (lib/encryption.ts) and
 -- key_version its key id. The scopes and expiry are kept beside it in the clear (neither is secret), so a
 -- lease decides about consent and refresh without decrypting. refresh_state: plan, Credentials and refresh.
 CREATE TABLE connections (
@@ -45,7 +45,7 @@ CREATE TABLE connections (
 	UNIQUE (provider, external_account_id)
 ) STRICT;
 
--- One ceiling, one layer per user, one per agent (connectors 4.1); the id says which.
+-- One ceiling, one layer per user, one per agent; the id says which.
 CREATE TABLE layers (
 	id TEXT PRIMARY KEY,
 	level TEXT NOT NULL CHECK (level IN ('ceiling', 'user', 'agent')),
@@ -86,7 +86,7 @@ CREATE TABLE agent_connections (
 CREATE INDEX agent_connections_connection ON agent_connections (connection_id);
 
 -- An index of conversations; each Conversation object is authoritative for itself. ready: its object was
--- initialized. bytes: its absolute byte total (files 15.2). deleted_at: the tombstone of a deletion.
+-- initialized. bytes: its absolute byte total. deleted_at: the tombstone of a deletion.
 CREATE TABLE conversations (
 	id TEXT PRIMARY KEY,
 	user_id TEXT NOT NULL,

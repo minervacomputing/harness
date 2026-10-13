@@ -1,11 +1,8 @@
-// The run's connector tools and their queue (harness 5, 6; runs 5.3), ported from worker/src/main.ts
-// (`gatewayTool`, `gatewayCalls`) and the gateway's rendering of results, with the replay cap and the
+// The run's connector tools and their queue, and the rendering of results, with the replay cap and the
 // re-parse of argument text the runtime's JSON.parse would misread.
 
 import { describe, expect, test } from "vitest";
 import type { ToolExecutionApi, ToolRegistration } from "@earendil-works/pi-durable";
-import type { AttemptFence, Json } from "../../src/contracts/common.ts";
-import type { ToolCallOutcome, ToolDeclaration } from "../../src/contracts/executor.ts";
 import { CALLS_AT_ONCE, ToolQueue, untilAborted } from "../../src/conversation/queue.ts";
 import {
 	argumentsOf,
@@ -17,6 +14,9 @@ import {
 	TOOL_RESULT_BYTES,
 	type ToolHost,
 } from "../../src/conversation/tools.ts";
+import type { ToolCallOutcome, ToolDeclaration } from "../../src/gateway/executor.ts";
+import type { Json } from "../../src/lib/json.ts";
+import type { AttemptFence } from "../../src/shared/rpc.ts";
 
 const FENCE: AttemptFence = { runId: "0199a000-0000-7000-8000-000000000001", attempt: 1 };
 

@@ -2,10 +2,18 @@
 // lifecycle). It names the container's incarnation, the run and attempt that own it (the newest the object
 // has seen, so an older attempt's call is refused), the hardening state, and a destroy still owed.
 
-import type { RunId } from "../contracts/common.ts";
-import type { SandboxSpec, SandboxState } from "../contracts/sandbox.ts";
 import { parseJson } from "../lib/json.ts";
 import { first, type Sql } from "../lib/sql.ts";
+import type { RunId } from "../shared/rpc.ts";
+import type { SandboxSpec } from "./constants.ts";
+
+/**
+ * `starting → hardening → verified → in_use → destroying`. Before `verified` no agent command or file
+ * operation is admitted. A Sandbox Durable Object that restarts never reuses a running container it did
+ * not verify in its current incarnation: it destroys it first. A failed `destroy()` leaves `cleanupPending`
+ * and is retried by an alarm.
+ */
+export type SandboxState = "none" | "starting" | "hardening" | "verified" | "in_use" | "destroying";
 
 // The table's schema steps are in schema.ts, apart so the account tests (Node) can read their ids.
 export { SANDBOX_MIGRATIONS } from "./schema.ts";

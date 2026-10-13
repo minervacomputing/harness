@@ -2,18 +2,16 @@
 // executor (executor-fakes.ts `Scenario`); the text rules (`redact`, `writtenProblem`, `escape`, `judge`);
 // and the registry accepting the declaration, whose fingerprints are printed and pinned.
 
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import type { z } from "zod";
-import type { ToolCallOutcome } from "../../src/contracts/executor.ts";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
 import { SlackClient, judge } from "../../src/connectors/slack/client.ts";
 import { CHANNEL, slackConnector } from "../../src/connectors/slack/connector.ts";
 import { escape, redact, writtenProblem } from "../../src/connectors/slack/mrkdwn.ts";
-import { OperationError, termsOf } from "../../src/gateway/connector.ts";
+import { OperationError } from "../../src/gateway/connector.ts";
+import type { ToolCallOutcome } from "../../src/gateway/executor.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
-import { Registry, inputSchema } from "../../src/gateway/registry.ts";
+import { Registry } from "../../src/gateway/registry.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
 import { EncryptionKeys } from "../../src/lib/encryption.ts";
@@ -22,13 +20,6 @@ import { tokenBody, tokenPayload, tokenRequest } from "../../src/workspace/crede
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
 import { Scenario, userGrants } from "./executor-fakes.ts";
 import { ADA, FakeConversations, FakeObjects, FakeOAuth, FakeTimers, KEYS, SETTINGS, TokenEndpoint, USER, WORKSPACE, database, nodeSql, tokens } from "./workspace-support.ts";
-import { changedOnPurpose } from "./changed.ts";
-
-/** Today's declaration and normalized inputs (generate.py), read with parseJson: Vite's JSON loader refuses lone surrogates. */
-const vectors = parseJson(readFileSync(fileURLToPath(new URL("../fixtures/connectors/slack/vectors.json", import.meta.url).href), "utf8")) as unknown as {
-	declaration: Json;
-	inputs: { [operation: string]: { in: Json; out?: Json; error?: string }[] };
-};
 
 const SECRET = "SECRET plans";
 const GENERAL = "C0GENERAL1";
@@ -279,7 +270,7 @@ describe("connecting", () => {
 	});
 
 	test("Slack tokens carry their scopes", () => {
-		// What connections/oauth.py's exchange_code does with Slack's answer, through the ported helpers.
+		// The code exchange's request and how Slack's answer is read.
 		const auth = slackConnector().auth;
 		if (auth.type !== "oauth2") throw new Error("Slack connects through OAuth.");
 		expect([auth.tokenUrl, auth.clientAuth, auth.pkce]).toEqual(["https://slack.com/api/oauth.v2.access", "basic", false]);
@@ -291,16 +282,14 @@ describe("connecting", () => {
 		expect(headers.get("authorization")).toBe(`Basic ${btoa("id:s")}`);
 		const fields = new URLSearchParams(request.body as string);
 		expect(fields.has("client_secret") || fields.has("client_id") || fields.has("code_verifier")).toBe(false);
-		const answer = tokenBody(
-			JSON.stringify({ ok: true, access_token: "xoxb-a", token_type: "bot", scope: "channels:read,chat:write", team: { id: "T0ACME", name: "Acme" } }),
-		);
+		const answer = tokenBody({ ok: true, access_token: "xoxb-a", token_type: "bot", scope: "channels:read,chat:write", team: { id: "T0ACME", name: "Acme" } });
 		expect(answer).not.toBeNull();
 		const tokens = tokenPayload(answer as JsonObject, Date.UTC(2026, 9, 11));
 		expect(tokens.access_token).toBe("xoxb-a");
 		expect(tokens.scopes).toEqual(["channels:read", "chat:write"]);
 		expect("expires_at" in tokens).toBe(false);
 		// Slack reports refusals with HTTP 200.
-		expect(tokenBody(JSON.stringify({ ok: false, error: "invalid_code" }))).toBeNull();
+		expect(tokenBody({ ok: false, error: "invalid_code" })).toBeNull();
 	});
 
 	test("Slack scopes follow the allowed actions", () => {
@@ -319,7 +308,7 @@ describe("connecting", () => {
 	});
 
 	test("a refused Slack refresh needs reconnecting", async () => {
-		// The Workspace's credential lease (credentials.py `access_secret`), with Slack registered.
+		// The Workspace's credential lease, with Slack registered.
 		const timers = new FakeTimers();
 		const oauth = new FakeOAuth();
 		oauth.clients.set("slack", { clientId: "id", clientSecret: "s" });
@@ -525,8 +514,8 @@ describe("runs", () => {
 	});
 });
 
-describe("the port", () => {
-	test("a post whose answer is not UTF-8 stays unknown, as json.loads refuses it", async () => {
+describe("requests and arguments", () => {
+	test("a post whose answer is not UTF-8 stays unknown", async () => {
 		const slack = new FakeSlack();
 		const run = await start(slack, { [GENERAL]: ["read", "post"] });
 		const bytes = new Uint8Array([...new TextEncoder().encode('{"ok": true, "ts": "1727790000.000001", "x": "'), 0xff, ...new TextEncoder().encode('"}')]);
@@ -639,75 +628,48 @@ describe("the port", () => {
 		expect(most).toBe(5);
 	});
 
-	test("the declaration is Python's: every string, need and flag, and the inputs' JSON Schema", () => {
-		const connector = slackConnector();
-		const declared = {
-			slug: connector.slug,
-			name: connector.name,
-			kinds: connector.kinds.map((kind) => ({
-				id: kind.id,
-				label: kind.label,
-				actions: kind.actions,
-				wildcard: kind.wildcard ?? false,
-				hierarchical: kind.hierarchical ?? false,
-				note: kind.note ?? null,
-				listed: kind.listed ?? true,
-			})),
-			actions: connector.actions.map((action) => ({ id: action.id, label: action.label, requires: action.requires ?? null })),
-			auth:
-				connector.auth.type === "oauth2"
-					? {
-							type: "oauth2",
-							app: connector.auth.app,
-							authorizeUrl: connector.auth.authorizeUrl,
-							tokenUrl: connector.auth.tokenUrl,
-							scopes: connector.auth.scopes,
-							scopeSeparator: connector.auth.scopeSeparator ?? " ",
-							registrationUrl: connector.auth.registrationUrl ?? null,
-							authorizeParams: connector.auth.authorizeParams ?? [],
-							loginHint: connector.auth.loginHint ?? false,
-							clientAuth: connector.auth.clientAuth ?? "post",
-							jsonBody: connector.auth.jsonBody ?? false,
-							pkce: connector.auth.pkce ?? true,
-						}
-					: connector.auth,
-			browsable: connector.browsable ?? [],
-			operations: connector.operations.map((op) => {
-				const terms = termsOf(op);
-				return {
-					name: op.name,
-					title: op.title,
-					description: op.description,
-					needs: op.needs,
-					outputAction: terms.outputAction,
-					consent: terms.consent,
-					revision: terms.revision,
-					mutates: terms.mutates,
-					paginated: terms.paginated,
-					// Pydantic leaves out an empty `required`.
-					input: (({ required, ...schema }) => (Array.isArray(required) && required.length === 0 ? schema : { required, ...schema }))(inputSchema(op)),
-				};
-			}),
-		};
-		expect(declared).toEqual(vectors.declaration);
-		expect(connector.manageLink).toBeUndefined();
-		expect(connector.offered).toBeUndefined();
+	test.each([
+		["list_channels", {}, { limit: 100, cursor: null }],
+		["list_channels", { cursor: "  p2  " }, { limit: 100, cursor: "p2" }],
+		["read_channel", { channel: "  General  " }, { channel: "#general", limit: 20, after: null, before: null, cursor: null }],
+		["read_channel", { channel: "#\u{1f989}" }, { channel: "#\u{1f989}", limit: 20, after: null, before: null, cursor: null }],
+		[
+			"read_channel",
+			{ channel: GENERAL, after: "2024-10-01", before: " 2024-10-01T12:00:00+02:00 " },
+			{ channel: GENERAL, limit: 20, after: "1727740800.000000", before: "1727776800.000000", cursor: null },
+		],
+		["read_thread", { channel: "#general", thread: " 1727780000.000100 " }, { channel: "#general", thread: "1727780000.000100", limit: 50, cursor: null }],
+		["post_message", { channel: "#general", text: "  tab\tand\r\nnewline  " }, { channel: "#general", text: "tab\tand\r\nnewline" }],
+		["reply", { channel: "#general", thread: REPLY, text: " ok " }, { channel: "#general", thread: REPLY, text: "ok" }],
+	])("%s normalizes %j, which write keys and query hashes hash", async (name, input, expected) => {
+		const op = slackConnector().operations.find((item) => item.name === name);
+		expect(await validateInput(op?.input as z.ZodType, input)).toEqual({ ok: true, data: expected });
 	});
 
-	test.each(Object.entries(vectors.inputs))("arguments normalized, which write keys and query hashes hash: %s", async (name, cases) => {
+	test.each([
+		["list_channels", { limit: 1.5 }],
+		["list_channels", { limit: "5" }],
+		["list_channels", { cursor: "x".repeat(501) }],
+		["read_channel", { channel: "x".repeat(82) }],
+		["read_channel", { channel: "#gen\ud800" }],
+		["read_channel", { channel: "#general", after: "" }],
+		["read_channel", { channel: "#general", extra: 1 }],
+		["read_thread", { channel: "#general", thread: "\u0661\u0667\u0662\u0667\u0667\u0668\u0660\u0660\u0660\u0660.\u0660\u0660\u0660\u0661\u0660\u0660" }],
+		["read_thread", { channel: "#general", thread: "111111111111111111111" }],
+		["post_message", { channel: "#general", text: "x".repeat(4_001) }],
+		["post_message", { channel: "#general", text: "\u{1f989}".repeat(2_001) }],
+		["reply", { channel: "#general", thread: REPLY, text: "ok", broadcast: true }],
+	])("%s refuses case %#", async (name, input) => {
 		const op = slackConnector().operations.find((item) => item.name === name);
-		if (op === undefined) throw new Error(`No operation ${name}`);
-		for (const vector of cases) {
-			if (changedOnPurpose(vector.in)) continue;
-			const validated = await validateInput(op.input as z.ZodType, vector.in);
-			expect(validated.ok ? { out: validated.data } : { refused: true }, JSON.stringify(vector.in)).toEqual("out" in vector ? { out: vector.out } : { refused: true });
-		}
+		expect(await validateInput(op?.input as z.ZodType, input)).toMatchObject({ ok: false });
 	});
 });
 
 describe("registry", () => {
 	test("accepts the Slack declaration; its fingerprints", async () => {
-		const registry = await Registry.create([slackConnector()]);
+		const connector = slackConnector();
+		expect([connector.manageLink, connector.offered]).toEqual([undefined, undefined]);
+		const registry = await Registry.create([connector]);
 		const fingerprints = Object.fromEntries(registry.get("slack").operations.map((op) => [op.name, registry.contract("slack", op.name)]));
 		console.info("slack fingerprints", fingerprints);
 		expect(Object.values(fingerprints).every((value) => /^[0-9a-f]{16}$/.test(value))).toBe(true);
@@ -753,6 +715,11 @@ describe("text and judging", () => {
 		"files.slack-files.com/x",
 		"https://acme.slack-gov.com/archives/C0PRIVATE1/p1",
 		"slack://channel?team=T0ACME&id=C0PRIVATE1",
+		"SLACK.COM",
+		"\u017flack.com",
+		"slac\u212a.com",
+		"acme.slack-f\u0131les.com",
+		"ACME.SLACK-F\u0130LES.COM",
 		"bell\x07",
 	])("written text may not link to Slack: %j", (written) => {
 		expect(writtenProblem(written)).not.toBeNull();
@@ -764,9 +731,9 @@ describe("text and judging", () => {
 	});
 
 	test("judge claims only what Slack confirms", () => {
-		const response = (status: number, body: unknown): [Response, string] => {
+		const response = (status: number, body: unknown): [Response, string, Uint8Array] => {
 			const text = typeof body === "string" ? body : JSON.stringify(body);
-			return [new Response([101, 103, 204, 205, 304].includes(status) ? null : text, { status }), text];
+			return [new Response([101, 103, 204, 205, 304].includes(status) ? null : text, { status }), text, new TextEncoder().encode(text)];
 		};
 		const judged = (status: number, body: unknown) => judge(...response(status, body));
 		expect(judged(200, { ok: true, ts: "1.2" })).toBe("applied");
@@ -778,6 +745,9 @@ describe("text and judging", () => {
 		}
 		expect(judged(200, "<html>")).toBe("unknown");
 		expect(judged(200, [1])).toBe("unknown");
+		// The answer is UTF-8 JSON; a byte order mark is dropped.
+		expect(judged(200, '\ufeff{"ok": true}')).toBe("applied");
+		expect(judge(new Response("x"), "", Uint8Array.from([0x7b, 0xff, 0x7d]))).toBe("unknown");
 		// Slack answers with 200; any other success status is judged by its body all the same.
 		expect(judged(201, { ok: false, error: "not_in_channel" })).toBe("not_applied");
 		expect(judged(204, "")).toBe("unknown");

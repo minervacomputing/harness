@@ -1,8 +1,8 @@
-// The attempt gate's rules (plan: Attempts and recovery; runs 2.4, 2.5), as pure functions. The object
+// The attempt gate's rules (plan: Attempts and recovery), as pure functions. The object
 // applies the decision in one transaction, syncs storage, and only then lets pi open
 // (conversation.ts, the harness factory).
 
-import type { RunStatus } from "../contracts/runs.ts";
+import type { RunStatus } from "../shared/rpc.ts";
 import { ACTIVE } from "./events.ts";
 
 /** At most attempts 1, 2 and 3 exist (MAX_RESTARTS = 2). */

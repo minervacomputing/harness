@@ -1,13 +1,14 @@
 // What the Workspace's logic reaches outside its own storage, as interfaces, so it is tested in Node with
 // fakes over node:sqlite and the Durable Object wires the real ones (workspace.ts, env.ts).
 
-import type { ConversationId, EpochMs, RunId } from "../contracts/common.ts";
-import type { CancelAck, ConversationInit } from "../contracts/conversation.ts";
-import type { CancelReason } from "../contracts/runs.ts";
+import type { CancelAck } from "../conversation/conversation.ts";
+import type { CancelReason } from "../conversation/events.ts";
+import type { ConversationInit } from "../conversation/store.ts";
+import type { ConversationId, EpochMs, RunId } from "../shared/rpc.ts";
 
 /**
- * The Conversation Durable Objects of this workspace, as the Workspace calls them (contracts/conversation.ts,
- * ConversationApi). `cancel` returning is the acknowledgement the revocation outbox waits for.
+ * The Conversation Durable Objects of this workspace, as the Workspace calls them
+ * (conversation/conversation.ts `ConversationApi`). `cancel` returning is the acknowledgement the revocation outbox waits for.
  */
 export interface ConversationClient {
 	init(input: ConversationInit): Promise<void>;
@@ -44,7 +45,7 @@ export const realTimers: Timers = {
 	},
 };
 
-/** An OAuth client: the operator's, or one registered dynamically (connectors 11.1). */
+/** An OAuth client: the operator's, or one registered dynamically. */
 export interface ClientCredentials {
 	clientId: string;
 	clientSecret: string;

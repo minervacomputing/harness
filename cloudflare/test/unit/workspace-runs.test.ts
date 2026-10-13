@@ -1,5 +1,5 @@
-// Starting a run in the Workspace (plan: Starting a run; runs 3; files 10), over node:sqlite: beginRun's
-// checks in today's order with today's messages, the snapshot, idempotency, reservations, activation and
+// Starting a run in the Workspace (plan: Starting a run), over node:sqlite: beginRun's
+// checks in order with their messages, the snapshot, idempotency, reservations, activation and
 // its answers, release, expiry, the run index, and the fault cases: a crash inside beginRun, a lost
 // activate answer, a revoke before the run exists and one between beginRun and activation.
 
@@ -42,7 +42,7 @@ async function withTools(h: Harness, actions: string[] = ["read", "create"]): Pr
 }
 
 describe("beginRun", () => {
-	test("snapshots the policy, the tools and the instructions, and registers the run (test_api)", async () => {
+	test("snapshots the policy, the tools and the instructions, and registers the run", async () => {
 		const h = await harness();
 		const connection = await withTools(h);
 		const { input, answer } = await begin(h);
@@ -71,7 +71,7 @@ describe("beginRun", () => {
 		expect(none.answer.ok && none.answer.value.snapshot.tools).toEqual([]);
 	});
 
-	test("stored scopes decide consent: unknown passes, none known fails (connectors 11.7, risk 16)", async () => {
+	test("stored scopes decide consent: unknown passes, none known fails", async () => {
 		const tools = async (scopes: string[] | null) => {
 			const h = await harness();
 			const id = await connectMixed(h, { scopes });
@@ -106,7 +106,7 @@ describe("beginRun", () => {
 		expect(await h.core.beginRun(first.input)).toEqual(first.answer);
 	});
 
-	test("refusals carry today's statuses and messages, in today's order, and leave nothing behind", async () => {
+	test("refusals carry their statuses and messages, in order, and leave nothing behind", async () => {
 		const h = await harness();
 		const theirs = await conversation(h, GRACE);
 		const mine = await conversation(h);

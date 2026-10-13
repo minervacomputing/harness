@@ -1,7 +1,7 @@
-// The security policy on Better Auth (src/accounts/policy.ts, step 5a3), through the Worker as the browser
+// The security policy on Better Auth (src/accounts/policy.ts), through the Worker as the browser
 // uses it: two factors for every sign-in, credential stamps ending sessions, email codes used once within
 // their budget, limits per address and per user, the routes the browser reaches, who may create accounts,
-// and today's password validators.
+// and the password rules.
 
 import { createExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
@@ -626,8 +626,8 @@ describe("what the browser reaches, and who creates accounts", () => {
 	});
 });
 
-describe("today's password validators", () => {
-	test("sign-up, reset and change refuse what Django's validators refuse, with every reason listed", async () => {
+describe("the password rules", () => {
+	test("sign-up, reset and change refuse a weak password, with every reason listed", async () => {
 		const common = await new Browser().auth("/sign-up/email", { email: uniqueEmail(), password: "1234567890", name: "" });
 		expect(common.status).toBe(400);
 		expect(common.body.code).toBe("PASSWORD_TOO_COMMON");

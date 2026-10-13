@@ -1,5 +1,4 @@
-// What a model request may carry (runs 7.2, 7.3), ported from test_gateway.py's relay tests as rules on the
-// payload pi-ai builds: the forced model, the output cap, `store: false`, text and function tools only.
+// What a model request may carry, as rules on the payload pi-ai builds: the forced model, the output cap, `store: false`, text and function tools only.
 
 import { readFileSync } from "node:fs";
 import type { Message, TranscriptContext } from "@earendil-works/pi-ai";

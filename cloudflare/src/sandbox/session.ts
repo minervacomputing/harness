@@ -3,8 +3,10 @@
 // already answered by destroying the container (plan: The sandbox lifecycle). The result's fence is what
 // every later call names, and what the ExecutionEnv (env.ts) is made with.
 
-import type { AttemptFence } from "../contracts/common.ts";
-import type { HardeningReport, Refused, SandboxApi, SandboxFence, SandboxSpec, VerificationReport } from "../contracts/sandbox.ts";
+import type { AttemptFence } from "../shared/rpc.ts";
+import type { SandboxSpec } from "./constants.ts";
+import type { Refused, SandboxApi, SandboxFence } from "./core.ts";
+import type { HardeningReport, VerificationReport } from "./hardening.ts";
 
 export type Prepared =
 	| { ok: true; fence: SandboxFence; ms: { start: number; harden: number; verify: number } }

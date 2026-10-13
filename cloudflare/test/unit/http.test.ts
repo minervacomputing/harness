@@ -6,7 +6,6 @@ import { CSRF_COOKIE, csrfCookie, parseCookies } from "../../src/http/cookies.ts
 import { checkCsrf, newCsrfToken } from "../../src/http/csrf.ts";
 import { HttpError, detail, notFound, validationItems } from "../../src/http/errors.ts";
 import { DEFAULT_CSP, withSecurityHeaders } from "../../src/http/headers.ts";
-import { quotePlus, urlencode } from "../../src/lib/urlsplit.ts";
 import { CHECKED_LATER, UPLOAD_ROUTE, createApp } from "../../src/http/router.ts";
 import { settingsEnv } from "./settings.ts";
 
@@ -17,7 +16,7 @@ function post(headers: Record<string, string>, url = `${SITE}/api/x`): Request {
 	return new Request(url, { method: "POST", headers });
 }
 
-describe("CSRF, in Django's order", () => {
+describe("CSRF, in order", () => {
 	const good = { Origin: SITE, Cookie: `${CSRF_COOKIE}=${TOKEN}`, "X-CSRFToken": TOKEN };
 
 	test("safe methods pass", () => {
@@ -58,7 +57,7 @@ describe("CSRF, in Django's order", () => {
 });
 
 describe("cookies", () => {
-	test("csrftoken carries Django's attributes", () => {
+	test("csrftoken's attributes", () => {
 		expect(csrfCookie(TOKEN, { debug: false })).toBe(`csrftoken=${TOKEN}; Max-Age=31449600; Path=/; SameSite=Lax; Secure`);
 		expect(csrfCookie(TOKEN, { debug: true })).toBe(`csrftoken=${TOKEN}; Max-Age=31449600; Path=/; SameSite=Lax`);
 	});
@@ -74,7 +73,7 @@ describe("cookies", () => {
 });
 
 describe("error shapes", () => {
-	test("Ninja's detail", async () => {
+	test("a refusal is its detail", async () => {
 		const response = detail(409, "Wait for the current answer to finish, or stop it.");
 		expect(response.status).toBe(409);
 		expect(response.headers.get("Cache-Control")).toBe("no-store");
@@ -170,20 +169,20 @@ describe("router", () => {
 	test("every unsafe route fails closed without a CSRF token, before the route runs", async () => {
 		const app = createApp();
 		const ran: string[] = [];
-		app.post("/api/ninja", () => (ran.push("ninja"), detail(401, "Unauthorized")));
+		app.post("/api/route", () => (ran.push("route"), detail(401, "Unauthorized")));
 		// Only Better Auth's own route is exempt (test/platform/auth.test.ts), not every path under /api/auth/.
 		app.delete("/api/auth/session", () => (ran.push("auth"), detail(401, "Unauthorized")));
-		const ninja = await app.request("/api/ninja", { method: "POST" }, env);
-		expect(ninja.status).toBe(403);
-		expect(await ninja.json()).toEqual({ detail: "CSRF check Failed" });
+		const route = await app.request("/api/route", { method: "POST" }, env);
+		expect(route.status).toBe(403);
+		expect(await route.json()).toEqual({ detail: "CSRF check Failed" });
 		const auth = await app.request("/api/auth/session", { method: "DELETE", headers: { Origin: "https://evil.example" } }, env);
 		expect(auth.status).toBe(403);
 		expect(await auth.json()).toEqual({ detail: "CSRF check Failed" });
 		expect(ran).toEqual([]);
 		const good = { Origin: SITE, Cookie: `csrftoken=${TOKEN}`, "X-CSRFToken": TOKEN };
-		expect((await app.request(`${SITE}/api/ninja`, { method: "POST", headers: good }, env)).status).toBe(401);
+		expect((await app.request(`${SITE}/api/route`, { method: "POST", headers: good }, env)).status).toBe(401);
 		// The upload checks CSRF itself, after the request's own checks and the session (its route,
-		// api/uploads.ts): here the missing Content-Length; its other methods are 405 first, as today.
+		// api/uploads.ts): here the missing Content-Length; its other methods are 405 first.
 		const uploads = `/api/workspaces/${"0".repeat(8)}-0000-7000-8000-${"0".repeat(12)}/uploads`;
 		const upload = await app.request(uploads, { method: "POST" }, env);
 		expect([upload.status, await upload.json()]).toEqual([411, { detail: "Send a Content-Length." }]);
@@ -191,15 +190,15 @@ describe("router", () => {
 			const other = await app.request(uploads, { method }, env);
 			expect([method, other.status, await other.json()]).toEqual([method, 405, { detail: "Use POST." }]);
 		}
-		expect(ran).toEqual(["ninja"]);
+		expect(ran).toEqual(["route"]);
 		expect([...CHECKED_LATER]).toEqual(["POST", "PUT", "PATCH", "DELETE"].map((method) => `${method} ${UPLOAD_ROUTE}`));
 	});
 
 	test("a declared body over 2.5 MB is 413 everywhere but the upload", async () => {
 		const app = createApp();
-		app.post("/api/ninja", () => detail(401, "Unauthorized"));
+		app.post("/api/route", () => detail(401, "Unauthorized"));
 		const big = { "Content-Length": String(MAX_JSON_BODY + 1) };
-		for (const path of ["/api/ninja", "/api/nope"]) {
+		for (const path of ["/api/route", "/api/nope"]) {
 			const response = await app.request(path, { method: "POST", headers: big }, env);
 			expect(response.status, path).toBe(413);
 			expect(await response.json()).toEqual({ detail: "The request is too large." });
@@ -236,11 +235,4 @@ describe("/assets/", () => {
 		expect(response.headers.get("Cache-Control")).toBe("no-store");
 		expect(response.headers.get("Content-Security-Policy")).toBe(DEFAULT_CSP);
 	});
-});
-
-test("urlencode and quote_plus encode as Python's (the OAuth redirects and authorization URLs)", () => {
-	// urllib.parse.urlencode([("error", "Notes was not connected."), ("a&b", "c=d/é~+*")])
-	expect(urlencode([["error", "Notes was not connected."], ["a&b", "c=d/é~+*"]])).toBe("error=Notes+was+not+connected.&a%26b=c%3Dd%2F%C3%A9~%2B%2A");
-	expect(quotePlus("data:read_write openid")).toBe("data%3Aread_write+openid");
-	expect(urlencode([])).toBe("");
 });

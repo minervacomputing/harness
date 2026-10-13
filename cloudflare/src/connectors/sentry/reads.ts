@@ -15,15 +15,12 @@
 // left out. What an application put in messages, exception values, source lines, transaction names and request
 // paths is shown as it is, links to other issues included.
 //
-// Numbers in an event are read as `_number` reads them, with what a JavaScript number cannot tell: a number
-// written with a fraction of zero (20.0, which Python reads as a float and leaves out) counts as the integer,
-// and an integer beyond 2^53 is left out (null) rather than shown rounded. A string is a number only when
-// it is ASCII digits.
+// Numbers in an event are safe integers, or strings of ASCII digits that make one; anything else, an integer
+// beyond 2^53 included, is left out (null) rather than shown rounded.
 
 import { z } from "zod";
-import type { Binding, Prepared, ProviderOutput } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
+import { type Binding, OperationError, type Prepared, type ProviderOutput, defineOperation, denied } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import type { Json } from "../../lib/json.ts";
 import { SINGLE_LINE, isSingleLine, truncate } from "../../lib/text.ts";
 import { requestAddress } from "./address.ts";
@@ -76,31 +73,7 @@ function clientOf(binding: Binding): SentryClient {
 	return binding.client as SentryClient;
 }
 
-// Inputs. Pydantic's AfterValidators that normalize are transforms after the field's own checks; those that
-// only check are refinements, in the validator's order.
-
-/**
- * A pattern Pydantic checks with Rust's regex, whose `\s` is Unicode White_Space: shown as Pydantic shows it
- * (in the input's JSON Schema and its error message), tested as Rust tests it. JavaScript's `\s` would also
- * refuse U+FEFF and let U+0085 through.
- */
-class RustPattern extends RegExp {
-	readonly #tested: RegExp;
-
-	constructor(shown: string, tested: RegExp) {
-		super(shown);
-		this.#tested = tested;
-		// What JSON Schema and the error read; a property of its own, as RegExp's `source` is an accessor.
-		Object.defineProperty(this, "source", { value: shown });
-	}
-
-	override exec(text: string): RegExpExecArray | null {
-		this.#tested.lastIndex = 0;
-		return this.#tested.exec(text);
-	}
-}
-
-const ENVIRONMENT = new RustPattern("^[^\\s/]+$", /^[^\p{White_Space}/]+$/u);
+// Inputs.
 
 const projectName = () =>
 	z.string().trim().min(1).max(100)
@@ -122,10 +95,7 @@ const issueName = () =>
 			return z.NEVER;
 		});
 
-/**
- * The default sits inside the pipe, where zod's JSON Schema shows it (after a transform it would be left out);
- * the transform keeps "latest" as it is, so the value is Pydantic's default, which it does not validate.
- */
+/** The default sits before the transform, where zod's JSON Schema shows it. */
 const eventName = () =>
 	z.string().trim().min(1).max(36)
 		.default("latest")
@@ -138,7 +108,7 @@ const eventName = () =>
 		});
 
 /** The run's own page token; the executor swaps it for Sentry's cursor before the call is prepared. */
-const pageCursor = () => z.string().trim().max(200).nullable().default(null).meta({ title: "Cursor" });
+const pageCursor = () => z.string().trim().max(200).nullable().default(null);
 
 const projectQuery = () => z.string().trim().min(1).max(100).refine(isSingleLine, SINGLE_LINE).describe("Words in the project's name or slug.");
 
@@ -148,16 +118,16 @@ const phrase = () =>
 		.refine((value) => !value.includes('"') && !value.includes("\\"), "must not contain quotes or backslashes")
 		.describe("A phrase the issue's message or title contains; no quotes or backslashes.");
 
-const environment = () => z.string().trim().min(1).max(64).regex(ENVIRONMENT).refine(isSingleLine, SINGLE_LINE).describe("An environment's name.");
+const environment = () => z.string().trim().min(1).max(64).regex(/^[^\s/]+$/u).refine(isSingleLine, SINGLE_LINE).describe("An environment's name.");
 
 // Reading what Sentry sent.
 
-/** `value.get(key)`: an own member, or null (None) when there is none. */
+/** An own member, or null when there is none. */
 function get(value: Fields, key: string): Json {
 	return Object.hasOwn(value, key) ? (value[key] as Json) : null;
 }
 
-/** The dicts in a list; nothing for anything else. */
+/** The objects in a list; nothing for anything else. */
 function items(value: Json): Fields[] {
 	return Array.isArray(value) ? value.filter(isDict) : [];
 }
@@ -221,7 +191,7 @@ async function resolveIssue(binding: Binding, name: string): Promise<[Resource, 
 	return [projectResource(binding, issue.project.id), issue];
 }
 
-/** reads.py `_issue`. */
+/** An issue as search lists it. */
 export function issueRecord(issue: Issue): Fields {
 	const assignee = issue.assignedTo;
 	return {
@@ -244,7 +214,7 @@ export function issueRecord(issue: Issue): Fields {
 	};
 }
 
-/** reads.py `_issue_detail`. */
+/** An issue as get_issue shows it. */
 export function issueDetail(issue: Issue): Fields {
 	return {
 		...issueRecord(issue),
@@ -307,7 +277,7 @@ function exceptionRecord(value: Fields): Fields {
 	};
 }
 
-/** reads.py `_event`: what is shown of an event. */
+/** What is shown of an event. */
 export function eventRecord(event: SentryEvent): Fields {
 	const values: Fields[] = [];
 	let request: Fields | null = null;
@@ -360,7 +330,7 @@ export function eventRecord(event: SentryEvent): Fields {
 	};
 }
 
-/** `str(value) == id` for an id Sentry sent as a string or an integer. */
+/** Whether an id Sentry sent as a string or an integer is `id`. */
 function sameId(value: Json, id: string): boolean {
 	if (typeof value === "string") return value === id;
 	return typeof value === "number" && Number.isSafeInteger(value) && String(value) === id;
@@ -368,12 +338,10 @@ function sameId(value: Json, id: string): boolean {
 
 // Operations.
 
-const ListProjects = z
-	.strictObject({
-		query: projectQuery().nullable().default(null).meta({ title: "Query" }),
-		cursor: pageCursor(),
-	})
-	.meta({ title: "ListProjects" });
+const ListProjects = z.strictObject({
+	query: projectQuery().nullable().default(null),
+	cursor: pageCursor(),
+});
 
 export const LIST_PROJECTS = defineOperation<z.output<typeof ListProjects>>({
 	name: "list_projects",
@@ -397,27 +365,23 @@ export const LIST_PROJECTS = defineOperation<z.output<typeof ListProjects>>({
 	},
 });
 
-const SearchIssues = z
-	.strictObject({
-		project: projectName().meta({ title: "Project" }),
-		text: phrase().nullable().default(null).meta({ title: "Text" }),
-		status: z
-			.enum(["unresolved", "resolved", "archived", "any"])
-			.describe("Archived issues were once called ignored.")
-			.default("unresolved")
-			.meta({ title: "Status" }),
-		level: z.enum(["fatal", "error", "warning", "info", "debug"]).nullable().default(null).meta({ title: "Level" }),
-		environment: environment().nullable().default(null).meta({ title: "Environment" }),
-		period: z
-			.enum(["24h", "7d", "14d", "30d", "90d"])
-			.describe("Only issues with events in this period, counted back from now.")
-			.default("14d")
-			.meta({ title: "Period" }),
-		sort: z.enum(["last_seen", "first_seen", "events", "users"]).default("last_seen").meta({ title: "Sort" }),
-		limit: z.int().min(1).max(25).default(10).meta({ title: "Limit" }),
-		cursor: pageCursor(),
-	})
-	.meta({ title: "SearchIssues" });
+const SearchIssues = z.strictObject({
+	project: projectName(),
+	text: phrase().nullable().default(null),
+	status: z
+		.enum(["unresolved", "resolved", "archived", "any"])
+		.describe("Archived issues were once called ignored.")
+		.default("unresolved"),
+	level: z.enum(["fatal", "error", "warning", "info", "debug"]).nullable().default(null),
+	environment: environment().nullable().default(null),
+	period: z
+		.enum(["24h", "7d", "14d", "30d", "90d"])
+		.describe("Only issues with events in this period, counted back from now.")
+		.default("14d"),
+	sort: z.enum(["last_seen", "first_seen", "events", "users"]).default("last_seen"),
+	limit: z.int().min(1).max(25).default(10),
+	cursor: pageCursor(),
+});
 
 type SearchIssues = z.output<typeof SearchIssues>;
 
@@ -470,7 +434,7 @@ export const SEARCH_ISSUES = defineOperation<SearchIssues>({
 	},
 });
 
-const GetIssue = z.strictObject({ issue: issueName().meta({ title: "Issue" }) }).meta({ title: "GetIssue" });
+const GetIssue = z.strictObject({ issue: issueName() });
 
 export const GET_ISSUE = defineOperation<z.output<typeof GetIssue>>({
 	name: "get_issue",
@@ -489,9 +453,7 @@ export const GET_ISSUE = defineOperation<z.output<typeof GetIssue>>({
 	},
 });
 
-const GetIssueEvent = z
-	.strictObject({ issue: issueName().meta({ title: "Issue" }), event: eventName().meta({ title: "Event" }) })
-	.meta({ title: "GetIssueEvent" });
+const GetIssueEvent = z.strictObject({ issue: issueName(), event: eventName() });
 
 export const GET_ISSUE_EVENT = defineOperation<z.output<typeof GetIssueEvent>>({
 	name: "get_issue_event",

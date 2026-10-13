@@ -7,8 +7,7 @@
 // the write.
 
 import { z } from "zod";
-import type { Binding, Prepared, ProviderOutput } from "../../contracts/connectors.ts";
-import { defineOperation } from "../../gateway/connector.ts";
+import { type Binding, type Prepared, type ProviderOutput, defineOperation } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
 import { PLAIN_TEXT, isPlainText } from "../../lib/text.ts";
 import type { Conversation } from "./client.ts";
@@ -17,7 +16,7 @@ import { ConversationId, INBOX, clientOf, confirmConversation, inboxOf, inboxRes
 
 export const MAX_TEXT = 10_000;
 
-/** html.py `check_written` as refinements: the first that fails is the one reported, as Python raises it. */
+/** Plain text that does not address Intercom; the first check that fails is the one reported. */
 const WrittenText = () =>
 	z.string().trim().min(1).max(MAX_TEXT)
 		.refine(isPlainText, PLAIN_TEXT)
@@ -26,9 +25,8 @@ const WrittenText = () =>
 
 export const RACE_NOTE = "If the conversation is reassigned to another team at the moment of writing, the write can land there.";
 
-// Each input is titled with the name of its Pydantic model, which validation errors name.
-const AddNote = z.strictObject({ conversation: ConversationId(), text: WrittenText() }).meta({ title: "AddNote" });
-const Reply = z.strictObject({ conversation: ConversationId(), text: WrittenText() }).meta({ title: "Reply" });
+const AddNote = z.strictObject({ conversation: ConversationId(), text: WrittenText() });
+const Reply = z.strictObject({ conversation: ConversationId(), text: WrittenText() });
 type Write = z.output<typeof AddNote>;
 
 function partIds(conversation: Conversation): Set<string> {

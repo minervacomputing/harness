@@ -1,5 +1,5 @@
 // Accounts: Better Auth's routes at /api/auth/* (its wire format, plan: The web API), `GET /api/me`
-// (web-api 8.1), the instance's setup and administration (instance-routes.ts) and the development seed
+//, the instance's setup and administration (instance-routes.ts) and the development seed
 // (6.4). Better Auth's routes check their own origin rules, so the router exempts them, and only them,
 // from our CSRF token (http/router.ts).
 
@@ -40,7 +40,7 @@ export function accountRoutes(app: App): void {
 
 	instanceRoutes(app);
 
-	// `make seed` (web-api 6.4) for the local Worker, run by scripts/seed.ts; absent outside debug.
+	// `make seed` for the local Worker, run by scripts/seed.ts; absent outside debug.
 	app.post("/api/dev/seed", async (c) => {
 		if (!settings(c.env).debug) return notFound("Seeding only runs with MINERVA_DEBUG=true.", false);
 		return json(200, { lines: await seed(c.env) });

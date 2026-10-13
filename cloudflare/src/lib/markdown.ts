@@ -1,11 +1,10 @@
 // Readable text from HTML, in a Markdown-like form, for the Web connector's pages and Gmail's HTML parts
-// (which convert with no base address, so a link is its href as written). Built on lib/htmlparser.ts, since
-// pages are hostile input. Scripts, styles, frames, forms and navigation are dropped. Links keep absolute http(s)
-// targets; images keep only their alt text, so the conversation never gains a remote image that could
-// carry data out when shown. Moved here from connectors/gmail/html.ts.
+// (which convert with no base address, so a link is kept only if its href is absolute). Pages are hostile
+// input. Scripts, styles, frames, forms and navigation are dropped with what is inside them. Links keep
+// absolute http(s) targets; images keep only their alt text, so the conversation never gains a remote image
+// that could carry data out when shown.
 
-import { type Attribute, HTMLParser } from "./htmlparser.ts";
-import { urljoin, urlsplit } from "./urlsplit.ts";
+import { type Attribute, type Tokens, tokenize } from "./html.ts";
 
 const SPACES = /\s+/g;
 
@@ -17,6 +16,8 @@ const SKIPPED = new Set([
 	"svg",
 	"math",
 	"iframe",
+	"noembed",
+	"noframes",
 	"object",
 	"embed",
 	"canvas",
@@ -72,23 +73,19 @@ function squash(text: string): string {
 	return text.replace(SPACES, " ").trim();
 }
 
-/** `_link(base_url, href)`: an absolute http(s) address, made safe for a Markdown link, or null. */
-function link(baseUrl: string, href: string | null | undefined): string | null {
+/** `href` resolved against the page's address, if it is an http(s) address, made safe for a Markdown link; else null. */
+function link(baseUrl: string, href: string | undefined): string | null {
 	if (!href) return null;
-	let absolute: string;
-	try {
-		absolute = urljoin(baseUrl, href.trim());
-	} catch {
-		// urljoin's ValueError: a malformed address.
-		return null;
-	}
-	const parts = urlsplit(absolute);
-	if (parts === null || (parts.scheme !== "http" && parts.scheme !== "https") || absolute.length > MAX_LINK) return null;
-	// Brackets and spaces would break the Markdown link.
-	return absolute.replaceAll(" ", "%20").replaceAll("(", "%28").replaceAll(")", "%29");
+	const url = URL.parse(href.trim(), baseUrl || undefined);
+	if (url === null || (url.protocol !== "http:" && url.protocol !== "https:") || url.href.length > MAX_LINK) return null;
+	// Parentheses would end the Markdown link; the parser has encoded spaces already.
+	return url.href.replaceAll("(", "%28").replaceAll(")", "%29");
 }
 
-class Converter extends HTMLParser {
+/** Elements whose "/>" browsers honour (foreign content); on others the slash is ignored. */
+const SELF_CLOSING = new Set(["svg", "math"]);
+
+class Converter implements Tokens {
 	readonly baseUrl: string;
 	readonly out: string[] = [];
 	private readonly skip: string[] = [];
@@ -100,7 +97,6 @@ class Converter extends HTMLParser {
 	private inTitle = false;
 
 	constructor(baseUrl: string) {
-		super();
 		this.baseUrl = baseUrl;
 	}
 
@@ -116,7 +112,12 @@ class Converter extends HTMLParser {
 		return ["p", "table", "blockquote", "pre"].includes(tag) ? 2 : 1;
 	}
 
-	override handleStartTag(tag: string, attrs: Attribute[]): void {
+	start(tag: string, attrs: Attribute[], selfClosing: boolean): void {
+		this.open(tag, attrs);
+		if (selfClosing && SELF_CLOSING.has(tag)) this.end(tag);
+	}
+
+	private open(tag: string, attrs: Attribute[]): void {
 		if (SKIPPED.has(tag)) {
 			if (!VOID.has(tag)) {
 				this.skip.push(tag);
@@ -129,8 +130,9 @@ class Converter extends HTMLParser {
 			this.inTitle = true;
 			return;
 		}
-		const values = new Map<string, string | null>();
-		for (const [name, value] of attrs) values.set(name, value);
+		// The first of repeated attributes counts, as in browsers.
+		const values = new Map<string, string>();
+		for (const [name, value] of attrs) if (!values.has(name)) values.set(name, value);
 		if (BLOCKS.has(tag)) this.newline(this.gap(tag));
 		if (tag.length === 2 && tag[0] === "h" && "123456".includes(tag[1] as string)) {
 			this.out.push(`${"#".repeat(Number(tag[1]))} `);
@@ -168,12 +170,7 @@ class Converter extends HTMLParser {
 		}
 	}
 
-	override handleStartEndTag(tag: string, attrs: Attribute[]): void {
-		this.handleStartTag(tag, attrs);
-		if (!VOID.has(tag)) this.handleEndTag(tag);
-	}
-
-	override handleEndTag(tag: string): void {
+	end(tag: string): void {
 		if (this.skip.length) {
 			if (this.skipOpen.get(tag)) {
 				// Unbalanced markup closes everything opened after the nearest matching tag.
@@ -203,11 +200,12 @@ class Converter extends HTMLParser {
 		const [start, href] = this.links.pop() as [number, string | null];
 		const text = squash(this.out.slice(start).join(""));
 		this.out.splice(start);
-		if (href && text && text !== href) this.out.push(`[${text}](${href})`);
+		// A link whose text is its own address is shown once.
+		if (href && text && link("", text) !== href) this.out.push(`[${text}](${href})`);
 		else this.out.push(text);
 	}
 
-	override handleData(data: string): void {
+	text(data: string): void {
 		if (this.inTitle) {
 			this.title.push(data);
 			return;
@@ -248,10 +246,10 @@ function tidy(text: string): string {
 	return cleaned.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-/** `html_to_text(html, base_url)`: (text, title). */
+/** The page's text and its title, with links resolved against `baseUrl` (none: only absolute links are kept). */
 export function htmlToText(html: string, baseUrl = ""): [text: string, title: string | null] {
 	const converter = new Converter(baseUrl);
-	converter.run(html);
+	tokenize(html, converter);
 	// A link still open when the page ended, even inside an unclosed script.
 	if (converter.links.length) converter.closeLink();
 	const title = squash(converter.title.join("")) || null;

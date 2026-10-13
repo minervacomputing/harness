@@ -9,30 +9,17 @@
 // `sleep <ms>`, `exit <n>`, `hold` (until `release()` or a cancel).
 
 import { type FileErrorCode, LineScanner } from "@earendil-works/pi-durable/env";
-import type { AttemptFence } from "../../src/contracts/common.ts";
-import type {
-	CheckpointUploadPlan,
-	CheckpointUploadResult,
-	ExecOutputSink,
-	ExecRequest,
-	ExecResult,
-	FileHandle,
-	FsRequest,
-	FsResponse,
-	HardeningReport,
-	HydratePlan,
-	HydrateResult,
-	Refused,
-	SandboxFence,
-	SandboxSpec,
-	SandboxStatus,
-	ScanResult,
-	VerificationReport,
-} from "../../src/contracts/sandbox.ts";
-import type { FolderWarnings } from "../../src/contracts/files.ts";
 import type { SandboxPort } from "../../src/conversation/local-run.ts";
+import type { FolderWarnings } from "../../src/files/manifest.ts";
 import { hex } from "../../src/lib/bytes.ts";
 import { uuid7 } from "../../src/lib/random.ts";
+import type { ExecOutputSink, ExecRequest, ExecResult } from "../../src/sandbox/commands.ts";
+import type { SandboxSpec } from "../../src/sandbox/constants.ts";
+import type { Refused, SandboxFence, SandboxStatus } from "../../src/sandbox/core.ts";
+import type { FileHandle, FsRequest, FsResponse } from "../../src/sandbox/files.ts";
+import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan, HydrateResult, ScanResult } from "../../src/sandbox/folder.ts";
+import type { HardeningReport, VerificationReport } from "../../src/sandbox/hardening.ts";
+import type { AttemptFence } from "../../src/shared/rpc.ts";
 
 const ROOT = "/workspace/";
 const STALE: Refused = { refused: "stale", message: "This sandbox belongs to another incarnation, run or attempt." };

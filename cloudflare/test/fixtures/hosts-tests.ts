@@ -1,60 +1,78 @@
 // The cases of test/fixtures/hosts.ts as tests, for test/unit/hosts.test.ts (Node) and
-// test/platform/hosts.test.ts (workerd, whose URL parser and Unicode data production uses).
+// test/platform/hosts.test.ts (workerd, whose URL parser and IDNA production uses).
 
 import { describe, expect, test } from "vitest";
 import { OperationError } from "../../src/gateway/connector.ts";
-import { IdnaError, idnaEncode } from "../../src/lib/idna.ts";
-import { isIpAddress } from "../../src/lib/ipaddress.ts";
-import { UrlError } from "../../src/lib/urlsplit.ts";
-import { parseUrl } from "../../src/lib/sites.ts";
-import { IDNA_CASES, IP_CASES, UNICODE_17_POINT, UNICODE_18_POINT, URL_CASES } from "./hosts.ts";
+import { MAX_URL, canonicalHost, parseUrl } from "../../src/lib/sites.ts";
+import { HOST_CASES, REDIRECT_CASES, URL_CASES } from "./hosts.ts";
 
-function encoded(name: string): string | null {
+function refusedAsNull<T>(run: () => T): T | null {
 	try {
-		return idnaEncode(name);
+		return run();
 	} catch (error) {
-		if (error instanceof IdnaError) return null;
+		if (error instanceof OperationError && error.code === "INVALID_URL") return null;
 		throw error;
 	}
 }
 
-function parsed(raw: string): readonly [string | null, string | null] {
+/** The message parseUrl refuses an address with. */
+function message(raw: string): string | null {
 	try {
-		const url = parseUrl(raw);
-		return [url.text, url.href];
+		parseUrl(raw);
+		return null;
 	} catch (error) {
-		// An address that cannot be split (a netloc that NFKC makes into another): a generic failure.
-		if (error instanceof OperationError || error instanceof UrlError) return [null, null];
+		if (error instanceof OperationError) return error.message;
 		throw error;
 	}
 }
 
-/** Domain names in ASCII (lib/idna.ts), IP addresses as Python reads them (lib/ipaddress.ts), web addresses as shown and requested (lib/sites.ts). */
+/** Host names (`canonicalHost`) and web addresses (`parseUrl`), alone and as redirects. */
 export function hostTests(): void {
-	describe("domain names in ASCII", () => {
-		test(`${IDNA_CASES.length} names: the runtime's mapping, IDNA 2008's rules, and raw text refused before the runtime sees it`, () => {
-			const expected = Object.fromEntries(IDNA_CASES.map(([name, ascii]) => [name, ascii]));
-			expect(Object.fromEntries(IDNA_CASES.map(([name]) => [name, encoded(name)]))).toEqual(expected);
+	describe("host names", () => {
+		test(`${HOST_CASES.length} names: canonical, or refused where the runtime would repair what was written`, () => {
+			const expected = Object.fromEntries(HOST_CASES.map(([raw, host, why]) => [`${raw} (${why})`, host]));
+			expect(Object.fromEntries(HOST_CASES.map(([raw, , why]) => [`${raw} (${why})`, refusedAsNull(() => canonicalHost(raw))]))).toEqual(expected);
 		});
 
-		test("the runtime's Unicode is 17, the version lib/idna.ts was checked for (review it, and its RIGHT_TO_LEFT, when this fails)", () => {
-			expect(/\p{Assigned}/u.test(UNICODE_17_POINT)).toBe(true);
-			expect(/\p{Assigned}/u.test(UNICODE_18_POINT)).toBe(false);
+		test("names under .example are accepted only where reserved names are", () => {
+			expect(canonicalHost("Mail.Example", true)).toBe("mail.example");
+			expect(refusedAsNull(() => canonicalHost("mail.example"))).toBeNull();
+			expect(refusedAsNull(() => canonicalHost("localhost", true))).toBeNull();
 		});
-	});
 
-	describe("IP addresses", () => {
-		test(`${IP_CASES.length} texts: only Python's spellings are addresses`, () => {
-			const expected = Object.fromEntries(IP_CASES.map(([text, family]) => [text, family]));
-			expect(Object.fromEntries(IP_CASES.map(([text]) => [text, isIpAddress(text)]))).toEqual(expected);
+		test("an IP address is refused as one", () => {
+			for (const raw of ["127.1", "0x7f.0.0.1", "[::ffff:127.0.0.1]", "2130706433"]) {
+				expect(() => canonicalHost(raw), raw).toThrow("Use the site's domain name, not an IP address.");
+			}
 		});
 	});
 
 	describe("web addresses", () => {
-		test(`${URL_CASES.length} addresses: shown in Python's spelling, requested as the runtime serializes it, on the host authorized`, () => {
-			const expected = Object.fromEntries(URL_CASES.map(([raw, text, href]) => [raw, [text, href]]));
-			expect(Object.fromEntries(URL_CASES.map(([raw]) => [raw, parsed(raw)]))).toEqual(expected);
-			for (const [raw, , href] of URL_CASES) if (href !== null) expect(new URL(href).hostname, raw).toBe(parseUrl(raw).host);
+		test(`${URL_CASES.length} addresses: requested as the runtime serializes them, on the host authorized`, () => {
+			const expected = Object.fromEntries(URL_CASES.map(([raw, href]) => [raw, href]));
+			expect(Object.fromEntries(URL_CASES.map(([raw]) => [raw, refusedAsNull(() => parseUrl(raw).href)]))).toEqual(expected);
+			for (const [raw, href] of URL_CASES) if (href !== null) expect(new URL(href).hostname, raw).toBe(parseUrl(raw).host);
+		});
+
+		test(`${REDIRECT_CASES.length} redirects: each Location checked as a new address`, () => {
+			const expected = Object.fromEntries(REDIRECT_CASES.map(([location, base, href]) => [`${location} from ${base}`, href]));
+			const found = Object.fromEntries(REDIRECT_CASES.map(([location, base]) => [`${location} from ${base}`, refusedAsNull(() => parseUrl(location, parseUrl(base)).href)]));
+			expect(found).toEqual(expected);
+		});
+
+		test("each refusal says why", () => {
+			expect(message("https://user@example.com/")).toBe("Web addresses with a user name or password are not allowed.");
+			expect(message("https://example.com:8443/")).toBe("Only web addresses on the standard ports can be opened.");
+			expect(message("https://example.com:44a/")).toBe("This web address has an invalid port.");
+			expect(message("ftp://example.com/")).toBe("Only http and https web addresses can be opened.");
+			expect(message("https://[::1]/")).toBe("Use the site's domain name, not an IP address.");
+			expect(message("https://example.com /")).toBe("This web address contains characters that are not allowed.");
+		});
+
+		test(`addresses of up to ${MAX_URL} characters`, () => {
+			const at = (length: number) => `https://example.com/${"a".repeat(length - "https://example.com/".length)}`;
+			expect(parseUrl(at(MAX_URL)).href).toBe(at(MAX_URL));
+			expect(message(at(MAX_URL + 1))).toBe("This web address contains characters that are not allowed.");
 		});
 	});
 }

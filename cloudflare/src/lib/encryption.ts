@@ -25,9 +25,9 @@
 // Limits. With random 96-bit nonces a derived key is good for at most 2^32 encryptions (NIST SP 800-38D);
 // rotating the key is the remedy, long before that.
 
-import { base64url, concat, fromBase64, fromUtf8Strict, utf8 } from "./bytes.ts";
+import { base64url, concat, fromBase64, utf8 } from "./bytes.ts";
 import { canonicalJson } from "./canonical.ts";
-import { type Json, parseJson } from "./json.ts";
+import { type Json, parseJsonBytes } from "./json.ts";
 
 /** The envelope's format version. */
 export const FORMAT = "m2";
@@ -152,7 +152,7 @@ export class EncryptionKeys {
 
 	/** The JSON value inside; invalid UTF-8 or JSON throws. */
 	async decrypt(binding: Binding, sealed: Sealed): Promise<Json> {
-		return parseJson(fromUtf8Strict(await this.decryptBytes(binding, sealed)));
+		return parseJsonBytes(await this.decryptBytes(binding, sealed));
 	}
 
 	#key(id: string, purpose: Purpose): Key {

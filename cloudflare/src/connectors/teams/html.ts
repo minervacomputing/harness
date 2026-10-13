@@ -7,20 +7,22 @@
 // - a link to Teams shows as "[Teams link]": its label and its address can both carry a channel's name, and
 //   so does an address to Teams in the text itself;
 // - a quote (any `<blockquote>`: Teams quotes replied-to messages with one) shows as "[quoted message]";
-// - attachments (`<attachment>`), scripts and styles are left out.
+// - attachments (`<attachment>`), scripts, styles and elements whose content is raw text (textarea, xmp,
+//   iframe, ...) are left out: browsers may read markup inside them that the tokenizer reads as text.
 // Each of these drops everything inside the element, and an element that is never closed hides the rest of
 // the message rather than letting it through, and so does one written self-closing (`<at/>`), which browsers
-// read as open. A mention or link that repeats an attribute is hidden too, since readers disagree on which
-// value counts, and so is a mention whose id the list of mentions also gives to a channel. Images show as
-// "[image]" and emoji as their text.
+// read as open, and one with a misnested or unclosed element inside (lib/html.ts's `Hidden`). A mention or
+// link that repeats an attribute is hidden too, since readers disagree on which value counts, and so is a
+// mention whose id the list of mentions also gives to a channel. Images show as "[image]" and emoji as their
+// text.
 //
 // Written text is escaped and sent as HTML, so it is shown literally: it cannot mention anyone (a mention
 // needs an `<at>` element and a list of mentions) or format anything. It may not link to Teams, in any
 // encoding: Teams can show a preview of a linked message or channel, which may be one the agent may not read.
 //
-// The HTML is tokenized by lib/htmlparser.ts.
+// The HTML is tokenized by lib/html.ts.
 
-import { type Attribute, HTMLParser } from "../../lib/htmlparser.ts";
+import { type Attribute, Hidden, type Tokens, tokenize } from "../../lib/html.ts";
 import { decoded, plainText, TextError, WORDS } from "../../lib/text.ts";
 import type { Mention } from "./client.ts";
 import { extend } from "../../lib/arrays.ts";
@@ -32,7 +34,21 @@ import { endsWithNewline, linkText, type Piece, written as writtenOut } from "..
  */
 export const TEAMS = /teams\.(?:m[iİı]crosoft\.(?:com|us)|l[iİı]ve\.com|cloud\.m[iİı]crosoft|m[iİı]crosoftonl[iİı]ne\.cn|off[iİı]ce\.com)|msteams:/iu;
 const BLOCKS: ReadonlySet<string> = new Set(["p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "pre", "ul", "ol", "table", "li"]);
-const DROPPED: ReadonlySet<string> = new Set(["attachment", "script", "style", "head", "title", "template"]);
+const DROPPED: ReadonlySet<string> = new Set([
+	"attachment",
+	"script",
+	"style",
+	"head",
+	"title",
+	"template",
+	"noscript",
+	"textarea",
+	"xmp",
+	"iframe",
+	"noembed",
+	"noframes",
+	"plaintext",
+]);
 
 /** Whether `text` addresses Teams in any encoding; browsers drop tabs and newlines inside addresses. */
 export function toTeams(text: string): boolean {
@@ -44,10 +60,7 @@ export function redact(text: string): string {
 	return text.replace(WORDS, (word) => (toTeams(word) ? "[Teams link]" : word));
 }
 
-/**
- * `_shown_mentions`: the `<at>` ids of mentions of people, tags and apps; any other mention, and any id also
- * given to one, is hidden.
- */
+/** The `<at>` ids of mentions of people, tags and apps; any other mention, and any id also given to one, is hidden. */
 function shownMentions(mentions: readonly Mention[]): Set<string> {
 	const shown = new Set<string>();
 	const hidden = new Set<string>();
@@ -62,16 +75,15 @@ function shownMentions(mentions: readonly Mention[]): Set<string> {
 	return new Set([...shown].filter((id) => !hidden.has(id)));
 }
 
-class Reader extends HTMLParser {
+class Reader implements Tokens {
 	readonly shown: Set<string>;
 	readonly out: Piece[] = [];
 	/** A link being read: its address and the text of its label. */
 	readonly links: [string, Piece[]][] = [];
-	/** The element whose content is dropped, and how deep the same element nests inside it. */
-	hidden: [string, number] | null = null;
+	/** The element whose content is dropped. */
+	hidden: Hidden | null = null;
 
 	constructor(shown: Set<string>) {
-		super();
 		this.shown = shown;
 	}
 
@@ -85,7 +97,7 @@ class Reader extends HTMLParser {
 
 	#hide(tag: string, replacement: string): void {
 		this.#emit(replacement);
-		this.hidden = [tag, 1];
+		this.hidden = new Hidden(tag);
 	}
 
 	#newline(): void {
@@ -93,15 +105,18 @@ class Reader extends HTMLParser {
 		if (target.length && !endsWithNewline(target[target.length - 1] as Piece)) target.push("\n");
 	}
 
-	override handleStartTag(tag: string, attrs: Attribute[]): void {
-		if (this.hidden !== null) {
-			const [name, depth] = this.hidden;
-			if (tag === name) this.hidden = [name, depth + 1];
+	start(tag: string, attrs: Attribute[], selfClosing: boolean): void {
+		// Browsers ignore the slash on elements that are not void, so `<at/>` stays open; an emoji has no content.
+		if (selfClosing && tag === "emoji" && this.hidden === null) {
+			this.#emit(attrs.find(([name]) => name === "alt")?.[1] ?? "");
 			return;
 		}
-		// `{k: v or "" for k, v in attrs}`: the last value of a repeated attribute.
-		const values = new Map<string, string>();
-		for (const [key, value] of attrs) values.set(key, value || "");
+		if (this.hidden !== null) {
+			this.hidden.start(tag);
+			return;
+		}
+		// Readers disagree on which of repeated attributes counts, so a mention or link repeating one is hidden.
+		const values = new Map<string, string>(attrs);
 		const repeated = values.size !== attrs.length;
 		if (DROPPED.has(tag)) this.#hide(tag, "");
 		else if (tag === "at") {
@@ -124,20 +139,9 @@ class Reader extends HTMLParser {
 		} else if (BLOCKS.has(tag)) this.#newline();
 	}
 
-	override handleStartEndTag(tag: string, attrs: Attribute[]): void {
-		// Browsers ignore the slash on elements that are not void, so `<at/>` stays open.
-		if (tag === "emoji" && this.hidden === null) {
-			// `dict(attrs).get("alt") or ""`.
-			let alt: string | null = null;
-			for (const [key, value] of attrs) if (key === "alt") alt = value;
-			this.#emit(alt || "");
-		} else this.handleStartTag(tag, attrs);
-	}
-
-	override handleEndTag(tag: string): void {
+	end(tag: string): void {
 		if (this.hidden !== null) {
-			const [name, depth] = this.hidden;
-			if (tag === name) this.hidden = depth > 1 ? [name, depth - 1] : null;
+			if (this.hidden.end(tag)) this.hidden = null;
 			return;
 		}
 		if (tag === "a" && this.links.length) {
@@ -148,11 +152,11 @@ class Reader extends HTMLParser {
 		else if (BLOCKS.has(tag)) this.#newline();
 	}
 
-	override handleData(text: string): void {
+	text(text: string): void {
 		if (this.hidden === null) this.#emit(text);
 	}
 
-	text(): string {
+	result(): string {
 		// A link never closed is shown as text, without its address.
 		for (const [, label] of [...this.links].reverse()) extend(this.out, label);
 		const lines = writtenOut(this.out).replaceAll("\u00a0", " ").split("\n");
@@ -166,8 +170,8 @@ export function read(content: string | null, contentType: string | null, mention
 	if (!content) return "";
 	if ((contentType || "").toLowerCase() === "text") return redact(content.trim());
 	const reader = new Reader(shownMentions(mentions));
-	reader.run(content);
-	return reader.text();
+	tokenize(content, reader);
+	return reader.result();
 }
 
 /** Refuses text that would do more than add words to a channel. Used as a field validator. */
@@ -179,7 +183,7 @@ export function checkWritten(text: string): string {
 	return text;
 }
 
-/** The HTML that shows `text` literally (`html.escape`, then line breaks). */
+/** The HTML that shows `text` literally: escaped, quotes included, with line breaks. */
 export function written(text: string): string {
 	return text
 		.replaceAll("&", "&amp;")

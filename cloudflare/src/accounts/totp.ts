@@ -1,4 +1,4 @@
-// A TOTP code works once (open item from 5a3; allauth refuses a reused code today). Better Auth accepts a
+// A TOTP code works once. Better Auth accepts a
 // code for the current time step or one either side, as often as it is sent. Before Better Auth checks a
 // code on /two-factor/verify-totp (a sign-in's second factor, or the code that finishes turning two-factor
 // on), the policy's hook finds the latest step the code is valid for and claims it in D1 with a

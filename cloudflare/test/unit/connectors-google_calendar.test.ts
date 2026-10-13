@@ -1,6 +1,5 @@
 // The Google Calendar connector against an in-memory Calendar API behind an injected `fetch`, and runs
-// through the executor. Input validation is also compared with the generated vectors in
-// test/fixtures/connectors/google/vectors.json.
+// through the executor.
 
 import { describe, expect, test } from "vitest";
 import { consentGiven } from "../../src/gateway/connector.ts";
@@ -10,8 +9,8 @@ import { OperationError } from "../../src/gateway/connector.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { parseJson } from "../../src/lib/json.ts";
-import { CONNECTION, ceilingRow, jsonResponse, operation, requestOf, settingsClient, startRun, validationOutcomes } from "../fixtures/connectors/google/runs.ts";
-import { vectors } from "../fixtures/connectors/google/vectors.ts";
+import { CONNECTION, ceilingRow, operation, requestOf, settingsClient, startRun, validated } from "./connector-runs.ts";
+import { jsonResponse } from "./executor-fakes.ts";
 
 const PRIMARY = "ada@example.com";
 const UNIVERSITY = "uni@group.calendar.google.com";
@@ -21,7 +20,7 @@ const READS = { [`calendar:${PRIMARY}`]: ["read"], [`calendar:${UNIVERSITY}`]: [
 
 type JsonObject = { [key: string]: Json };
 
-/** Google Calendar API v3 and the OpenID userinfo endpoint (test_google_calendar.py `FakeCalendar`). */
+/** Google Calendar API v3 and the OpenID userinfo endpoint. */
 class FakeCalendar {
 	calendars: JsonObject[] = [
 		{ id: PRIMARY, summary: PRIMARY, primary: true, accessRole: "owner", timeZone: "Europe/Berlin" },
@@ -102,69 +101,95 @@ function calendars(grants: { [id: string]: string[] }): { [key: string]: string[
 	return Object.fromEntries(Object.entries(grants).map(([id, actions]) => [`calendar:${id}`, actions]));
 }
 
-describe("dates and times", () => {
-	test("times need an offset, dates name real days, zones are IANA names; each with its own message", async () => {
-		const connector = googleCalendarConnector();
-		const { validateInput } = await import("../../src/gateway/validation.ts");
-		const message = async (name: string, input: Json) => {
-			const outcome = await validateInput(operation(connector, name).input as never, input);
-			return outcome.ok ? "ok" : outcome.message;
-		};
-		const event = { calendar_id: PRIMARY, summary: "Study group" };
-		expect(await message("list_events", { calendar_id: PRIMARY, time_min: "2026-10-01T09:00:00.123456+02:00" })).toBe("ok");
-		expect(await message("list_events", { calendar_id: PRIMARY, time_min: "2026-10-01T09:00:00" })).toContain(DATE_TIME_MESSAGE);
-		expect(await message("create_event", { ...event, start: "2026-02-28", end: "2026-03-01", time_zone: "US/Pacific" })).toBe("ok");
-		expect(await message("create_event", { ...event, start: "2026-02-30", end: "2026-03-02" })).toContain(DATE_OR_DATE_TIME_MESSAGE);
-		expect(await message("create_event", { ...event, start: "2026-10-01", end: "2026-10-02", time_zone: "+02:00" })).toContain("must be an IANA time zone");
-	});
-});
-
-describe("input validation, as Pydantic words it", () => {
+describe("arguments", () => {
 	const connector = googleCalendarConnector();
-	for (const name of ["create_event", "list_events", "get_event"]) {
-		test(name, async () => {
-			const { actual, expected } = await validationOutcomes(operation(connector, name), vectors().calendar[name]);
-			expect(actual).toEqual(expected);
-		});
-	}
+	const event = { calendar_id: UNIVERSITY, summary: "Study group", start: "2026-10-02T14:00:00+02:00", end: "2026-10-02T15:00:00+02:00" };
+	/** The field a refusal names, or "ok". */
+	const outcome = async (name: string, input: Json): Promise<string> => {
+		const found = await validated(connector, name, input);
+		return "ok" in found ? "ok" : (/^Invalid arguments\. ([\w.]+):/.exec(found.refused)?.[1] ?? found.refused);
+	};
 
-	test("test_event_input_is_validated", async () => {
-		const event = { calendar_id: UNIVERSITY, summary: "Study group", start: "2026-10-02T14:00:00+02:00", end: "2026-10-02T15:00:00+02:00" };
-		const op = operation(connector, "create_event");
-		const { validateInput } = await import("../../src/gateway/validation.ts");
-		for (const change of [
-			{ start: "2026-10-02", end: "2026-10-02T15:00:00+02:00" },
-			{ start: "2026-10-02T15:00:00", end: "2026-10-02T16:00:00" },
-			{ start: "2026-10-02T15:00:00+02:00", end: "2026-10-02T15:00:00+02:00" },
-			{ start: "2026-10-03", end: "2026-10-02" },
-			{ start: 1790000000, end: 1790003600 },
-			{ start: "2026-02-30", end: "2026-03-02" },
-			{ time_zone: "Mars/Olympus" },
-			{ calendar_id: "a/b" },
-			{ calendar_id: ".." },
-			{ summary: "" },
-		]) {
-			expect((await validateInput(op.input as never, { ...event, ...change } as Json)).ok).toBe(false);
-		}
+	test("an event is trimmed and given its defaults", async () => {
+		expect(await validated(connector, "create_event", { ...event, calendar_id: " primary ", end: " 2026-10-02T15:00:00+02:00", time_zone: " Europe/Berlin " })).toEqual({
+			ok: { ...event, calendar_id: "primary", time_zone: "Europe/Berlin", description: null, location: null },
+		});
 	});
 
-	test("test_event_listing_bounds_are_validated", async () => {
-		const op = operation(connector, "list_events");
-		const { validateInput } = await import("../../src/gateway/validation.ts");
-		expect((await validateInput(op.input as never, { calendar_id: PRIMARY, time_min: "2026-10-02T00:00:00Z", time_max: "2026-10-01T00:00:00Z" })).ok).toBe(false);
-		expect((await validateInput(op.input as never, { calendar_id: PRIMARY, time_min: "2026-10-02" })).ok).toBe(false);
+	test("an event's fields are checked one by one, then start against end", async () => {
+		const cases: [Json, string][] = [
+			[{ ...event, description: "", location: "" }, "ok"],
+			[{ ...event, start: "2026-10-02", end: "2026-10-03" }, "ok"],
+			[{ ...event, start: "2026-10-02T15:00:00+02:00", end: "2026-10-02T13:00:01Z" }, "ok"],
+			[{ ...event, time_zone: "europe/berlin" }, "ok"],
+			[{ ...event, calendar_id: "" }, "calendar_id"],
+			[{ ...event, calendar_id: "a/b" }, "calendar_id"],
+			[{ ...event, calendar_id: ".." }, "calendar_id"],
+			[{ ...event, calendar_id: "x".repeat(201) }, "calendar_id"],
+			[{ ...event, summary: "  " }, "summary"],
+			[{ ...event, summary: null }, "summary"],
+			[{ ...event, summary: "😀".repeat(151) }, "summary"],
+			[{ ...event, description: "x".repeat(8001) }, "description"],
+			[{ ...event, time_zone: "Mars/Olympus" }, "time_zone"],
+			[{ ...event, time_zone: "+02:00" }, "time_zone"],
+			[{ ...event, start: "2026-02-30", end: "2026-03-02" }, "start"],
+			[{ ...event, start: "2026-10-02T15:00:00", end: "2026-10-02T16:00:00" }, "start"],
+			[{ ...event, start: "2026-10-02T23:00:00+00:00", end: "2026-10-02T24:00:00+00:00" }, "end"],
+			[{ ...event, start: 1790000000, end: 1790003600 }, "start"],
+			[{ ...event, start: "2026-10-02" }, "input"],
+			[{ ...event, start: "2026-10-03", end: "2026-10-02" }, "input"],
+			[{ ...event, start: "2026-10-02", end: "2026-10-02" }, "input"],
+			[{ ...event, start: "2026-10-02T15:00:00+02:00", end: "2026-10-02T14:00:00+01:00" }, "input"],
+		];
+		for (const [input, expected] of cases) expect(await outcome("create_event", input), JSON.stringify(input)).toBe(expected);
+		// Guests cannot be invited: attendees are not an input.
+		expect(await validated(connector, "create_event", { ...event, attendees: ["eve@example.com"] })).toEqual({ refused: 'Invalid arguments. input: Unrecognized key: "attendees"' });
+		const both = await validated(connector, "create_event", { ...event, start: "2026-02-30", end: "x" });
+		expect(both).toEqual({ refused: expect.stringContaining(DATE_OR_DATE_TIME_MESSAGE) });
+		expect((both as { refused: string }).refused).toContain("; end: ");
+	});
+
+	test("listing bounds need an offset and time_max after time_min", async () => {
+		expect(await validated(connector, "list_events", { calendar_id: "x" })).toEqual({ ok: { calendar_id: "x", time_min: null, time_max: null, search: null, limit: 25, cursor: null } });
+		const cases: [Json, string][] = [
+			[{ calendar_id: "x", time_min: "2026-10-01T09:00:00.123456+02:00" }, "ok"],
+			[{ calendar_id: "x", time_min: "2026-10-02T00:00:00Z", time_max: "2026-10-02T02:00:01+02:00" }, "ok"],
+			[{ calendar_id: "x", time_min: "2026-10-02T00:00:00Z", time_max: "2026-10-02T02:00:00+02:00" }, "input"],
+			[{ calendar_id: "x", time_min: "2026-10-02T00:00:00Z", time_max: "2026-10-01T00:00:00Z" }, "input"],
+			[{ calendar_id: "x", time_min: "2026-10-02" }, "time_min"],
+			[{ calendar_id: "x", time_min: "2026-10-01T09:00:00" }, "time_min"],
+			[{ calendar_id: "x", search: "" }, "search"],
+			[{ calendar_id: "x", limit: 51 }, "limit"],
+			[{ calendar_id: "x", limit: "5" }, "limit"],
+			[{ calendar_id: "x", cursor: "x".repeat(301) }, "cursor"],
+			[{ calendar_id: "x", extra: 1 }, "input"],
+			[{}, "calendar_id"],
+		];
+		for (const [input, expected] of cases) expect(await outcome("list_events", input), JSON.stringify(input)).toBe(expected);
+		expect(await validated(connector, "list_events", { calendar_id: "x", time_min: "2026-10-01T09:00:00" })).toEqual({ refused: expect.stringContaining(DATE_TIME_MESSAGE) });
+	});
+
+	test("event ids are letters, digits and _@.-, and more than dots", async () => {
+		for (const [id, expected] of [
+			["abc_DEF@x.y-z", "ok"],
+			["...", "event_id"],
+			["a b", "event_id"],
+			["x".repeat(1025), "event_id"],
+		]) {
+			expect(await outcome("get_event", { calendar_id: "x", event_id: id as string })).toBe(expected);
+		}
 	});
 });
 
 describe("the connector outside a run", () => {
-	test("test_the_account_is_the_openid_subject", async () => {
+	test("the account is the OpenID subject", async () => {
 		const google = new FakeCalendar();
 		const account = await googleCalendarConnector().account(google.client());
 		expect(account).toEqual({ id: "108", label: PRIMARY });
 		expect(google.requests[0]?.headers.get("authorization")).toBe("Bearer token");
 	});
 
-	test("test_discovery_pages_through_readable_calendars_and_filters_by_name", async () => {
+	test("discovery pages through readable calendars and filters by name", async () => {
 		const google = new FakeCalendar();
 		google.pageSize = 2;
 		const connector = googleCalendarConnector();
@@ -188,7 +213,7 @@ describe("the connector outside a run", () => {
 		expect(found.items.map((item) => item.id)).toEqual(["strasse@example.com"]);
 	});
 
-	test("test_an_account_with_too_many_calendars_is_refused", async () => {
+	test("an account with too many calendars is refused", async () => {
 		const google = new FakeCalendar();
 		google.pageSize = 1;
 		const connector = googleCalendarConnector({ maxCalendarPages: 2 });
@@ -203,7 +228,7 @@ describe("the connector outside a run", () => {
 		[200, { items: [{ summary: "no id" }] }, "PROVIDER_FAILED"],
 	];
 	for (const [status, body, code] of errors) {
-		test(`test_provider_errors_are_mapped: ${status} ${JSON.stringify(body)}`, async () => {
+		test(`a provider error is mapped: ${status} ${JSON.stringify(body)}`, async () => {
 			const google = new FakeCalendar();
 			google.error = [status, body];
 			const caught = await google
@@ -217,7 +242,7 @@ describe("the connector outside a run", () => {
 });
 
 describe("runs through the executor", () => {
-	test("test_an_agent_lists_only_the_calendars_it_was_granted", async () => {
+	test("an agent lists only the calendars it was granted", async () => {
 		const google = new FakeCalendar();
 		const run = await start(google, BASE_SCOPES, READS);
 		const outcome = await run.ok("google_calendar_list_calendars", {});
@@ -230,7 +255,7 @@ describe("runs through the executor", () => {
 		expect((await start(google, ["openid"], READS)).tools).not.toContain("google_calendar_list_calendars");
 	});
 
-	test("test_events_are_listed_only_from_granted_calendars", async () => {
+	test("events are listed only from granted calendars", async () => {
 		const google = new FakeCalendar();
 		const run = await start(google, BASE_SCOPES, READS);
 		const outcome = await run.ok("google_calendar_list_events", { calendar_id: UNIVERSITY });
@@ -245,7 +270,7 @@ describe("runs through the executor", () => {
 		expect(eventRequests.every((r) => !decodeURIComponent(new URL(r.url).pathname).includes(HOLIDAYS))).toBe(true);
 	});
 
-	test("test_primary_resolves_to_the_real_calendar_and_its_grant", async () => {
+	test("primary resolves to the real calendar and its grant", async () => {
 		const google = new FakeCalendar();
 		let run = await start(google, BASE_SCOPES, calendars({ [UNIVERSITY]: ["read"] }));
 		expect(await run.code("google_calendar_list_events", { calendar_id: "primary" })).toBe("POLICY_DENIED");
@@ -257,9 +282,9 @@ describe("runs through the executor", () => {
 		expect(decodeURIComponent(new URL(google.requests.at(-1)?.url as string).pathname).endsWith(`/calendars/${PRIMARY}/events/e1`)).toBe(true);
 	});
 
-	test("test_other_spellings_of_a_calendar_id_meet_its_grants", async () => {
+	test("other spellings of a calendar id meet its grants", async () => {
 		const google = new FakeCalendar();
-		const deny = ceilingRow(CONNECTION, "calendar", UNIVERSITY, "deny");
+		const deny = ceilingRow("calendar", UNIVERSITY, "deny");
 		const run = await start(google, BASE_SCOPES, calendars({ "*": ["read"] }), [deny]);
 		for (const spelling of [UNIVERSITY, UNIVERSITY.toUpperCase()]) {
 			expect(await run.code("google_calendar_list_events", { calendar_id: spelling })).toBe("POLICY_DENIED");
@@ -271,7 +296,7 @@ describe("runs through the executor", () => {
 		expect(new Set(outcome.result.items.map((e) => e.calendar_id))).toEqual(new Set([PRIMARY]));
 	});
 
-	test("test_later_pages_repeat_the_first_pages_time_bound", async () => {
+	test("later pages repeat the first page's time bound", async () => {
 		const google = new FakeCalendar();
 		const run = await start(google, BASE_SCOPES, READS);
 		const args = { calendar_id: PRIMARY, limit: 2, search: "Lecture" };
@@ -289,7 +314,7 @@ describe("runs through the executor", () => {
 		expect(await run.code("google_calendar_list_events", { ...args, search: "Exam", cursor: token })).toBe("INVALID_CURSOR");
 	});
 
-	test("test_creating_an_event_needs_the_create_grant_and_the_events_scope", async () => {
+	test("creating an event needs the create grant and the events scope", async () => {
 		const google = new FakeCalendar();
 		const event = {
 			calendar_id: UNIVERSITY,
@@ -329,7 +354,7 @@ describe("runs through the executor", () => {
 		expect(decodeURIComponent(lastUrl.pathname).startsWith(`/calendar/v3/calendars/${PRIMARY}/`)).toBe(true);
 	});
 
-	test("test_a_disabled_calendar_api_is_explained_and_the_connection_kept", async () => {
+	test("a disabled Calendar API is explained and the connection kept", async () => {
 		const google = new FakeCalendar();
 		const run = await start(google, BASE_SCOPES, READS);
 		google.error = [
@@ -350,10 +375,10 @@ describe("runs through the executor", () => {
 	});
 });
 
-describe("consent and scopes (the connector's part of the reconnect tests)", () => {
+describe("consent and scopes", () => {
 	const connector = googleCalendarConnector();
 
-	test("test_allowed_actions_the_provider_has_not_granted_are_reported", () => {
+	test("allowed actions the provider has not granted are reported", () => {
 		expect(consentNeeded(connector, BASE_SCOPES, new Set())).toEqual([]);
 		expect(consentNeeded(connector, BASE_SCOPES, new Set(["read", "create"]))).toEqual(["create"]);
 		expect(consentNeeded(connector, ["openid", FULL_SCOPE], new Set(["read", "create"]))).toEqual([]);
@@ -361,7 +386,7 @@ describe("consent and scopes (the connector's part of the reconnect tests)", () 
 		expect(consentNeeded(connector, null, new Set(["read", "create"]))).toEqual([]);
 	});
 
-	test("test_reconnecting_asks_only_for_what_allowed_actions_lack", () => {
+	test("reconnecting asks only for what allowed actions lack", () => {
 		expect(requestedScopes(connector, new Set(["read"]))).toEqual(BASE_SCOPES);
 		expect(requestedScopes(connector, new Set(["read", "create"]))).toEqual([...BASE_SCOPES, EVENTS_SCOPE]);
 		// Stored scopes are not trusted: Google forgets a grant the user revoked.

@@ -1,8 +1,10 @@
 // The constants and messages of agent files. The limits that are settings come from config.ts
 // (`Settings.files`); the rest are constants.
 
-import type { FolderLimit } from "../contracts/files.ts";
 import { NO_LONGER_AVAILABLE, NO_ROOM, sizeText } from "../workspace/limits.ts";
+
+/** The four limits a folder can hit; the same strings everywhere. */
+export type FolderLimit = "folder_bytes" | "folder_entries" | "run_uploads" | "workspace";
 
 export { NO_LONGER_AVAILABLE, NO_ROOM, sizeText };
 
@@ -52,18 +54,9 @@ export function pages(size: number): number {
 	return Math.ceil(size / PAGE_BYTES) * PAGE_BYTES;
 }
 
-/** The nearest integer, a tie to the even one. `n / 2**20` is exact in binary, so a tie is exactly half. */
-function roundHalfEven(x: number): number {
-	const floor = Math.floor(x);
-	const fraction = x - floor;
-	if (fraction > 0.5) return floor + 1;
-	if (fraction < 0.5) return floor;
-	return floor % 2 === 0 ? floor : floor + 1;
-}
-
 /** Whole MiB from one MiB, else bytes. */
 export function mib(bytes: number): string {
-	return bytes >= 2 ** 20 ? `${roundHalfEven(bytes / 2 ** 20)} MiB` : `${bytes} bytes`;
+	return bytes >= 2 ** 20 ? `${Math.round(bytes / 2 ** 20)} MiB` : `${bytes} bytes`;
 }
 
 export interface FolderLimits {

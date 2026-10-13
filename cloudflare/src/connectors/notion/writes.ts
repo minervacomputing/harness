@@ -2,9 +2,8 @@
 // and rows, and commenting. Each sends exactly one write, from its execute step.
 
 import { z } from "zod";
-import type { Prepared, ProviderOutput } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, defineOperation } from "../../gateway/connector.ts";
+import { OperationError, type Prepared, type ProviderOutput, defineOperation } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import type { JsonObject } from "../../lib/json.ts";
 import { record } from "../../lib/schema.ts";
 import { PLAIN_TEXT, SINGLE_LINE, isPlainText, isSingleLine } from "../../lib/text.ts";
@@ -54,13 +53,11 @@ function inside(resource: Resource): string[] {
 	return [resource.id, ...resource.within];
 }
 
-const CreatePage = z
-	.strictObject({
-		parent_page_id: objectIdField(),
-		title: titleField(),
-		markdown: markdownField().nullable().default(null),
-	})
-	.meta({ title: "CreatePage" });
+const CreatePage = z.strictObject({
+	parent_page_id: objectIdField(),
+	title: titleField(),
+	markdown: markdownField().nullable().default(null),
+});
 
 export const CREATE_PAGE = defineOperation<z.output<typeof CreatePage>>({
 	name: "create_page",
@@ -85,14 +82,12 @@ export const CREATE_PAGE = defineOperation<z.output<typeof CreatePage>>({
 	},
 });
 
-const CreateRow = z
-	.strictObject({
-		database_id: objectIdField(),
-		data_source_id: optionalObjectIdField(),
-		properties: propertiesField(),
-		markdown: markdownField().nullable().default(null),
-	})
-	.meta({ title: "CreateRow" });
+const CreateRow = z.strictObject({
+	database_id: objectIdField(),
+	data_source_id: optionalObjectIdField(),
+	properties: propertiesField(),
+	markdown: markdownField().nullable().default(null),
+});
 
 export const CREATE_DATABASE_ROW = defineOperation<z.output<typeof CreateRow>>({
 	name: "create_database_row",
@@ -119,7 +114,7 @@ export const CREATE_DATABASE_ROW = defineOperation<z.output<typeof CreateRow>>({
 	},
 });
 
-const UpdateProperties = z.strictObject({ page_id: objectIdField(), properties: propertiesField() }).meta({ title: "UpdateProperties" });
+const UpdateProperties = z.strictObject({ page_id: objectIdField(), properties: propertiesField() });
 
 /** The properties a page may have: its data source's for a database row, else only its title. */
 async function pageSchema(tree: Tree, page: Page, resource: Resource): Promise<Properties> {
@@ -155,14 +150,12 @@ export const UPDATE_PAGE_PROPERTIES = defineOperation<z.output<typeof UpdateProp
 	},
 });
 
-const Edit = z
-	.strictObject({
-		old: z.string().trim().min(1).max(10_000).describe("Text to replace, as read_page shows it."),
-		new: z.string().trim().max(MAX_MARKDOWN).describe("Its replacement, in Notion-flavored markdown.").refine(isPlainText, PLAIN_TEXT).superRefine(writtenOnly),
-	})
-	.meta({ title: "Edit" });
+const Edit = z.strictObject({
+	old: z.string().trim().min(1).max(10_000).describe("Text to replace, as read_page shows it."),
+	new: z.string().trim().max(MAX_MARKDOWN).describe("Its replacement, in Notion-flavored markdown.").refine(isPlainText, PLAIN_TEXT).superRefine(writtenOnly),
+});
 
-const EditPage = z.strictObject({ page_id: objectIdField(), edits: z.array(Edit).min(1).max(20) }).meta({ title: "EditPage" });
+const EditPage = z.strictObject({ page_id: objectIdField(), edits: z.array(Edit).min(1).max(20) });
 
 export const EDIT_PAGE = defineOperation<z.output<typeof EditPage>>({
 	name: "edit_page",
@@ -203,7 +196,7 @@ export const EDIT_PAGE = defineOperation<z.output<typeof EditPage>>({
 	},
 });
 
-const AppendToPage = z.strictObject({ page_id: objectIdField(), markdown: markdownField() }).meta({ title: "AppendToPage" });
+const AppendToPage = z.strictObject({ page_id: objectIdField(), markdown: markdownField() });
 
 export const APPEND_TO_PAGE = defineOperation<z.output<typeof AppendToPage>>({
 	name: "append_to_page",
@@ -225,12 +218,10 @@ export const APPEND_TO_PAGE = defineOperation<z.output<typeof AppendToPage>>({
 	},
 });
 
-const AddComment = z
-	.strictObject({
-		page_id: objectIdField(),
-		text: z.string().trim().min(1).max(MAX_COMMENT).describe("Inline Notion-flavored markdown.").refine(isPlainText, PLAIN_TEXT).superRefine(writtenOnly),
-	})
-	.meta({ title: "AddComment" });
+const AddComment = z.strictObject({
+	page_id: objectIdField(),
+	text: z.string().trim().min(1).max(MAX_COMMENT).describe("Inline Notion-flavored markdown.").refine(isPlainText, PLAIN_TEXT).superRefine(writtenOnly),
+});
 
 export const ADD_COMMENT = defineOperation<z.output<typeof AddComment>>({
 	name: "add_comment",

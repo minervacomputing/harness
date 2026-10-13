@@ -1,7 +1,7 @@
 // Accounts on Better Auth in local workerd over D1 (plan: The web API): sign-up and recoverable
 // provisioning, the session our routes read, /api/me, passwords, rate limits, the CSRF boundary between
 // Better Auth's routes and ours, tenancy and the seed. Security policy (two-factor across sign-in
-// methods, account-scoped limits, revocation) is step 5a3's and tested there.
+// methods, account-scoped limits, revocation) is tested in accounts-policy.test.ts.
 
 import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
@@ -370,7 +370,7 @@ describe("CSRF: Better Auth's origins on its routes, our token on ours", () => {
 	});
 });
 
-describe("tenancy (test_tenancy)", () => {
+describe("tenancy", () => {
 	test("two users' workspaces see only their own agent", async () => {
 		const agents = [];
 		for (const name of ["ada", "grace"]) {
@@ -386,7 +386,7 @@ describe("tenancy (test_tenancy)", () => {
 	});
 });
 
-describe("seed (test_seed)", () => {
+describe("seed", () => {
 	test("with debug, seeding twice is idempotent, removes two-factor and signs the accounts out", async () => {
 		expect(await seed(env)).toEqual(["created  ada@example.com", "created  grace@example.com", "Password for all seed accounts: password"]);
 		const ada = await userId("ada@example.com");

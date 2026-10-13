@@ -1,30 +1,31 @@
-// The run event stream (web-api 10.3; frontend 8; plan: Events and the stream): `GET
+// The run event stream (plan: Events and the stream): `GET
 // /api/workspaces/{ws}/runs/{run}/stream` as server-sent events, relayed from the Conversation Durable
 // Object's hibernatable WebSocket (conversation/stream.ts). Signed out is 401 `Unauthorized`; not a member,
-// or not the caller's run in this workspace, 404 `Not found` (lowercase, as today's view answers, and
+// or not the caller's run in this workspace, 404 `Not found` (lowercase, and
 // unlike the JSON API's 401). The cursor is Last-Event-ID, else `?after=`, else 0; a value that is not all
 // digits counts as 0.
 //
 // Each event is written as `id: <seq>\nevent: <type>\ndata: <JSON on one line>\n\n`, `event: end\ndata: {}`
-// once the run is inactive and every event was sent, and `: keepalive` after 15 s of silence. The object
+// once the run is inactive and every event was sent, and `: keepalive` after 15 s of silence; never an
+// unnamed `data:` frame, which the browser would dispatch as `message` and settle the turn. The object
 // sends the backlog and subscribes in one synchronous step, so nothing falls between them; the relay skips
 // any seq it already sent, so nothing is sent twice either. When the object closes its socket with 1013
 // (a backlog over its limit, or a socket inherited by a new instance that cannot know what the old one
 // missed), the relay opens a new socket from the last seq it sent; any other close, a client too slow to
-// keep up, or a session that ended or a membership that did (checked every 60 s, which today's view does
-// not) ends the response, and the browser's EventSource reconnects with Last-Event-ID and loses nothing. A
+// keep up, or a session that ended or a membership that did (checked every 60 s) ends the
+// response, and the browser's EventSource reconnects with Last-Event-ID and loses nothing. A
 // response ended that way drops the frames the client has not taken yet.
 
 import type { Context } from "hono";
 import { currentSession, withSessionCookies } from "../accounts/auth.ts";
 import { conversationObject } from "../addressing.ts";
-import type { RunId, UserId } from "../contracts/common.ts";
 import type { Conversation } from "../conversation/conversation.ts";
 import { STREAM_PATH } from "../conversation/stream.ts";
 import { HttpError, detail, unauthorized } from "../http/errors.ts";
 import { UUID } from "../http/paths.ts";
 import type { App, AppEnv } from "../http/router.ts";
 import { parseJson } from "../lib/json.ts";
+import type { RunId, UserId } from "../shared/rpc.ts";
 import { type Member, member, param } from "./members.ts";
 
 /** Timings and limits of a relayed stream; the tests shorten them. */
@@ -52,7 +53,7 @@ function streamNotFound(): Response {
 	return detail(404, "Not found");
 }
 
-/** Last-Event-ID, else the last `?after=`, else "0"; all digits or 0 (runs/stream.py). */
+/** Last-Event-ID, else the last `?after=`, else "0"; all digits or 0. */
 export function streamCursor(request: Request): number {
 	const header = request.headers.get("Last-Event-ID");
 	const raw = header || new URL(request.url).searchParams.getAll("after").at(-1) || "0";

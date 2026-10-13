@@ -1,6 +1,6 @@
-// The demo's endpoints, off (web-api 8.2, 11): the Worker has no demo mode. `GET /api/demo/config` gives the
+// The demo's endpoints, off: the Worker has no demo mode. `GET /api/demo/config` gives the
 // off answer the frontend checks on the sign-in pages, and the gate and email endpoints answer 404 after
-// their CSRF check (the router's) and their body's validation, as backend/demo/api.py does when the demo is off.
+// their CSRF check (the router's) and their body's validation.
 
 import { z } from "zod";
 import { detail, json } from "../http/errors.ts";

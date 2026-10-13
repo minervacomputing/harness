@@ -1,8 +1,7 @@
-// The OAuth connection flow (web-api 9) against the test build's fake provider, Notes (src/faults/provider.ts),
-// whose consent page `authorize` stands for: the authorization URL, the callback's checks in today's order,
-// a flow used once (also by concurrent callbacks), PKCE, reconnects, Google's login hint, and Todoist's
-// dynamic client registration against a fake (backend/tests: test_google_calendar.py's reconnect tests,
-// test_contract.py's flow-client tests, test_github.py `test_apps_without_an_oauth_client_are_not_offered`).
+// The OAuth connection flow against the test build's fake provider, Notes (src/faults/provider.ts),
+// whose consent page `authorize` stands for: the authorization URL, the callback's checks in order,
+// a flow used once (also by concurrent callbacks), PKCE, reconnects, Google's login hint, apps without an
+// OAuth client not offered, and Todoist's dynamic client registration against a fake.
 
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
@@ -11,10 +10,10 @@ import { workspaceObject } from "../../src/addressing.ts";
 import { EXPIRED_FLOW } from "../../src/api/flows.ts";
 import { FLOW_CLIENTS } from "../../src/api/oauth-clients.ts";
 import { PROVIDER_NETWORK } from "../../src/api/providers.ts";
-import type { Role } from "../../src/contracts/common.ts";
 import { providerOf } from "../../src/faults/ports.ts";
 import { NOTES_ACCOUNT } from "../../src/faults/provider.ts";
 import { uuid7 } from "../../src/lib/random.ts";
+import type { Role } from "../../src/shared/rpc.ts";
 import { type Answer, Browser, installEmailLog, signedIn } from "./accounts-helpers.ts";
 
 installEmailLog();
@@ -121,7 +120,7 @@ async function flowsOf(ws: string): Promise<number> {
 
 const expired = { path: "/", params: { error: EXPIRED_FLOW } };
 
-describe("connecting an account (web-api 9)", () => {
+describe("connecting an account", () => {
 	test("the authorization URL, the callback and the connection it saves", async () => {
 		const ada = await account();
 		const url = await start(ada);
@@ -256,7 +255,7 @@ describe("connecting an account (web-api 9)", () => {
 	});
 });
 
-describe("reconnecting (backend/tests/test_google_calendar.py)", () => {
+describe("reconnecting", () => {
 	test("the same account renews the connection; another account or a removed connection changes nothing", async () => {
 		const ada = await account();
 		const id = (await connect(ada)).params.connected!;
@@ -339,7 +338,7 @@ describe("reconnecting (backend/tests/test_google_calendar.py)", () => {
 	});
 });
 
-/** Todoist's registration endpoint and token endpoint (RFC 7591; backend/connections/oauth.py `_register_client`). */
+/** Todoist's registration endpoint (RFC 7591) and token endpoint. */
 class FakeTodoistAuth {
 	readonly registrations: unknown[] = [];
 	readonly tokenRequests: URLSearchParams[] = [];
@@ -371,7 +370,7 @@ async function storedTodoistClients(): Promise<{ client_id: string; secret_ciphe
 	return (await env.DB.prepare("SELECT client_id, secret_ciphertext FROM oauth_clients WHERE provider = 'todoist'").all<{ client_id: string; secret_ciphertext: string }>()).results;
 }
 
-describe("Todoist registers Minerva dynamically (web-api 9.1)", () => {
+describe("Todoist registers Minerva dynamically", () => {
 	beforeEach(async () => {
 		await env.DB.prepare("DELETE FROM oauth_clients WHERE provider = 'todoist'").run();
 	});

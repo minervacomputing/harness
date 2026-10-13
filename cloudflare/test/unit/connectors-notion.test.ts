@@ -1,22 +1,22 @@
-// backend/tests/test_notion.py, case by case: the Notion connector against an in-memory Notion API behind
-// an injected `fetch` (FakeNotion, as the Python test serves it through httpx.MockTransport), and runs
-// through the executor (executor-fakes.ts `Scenario`, which is connector_runs.py's claimed run). Then what
-// the port adds: the declaration as the registry takes it, with its fingerprints, and a few cases the
-// Python test leaves to the code (paging, size limits, data source choice).
+// The Notion connector against an in-memory Notion API behind an injected `fetch` (FakeNotion), with runs
+// through the executor (executor-fakes.ts `Scenario`); its pure rules (ids and links, the page text agents
+// read and write, edit planning, property values and filters); its tool inputs; and the declaration as the
+// registry takes it.
 
 import { afterEach, describe, expect, test } from "vitest";
-import type { GrantRow } from "../../src/contracts/policy.ts";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
-import { MAX_MARKDOWN_BYTES, NOTION_VERSION } from "../../src/connectors/notion/client.ts";
+import { MAX_MARKDOWN_BYTES, NOTION_VERSION, Page, SearchPage, textOf } from "../../src/connectors/notion/client.ts";
 import { notionConnector } from "../../src/connectors/notion/connector.ts";
 import { SYNCED_HIDDEN, planEdits, redact, writtenRefusal } from "../../src/connectors/notion/markdown.ts";
 import { canonical, objectId } from "../../src/connectors/notion/pages.ts";
-import { checkFilter, readable, writable } from "../../src/connectors/notion/properties.ts";
+import { checkFilter, mentionsHidden, readable, schema, writable } from "../../src/connectors/notion/properties.ts";
 import { OperationError, offered, termsOf } from "../../src/gateway/connector.ts";
+import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry, fingerprint } from "../../src/gateway/registry.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
 import { tokenBody, tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
+import { validated } from "./connector-runs.ts";
 import { Scenario, jsonResponse, userGrants } from "./executor-fakes.ts";
 
 const NAMES = [
@@ -38,7 +38,7 @@ const NAMES = [
 ] as const;
 type Name = (typeof NAMES)[number];
 
-/** Python's `str(UUID(int=n))`. */
+/** A UUID with the number `n` in its last digits. */
 function uuid(n: number): string {
 	const h = n.toString(16).padStart(32, "0");
 	return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
@@ -107,7 +107,7 @@ interface Sent {
 type Handle = (request: Sent) => Response;
 
 /**
- * The Notion API (test_notion.py `FakeNotion`). Workspace: Home (Private, Projects database with rows row1
+ * The Notion API. Workspace: Home (Private, Projects database with rows row1
  * and row2, a column holding in_column, a linked view of Projects, and a page showing synced content).
  * Shared without its parent: orphan.
  */
@@ -120,7 +120,7 @@ class FakeNotion {
 	comments: JsonObject[];
 	readonly requests: Sent[] = [];
 	readonly writes: [method: string, path: string, body: Json][] = [];
-	/** Requests without the pinned Notion-Version or the bearer token (the Python fake asserts both). */
+	/** Requests without the pinned Notion-Version or the bearer token. */
 	readonly problems: string[] = [];
 	hook: ((request: Sent) => void) | null = null;
 	created = 0;
@@ -256,7 +256,7 @@ class FakeNotion {
 		return jsonResponse(200, { object: "page_markdown", id: pageId, markdown });
 	}
 
-	/** The fake's routes (test_notion.py `FakeNotion.handler`); replaced by a test to refuse one request. */
+	/** The fake's routes; replaced by a test to refuse one request. */
 	handle: Handle = (request) => {
 		const body = request.body ? (parseJson(request.body) as JsonObject) : {};
 		const parts = request.path.split("/").slice(2);
@@ -341,7 +341,7 @@ function deny(name: Name, actions: string[] = ["read"]): GrantRow {
 	return { layer: "ceiling", subject: null, connectionId: NOTION, kind: PAGE, resourceId: ID[name], resourceName: "", actions: [...actions].sort(), effect: "deny" };
 }
 
-/** Starts a run for an agent with the user's Notion connection, holding `grants` (test_notion.py `start`). */
+/** Starts a run for an agent with the user's Notion connection, holding `grants`. */
 function start(notion: FakeNotion, grants: { [name: string]: string[] }, options: { ceiling?: GrantRow[]; maxLookups?: number } = {}): Promise<Scenario> {
 	return Scenario.start({
 		connectors: [notionConnector(options.maxLookups === undefined ? {} : { maxLookups: options.maxLookups })],
@@ -366,16 +366,108 @@ function refused(run: () => unknown): OperationError {
 	throw new Error("not refused");
 }
 
+describe("Notion's answers", () => {
+	const ID = "0000000000000000000000000000000a";
+	const page = { object: "page", id: ID, parent: { type: "page_id", page_id: ID } };
+
+	test("unknown fields are dropped and missing ones take their defaults", () => {
+		expect(Page.parse({ ...page, extra: 1, in_trash: true })).toEqual({
+			...page,
+			parent: { type: "page_id", page_id: ID, database_id: null, data_source_id: null, block_id: null },
+			url: null,
+			in_trash: true,
+			is_locked: false,
+			created_time: null,
+			last_edited_time: null,
+			properties: {},
+		});
+	});
+
+	test("a value of another type is refused, not converted", () => {
+		for (const in_trash of [1, "true", "yes", null]) expect(Page.safeParse({ ...page, in_trash }).success, String(in_trash)).toBe(false);
+		expect(SearchPage.safeParse({ results: [], has_more: "yes" }).success).toBe(false);
+		expect(Page.safeParse({ ...page, properties: { Name: "x" } }).success).toBe(false);
+	});
+});
+
 describe("ids and links", () => {
-	test("ids are canonical and links are parsed", () => {
-		const plain = "0000000000000000000000000000000a";
-		expect(canonical(plain)).toBe("00000000-0000-0000-0000-00000000000a");
-		expect(canonical(plain.toUpperCase())).toBe(canonical(plain));
-		expect(canonical("nope")).toBeNull();
-		for (const value of [plain, `https://www.notion.so/acme/Plan-${plain}`, `https://notion.so/Plan-${plain}?pvs=4`, `https://acme.notion.site/${plain}`]) {
-			expect(objectId(value)).toBe(canonical(plain));
-		}
-		for (const value of [`https://evil.example/${plain}`, `http://www.notion.so/${plain}`, "https://www.notion.so/x"]) expect(objectId(value)).toBeNull();
+	const HEX = "0000000000000000000000000000000a";
+	const CANONICAL = "00000000-0000-0000-0000-00000000000a";
+
+	test.each([
+		[HEX, CANONICAL],
+		["0000000000000000000000000000000A", CANONICAL],
+		[CANONICAL, CANONICAL],
+		["00000000-0000-0000-0000-00000000000A", CANONICAL],
+		["000000000000-0000-0000-00000000000a", CANONICAL],
+		["ABCDEF0123456789ABCDEF0123456789", "abcdef01-2345-6789-abcd-ef0123456789"],
+		["00000000--0000-0000-0000-00000000000a", null],
+		["-00000000-0000-0000-0000-00000000000a", null],
+		["nope", null],
+		["", null],
+		[`${HEX}\n`, null],
+		[`${HEX}0`, null],
+		["g000000000000000000000000000000a", null],
+		["０".repeat(32), null],
+		["٠".repeat(32), null],
+	])("canonical(%j) is %j", (value, expected) => {
+		expect(canonical(value)).toBe(expected);
+	});
+
+	test.each([
+		HEX,
+		`https://www.notion.so/acme/Plan-${HEX}`,
+		`https://notion.so/Plan-${HEX}?pvs=4`,
+		`https://acme.notion.site/${HEX}`,
+		`https://ACME.Notion.Site/${HEX}`,
+		`HTTPS://WWW.NOTION.SO/${HEX.toUpperCase()}`,
+		`https://www.notion.so/${HEX}///`,
+		`https://www.notion.so/a/${HEX}?q=1#f`,
+		`https://www.notion.so/x${HEX}`,
+		`https://www.notion.so/é-${HEX}`,
+		`https://user:pass@www.notion.so/${HEX}`,
+		`https://evil.example@www.notion.so/${HEX}`,
+		`https://www.notion.so:8080/${HEX}`,
+		`https://notion.site/${HEX}`,
+		`https://a.b.notion.site/${HEX}`,
+		`htt\tps://www.no\ntion.so/${HEX}\r`,
+		// Links the URL parser repairs name the page they repair to: the id only names a page, and grants are
+		// checked on the id.
+		`https:www.notion.so/${HEX}`,
+		`https://www.notion.so\\${HEX}`,
+		`https://www%2enotion.so/${HEX}`,
+		`https://ｗww.notion.so/${HEX}`,
+	])("the id of %j", (value) => {
+		expect(objectId(value)).toBe(CANONICAL);
+	});
+
+	test.each([
+		`https://evil.example/${HEX}`,
+		`http://www.notion.so/${HEX}`,
+		"https://www.notion.so/x",
+		`https://www.notion.so/${HEX}x`,
+		`https://www.notion.so/${HEX.slice(1)}`,
+		`https://www.notion.so@evil.example/${HEX}`,
+		`https://www.notion.so.evil.example/${HEX}`,
+		`https://notion.so.evil.example/${HEX}`,
+		`https://evilnotion.site/${HEX}`,
+		`https://[::1]/${HEX}`,
+		`https://[1.2.3.4]/${HEX}`,
+		`https://[www.notion.so]/${HEX}`,
+		`https://[v1.notion.site]/${HEX}`,
+		`https://www.notion.so]/${HEX}`,
+		`//www.notion.so/${HEX}`,
+		`https://www.notion.so?${HEX}`,
+		`https://www.notion.so#${HEX}`,
+		`https://www.notion.so/${HEX}%0A`,
+		`https://www.℀notion.so/${HEX}`,
+		`https://WWW.NOTİON.SO/${HEX}`,
+		`https://www.notion.so%2f/${HEX}`,
+		`httpſ://www.notion.so/${HEX}`,
+		`1https://www.notion.so/${HEX}`,
+		`https://x%a.notion.site/${HEX}`,
+	])("no id in %j", (value) => {
+		expect(objectId(value)).toBeNull();
 	});
 });
 
@@ -411,6 +503,103 @@ describe("page text", () => {
 		expect(shown).not.toContain("Secret");
 		expect(shown.startsWith("Mine\n")).toBe(true);
 		expect(shown.endsWith("\nAfter")).toBe(true);
+	});
+
+	const A = "0000000000000000000000000000000a";
+	const LINKS = "must not contain tags that link to other sites; use [text](url) links";
+	test.each([
+		["plain", "plain"],
+		[`<page url="https://www.notion.so/Secret-plans-${A}">Private plans</page> after`, `<page url="https://www.notion.so/${A}"></page> after`],
+		['<mention-page url="u"/>', '<mention-page url="u"/>'],
+		['<mention-page url="u" / >', '<mention-page url="u"/>'],
+		// Names in any case and with any separator; only the url attribute is kept.
+		["<PAGE url='x'>T</PAGE>", "<page></page>"],
+		['<Page url="x">T</pAGE >', '<page url="x"></page>'],
+		['<page url="x">T</page\n>', '<page url="x"></page>'],
+		['<page\turl="x">T</page>', '<page url="x"></page>'],
+		['<page\u001curl="x">T</page>', '<page url="x"></page>'],
+		['<page\u0085url="x">T</page>', '<page url="x"></page>'],
+		['<pageurl="x">T</page>', '<pageurl="x">T</page>'],
+		['<page xurl="no" url="yes">T</page>', '<page url="yes"></page>'],
+		['<page data-url="no">T</page>', '<page url="no"></page>'],
+		['<page éurl="no">T</page>', "<page></page>"],
+		['<page _url="no">T</page>', "<page></page>"],
+		["<pages>not a tag</pages>", "<pages>not a tag</pages>"],
+		["<page-x>x</page-x>", "<page-x>x</page-x>"],
+		// The dotted capital I and the dotless i are read as "i" in names, and the tag is shown by its name.
+		['<mentıon-page url="u">Secret</mention-page> rest', '<mention-page url="u"></mention-page> rest'],
+		['<mentİon-page url="u">Secret</mention-page> rest', '<mention-page url="u"></mention-page> rest'],
+		['<mention-page url="u">Secret</mentıon-page> rest', '<mention-page url="u"></mention-page> rest'],
+		// A closing tag spelled with a combining dot is no closing tag: the rest is hidden.
+		['<mention-page url="u">Secret</menti\u0307on-page> rest', '<mention-page url="u"></mention-page>'],
+		["<database url=\"u\">Projects</database><database>Other</database>", '<database url="u"></database><database></database>'],
+		['<mention-database url="u">D</mention-database>', '<mention-database url="u"></mention-database>'],
+		['<mention-data-source url="u">D</mention-data-source>', '<mention-data-source url="u"></mention-data-source>'],
+		['<mention-agent url="u">A</mention-agent>', '<mention-agent url="u"></mention-agent>'],
+		['<mention-user url="u">Ada</mention-user>', '<mention-user url="u">Ada</mention-user>'],
+		["a</synced_block_reference>b<synced_block_reference>c", `a</synced_block_reference>b<synced_block_reference>${SYNCED_HIDDEN}</synced_block_reference>`],
+		// Notion addresses, however written, are shortened to the page's id.
+		["https://www.notion.so/ABCDEF0123456789ABCDEF0123456789", "https://www.notion.so/abcdef0123456789abcdef0123456789"],
+		["HTTPS://WWW.NOTION.SO/Title-ABCDEF0123456789ABCDEF0123456789#x", "https://www.notion.so/abcdef0123456789abcdef0123456789"],
+		[`httpſ://www.notion.so/Title-${A}`, `https://www.notion.so/${A}`],
+		[`https://www.notıon.so/Title-${A}`, `https://www.notion.so/${A}`],
+		[`https://ſub.notion.site/Title-${A}`, `https://www.notion.so/${A}`],
+		[`https://\u212aey.notion.site/Title-${A}`, `https://www.notion.so/${A}`],
+		[`https://www.notion.so/Title-${A}0`, `https://www.notion.so/${A.slice(1)}0`],
+		[`https://www.notion.so/Title-${A}g rest`, `https://www.notion.so/${A} rest`],
+		[`https://www.notion.so/${A}${A}`, `https://www.notion.so/${A}`],
+		[`(https://www.notion.so/a-${A})`, `(https://www.notion.so/${A})`],
+		[`https://www.notion.so/a\ufeff-${A}`, `https://www.notion.so/${A}`],
+		[`https://www.notion.so/a b-${A}`, `https://www.notion.so/a b-${A}`],
+		[`https://www.notion.so/a\u3000-${A}`, `https://www.notion.so/a\u3000-${A}`],
+		[`https://evil.example/${A}`, `https://evil.example/${A}`],
+		[`https://notion.so.evil.example/${A}`, `https://notion.so.evil.example/${A}`],
+		[`😀<page url="u">😀</page>😀 https://www.notion.so/😀-${A}`, `😀<page url="u"></page>😀 https://www.notion.so/${A}`],
+		['\ud800<page url="u">x</page>', '\ud800<page url="u"></page>'],
+	])("read text: %j", (text, shown) => {
+		expect(redact(text)).toBe(shown);
+	});
+
+	test.each([
+		["<mention-page url=\"https://ACME.notion.site/x\"/>", "<mention-page> must link to a notion.so page"],
+		['<mention-page url="https://www.notion.so/x" extra="1"/>', "<mention-page> must link to a notion.so page"],
+		['<Mention-Page url="https://evil.example">', "<mention-page> must link to a notion.so page"],
+		["< img src=x>", "must not contain <img> tags"],
+		["</ iframe>", "must not contain <iframe> tags"],
+		["<LINK-PREVIEW>", "must not contain <link-preview> tags"],
+		["<link_preview>", "must not contain <link_preview> tags"],
+		['<a href="x">', LINKS],
+		['<a -href="x">', LINKS],
+		['<a HREF = "x">', LINKS],
+		['<a ſrc="x">', LINKS],
+		['<a actıon="x">', LINKS],
+		['<a act\u0130on="x">', LINKS],
+		["<a srcset=x>", LINKS],
+		["<a data=x>", LINKS],
+		["<a poster  =x>", LINKS],
+		["<x:y src=x>", LINKS],
+		["!![![", "must not contain images"],
+	])("written text refused: %j", (text, reason) => {
+		expect(writtenRefusal(text)).toBe(reason);
+	});
+
+	test.each([
+		'<mention-page url="https://acme.notion.site/x"/>',
+		'<mention-page  url="https://www.notion.so/x"  /  >',
+		"<mention-page>",
+		'<mention-database url="https://www.notion.so/d">x</mention-database>',
+		"<imgK>",
+		'<a xhref="x">',
+		'<a éhref="x">',
+		'<a hrſ="x">',
+		"<a srcsetx=x>",
+		"<a data-x=x>",
+		"<1img>",
+		"<é img>",
+		"!\n[",
+		"",
+	])("written text allowed: %j", (text) => {
+		expect(writtenRefusal(text)).toBeNull();
 	});
 
 	test.each([
@@ -469,6 +658,38 @@ describe("page text", () => {
 		expect(refused(() => planEdits(markdown, [[old, replacement]])).code).toBe("EDIT_NOT_APPLIED");
 	});
 
+	const ONCE = "The text to replace must appear exactly once in the page, as read_page shows it.";
+	const HIDDEN = "Minerva does not edit lines that link to child pages, databases or mentioned pages, or next to synced content. Choose text on other lines.";
+	const LINKED = "Minerva cannot edit these lines: they link to Notion pages, or the page changed. Read the page again, or choose text on other lines.";
+	const FENCES =
+		"Minerva does not add or remove code fences or single backticks in an edit, since that changes how the rest of the page reads. Keep backticks paired.";
+	test.each([
+		["a\nb\na\nb\nc", "b", ONCE],
+		["x\na\nb\nx\na\nc", "a", ONCE],
+		["😀\nab\n😀\nab\nc", "ab", ONCE],
+		[`${"a\n".repeat(30)}b`, "a", ONCE],
+		["A https://www.notion.so/T-0000000000000000000000000000000a\nB", "A", LINKED],
+		["ok <PAGE>t</PAGE>\nnext", "ok", HIDDEN],
+		["ok </page \nnext", "ok", HIDDEN],
+		["ok </mentıon-page>\nnext", "ok", HIDDEN],
+		["  ```\nx\n  ```", "x", FENCES],
+	])("edits refused: %j, %j", (markdown, old, message) => {
+		expect(refused(() => planEdits(markdown, [[old, old === "x" ? "```" : "y"]])).message).toBe(message);
+	});
+
+	test.each([
+		["A\nhttps://www.notion.so/T-0000000000000000000000000000000a\nB", "A", "x", { old_str: "A\n", new_str: "x\n" }],
+		["line\r\nline2 x", "line2", "y", { old_str: "\nline2 x", new_str: "\ny x" }],
+		["```\n```\nx", "x", "y", { old_str: "\nx", new_str: "\ny" }],
+		["<synced_block_reference>x</synced_block_reference>\nOK", "OK", "y", { old_str: "\nOK", new_str: "\ny" }],
+		["ok <pagex\nnext", "ok", "y", { old_str: "ok <pagex\n", new_str: "y <pagex\n" }],
+		["first\nsecond", "first", "", { old_str: "first\n", new_str: "\n" }],
+		// Replacement patterns are text.
+		["a\nIntro line\nb", "Intro", "$& $1 $$", { old_str: "\nIntro line\n", new_str: "\n$& $1 $$ line\n" }],
+	])("edits of %j: %j to %j", (markdown, old, replacement, update) => {
+		expect(planEdits(markdown, [[old, replacement]])).toEqual([update]);
+	});
+
 	test("edits may write inline code and keep fences", () => {
 		const markdown = "Start\n```py\nx = 1\n```\nEnd";
 		expect(planEdits(markdown, [["x = 1", "x = 2"]])[0]?.new_str).toBe("\nx = 2\n");
@@ -490,7 +711,6 @@ describe("properties", () => {
 	});
 
 	test("malformed properties are skipped and truncation is shown", () => {
-		// The Python case also has a key that is not a string (1), which JSON cannot carry.
 		expect(readable({ X: { type: [] }, Y: [] })).toEqual({});
 		expect(writable({ Name: { id: [], type: "title" } }, { Name: "x" })).toEqual({ Name: { title: [{ type: "text", text: { content: "x" } }] } });
 		expect(readable({ Related: { type: "relation", relation: [{ id: "a" }], has_more: true } })).toEqual({ Related: { items: ["a"], more: true } });
@@ -513,6 +733,255 @@ describe("properties", () => {
 		for (let i = 0; i < 10; i++) nested = { and: [nested] };
 		expect(refused(() => checkFilter(SCHEMA, nested))).toBeInstanceOf(OperationError);
 	});
+
+	/** Every kind of property, with values a database might hold, well formed or not. */
+	const SHAPES: JsonObject = {
+		Name: { type: "title", title: [{ plain_text: "A" }, { type: "mention", plain_text: "Secret", mention: { type: "page", page: { id: "p1" } } }, "x", { plain_text: 5 }, {}] },
+		Status: { type: "status", status: { name: "Done" } },
+		Sel: { type: "select", select: null },
+		Sel2: { type: "select", select: { id: "x" } },
+		Multi: { type: "multi_select", multi_select: [{ name: "a" }, "b", { id: "c" }] },
+		Due: { type: "date", date: { start: "2026-10-01", extra: 1 } },
+		Due2: { type: "date", date: "2026" },
+		Id: { type: "unique_id", unique_id: { prefix: "ENG", number: 5 } },
+		Id2: { type: "unique_id", unique_id: { prefix: "", number: 5 } },
+		Id3: { type: "unique_id", unique_id: { prefix: "X", number: null } },
+		People: { type: "people", people: [{ name: "Grace" }, { id: "u2", name: "" }, { id: "u3" }, "x"] },
+		By: { type: "created_by", created_by: { id: "u1", name: "Ada" } },
+		Num: { type: "number", number: 1.5 },
+		Num2: { type: "number", number: [1] },
+		Check: { type: "checkbox", checkbox: false },
+		Mail: { type: "email", email: "a@example.com" },
+		Time: { type: "created_time", created_time: "2026-10-01T00:00:00Z" },
+		Edited: { type: "last_edited_time", last_edited_time: { x: 1 } },
+		Formula: { type: "formula", formula: { number: 1 } },
+		Rollup: { type: "rollup", rollup: {} },
+		Files: { type: "files", files: [] },
+		Text: { type: "rich_text", rich_text: "not a list" },
+		Missing: { type: "rich_text" },
+		Agent: { type: "rich_text", rich_text: [{ type: "mention", mention: { type: "agent", agent: { id: "a1" } } }] },
+		User: { type: "rich_text", rich_text: [{ type: "mention", plain_text: "@Ada", mention: { type: "user", user: { id: "u1" } } }] },
+		NoTarget: { type: "rich_text", rich_text: [{ type: "mention", mention: { type: "database", database: "x" } }] },
+		Related: { type: "relation", relation: [{ id: "a" }, "b", { x: 1 }], has_more: true },
+		Related2: { type: "relation", relation: [{ id: "a" }], has_more: "yes" },
+	};
+
+	test("rows show their own values, mentions by id and nothing computed", () => {
+		expect(readable(SHAPES)).toEqual({
+			Name: "A(mention of page p1)",
+			Status: "Done",
+			Sel: null,
+			Sel2: null,
+			Multi: ["a", null],
+			Due: { start: "2026-10-01", end: null, time_zone: null },
+			Due2: null,
+			Id: "ENG-5",
+			Id2: 5,
+			Id3: null,
+			People: ["Grace", "u2", "u3", null],
+			By: "Ada",
+			Num: 1.5,
+			Num2: null,
+			Check: false,
+			Mail: "a@example.com",
+			Time: "2026-10-01T00:00:00Z",
+			Edited: null,
+			Text: "",
+			Missing: "",
+			Agent: "(mention of agent a1)",
+			User: "@Ada",
+			NoTarget: "(mention of database)",
+			Related: { items: ["a", null], more: true },
+			Related2: ["a"],
+		});
+		const described = schema(SHAPES) as { [name: string]: JsonObject };
+		expect([described.Formula, described.Rollup, described.Files, described.Status]).toEqual([
+			{ type: "formula", hidden: true },
+			{ type: "rollup", hidden: true },
+			{ type: "files", hidden: true },
+			{ type: "status", options: [] },
+		]);
+		// Which text properties mention another object, whose title a filter could probe.
+		const mentioning = Object.keys(SHAPES).filter((name) => mentionsHidden(SHAPES[name] as Json));
+		expect(mentioning).toEqual(["Name", "Agent", "NoTarget"]);
+		expect([mentionsHidden(null), mentionsHidden("x"), mentionsHidden({ type: "title", title: "x" })]).toEqual([false, false, false]);
+	});
+
+	test("rich text shows plain text, and mentions of titled objects by id", () => {
+		expect(textOf([{ plain_text: "a" }, { plain_text: "b" }])).toBe("ab");
+		expect(textOf([{ type: "mention", plain_text: "T", mention: { type: "data_source", data_source: { id: "d" } } }])).toBe("(mention of data_source d)");
+		expect(textOf([{ type: "mention", plain_text: "T", mention: { type: "date" } }])).toBe("T");
+		expect(textOf([{ type: "mention", plain_text: "T", mention: "x" }])).toBe("T");
+		expect(textOf([1, null, "x", { plain_text: "ok" }, { type: "text", plain_text: null }])).toBe("ok");
+		expect([textOf("x"), textOf(null)]).toEqual(["", ""]);
+	});
+
+	/** SCHEMA with every kind agents may set, and names that are also keys of every object. */
+	const FULL: JsonObject = {
+		...SCHEMA,
+		Kind: { id: "kd", type: "select", select: { options: [{ name: "x" }, { id: "no-name" }, "bad", { name: 5 }] } },
+		Notes: { id: "nt", type: "rich_text", rich_text: {} },
+		Score: { id: "sc", type: "number", number: {} },
+		Done: { id: "dn", type: "checkbox", checkbox: {} },
+		Link: { id: "ln", type: "url", url: {} },
+		Files: { id: "fl", type: "files", files: {} },
+		Created: { id: "ct", type: "created_time", created_time: {} },
+		constructor: { id: "cn", type: "number", number: {} },
+		Broken: [],
+		Untyped: { id: "ut" },
+	};
+	Object.defineProperty(FULL, "__proto__", { value: { id: "pr", type: "rich_text", rich_text: {} }, enumerable: true });
+
+	test.each([
+		[{ Due: "2026-10-01T10:00:00.123456+02:00" }, { Due: { date: { start: "2026-10-01T10:00:00.123456+02:00" } } }],
+		[{ Due: { start: "2026-10-01", end: "2026-10-02" } }, { Due: { date: { start: "2026-10-01", end: "2026-10-02" } } }],
+		[{ Due: null }, { Due: { date: null } }],
+		[{ Tags: [] }, { Tags: { multi_select: [] } }],
+		[{ Name: "" }, { Name: { title: [] } }],
+		[{ Name: "😀".repeat(1000) }, { Name: { title: [{ type: "text", text: { content: "😀".repeat(1000) } }] } }],
+		[{ Notes: null }, { Notes: { rich_text: [] } }],
+		[{ Score: null }, { Score: { number: null } }],
+		[{ Link: "" }, { Link: { url: null } }],
+		[{ Kind: "x" }, { Kind: { select: { name: "x" } } }],
+		[{ Kind: null }, { Kind: { select: null } }],
+		[{ constructor: 1 }, { constructor: { number: 1 } }],
+	] as [JsonObject, JsonObject][])("setting %j", (values, converted) => {
+		expect(writable(FULL, values)).toEqual(converted);
+	});
+
+	test("a property named __proto__ is an ordinary property", () => {
+		const converted = writable(FULL, parseJson('{"__proto__": "x"}') as JsonObject);
+		expect(Object.keys(converted)).toEqual(["__proto__"]);
+		expect(Object.getPrototypeOf(converted)).toBe(Object.prototype);
+		expect(Object.getOwnPropertyDescriptor(converted, "__proto__")?.value).toEqual({ rich_text: [{ type: "text", text: { content: "x" } }] });
+	});
+
+	test.each([
+		[{ Tags: "a" }, '"Tags" takes a list of distinct existing options.'],
+		[{ Tags: Array(101).fill("a") }, '"Tags" takes a list of distinct existing options.'],
+		[{ Tags: [1] }, '"Tags" takes one of its existing options, as get_database shows them.'],
+		[{ Due: "2026-10-01T10:00:00.1234567Z" }, '"Due" takes a date like "2026-10-01", or {"start": ..., "end": ...}, or null.'],
+		[{ Due: "2026-10-01\n" }, '"Due" takes a date like "2026-10-01", or {"start": ..., "end": ...}, or null.'],
+		[{ Due: "2026-02-30" }, '"Due" takes a date like "2026-10-01", or {"start": ..., "end": ...}, or null.'],
+		[{ Due: "2026-10-01T24:00Z" }, '"Due" takes a date like "2026-10-01", or {"start": ..., "end": ...}, or null.'],
+		[{ Due: "2026-10-01T10:00+24:00" }, '"Due" takes a date like "2026-10-01", or {"start": ..., "end": ...}, or null.'],
+		[{ Due: { end: "2026-10-02" } }, '"Due" takes a date like "2026-10-01", or {"start": ..., "end": ...}, or null.'],
+		[{ Due: { start: "2026-10-01", time_zone: "UTC" } }, '"Due" takes a date like "2026-10-01", or {"start": ..., "end": ...}, or null.'],
+		[{ Name: null }, '"Name" takes text of at most 2000 characters.'],
+		[{ Name: "😀".repeat(1001) }, '"Name" takes text of at most 2000 characters.'],
+		[{ Score: true }, '"Score" takes a number, or null.'],
+		[{ Score: "1" }, '"Score" takes a number, or null.'],
+		[{ Done: 1 }, '"Done" takes true or false.'],
+		[{ Link: 5 }, '"Link" takes text of at most 2000 characters, or null.'],
+		[{ Kind: "no-name" }, '"Kind" takes one of its existing options, as get_database shows them.'],
+		[{ Kind: 5 }, '"Kind" takes one of its existing options, as get_database shows them.'],
+		[{ Status: null }, '"Status" takes one of its existing options, as get_database shows them.'],
+		[{ Files: [] }, 'Minerva does not set files properties such as "Files".'],
+		[{ Created: "x" }, 'Minerva does not set created_time properties such as "Created".'],
+		[{ Owner: ["u1"] }, 'Minerva does not set people properties such as "Owner".'],
+		[{ toString: 1 }, 'There is no property named "toString".'],
+		[{ Broken: 1 }, 'There is no property named "Broken".'],
+		[{ Untyped: 1 }, 'There is no property named "Untyped".'],
+		// Ids are not names.
+		[{ st: "Done" }, 'There is no property named "st".'],
+		[{ title: "x" }, 'There is no property named "title".'],
+	] as [JsonObject, string][])("setting %j is refused", (values, message) => {
+		expect(refused(() => writable(FULL, values))).toMatchObject({ code: "INVALID_ARGUMENTS", message });
+	});
+
+	test.each([
+		[{ and: [{ property: "Status", status: { equals: "Done" } }, { property: "tg" }] }, ["Status", "Tags"]],
+		[{ property: "title" }, ["Name"]],
+		[{ property: "constructor" }, ["constructor"]],
+		[{ property: "__proto__" }, ["__proto__"]],
+		[{ property: "Owner" }, ["Owner"]],
+		[[{ timestamp: "created_time", direction: "descending" }], []],
+		[{ a: { b: { c: { d: { e: { f: { g: { property: "Status" } } } } } } } }, ["Status"]],
+		[null, []],
+		["x", []],
+	] as [Json, string[]][])("a filter uses %j", (filter, used) => {
+		expect([...checkFilter(FULL, parseJson(JSON.stringify(filter)))].sort()).toEqual(used);
+	});
+
+	test.each([
+		[{ property: "Files" }, "Minerva does not filter or sort by files properties."],
+		[{ property: "toString" }, 'There is no property named "toString".'],
+		[{ property: 5 }, "There is no property named 5."],
+		[{ property: null }, "There is no property named null."],
+		[{ a: { b: { c: { d: { e: { f: { g: { h: { property: "Status" } } } } } } } } }, "The filter is nested too deeply."],
+		[[[[[[[[[{ property: "Status" }]]]]]]]], "The filter is nested too deeply."],
+	] as [Json, string][])("a filter %j is refused", (filter, message) => {
+		expect(refused(() => checkFilter(FULL, filter))).toMatchObject({ code: "INVALID_ARGUMENTS", message });
+	});
+
+	test("a name that is another property's id must pass as both", () => {
+		const crossed = { A: { id: "B", type: "formula" }, B: { id: "A", type: "number" } };
+		expect(refused(() => checkFilter(crossed, { property: "A" })).message).toBe("Minerva does not filter or sort by formula properties.");
+	});
+});
+
+describe("tool inputs", () => {
+	const connector = notionConnector();
+	const HEX = "0000000000000000000000000000000a";
+	const ID_A = "00000000-0000-0000-0000-00000000000a";
+
+	test.each([
+		["search", {}, { text: null, limit: 20, cursor: null }],
+		["search", { text: "  launch  ", cursor: " c " }, { text: "launch", limit: 20, cursor: "c" }],
+		["get_page", { page_id: `  https://www.notion.so/acme/Plan-${HEX}  ` }, { page_id: ID_A }],
+		["read_page", { page_id: HEX }, { page_id: ID_A, offset: 0, max_chars: 20_000 }],
+		["query_database", { database_id: HEX }, { database_id: ID_A, data_source_id: null, filter: null, sorts: null, limit: 25, cursor: null }],
+		["query_database", { database_id: HEX, data_source_id: ID_A, filter: { a: "x".repeat(7990) } }, { database_id: ID_A, data_source_id: ID_A, filter: { a: "x".repeat(7990) }, sorts: null, limit: 25, cursor: null }],
+		["create_page", { parent_page_id: HEX, title: "  Notes  ", markdown: "  Hello\n  " }, { parent_page_id: ID_A, title: "Notes", markdown: "Hello" }],
+		["create_page", { parent_page_id: HEX, title: "x", markdown: "a\tb\r\nc" }, { parent_page_id: ID_A, title: "x", markdown: "a\tb\r\nc" }],
+		["edit_page", { page_id: HEX, edits: [{ old: "  Intro  ", new: "" }] }, { page_id: ID_A, edits: [{ old: "Intro", new: "" }] }],
+		["add_comment", { page_id: HEX, text: "Looks good" }, { page_id: ID_A, text: "Looks good" }],
+	] as [string, JsonObject, JsonObject][])("%s takes %j", async (name, input, normalized) => {
+		expect(await validated(connector, name, input)).toEqual({ ok: normalized });
+	});
+
+	test.each([
+		["search", { text: "a\nb" }, "text"],
+		["search", { text: "x".repeat(201) }, "text"],
+		["search", { limit: 51 }, "limit"],
+		["search", { limit: "5" }, "limit"],
+		["search", { cursor: "x".repeat(1001) }, "cursor"],
+		["search", { connection_id: "x" }, "connection_id"],
+		["get_page", { page_id: "not an id" }, "page_id"],
+		["get_page", { page_id: "x".repeat(32) }, "page_id"],
+		["get_page", { page_id: `https://evil.example/${HEX}` }, "page_id"],
+		["get_page", { page_id: HEX, extra: 1 }, "extra"],
+		["read_page", { page_id: HEX, max_chars: 100_001 }, "max_chars"],
+		["query_database", { database_id: HEX, data_source_id: "bad" }, "data_source_id"],
+		["query_database", { database_id: HEX, filter: { a: "é".repeat(8000) } }, "filter"],
+		["query_database", { database_id: HEX, filter: [] }, "filter"],
+		["query_database", { database_id: HEX, sorts: Array(11).fill({}) }, "sorts"],
+		["create_page", { parent_page_id: HEX, title: "   " }, "title"],
+		["create_page", { parent_page_id: HEX, title: "x", markdown: "a\u0000b" }, "markdown"],
+		["create_page", { parent_page_id: HEX, title: "x", markdown: "![x](y) <img src=x>" }, "markdown"],
+		["create_database_row", { database_id: HEX, properties: {} }, "properties"],
+		["create_database_row", { database_id: HEX, properties: Object.fromEntries(Array.from({ length: 51 }, (_, n) => [`p${n}`, n])) }, "properties"],
+		["create_database_row", { database_id: HEX, properties: { a: "x".repeat(8000) } }, "properties"],
+		["edit_page", { page_id: HEX, edits: [] }, "edits"],
+		["edit_page", { page_id: HEX, edits: Array(21).fill({ old: "a", new: "b" }) }, "edits"],
+		["edit_page", { page_id: HEX, edits: [{ old: "a", new: "b", x: 1 }] }, "edits.0: Unrecognized key"],
+		["edit_page", { page_id: HEX, edits: [{ old: "a", new: "<embed>" }] }, "edits.0.new"],
+		["append_to_page", { page_id: HEX, markdown: '<mention-user url="user://1"/>' }, "markdown"],
+		["add_comment", { page_id: HEX, text: "x".repeat(2001) }, "text"],
+		["add_comment", { page_id: HEX, text: "a\u0007b" }, "text"],
+	] as [string, JsonObject, string][])("%s refuses %j", async (name, input, field) => {
+		const outcome = await validated(connector, name, input);
+		expect(outcome).toMatchObject({ refused: expect.stringContaining(field) });
+	});
+
+	test("property and filter keys may not be prototype names or lone surrogates", async () => {
+		for (const key of ["__proto__", "constructor", "prototype", "\ud800"]) {
+			const properties = parseJson(`{${JSON.stringify(key)}: 1}`);
+			expect(await validated(connector, "update_page_properties", { page_id: HEX, properties }), key).toMatchObject({ refused: expect.any(String) });
+			const filter = parseJson(`{${JSON.stringify(key)}: 1}`);
+			expect(await validated(connector, "query_database", { database_id: HEX, filter }), key).toMatchObject({ refused: expect.any(String) });
+		}
+	});
 });
 
 describe("connecting", () => {
@@ -533,8 +1002,8 @@ describe("connecting", () => {
 	});
 
 	test("token requests use Basic auth and JSON", async () => {
-		// The code exchange's request (oauth.py `exchange_code` through `_token_request`), for the operator's
-		// client: Basic client authentication, a JSON body, and no code_verifier since Notion has no PKCE.
+		// The code exchange's request for the operator's client: Basic client authentication, a JSON body, and
+		// no code_verifier since Notion has no PKCE.
 		const auth = notionConnector().auth;
 		if (auth.type !== "oauth2") throw new Error("Notion connects through OAuth");
 		expect(auth.tokenUrl).toBe("https://api.notion.com/v1/oauth/token");
@@ -550,14 +1019,14 @@ describe("connecting", () => {
 		expect(headers.get("authorization")).toBe(`Basic ${btoa("id:secret")}`);
 		expect(init.redirect).toBe("manual");
 		// Notion's answer: the tokens are kept, its own fields (bot_id) ignored, and it names no scopes.
-		const body = tokenBody(JSON.stringify({ access_token: "a", refresh_token: "r", bot_id: "b" }));
+		const body = tokenBody({ access_token: "a", refresh_token: "r", bot_id: "b" });
 		expect(body).not.toBeNull();
 		expect(tokenPayload(body as JsonObject, 0)).toEqual({ kind: "oauth2", access_token: "a", refresh_token: "r", scopes: null });
 	});
 
 	test("the authorization asks for no scope and no PKCE", () => {
-		// What authorization_url builds its query from: owner=user first, then the protocol's parameters;
-		// no scope (none are declared) and no code challenge (pkce false). The URL itself is the web API's.
+		// The authorization query: owner=user first, then the protocol's parameters; no scope (none are
+		// declared) and no code challenge (pkce false).
 		const auth = notionConnector().auth;
 		expect(auth).toEqual({
 			type: "oauth2",
@@ -831,7 +1300,7 @@ describe("runs", () => {
 	});
 });
 
-describe("beyond test_notion.py", () => {
+describe("declaration, paging and limits", () => {
 	test("the registry takes the declarations; their fingerprints", async () => {
 		const connector = notionConnector();
 		const registry = await Registry.create([connector]);
@@ -929,6 +1398,19 @@ describe("beyond test_notion.py", () => {
 			message: "This page is too long for Minerva to edit.",
 		});
 		expect(notion.writes).toEqual([]);
+	});
+
+	test("page text is UTF-8 JSON: a byte order mark is dropped, anything else is unexpected", async () => {
+		const notion = fakeNotion();
+		const run = await start(notion, { home: ["read"] });
+		const original = notion.handle;
+		let body = new Uint8Array();
+		notion.handle = (request) => (request.path.endsWith(`${ID.private}/markdown`) ? new Response(body, { status: 200 }) : original(request));
+		const json = new TextEncoder().encode(JSON.stringify({ object: "page_markdown", id: ID.private, markdown: "Text é" }));
+		body = new Uint8Array([0xef, 0xbb, 0xbf, ...json]);
+		expect((await run.ok("notion_read_page", { page_id: ID.private })).result.items[0]?.text).toBe("Text é");
+		body = json.map((byte) => (byte === 0xa9 ? 0xff : byte));
+		expect(await run.error("notion_read_page", { page_id: ID.private })).toEqual({ code: "PROVIDER_FAILED", message: "Notion returned an unexpected response." });
 	});
 
 	test("read_page counts UTF-16 units and never cuts a character in half", async () => {

@@ -12,7 +12,7 @@ import { defaultPorts, PORTS } from "../conversation/ports.ts";
 import { RunStore } from "../conversation/store.ts";
 import { SCRIPT_TIMEOUT_MS } from "../scripts/limits.ts";
 import { SCRIPT_CLOCK } from "../scripts/run.ts";
-import type { RunId } from "../contracts/common.ts";
+import type { RunId } from "../shared/rpc.ts";
 import { Workspace as BaseWorkspace, WORKSPACE_PORTS } from "../workspace/workspace.ts";
 import { FLOW_CLIENTS } from "../api/oauth-clients.ts";
 import { MAIL_TRANSPORT } from "../accounts/emails.ts";

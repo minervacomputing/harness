@@ -1,11 +1,11 @@
-// Hashes and HMACs over WebCrypto, with Django's salted HMAC for values today's Python derives that way.
+// Hashes and HMACs over WebCrypto.
 
 import { hex, utf8Strict } from "./bytes.ts";
 
 type Data = string | Uint8Array;
 export type HashName = "SHA-1" | "SHA-256";
 
-/** Strings are hashed as UTF-8 and, as Python's `str.encode()`, a lone surrogate throws rather than become U+FFFD. */
+/** Strings are hashed as UTF-8; a lone surrogate throws rather than become U+FFFD (lib/bytes.ts utf8Strict). */
 function bytesOf(data: Data): Uint8Array {
 	return typeof data === "string" ? utf8Strict(data) : data;
 }
@@ -14,7 +14,7 @@ export async function digest(name: HashName, data: Data): Promise<Uint8Array> {
 	return new Uint8Array(await crypto.subtle.digest(name, bytesOf(data)));
 }
 
-/** Lowercase hex SHA-256, as Python's `hashlib.sha256(text.encode()).hexdigest()`. */
+/** Lowercase hex SHA-256. */
 export async function sha256Hex(data: Data): Promise<string> {
 	return hex(await digest("SHA-256", data));
 }
@@ -29,9 +29,8 @@ export async function hmacSha256Hex(key: Data, message: Data): Promise<string> {
 }
 
 /**
- * Django's `salted_hmac(salt, value, secret, algorithm=...)`: HMAC of `value` keyed by
- * `hash(salt + secret)`. Today's write ids are `salted_hmac("minerva.gateway.write", f"{run}:{key}")
- * .hexdigest()[:32]` with SHA-1, Django's default (runs-gateway-models spec 5.3).
+ * The HMAC of `value` keyed by `hash(salt + secret)`, in hex: one secret gives each purpose (the salt) its
+ * own key. Write ids are the first 32 hex digits of the SHA-1 form over `{run}:{key}`.
  */
 export async function saltedHmacHex(salt: string, value: Data, secret: string, name: HashName = "SHA-1"): Promise<string> {
 	const key = await digest(name, salt + secret);

@@ -3,23 +3,13 @@
 // Slack answers most failed requests with HTTP 200 and `{"ok": false, "error": "<code>"}`. Reads fail
 // closed: any such answer refuses the call. A post counts as applied only when Slack answers `ok: true`, and
 // as not applied only for the errors Slack raises when it refused the request before posting; anything else
-// (`internal_error`, an unknown code, a response that is not JSON) leaves its outcome unknown, which pauses
-// further writes. Slack's own error texts never reach the model.
-//
-// Answers are read as httpx's `response.json()` reads them: UTF-8, a byte order mark skipped. `judge` and
-// `classify` get the body as text, decoded with replacement characters (gateway/http.ts), where Python's
-// `json.loads` refuses invalid UTF-8; `post` therefore reads the bytes again and leaves a post whose answer
-// is not UTF-8 unknown, as Python's `judge` does. What still differs, for bodies Slack does not send: a
-// failed answer that is not UTF-8 may still be classified by its `error`, and `json.loads` reads UTF-16
-// and UTF-32 bodies and NaN or Infinity, which are unexpected answers here (a post's outcome unknown).
+// (`internal_error`, an unknown code, a response that is not a UTF-8 JSON object) leaves its outcome unknown,
+// which pauses further writes. Slack's own error texts never reach the model.
 
 import { z } from "zod";
-import type { Effect, ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
-import { ProviderHTTP } from "../../gateway/http.ts";
-import { fromUtf8Strict } from "../../lib/bytes.ts";
-import { type Json, type JsonObject, parseJson } from "../../lib/json.ts";
-import { dict, laxBool, laxInt } from "../../lib/lax.ts";
+import { OperationError, type ProviderClient } from "../../gateway/connector.ts";
+import { type Effect, ProviderHTTP, type ProviderIo } from "../../gateway/http.ts";
+import { isDict, type Json, type JsonObject, parseJsonBytes } from "../../lib/json.ts";
 
 export const API_URL = "https://slack.com/api";
 export const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -90,7 +80,7 @@ export const REFUSED_BEFORE_POSTING: ReadonlySet<string> = new Set([
 
 export const NOT_IN_CHANNEL_MESSAGE = "The Slack app is not a member of this channel. Someone in the channel can add it (/invite and the app's name).";
 
-/** The owned error for one of Slack's error codes (`error_for`). */
+/** The owned error for one of Slack's error codes. */
 export function errorFor(provider: string, error: Json | undefined): OperationError {
 	const code = typeof error === "string" ? error : "";
 	if (UNAUTHORIZED.has(code)) return new OperationError("CONNECTION_UNAUTHORIZED", `The ${provider} connection is no longer authorized.`);
@@ -109,30 +99,19 @@ export function errorFor(provider: string, error: Json | undefined): OperationEr
 	return new OperationError("PROVIDER_FAILED", `${provider} could not complete this request.`);
 }
 
-/** `_body` over text: a JSON object, or null. A leading byte order mark is skipped, as `json.loads` skips it in bytes. */
-export function bodyOf(text: string): JsonObject | null {
+/** A response body that is a UTF-8 JSON object (a byte order mark dropped), or null. */
+export function bodyOf(bytes: Uint8Array): JsonObject | null {
 	let body: Json;
 	try {
-		body = parseJson(text.startsWith("\ufeff") ? text.slice(1) : text);
+		body = parseJsonBytes(bytes);
 	} catch {
 		return null;
 	}
-	return typeof body === "object" && body !== null && !Array.isArray(body) ? body : null;
+	return isDict(body) ? body : null;
 }
 
-/** The body as `json.loads` decodes bytes: UTF-8, or null for anything that is not. */
-async function responseText(response: Response): Promise<string | null> {
-	try {
-		return fromUtf8Strict(new Uint8Array(await response.arrayBuffer()));
-	} catch {
-		return null;
-	}
-}
-
-/** `_body` over a response's bytes, which must be UTF-8. */
 async function responseBody(response: Response): Promise<JsonObject | null> {
-	const text = await responseText(response);
-	return text === null ? null : bodyOf(text);
+	return bodyOf(new Uint8Array(await response.arrayBuffer()));
 }
 
 function field(body: JsonObject, key: string): Json | undefined {
@@ -140,8 +119,8 @@ function field(body: JsonObject, key: string): Json | undefined {
 }
 
 /** Errors with a status other than 200; their status says enough except for authorization. */
-export function classify(provider: string, _response: Response, text: string): OperationError | null {
-	const body = bodyOf(text);
+export function classify(provider: string, _response: Response, _text: string, bytes: Uint8Array): OperationError | null {
+	const body = bodyOf(bytes);
 	const error = body === null ? undefined : field(body, "error");
 	if (typeof error === "string" && UNAUTHORIZED.has(error)) return errorFor(provider, error);
 	return null;
@@ -151,9 +130,9 @@ export function classify(provider: string, _response: Response, text: string): O
  * What a post did. Only Slack's answer counts for a success status, whichever; other statuses are judged by
  * status: 429 was refused, 5xx is unknown.
  */
-export function judge(response: Response, text: string): Effect | null {
+export function judge(response: Response, _text: string, bytes: Uint8Array): Effect | null {
 	if (response.status < 200 || response.status >= 300) return null;
-	const body = bodyOf(text);
+	const body = bodyOf(bytes);
 	if (body === null) return "unknown";
 	const ok = field(body, "ok");
 	if (ok === true) return "applied";
@@ -162,38 +141,39 @@ export function judge(response: Response, text: string): Effect | null {
 	return "unknown";
 }
 
-// The answers' models: Pydantic's lax mode, unknown fields ignored (lax.ts).
+// What Slack answers, unknown fields dropped.
 
-const str = () => z.string();
-const optionalStr = () => z.string().nullable().default(null);
+const optionalText = () => z.string().nullable().default(null);
+/** A JSON object, whatever it holds. */
+const object = () => z.custom<JsonObject>(isDict);
 
 export const Identity = z.object({
-	team_id: str(),
-	team: str().default(""),
-	user_id: str(),
-	user: str().default(""),
-	is_enterprise_install: laxBool().default(false),
+	team_id: z.string(),
+	team: z.string().default(""),
+	user_id: z.string(),
+	user: z.string().default(""),
+	is_enterprise_install: z.boolean().default(false),
 });
 export type Identity = z.output<typeof Identity>;
 
-const Text = z.object({ value: str().default("") });
+const Text = z.object({ value: z.string().default("") });
 
 export const Channel = z.object({
-	id: str(),
-	name: str().default(""),
-	is_channel: laxBool().default(false),
-	is_group: laxBool().default(false),
-	is_im: laxBool().default(false),
-	is_mpim: laxBool().default(false),
-	is_private: laxBool().default(false),
-	is_archived: laxBool().default(false),
+	id: z.string(),
+	name: z.string().default(""),
+	is_channel: z.boolean().default(false),
+	is_group: z.boolean().default(false),
+	is_im: z.boolean().default(false),
+	is_mpim: z.boolean().default(false),
+	is_private: z.boolean().default(false),
+	is_archived: z.boolean().default(false),
 	// Left out by some methods; unknown counts as not a member.
-	is_member: laxBool().nullable().default(null),
-	is_ext_shared: laxBool().default(false),
-	is_pending_ext_shared: laxBool().default(false),
+	is_member: z.boolean().nullable().default(null),
+	is_ext_shared: z.boolean().default(false),
+	is_pending_ext_shared: z.boolean().default(false),
 	topic: Text.nullable().default(null),
 	purpose: Text.nullable().default(null),
-	num_members: laxInt().nullable().default(null),
+	num_members: z.number().int().nullable().default(null),
 });
 export type Channel = z.output<typeof Channel>;
 
@@ -202,42 +182,42 @@ export function isConversationChannel(channel: Channel): boolean {
 	return (channel.is_channel || channel.is_group) && !channel.is_im && !channel.is_mpim;
 }
 
-const Reaction = z.object({ name: str().default(""), count: laxInt().default(0) });
+const Reaction = z.object({ name: z.string().default(""), count: z.number().int().default(0) });
 
 const File = z.object({
-	id: optionalStr(),
-	name: optionalStr(),
-	title: optionalStr(),
-	mimetype: optionalStr(),
-	size: laxInt().nullable().default(null),
+	id: optionalText(),
+	name: optionalText(),
+	title: optionalText(),
+	mimetype: optionalText(),
+	size: z.number().int().nullable().default(null),
 });
 
 export const Message = z.object({
-	ts: str(),
-	type: optionalStr(),
-	subtype: optionalStr(),
-	user: optionalStr(),
-	bot_id: optionalStr(),
-	username: optionalStr(),
-	text: str().default(""),
-	thread_ts: optionalStr(),
-	reply_count: laxInt().nullable().default(null),
-	latest_reply: optionalStr(),
-	edited: dict().nullable().default(null),
+	ts: z.string(),
+	type: optionalText(),
+	subtype: optionalText(),
+	user: optionalText(),
+	bot_id: optionalText(),
+	username: optionalText(),
+	text: z.string().default(""),
+	thread_ts: optionalText(),
+	reply_count: z.number().int().nullable().default(null),
+	latest_reply: optionalText(),
+	edited: object().nullable().default(null),
 	reactions: z.array(Reaction).default(() => []),
 	files: z.array(File).default(() => []),
-	attachments: z.array(dict()).default(() => []),
-	blocks: z.array(dict()).default(() => []),
+	attachments: z.array(object()).default(() => []),
+	blocks: z.array(object()).default(() => []),
 });
 export type Message = z.output<typeof Message>;
 
-const Profile = z.object({ display_name: str().default(""), real_name: str().default("") });
+const Profile = z.object({ display_name: z.string().default(""), real_name: z.string().default("") });
 
 export const User = z.object({
-	id: str(),
-	name: str().default(""),
-	real_name: str().default(""),
-	deleted: laxBool().default(false),
+	id: z.string(),
+	name: z.string().default(""),
+	real_name: z.string().default(""),
+	deleted: z.boolean().default(false),
 	profile: Profile.nullable().default(null),
 });
 export type User = z.output<typeof User>;
@@ -248,7 +228,7 @@ export function shownName(user: User): string {
 	return user.real_name || (user.profile ? user.profile.real_name : "") || user.name;
 }
 
-export const Posted = z.object({ channel: optionalStr(), ts: optionalStr() });
+export const Posted = z.object({ channel: optionalText(), ts: optionalText() });
 export type Posted = z.output<typeof Posted>;
 
 type Params = { [name: string]: string | number | null | undefined };
@@ -256,12 +236,10 @@ type Params = { [name: string]: string | number | null | undefined };
 /** Thin client for Slack's Web API. Responses are validated before use. */
 export class SlackClient implements ProviderClient {
 	readonly bot: boolean;
-	readonly #io: ProviderIo;
 	readonly #http: ProviderHTTP;
 
 	constructor(accessToken: string, io: ProviderIo, baseUrl: string = API_URL) {
 		this.bot = BOT_TOKEN_PREFIXES.some((prefix) => accessToken.startsWith(prefix));
-		this.#io = io;
 		this.#http = new ProviderHTTP(io, {
 			provider: "Slack",
 			baseUrl,
@@ -392,14 +370,8 @@ export class SlackClient implements ProviderClient {
 			body: JSON.stringify(payload),
 			headers: { "Content-Type": "application/json; charset=utf-8" },
 		});
-		const answer = await responseText(response);
-		if (answer === null) {
-			// `judge` read the text with replacement characters; Python's read no answer in these bytes, so
-			// what the post did stays unknown.
-			const attempt = this.#io.currentWrite();
-			if (attempt !== null && attempt.sent && !attempt.closed) attempt.effect = "unknown";
-		}
-		const body = answer === null ? null : bodyOf(answer);
+		// `judge` read the same bytes: a body that is not a JSON object left the outcome unknown.
+		const body = await responseBody(response);
 		if (body === null) throw new OperationError("WRITE_UNCONFIRMED", "Slack did not confirm the message.");
 		if (field(body, "ok") !== true) throw errorFor("Slack", field(body, "error"));
 		const posted = Posted.safeParse(body);

@@ -67,7 +67,7 @@ DESCRIPTIONS = {
 }
 
 CHUNK = 1024 * 1024
-# A positional read answers at most this much (contracts/sandbox.ts FsAnswers).
+# A positional read answers at most this much (src/sandbox/files.ts FsAnswers).
 MAX_READ = 4 * 1024 * 1024
 
 
@@ -139,7 +139,7 @@ def decoded(raw):
     return raw.decode(ENCODING, "replace")
 
 
-# File operations (pi's FileSystem; contracts/sandbox.ts FsRequest). Paths are absolute: the client resolves
+# File operations (pi's FileSystem; src/sandbox/files.ts FsRequest). Paths are absolute: the client resolves
 # them against the environment's cwd as pi does.
 
 

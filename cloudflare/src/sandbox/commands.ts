@@ -1,15 +1,46 @@
-// An agent command (contracts/sandbox.ts ExecRequest): run through the wrapper, both streams read as they
+// An agent command (`ExecRequest`): run through the wrapper, both streams read as they
 // arrive and handed to the caller's sink through an OutputPump, the complete output spilled to a file in
 // the container past pi's thresholds, then the outcome in pi's terms (pi's NodeExecutionEnv.exec): after
 // the process exits, output is still taken until both streams end or 100 ms pass without any, so a
 // background process holding a pipe cannot hold the call.
 
-import type { ExecOutputSink, ExecRequest, ExecResult } from "../contracts/sandbox.ts";
+import type { ExecutionErrorCode, ShellOutputSkip } from "@earendil-works/pi-durable/env";
 import { parseJson } from "../lib/json.ts";
 import { ByteReader } from "./bytes.ts";
 import { KILL_AFTER_SECONDS, TMP } from "./constants.ts";
 import { OutputPump, SpillCounter, type Stream, StreamText } from "./output.ts";
 import { ContainerGone, helper, killGroup, type Machine, sleep, startWrapped, type Wrapped } from "./process.ts";
+
+export interface ExecRequest {
+	/** Chosen by the caller, unique within the incarnation; `cancel` names it. */
+	execId: string;
+	/** A string runs through `bash -c`; an array runs without a shell, arguments unparsed. */
+	command: string | string[];
+	cwd: string;
+	/**
+	 * Exactly the command's environment; nothing is inherited. Bash calls get PATH, HOME=/tmp/home,
+	 * TMPDIR=/tmp, LANG=C.UTF-8 and MPLCONFIGDIR=/tmp/matplotlib.
+	 */
+	env: { [name: string]: string };
+	/**
+	 * Seconds, already cut to the run's deadline; 0 for none. The wrapper's `timeout` stops the command's
+	 * process group (TERM, then KILL 5 s later) and the result is `timeout`.
+	 */
+	timeoutSeconds: number;
+	/** Spill the complete output to a file under /tmp past either threshold (pi's ShellSpillOptions). */
+	spill?: { afterBytes: number; afterLines: number };
+	/** The tail the caller keeps; output outside it may be skipped and reported (pi's ShellOutputWindow). */
+	window?: { maxBytes: number; maxLines: number; minIntervalMs: number; bytesPerSecond: number };
+}
+
+/** An RpcTarget the caller passes to `exec`, called with output as it arrives, each stream decoded separately. */
+export interface ExecOutputSink {
+	output(chunk: { stream: "stdout" | "stderr"; text: string; skipped?: ShellOutputSkip }): void;
+}
+
+export type ExecResult =
+	| { ok: true; exitCode: number; spillPath?: string }
+	| { ok: false; code: ExecutionErrorCode; message: string; spillPath?: string };
 
 /** pi's EXIT_STDIO_GRACE_MS. */
 const STDIO_GRACE_MS = 100;

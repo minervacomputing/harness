@@ -1,5 +1,5 @@
-// The model wrapper (plan: The harness, Model; runs 7): the one pi-ai provider pi is opened with. pi stores a
-// session's model as `minerva/default` (runs 1.7: the alias is always `default`) and resolves it at each
+// The model wrapper (plan: The harness, Model): the one pi-ai provider pi is opened with. pi stores a
+// session's model as `minerva/default` (the alias is always `default`) and resolves it at each
 // request, so every call, compaction's included, comes through here. For each request the wrapper:
 //
 // - finds the run it belongs to by pi's provider session id, and refuses it ("This run has ended.", counted
@@ -9,14 +9,14 @@
 // - forces the route's model, the output cap and `store: false` on the payload, and adds the route's
 //   reasoning settings;
 // - asks once more without the reasoning summary when the provider refuses it, and then never asks for one
-//   again in this isolate (runs 7.5, step 7);
+//   again in this isolate;
 // - aborts the upstream request when the run stops, is revoked, passes its deadline or is replaced, and
 //   ends a call whose answer has not started within 120 s, or whose answer that is not an event stream
-//   has not been read within 120 s more, as an error (runs 2.5);
+//   has not been read within 120 s more, as an error;
 // - taps the stream: text and reasoning published every 0.25 s per call with the call's 8-hex id (not for
 //   a compaction's summary), tool-call argument text kept as the model sent it, and when the call settles
 //   (attempt or not) the last usage report recorded, or the call counted unmetered if it streamed without
-//   one or was stopped; a call the provider refused or that never reached it is neither (runs 7.5, 7.6);
+//   one or was stopped; a call the provider refused or that never reached it is neither;
 // - keeps provider text out of everything pi gets (tap.ts `screened`): a failure's text is replaced with
 //   "The model provider reported an error.", or for a context overflow with words pi-ai still classifies as
 //   one, so pi compacts and asks again; createAI's diagnostics, which copy that text, are dropped from every
@@ -44,29 +44,29 @@ import {
 	type SimpleStreamOptions,
 	type TranscriptContext,
 } from "@earendil-works/pi-ai";
-import type { AttemptFence } from "../contracts/common.ts";
 import { parseJson } from "../lib/json.ts";
 import { tokenHex } from "../lib/random.ts";
+import type { AttemptFence } from "../shared/rpc.ts";
 import { forcePayload, isCompaction, outputCap, refusal } from "./policy.ts";
 import { CONTEXT_WINDOW, type ModelRoute, QUIET_MS, type Upstream } from "./route.ts";
 import { DeltaBuffer, errorClass, failureSummary, PROVIDER_ERROR, reportedUsage, type Segment, screened, screenedEvent, TEXT_FLUSH_MS } from "./tap.ts";
 
 export const MINERVA_PROVIDER = "minerva";
 export const MINERVA_API = "minerva";
-/** The model alias every run uses today (runs 1.7). */
+/** The model alias every run uses. */
 export const MODEL_ALIAS = "default";
 /** How pi refers to the model, in every session it stores. */
 export const MODEL_REF = { provider: MINERVA_PROVIDER, modelId: MODEL_ALIAS } as const;
 
-/** The 401 today's relay answers a model call of a run that is not current with (runs 7.5). */
+/** The error a model call of a run that is not current ends with. */
 export const RUN_ENDED_TEXT = "This run has ended.";
 /** For the operator, once per isolate, when the provider took a request without the summary it refused. */
 export const SUMMARY_REFUSED_HINT = "The model provider refused a reasoning summary; set MINERVA_MODEL_REASONING_SUMMARY empty";
 
 /**
  * Set once the provider refused a reasoning summary and then took the request without one (OpenAI asks
- * some organizations to verify first): later calls ask for none. Per isolate, where today's was per
- * process (runs 7.5, step 7); tests reset it.
+ * some organizations to verify first): later calls ask for none. Per isolate; tests
+ * reset it.
  */
 export const REASONING_SUMMARY = { refused: false };
 
@@ -86,7 +86,7 @@ export interface ModelHost {
 	/** A tool call's argument text, as the model sent it, when its call ends. */
 	toolCallText(fence: AttemptFence, callId: string, text: string): void;
 	/**
-	 * Not fenced: a call is metered whichever attempt made it (runs 7.5, step 10); null counts it unmetered.
+	 * Not fenced: a call is metered whichever attempt made it; null counts it unmetered.
 	 * Not called for a call the provider refused or that never reached it.
 	 */
 	settled(fence: AttemptFence, usage: { input: number; output: number } | null): void;
@@ -94,7 +94,7 @@ export interface ModelHost {
 	log(message: string): void;
 }
 
-/** The model pi sees: `minerva/default`, text only, with today's context window and the route's cap. */
+/** The model pi sees: `minerva/default`, text only, with CONTEXT_WINDOW and the route's cap. */
 export function minervaModel(route: ModelRoute): Model<Api> {
 	return {
 		id: MODEL_ALIAS,
@@ -177,9 +177,8 @@ function asksSummary(route: ModelRoute): boolean {
 }
 
 /**
- * The relay's test (runs 7.5, step 7): a 400 whose error mentions the summary. createAI reads the
- * provider's error message from its body (OpenAI's `error.message`), where today's relay searched the
- * body's first 16 KiB.
+ * Whether the provider refused the reasoning summary: a 400 whose error mentions the summary. createAI
+ * reads the provider's error message from its body (OpenAI's `error.message`).
  */
 function summaryRefused(event: AssistantMessageEvent, status: number | undefined): boolean {
 	return event.type === "error" && event.reason === "error" && status === 400 && (event.error.errorMessage ?? "").toLowerCase().includes("summar");
@@ -278,8 +277,8 @@ function wrapped(context: TranscriptContext, streamOptions: SimpleStreamOptions 
 			let { events, iterator } = send(summary);
 			let next = await nextOf(iterator);
 			if (summary && !next.done && summaryRefused(next.value, status)) {
-				// Asked once more without the summary; if that is taken, the summary was the problem (runs 7.5,
-				// step 7). The same call: not counted again, and the refused request was neither metered nor not.
+				// Asked once more without the summary; if that is taken, the summary was the problem.
+				// The same call: not counted again, and the refused request was neither metered nor not.
 				if (!options.host.current(fence) || stops.some((signal) => signal.aborted)) {
 					runEnded = true;
 					throw new Error(RUN_ENDED_TEXT);
@@ -345,8 +344,7 @@ function wrapped(context: TranscriptContext, streamOptions: SimpleStreamOptions 
 		flush();
 		// Settled once the provider accepted the request (a 200, a stream or not: one with no body is
 		// unmetered), or when the run or pi stopped the call before any answer came; a call the provider
-		// refused, or that never reached it, is counted but neither metered nor unmetered (runs 7.5, steps 6,
-		// 8 and 9).
+		// refused, or that never reached it, is counted but neither metered nor unmetered.
 		const accepted = streamed || status === 200;
 		if (accepted) options.host.settled(fence, reportedUsage(final.usage));
 		else if (!runEnded && status === undefined && stops.some((signal) => signal.aborted)) options.host.settled(fence, null);

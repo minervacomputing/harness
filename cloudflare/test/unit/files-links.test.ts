@@ -1,15 +1,12 @@
-// Download links and headers (files 11.2; plan: Files, Downloads): Content-Disposition exactly as Django
-// writes it (against the vectors), urllib's quote, links signed with MINERVA_DOWNLOAD_KEY over the origin,
+// Download links and headers: Content-Disposition, links signed with MINERVA_DOWNLOAD_KEY over the origin,
 // workspace, conversation, version, path, user, object and a five-minute expiry, and the byte ranges the
 // download origin serves.
 
 import { describe, expect, test } from "vitest";
 import { parseRange, servedRange } from "../../src/files/download.ts";
 import { LINK_LIFETIME_MS } from "../../src/files/limits.ts";
-import { contentDisposition, type DownloadLink, downloadLinkFor, quote, signDownload, verifyDownload } from "../../src/files/links.ts";
-import { filesVectors } from "./files-support.ts";
+import { contentDisposition, type DownloadLink, downloadLinkFor, signDownload, verifyDownload } from "../../src/files/links.ts";
 
-const vectors = filesVectors();
 const KEY = "a-download-key-for-these-tests-only";
 const ORIGIN = "https://files.minerva.example";
 const NOW = 1_760_000_000_000;
@@ -24,19 +21,26 @@ const LINK: Omit<DownloadLink, "expires"> = {
 };
 
 describe("Content-Disposition", () => {
-	test("as Django's content_disposition_header(True, name) writes it", () => {
-		for (const { name, header } of vectors.content_disposition as { name: string; header: string }[]) expect([name, contentDisposition(name)]).toEqual([name, header]);
-	});
-
-	test("today's download: the UTF-8 form without an ASCII fallback", () => {
-		expect(contentDisposition("zażółć report.html")).toBe("attachment; filename*=utf-8''za%C5%BC%C3%B3%C5%82%C4%87%20report.html");
-		expect(contentDisposition('say "hi"\\.txt')).toBe('attachment; filename="say \\"hi\\"\\\\.txt"');
-	});
-
-	test("quote keeps letters, digits, _.-~ and /, and escapes every other byte", () => {
-		expect(quote("a b/c~d_e.f-g")).toBe("a%20b/c~d_e.f-g");
-		expect(quote("\u{1F600}")).toBe("%F0%9F%98%80");
-		expect(quote("!*'();:@&=+$,?#[]")).toBe("%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D");
+	test.each([
+		["report.html", 'attachment; filename="report.html"'],
+		["a b", 'attachment; filename="a b"'],
+		["100%", 'attachment; filename="100%"'],
+		['say "hi"\\.txt', 'attachment; filename="say \\"hi\\"\\\\.txt"'],
+		["~!@#$%^&*()_+`-={}|[]:;'<>?,./", "attachment; filename=\"~!@#$%^&*()_+`-={}|[]:;'<>?,./\""],
+		// Anything else, controls and line breaks included, is percent-encoded UTF-8 and cannot end the header.
+		["za\u017c\u00f3\u0142\u0107 report.html", "attachment; filename*=utf-8''za%C5%BC%C3%B3%C5%82%C4%87%20report.html"],
+		["\u{1f600}.png", "attachment; filename*=utf-8''%F0%9F%98%80.png"],
+		["a\nb", "attachment; filename*=utf-8''a%0Ab"],
+		["a\n", "attachment; filename*=utf-8''a%0A"],
+		["a\r\nSet-Cookie: x", "attachment; filename*=utf-8''a%0D%0ASet-Cookie%3A%20x"],
+		["tab\there", "attachment; filename*=utf-8''tab%09here"],
+		["\u007f", "attachment; filename*=utf-8''%7F"],
+		["it's (1)*.txt\u00e9", "attachment; filename*=utf-8''it%27s%20%281%29%2A.txt%C3%A9"],
+		["line\u2028", "attachment; filename*=utf-8''line%E2%80%A8"],
+		["", "attachment"],
+	])("%j", (name, header) => {
+		expect(contentDisposition(name)).toBe(header);
+		expect(new Headers({ "Content-Disposition": contentDisposition(name) }).get("Content-Disposition")).toBe(header);
 	});
 });
 

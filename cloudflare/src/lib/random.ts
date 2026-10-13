@@ -7,12 +7,12 @@ export function randomBytes(length: number): Uint8Array {
 	return crypto.getRandomValues(new Uint8Array(length));
 }
 
-/** Python's `secrets.token_urlsafe(n)`: n random bytes in URL-safe base64 without padding (32 bytes: 43 characters). */
+/** n random bytes in URL-safe base64 without padding (32 bytes: 43 characters). */
 export function tokenUrlsafe(bytes = 32): string {
 	return base64url(randomBytes(bytes), { pad: false });
 }
 
-/** Python's `secrets.token_hex(n)`: 2n lowercase hex characters. */
+/** n random bytes as 2n lowercase hex characters. */
 export function tokenHex(bytes = 32): string {
 	return hex(randomBytes(bytes));
 }
@@ -20,7 +20,7 @@ export function tokenHex(bytes = 32): string {
 export const ALPHANUMERIC = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 export const DIGITS = "0123456789";
 
-/** `length` characters drawn uniformly from `alphabet` (Django's `get_random_string`), without modulo bias. */
+/** `length` characters drawn uniformly from `alphabet`, without modulo bias. */
 export function randomString(length: number, alphabet = ALPHANUMERIC): string {
 	if (alphabet.length < 2 || alphabet.length > 256) throw new RangeError("An alphabet has 2 to 256 characters.");
 	const limit = 256 - (256 % alphabet.length);
@@ -38,9 +38,8 @@ let lastMs = -1;
 let counter = 0;
 
 /**
- * A UUIDv7 (RFC 9562), lowercase and hyphenated, as today's primary keys are. Like Python 3.14's
- * `uuid.uuid7()`, ids made in the same millisecond carry a 42-bit counter that keeps them in order, which
- * matters in Workers, where the clock stands still while a request computes.
+ * A UUIDv7 (RFC 9562), lowercase and hyphenated, as every id is. Ids made in the same millisecond carry a
+ * 42-bit counter that keeps them in order (RFC 9562's method 1), which matters in Workers, where the clock stands still while a request computes.
  */
 export function uuid7(now = Date.now()): string {
 	const random = randomBytes(10);

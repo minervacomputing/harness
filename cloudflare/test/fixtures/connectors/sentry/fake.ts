@@ -1,4 +1,4 @@
-// backend/tests/test_sentry.py's FakeSentry behind an injected `fetch`: the API of one organisation, "acme",
+// Sentry's API behind an injected `fetch`: the API of one organisation, "acme",
 // in the de.sentry.io region, with two projects (web, and payroll, whose name is the secret) and three issues.
 // Ids, names and addresses are made up; addresses use reserved example domains and private networks.
 
@@ -128,7 +128,7 @@ export type Hook = (request: Seen) => Response | null;
 
 export class FakeSentry {
 	requests: Seen[] = [];
-	/** What the Python fake asserts on each request; a test checks it stayed empty. */
+	/** What went wrong in a request (token, host, region, path); a test checks it stayed empty. */
 	problems: string[] = [];
 	user: SentryObject = { id: "42", name: "Ada Lovelace", email: "ada@example.com" };
 	organisations: SentryObject[] = [{ id: "7", slug: "acme", name: "Acme", links: { regionUrl: "https://de.sentry.io" } }];

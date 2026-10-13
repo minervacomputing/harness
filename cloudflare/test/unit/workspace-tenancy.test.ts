@@ -1,9 +1,8 @@
-// The Workspace's provisioning, agents and conversation index, over node:sqlite: backend/tests/
-// test_tenancy.py restated as Workspace invariants (web-api 6.3, 7), and the agent cases of test_api.py
-// (web-api 8.3).
+// The Workspace's provisioning, agents and conversation index, over node:sqlite: tenancy as Workspace
+// invariants, and agents.
 
 import { describe, expect, test } from "vitest";
-import type { AgentIn } from "../../src/contracts/api.ts";
+import type { AgentIn } from "../../src/shared/api.ts";
 import { CHOOSE_CONNECTIONS, DEFAULT_AGENT, KEEP_ONE_AGENT, NOT_FOUND } from "../../src/workspace/core.ts";
 import { ADA, GRACE, OTHER, USER, WORKSPACE, attach, connectMixed, conversation, database, defaultAgent, harness } from "./workspace-support.ts";
 

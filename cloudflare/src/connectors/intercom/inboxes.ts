@@ -1,9 +1,8 @@
 // What Intercom's operations share: inboxes, conversation names, and where conversations are.
 
 import { z } from "zod";
-import type { Binding } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, denied } from "../../gateway/connector.ts";
+import { type Binding, OperationError, denied } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import { type Conversation, ID, type IntercomClient } from "./client.ts";
 import { formatUtc } from "../../lib/dates.ts";
 

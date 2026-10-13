@@ -1,17 +1,16 @@
-// The provider calls of the connection settings (web-api 8.5): the account behind a new API key, and the
-// access editor's discover, children and describe. They run here, in the Worker, as the contract has it
-// (contracts/workspace.ts): the Workspace lends the caller's credential (`lease` for `settings`, refreshed
+// The provider calls of the connection settings: the account behind a new API key, and the
+// access editor's discover, children and describe. They run here, in the Worker, as the Workspace's API has it
+// (workspace/core.ts `WorkspaceApi`): the Workspace lends the caller's credential (`lease` for `settings`, refreshed
 // first when it is about to expire), it is decrypted for the one call only, as the Conversation's executor
 // does for a run, and it is never stored or returned. A token the provider rejects marks the connection
-// Needs reconnecting, unless it got new credentials meanwhile (connections/credentials.py `open_client`).
+// Needs reconnecting, unless it got new credentials meanwhile.
 
-import type { WorkspaceRef } from "../contracts/common.ts";
-import type { Account, Connector, CredentialPayload, ProviderClient } from "../contracts/connectors.ts";
-import { OperationError } from "../gateway/connector.ts";
+import { type Account, type Connector, type CredentialPayload, OperationError, type ProviderClient } from "../gateway/connector.ts";
 import { secretOf, unauthorized } from "../gateway/executor.ts";
 import { CallIo } from "../gateway/http.ts";
 import { HttpError, detail } from "../http/errors.ts";
 import { EncryptionKeys, credentialBinding } from "../lib/encryption.ts";
+import type { WorkspaceRef } from "../shared/rpc.ts";
 import type { Member } from "./members.ts";
 
 /**
@@ -54,7 +53,7 @@ export function providerAccount(env: Env, workspace: WorkspaceRef, connector: Co
 	return call(env, workspace, connector, secret, (client) => connector.account(client));
 }
 
-/** The account a key belongs to; a provider's refusal is 422 with its message (connections/services.py `save_connection`). */
+/** The account a key belongs to; a provider's refusal is 422 with its message. */
 export async function keyAccount(env: Env, workspace: WorkspaceRef, connector: Connector, key: string): Promise<Account> {
 	try {
 		return await providerAccount(env, workspace, connector, key);
@@ -67,7 +66,7 @@ export async function keyAccount(env: Env, workspace: WorkspaceRef, connector: C
 /**
  * Runs `run` against the provider with the connection's credentials, for the member. A credential the
  * Workspace will not lend (the connection needs reconnecting, a refresh failed) and a provider's failure are
- * 502 with their message (connections/api.py `_provider_call`).
+ * 502 with their message; an id refused before anything is sent is 422.
  */
 export async function withConnection<T>(env: Env, member: Member, connector: Connector, connectionId: string, run: (client: ProviderClient) => Promise<T>): Promise<T> {
 	const lease = await member.object.lease(connectionId, { settings: member.caller });
@@ -84,7 +83,8 @@ export async function withConnection<T>(env: Env, member: Member, connector: Con
 				console.error("Could not mark the connection as needing reconnecting", connectionId, marking);
 			}
 		}
-		if (error instanceof OperationError) throw new HttpError(detail(502, error.message));
+		// An id the member gave that cannot name anything (segment refuses "..") is their mistake, not the provider's.
+		if (error instanceof OperationError) throw new HttpError(detail(error.code === "INVALID_ARGUMENTS" ? 422 : 502, error.message));
 		throw error;
 	}
 }

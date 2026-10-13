@@ -1,13 +1,12 @@
 // The API's shapes as the Workspace builds them: connections with their access, the scopes consent asks
 // for, and agents.
 
-import type { AccessOut, ActionOut, AgentOut, AllowedOut, ConnectionOut, ConversationOut, GrantOut, KindOut } from "../contracts/api.ts";
-import type { Caller, UserId } from "../contracts/common.ts";
-import type { Connector, Operation } from "../contracts/connectors.ts";
-import type { GrantRow } from "../contracts/policy.ts";
-import { actionOf, consentGiven, kindOf } from "../gateway/connector.ts";
+import { type Connector, type Operation, actionOf, consentGiven, kindOf } from "../gateway/connector.ts";
+import type { GrantRow } from "../gateway/grants.ts";
 import { ANY } from "../gateway/policy.ts";
 import { isoTime } from "../lib/dates.ts";
+import type { AccessOut, ActionOut, AgentOut, AllowedOut, ConnectionOut, ConversationOut, GrantOut, KindOut } from "../shared/api.ts";
+import type { Caller, UserId } from "../shared/rpc.ts";
 
 /** Names of resources shown per allowed action in a connection's summary. */
 export const SUMMARY_NAMES = 3;
@@ -78,7 +77,7 @@ export function consentNeeded(connector: Connector, scopes: readonly string[] | 
 /**
  * `requested_scopes`: the connector's base scopes, then what the operations behind `actions` need (the first
  * option of each), sorted. Stored scopes are not trusted to be current: the user may have revoked access at
- * the provider since. For the reconnect flow (connectors 11.7).
+ * the provider since. For the reconnect flow.
  */
 export function requestedScopes(connector: Connector, actions: ReadonlySet<string>): string[] {
 	if (connector.auth.type !== "oauth2") throw new TypeError(`${connector.name} does not connect through OAuth.`);

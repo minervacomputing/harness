@@ -1,13 +1,19 @@
-// Google Calendar. Resources are calendars;
-// what is allowed on a calendar covers its events.
+// Google Calendar. Resources are calendars; what is allowed on a calendar covers its events.
 
 import { z } from "zod";
-import type { Binding, Connector, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
-import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
+import {
+	type Binding,
+	type Connector,
+	OperationError,
+	type Prepared,
+	type ProviderOutput,
+	type ScopedRecord,
+	defineOperation,
+	denied,
+} from "../../gateway/connector.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
 import { sliceText } from "../../lib/text.ts";
 import { oauth } from "../google/index.ts";
-import { setOwn } from "../google/model.ts";
 import { type EventTime, type GoogleCalendar, GoogleCalendarClient, type GoogleEvent, calendarName } from "./client.ts";
 import { epochMicros, isDate, isTimeZone, parseDate, parseZonedDateTime } from "../../lib/dates.ts";
 import { extend } from "../../lib/arrays.ts";
@@ -60,8 +66,8 @@ async function allCalendars(client: GoogleCalendarClient, maxPages: number): Pro
 	for (let page = 0; page < maxPages; page++) {
 		const found = await client.calendars(token);
 		extend(calendars, found.items);
-		if (!found.next_page_token) return calendars;
-		token = found.next_page_token;
+		if (!found.nextPageToken) return calendars;
+		token = found.nextPageToken;
 	}
 	throw new OperationError("PROVIDER_LIMIT", "This Google account has more calendars than Minerva can list.");
 }
@@ -85,13 +91,13 @@ async function calendarIdOf(client: GoogleCalendarClient, calendarId: string): P
 
 function timeOf(value: EventTime | null): string | null {
 	if (value === null) return null;
-	return value.date_time || value.date;
+	return value.dateTime || value.date;
 }
 
 function eventRecord(binding: Binding, calendarId: string, event: GoogleEvent): ScopedRecord {
 	let description = event.description;
 	if (description && description.length > MAX_DESCRIPTION) description = `${sliceText(description, 0, MAX_DESCRIPTION)} [truncated]`;
-	const attendees = event.attendees.slice(0, MAX_ATTENDEES).map((a) => ({ email: a.email, name: a.display_name, response: a.response_status }));
+	const attendees = event.attendees.slice(0, MAX_ATTENDEES).map((a) => ({ email: a.email, name: a.displayName, response: a.responseStatus }));
 	return {
 		resource: binding.resource(CALENDAR, calendarId),
 		data: {
@@ -103,14 +109,14 @@ function eventRecord(binding: Binding, calendarId: string, event: GoogleEvent): 
 			location: event.location,
 			start: timeOf(event.start),
 			end: timeOf(event.end),
-			all_day: Boolean(event.start && event.start.date && !event.start.date_time),
-			time_zone: event.start ? event.start.time_zone : null,
+			all_day: Boolean(event.start && event.start.date && !event.start.dateTime),
+			time_zone: event.start ? event.start.timeZone : null,
 			organizer: event.organizer ? event.organizer.email : null,
 			attendees,
 			// The attendee list is incomplete when Google or Minerva left some out.
-			attendees_incomplete: event.attendees_omitted || event.attendees.length > MAX_ATTENDEES,
-			link: event.html_link,
-			recurring_event_id: event.recurring_event_id,
+			attendees_incomplete: event.attendeesOmitted || event.attendees.length > MAX_ATTENDEES,
+			link: event.htmlLink,
+			recurring_event_id: event.recurringEventId,
 		},
 	};
 }
@@ -177,18 +183,19 @@ function eventBody(data: CreateEventInput): { [key: string]: Json } {
 	return body;
 }
 
-/** Minerva's own upstream cursor, Google's page token with the first page's time bound. */
-function pageState(cursor: string): { [key: string]: Json } {
-	let state: Json | null;
+/** Minerva's own upstream cursor: Google's page token with the first page's lower time bound. */
+const PageState = z.object({ page: z.string(), time_min: z.string().nullable() });
+
+function pageState(cursor: string): z.output<typeof PageState> {
+	let data: unknown;
 	try {
-		state = parseJson(cursor);
+		data = parseJson(cursor);
 	} catch {
-		state = null;
+		data = null;
 	}
-	if (typeof state !== "object" || state === null || Array.isArray(state) || typeof (Object.hasOwn(state, "page") ? state.page : undefined) !== "string") {
-		throw new OperationError("INVALID_CURSOR", "This page token is invalid or belongs to another request.");
-	}
-	return state;
+	const parsed = PageState.safeParse(data);
+	if (!parsed.success) throw new OperationError("INVALID_CURSOR", "This page token is invalid or belongs to another request.");
+	return parsed.data;
 }
 
 /** Google Calendar's connector. */
@@ -213,7 +220,7 @@ export function googleCalendarConnector(options: CalendarOptions = {}): Connecto
 						return {
 							records: calendars.map((c) => ({
 								resource: binding.resource(CALENDAR, c.id),
-								data: { id: c.id, name: calendarName(c), primary: c.primary, access_role: c.access_role, time_zone: c.time_zone },
+								data: { id: c.id, name: calendarName(c), primary: c.primary, access_role: c.accessRole, time_zone: c.timeZone },
 							})),
 						};
 					},
@@ -235,22 +242,20 @@ export function googleCalendarConnector(options: CalendarOptions = {}): Connecto
 				// The upstream cursor is Minerva's own: Google's page token plus the time bound the first page used,
 				// so later pages repeat the query exactly, even when the default bound ("now") was applied.
 				const state = data.cursor ? pageState(data.cursor) : null;
-				let timeMin: Json = data.time_min;
-				if (state !== null) timeMin = Object.hasOwn(state, "time_min") ? (state.time_min as Json) : null;
-				else if (timeMin === null && data.time_max === null) timeMin = new Date(now()).toISOString();
+				const timeMin = state ? state.time_min : (data.time_min ?? (data.time_max === null ? new Date(now()).toISOString() : null));
 				return {
 					requirements: [{ need: binding.resource(CALENDAR, calendarId), action: "read" }],
 					async execute(): Promise<ProviderOutput> {
 						const page = await client.events(calendarId, {
-							timeMin: typeof timeMin === "string" ? timeMin : null,
+							timeMin,
 							timeMax: data.time_max,
 							query: data.search,
 							limit: data.limit,
-							pageToken: state ? (state.page as string) : null,
+							pageToken: state ? state.page : null,
 						});
 						let nextCursor: string | null = null;
-						if (page.next_page_token) {
-							nextCursor = JSON.stringify({ page: page.next_page_token, time_min: timeMin });
+						if (page.nextPageToken) {
+							nextCursor = JSON.stringify({ page: page.nextPageToken, time_min: timeMin });
 							if (nextCursor.length > 1000) throw new OperationError("PROVIDER_LIMIT", "Google Calendar returned a page token that is too long.");
 						}
 						return { records: page.items.map((event) => eventRecord(binding, calendarId, event)), nextCursor };
@@ -326,9 +331,8 @@ export function googleCalendarConnector(options: CalendarOptions = {}): Connecto
 		},
 		async describe(client, _kind, ids) {
 			const wanted = new Set(ids);
-			const names: { [id: string]: string } = {};
-			for (const c of await allCalendars(client, maxPages)) if (wanted.has(c.id)) setOwn(names, c.id, calendarName(c));
-			return names;
+			// Object.fromEntries defines own properties, even for an id such as "__proto__".
+			return Object.fromEntries((await allCalendars(client, maxPages)).filter((c) => wanted.has(c.id)).map((c) => [c.id, calendarName(c)]));
 		},
 	};
 }

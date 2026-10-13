@@ -1,40 +1,132 @@
-// Provider HTTP, ported from backend/connectors/http.py (connectors 7.6): owned errors for provider
-// responses, and the accounting of writes. A mutating operation may send exactly one mutating request,
-// only from its execute step, only with time left before its deadline; what happened to that request
-// tells the executor whether a failed write was applied, so it can allow a retry or pause writes.
+// Provider HTTP: owned errors for provider responses, and the accounting of writes. A mutating operation
+// may send exactly one mutating request, only from its execute step, only with time left before its
+// deadline; what happened to that request tells the executor whether a failed write was applied, so it can
+// allow a retry or pause writes.
 //
-// What changes with `fetch` (connectors 7.6 CHANGE, risks 7 to 9):
 // - Redirects are never followed (`redirect: "manual"`), so a write is never replayed to another URL and a
 //   read never leaves the host it was authorized for.
 // - The write attempt is bound to one call explicitly: the executor gives each call's client its own
 //   `CallIo` (never a global), and closes the attempt once it has judged it, so a request from a promise
 //   the connector left running is refused. A promise started in `prepare` sees the call's attempt once
-//   `execute` opened it, where Python's context variable would not; the one write is still accounted and
-//   judged, and a second is refused.
+//   `execute` opened it; the one write is still accounted and judged, and a second is refused.
 // - A transport error on a write is always an unknown outcome: on Workers it cannot tell a connection that
 //   never opened from one dropped after the request was sent.
-// - Timeouts are per phase, as httpx's: the response's headers, then each chunk of its body, must arrive
-//   within the timeout (for a write, within min(timeout, time left), fixed when it is sent). Bodies are
-//   read into memory with a cap, which httpx did not have.
+// - Timeouts are per phase: the response's headers, then each chunk of its body, must arrive within the
+//   timeout (for a write, within min(timeout, time left), fixed when it is sent). Bodies are read into
+//   memory with a cap.
 // - A fetch the platform refuses (private and non-Cloudflare IP literals) resolves to a 403 with
 //   "error code: 1003", or Cloudflare's error page for it when the request has an Accept header, rather than
 //   throwing; `platformRefusal` lets the Web connector recognise it.
 
 import type { z } from "zod";
-import type {
-	Effect,
-	OperationErrorShape,
-	ProviderClient,
-	ProviderHttp,
-	ProviderHttpOptions,
-	ProviderIo,
-	ProviderRequest,
-	WriteAttempt,
-} from "../contracts/connectors.ts";
-import { concatAll, fromUtf8, fromUtf8Strict, utf8 } from "../lib/bytes.ts";
-import { type Json, parseJson } from "../lib/json.ts";
-import { OperationError } from "./connector.ts";
+import { concatAll, fromUtf8, utf8 } from "../lib/bytes.ts";
+import { type Json, parseJsonBytes } from "../lib/json.ts";
+import { percentEncode } from "../lib/text.ts";
+import { OperationError, type OperationErrorShape, type ProviderClient } from "./connector.ts";
 import { RUN_ENDED_MESSAGE } from "./ledger.ts";
+
+/**
+ * What a write did to the provider. Starts unknown when sent: 2xx is applied; 400, 401, 403, 404, 409,
+ * 412, 422 and 429 are not applied (refused); anything else (5xx, 418, 3xx) and every transport error stay
+ * unknown, since `fetch` cannot tell "never connected" from "dropped after sending".
+ */
+export type Effect = "not_applied" | "applied" | "unknown";
+
+/**
+ * The one write a mutating operation may send, opened by the executor around `execute()` with the deadline
+ * fixed at dispatch (a monotonic `performance.now()` instant). A request after the attempt is closed (a
+ * promise the connector left running) is refused.
+ */
+export interface WriteAttempt {
+	readonly deadline: number;
+	sent: boolean;
+	effect: Effect | null;
+	closed: boolean;
+}
+
+/** What the executor hands a connector's client: `fetch` (injected in tests) and the open write attempt. */
+export interface ProviderIo {
+	fetch: typeof fetch;
+	/** The write attempt the executor opened for this call's `execute()`, or null outside it. */
+	currentWrite(): WriteAttempt | null;
+	/** Monotonic milliseconds, for write deadlines. */
+	now(): number;
+}
+
+export interface ProviderRequest {
+	method: string;
+	/** Relative to the client's base URL. */
+	path: string;
+	query?: { [name: string]: string | number | boolean | null | undefined };
+	headers?: { [name: string]: string };
+	json?: Json;
+	form?: { [name: string]: string };
+	body?: BodyInit;
+	/** Whether the request writes. Defaults to POST, PUT, PATCH and DELETE; a read sent with POST passes false. */
+	mutating?: boolean;
+	/** Return a 3xx for the caller to judge instead of failing. Never for a write. */
+	redirects?: boolean;
+}
+
+/**
+ * A provider's HTTP client. Never follows redirects (`redirect: "manual"`).
+ * Allows one mutating request, only inside an open write attempt, only with at least 2 s left (else
+ * TIMED_OUT, not sent), with a timeout of min(20 s, time left). Maps errors: `classify` first, then 401
+ * CONNECTION_UNAUTHORIZED "The {provider} connection is no longer authorized.", 403 `forbidden` (default
+ * PROVIDER_FORBIDDEN "{provider} refused this request for the connected account."), 404 NOT_FOUND "{provider}
+ * did not find this object.", 429 PROVIDER_RATE_LIMITED "{provider} is rate limiting requests. Try again
+ * later.", other 4xx PROVIDER_REJECTED "{provider} rejected this request.", anything else PROVIDER_FAILED
+ * "{provider} could not complete this request."; a transport error is PROVIDER_UNAVAILABLE "{provider}
+ * could not be reached." `judge` decides a write's effect before the status does.
+ */
+export interface ProviderHttp {
+	readonly provider: string;
+	request(request: ProviderRequest): Promise<Response>;
+	/** The body as JSON; a body that does not parse is PROVIDER_FAILED "{provider} returned an unexpected response." */
+	json(request: ProviderRequest): Promise<Json>;
+	/** The body validated by a schema; a mismatch is the same unexpected-response error. */
+	parsed<T>(request: ProviderRequest, schema: z.ZodType<T>): Promise<T>;
+	/**
+	 * The body streamed up to `limit` bytes; more raises `tooLarge`. An error response is read up to 64 KiB
+	 * and mapped with only content-type, retry-after and x-ratelimit-* kept. Never accounted as a write.
+	 */
+	bounded(request: ProviderRequest, limit: number, tooLarge: OperationErrorShape): Promise<Response>;
+	/** `bounded` with FILE_TOO_LARGE "This file is larger than Minerva reads ({limit} bytes)." */
+	download(request: ProviderRequest, limit: number): Promise<Response>;
+}
+
+export interface ProviderHttpOptions {
+	provider: string;
+	baseUrl: string;
+	headers: { [name: string]: string };
+	/** Seconds; default 20. */
+	timeout?: number;
+	forbidden?(provider: string, response: Response): OperationErrorShape;
+	/**
+	 * Names the error for a failed response when its status does not; null keeps the status's meaning.
+	 * `body` is the text decoded leniently (U+FFFD for invalid bytes), on purpose: a provider's reason is
+	 * still found in an error body with stray bytes. `bytes` is what was received, for a connector that reads
+	 * it strictly with parseJsonBytes.
+	 */
+	classify?(provider: string, response: Response, body: string, bytes: Uint8Array): OperationErrorShape | null;
+	/**
+	 * What a response did to a write when its status does not tell (GraphQL answers failures with 200); null
+	 * goes by the status. `body` and `bytes` as for `classify`.
+	 */
+	judge?(response: Response, body: string, bytes: Uint8Array): Effect | null;
+}
+
+/**
+ * One segment of a provider API path, `percentEncode`d. "", "." and ".." are refused with an ordinary
+ * INVALID_ARGUMENTS error: the URL parser drops them or steps up a level, so an id such as ".." would
+ * address another endpoint of the provider.
+ */
+export function segment(value: string): string {
+	if (value === "" || value === "." || value === "..") {
+		throw new OperationError("INVALID_ARGUMENTS", `${JSON.stringify(value)} is not a valid id or name.`);
+	}
+	return percentEncode(value);
+}
 
 export const MUTATING_METHODS: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 /** The provider refused these requests, so the write they carried was not applied. */
@@ -52,7 +144,7 @@ const NULL_BODY: ReadonlySet<number> = new Set([101, 103, 204, 205, 304]);
 /** Headers that describe the body as it was sent; the body returned is already decoded. */
 const ENCODING_HEADERS: ReadonlySet<string> = new Set(["content-encoding", "content-length"]);
 
-/** Python's RuntimeError: a connector broke the HTTP contract. Logged; the model sees the generic failure. */
+/** A connector broke the HTTP contract. Logged; the model sees the generic failure. */
 export class ProgrammingError extends Error {
 	constructor(message: string) {
 		super(message);
@@ -79,7 +171,7 @@ export class PhaseTimeout extends Error {
 	}
 }
 
-/** The one write of a mutating operation's execute step (http.py `WriteAttempt`). */
+/** The one write of a mutating operation's execute step. */
 export class WriteAttemptState implements WriteAttempt {
 	/** Monotonic milliseconds. */
 	readonly deadline: number;
@@ -151,7 +243,7 @@ export class CallIo implements ProviderIo {
 		this.#controller.abort(new PhaseTimeout());
 	}
 
-	/** The call ended: every later request is refused, as a closed httpx client refuses. */
+	/** The call ended: every later request is refused. */
 	close(): void {
 		this.#closed = true;
 		this.#write?.close();
@@ -254,12 +346,6 @@ function owned(error: OperationErrorShape): OperationError {
 	return error instanceof OperationError ? error : new OperationError(error.code, error.message);
 }
 
-/** JSON's text from bytes as `json.loads` reads them: UTF-8, a byte order mark skipped, invalid UTF-8 refused. */
-function jsonText(bytes: Uint8Array): string {
-	const start = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
-	return fromUtf8Strict(bytes.subarray(start));
-}
-
 export function defaultForbidden(provider: string): OperationErrorShape {
 	return new OperationError("PROVIDER_FORBIDDEN", `${provider} refused this request for the connected account.`);
 }
@@ -276,7 +362,7 @@ const PAGE_REFUSAL = /<span data-translate="error">Error<\/span>\s*<span>(\d{4})
  * To a request with an Accept header (any value, the wildcard and text/plain included; the Web connector's has one),
  * the body is instead Cloudflare's HTML error page (text/html, about 6.5 KB) headed `Error NNNN` (measured
  * on the account 2026-10-12: 1002 for a name of a private IPv4 address, 1102 for localtest.me). Measured, not
- * documented (plan: Spike results). The Web connector's `classify` reports it as today.
+ * documented. The Web connector's `classify` reports it.
  */
 export function platformRefusal(response: Response, body: string): number | null {
 	if (response.headers.get("server")?.toLowerCase() !== "cloudflare") return null;
@@ -287,7 +373,7 @@ export function platformRefusal(response: Response, body: string): number | null
 	return page === null ? null : Number(page[1]);
 }
 
-/** A provider's HTTP client (http.py `ProviderHTTP`), built by a connector's `client()` on the call's io. */
+/** A provider's HTTP client, built by a connector's `client()` on the call's io. */
 export class ProviderHTTP implements ProviderHttp, ProviderClient {
 	readonly provider: string;
 	readonly #io: ProviderIo;
@@ -302,7 +388,7 @@ export class ProviderHTTP implements ProviderHttp, ProviderClient {
 	constructor(io: ProviderIo, options: ProviderHttpOptions) {
 		this.provider = options.provider;
 		this.#io = io;
-		// As httpx merges: the base path always ends in "/", and a relative path is appended to it.
+		// The base path always ends in "/", and a relative path is appended to it.
 		this.#base = options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`;
 		this.#headers = { ...options.headers };
 		this.#timeoutMs = (options.timeout ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
@@ -325,7 +411,7 @@ export class ProviderHTTP implements ProviderHttp, ProviderClient {
 		}
 		for (const [name, value] of Object.entries(request.query ?? {})) {
 			if (value === undefined) continue;
-			// httpx writes None as an empty value and booleans in lowercase.
+			// null is an empty value; booleans are written in lowercase.
 			url.searchParams.append(name, value === null ? "" : String(value));
 		}
 		return url.toString();
@@ -339,7 +425,6 @@ export class ProviderHTTP implements ProviderHttp, ProviderClient {
 		const sources = [request.json !== undefined, request.form !== undefined, request.body !== undefined].filter(Boolean).length;
 		if (sources > 1) throw new ProgrammingError("A request has one body: json, form or body.");
 		if (request.json !== undefined) {
-			// httpx's encoding: compact, non-ASCII as is.
 			body = JSON.stringify(request.json);
 			type = "application/json";
 		} else if (request.form !== undefined) {
@@ -348,7 +433,7 @@ export class ProviderHTTP implements ProviderHttp, ProviderClient {
 		} else if (request.body !== undefined) {
 			body = request.body;
 		}
-		// As httpx: a Content-Type the client or the request set wins over the encoding's.
+		// A Content-Type the client or the request set wins over the encoding's.
 		if (type !== null && !headers.has("content-type")) headers.set("content-type", type);
 		return { method, headers, body, redirect: "manual" };
 	}
@@ -389,13 +474,15 @@ export class ProviderHTTP implements ProviderHttp, ProviderClient {
 				throw error;
 			}
 			if (error instanceof ProgrammingError) throw error;
-			// fetch cannot tell a connection that never opened from one dropped after sending (risk 9).
+			// fetch cannot tell a connection that never opened from one dropped after sending.
 			if (attempt !== null) attempt.effect = "unknown";
 			throw this.#unavailable(error);
 		}
 		const success = isSuccess(exchanged.status);
 		const body = success ? exchanged.body : exchanged.body.subarray(0, MAX_ERROR_BODY);
 		const fresh = () => responseOf(exchanged, body, (name) => !ENCODING_HEADERS.has(name));
+		// Read leniently (U+FFFD for invalid bytes) for `classify` and `judge`, which look for a provider's
+		// reason in an error body; a body read as data goes through parseJsonBytes instead.
 		const text = fromUtf8(body);
 		if (attempt !== null) {
 			// Unknown until judged, so a judge that throws leaves nothing claimed. A body cut at the cap cannot
@@ -409,18 +496,17 @@ export class ProviderHTTP implements ProviderHttp, ProviderClient {
 		}
 		if (success && exchanged.over) throw this.unexpected();
 		const response = fresh();
-		// Every 3xx, with a Location or not, as httpx 0.28's `is_redirect` counts them; the caller judges it.
+		// Every 3xx, with a Location or not; the caller judges it.
 		if (request.redirects && response.status >= 300 && response.status < 400) return response;
 		if (!success) throw this.error(response, text, body);
 		return response;
 	}
 
-	/** The body as JSON, read with parseJson; one that does not parse is an unexpected response. */
+	/** The body as JSON (parseJsonBytes); one that does not parse is an unexpected response. */
 	async json(request: ProviderRequest): Promise<Json> {
 		const response = await this.request(request);
-		const bytes = new Uint8Array(await response.arrayBuffer());
 		try {
-			return parseJson(jsonText(bytes));
+			return parseJsonBytes(await response.arrayBuffer());
 		} catch (error) {
 			throw this.unexpected(error);
 		}

@@ -1,9 +1,9 @@
-// The download origin's handler (files 11.2; plan: Files, Downloads), which files-worker/ serves as
-// minerva-cf-files: a GET of a signed link (links.ts) on this origin streams the object from the
-// workspace's bucket as an attachment that cannot run: `application/octet-stream`, `Content-Disposition` as
-// Django writes it, `nosniff`, `Content-Security-Policy: sandbox`, `Cache-Control: private, no-store`, with
-// single byte ranges. Every refusal is the same 404 `{"detail": "Not Found"}`, except a request without a
-// signature, which is today's 401 for a request without a session.
+// The download origin's handler, which files-worker/ serves as minerva-cf-files: a GET of a signed link
+// (links.ts) on this origin streams the object from the workspace's bucket as an attachment that cannot
+// run: `application/octet-stream`, `Content-Disposition: attachment`, `nosniff`, `Content-Security-Policy:
+// sandbox`, `Cache-Control: private, no-store`, with single byte ranges. Every refusal is the same 404
+// `{"detail": "Not Found"}`, except a request without a signature, which is 401 as for a request without
+// a session.
 
 import { DOWNLOAD_PATH, contentDisposition, verifyDownload } from "./links.ts";
 

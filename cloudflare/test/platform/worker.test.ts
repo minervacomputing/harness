@@ -9,7 +9,8 @@ import { PROBE_HEADER, probeToken } from "../../src/http/probe-token.ts";
 import { AUTH_ROUTE } from "../../src/accounts/routes.ts";
 import { CHECKED_LATER, createApp } from "../../src/http/router.ts";
 import { saltedHmacHex } from "../../src/lib/hash.ts";
-import { escapedKeyCheck } from "../../src/lib/json.ts";
+import { DraftInvoice, body, jsonBody } from "../../src/connectors/xero/writes.ts";
+import { escapedKeyCheck, type JsonObject } from "../../src/lib/json.ts";
 import { appliedMigrations, migrate } from "../../src/lib/sqlite.ts";
 
 const WS = "0199a000-0000-7000-8000-0000000000aa";
@@ -28,7 +29,7 @@ describe("the router in workerd", () => {
 		const response = await exports.default.fetch("http://localhost/api/workspaces", { method: "POST" });
 		expect(response.status).toBe(404);
 		const body = (await response.json()) as { detail: string };
-		// Debug is on in these tests, so the reason is appended as Django does.
+		// Debug is on in these tests, so the reason is appended.
 		expect(body.detail).toMatch(/^Not Found/);
 	});
 
@@ -82,6 +83,20 @@ describe("the runtime's JSON.parse", () => {
 	test("still confuses escaped keys, and parseJson does not", () => {
 		// When this fails on `native`, workerd's V8 is fixed: update lib/json.ts (parseJson can then call JSON.parse).
 		expect(escapedKeyCheck()).toEqual({ native: [92], parseJson: [10] });
+	});
+});
+
+describe("the runtime's JSON.rawJSON", () => {
+	test("writes a Xero draft's amounts as their decimals", () => {
+		const draft = DraftInvoice.parse({
+			contact: "0199a000-0000-7000-8000-0000000000cc",
+			lines: [{ description: "Consulting", quantity: "123456789.0001", unit_amount: "-9999999999.9999", discount_rate: "12.50" }],
+		});
+		const sent = body(draft, "sales");
+		const line = (sent.LineItems as JsonObject[])[0] as JsonObject;
+		const raw = JSON as unknown as { isRawJSON(value: unknown): boolean };
+		expect([line.Quantity, line.UnitAmount, line.DiscountRate].map((value) => raw.isRawJSON(value))).toEqual([true, true, true]);
+		expect(jsonBody(draft, "sales")).toContain('"Quantity":123456789.0001,"UnitAmount":-9999999999.9999,"DiscountRate":12.5}');
 	});
 });
 

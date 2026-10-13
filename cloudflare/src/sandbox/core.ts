@@ -1,4 +1,4 @@
-// The Sandbox's logic (contracts/sandbox.ts SandboxApi; plan: The sandbox lifecycle), over its ports so
+// The Sandbox's logic (`SandboxApi`; plan: The sandbox lifecycle), over its ports so
 // it runs the same in the Durable Object, in unit tests and against a local container.
 //
 // The container's lifecycle is `starting → hardening → verified → in_use → destroying`, each state written
@@ -12,18 +12,8 @@
 // Commands and file operations run side by side; hydration, scans and checkpoints need the folder to
 // themselves and are refused (`busy`) while anything else runs, as the Conversation's barrier expects.
 
-import type { ExecOutputSink, ExecRequest, ExecResult, FsRequest, FsResponse, Refused, SandboxFence, SandboxSpec, SandboxStatus } from "../contracts/sandbox.ts";
-import type {
-	CheckpointUploadPlan,
-	CheckpointUploadResult,
-	HardeningReport,
-	HydratePlan,
-	HydrateResult,
-	ScanResult,
-	VerificationReport,
-} from "../contracts/sandbox.ts";
-import type { AttemptFence } from "../contracts/common.ts";
-import { type RunningCommand, runCommand } from "./commands.ts";
+import type { AttemptFence, EpochMs } from "../shared/rpc.ts";
+import { type ExecOutputSink, type ExecRequest, type ExecResult, type RunningCommand, runCommand } from "./commands.ts";
 import {
 	AGENT_CGROUP,
 	CLEANUP_RETRY_MS,
@@ -31,15 +21,73 @@ import {
 	IDLE_MS,
 	INSTANCE,
 	MAX_INACTIVITY_MS,
+	type SandboxSpec,
 	workspaceBytes,
 } from "./constants.ts";
-import { fileOperation, Readers, Servers } from "./files.ts";
-import { hydrate, type IndexEntry, scan, upload } from "./folder.ts";
-import { DROPPED_PROBE, hardeningArgv, hardeningReport, verificationArgv, verificationReport } from "./hardening.ts";
+import { fileOperation, type FsRequest, type FsResponse, Readers, Servers } from "./files.ts";
+import {
+	type CheckpointUploadPlan,
+	type CheckpointUploadResult,
+	hydrate,
+	type HydratePlan,
+	type HydrateResult,
+	type IndexEntry,
+	scan,
+	type ScanResult,
+	upload,
+} from "./folder.ts";
+import {
+	DROPPED_PROBE,
+	type HardeningReport,
+	type VerificationReport,
+	hardeningArgv,
+	hardeningReport,
+	verificationArgv,
+	verificationReport,
+} from "./hardening.ts";
 import type { SandboxPorts } from "./ports.ts";
 import { ContainerGone, helperEnvironment, type Machine, runRoot, sleep } from "./process.ts";
-import { olderThan, readState, type StateRow, writeState } from "./store.ts";
+import { olderThan, readState, type SandboxState, type StateRow, writeState } from "./store.ts";
 import { wrapperArgv } from "./wrapper.ts";
+
+/** A container incarnation, from `start`; every later call carries it. */
+export interface SandboxFence extends AttemptFence {
+	incarnation: string;
+}
+
+export interface SandboxStatus {
+	state: SandboxState;
+	incarnation: string | null;
+	runId: string | null;
+	attempt: number | null;
+	cleanupPending: boolean;
+	startedAt: EpochMs | null;
+}
+
+export type Refused = { refused: "stale" | "not_verified" | "busy"; message: string };
+
+/**
+ * The Sandbox Durable Object's RPC surface. A refusal for a fence that is not current is `{refused:
+ * "stale"}`; before verification, `{refused: "not_verified"}`.
+ */
+export interface SandboxApi {
+	/** Destroys any container left from an earlier incarnation first, then starts one for this attempt. */
+	start(fence: AttemptFence, spec: SandboxSpec): Promise<{ incarnation: string } | Refused | { failed: string }>;
+	harden(fence: SandboxFence): Promise<HardeningReport | Refused>;
+	verify(fence: SandboxFence): Promise<VerificationReport | Refused>;
+	exec(fence: SandboxFence, request: ExecRequest, sink: ExecOutputSink | null): Promise<ExecResult | Refused>;
+	/** Kills one command's processes; idempotent. */
+	cancel(fence: SandboxFence, execId: string): Promise<void>;
+	fs(fence: SandboxFence, request: FsRequest): Promise<FsResponse | Refused>;
+	hydrate(fence: SandboxFence, plan: HydratePlan): Promise<HydrateResult | Refused>;
+	scan(fence: SandboxFence, options: { rehashAll: boolean }): Promise<ScanResult | Refused>;
+	checkpoint(fence: SandboxFence, plan: CheckpointUploadPlan): Promise<CheckpointUploadResult | Refused>;
+	/** `echo 1 > /sys/fs/cgroup/agent/cgroup.kill`, then verify the cgroup is empty; catches setsid processes. */
+	killStrays(fence: SandboxFence): Promise<{ ok: true } | { ok: false; message: string } | Refused>;
+	/** Destroys this incarnation's container; refused for any other incarnation. */
+	destroy(fence: SandboxFence, reason: string): Promise<{ destroyed: boolean } | Refused>;
+	status(): Promise<SandboxStatus>;
+}
 
 const READY_MS = 90_000;
 const ROOT_MS = 60_000;
@@ -549,12 +597,12 @@ export class SandboxCore {
 	}
 
 	/**
-	 * `cgroup.kill` the agent cgroup, then wait until it is empty: commands that other calls run die too, as
-	 * today. No call is admitted meanwhile. Every reader and file server of the incarnation ends with it.
+	 * `cgroup.kill` the agent cgroup, then wait until it is empty: commands that other calls run die too.
+	 * No call is admitted meanwhile. Every reader and file server of the incarnation ends with it.
 	 */
 	killStrays(fence: SandboxFence): Promise<{ ok: true } | { ok: false; message: string } | Refused> {
 		return this.#admitted(fence, false, async (machine, generation) => {
-			// Killed again on every round, as today's stray killer repeats kill(-1): a process that joined the cgroup
+			// Killed again on every round: a process that joined the cgroup
 			// after a round (a helper that was starting) dies in the next.
 			const script = [
 				`for i in $(seq ${STRAYS_GONE_MS / 50}); do echo 1 > "$0/cgroup.kill"; grep -qx 'populated 0' "$0/cgroup.events" && exit 0; sleep 0.05; done`,

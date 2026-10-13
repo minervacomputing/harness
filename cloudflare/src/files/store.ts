@@ -1,38 +1,35 @@
-// A conversation's folder in its Durable Object (files 3 to 7, 10 to 13, 15; plan: Starting a run,
-// Checkpoints, Files): versions with their lineage, the blobs they name by hash, what each run may read,
+// A conversation's folder in its Durable Object (plan: Starting a run, Checkpoints, Files): versions with their lineage, the blobs they name by hash, what each run may read,
 // the attachments a message adds at the start of its run, checkpoints, publishing at a run's end, the
 // listing and downloads, and the sweep that deletes objects nothing names. The logic is over lib/sql.ts, so
 // it runs on a Durable Object's SQLite and, in the unit tests, on node:sqlite; R2 and the Workspace are
 // ports (objects.ts, `ByteCounter`).
 //
-// Blobs belong to the conversation (files 15.2, option A): `blobs/<ws>/<conv>/<sha256>/<random>`, one stored
+// Blobs belong to the conversation (option A): `blobs/<ws>/<conv>/<sha256>/<random>`, one stored
 // object per contents, deduplicated within the conversation only, under a key never reused, so deleting an
 // object never races a later write of the same contents (files risk 24). Every object is recorded before
 // it is written (a `loose` row, due an hour later) and claimed in the transaction that names it; the sweep
 // deletes what was never claimed, and what a run left unnamed when it ended, twice, a day apart. The
 // conversation's byte total, everything recorded and not yet deleted, is reported to the Workspace as an
 // absolute number before any new object is written and after the sweep deleted some, one report at a time,
-// so the Workspace never counts less than the bucket holds, whatever crashes in between (files 12.1, 15.2).
+// so the Workspace never counts less than the bucket holds, whatever crashes in between.
 //
 // Every change someone acts on (a claim, a checkpoint, warnings, a charge) is made outside pi's open
 // transactions (`outside`, conversation/store.ts), in one synchronous transaction with its checks.
 
-import type { AttachmentOut, FolderOut } from "../contracts/api.ts";
-import type { AttemptFence, ConversationId, EpochMs, Outcome, Refusal, RunId, Sha256, VersionId, WorkspaceId } from "../contracts/common.ts";
-import type { DownloadTarget } from "../contracts/conversation.ts";
-import type { CheckpointOutcome, CheckpointRefusalCode, CheckpointScan, FolderLimit, FolderUsage, StoredEntries, VersionKind } from "../contracts/files.ts";
-import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan } from "../contracts/sandbox.ts";
-import type { ReservedUpload } from "../contracts/workspace.ts";
 import { utf8Strict } from "../lib/bytes.ts";
 import { canonicalJson, hashLabel } from "../lib/canonical.ts";
 import { parseJson } from "../lib/json.ts";
 import { tokenHex, uuid7 } from "../lib/random.ts";
 import { first, type Sql, type SqlValue } from "../lib/sql.ts";
 import { splitParts, VALUE_PART } from "../lib/text.ts";
+import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan } from "../sandbox/folder.ts";
+import type { AttachmentOut, FolderOut } from "../shared/api.ts";
+import type { AttemptFence, ConversationId, EpochMs, Outcome, Refusal, RunId, Sha256, VersionId, WorkspaceId } from "../shared/rpc.ts";
 import { overFolder } from "../workspace/limits.ts";
 import {
 	BLOB_GONE,
 	CONFLICT,
+	type FolderLimit,
 	LOOSE_GRACE_MS,
 	NO_LONGER_AVAILABLE,
 	NO_ROOM,
@@ -45,9 +42,12 @@ import {
 } from "./limits.ts";
 import {
 	type FolderChanges,
+	type FolderWarnings,
 	InvalidManifest,
 	type Manifest,
+	type StoredEntries,
 	type StoredWarnings,
+	type WireManifest,
 	entriesBytes,
 	entryCountOf,
 	filesOf,
@@ -62,13 +62,73 @@ import {
 import { numbered } from "./names.ts";
 import { type Bucket, blobKey, conversationPrefix, deletePrefix } from "./objects.ts";
 import { sha256HexSync } from "./sha256.ts";
+import type { ReservedUpload } from "./uploads.ts";
+
+/** A file a signed download link may name (plan: Files, Downloads). */
+export interface DownloadTarget {
+	versionId: VersionId;
+	path: string;
+	/** `blobs/<ws>/<conv>/<sha256>/<random>`. */
+	key: string;
+	sha256: Sha256;
+	size: number;
+}
+
+/**
+ * `base`: a message's attachments added to the folder. `checkpoint`: a run's last saved state (at most one
+ * per run, transient). `turn`: a checkpoint its run published. Contents are immutable; `kind` and `parent`
+ * may change when a checkpoint is published.
+ */
+export type VersionKind = "base" | "checkpoint" | "turn";
+
+/** A conversation's folder as a new run sees it: its current version and how full it is. */
+export interface FolderUsage {
+	versionId: VersionId | null;
+	/** In pages, as the store counts it. */
+	bytes: number;
+	entries: number;
+	/** First path segments of every file and directory at the root: what attachment names are numbered against. */
+	rootNames: string[];
+}
+
+/**
+ * What a checkpoint takes (plan: Checkpoints, steps 4 to 6): the scan's report as the container
+ * made it, untrusted (ScanResult's `manifest`, `sizes` and `warnings`), and the version the working copy
+ * was built on, which must still be the run's (its last checkpoint, else its base version).
+ */
+export interface CheckpointScan {
+	/**
+	 * The version the working copy was built on: the one the attempt hydrated (`HydratePlan.versionId`), then
+	 * each accepted checkpoint's `versionId`. Anything else is `conflict`, so a scan taken before
+	 * a newer checkpoint can never replace it.
+	 */
+	parent: VersionId | null;
+	manifest: WireManifest;
+	/** Bytes per path, as the scan measured them; only the files to upload are sized from it. */
+	sizes: { [path: string]: number };
+	/** Null or omitted: the run's warnings stay as they were; otherwise they replace them, also when nothing else changed. */
+	warnings?: FolderWarnings | null;
+}
+
+/** `CheckpointRefused`'s codes; `conflict` is the version the working copy was built on having moved. */
+export type CheckpointRefusalCode = "stale" | "conflict" | "invalid_manifest" | "unknown_blob" | "quota";
+
+/**
+ * A checkpoint's outcome. `versionId` is the run's version afterwards: the current one for an identical
+ * manifest (null for a run that never had files). A `quota` refusal names its limit and fails the turn with
+ * `folder_limit`; any other refusal, or a failed upload, ends the attempt.
+ */
+export type CheckpointOutcome =
+	| { ok: true; versionId: VersionId | null; uploaded: number }
+	| { ok: false; code: CheckpointRefusalCode; message: string; limit?: FolderLimit }
+	| { ok: false; code: "upload"; reason: "changed" | "mismatch" | "failed"; path: string; message: string };
 
 /** The keys a checkpoint's plan writes: not those of contents only hashed. */
 function keysOf(plan: CheckpointUploadPlan): string[] {
 	return plan.files.flatMap((file) => (file.key === null ? [] : [file.key]));
 }
 
-/** The Workspace's byte counter (contracts/workspace.ts `setConversationBytes`). */
+/** The Workspace's byte counter (workspace/core.ts `setConversationBytes`). */
 export interface ByteCounter {
 	setConversationBytes(conversationId: ConversationId, total: number, revision: number): Promise<{ ok: true } | { ok: false; limit: Extract<FolderLimit, "workspace"> }>;
 }
@@ -169,7 +229,7 @@ export interface AttachmentPlan {
 
 /** Objects deleted at once by the sweep (R2's limit per delete). */
 const DELETE_BATCH = 1000;
-/** Uploads and copies that stream at once (files 2, "Transfers per run"). */
+/** Uploads and copies that stream at once ("Transfers per run"). */
 const TRANSFERS = 4;
 const RETRY_MS = 30_000;
 /** Parsed versions kept in memory, by the length of their stored text: a version at the limits is about 1.5 MB of it. */
@@ -220,13 +280,13 @@ export class FolderStore {
 		this.#sql = deps.sql;
 	}
 
-	// Versions (files 5).
+	// Versions.
 
 	version(id: VersionId): VersionRow | null {
 		return first<VersionRow>(this.#sql, "SELECT * FROM folder_versions WHERE id = ?", id);
 	}
 
-	/** A version's stored entries, sorted by path (files 4.3). */
+	/** A version's stored entries, sorted by path. */
 	entries(id: VersionId): StoredEntries {
 		const cached = this.#entries.get(id);
 		if (cached) return cached.entries;
@@ -260,7 +320,7 @@ export class FolderStore {
 	/**
 	 * Stores a version: its entries as canonical JSON (lib/canonical.ts), the digest's input after its label
 	 * (manifest.ts `digestOf`), in parts under the 2 MB a value or a row may have (a manifest at the limits
-	 * is about 1.5 MB, files 15.3), with its size, counts and digest. Inside the caller's transaction.
+	 * is about 1.5 MB), with its size, counts and digest. Inside the caller's transaction.
 	 */
 	#insertVersion(input: { kind: VersionKind; parentId: VersionId | null; runId: RunId | null; attempt: number | null; entries: StoredEntries }): VersionRow {
 		const now = this.#deps.now();
@@ -320,7 +380,7 @@ export class FolderStore {
 	}
 
 	/**
-	 * `record_version` (files 5): the sizes of hashes the parent has come from the parent, the others from the
+	 * `record_version`: the sizes of hashes the parent has come from the parent, the others from the
 	 * stored blobs (UnknownBlob, sorted, for any missing); the size limit is checked here, the entry limit by
 	 * the manifest's parse. Inside the caller's transaction. Throws TypeError for a kind that is none or a run
 	 * that is not this conversation's, StaleParent, UnknownBlob, QuotaExceeded("folder_bytes").
@@ -348,7 +408,7 @@ export class FolderStore {
 		return this.#insertVersion({ kind, parentId, runId, attempt: options.attempt ?? null, entries: storedEntries(manifest, sizes) });
 	}
 
-	/** The folder a new run would start from, for `beginRun`'s limit checks (files 10). */
+	/** The folder a new run would start from, for `beginRun`'s limit checks. */
 	usage(): FolderUsage {
 		const versionId = this.#deps.conversation()?.folderVersionId ?? null;
 		const row = versionId === null ? null : this.version(versionId);
@@ -356,7 +416,7 @@ export class FolderStore {
 		return { versionId, bytes: row.size, entries: row.entry_count, rootNames: [...rootNames(this.entries(row.id))].sort() };
 	}
 
-	// Blobs and the byte total (files 3, 12.1, 15.2).
+	// Blobs and the byte total.
 
 	#random(): string {
 		return this.#deps.random ? this.#deps.random() : tokenHex(16);
@@ -515,7 +575,7 @@ export class FolderStore {
 		return true;
 	}
 
-	/** The hashes a run may read and name (files 6): its base version's, its last checkpoint's and its uploads'. */
+	/** The hashes a run may read and name: its base version's, its last checkpoint's and its uploads'. */
 	readable(runId: RunId): Set<Sha256> {
 		const run = this.#run(runId);
 		const hashes = new Set<Sha256>();
@@ -531,7 +591,7 @@ export class FolderStore {
 		return first<RunFolder>(this.#sql, "SELECT status, attempt, base_version_id, checkpoint_version_id, uploaded_bytes FROM runs WHERE id = ?", runId);
 	}
 
-	// Attachments (files 10; plan: Starting a run, steps 3 and 4).
+	// Attachments (plan: Starting a run, steps 3 and 4).
 
 	/**
 	 * Before the start's transaction: the base version the message's uploads make, at the folder's root with
@@ -668,7 +728,7 @@ export class FolderStore {
 		});
 	}
 
-	// Checkpoints (files 7.3; plan: Checkpoints, steps 4 to 6).
+	// Checkpoints (plan: Checkpoints).
 
 	/**
 	 * Records the run's folder as the scan reports it, on top of its last checkpoint (or its base version):
@@ -679,9 +739,9 @@ export class FolderStore {
 	 * transaction. Warnings replace the run's even when nothing else changed; invalid ones refuse the whole
 	 * checkpoint. A run keeps only its last checkpoint.
 	 *
-	 * Knowing a hash is not enough (files 6): only a file whose contents the run may read is named without its
+	 * Knowing a hash is not enough: only a file whose contents the run may read is named without its
 	 * bytes; every other one is read from the container and checked against its hash on the way into R2. The
-	 * bytes about to be received count against the run's budget whether or not they are stored (files 7.2).
+	 * bytes about to be received count against the run's budget whether or not they are stored.
 	 */
 	async checkpoint(fence: AttemptFence, scan: CheckpointScan, upload: (plan: CheckpointUploadPlan) => Promise<CheckpointUploadResult>): Promise<CheckpointOutcome> {
 		type Planned =
@@ -713,7 +773,7 @@ export class FolderStore {
 				return { kind: "done", outcome: { ok: true, versionId: current, uploaded: 0 } };
 			}
 			// Contents the run may read need no upload; every other file's bytes come from the container and
-			// prove it has them (files 6, 15.1). One upload per contents, from its first path. Contents the
+			// prove it has them. One upload per contents, from its first path. Contents the
 			// conversation stores already are only hashed: nothing is written, recorded or counted for them.
 			const readable = this.readable(fence.runId);
 			const known = this.#stored([...hashesOf(manifest)].filter((hash) => readable.has(hash)));
@@ -862,7 +922,7 @@ export class FolderStore {
 		return outcome;
 	}
 
-	/** The version a new attempt hydrates (files 7.1): its last checkpoint, else its base version, with each file's key. */
+	/** The version a new attempt hydrates: its last checkpoint, else its base version, with each file's key. */
 	hydratePlan(runId: RunId): HydratePlan {
 		const run = this.#run(runId);
 		const versionId = run === null ? null : (run.checkpoint_version_id ?? run.base_version_id);
@@ -877,7 +937,7 @@ export class FolderStore {
 		return { versionId, files, dirs: [...entries.dirs] };
 	}
 
-	// Publishing (files 7.6).
+	// Publishing.
 
 	/**
 	 * Inside the transaction that ends the run: its last checkpoint becomes a `turn` on top of its base
@@ -913,7 +973,7 @@ export class FolderStore {
 		});
 	}
 
-	// Reading from the web (files 11).
+	// Reading from the web.
 
 	/** `conversation_version`: the folder, or a non-checkpoint version of this conversation; undefined is 404. */
 	#readable(versionId: VersionId | null): VersionRow | null | undefined {
@@ -949,7 +1009,7 @@ export class FolderStore {
 		return { versionId: row.id, path, key: blob.key, sha256: entry.sha256, size: blob.size };
 	}
 
-	// The sweep (files 13.1, 15.3).
+	// The sweep.
 
 	/** When the sweep is next due: the earliest loose or doomed row, or now when the total is not reported yet. */
 	nextSweep(): EpochMs | null {

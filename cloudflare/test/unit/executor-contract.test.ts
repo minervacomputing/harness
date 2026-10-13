@@ -1,17 +1,15 @@
-// The executor parts of backend/tests/test_contract.py, case by case, through the HTTP-based `mixed` and
-// `keyed` fakes: requirement checks, record filtering, write accounting, consent and contract changes.
-// Where the port differs on purpose, the case says why.
+// The executor's contract with connectors, through the HTTP-based `mixed` and `keyed` fakes: requirement
+// checks, record filtering, write accounting, consent and contract changes.
 
 import { describe, expect, test } from "vitest";
 import { z } from "zod";
-import type { Connector, Prepared } from "../../src/contracts/connectors.ts";
-import type { RunStatePort, ToolResult } from "../../src/contracts/executor.ts";
-import { ACCOUNT_KIND, OperationError, defineOperation } from "../../src/gateway/connector.ts";
+import { ACCOUNT_KIND, type Connector, OperationError, type Prepared, defineOperation } from "../../src/gateway/connector.ts";
 import { visibleResult } from "../../src/gateway/executor.ts";
 import { ProgrammingError } from "../../src/gateway/http.ts";
 import { Layer, Policy, resource } from "../../src/gateway/policy.ts";
 import { Registry } from "../../src/gateway/registry.ts";
-import { RESULT_SCHEMA, appliedWithoutResult } from "../../src/gateway/results.ts";
+import { RESULT_SCHEMA, type ToolResult, appliedWithoutResult } from "../../src/gateway/results.ts";
+import type { RunStatePort } from "../../src/gateway/run-state.ts";
 import {
 	FOLDER,
 	FakeServer,
@@ -35,7 +33,7 @@ function copy(source = "inbox", dest = "archive", name = "a") {
 	return { source, dest, name };
 }
 
-/** Grants are {folder id: actions}, plus [kind, id, actions] rows for other kinds (test_contract.py `start`). */
+/** Grants are {folder id: actions}, plus [kind, id, actions] rows for other kinds. */
 function start(server: FakeServer, folders: { [id: string]: string[] }, others: [string, string, string[]][] = [], scopes?: string[] | null) {
 	return Scenario.start({
 		connectors: [mixedConnector(server), keyedConnector(server)],
@@ -54,7 +52,7 @@ function withMode(mode: MixedMode, responses: WriteResponse[] = []): FakeServer 
 	return server;
 }
 
-/** RESULT_SCHEMA checked by hand: the keys it allows, with their types (connectors 6). */
+/** RESULT_SCHEMA checked by hand: the keys it allows, with their types. */
 function matchesResultSchema(value: unknown): boolean {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
 	const result = value as { [key: string]: unknown };
@@ -140,7 +138,7 @@ describe("requirements", () => {
 	});
 
 	test("prepare cannot write", async () => {
-		// Python raises RuntimeError out of invoke; the gateway answers FAILED with the generic message.
+		// A write attempted in prepare throws; the call fails with the generic message and nothing is sent.
 		const server = withMode("write-in-prepare");
 		const run = await start(server, WRITER);
 		expect(await run.error(COPY, copy())).toEqual({ code: "FAILED", message: "The operation could not be completed. Check the connection and try again." });
@@ -178,7 +176,7 @@ describe("write accounting", () => {
 		[409, "PROVIDER_REJECTED", "Mixed rejected this request."],
 		[429, "PROVIDER_RATE_LIMITED", "Mixed is rate limiting requests. Try again later."],
 		[403, "PROVIDER_FORBIDDEN", "Mixed refused this request for the connected account."],
-		// The platform's own refusal of a fetch is what "never connected" (httpx.ConnectError) is here.
+		// The platform's own refusal of a fetch: the request never left.
 		["platform", "PROVIDER_FORBIDDEN", "Mixed refused this request for the connected account."],
 	] as [WriteResponse, string, string][])("a refused write is forgotten and can be retried (%s)", async (response, code, message) => {
 		const server = withMode("ok", [response]);
@@ -191,8 +189,8 @@ describe("write accounting", () => {
 	});
 
 	test.each([500, 502, 418, 302, "transport", "lost", "hang"] as WriteResponse[])("a write with an unknown outcome pauses writes (%s)", async (response) => {
-		// A transport error is unknown even when the connection never opened: fetch cannot tell (connectors
-		// 7.6 CHANGE), where httpx's ConnectError was a refusal. "hang" is httpx's ReadTimeout.
+		// A transport error is unknown even when the connection never opened: fetch cannot tell. "hang" is
+		// an answer that never comes.
 		const server = withMode("ok", [response]);
 		server.timeout = 0.05;
 		const run = await start(server, WRITER);
@@ -253,7 +251,7 @@ describe("write accounting", () => {
 	});
 
 	test("a cancelled call answers at once, and its write still settles with its real outcome", async () => {
-		// Today the cancelled task cancelled its request too, so the write became uncertain. Here the call
+		// The call
 		// stops (plan: Writes, "even if the tool call that asked for it was cancelled") and the request goes on.
 		const server = new FakeServer();
 		server.gate = new Gate();

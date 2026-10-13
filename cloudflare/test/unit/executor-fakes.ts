@@ -1,30 +1,45 @@
-// What the executor's tests run against, ported from backend/tests/fakes.py, conftest.py (FakeTodoist and
-// the Todoist connector) and connector_runs.py: providers behind an injected `fetch`, connectors built on
-// ProviderHTTP, and in-memory fakes of the ports around the real ledger and page tokens on node:sqlite.
-// `mixed` has two kinds (one without wildcards), an operation that needs different actions on two
-// resources and one gated by provider consent, and modes that break the contract on purpose; `keyed`
-// authenticates with an API key and acts on its account.
+// What the executor's tests run against: providers behind an injected `fetch` (an in-memory Todoist for
+// the real Todoist connector among them), connectors built on ProviderHTTP, and in-memory fakes of the
+// ports around the real ledger and page tokens on node:sqlite. `mixed` has two kinds (one without
+// wildcards), an operation that needs different actions on two resources and one gated by provider
+// consent, and modes that break the contract on purpose; `keyed` authenticates with an API key and acts on
+// its account.
 
 import { z } from "zod";
-import type { AttemptFence, ConnectionId, RunId } from "../../src/contracts/common.ts";
-import type { Connector, CredentialPayload, Operation, Prepared, ProviderOutput, Requirement } from "../../src/contracts/connectors.ts";
-import type { CredentialLease, CredentialPort, RunStatePort, ToolCallOutcome, ToolCallRequest } from "../../src/contracts/executor.ts";
-import type { GrantRow } from "../../src/contracts/policy.ts";
-import type { ToolRef } from "../../src/contracts/runs.ts";
-import type { ToolCallEventData } from "../../src/contracts/events.ts";
 import type { Clock } from "../../src/gateway/clock.ts";
-import { ACCOUNT_KIND, OperationError, defineOperation, denied } from "../../src/gateway/connector.ts";
-import { type ExecutorHost, type ExecutorLog, type ToolExecutor, createExecutor } from "../../src/gateway/executor.ts";
-import { type RunLayers, effectivePolicy } from "../../src/gateway/grants.ts";
+import {
+	ACCOUNT_KIND,
+	type Connector,
+	type CredentialPayload,
+	type Operation,
+	OperationError,
+	type Prepared,
+	type ProviderOutput,
+	type Requirement,
+	defineOperation,
+} from "../../src/gateway/connector.ts";
+import {
+	type CredentialLease,
+	type CredentialPort,
+	type ExecutorHost,
+	type ExecutorLog,
+	type ToolCallOutcome,
+	type ToolCallRequest,
+	type ToolExecutor,
+	createExecutor,
+} from "../../src/gateway/executor.ts";
+import { type GrantRow, type RunLayers, effectivePolicy } from "../../src/gateway/grants.ts";
 import { ProviderHTTP } from "../../src/gateway/http.ts";
 import { WriteLedger } from "../../src/gateway/ledger.ts";
 import { PageTokens } from "../../src/gateway/page-tokens.ts";
 import { Registry } from "../../src/gateway/registry.ts";
-import { LedgerRunState, type RunState, type RunTable } from "../../src/gateway/run-state.ts";
-import { type ConnectionInfo, toolsFor } from "../../src/gateway/tools.ts";
+import type { ToolCallEventData } from "../../src/gateway/results.ts";
+import { LedgerRunState, type RunState, type RunStatePort, type RunTable } from "../../src/gateway/run-state.ts";
+import { type ConnectionInfo, type ToolRef, toolsFor } from "../../src/gateway/tools.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { parseJson } from "../../src/lib/json.ts";
 import type { Sql } from "../../src/lib/sql.ts";
+import type { AttemptFence, ConnectionId, RunId } from "../../src/shared/rpc.ts";
 import { ledgerSql } from "./sqlite.ts";
 
 export const USER = "0199a000-0000-7000-8000-0000000000aa";
@@ -103,7 +118,7 @@ export type MixedMode =
 	| "no-write"
 	| "late-write";
 
-/** One in-memory provider behind an injected `fetch` (fakes.py `FakeServer`). */
+/** One in-memory provider behind an injected `fetch`. */
 export class FakeServer {
 	folders: { [id: string]: string } = { inbox: "Inbox", archive: "Archive", secret: "Secret" };
 	labels: { [id: string]: string } = { red: "Red", blue: "Blue" };
@@ -247,7 +262,7 @@ function mixedOperations(server: FakeServer): Operation<never>[] {
 	];
 }
 
-/** fakes.py `MixedConnector`, over ProviderHTTP. */
+/** The mixed connector, over ProviderHTTP. */
 export function mixedConnector(server: FakeServer): Connector<ProviderHTTP> {
 	return {
 		slug: "mixed",
@@ -277,7 +292,7 @@ export function mixedConnector(server: FakeServer): Connector<ProviderHTTP> {
 	};
 }
 
-/** fakes.py `KeyedConnector`: an API key, acting on its account. */
+/** The keyed connector: an API key, acting on its account. */
 export function keyedConnector(server: FakeServer): Connector<ProviderHTTP> {
 	const Whoami = z.strictObject({});
 	return {
@@ -319,7 +334,7 @@ export function keyedConnector(server: FakeServer): Connector<ProviderHTTP> {
 	};
 }
 
-// Todoist (conftest.py `FakeTodoist`, connectors/todoist/), the connector backend/tests/test_executor.py uses.
+// An in-memory Todoist for the real Todoist connector (src/connectors/todoist/): two projects and a task in each.
 
 export interface FakeTask {
 	id: string;
@@ -341,7 +356,7 @@ export class FakeTodoist {
 	failWrites = false;
 	revoked = false;
 	pageSize: number | null = null;
-	/** Runs when a POST arrives, before it is applied (test_attempts.py's handler). */
+	/** Runs when a POST arrives, before it is applied. */
 	onWrite: (() => void) | null = null;
 
 	count(method: string, path: string): number {
@@ -383,155 +398,6 @@ export class FakeTodoist {
 	};
 }
 
-const ObjectId = () => z.string().trim().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/);
-const TodoistTask = z.object({
-	id: z.string(),
-	project_id: z.string(),
-	content: z.string(),
-	description: z.string().default(""),
-	priority: z.int().default(1),
-	due: z.object({ date: z.string(), string: z.string().nullable().default(null) }).nullable().default(null),
-	checked: z.boolean().default(false),
-});
-const Page = <T extends z.ZodType>(item: T) => z.object({ results: z.array(item), next_cursor: z.string().nullable().default(null) });
-const TodoistProject = z.object({ id: z.string(), name: z.string() });
-const ListTasks = z.strictObject({
-	project_id: ObjectId(),
-	search: z.string().trim().min(1).max(200).nullable().default(null),
-	limit: z.int().min(1).max(50).default(30),
-	cursor: z.string().trim().max(300).nullable().default(null),
-});
-const GetTask = z.strictObject({ task_id: ObjectId() });
-const CreateTask = z.strictObject({ project_id: ObjectId(), title: z.string().trim().min(1).max(300) });
-
-function taskRecord(binding: Parameters<Operation["prepare"]>[0], task: z.output<typeof TodoistTask>) {
-	return {
-		resource: binding.resource(PROJECT, task.project_id),
-		data: {
-			id: task.id,
-			project_id: task.project_id,
-			title: task.content,
-			description: task.description,
-			priority: task.priority,
-			due: task.due ? (task.due.string ?? task.due.date) : null,
-			completed: task.checked,
-		},
-	};
-}
-
-/** connectors/todoist/connector.py, the parts test_executor.py exercises. */
-export function todoistConnector(): Connector<ProviderHTTP> {
-	return {
-		slug: "todoist",
-		name: "Todoist",
-		kinds: [{ id: PROJECT, label: "Project", actions: ["read", "create"], wildcard: true }],
-		actions: [
-			{ id: "read", label: "Read tasks" },
-			{ id: "create", label: "Create tasks", requires: "read" },
-		],
-		auth: {
-			type: "oauth2",
-			app: "todoist",
-			authorizeUrl: "https://app.todoist.com/oauth/authorize",
-			tokenUrl: "https://api.todoist.com/oauth/access_token",
-			scopes: ["data:read_write"],
-			registrationUrl: "https://api.todoist.com/oauth/register",
-		},
-		operations: [
-			defineOperation<z.output<typeof ListInput>>({
-				name: "list_projects",
-				title: "List projects",
-				description: "List the Todoist projects you may access.",
-				input: ListInput,
-				needs: [[PROJECT, "read"]],
-				async prepare(binding): Promise<Prepared> {
-					const http = binding.client as ProviderHTTP;
-					return {
-						requirements: [{ enumerate: PROJECT, action: "read" }],
-						async execute() {
-							const page = await http.parsed({ method: "GET", path: "/projects", query: { limit: 200 } }, Page(TodoistProject));
-							return { records: page.results.map((project) => ({ resource: binding.resource(PROJECT, project.id), data: { id: project.id, name: project.name } })) };
-						},
-					};
-				},
-			}),
-			defineOperation<z.output<typeof ListTasks>>({
-				name: "list_tasks",
-				title: "List tasks",
-				description:
-					"List active tasks in one project you may read. Optionally filter by search text. To get the next page, repeat the call with identical arguments plus the returned next_cursor.",
-				input: ListTasks,
-				needs: [[PROJECT, "read"]],
-				paginated: true,
-				async prepare(binding, data): Promise<Prepared> {
-					const http = binding.client as ProviderHTTP;
-					return {
-						requirements: [{ need: binding.resource(PROJECT, data.project_id), action: "read" }],
-						async execute() {
-							const query = { project_id: data.project_id, limit: data.limit, cursor: data.cursor || undefined };
-							const page = await http.parsed({ method: "GET", path: "/tasks", query }, Page(TodoistTask));
-							return { records: page.results.map((task) => taskRecord(binding, task)), nextCursor: page.next_cursor };
-						},
-					};
-				},
-			}),
-			defineOperation<z.output<typeof GetTask>>({
-				name: "get_task",
-				title: "Get a task",
-				description: "Read one task by ID. Its project must be readable for you.",
-				input: GetTask,
-				needs: [[PROJECT, "read"]],
-				async prepare(binding, data): Promise<Prepared> {
-					const http = binding.client as ProviderHTTP;
-					let task: z.output<typeof TodoistTask>;
-					try {
-						task = await http.parsed({ method: "GET", path: `/tasks/${data.task_id}` }, TodoistTask);
-					} catch (error) {
-						if (error instanceof OperationError && (error.code === "NOT_FOUND" || error.code === "PROVIDER_FORBIDDEN")) throw denied();
-						throw error;
-					}
-					if (task.id !== data.task_id) throw denied();
-					return {
-						requirements: [{ need: binding.resource(PROJECT, task.project_id), action: "read" }],
-						async execute() {
-							return { records: [taskRecord(binding, task)] };
-						},
-					};
-				},
-			}),
-			defineOperation<z.output<typeof CreateTask>>({
-				name: "create_task",
-				title: "Create a task",
-				description: "Create one task in a project where you have create permission. Give an explicit project_id and title.",
-				input: CreateTask,
-				needs: [[PROJECT, "create"]],
-				mutates: true,
-				async prepare(binding, data): Promise<Prepared> {
-					const http = binding.client as ProviderHTTP;
-					return {
-						requirements: [{ need: binding.resource(PROJECT, data.project_id), action: "create" }],
-						async execute() {
-							const task = await http.parsed({ method: "POST", path: "/tasks", json: { project_id: data.project_id, content: data.title } }, TodoistTask);
-							return { records: [taskRecord(binding, task)] };
-						},
-					};
-				},
-			}),
-		],
-		client: (secret, io) => new ProviderHTTP(io, { provider: "Todoist", baseUrl: "https://api.todoist.com/api/v1", headers: { Authorization: `Bearer ${secret}` } }),
-		async account(http) {
-			const user = (await http.json({ method: "GET", path: "/user" })) as { id: string; full_name: string };
-			return { id: user.id, label: user.full_name };
-		},
-		async discover() {
-			return { items: [] };
-		},
-		async describe() {
-			return {};
-		},
-	};
-}
-
 // The ports.
 
 /** The Conversation Durable Object's runs, as the checks read them. */
@@ -570,7 +436,7 @@ export interface FakeConnection {
 	payload: CredentialPayload;
 }
 
-/** The Workspace Durable Object's credentials (credentials.py `open_client`), fenced as the contract says. */
+/** The Workspace Durable Object's credentials, fenced as the contract says. */
 export class FakeCredentials implements CredentialPort {
 	readonly connections = new Map<ConnectionId, FakeConnection>();
 	leases = 0;
@@ -671,7 +537,7 @@ export interface ScenarioOptions {
 	editTools?: (tools: ToolRef[]) => ToolRef[];
 }
 
-/** A run started and claimed (connector_runs.py `claimed_run`), its executor, and what its calls recorded. */
+/** A run started and claimed, its executor, and what its calls recorded. */
 export class Scenario {
 	readonly registry: Registry;
 	readonly clock: FakeClock;
@@ -754,7 +620,7 @@ export class Scenario {
 		return outcome;
 	}
 
-	/** The error code the call fails with (connector_runs.py `refusal`). */
+	/** The error code the call fails with. */
 	async code(name: string, args?: Json, extra: Partial<ToolCallRequest> = {}): Promise<string> {
 		const outcome = await this.call(name, args, extra);
 		if (outcome.ok) throw new Error(`${name} succeeded`);
@@ -775,14 +641,14 @@ export class Scenario {
 		return this.ledger.paused(this.runId);
 	}
 
-	/** A new attempt takes over the run, as a restart would (test_attempts.py `replace`). */
+	/** A new attempt takes over the run, as a restart would. */
 	replace(): void {
 		this.attempt += 1;
 		this.runs.set(this.runId, { attempt: this.attempt });
 	}
 }
 
-/** The mixed connection with both scopes, as test_contract.py's `mixed` fixture stores it. */
+/** The mixed connection with both scopes. */
 export function mixedConnection(scopes: string[] | null = ["files", "labels"]): ScenarioConnection {
 	return { id: MIXED, provider: "mixed", payload: { kind: "oauth2", access_token: "t", refresh_token: null, scopes } };
 }

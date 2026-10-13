@@ -1,21 +1,284 @@
-// The connector contract's runtime parts, ported from backend/connectors/base.py: lookups on a
-// declaration, the defaults of an operation, consent, bindings and the owned error. The declaration
-// format itself is in contracts/connectors.ts; the registry (registry.ts) checks every declaration.
+// The connector contract: the declaration every connector makes and the runtime parts around it.
+// A connector declares resource kinds, the actions on them, how it authenticates and its operations. Each
+// operation validates its input strictly and declares the (kind, action) pairs it needs; `prepare()`
+// resolves the real resources a call touches before anything is authorized; returned records carry their
+// actual resource, so results are filtered after the call. Provider knowledge lives in connectors; the
+// generic rules live in the executor, and the registry (registry.ts) checks every declaration.
+//
+// The runtime parts: lookups on a declaration, the defaults of an operation, consent, bindings and the
+// owned error.
 
-import type { ConnectionId } from "../contracts/common.ts";
-import type {
-	ActionSpec,
-	Binding,
-	Connector,
-	Consent,
-	ErrorCode,
-	Operation,
-	OperationErrorShape,
-	ProviderClient,
-	ResourceKind,
-} from "../contracts/connectors.ts";
-import type { Resource } from "../contracts/policy.ts";
-import { resource } from "./policy.ts";
+import type { z } from "zod";
+import type { Json } from "../lib/json.ts";
+import type { ConnectionId } from "../shared/rpc.ts";
+import type { ProviderIo } from "./http.ts";
+import { type Resource, resource } from "./policy.ts";
+
+export interface ActionSpec {
+	id: string;
+	label: string;
+	/** One action that must also be allowed on the same resource (create requires read). */
+	requires?: string | null;
+}
+
+export interface ResourceKind {
+	id: string;
+	label: string;
+	actions: string[];
+	/** One grant (`*`) may cover every resource of the kind, including new ones. Default false. */
+	wildcard?: boolean;
+	/** Resources nest; a grant covers what is inside, and resources carry their ancestors. Default false. */
+	hierarchical?: boolean;
+	/** Shown with the kind where users choose access. */
+	note?: string | null;
+	/** Whether discovery lists resources without a search; otherwise users search. Default true. */
+	listed?: boolean;
+}
+
+/**
+ * The call touches this concrete resource and needs this action (and its `requires` chain) on it.
+ * `enumerate`: a listing that passes if some resource of the kind could be allowed; its records are then
+ * filtered one by one. Writes never enumerate.
+ */
+export type Requirement = { need: Resource; action: string } | { enumerate: string; action: string };
+
+export interface ScopedRecord {
+	resource: Resource;
+	data: { [key: string]: Json };
+}
+
+export interface ProviderOutput {
+	records: ScopedRecord[];
+	/** The provider's own cursor; the executor turns it into a run-bound page token. */
+	nextCursor?: string | null;
+	/** The provider said it did not search everything it could have. */
+	incomplete?: boolean;
+}
+
+export interface Prepared {
+	requirements: Requirement[];
+	/** Runs only after authorization. A mutating operation sends its one write from here. */
+	execute(): Promise<ProviderOutput>;
+}
+
+/** One connection as one call sees it: its id and an authenticated provider client. */
+export interface Binding<Client = ProviderClient> {
+	connectionId: ConnectionId;
+	client: Client;
+	/** A resource on this connection; ancestors nearest first. */
+	resource(kind: string, id: string, within?: string[], partial?: boolean): Resource;
+	/** The connection itself, as an `account` resource. */
+	account(): Resource;
+}
+
+/**
+ * Provider scopes an operation works with: any one of these sets, granted in full; the first is the one
+ * requested. Unknown scopes (`null`) pass every check, so the provider refuses; `[]` (known, none) fails
+ * every operation with consent.
+ */
+export type Consent = string[][];
+
+export interface Operation<Input = Json> {
+	/** Lowercase words joined by underscores, no digits; `<slug>99_<name>` fits in 64 characters. */
+	name: string;
+	title: string;
+	/** Model-facing; not part of the fingerprint (field descriptions are, through the schema). */
+	description: string;
+	/**
+	 * Strict input: unknown fields refused at every depth (the model must never pick a connection), no
+	 * coercion, no transform before validation. `null` or missing arguments validate as `{}`. The executor
+	 * hashes the normalized output, defaults included. Its JSON Schema, zod's own of the input with zod
+	 * pinned (registry.ts `inputSchema`), is what the model sees and what the fingerprint covers.
+	 * The registry refuses an input that is not strict at every depth (registry.ts `checkStrict`):
+	 * every object `z.strictObject`, every record lib/schema.ts's `record` (never `z.record`, which drops a
+	 * "__proto__" key), no `z.coerce`. Strings are usually `z.string().trim()` with their limits. The
+	 * arguments are parsed from the model's text with `parseJson` (lib/json.ts), not `JSON.parse`.
+	 */
+	input: z.ZodType<Input>;
+	prepare(binding: Binding, input: Input): Promise<Prepared>;
+	/** Every (kind, action) pair the operation can need; requirements at runtime must cover exactly these. */
+	needs: [kind: string, action: string][];
+	/** The action each returned record must allow on its own resource. Default `read`. */
+	outputAction?: string;
+	consent?: Consent | null;
+	/** Bump when the meaning changes in a way the declaration does not show. Default 1. */
+	revision?: number;
+	mutates?: boolean;
+	/** The input has `cursor`; the output may have `nextCursor`. */
+	paginated?: boolean;
+}
+
+export type Auth =
+	| {
+			type: "oauth2";
+			/** The operator's client: MINERVA_<APP>_CLIENT_ID and _SECRET; several connectors may share one. */
+			app: string;
+			authorizeUrl: string;
+			tokenUrl: string;
+			scopes: string[];
+			/** Default " "; Linear and Slack use ",". */
+			scopeSeparator?: string;
+			/** Dynamic client registration when the operator configured no client (Todoist). */
+			registrationUrl?: string | null;
+			/** Sent first, in order; none may be a protocol parameter. */
+			authorizeParams?: [string, string][];
+			/** Send `login_hint` with the account id on reconnect. Default false. */
+			loginHint?: boolean;
+			/** Default "post" (client id and secret in the body, before the other fields). */
+			clientAuth?: "post" | "basic";
+			/** Token requests as JSON instead of a form. Default false. */
+			jsonBody?: boolean;
+			/** Default true. */
+			pkce?: boolean;
+	  }
+	| { type: "api_key"; label: string; hint?: string | null }
+	| { type: "builtin" };
+
+export interface Account {
+	id: string;
+	label: string;
+}
+
+export interface DiscoveryItem {
+	id: string;
+	name: string;
+	/** `children` may list resources inside this one. */
+	expandable?: boolean;
+}
+
+export interface DiscoveryPage {
+	items: DiscoveryItem[];
+	/** The provider's cursor; the browser holds it, so connectors validate it as strictly as tool input. */
+	nextCursor?: string | null;
+}
+
+/** A provider client, owned by one request and closed after it. */
+export interface ProviderClient {
+	close(): Promise<void>;
+}
+
+export interface Connector<Client extends ProviderClient = ProviderClient> {
+	slug: string;
+	name: string;
+	kinds: ResourceKind[];
+	actions: ActionSpec[];
+	auth: Auth;
+	/** Each declared with `defineOperation` (below), which keeps its input's type for `prepare`. */
+	operations: Operation<never>[];
+	/** Hierarchical kinds users browse as a tree with `children`; not part of the fingerprint. */
+	browsable?: string[];
+	/** `secret`: the API key, the OAuth access token, or "" for a built-in service. */
+	client(secret: string, io: ProviderIo): Client;
+	account(client: Client): Promise<Account>;
+	discover(client: Client, kind: string, options: { query: string | null; cursor: string | null }): Promise<DiscoveryPage>;
+	/** `parent` is user input: check it as strictly as a tool would. Only for browsable kinds. */
+	children?(client: Client, kind: string, parent: string | null, options: { cursor: string | null }): Promise<DiscoveryPage>;
+	/** Names of the given resources; ones the account cannot see are left out. */
+	describe(client: Client, kind: string, ids: string[]): Promise<{ [id: string]: string }>;
+	/** Whether this instance can run the operation at all (say, an operator key is set). Default true. */
+	offered?(operation: Operation<never>): boolean;
+	/** A (label, URL) where the user manages what the provider lets Minerva reach. */
+	manageLink?(): [label: string, url: string] | null;
+}
+
+/** Errors the core raises. Only an error's message reaches the model or the UI. */
+export type CoreErrorCode =
+	| "POLICY_DENIED"
+	| "INVALID_ARGUMENTS"
+	| "UNKNOWN_OPERATION"
+	| "OPERATION_CHANGED"
+	| "CONSENT_REQUIRED"
+	| "CONNECTOR_ERROR"
+	| "RUN_ENDED"
+	| "WRITE_UNCERTAIN"
+	| "WRITE_IN_PROGRESS"
+	| "LIMIT_REACHED"
+	| "INVALID_CURSOR"
+	| "TIMED_OUT"
+	| "PROVIDER_UNAVAILABLE"
+	| "CONNECTION_UNAUTHORIZED"
+	| "PROVIDER_FORBIDDEN"
+	| "NOT_FOUND"
+	| "PROVIDER_RATE_LIMITED"
+	| "PROVIDER_REJECTED"
+	| "PROVIDER_FAILED"
+	| "FILE_TOO_LARGE"
+	| "INVALID_ADDRESS"
+	/** Any error that is not an operation error; its message is the generic one. */
+	| "FAILED";
+
+/** Errors connectors raise. */
+export type ConnectorErrorCode =
+	| "PROVIDER_LIMIT"
+	| "RESPONSE_TOO_LARGE"
+	| "INVALID_URL"
+	| "UNSUPPORTED_FILE"
+	| "UNSUPPORTED_ACCOUNT"
+	| "UNSUPPORTED_MESSAGE"
+	| "UNSUPPORTED_CONTENT"
+	| "UNSUPPORTED_RECIPIENT"
+	| "UNSUPPORTED_PAGE"
+	| "UNSUPPORTED_DATABASE"
+	| "SITE_UNREACHABLE"
+	| "SITE_TIMEOUT"
+	| "SITE_NOT_PUBLIC"
+	| "PAGE_TOO_LARGE"
+	| "PAGE_ERROR"
+	| "WRITE_UNCONFIRMED"
+	| "EDIT_NOT_APPLIED"
+	| "FILE_MOVED"
+	| "PAGE_MOVED"
+	| "ISSUE_MOVED"
+	| "TEAM_MOVED"
+	| "MAIL_MOVED"
+	| "CHANNEL_MOVED"
+	| "DEAL_MOVED"
+	| "CONVERSATION_MOVED"
+	| "MESSAGE_CHANGED"
+	| "PAYMENT_CHANGED"
+	| "CHANNEL_ARCHIVED"
+	| "PIPELINE_ARCHIVED"
+	| "NOT_IN_CHANNEL"
+	| "EXTERNAL_CHANNEL"
+	| "LINK_NOT_ALLOWED"
+	| "STATUS_CHANGE_REFUSED"
+	| "REFUND_REFUSED"
+	| "CURRENCY_MISMATCH"
+	| "INVALID_STAGE"
+	| "INVALID_KEY"
+	| "SEARCH_UNAVAILABLE"
+	| "PROVIDER_NOT_CONFIGURED"
+	| "NOT_SUPPORTED";
+
+export type ErrorCode = CoreErrorCode | ConnectorErrorCode;
+
+/**
+ * An owned, deliberately safe error: `{code, message}` (`OperationError` below, and `denied()` for
+ * POLICY_DENIED, also for what Minerva will not reveal). Any other exception is logged and the model sees
+ * "The operation could not be completed. Check the connection and try again." (code FAILED).
+ */
+export interface OperationErrorShape {
+	code: ErrorCode;
+	message: string;
+}
+
+/** A connection's credentials, decrypted: what the Workspace stores encrypted and lends for one call. */
+export type CredentialPayload =
+	| {
+			kind: "oauth2";
+			access_token: string;
+			refresh_token: string | null;
+			/** Sorted, unique; null when unknown (consent checks then pass). */
+			scopes: string[] | null;
+			/** Epoch seconds; set only from an integer `expires_in` under a year. */
+			expires_at?: number;
+			/** The client that issued the tokens; refresh and reconnect go only through it. */
+			client_id?: string;
+			/** The endpoint that issued them; refresh tokens are only ever sent there. */
+			token_url?: string;
+	  }
+	| { kind: "api_key"; key: string }
+	| { kind: "builtin" };
 
 /** A reserved kind for account-level actions; its one resource id is the connection id. */
 export const ACCOUNT_KIND = "account";
@@ -73,7 +336,7 @@ export function offered(connector: Connector, op: Operation<never>): boolean {
 	return connector.offered ? connector.offered(op) : true;
 }
 
-/** What an operation means beyond its input and needs, with base.py's defaults filled in. */
+/** What an operation means beyond its input and needs, with the defaults filled in. */
 export interface OperationTerms {
 	outputAction: string;
 	consent: Consent | null;
@@ -95,7 +358,7 @@ export function termsOf(op: Operation<never>): OperationTerms {
 /**
  * Whether the scopes the connection was granted cover the operation: any one set in full. Unknown scopes
  * (null) pass, so the provider is the one to refuse; known but empty ones fail every operation with
- * consent (connectors 11.7, risk 16).
+ * consent (risk 16).
  */
 export function consentGiven(consent: Consent | null | undefined, scopes: readonly string[] | null): boolean {
 	if (consent === null || consent === undefined || scopes === null) return true;

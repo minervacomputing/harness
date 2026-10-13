@@ -1,18 +1,18 @@
-// `run_script` as the model sees it (src/scripts/tool.ts, description.ts): its registration, today's
-// description with the platform's stated differences, the rendering of results (harness 7.4) and the
-// store's persistence (harness 7.6, worker/src/script-store.ts).
+// `run_script` as the model sees it (src/scripts/tool.ts, description.ts): its registration, the
+// description with the platform's stated differences, the rendering of results and the
+// store's persistence.
 
 import { describe, expect, test } from "vitest";
-import type { ToolDeclaration } from "../../src/contracts/executor.ts";
-import type { ScriptResult } from "../../src/contracts/scripts.ts";
+import type { ToolDeclaration } from "../../src/gateway/executor.ts";
 import { scriptDeclarations, scriptDescription } from "../../src/scripts/description.ts";
 import { HEAD_CHARS } from "../../src/scripts/limits.ts";
 import { piece } from "../../src/scripts/output.ts";
+import type { ScriptResult } from "../../src/scripts/run.ts";
 import { loadStore, render, saveStore, SCRIPT_STORE, scriptTool, type ScriptToolHost } from "../../src/scripts/tool.ts";
 import { declaration } from "./scripts-support.ts";
 
-/** Today's description, worker/src/main.ts `scriptRunner`, lines before the declarations. */
-const TODAY = [
+/** The description pi-codemode's host gives, lines before the declarations. */
+const PI_CODEMODE = [
 	"Run JavaScript that calls the tools declared below and returns a compact result.",
 	"Prefer it for reads that page through long lists, repeat across many resources (each repository, calendar or database), or count, filter or total results. Start such reads inside the script, so their raw results never enter the conversation, and print only what the answer needs. Where you can, do the whole read in one script: list what you need, read each item and compute the answer. Call tools directly for one or two small reads whose results you want to see.",
 	"The code is the body of an async function in a sandbox, so top-level await and return work. There is no network, file system, timers or modules.",
@@ -54,9 +54,9 @@ const CHANGED = new Map([
 const TOOLS: ToolDeclaration[] = [declaration("github_list_issues"), declaration("todoist_add-task", true)];
 
 describe("the description", () => {
-	test("today's, line for line, but for the two that state the platform's differences", () => {
+	test("pi-codemode's, line for line, but for the two that state the platform's differences", () => {
 		const lines = scriptDescription(TOOLS).split("\n");
-		const expected = TODAY.map((line, index) => CHANGED.get(index) ?? line);
+		const expected = PI_CODEMODE.map((line, index) => CHANGED.get(index) ?? line);
 		expect(lines.slice(0, expected.length)).toEqual(expected);
 		expect(lines.slice(expected.length).join("\n")).toBe(`${scriptDeclarations(TOOLS)}\n\`\`\``);
 	});
@@ -78,7 +78,7 @@ describe("the description", () => {
 });
 
 describe("the registration", () => {
-	test("sequential, never replayed, results up to 1 MiB with no line limit, today's parameters", () => {
+	test("sequential, never replayed, results up to 1 MiB with no line limit, one `code` parameter", () => {
 		const tool = scriptTool([...TOOLS, TOOLS[0] as ToolDeclaration], {} as ScriptToolHost);
 		expect(tool).toMatchObject({
 			name: "run_script",
@@ -102,7 +102,7 @@ const texts = async (r: ScriptResult, unkept?: string) => {
 	return { texts: (rendered.content ?? []).map((item) => (item.type === "text" ? item.text : "")), isError: rendered.isError, diagnostics: rendered.diagnostics };
 };
 
-describe("what the model sees (harness 7.4)", () => {
+describe("what the model sees", () => {
 	test("notes first, then the output, then the value", async () => {
 		expect(await texts(result({ output: [{ text: "printed" }, { text: "[image omitted]" }], value: { text: "42" }, cancelled: 1 }), "What the script passed to `store()` was not kept: x")).toEqual({
 			texts: [
@@ -170,7 +170,7 @@ function api() {
 	};
 }
 
-describe("the store (harness 7.6)", () => {
+describe("the store", () => {
 	test("saved as pairs of JSON texts, deletes before sets, and read back as the guest gets it", async () => {
 		const a = api();
 		expect(await saveStore(a as never, { set: [["a", '{"n": 1.0}'], ["__proto__", "[1]"]], delete: [] }, a.context)).toBeUndefined();
@@ -183,7 +183,7 @@ describe("the store (harness 7.6)", () => {
 		expect(await saveStore(a as never, EMPTY, a.context)).toBeUndefined();
 	});
 
-	test("today's refusals: a value that is not JSON, and more than 1 MiB of JSON in all", async () => {
+	test("refusals: a value that is not JSON, and more than 1 MiB of JSON in all", async () => {
 		const a = api();
 		expect(await saveStore(a as never, { set: [["a", "{"]], delete: [] }, a.context)).toBe("What the script passed to `store()` was not kept: a value could not be converted to JSON.");
 		const big = JSON.stringify("é".repeat(200_000));

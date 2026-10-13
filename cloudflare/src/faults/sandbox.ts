@@ -2,7 +2,7 @@
 // account tests need for the plan's Sandbox row, reachable only through the test build's token-gated driver
 // (lab.ts): faults in its container port (a hardening step that fails, destroys that fail), a reset of the
 // object that leaves its container running, a root shell for the tests' checks, and whether the container
-// runs. Ported from step 3's lab Worker minerva-cf-sbx. Never part of the production Worker.
+// runs. Never part of the production Worker.
 
 import { parseJson } from "../lib/json.ts";
 import { runRoot } from "../sandbox/process.ts";

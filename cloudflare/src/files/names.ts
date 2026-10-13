@@ -3,7 +3,6 @@
 // and the media type sniffed for display. Names are cut by UTF-16 code unit, but a surrogate pair is never
 // split. Categories and NFC come from the runtime's Unicode tables.
 
-import { fromUtf8Strict } from "../lib/bytes.ts";
 import { MAX_EXTENSION_CHARS, MAX_SEGMENT_BYTES } from "./limits.ts";
 
 const ENCODER = new TextEncoder();
@@ -16,7 +15,7 @@ function utf8Length(text: string): number {
 }
 
 /**
- * `clean_name(raw)`: the last segment (after `/` or `\`), without control or formatting characters, in NFC
+ * A browser's file name made a valid name: the last segment (after `/` or `\`), without control or formatting characters, in NFC
  * and stripped, `file` for nothing, `.` or `..`, and at most 255 UTF-8 bytes with an extension of up to 16
  * characters kept.
  */
@@ -29,7 +28,7 @@ export function cleanName(raw: string): string {
 	return fit(stem, extension);
 }
 
-/** `numbered(name, taken)`: the name, or the first of `name (2).ext`, `name (3).ext`, … that is not taken. */
+/** The name, or the first of `name (2).ext`, `name (3).ext`, … that is not taken. */
 export function numbered(name: string, taken: ReadonlySet<string>): string {
 	if (!taken.has(name)) return name;
 	const [stem, extension] = split(name);
@@ -39,7 +38,7 @@ export function numbered(name: string, taken: ReadonlySet<string>): string {
 	}
 }
 
-/** `_split(name)`: the stem and an extension of at most 16 characters with its dot; a leading dot is no extension. */
+/** The stem and an extension of at most 16 characters with its dot; a leading dot is no extension. */
 export function split(name: string): [string, string] {
 	const points = Array.from(name);
 	const dot = points.lastIndexOf(".");
@@ -47,7 +46,7 @@ export function split(name: string): [string, string] {
 	return [points.slice(0, dot).join(""), points.slice(dot).join("")];
 }
 
-/** `_fit(stem, extension, suffix)`: stem + suffix + extension, NFC after the join, the stem shortened until it fits 255 bytes. */
+/** stem + suffix + extension, NFC after the join, the stem shortened until it fits 255 bytes. */
 export function fit(stem: string, extension: string, suffix = ""): string {
 	// No more characters than the name has bytes, so the loop is short for any name the browser sends.
 	let points = Array.from(stem).slice(0, MAX_SEGMENT_BYTES);
@@ -62,7 +61,7 @@ export function fit(stem: string, extension: string, suffix = ""): string {
 	}
 }
 
-/** `name.encode()[:n].decode(errors="ignore")`: the first n bytes, a character cut at the end dropped. */
+/** The characters of `text` that fit in its first n UTF-8 bytes. */
 function firstBytes(text: string, n: number): string {
 	let out = "";
 	let used = 0;
@@ -89,15 +88,6 @@ const TEXT_TYPES: { [extension: string]: string } = {
 	".tsv": "text/tab-separated-values",
 };
 
-/** `os.path.splitext(name)[1]`: from the last dot, unless the dots before it are all the name has (`.bashrc`). */
-function extensionOf(name: string): string {
-	const slash = name.lastIndexOf("/");
-	const dot = name.lastIndexOf(".");
-	if (dot <= slash) return "";
-	for (let i = slash + 1; i < dot; i++) if (name[i] !== ".") return name.slice(dot);
-	return "";
-}
-
 function startsWith(head: Uint8Array, prefix: readonly number[], at = 0): boolean {
 	if (head.length < at + prefix.length) return false;
 	return prefix.every((byte, index) => head[at + index] === byte);
@@ -106,11 +96,11 @@ function startsWith(head: Uint8Array, prefix: readonly number[], at = 0): boolea
 const bytes = (text: string) => Array.from(text, (char) => char.charCodeAt(0));
 
 /**
- * `sniff(head, name)` (files 9.3), for display only (downloads are always application/octet-stream): from
+ * The media type of an upload, for display only (downloads are always application/octet-stream): from
  * the contents, with the name telling apart only kinds of zip and of text. HTML is text/plain.
  */
 export function sniff(head: Uint8Array, name: string): string {
-	const extension = extensionOf(name).toLowerCase();
+	const extension = split(name)[1].toLowerCase();
 	if (startsWith(head, bytes("%PDF-"))) return "application/pdf";
 	if (startsWith(head, [0x89, ...bytes("PNG\r\n\x1a\n")])) return "image/png";
 	if (startsWith(head, [0xff, 0xd8, 0xff])) return "image/jpeg";
@@ -122,15 +112,14 @@ export function sniff(head: Uint8Array, name: string): string {
 	return "application/octet-stream";
 }
 
-/** `_is_text(head)`: no NUL, and strict UTF-8 once 0 to 3 trailing bytes are dropped (the sample may end inside a character). */
+const strictUtf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
+
+/** No NUL, and UTF-8 once 0 to 3 trailing bytes are dropped (the sample may end inside a character). */
 function isText(head: Uint8Array): boolean {
 	if (head.includes(0)) return false;
 	for (let cut = 0; cut < 4; cut++) {
-		// The first `length - cut` bytes; an end below zero counts from the end.
-		let end = head.length - cut;
-		if (end < 0) end = Math.max(0, head.length + end);
 		try {
-			fromUtf8Strict(head.subarray(0, end));
+			strictUtf8.decode(head.subarray(0, Math.max(0, head.length - cut)));
 			return true;
 		} catch {
 			// Not UTF-8 at this cut.
@@ -140,46 +129,26 @@ function isText(head: Uint8Array): boolean {
 }
 
 /**
- * The upload's name from its query string (files 9.1, check 6): `parse_qs(query.decode("ascii"),
- * errors="strict").get("name")` must be exactly one value. Pairs are split on `&`, a pair without `=` and a
- * blank value are dropped, `+` is a space, and a percent escape that is not valid UTF-8 refuses the whole
- * query; a `%` without two hex digits stays as it is. Null when the request must be refused with "Name the
- * file with ?name=.". `query` is the URL's search without `?`; the URL parser has already escaped anything
- * that was not ASCII.
+ * The upload's name from its query string: exactly one non-empty `name`, else null (the request is refused
+ * with "Name the file with ?name=."). `+` is a space; a percent escape that is not UTF-8, or a `%` without
+ * two hex digits, refuses the whole query.
  */
 export function uploadName(query: string): string | null {
 	const names: string[] = [];
 	for (const pair of query.split("&")) {
-		if (pair === "") continue;
 		const equals = pair.indexOf("=");
-		if (equals < 0) continue;
-		const value = pair.slice(equals + 1);
-		if (value === "") continue;
-		const key = unquotePlusStrict(pair.slice(0, equals));
-		const decoded = unquotePlusStrict(value);
-		if (key === null || decoded === null) return null;
-		if (key === "name") names.push(decoded);
+		const key = formDecoded(equals < 0 ? pair : pair.slice(0, equals));
+		const value = formDecoded(equals < 0 ? "" : pair.slice(equals + 1));
+		if (key === null || value === null) return null;
+		if (key === "name" && value !== "") names.push(value);
 	}
 	return names.length === 1 ? (names[0] as string) : null;
 }
 
-/** `unquote_plus(text, errors="strict")`: null where the escaped bytes are not UTF-8. */
-function unquotePlusStrict(text: string): string | null {
-	const plain = text.replaceAll("+", " ");
-	if (!plain.includes("%")) return plain;
-	const out: number[] = [];
-	for (let i = 0; i < plain.length; ) {
-		const pair = plain.slice(i + 1, i + 3);
-		if (plain[i] === "%" && /^[0-9a-fA-F]{2}$/.test(pair)) {
-			out.push(Number.parseInt(pair, 16));
-			i += 3;
-		} else {
-			for (const byte of ENCODER.encode(plain[i] as string)) out.push(byte);
-			i += 1;
-		}
-	}
+/** A form-encoded key or value decoded, or null when its escapes are malformed or not UTF-8. */
+function formDecoded(text: string): string | null {
 	try {
-		return fromUtf8Strict(Uint8Array.from(out));
+		return decodeURIComponent(text.replaceAll("+", " "));
 	} catch {
 		return null;
 	}

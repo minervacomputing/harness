@@ -42,6 +42,7 @@
     "canonicalize": "5.1.0",
     "entities": "8.1.0",
     "hono": "4.13.9",
+    "htmlparser2": "12.0.0",
     "ipaddr.js": "2.5.0",
     "oauth4webapi": "3.8.8",
     "pako": "2.1.0",

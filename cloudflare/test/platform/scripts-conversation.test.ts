@@ -9,17 +9,20 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import type { TranscriptContext } from "@earendil-works/pi-ai";
 import { conversationObject } from "../../src/addressing.ts";
-import type { Caller, Json, RunId } from "../../src/contracts/common.ts";
-import type { RunEvent } from "../../src/contracts/events.ts";
-import type { ExecutorContext, ToolCallOutcome, ToolCallRequest, ToolDeclaration, ToolResult } from "../../src/contracts/executor.ts";
-import type { RunHead, StartSnapshot } from "../../src/contracts/runs.ts";
-import type { BeginRunInput, BeginRunResult, Registration } from "../../src/contracts/workspace.ts";
 import type { Conversation } from "../../src/conversation/conversation.ts";
+import type { RunEvent } from "../../src/conversation/events.ts";
 import { type ConversationPorts, defaultPorts, emptyFolder, PORTS, type WorkspaceClient, type WriteLedger } from "../../src/conversation/ports.ts";
+import type { RunHead } from "../../src/conversation/store.ts";
+import type { ExecutorContext, ToolCallOutcome, ToolCallRequest, ToolDeclaration } from "../../src/gateway/executor.ts";
+import type { ToolResult } from "../../src/gateway/results.ts";
+import type { StartSnapshot } from "../../src/gateway/tools.ts";
+import type { Json } from "../../src/lib/json.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { type FakeTurn, fakeUpstream } from "../../src/model/fake.ts";
 import { SCRIPT_TIMEOUT_MS } from "../../src/scripts/limits.ts";
 import { SCRIPT_CLOCK } from "../../src/scripts/run.ts";
+import type { Caller, RunId } from "../../src/shared/rpc.ts";
+import type { BeginRunInput, BeginRunResult, Registration } from "../../src/workspace/core.ts";
 
 const WS = "0199a000-0000-7000-8000-00000000d0aa";
 const USER = "0199a000-0000-7000-8000-00000000d0bb";
@@ -192,7 +195,7 @@ function scriptResults(fakes: Fakes): { texts: string[]; isError: boolean }[] {
 }
 
 describe("run_script in the conversation", () => {
-	test("offered after the connector tools, with today's description; absent without them", async () => {
+	test("offered after the connector tools, with its description; absent without them", async () => {
 		const { stub, fakes } = await conversation();
 		await settled(stub, await posted(stub, [{ text: "Hi." }]));
 		expect(offered(fakes.contexts[0]).map((tool) => tool.name)).toEqual(["fake_read", "fake_write", "run_script", "read", "write", "edit", "bash"]);

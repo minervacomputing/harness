@@ -10,9 +10,8 @@
 // The work is synchronous and bounded, and runs in the Worker that serves the call: these limits, not
 // isolation, are what contain a hostile file.
 //
-// Where it differs from Python's expat: parts are read as UTF-8, or UTF-16 with a byte order mark (what
-// Office writes); a part that declares another encoding is unreadable here, where expat would decode a
-// single-byte one. saxes and expat refuse the same malformed XML in all but corner cases.
+// Parts are read as UTF-8, or UTF-16 after a byte order mark; a part that declares another encoding is
+// unreadable.
 
 import { SaxesParser, type SaxesAttributeNS, type SaxesTagNS } from "saxes";
 import { OperationError } from "../../gateway/connector.ts";
@@ -28,7 +27,6 @@ export const MAX_SLIDES = 1000;
 export const MAX_COLUMNS = 200;
 export const CHUNK = 64 * 1024;
 const CELL = /^([A-Z]{1,3})\d+$/u;
-const XMLNS = "http://www.w3.org/2000/xmlns/";
 
 export type Kind = "docx" | "pptx" | "xlsx";
 
@@ -76,147 +74,67 @@ class Text {
 	}
 }
 
+/** An element's attributes without a prefix, by name. */
 type Attrs = Map<string, string>;
-type Start = (name: string, attrs: Attrs) => void;
+type Start = (name: string, attrs: Attrs, attributes: Record<string, SaxesAttributeNS>) => void;
 type End = (name: string) => void;
 type Chars = (data: string) => void;
 
-/** An element or attribute name without its namespace (expat joins them with a space). */
-function local(name: string): string {
-	return name.slice(name.lastIndexOf(" ") + 1);
-}
-
-/**
- * The attributes as office.py sees them: `{local(k): v for k, v in attrs} | attrs`, where expat names a
- * namespaced attribute "uri local" and leaves out namespace declarations.
- */
 function attrsOf(attributes: Record<string, SaxesAttributeNS>): Attrs {
-	const named: [string, string][] = [];
-	for (const attribute of Object.values(attributes)) {
-		if (attribute.uri === XMLNS || attribute.name === "xmlns" || attribute.prefix === "xmlns") continue;
-		named.push([attribute.prefix ? `${attribute.uri} ${attribute.local}` : attribute.local, attribute.value]);
-	}
-	const attrs: Attrs = new Map();
-	for (const [key, value] of named) attrs.set(local(key), value);
-	for (const [key, value] of named) attrs.set(key, value);
-	return attrs;
+	return new Map(
+		Object.values(attributes)
+			.filter((attribute) => !attribute.prefix)
+			.map((attribute) => [attribute.local, attribute.value]),
+	);
 }
 
-function relationshipId(attrs: Attrs): string | null {
-	for (const [key, value] of attrs) {
-		if (key.includes(" ") && key.endsWith(" id") && (key.split(" ")[0] as string).endsWith("/relationships")) return value;
-	}
-	return null;
+/** The id attribute in the relationships namespace (`r:id`), which names a relationship of the part. */
+function relationshipId(attributes: Record<string, SaxesAttributeNS>): string | null {
+	return Object.values(attributes).find((attribute) => attribute.local === "id" && attribute.uri.endsWith("/relationships"))?.value ?? null;
 }
 
-/** `posixpath.split`. */
-function split(path: string): [string, string] {
-	const at = path.lastIndexOf("/") + 1;
-	let head = path.slice(0, at);
-	const tail = path.slice(at);
-	if (head && head !== "/".repeat(head.length)) head = head.replace(/\/+$/, "");
-	return [head, tail];
-}
-
-/** `posixpath.join`. */
-function join(first: string, ...rest: string[]): string {
-	let path = first;
-	for (const part of rest) {
-		if (part.startsWith("/")) path = part;
-		else if (!path || path.endsWith("/")) path += part;
-		else path += `/${part}`;
-	}
-	return path;
-}
-
-/** `posixpath.normpath`. */
-export function normpath(path: string): string {
-	if (path === "") return ".";
-	const initial = path.startsWith("/") ? (path.startsWith("//") && !path.startsWith("///") ? 2 : 1) : 0;
+/** A relationship's target part, resolved against the folder of the part it belongs to. */
+function resolvePart(folder: string, target: string): string {
 	const parts: string[] = [];
-	for (const part of path.split("/")) {
-		if (part === "" || part === ".") continue;
-		if (part !== ".." || (!initial && !parts.length) || (parts.length && parts[parts.length - 1] === "..")) parts.push(part);
-		else if (parts.length) parts.pop();
+	for (const segment of (target.startsWith("/") ? target : `${folder}/${target}`).split("/")) {
+		if (segment === "..") parts.pop();
+		else if (segment !== "" && segment !== ".") parts.push(segment);
 	}
-	const joined = "/".repeat(initial) + parts.join("/");
-	return joined || ".";
+	return parts.join("/");
 }
-
-/** An XML declaration's version, up to its closing quote. */
-const VERSION = /^<\?xml([ \t\r\n]+version[ \t\r\n]*=[ \t\r\n]*)(["'])[A-Za-z0-9._-]*\2/;
 
 /** The encoding an XML declaration names, if the text starts with one. */
 const DECLARED = /^<\?xml\s[^?>]*\bencoding\s*=\s*["']([^"']*)["']/;
 
+/** Whether a declared encoding is the one the bytes are read in: by the Encoding Standard's name, or "utf-16" for either order. */
+function agrees(declared: string, encoding: string): boolean {
+	if (declared.trim().toLowerCase() === "utf-16") return encoding.startsWith("utf-16");
+	try {
+		return new TextDecoder(declared).encoding === encoding;
+	} catch {
+		return false;
+	}
+}
+
 /**
- * The part's bytes as text, decoded as they stream, as expat reads them: UTF-16 after its byte order mark or
- * when the first two bytes are a zero and a character, else UTF-8 (a byte order mark skipped), or ISO-8859-1 or
- * US-ASCII when the declaration says so; invalid sequences refused. A declaration that contradicts the bytes
- * is refused (expat's "encoding specified in XML declaration is incorrect"), and so is one that names any
- * other encoding (Python's expat also reads other single-byte codecs).
+ * A part's bytes as text, decoded as they stream: UTF-16 after its byte order mark, else UTF-8 (a byte order
+ * mark dropped), invalid sequences refused. A declaration that names another encoding is refused.
  */
 class Decoder {
-	#utf8: TextDecoder | null = null;
-	#single: "latin1" | "ascii" | null = null;
-	/** Little or big endian UTF-16, decoded here (the runtime's TextDecoder may know only UTF-8). */
-	#utf16: { little: boolean; pending: number[]; high: number | null; head: string | null } | null = null;
+	#decoder: TextDecoder | null = null;
 
 	write(bytes: Uint8Array, final: boolean): string {
-		if (this.#utf8 === null && this.#single === null && this.#utf16 === null) {
-			if ((bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0xfe && bytes[1] === 0xff)) {
-				this.#utf16 = { little: bytes[0] === 0xff, pending: [], high: null, head: "" };
-				bytes = bytes.subarray(2);
-			} else if (bytes.length > 1 && (bytes[0] === 0) !== (bytes[1] === 0)) {
-				// No byte order mark: a zero byte beside a character's other byte, as expat tells UTF-16 apart.
-				this.#utf16 = { little: bytes[1] === 0, pending: [], high: null, head: "" };
-			} else {
-				if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) bytes = bytes.subarray(3);
-				const declared = DECLARED.exec(String.fromCharCode(...bytes.subarray(0, 256)));
-				const name = declared === null ? "utf-8" : (declared[1] as string).toLowerCase();
-				if (name === "utf-8") this.#utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
-				else if (name === "iso-8859-1") this.#single = "latin1";
-				else if (name === "us-ascii") this.#single = "ascii";
-				else throw new Unparsable("encoding");
-			}
+		const first = this.#decoder === null;
+		const label = bytes[0] === 0xff && bytes[1] === 0xfe ? "utf-16le" : bytes[0] === 0xfe && bytes[1] === 0xff ? "utf-16be" : "utf-8";
+		this.#decoder ??= new TextDecoder(label, { fatal: true, ignoreBOM: false });
+		const text = this.#decoder.decode(bytes, { stream: !final });
+		if (first) {
+			// The first piece is the whole part or 64 KiB of it: a declaration it does not hold whole is refused.
+			if (text.startsWith("<?xml") && !text.includes("?>")) throw new Unparsable("encoding");
+			const declared = DECLARED.exec(text)?.[1];
+			if (declared !== undefined && !agrees(declared, this.#decoder.encoding)) throw new Unparsable("encoding");
 		}
-		if (this.#utf8 !== null) return this.#utf8.decode(bytes, { stream: !final });
-		if (this.#single !== null) {
-			let out = "";
-			for (let at = 0; at < bytes.length; at += 8192) {
-				const piece = bytes.subarray(at, at + 8192);
-				if (this.#single === "ascii" && piece.some((byte) => byte > 0x7f)) throw new Unparsable("us-ascii");
-				out += String.fromCharCode(...piece);
-			}
-			return out;
-		}
-		const state = this.#utf16 as { little: boolean; pending: number[]; high: number | null; head: string | null };
-		const units = [...state.pending, ...bytes];
-		let out = "";
-		let at = 0;
-		for (; at + 1 < units.length; at += 2) {
-			const unit = state.little ? (units[at] as number) | ((units[at + 1] as number) << 8) : ((units[at] as number) << 8) | (units[at + 1] as number);
-			if (state.high !== null) {
-				if (unit < 0xdc00 || unit > 0xdfff) throw new Unparsable("utf-16");
-				out += String.fromCharCode(state.high, unit);
-				state.high = null;
-			} else if (unit >= 0xd800 && unit <= 0xdbff) state.high = unit;
-			else if (unit >= 0xdc00 && unit <= 0xdfff) throw new Unparsable("utf-16");
-			else out += String.fromCharCode(unit);
-		}
-		state.pending = units.slice(at);
-		if (final && (state.pending.length || state.high !== null)) throw new Unparsable("utf-16");
-		if (state.head !== null) {
-			// The declaration is read once 256 characters are in: UTF-16 or the variant of this byte order only.
-			state.head += out;
-			if (state.head.length >= 256 || final) {
-				const declared = DECLARED.exec(state.head.slice(0, 256));
-				state.head = null;
-				const name = declared === null ? "utf-16" : (declared[1] as string).toLowerCase();
-				if (name !== "utf-16" && name !== (state.little ? "utf-16le" : "utf-16be")) throw new Unparsable("encoding");
-			}
-		}
-		return out;
+		return text;
 	}
 }
 
@@ -231,8 +149,8 @@ const S_TEXT = 13;
 const S_ENTITY = 14;
 
 /**
- * Hands the text saxes holds at the end of a chunk to `chars` now, as expat hands over the text of each chunk
- * it parsed, so a long run of text stops being read once the text is full, as it does today.
+ * Hands the text saxes holds back at the end of a chunk to `chars` now, rather than at the next markup, so a
+ * long run of text stops being read as soon as the text is full.
  */
 function flushText(parser: SaxesParser<{ xmlns: true }>, chars: Chars): void {
 	const pending = parser as unknown as Pending;
@@ -249,7 +167,7 @@ const ROOT_NAMESPACES: Readonly<Record<string, string>> = { xml: "http://www.w3.
 
 /**
  * saxes resolves a prefix by walking every open element, so nesting costs the square of its depth (20,000
- * nested elements took over a second, expat a few milliseconds). Here the bindings in scope are kept per
+ * nested elements took over a second). Here the bindings in scope are kept per
  * prefix as elements open and close (`Archive.parse` keeps them), so a lookup is one step and finds what
  * saxes would: the element's own declarations, then the nearest open element's, then xml and xmlns. An
  * override on the class, not the instance: a property added to a parser slows every access saxes makes.
@@ -294,7 +212,7 @@ export class Archive {
 		});
 		parser.on("closetag", (tag) => {
 			for (const prefix of Object.keys((tag as SaxesTagNS).ns)) parser.scopes.get(prefix)?.pop();
-			if (end !== null) end(local((tag as SaxesTagNS).local));
+			if (end !== null) end((tag as SaxesTagNS).local);
 		});
 		parser.on("opentag", (tag) => {
 			for (const [prefix, uri] of Object.entries((tag as SaxesTagNS).ns)) {
@@ -304,11 +222,7 @@ export class Archive {
 			}
 			parser.opening = null;
 			const attributes = (tag as SaxesTagNS).attributes;
-			// expat joins a namespace and a name with a space, so it refuses a namespace that holds one.
-			for (const attribute of Object.values(attributes)) {
-				if ((attribute.name === "xmlns" || attribute.prefix === "xmlns") && attribute.value.includes(" ")) throw unreadable();
-			}
-			start(local((tag as SaxesTagNS).local), attrsOf(attributes));
+			start((tag as SaxesTagNS).local, attrsOf(attributes), attributes);
 		});
 		if (chars !== null) {
 			parser.on("text", chars);
@@ -316,17 +230,8 @@ export class Archive {
 		}
 		const decoder = new Decoder();
 		try {
-			let first = true;
 			await this.zip.read(name, CHUNK, (chunk) => {
-				let text = decoder.write(chunk, false);
-				if (first) {
-					// A second byte order mark is text before the root; saxes would skip it.
-					if (text.startsWith("\ufeff")) throw new Unparsable("bom");
-					// expat takes any version of letters, digits, "." "_" and "-" and reads it as XML 1.0.
-					text = text.replace(VERSION, (_match, before: string, quote: string) => `<?xml${before}${quote}1.0${quote}`);
-					first = false;
-				}
-				parser.write(text);
+				parser.write(decoder.write(chunk, false));
 				if (chars !== null) flushText(parser, chars);
 			});
 			parser.write(decoder.write(new Uint8Array(0), true));
@@ -341,8 +246,9 @@ export class Archive {
 
 	/** The part's internal relationships: id -> [type, the target part's name]. */
 	async relationships(part: string): Promise<Map<string, [string, string]>> {
-		const [folder, base] = split(part);
-		const rels = join(folder, "_rels", `${base}.rels`);
+		const at = part.lastIndexOf("/");
+		const folder = at < 0 ? "" : part.slice(0, at);
+		const rels = `${folder ? `${folder}/` : ""}_rels/${part.slice(at + 1)}.rels`;
 		const found = new Map<string, [string, string]>();
 		if (!this.has(rels)) return found;
 		await this.parse(rels, (name, attrs) => {
@@ -351,8 +257,7 @@ export class Archive {
 			const kind = attrs.get("Type");
 			const target = attrs.get("Target");
 			if (rid && kind && target && found.size < MAX_ENTRIES) {
-				const path = target.startsWith("/") ? target.slice(1) : join(folder, target);
-				found.set(rid, [kind, normpath(path)]);
+				found.set(rid, [kind, resolvePart(folder, target)]);
 			}
 		});
 		return found;
@@ -403,9 +308,9 @@ async function slides(archive: Archive): Promise<string[]> {
 	const main = await archive.main();
 	const relationships = await archive.relationships(main);
 	const order: string[] = [];
-	await archive.parse(main, (name, attrs) => {
+	await archive.parse(main, (name, _attrs, attributes) => {
 		if (name !== "sldId" || order.length >= MAX_SLIDES) return;
-		const rid = relationshipId(attrs);
+		const rid = relationshipId(attributes);
 		if (rid) order.push(rid);
 	});
 	return order.filter((rid) => relationships.has(rid)).map((rid) => (relationships.get(rid) as [string, string])[1]);
@@ -473,7 +378,7 @@ function cellText(kind: string | undefined, raw: string, strings: readonly strin
 	return raw;
 }
 
-/** A row as Python's `csv.writer(lineterminator="\n")` writes it. */
+/** A CSV row: fields with a comma, quote or line break quoted, quotes doubled, ending with "\n". */
 export function csvRow(cells: readonly string[]): string {
 	const fields = cells.map((cell) => (/[,"\n\r]/.test(cell) ? `"${cell.replaceAll('"', '""')}"` : cell));
 	const line = fields.join(",");
@@ -486,9 +391,9 @@ async function excel(archive: Archive, text: Text): Promise<void> {
 	const main = await archive.main();
 	const relationships = await archive.relationships(main);
 	const first: string[] = [];
-	await archive.parse(main, (name, attrs) => {
+	await archive.parse(main, (name, _attrs, attributes) => {
 		if (name !== "sheet" || first.length) return;
-		const rid = relationshipId(attrs);
+		const rid = relationshipId(attributes);
 		if (rid) first.push(rid);
 	});
 	if (!first.length || !relationships.has(first[0] as string)) throw unreadable();
@@ -502,7 +407,7 @@ async function excel(archive: Archive, text: Text): Promise<void> {
 	const strings = shared && archive.has(shared) ? await sharedStrings(archive, shared) : [];
 
 	const row = new Map<number, string>();
-	// The cell being read; it stays set after the cell ends, as office.py's dict does.
+	// The cell being read.
 	const cell: { type?: string | undefined; column?: number } = {};
 	let value: string[] = [];
 	const state = { v: false, is: false, t: false };

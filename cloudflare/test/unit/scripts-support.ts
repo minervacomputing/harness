@@ -4,13 +4,14 @@
 // from its globals. The script module is the one the guest gets, wrapped the same way.
 
 import { constants, createContext, runInContext } from "node:vm";
-import type { ToolCallOutcome, ToolDeclaration } from "../../src/contracts/executor.ts";
-import type { GuestOutcome, ScriptControl, ScriptFence, ScriptRequest, ScriptTools } from "../../src/contracts/scripts.ts";
+import type { ToolCallOutcome, ToolDeclaration } from "../../src/gateway/executor.ts";
+import type { Json } from "../../src/lib/json.ts";
 import type { ScriptsClient } from "../../src/scripts/run.ts";
-import type { Json } from "../../src/contracts/common.ts";
-import { guestOutcome } from "../../src/scripts/outcome.ts";
+import { type GuestOutcome, guestOutcome } from "../../src/scripts/outcome.ts";
 import { GUEST_CORE, SCRIPT_PREFIX, SCRIPT_SUFFIX } from "../../src/scripts/prelude.ts";
 import { RESET_REASON } from "../../src/scripts/limits.ts";
+import type { ScriptFence, ScriptRequest } from "../../src/scripts/scripts.ts";
+import type { ScriptControl, ScriptTools } from "../../src/scripts/target.ts";
 
 export interface Guest {
 	/** What `run()` answered, as the guest sent it (not yet checked). */

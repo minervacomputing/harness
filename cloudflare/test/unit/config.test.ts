@@ -3,7 +3,7 @@ import { OAUTH_APPS, checkBuild, clientSecretNames, connectorClientSecrets, pars
 import { connectorRegistry } from "../../src/connectors/index.ts";
 import { settingsEnv } from "./settings.ts";
 
-test("defaults are today's", () => {
+test("the defaults", () => {
 	const parsed = parse(settingsEnv());
 	expect(parsed.siteUrl).toBe("https://minerva.example");
 	expect(parsed.debug).toBe(false);

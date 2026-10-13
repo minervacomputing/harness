@@ -2,11 +2,9 @@
 // databases sit, and how they are shown.
 
 import { z } from "zod";
-import type { Binding, ScopedRecord } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, denied } from "../../gateway/connector.ts";
+import { type Binding, OperationError, type ScopedRecord, denied } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import { type JsonObject } from "../../lib/json.ts";
-import { hostnameOf, urlsplit } from "../../lib/urlsplit.ts";
 import { type Block, type Comment, type DataSource, type Database, type NotionClient, type Page, type Parent, pageTitle, sourceDatabaseId, textOf } from "./client.ts";
 
 export const PAGE = "page";
@@ -15,8 +13,8 @@ export const MAX_HOPS = 64;
 export const MAX_FILTER = 8000;
 
 const UUID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/iu;
-/** `([0-9a-f]{32})$` under IGNORECASE; Python's `$` also matches before a final "\n". */
-const LINK_ID = /([0-9a-fA-F]{32})(?=\n?$)/u;
+/** The id at the end of a link's last path segment. */
+const LINK_ID = /([0-9a-f]{32})$/i;
 
 /** A Notion id as a lowercase UUID with dashes, or null when it is not one. */
 export function canonical(value: unknown): string | null {
@@ -29,22 +27,15 @@ function notionHost(host: string): boolean {
 	return host === "notion.so" || host === "www.notion.so" || host === "notion.site" || host.endsWith(".notion.site");
 }
 
-/**
- * The path of `value` read as an https link to a Notion host, or null: Python's `urlsplit(value)` and its
- * `hostname`, for what `_object_id` asks of them (lib/urlsplit.ts). Every outcome that is not such a link
- * (another scheme, no host, another host, or a ValueError) is null, as each is refused alike.
- */
+/** The path of `value` read as an https link to a Notion host, or null. */
 function notionLinkPath(value: string): string | null {
-	const parts = urlsplit(value);
-	if (parts === null || parts.scheme !== "https") return null;
-	// `hostname` lowercases all but an IPv6 zone, and `_object_id` lowercases the rest.
-	const host = hostnameOf(parts.netloc);
-	return host !== null && notionHost(host.toLowerCase()) ? parts.path : null;
+	const url = URL.parse(value);
+	return url !== null && url.protocol === "https:" && notionHost(url.hostname) ? url.pathname : null;
 }
 
 export const OBJECT_ID_ERROR = "must be a Notion id, or a link to a Notion page or database";
 
-/** `_object_id`: a Notion id, or the id at the end of a link to a Notion page or database; null otherwise. */
+/** A Notion id, or the id at the end of a link to a Notion page or database; null otherwise. */
 export function objectId(value: string): string | null {
 	const found = canonical(value);
 	if (found !== null) return found;
@@ -65,7 +56,7 @@ export const JSON_SIZE_ERROR = `must be at most ${MAX_FILTER} characters as JSON
 
 const idString = () => z.string().trim().min(32).max(300).describe("A Notion id, or a link to the page or database.");
 
-/** `_object_id` as the AfterValidator of a validated string. */
+/** `objectId` as the transform of a validated string. */
 function toObjectId<T>(value: string, ctx: z.core.$RefinementCtx<T>): string {
 	const id = objectId(value);
 	if (id !== null) return id;
@@ -73,14 +64,14 @@ function toObjectId<T>(value: string, ctx: z.core.$RefinementCtx<T>): string {
 	return z.NEVER;
 }
 
-/** `ObjectId`: a Notion id, or a link to the page or database, normalized to the id. */
+/** A Notion id, or a link to the page or database, normalized to the id. */
 export function objectIdField() {
 	return idString().transform(toObjectId);
 }
 
 /**
- * `ObjectId | None = None`. The default sits inside the transform, since zod's JSON Schema leaves out the
- * default of a field that transforms: so the model sees `"default": null`, as Pydantic shows it.
+ * An optional `objectIdField`, null by default. The default sits inside the transform, since zod's JSON
+ * Schema leaves out the default of a field that transforms.
  */
 export function optionalObjectIdField() {
 	return idString()
@@ -284,7 +275,7 @@ export function pageRecord(resource: Resource, page: Page, extra: JsonObject = {
 
 /** The database's data source the call uses, which must belong to this database itself. */
 export async function dataSource(client: NotionClient, database: Database, requested: string | null): Promise<DataSource> {
-	// A dict keyed by canonical id: in Notion's order, each id once.
+	// Canonical ids in Notion's order, each once; null for an id that is not one.
 	const sources = new Set(database.data_sources.map((source) => canonical(source.id)));
 	let chosen: string | null;
 	if (requested !== null) {
@@ -293,7 +284,7 @@ export async function dataSource(client: NotionClient, database: Database, reque
 	} else if (sources.size === 1) {
 		chosen = [...sources][0] as string | null;
 	} else {
-		const ids = [...sources].map((id) => id ?? "None").join(", ");
+		const ids = [...sources].filter((id) => id !== null).join(", ");
 		throw new OperationError("INVALID_ARGUMENTS", `This database has several data sources; pass data_source_id: ${ids}.`);
 	}
 	if (chosen === null) throw new OperationError("PROVIDER_FAILED", "Notion returned an unexpected response.");

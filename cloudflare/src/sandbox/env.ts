@@ -1,4 +1,4 @@
-// The ExecutionEnv pi's local tools get (plan: The local tools; contracts/sandbox.ts ExecutionEnvAdapter):
+// The ExecutionEnv pi's local tools get (plan: The local tools):
 // pi's `FileSystem & Shell`, each call forwarded to the Sandbox Durable Object of the run's incarnation. It
 // is a thin client, made per tool call: paths are resolved here as pi's NodeExecutionEnv resolves them
 // (with the container's HOME), arguments are checked here as pi checks them, and everything else happens
@@ -27,18 +27,10 @@ import {
 	type WatchChange,
 	type WatchTarget,
 } from "@earendil-works/pi-durable/env";
-import type {
-	ExecOutputSink,
-	ExecRequest,
-	ExecResult,
-	FileHandle,
-	FsRequest,
-	FsResponse,
-	Refused,
-	SandboxFence,
-	WatchSnapshot,
-} from "../contracts/sandbox.ts";
+import type { ExecOutputSink, ExecRequest, ExecResult } from "./commands.ts";
 import { commandEnvironment, MAX_BINARY_BYTES, MAX_READ_BYTES, MAX_TEXT_BYTES, WORKSPACE } from "./constants.ts";
+import type { Refused, SandboxFence } from "./core.ts";
+import type { FileHandle, FsRequest, FsResponse, WatchSnapshot } from "./files.ts";
 import type { Delivered } from "./output.ts";
 import { join, resolvePath } from "./paths.ts";
 
@@ -98,6 +90,7 @@ export class SandboxExecutionEnv implements ExecutionEnv {
 
 	constructor(options: SandboxEnvOptions) {
 		this.#options = options;
+		// The incarnation, so pi's per-file mutation queues are keyed by the container they change.
 		this.id = `sandbox:${options.fence.incarnation}`;
 		this.cwd = options.cwd ?? WORKSPACE;
 	}

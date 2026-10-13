@@ -7,16 +7,15 @@ import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, test } from "vitest";
 import { sandboxObject } from "../../src/addressing.ts";
-import type { WorkspaceRef } from "../../src/contracts/common.ts";
-import type { SandboxFence } from "../../src/contracts/sandbox.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { durableSql } from "../../src/lib/sql.ts";
 import { sandboxSpec, WORKSPACE } from "../../src/sandbox/constants.ts";
-import { SandboxCore } from "../../src/sandbox/core.ts";
+import { SandboxCore, type SandboxFence } from "../../src/sandbox/core.ts";
 import { CHECK_MISMATCH, r2Bucket } from "../../src/sandbox/ports.ts";
 import { OutputSink } from "../../src/sandbox/sink.ts";
 import { readState, writeState } from "../../src/sandbox/store.ts";
 import { prepareSandbox } from "../../src/sandbox/session.ts";
+import type { WorkspaceRef } from "../../src/shared/rpc.ts";
 import { ScriptedContainer } from "./sandbox-container.ts";
 
 const WS: WorkspaceRef = { id: "0199b000-0000-7000-8000-000000000001", jurisdiction: null };

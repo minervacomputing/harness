@@ -1,7 +1,7 @@
 // The test build's driver (src/faults/): POST /api/faults/<op> with a JSON body, for the account tests.
 // It answers only a request with `X-Minerva-Faults-Token: <faultsToken(MINERVA_SECRET_KEY)>`; any other request
 // is passed on to the Worker, which answers 404 as for a path with no route. It calls the objects through
-// addressing.ts as the API will (step 5), as a fixed test user, against the fake provider only. Operations
+// addressing.ts as the API does, as a fixed test user, against the fake provider only. Operations
 // under `sandbox/` drive a Sandbox object of their own (lab.ts). `emails` and `emails-clear` read and empty
 // the mailbox the build's emails go to (mailbox.ts); `download` serves a signed download link as the
 // download origin (files-worker/) would, from the test Worker's own buckets, for the platform tests (the
@@ -12,13 +12,13 @@
 // so the request's CPU time is the hash's (plan: Step 7, the scrypt measurement).
 
 import { conversationObject, filesBucket, sandboxObject, workspaceObject } from "../addressing.ts";
-import type { Caller, WorkspaceRef } from "../contracts/common.ts";
-import type { GrantChange } from "../contracts/policy.ts";
 import { hashPassword } from "../accounts/passwords.ts";
+import type { GrantChange } from "../gateway/grants.ts";
 import { timingSafeEqual } from "../lib/hash.ts";
 import { serveDownload } from "../files/download.ts";
 import { receiveUpload } from "../files/uploads.ts";
 import { type Json, parseJson } from "../lib/json.ts";
+import type { Caller, WorkspaceRef } from "../shared/rpc.ts";
 import { FOLDER, NOTES, NOTES_CLIENT, NOTES_TOKEN_URL } from "./connector.ts";
 import type { Conversation, Workspace } from "./index.ts";
 import { SandboxLab } from "./lab.ts";

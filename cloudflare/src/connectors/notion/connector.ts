@@ -1,5 +1,4 @@
-// Notion, ported from backend/connectors/notion/. Resources are pages and databases; what is allowed on one
-// covers everything inside it.
+// Notion. Resources are pages and databases; what is allowed on one covers everything inside it.
 //
 // Minerva connects as a public integration (`owner=user`). Notion itself decides which pages the integration
 // can reach: the user picks them when connecting. Notion has no scopes, so the connector declares no
@@ -25,11 +24,9 @@
 // This module assembles the connector. The operations are in `reads` and `writes`; what they share (ids,
 // where pages and databases sit, how they are shown) is in `pages`.
 
-import type { Connector, DiscoveryItem, DiscoveryPage } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
-import { DataSource, NotionClient, type NotionClientOptions, Page, databaseName, pageTitle, sourceDatabaseId, sourceName } from "./client.ts";
+import { type Connector, type DiscoveryItem, type DiscoveryPage, OperationError } from "../../gateway/connector.ts";
+import { DataSource, NotionClient, type NotionClientOptions, Page, databaseName, own, pageTitle, sourceDatabaseId, sourceName } from "./client.ts";
 import { PAGE, canonical } from "./pages.ts";
-import { has } from "./python.ts";
 import { GET_DATABASE, GET_PAGE, LIST_COMMENTS, QUERY_DATABASE, READ_PAGE, SEARCH } from "./reads.ts";
 import { ADD_COMMENT, APPEND_TO_PAGE, CREATE_DATABASE_ROW, CREATE_PAGE, EDIT_PAGE, UPDATE_PAGE_PROPERTIES } from "./writes.ts";
 
@@ -48,7 +45,7 @@ function hidden(error: unknown): boolean {
 	return error instanceof OperationError && HIDDEN.has(error.code);
 }
 
-/** `fn` over `items` with at most `limit` running at once, results in order (asyncio.Semaphore and gather). */
+/** `fn` over `items` with at most `limit` running at once, results in order. */
 async function limited<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
 	const results: R[] = new Array(items.length);
 	let next = 0;
@@ -112,7 +109,7 @@ export function notionConnector(options: NotionClientOptions = {}): Connector<No
 			const items: DiscoveryItem[] = [];
 			const seen = new Set<string>();
 			for (const item of found.results) {
-				const object = has(item, "object") ? item.object : null;
+				const object = own(item, "object");
 				let objectId: string | null;
 				let name: string;
 				if (object === "page") {

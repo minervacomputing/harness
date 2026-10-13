@@ -13,9 +13,19 @@
 // without a Brave Search key (MINERVA_BRAVE_SEARCH_API_KEY) the connector withholds search (`offered`).
 
 import { z } from "zod";
-import type { Binding, Connector, Prepared, ProviderClient, ProviderIo, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { ACCOUNT_KIND, OperationError, defineOperation } from "../../gateway/connector.ts";
+import {
+	ACCOUNT_KIND,
+	type Binding,
+	type Connector,
+	OperationError,
+	type Prepared,
+	type ProviderClient,
+	type ProviderOutput,
+	type ScopedRecord,
+	defineOperation,
+} from "../../gateway/connector.ts";
+import type { ProviderIo } from "../../gateway/http.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import { htmlToText } from "../../lib/markdown.ts";
 import { MAX_URL, ancestors, canonicalHost, choices, name, parseUrl, validId } from "../../lib/sites.ts";
 import { SINGLE_LINE, isSingleLine, sliceText } from "../../lib/text.ts";
@@ -47,20 +57,14 @@ function site(binding: Binding, host: string): Resource {
 	return binding.resource(SITE, host, ancestors(host));
 }
 
-const Search = z
-	.strictObject({
-		query: z.string().trim().min(1).max(400).refine(isSingleLine, SINGLE_LINE).meta({ title: "Query" }),
-		limit: z.int().min(1).max(20).default(10).meta({ title: "Limit" }),
-		// Where results should come from, as a two-letter country code (CH, DE, US).
-		country: z.string().trim()
-			.regex(/^[A-Z]{2}$/)
-			.nullable()
-			.default(null)
-			.meta({ title: "Country" }),
-		freshness: z.enum(["day", "week", "month", "year"]).nullable().default(null).meta({ title: "Freshness" }),
-		cursor: z.string().trim().max(300).nullable().default(null).meta({ title: "Cursor" }),
-	})
-	.meta({ title: "Search" });
+const Search = z.strictObject({
+	query: z.string().trim().min(1).max(400).refine(isSingleLine, SINGLE_LINE),
+	limit: z.int().min(1).max(20).default(10),
+	// Where results should come from, as a two-letter country code (CH, DE, US).
+	country: z.string().trim().regex(/^[A-Z]{2}$/).nullable().default(null),
+	freshness: z.enum(["day", "week", "month", "year"]).nullable().default(null),
+	cursor: z.string().trim().max(300).nullable().default(null),
+});
 
 const FRESHNESS: { readonly [name: string]: string } = { day: "pd", week: "pw", month: "pm", year: "py" };
 
@@ -106,7 +110,7 @@ export const SEARCH = defineOperation<z.output<typeof Search>>({
 						resource: account,
 						data: {
 							title: plain(result.title),
-							url: url.text,
+							url: url.href,
 							site: url.host,
 							snippet: sliceText(plain(result.description), 0, MAX_SNIPPET),
 							age: result.age,
@@ -120,14 +124,12 @@ export const SEARCH = defineOperation<z.output<typeof Search>>({
 	},
 });
 
-const ReadPage = z
-	.strictObject({
-		url: z.string().trim().min(1).max(MAX_URL).meta({ title: "Url" }),
-		max_chars: z.int().min(500).max(100_000).default(20_000).meta({ title: "Max Chars" }),
-		// Where to start in the page's text, to continue a long page.
-		offset: z.int().min(0).max(10_000_000).default(0).meta({ title: "Offset" }),
-	})
-	.meta({ title: "ReadPage" });
+const ReadPage = z.strictObject({
+	url: z.string().trim().min(1).max(MAX_URL),
+	max_chars: z.int().min(500).max(100_000).default(20_000),
+	// Where to start in the page's text, to continue a long page.
+	offset: z.int().min(0).max(10_000_000).default(0),
+});
 
 const MOVED_NOTE = "This page moved to another address. Open redirect_to to follow it; that site needs its own permission.";
 
@@ -146,11 +148,11 @@ export const READ_PAGE = defineOperation<z.output<typeof ReadPage>>({
 			async execute(): Promise<ProviderOutput> {
 				const outcome = await clientOf(binding).fetcher.get(target);
 				if (outcome instanceof Moved) {
-					return { records: [{ resource: site(binding, target.host), data: { url: target.text, redirect_to: outcome.target.text, note: MOVED_NOTE } }] };
+					return { records: [{ resource: site(binding, target.host), data: { url: target.href, redirect_to: outcome.target.href, note: MOVED_NOTE } }] };
 				}
 				let title: string | null = null;
 				let text = outcome.text;
-				if (outcome.form === "html") [text, title] = htmlToText(outcome.text, outcome.url.text);
+				if (outcome.form === "html") [text, title] = htmlToText(outcome.text, outcome.url.href);
 				const end = data.offset + data.max_chars;
 				const total = text.length;
 				return {
@@ -158,7 +160,7 @@ export const READ_PAGE = defineOperation<z.output<typeof ReadPage>>({
 						{
 							resource: site(binding, outcome.url.host),
 							data: {
-								url: outcome.url.text,
+								url: outcome.url.href,
 								title,
 								content_type: outcome.contentType,
 								text: sliceText(text, data.offset, end),

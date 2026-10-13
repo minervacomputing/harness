@@ -1,30 +1,19 @@
-// Helpers for the files tests: the Python vectors (files-vectors.json, read with parseJson, since the
-// runtime's JSON.parse can misread escaped keys), an in-memory R2 bucket with fault hooks, a Workspace byte
+// Helpers for the files tests: an in-memory R2 bucket with fault hooks, a Workspace byte
 // counter, and a conversation's folder over node:sqlite with the Conversation's own schema, its runs and a
 // `finish` that publishes as conversation/store.ts does.
 
-import type { AttemptFence, RunId, Sha256, VersionId } from "../../src/contracts/common.ts";
-import type { CheckpointScan, FileMode, FolderWarnings } from "../../src/contracts/files.ts";
-import type { CheckpointUploadPlan, CheckpointUploadResult } from "../../src/contracts/sandbox.ts";
-import type { ReservedUpload } from "../../src/contracts/workspace.ts";
 import { MIGRATIONS } from "../../src/conversation/schema.ts";
+import type { FileMode, FolderWarnings } from "../../src/files/manifest.ts";
+import type { ReservedUpload } from "../../src/files/uploads.ts";
+import type { CheckpointUploadPlan, CheckpointUploadResult } from "../../src/sandbox/folder.ts";
 import { CHECK_MISMATCH } from "../../src/sandbox/ports.ts";
 import type { Bucket, StoredObject } from "../../src/files/objects.ts";
-import { type ByteCounter, type FolderDeps, FolderStore } from "../../src/files/store.ts";
+import { type ByteCounter, type CheckpointScan, type FolderDeps, FolderStore } from "../../src/files/store.ts";
 import { hex } from "../../src/lib/bytes.ts";
 import { type Json, parseJson } from "../../src/lib/json.ts";
 import { migrate, type Sql, sqliteSql } from "../../src/lib/sql.ts";
+import type { AttemptFence, RunId, Sha256, VersionId } from "../../src/shared/rpc.ts";
 import { openDatabase } from "./sqlite.ts";
-
-interface NodeFs {
-	getBuiltinModule(id: "node:fs"): { readFileSync(path: URL, encoding: "utf8"): string };
-}
-
-/** files-vectors.json, written by test/fixtures/files-vectors.py from today's Python. */
-export function filesVectors(): { [name: string]: Json } {
-	const fs = (globalThis as unknown as { process: NodeFs }).process.getBuiltinModule("node:fs");
-	return parseJson(fs.readFileSync(new URL("../fixtures/files-vectors.json", import.meta.url), "utf8")) as { [name: string]: Json };
-}
 
 export const WORKSPACE = "0199a000-0000-7000-8000-00000000f0a1";
 export const CONVERSATION = "0199a000-0000-7000-8000-00000000f0c1";

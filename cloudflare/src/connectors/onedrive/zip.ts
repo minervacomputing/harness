@@ -11,13 +11,13 @@
 //   the budget at most;
 // - each entry's CRC-32 is checked, and the last piece of an entry is handed over only once it has been, so
 //   an entry of one piece is never parsed damaged. A reader that stops early (office.ts, once the text it
-//   wants is complete) leaves the rest of a longer entry unchecked, as Python's does.
+//   wants is complete) leaves the rest of a longer entry unchecked.
 //
 // zip.js also refuses output that is not the size an entry declares, a local header whose flags, method,
 // CRC-32, sizes or file name differ from the directory's, and data that reaches past the directory. Not
 // refused, as the budget bounds what they could cost: overlapping entries, an entry flagged as patched
-// (bit 5) or strongly encrypted (bit 6) but not encrypted, and file names that decode differently from
-// Python's (zip.js reads UTF-8 without the flag, and does not cut at a NUL). Names are never used as paths.
+// (bit 5) or strongly encrypted (bit 6) but not encrypted, and odd file names (zip.js reads UTF-8 without
+// the flag, and does not cut at a NUL). Names are never used as paths.
 //
 // Every zip.js failure (a truncated or corrupt archive, an encrypted or unsupported entry) is a `BadZip`.
 

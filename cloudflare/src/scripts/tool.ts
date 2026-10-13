@@ -1,10 +1,10 @@
-// `run_script` in the `minerva` extension (harness 7.1, 7.4, 7.6): offered when the run has a connector
+// `run_script` in the `minerva` extension: offered when the run has a connector
 // tool, after the direct ones (gateway/tools.ts `modelTools`); scripts can call every connector tool of the
 // run, those past the direct cap included. Never replayed (a script may have written before it was
 // interrupted) and `sequential`, so a round with a script runs one call at a time; its result up to 1 MiB
 // with no line limit, as the direct tools'.
 //
-// What the model sees, in order (harness 7.4): the failure (clipped to 30,000 characters), the cancelled
+// What the model sees, in order: the failure (clipped to 30,000 characters), the cancelled
 // calls, the store's refusal, the printed output (images as "[image omitted]"), then the returned value, or
 // "The script printed and returned nothing."; `isError` when the script failed. A result past 1 MiB is cut
 // as pi cuts it, with pi's note (scripts/output.ts).
@@ -16,24 +16,24 @@
 
 import type { TSchema } from "@earendil-works/pi-ai";
 import { defineDoc, type ToolExecutionApi, type ToolExecutionResult, type ToolRegistration } from "@earendil-works/pi-durable";
-import type { AttemptFence, EpochMs, RunId } from "../contracts/common.ts";
-import type { ToolDeclaration } from "../contracts/executor.ts";
-import type { ScriptControl, ScriptResult, ScriptText, ScriptTools } from "../contracts/scripts.ts";
 import { clip } from "../conversation/history.ts";
+import type { ToolDeclaration } from "../gateway/executor.ts";
 import { TOOL_RESULT_LIMITS } from "../gateway/results.ts";
 import { RUN_ENDED_MESSAGE } from "../gateway/ledger.ts";
 import { parseJson } from "../lib/json.ts";
 import { uuid7 } from "../lib/random.ts";
+import type { AttemptFence, EpochMs, RunId } from "../shared/rpc.ts";
 import { scriptDescription } from "./description.ts";
 import { CANCELLED_NOTE, NOTHING, SCRIPT_TOOL, STORE_BYTES, STORE_TOO_LARGE, STORE_UNCONVERTIBLE } from "./limits.ts";
-import { bound, sizeOf } from "./output.ts";
-import { executeScript, type ScriptLane, type ScriptsClient, scriptCpuMs, scriptTimeoutMs } from "./run.ts";
+import { type ScriptText, bound, sizeOf } from "./output.ts";
+import { executeScript, type ScriptLane, type ScriptResult, type ScriptsClient, scriptCpuMs, scriptTimeoutMs } from "./run.ts";
 import type { ScriptCallPort, ScriptCalls, ScriptSession } from "./session.ts";
+import type { ScriptControl, ScriptTools } from "./target.ts";
 
 type Context = Parameters<ToolRegistration["execute"]>[2];
 
 
-/** The turn's `store()` values (worker/src/script-store.ts), in the run's pi conversation. */
+/** The turn's `store()` values, in the run's pi conversation. */
 export const SCRIPT_STORE = defineDoc<{ entries: [string, string][] }>({
 	kind: "minerva.script-store",
 	version: 1,
@@ -79,7 +79,7 @@ export async function loadStore(api: Pick<ToolExecutionApi, "snapshot" | "conver
 
 class TooLarge extends Error {}
 
-/** UTF-8 bytes of the values' JSON as one object, `{"key":value,…}`, which today's 1 MiB counts. */
+/** UTF-8 bytes of the values' JSON as one object, `{"key":value,…}`, which the 1 MiB limit counts. */
 function storeBytes(entries: ReadonlyMap<string, string>): number {
 	let bytes = 2 + Math.max(0, entries.size - 1);
 	for (const [key, json] of entries) bytes += sizeOf(JSON.stringify(key)).bytes + 1 + sizeOf(json).bytes;
@@ -119,7 +119,7 @@ export async function saveStore(
 	return undefined;
 }
 
-/** What the model sees of a result, with the store saved first when the script succeeded (harness 7.4). */
+/** What the model sees of a result, with the store saved first when the script succeeded. */
 export async function render(result: ScriptResult, save: (writes: ScriptResult["storeWrites"]) => Promise<string | undefined>): Promise<ToolExecutionResult> {
 	// Notes come first, where cutting a long result cannot drop them.
 	const notes: string[] = [];

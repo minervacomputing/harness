@@ -68,7 +68,7 @@ export function error(status: number, code: string): Response {
 	return json(status, { type: "error.list", errors: [{ code, message: SECRET }] });
 }
 
-/** A copy of a JSON value, as Python's copy.deepcopy. */
+/** A deep copy of a JSON value. */
 export function copy<T extends Json>(value: T): T {
 	return parseJson(JSON.stringify(value)) as T;
 }

@@ -3,9 +3,11 @@
 
 import { ExecutionError, FileError } from "@earendil-works/pi-durable/env";
 import { describe, expect, test } from "vitest";
-import type { ExecOutputSink, ExecRequest, ExecResult, FsRequest, FsResponse, Refused, SandboxFence } from "../../src/contracts/sandbox.ts";
+import type { ExecOutputSink, ExecRequest, ExecResult } from "../../src/sandbox/commands.ts";
 import { commandEnvironment, MAX_READ_BYTES } from "../../src/sandbox/constants.ts";
+import type { Refused, SandboxFence } from "../../src/sandbox/core.ts";
 import { type SandboxClient, SandboxExecutionEnv } from "../../src/sandbox/env.ts";
+import type { FsRequest, FsResponse } from "../../src/sandbox/files.ts";
 import type { Delivered } from "../../src/sandbox/output.ts";
 
 type Context = Parameters<SandboxExecutionEnv["readTextFile"]>[1];

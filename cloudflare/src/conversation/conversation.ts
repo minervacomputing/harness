@@ -1,4 +1,4 @@
-// The Conversation Durable Object (contracts/conversation.ts; plan: Data placement, Protocols): one per chat.
+// The Conversation Durable Object (`ConversationApi`; plan: Data placement, Protocols): one per chat.
 // It extends the Agents SDK's Agent and runs pi-durable through PiHarness, one pi session per run, with the
 // `minerva` extension's tools and the model wrapper of src/model/. It owns its messages, runs, attempts and
 // run events, and the start protocol's side of the Workspace's registry. Nothing routes to it but our own
@@ -30,22 +30,17 @@ import { Agent } from "agents";
 import { PiHarness } from "agents/harness/pi";
 import { scriptsObject } from "../addressing.ts";
 import { settings } from "../config.ts";
-import type { FolderOut, MessageIn, MessageOut } from "../contracts/api.ts";
-import type { AttemptFence, Caller, Json, Outcome, Refusal, RunId, VersionId } from "../contracts/common.ts";
-import type { CancelAck, ConversationApi, ConversationInit, DownloadTarget, EventPage } from "../contracts/conversation.ts";
-import type { RunEvent } from "../contracts/events.ts";
-import type { CredentialPort, Executor, RunStatePort, ToolCallOutcome, ToolDeclaration } from "../contracts/executor.ts";
-import type { CancelReason, ConversationHead, PostedView, RunEnd, RunHead, RunSnapshot } from "../contracts/runs.ts";
-import type { ScriptsApi } from "../contracts/scripts.ts";
-import type { CredentialPayload } from "../contracts/connectors.ts";
-import type { FolderLimit } from "../contracts/files.ts";
 import { connectorRegistry } from "../connectors/index.ts";
-import { folderLimitMessage, type FolderLimits } from "../files/limits.ts";
+import { type FolderLimit, folderLimitMessage, type FolderLimits } from "../files/limits.ts";
+import type { DownloadTarget } from "../files/store.ts";
+import type { CredentialPayload } from "../gateway/connector.ts";
+import type { CredentialPort, Executor, ToolCallOutcome, ToolDeclaration } from "../gateway/executor.ts";
 import type { Registry as ConnectorRegistry } from "../gateway/registry.ts";
+import type { RunStatePort } from "../gateway/run-state.ts";
 import { modelTools } from "../gateway/tools.ts";
 import { type About, identity } from "../lib/about.ts";
 import { EncryptionKeys, credentialBinding } from "../lib/encryption.ts";
-import { parseJson } from "../lib/json.ts";
+import { type Json, parseJson } from "../lib/json.ts";
 import { isUuid, uuid7 } from "../lib/random.ts";
 import { appliedMigrations, migrate } from "../lib/sqlite.ts";
 import { sliceText } from "../lib/text.ts";
@@ -55,17 +50,23 @@ import { sandboxSpec } from "../sandbox/constants.ts";
 import { outputSink } from "../sandbox/sink.ts";
 import { ScriptRuns, scriptToolHost } from "../scripts/host.ts";
 import { isReset, type ScriptsClient } from "../scripts/run.ts";
+import type { ScriptsApi } from "../scripts/scripts.ts";
 import { scriptTool } from "../scripts/tool.ts";
+import type { FolderOut, MessageIn, MessageOut } from "../shared/api.ts";
+import type { AttemptFence, Caller, Outcome, Refusal, RunId, VersionId } from "../shared/rpc.ts";
 import { START_FAILED } from "../workspace/core.ts";
 import {
 	ACTING,
 	ACTIVE,
 	CANCELLED,
+	type CancelReason,
 	COMPLETED,
 	endFor,
 	localToolEvent,
 	phaseEvent,
 	phaseOf,
+	type RunEnd,
+	type RunEvent,
 	START_EXPIRED,
 	statusEvent,
 	TIMED_OUT,
@@ -80,9 +81,104 @@ import { type ConversationPorts, type FolderPort, PORTS, type PortsContext, runS
 import { ToolQueue, untilAborted } from "./queue.ts";
 import { MIGRATIONS } from "./schema.ts";
 import { KEY_REUSED, START_KEY, START_KEY_TTL_MS, messageDigest } from "./start-keys.ts";
-import { type RunRow, RunStore, type StartRow } from "./store.ts";
+import {
+	type ConversationHead,
+	type ConversationInit,
+	type EventPage,
+	type RunHead,
+	type RunRow,
+	type RunSnapshot,
+	RunStore,
+	type RunView,
+	type StartRow,
+} from "./store.ts";
 import { RunStream } from "./stream.ts";
 import { connectorTool, isWrite, REPLAY_REFUSED, REPLAYS_ALLOWED, RUN_ENDED_MESSAGE, type ToolHost } from "./tools.ts";
+
+/** What a Conversation Durable Object answers to a cancel from outside: the acknowledgement the Workspace's outbox waits for. */
+export interface CancelAck {
+	runId: RunId;
+	/**
+	 * `stopping`: the run's local revoked flag is set and the run is being stopped. `tombstoned`: the run is
+	 * not stored yet, so a start that is still in flight stores it as cancelled (plan: Strict revocation,
+	 * step 4). `ended`: it had already ended.
+	 */
+	state: "stopping" | "tombstoned" | "ended";
+}
+
+/**
+ * The Conversation Durable Object's RPC surface. One object per chat, named by the conversation's id, in
+ * its workspace's jurisdiction. Authoritative for its owner, workspace and agent (fixed at creation),
+ * messages, runs and attempts, run events, the write ledger, page tokens, folder versions, the run's
+ * checkpoint, the script store, and pi's `pi_*` tables. Every method that takes a `Caller` answers "not
+ * found" (null, or a 404 refusal) for a caller who is not the conversation's owner, so another user's chat
+ * looks like none.
+ *
+ * Workers RPC refuses an argument or result over 32 MiB, and a conversation's events grow without bound,
+ * so no method returns more than one run's page of events: conversations and runs come back as heads, and
+ * the Worker streams the API's body (each run with all its events by seq), paging each run's events with
+ * `getRunEvents` up to its head's `eventSeq`.
+ */
+export interface ConversationApi {
+	/** Fixes the owner, workspace and agent. Idempotent; refuses a different identity. */
+	init(input: ConversationInit): Promise<void>;
+
+	/** Messages by (created_at, id); runs by created_at, as heads. */
+	getConversation(caller: Caller): Promise<ConversationHead | null>;
+	/** One page of a run's events by seq; null for another user's run or an unknown one. */
+	getRunEvents(caller: Caller, runId: RunId, page: EventPage): Promise<RunEvent[] | null>;
+
+	/**
+	 * Starts a turn (plan: Starting a run): 404, 400 "Write a message or attach a file.", 409 "Wait
+	 * for the current answer to finish, or stop it.", or the attachment refusals of `beginRun`. Every
+	 * refusal leaves nothing behind (no message, no run, uploads untouched), which the composer relies on.
+	 * Before its transaction it copies each reserved upload whose contents the conversation does not hold
+	 * yet into a blob of its own (`blobs/<ws>/<conv>/<sha256>/<random>`, recorded as loose first, `get` then
+	 * `put` with the upload's SHA-256, which R2 checks), so the folder never names an `uploads/` key: those
+	 * expire a day after they were written. An upload gone by then is "An attached file is no longer
+	 * available. Remove it and attach it again." Success stores the message, the run (`queued`, attempt 1,
+	 * event seq 1 `status: queued`) and the base version together, and sets the title from the first message
+	 * (`content[:80]`, else the attachment paths joined by ", "); then it calls `activate`.
+	 *
+	 * `key` is the client's Idempotency-Key, if it sent one (1 to 255 visible ASCII characters): the same
+	 * message sent again with it within a day answers for the run the first one started (joining the start in
+	 * flight, or the stored message and run with its first page of events), before the 409 check, so a
+	 * retried request never starts a second run; another message with the key is 422 "This
+	 * Idempotency-Key was used for a different message." A refused start forgets its key.
+	 */
+	postMessage(caller: Caller, input: Required<MessageIn>, key?: string | null): Promise<Outcome<PostedView>>;
+
+	getRun(caller: Caller, runId: RunId): Promise<RunHead | null>;
+	/** The user's stop: idempotent, a finished run stays as it was; the refreshed run. */
+	cancelRun(caller: Caller, runId: RunId): Promise<RunHead | null>;
+	/**
+	 * A cancel from the Workspace's outbox (revocation, deletion, emergency stop): sets the run's local
+	 * revoked flag synchronously and stops it with the reason's code and message (CancelReason, RunEnd), or
+	 * leaves a tombstone for a run not stored yet. Idempotent by run id. Returning is the acknowledgement.
+	 */
+	cancel(runId: RunId, reason: CancelReason, entryId: number): Promise<CancelAck>;
+
+	/**
+	 * The current folder (no version), or a non-checkpoint version of this conversation; null is 404.
+	 * `{version_id: null, files: [], dirs: []}` when there is no folder yet.
+	 */
+	listFiles(caller: Caller, versionId: VersionId | null): Promise<FolderOut | null>;
+	/** A file of a non-checkpoint version (or of the current folder), for a signed link; null is 404. */
+	resolveDownload(caller: Caller, versionId: VersionId | null, path: string): Promise<DownloadTarget | null>;
+
+	/**
+	 * Tombstone, cancel and wait, then delete storage and the R2 prefix (plan: Files, Deletion). Driven by the
+	 * Workspace, which calls it again until it resolves. It overrides the Agents SDK's own `destroy()`, which
+	 * resets the object after it deletes the storage, so the caller may see the connection break once the
+	 * deletion is done: a broken call after a resolved one, or a second call that finds nothing, is done.
+	 */
+	destroy(): Promise<void>;
+}
+
+export interface PostedView {
+	message: MessageOut;
+	run: RunView;
+}
 
 /** chord's background context: never cancelled, no values. */
 const BG = Object.freeze({ abortSignal: undefined, value: () => undefined, toString: () => "[Context minerva-conversation]" });
@@ -91,7 +187,7 @@ const BG = Object.freeze({ abortSignal: undefined, value: () => undefined, toStr
 const NEVER_MS = 2_000_000_000;
 
 /**
- * pi's settings (harness 3.1): a failed model call ends the turn (any retry delay pi might use
+ * pi's settings: a failed model call ends the turn (any retry delay pi might use
  * stays at or under 60 s, so a long wait is never mistaken for a restart); no background compaction; no
  * partial commits, so an interrupted answer is asked again; and no context kept in memory after a turn,
  * which would keep every object active, and billed, for 10 minutes (spike: PiHarness, fact 17).
@@ -125,7 +221,7 @@ const LIVE_TASKS = ["pending", "running", "waiting", "completing"] as const;
 /** The reason an attempt's object is reset when its local calls cannot go on (plan: Checkpoints). */
 export const ATTEMPT_ENDED = "The attempt ended: ";
 
-/** Ninja's `get_object_or_404` (web-api 3): another user's conversation looks like none. */
+/** A conversation, or a 404: another user's conversation looks like none. */
 const NOT_FOUND = { status: 404, detail: "Not Found" } as const;
 
 type Job = { fn: string; payload?: unknown; job: { id: string; payload: unknown } };
@@ -460,7 +556,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * `activate` (step 5): until the Workspace answers, sent again by the watch job and whenever the object
+	 * `activate` (plan: Starting a run, step 5): until the Workspace answers, sent again by the watch job and whenever the object
 	 * starts. Active: the run is provisioned and its loop starts. Revoked: it stops with that reason. Expired:
 	 * it fails (`start_expired`). Ended: the Workspace no longer tracks it, so no revocation could reach it;
 	 * it stops ("Stopped.").
@@ -746,7 +842,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		}
 		if (submission.status !== "done" || submission.type !== "input") return;
 		const entry = entries.get(submission.answer) ?? (await this.#entry(run, submission.answer));
-		// The folder as the turn left it, before the turn counts as complete (harness 2, step 12).
+		// The folder as the turn left it, before the turn counts as complete.
 		if (!(await this.#finishLocal(fence))) return;
 		await this.#complete(fence, answerText(entry));
 	}
@@ -767,7 +863,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * `complete` (runs 2.2): the assistant message, the `message` event and `completed`, in one transaction and
+	 * `complete`: the assistant message, the `message` event and `completed`, in one transaction and
 	 * in that order, only while the attempt is current. An empty answer, or one past what a WorkerEvent could
 	 * carry, fails the run instead. Outside pi's transactions (store.ts `outside`), as every end.
 	 */
@@ -885,7 +981,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			this.#log("the run's tools could not be built", error);
 			listed = [];
 		}
-		// read, write, edit and bash in the run's container, after the connector tools and `run_script` (harness 5.1).
+		// read, write, edit and bash in the run's container, after the connector tools and `run_script`.
 		const locals = localToolSpecs({ deadline: run.deadline }).map((local) => this.#localTool(local, host));
 		const tools = modelTools<ToolDeclaration, ToolRegistration>(
 			listed,
@@ -967,7 +1063,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		this.#localOf({ runId: run.id, attempt: run.attempt })?.prepare();
 	}
 
-	/** A local call's environment; "Preparing files" shows while a call waits for the container (harness 12.2). */
+	/** A local call's environment; "Preparing files" shows while a call waits for the container. */
 	async #waitFor(fence: AttemptFence, local: LocalRun, signal: AbortSignal | undefined) {
 		const waits = local.preparing;
 		if (waits) {
@@ -1004,7 +1100,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		}
 	}
 
-	/** A local call's card, after its result was released (files 8.4); outside pi's transactions, for the attempt only. */
+	/** A local call's card, after its result was released; outside pi's transactions, for the attempt only. */
 	#reportLocal(fence: AttemptFence, event: LocalToolEvent): void {
 		this.#store
 			.outside(() => void this.#store.append(fence.runId, localToolEvent(event.tool, event.summary, event.ok, event.excerpt), fence))
@@ -1013,7 +1109,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 
 	/**
 	 * The attempt's local calls cannot go on (local.ts), and no held result is released before this settles:
-	 * a folder over its limits fails the turn with `folder_limit` and that limit's own message (runs 2.3),
+	 * a folder over its limits fails the turn with `folder_limit` and that limit's own message,
 	 * then the object is reset, so pi never commits a held result; a container that
 	 * failed its hardening or checks fails the turn as `worker_failed` (no local call ran in it); anything
 	 * else ends the attempt by resetting the object, and the next attempt starts from the last checkpoint.
@@ -1128,7 +1224,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		return executor;
 	}
 
-	/** The executor's view of the run (contracts/executor.ts): our checks and the ledger's records (ports.ts `runStatePort`). */
+	/** The executor's view of the run (gateway/run-state.ts `RunStatePort`): our checks and the ledger's records (ports.ts `runStatePort`). */
 	#runState(): RunStatePort {
 		return runStatePort(this.#store, () => this.#ledger(), (runId) => this.#scheduleSweep(runId));
 	}
@@ -1181,7 +1277,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	 * settles, whether or not its caller still waits (the executor's `settled`, so a write sent before pi
 	 * aborted the call is recorded with its real outcome), while the run is active (any attempt), never for
 	 * RUN_ENDED (the executor returns no event then). A scripted call passes `drop` instead of `signal`: the
-	 * script's end drops it while it waits for its slot, but never cuts it once sent (harness 7.5).
+	 * script's end drops it while it waits for its slot, but never cuts it once sent.
 	 */
 	#invoke(
 		fence: AttemptFence,
@@ -1299,7 +1395,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		};
 	}
 
-	// Phases (harness 12.2): emitted only when they change, fenced by the attempt.
+	// Phases: emitted only when they change, fenced by the attempt.
 
 	#phase(fence: AttemptFence, text: string): void {
 		if (this.#phases.get(fence.runId) === text) return;
@@ -1423,7 +1519,7 @@ async function piWork(storage: SqliteStorage, run: RunRow): Promise<PiWork> {
 	return classifyWork(submission?.status, live);
 }
 
-/** The history replay, in the commit that creates the run's session: one timestamp for every entry (harness 3.3). */
+/** The history replay, in the commit that creates the run's session: one timestamp for every entry. */
 async function replay(tx: Tx, id: PiConversationId, history: { role: "user" | "assistant"; content: string }[]): Promise<void> {
 	const timestamp = Date.now();
 	for (const message of history) {
@@ -1448,7 +1544,7 @@ async function replay(tx: Tx, id: PiConversationId, history: { role: "user" | "a
 	}
 }
 
-/** The answer: the text blocks of the assistant message joined and trimmed (harness 3.6). */
+/** The answer: the text blocks of the assistant message joined and trimmed. */
 function answerText(entry: EntryRecord | undefined): string {
 	const message = entry?.model?.[0];
 	if (message?.role !== "assistant") return "";

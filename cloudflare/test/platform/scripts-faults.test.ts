@@ -1,7 +1,7 @@
 // Code mode's faults end to end in local workerd, as test/platform/protocols.test.ts runs the protocols:
 // the real Workspace and Conversation objects, the executor with its ledger, the fake Notes connector and
 // its provider, the fake model, the real Scripts object, and the test build's fault points. A script's
-// store survives a crash of the conversation (worker/test/resume.test.ts), a write a script was waiting for
+// store survives a crash of the conversation, a write a script was waiting for
 // when its wall clock ran out settles in the ledger and is recorded, and a crash during a script ends it
 // unreplayed.
 
@@ -9,10 +9,9 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import { conversationObject, workspaceObject } from "../../src/addressing.ts";
 import { CONNECTORS, CONNECTOR_SOURCE } from "../../src/connectors/index.ts";
-import type { Caller, RunId, WorkspaceRef } from "../../src/contracts/common.ts";
-import type { RunEvent } from "../../src/contracts/events.ts";
-import type { RunHead } from "../../src/contracts/runs.ts";
+import type { RunEvent } from "../../src/conversation/events.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
+import type { RunHead } from "../../src/conversation/store.ts";
 import { notesConnector } from "../../src/faults/connector.ts";
 import type { Conversation, Workspace } from "../../src/faults/index.ts";
 import type { Fault } from "../../src/faults/plan.ts";
@@ -22,6 +21,7 @@ import { uuid7 } from "../../src/lib/random.ts";
 import type { FakeTurn } from "../../src/model/fake.ts";
 import { SCRIPT_TIMEOUT_MS } from "../../src/scripts/limits.ts";
 import { SCRIPT_CLOCK } from "../../src/scripts/run.ts";
+import type { Caller, RunId, WorkspaceRef } from "../../src/shared/rpc.ts";
 import { WORKSPACE_PORTS } from "../../src/workspace/workspace.ts";
 
 const USER = "0199a000-0000-7000-8000-0000000e5c01";

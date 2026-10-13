@@ -1,4 +1,4 @@
-// The Workspace's logic (contracts/workspace.ts, WorkspaceApi), over the small SQL surface of sql.ts so it
+// The Workspace's logic (`WorkspaceApi`), over the small SQL surface of sql.ts so it
 // runs, and is unit-tested, on node:sqlite as on a Durable Object's storage; workspace.ts is the object
 // around it. One instance is one incarnation of the object: building it converts refreshes a dead
 // instance left `refreshing` into `refresh_uncertain` (plan: Credentials and refresh).
@@ -8,45 +8,35 @@
 // provider) or after (delivering cancels), and a write that depends on what an await saw re-checks it
 // first (compare-and-set on the credential generation).
 
-import type { AccessOut, AgentIn, AgentOut, ConnectionOut, ConversationOut, UploadOut } from "../contracts/api.ts";
+import type { CancelAck } from "../conversation/conversation.ts";
+import type { CancelReason } from "../conversation/events.ts";
+import type { FolderLimit } from "../files/limits.ts";
+import type { ReservedUpload } from "../files/uploads.ts";
+import { ACCOUNT_KIND, type CredentialPayload } from "../gateway/connector.ts";
+import type { CredentialLease } from "../gateway/executor.ts";
+import { type GrantChange, type GrantRow, InvalidGrants, type LayerRows, checkChanges, planGrantChanges, resourceKey } from "../gateway/grants.ts";
+import type { Registry } from "../gateway/registry.ts";
+import { type ConnectionInfo, type StartSnapshot, startSnapshot } from "../gateway/tools.ts";
+import { type Binding, type EncryptionKeys, type Sealed, credentialBinding } from "../lib/encryption.ts";
+import { type JsonObject, parseJson } from "../lib/json.ts";
+import { uuid7 } from "../lib/random.ts";
+import { VALUE_PART, sliceText, splitParts } from "../lib/text.ts";
+import type { AccessOut, AgentIn, AgentOut, ConnectionOut, ConversationOut, UploadOut } from "../shared/api.ts";
 import type {
 	AgentId,
 	Caller,
 	ConnectionId,
 	ConversationId,
+	EpochMs,
 	Outcome,
 	Refusal,
-	Revocation,
 	RunId,
+	RunStatus,
 	Sha256,
 	UploadId,
 	UserId,
 	WorkspaceRef,
-} from "../contracts/common.ts";
-import type { CancelAck } from "../contracts/conversation.ts";
-import type { CredentialLease } from "../contracts/executor.ts";
-import type { FolderLimit } from "../contracts/files.ts";
-import type { GrantChange, GrantRow } from "../contracts/policy.ts";
-import type { CancelReason, RunStatus, StartSnapshot } from "../contracts/runs.ts";
-import type {
-	BeginRunInput,
-	BeginRunResult,
-	ConnectionAccount,
-	RefreshState,
-	Registration,
-	ReservedUpload,
-	SaveConnectionInput,
-	WorkspaceApi,
-	WorkspaceInit,
-} from "../contracts/workspace.ts";
-import { ACCOUNT_KIND } from "../gateway/connector.ts";
-import { InvalidGrants, type LayerRows, checkChanges, planGrantChanges, resourceKey } from "../gateway/grants.ts";
-import type { Registry } from "../gateway/registry.ts";
-import { type ConnectionInfo, startSnapshot } from "../gateway/tools.ts";
-import { type Binding, type EncryptionKeys, type Sealed, credentialBinding } from "../lib/encryption.ts";
-import { type JsonObject, parseJson } from "../lib/json.ts";
-import { uuid7 } from "../lib/random.ts";
-import { VALUE_PART, sliceText, splitParts } from "../lib/text.ts";
+} from "../shared/rpc.ts";
 import { EXPIRED, asPayload, expiresAtOf, keepRefreshToken, needsRefresh, planRefresh, type RefreshResult, scopesOf } from "./credentials.ts";
 import {
 	ATTACHED_TWICE,
@@ -68,6 +58,228 @@ import type { ConversationClient, Log, OAuthClients, ObjectStore, Timers, Worksp
 import { MIGRATIONS } from "./schema.ts";
 import { type SqlRow as Row, type Sql, type SqlValue, first, migrate } from "../lib/sql.ts";
 import { compareText } from "../lib/arrays.ts";
+
+/**
+ * How a change that revokes runs was delivered (plan: Strict revocation). `acknowledged`: every affected
+ * run's Conversation Durable Object has acknowledged the cancel, so the API may answer. `pending`: the
+ * change is saved, but some acknowledgement did not arrive within 10 seconds; the API answers 503 and the
+ * Workspace's alarm keeps delivering.
+ */
+export type Revocation = "acknowledged" | "pending";
+
+export interface WorkspaceInit {
+	workspace: WorkspaceRef;
+	kind: "personal" | "team";
+	ownerId: UserId;
+	createdAt: EpochMs;
+}
+
+export interface BeginRunInput {
+	runId: RunId;
+	conversationId: ConversationId;
+	userId: UserId;
+	agentId: AgentId;
+	/** As the message named them, in order, duplicates included (the check refuses them). */
+	uploadIds: UploadId[];
+	/** The folder the run would start from, for the limit checks with the attachments. */
+	folder: { bytes: number; entries: number };
+}
+
+/**
+ * `beginRun` refusals: 404 for an unknown agent;
+ * 400 "Attach at most {n} files to a message.", "A file is attached twice.", "An attached file is no
+ * longer available. Remove it and attach it again."; 413 "These files would put more than 10,000 files and
+ * folders in this conversation's folder." or "These files would make this conversation's folder larger
+ * than 256 MB." (thousands separator here). A refused or revoked start leaves nothing behind.
+ */
+export type BeginRunResult = Outcome<{ snapshot: StartSnapshot; uploads: ReservedUpload[] }>;
+
+/**
+ * Where a registered run stands, as `activate` answers it. `revoked`: a revocation reached it (its cancel
+ * is in the outbox too). `expired`: not activated within ten minutes, so its reservations were released.
+ */
+export type Registration = { state: "active" } | { state: "revoked"; reason: CancelReason } | { state: "expired" } | { state: "ended" };
+
+/**
+ * Where a connection's credentials stand (plan: Credentials and refresh). `refreshing` is recorded at
+ * generation g before the token endpoint is called; found after a restart it becomes `refresh_uncertain`,
+ * and the next use makes exactly one refresh with the stored token, while no other request uses the
+ * connection. A reconnect or delete during a refresh wins: a result for a generation that moved is dropped.
+ */
+export type RefreshState = "fresh" | "refreshing" | "refresh_uncertain";
+
+export interface SaveConnectionInput {
+	provider: string;
+	/** From `connector.account()` with the new secret. */
+	account: { id: string; label: string };
+	credentials: CredentialPayload;
+	/** Set when reconnecting or replacing a key: the same provider and external account are required. */
+	connectionId: ConnectionId | null;
+}
+
+/** A connection's provider account and owner (null: shared), as `connectionAccount` answers. */
+export interface ConnectionAccount {
+	provider: string;
+	accountId: string;
+	label: string;
+	ownerId: UserId | null;
+}
+
+/**
+ * The Workspace Durable Object's RPC surface. One object per workspace, named by its id, in its
+ * jurisdiction (plan: Data placement). Authoritative for connections (encrypted credentials, status,
+ * generation, scopes, refresh state), permission layers and grants, agents, unattached uploads with their
+ * reservations, the registry of runs, the revocation outbox and byte counters; an index of conversations.
+ * Reached only by typed RPC from our own code, after the Worker checked membership in D1. `Caller` is the
+ * Worker's verified user and role; every refusal is `{status, detail}`.
+ */
+export interface WorkspaceApi {
+	/**
+	 * Creates the ceiling layer (unrestricted), the owner's user layer (restricted) and the default agent
+	 * ("Assistant", "You are a helpful, concise assistant.", model `default`, no connections). Idempotent;
+	 * the Worker retries it until it succeeds after the D1 batch that made the user, workspace and
+	 * membership.
+	 */
+	init(input: WorkspaceInit): Promise<void>;
+
+	// Agents.
+	listAgents(caller: Caller): Promise<AgentOut[]>;
+	getAgent(caller: Caller, agentId: AgentId): Promise<AgentOut | null>;
+	/** 422 "Choose connections you can use." when an added connection is unknown, broken or someone else's. */
+	createAgent(caller: Caller, input: AgentIn): Promise<Outcome<AgentOut>>;
+	/**
+	 * A full replace. 403 "You cannot change this agent." unless the caller owns the agent or is a workspace
+	 * owner or admin. A changed connection set revokes the agent's active runs (`agent_connections_changed`)
+	 * before answering.
+	 */
+	updateAgent(caller: Caller, agentId: AgentId, input: AgentIn): Promise<Outcome<{ agent: AgentOut; revocation: Revocation }>>;
+	/** 422 "Keep at least one agent."; cancels the agent's runs ("Stopped.") and deletes its conversations. */
+	deleteAgent(caller: Caller, agentId: AgentId): Promise<Outcome<{ revocation: Revocation }>>;
+
+	// Connections and access. Provider calls (account, discover, children, describe)
+	// happen in the Worker before these are called, with a credential from `lease`.
+	listConnections(caller: Caller): Promise<ConnectionOut[]>;
+	/** Built-in services: one per user, idempotent; 422 "{Name} is connected through its own sign-in." */
+	enableBuiltin(caller: Caller, provider: string): Promise<Outcome<ConnectionOut>>;
+	/** After an OAuth callback or a key check; encrypts the credentials and bumps the generation. */
+	saveConnection(caller: Caller, input: SaveConnectionInput): Promise<Outcome<ConnectionOut>>;
+	/** 403 for a shared connection and a non-admin; revokes the caller's runs (`connection_removed`). */
+	deleteConnection(caller: Caller, connectionId: ConnectionId): Promise<Outcome<{ revocation: Revocation }>>;
+	/**
+	 * `_usable`, then the caller's access: 404 "Not Found" when the connection does not exist, "Not found."
+	 * when it is another user's personal one. Never calls the provider. The Worker reads a connection's
+	 * provider, owner and the caller's grants from this before every settings request.
+	 */
+	getAccess(caller: Caller, connectionId: ConnectionId): Promise<Outcome<AccessOut>>;
+	/**
+	 * All or nothing, after `checkChanges` and the provider's `describe` of new concrete grants (names
+	 * given, keyed by gateway/grants.ts `resourceKey(kind, id)`), then `planGrantChanges`. 422 with
+	 * `checkChanges`'s messages; at most 500 grants per connection. Revokes the caller's active runs
+	 * (`permissions_changed`) in the same transaction, then waits for the acknowledgements.
+	 */
+	applyGrantChanges(
+		caller: Caller,
+		connectionId: ConnectionId,
+		changes: GrantChange[],
+		names: { [key: string]: string },
+	): Promise<Outcome<{ access: AccessOut; revocation: Revocation }>>;
+	/** The actions allowed on a connection: the caller's, or every member's for a shared one (reconnect scopes). */
+	allowedActions(caller: Caller, connectionId: ConnectionId): Promise<string[] | null>;
+	/**
+	 * The provider account behind a connection and whose connection it is, for an OAuth flow:
+	 * `login_hint` on a reconnect and the callback's checks, which tell another user's connection apart from
+	 * one that is gone. Null when the connection does not exist.
+	 */
+	connectionAccount(connectionId: ConnectionId): Promise<ConnectionAccount | null>;
+
+	/**
+	 * Credentials for one provider call, refreshed first when they expire within 120 s (single-flight per
+	 * connection, fenced by the generation). `purpose` says who asks: a run's executor (RUN_ENDED "This run
+	 * is no longer active." unless the run is registered, activated, not revoked and the user's) or a
+	 * settings request of the caller. The registry does not know attempts: the Conversation Durable Object
+	 * checks the call's AttemptFence before and after this (executor.ts, CredentialPort).
+	 */
+	lease(
+		connectionId: ConnectionId,
+		purpose: { run: RunId; userId: UserId } | { settings: Caller },
+	): Promise<CredentialLease | { refused: "RUN_ENDED" | "CONNECTION_UNAUTHORIZED" | "PROVIDER_UNAVAILABLE"; message: string }>;
+	/** Compare-and-set: `error` only if still `active` at this generation. */
+	markUnauthorized(connectionId: ConnectionId, generation: number): Promise<void>;
+
+	// Runs (plan: Starting a run).
+	/**
+	 * Idempotent by run id and synchronous inside (no awaits): checks the agent, the uploads (the user's
+	 * own, unattached, complete) and the folder limits with the attachments, reserves the uploads, computes
+	 * the snapshot and registers the run as active. Called again with the same run id it returns the same
+	 * answer; it refuses a run it has since revoked (409 with the run's end message, "Stopped because
+	 * permissions changed." or "Stopped.") or expired or released (503 "The agent could not finish this run.
+	 * Try again."). A refused start registers nothing.
+	 */
+	beginRun(input: BeginRunInput): Promise<BeginRunResult>;
+	/**
+	 * The run is stored: its reservations become consumption (the upload rows and their objects are deleted;
+	 * the run's copies are its own). Idempotent, and answers where the registration stands. The Conversation
+	 * Durable Object calls it after storing the run, again on an alarm and on every start of the object for
+	 * each stored active run not yet `activated`; it stops a run that comes back `revoked` with that reason
+	 * and fails one that comes back `expired` (`start_expired`). An alarm expires starts not activated within
+	 * ten minutes, so a late `beginRun` result cannot start them.
+	 */
+	activate(runId: RunId): Promise<Registration>;
+	/** The run ended (or its start was refused after `beginRun`): it leaves the active registry; reservations not consumed are released. */
+	release(runId: RunId, status: RunStatus | "refused"): Promise<void>;
+	/** For `/runs/{run}` URLs: the caller's run's conversation, else null. */
+	locateRun(caller: Caller, runId: RunId): Promise<{ conversationId: ConversationId } | null>;
+	/** A Conversation Durable Object's acknowledgement of an outbox entry delivered earlier without one. */
+	acknowledgeCancel(entryId: number, runId: RunId): Promise<void>;
+	/** An operator's command: cancels every active run of the workspace through the outbox (plan: Emergency stop). */
+	emergencyStop(reason: string): Promise<{ runs: number; revocation: Revocation }>;
+
+	// Conversations: an index only; each Conversation Durable Object is authoritative for itself.
+	/** 404 when the agent is not in the workspace; initializes the Conversation Durable Object idempotently. */
+	createConversation(caller: Caller, agentId: AgentId): Promise<Outcome<ConversationOut>>;
+	/** The caller's, newest `updated_at` first, at most 100. */
+	listConversations(caller: Caller): Promise<ConversationOut[]>;
+	/**
+	 * Whether the conversation is in this workspace's index, ready, not deleted and the caller's: the Worker
+	 * asks before it addresses a Conversation Durable Object by an id from the URL (addressing.ts), so an id
+	 * from another workspace, another user's, or none at all is 404 without reaching (or creating) an object.
+	 */
+	ownsConversation(caller: Caller, conversationId: ConversationId): Promise<boolean>;
+	/** Written by the Conversation Durable Object when its title or `updated_at` changes. */
+	conversationTouched(conversationId: ConversationId, change: { title: string; updatedAt: EpochMs }): Promise<void>;
+	/**
+	 * Tombstones the conversation (both objects then refuse new runs, uploads and writes), cancels its active
+	 * run through the outbox and waits for the acknowledgement (`revocation` as for a grant change), then has
+	 * the Conversation Durable Object destroy itself (`destroy()`: its run ended, its storage and R2 prefix
+	 * deleted), again an hour later; an alarm finishes an interrupted deletion (plan: Files, Deletion).
+	 */
+	deleteConversation(caller: Caller, conversationId: ConversationId): Promise<Outcome<{ revocation: Revocation }>>;
+
+	// Uploads (plan: Files). Every object is recorded before it is written.
+	/**
+	 * Records the upload as pending, with its key and a byte reservation against the workspace's quota,
+	 * before the Worker streams the body into R2. In this order: 429 "You are uploading too many files
+	 * at once." (3 pending per user, younger than the body's 15 minutes); 429 "You have too many files waiting
+	 * to be sent. Send or remove some, or try again tomorrow." (30 per user); 413 "This workspace has no room
+	 * for more files."
+	 */
+	reserveUpload(caller: Caller, upload: { name: string; size: number }): Promise<Outcome<{ id: UploadId; key: string }>>;
+	/** After the put and the hash: the upload is complete and attachable for a day. */
+	completeUpload(caller: Caller, id: UploadId, stored: { sha256: Sha256; size: number; mediaType: string }): Promise<Outcome<UploadOut>>;
+	/** The body never arrived or failed its checks; the reservation is released and the object deleted if written. */
+	abandonUpload(caller: Caller, id: UploadId): Promise<void>;
+	/** Only the caller's own unattached upload; always succeeds (204). */
+	deleteUpload(caller: Caller, id: UploadId): Promise<void>;
+
+	/**
+	 * A conversation's absolute byte total, before it writes new blobs. Refused when the sum
+	 * would pass MINERVA_FILES_WORKSPACE_BYTES; absolute totals make it idempotent. `revision` rises with
+	 * every report the conversation sends: one no newer than a report already seen changes nothing (it was
+	 * sent by an instance that has since reset). One without a revision, as an older caller sends, applies
+	 * only until a report with one has been seen.
+	 */
+	setConversationBytes(conversationId: ConversationId, total: number, revision?: number): Promise<{ ok: true } | { ok: false; limit: Extract<FolderLimit, "workspace"> }>;
+}
 
 /** A start not activated within this is expired and its reservations released (plan: Starting a run). */
 export const START_TTL_MS = 10 * 60 * 1000;
@@ -107,7 +319,7 @@ function refuse<T>(status: Status, detail: string): Outcome<T> {
 	return { ok: false, refusal: { status, detail } };
 }
 
-/** How a run stopped from outside ends (RunEnd in contracts/runs.ts). */
+/** How a run stopped from outside ends (conversation/events.ts `RunEnd`). */
 export function stopMessage(reason: CancelReason): string {
 	return reason === "cancelled" || reason === "emergency_stop" ? "Stopped." : "Stopped because permissions changed.";
 }
@@ -332,7 +544,7 @@ export class WorkspaceCore implements WorkspaceApi {
 				input.ownerId,
 				input.createdAt,
 			);
-			// web-api 6.3: an unrestricted ceiling, the owner's restricted layer, and the default agent.
+			// A new workspace: an unrestricted ceiling, the owner's restricted layer, and the default agent.
 			this.#sql.exec("INSERT OR IGNORE INTO layers (id, level, subject, restricted, updated_at) VALUES ('ceiling', 'ceiling', NULL, 0, ?)", now);
 			this.#ensureUserLayer(input.ownerId, now);
 			this.#sql.exec(
@@ -515,7 +727,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		const connector = this.#registry.find(provider);
 		if (connector === null) return refuse(404, UNKNOWN_PROVIDER);
 		if (connector.auth.type !== "builtin") return refuse(422, `${connector.name} is connected through its own sign-in.`);
-		// One per user (connectors 11.9), found again by its account id, the user's id.
+		// One per user, found again by its account id, the user's id.
 		const found = this.#connectionByAccount(provider, caller.userId);
 		if (found !== null) return ok(this.#connectionOut(caller, found) as ConnectionOut);
 		const payload: JsonObject = { kind: "builtin" };
@@ -604,7 +816,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		if (usable.value.owner_id === null && !isAdmin(caller)) return refuse(403, "Only workspace admins can remove shared connections.");
 		const now = this.#now();
 		const entries = this.#commit(() => {
-			// Its grants cascade and it leaves every agent; the deleting user's runs stop (connectors 4.6).
+			// Its grants cascade and it leaves every agent; the deleting user's runs stop.
 			this.#sql.exec("DELETE FROM grants WHERE connection_id = ?", connectionId);
 			this.#sql.exec("DELETE FROM agent_connections WHERE connection_id = ?", connectionId);
 			this.#sql.exec("DELETE FROM connections WHERE id = ?", connectionId);
@@ -632,7 +844,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		}
 		const named = new Map<string, string>();
 		for (const [key, name] of Object.entries(names)) named.set(key, sliceText(storable(name), 0, RESOURCE_NAME_MAX));
-		// Account grants are named with the connection's label and need no provider call (connectors 11.9).
+		// Account grants are named with the connection's label and need no provider call.
 		for (const change of changes) {
 			if (change.kind === ACCOUNT_KIND && change.actions.length) named.set(resourceKey(change.kind, change.id), sliceText(connection.label, 0, RESOURCE_NAME_MAX));
 		}
@@ -666,7 +878,7 @@ export class WorkspaceCore implements WorkspaceApi {
 				}
 				this.#sql.exec("UPDATE layers SET version = version + 1, updated_at = ? WHERE id = ?", now, layerId);
 				// Any change to a user's grants stops all of that user's active runs, queued ones included, not
-				// only those using this connection (connectors 4.5, step 7).
+				// only those using this connection.
 				const entries = this.#revoke({ userId: caller.userId }, "permissions_changed", now).entries;
 				// As saved: the connection may change again, or go, while the cancels are delivered.
 				return { entries, access: accessOut(connector, this.#view(connection), this.#userGrants(connectionId, caller.userId)) };
@@ -684,11 +896,11 @@ export class WorkspaceCore implements WorkspaceApi {
 		// its new generation is not marked.
 		const refreshing = this.#refreshes.get(connectionId);
 		if (refreshing !== undefined) await refreshing.catch(() => null);
-		// Compare-and-set: credentials replaced since the failed call are not marked (connectors 9.2).
+		// Compare-and-set: credentials replaced since the failed call are not marked.
 		this.#sql.exec("UPDATE connections SET status = 'error', updated_at = ? WHERE id = ? AND status = 'active' AND generation = ?", this.#now(), connectionId, generation);
 	}
 
-	// Credential leases (plan: Credentials and refresh; connectors 9.3).
+	// Credential leases (plan: Credentials and refresh).
 
 	/** The purpose's checks, then the connection's: a refusal, or the row to lend. Synchronous. */
 	#leaseCheck(connectionId: ConnectionId, purpose: { run: RunId; userId: UserId } | { settings: Caller }): { refusal: LeaseRefusal } | { row: ConnectionRow } {
@@ -789,7 +1001,7 @@ export class WorkspaceCore implements WorkspaceApi {
 			const current = this.#connection(connectionId);
 			if (current === null || current.generation !== generation) return { kind: "moved" };
 			if (result.kind === "invalid") {
-				// "Needs reconnecting" (connectors 9.3).
+				// "Needs reconnecting".
 				this.#sql.exec("UPDATE connections SET status = 'error', refresh_state = 'fresh', refresh_generation = NULL, updated_at = ? WHERE id = ?", now, connectionId);
 				return { kind: "expired" };
 			}
@@ -801,7 +1013,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		});
 	}
 
-	// Agents (web-api 8.3).
+	// Agents.
 
 	#agentRow(id: AgentId): AgentRow | null {
 		return first<AgentRow>(this.#sql, "SELECT * FROM agents WHERE id = ?", id);
@@ -909,7 +1121,7 @@ export class WorkspaceCore implements WorkspaceApi {
 			const conversations = this.#sql
 				.exec<{ id: string }>("SELECT id FROM conversations WHERE agent_id = ? AND deleted_at IS NULL", agentId)
 				.map((row) => row.id);
-			// Its runs stop as a plain cancel ("Stopped."), then its conversations go with it (runs 8).
+			// Its runs stop as a plain cancel ("Stopped."), then its conversations go with it.
 			const entries = this.#revoke({ agentId }, "cancelled", now).entries;
 			for (const id of conversations) this.#tombstone(id, now);
 			this.#sql.exec("DELETE FROM agent_connections WHERE agent_id = ?", agentId);
@@ -1043,7 +1255,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		return ok(answer);
 	}
 
-	/** `uploads.attach`'s checks, in its order (files 10, steps 3 to 5). */
+	/** The attachments' checks, in order: the user's own, unattached, complete uploads within the limits. */
 	#attachable(input: BeginRunInput): Outcome<UploadRow[]> {
 		const ids = input.uploadIds;
 		const { messageAttachments } = this.#deps.settings;
@@ -1066,7 +1278,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		const now = this.#now();
 		const { folderBytes, folderEntries, runTimeoutMs } = this.#deps.settings;
 		// One synchronous transaction from the first check to the registration, so a grant change processed
-		// afterwards revokes this run, and one processed before is in its snapshot (connectors 4.4).
+		// afterwards revokes this run, and one processed before is in its snapshot.
 		return this.#commit((): BeginRunResult => {
 			const existing = this.#run(input.runId);
 			if (existing !== null) return this.#repeatBegin(existing, input, now);
@@ -1086,7 +1298,7 @@ export class WorkspaceCore implements WorkspaceApi {
 			if (!attachable.ok) return attachable;
 			const uploads = attachable.value;
 			if (uploads.length) {
-				// Each attachment is a new file at the folder's root: one entry, and its pages (files 10, step 8).
+				// Each attachment is a new file at the folder's root: one entry, and its pages.
 				if (input.folder.entries + uploads.length > folderEntries) return refuse(413, overFolder("folder_entries", folderEntries, folderBytes));
 				const bytes = input.folder.bytes + uploads.reduce((sum, upload) => sum + pages(upload.size), 0);
 				if (bytes > folderBytes) return refuse(413, overFolder("folder_bytes", folderEntries, folderBytes));
@@ -1369,7 +1581,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		);
 	}
 
-	// Uploads and bytes (files 9, 12; plan: Files).
+	// Uploads and bytes (plan: Files).
 
 	#doom(key: string, now: number): void {
 		this.#sql.exec("INSERT INTO doomed_objects (key, due_at) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET due_at = min(due_at, excluded.due_at)", key, now);
@@ -1393,7 +1605,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		const now = this.#now();
 		const workspace = this.workspaceRef();
 		return this.#commit((): Outcome<{ id: UploadId; key: string }> => {
-			// files 9.1 check 13: uploads still arriving; a pending one older than the body's deadline is not.
+			// Uploads still arriving; a pending one older than the body's deadline is not.
 			const arriving = first<{ n: number }>(
 				this.#sql,
 				"SELECT count(*) AS n FROM uploads WHERE user_id = ? AND state = 'pending' AND created_at > ?",
@@ -1562,7 +1774,7 @@ function jsonScopes(payload: JsonObject): string | null {
 	return scopes === null ? null : JSON.stringify(scopes);
 }
 
-/** AgentIn with its defaults: a PUT is a full replace (web-api 8.3). Validated by the Worker's schema. */
+/** AgentIn with its defaults: a PUT is a full replace. Validated by the Worker's schema. */
 function agentFields(input: AgentIn): { name: string; instructions: string; connectionIds: string[] } {
 	return { name: storable(input.name), instructions: storable(input.instructions ?? ""), connectionIds: input.connection_ids ?? [] };
 }

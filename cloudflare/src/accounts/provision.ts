@@ -1,5 +1,5 @@
 // Provisioning: every user gets a personal organization they own and our row for its personal workspace,
-// with both memberships, and the workspace's Durable Object is initialized (web-api spec 6.3; plan: The
+// with both memberships, and the workspace's Durable Object is initialized (plan: The
 // web API). Better Auth creates the user; this runs after, from its hooks (auth-options.ts), for every way
 // a user is created (sign-up, an email code, the admin plugin, seed).
 //
@@ -16,8 +16,8 @@
 // initialized workspaces, so a half-made one is never shown.
 
 import { workspaceObject } from "../addressing.ts";
-import type { WorkspaceRef } from "../contracts/common.ts";
 import { uuid7 } from "../lib/random.ts";
+import type { WorkspaceRef } from "../shared/rpc.ts";
 
 export interface WorkspaceRow {
 	id: string;
@@ -114,7 +114,7 @@ export interface MembershipOut {
 }
 
 /**
- * Every workspace the user belongs to, personal before team, then by creation (web-api 8.1). One whose
+ * Every workspace the user belongs to, personal before team, then by creation. One whose
  * object cannot be initialized yet is left out until it can.
  */
 export async function listWorkspaces(env: Env, userId: string): Promise<MembershipOut[]> {

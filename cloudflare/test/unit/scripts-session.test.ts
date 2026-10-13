@@ -1,10 +1,9 @@
-// The host's side of a script (src/scripts/session.ts): today's admission of scripted calls (harness 7.5,
-// worker/src/main.ts `scriptCalls`), the guest treated as hostile, and calls and prints after the end.
+// The host's side of a script (src/scripts/session.ts): the admission of scripted calls, the guest treated as hostile, and calls and prints after the end.
 
 import { describe, expect, test } from "vitest";
-import type { Json } from "../../src/contracts/common.ts";
-import type { ToolCallOutcome, ToolDeclaration } from "../../src/contracts/executor.ts";
 import { ToolQueue } from "../../src/conversation/queue.ts";
+import type { ToolCallOutcome, ToolDeclaration } from "../../src/gateway/executor.ts";
+import type { Json } from "../../src/lib/json.ts";
 import { HEAD_CHARS, IMAGE_OMITTED, LATE_PENDING, MAX_OUTPUT_ITEMS, OUTPUT_LIMIT, SCRIPT_ARGS_BYTES } from "../../src/scripts/limits.ts";
 import { ScriptCalls, ScriptSession } from "../../src/scripts/session.ts";
 import { declaration, ok } from "./scripts-support.ts";
@@ -55,8 +54,8 @@ async function settledYet(promise: Promise<unknown>): Promise<boolean> {
 	return done;
 }
 
-describe("admission (harness 7.5)", () => {
-	test("today's order and words: 100 open across the turn's scripts, then the JSON, then 256 KB", async () => {
+describe("admission", () => {
+	test("order and words: 100 open across the turn's scripts, then the JSON, then 256 KB", async () => {
 		const calls = new ScriptCalls();
 		const p = port();
 		const first = new ScriptSession(calls, TOOLS, p);
@@ -72,7 +71,7 @@ describe("admission (harness 7.5)", () => {
 		for (let i = 0; i < 97; i++) answers.push(second.call(READ.name, "{}"));
 		expect(calls.open).toBe(100);
 		expect(await answers[96]).toEqual({ ok: false, message: "At most 100 tool calls can wait at once. Await some before starting more." });
-		// The open count is checked first, as today.
+		// The open count is checked first.
 		expect(await second.call(READ.name, "{")).toEqual({ ok: false, message: "At most 100 tool calls can wait at once. Await some before starting more." });
 		p.settle(0);
 		await flush();
@@ -116,7 +115,7 @@ describe("admission (harness 7.5)", () => {
 		expect(await hundredth).toEqual({ ok: false, message: "Tool arguments could not be converted to JSON." });
 		await flush();
 		expect(session.stopReason).toEqual({ kind: "aborted", message: "The script kept making tool calls that could not run." });
-		// The 101st came in the same stretch, before the stop: refused too, as today's setImmediate let through.
+		// The 101st came in the same stretch, before the stop: refused too.
 		expect(await after).toEqual({ ok: false, message: "Tool arguments could not be converted to JSON." });
 		expect(await settledYet(session.call(READ.name, "{"))).toBe(false);
 	});
@@ -141,7 +140,7 @@ describe("calls and the script's end", () => {
 		await flush();
 		expect(calls.open).toBe(0);
 		for (const answer of answers) expect(await settledYet(answer)).toBe(false);
-		// Settled after the end: still cancelled in the records, as today's finish() left them.
+		// Settled after the end: still cancelled in the records.
 		expect(session.pending()).toBe(5);
 	});
 
@@ -201,7 +200,7 @@ describe("prints", () => {
 			[{ type: "text", text: "a", rest: { bytes: 1, newlines: 2, last: false } }],
 			[{ type: "video" }],
 			[{ type: "text", text: "x".repeat(HEAD_CHARS + 1) }],
-			// Sizes no output within today's limits could have.
+			// Sizes no output within the limits could have.
 			[{ type: "text", text: "head", rest: { bytes: 1_000_000_000, newlines: 0, last: false } }],
 		]) {
 			const session = new ScriptSession(new ScriptCalls(), TOOLS, port());
@@ -211,7 +210,7 @@ describe("prints", () => {
 		}
 	});
 
-	test("more than today's items stops the script as the prelude would have failed it", async () => {
+	test("more than MAX_OUTPUT_ITEMS items stops the script as the prelude would have failed it", async () => {
 		const session = new ScriptSession(new ScriptCalls(), TOOLS, port());
 		await session.print(Array.from({ length: MAX_OUTPUT_ITEMS }, () => ({ type: "text" as const, text: "" })));
 		expect(session.over).toBe(false);

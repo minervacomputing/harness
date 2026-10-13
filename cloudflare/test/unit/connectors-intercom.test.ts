@@ -9,7 +9,7 @@ import { checkWritten, read, redact, written } from "../../src/connectors/interc
 import { INBOX } from "../../src/connectors/intercom/inboxes.ts";
 import { MAX_MESSAGES, messages } from "../../src/connectors/intercom/reads.ts";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
-import type { GrantRow } from "../../src/contracts/policy.ts";
+import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import type { JsonObject } from "../../src/lib/json.ts";
@@ -140,7 +140,7 @@ describe("connecting and discovery", () => {
 		]);
 		expect([...new URLSearchParams(exchange.body as string).keys()]).toEqual(["client_id", "client_secret", "code", "redirect_uri", "grant_type"]);
 		// Intercom's token answer carries no scopes and no expiry: the scopes are unknown, the token lasts.
-		const body = tokenBody(JSON.stringify({ token_type: "Bearer", token: "t", access_token: "t" })) as JsonObject;
+		const body = tokenBody({ token_type: "Bearer", token: "t", access_token: "t" }) as JsonObject;
 		expect(tokenPayload(body, Date.UTC(2026, 9, 12))).toEqual({ kind: "oauth2", access_token: "t", refresh_token: null, scopes: null });
 		expect([intercom.offered, intercom.manageLink, intercom.children, intercom.browsable]).toEqual([undefined, undefined, undefined, undefined]);
 	});
@@ -177,13 +177,13 @@ describe("connecting and discovery", () => {
 	});
 });
 
-/** What each operation means today; a change here makes running runs' tools fail with OPERATION_CHANGED. */
+/** What each operation means; a change here makes running runs' tools fail with OPERATION_CHANGED. */
 const FINGERPRINTS: { [operation: string]: string } = {
-	list_inboxes: "b139269685507f12",
-	search_conversations: "297e3bd691041759",
-	get_conversation: "54f910a8a614f10f",
-	add_note: "de083cccf00a35c6",
-	reply: "36c938f5dfcf6975",
+	list_inboxes: "0c2508dbac534a3c",
+	search_conversations: "03ab010ca8c02fec",
+	get_conversation: "26e41a62b7a2f78d",
+	add_note: "a7a26100ad1fa560",
+	reply: "333c352b155f52de",
 };
 
 describe("reading", () => {
@@ -395,28 +395,30 @@ describe("reading", () => {
 		expect(await run.code("intercom_search_conversations", { inbox: SUPPORT })).toBe("INVALID_ARGUMENTS");
 	});
 
-	test("answers are read as Pydantic reads them", async () => {
+	test("an answer that does not fit is an unexpected response", async () => {
 		const fake = new FakeIntercom();
 		const run = await start(fake, { "*": ["read"] });
 		const raw = (text: string) => {
 			fake.hook = (method, path) => (method === "GET" && path === "/conversations/102" ? new Response(text, { status: 200 }) : null);
 		};
 		const refund = JSON.stringify(fake.conversations["102"]);
-		// Pydantic's JSON parser refuses an escaped lone surrogate anywhere, a byte order mark and trailing text.
-		for (const text of [refund.replace('"Refund"', '"\\ud800"'), refund.replace('"type":"conversation"', '"\\udfff":1'), `﻿${refund}`, `${refund} x`]) {
+		for (const text of [
+			`${refund} x`,
+			refund.replace('"created_at":1790000000', '"created_at":"1790000000"'),
+			refund.replace('"redacted":false', '"redacted":0'),
+		]) {
 			raw(text);
-			expect(await run.code("intercom_get_conversation", { conversation: "102" })).toBe("PROVIDER_FAILED");
+			expect(await run.code("intercom_get_conversation", { conversation: "102" }), text.slice(0, 80)).toBe("PROVIDER_FAILED");
 		}
-		// A surrogate pair, whitespace around the document, and lax ints, bools and nulls are read.
-		raw(` ${refund.replace('"Refund"', '"\\ud83d\\ude00"').replace('"created_at":1790000000', '"created_at":"1790000000"').replace('"redacted":false', '"redacted":0')}\n`);
+		// A surrogate pair and whitespace around the document are read.
+		raw(` ${refund.replace('"Refund"', '"\\ud83d\\ude00"')}\n`);
 		const [found] = await items(run, "intercom_get_conversation", { conversation: "102" });
 		expect([found?.title, found?.created]).toEqual(["\u{1f600}", "2026-09-21T14:13:20Z"]);
-		// A reply's answer is read as json.loads reads it, which keeps a lone surrogate.
-		const writer = await start(fake, { [SUPPORT]: ["read", "note"] });
-		fake.hook = (method, path) =>
-			method === "POST" && path.endsWith("/reply") ? new Response(JSON.stringify(fake.conversations["100"]).replace('"Login issue"', '"\\ud800"'), { status: 200 }) : null;
-		const [note] = (await writer.ok("intercom_add_note", { conversation: "100", text: "x" })).result.items;
-		expect([note?.written, note?.inbox]).toEqual([true, SUPPORT]);
+		// Bodies are strict UTF-8; a byte order mark is dropped.
+		raw(`\ufeff${refund}`);
+		expect((await items(run, "intercom_get_conversation", { conversation: "102" }))[0]?.id).toBe("102");
+		fake.hook = (method, path) => (method === "GET" && path === "/conversations/102" ? new Response(new Uint8Array([0x7b, 0xff, 0x7d]), { status: 200 }) : null);
+		expect(await run.code("intercom_get_conversation", { conversation: "102" })).toBe("PROVIDER_FAILED");
 	});
 
 	test("search answers are checked", async () => {
@@ -643,9 +645,53 @@ describe("text agents read", () => {
 		for (const text of ["bell \u0007", "\u0000"]) expect(() => checkWritten(text), text).toThrow("must not contain control characters");
 	});
 
+	test("the dotted capital I and the dotless i are read as i, and ASCII case does not matter", () => {
+		const SECRET = "SECRET merger";
+		for (const text of ["\u0130NTERCOM.COM", "\u0130ntercom.io", "app.\u0131ntercom.com", "x.intercomcdn.\u0130o", "\u0131ntercom:x", "INTERCOM.IO"]) {
+			expect(redact(text), text).toBe("[Intercom link]");
+			expect(() => checkWritten(text), text).toThrow("must not link to Intercom");
+		}
+		for (const href of ["https://\u0130ntercom.com/x", "HTTPS://APP.INTERCOM.COM/x"]) expect(read(`<a href="${href}">${SECRET}</a>`), href).toBe("[Intercom link]");
+		// A scheme is ASCII: one written with a lookalike letter is a relative link, hidden like one.
+		for (const href of ["ma\u0130lto:a@example.com", "maılto:a@example.com", "HT\u0131TPS://example.com/", "http\u017f://example.com/", "\uff48\uff54\uff54\uff50\uff53://example.com/", "%68ttps://example.com/", "h ttps://example.com/", "\u200bhttps://example.com/"]) {
+			expect(read(`<a href="${href}">${SECRET}</a>`), href).toBe("[Intercom link]");
+		}
+		expect(read(`<a href="MAILTO:a@example.com">${SECRET}</a>`)).toBe(`${SECRET} (MAILTO:a@example.com)`);
+	});
+
 	test("what an unclosed or self-closed script or svg could hide stays hidden", () => {
 		expect(read("<script/>a</script>b")).toBe("b");
 		expect(read("<svg/>after")).toBe("");
+	});
+
+	test("malformed markup hides more, never less (adversarial)", () => {
+		const SECRET = "SECRET merger";
+		const INTERNAL = "https://app.intercom.com/a/inbox/x";
+		const hidden = (html: string) => expect(read(html), html).not.toContain("SECRET");
+		for (const html of [
+			`<a href="${INTERNAL}">${SECRET}`,
+			`<a href="${INTERNAL}"/>${SECRET}`,
+			`<A HREF="${INTERNAL}">${SECRET}</A>`,
+			`<a href="https://example.com/"><a href="${INTERNAL}">${SECRET}</a></a>`,
+			`<a href="https://example.com/" HREF="/x">${SECRET}</a>`,
+			`<a href="https://example.com/" href="https://example.org/">${SECRET}</a>`,
+			`<a href="/a/inbox/x"/>${SECRET}`,
+			`<SCRIPT>${SECRET}</script`,
+			`<style/>${SECRET}`,
+			`<a href="/x">${SECRET}</a ${SECRET}`,
+		])
+			hidden(html);
+		// References in addresses are decoded before they are judged.
+		for (const href of ["&#x6a;avascript:alert(1)", "&#x2f;a/inbox/x", "https://app&#46;intercom&#46;com/x", "https://app.inter&#1;com.com/x"]) {
+			expect(read(`<a href="${href}">${SECRET}</a>`), href).toBe("[Intercom link]");
+		}
+		expect(read("see app.inter&#1;com.com/x")).toBe("see [Intercom link]");
+		expect(read(`a<!-- <a href="${INTERNAL}"> -->b<![CDATA[x]]>c`)).toBe("abc");
+		hidden(`<![CDATA[><a href="${INTERNAL}">]]>${SECRET}</a>`);
+		hidden(`<a href="${INTERNAL}"><div>${SECRET}</a>${SECRET}</div>`);
+		for (const element of ["textarea", "xmp", "noembed", "noframes", "plaintext"]) hidden(`<${element}><a href="${INTERNAL}">${SECRET}</a></${element}>`);
+		expect(read(`a</p x="><a href='"><a href="${INTERNAL}">${SECRET}</a>'>x</a>`)).toBe("a");
+		expect(read(`&lt;a href="${INTERNAL}"&gt;x`)).toBe("<a [Intercom link]");
 	});
 
 	test("a large document is read in time", () => {

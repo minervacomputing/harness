@@ -1,15 +1,14 @@
-// CSRF as Django checks it (web-api spec 3.2): unsafe methods must come from the site's origin and carry
-// the `csrftoken` cookie's value in `X-CSRFToken` (double submit). In Django's order:
+// CSRF: unsafe methods must come from the site's origin and carry the `csrftoken` cookie's value in
+// `X-CSRFToken` (double submit). In this order:
 //
 // 1. an `Origin` header, when present, must be the request's own origin or MINERVA_SITE_URL's;
 // 2. without `Origin`, an HTTPS request needs a `Referer` with one of those origins;
 // 3. the cookie must be set and well formed;
 // 4. the header must equal it (compared in constant time).
 //
-// The page sends the cookie's value as it is, so only that form is accepted; Django's 64-character masked
-// tokens are not (web-api spec 3.2: "the port only needs header equals cookie").
+// The page sends the cookie's value as it is, so only that form is accepted; masked tokens are not.
 //
-// Where the check sits among the others depends on the route: Ninja routes check it before the session
+// Where the check sits among the others depends on the route: JSON API routes check it before the session
 // (403 `CSRF check Failed`, so an anonymous unsafe request gets 403, not 401), and uploads check it after
 // the session. Better Auth's routes are exempt: they check their own origin rules (http/router.ts).
 
@@ -28,7 +27,7 @@ export function isSafeMethod(method: string): boolean {
 	return SAFE.has(method.toUpperCase());
 }
 
-/** A new secret for the cookie: 32 letters and digits, as Django's. */
+/** A new secret for the cookie: 32 letters and digits. */
 export function newCsrfToken(): string {
 	return randomString(32, ALPHANUMERIC);
 }
@@ -50,7 +49,7 @@ export function checkCsrf(request: Request, siteUrl: string): CsrfFailure | null
 	} else if (own.protocol === "https:") {
 		const referer = request.headers.get("Referer");
 		if (!referer) return "no_referer";
-		// The URL parser repairs `https:host`, which Django refuses, so the Referer must start with
+		// The URL parser repairs `https:host`, so the Referer must start with
 		// `https://`; one carrying credentials is refused too.
 		if (!referer.startsWith("https://")) return "bad_referer";
 		let from: URL;

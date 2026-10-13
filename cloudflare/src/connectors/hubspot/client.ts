@@ -1,30 +1,15 @@
-// HubSpot's CRM API, at a pinned date version, so response shapes do not change under Minerva (ported from
-// backend/connectors/hubspot/client.py).
+// HubSpot's CRM API, at a pinned date version, so response shapes do not change under Minerva.
 //
 // Responses are validated before use (models.ts). HubSpot's errors carry a category: a token without a
 // scope is `MISSING_SCOPES` (403), and a write that would duplicate a unique value (a contact's email
 // address) is a conflict (409). HubSpot's own messages are never passed on, since they can quote record
 // data.
 
-import type { ProviderClient, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
-import { ProviderHTTP } from "../../gateway/http.ts";
-import { fromUtf8Strict } from "../../lib/bytes.ts";
-import { type Json, type JsonObject, parseJson } from "../../lib/json.ts";
-import {
-	type Details,
-	type HubRecord,
-	type Pipeline,
-	type Reader,
-	type SearchPage,
-	fromJsonText,
-	readBatch,
-	readDetails,
-	readPipeline,
-	readPipelines,
-	readRecord,
-	readSearchPage,
-} from "./models.ts";
+import type { z } from "zod";
+import { OperationError, type ProviderClient } from "../../gateway/connector.ts";
+import { ProviderHTTP, type ProviderIo, type ProviderRequest } from "../../gateway/http.ts";
+import { type Json, type JsonObject, isDict, parseJson, parseJsonBytes } from "../../lib/json.ts";
+import { Batch, Details, HubRecord, Pipeline, Pipelines, SearchPage } from "./models.ts";
 
 export const API_URL = "https://api.hubapi.com";
 export const VERSION = "2026-09";
@@ -41,22 +26,15 @@ export const MAX_RESPONSE = 4 * 1024 * 1024;
 export const MAX_PIPELINES = 100;
 export const CONFLICT = "HubSpot refused this because it conflicts with an existing record.";
 
-/**
- * What `response.json().get("category")` finds in an error's body, or undefined. `body` is the text
- * ProviderHTTP decoded, invalid UTF-8 replaced, where `json.loads` refuses invalid UTF-8 and reads UTF-16
- * and UTF-32 too, and parseJson refuses NaN and Infinity: for such a body (not HubSpot's JSON), a 403 is
- * worded by the status rather than by its category, or the other way round, and stays PROVIDER_FORBIDDEN.
- */
+/** The `category` of an error's JSON body, or undefined. */
 function category(body: string): Json | undefined {
 	let data: Json;
 	try {
-		// As json.loads reads bytes: a byte order mark (U+FEFF) is skipped.
-		data = parseJson(body.charCodeAt(0) === 0xfeff ? body.slice(1) : body);
+		data = parseJson(body);
 	} catch {
 		return undefined;
 	}
-	if (typeof data !== "object" || data === null || Array.isArray(data)) return undefined;
-	return Object.hasOwn(data, "category") ? data.category : undefined;
+	return isDict(data) && Object.hasOwn(data, "category") ? data.category : undefined;
 }
 
 /** Names HubSpot's errors that the status alone does not (ProviderHttpOptions `classify`). */
@@ -91,28 +69,27 @@ export class HubSpotClient implements ProviderClient {
 		return this.#http.unexpected(cause);
 	}
 
-	/**
-	 * A read streamed up to 4 MiB and read as `model_validate_json` reads bytes: UTF-8, no byte order mark,
-	 * no lone surrogate escape.
-	 */
-	async #read<T>(reader: Reader<T>, request: ProviderRequest): Promise<T> {
-		const response = await this.#http.bounded(request, MAX_RESPONSE, new OperationError("RESPONSE_TOO_LARGE", "HubSpot's response was too large to read."));
-		const bytes = new Uint8Array(await response.arrayBuffer());
-		try {
-			return fromJsonText(reader, fromUtf8Strict(bytes));
-		} catch (error) {
-			throw this.unexpected(error);
-		}
+	#fit<T>(schema: z.ZodType<T>, value: unknown): T {
+		const found = schema.safeParse(value);
+		if (!found.success) throw this.unexpected(found.error);
+		return found.data;
 	}
 
-	/** A write's JSON answer read with `reader` (ProviderHTTP.parsed). */
-	async #parsed<T>(reader: Reader<T>, request: ProviderRequest): Promise<T> {
-		const data = await this.#http.json(request);
+	/** A read streamed up to 4 MiB: UTF-8 JSON (a byte order mark dropped) that fits `schema`. */
+	async #read<T>(schema: z.ZodType<T>, request: ProviderRequest): Promise<T> {
+		const response = await this.#http.bounded(request, MAX_RESPONSE, new OperationError("RESPONSE_TOO_LARGE", "HubSpot's response was too large to read."));
+		let data: Json;
 		try {
-			return reader(data);
+			data = parseJsonBytes(await response.arrayBuffer());
 		} catch (error) {
 			throw this.unexpected(error);
 		}
+		return this.#fit(schema, data);
+	}
+
+	/** A write's JSON answer, fitted to `schema`. */
+	async #parsed<T>(schema: z.ZodType<T>, request: ProviderRequest): Promise<T> {
+		return this.#fit(schema, await this.#http.json(request));
 	}
 
 	#checked(record: HubRecord): HubRecord {
@@ -121,7 +98,7 @@ export class HubSpotClient implements ProviderClient {
 	}
 
 	details(): Promise<Details> {
-		return this.#read(readDetails, { method: "GET", path: `/account-info/${VERSION}/details` });
+		return this.#read(Details, { method: "GET", path: `/account-info/${VERSION}/details` });
 	}
 
 	/**
@@ -129,12 +106,12 @@ export class HubSpotClient implements ProviderClient {
 	 * differ from the one asked for.
 	 */
 	async record(objectType: string, recordId: string, properties: readonly string[]): Promise<HubRecord> {
-		const found = await this.#read(readRecord, { method: "GET", path: `${OBJECTS}/${objectType}/${recordId}`, query: { properties: properties.join(",") } });
+		const found = await this.#read(HubRecord, { method: "GET", path: `${OBJECTS}/${objectType}/${recordId}`, query: { properties: properties.join(",") } });
 		return this.#checked(found);
 	}
 
 	async search(objectType: string, body: JsonObject): Promise<SearchPage> {
-		const page = await this.#read(readSearchPage, { method: "POST", path: `${OBJECTS}/${objectType}/search`, json: body });
+		const page = await this.#read(SearchPage, { method: "POST", path: `${OBJECTS}/${objectType}/search`, json: body });
 		for (const record of page.results) this.#checked(record);
 		return page;
 	}
@@ -142,7 +119,7 @@ export class HubSpotClient implements ProviderClient {
 	/** The records with these ids that exist; a read, though HubSpot takes it as a POST. */
 	async batch(objectType: string, ids: readonly string[], properties: readonly string[]): Promise<HubRecord[]> {
 		if (ids.length === 0) return [];
-		const found = await this.#read(readBatch, {
+		const found = await this.#read(Batch, {
 			method: "POST",
 			path: `${OBJECTS}/${objectType}/batch/read`,
 			json: { properties: [...properties], inputs: ids.map((id) => ({ id })) },
@@ -151,24 +128,24 @@ export class HubSpotClient implements ProviderClient {
 	}
 
 	async pipelines(): Promise<Pipeline[]> {
-		const found = await this.#read(readPipelines, { method: "GET", path: PIPELINES });
+		const found = await this.#read(Pipelines, { method: "GET", path: PIPELINES });
 		if (found.results.length > MAX_PIPELINES) throw new OperationError("PROVIDER_LIMIT", "There are more deal pipelines than Minerva reads.");
 		return found.results.filter((pipeline) => PIPELINE_ID.test(pipeline.id));
 	}
 
 	async pipeline(pipelineId: string): Promise<Pipeline> {
-		const found = await this.#read(readPipeline, { method: "GET", path: `${PIPELINES}/${pipelineId}` });
+		const found = await this.#read(Pipeline, { method: "GET", path: `${PIPELINES}/${pipelineId}` });
 		if (found.id !== pipelineId) throw this.unexpected();
 		return found;
 	}
 
 	async create(objectType: string, properties: { [name: string]: string }, associations: JsonObject[]): Promise<HubRecord> {
-		const created = await this.#parsed(readRecord, { method: "POST", path: `${OBJECTS}/${objectType}`, json: { properties, associations } });
+		const created = await this.#parsed(HubRecord, { method: "POST", path: `${OBJECTS}/${objectType}`, json: { properties, associations } });
 		return this.#checked(created);
 	}
 
 	async update(objectType: string, recordId: string, properties: { [name: string]: string }): Promise<HubRecord> {
-		const updated = await this.#parsed(readRecord, { method: "PATCH", path: `${OBJECTS}/${objectType}/${recordId}`, json: { properties } });
+		const updated = await this.#parsed(HubRecord, { method: "PATCH", path: `${OBJECTS}/${objectType}/${recordId}`, json: { properties } });
 		return this.#checked(updated);
 	}
 }

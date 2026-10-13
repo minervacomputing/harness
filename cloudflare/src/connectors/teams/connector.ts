@@ -21,9 +21,18 @@
 // and channels and posting do not.
 
 import { z } from "zod";
-import type { Binding, Connector, DiscoveryItem, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
+import {
+	type Binding,
+	type Connector,
+	type DiscoveryItem,
+	OperationError,
+	type Prepared,
+	type ProviderOutput,
+	type ScopedRecord,
+	defineOperation,
+	denied,
+} from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import type { Json } from "../../lib/json.ts";
 import { truncate, TextError } from "../../lib/text.ts";
 import { accountLabel, consent, consentAll, oauth } from "../microsoft/index.ts";
@@ -43,7 +52,7 @@ export const MAX_TEXT = 4_000;
 export const MAX_READ_TEXT = 4_000;
 export const MAX_SUBJECT = 500;
 export const MAX_TEAMS = 100;
-/** `DISCOVERY_PAGE` is mutable so that tests can lower it. */
+/** Mutable so that tests can lower the discovery page. */
 export const LIMITS = { discoveryPage: 10 };
 export const DISCOVERY_SCAN = 25;
 export const CONCURRENCY = 8;
@@ -87,7 +96,7 @@ function clientOf(binding: Binding): TeamsClient {
 	return binding.client as TeamsClient;
 }
 
-/** `_joined`: the teams the account is in, by id, with ids in lower case. */
+/** The teams the account is in, by id, with ids in lower case. */
 async function joined(client: TeamsClient): Promise<Team[]> {
 	const teams = new Map<string, Team>();
 	for (const team of await client.joinedTeams()) {
@@ -97,7 +106,7 @@ async function joined(client: TeamsClient): Promise<Team[]> {
 	return [...teams.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
-/** `_channels`: the channels a team hosts that the account can see, or null for a team it cannot see. */
+/** The channels a team hosts that the account can see, or null for a team it cannot see. */
 async function channelsOf(client: TeamsClient, teamId: string): Promise<Channel[] | null> {
 	let channels: Channel[];
 	try {
@@ -110,7 +119,7 @@ async function channelsOf(client: TeamsClient, teamId: string): Promise<Channel[
 }
 
 /**
- * `_resolve`: the channel a call names, in its team. A channel the team does not host is refused like a
+ * The channel a call names, in its team. A channel the team does not host is refused like a
  * channel without a grant.
  */
 async function resolve(binding: Binding, teamId: string, channelId: string): Promise<Resource> {
@@ -125,7 +134,7 @@ async function confirmForWriting(binding: Binding, resource: Resource): Promise<
 	const channels = await channelsOf(clientOf(binding), resource.within[0] as string);
 	const channel = (channels ?? []).find((c) => c.id === resource.id);
 	if (channel === undefined) throw new OperationError("CHANNEL_MOVED", "This channel changed in Teams while Minerva was using it, or access was lost.");
-	if (!WRITABLE.has(channel.membership_type)) {
+	if (!WRITABLE.has(channel.membershipType)) {
 		throw new OperationError(
 			"EXTERNAL_CHANNEL",
 			"Minerva posts only to standard and private channels, not to shared channels, which can include people of other organizations.",
@@ -133,10 +142,10 @@ async function confirmForWriting(binding: Binding, resource: Resource): Promise<
 	}
 }
 
-/** `_in`: whether Graph says the message is in this channel. */
+/** Whether Graph says the message is in this channel. */
 function isIn(message: Message, resource: Resource): boolean {
-	const identity = message.channel_identity;
-	return identity !== null && teamKey(identity.team_id) === resource.within[0] && identity.channel_id === resource.id && MESSAGE_ID.test(message.id);
+	const identity = message.channelIdentity;
+	return identity !== null && teamKey(identity.teamId) === resource.within[0] && identity.channelId === resource.id && MESSAGE_ID.test(message.id);
 }
 
 function plain(value: string | null): string | null {
@@ -148,42 +157,42 @@ function channelData(teamId: string, channel: Channel): { [key: string]: Json } 
 	return {
 		id: channel.id,
 		team_id: teamId,
-		name: channel.display_name,
+		name: channel.displayName,
 		description: plain(channel.description),
-		membership: channel.membership_type,
-		link: channel.web_url,
+		membership: channel.membershipType,
+		link: channel.webUrl,
 	};
 }
 
 function teamData(team: Team): { [key: string]: Json } {
-	return { id: team.id, type: "team", name: team.display_name, description: plain(team.description), archived: team.is_archived };
+	return { id: team.id, type: "team", name: team.displayName, description: plain(team.description), archived: team.isArchived };
 }
 
 function messageData(message: Message, resource: Resource): { [key: string]: Json } {
-	const deleted = message.deleted_date_time !== null;
-	const sender = message.sender;
+	const deleted = message.deletedDateTime !== null;
+	const sender = message.from;
 	const author = sender ? (sender.user ?? sender.application) : null;
 	const record: { [key: string]: Json } = {
 		id: message.id,
 		team_id: resource.within[0] as string,
 		channel_id: resource.id,
-		reply_to_id: message.reply_to_id,
-		created_time: message.created_date_time,
-		edited_time: message.last_edited_date_time,
+		reply_to_id: message.replyToId,
+		created_time: message.createdDateTime,
+		edited_time: message.lastEditedDateTime,
 		deleted,
-		author: author ? author.display_name : null,
+		author: author ? author.displayName : null,
 		author_id: author ? author.id : null,
 		importance: message.importance,
-		link: message.web_url,
+		link: message.webUrl,
 	};
 	if (deleted) return { ...record, subject: null, text: "", text_truncated: false, reactions: [], files: [] };
 	const body = message.body;
-	const [text, truncated] = truncate(html.read(body ? body.content : null, body ? body.content_type : null, message.mentions), MAX_READ_TEXT);
+	const [text, truncated] = truncate(html.read(body ? body.content : null, body ? body.contentType : null, message.mentions), MAX_READ_TEXT);
 	const counts = new Map<string, number>();
 	for (const reaction of message.reactions) {
-		if (reaction.reaction_type) counts.set(reaction.reaction_type, (counts.get(reaction.reaction_type) ?? 0) + 1);
+		if (reaction.reactionType) counts.set(reaction.reactionType, (counts.get(reaction.reactionType) ?? 0) + 1);
 	}
-	const files = message.attachments.filter((a) => a.content_type === "reference");
+	const files = message.attachments.filter((a) => a.contentType === "reference");
 	Object.assign(record, {
 		subject: plain(message.subject),
 		text,
@@ -196,16 +205,16 @@ function messageData(message: Message, resource: Resource): { [key: string]: Jso
 	return record;
 }
 
-/** `_messages`: user messages Graph places in this channel; system events (members added, renames) left out. */
+/** User messages Graph places in this channel; system events (members added, renames) left out. */
 function messageRecords(messages: readonly Message[], resource: Resource): ScopedRecord[] {
-	return messages.filter((m) => m.message_type === "message" && isIn(m, resource)).map((m) => ({ resource, data: messageData(m, resource) }));
+	return messages.filter((m) => m.messageType === "message" && isIn(m, resource)).map((m) => ({ resource, data: messageData(m, resource) }));
 }
 
 function notAThread(): OperationError {
 	return new OperationError("INVALID_ARGUMENTS", "message_id must be the first message of a thread in this channel.");
 }
 
-/** `_root`: the message that starts a thread in this channel, or INVALID_ARGUMENTS. */
+/** The message that starts a thread in this channel, or INVALID_ARGUMENTS. */
 async function threadRoot(binding: Binding, resource: Resource, messageId: string): Promise<Message> {
 	let message: Message;
 	try {
@@ -214,11 +223,11 @@ async function threadRoot(binding: Binding, resource: Resource, messageId: strin
 		if (unseen(error)) throw notAThread();
 		throw error;
 	}
-	if (message.id !== messageId || message.reply_to_id !== null || !isIn(message, resource)) throw notAThread();
+	if (message.id !== messageId || message.replyToId !== null || !isIn(message, resource)) throw notAThread();
 	return message;
 }
 
-export const ListTeams = z.strictObject({}).meta({ title: "ListTeams" });
+export const ListTeams = z.strictObject({});
 
 const LIST_TEAMS = defineOperation<z.output<typeof ListTeams>>({
 	name: "list_teams",
@@ -238,8 +247,7 @@ const LIST_TEAMS = defineOperation<z.output<typeof ListTeams>>({
 });
 
 export const ListChannels = z
-	.strictObject({ team_id: TeamId().nullable().default(null).describe("A team's id; without one, all teams.") })
-	.meta({ title: "ListChannels" });
+	.strictObject({ team_id: TeamId().nullable().default(null).describe("A team's id; without one, all teams.") });
 
 const LIST_CHANNELS = defineOperation<z.output<typeof ListChannels>>({
 	name: "list_channels",
@@ -281,8 +289,7 @@ export const ReadChannel = z
 		channel_id: ChannelId(),
 		limit: z.int().min(1).max(50).default(20),
 		cursor: Cursor().nullable().default(null),
-	})
-	.meta({ title: "ReadChannel" });
+	});
 
 const READ_CHANNEL = defineOperation<z.output<typeof ReadChannel>>({
 	name: "read_channel",
@@ -314,8 +321,7 @@ export const ReadThread = z
 		message_id: MessageId().describe("The id of the message that starts the thread."),
 		limit: z.int().min(1).max(50).default(20),
 		cursor: Cursor().nullable().default(null),
-	})
-	.meta({ title: "ReadThread" });
+	});
 
 const READ_THREAD = defineOperation<z.output<typeof ReadThread>>({
 	name: "read_thread",
@@ -343,7 +349,7 @@ const READ_THREAD = defineOperation<z.output<typeof ReadThread>>({
 					if (unseen(error)) throw notAThread();
 					throw error;
 				}
-				records = [...records, ...messageRecords(replies.filter((r) => r.reply_to_id === data.message_id), resource)];
+				records = [...records, ...messageRecords(replies.filter((r) => r.replyToId === data.message_id), resource)];
 				return { records, nextCursor: cursor };
 			},
 		};
@@ -355,19 +361,19 @@ export const WRITE_NOTE =
 	"sees it, posted as the signed-in user. Shared channels are refused.";
 
 function posted(binding: Binding, resource: Resource, message: Message, replyTo: string | null): { [key: string]: Json } {
-	if (!isIn(message, resource) || message.reply_to_id !== replyTo) throw clientOf(binding).unexpected();
+	if (!isIn(message, resource) || message.replyToId !== replyTo) throw clientOf(binding).unexpected();
 	return {
 		written: true,
 		id: message.id,
 		team_id: resource.within[0] as string,
 		channel_id: resource.id,
 		reply_to_id: replyTo,
-		created_time: message.created_date_time,
-		link: message.web_url,
+		created_time: message.createdDateTime,
+		link: message.webUrl,
 	};
 }
 
-export const PostMessage = z.strictObject({ team_id: TeamId(), channel_id: ChannelId(), text: WrittenText() }).meta({ title: "PostMessage" });
+export const PostMessage = z.strictObject({ team_id: TeamId(), channel_id: ChannelId(), text: WrittenText() });
 
 const POST_MESSAGE = defineOperation<z.output<typeof PostMessage>>({
 	name: "post_message",
@@ -396,8 +402,7 @@ export const Reply = z
 		channel_id: ChannelId(),
 		message_id: MessageId().describe("The id of the message that starts the thread."),
 		text: WrittenText(),
-	})
-	.meta({ title: "Reply" });
+	});
 
 const REPLY = defineOperation<z.output<typeof Reply>>({
 	name: "reply",
@@ -413,7 +418,7 @@ const REPLY = defineOperation<z.output<typeof Reply>>({
 			requirements: [{ need: resource, action: "reply" }],
 			async execute(): Promise<ProviderOutput> {
 				const root = await threadRoot(binding, resource, data.message_id);
-				if (root.message_type !== "message" || root.deleted_date_time !== null) throw notAThread();
+				if (root.messageType !== "message" || root.deletedDateTime !== null) throw notAThread();
 				// Last before the write, so the channel is checked as close to it as Graph allows.
 				await confirmForWriting(binding, resource);
 				const message = await clientOf(binding).post(data.team_id, data.channel_id, html.written(data.text), data.message_id);
@@ -435,8 +440,8 @@ async function teamItems(client: TeamsClient, teams: readonly Team[]): Promise<[
 }
 
 function teamName(team: Team): string {
-	const name = team.display_name || team.id;
-	return team.is_archived ? `${name} (archived)` : name;
+	const name = team.displayName || team.id;
+	return team.isArchived ? `${name} (archived)` : name;
 }
 
 export function teamsConnector(options: { baseUrl?: string } = {}): Connector<TeamsClient> {
@@ -487,7 +492,7 @@ export function teamsConnector(options: { baseUrl?: string } = {}): Connector<Te
 				end += chunk.length;
 				for (const [team, channels] of await teamItems(client, chunk)) {
 					const name = teamName(team);
-					const found: DiscoveryItem[] = [{ id: team.id, name }, ...channels.map((c) => ({ id: c.id, name: `${name} / ${c.display_name || c.id}` }))];
+					const found: DiscoveryItem[] = [{ id: team.id, name }, ...channels.map((c) => ({ id: c.id, name: `${name} / ${c.displayName || c.id}` }))];
 					extend(items, found.filter((item) => folded === null || item.name.toLowerCase().includes(folded)));
 				}
 				if (!folded || items.length) break;
@@ -499,15 +504,14 @@ export function teamsConnector(options: { baseUrl?: string } = {}): Connector<Te
 			const wanted = new Set(ids);
 			if (![...wanted].some((id) => GUID.test(id) || CHANNEL_ID.test(id))) return {};
 			const teams = (await joined(client)).slice(0, MAX_TEAMS);
-			const names: { [id: string]: string } = {};
-			const name = (id: string, value: string) => Object.defineProperty(names, id, { value, enumerable: true, writable: true, configurable: true });
-			for (const team of teams) if (wanted.has(team.id)) name(team.id, teamName(team));
+			const names = new Map<string, string>();
+			for (const team of teams) if (wanted.has(team.id)) names.set(team.id, teamName(team));
 			if ([...wanted].some((id) => CHANNEL_ID.test(id))) {
 				for (const [team, channels] of await teamItems(client, teams)) {
-					for (const channel of channels) if (wanted.has(channel.id)) name(channel.id, `${teamName(team)} / ${channel.display_name || channel.id}`);
+					for (const channel of channels) if (wanted.has(channel.id)) names.set(channel.id, `${teamName(team)} / ${channel.displayName || channel.id}`);
 				}
 			}
-			return names;
+			return Object.fromEntries(names);
 		},
 	};
 }

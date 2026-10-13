@@ -1,12 +1,13 @@
 // Layers and grants, the pure parts (gateway/grants.ts): wildcards, connections that act on their account,
 // the limit on grants, wildcards on kinds without them, and the validation of access settings. The provider's `describe` step between the checks
-// and the plan belongs to the API (step 5).
+// and the plan belongs to the API.
 
 import { describe, expect, test } from "vitest";
-import type { GrantChange, GrantRow } from "../../src/contracts/policy.ts";
 import { ACCOUNT_KIND } from "../../src/gateway/connector.ts";
 import {
 	DEFAULT_RESTRICTED,
+	type GrantChange,
+	type GrantRow,
 	InvalidGrants,
 	MAX_GRANTS_PER_CONNECTION,
 	allowedActions,
@@ -77,7 +78,7 @@ describe("planGrantChanges", () => {
 	const names = (entries: [kind: string, id: string, name: string][] = []) => new Map(entries.map(([kind, id, name]) => [resourceKey(kind, id), name]));
 
 	test("a requirement may be met on the resource or by the kind's wildcard", () => {
-		// test_access_settings_understand_wildcards: create on one folder relies on the wildcard read.
+		// Create on one folder relies on the wildcard read.
 		let rows: GrantRow[] = [];
 		const apply = (changes: GrantChange[], given = names()) => {
 			const plan = planGrantChanges(mixed, rows, changes, given);
@@ -127,7 +128,7 @@ describe("planGrantChanges", () => {
 	});
 
 	test("a connection has a limited number of grants", () => {
-		// test_a_connection_has_a_limited_number_of_grants. Widening f0 there is refused by the provider's
+		// Widening f0 there is refused by the provider's
 		// describe (f0 does not exist at the fake), not by the limit, which counts resources.
 		const full = Array.from({ length: MAX_GRANTS_PER_CONNECTION }, (_, i) => grant(FOLDER, `f${i}`, ["read"]));
 		expect(refusal(() => planGrantChanges(mixed, full, [change(FOLDER, "inbox", ["read"])], names()))).toBe("A connection can have at most 500 permissions.");

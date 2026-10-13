@@ -7,16 +7,15 @@
 // organisation is authorized: it must exist and be active.
 //
 // Amounts are taken as decimal strings and sent as JSON numbers. They have at most 14 significant digits, and
-// the number's text is the decimal itself: it is written from the checked string (decimal.ts), never through
-// a float.
+// the number's text is the decimal itself: it is written from the checked string with JSON.rawJSON, never
+// through a float.
 
 import { z } from "zod";
-import type { Binding, Prepared, ProviderOutput } from "../../contracts/connectors.ts";
-import { OperationError, defineOperation } from "../../gateway/connector.ts";
+import { type Binding, OperationError, type Prepared, type ProviderOutput, defineOperation } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
 import { PLAIN_TEXT, SINGLE_LINE, isPlainText, isSingleLine } from "../../lib/text.ts";
 import { type Contact, type Invoice, invoiceDate, messages, uuid } from "./client.ts";
-import { type Decimal, type JsonBody, JsonNumber, compare, isZero, jsonText, money, number, parsePlain, plain } from "./decimal.ts";
+import { type Decimal, compare, isZero, money, number, parsePlain, plain } from "./decimal.ts";
 import { ORGANISATION, client, contactId, organisationId, resolveOrganisation, short } from "./organisations.ts";
 import { type InvoiceKind, TYPES, day, kindOf } from "./reads.ts";
 
@@ -33,7 +32,7 @@ interface Bounds {
 	most?: Decimal;
 }
 
-/** writes.py `_decimal`: the value checked against `pattern` and the bounds, written without trailing zeros, or why it is refused. */
+/** The value checked against `pattern` and the bounds, written without trailing zeros, or why it is refused. */
 export function checkedDecimal(value: string, pattern: RegExp, bounds: Bounds = {}): { value: string } | { problem: string } {
 	const found = pattern.test(value) ? parsePlain(value) : null;
 	if (found === null) return { problem: NOT_A_DECIMAL };
@@ -42,7 +41,7 @@ export function checkedDecimal(value: string, pattern: RegExp, bounds: Bounds = 
 	return { value: number(found) };
 }
 
-/** `AfterValidator(_decimal(...))`: a refusal is the validator's ValueError. */
+/** A transform that checks a decimal string; a refusal is the field's message. */
 function decimalField(pattern: RegExp, bounds: Bounds = {}) {
 	return (value: string, ctx: Pick<z.RefinementCtx, "issues">): string => {
 		const checked = checkedDecimal(value, pattern, bounds);
@@ -64,7 +63,7 @@ const unitAmount = () =>
 	z.string().trim().min(1).max(16)
 		.describe("A decimal string, up to 4 decimal places; negative for a discount line.")
 		.transform(decimalField(UNIT_AMOUNT));
-/** `DiscountRate | None = None`, defaulted before the transform so the JSON Schema shows the default. */
+/** An optional discount rate, defaulted before the transform so the JSON Schema shows the default. */
 const discountRate = () => {
 	const check = decimalField(DISCOUNT_RATE, { most: HUNDRED });
 	return z.string().trim().min(1).max(6)
@@ -92,8 +91,8 @@ function lineFields() {
 	};
 }
 
-const Line = z.strictObject(lineFields()).meta({ title: "Line" });
-const SalesLine = z.strictObject({ ...lineFields(), discount_rate: discountRate() }).meta({ title: "SalesLine" });
+const Line = z.strictObject(lineFields());
+const SalesLine = z.strictObject({ ...lineFields(), discount_rate: discountRate() });
 
 function draftFields() {
 	return {
@@ -115,8 +114,7 @@ export const DraftInvoice = z
 		lines: z.array(SalesLine).min(1).max(MAX_LINES),
 		number: reference().nullable().default(null).describe("The invoice number; Xero numbers it in sequence when left out."),
 		reference: reference().nullable().default(null),
-	})
-	.meta({ title: "DraftInvoice" });
+	});
 export type DraftInvoice = z.output<typeof DraftInvoice>;
 
 export const DraftBill = z
@@ -124,21 +122,20 @@ export const DraftBill = z
 		...draftFields(),
 		lines: z.array(Line).min(1).max(MAX_LINES),
 		number: reference().nullable().default(null).describe("The supplier's invoice number, shown in Xero as the bill's reference."),
-	})
-	.meta({ title: "DraftBill" });
+	});
 export type DraftBill = z.output<typeof DraftBill>;
 
 type LineInput = DraftBill["lines"][number] | DraftInvoice["lines"][number];
 
-/** A checked decimal string as the JSON number Xero takes. */
-function amount(value: string): JsonNumber {
+/** A checked decimal string as the JSON number Xero takes, which JSON.stringify writes as that text. */
+function amount(value: string): Json {
 	const found = parsePlain(value);
 	if (found === null) throw new TypeError("An amount the input accepted is not a decimal.");
-	return new JsonNumber(found);
+	return (JSON as unknown as { rawJSON(text: string): Json }).rawJSON(number(found));
 }
 
-function line(item: LineInput): { [key: string]: JsonBody } {
-	const out: { [key: string]: JsonBody } = {
+function line(item: LineInput): { [key: string]: Json } {
+	const out: { [key: string]: Json } = {
 		Description: item.description,
 		Quantity: amount(item.quantity),
 		UnitAmount: amount(item.unit_amount),
@@ -152,8 +149,8 @@ function line(item: LineInput): { [key: string]: JsonBody } {
 }
 
 /** The invoice sent to Xero: only these fields, and always a draft. */
-export function body(data: DraftInvoice | DraftBill, kind: InvoiceKind): { [key: string]: JsonBody } {
-	const invoice: { [key: string]: JsonBody } = {
+export function body(data: DraftInvoice | DraftBill, kind: InvoiceKind): { [key: string]: Json } {
+	const invoice: { [key: string]: Json } = {
 		Type: TYPES[kind],
 		Status: "DRAFT",
 		Contact: { ContactID: data.contact },
@@ -222,7 +219,7 @@ function prepareDraft(kind: InvoiceKind, action: string) {
 
 /** The request's JSON text: `{"Invoices": [body]}`, compact, amounts as their decimals. */
 export function jsonBody(data: DraftInvoice | DraftBill, kind: InvoiceKind): string {
-	return jsonText({ Invoices: [body(data, kind)] });
+	return JSON.stringify({ Invoices: [body(data, kind)] });
 }
 
 export const WRITE_NOTE =

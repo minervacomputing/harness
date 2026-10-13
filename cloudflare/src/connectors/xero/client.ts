@@ -1,5 +1,4 @@
-// Xero's Accounting API, and the identity endpoints that name the user and the organisations they connected,
-//.
+// Xero's Accounting API, and the identity endpoints that name the user and the organisations they connected.
 //
 // Every accounting request names its organisation in the `xero-tenant-id` header, always one Minerva has
 // already authorized. Models mirror Xero's JSON, whose keys are in PascalCase; fields Xero leaves out stay
@@ -7,17 +6,14 @@
 // each): they describe the organisation's own data, in an organisation the call was allowed to use. Its other
 // error texts are not.
 //
-// Responses are read as the Python models read them, ignoring fields they do not name; amounts become exact
-// decimals (decimal.ts). Unlike Pydantic's lax mode, a number or boolean sent as a string is refused as an
-// unexpected response, and so is an integral amount of 2^53 or more, which JSON parsing here may already have
-// rounded (Xero sends neither).
+// Responses are strict UTF-8 JSON, a byte order mark dropped. Fields not named here are dropped, and amounts
+// become exact decimals (decimal.ts). A field of another type (a number or boolean sent as a string, an
+// integral amount of 2^53 or more, which JSON parsing may already have rounded) makes the response unexpected.
 
 import { z } from "zod";
-import type { Effect, OperationErrorShape, ProviderClient, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
-import { ProviderHTTP } from "../../gateway/http.ts";
-import { fromUtf8Strict } from "../../lib/bytes.ts";
-import { isDict, type Json, parseJson, parseModelJson, truthy } from "../../lib/json.ts";
+import { OperationError, type OperationErrorShape, type ProviderClient } from "../../gateway/connector.ts";
+import { type Effect, ProviderHTTP, type ProviderIo, type ProviderRequest } from "../../gateway/http.ts";
+import { isDict, type Json, parseJson, parseJsonBytes } from "../../lib/json.ts";
 import { truncate } from "../../lib/text.ts";
 import { type Decimal, fromNumber } from "./decimal.ts";
 
@@ -46,11 +42,11 @@ export function uuid(value: string | null | undefined): string | null {
 	return UUID.test(lowered) && lowered !== ZERO_UUID ? lowered : null;
 }
 
-// Pydantic's `str | None = None` and the like: a missing field takes the default; other fields are ignored.
+// A missing field takes its default; fields not named are dropped.
 const text = () => z.string().nullable().default(null);
 const flag = () => z.boolean().nullable().default(null);
 const integer = () => z.int().nullable().default(null);
-/** `Decimal | None = None`, read exactly from the JSON number (decimal.ts). */
+/** A decimal, read exactly from the JSON number (decimal.ts), or null. */
 const decimal = () =>
 	z
 		.number()
@@ -217,7 +213,7 @@ export function messages(found: readonly Message[]): string[] {
 	const shown: string[] = [];
 	for (const message of found) {
 		const line = (message.Message ?? "").trim().replace(/\s+/g, " ");
-		// As today: the whole line is compared with what was kept, which is each line cut to MAX_MESSAGE.
+		// The whole line is compared with what was kept, which is each line cut to MAX_MESSAGE.
 		if (line && !shown.includes(line)) shown.push(truncate(line, MAX_MESSAGE)[0]);
 	}
 	return shown.slice(0, MAX_MESSAGES);
@@ -240,12 +236,12 @@ function parsedBody(body: string): Json | undefined {
 export const FORBIDDEN =
 	"Xero refused this request. The connection may lack a permission (reconnect to give it), the user's role in this organisation may not allow it, or the organisation was disconnected from Minerva.";
 
-/** client.py `classify`: Xero's validation messages for a 400, and what a 403 may mean. */
+/** Xero's validation messages for a 400, and what a 403 may mean. */
 export function classify(_provider: string, response: Response, _body: string, bytes: Uint8Array): OperationErrorShape | null {
 	if (response.status === 400) {
 		let data: Json;
 		try {
-			data = modelJson(bytes);
+			data = parseJsonBytes(bytes);
 		} catch {
 			return null;
 		}
@@ -258,29 +254,28 @@ export function classify(_provider: string, response: Response, _body: string, b
 	return null;
 }
 
-/** `uuid(item.get("InvoiceID"))` on any JSON value: a falsy one is no id; another that is not text raises, as `.lower()` does in Python. */
-function anyUuid(value: Json | undefined): string | null {
-	if (typeof value === "string") return uuid(value);
-	if (!truthy(value)) return null;
-	throw new TypeError("An invoice id that is not text.");
-}
-
 /**
  * A 200 that holds only invoices Xero refused created nothing. Minerva asks Xero to answer refusals with 400
  * (`summarizeErrors=true`); this covers an answer that ignores that.
  */
 export function judge(response: Response, body: string): Effect | null {
 	if (!response.ok) return null;
-	// json.loads skips a UTF-8 byte order mark (Pydantic, which classify's model reads with, does not).
-	const data = parsedBody(body.startsWith("﻿") ? body.slice(1) : body);
-	if (data === undefined) return null;
+	const data = parsedBody(body);
 	const found = isDict(data) ? data.Invoices : undefined;
 	if (!Array.isArray(found) || found.length === 0) return null;
-	// Python's all() stops at the first item that is not a refusal.
+	let refused = true;
 	for (const item of found) {
-		if (!(isDict(item) && item.HasErrors === true && anyUuid(item.InvoiceID) === null)) return null;
+		if (!isDict(item) || item.HasErrors !== true) {
+			refused = false;
+			continue;
+		}
+		// A refused invoice has no id (or the zero UUID); an id of another type leaves the write unknown.
+		const id = item.InvoiceID;
+		if (id === undefined || id === null) continue;
+		if (typeof id !== "string") return "unknown";
+		if (uuid(id) !== null) refused = false;
 	}
-	return "not_applied";
+	return refused ? "not_applied" : null;
 }
 
 export function invalidPage(): OperationError {
@@ -329,20 +324,6 @@ export function invoiceDate(text: string | null, raw: string | null): string | n
 
 type Query = NonNullable<ProviderRequest["query"]>;
 
-/** A UTF-8 JSON body; anything else is not one. */
-function jsonOf(bytes: Uint8Array): Json {
-	return parseJson(fromUtf8Strict(bytes));
-}
-
-/**
- * The JSON `model_validate_json(content)` reads: strict UTF-8 without a byte order mark, no lone surrogate
- * escape in any string or key, ignored fields included (json.loads, which the other reads use, takes them),
- * and jiter's nesting limit.
- */
-function modelJson(bytes: Uint8Array): Json {
-	return parseModelJson(fromUtf8Strict(bytes));
-}
-
 export class XeroClient implements ProviderClient {
 	readonly #http: ProviderHTTP;
 	#organisations: Connection[] | null = null;
@@ -373,12 +354,12 @@ export class XeroClient implements ProviderClient {
 		return new Uint8Array(await response.arrayBuffer());
 	}
 
-	/** `model.model_validate_json(response.content)`: the body as one model, or an unexpected response. */
+	/** The body fitted to `schema`, or an unexpected response. */
 	async #read<T>(schema: z.ZodType<T>, url: string, tenant: string | null = null, params?: Query): Promise<T> {
 		const bytes = await this.#bounded(url, tenant, params);
 		let data: Json;
 		try {
-			data = modelJson(bytes);
+			data = parseJsonBytes(bytes);
 		} catch (error) {
 			throw this.unexpected(error);
 		}
@@ -397,16 +378,7 @@ export class XeroClient implements ProviderClient {
 	 */
 	async organisations(): Promise<Connection[]> {
 		if (this.#organisations === null) {
-			const bytes = await this.#bounded("/connections", null);
-			let found: Connection[] | null;
-			try {
-				// json.loads skips a UTF-8 byte order mark.
-				const body = jsonOf(bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? bytes.subarray(3) : bytes);
-				found = Array.isArray(body) ? body.map((item) => Connection.parse(item)) : null;
-			} catch (error) {
-				throw this.unexpected(error);
-			}
-			if (found === null) throw this.unexpected();
+			const found = await this.#read(z.array(Connection), "/connections");
 			const kept = new Map<string, Connection>();
 			for (const connection of found) {
 				const tenant = uuid(connection.tenantId);
@@ -462,7 +434,7 @@ export class XeroClient implements ProviderClient {
 	/**
 	 * The one write: PUT creates and never updates (POST would update an invoice it matches). Refusals are
 	 * asked for as 400s; a 200 that still carries them is refused here too. `body` is the request's JSON text,
-	 * whose amounts are written as their decimals (decimal.ts `jsonText`).
+	 * whose amounts are written as their decimals (writes.ts `jsonBody`).
 	 */
 	async createInvoice(tenant: string, body: string): Promise<Invoice> {
 		const found = await this.#http.parsed(

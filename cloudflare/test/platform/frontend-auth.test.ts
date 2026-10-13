@@ -2,7 +2,7 @@
 // steps the sign-in, sign-up, verification, code, two-factor, reset and account pages take, the step each leaves
 // pending, and the field a failure names. No page is rendered. Signing in and signing out load a whole page in
 // the app, which cannot happen here: a step answers `signed-in`, and a sign-out resolves only once the server
-// has ended the session; the pages act on those. The browser walk (test/account) drives the pages.
+// has ended the session; the pages act on those. The browser walk (test/account/browser.test.ts) drives the pages.
 // The client reaches the Worker through a Browser's cookie jar in place of `fetch`.
 
 import { env } from "cloudflare:workers";

@@ -4,7 +4,7 @@
 // module code, so acorn (8.19.0, MIT) parses the module the guest gets (scripts/prelude.ts) and requires its
 // one function to end where the wrapper's does. A failure is reported with acorn's words and the code's own
 // line and column, from a parse of the code alone where that fails too, since that position is the one the
-// model wrote. QuickJS reported today's syntax errors in its own words.
+// model wrote.
 
 import { type Node, parse } from "acorn";
 import { SCRIPT_PREFIX, SCRIPT_SUFFIX, scriptModule } from "./prelude.ts";

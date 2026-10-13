@@ -15,7 +15,7 @@
 // This module assembles the connector. The operations are in reads.ts and writes.ts; what they share is in
 // scope.ts, the HTTP client in client.ts and the response models in models.ts.
 
-import type { Connector, DiscoveryItem } from "../../contracts/connectors.ts";
+import type { Connector, DiscoveryItem } from "../../gateway/connector.ts";
 import { HubSpotClient } from "./client.ts";
 import type { Pipeline } from "./models.ts";
 import { GET_COMPANY, GET_CONTACT, GET_DEAL, LIST_PIPELINES, SEARCH_COMPANIES, SEARCH_CONTACTS, SEARCH_DEALS } from "./reads.ts";

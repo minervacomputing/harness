@@ -19,8 +19,7 @@
 // This module assembles the connector. The operations are in reads.ts and writes.ts; what they share is in
 // organisations.ts and decimal.ts, and Xero's API in client.ts.
 
-import type { Account, Connector, DiscoveryPage } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
+import { type Account, type Connector, type DiscoveryPage, OperationError } from "../../gateway/connector.ts";
 import { XeroClient } from "./client.ts";
 import { ORGANISATION, label } from "./organisations.ts";
 import { GET_INVOICE, LIST_ACCOUNTS, LIST_ORGANISATIONS, LIST_TAX_RATES, SEARCH_CONTACTS, SEARCH_INVOICES } from "./reads.ts";

@@ -1,7 +1,6 @@
-// backend/tests/test_outlook.py, case by case: the Outlook connector against an in-memory Microsoft Graph
-// behind an injected `fetch`, and runs through the executor. Addresses, times and input validation are
-// compared with vectors from today's Python (test/fixtures/connectors/outlook/generate.py). Graph's paging,
-// error classification and consent are tested with the shared base in connectors-microsoft.test.ts.
+// The Outlook connector against an in-memory Microsoft Graph behind an injected `fetch`, and runs through the
+// executor. Graph's paging, error classification and consent are tested with the shared base in
+// connectors-microsoft.test.ts.
 
 import { describe, expect, test } from "vitest";
 import { type GraphClient } from "../../src/connectors/outlook/client.ts";
@@ -9,12 +8,12 @@ import { outlookConnector } from "../../src/connectors/outlook/connector.ts";
 import { LIMITS } from "../../src/connectors/outlook/mailbox.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
-import { validateInput } from "../../src/gateway/validation.ts";
 import * as addresses from "../../src/lib/addresses.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { moment, messageFilter } from "../../src/connectors/outlook/reads.ts";
-import { ceilingRow, jsonResponse, operation, received, startRun, vectors, type Received } from "../fixtures/connectors/microsoft/runs.ts";
-import { changedOnPurpose } from "./changed.ts";
+import { type Received, received } from "../fixtures/connectors/microsoft/fake.ts";
+import { ceilingRow, startRun, validated } from "./connector-runs.ts";
+import { jsonResponse } from "./executor-fakes.ts";
 
 type JsonObject = { [key: string]: Json };
 
@@ -60,7 +59,7 @@ function messageOf(id: string, folder: string, sender: string, fields: JsonObjec
 type Hook = (method: string, path: string, params: { [name: string]: string }) => Response | null;
 
 /**
- * Microsoft Graph's mail API (test_outlook.py `FakeGraph`). Folders: Inbox (with Projects and Private under
+ * Microsoft Graph's mail API. Folders: Inbox (with Projects and Private under
  * it), Sent Items and Drafts, under msgfolderroot; and a search folder outside that tree, which collects the
  * mail in Private.
  */
@@ -191,7 +190,7 @@ describe("addresses", () => {
 		["Giulia@TrattoriaRossa.example", "giulia@trattoriarossa.example"],
 	];
 	for (const [raw, expected] of canonical) {
-		test(`test_addresses_are_canonical: ${JSON.stringify(raw)}`, () => {
+		test(`addresses are canonical: ${JSON.stringify(raw)}`, () => {
 			expect(addresses.parse(raw)).toBe(expected);
 			expect(addresses.validId(expected)).toBe(true);
 		});
@@ -217,15 +216,21 @@ describe("addresses", () => {
 		"Ada <ada@example.com>",
 		"ädä@example.com",
 		"ada@exa\nmple.com",
+		"ada@example.com.",
+		"ada@a\u00b7b.com",
+		"ada@\u{1f600}.com",
+		"ada@\u212aelvin.com",
+		"\u212ada@example.com",
+		"ada@\uff25xample.com",
 		`${"a".repeat(65)}@example.com`,
 	];
 	for (const raw of odd) {
-		test(`test_odd_addresses_are_refused: ${JSON.stringify(raw)}`, () => {
+		test(`odd addresses are refused: ${JSON.stringify(raw)}`, () => {
 			expect(() => addresses.parse(raw)).toThrow(expect.objectContaining({ code: "INVALID_ADDRESS" }));
 		});
 	}
 
-	test("test_address_patterns_cover_one_domain", () => {
+	test("address patterns cover one domain", () => {
 		expect(addresses.ancestors("ada@mail.example.com")).toEqual(["*@mail.example.com"]);
 		expect(addresses.choices("Ada@Example.com")).toEqual(["ada@example.com", "*@example.com"]);
 		expect(addresses.choices("example.com")).toEqual(["*@example.com"]);
@@ -237,65 +242,116 @@ describe("addresses", () => {
 			expect(addresses.validId(resource)).toBe(false);
 		}
 		for (const query of ["co.uk", "ada@co.uk", "*.example.com"]) expect(() => addresses.choices(query)).toThrow(OperationError);
-	});
-
-	test("parse, valid_id and choices agree with Python on 200 cases", () => {
-		const outcome = (call: () => unknown) => {
-			try {
-				return { value: call() };
-			} catch (error) {
-				if (error instanceof OperationError) return { error: error.code };
-				throw error;
-			}
-		};
-		const { parse, valid_id, choices } = vectors("outlook") as { [name: string]: { [raw: string]: unknown } };
-		expect(Object.keys(parse as object).length).toBeGreaterThan(80);
-		expect(Object.fromEntries(Object.keys(parse as object).map((raw) => [raw, outcome(() => addresses.parse(raw))]))).toEqual(parse);
-		expect(Object.fromEntries(Object.keys(valid_id as object).map((raw) => [raw, addresses.validId(raw)]))).toEqual(valid_id);
-		expect(Object.fromEntries(Object.keys(choices as object).map((raw) => [raw, outcome(() => addresses.choices(raw))]))).toEqual(choices);
+		// A private suffix such as github.io is no one's domain; the names under it are.
+		expect(() => addresses.parse("ada@github.io")).toThrow(expect.objectContaining({ code: "INVALID_ADDRESS" }));
+		for (const resource of ["*@github.io", "ada@github.io"]) expect(addresses.validId(resource)).toBe(false);
+		expect(addresses.parse("ada@x.github.io")).toBe("ada@x.github.io");
+		for (const resource of ["*@x.github.io", "ada@x.github.io"]) expect(addresses.validId(resource)).toBe(true);
+		expect(addresses.choices("x.github.io")).toEqual(["*@x.github.io"]);
 	});
 });
 
-describe("times and tool inputs, as today's Python reads them", () => {
-	test("the message filter is Graph's $filter", () => {
-		const cases = vectors("outlook").filters as { args: JsonObject; filter: string | null }[];
-		expect(cases).toHaveLength(5);
-		for (const { args, filter } of cases) {
-			expect(messageFilter({ unread_only: (args.unread_only as boolean) ?? false, after: args.after ? moment(args.after as string) : null, before: args.before ? moment(args.before as string) : null })).toBe(filter);
-		}
+describe("times and tool inputs", () => {
+	test("the message filter is Graph's $filter, in UTC, and always starts with receivedDateTime", () => {
+		const filter = (args: { unread_only?: boolean; after?: string; before?: string }) =>
+			messageFilter({ unread_only: args.unread_only ?? false, after: args.after ? moment(args.after) : null, before: args.before ? moment(args.before) : null });
+		expect(filter({})).toBeNull();
+		expect(filter({ unread_only: true })).toBe("receivedDateTime ge 1900-01-01T00:00:00Z and isRead eq false");
+		expect(filter({ after: "2026-09-01T02:00:00+02:00" })).toBe("receivedDateTime ge 2026-09-01T00:00:00Z");
+		expect(filter({ before: "2026-10-01", unread_only: true })).toBe(
+			"receivedDateTime ge 1900-01-01T00:00:00Z and receivedDateTime lt 2026-10-01T00:00:00Z and isRead eq false",
+		);
+		expect(filter({ after: "2026-09-01", before: "2026-10-01T12:30:00-02:00" })).toBe("receivedDateTime ge 2026-09-01T00:00:00Z and receivedDateTime lt 2026-10-01T14:30:00Z");
 	});
 
-	const tools: [string, string][] = [
-		["list_folders", "list_folders"],
-		["list_messages", "list_messages"],
-		["read_message", "read_message"],
-		["send_message", "send_message"],
-		["reply", "reply"],
+	const LIST = { folder: INBOX, limit: 20, unread_only: false, after: null, before: null, query: null, cursor: null };
+	const accepted: [string, Json, Json][] = [
+		["list_folders", {}, { parent: null, limit: 50, cursor: null }],
+		["list_folders", { parent: " INBOX " }, { parent: "inbox", limit: 50, cursor: null }],
+		["list_folders", { parent: "SentItems", limit: 100, cursor: " c " }, { parent: "sentitems", limit: 100, cursor: "c" }],
+		["list_messages", { folder: INBOX }, LIST],
+		["list_messages", { folder: "Inbox" }, { ...LIST, folder: "inbox" }],
+		["list_messages", { folder: INBOX, query: null, after: null }, LIST],
+		["list_messages", { folder: INBOX, query: "budget 2026" }, { ...LIST, query: "budget 2026" }],
+		[
+			"list_messages",
+			{ folder: INBOX, unread_only: true, after: "2026-09-01T02:00:00+02:00", before: " 2026-10-01 " },
+			{ ...LIST, unread_only: true, after: "2026-09-01T00:00:00Z", before: "2026-10-01T00:00:00Z" },
+		],
+		["list_messages", { folder: INBOX, after: "0001-01-01T00:00:00+01:00" }, { ...LIST, after: "0000-12-31T23:00:00Z" }],
+		["read_message", { message: FROM_GRACE }, { message: FROM_GRACE, max_chars: 20000, offset: 0 }],
+		["read_message", { message: FROM_GRACE, max_chars: 500, offset: 500 }, { message: FROM_GRACE, max_chars: 500, offset: 500 }],
+		[
+			"send_message",
+			{ to: ["Grace@Example.com"], cc: ["ada@partner.org"], subject: "Plans", body: "Hi <b>Grace</b>\r\n\tthanks" },
+			{ to: ["grace@example.com"], cc: ["ada@partner.org"], bcc: [], subject: "Plans", body: "Hi <b>Grace</b>\r\n\tthanks" },
+		],
+		["reply", { message: FROM_GRACE, body: "Thanks" }, { message: FROM_GRACE, body: "Thanks" }],
 	];
-	for (const [key, name] of tools) {
-		test(`inputs of ${name}: normalized arguments, and refusals`, async () => {
-			const cases = (vectors("outlook").inputs as { [tool: string]: { args: Json; data?: Json; message?: string; raises?: string }[] })[key] as { args: Json; data?: Json; message?: string; raises?: string }[];
-			expect(cases.length).toBeGreaterThan(1);
-			const op = operation(outlookConnector(), name);
-			const actual = [];
-			const wanted = [];
-			for (const { args, data, raises } of cases.filter((item) => !changedOnPurpose(item.args))) {
-				wanted.push(raises !== undefined ? { args, raises } : data !== undefined ? { args, data } : { args, refused: true });
-				try {
-					const result = await validateInput(op.input as never, args);
-					actual.push(result.ok ? { args, data: result.data } : { args, refused: true });
-				} catch (error) {
-					if (error instanceof TypeError) actual.push({ args, raises: "TypeError" });
-					else throw error;
-				}
-			}
-			expect(actual).toEqual(wanted);
+	for (const [tool, args, data] of accepted) {
+		test(`${tool} accepts ${JSON.stringify(args)}`, async () => {
+			expect(await validated(outlookConnector(), tool, args)).toEqual({ ok: data });
+		});
+	}
+
+	const some = (prefix: string, count: number) => Array.from({ length: count }, (_, index) => `${prefix}${index}@example.com`);
+	const refused: [string, Json, string][] = [
+		["list_folders", { parent: "Projects" }, "parent"],
+		["list_folders", { parent: "../me" }, "parent"],
+		["list_folders", { parent: "" }, "parent"],
+		["list_folders", { parent: "a".repeat(513) }, "parent"],
+		["list_folders", { parent: 5 }, "parent"],
+		["list_folders", { limit: 0 }, "limit"],
+		["list_folders", { limit: 101 }, "limit"],
+		["list_folders", { cursor: "x".repeat(2049) }, "cursor"],
+		["list_folders", { extra: 1 }, "extra"],
+		["list_messages", {}, "folder"],
+		["list_messages", { folder: null }, "folder"],
+		["list_messages", { folder: INBOX, query: "budget", unread_only: true }, "query cannot be combined"],
+		["list_messages", { folder: INBOX, after: "2026-10-01", query: "x" }, "query cannot be combined"],
+		["list_messages", { folder: INBOX, query: 'budget" OR from:x' }, "query"],
+		["list_messages", { folder: INBOX, query: "back\\slash" }, "query"],
+		["list_messages", { folder: INBOX, query: "a\nb" }, "query"],
+		["list_messages", { folder: INBOX, query: "  " }, "query"],
+		["list_messages", { folder: INBOX, query: "x".repeat(201) }, "query"],
+		["list_messages", { folder: INBOX, after: "yesterday" }, "after"],
+		["list_messages", { folder: INBOX, after: "2026-09-01T00:00:00Z' or true" }, "after"],
+		["list_messages", { folder: INBOX, before: "2026-W40-1" }, "before"],
+		["list_messages", { folder: INBOX, after: "x".repeat(41) }, "after"],
+		["list_messages", { folder: INBOX, after: "" }, "after"],
+		["list_messages", { folder: INBOX, limit: 51 }, "limit"],
+		["list_messages", { folder: INBOX, unread_only: "yes" }, "unread_only"],
+		["read_message", { message: "short" }, "message"],
+		["read_message", { message: "MSG/GRACE/1" }, "message"],
+		["read_message", { message: FROM_GRACE, offset: -1 }, "offset"],
+		["read_message", { message: FROM_GRACE, max_chars: 499 }, "max_chars"],
+		["read_message", { message: FROM_GRACE, max_chars: 50001 }, "max_chars"],
+		["send_message", { to: ["grace@example.com"], cc: ["Grace@example.com"], subject: "x", body: "x" }, "each address may appear only once"],
+		["send_message", { to: ["grace@example.com", "GRACE@example.com"], subject: "x", body: "x" }, "each address may appear only once"],
+		["send_message", { to: some("p", 6), cc: some("q", 5), subject: "x", body: "x" }, "input"],
+		["send_message", { to: some("p", 11), subject: "x", body: "x" }, "to"],
+		["send_message", { to: [], subject: "x", body: "x" }, "to"],
+		["send_message", { to: "grace@example.com", subject: "x", body: "x" }, "to"],
+		["send_message", { to: ["Grace <grace@example.com>"], subject: "x", body: "x" }, "to.0"],
+		["send_message", { to: ["grace@example.com"], bcc: ["x@co.uk"], subject: "x", body: "x" }, "bcc.0"],
+		["send_message", { to: ["grace@example.com"], subject: "a\r\nBcc: x@evil.example", body: "x" }, "subject"],
+		["send_message", { to: ["grace@example.com"], subject: "", body: "x" }, "subject"],
+		["send_message", { to: ["grace@example.com"], subject: "x", body: "bell\u0007" }, "body"],
+		["send_message", { to: ["grace@example.com"], subject: "x", body: "x", from: "ceo@example.com" }, "from"],
+		["reply", { message: FROM_GRACE, body: "" }, "body"],
+		["reply", { message: FROM_GRACE, body: "a\u0000b" }, "body"],
+		["reply", { message: "x", body: "y" }, "message"],
+	];
+	for (const [tool, args, named] of refused) {
+		test(`${tool} refuses ${JSON.stringify(args).slice(0, 120)}`, async () => {
+			const result = await validated(outlookConnector(), tool, args);
+			expect(result).toEqual({ refused: expect.stringContaining(named) });
 		});
 	}
 });
 
 describe("the connector outside a run", () => {
-	test("test_account_discovery_and_names", async () => {
+	test("account discovery and names", async () => {
 		const graph = new FakeGraph();
 		const connector = outlookConnector();
 		const account = await connector.account(graph.client());
@@ -317,6 +373,9 @@ describe("the connector outside a run", () => {
 		]);
 		let names = await connector.describe(graph.client(), "folder", [PROJECTS, INBOX, SEARCH, ROOT, HIDDEN_ROOT, "NOSUCHFOLDER", "inbox", "*"]);
 		expect(names).toEqual({ [PROJECTS]: "Inbox/Projects", [INBOX]: "Inbox" });
+		// A folder without a name is still described.
+		(graph.folders[INBOX] as JsonObject).displayName = "";
+		expect(await connector.describe(graph.client(), "folder", [INBOX])).toEqual({ [INBOX]: "" });
 		names = await connector.describe(graph.client(), "recipient", ["*@partner.org", "Ada@x.com", "*@co.uk"]);
 		expect(names).toEqual({ "*@partner.org": "Everyone at partner.org" });
 	});
@@ -337,7 +396,7 @@ describe("the connector outside a run", () => {
 		const graph = new FakeGraph();
 		graph.hook = (_method, path, params) => (path === "/me" && (params.$select ?? "").includes("proxyAddresses") ? jsonResponse(400, { error: { code: "BadRequest" } }) : null);
 		const user = await graph.client().identities();
-		expect([user.mail, user.proxy_addresses]).toEqual(["me@contoso.com", []]);
+		expect([user.mail, user.proxyAddresses]).toEqual(["me@contoso.com", []]);
 	});
 
 	test("an on-premises mailbox is named as unsupported", async () => {
@@ -357,7 +416,7 @@ describe("the connector outside a run", () => {
 });
 
 describe("reading", () => {
-	test("test_folders_without_a_grant_or_out_of_reach_look_alike", async () => {
+	test("folders without a grant or out of reach look alike", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, folder(PROJECTS));
 		const [listed] = await items(run, "outlook_list_messages", { folder: PROJECTS });
@@ -379,7 +438,7 @@ describe("reading", () => {
 		}
 	});
 
-	test("test_a_grant_on_a_folder_covers_its_subfolders_and_a_deny_holds", async () => {
+	test("a grant on a folder covers its subfolders and a deny holds", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, folder(INBOX), { ceiling: [ceilingRow("folder", PRIVATE, "deny")] });
 		expect(await ids(run, "outlook_list_messages", { folder: "inbox" })).toEqual([FROM_GRACE, LEGACY]);
@@ -391,7 +450,7 @@ describe("reading", () => {
 		expect(await ids(run, "outlook_list_folders", {})).toEqual([INBOX]);
 	});
 
-	test("test_folders_outside_the_mailbox_tree_are_refused_even_with_every_folder", async () => {
+	test("folders outside the mailbox tree are refused even with every folder", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, folder("*"));
 		expect(await ids(run, "outlook_list_folders", {})).toEqual([INBOX, SENT, DRAFTS]);
@@ -431,7 +490,7 @@ describe("reading", () => {
 	const SEARCH_IN_INBOX = "INBOXSEARCH0";
 	const [HIDDEN, HIDDEN_CHILD, HIDDEN_MAIL] = ["HIDDENFOLD00", "HIDDENCHILD0", "MSGHIDDEN001"] as const;
 
-	test("test_search_and_hidden_folders_are_refused_wherever_they_sit", async () => {
+	test("search and hidden folders are refused wherever they sit", async () => {
 		const graph = new FakeGraph();
 		// Graph lets a search folder sit in any folder, and a hidden folder too; both can be reached by id.
 		graph.folders[SEARCH_IN_INBOX] = { ...folderOf(SEARCH_IN_INBOX, "Everything private", INBOX), "@odata.type": "#microsoft.graph.mailSearchFolder" };
@@ -458,7 +517,7 @@ describe("reading", () => {
 		expect(names).toEqual({ [PROJECTS]: "Inbox/Projects" });
 	});
 
-	test("test_listings_leave_out_what_lives_elsewhere", async () => {
+	test("listings leave out what lives elsewhere", async () => {
 		const graph = new FakeGraph();
 		let run = await start(graph, folder(INBOX));
 		graph.hook = (_method, path) => {
@@ -478,7 +537,7 @@ describe("reading", () => {
 		expect(await ids(run, "outlook_list_folders", {})).toEqual([INBOX]);
 	});
 
-	test("test_filters_and_search", async () => {
+	test("filters and search", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, folder(INBOX));
 		const sentParams = () => {
@@ -505,7 +564,7 @@ describe("reading", () => {
 		}
 	});
 
-	test("test_pages_follow_graphs_links_only_through_their_parameters", async () => {
+	test("pages follow Graph's links only through their parameters", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, folder(INBOX));
 		const first = await run.ok("outlook_list_messages", { folder: INBOX, limit: 1 });
@@ -526,7 +585,7 @@ describe("reading", () => {
 		expect(await run.code("outlook_list_messages", { folder: INBOX })).toBe("PROVIDER_LIMIT");
 	});
 
-	test("test_reading_a_message", async () => {
+	test("reading a message", async () => {
 		const graph = new FakeGraph();
 		const grace = graph.messages[FROM_GRACE] as JsonObject;
 		(grace.body as JsonObject).content = `${"x".repeat(600)}end`;
@@ -556,7 +615,7 @@ describe("reading", () => {
 		expect(message?.next_offset).toBe(500);
 	});
 
-	test("test_mail_moved_while_the_call_runs_is_refused", async () => {
+	test("mail moved while the call runs is refused", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, folder(INBOX));
 
@@ -581,7 +640,7 @@ describe("reading", () => {
 		expect(await run.code("outlook_list_folders", { parent: PROJECTS })).toBe("MAIL_MOVED");
 	});
 
-	test("test_reads_with_errors_or_too_much_data_are_refused", async () => {
+	test("reads with errors or too much data are refused", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, folder(INBOX));
 		graph.hook = (_method, path) => (path.endsWith("/messages") ? jsonResponse(200, { value: [{ id: "x".repeat(5 * 1024 * 1024) }] }) : null);
@@ -609,7 +668,7 @@ describe("reading", () => {
 });
 
 describe("sending", () => {
-	test("test_sending_needs_every_recipient", async () => {
+	test("sending needs every recipient", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { ...recipient("*@example.com"), ...recipient("ada@partner.org") });
 		const [sent] = await items(run, "outlook_send_message", { to: ["Grace@Example.com"], cc: ["ada@partner.org"], subject: "Plans", body: "Hi <b>Grace</b>\r\n\tthanks" });
@@ -654,7 +713,7 @@ describe("sending", () => {
 		expect(post[0]?.body).toContain('"saveToSentItems":true');
 	});
 
-	test("test_write_outcomes_follow_graphs_status", async () => {
+	test("write outcomes follow Graph's status", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, recipient("*@example.com"));
 		const send = { to: ["grace@example.com"], subject: "x", body: "x" };
@@ -674,7 +733,7 @@ describe("sending", () => {
 });
 
 describe("replying", () => {
-	test("test_replying_goes_to_exactly_the_authorized_addresses", async () => {
+	test("replying goes to exactly the authorized addresses", async () => {
 		const graph = new FakeGraph();
 		let run = await start(graph, { ...folder(INBOX), ...recipient("grace@example.com") });
 		const [replied] = await items(run, "outlook_reply", { message: FROM_GRACE, body: "Thanks" });
@@ -707,7 +766,7 @@ describe("replying", () => {
 		expect(graph.writes).toHaveLength(1);
 	});
 
-	test("test_replies_whose_recipients_are_unclear_are_refused", async () => {
+	test("replies whose recipients are unclear are refused", async () => {
 		const graph = new FakeGraph();
 		let run = await start(graph, { ...folder("*"), ...recipient("grace@example.com"), ...recipient("*@contoso.com") });
 		// An address Minerva cannot read is refused like one without a grant...
@@ -737,7 +796,7 @@ describe("replying", () => {
 		expect(graph.writes).toEqual([]);
 	});
 
-	test("test_replies_to_the_accounts_own_mail_are_refused_however_it_was_sent", async () => {
+	test("replies to the account's own mail are refused however it was sent", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { ...folder("*"), ...recipient("*") });
 		const refusedReply = (change: JsonObject): Promise<string> => {
@@ -762,7 +821,7 @@ describe("replying", () => {
 		expect(graph.writes).toEqual([]);
 	});
 
-	test("test_a_reply_confirms_its_message_last_before_writing", async () => {
+	test("a reply confirms its message last before writing", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { ...folder(INBOX), ...recipient("grace@example.com") });
 		graph.hook = (_method, path) => {

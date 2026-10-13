@@ -1,16 +1,91 @@
-// File operations (contracts/sandbox.ts FsRequest), each answered by minerva-fs as the agent's user through
+// File operations (`FsRequest`), each answered by minerva-fs as the agent's user through
 // the wrapper, by a long-lived server process (`serve`) that runs them one at a time: one JSON line,
 // sometimes followed by bytes whose length it gives. Its answers are the container's and so untrusted: each is checked for its shape before it goes
 // back. A binary reader is a minerva-fs process that holds its file open and answers requests on stdin, so
 // reads keep seeing the file that was opened even after a rename (pi's BinaryReader).
 
-import type { FileErrorCode, FileInfo, LineScan } from "@earendil-works/pi-durable/env";
-import type { FileHandle, FsAnswers, FsRequest, FsResponse, WatchSnapshot } from "../contracts/sandbox.ts";
+import type { FileErrorCode, FileInfo, LineScan, WatchTarget } from "@earendil-works/pi-durable/env";
 import { type Json, parseJson } from "../lib/json.ts";
 import { ByteReader } from "./bytes.ts";
 import { FILE_OPERATION_SECONDS, MAX_READ_BYTES, MAX_TEXT_BYTES } from "./constants.ts";
 import { resolvePath } from "./paths.ts";
 import { ContainerGone, helper, type Machine, startWrapped, type Wrapped } from "./process.ts";
+
+/**
+ * A file opened for positional reads by a reader process that holds it open, so reads keep seeing the file
+ * that was opened even after a rename (pi's BinaryReader); `close` ends the process, and so does killing
+ * strays. A handle whose reader is gone answers `invalid`.
+ */
+export interface FileHandle {
+	/** The reader's id within the incarnation. */
+	id: string;
+	path: string;
+	dev: number;
+	ino: number;
+	size: number;
+	mtimeMs: number;
+}
+
+/**
+ * File operations, all as the dropped user through `minerva-fs`: paths are arguments, reads are bounded,
+ * files open with O_NONBLOCK and are accepted only when `fstat` says regular file, so a FIFO never hangs a
+ * call. pi's own tools keep pi's semantics for the paths the agent names (plan: The sandbox lifecycle).
+ */
+export type FsRequest =
+	| { op: "absolute"; path: string; cwd: string }
+	| { op: "canonical"; path: string }
+	| { op: "exists"; path: string }
+	| { op: "info"; path: string }
+	| { op: "open"; path: string; noFollow: boolean }
+	| { op: "read"; handle: FileHandle; offset: number; length: number }
+	| { op: "scanLines"; handle: FileHandle; startLine: number; endLine?: number }
+	| { op: "stat"; handle: FileHandle }
+	| { op: "close"; handle: FileHandle }
+	| { op: "opendir"; path: string }
+	| { op: "snapshot"; targets: WatchTarget[]; maxEntries: number }
+	| { op: "readText"; path: string; maxBytes: number }
+	| { op: "write"; path: string; content: Uint8Array; append: boolean }
+	| { op: "truncate"; path: string; size: number }
+	| { op: "flush"; path: string }
+	| { op: "rename"; from: string; to: string }
+	| { op: "list"; path: string; after: string | null; max: number }
+	| { op: "mkdir"; path: string; recursive: boolean }
+	| { op: "remove"; path: string; recursive: boolean; force: boolean }
+	| { op: "mktemp"; kind: "file" | "dir"; prefix?: string; suffix?: string };
+
+/** Each request's answer, by `op`. A read returns at most 4 MiB; RPC payloads are limited to 32 MiB. */
+export interface FsAnswers {
+	absolute: string;
+	canonical: string;
+	exists: boolean;
+	info: FileInfo;
+	open: FileHandle;
+	read: Uint8Array;
+	scanLines: LineScan;
+	stat: FileInfo;
+	close: null;
+	opendir: null;
+	snapshot: WatchSnapshot;
+	readText: string;
+	write: null;
+	truncate: null;
+	flush: null;
+	rename: null;
+	list: { entries: FileInfo[]; next: string | null };
+	mkdir: null;
+	remove: null;
+	mktemp: string;
+}
+
+/**
+ * What a watch's poll compares (the ExecutionEnv's `watch` polls): a signature per path under the targets
+ * (kind, size, mtime, ctime, inode; a symbolic link also by what it points to), excluded entries left out.
+ * `overflow` when the targets hold more than `maxEntries` entries.
+ */
+export type WatchSnapshot = { entries: { [path: string]: string } } | { overflow: true };
+
+/** The answer to a request: its value (`FsAnswers[op]`), or pi's error code. */
+export type FsResponse = { ok: true; value: FsAnswers[keyof FsAnswers] } | { ok: false; code: FileErrorCode; message: string };
 
 const CODES: readonly FileErrorCode[] = ["aborted", "not_found", "permission_denied", "not_directory", "is_directory", "invalid", "not_supported", "unknown"];
 const KINDS = ["file", "directory", "symlink"];

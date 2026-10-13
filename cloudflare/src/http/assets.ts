@@ -1,4 +1,4 @@
-// Hashed build output under /assets/ (frontend-runtime 11, web-api 1.2). The Worker runs first for these
+// Hashed build output under /assets/. The Worker runs first for these
 // paths because the assets' single-page-application fallback answers a missing file with index.html, 200,
 // which public/_headers would then mark immutable for a year: a tab that asks for a chunk during a deploy
 // would keep HTML under that URL. A miss is a 404 here, and only a file that exists is cached for good.
@@ -38,7 +38,7 @@ const RECHECK_MS = 60 * 60_000;
 const RETRY_MS = 5 * 60_000;
 /**
  * A marker older than this is written again together with the files, which renews their age well before the
- * lifecycle rule (30 days) removes them: the build that is live today is the previous build of the next deploy.
+ * lifecycle rule (30 days) removes them: the build that is live now is the previous build of the next deploy.
  * Renewal needs an asset request to reach the Worker (a build nobody loads for weeks is not renewed).
  */
 const REFRESH_AFTER_MS = 14 * 24 * 60 * 60_000;

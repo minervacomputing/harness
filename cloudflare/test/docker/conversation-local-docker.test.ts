@@ -11,7 +11,6 @@
 
 import type { ToolExecutionApi, ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
 import { afterAll, describe, expect, test } from "vitest";
-import type { RunId } from "../../src/contracts/common.ts";
 import { FolderOverLimit, FolderUnavailable, LocalCalls, type LocalToolEvent, localToolSpecs, runGated } from "../../src/conversation/local.ts";
 import { destroyRunSandbox, LocalRun, type SandboxPort } from "../../src/conversation/local-run.ts";
 import { parseJson } from "../../src/lib/json.ts";
@@ -22,6 +21,7 @@ import { SandboxCore } from "../../src/sandbox/core.ts";
 import type { Delivered } from "../../src/sandbox/output.ts";
 import { type BucketPort, CHECK_MISMATCH } from "../../src/sandbox/ports.ts";
 import { SANDBOX_MIGRATIONS } from "../../src/sandbox/store.ts";
+import type { RunId } from "../../src/shared/rpc.ts";
 import { CONVERSATION, sha, WORKSPACE, World } from "../unit/files-support.ts";
 import { DockerContainer, dockerReady } from "./sandbox-docker.ts";
 import { openDatabase } from "../unit/sqlite.ts";

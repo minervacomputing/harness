@@ -1,5 +1,4 @@
-// Gmail, through the Gmail API. Mail is read per label,
-// sent per recipient, and drafted per account.
+// Gmail, through the Gmail API. Mail is read per label, sent per recipient, and drafted per account.
 //
 // Minerva connects through the operator's Google app, shared with Google Calendar and Drive (see
 // ../google/index.ts). The base scope is `gmail.readonly`; sending asks for `gmail.send`, and drafts for
@@ -41,10 +40,8 @@
 // The operations are in reads.ts and writes.ts; what they share (consent, ids, labels and where messages sit)
 // is in mailbox.ts, and MIME handling is in mime.ts.
 
-import type { Connector } from "../../contracts/connectors.ts";
-import { ACCOUNT_KIND } from "../../gateway/connector.ts";
+import { ACCOUNT_KIND, type Connector } from "../../gateway/connector.ts";
 import { oauth } from "../google/index.ts";
-import { setOwn } from "../google/model.ts";
 import * as addresses from "../../lib/addresses.ts";
 import { GmailClient } from "./client.ts";
 import { LABEL, Labels, READONLY_SCOPE, RECIPIENT } from "./mailbox.ts";
@@ -56,7 +53,7 @@ export interface GmailOptions {
 	baseUrl?: string;
 }
 
-/** Gmail's connector (`GmailConnector`). */
+/** Gmail's connector. */
 export function gmailConnector(options: GmailOptions = {}): Connector<GmailClient> {
 	return {
 		slug: "gmail",
@@ -111,14 +108,10 @@ export function gmailConnector(options: GmailOptions = {}): Connector<GmailClien
 			return { items: items.filter((item) => !folded || item.name.toLowerCase().includes(folded)) };
 		},
 		async describe(client, kind, ids) {
-			const names: { [id: string]: string } = {};
-			if (kind === RECIPIENT) {
-				for (const id of ids) if (addresses.validId(id)) setOwn(names, id, addresses.name(id));
-				return names;
-			}
+			// Object.fromEntries defines own properties, even for an id such as "__proto__".
+			if (kind === RECIPIENT) return Object.fromEntries(ids.filter((id) => addresses.validId(id)).map((id) => [id, addresses.name(id)]));
 			const labels = await Labels.fetch(client);
-			for (const id of ids) if (labels.grantable.has(id)) setOwn(names, id, labels.name(id));
-			return names;
+			return Object.fromEntries(ids.filter((id) => labels.grantable.has(id)).map((id) => [id, labels.name(id)]));
 		},
 	};
 }

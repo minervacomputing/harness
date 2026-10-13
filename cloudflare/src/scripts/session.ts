@@ -1,25 +1,22 @@
-// The host's side of one script (harness 7.5; plan: Code mode), in the Conversation Durable Object: what
-// the guest's RpcTarget does with its calls and prints. Ported from worker/src/main.ts `scriptCalls` and
-// pi-codemode 1.0.4's host, with the guest now hostile: every bound is applied here, whatever the prelude
-// did.
+// The host's side of one script (plan: Code mode), in the Conversation Durable Object: what the guest's
+// RpcTarget does with its calls and prints. The guest is hostile: every bound is applied here, whatever the
+// prelude did.
 //
-// - Calls are admitted in today's order (100 open across the turn's scripts, then the arguments' JSON and
-//   its 256 KB), after the tool lookup pi-codemode's host made first; a refusal is a rejected call inside
+// - Calls are admitted in this order: the tool lookup, 100 open across the turn's scripts, then the
+//   arguments' JSON and its 256 KB; a refusal is a rejected call inside
 //   the script, and the 100th refusal of a script stops it from a microtask, so that call still counts as
 //   refused (incoming calls are served before timers, so a timer would let more through).
 // - An admitted call goes through the run's queue and the executor (the port), shared with direct calls.
 //   It is never cut when the script ends: a call still waiting for its slot is dropped, one already sent runs
 //   to its end and keeps its slot and its open count until then, and a write still settles and is recorded.
 //   Calls that had not settled when the script ended are reported as cancelled.
-// - Prints are kept as scripts/output.ts says, and counted against today's item limit.
+// - Prints are kept as scripts/output.ts says, and counted against the item limit.
 // - Once the script ended or was stopped, calls and prints get a promise that never settles: a stopped
 //   guest that awaits one stops, and one that loops on answers given at once cannot keep the host busy.
 //   Past `LATE_PENDING` of them, more are answered at once, so they cannot fill the host's memory either.
 
-import type { Json } from "../contracts/common.ts";
-import type { ToolCallOutcome, ToolDeclaration } from "../contracts/executor.ts";
-import type { ScriptCallAnswer, ScriptError, TextSize } from "../contracts/scripts.ts";
-import { parseJson } from "../lib/json.ts";
+import type { ToolCallOutcome, ToolDeclaration } from "../gateway/executor.ts";
+import { type Json, parseJson } from "../lib/json.ts";
 import {
 	ARGS_TOO_LARGE,
 	ARGS_UNCONVERTIBLE,
@@ -38,7 +35,9 @@ import {
 	SCRIPT_REFUSALS,
 	UNKNOWN_TOOL,
 } from "./limits.ts";
-import { OutputRecord, sizeOf } from "./output.ts";
+import type { ScriptError } from "./outcome.ts";
+import { OutputRecord, type TextSize, sizeOf } from "./output.ts";
+import type { ScriptCallAnswer } from "./target.ts";
 
 /** One scripted call through the run's queue and the executor (the Conversation's `#invoke`). */
 export interface ScriptCallPort {
@@ -49,7 +48,7 @@ export interface ScriptCallPort {
 	invoke(declaration: ToolDeclaration, args: Json | undefined, drop: AbortSignal): Promise<ToolCallOutcome>;
 }
 
-/** The turn's scripted calls that wait or run, across its scripts (today's `open`, per run and instance). */
+/** The turn's scripted calls that wait or run, across its scripts, per run and instance. */
 export class ScriptCalls {
 	open = 0;
 }
@@ -96,7 +95,7 @@ export class ScriptSession {
 	readonly #stopped: Promise<Stop>;
 	#onStop: (stop: Stop) => void = () => {};
 	#refused = 0;
-	/** Today's records: each admitted call is `cancelled` until it settles before the end. */
+	/** Each admitted call is `cancelled` until it settles before the end. */
 	readonly #records: { status: Status }[] = [];
 	readonly output = new OutputRecord();
 	#items = 0;
@@ -212,7 +211,7 @@ export class ScriptSession {
 				this.#crossed += text.length;
 				if (this.#crossed > HEAD_CHARS) return this.#broken("the output crossed past its head");
 				this.output.add(text, rest);
-				// Sizes the guest claims for what did not cross only count; past what today's limits allow, they are not honest.
+				// Sizes the guest claims for what did not cross only count; past what the limits allow, they are not honest.
 				if (this.output.total.bytes > OUTPUT_BYTES_MAX) return this.#broken("the output is larger than its limits allow");
 			} else return this.#broken("a printed item is malformed");
 			if (++this.#items > MAX_OUTPUT_ITEMS) {

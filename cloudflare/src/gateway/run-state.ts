@@ -1,14 +1,47 @@
 // The executor's run-state port over the Conversation Durable Object's own state: its runs (read through
 // `RunTable`, which the object implements over its runs table and memory), the write ledger and page
 // tokens. Every method is synchronous, so a check and the claim or answer that depends on it happen with
-// no await between them (plan: Strict revocation, Writes; runs 5.1).
+// no await between them (plan: Strict revocation, Writes).
 
-import type { AttemptFence, EpochMs, RunId } from "../contracts/common.ts";
-import type { DispatchResult, RunStatePort, Settlement, WriteRecord } from "../contracts/executor.ts";
-import type { ActingStatus, RunStatus } from "../contracts/runs.ts";
+import type { AttemptFence, EpochMs, RunId, RunStatus } from "../shared/rpc.ts";
 import type { Clock } from "./clock.ts";
-import { RUN_ENDED_MESSAGE, type WriteLedger } from "./ledger.ts";
+import { type DispatchResult, RUN_ENDED_MESSAGE, type Settlement, type WriteLedger, type WriteRecord } from "./ledger.ts";
 import type { PageTokens } from "./page-tokens.ts";
+
+/**
+ * Run state the executor needs. Synchronous methods are synchronous on purpose: the Conversation Durable
+ * Object answers them from SQLite and memory with no await, which is what makes the revocation and
+ * dispatch checks atomic (plan: Strict revocation, Writes).
+ *
+ * `dispatchWrite` and `settleWrite` may answer later: the Conversation Durable Object first waits until no
+ * asynchronous transaction of pi's is open on its storage, since a claim or a settlement made inside one
+ * would roll back with it (conversation/store.ts `outside`). The check and the claim still run in one
+ * synchronous stretch, after that wait; the executor sends nothing until the claim has answered.
+ */
+export interface RunStatePort {
+	/** Status acting, deadline not passed, attempt equal, not revoked. */
+	isCurrent(fence: AttemptFence): boolean;
+	/** Status acting, deadline not passed, not revoked; any attempt (for results and recording). */
+	isActive(runId: RunId): boolean;
+	/** Counts the call if the fence is current; false means RUN_ENDED, not counted. Calls are never limited. */
+	countToolCall(fence: AttemptFence): boolean;
+	knownWrite(runId: RunId, key: string): WriteRecord | null;
+	/** One write dispatched at a time per run; refused when paused, in progress or not current. */
+	dispatchWrite(fence: AttemptFence, key: string): DispatchResult | Promise<DispatchResult>;
+	/** Always recorded, even for an older attempt and even when the call that asked for it was cancelled (under waitUntil). */
+	settleWrite(runId: RunId, key: string, settlement: Settlement): void | Promise<void>;
+	/** The upstream cursor for a token issued to this run for the same tool and query hash, else null. */
+	resolvePageToken(runId: RunId, token: string, tool: string, queryHash: string): string | null;
+	/** A new opaque token (`tokenUrlsafe(18)`), or null when the run already holds 200. */
+	issuePageToken(runId: RunId, tool: string, queryHash: string, upstreamCursor: string): string | null;
+}
+
+/**
+ * The states in which a run's current attempt may still act: call tools and models, append fenced events,
+ * checkpoint. An expired run (deadline passed) counts as inactive for every check before it is marked
+ * `timed_out`.
+ */
+export type ActingStatus = "provisioning" | "running";
 
 /** What the checks read of a run, synchronously. */
 export interface RunState {
@@ -29,7 +62,7 @@ export interface RunTable {
 
 const ACTING: ReadonlySet<RunStatus> = new Set<ActingStatus>(["provisioning", "running"]);
 
-/** An expired run counts as inactive for every check before it is marked timed_out (runs 2.5). */
+/** An expired run counts as inactive for every check before it is marked timed_out. */
 export function canAct(run: RunState | null, now: EpochMs): run is RunState {
 	return run !== null && ACTING.has(run.status) && !run.revoked && (run.deadline === null || run.deadline > now);
 }

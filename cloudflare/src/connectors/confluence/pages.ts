@@ -2,9 +2,8 @@
 // page names, and where pages sit.
 
 import { z } from "zod";
-import type { Binding } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, denied } from "../../gateway/connector.ts";
+import { type Binding, OperationError, denied } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import { CLOUD_ID, type Site } from "../atlassian/index.ts";
 import type { ConfluenceClient, Page, Space } from "./client.ts";
 
@@ -101,7 +100,7 @@ export async function resolvePage(binding: Binding, siteId: string | null, name:
 		throw error;
 	}
 	if (page.id !== name || page.status !== "current") throw denied();
-	return [site, spaceResource(binding, site, page.space_id), page];
+	return [site, spaceResource(binding, site, page.spaceId), page];
 }
 
 /** The page read again by id, refused unless it is current and still in the space it was authorized in. */
@@ -114,8 +113,8 @@ export async function confirmPage(binding: Binding, site: Site, resource: Resour
 		if (unseen(error)) throw pageMoved();
 		throw error;
 	}
-	if (page.id !== pageId || page.status !== "current" || page.space_id === null) throw pageMoved();
-	if (spaceId(site, page.space_id) !== resource.id) throw pageMoved();
+	if (page.id !== pageId || page.status !== "current" || page.spaceId === null) throw pageMoved();
+	if (spaceId(site, page.spaceId) !== resource.id) throw pageMoved();
 	return page;
 }
 

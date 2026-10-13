@@ -1,21 +1,21 @@
-// backend/tests/test_xero.py, case by case: the Xero connector against FakeXero behind an injected `fetch`
-// (test/fixtures/connectors/xero/fake.ts), and runs through the executor with the user's grants, the
-// workspace ceiling and the connection's scopes (executor-fakes.ts `Scenario`, as connector_runs.py's
-// helpers). connectors-xero-vectors.test.ts compares the same code with today's Python answer by answer.
+// The Xero connector: exact amounts, dates and pages, the client's error names, and runs through the executor
+// against FakeXero behind an injected `fetch` (test/fixtures/connectors/xero/fake.ts), with the user's grants,
+// the workspace ceiling and the connection's scopes (executor-fakes.ts `Scenario`).
 
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { ConnectionId } from "../../src/contracts/common.ts";
-import type { GrantRow } from "../../src/contracts/policy.ts";
-import type { ToolCallOutcome } from "../../src/contracts/executor.ts";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
-import { MAX_PAGE, Pagination, ZERO_UUID, classify, invoiceDate, judge, moment, nextPage, page } from "../../src/connectors/xero/client.ts";
+import { MAX_PAGE, Message, Pagination, ZERO_UUID, classify, date, invoiceDate, judge, messages, moment, nextPage, page } from "../../src/connectors/xero/client.ts";
+import { fromNumber, money, number } from "../../src/connectors/xero/decimal.ts";
+import { short } from "../../src/connectors/xero/organisations.ts";
 import { xeroConnector } from "../../src/connectors/xero/connector.ts";
-import { jsonText } from "../../src/connectors/xero/decimal.ts";
 import { DraftBill, DraftInvoice, body } from "../../src/connectors/xero/writes.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
+import type { ToolCallOutcome } from "../../src/gateway/executor.ts";
+import type { GrantRow } from "../../src/gateway/grants.ts";
 import { Registry, validate } from "../../src/gateway/registry.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
+import type { ConnectionId } from "../../src/shared/rpc.ts";
 import { planRefresh } from "../../src/workspace/credentials.ts";
 import { ACME, ARCHIVED, BETA, CUSTOMER, FakeXero, INVOICE, SECRET, SUPPLIER, TOKEN, UNREACHED, contactOf, invoiceOf, jsonResponse } from "../fixtures/connectors/xero/fake.ts";
 import { Scenario, userGrants } from "./executor-fakes.ts";
@@ -41,12 +41,12 @@ function fake(): FakeXero {
 }
 
 afterEach(() => {
-	// What FakeXero asserted about each request in Python.
+	// What FakeXero checked about each request.
 	for (const xero of fakes.splice(0)) expect(xero.problems).toEqual([]);
 	vi.restoreAllMocks();
 });
 
-/** Starts a run with the user's Xero connection, holding `grants` ({organisation: actions}) (test_xero.py `start`). */
+/** Starts a run with the user's Xero connection, holding `grants` ({organisation: actions}). */
 function start(xero: FakeXero, grants: { [organisation: string]: string[] }, options: { scopes?: string[]; ceiling?: GrantRow[] } = {}): Promise<Scenario> {
 	return Scenario.start({
 		connectors: [xeroConnector()],
@@ -58,7 +58,7 @@ function start(xero: FakeXero, grants: { [organisation: string]: string[] }, opt
 	});
 }
 
-/** connector_runs.py `ceiling`: a grant of the workspace ceiling on the Xero connection. */
+/** A grant of the workspace ceiling on the Xero connection. */
 function ceiling(resourceId: string, effect: GrantRow["effect"], actions = ["read"]): GrantRow {
 	return { layer: "ceiling", subject: null, connectionId: XERO, kind: "organisation", resourceId, resourceName: "", actions, effect };
 }
@@ -87,14 +87,14 @@ describe("the declaration", () => {
 		const fingerprints = Object.fromEntries(xeroConnector().operations.map((op) => [op.name, registry.contract("xero", op.name)]));
 		// A change here is a change of what a tool means: running runs fail its calls with OPERATION_CHANGED.
 		expect(fingerprints).toEqual({
-			list_organisations: "b4c96fe279a2bd0a",
-			search_contacts: "b4db2753ffcc00ba",
-			search_invoices: "05998643463a96a6",
-			get_invoice: "df6b2a206ef86366",
-			list_accounts: "749bfdc842d157fd",
-			list_tax_rates: "56d88ac884a3d185",
-			create_draft_invoice: "30485ed08873f58f",
-			create_draft_bill: "86266d544fb68a9a",
+			list_organisations: "9005b0f2eccd570e",
+			search_contacts: "be8cf28317bf278b",
+			search_invoices: "19fc33df9deac894",
+			get_invoice: "0373e3519954cc89",
+			list_accounts: "0575e50fe99e934e",
+			list_tax_rates: "0575e50fe99e934e",
+			create_draft_invoice: "10ce1dffc230fb1a",
+			create_draft_bill: "f177b05caf11d57d",
 		});
 	});
 
@@ -118,8 +118,7 @@ describe("connecting and discovery", () => {
 		expect((await connector.account(xero.client())).label).toBe("Ada");
 		xero.me = { name: "Ada" };
 		expect((await raised(connector.account(xero.client()))).code).toBe("PROVIDER_FAILED");
-		// model_validate_json refuses a lone surrogate even in a field the model ignores.
-		xero.me = { sub: "u-991", given_name: "Ada", note: "\ud800" };
+		xero.me = { sub: 991, given_name: "Ada" };
 		expect((await raised(connector.account(xero.client()))).code).toBe("PROVIDER_FAILED");
 		xero.me = { sub: "u-991" };
 		xero.connections = xero.connections.filter((connection) => connection.tenantType !== "ORGANISATION");
@@ -163,8 +162,8 @@ describe("connecting and discovery", () => {
 	});
 
 	test("a refresh authenticates with HTTP Basic and keeps the rotated token", async () => {
-		// Not in test_xero.py: the token request Xero's `client_auth="basic"` declares, through the Workspace's
-		// refresh, with a refresh token that rotates.
+		// The token request `clientAuth: "basic"` declares, through the Workspace's refresh, with a refresh token
+		// that rotates.
 		const sent: Request[] = [];
 		const fetch: typeof globalThis.fetch = async (input, init) => {
 			sent.push(new Request(input as RequestInfo, init as RequestInit));
@@ -221,13 +220,7 @@ describe("connecting and discovery", () => {
 		expect(classified(400, { Type: "ValidationException" })?.message).toBe("Xero rejected this.");
 		expect(classified(400, { Type: "QueryParseException", Message: SECRET })).toBeNull();
 		expect(classified(400, "<html>")).toBeNull();
-		// Pydantic's JSON refuses a lone surrogate escape anywhere, and bytes that are not UTF-8.
-		expect(classified(400, '{"Type":"ValidationException","Note":"\\ud800"}')).toBeNull();
-		expect(classified(400, '{"Type":"ValidationException","\\udc00":1}')).toBeNull();
-		// Even in a value a later duplicate key replaces, and past jiter's nesting limit.
-		expect(classified(400, '{"Type":"ValidationException","Note":"\\ud800","Note":"ok"}')).toBeNull();
-		expect(classified(400, `{"Type":"ValidationException","Note":${"[".repeat(200)}1${"]".repeat(200)}}`)).toBeNull();
-		expect(classified(400, `{"Type":"ValidationException","Note":${"[".repeat(199)}1${"]".repeat(199)}}`)?.code).toBe("PROVIDER_REJECTED");
+		// Bytes that are not UTF-8 are not Xero's JSON.
 		const latin = Uint8Array.from('{"Type":"ValidationException","Message":"caf\u00e9"}', (char) => char.charCodeAt(0));
 		expect(classify("Xero", new Response(latin, { status: 400 }), "", latin)).toBeNull();
 		const forbidden = classified(403, { Detail: SECRET });
@@ -245,6 +238,9 @@ describe("connecting and discovery", () => {
 		expect(judged(200, { Invoices: [refused] })).toBe("not_applied");
 		expect(judged(200, { Invoices: [{ ...refused, InvoiceID: INVOICE }] })).toBeNull();
 		expect(judged(200, { Invoices: [{ InvoiceID: INVOICE }] })).toBeNull();
+		// An id of another type leaves the write unknown.
+		expect(judged(200, { Invoices: [{ ...refused, InvoiceID: 5 }] })).toBe("unknown");
+		expect(judged(200, { Invoices: [{ ...refused, InvoiceID: null }] })).toBe("not_applied");
 		expect(judged(200, { Invoices: [] })).toBeNull();
 		expect(judged(200, [refused])).toBeNull();
 		expect(judged(400, { Invoices: [refused] })).toBeNull();
@@ -272,6 +268,90 @@ describe("connecting and discovery", () => {
 		expect(invoiceDate("2026-09-02T00:00:00", "/Date(1788220800000+0000)/")).toBe("2026-09-02");
 		expect(invoiceDate(null, "/Date(1788220800000)/")).toBe("2026-09-01");
 		expect(invoiceDate("soon", null)).toBeNull();
+	});
+
+	test.each([
+		["/Date(1788220800999+0000)/", "2026-09-01T00:00:00Z"],
+		["/Date(1788307200000-0700)/", "2026-09-02T00:00:00Z"],
+		["/Date(0)/", "1970-01-01T00:00:00Z"],
+		["/Date(-1)/", "1969-12-31T23:59:59Z"],
+		["/Date(-1000)/", "1969-12-31T23:59:59Z"],
+		["/Date(-1001)/", "1969-12-31T23:59:58Z"],
+		["/Date(253402300799999)/", "9999-12-31T23:59:59Z"],
+		["/Date(253402300800000)/", null],
+		["/Date(-62135596800000)/", "0001-01-01T00:00:00Z"],
+		["/Date(-62135596800001)/", null],
+		["/Date(999999999999999)/", null],
+		["/Date(١٧٨٨٢٢٠٨٠٠٠٠٠)/", null],
+		["/Date(1788220800000+00)/", null],
+		["/Date(1788220800000 +0000)/", null],
+		["/Date(+1788220800000)/", null],
+		["/Date()/", null],
+		["/Date(1788220800000+0000)/\n", null],
+		["Date(1788220800000)", null],
+	])("the moment %j is %s, to the second it falls in", (value, shown) => {
+		expect(moment(value)).toBe(shown);
+	});
+
+	test.each([
+		["2026-09-01T00:00:00", "2026-09-01"],
+		["2026-09-01", "2026-09-01"],
+		["2026-09-01T00:00:00.123", "2026-09-01"],
+		["2026-09-01T", null],
+		["2026-09-01T00:00:00Z", null],
+		["2026-09-01 00:00:00", null],
+		["２０２６-09-01", null],
+		["2026-9-01", null],
+		["2026-09-01\n", null],
+	])("the date %j is %s", (value, shown) => {
+		expect(date(value)).toBe(shown);
+	});
+
+	test("an invoice's date is the string form, else the JSON date's day", () => {
+		expect(invoiceDate(null, null)).toBeNull();
+		expect(invoiceDate("2026-09-02T00:00:00", "/Date(x)/")).toBe("2026-09-02");
+		expect(invoiceDate("soon", "/Date(1788220800000+0000)/")).toBe("2026-09-01");
+		expect(invoiceDate("soon", "/Date(x)/")).toBeNull();
+	});
+
+	test.each([
+		["0", "0.00", "0"],
+		["-0", "0.00", "0"],
+		["-0.0", "0.00", "0"],
+		["-1", "-1.00", "-1"],
+		["1E2", "100.00", "100"],
+		["70.0", "70.00", "70"],
+		["0.1", "0.10", "0.1"],
+		["0.30000000000000004", "0.30000000000000004", "0.30000000000000004"],
+		["1e-7", "0.0000001", "0.0000001"],
+		["-1e-7", "-0.0000001", "-0.0000001"],
+		["1e-400", "0.00", "0"],
+		["80.1234", "80.1234", "80.1234"],
+		["-0.005", "-0.005", "-0.005"],
+		["2.675", "2.675", "2.675"],
+		["1.5e15", "1500000000000000.00", "1500000000000000"],
+		["-9007199254740991", "-9007199254740991.00", "-9007199254740991"],
+		["4503599627370496.5", "4503599627370496.00", "4503599627370496"],
+		["1.10", "1.10", "1.1"],
+	])("Xero's %s is the amount %s and the number %s", (text, amount, shown) => {
+		const value = fromNumber(parseJson(text) as number);
+		expect([money(value), number(value)]).toEqual([amount, shown]);
+	});
+
+	test("what a JSON number cannot hold exactly is refused", () => {
+		for (const value of [2 ** 53, -(2 ** 53), 1e16, 1e300, Number.MAX_VALUE, Number.POSITIVE_INFINITY, Number.NaN]) expect(fromNumber(value)).toBeNull();
+		expect(number(fromNumber(5e-324))).toBe(`0.${"0".repeat(323)}5`);
+		expect([money(fromNumber(4503599627370495.5)), number(fromNumber(4503599627370495.5))]).toEqual(["4503599627370495.50", "4503599627370495.5"]);
+	});
+
+	test("texts are shown on one line, cut, and Xero's messages once each", () => {
+		for (const blank of [null, "", "   "]) expect(short(blank)).toBeNull();
+		expect(short("\tAcme\nLtd  　x​")).toBe("Acme Ltd x​");
+		expect(short("x".repeat(501))).toBe("x".repeat(500));
+		expect(short("x".repeat(301), 300)).toBe("x".repeat(300));
+		const shown = (texts: (string | null)[]) => messages(texts.map((text) => Message.parse({ Message: text })));
+		expect(shown(["one", "one", " one "])).toEqual(["one"]);
+		expect(shown(["x\ny", null, "", "  "])).toEqual(["x y"]);
 	});
 });
 
@@ -521,7 +601,6 @@ describe("reading", () => {
 		]);
 		xero.accounts = Array.from({ length: 2001 }, (_, n) => ({ Code: String(n), Status: "ACTIVE" }));
 		expect(await run.code("xero_list_accounts", {})).toBe("PROVIDER_LIMIT");
-		// Not in test_xero.py: the limits themselves.
 		xero.accounts = Array.from({ length: 2000 }, (_, n) => ({ Code: String(n), Status: n % 2 ? "ACTIVE" : "ARCHIVED" }));
 		expect(items(await run.ok("xero_list_accounts", {}))).toHaveLength(1000);
 		xero.taxRates = Array.from({ length: 501 }, () => ({ Name: "r" }));
@@ -531,7 +610,7 @@ describe("reading", () => {
 	});
 
 	test("responses Minerva cannot read exactly or in full are refused", async () => {
-		// Not in test_xero.py: the read limit, and amounts JSON parsing may have rounded (client.ts).
+		// The read limit, and amounts JSON parsing may have rounded (client.ts).
 		const xero = fake();
 		onlyAcme(xero);
 		const run = await start(xero, { [ACME]: ["read"] });
@@ -546,13 +625,22 @@ describe("reading", () => {
 			const found = invoiceOf(INVOICE, "ACCREC", contactOf(CUSTOMER, "C"));
 			return new Response(`{"Invoices": [${JSON.stringify(found).replace('"Total":120', '"Total":"120.00"')}]}`, { status: 200 });
 		};
-		// Deviation: Pydantic's lax mode reads an amount sent as a string; Xero sends numbers.
+		// An amount sent as a string is not Xero's: Xero sends numbers.
 		expect(await run.error("xero_get_invoice", { invoice: INVOICE })).toEqual({ code: "PROVIDER_FAILED", message: "Xero returned an unexpected response." });
 		xero.hook = () => {
 			const found = invoiceOf(INVOICE, "ACCREC", contactOf(CUSTOMER, "C"));
 			return new Response(`{"Invoices": [${JSON.stringify(found).replace('"Total":120', '"Total":9007199254740991.0')}]}`, { status: 200 });
 		};
 		expect(items(await run.ok("xero_get_invoice", { invoice: INVOICE }))[0]?.total).toBe("9007199254740991.00");
+		// A byte order mark is dropped; bytes that are not UTF-8, or a list that is null, are not Xero's answer.
+		xero.hook = (method, path) => (method === "GET" && path.endsWith("/Accounts") ? new Response(Uint8Array.from([0xef, 0xbb, 0xbf, ...new TextEncoder().encode('{"Accounts": [{"Code": "200"}]}')]), { status: 200 }) : null);
+		expect(items(await run.ok("xero_list_accounts", {}))[0]?.code).toBe("200");
+		xero.hook = (method, path) => (method === "GET" && path.endsWith("/Accounts") ? new Response(Uint8Array.from([0x7b, 0xff, 0x7d]), { status: 200 }) : null);
+		expect(await run.error("xero_list_accounts", {})).toEqual({ code: "PROVIDER_FAILED", message: "Xero returned an unexpected response." });
+		xero.hook = (method, path) => (method === "GET" && path.endsWith("/Contacts") ? jsonResponse(200, { Contacts: null }) : null);
+		expect(await run.error("xero_search_contacts", {})).toEqual({ code: "PROVIDER_FAILED", message: "Xero returned an unexpected response." });
+		xero.hook = (method, path) => (method === "GET" && path.endsWith("/Contacts") ? FakeXero.error(429) : null);
+		expect(await run.error("xero_search_contacts", { text: "x" })).toEqual({ code: "PROVIDER_RATE_LIMITED", message: "Xero is rate limiting requests. Try again later." });
 	});
 });
 
@@ -643,7 +731,7 @@ describe("drafting", () => {
 			expect([bad, await run.code("xero_create_draft_invoice", bad)]).toEqual([bad, "INVALID_ARGUMENTS"]);
 		}
 		expect(xero.writes).toHaveLength(1);
-		// Not in test_xero.py: the same draft again is answered from the run's record, and sends nothing.
+		// The same draft again is answered from the run's record, and sends nothing.
 		const again = await run.ok("xero_create_draft_invoice", { ...DRAFT, lines: [{ ...line, quantity: "1.5" }, DRAFT_LINES[1] as JsonObject] });
 		expect([again.repeat, items(again)]).toEqual([true, items(outcome)]);
 		expect(xero.writes).toHaveLength(1);
@@ -748,7 +836,7 @@ describe("drafting", () => {
 	});
 
 	test("a draft Xero may or may not have made pauses later drafts", async () => {
-		// Not in test_xero.py: a write whose outcome is unknown (a 500) makes the run uncertain.
+		// A write whose outcome is unknown (a 500) makes the run uncertain.
 		const xero = fake();
 		onlyAcme(xero);
 		const run = await start(xero, { [ACME]: ["read", "draft_sales"] });
@@ -766,8 +854,8 @@ describe("drafting", () => {
 		const sent = async (fields: JsonObject): Promise<string> => {
 			const validated = await validateInput(DraftInvoice, { contact: CUSTOMER, lines: [line(fields)] });
 			if (!validated.ok) throw new Error(validated.message);
-			const items = body(validated.data as unknown as DraftInvoice, "sales").LineItems as Parameters<typeof jsonText>[0][];
-			return jsonText(items[0] as Parameters<typeof jsonText>[0]);
+			const items = body(validated.data as unknown as DraftInvoice, "sales").LineItems as Json[];
+			return JSON.stringify(items[0]);
 		};
 		expect(await sent({ quantity: "2.500", unit_amount: "-0.0" })).toBe('{"Description":"x","Quantity":2.5,"UnitAmount":0}');
 		expect(parseJson(await sent({ unit_amount: "9999999999.9999" }))).toMatchObject({ UnitAmount: 9999999999.9999 });
@@ -789,7 +877,7 @@ describe("drafting", () => {
 		}
 		const validated = await validateInput(DraftBill, { contact: CUSTOMER, lines: [line()] });
 		if (!validated.ok) throw new Error(validated.message);
-		expect(jsonText(body(validated.data as unknown as DraftBill, "bill"))).toBe(
+		expect(JSON.stringify(body(validated.data as unknown as DraftBill, "bill"))).toBe(
 			`{"Type":"ACCPAY","Status":"DRAFT","Contact":{"ContactID":"${CUSTOMER}"},"LineAmountTypes":"Exclusive","LineItems":[{"Description":"x","Quantity":1,"UnitAmount":1}]}`,
 		);
 	});

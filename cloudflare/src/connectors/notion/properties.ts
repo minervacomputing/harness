@@ -8,12 +8,12 @@
 //
 // Properties are kept by name in Maps, and results built with own properties, so a property named
 // "constructor" or "__proto__" is an ordinary name. Names that are array indexes ("1", "42") come first in
-// a JSON object, as JavaScript orders them; Python keeps Notion's order.
+// a JSON object, as JavaScript orders them.
 
 import { OperationError } from "../../gateway/connector.ts";
-import { type Json, type JsonObject, isDict, truthy } from "../../lib/json.ts";
-import { hasTitledMention, textOf } from "./client.ts";
-import { asText, own } from "./python.ts";
+import { parseDate, parseDateTime } from "../../lib/dates.ts";
+import { type Json, type JsonObject, isDict } from "../../lib/json.ts";
+import { hasTitledMention, own, textOf } from "./client.ts";
 
 export const READABLE: ReadonlySet<string> = new Set([
 	"title",
@@ -35,24 +35,10 @@ export const READABLE: ReadonlySet<string> = new Set([
 	"relation",
 	"people",
 ]);
-export const WRITABLE: ReadonlySet<string> = new Set([
-	"title",
-	"rich_text",
-	"number",
-	"select",
-	"multi_select",
-	"status",
-	"date",
-	"checkbox",
-	"url",
-	"email",
-	"phone_number",
-]);
 /** Filters and sorts may use what reading shows, and nothing else: filtering on a hidden value reveals it. */
 export const FILTERABLE = READABLE;
 export const MAX_TEXT = 2000;
 export const MAX_OPTIONS = 100;
-const DATE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:\d{2})?)?$/u;
 
 /** Properties as Notion lists them: a JSON object of property objects. */
 export type Properties = { [name: string]: JsonObject } | JsonObject;
@@ -110,7 +96,8 @@ function valueOf(kind: string, value: Json): Json {
 		case "unique_id": {
 			if (!isDict(value)) return null;
 			const [prefix, number] = [own(value, "prefix"), own(value, "number")];
-			return truthy(prefix) ? `${asText(prefix)}-${asText(number)}` : number;
+			if (typeof number !== "number") return null;
+			return typeof prefix === "string" && prefix ? `${prefix}-${number}` : number;
 		}
 		case "relation":
 			return Array.isArray(value) ? value.filter(isDict).map((related) => own(related, "id")) : [];
@@ -147,7 +134,7 @@ export function readable(properties: Json): JsonObject {
 
 function optionsOf(prop: JsonObject): string[] {
 	const type = own(prop, "type");
-	const config = typeof type === "string" ? own(prop, type) : own(prop, "");
+	const config = typeof type === "string" ? own(prop, type) : null;
 	const options = isDict(config) ? own(config, "options") : null;
 	if (!Array.isArray(options)) return [];
 	return options.filter((option): option is JsonObject => isDict(option) && typeof own(option, "name") === "string").map((option) => own(option, "name") as string);
@@ -194,7 +181,7 @@ function date(name: string, value: Json): Json {
 	if (
 		!isDict(given) ||
 		!Object.keys(given).every((key) => key === "start" || key === "end") ||
-		!Object.values(given).every((item) => typeof item === "string" && DATE.test(item)) ||
+		!Object.values(given).every((item) => typeof item === "string" && (parseDate(item) ?? parseDateTime(item)) !== null) ||
 		!Object.hasOwn(given, "start")
 	) {
 		throw invalid(`${JSON.stringify(name)} takes a date like "2026-10-01", or {"start": ..., "end": ...}, or null.`);
@@ -203,14 +190,14 @@ function date(name: string, value: Json): Json {
 }
 
 function convert(name: string, prop: JsonObject, value: Json): JsonObject {
-	const kind = own(prop, "type");
+	const kind = own(prop, "type") as string;
 	switch (kind) {
 		case "title":
 			return { title: richText(name, value, true) };
 		case "rich_text":
 			return { rich_text: richText(name, value) };
 		case "number":
-			// A number too large for a double ("1e400") parses as an infinity, in Python too.
+			// A number too large for a double ("1e400") parses as an infinity.
 			if (value !== null && (typeof value !== "number" || !Number.isFinite(value))) throw invalid(`${JSON.stringify(name)} takes a number, or null.`);
 			return { number: value };
 		case "select":
@@ -218,7 +205,7 @@ function convert(name: string, prop: JsonObject, value: Json): JsonObject {
 		case "status":
 			return { status: option(name, prop, value) };
 		case "multi_select":
-			if (!Array.isArray(value) || value.length > MAX_OPTIONS || new Set(value.map(asText)).size !== value.length) {
+			if (!Array.isArray(value) || value.length > MAX_OPTIONS || new Set(value).size !== value.length) {
 				throw invalid(`${JSON.stringify(name)} takes a list of distinct existing options.`);
 			}
 			return { multi_select: value.map((item) => option(name, prop, item)) };
@@ -232,7 +219,7 @@ function convert(name: string, prop: JsonObject, value: Json): JsonObject {
 		case "phone_number":
 			return entries([[kind, plain(name, value)]]);
 	}
-	throw invalid(`Minerva does not set ${asText(kind)} properties such as ${JSON.stringify(name)}.`);
+	throw invalid(`Minerva does not set ${kind} properties such as ${JSON.stringify(name)}.`);
 }
 
 /** Notion property values for what the agent asked to set, checked against the schema. */

@@ -9,17 +9,17 @@
 // POST /lab/<op> answers only with `X-Minerva-CM: <CM_TOKEN>`.
 
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
-import type { AttemptFence, Json } from "../../../../src/contracts/common.ts";
-import type { ToolCallOutcome, ToolDeclaration } from "../../../../src/contracts/executor.ts";
-import type { GuestOutcome, ScriptFence, ScriptRequest, ScriptResult, ScriptTools } from "../../../../src/contracts/scripts.ts";
 import { ToolQueue } from "../../../../src/conversation/queue.ts";
-import { parseJson } from "../../../../src/lib/json.ts";
+import type { ToolCallOutcome, ToolDeclaration } from "../../../../src/gateway/executor.ts";
+import { type Json, parseJson } from "../../../../src/lib/json.ts";
 import { uuid7 } from "../../../../src/lib/random.ts";
-import { executeScript, ScriptLane, type ScriptsClient } from "../../../../src/scripts/run.ts";
-import { runGuest, Scripts as BaseScripts } from "../../../../src/scripts/scripts.ts";
+import type { GuestOutcome } from "../../../../src/scripts/outcome.ts";
+import { executeScript, ScriptLane, type ScriptResult, type ScriptsClient } from "../../../../src/scripts/run.ts";
+import { runGuest, type ScriptFence, type ScriptRequest, Scripts as BaseScripts } from "../../../../src/scripts/scripts.ts";
 import { ScriptCalls, ScriptSession } from "../../../../src/scripts/session.ts";
-import { targetsOf } from "../../../../src/scripts/target.ts";
+import { type ScriptTools, targetsOf } from "../../../../src/scripts/target.ts";
 import { render } from "../../../../src/scripts/tool.ts";
+import type { AttemptFence } from "../../../../src/shared/rpc.ts";
 
 interface LabEnv {
 	LOADER: WorkerLoader;

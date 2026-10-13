@@ -2,8 +2,7 @@
 
 import { describe, expect, test } from "vitest";
 import { z } from "zod";
-import type { ActionSpec, Connector } from "../../src/contracts/connectors.ts";
-import { ACCOUNT_KIND, consentGiven, defineOperation, termsOf } from "../../src/gateway/connector.ts";
+import { ACCOUNT_KIND, type ActionSpec, type Connector, consentGiven, defineOperation, termsOf } from "../../src/gateway/connector.ts";
 import { InvalidConnector, LookupError, Registry, fingerprint, inputSchema, meaning, validate } from "../../src/gateway/registry.ts";
 import { parseJson } from "../../src/lib/json.ts";
 import { record } from "../../src/lib/schema.ts";
@@ -238,7 +237,7 @@ describe("fingerprints", () => {
 		expect(await fingerprint(base, { ...op, input: described as never })).not.toBe(print);
 	});
 
-	test("what it covers, as registry.py's payload", () => {
+	test("what the contract covers", () => {
 		const base = mixedConnector();
 		const labels = base.operations[2]!;
 		expect(meaning(base, { ...labels, consent: [["b", "a", "b"], ["a"]] })).toEqual({
@@ -380,7 +379,7 @@ test("kind and action ids are only names, even __proto__", async () => {
 	expect(Object.keys(meaning(proto, proto.operations[0]!).kinds as object)).toEqual(["__proto__"]);
 });
 
-test("an operation's defaults are base.py's", () => {
+test("an operation's defaults: reads, no consent, revision 1, not mutating, not paginated", () => {
 	expect(termsOf(mixedConnector().operations[0]!)).toEqual({ outputAction: "read", consent: null, revision: 1, mutates: false, paginated: false });
 	expect(termsOf(mixedConnector().operations[1]!).mutates).toBe(true);
 	expect(termsOf(mixedConnector().operations[2]!).consent).toEqual([["labels"]]);

@@ -29,8 +29,8 @@
 // A conversation whose plan sets `model` to `workers-ai` gets Workers AI instead of the fake model. Never
 // part of the production Worker.
 
-import type { ExecutorContext } from "../contracts/executor.ts";
 import type { ConversationPorts, PortsContext, WorkspaceClient } from "../conversation/ports.ts";
+import type { ExecutorContext } from "../gateway/executor.ts";
 import type { ConversationClient, OAuthClients } from "../workspace/ports.ts";
 import type { WorkspaceDeps } from "../workspace/core.ts";
 import type { ReplaceablePorts } from "../workspace/workspace.ts";
@@ -50,7 +50,7 @@ export function providerOf(env: Env, scope: string): DurableObjectStub<FaultProv
 
 /**
  * The network of the test build's executor and refreshes: the fake provider, and nothing else, refused as a
- * blocked egress would be, so a real connector in its registry (step 6) cannot reach its provider from a
+ * blocked egress would be, so a real connector in its registry cannot reach its provider from a
  * Worker the token-gated driver controls. Models go through the AI binding, not here.
  */
 export function providerFetch(env: Env, scope: string): typeof fetch {

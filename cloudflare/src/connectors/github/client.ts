@@ -1,27 +1,13 @@
 // GitHub's REST API (v3), as a GitHub App acting for a user.
 // Repositories are addressed by id (`/repositories/{id}`), so a rename between two requests cannot change
-// which repository a request reaches. Responses are validated before use.
-//
-// What changes from Python:
-// - GitHub's 403 is worded from its body, which `forbidden` cannot read here (its response is read
-//   synchronously), so `classify` words every 403 instead; it sees the same headers and body. The body is
-//   UTF-8 with invalid bytes replaced, where Python's `response.json()` refused such a body and so ignored
-//   its message.
-// - Response models are zod's objects with defaults; unknown fields are dropped, as with Pydantic's
-//   `extra="ignore"`. Pydantic's lax coercions (a number sent as a string, 1 for true) are not made: such a
-//   response is an unexpected one.
-// - Pagination's Link header and the base64 of file contents are read with Python's own rules (`re`'s `\s`,
-//   `urlsplit`, `parse_qs`, non-validating `b64decode`), so a cursor and a file read as they did in Python. A
-//   redirect's Location is decoded as httpx decodes headers. (A Link header that is not ASCII failed every
-//   listing in Python, whose `bounded` re-encodes kept headers as ASCII; here it is read as Latin-1.)
+// which repository a request reaches. Responses are validated before use: unknown fields are dropped, and a
+// field of another type makes the response unexpected. Bodies are strict UTF-8 JSON (a byte order mark
+// dropped). The next page is taken from the Link header's query, never its address.
 
 import { z } from "zod";
-import type { OperationErrorShape, ProviderClient, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
-import { ProviderHTTP, defaultForbidden } from "../../gateway/http.ts";
-import { fromUtf8Strict } from "../../lib/bytes.ts";
-import { isDict, type Json, parseJson } from "../../lib/json.ts";
-import { parseQs, quoteSegment, urlsplitStrict } from "../../lib/urlsplit.ts";
+import { OperationError, type OperationErrorShape, type ProviderClient } from "../../gateway/connector.ts";
+import { ProviderHTTP, type ProviderIo, type ProviderRequest, defaultForbidden, segment } from "../../gateway/http.ts";
+import { isDict, type Json, parseJson, parseJsonBytes } from "../../lib/json.ts";
 
 export const API_URL = "https://api.github.com";
 /** The largest file GitHub returns inline, and room for its base64 encoding in the JSON around it. */
@@ -32,33 +18,18 @@ export const MAX_PAGE_RESPONSE = 10 * 1024 * 1024;
 
 const PROVIDER = "GitHub";
 
-/** `quote(value, safe="")` (lib/urlsplit.ts). */
-export const segment = quoteSegment;
-
-/** A JSON value as text: a string as it is, anything else as JSON. */
-function textOf(value: Json): string {
-	return typeof value === "string" ? value : JSON.stringify(value);
-}
-
-/** JSON's text from bytes as `json.loads` reads them: UTF-8, a byte order mark skipped, invalid UTF-8 refused. */
-function jsonText(bytes: Uint8Array): string {
-	const start = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
-	return fromUtf8Strict(bytes.subarray(start));
-}
-
-/** The `message` of a JSON object body, as `str(response.json().get("message", ""))`; "" for any other body. */
+/** The `message` of a JSON object body, when it is a string; "" for any other body. */
 function messageOf(body: string): string {
 	let data: Json;
 	try {
-		data = parseJson(body.startsWith("\ufeff") ? body.slice(1) : body);
+		data = parseJson(body);
 	} catch {
 		return "";
 	}
-	if (!isDict(data)) return "";
-	return Object.hasOwn(data, "message") ? textOf(data.message as Json) : "";
+	return isDict(data) && typeof data.message === "string" ? data.message : "";
 }
 
-/** GitHub reports rate limits, and what the App may not do, as 403 (client.py `forbidden`). */
+/** GitHub reports rate limits, and what the App may not do, as 403. */
 export function forbidden(provider: string, response: Response, body: string): OperationErrorShape {
 	const message = messageOf(body).toLowerCase();
 	if (response.headers.get("x-ratelimit-remaining") === "0" || response.headers.has("retry-after") || message.includes("rate limit")) {
@@ -78,9 +49,9 @@ function classify(provider: string, response: Response, body: string): Operation
 	return response.status === 403 ? forbidden(provider, response, body) : null;
 }
 
-// Models (client.py): what GitHub returns, with Pydantic's defaults. A dict is a JSON object.
+// What GitHub returns, with defaults.
 
-const dict = z.custom<{ [key: string]: Json }>((value) => isDict(value));
+const object = z.custom<{ [key: string]: Json }>((value) => isDict(value));
 
 export const User = z.object({
 	id: z.int(),
@@ -124,7 +95,7 @@ export const Issue = z.object({
 	updated_at: z.string().nullable().default(null),
 	closed_at: z.string().nullable().default(null),
 	html_url: z.string().nullable().default(null),
-	pull_request: dict.nullable().default(null),
+	pull_request: object.nullable().default(null),
 });
 export type Issue = z.output<typeof Issue>;
 
@@ -179,7 +150,7 @@ export const Entry = z.object({
 });
 export type Entry = z.output<typeof Entry>;
 
-/** `Entry | list[Entry]`: a file, or a directory's entries. */
+/** A file, or a directory's entries. */
 const Contents = z.union([Entry, z.array(Entry)]);
 
 /** One page of a listing, and GitHub's next page as the query parameters its Link header names (null on the last). */
@@ -192,47 +163,23 @@ export interface Page<T> {
 const ID = /^\d{1,20}$/u;
 const NEXT_LINK = /<([^>]+)>;\s*rel="next"/u;
 
-/** client.py `_next`: the `page` and `after` of the Link header's next page, or null. */
+/** The `page` and `after` of the Link header's next page, or null. */
 export function nextPage(response: Response): { [key: string]: string } | null {
 	const match = NEXT_LINK.exec(response.headers.get("link") ?? "");
 	if (match === null) return null;
-	const query = parseQs(urlsplitStrict(match[1] as string).query);
+	const query = URL.parse(match[1] as string, API_URL)?.searchParams;
+	if (query === undefined) return null;
 	const next: { [key: string]: string } = {};
 	for (const key of ["page", "after"]) {
-		const values = query.get(key);
-		if (values !== undefined && values.length > 0) next[key] = values[0] as string;
+		const value = query.get(key);
+		if (value) next[key] = value;
 	}
 	return Object.keys(next).length > 0 ? next : null;
 }
 
-const LATIN_1 = /^[\u0000-\u00ff]*$/;
-const ASCII = /^[\u0000-\u007f]*$/;
-
-/**
- * A response header as httpx reads it: every header's bytes as ASCII, else as UTF-8 if all of them are
- * valid UTF-8, else as Latin-1. `fetch` gives each byte of a value as one character; a value with a
- * character beyond Latin-1 was already decoded, and is read as it is. ProviderHTTP has dropped
- * Content-Encoding and Content-Length, which httpx would weigh too; only one that is not ASCII could
- * change the outcome.
- */
-export function httpxHeader(headers: Headers, name: string): string | null {
-	const value = headers.get(name);
-	if (value === null) return null;
-	const texts: string[] = [];
-	headers.forEach((item, key) => texts.push(key, item));
-	if (texts.every((text) => ASCII.test(text)) || !texts.every((text) => LATIN_1.test(text))) return value;
-	const bytes = (text: string) => Uint8Array.from(text, (char) => char.charCodeAt(0));
-	try {
-		for (const text of texts) fromUtf8Strict(bytes(text));
-	} catch {
-		return value;
-	}
-	return fromUtf8Strict(bytes(value));
-}
-
 export interface GitHubClientOptions {
 	baseUrl?: string;
-	/** MAX_PAGE_RESPONSE; tests lower it, as Python's monkeypatch did. */
+	/** MAX_PAGE_RESPONSE; tests lower it. */
 	maxPageResponse?: number;
 }
 
@@ -273,9 +220,8 @@ export class GitHubClient implements ProviderClient {
 
 	/** A response's body as JSON; one that does not parse is an unexpected response. */
 	async #body(response: Response): Promise<Json> {
-		const bytes = new Uint8Array(await response.arrayBuffer());
 		try {
-			return parseJson(jsonText(bytes));
+			return parseJsonBytes(await response.arrayBuffer());
 		} catch (error) {
 			throw this.http.unexpected(error);
 		}
@@ -317,7 +263,7 @@ export class GitHubClient implements ProviderClient {
 		const response = await this.http.request({ method: "GET", path: `/repos/${segment(owner)}/${segment(name)}`, redirects: true });
 		if (response.status >= 300 && response.status < 400) {
 			// Followed only to /repositories/<id> on the API host, the id in ASCII digits.
-			const location = httpxHeader(response.headers, "location") ?? "";
+			const location = response.headers.get("location") ?? "";
 			const prefix = `${this.#baseUrl}/repositories/`;
 			const id = location.startsWith(prefix) ? location.slice(prefix.length) : null;
 			if (id === null || !ID.test(id)) throw this.http.unexpected();

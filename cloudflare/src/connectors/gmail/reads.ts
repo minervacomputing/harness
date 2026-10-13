@@ -1,13 +1,10 @@
-// Gmail's read operations: labels, message lists, messages
-// and threads.
+// Gmail's read operations: labels, message lists, messages and threads.
 
 import { z } from "zod";
-import type { Binding, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, defineOperation } from "../../gateway/connector.ts";
+import { type Binding, OperationError, type Prepared, type ProviderOutput, type ScopedRecord, defineOperation } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
 import { SINGLE_LINE, htmlUnescape, isSingleLine, sliceText } from "../../lib/text.ts";
-import { digitsOr } from "../google/digits.ts";
 import { type GmailClient, ID, type Message, type MessageRef, headersOf } from "./client.ts";
 import { CONNECTION_ERRORS, LABEL, Labels, READ_CONSENT, SPAM_TRASH, SYSTEM_LABELS, confirm, locate, messageIdInput, moved, sameResource } from "./mailbox.ts";
 import * as mime from "./mime.ts";
@@ -21,7 +18,7 @@ export function passesThrough(error: unknown): boolean {
 	return error instanceof OperationError && (CONNECTION_ERRORS.has(error.code) || error.code === "RUN_ENDED");
 }
 
-/** `_label_ref`: a system label in any case, else a label id. */
+/** A system label in any case, else a label id. */
 function labelRef(value: string, ctx: z.RefinementCtx): string {
 	const upper = value.toUpperCase();
 	if (SYSTEM_LABELS.has(upper)) return upper;
@@ -42,8 +39,8 @@ function first(message: Message, name: string): string | null {
 function summary(message: Message): JsonObject {
 	return {
 		id: message.id,
-		thread_id: message.thread_id,
-		label_ids: message.label_ids.filter((label) => ID.test(label)),
+		thread_id: message.threadId,
+		label_ids: message.labelIds.filter((label) => ID.test(label)),
 		from: first(message, "From"),
 		to: first(message, "To"),
 		cc: first(message, "Cc"),
@@ -51,7 +48,7 @@ function summary(message: Message): JsonObject {
 		date: first(message, "Date"),
 		// Gmail escapes the snippet as HTML.
 		snippet: message.snippet ? sliceText(mime.headerText(htmlUnescape(message.snippet)) as string, 0, MAX_SNIPPET) : null,
-		unread: message.label_ids.includes("UNREAD"),
+		unread: message.labelIds.includes("UNREAD"),
 	};
 }
 
@@ -102,20 +99,15 @@ const ListMessages = z.strictObject({
 		.default(null)
 		.describe("Only mail with this label; leave out to search all mail."),
 	query: z.string().trim().min(1).max(200)
+		.refine(isSingleLine, SINGLE_LINE)
 		.nullable()
-		.superRefine((value, ctx) => {
-			// AfterValidator(single_line) on `str | None`: Python iterates None and raises TypeError, which no
-			// validation error words; the call fails as any other bug does.
-			if (value === null) throw new TypeError("'NoneType' object is not iterable");
-			if (!isSingleLine(value)) ctx.addIssue({ code: "custom", message: SINGLE_LINE, input: value });
-		})
 		.default(null)
 		.describe('Gmail search, as in its search box, such as "from:ada@example.com is:unread".'),
 	limit: z.int().min(1).max(25).default(10),
 	cursor: Cursor().nullable().default(null),
 });
 
-/** Up to `limit` of `tasks` at once, results in order (an asyncio.Semaphore with gather). */
+/** Up to `limit` of `tasks` at once, results in order. */
 async function gatherLimited<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
 	const results: T[] = new Array(tasks.length);
 	let next = 0;
@@ -183,34 +175,15 @@ const LIST_MESSAGES = defineOperation<z.output<typeof ListMessages>>({
 	},
 });
 
-/** Code point positions in a long text, found without copying it into an array. */
-function codePointIndex(text: string, count: number): number {
-	let index = 0;
-	for (let seen = 0; seen < count && index < text.length; seen++) {
-		const unit = text.charCodeAt(index);
-		index += unit >= 0xd800 && unit <= 0xdbff && index + 1 < text.length && text.charCodeAt(index + 1) >= 0xdc00 && text.charCodeAt(index + 1) <= 0xdfff ? 2 : 1;
-	}
-	return index;
-}
-
-function codePoints(text: string): number {
-	let count = 0;
-	for (let index = 0; index < text.length; count++) {
-		const unit = text.charCodeAt(index);
-		index += unit >= 0xd800 && unit <= 0xdbff && index + 1 < text.length && text.charCodeAt(index + 1) >= 0xdc00 && text.charCodeAt(index + 1) <= 0xdfff ? 2 : 1;
-	}
-	return count;
-}
-
 function full(message: Message, maxChars: number, offset = 0): JsonObject {
 	const found = mime.content(message.payload);
 	const end = offset + maxChars;
-	const total = codePoints(found.text);
+	const total = found.text.length;
 	return {
 		...summary(message),
 		bcc: first(message, "Bcc"),
 		reply_to: first(message, "Reply-To"),
-		body: found.text.slice(codePointIndex(found.text, offset), codePointIndex(found.text, end)),
+		body: sliceText(found.text, offset, end),
 		offset,
 		total_chars: total,
 		next_offset: end < total ? end : null,
@@ -274,20 +247,13 @@ const READ_THREAD = defineOperation<z.output<typeof ReadThread>>({
 				}
 				if (thread.id !== data.thread) throw client.unexpected();
 				const labels = await Labels.fetch(client);
-				const keyed = thread.messages
-					.filter((m) => m.thread_id === thread.id && ID.test(m.id))
-					.map((m) => ({ message: m, key: digitsOr(m.internal_date ?? "", 0n) as bigint }));
-				keyed.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-				const messages = keyed.map((item) => item.message);
+				const messages = thread.messages
+					.filter((m) => m.threadId === thread.id && ID.test(m.id))
+					.sort((a, b) => (a.internalDate ?? 0) - (b.internalDate ?? 0));
 				const records: ScopedRecord[] = [];
 				for (const message of messages.slice(-MAX_THREAD_MESSAGES)) {
-					const data_ = full(message, data.max_chars_per_message);
-					const truncated = data_.next_offset !== null;
-					delete data_.next_offset;
-					delete data_.offset;
-					delete data_.total_chars;
-					data_.body_truncated = truncated;
-					const found = record(binding, labels, message, data_);
+					const { next_offset, offset: _, total_chars: __, ...item } = full(message, data.max_chars_per_message);
+					const found = record(binding, labels, message, { ...item, body_truncated: next_offset !== null });
 					if (found !== null) records.push(found);
 				}
 				return { records, incomplete: messages.length > MAX_THREAD_MESSAGES };

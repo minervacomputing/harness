@@ -1,14 +1,12 @@
-// What Gmail's operations share: consent, ids, labels and
-// where messages sit.
+// What Gmail's operations share: consent, ids, labels and where messages sit.
 //
 // A message is not a resource users choose. It is authorized as `message:<id>` inside every grantable label
 // it carries, and inside those labels' parents, so a grant on any of them covers it and a deny on any of them
 // hides it (see connector.ts).
 
 import { z } from "zod";
-import type { Binding } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, denied } from "../../gateway/connector.ts";
+import { type Binding, OperationError, denied } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import { type Format, type GmailClient, ID, type Label, type Message } from "./client.ts";
 
 export const LABEL = "label";
@@ -101,7 +99,7 @@ export class Labels {
 
 	private label(labelId: string): Label {
 		const label = this.grantable.get(labelId);
-		if (label === undefined) throw new Error(`KeyError: ${labelId}`);
+		if (label === undefined) throw new Error(`Label ${labelId} is not grantable.`);
 		return label;
 	}
 
@@ -155,10 +153,10 @@ export class Labels {
 	 * know makes the chain partial, so any deny on a label hides the message.
 	 */
 	message(binding: Binding, message: Message): Resource {
-		if (message.label_ids.includes(CHAT)) throw unsupportedMessage();
+		if (message.labelIds.includes(CHAT)) throw unsupportedMessage();
 		const within: string[] = [];
 		let partial = false;
-		for (const labelId of message.label_ids) {
+		for (const labelId of message.labelIds) {
 			if (MARKS.has(labelId)) continue;
 			if (!this.grantable.has(labelId)) {
 				partial = true;

@@ -19,8 +19,7 @@
 // or credit needs its action on both the customer and the amount. Caps are per call: Minerva keeps no budget
 // across calls, so each refund or credit is capped but their number is not, in a run or across runs.
 
-import type { Account, Connector, DiscoveryItem, DiscoveryPage } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
+import { type Account, type Connector, type DiscoveryItem, type DiscoveryPage, OperationError } from "../../gateway/connector.ts";
 import { sliceText } from "../../lib/text.ts";
 import { CUSTOMER_ID, type Customer, KEY, SEARCH_PAGE, StripeClient, nextCursor } from "./client.ts";
 import * as money from "./money.ts";
@@ -50,7 +49,7 @@ function listCursor(value: string | null): string | null {
 	return cursor(value.slice(2));
 }
 
-/** `work` for each item, at most `concurrency` at once, results in the items' order (asyncio.gather). */
+/** `work` for each item, at most `concurrency` at once, results in the items' order; the first failure stops it. */
 async function gathered<T, R>(items: readonly T[], concurrency: number, work: (item: T) => Promise<R>): Promise<R[]> {
 	const results: R[] = [];
 	let next = 0;

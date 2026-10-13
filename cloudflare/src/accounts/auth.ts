@@ -6,7 +6,7 @@ import { betterAuth } from "better-auth";
 import { settings } from "../config.ts";
 import { readBytes } from "../http/body.ts";
 import { HttpError, notFound, unparseableBody } from "../http/errors.ts";
-import { type Json, parseJson } from "../lib/json.ts";
+import { type Json, parseJsonBytes } from "../lib/json.ts";
 import { AUTH_BASE_PATH, type OtpType, authOptions } from "./auth-options.ts";
 import { type EmailKind, render, sendEmail } from "./emails.ts";
 import { signupAllowed } from "./instance.ts";
@@ -130,7 +130,7 @@ const PLAIN_KEY = /^[A-Za-z0-9_.:-]*$/;
 function plainJson(bytes: Uint8Array): string {
 	let value: Json;
 	try {
-		value = parseJson(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes));
+		value = parseJsonBytes(bytes);
 	} catch {
 		throw new HttpError(unparseableBody());
 	}

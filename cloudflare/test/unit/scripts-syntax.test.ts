@@ -82,7 +82,7 @@ describe("guest answers", () => {
 		}
 	});
 
-	test("the platform's stops become today's kinds", () => {
+	test("the platform's stops become script and sandbox errors", () => {
 		expect(thrownOutcome(new Error("Worker exceeded CPU time limit."), 30_000).ok === false && thrownOutcome(new Error("Worker exceeded CPU time limit."), 30_000)).toMatchObject({
 			error: { kind: "sandbox", message: "The script was stopped after 30 seconds of computation." },
 		});

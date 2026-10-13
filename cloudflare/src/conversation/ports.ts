@@ -7,22 +7,21 @@
 
 import { sandboxObject, workspaceObject } from "../addressing.ts";
 
-import type { AttachmentOut, FolderOut } from "../contracts/api.ts";
-import type { AttemptFence, ConversationId, EpochMs, Outcome, RunId, VersionId, WorkspaceRef } from "../contracts/common.ts";
-import type { DownloadTarget } from "../contracts/conversation.ts";
-import type { DispatchResult, Executor, ExecutorContext, RunStatePort, Settlement } from "../contracts/executor.ts";
-import type { CheckpointOutcome, CheckpointScan, FolderUsage } from "../contracts/files.ts";
-import type { RunStatus } from "../contracts/runs.ts";
-import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan } from "../contracts/sandbox.ts";
-import type { ReservedUpload, WorkspaceApi } from "../contracts/workspace.ts";
 import { conversationFolder } from "../files/folder.ts";
+import type { CheckpointOutcome, CheckpointScan, DownloadTarget, FolderUsage } from "../files/store.ts";
+import type { ReservedUpload } from "../files/uploads.ts";
 import { systemClock } from "../gateway/clock.ts";
-import { createExecutor } from "../gateway/executor.ts";
-import { RUN_ENDED_MESSAGE, WriteLedger as GatewayLedger } from "../gateway/ledger.ts";
+import { type Executor, type ExecutorContext, createExecutor } from "../gateway/executor.ts";
+import { type DispatchResult, RUN_ENDED_MESSAGE, type Settlement, WriteLedger as GatewayLedger } from "../gateway/ledger.ts";
 import { PageTokens } from "../gateway/page-tokens.ts";
 import type { Registry } from "../gateway/registry.ts";
+import type { RunStatePort } from "../gateway/run-state.ts";
 import { durableSql } from "../lib/sql.ts";
 import { type ModelRoute, type Upstream, upstreamOf } from "../model/route.ts";
+import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan } from "../sandbox/folder.ts";
+import type { AttachmentOut, FolderOut } from "../shared/api.ts";
+import type { AttemptFence, ConversationId, EpochMs, Outcome, RunId, RunStatus, VersionId, WorkspaceRef } from "../shared/rpc.ts";
+import type { WorkspaceApi } from "../workspace/core.ts";
 import type { GateDecision } from "./gate.ts";
 import type { SandboxPort } from "./local-run.ts";
 import type { RunStore } from "./store.ts";
@@ -31,8 +30,7 @@ import type { RunStore } from "./store.ts";
 export type WorkspaceClient = Pick<WorkspaceApi, "beginRun" | "activate" | "release" | "conversationTouched" | "lease" | "markUnauthorized">;
 
 /**
- * The write ledger and page tokens (runs 5.5, 5.6; plan: Writes), today's RunWrite and RunPageToken in this
- * object's SQLite, built with the executor (gateway/). The object composes the executor's `RunStatePort`
+ * The write ledger and page tokens (plan: Writes), in this object's SQLite, built with the executor (gateway/). The object composes the executor's `RunStatePort`
  * from its own run checks and these, and calls the two maintenance methods itself.
  */
 export interface WriteLedger extends Pick<RunStatePort, "knownWrite" | "resolvePageToken" | "issuePageToken"> {
@@ -52,7 +50,7 @@ export interface WriteLedger extends Pick<RunStatePort, "knownWrite" | "resolveP
 	sweepLostWrites(now: EpochMs): { uncertain: RunId[]; nextAt: EpochMs | null };
 }
 
-/** What the ledger reads and writes of the run itself (`writes_uncertain` is a run column, runs 1.1). */
+/** What the ledger reads and writes of the run itself (`writes_uncertain` is a run column). */
 export interface LedgerRuns {
 	isCurrent(fence: AttemptFence): boolean;
 	deadline(runId: RunId): EpochMs | null;
@@ -61,7 +59,7 @@ export interface LedgerRuns {
 }
 
 /**
- * The run's folder (files spec; plan: Starting a run, Checkpoints, Files; src/files/). The start protocol
+ * The run's folder (plan: Starting a run, Checkpoints, Files; src/files/). The start protocol
  * calls `prepareAttachments` before its transaction (the copies into the conversation's blobs, recorded as
  * loose first) and `commitAttachments` inside it; `publish` runs in `finish`'s transaction. The sandbox
  * hydrates from `hydratePlan` and saves with `checkpoint`; `sweep` is the `files` Lifecycle job.
@@ -72,7 +70,7 @@ export interface FolderPort {
 	prepareAttachments(runId: RunId, uploads: ReservedUpload[]): Promise<Outcome<PreparedAttachments>>;
 	/** Synchronous, inside the start's transaction: the base version with the copies, claiming their loose keys. */
 	commitAttachments(runId: RunId, prepared: PreparedAttachments): { baseVersionId: VersionId | null; attachments: AttachmentOut[] };
-	/** Inside `finish`'s transaction (runs 2.2): the last checkpoint, else the base, becomes the folder. */
+	/** Inside `finish`'s transaction: the last checkpoint, else the base, becomes the folder. */
 	publish(runId: RunId, run: { baseVersionId: VersionId | null; checkpointVersionId: VersionId | null; status: RunStatus }): {
 		resultVersionId: VersionId | null;
 		changes: { [key: string]: unknown } | null;
@@ -81,11 +79,10 @@ export interface FolderPort {
 	resolve(versionId: VersionId | null, path: string): DownloadTarget | null;
 	/** Deletes the conversation's objects in R2 (plan: Files, Deletion). */
 	deleteObjects(): Promise<void>;
-	/** What a new attempt of the run hydrates (files 7.1): its last checkpoint, else its base version, with each file's R2 key. */
+	/** What a new attempt of the run hydrates: its last checkpoint, else its base version, with each file's R2 key. */
 	hydratePlan(runId: RunId): HydratePlan;
 	/**
-	 * A checkpoint of the run's folder from the container's scan (files 7.3; plan: Checkpoints, steps 4 to
-	 * 6): validated, the files whose contents the run may not read uploaded by `upload` (the Sandbox's
+	 * A checkpoint of the run's folder from the container's scan (plan: Checkpoints, steps 4 to 6): validated, the files whose contents the run may not read uploaded by `upload` (the Sandbox's
 	 * `checkpoint`, under keys recorded here first), then recorded for the fence's attempt on top of its
 	 * last checkpoint. Outside pi's transactions; the caller releases held results only after `ok`.
 	 */
@@ -175,7 +172,7 @@ export function gatewayExecutor(run: ExecutorContext, context: PortsContext): Ex
 /**
  * gateway/'s write ledger and page tokens over this object's SQLite (plan: Writes). The run checks are the
  * object's own, made in the same synchronous stretch as the claim; `writes_uncertain` mirrors the ledger's
- * uncertain rows (runs 1.1), set in the same transaction whenever one appears.
+ * uncertain rows, set in the same transaction whenever one appears.
  */
 export function gatewayLedger(storage: DurableObjectStorage, runs: LedgerRuns): WriteLedger {
 	const sql = durableSql(storage);
@@ -207,7 +204,7 @@ export function gatewayLedger(storage: DurableObjectStorage, runs: LedgerRuns): 
 }
 
 /**
- * The executor's RunStatePort for a Conversation (contracts/executor.ts): the store's checks, synchronous,
+ * The executor's RunStatePort for a Conversation: the store's checks, synchronous,
  * and the ledger's records. A claim and a settlement wait until no asynchronous transaction of pi's is open
  * (store.ts `outside`): made inside one, they would roll back with it, and a claim the executor was told
  * was dispatched would leave nothing for the restart gate to mark uncertain, so the same write could be sent

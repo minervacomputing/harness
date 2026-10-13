@@ -1,22 +1,35 @@
-// What a script's result shows the model when it is long (harness 5.5, 7.4). `run_script` declares
+// What a script's result shows the model when it is long. `run_script` declares
 // results of up to 1 MiB with no line limit and the head kept, so pi keeps the first 1 MiB of the result's
 // text (its text items joined with "") and notes what it dropped: "Output truncated to its beginning: <L>
 // lines, <B> bytes dropped" (pi-durable 1.1.0 harness/output.ts `boundOutput`, harness/tool.ts
 // `boundContent` and `truncated`).
 //
-// Today the host held the whole output, up to 16 Mi characters, and let pi cut it. Here the conversation
-// holds only the head of a long output or value and the size of the rest (scripts/limits.ts HEAD_CHARS),
+// The conversation holds only the head of a long output or value and the size of the rest (scripts/limits.ts HEAD_CHARS),
 // so a script cannot fill its memory, and cuts the result itself, exactly as pi would cut the whole text,
 // with pi's own note: the head it keeps is longer than 1 MiB, which is all the cut reads, and the sizes of
-// the rest give the counts. A result under the bound is passed through untouched for pi, as today.
+// the rest give the counts. A result under the bound is passed through untouched for pi.
 // (A lone surrogate ending one piece and another starting the next are one character in the joined text;
 // that is counted where both pieces crossed whole. Across a measured rest it cannot be, and only there could
 // the counts, or whether the result is cut at all, differ from pi's.)
 
-import type { ScriptText, TextSize } from "../contracts/scripts.ts";
 import { HEAD_CHARS } from "./limits.ts";
 
-export type { ScriptText, TextSize };
+/** The size of the part of a text that did not cross, as UTF-8. */
+export interface TextSize {
+	bytes: number;
+	newlines: number;
+	/** Whether the text ends with a newline. */
+	last: boolean;
+}
+
+/** A text as it crossed: whole, or its head and the size of the rest (long outputs and values). */
+export interface ScriptText {
+	text: string;
+	rest?: TextSize;
+}
+
+/** One printed item; an image is shown to the model as "[image omitted]", so its data never crosses. */
+export type ScriptOutputItem = ({ type: "text" } & ScriptText) | { type: "image" };
 
 export const EMPTY: TextSize = Object.freeze({ bytes: 0, newlines: 0, last: false });
 

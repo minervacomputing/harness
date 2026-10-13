@@ -4,11 +4,10 @@
 // against the real image are in sandbox-local.test.ts.
 
 import { describe, expect, test } from "vitest";
-import type { SandboxFence, SandboxSpec } from "../../src/contracts/sandbox.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { migrate, type Sql, sqliteSql } from "../../src/lib/sql.ts";
-import { DEADLINE_GRACE_MS, IDLE_MS, sandboxSpec, WORKSPACE } from "../../src/sandbox/constants.ts";
-import { SandboxCore } from "../../src/sandbox/core.ts";
+import { DEADLINE_GRACE_MS, IDLE_MS, sandboxSpec, type SandboxSpec, WORKSPACE } from "../../src/sandbox/constants.ts";
+import { SandboxCore, type SandboxFence } from "../../src/sandbox/core.ts";
 import type { ContainerPort, SandboxPorts } from "../../src/sandbox/ports.ts";
 import { prepareSandbox } from "../../src/sandbox/session.ts";
 import { readState, SANDBOX_MIGRATIONS } from "../../src/sandbox/store.ts";

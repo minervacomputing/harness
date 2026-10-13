@@ -2,12 +2,11 @@
 // it.
 
 import { z } from "zod";
-import type { Binding, Prepared, ProviderOutput } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, defineOperation } from "../../gateway/connector.ts";
+import { type Binding, OperationError, type Prepared, type ProviderOutput, defineOperation } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import type { Json } from "../../lib/json.ts";
 import type { User } from "../microsoft/index.ts";
-import { after, modelValidator, plainTextOf, singleLineOf } from "../microsoft/inputs.ts";
+import { after, objectCheck, plainTextOf, singleLineOf } from "../microsoft/inputs.ts";
 import * as addresses from "../../lib/addresses.ts";
 import { type GraphClient, type Message, REPLY_FIELDS, type Recipient } from "./client.ts";
 import { FOLDER, RECIPIENT, SEND_CONSENT, Tree, confirmMessage, locate, messageId } from "./mailbox.ts";
@@ -55,13 +54,12 @@ export const SendMessage = z
 		body: Body(),
 	})
 	.check(
-		modelValidator((data: { to: string[]; cc: string[]; bcc: string[] }) => {
+		objectCheck((data: { to: string[]; cc: string[]; bcc: string[] }) => {
 			const everyone = [...data.to, ...data.cc, ...data.bcc];
 			if (new Set(everyone).size !== everyone.length) throw new TextError("each address may appear only once");
 			if (everyone.length > MAX_RECIPIENTS) throw new TextError(`a message may go to at most ${MAX_RECIPIENTS} addresses`);
 		}),
-	)
-	.meta({ title: "SendMessage" });
+	);
 
 export const SEND_MESSAGE = defineOperation<z.output<typeof SendMessage>>({
 	name: "send_message",
@@ -93,7 +91,7 @@ export const SEND_MESSAGE = defineOperation<z.output<typeof SendMessage>>({
 });
 
 function rawAddress(recipient: Recipient | null): string | null {
-	return recipient !== null && recipient.email_address !== null ? recipient.email_address.address : null;
+	return recipient !== null && recipient.emailAddress !== null ? recipient.emailAddress.address : null;
 }
 
 function parsedOrNull(raw: string | null): string | null {
@@ -106,11 +104,11 @@ function parsedOrNull(raw: string | null): string | null {
 }
 
 /**
- * `_reply_targets`: the addresses Graph sends a reply to, the original's reply-to addresses if it has any,
+ * The addresses Graph sends a reply to, the original's reply-to addresses if it has any,
  * otherwise its sender (RFC 5322). One Minerva cannot name as an address makes the whole reply unsupported.
  */
 export function replyTargets(message: Message): string[] {
-	const sources = message.reply_to.length ? message.reply_to : message.from_ !== null ? [message.from_] : [];
+	const sources = message.replyTo.length ? message.replyTo : message.from !== null ? [message.from] : [];
 	const targets: string[] = [];
 	for (const source of sources) {
 		const address = parsedOrNull(rawAddress(source));
@@ -122,13 +120,13 @@ export function replyTargets(message: Message): string[] {
 }
 
 /**
- * `_own_addresses`: the account's mail and sign-in names, and its aliases (Exchange lists them as `SMTP:` or
+ * The account's mail and sign-in names, and its aliases (Exchange lists them as `SMTP:` or
  * `smtp:` proxy addresses, beside other kinds such as `X500:`).
  */
 export function ownAddresses(user: User): Set<string> {
-	const aliases = user.proxy_addresses.filter((raw) => raw.slice(0, 5).toLowerCase() === "smtp:").map((raw) => raw.slice(5));
+	const aliases = user.proxyAddresses.filter((raw) => raw.slice(0, 5).toLowerCase() === "smtp:").map((raw) => raw.slice(5));
 	const own = new Set<string>();
-	for (const raw of [user.mail, user.user_principal_name, ...aliases]) {
+	for (const raw of [user.mail, user.userPrincipalName, ...aliases]) {
 		const address = parsedOrNull(raw);
 		if (address !== null) own.add(address);
 	}
@@ -139,7 +137,7 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
 	return a.length === b.length && a.every((item, index) => item === b[index]);
 }
 
-export const Reply = z.strictObject({ message: messageId(), body: Body() }).meta({ title: "Reply" });
+export const Reply = z.strictObject({ message: messageId(), body: Body() });
 
 export const REPLY = defineOperation<z.output<typeof Reply>>({
 	name: "reply",
@@ -170,14 +168,14 @@ export const REPLY = defineOperation<z.output<typeof Reply>>({
 				const sentItems = (await client.folder("sentitems")).id;
 				// The last reads before the write: the message and its folder, as they are now.
 				const message = await confirmMessage(binding as Binding<GraphClient>, tree, resource, data.message, REPLY_FIELDS);
-				if (message.is_draft !== false) {
+				if (message.isDraft !== false) {
 					// A draft's recipients and reply-to addresses can still change; a sent message's cannot.
 					throw new OperationError("UNSUPPORTED_MESSAGE", "Minerva does not reply to drafts.");
 				}
 				if (!sameList(replyTargets(message), targets)) throw new OperationError("MESSAGE_CHANGED", "Who this message's replies go to changed. Try again.");
-				const sender = parsedOrNull(rawAddress(message.from_));
+				const sender = parsedOrNull(rawAddress(message.from));
 				const delegate = parsedOrNull(rawAddress(message.sender));
-				if (sender === null || own.has(sender) || (delegate !== null && own.has(delegate)) || message.parent_folder_id === sentItems) {
+				if (sender === null || own.has(sender) || (delegate !== null && own.has(delegate)) || message.parentFolderId === sentItems) {
 					throw new OperationError("UNSUPPORTED_MESSAGE", "Minerva does not reply to messages sent from this account. Use send_message instead.");
 				}
 				// The recipients are named, and Cc and Bcc emptied, so the reply goes to exactly the addresses that

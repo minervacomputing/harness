@@ -1,8 +1,8 @@
-// backend/tests/test_xero.py's FakeXero: Xero's identity and Accounting APIs behind an injected `fetch`.
+// FakeXero: Xero's identity and Accounting APIs behind an injected `fetch`.
 //
 // Ada connected Acme and Beta (whose name is secret); `/connections` also lists a Practice Manager tenant
 // and Acme a second time, in capitals. Acme has a customer, a supplier and an archived contact. What the
-// Python fake asserted about each request (the token, the host, the tenant header) is collected in
+// fake checks about each request (the token, the host, the tenant header) is collected in
 // `problems`, which the tests check is empty: an exception thrown from `fetch` would only reach them as
 // PROVIDER_UNAVAILABLE.
 

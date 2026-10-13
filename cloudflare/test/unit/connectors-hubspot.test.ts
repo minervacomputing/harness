@@ -1,21 +1,22 @@
-// backend/tests/test_hubspot.py, case by case: the HubSpot connector against an in-memory HubSpot CRM API
-// behind an injected `fetch`, runs through the executor (test/unit/executor-fakes.ts's Scenario, the port of
-// connector_runs.py), and its tokens; then what the port adds: the registry and its fingerprints, limits and
-// refusals the Python tests leave to the code.
+// The HubSpot connector against an in-memory HubSpot CRM API behind an injected `fetch`, run through the
+// executor (test/unit/executor-fakes.ts's Scenario): grants, requests, what the model sees, refusals and
+// limits; its tokens; and the inputs each operation accepts.
 
 import { describe, expect, test } from "vitest";
-import type { GrantRow } from "../../src/contracts/policy.ts";
-import type { ToolCallOutcome } from "../../src/contracts/executor.ts";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
 import { classify } from "../../src/connectors/hubspot/client.ts";
 import { SCOPES, hubspotConnector } from "../../src/connectors/hubspot/connector.ts";
-import { DEAL_PROPERTIES, after } from "../../src/connectors/hubspot/scope.ts";
+import { HubRecord, SearchPage } from "../../src/connectors/hubspot/models.ts";
+import { DEAL_PROPERTIES, after, following, recordData } from "../../src/connectors/hubspot/scope.ts";
 import { noteHtml } from "../../src/connectors/hubspot/writes.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
+import type { ToolCallOutcome } from "../../src/gateway/executor.ts";
+import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { MAX_ALIAS_SUFFIX, MAX_TOOL_NAME, Registry } from "../../src/gateway/registry.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
 import { type OAuth2, planRefresh, tokenBody, tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
+import { validated } from "./connector-runs.ts";
 import { Scenario, type ScenarioConnection, USER } from "./executor-fakes.ts";
 
 const HUBSPOT = "0199a000-0000-7000-8000-0000000000b5";
@@ -52,7 +53,7 @@ interface Seen {
 }
 
 /**
- * HubSpot's CRM for one account (test_hubspot.py `FakeHubSpot`).
+ * HubSpot's CRM for one account.
  *
  * Pipelines: Sales ("default"), Partners ("200") and an archived one ("300"). Contacts Ada and Grace (and one
  * merged into Ada), companies Acme and Initech, and deals Big and Small in Sales and Partner in Partners. Ada
@@ -107,7 +108,7 @@ class FakeHubSpot {
 
 	#matches(type: string, id: string, properties: Properties, body: JsonObject): boolean {
 		const query = String(body.query ?? "").toLowerCase();
-		if (query && !Object.values(properties).some((value) => String(value ?? "None").toLowerCase().includes(query))) return false;
+		if (query && !Object.values(properties).some((value) => (value ?? "").toLowerCase().includes(query))) return false;
 		for (const group of (body.filterGroups ?? []) as { filters: { propertyName: string; value: string }[] }[]) {
 			for (const filter of group.filters) {
 				if (filter.propertyName.startsWith("associations.")) {
@@ -217,7 +218,7 @@ function connection(): ScenarioConnection {
 	return { id: HUBSPOT, provider: "hubspot", payload: { kind: "oauth2", access_token: TOKEN, refresh_token: null, scopes: [...SCOPES] } };
 }
 
-/** User grants on records ({resource: actions}), as test_hubspot.py's `record` builds them. */
+/** User grants on records ({resource: actions}). */
 function records(grants: { [resource: string]: string[] }): GrantRow[] {
 	return Object.entries(grants).map(([resourceId, actions]) => ({
 		layer: "user",
@@ -231,7 +232,7 @@ function records(grants: { [resource: string]: string[] }): GrantRow[] {
 	}));
 }
 
-/** Starts and claims a run with these grants (test_hubspot.py `start`). */
+/** Starts and claims a run with these grants. */
 function start(hubspot: FakeHubSpot, grants: { [resource: string]: string[] }): Promise<Scenario> {
 	return Scenario.start({ connectors: [hubspotConnector()], connections: [connection()], user: records(grants), fetch: hubspot.fetch });
 }
@@ -248,6 +249,17 @@ function ids(outcome: Extract<ToolCallOutcome, { ok: true }>): Json[] {
 
 function searches(hubspot: FakeHubSpot, type: string): JsonObject[] {
 	return hubspot.requests.filter((request) => request.url.pathname === `${PREFIX}${type}/search`).map((request) => request.body);
+}
+
+/** The code of the OperationError `run` throws. */
+function failure(run: () => unknown): string {
+	try {
+		run();
+	} catch (error) {
+		if (error instanceof OperationError) return error.code;
+		throw error;
+	}
+	return "none";
 }
 
 function errorOf(response: Response, body: string): OperationError | null {
@@ -271,22 +283,64 @@ describe("the client and connecting", () => {
 		for (const error of [missing, conflict]) expect(error?.message).not.toContain(SECRET);
 	});
 
-	test("search offsets stop where HubSpot does", () => {
-		expect(after(null, 10)).toBeNull();
-		expect(after("9990", 10)).toBe("9990");
-		for (const value of ["9991", "010", "-1", "1e3", "abc", "100000"]) {
-			let code: string | null = null;
-			try {
-				after(value, 10);
-			} catch (error) {
-				code = error instanceof OperationError ? error.code : null;
-			}
-			expect(code).toBe("INVALID_CURSOR");
+	test("errors whose body names nothing are left to the status", () => {
+		for (const [status, body] of [
+			[403, '{"category": "FORBIDDEN"}'],
+			[403, '["MISSING_SCOPES"]'],
+			[403, "not json"],
+			[400, '{"category": "MISSING_SCOPES"}'],
+			[404, '{"category": "OBJECT_NOT_FOUND"}'],
+		] as const) {
+			expect(errorOf(new Response(body, { status }), body), body).toBeNull();
 		}
 	});
 
+	test("search offsets stop where HubSpot does", () => {
+		expect(after(null, 10)).toBeNull();
+		expect([after("0", 10), after("9990", 10), after("9950", 50)]).toEqual(["0", "9990", "9950"]);
+		for (const [value, limit] of [["9991", 10], ["9951", 50], ["99999", 1], ["010", 10], ["-1", 10], ["1e3", 10], ["abc", 10], ["100000", 10], ["", 10], ["1 ", 10], ["\uff11", 10]] as const) {
+			expect(failure(() => after(value, limit)), value).toBe("INVALID_CURSOR");
+		}
+	});
+
+	test("the next page's offset, and searches cut at 10,000", () => {
+		const client = new FakeHubSpot().client();
+		const next = (paging: Json, limit = 10) => following(client, SearchPage.parse(paging), limit);
+		expect([next({}), next({ paging: {} }), next({ paging: { next: { after: "10" } } })]).toEqual([
+			[null, false],
+			[null, false],
+			["10", false],
+		]);
+		expect(next({ paging: { next: { after: "9990" } } })).toEqual(["9990", false]);
+		// Past what a search reaches, the results are flagged incomplete instead of offered a cursor.
+		expect(next({ paging: { next: { after: "9995" } } })).toEqual([null, true]);
+		for (const offset of ["abc", "010", "100000"]) expect(failure(() => next({ paging: { next: { after: offset } } })), offset).toBe("PROVIDER_FAILED");
+	});
+
 	test("notes only show their text", () => {
-		expect(noteHtml('<a href="x">hi</a> & bye\r\nnext')).toBe("&lt;a href=&quot;x&quot;&gt;hi&lt;/a&gt; &amp; bye<br>next");
+		for (const [body, html] of [
+			['<a href="x">hi</a> & bye\r\nnext', "&lt;a href=&quot;x&quot;&gt;hi&lt;/a&gt; &amp; bye<br>next"],
+			["it's \"quoted\"", "it&#x27;s &quot;quoted&quot;"],
+			["a\rb\r\n\r\nc\n", "a\rb<br><br>c<br>"],
+			["&amp; already", "&amp;amp; already"],
+			["\u{1f600} <\u00e9>", "\u{1f600} &lt;\u00e9&gt;"],
+		]) {
+			expect(noteHtml(body as string)).toBe(html);
+		}
+	});
+
+	test("records show the properties asked for, long ones cut and flagged", () => {
+		const record = HubRecord.parse({ id: "301", properties: { dealname: "d".repeat(600), description: "\u{1f600}".repeat(1500), amount: null } });
+		const data = recordData(record, ["dealname", "description", "amount", "closedate"]);
+		expect(data).toEqual({
+			id: "301",
+			dealname: "d".repeat(500),
+			dealname_truncated: true,
+			description: "\u{1f600}".repeat(1000),
+			description_truncated: true,
+			amount: null,
+			closedate: null,
+		});
 	});
 
 	test("the connection is the HubSpot account", async () => {
@@ -295,13 +349,16 @@ describe("the client and connecting", () => {
 		expect(await connector.account(hubspot.client())).toEqual({ id: "4242", label: "Acme Corp (4242)" });
 		await expect(connector.account(hubspot.client("other"))).rejects.toMatchObject({ code: "CONNECTION_UNAUTHORIZED" });
 		// Without a name, the account is named by its number.
-		hubspot.hook = (request) => (request.url.pathname.startsWith("/account-info/") ? json(200, { portalId: "007", portalName: "" }) : null);
+		hubspot.hook = (request) => (request.url.pathname.startsWith("/account-info/") ? json(200, { portalId: 7, portalName: "" }) : null);
 		expect(await connector.account(hubspot.client())).toEqual({ id: "7", label: "HubSpot 7" });
+		// A portal id sent as a string does not fit.
+		hubspot.hook = (request) => (request.url.pathname.startsWith("/account-info/") ? json(200, { portalId: "7" }) : null);
+		await expect(connector.account(hubspot.client())).rejects.toMatchObject({ code: "PROVIDER_FAILED" });
 	});
 
-	test("HubSpot's tokens carry their scopes (test_hubspot_tokens_carry_their_scopes)", async () => {
-		// The code exchange itself is the web API's (plan step 5); its parts are here: the request to the
-		// declared token URL with the client in the form, no PKCE verifier, and the scopes HubSpot lists.
+	test("HubSpot's tokens carry their scopes", async () => {
+		// The parts of the code exchange: the request to the declared token URL with the client in the form,
+		// no PKCE verifier, and the scopes HubSpot lists.
 		const oauth = hubspotConnector().auth as OAuth2;
 		expect(oauth.tokenUrl).toBe("https://api.hubspot.com/oauth/2026-09/token");
 		expect(oauth.pkce).toBe(false);
@@ -316,7 +373,7 @@ describe("the client and connecting", () => {
 		expect(form.get("client_id")).toBe("id");
 		expect(form.get("client_secret")).toBe("secret");
 		const issued = { token_type: "bearer", access_token: "a", refresh_token: "r", expires_in: 1800, hub_id: 4242, scopes: [...SCOPES] };
-		const body = tokenBody(JSON.stringify(issued));
+		const body = tokenBody(issued);
 		expect(body).not.toBeNull();
 		const tokens = tokenPayload(body as JsonObject, Date.UTC(2026, 9, 11));
 		expect(tokens.scopes).toEqual([...SCOPES].sort());
@@ -507,7 +564,7 @@ describe("writes", () => {
 		expect(items(edited)).toEqual([{ id: ADA, jobtitle: "Analyst" }]);
 		expect(hubspot.table("contacts").get(ADA)?.jobtitle).toBe("Analyst");
 		expect(await run.code("hubspot_update_contact", { contact_id: "999", phone: "1" })).toBe("POLICY_DENIED");
-		// The port's own: another contact's address, in the operation's words; a refused write is forgotten.
+		// Another contact's address, in the operation's words; a refused write is forgotten.
 		expect(await run.error("hubspot_update_contact", { contact_id: ADA, email: "grace@example.com" })).toEqual({
 			code: "PROVIDER_REJECTED",
 			message: "Another contact already has this email address.",
@@ -585,7 +642,7 @@ describe("writes", () => {
 	});
 });
 
-describe("the port's own", () => {
+describe("the registry, refusals and limits", () => {
 	test("the registry accepts HubSpot's declarations; their fingerprints", async () => {
 		const registry = await Registry.create([hubspotConnector()]);
 		const connector = registry.get("hubspot");
@@ -651,10 +708,14 @@ describe("the port's own", () => {
 		// A search page whose offset HubSpot would not write.
 		hubspot.hook = (request) => (request.url.pathname.endsWith("/search") ? json(200, { results: [], paging: { next: { after: "010" } } }) : null);
 		expect(await run.code("hubspot_search_contacts", {})).toBe("PROVIDER_FAILED");
-		// A lone surrogate escape fails a read anywhere, as Pydantic's JSON parser refuses it, even in a field
-		// the model ignores; a write's answer is read with json.loads, which keeps it.
-		hubspot.hook = (request) => (request.method === "GET" ? new Response(`{"id":"${ADA}","unused":"\\ud800"}`, { status: 200 }) : null);
+		// Bodies are strict UTF-8; a byte order mark is dropped.
+		hubspot.hook = (request) => (request.method === "GET" ? new Response(new Uint8Array([0x7b, 0xff, 0x7d]), { status: 200 }) : null);
 		expect(await run.code("hubspot_get_contact", { contact_id: ADA })).toBe("PROVIDER_FAILED");
+		hubspot.hook = (request) => (request.method === "GET" ? new Response(`\ufeff{"id":"${ADA}","properties":{"email":"bom@example.com"}}`, { status: 200 }) : null);
+		expect(items(await run.ok("hubspot_get_contact", { contact_id: ADA }))[0]?.email).toBe("bom@example.com");
+		// A lone surrogate escape is kept as the JSON says, in a read and in a write's answer.
+		hubspot.hook = (request) => (request.method === "GET" ? new Response(`{"id":"${ADA}","properties":{"email":"\\ud800"}}`, { status: 200 }) : null);
+		expect(items(await run.ok("hubspot_get_contact", { contact_id: ADA }))[0]?.email).toBe("\ud800");
 		const writer = await start(hubspot, { contacts: ["read", "create"] });
 		hubspot.hook = (request) => (request.method === "POST" && request.url.pathname === `${PREFIX}contacts` ? new Response('{"id":"960","properties":{"email":"\\udc00"}}', { status: 200 }) : null);
 		expect(items(await writer.ok("hubspot_create_contact", { email: "lone@example.com" }))[0]?.email).toBe("\udc00");
@@ -718,5 +779,79 @@ describe("the port's own", () => {
 		hubspot.hook = (request) => (request.method === "PATCH" ? new Response("{}", { status: 502 }) : null);
 		expect(await run.code("hubspot_update_deal", { deal_id: BIG, name: "x" })).toBe("WRITE_UNCERTAIN");
 		expect(run.paused()).toBe(true);
+	});
+});
+
+describe("inputs", () => {
+	const connector = hubspotConnector();
+
+	test("arguments are trimmed and defaulted; a null filter is no filter", async () => {
+		const none = { query: null, email: null, company_id: null, deal_id: null, limit: 10, cursor: null };
+		expect(await validated(connector, "search_contacts", null)).toEqual({ ok: none });
+		expect(await validated(connector, "search_contacts", { query: " example.com ", email: null, company_id: " 201 " })).toEqual({
+			ok: { ...none, query: "example.com", company_id: "201" },
+		});
+		expect(await validated(connector, "search_companies", { domain: null })).toEqual({ ok: { query: null, domain: null, contact_id: null, deal_id: null, limit: 10, cursor: null } });
+		expect(await validated(connector, "get_contact", { contact_id: " 101\n" })).toEqual({ ok: { contact_id: "101" } });
+		expect(await validated(connector, "get_contact", { contact_id: "12345678901234567890" })).toEqual({ ok: { contact_id: "12345678901234567890" } });
+		expect(await validated(connector, "create_deal", { pipeline: "default", stage: "qualified", name: "New", amount: " 10 ", company_ids: [" 201 "] })).toEqual({
+			ok: { pipeline: "default", stage: "qualified", name: "New", amount: "10", close_date: null, contact_ids: [], company_ids: ["201"] },
+		});
+		expect(await validated(connector, "add_note", { company_id: "201", body: "a\tb\r\nc" })).toEqual({ ok: { contact_id: null, company_id: "201", deal_id: null, body: "a\tb\r\nc" } });
+		for (const close of ["2024-02-29", "2000-02-29", "0001-01-01", "9999-12-31"]) {
+			expect(await validated(connector, "update_deal", { deal_id: "301", close_date: close }), close).toMatchObject({ ok: { close_date: close } });
+		}
+		for (const amount of ["1500", "01500", "1500.50", "1234567890123.45"]) {
+			expect(await validated(connector, "update_deal", { deal_id: "301", amount }), amount).toMatchObject({ ok: { amount } });
+		}
+	});
+
+	test.each([
+		["search_contacts", { query: "" }, "query"],
+		["search_contacts", { query: "a\tb" }, "query"],
+		["search_contacts", { query: "x".repeat(201) }, "query"],
+		["search_contacts", { email: "a\nb@c.d" }, "email"],
+		["search_contacts", { company_id: "0101" }, "company_id"],
+		["search_contacts", { company_id: 201 }, "company_id"],
+		["search_contacts", { company_id: "\uff11\uff10\uff11" }, "company_id"],
+		["search_contacts", { company_id: "1".repeat(21) }, "company_id"],
+		["search_contacts", { limit: 51 }, "limit"],
+		["search_contacts", { limit: "10" }, "limit"],
+		["search_contacts", { limit: 10.5 }, "limit"],
+		["search_contacts", { cursor: "x".repeat(201) }, "cursor"],
+		["search_contacts", { connection_id: "x" }, "input"],
+		["get_contact", { contact_id: "0" }, "contact_id"],
+		["get_contact", {}, "contact_id"],
+		["search_companies", { domain: "a\u0000b.example" }, "domain"],
+		["list_pipelines", { x: 1 }, "input"],
+		["search_deals", { pipeline: "a b" }, "pipeline"],
+		["search_deals", { stage: "" }, "stage"],
+		["get_deal", { deal_id: "abc" }, "deal_id"],
+		["create_contact", {}, "email"],
+		["create_contact", { email: "x", phone: "1".repeat(51) }, "phone"],
+		["create_contact", { email: "x", contact_id: "101" }, "input"],
+		["update_contact", { contact_id: "101" }, "input"],
+		["update_contact", { contact_id: "101", email: null }, "input"],
+		["update_contact", { contact_id: "101", phone: "  " }, "phone"],
+		["create_deal", { pipeline: "default", stage: "s", name: "N", amount: "1500.505" }, "amount"],
+		["create_deal", { pipeline: "default", stage: "s", name: "N", amount: "-1" }, "amount"],
+		["create_deal", { pipeline: "default", stage: "s", name: "N", amount: "12345678901234" }, "amount"],
+		["create_deal", { pipeline: "default", stage: "s", name: "N", amount: 10 }, "amount"],
+		["create_deal", { pipeline: "default", stage: "s", name: "N", close_date: "2026-02-30" }, "close_date"],
+		["create_deal", { pipeline: "default", stage: "s", name: "N", close_date: "2100-02-29" }, "close_date"],
+		["create_deal", { pipeline: "default", stage: "s", name: "N", close_date: "2026-W01" }, "close_date"],
+		["create_deal", { pipeline: "default", stage: "s", name: "N", close_date: "2026-12-31T00:00" }, "close_date"],
+		["create_deal", { pipeline: "default", stage: "s", name: "N", contact_ids: ["0"] }, "contact_ids.0"],
+		["create_deal", { pipeline: "default", stage: "s", name: "N", contact_ids: Array.from({ length: 11 }, (_, n) => String(n + 1)) }, "contact_ids"],
+		["create_deal", { pipeline: "default", stage: "s", name: "N", contact_ids: null }, "contact_ids"],
+		["update_deal", { deal_id: "301", stage: null }, "input"],
+		["update_deal", { deal_id: "301", pipeline: "200" }, "input"],
+		["add_note", { contact_id: "101", deal_id: "301", body: "hi" }, "input"],
+		["add_note", { company_id: "201", body: "a\u0000b" }, "body"],
+		["add_note", { deal_id: "301", body: "x".repeat(5001) }, "body"],
+		["add_note", { deal_id: "301", body: "  \t " }, "body"],
+	] as [string, JsonObject, string][])("%s refuses %j at %s", async (name, args, field) => {
+		const result = await validated(connector, name, args);
+		expect(result).toMatchObject({ refused: expect.stringMatching(new RegExp(`^Invalid arguments\\. ${field.replace(".", "\\.")}: `)) });
 	});
 });

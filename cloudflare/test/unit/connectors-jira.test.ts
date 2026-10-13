@@ -1,21 +1,18 @@
-// backend/tests/test_jira.py, case by case: the Jira connector against an in-memory Atlassian API behind an
-// injected `fetch`, and runs through the executor. The ADF cases are in connectors-atlassian.test.ts; the
-// pure helpers are also checked against vectors from today's Python.
+// The Jira connector against an in-memory Atlassian API behind an injected `fetch`, and runs through the
+// executor. The ADF cases are in connectors-atlassian.test.ts.
 
-import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, test } from "vitest";
-import type { GrantRow } from "../../src/contracts/policy.ts";
 import { MAX_SITES } from "../../src/connectors/atlassian/index.ts";
 import { JiraClient, nextCursor, pageParams } from "../../src/connectors/jira/client.ts";
 import { discoveryCursor, jiraConnector } from "../../src/connectors/jira/connector.ts";
 import { MAX_PROJECT_PAGES, searchWords } from "../../src/connectors/jira/reads.ts";
 import { names } from "../../src/connectors/jira/writes.ts";
-import { OperationError } from "../../src/gateway/connector.ts";
+import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
-import { changedOnPurpose } from "./changed.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
-import { Scenario, USER, jsonResponse } from "./executor-fakes.ts";
+import { ceilingRow, startRun } from "./connector-runs.ts";
+import { type Scenario, jsonResponse } from "./executor-fakes.ts";
 
 const SECRET = "SECRET merger";
 const ACCOUNT_ID = "5b10ac8d82e05b22cc7d4ef5";
@@ -28,27 +25,6 @@ const OPS = `${BETA}/10000`;
 const SCOPES = ["offline_access", "read:me", "read:jira-work", "write:jira-work"];
 /** Jira's page tokens are opaque; some are not URL-safe. */
 const TOKEN = "eyJ+a/b=";
-const CONNECTION = "0199a000-0000-7000-8000-0000000000a1";
-
-type Outcome = { value?: Json; error?: string; message?: string };
-const VECTORS = parseJson(readFileSync(new URL("../fixtures/connectors/atlassian/vectors.json", import.meta.url).pathname, "utf8")) as unknown as {
-	jira: {
-		page_params: ({ cursor: string | null } & Outcome)[];
-		next_cursor: ({ body: JsonObject } & Outcome)[];
-		discover_cursor: ({ cursor: string | null } & Outcome)[];
-		search_words: ({ text: string } & Outcome)[];
-		names: { values: (string | null)[]; value: string }[];
-	};
-};
-
-function outcome(run: () => Json): Outcome {
-	try {
-		return { value: run() };
-	} catch (error) {
-		if (error instanceof OperationError) return { error: error.code, message: error.message };
-		throw error;
-	}
-}
 
 function doc(...content: Json[]): JsonObject {
 	return { type: "doc", version: 1, content };
@@ -112,7 +88,7 @@ interface FakeSite {
 const fakes: FakeJira[] = [];
 
 /**
- * Atlassian's API for Jira (test_jira.py `FakeJira`). Acme (acme.atlassian.net) has projects ENG and FIN;
+ * Atlassian's API for Jira. Acme (acme.atlassian.net) has projects ENG and FIN;
  * Beta (beta.atlassian.net) has OPS, whose id repeats ENG's. ENG-1 has a sub-task ENG-2 and blocks FIN-1,
  * whose former key was ENG-9.
  */
@@ -304,27 +280,13 @@ afterEach(() => {
 
 /** Starts and claims a run with the user's Jira connection, holding `grants` ({site or project: actions}). */
 function start(jira: FakeJira, grants: { [id: string]: string[] }, options: { scopes?: string[]; ceiling?: GrantRow[] } = {}): Promise<Scenario> {
-	return Scenario.start({
-		connectors: [jiraConnector()],
-		connections: [{ id: CONNECTION, provider: "jira", payload: { kind: "oauth2", access_token: "t", refresh_token: null, scopes: options.scopes ?? SCOPES } }],
-		user: Object.entries(grants).map(([resourceId, actions]) => ({
-			layer: "user",
-			subject: USER,
-			connectionId: CONNECTION,
-			kind: "project",
-			resourceId,
-			resourceName: "",
-			actions: [...actions].sort(),
-			effect: "allow",
-		})),
-		ceiling: options.ceiling ?? [],
-		fetch: jira.fetch,
-	});
+	const rows = Object.fromEntries(Object.entries(grants).map(([id, actions]) => [`project:${id}`, actions]));
+	return startRun(jiraConnector(), jira.fetch, { scopes: options.scopes ?? SCOPES, grants: rows, ceiling: options.ceiling ?? [] });
 }
 
-/** A deny in the workspace ceiling (connector_runs.py `ceiling`). */
+/** A deny in the workspace ceiling. */
 function ceilingDeny(resourceId: string, actions: string[] = ["read"]): GrantRow {
-	return { layer: "ceiling", subject: null, connectionId: CONNECTION, kind: "project", resourceId, resourceName: "", actions, effect: "deny" };
+	return ceilingRow("project", resourceId, "deny", actions);
 }
 
 async function items(run: Scenario, tool: string, args: Json): Promise<JsonObject[]> {
@@ -381,7 +343,7 @@ describe("connecting and discovery", () => {
 
 	test("too many sites are refused", async () => {
 		const jira = new FakeJira();
-		// Python lowers MAX_SITES to 1; here the account reaches one more site than the limit.
+		// The account reaches one more site than the limit.
 		const site = (n: number) => ({ id: `${String(n).padStart(8, "0")}-0000-4000-8000-000000000000`, name: `S${n}`, url: `https://s${n}.atlassian.net`, scopes: SCOPES });
 		jira.resources = Array.from({ length: MAX_SITES }, (_, n) => site(n));
 		expect(await jira.client().sites()).toHaveLength(MAX_SITES);
@@ -393,17 +355,34 @@ describe("connecting and discovery", () => {
 		expect(pageParams(`t:${TOKEN}`)).toEqual({ nextPageToken: TOKEN });
 		for (const cursor of ["x:abc", "t:", "t:a b", `t:${"a".repeat(991)}`, "t:é"]) expect(() => pageParams(cursor), cursor).toThrow(expect.objectContaining({ code: "INVALID_CURSOR" }));
 		expect(nextCursor({ nextPageToken: "abc", isLast: true })).toBeNull();
-		expect(nextCursor({})).toBeNull();
-		for (const token of ["a b", 5, "a".repeat(991)]) expect(() => nextCursor({ nextPageToken: token }), String(token)).toThrow(expect.objectContaining({ code: "PROVIDER_LIMIT" }));
+		expect(nextCursor({ nextPageToken: null, isLast: false })).toBeNull();
+		expect(nextCursor({ nextPageToken: "abc", isLast: false })).toBe("t:abc");
+		for (const token of ["a b", "a".repeat(991)]) expect(() => nextCursor({ nextPageToken: token, isLast: false }), token).toThrow(expect.objectContaining({ code: "PROVIDER_LIMIT" }));
 	});
 
-	test("the pure helpers answer as Python's", () => {
-		const vectors = VECTORS.jira;
-		for (const { cursor, ...expected } of vectors.page_params) if (!changedOnPurpose(cursor)) expect(outcome(() => pageParams(cursor)), String(cursor)).toEqual(expected);
-		for (const { body, ...expected } of vectors.next_cursor) expect(outcome(() => nextCursor(body)), JSON.stringify(body)).toEqual(expected);
-		for (const { cursor, ...expected } of vectors.discover_cursor) if (!changedOnPurpose(cursor)) expect(outcome(() => discoveryCursor(cursor, [null, null])), String(cursor)).toEqual(expected);
-		for (const { text: value, ...expected } of vectors.search_words) expect(outcome(() => searchWords(value)), value).toEqual(expected);
-		for (const { values, value } of vectors.names) expect(names(values)).toBe(value);
+	test("discovery cursors are a site index and an offset", () => {
+		const sites = [null, null];
+		expect([null, "0:0", "1:50", "00:12", "01:5"].map((cursor) => discoveryCursor(cursor, sites))).toEqual([[0, 0], [0, 0], [1, 50], [0, 12], [1, 5]]);
+		for (const cursor of ["2:0", "x", "0:-1", "0:1234567", "0:", ":0", "0:0\n", "١:٢", "0:１"]) {
+			expect(() => discoveryCursor(cursor, sites), cursor).toThrow(expect.objectContaining({ code: "INVALID_CURSOR" }));
+		}
+	});
+
+	test("search words are letters and digits only, at most eight", () => {
+		expect(searchWords('login "OR project = FIN')).toBe("login OR project FIN");
+		expect(searchWords("https://acme.atlassian.net/browse/FIN-1")).toBe("https acme atlassian net browse FIN 1");
+		expect(searchWords("a b c d e f g h i j")).toBe("a b c d e f g h");
+		expect(searchWords("é_x ٣ Ⅷ ²")).toBe("é_x ٣ Ⅷ ²");
+		for (const value of ["", " ", "?!", "\\\""]) expect(() => searchWords(value), value).toThrow(expect.objectContaining({ code: "INVALID_ARGUMENTS", message: "text must contain letters or digits." }));
+	});
+
+	test("names listed in a message: distinct, sorted, at most 30", () => {
+		expect(names([])).toBe("none");
+		expect(names([null, ""])).toBe("none");
+		expect(names(["b", "a", "b"])).toBe("a, b");
+		const many = names(Array.from({ length: 40 }, (_, n) => `t${String(n).padStart(2, "0")}`));
+		expect(many.split(", ")).toHaveLength(31);
+		expect(many.endsWith("t29, …")).toBe(true);
 	});
 
 	test("scopes follow the allowed actions", () => {
@@ -500,7 +479,7 @@ describe("reading", () => {
 		expect([found.related_elsewhere, found.related_not_shown]).toEqual([1, 0]);
 		expect([found.attachments, found.link]).toEqual([1, "https://acme.atlassian.net/browse/ENG-1"]);
 		expect(jira.reads("/comment")[0]?.params.maxResults).toBe("30");
-		// The whole record, as Python returns it.
+		// The whole record.
 		expect(found).toEqual({
 			id: "20001",
 			key: "ENG-1",
@@ -617,7 +596,7 @@ describe("reading", () => {
 
 	test("project listings stop at a cap", async () => {
 		const jira = new FakeJira();
-		// Python lowers MAX_PROJECT_PAGES to 1; here Acme has more projects than that many pages of one.
+		// Acme has more projects than MAX_PROJECT_PAGES pages of one.
 		const acme = jira.sites[ACME] as FakeSite;
 		for (let n = 0; n < MAX_PROJECT_PAGES; n++) acme.projects.push(project(String(11000 + n), `P${n}`, `Project ${n}`));
 		jira.pageSize = 1;
@@ -740,6 +719,32 @@ describe("writing", () => {
 		expect(jira.writes).toEqual([]);
 	});
 
+	test("a write Jira refuses or fails is reported, with what is known of its outcome", async () => {
+		const jira = new FakeJira();
+		jira.oneSite();
+		const run = await start(jira, { [ENG]: ["read", "comment"] });
+		const answers: [number, JsonObject][] = [
+			[400, { errorMessages: [SECRET] }],
+			[403, { errorMessages: [SECRET] }],
+			[429, {}],
+			[500, { errorMessages: [SECRET] }],
+		];
+		const seen: unknown[] = [];
+		for (const [status, body] of answers) {
+			jira.hook = (method, path) => (method === "POST" && path.endsWith("/comment") ? jsonResponse(status, body) : null);
+			const error = await run.error("jira_add_comment", { issue: "ENG-1", text: `try ${status}` });
+			expect(error.message).not.toContain(SECRET);
+			seen.push([status, error.code, run.writes().at(-1)?.status]);
+		}
+		// Refused writes leave no entry; a failed one may have landed, so it stays in the ledger as uncertain.
+		expect(seen).toEqual([
+			[400, "PROVIDER_REJECTED", undefined],
+			[403, "PROVIDER_FORBIDDEN", undefined],
+			[429, "PROVIDER_RATE_LIMITED", undefined],
+			[500, "WRITE_UNCERTAIN", "uncertain"],
+		]);
+	});
+
 	test("issue types page by what Jira returned", async () => {
 		const jira = new FakeJira();
 		jira.types = Array.from({ length: 7 }, (_, n) => ({ id: String(n + 1), name: `Type ${n + 1}`, subtask: false }));
@@ -747,5 +752,11 @@ describe("writing", () => {
 		const types = await jira.client().issueTypes(ACME, "10000");
 		expect(types.map((type) => type.id)).toEqual(["1", "2", "3", "4", "5", "6", "7"]);
 		expect(jira.reads("/issuetypes").map((request) => request.params.startAt)).toEqual(["0", "3", "6"]);
+	});
+
+	test("issue types under another name are an unexpected response", async () => {
+		const jira = new FakeJira();
+		jira.hook = (_method, path) => (path.endsWith("/issuetypes") ? jsonResponse(200, { values: [], total: 0 }) : null);
+		await expect(jira.client().issueTypes(ACME, "10000")).rejects.toMatchObject({ code: "PROVIDER_FAILED" });
 	});
 });

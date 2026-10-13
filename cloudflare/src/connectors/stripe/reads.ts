@@ -1,8 +1,16 @@
 // Stripe's read operations: customers, and the payments, invoices and subscriptions billed to them.
 
 import { z } from "zod";
-import type { Binding, Prepared, ProviderOutput, Requirement, ScopedRecord } from "../../contracts/connectors.ts";
-import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
+import {
+	type Binding,
+	OperationError,
+	type Prepared,
+	type ProviderOutput,
+	type Requirement,
+	type ScopedRecord,
+	defineOperation,
+	denied,
+} from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
 import { SINGLE_LINE, isSingleLine, truncate } from "../../lib/text.ts";
 import { CUSTOMER_ID, type Charge, type Customer, type Invoice, type Page, type StripeClient, type Subscription, nextCursor } from "./client.ts";
@@ -21,7 +29,7 @@ function amountOf(minor: number | bigint | null, currency: string | null): strin
 	return money.major(minor, currency.toLowerCase());
 }
 
-/** reads.py `_text`: a long text cut, and flagged as `<name>_truncated`. */
+/** A long text cut, and flagged as `<name>_truncated`. */
 function textInto(record: Fields, name: string, value: string | null): void {
 	const [kept, cut] = truncate(value, MAX_TEXT);
 	record[name] = kept;
@@ -140,7 +148,7 @@ const ListCustomers = z.strictObject({
 		.describe("Only customers with exactly this email address. Only one page is returned."),
 	limit: limit(),
 	cursor: pageCursor(),
-}).meta({ title: "ListCustomers" });
+});
 
 export const LIST_CUSTOMERS = defineOperation<z.output<typeof ListCustomers>>({
 	name: "list_customers",
@@ -166,7 +174,7 @@ export const LIST_CUSTOMERS = defineOperation<z.output<typeof ListCustomers>>({
 	},
 });
 
-const GetCustomer = z.strictObject({ customer: customerId() }).meta({ title: "GetCustomer" });
+const GetCustomer = z.strictObject({ customer: customerId() });
 
 export const GET_CUSTOMER = defineOperation<z.output<typeof GetCustomer>>({
 	name: "get_customer",
@@ -198,7 +206,7 @@ const ListPayments = z.strictObject({
 	customer: customerId().nullable().default(null).describe("Only this customer's payments."),
 	limit: limit(),
 	cursor: pageCursor(),
-}).meta({ title: "ListPayments" });
+});
 
 export const LIST_PAYMENTS = defineOperation<z.output<typeof ListPayments>>({
 	name: "list_payments",
@@ -224,7 +232,7 @@ const ListInvoices = z.strictObject({
 	status: z.enum(["draft", "open", "paid", "uncollectible", "void"]).nullable().default(null),
 	limit: limit(),
 	cursor: pageCursor(),
-}).meta({ title: "ListInvoices" });
+});
 
 export const LIST_INVOICES = defineOperation<z.output<typeof ListInvoices>>({
 	name: "list_invoices",
@@ -254,7 +262,7 @@ const ListSubscriptions = z.strictObject({
 		.describe("Leave out for every subscription that is not canceled."),
 	limit: limit(),
 	cursor: pageCursor(),
-}).meta({ title: "ListSubscriptions" });
+});
 
 export const LIST_SUBSCRIPTIONS = defineOperation<z.output<typeof ListSubscriptions>>({
 	name: "list_subscriptions",

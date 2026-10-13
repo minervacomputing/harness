@@ -2,9 +2,8 @@
 // calls name them, and how records show text. How they show money is in decimal.ts.
 
 import { z } from "zod";
-import type { Binding } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, denied } from "../../gateway/connector.ts";
+import { type Binding, OperationError, denied } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import { truncate } from "../../lib/text.ts";
 import { UUID, type Connection, type XeroClient, uuid } from "./client.ts";
 
@@ -20,7 +19,7 @@ function isId(value: string): boolean {
 	return UUID.test(value.toLowerCase());
 }
 
-/** organisations.py's `_uuid` on a required id: checked, then kept in lower case. */
+/** A required id: checked, then kept in lower case. */
 function requiredId(description: string) {
 	return z.string().trim().min(36).max(36)
 		.describe(description)
@@ -29,8 +28,8 @@ function requiredId(description: string) {
 }
 
 /**
- * The same, `| None = None`. Defaulted before the transform, so the JSON Schema still shows the default: zod
- * leaves out the default of a field whose transform comes first.
+ * An optional id, null by default. Defaulted before the transform, so the JSON Schema still shows the default:
+ * zod leaves out the default of a field whose transform comes first.
  */
 function optionalId(description: string) {
 	return z.string().trim().min(36).max(36)
@@ -41,13 +40,9 @@ function optionalId(description: string) {
 		.transform((value) => (value === null ? null : value.toLowerCase()));
 }
 
-/** `OrganisationId | None = None`. */
 export const organisationId = () => optionalId(ORGANISATION_NOTE);
-/** `ContactId`. */
 export const contactId = () => requiredId(CONTACT_NOTE);
-/** `ContactId | None = None`. */
 export const optionalContactId = () => optionalId(CONTACT_NOTE);
-/** `InvoiceId`. */
 export const invoiceId = () => requiredId(INVOICE_NOTE);
 
 /** A text as records show it: whitespace collapsed, cut to `limit` characters, and null when empty. */

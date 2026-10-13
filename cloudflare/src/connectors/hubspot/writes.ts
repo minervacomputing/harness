@@ -7,9 +7,16 @@
 // contact, from the domain of the contact's email address, when the account is set up that way.
 
 import { z } from "zod";
-import type { Binding, Prepared, ProviderOutput, Requirement } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
+import {
+	type Binding,
+	OperationError,
+	type Prepared,
+	type ProviderOutput,
+	type Requirement,
+	defineOperation,
+	denied,
+} from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import { DATE_MESSAGE, isDate } from "../../lib/dates.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
 import { PLAIN_TEXT, isPlainText } from "../../lib/text.ts";
@@ -187,11 +194,6 @@ const CreateDeal = z.strictObject({
 	company_ids: z.array(CompanyId()).max(MAX_ASSOCIATIONS).default([]).describe("Companies to associate with the deal."),
 });
 
-/** `list(dict.fromkeys(ids))`: the ids once each, in their first place. */
-function unique(ids: readonly string[]): string[] {
-	return [...new Set(ids)];
-}
-
 export const CREATE_DEAL = defineOperation<z.output<typeof CreateDeal>>({
 	name: "create_deal",
 	title: "Create a deal",
@@ -208,8 +210,8 @@ export const CREATE_DEAL = defineOperation<z.output<typeof CreateDeal>>({
 	async prepare(binding, data): Promise<Prepared> {
 		const client = clientOf(binding);
 		const target = pipeline(binding, data.pipeline);
-		const contactIds = unique(data.contact_ids);
-		const companyIds = unique(data.company_ids);
+		const contactIds = [...new Set(data.contact_ids)];
+		const companyIds = [...new Set(data.company_ids)];
 		const requirements: Requirement[] = [
 			{ need: target, action: "read" },
 			{ need: target, action: "create" },
@@ -302,14 +304,14 @@ const AddNote = z
 		message: "give exactly one of contact_id, company_id and deal_id",
 	});
 
-/** Python's `html.escape(text)`: `&`, `<`, `>`, `"` and `'` as character references. */
-export function htmlEscape(value: string): string {
+/** `&`, `<`, `>`, `"` and `'` as character references. */
+function escape(value: string): string {
 	return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#x27;");
 }
 
 /** The note as HTML that only shows its text: escaped, with its line breaks kept. */
 export function noteHtml(body: string): string {
-	return htmlEscape(body.replaceAll("\r\n", "\n")).replaceAll("\n", "<br>");
+	return escape(body.replaceAll("\r\n", "\n")).replaceAll("\n", "<br>");
 }
 
 export const ADD_NOTE = defineOperation<z.output<typeof AddNote>>({

@@ -6,13 +6,14 @@
 
 import { env } from "cloudflare:workers";
 import { describe, expect, test } from "vitest";
-import type { Json } from "../../src/contracts/common.ts";
-import type { ToolCallOutcome, ToolDeclaration } from "../../src/contracts/executor.ts";
-import type { GuestOutcome, ScriptFence, ScriptRequest } from "../../src/contracts/scripts.ts";
 import { ToolQueue } from "../../src/conversation/queue.ts";
+import type { ToolCallOutcome, ToolDeclaration } from "../../src/gateway/executor.ts";
+import type { Json } from "../../src/lib/json.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { RESET_REASON } from "../../src/scripts/limits.ts";
+import type { GuestOutcome } from "../../src/scripts/outcome.ts";
 import { executeScript, isReset, ScriptLane, type ScriptsClient, toolList } from "../../src/scripts/run.ts";
+import type { ScriptFence, ScriptRequest } from "../../src/scripts/scripts.ts";
 import { ScriptCalls, ScriptSession } from "../../src/scripts/session.ts";
 import { targetsOf } from "../../src/scripts/target.ts";
 

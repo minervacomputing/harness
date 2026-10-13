@@ -1,9 +1,8 @@
 // Linear's write operations: creating and updating issues, and commenting.
 
 import { z } from "zod";
-import type { Prepared, ProviderOutput } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, defineOperation } from "../../gateway/connector.ts";
+import { OperationError, type Prepared, type ProviderOutput, defineOperation } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
 import { SINGLE_LINE, isSingleLine } from "../../lib/text.ts";
 import { type LinearClient, MAX_ISSUE_DEPTH, type ParentIssue, type State, type Written } from "./client.ts";
@@ -112,15 +111,10 @@ async function stateId(client: LinearClient, teamId: string, name: string): Prom
 	return state as State & { id: string };
 }
 
-/** Python's f-string of an optional name: "None" for a missing one. */
-function shown(name: string | null): string {
-	return name === null ? "None" : name;
-}
-
 async function labelIds(client: LinearClient, teamId: string, names: string[]): Promise<string[]> {
 	const labels = (await client.labels(teamId))[0].filter((label) => !label.isGroup);
 	const picked = names.map((name) =>
-		pick(labels, name, (label) => [label.name, label.parent ? `${shown(label.parent.name)}/${label.name}` : null], "label"),
+		pick(labels, name, (label) => [label.name, label.parent?.name ? `${label.parent.name}/${label.name}` : null], "label"),
 	);
 	return [...new Set(picked.map((label) => label.id))];
 }
@@ -156,7 +150,7 @@ const CreateIssue = z.strictObject({
 	labels: LabelNames().nullable().default(null),
 	assignee: Assignee().nullable().default(null),
 	due_date: DueDate(),
-}).meta({ title: "CreateIssue" });
+});
 
 export const CREATE_ISSUE = defineOperation<z.output<typeof CreateIssue>>({
 	name: "create_issue",
@@ -205,7 +199,7 @@ const AddComment = z.strictObject({
 		.default(null)
 		.refine((value) => value === null || UUID.test(value.toLowerCase()), NOT_AN_ID)
 		.transform((value) => (value === null ? null : value.toLowerCase())),
-}).meta({ title: "AddComment" });
+});
 
 export const ADD_COMMENT = defineOperation<z.output<typeof AddComment>>({
 	name: "add_comment",
@@ -251,25 +245,23 @@ export const ADD_COMMENT = defineOperation<z.output<typeof AddComment>>({
 	},
 });
 
-const UpdateIssue = z
-	.strictObject({
-		issue: IssueName(),
-		title: Title().nullable().default(null),
-		description: Markdown(MAX_DESCRIPTION, "Markdown; replaces the whole description.").nullable().default(null),
-		state: ShortName().nullable().default(null),
-		priority: Priority().nullable().default(null),
-		add_labels: LabelNames().nullable().default(null),
-		remove_labels: LabelNames().nullable().default(null),
-		assignee: Assignee().nullable().default(null),
-		unassign: z.boolean().default(false),
-		due_date: DueDate(),
-		clear_due_date: z.boolean().default(false),
-	})
-	.superRefine((value, ctx) => {
-		const problem = oneChange(value);
-		if (problem !== null) ctx.addIssue({ code: "custom", message: problem });
-	})
-	.meta({ title: "UpdateIssue" });
+const UpdateIssue = z.strictObject({
+	issue: IssueName(),
+	title: Title().nullable().default(null),
+	description: Markdown(MAX_DESCRIPTION, "Markdown; replaces the whole description.").nullable().default(null),
+	state: ShortName().nullable().default(null),
+	priority: Priority().nullable().default(null),
+	add_labels: LabelNames().nullable().default(null),
+	remove_labels: LabelNames().nullable().default(null),
+	assignee: Assignee().nullable().default(null),
+	unassign: z.boolean().default(false),
+	due_date: DueDate(),
+	clear_due_date: z.boolean().default(false),
+})
+.superRefine((value, ctx) => {
+	const problem = oneChange(value);
+	if (problem !== null) ctx.addIssue({ code: "custom", message: problem });
+});
 
 type UpdateFields = {
 	title: string | null;

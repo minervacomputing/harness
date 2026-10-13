@@ -4,62 +4,62 @@
 // the requested zone (see the connector for their dates). Creating an event is judged by status: Graph
 // answers 201 with the event.
 
-import type { ProviderIo } from "../../contracts/connectors.ts";
+import { z } from "zod";
 import type { Json } from "../../lib/json.ts";
-import { API_URL, Graph, IMMUTABLE_IDS, pageParam, segment } from "../microsoft/index.ts";
-import { Invalid, bool, list, model, nullable, optional, required, str } from "../microsoft/model.ts";
+import { API_URL, Graph, IMMUTABLE_IDS, pageParam } from "../microsoft/index.ts";
+import { type ProviderIo, segment } from "../../gateway/http.ts";
 
 export const EVENT_READ = `${IMMUTABLE_IDS}, outlook.timezone="UTC", outlook.body-content-type="text"`;
 export const CALENDAR_FIELDS = "id,name,isDefaultCalendar,canEdit,owner";
 export const EVENT_FIELDS =
 	"id,subject,body,start,end,isAllDay,isCancelled,showAs,sensitivity,location,organizer,attendees,onlineMeeting,webLink,type,seriesMasterId,categories";
 
-const EmailAddress = model({ name: optional(nullable(str), null), address: optional(nullable(str), null) });
-const Recipient = model({ email_address: optional(nullable(EmailAddress), null) });
+const EmailAddress = z.object({ name: z.string().nullable().default(null), address: z.string().nullable().default(null) });
+const Recipient = z.object({ emailAddress: EmailAddress.nullable().default(null) });
 
-export const Calendar = model({
-	id: required(str),
-	name: optional(str, ""),
-	is_default_calendar: optional(nullable(bool), null),
-	can_edit: optional(nullable(bool), null),
-	owner: optional(nullable(EmailAddress), null),
+export const Calendar = z.object({
+	id: z.string(),
+	name: z.string().default(""),
+	isDefaultCalendar: z.boolean().nullable().default(null),
+	canEdit: z.boolean().nullable().default(null),
+	owner: EmailAddress.nullable().default(null),
 });
-export type Calendar = ReturnType<typeof Calendar>;
+export type Calendar = z.output<typeof Calendar>;
 
-const Body = model({ content_type: optional(nullable(str), null), content: optional(str, "") });
+const Body = z.object({ contentType: z.string().nullable().default(null), content: z.string().default("") });
 
-export const Time = model({ date_time: required(str), time_zone: optional(nullable(str), null) });
-export type Time = ReturnType<typeof Time>;
+export const Time = z.object({ dateTime: z.string(), timeZone: z.string().nullable().default(null) });
+export type Time = z.output<typeof Time>;
 
-const Location = model({ display_name: optional(nullable(str), null) });
-const Response = model({ response: optional(nullable(str), null) });
-const Attendee = model({
-	email_address: optional(nullable(EmailAddress), null),
-	type: optional(nullable(str), null),
-	status: optional(nullable(Response), null),
+const Location = z.object({ displayName: z.string().nullable().default(null) });
+const Response = z.object({ response: z.string().nullable().default(null) });
+const Attendee = z.object({
+	emailAddress: EmailAddress.nullable().default(null),
+	type: z.string().nullable().default(null),
+	status: Response.nullable().default(null),
 });
-const OnlineMeeting = model({ join_url: optional(nullable(str), null) });
+const OnlineMeeting = z.object({ joinUrl: z.string().nullable().default(null) });
 
-export const Event = model({
-	id: required(str),
-	subject: optional(nullable(str), null),
-	body: optional(nullable(Body), null),
-	start: optional(nullable(Time), null),
-	end: optional(nullable(Time), null),
-	is_all_day: optional(nullable(bool), null),
-	is_cancelled: optional(nullable(bool), null),
-	show_as: optional(nullable(str), null),
-	sensitivity: optional(nullable(str), null),
-	location: optional(nullable(Location), null),
-	organizer: optional(nullable(Recipient), null),
-	attendees: optional(list(Attendee), []),
-	online_meeting: optional(nullable(OnlineMeeting), null),
-	web_link: optional(nullable(str), null),
-	type: optional(nullable(str), null),
-	series_master_id: optional(nullable(str), null),
-	categories: optional(list(str), []),
+export const Event = z.object({
+	id: z.string(),
+	subject: z.string().nullable().default(null),
+	body: Body.nullable().default(null),
+	start: Time.nullable().default(null),
+	end: Time.nullable().default(null),
+	isAllDay: z.boolean().nullable().default(null),
+	isCancelled: z.boolean().nullable().default(null),
+	showAs: z.string().nullable().default(null),
+	sensitivity: z.string().nullable().default(null),
+	location: Location.nullable().default(null),
+	organizer: Recipient.nullable().default(null),
+	attendees: z.array(Attendee).default([]),
+	onlineMeeting: OnlineMeeting.nullable().default(null),
+	webLink: z.string().nullable().default(null),
+	type: z.string().nullable().default(null),
+	seriesMasterId: z.string().nullable().default(null),
+	categories: z.array(z.string()).default([]),
 });
-export type Event = ReturnType<typeof Event>;
+export type Event = z.output<typeof Event>;
 
 /** Thin client for the parts of Microsoft Graph Outlook Calendar uses. Responses are validated. */
 export class CalendarClient extends Graph {
@@ -99,11 +99,6 @@ export class CalendarClient extends Graph {
 			body: JSON.stringify(event),
 			headers: { "Content-Type": "application/json; charset=utf-8", Prefer: EVENT_READ },
 		});
-		try {
-			return Event(body);
-		} catch (error) {
-			if (error instanceof Invalid) throw this.unexpected(error);
-			throw error;
-		}
+		return this.parse(Event, body);
 	}
 }

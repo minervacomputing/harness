@@ -1,6 +1,5 @@
-// backend/tests/test_outlook_calendar.py, case by case: the Outlook Calendar connector against an in-memory
-// Microsoft Graph behind an injected `fetch`, and runs through the executor. Tool inputs, times and page
-// state are compared with vectors from today's Python (test/fixtures/connectors/outlook_calendar/generate.py).
+// The Outlook Calendar connector against an in-memory Microsoft Graph behind an injected `fetch`, and runs
+// through the executor.
 
 import { describe, expect, test } from "vitest";
 import { Time } from "../../src/connectors/outlook_calendar/client.ts";
@@ -13,14 +12,12 @@ import {
 	windowOf,
 } from "../../src/connectors/outlook_calendar/connector.ts";
 import { ZONES } from "../../src/connectors/outlook_calendar/zones.ts";
-import { TextError } from "../../src/lib/text.ts";
-import { OperationError } from "../../src/gateway/connector.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
-import { validateInput } from "../../src/gateway/validation.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
-import { ceilingRow, jsonResponse, operation, received, startRun, vectors, type Received } from "../fixtures/connectors/microsoft/runs.ts";
-import { changedOnPurpose } from "./changed.ts";
+import { type Received, received } from "../fixtures/connectors/microsoft/fake.ts";
+import { ceilingRow, startRun, validated } from "./connector-runs.ts";
+import { jsonResponse } from "./executor-fakes.ts";
 
 type JsonObject = { [key: string]: Json };
 
@@ -61,7 +58,7 @@ function timed(id: string, start: string, end: string, fields: JsonObject = {}):
 type Hook = (method: string, path: string, params: { [name: string]: string }) => Response | null;
 
 /**
- * Microsoft Graph's calendar API (test_outlook_calendar.py `FakeGraph`). Calendars: the default one, Work, a
+ * Microsoft Graph's calendar API. Calendars: the default one, Work, a
  * calendar Grace shared, and Private. Graph also finds Work under an older id, and answers with the id it
  * lists.
  */
@@ -182,19 +179,8 @@ async function ids(run: Run, tool: string, args: Json): Promise<string[]> {
 	return (await items(run, tool, args)).map((item) => item.id as string);
 }
 
-/** generate.py's `outcome`: what a call gives, or the error it raises. */
-function outcome(call: () => unknown): { [key: string]: unknown } {
-	try {
-		return { value: call() };
-	} catch (error) {
-		if (error instanceof OperationError) return { error: error.code };
-		if (error instanceof TextError) return { error: "ValueError", message: error.message };
-		throw error;
-	}
-}
-
 describe("connecting and discovery", () => {
-	test("test_account_discovery_and_names", async () => {
+	test("account discovery and names", async () => {
 		const graph = new FakeGraph();
 		const connector = outlookCalendarConnector();
 		const account = await connector.account(graph.client());
@@ -212,7 +198,7 @@ describe("connecting and discovery", () => {
 		expect(described).toEqual({ [WORK]: "Work" });
 	});
 
-	test("test_calendar_pages_are_followed_up_to_a_cap", async () => {
+	test("calendar pages are followed up to a cap", async () => {
 		const graph = new FakeGraph();
 		graph.pageSize = 1;
 		const connector = outlookCalendarConnector();
@@ -224,7 +210,7 @@ describe("connecting and discovery", () => {
 		await expect(connector.discover(graph.client(), "calendar", { query: null, cursor: null })).rejects.toMatchObject({ code: "PROVIDER_LIMIT" });
 	});
 
-	test("test_calendar_scopes_follow_the_allowed_actions", () => {
+	test("calendar scopes follow the allowed actions", () => {
 		const connector = outlookCalendarConnector();
 		const base = ["offline_access", "User.Read", "Calendars.Read"];
 		expect(requestedScopes(connector, new Set(["read"]))).toEqual(base);
@@ -256,69 +242,190 @@ describe("connecting and discovery", () => {
 });
 
 describe("time zones", () => {
-	test("test_only_documented_zones_are_offered", () => {
+	test("only documented zones are offered", () => {
 		for (const zone of ["UTC", "Europe/Berlin", "America/New_York", "Asia/Kolkata"]) expect(ZONES.has(zone)).toBe(true);
 		for (const zone of ["Europe/Zurich", "US/Eastern", "CET", "Local"]) expect(ZONES.has(zone)).toBe(false);
 	});
 });
 
 describe("page state", () => {
-	test("test_cursors_belong_to_their_calendar", () => {
+	test("cursors belong to their calendar", () => {
 		const state = { calendar: WORK, page: "skip:2", start: "a", end: "b" };
 		expect(pageState(JSON.stringify(state), WORK)).toEqual(state);
+		const { end: _end, ...partial } = state;
 		const refused: [string, string][] = [
 			[JSON.stringify(state), DEFAULT],
 			[JSON.stringify({ ...state, extra: "x" }), WORK],
 			[JSON.stringify({ ...state, page: 2 }), WORK],
+			[JSON.stringify(partial), WORK],
 			[JSON.stringify([state]), WORK],
+			["null", WORK],
 			["skip:2", WORK],
 		];
 		for (const [cursor, calendar] of refused) expect(() => pageState(cursor, calendar)).toThrow(expect.objectContaining({ code: "INVALID_CURSOR" }));
 	});
-
-	test("agrees with Python on states", () => {
-		const cases = vectors("outlook_calendar").page_state as { cursor: string; calendar: string; value?: unknown; error?: string }[];
-		expect(cases).toHaveLength(6);
-		for (const { cursor, calendar, ...expected } of cases) expect(outcome(() => pageState(cursor, calendar))).toEqual(expected);
-	});
 });
 
-describe("times and tool inputs, as today's Python reads them", () => {
-	test("the event times Graph reports are shown as _time shows them", () => {
-		const cases = vectors("outlook_calendar").times as { time: JsonObject; all_day: boolean; shown: string | null }[];
-		expect(cases).toHaveLength(9);
-		expect(cases.map(({ time, all_day }) => shownTime(Time(time), all_day))).toEqual(cases.map(({ shown }) => shown));
+describe("times and tool inputs", () => {
+	test("event times are shown to the second, in UTC with a Z, else with Graph's zone, and all-day ones as dates", () => {
+		const shown = (time: Json, allDay = false) => shownTime(Time.parse(time), allDay);
+		expect(shown({ dateTime: "2026-10-05T07:00:00.0000000", timeZone: "UTC" })).toBe("2026-10-05T07:00:00Z");
+		expect(shown({ dateTime: "2026-10-05T07:00:00.0000000", timeZone: "utc" })).toBe("2026-10-05T07:00:00Z");
+		expect(shown({ dateTime: "2026-10-05T07:00", timeZone: "UTC" })).toBe("2026-10-05T07:00Z");
+		expect(shown({ dateTime: "2026-10-06T00:00:00.0000000", timeZone: "UTC" }, true)).toBe("2026-10-06");
+		expect(shown({ dateTime: "2026-10-05", timeZone: "UTC" }, true)).toBe("2026-10-05");
+		expect(shown({ dateTime: "2026-10-05T07:00:00.0000000", timeZone: "Pacific Standard Time" })).toBe("2026-10-05T07:00:00 Pacific Standard Time");
+		// Without a zone the moment is shown as Graph gave it.
+		expect(shown({ dateTime: "2026-10-05T07:00:00.0000000", timeZone: null })).toBe("2026-10-05T07:00:00");
+		expect(shown({ dateTime: "2026-10-05T07:00:00.0000000" })).toBe("2026-10-05T07:00:00");
+		expect(shownTime(null, false)).toBeNull();
 	});
 
-	for (const [key, name] of [
-		["list_events", "list_events"],
-		["create_event", "create_event"],
-	] as const) {
-		test(`inputs of ${name}: normalized arguments, refusals, the window and the payload`, async () => {
-			const cases = vectors("outlook_calendar")[key] as { args: Json; data?: JsonObject; message?: string; window?: string[]; payload?: JsonObject }[];
-			expect(cases.length).toBeGreaterThan(30);
-			const op = operation(outlookCalendarConnector(), name);
-			const actual = [];
-			const wanted = cases.filter((item) => !changedOnPurpose(item.args)).map(({ message, ...rest }) => (message !== undefined ? { args: rest.args, refused: true } : rest));
-			for (const { args } of wanted) {
-				const result = await validateInput(op.input as never, args);
-				if (!result.ok) {
-					actual.push({ args, refused: true });
-					continue;
-				}
-				const data = result.data as { time_min?: string | null; time_max?: string | null };
-				const entry: { [key: string]: unknown } = { args, data: result.data };
-				if (name === "list_events" && (data.time_min || data.time_max)) entry.window = windowOf(data as { time_min: string | null; time_max: string | null }, 0);
-				if (name === "create_event") entry.payload = eventPayload(result.data as never);
-				actual.push(entry);
-			}
-			expect(actual).toEqual(wanted);
-		});
+	/** What list_events makes of its arguments: the window it asks Graph for, or the field it refuses. */
+	async function listed(args: { [key: string]: Json }): Promise<[string, string] | string> {
+		const result = await validated(outlookCalendarConnector(), "list_events", { calendar_id: WORK, ...args });
+		if ("refused" in result) return result.refused;
+		return windowOf(result.ok as { time_min: string | null; time_max: string | null }, Date.parse("2026-10-01T00:00:00Z"));
 	}
+
+	test("list_events: its defaults, and the window it asks for", async () => {
+		expect(await validated(outlookCalendarConnector(), "list_events", { calendar_id: "primary" })).toEqual({
+			ok: { calendar_id: "primary", time_min: null, time_max: null, limit: 25, cursor: null },
+		});
+		const windows: [{ [key: string]: Json }, [string, string]][] = [
+			[{}, ["2026-10-01T00:00:00Z", "2026-10-31T00:00:00Z"]],
+			[{ time_min: "2026-10-01T09:00:00+02:00" }, ["2026-10-01T07:00:00Z", "2026-10-31T07:00:00Z"]],
+			[{ time_max: "2026-10-31T00:00:00Z" }, ["2026-10-01T00:00:00Z", "2026-10-31T00:00:00Z"]],
+			[{ time_min: "2026-01-01T00:00:00Z", time_max: "2027-01-02T00:00:00Z" }, ["2026-01-01T00:00:00Z", "2027-01-02T00:00:00Z"]],
+			[{ time_min: "2026-10-01T02:00:00+02:00", time_max: "2026-10-01T00:00:00.000001Z" }, ["2026-10-01T00:00:00Z", "2026-10-01T00:00:00.000001Z"]],
+			[{ time_min: "2026-10-01T00:00:00.5+02:00", time_max: "2026-10-01T00:00:00.75+02:00" }, ["2026-09-30T22:00:00.500000Z", "2026-09-30T22:00:00.750000Z"]],
+			[{ time_min: "2026-03-29T01:30:00+01:00", time_max: "2026-03-29T03:30:00+02:00" }, ["2026-03-29T00:30:00Z", "2026-03-29T01:30:00Z"]],
+			[{ time_min: "1900-01-01T00:00:00+05:00" }, ["1899-12-31T19:00:00Z", "1900-01-30T19:00:00Z"]],
+			[{ time_max: "2999-12-31T23:00:00-05:00" }, ["2999-12-02T04:00:00Z", "3000-01-01T04:00:00Z"]],
+			[{ time_min: "2026-10-01T09:00Z" }, ["2026-10-01T09:00:00Z", "2026-10-31T09:00:00Z"]],
+			[{ time_min: "2026-10-01T09:00:00-23:59" }, ["2026-10-02T08:59:00Z", "2026-11-01T08:59:00Z"]],
+			[{ time_min: "2026-10-01T09:00:00Z\n" }, ["2026-10-01T09:00:00Z", "2026-10-31T09:00:00Z"]],
+		];
+		for (const [args, window] of windows) expect(await listed(args), JSON.stringify(args)).toEqual(window);
+	});
+
+	test("list_events refuses odd calendars, limits, and times outside RFC 3339 or the years 1900 to 2999", async () => {
+		const refused: [{ [key: string]: Json }, string][] = [
+			[{ calendar_id: "Work" }, "calendar_id"],
+			[{ calendar_id: "../me" }, "calendar_id"],
+			[{ calendar_id: "AAMk/CAL/WORK" }, "calendar_id"],
+			[{ limit: 0 }, "limit"],
+			[{ limit: 51 }, "limit"],
+			[{ cursor: "x".repeat(4097) }, "cursor"],
+			[{ time_min: "2026-10-02T00:00:00Z", time_max: "2026-10-01T00:00:00Z" }, "time_max must be after time_min"],
+			[{ time_min: "2026-10-01T00:00:00Z", time_max: "2026-10-01T00:00:00Z" }, "time_max must be after time_min"],
+			[{ time_min: "2026-01-01T00:00:00Z", time_max: "2027-01-03T00:00:00Z" }, "366 days"],
+			[{ time_min: "2026-01-01T00:00:00Z", time_max: "2027-01-02T00:00:00.000001Z" }, "366 days"],
+			...[
+				"",
+				"2026-10-01",
+				"2026-10-01T09:00:00",
+				"2026-W40-1T09:00:00Z",
+				"2026-10-01T09:00:00+00:99",
+				"2026-10-01T09:00:00+24:00",
+				"2026-10-01T09:00:00.1234567Z",
+				"2026-10-01T09:00:00,5Z",
+				"2026-10-01t09:00:00z",
+				"2026-10-01 09:00:00Z",
+				"2026-10-01T09:00:00Ｚ",
+				"２０２６-10-01T09:00:00Z",
+				"2026-10-01T0٩:00:00Z",
+				"2026-02-30T09:00:00Z",
+				"2026-13-01T09:00:00Z",
+				"2026-10-00T09:00:00Z",
+				"2026-10-01T24:00:00Z",
+				"2026-10-01T25:00:00Z",
+				"2026-10-01T23:60:00Z",
+				"2026-10-01T23:59:60Z",
+				"1899-12-31T23:59:59Z",
+				"3000-01-01T00:00:00Z",
+				"0000-10-01T09:00:00Z",
+			].map((time_min): [{ [key: string]: Json }, string] => [{ time_min }, "time_min"]),
+		];
+		for (const [args, named] of refused) expect(await listed(args), JSON.stringify(args)).toEqual(expect.stringContaining(named));
+	});
+
+	/** What create_event sends Graph for its arguments, or the field it refuses. */
+	async function created(args: { [key: string]: Json }): Promise<Json | string> {
+		const result = await validated(outlookCalendarConnector(), "create_event", { calendar_id: WORK, ...args });
+		return "refused" in result ? result.refused : eventPayload(result.ok as never);
+	}
+
+	test("create_event sends timed events in UTC and all-day ones in their zone, without attendees", async () => {
+		const timedAt = (start: string, end: string, extra: { [key: string]: Json } = {}) => ({
+			subject: "Focus",
+			start: { dateTime: start, timeZone: "UTC" },
+			end: { dateTime: end, timeZone: "UTC" },
+			isAllDay: false,
+			attendees: [],
+			isOnlineMeeting: false,
+			...extra,
+		});
+		const offsite = (zone: string) => ({
+			subject: "Offsite",
+			start: { dateTime: "2026-10-12T00:00:00", timeZone: zone },
+			end: { dateTime: "2026-10-14T00:00:00", timeZone: zone },
+			isAllDay: true,
+			attendees: [],
+			isOnlineMeeting: false,
+		});
+		const FOCUS = { subject: "Focus", start: "2026-10-05T10:00:00+02:00", end: "2026-10-05T11:30:00+02:00" };
+		const OFFSITE = { subject: "Offsite", start: "2026-10-12", end: "2026-10-14" };
+		expect(await created(FOCUS)).toEqual(timedAt("2026-10-05T08:00:00", "2026-10-05T09:30:00"));
+		expect(await created({ ...FOCUS, body: "Deep work\nNo meetings", location: "Home" })).toEqual(
+			timedAt("2026-10-05T08:00:00", "2026-10-05T09:30:00", { body: { contentType: "text", content: "Deep work\nNo meetings" }, location: { displayName: "Home" } }),
+		);
+		expect(await created({ ...FOCUS, body: "", location: "" })).toEqual(timedAt("2026-10-05T08:00:00", "2026-10-05T09:30:00"));
+		expect(await created({ ...FOCUS, start: "2026-10-05T10:00:00.5+02:00", end: "2026-10-05T11:30:00.250001+02:00" })).toEqual(
+			timedAt("2026-10-05T08:00:00.500000", "2026-10-05T09:30:00.250001"),
+		);
+		expect(await created({ ...FOCUS, start: "2026-10-12T09:00:00Z", end: "2026-10-12T09:00:00.000001Z" })).toEqual(timedAt("2026-10-12T09:00:00", "2026-10-12T09:00:00.000001"));
+		for (const zone of ["Europe/Berlin", "UTC", "Etc/GMT+12"]) expect(await created({ ...OFFSITE, time_zone: zone })).toEqual(offsite(zone));
+		expect(await created({ ...OFFSITE, time_zone: " Europe/Berlin " })).toEqual(offsite("Europe/Berlin"));
+	});
+
+	test("create_event refuses mixed, reversed or unzoned times, unknown zones and odd text", async () => {
+		const FOCUS = { subject: "Focus", start: "2026-10-05T10:00:00+02:00", end: "2026-10-05T11:30:00+02:00" };
+		const OFFSITE = { subject: "Offsite", start: "2026-10-12", end: "2026-10-14", time_zone: "Europe/Berlin" };
+		const refused: [{ [key: string]: Json }, string][] = [
+			[{ ...OFFSITE, time_zone: null }, "time_zone is required for all-day events"],
+			[{ ...OFFSITE, time_zone: "Europe/Zurich" }, "time_zone"],
+			[{ ...OFFSITE, time_zone: "Mars/Olympus" }, "time_zone"],
+			[{ ...OFFSITE, time_zone: "US/Eastern" }, "time_zone"],
+			[{ ...OFFSITE, time_zone: "x".repeat(65) }, "time_zone"],
+			[{ ...OFFSITE, end: "2026-10-12" }, "end must be after start"],
+			[{ ...OFFSITE, end: "2026-10-11" }, "end must be after start"],
+			[{ ...OFFSITE, end: "2026-10-14T00:00:00Z" }, "both be dates or both be date-times"],
+			[{ ...FOCUS, start: "2026-10-12" }, "both be dates or both be date-times"],
+			[{ ...FOCUS, start: "2026-10-12T09:00:00Z", end: "2026-10-12T10:00:00Z", time_zone: "Europe/Berlin" }, "time_zone is only for all-day events"],
+			[{ ...FOCUS, end: FOCUS.start }, "end must be after start"],
+			[{ ...FOCUS, start: "2026-10-12T09:00:00.9Z", end: "2026-10-12T09:00:00.1Z" }, "end must be after start"],
+			[{ ...FOCUS, start: "2026-10-12T09:00:00+24:00", end: "2026-10-12T10:00:00Z" }, "start"],
+			[{ ...FOCUS, start: "2026-10-12T24:00:00Z", end: "2026-10-13T01:00:00Z" }, "start"],
+			[{ ...FOCUS, start: "2026-02-30T09:00:00Z" }, "start"],
+			[{ ...OFFSITE, start: "2026-02-30" }, "start"],
+			[{ ...OFFSITE, start: "２０２６-10-12" }, "start"],
+			[{ ...OFFSITE, start: "1899-12-31", end: "1900-01-01" }, "start"],
+			[{ ...OFFSITE, start: "2999-12-31", end: "3000-01-01" }, "end"],
+			[{ ...OFFSITE, subject: "Two\nlines" }, "subject"],
+			[{ ...OFFSITE, subject: "" }, "subject"],
+			[{ ...OFFSITE, subject: "x".repeat(256) }, "subject"],
+			[{ ...FOCUS, body: "bell\u0007" }, "body"],
+			[{ ...FOCUS, location: "a\tb" }, "location"],
+			[{ subject: "x", start: "2026-10-12" }, "end"],
+			[{ ...FOCUS, attendees: [] }, "attendees"],
+		];
+		for (const [args, named] of refused) expect(await created(args), JSON.stringify(args)).toEqual(expect.stringContaining(named));
+	});
 });
 
 describe("reading", () => {
-	test("test_calendars_without_a_grant_or_unknown_look_alike", async () => {
+	test("calendars without a grant or unknown look alike", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { [WORK]: ["read"], [SHARED]: ["read"] });
 		expect(await ids(run, "outlook_calendar_list_calendars", {})).toEqual([WORK, SHARED]);
@@ -337,7 +444,7 @@ describe("reading", () => {
 		}
 	});
 
-	test("test_a_deny_holds_under_every_id_graph_accepts", async () => {
+	test("a deny holds under every id graph accepts", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { "*": ["read", "create"] }, { ceiling: [ceilingRow("calendar", DEFAULT, "deny"), ceilingRow("calendar", WORK, "deny", ["create"])] });
 		expect(await run.code("outlook_calendar_list_events", { calendar_id: "primary" })).toBe("POLICY_DENIED");
@@ -354,7 +461,7 @@ describe("reading", () => {
 		expect(graph.writes.map(([path]) => path)).toEqual([`/me/calendars/${SHARED}/events`]);
 	});
 
-	test("test_events_are_read_in_utc_and_in_full", async () => {
+	test("events are read in UTC and in full", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { [DEFAULT]: ["read"] });
 		const args = { calendar_id: "primary", time_min: "2026-10-01T00:00:00+02:00", time_max: "2026-10-31T00:00:00Z" };
@@ -387,7 +494,7 @@ describe("reading", () => {
 		expect(review.attendees_incomplete).toBe(false);
 	});
 
-	test("test_the_window_defaults_to_thirty_days", async () => {
+	test("the window defaults to thirty days", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { [DEFAULT]: ["read"] });
 		const window = (): [number, number] => {
@@ -436,7 +543,7 @@ describe("reading", () => {
 		expect([startDateTime, endDateTime]).toEqual(["2026-10-07T12:34:56Z", "2026-11-06T12:34:56Z"]);
 	});
 
-	test("test_later_pages_repeat_the_first_pages_window", async () => {
+	test("later pages repeat the first pages window", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { [DEFAULT]: ["read"] });
 		const args = { calendar_id: DEFAULT, time_min: "2026-10-01T00:00:00Z", limit: 2 };
@@ -468,7 +575,7 @@ describe("reading", () => {
 });
 
 describe("creating", () => {
-	test("test_creating_needs_the_create_grant_and_read_write_consent", async () => {
+	test("creating needs the create grant and read write consent", async () => {
 		const graph = new FakeGraph();
 		let run = await start(graph, { [DEFAULT]: ["read"], [WORK]: ["read", "create"] });
 		const event = { subject: "Focus", start: "2026-10-05T10:00:00+02:00", end: "2026-10-05T11:00:00+02:00" };
@@ -485,7 +592,7 @@ describe("creating", () => {
 		expect(graph.writes).toHaveLength(0);
 	});
 
-	test("test_timed_events_are_sent_in_utc_without_attendees", async () => {
+	test("timed events are sent in UTC without attendees", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { [WORK]: ["read", "create"] });
 		const args = {
@@ -515,7 +622,7 @@ describe("creating", () => {
 		expect([created?.start, created?.end]).toEqual(["2026-10-05T08:00:00Z", "2026-10-05T09:30:00Z"]);
 	});
 
-	test("test_all_day_events_are_created_in_the_owners_zone", async () => {
+	test("all-day events are created in the owner's zone", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { [WORK]: ["read", "create"] });
 		const args: JsonObject = { calendar_id: WORK, subject: "Offsite", start: "2026-10-12", end: "2026-10-14", time_zone: "Europe/Berlin" };
@@ -548,7 +655,7 @@ describe("creating", () => {
 		expect(graph.writes).toHaveLength(1);
 	});
 
-	test("test_write_outcomes_follow_graphs_status", async () => {
+	test("write outcomes follow Graph's status", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { [WORK]: ["read", "create"] });
 		const event = { calendar_id: WORK, start: "2026-10-05T10:00:00Z", end: "2026-10-05T11:00:00Z" };

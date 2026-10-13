@@ -1,8 +1,7 @@
 // Permission evaluation: layers, grants, wildcards and denies, and the policy snapshot.
 
 import { describe, expect, test } from "vitest";
-import type { Resource } from "../../src/contracts/policy.ts";
-import { ANY, DENY_ALL, Layer, type LayerName, Policy, resource } from "../../src/gateway/policy.ts";
+import { ANY, DENY_ALL, Layer, type LayerName, Policy, type Resource, resource } from "../../src/gateway/policy.ts";
 import { parseJson } from "../../src/lib/json.ts";
 
 const WORK = resource("c1", "project", "work");

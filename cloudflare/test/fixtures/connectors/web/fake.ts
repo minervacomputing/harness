@@ -1,5 +1,4 @@
-// What a Worker's fetch reaches, for the Web connector's tests (backend/tests/test_web.py's FakeNet and
-// FakeBrave): public DNS and web servers behind Cloudflare's own checks, as the storage spike measured them
+// What a Worker's fetch reaches, for the Web connector's tests (the network and Brave Search): public DNS and web servers behind Cloudflare's own checks, as the storage spike measured them
 // (plan: Spike results). The platform parses the address as WHATWG URL does (2130706433, 0x7f.1 and
 // [::ffff:127.0.0.1] are IP literals to it), refuses every IP literal that is not Cloudflare's with "error
 // code: 1003", localtest.me and *.localhost with 1102, a name whose address is private with 1002 (looked up

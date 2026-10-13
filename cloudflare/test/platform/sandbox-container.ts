@@ -3,7 +3,7 @@
 // would, and runs `echo …` through the wrapper. Enough for the lifecycle over a real object's storage; the
 // real image is tested in Docker and on the account.
 
-import type { SandboxSpec } from "../../src/contracts/sandbox.ts";
+import type { SandboxSpec } from "../../src/sandbox/constants.ts";
 import type { ContainerPort } from "../../src/sandbox/ports.ts";
 
 function stream(text: string): ReadableStream<Uint8Array> {

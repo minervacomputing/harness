@@ -1,7 +1,6 @@
-// gateway/ledger.ts and gateway/run-state.ts on real SQLite: today's RunWrite protocol (runs 5.6;
-// connectors 7.5), the lost-write sweep (test_contract.py `test_the_sweep_marks_writes_that_never_settled`),
-// the restart gate's marking (plan: Writes), the fenced claims of test_attempts.py, and a ledger reopened
-// over the same database file, as after a crash.
+// gateway/ledger.ts and gateway/run-state.ts on real SQLite: the write ledger's protocol, the lost-write
+// sweep, the restart gate's marking (plan: Writes), claims fenced by attempt, and a ledger reopened over the
+// same database file, as after a crash.
 
 import { afterAll, describe, expect, test } from "vitest";
 import { LOST_WRITE_GRACE_MS, WRITE_MESSAGES, WRITE_WINDOW_MS, WriteLedger, writeKey } from "../../src/gateway/ledger.ts";
@@ -184,7 +183,7 @@ describe("the run-state port", () => {
 		expect(state.isCurrent({ runId: RUN, attempt: 1 })).toBe(true);
 		expect(state.isCurrent({ runId: RUN, attempt: 2 })).toBe(false);
 		expect(state.isCurrent({ runId: "0199a000-0000-7000-8000-0000000000ff", attempt: 1 })).toBe(false);
-		// test_attempts.py: a replaced attempt cannot reserve a write.
+		// A replaced attempt cannot reserve a write.
 		runs.set(RUN, { attempt: 2 });
 		expect(state.dispatchWrite({ runId: RUN, attempt: 1 }, K1)).toEqual({ kind: "refused", code: "RUN_ENDED", message: "This run is no longer active." });
 		expect(state.knownWrite(RUN, K1)).toBeNull();
@@ -196,7 +195,7 @@ describe("the run-state port", () => {
 		}
 		runs.set(RUN, { status: "provisioning", revoked: false });
 		expect(state.isActive(RUN)).toBe(true);
-		// Expired: inactive for every check before it is marked timed_out (runs 2.5).
+		// Expired: inactive for every check before it is marked timed_out.
 		clock.advance(5 * 60_000);
 		expect([state.isActive(RUN), state.isCurrent({ runId: RUN, attempt: 2 }), state.countToolCall({ runId: RUN, attempt: 2 })]).toEqual([false, false, false]);
 		expect(runs.toolCalls(RUN)).toBe(0);
@@ -212,7 +211,7 @@ describe("the run-state port", () => {
 });
 
 describe("lost writes", () => {
-	test("the sweep marks writes still dispatched 30 s past their deadline (test_the_sweep_marks_writes_that_never_settled)", () => {
+	test("the sweep marks writes still dispatched 30 s past their deadline", () => {
 		const { clock, ledger } = setup();
 		const dispatchedWith = (deadline: number) => {
 			ledger.forget(RUN);

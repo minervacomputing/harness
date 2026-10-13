@@ -1,10 +1,10 @@
-// The tools that work in the run's folder: pi-durable's own `read`, `write`, `edit` and `bash` (harness 8,
-// 10; plan: Checkpoints, The local tools), ported from worker/src/local-tools.ts. They run in the
+// The tools that work in the run's folder: pi-durable's own `read`, `write`, `edit` and `bash` (plan:
+// Checkpoints, The local tools). They run in the
 // conversation's container through the ExecutionEnv the call is given (src/sandbox/env.ts); this module
 // holds what decides when their results reach pi.
 //
 // A local call's result is held until a checkpoint has saved the folder, so whatever pi records happened in
-// a folder the store has (today's LocalCalls invariant). Checkpoints run at quiet moments: once no local
+// a folder the store has. Checkpoints run at quiet moments: once no local
 // call is running and some are waiting. Calls that arrive meanwhile wait for the checkpoint to end before
 // they start, so nothing changes the folder while it is scanned. A round that only read needs none. A
 // checkpoint that fails ends the attempt (`fail`, which resets the object before any held result is
@@ -15,16 +15,15 @@
 
 import type { ToolExecutionApi, ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
-import type { FolderLimit } from "../contracts/files.ts";
-import type { LocalToolEventData } from "../contracts/events.ts";
+import type { FolderLimit } from "../files/limits.ts";
 import { commandEnvironment } from "../sandbox/constants.ts";
-import { EXCERPT_CHARS, head, storable, SUMMARY_CHARS, tail } from "./events.ts";
+import { EXCERPT_CHARS, head, type LocalToolEventData, storable, SUMMARY_CHARS, tail } from "./events.ts";
 import { untilAborted } from "./queue.ts";
 
 export const LOCAL_TOOLS = ["read", "write", "edit", "bash"] as const;
 export type LocalToolName = (typeof LOCAL_TOOLS)[number];
 
-/** A command stops after this long unless it asks for longer (harness 8.5). */
+/** A command stops after this long unless it asks for longer. */
 export const COMMAND_TIMEOUT_S = 600;
 /**
  * A command whose call has not settled this long after its timeout is stuck, for example on output that a
@@ -42,7 +41,7 @@ export const STUCK_GRACE_MS = 10_000;
 export const STRAYS_KILL_MS = 30_000;
 /** setTimeout fires at once for longer delays. */
 const MAX_TIMER_MS = 2_147_483_647;
-/** The bash tool's own timeout description, with today's default (harness 8.5). */
+/** The bash tool's own timeout description, with its default. */
 export const TIMEOUT_DESCRIPTION = `Timeout in seconds (optional, ${COMMAND_TIMEOUT_S} by default)`;
 export const OUT_OF_TIME = "The turn has run out of time.";
 
@@ -72,7 +71,7 @@ export class SandboxRefused extends Error {
 	override readonly name = "SandboxRefused";
 }
 
-/** What the chat shows of a local call (files 8.4): written from its arguments and output, so as untrusted as either. */
+/** What the chat shows of a local call: written from its arguments and output, so as untrusted as either. */
 export type LocalToolEvent = LocalToolEventData;
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (reason: unknown) => void };
@@ -99,7 +98,7 @@ export interface LocalCallsOptions {
 	saving?: (active: boolean) => void;
 }
 
-/** Admits local calls and runs the checkpoints between them (harness 10.1). */
+/** Admits local calls and runs the checkpoints between them. */
 export class LocalCalls {
 	readonly #options: LocalCallsOptions;
 	#running = 0;
@@ -329,7 +328,7 @@ function keepTail(text: string): string {
 }
 
 /**
- * Runs one local call under the barrier (harness 8.6): admitted, planned once admitted (so time spent
+ * Runs one local call under the barrier: admitted, planned once admitted (so time spent
  * waiting for a checkpoint is not given to a command), watched for being stuck, its result held until the
  * next checkpoint saved what it did, and reported to the chat only once released. An aborted call stops
  * waiting for its release and is not reported; its effect is still saved.
@@ -391,14 +390,14 @@ export interface LocalToolOptions {
 	now?: () => number;
 }
 
-/** The four local tools in their fixed order, as pi makes them with today's changes (harness 8.2 to 8.5). */
+/** The four local tools in their fixed order, as pi makes them with our changes. */
 export function localToolSpecs(options: LocalToolOptions): LocalTool[] {
 	const now = options.now ?? Date.now;
 	const path = (args: { [key: string]: unknown }) => String(args.path ?? "");
 	const files = (args: { [key: string]: unknown }) => ({ args, stuckMs: FILE_TOOL_STUCK_MS });
 	const bash = createBashTool({
 		prepare(execution) {
-			// Commands get a fixed environment (files 8.5), never anything of the Worker's.
+			// Commands get a fixed environment, never anything of the Worker's.
 			execution.inheritEnv = false;
 			execution.env = commandEnvironment();
 		},
@@ -440,7 +439,7 @@ export interface LocalToolsOptions extends LocalToolOptions {
 	calls: LocalCalls;
 }
 
-/** The run's local tools, in a fixed order, each gated (worker/src/local-tools.ts `localTools`). */
+/** The run's local tools, in a fixed order, each gated. */
 export function localTools(options: LocalToolsOptions): ToolRegistration[] {
 	return localToolSpecs(options)
 		.filter((local) => options.names.includes(local.name))

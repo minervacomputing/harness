@@ -4,17 +4,27 @@
 // at the earliest time the core has work due (deliveries, expiries, sweeps, deletions).
 
 import { DurableObject } from "cloudflare:workers";
-import type { AccessOut, AgentIn, AgentOut, ConnectionOut, ConversationOut, UploadOut } from "../contracts/api.ts";
-import type { AgentId, Caller, ConnectionId, ConversationId, Outcome, Revocation, RunId, Sha256, UploadId, UserId } from "../contracts/common.ts";
-import type { FolderLimit } from "../contracts/files.ts";
-import type { GrantChange } from "../contracts/policy.ts";
-import type { RunStatus } from "../contracts/runs.ts";
-import type { BeginRunInput, BeginRunResult, ConnectionAccount, Registration, SaveConnectionInput, WorkspaceApi, WorkspaceInit } from "../contracts/workspace.ts";
+import type { FolderLimit } from "../files/limits.ts";
+import type { GrantChange } from "../gateway/grants.ts";
 import { type About, identity } from "../lib/about.ts";
 import { EncryptionKeys } from "../lib/encryption.ts";
 import { appliedMigrations } from "../lib/sqlite.ts";
 import { connectorRegistry } from "../connectors/index.ts";
-import { type LeaseAnswer, WorkspaceCore, type WorkspaceDeps } from "./core.ts";
+import type { AccessOut, AgentIn, AgentOut, ConnectionOut, ConversationOut, UploadOut } from "../shared/api.ts";
+import type { AgentId, Caller, ConnectionId, ConversationId, Outcome, RunId, RunStatus, Sha256, UploadId, UserId } from "../shared/rpc.ts";
+import {
+	type BeginRunInput,
+	type BeginRunResult,
+	type ConnectionAccount,
+	type LeaseAnswer,
+	type Registration,
+	type Revocation,
+	type SaveConnectionInput,
+	type WorkspaceApi,
+	WorkspaceCore,
+	type WorkspaceDeps,
+	type WorkspaceInit,
+} from "./core.ts";
 import { conversationClient, oauthClients, objectStore, workspaceSettings } from "./env.ts";
 import { realTimers } from "./ports.ts";
 import { durableSql } from "../lib/sql.ts";

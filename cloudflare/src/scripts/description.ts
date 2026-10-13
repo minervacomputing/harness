@@ -1,11 +1,11 @@
-// `run_script`'s description (harness 7.2: kept verbatim, since the model's use of it depends on it), with
+// `run_script`'s description (pi-codemode's, kept verbatim, since the model's use of it depends on it), with
 // the differences this platform has, which it states (plan: Code mode): eval is not available and timers
 // exist, computation is cut after 30 seconds, a guest may hold about 256 MB, and what a script printed
 // since it last waited on a call or a timer is lost when it is stopped for either. The declarations are
-// pi-codemode's rendering of the tools' schemas, as today.
+// pi-codemode's rendering of the tools' schemas.
 
 import { DEFAULT_INPUT_SCHEMA_MAX_CHARS, schemaToType, toCodemodeIdentifier } from "@earendil-works/pi-codemode/declarations";
-import type { ToolDeclaration } from "../contracts/executor.ts";
+import type { ToolDeclaration } from "../gateway/executor.ts";
 import { CALLS_AT_ONCE, SCRIPT_CALLS_OPEN, SCRIPT_CPU_MS, SCRIPT_MEMORY_LABEL, SCRIPT_TIMEOUT_MS, STORE_BYTES } from "./limits.ts";
 
 type CodemodeJsonSchema = Parameters<typeof schemaToType>[0];

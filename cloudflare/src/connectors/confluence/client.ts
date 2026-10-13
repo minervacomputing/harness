@@ -6,55 +6,48 @@
 // the same query again; the address itself is never followed.
 
 import { z } from "zod";
-import type { ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { type Json, type JsonObject, parseJson } from "../../lib/json.ts";
-import { parseQs, urlsplitStrict } from "../../lib/urlsplit.ts";
-import { AtlassianClient, segment } from "../atlassian/index.ts";
-import { laxInt, model, optionalStr } from "../atlassian/model.ts";
+import { AtlassianClient } from "../atlassian/index.ts";
 import { extend } from "../../lib/arrays.ts";
+import { type ProviderIo, segment } from "../../gateway/http.ts";
 
 export const MAX_PAGES = 10;
 export const BATCH_LIMIT = 250;
 const TOKEN = /^[\x21-\x7e]{1,990}$/;
 export const PREFIX = "c:";
 
-const camel = { camel: true };
 const optional = <T extends z.ZodType>(schema: T) => schema.nullable().default(null);
-const anything = () => z.custom<Json>().optional().transform((value) => value ?? null);
 
-export const SpaceModel = model({ id: z.string(), key: z.string(), name: optionalStr, type: optionalStr, status: optionalStr }, camel);
+export const SpaceModel = z.object({ id: z.string(), key: z.string(), name: optional(z.string()), type: optional(z.string()), status: optional(z.string()) });
 export type Space = z.output<typeof SpaceModel>;
 
-const Version = model({ number: optional(laxInt), created_at: optionalStr }, camel);
-const Representation = model({ value: anything() }, camel);
-export const BodyModel = model({ atlas_doc_format: optional(Representation) }, camel);
+const Version = z.object({ number: optional(z.number().int()), createdAt: optional(z.string()) });
+const Representation = z.object({ value: optional(z.string()) });
+export const BodyModel = z.object({ atlas_doc_format: optional(Representation) });
 export type Body = z.output<typeof BodyModel>;
 
-export const PageModel = model(
-	{
-		id: z.string(),
-		status: optionalStr,
-		title: optionalStr,
-		space_id: optionalStr,
-		parent_id: optionalStr,
-		parent_type: optionalStr,
-		created_at: optionalStr,
-		version: optional(Version),
-		body: optional(BodyModel),
-	},
-	camel,
-);
+export const PageModel = z.object({
+	id: z.string(),
+	status: optional(z.string()),
+	title: optional(z.string()),
+	spaceId: optional(z.string()),
+	parentId: optional(z.string()),
+	parentType: optional(z.string()),
+	createdAt: optional(z.string()),
+	version: optional(Version),
+	body: optional(BodyModel),
+});
 export type Page = z.output<typeof PageModel>;
 
-export const CommentModel = model({ id: z.string(), status: optionalStr, version: optional(Version), body: optional(BodyModel) }, camel);
+export const CommentModel = z.object({ id: z.string(), status: optional(z.string()), version: optional(Version), body: optional(BodyModel) });
 export type Comment = z.output<typeof CommentModel>;
 
-const Found = model({ id: z.string(), type: optionalStr }, camel);
-const Result = model({ content: optional(Found) }, camel);
-const Links = model({ next: optionalStr }, camel);
+const Found = z.object({ id: z.string(), type: optional(z.string()) });
+const Result = z.object({ content: optional(Found) });
+/** A JSON object, whatever it holds. */
 const Dict = z.custom<JsonObject>((value) => typeof value === "object" && value !== null && !Array.isArray(value));
-export const ListingModel = model({ results: z.array(Dict).default([]), links: Links.prefault({}) }, { camel: true, aliases: { links: "_links" } });
+export const ListingModel = z.object({ results: z.array(Dict).default([]), _links: z.object({ next: optional(z.string()) }).prefault({}) });
 export type Listing = z.output<typeof ListingModel>;
 
 export function pageParams(cursor: string | null): { [name: string]: string } {
@@ -66,8 +59,10 @@ export function pageParams(cursor: string | null): { [name: string]: string } {
 
 /** The cursor of the next page, from the `_links.next` address; null on the last page. */
 export function nextToken(listing: Listing): string | null {
-	if (!listing.links.next) return null;
-	const tokens = parseQs(urlsplitStrict(listing.links.next).query).get("cursor") ?? [];
+	const next = listing._links.next;
+	if (!next) return null;
+	// The link is relative to the site; only its query is read.
+	const tokens = URL.parse(next, "https://confluence.invalid")?.searchParams.getAll("cursor") ?? [];
 	if (tokens.length !== 1 || !TOKEN.test(tokens[0] as string)) throw new OperationError("PROVIDER_LIMIT", "Confluence returned a page token Minerva cannot use.");
 	return tokens[0] as string;
 }
@@ -80,7 +75,7 @@ export function nextCursor(listing: Listing): string | null {
 /** The ADF document of a page's or comment's body; Confluence sends it as a JSON string. */
 export function document(body: Body | null): Json | null {
 	const value = body?.atlas_doc_format ? body.atlas_doc_format.value : null;
-	if (typeof value !== "string" || !value) return null;
+	if (!value) return null;
 	try {
 		return parseJson(value);
 	} catch {
@@ -162,7 +157,7 @@ export class ConfluenceClient extends AtlassianClient {
 		}
 		const order = new Map<string, number>();
 		ids.forEach((id, index) => order.set(id, index));
-		// A dict by id: a page listed twice keeps its first place and its last value.
+		// A page listed twice keeps its first place and its last value.
 		const unique = new Map<string, Page>();
 		for (const page of found) if (order.has(page.id)) unique.set(page.id, page);
 		return [...unique.values()].sort((a, b) => (order.get(a.id) as number) - (order.get(b.id) as number));
@@ -181,7 +176,7 @@ export class ConfluenceClient extends AtlassianClient {
 	async footerComments(cloudId: string, pageId: string, options: { limit: number }): Promise<[Comment[], boolean]> {
 		const params = { "body-format": "atlas_doc_format", sort: "-created-date", limit: String(options.limit) };
 		const listing = await this.#listing(this.#v2(cloudId, `/pages/${segment(pageId)}/footer-comments`), params);
-		return [this.#items(CommentModel, listing), Boolean(listing.links.next)];
+		return [this.#items(CommentModel, listing), Boolean(listing._links.next)];
 	}
 
 	// Writes: each operation sends exactly one.

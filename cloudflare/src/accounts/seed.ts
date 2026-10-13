@@ -1,4 +1,4 @@
-// `make seed` for the Worker (web-api spec 6.4): ada@example.com and grace@example.com with the password
+// `make seed` for the Worker: ada@example.com and grace@example.com with the password
 // `password`, verified, without two-factor, each with a personal workspace. Re-running resets them and
 // signs out their sessions. Known credentials, so it refuses to run unless MINERVA_DEBUG is on, creating
 // nothing; a deployed build never has debug on (cloudflare.config.ts).

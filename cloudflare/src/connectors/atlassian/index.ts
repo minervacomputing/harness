@@ -12,13 +12,9 @@
 // reach the model.
 
 import { z } from "zod";
-import type { Auth, ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
-import { OperationError, denied } from "../../gateway/connector.ts";
-import { ProviderHTTP } from "../../gateway/http.ts";
-import { fromUtf8Strict } from "../../lib/bytes.ts";
-import { type Json, parseJson } from "../../lib/json.ts";
-import { model, optionalStr } from "./model.ts";
-import { quoteSegment } from "../../lib/urlsplit.ts";
+import { type Auth, OperationError, type ProviderClient, denied } from "../../gateway/connector.ts";
+import { ProviderHTTP, type ProviderIo, segment } from "../../gateway/http.ts";
+import { type Json, parseJsonBytes } from "../../lib/json.ts";
 
 export const API_URL = "https://api.atlassian.com";
 export const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -44,13 +40,16 @@ export function oauth(app: string, ...scopes: string[]): Extract<Auth, { type: "
 	};
 }
 
-/** One path segment: everything but ASCII letters, digits and `_.-~` percent-encoded (lib/urlsplit.ts). */
-export const segment = quoteSegment;
-
-export const MeModel = model({ account_id: z.string(), name: optionalStr, email: optionalStr });
+/** Atlassian's `/me` answers in snake case. */
+export const MeModel = z.object({ account_id: z.string(), name: z.string().nullable().default(null), email: z.string().nullable().default(null) });
 export type Me = z.output<typeof MeModel>;
 
-const SiteModel = model({ id: z.string(), name: optionalStr, url: optionalStr, scopes: z.array(z.string()).default([]) });
+const SiteModel = z.object({
+	id: z.string(),
+	name: z.string().nullable().default(null),
+	url: z.string().nullable().default(null),
+	scopes: z.array(z.string()).default([]),
+});
 
 /** A site (one Atlassian cloud) as `accessible-resources` lists it. */
 export class Site {
@@ -64,11 +63,6 @@ export class Site {
 		this.name = fields.name;
 		this.url = fields.url;
 		this.scopes = fields.scopes;
-	}
-
-	static parse(value: unknown): Site | null {
-		const parsed = SiteModel.safeParse(value);
-		return parsed.success ? new Site(parsed.data) : null;
 	}
 
 	/** The site's host, when Atlassian gave a usable address. */
@@ -86,12 +80,6 @@ export class Site {
 	withId(id: string): Site {
 		return new Site({ id, name: this.name, url: this.url, scopes: this.scopes });
 	}
-}
-
-/** JSON's text from bytes as `json.loads` reads them: UTF-8, a byte order mark skipped, invalid UTF-8 refused. */
-function jsonText(bytes: Uint8Array): string {
-	const start = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
-	return fromUtf8Strict(bytes.subarray(start));
 }
 
 /** Base of the Atlassian clients: authenticated, bounded reads, validated responses. */
@@ -133,10 +121,11 @@ export class AtlassianClient implements ProviderClient {
 		return new OperationError("RESPONSE_TOO_LARGE", `${this.provider} returned more than Minerva reads.`);
 	}
 
+	/** The answer as JSON: UTF-8 (a byte order mark dropped), invalid UTF-8 refused. */
 	async #json(response: Response): Promise<Json> {
-		const bytes = new Uint8Array(await response.arrayBuffer());
+		const bytes = await response.arrayBuffer();
 		try {
-			return parseJson(jsonText(bytes));
+			return parseJsonBytes(bytes);
 		} catch (error) {
 			throw this.unexpected(error);
 		}
@@ -163,12 +152,9 @@ export class AtlassianClient implements ProviderClient {
 	/** The sites this connection may use, once each, ordered by cloud id. */
 	async sites(): Promise<Site[]> {
 		if (this.#sites === null) {
-			const body = await this.get("/oauth/token/accessible-resources");
-			if (!Array.isArray(body)) throw this.unexpected();
+			const listed = this.parse(z.array(SiteModel), await this.get("/oauth/token/accessible-resources"));
 			const found = new Map<string, Site>();
-			for (const item of body) {
-				const site = Site.parse(item);
-				if (site === null) throw this.unexpected();
+			for (const site of listed.map((fields) => new Site(fields))) {
 				const cloudId = site.id.toLowerCase();
 				if (CLOUD_ID.test(cloudId) && site.scopes.includes(this.scope) && !found.has(cloudId)) found.set(cloudId, site.withId(cloudId));
 			}

@@ -3,7 +3,7 @@
 // refresh (restart while `refreshing`) and a reconnect or delete during one.
 
 import { describe, expect, test } from "vitest";
-import type { CredentialLease } from "../../src/contracts/executor.ts";
+import type { CredentialLease } from "../../src/gateway/executor.ts";
 import type { JsonObject } from "../../src/lib/json.ts";
 import { RUN_ENDED } from "../../src/workspace/core.ts";
 import { EXPIRED, type OAuth2, keepRefreshToken, parseScopes, tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
@@ -99,7 +99,7 @@ describe("leases", () => {
 	});
 });
 
-describe("refresh (test_connections, test_contract)", () => {
+describe("refresh", () => {
 	test("keeps the refresh token when the provider omits it", async () => {
 		const h = await harness();
 		// A payload saved before `kind` was recorded is read as OAuth.
@@ -425,8 +425,7 @@ describe("token bodies", () => {
 		expect(tokenPayload({ access_token: "a", expires_in: 3600.5 }, now)).not.toHaveProperty("expires_at");
 		expect(tokenPayload({ access_token: "a", expires_in: 365 * 24 * 3600 }, now)).not.toHaveProperty("expires_at");
 		expect(tokenPayload({ access_token: "a", expires_in: "3600" }, now)).not.toHaveProperty("expires_at");
-		// `true` counts as 1.
-		expect(tokenPayload({ access_token: "a", expires_in: true }, now).expires_at).toBe(seconds + 1);
+		expect(tokenPayload({ access_token: "a", expires_in: true }, now)).not.toHaveProperty("expires_at");
 		expect(tokenPayload({ access_token: "a", refresh_token: "r" }, now).refresh_token).toBe("r");
 	});
 

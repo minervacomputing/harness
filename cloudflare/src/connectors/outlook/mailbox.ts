@@ -2,9 +2,8 @@
 // and message ids, and where folders sit.
 
 import { z } from "zod";
-import type { Binding } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { OperationError, denied } from "../../gateway/connector.ts";
+import { type Binding, OperationError, denied } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import { after } from "../microsoft/inputs.ts";
 import { ID, consent } from "../microsoft/index.ts";
 import { type Folder, type GraphClient, type Message, ordinary } from "./client.ts";
@@ -17,7 +16,7 @@ export const SEND_CONSENT = consent("Mail.Send");
 
 export const ROOT = "msgfolderroot";
 export const WELL_KNOWN = ["inbox", "sentitems", "drafts", "archive", "deleteditems", "junkemail"];
-/** Mutable for tests only (Python's module constants, which tests patch). */
+/** Mutable for tests only. */
 export const LIMITS = { maxDepth: 16, maxLookups: 60 };
 /** Errors about the connection, not about the object a call names; they say nothing about that object. */
 export const CONNECTION_ERRORS: ReadonlySet<string> = new Set(["CONNECTION_UNAUTHORIZED", "PROVIDER_RATE_LIMITED", "PROVIDER_UNAVAILABLE", "UNSUPPORTED_ACCOUNT"]);
@@ -99,7 +98,7 @@ export class Tree {
 		let current = folder;
 		for (;;) {
 			if (!ordinary(current)) return null;
-			const parentId = current.parent_folder_id;
+			const parentId = current.parentFolderId;
 			if (parentId === root) return within;
 			if (!parentId || !ID.test(parentId) || parentId === folder.id || within.includes(parentId) || within.length >= LIMITS.maxDepth) return null;
 			const parent = await this.#parent(parentId);
@@ -115,8 +114,8 @@ export class Tree {
 			.reverse()
 			.map((id) => this.#folders.get(id) ?? null)
 			.filter((found): found is Folder => found !== null)
-			.map((found) => found.display_name);
-		return [...names, folder.display_name].join("/");
+			.map((found) => found.displayName);
+		return [...names, folder.displayName].join("/");
 	}
 
 	/**
@@ -168,8 +167,8 @@ export async function locate(binding: Binding<GraphClient>, tree: Tree, id: stri
 		if (!(error instanceof OperationError) || connectionError(error)) throw error;
 		throw denied();
 	}
-	if (message.id !== id || !message.parent_folder_id || !ID.test(message.parent_folder_id)) throw denied();
-	const [resource] = await tree.resolve(binding, message.parent_folder_id);
+	if (message.id !== id || !message.parentFolderId || !ID.test(message.parentFolderId)) throw denied();
+	const [resource] = await tree.resolve(binding, message.parentFolderId);
 	return [message, resource];
 }
 
@@ -183,6 +182,6 @@ export async function confirmMessage(binding: Binding<GraphClient>, tree: Tree, 
 		if (!(error instanceof OperationError) || connectionError(error)) throw error;
 		throw moved();
 	}
-	if (message.id !== id || message.parent_folder_id !== resource.id) throw moved();
+	if (message.id !== id || message.parentFolderId !== resource.id) throw moved();
 	return message;
 }

@@ -9,8 +9,8 @@ import { type WorkspaceRow, ensureInitialized, workspaceOwner } from "../../src/
 import { workspaceObject } from "../../src/addressing.ts";
 import { PROVIDER_NETWORK } from "../../src/api/providers.ts";
 import { STILL_STOPPING, afterRevocation } from "../../src/api/members.ts";
-import type { Caller, Role } from "../../src/contracts/common.ts";
 import { uuid7 } from "../../src/lib/random.ts";
+import type { Caller, Role } from "../../src/shared/rpc.ts";
 import { type Answer, Browser, installEmailLog, signedIn } from "./accounts-helpers.ts";
 
 installEmailLog();
@@ -131,7 +131,7 @@ function expectDetail(answer: Answer, status: number, detail: string): void {
 	expect([answer.status, answer.body], JSON.stringify(answer.body)).toEqual([status, { detail }]);
 }
 
-describe("membership (web-api 7)", () => {
+describe("membership", () => {
 	test("another user's workspace is 401 on every route, before validation and the handler", async () => {
 		const ada = await account();
 		const grace = await account("grace");
@@ -192,7 +192,7 @@ describe("membership (web-api 7)", () => {
 	});
 });
 
-describe("agents (web-api 8.3)", () => {
+describe("agents", () => {
 	test("create, read, replace and delete; unknown fields are ignored and never echoed", async () => {
 		const ada = await account();
 		const url = `/api/workspaces/${ada.ws}/agents`;
@@ -243,7 +243,7 @@ describe("agents (web-api 8.3)", () => {
 		const ada = await account();
 		const grace = await account("grace");
 		const url = `/api/workspaces/${ada.ws}/agents`;
-		// Another workspace's connection (test_agents_can_only_use_connections_of_their_user).
+		// An agent can only use connections of its user: not another workspace's.
 		const foreign = await todoistConnection(grace);
 		expectDetail(await ada.browser.call("POST", url, { name: "Sneaky", connection_ids: [foreign] }), 422, "Choose connections you can use.");
 		// An id in another spelling of the UUID is the same connection.
@@ -251,7 +251,7 @@ describe("agents (web-api 8.3)", () => {
 		const created = await ada.browser.call("POST", url, { name: "Helper", connection_ids: [mine.toUpperCase(), mine.replaceAll("-", "")] });
 		expect(created.status).toBe(201);
 		expect(created.body.connection_ids).toEqual([mine]);
-		// test_an_agent_keeps_a_connection_that_needs_reconnecting
+		// An agent keeps a connection that needs reconnecting.
 		await object(ada.ws).markUnauthorized(mine, 1);
 		const agent = `${url}/${created.body.id}`;
 		expect((await ada.browser.call("PUT", agent, { name: "Renamed", connection_ids: [mine] })).status).toBe(200);
@@ -303,7 +303,7 @@ describe("agents (web-api 8.3)", () => {
 	});
 });
 
-describe("connectors and connections (web-api 8.5)", () => {
+describe("connectors and connections", () => {
 	test("connectors this instance can connect, in order", async () => {
 		const ada = await account();
 		const listed = (await ada.browser.call("GET", `/api/workspaces/${ada.ws}/connectors`)).body;
@@ -368,7 +368,7 @@ describe("connectors and connections (web-api 8.5)", () => {
 		});
 	});
 
-	test("access settings are validated (test_access_settings_are_validated)", async () => {
+	test("access settings are validated", async () => {
 		const ada = await account();
 		const todoist = new FakeTodoist().install();
 		const connection = await todoistConnection(ada);
@@ -413,7 +413,7 @@ describe("connectors and connections (web-api 8.5)", () => {
 		expect((await ada.browser.call("GET", `${url}/resources?kind=project`)).body.items[0].actions).toEqual(["create", "read"]);
 	});
 
-	test("connections summarize what the user allows (test_connections_summarize_what_the_user_allows)", async () => {
+	test("connections summarize what the user allows", async () => {
 		const ada = await account();
 		new FakeTodoist().install();
 		const connection = await todoistConnection(ada);
@@ -483,7 +483,7 @@ describe("connectors and connections (web-api 8.5)", () => {
 		expect((await ada.browser.call("POST", `${base}/stripe/key`, { key: "" })).body.detail[0]).toMatchObject({ type: "too_small", loc: ["body", "key"] });
 		const todoist = await todoistConnection(ada);
 		expectDetail(await ada.browser.call("PUT", `${base}/${todoist}/key`, { key }), 422, "This provider does not connect with a key.");
-		// Another user's connection is not found; one that does not exist is Django's 404.
+		// Another user's connection is not found, the same as one that does not exist.
 		const theirs = await todoistConnection(grace, ada.ws, { id: "u2", label: "Grace" }, "member");
 		expectDetail(await ada.browser.call("PUT", `${base}/${theirs}/key`, { key }), 404, "Not found.");
 		expectDetail(await ada.browser.call("PUT", `${base}/${uuid7()}/key`, { key }), 404, "Not Found");
@@ -548,7 +548,7 @@ describe("connectors and connections (web-api 8.5)", () => {
 	});
 });
 
-describe("the demo is off (web-api 8.2)", () => {
+describe("the demo is off", () => {
 	test("the config says so and its endpoints are 404 after CSRF and validation", async () => {
 		const browser = await new Browser().start();
 		const config = await browser.call("GET", "/api/demo/config");

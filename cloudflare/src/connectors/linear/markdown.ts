@@ -12,18 +12,21 @@
 // Text may not show images from anywhere but Linear's own uploads, since a reader's browser would load them
 // from another site, nor use HTML that loads or links anything.
 //
-// Every expression has the `u` flag, so that a class matches a code point; IGNORECASE also matches U+0130
-// and U+0131 to `i` (python.ts). An address runs up to whitespace, but U+FEFF, which `\s` counts and no
-// one sees, stays part of it, so that it cannot end an address early.
+// Every expression has the `u` flag, so that a class matches a code point, and those that match words
+// also `i`, whose case folding matches "ſ" to "s" and the Kelvin sign to "k". The dotted capital I and the
+// dotless i do not fold to "i", so the patterns name them as lookalikes. An address runs up to whitespace,
+// but U+FEFF, which `\s` counts and no one sees, stays part of it, so that it cannot end an address early.
 
 import { decoded, isPlainText, PLAIN_TEXT, WORD_CLASS } from "../../lib/text.ts";
-import { RE_I, RE_LETTERS_EXTRA } from "./python.ts";
 import { compareText } from "../../lib/arrays.ts";
 
 export const MAX_ISSUE_LINKS = 10;
 
-const LINEAR = String.raw`l${RE_I}near\.app`;
-const SEGMENT = String.raw`[A-Za-z0-9_${RE_LETTERS_EXTRA}-]+`;
+/** "i" and the lookalikes that case folding does not match to it, the dotted capital I and the dotless i. */
+const I = "[i\u0130\u0131]";
+const LOOKALIKES = "\u0130\u0131";
+const LINEAR = String.raw`l${I}near\.app`;
+const SEGMENT = String.raw`[A-Za-z0-9_${LOOKALIKES}-]+`;
 
 const ANY_LINEAR = new RegExp(LINEAR, "giu");
 /** An address of an object in Linear; group 3 is the rest of its path. */
@@ -48,11 +51,11 @@ export const IDENTIFIER = /^[A-Za-z0-9]{1,10}-\d{1,9}$/u;
 
 /** An issue address as agents may write it: workspace, identifier and optionally the title part. */
 const ISSUE_LINK = new RegExp(
-	String.raw`^https?://${LINEAR}/(${SEGMENT})/${RE_I}ssue/([A-Za-z0-9${RE_LETTERS_EXTRA}]{1,10}-\d{1,9})(?:/[A-Za-z0-9${RE_LETTERS_EXTRA}-]*)?$`,
+	String.raw`^https?://${LINEAR}/(${SEGMENT})/${I}ssue/([A-Za-z0-9${LOOKALIKES}]{1,10}-\d{1,9})(?:/[A-Za-z0-9${LOOKALIKES}-]*)?$`,
 	"iu",
 );
-/** `https?://$` searched between two positions: `$` is the window's end, or before a newline that ends it. */
-const SCHEME = /https?:\/\/(?=\n?$)/iu;
+/** A scheme that ends right where the address's host starts. */
+const SCHEME = /https?:\/\/$/iu;
 /** All that any parser could take as part of an address: up to whitespace or an angle bracket. */
 const RUN = /(?:[^\s<>]|\uFEFF)*/uy;
 /** What may follow an address without being part of it: punctuation, closing brackets, emphasis, quotes. */
@@ -64,12 +67,12 @@ const IMAGE = new RegExp(
 const TAG = new RegExp(String.raw`<\s*/?\s*([A-Za-z][${WORD_CLASS}:-]*)([^<>]*)>`, "gu");
 /** `\b` before a word character is "not after one". */
 const LINK_ATTRIBUTE = new RegExp(
-	String.raw`(?<![${WORD_CLASS}])(?:src|url|href|data|srcset|poster|act${RE_I}on|background)\s*=`,
+	String.raw`(?<![${WORD_CLASS}])(?:src|url|href|data|srcset|poster|act${I}on|background)\s*=`,
 	"iu",
 );
 const LOADING_TAGS: ReadonlySet<string> = new Set(["img", "image", "iframe", "embed", "object", "video", "audio", "source", "link"]);
 
-/** `str.strip("/")`. */
+/** The text without slashes at either end. */
 function stripSlashes(text: string): string {
 	return text.replace(/^\/+|\/+$/gu, "");
 }

@@ -1,48 +1,38 @@
-// What the Google connectors share (backend/connectors/google/__init__.py): how Google's 403s are read, path
-// segments, the OAuth declaration, and the numeric strings Drive and Gmail send; and that the registry accepts
-// the Google connectors' declarations. Cases come from today's Python (test/fixtures/connectors/google/generate.py).
+// What the Google connectors share: how Google's 403s are read, the OAuth declaration and the userinfo; and
+// that the registry accepts the Calendar and Drive declarations.
 
 import { describe, expect, test } from "vitest";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
-import { digitsOr, jsonInteger } from "../../src/connectors/google/digits.ts";
-import { GoogleUser, NOT_CONFIGURED, RATE_LIMITED, TOO_LARGE, classify, oauth, reasons, segment } from "../../src/connectors/google/index.ts";
+import { GoogleUser, NOT_CONFIGURED, RATE_LIMITED, TOO_LARGE, classify, oauth, reasons } from "../../src/connectors/google/index.ts";
 import { googleCalendarConnector } from "../../src/connectors/google_calendar/connector.ts";
 import { googleDriveConnector } from "../../src/connectors/google_drive/connector.ts";
 import { Registry, validate } from "../../src/gateway/registry.ts";
-import { vectors } from "../fixtures/connectors/google/vectors.ts";
-
-interface ForbiddenCase {
-	reasons: string[];
-	code: string;
-	message: string;
-}
 
 const DEFAULT_FORBIDDEN = { code: "PROVIDER_FORBIDDEN", message: "Google Drive refused this request for the connected account." };
 
-describe("Google's 403s", () => {
-	const cases = vectors().base.forbidden as { [body: string]: ForbiddenCase };
+function forbidden(body: string): { code: string; message: string } {
+	const named = classify("Google Drive", new Response(body, { status: 403 }), body);
+	return named === null ? DEFAULT_FORBIDDEN : { code: named.code, message: named.message };
+}
 
-	test("the reasons are read as _reasons reads them, whatever shape the body has", () => {
-		expect(Object.keys(cases).length).toBeGreaterThan(40);
-		const actual: { [body: string]: string[] } = {};
-		const expected: { [body: string]: string[] } = {};
-		for (const [body, item] of Object.entries(cases)) {
-			actual[body] = [...reasons(body)].sort();
-			expected[body] = item.reasons;
+describe("Google's 403s", () => {
+	test("the string reasons of error.errors[] and error.details[] are read; any other shape has none", () => {
+		const body = (error: unknown) => JSON.stringify({ error });
+		expect([...reasons(body({ errors: [{ reason: "rateLimitExceeded" }], details: [{ reason: "SERVICE_DISABLED" }] }))].sort()).toEqual(["SERVICE_DISABLED", "rateLimitExceeded"]);
+		expect([...reasons(body({ errors: [{ reason: 1 }, "x", null, { reason: "a" }, {}] }))]).toEqual(["a"]);
+		for (const text of ["", "not json", "[]", "{}", body("x"), body({ errors: "rateLimitExceeded" }), body({ errors: { reason: "a" } })]) {
+			expect([...reasons(text)], text).toEqual([]);
 		}
-		expect(actual).toEqual(expected);
 	});
 
 	test("a rate limit, a disabled API and an export too large are named; anything else is a plain refusal", () => {
-		const actual: { [body: string]: { code: string; message: string } } = {};
-		const expected: { [body: string]: { code: string; message: string } } = {};
-		for (const [body, item] of Object.entries(cases)) {
-			const named = classify("Google Drive", new Response(body, { status: 403 }), body);
-			actual[body] = named === null ? DEFAULT_FORBIDDEN : { code: named.code, message: named.message };
-			// Python's default_forbidden answers where `forbidden` names nothing.
-			expected[body] = item.code === "PROVIDER_FORBIDDEN" ? DEFAULT_FORBIDDEN : { code: item.code, message: item.message };
-		}
-		expect(actual).toEqual(expected);
+		const body = (reason: string) => JSON.stringify({ error: { errors: [{ reason }] } });
+		expect(forbidden(body("userRateLimitExceeded"))).toEqual({ code: "PROVIDER_RATE_LIMITED", message: "Google Drive is rate limiting requests. Try again later." });
+		expect(forbidden(body("accessNotConfigured")).code).toBe("PROVIDER_NOT_CONFIGURED");
+		expect(forbidden(JSON.stringify({ error: { details: [{ reason: "SERVICE_DISABLED" }] } })).code).toBe("PROVIDER_NOT_CONFIGURED");
+		expect(forbidden(body("exportSizeLimitExceeded"))).toEqual({ code: "FILE_TOO_LARGE", message: "This file is too large for Google Drive to export." });
+		expect(forbidden(body("insufficientPermissions"))).toEqual(DEFAULT_FORBIDDEN);
+		expect(forbidden("<html>")).toEqual(DEFAULT_FORBIDDEN);
 	});
 
 	test("only a 403 is read", () => {
@@ -55,14 +45,6 @@ describe("Google's 403s", () => {
 		expect([...RATE_LIMITED].sort()).toEqual(["rateLimitExceeded", "userRateLimitExceeded"]);
 		expect([...NOT_CONFIGURED].sort()).toEqual(["SERVICE_DISABLED", "accessNotConfigured"]);
 		expect([...TOO_LARGE]).toEqual(["exportSizeLimitExceeded"]);
-	});
-});
-
-describe("path segments", () => {
-	test("segment is quote(value, safe='')", () => {
-		const cases = vectors().base.segments as { [text: string]: string };
-		expect(Object.keys(cases).length).toBeGreaterThan(8);
-		expect(Object.fromEntries(Object.keys(cases).map((text) => [text, segment(text)]))).toEqual(cases);
 	});
 });
 
@@ -88,28 +70,7 @@ describe("the OAuth app", () => {
 		expect(GoogleUser.parse({ sub: "108", email: "ada@example.com", name: "Ada" })).toEqual({ sub: "108", email: "ada@example.com", name: "Ada" });
 		expect(GoogleUser.safeParse({ email: "ada@example.com" }).success).toBe(false);
 		expect(GoogleUser.safeParse({ sub: 108 }).success).toBe(false);
-	});
-});
-
-describe("numeric strings", () => {
-	test("ASCII digits are read, anything else is the fallback", () => {
-		expect(digitsOr("0", null)).toBe(0n);
-		expect(digitsOr("1048576", null)).toBe(1048576n);
-		expect(digitsOr("", "x")).toBe("x");
-		expect(digitsOr(null, "x")).toBe("x");
-		expect(digitsOr("12a", "x")).toBe("x");
-		expect(digitsOr("-1", "x")).toBe("x");
-		expect(digitsOr(" 1", "x")).toBe("x");
-		expect(digitsOr("1.5", "x")).toBe("x");
-	});
-
-	test("other digits are no number", () => {
-		for (const text of ["²", "1³", "①", "١٢", "１２", "½"]) expect(digitsOr(text, null)).toBeNull();
-	});
-
-	test("an integer goes into JSON as a number, unless a number cannot hold it exactly", () => {
-		expect(jsonInteger(9007199254740991n, "Google Drive")).toBe(9007199254740991);
-		expect(() => jsonInteger(9007199254740992n, "Google Drive")).toThrow("Google Drive returned an unexpected response.");
+		expect(GoogleUser.safeParse({ sub: "108", email: 1 }).success).toBe(false);
 	});
 });
 

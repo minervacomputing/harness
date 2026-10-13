@@ -29,8 +29,7 @@
 // This module assembles the connector. The operations are in reads.ts and writes.ts; what they share (Graph
 // consent, folder and message ids, where folders sit) is in mailbox.ts.
 
-import type { Connector, DiscoveryItem, DiscoveryPage } from "../../contracts/connectors.ts";
-import { OperationError } from "../../gateway/connector.ts";
+import { type Connector, type DiscoveryItem, type DiscoveryPage, OperationError } from "../../gateway/connector.ts";
 import { ID, accountLabel, oauth } from "../microsoft/index.ts";
 import { mapLimited } from "../microsoft/limit.ts";
 import * as addresses from "../../lib/addresses.ts";
@@ -57,11 +56,11 @@ async function allFolders(client: GraphClient): Promise<[string, string][]> {
 			let folders: Folder[];
 			[folders, cursor] = await client.folders(parent, 100, cursor);
 			for (const folder of folders) {
-				if (folder.parent_folder_id !== (parent || root) || !ID.test(folder.id) || !ordinary(folder)) continue;
-				const path = prefix + folder.display_name;
+				if (folder.parentFolderId !== (parent || root) || !ID.test(folder.id) || !ordinary(folder)) continue;
+				const path = prefix + folder.displayName;
 				found.push([folder.id, path]);
-				// Python's truthiness: a count of 0 or none adds nothing.
-				if (folder.child_folder_count) queue.push([folder.id, `${path}/`]);
+				// A count of 0 or none adds nothing.
+				if (folder.childFolderCount) queue.push([folder.id, `${path}/`]);
 			}
 			if (cursor === null) break;
 		}
@@ -125,9 +124,7 @@ export function outlookConnector(): Connector<GraphClient> {
 
 		async describe(client, kind, ids) {
 			if (kind === RECIPIENT) {
-				const names: { [id: string]: string } = {};
-				for (const id of ids) if (addresses.validId(id)) Object.defineProperty(names, id, { value: addresses.name(id), enumerable: true, writable: true, configurable: true });
-				return names;
+				return Object.fromEntries(ids.filter((id) => addresses.validId(id)).map((id) => [id, addresses.name(id)]));
 			}
 			const tree = new Tree(client);
 			await tree.root();
@@ -145,12 +142,12 @@ export function outlookConnector(): Connector<GraphClient> {
 				if (within === null || folder.id !== folderId) return null;
 				return tree.path(folder, within);
 			});
-			const names: { [id: string]: string } = {};
-			wanted.forEach((id, index) => {
-				const name = found[index];
-				if (name !== null && name !== undefined) Object.defineProperty(names, id, { value: name, enumerable: true, writable: true, configurable: true });
-			});
-			return names;
+			return Object.fromEntries(
+				wanted.flatMap((id, index) => {
+					const name = found[index];
+					return typeof name === "string" ? [[id, name]] : [];
+				}),
+			);
 		},
 	};
 }

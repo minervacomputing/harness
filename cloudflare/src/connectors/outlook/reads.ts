@@ -2,12 +2,11 @@
 // single messages.
 
 import { z } from "zod";
-import type { Binding, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
-import { defineOperation } from "../../gateway/connector.ts";
+import { type Binding, type Prepared, type ProviderOutput, type ScopedRecord, defineOperation } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
 import { singleLine, sliceText, TextError } from "../../lib/text.ts";
 import { ID } from "../microsoft/index.ts";
-import { after, modelValidator } from "../microsoft/inputs.ts";
+import { after, objectCheck } from "../microsoft/inputs.ts";
 import { formatUtc, parseInstant } from "../../lib/dates.ts";
 import { FULL_FIELDS, type Folder, type GraphClient, type Message, type Recipient, ordinary } from "./client.ts";
 import { FOLDER, READ_CONSENT, Tree, confirmMessage, folderRef, locate, messageId } from "./mailbox.ts";
@@ -23,9 +22,9 @@ function clientOf(binding: Binding): GraphClient {
 	return binding.client as GraphClient;
 }
 
-/** `_search_text`. Called with None too (the validator is on `str | None`), where Python raises a TypeError. */
+/** Search words for Graph's $search: one line, without the quotes and backslashes its syntax uses. Null is no search. */
 function searchText(value: string | null): string | null {
-	if (value === null) throw new TypeError("'NoneType' object is not iterable");
+	if (value === null) return null;
 	singleLine(value);
 	if (value.includes('"') || value.includes("\\")) throw new TextError("must not contain double quotes or backslashes");
 	return value;
@@ -42,8 +41,8 @@ const Moment = () => after(z.string().trim().min(1).max(40).describe("An ISO 860
 const Cursor = () => z.string().trim().max(1000);
 
 function person(recipient: Recipient | null): Json {
-	if (recipient === null || recipient.email_address === null) return null;
-	return { name: recipient.email_address.name, address: recipient.email_address.address };
+	if (recipient === null || recipient.emailAddress === null) return null;
+	return { name: recipient.emailAddress.name, address: recipient.emailAddress.address };
 }
 
 function people(recipients: readonly Recipient[]): Json[] {
@@ -53,19 +52,19 @@ function people(recipients: readonly Recipient[]): Json[] {
 function summary(message: Message): { [key: string]: Json } {
 	return {
 		id: message.id,
-		conversation_id: message.conversation_id,
-		folder_id: message.parent_folder_id,
+		conversation_id: message.conversationId,
+		folder_id: message.parentFolderId,
 		subject: message.subject,
-		from: person(message.from_),
-		to: people(message.to_recipients),
-		cc: people(message.cc_recipients),
-		received: message.received_date_time,
-		sent: message.sent_date_time,
-		is_read: message.is_read,
-		is_draft: message.is_draft,
-		has_attachments: message.has_attachments,
+		from: person(message.from),
+		to: people(message.toRecipients),
+		cc: people(message.ccRecipients),
+		received: message.receivedDateTime,
+		sent: message.sentDateTime,
+		is_read: message.isRead,
+		is_draft: message.isDraft,
+		has_attachments: message.hasAttachments,
 		importance: message.importance,
-		preview: message.body_preview,
+		preview: message.bodyPreview,
 		categories: message.categories,
 	};
 }
@@ -73,10 +72,10 @@ function summary(message: Message): { [key: string]: Json } {
 function folderData(folder: Folder, parentId: string | null): { [key: string]: Json } {
 	return {
 		id: folder.id,
-		name: folder.display_name,
+		name: folder.displayName,
 		parent_id: parentId,
-		unread: folder.unread_item_count,
-		total: folder.total_item_count,
+		unread: folder.unreadItemCount,
+		total: folder.totalItemCount,
 	};
 }
 
@@ -85,8 +84,7 @@ export const ListFolders = z
 		parent: folderRef().nullable().default(null).describe("List this folder's subfolders; leave out for the top-level folders."),
 		limit: z.int().min(1).max(100).default(50),
 		cursor: Cursor().nullable().default(null),
-	})
-	.meta({ title: "ListFolders" });
+	});
 
 export const LIST_FOLDERS = defineOperation<z.output<typeof ListFolders>>({
 	name: "list_folders",
@@ -108,7 +106,7 @@ export const LIST_FOLDERS = defineOperation<z.output<typeof ListFolders>>({
 					const root = await tree.root();
 					const [folders, cursor] = await client.folders(null, data.limit, data.cursor);
 					const records: ScopedRecord[] = folders
-						.filter((folder) => folder.parent_folder_id === root && ID.test(folder.id) && ordinary(folder))
+						.filter((folder) => folder.parentFolderId === root && ID.test(folder.id) && ordinary(folder))
 						.map((folder) => ({ resource: binding.resource(FOLDER, folder.id), data: folderData(folder, null) }));
 					return { records, nextCursor: cursor };
 				},
@@ -123,7 +121,7 @@ export const LIST_FOLDERS = defineOperation<z.output<typeof ListFolders>>({
 				const within = [folder.id, ...resource.within];
 				const records: ScopedRecord[] = folders
 					// A folder that does not name this one as its parent is not placed by this listing.
-					.filter((child) => child.parent_folder_id === folder.id && ID.test(child.id) && !within.includes(child.id) && ordinary(child))
+					.filter((child) => child.parentFolderId === folder.id && ID.test(child.id) && !within.includes(child.id) && ordinary(child))
 					.map((child) => ({ resource: binding.resource(FOLDER, child.id, within), data: folderData(child, folder.id) }));
 				return { records, nextCursor: cursor };
 			},
@@ -149,17 +147,16 @@ export const ListMessages = z
 		cursor: Cursor().nullable().default(null),
 	})
 	.check(
-		modelValidator((data: { query: string | null; unread_only: boolean; after: string | null; before: string | null }) => {
+		objectCheck((data: { query: string | null; unread_only: boolean; after: string | null; before: string | null }) => {
 			if (data.query !== null && (data.unread_only || data.after || data.before)) {
 				throw new TextError("query cannot be combined with unread_only, after or before");
 			}
 		}),
-	)
-	.meta({ title: "ListMessages" });
+	);
 
 type ListMessagesData = z.output<typeof ListMessages>;
 
-/** `_filter`: Graph's $filter for the time and unread limits, or null without any. */
+/** Graph's $filter for the time and unread limits, or null without any. */
 export function messageFilter(data: Pick<ListMessagesData, "unread_only" | "after" | "before">): string | null {
 	if (!(data.unread_only || data.after || data.before)) return null;
 	const parts = [`receivedDateTime ge ${data.after || EPOCH}`];
@@ -195,7 +192,7 @@ export const LIST_MESSAGES = defineOperation<ListMessagesData>({
 				});
 				const records: ScopedRecord[] = messages
 					// Mail that lives in another folder (as in a search folder) is not this folder's to show.
-					.filter((message) => message.parent_folder_id === folder.id && ID.test(message.id))
+					.filter((message) => message.parentFolderId === folder.id && ID.test(message.id))
 					.map((message) => ({ resource, data: summary(message) }));
 				return { records, nextCursor: cursor };
 			},
@@ -209,8 +206,7 @@ export const ReadMessage = z
 		max_chars: z.int().min(500).max(50_000).default(20_000),
 		// Where to start in the body, to continue a long message.
 		offset: z.int().min(0).max(10_000_000).default(0),
-	})
-	.meta({ title: "ReadMessage" });
+	});
 
 export const READ_MESSAGE = defineOperation<z.output<typeof ReadMessage>>({
 	name: "read_message",
@@ -230,19 +226,19 @@ export const READ_MESSAGE = defineOperation<z.output<typeof ReadMessage>>({
 			requirements: [{ need: resource, action: "read" }],
 			async execute(): Promise<ProviderOutput> {
 				const message = await confirmMessage(binding as Binding<GraphClient>, tree, resource, data.message, FULL_FIELDS, true);
-				const attachments = message.has_attachments ? await client.attachments(message.id, MAX_ATTACHMENTS) : [];
+				const attachments = message.hasAttachments ? await client.attachments(message.id, MAX_ATTACHMENTS) : [];
 				const text = message.body ? message.body.content : "";
 				const total = text.length;
 				const end = data.offset + data.max_chars;
 				const record: { [key: string]: Json } = {
 					...summary(message),
-					reply_to: people(message.reply_to),
-					bcc: people(message.bcc_recipients),
+					reply_to: people(message.replyTo),
+					bcc: people(message.bccRecipients),
 					body: sliceText(text, data.offset, end),
 					offset: data.offset,
 					total_chars: total,
 					next_offset: end < total ? end : null,
-					attachments: attachments.map((a) => ({ name: a.name, content_type: a.content_type, size: a.size, inline: a.is_inline })),
+					attachments: attachments.map((a) => ({ name: a.name, content_type: a.contentType, size: a.size, inline: a.isInline })),
 				};
 				return { records: [{ resource, data: record }] };
 			},

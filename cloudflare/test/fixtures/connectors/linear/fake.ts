@@ -1,4 +1,4 @@
-// Linear's GraphQL API in memory, behind an injected `fetch`: backend/tests/test_linear.py `FakeLinear`.
+// Linear's GraphQL API in memory, behind an injected `fetch`.
 //
 // Teams: Engineering (sub-team Web), Operations, Design, and Security, which the account cannot see.
 // ENG-1 has sub-issues ENG-2 and OPS-2; ENG-3's parent is OPS-1; ENG-4 is done.

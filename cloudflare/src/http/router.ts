@@ -1,11 +1,10 @@
 // The API router. Only /api/* reaches it (static assets answer everything else, http/assets.ts), and every
 // API response gets the security headers. Paths have no trailing slash; a path that matches no route, or a
-// workspace id that is not a UUID, is 404 `{"detail": "Not Found"}` (web-api spec 8).
+// workspace id that is not a UUID, is 404 `{"detail": "Not Found"}`.
 //
 // Two rules hold for every route without the route asking for them, so a route added in a later step
-// cannot forget them: a declared body over 2.5 MB is 413, as the web role's ASGI wrapper answers before
-// Django today (web-api 1), and an unsafe request to a route fails closed without a valid CSRF token
-// (web-api 3.2), before the route's session check. The exemptions: CHECKED_LATER, routes that check CSRF
+// cannot forget them: a declared body over 2.5 MB is 413, and an unsafe request to a route fails closed
+// without a valid CSRF token, before the route's session check. The exemptions: CHECKED_LATER, routes that check CSRF
 // themselves after the session; and Better Auth's one route (accounts/routes.ts AUTH_ROUTE), whose client
 // sends no token and which checks the request's origin against its trusted origins itself (only the
 // token check is skipped: the body cap and the security headers still apply). test/platform/worker.test.ts
@@ -37,7 +36,7 @@ export { UPLOAD_ROUTE, UUID } from "./paths.ts";
 
 /**
  * `METHOD path` of the routes that check CSRF themselves, after the session, and take bodies of their own
- * size: the upload, and its other methods, which are 405 "Use POST." before anything else, as today.
+ * size: the upload, and its other methods, which are 405 "Use POST." before anything else.
  */
 export const CHECKED_LATER: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH", "DELETE"].map((method) => `${method} ${UPLOAD_ROUTE}`));
 
@@ -73,7 +72,7 @@ const securityHeaders: MiddlewareHandler<AppEnv> = async (c, next) => {
 	c.res = withSecurityHeaders(c.res);
 };
 
-/** The body cap and CSRF, for every route (above). A path no route matches is left to the 404, as Django resolves URLs first. */
+/** The body cap and CSRF, for every route (above). A path no route matches is left to the 404, before any of these. */
 const requestRules: MiddlewareHandler<AppEnv> = async (c, next) => {
 	// Hono marks middleware with the method ALL; any other match is an endpoint.
 	const endpoint = matchedRoutes(c).find((route) => route.method !== "ALL");
@@ -86,7 +85,7 @@ const requestRules: MiddlewareHandler<AppEnv> = async (c, next) => {
 	await next();
 };
 
-/** A Content-Length over the JSON cap, or one that is not a number (web-api 1). */
+/** A Content-Length over the JSON cap, or one that is not a number. */
 function declaredTooLarge(request: Request): boolean {
 	const declared = request.headers.get("Content-Length");
 	return declared !== null && (!/^[0-9]+$/.test(declared.trim()) || Number(declared) > MAX_JSON_BODY);

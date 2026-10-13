@@ -1,10 +1,44 @@
-// Pure permission evaluation. No storage, so it
+// The permission model's data and its pure evaluation. No storage, so it
 // is cheap to test exhaustively. The Workspace Durable Object builds a run's policy at start (grants.ts)
 // and offers tools with `permitsAny` (tools.ts); the executor checks every call with `permits`.
 
-import type { ConnectionId } from "../contracts/common.ts";
-import type { Any, GrantKey, LayerSnapshot, PolicySnapshot, Resource } from "../contracts/policy.ts";
 import { compareText } from "../lib/arrays.ts";
+import type { ConnectionId } from "../shared/rpc.ts";
+
+/** Selects every resource of a kind, including later ones. Never a real resource id. */
+export type Any = "*";
+
+/** `(connection id, resource kind, resource id, action)`. */
+export type GrantKey = [connection: ConnectionId, kind: string, resource: string, action: string];
+
+/** A layer as a run snapshots it: lists sorted, round-trip stable. */
+export interface LayerSnapshot {
+	name: "ceiling" | "user" | "agent" | "deny-all";
+	/** An unrestricted layer passes everything its denies do not block. */
+	restricted: boolean;
+	allows: GrantKey[];
+	denies: GrantKey[];
+}
+
+/**
+ * The effective policy: ceiling ∩ user ∩ agent, deny wins, in that order (`["ceiling", "user", "agent"]`
+ * is pinned by a test). Only enforceable rows are kept: denies always, allows only for a declared kind and
+ * not `*` unless the kind is wildcard.
+ */
+export type PolicySnapshot = LayerSnapshot[];
+
+/**
+ * A resource as a connector names it. `within` lists ancestors nearest first, for
+ * hierarchical kinds only; `partial` says ancestors beyond them may exist, so any exact deny for the
+ * action blocks and unknown ancestors never help an allow. At most 64 ancestors, no `*`, no duplicates.
+ */
+export interface Resource {
+	connectionId: ConnectionId;
+	kind: string;
+	id: string;
+	within: string[];
+	partial: boolean;
+}
 
 /** A grant on every resource of a kind, including ones created later. Never a real resource id. */
 export const ANY: Any = "*";
@@ -186,7 +220,7 @@ export class Policy {
 		return candidates.some((ids) => actions.every((item) => this.#permits(connectionId, kind, ids, item)));
 	}
 
-	/** The run snapshot's form: each layer's keys sorted (connectors 3.1). */
+	/** The run snapshot's form: each layer's keys sorted. */
 	toJson(): PolicySnapshot {
 		return this.layers.map((layer) => ({
 			name: layer.name,

@@ -63,7 +63,7 @@ export interface AuthDeps {
 }
 
 /**
- * Better Auth's custom hash: our scrypt (passwords.ts), rehashed with today's parameters when verified.
+ * Better Auth's custom hash: our scrypt (passwords.ts), rehashed with the current parameters when verified.
  * A password whose stored hash changed while it was being checked (a reset in between) is refused rather
  * than accepted against the hash it replaced.
  */
@@ -89,7 +89,7 @@ function passwordHasher(deps: AuthDeps) {
 	};
 }
 
-/** Two weeks, as Django's sessions today; a session in use is extended once a day. */
+/** Two weeks; a session in use is extended once a day. */
 export const SESSION_SECONDS = 14 * 24 * 3600;
 
 /** Better Auth's two-factor plugin with its sign-in hook run after every first factor (policy.ts), not just a password. */
@@ -151,7 +151,7 @@ export function authOptions(deps: AuthDeps) {
 			updateAge: 24 * 3600,
 			// Every request reads the session from D1, so a revoked session ends on its next request.
 			cookieCache: { enabled: false },
-			// allauth's reauthentication window. The sensitive endpoints the browser reaches (password,
+			// Five minutes from a sign-in count as recent. The sensitive endpoints the browser reaches (password,
 			// two-factor) ask for the password every time; this bounds any that rely on a recent sign-in.
 			freshAge: 300,
 			additionalFields: {
@@ -204,7 +204,7 @@ export function authOptions(deps: AuthDeps) {
 				sendVerificationOTP: ({ email, otp, type }) => deps.sendCode(email, otp, type),
 				overrideDefaultEmailVerification: true,
 				sendVerificationOnSignUp: true,
-				// A code for an unknown address never creates an account (today's behaviour).
+				// A code for an unknown address never creates an account.
 				disableSignUp: true,
 				allowedAttempts: 3,
 				storeOTP: { hash: (otp: string) => deps.hashCode(otp) },

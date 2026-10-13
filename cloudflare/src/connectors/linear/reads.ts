@@ -1,9 +1,8 @@
 // Linear's read operations: teams, issue lists and search, and single issues.
 
 import { z } from "zod";
-import type { Binding, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
-import type { Resource } from "../../contracts/policy.ts";
-import { defineOperation } from "../../gateway/connector.ts";
+import { type Binding, type Prepared, type ProviderOutput, type ScopedRecord, defineOperation } from "../../gateway/connector.ts";
+import type { Resource } from "../../gateway/policy.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
 import { SINGLE_LINE, isSingleLine, truncate } from "../../lib/text.ts";
 import { type IssueSummary, type Label, type Team, authorOf } from "./client.ts";
@@ -60,12 +59,10 @@ function summary(issue: IssueSummary): JsonObject {
 	};
 }
 
-const ListTeams = z
-	.strictObject({
-		limit: z.int().min(1).max(100).default(50),
-		cursor: Cursor(),
-	})
-	.meta({ title: "ListTeams" });
+const ListTeams = z.strictObject({
+	limit: z.int().min(1).max(100).default(50),
+	cursor: Cursor(),
+});
 
 export const LIST_TEAMS = defineOperation<z.output<typeof ListTeams>>({
 	name: "list_teams",
@@ -89,7 +86,7 @@ export const LIST_TEAMS = defineOperation<z.output<typeof ListTeams>>({
 	},
 });
 
-const TeamInput = z.strictObject({ team: TeamName() }).meta({ title: "TeamInput" });
+const TeamInput = z.strictObject({ team: TeamName() });
 
 function labelData(label: Label): JsonObject {
 	return { name: label.name, group: label.parent ? label.parent.name : null };
@@ -127,15 +124,13 @@ export const GET_TEAM = defineOperation<z.output<typeof TeamInput>>({
 
 const StateFilter = () => z.enum(["open", "closed", "all"]);
 
-const ListIssues = z
-	.strictObject({
-		team: TeamName(),
-		state: StateFilter().default("open"),
-		assigned_to_me: z.boolean().default(false),
-		limit: z.int().min(1).max(50).default(25),
-		cursor: Cursor(),
-	})
-	.meta({ title: "ListIssues" });
+const ListIssues = z.strictObject({
+	team: TeamName(),
+	state: StateFilter().default("open"),
+	assigned_to_me: z.boolean().default(false),
+	limit: z.int().min(1).max(50).default(25),
+	cursor: Cursor(),
+});
 
 function stateCondition(state: "open" | "closed" | "all"): JsonObject[] {
 	if (state === "open") return [{ state: { type: { nin: [...CLOSED] } } }];
@@ -176,15 +171,13 @@ export const LIST_ISSUES = defineOperation<z.output<typeof ListIssues>>({
 	},
 });
 
-const SearchIssues = z
-	.strictObject({
-		team: TeamName(),
-		query: z.string().trim().min(1).max(200).describe("Words that must all appear in the title.").refine(isSingleLine, SINGLE_LINE),
-		state: StateFilter().default("all"),
-		limit: z.int().min(1).max(50).default(25),
-		cursor: Cursor(),
-	})
-	.meta({ title: "SearchIssues" });
+const SearchIssues = z.strictObject({
+	team: TeamName(),
+	query: z.string().trim().min(1).max(200).describe("Words that must all appear in the title.").refine(isSingleLine, SINGLE_LINE),
+	state: StateFilter().default("all"),
+	limit: z.int().min(1).max(50).default(25),
+	cursor: Cursor(),
+});
 
 export const SEARCH_ISSUES = defineOperation<z.output<typeof SearchIssues>>({
 	name: "search_issues",
@@ -210,7 +203,7 @@ export const SEARCH_ISSUES = defineOperation<z.output<typeof SearchIssues>>({
 
 export const READ_NOTE = "Links to other Linear objects appear without their titles, and related issues in other teams only as existing.";
 
-const IssueInput = z.strictObject({ issue: IssueName() }).meta({ title: "IssueInput" });
+const IssueInput = z.strictObject({ issue: IssueName() });
 
 export const GET_ISSUE = defineOperation<z.output<typeof IssueInput>>({
 	name: "get_issue",

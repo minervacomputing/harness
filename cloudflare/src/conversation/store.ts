@@ -16,18 +16,68 @@
 // and reasoning deltas, phases, usage counts) may still run inside pi's transaction; rolled back with it, it
 // was never announced either.
 
-import type { AttachmentOut, FolderChangesOut, FolderWarningsOut, MessageOut } from "../contracts/api.ts";
-import type { AttemptFence, EpochMs, RunId, UserId, VersionId, WorkspaceRef } from "../contracts/common.ts";
-import type { ConversationInit, EventPage } from "../contracts/conversation.ts";
-import type { NewRunEvent, RunEvent, RunEventType } from "../contracts/events.ts";
-import type { CancelReason, ConversationHead, RunEnd, RunHead, RunSnapshot, RunStatus } from "../contracts/runs.ts";
+import type { StartSnapshot } from "../gateway/tools.ts";
 import { type Json, parseJson } from "../lib/json.ts";
 import { VALUE_PART, sliceText, splitParts } from "../lib/text.ts";
 import { isoTime } from "../lib/dates.ts";
-import { ACTIVE, ERROR_MESSAGE_CHARS, statusEvent, terminalStatus } from "./events.ts";
+import type { AttachmentOut, ConversationDetail, FolderChangesOut, FolderWarningsOut, MessageOut, RunOut } from "../shared/api.ts";
+import type { AgentId, AttemptFence, ConversationId, EpochMs, RunId, RunStatus, UserId, VersionId, WorkspaceRef } from "../shared/rpc.ts";
+import {
+	ACTIVE,
+	type CancelReason,
+	ERROR_MESSAGE_CHARS,
+	type NewRunEvent,
+	type RunEnd,
+	type RunEvent,
+	type RunEventType,
+	statusEvent,
+	terminalStatus,
+} from "./events.ts";
 import type { StoredMessage } from "./history.ts";
 
-/** A page of events stops at this much JSON, whatever its limit (contracts/conversation.ts, EventPage). */
+export interface ConversationInit {
+	conversationId: ConversationId;
+	workspace: WorkspaceRef;
+	userId: UserId;
+	agentId: AgentId;
+	createdAt: EpochMs;
+}
+
+/** A page of a run's events: seq above `after` and at most `upTo`, at most `limit` of them. */
+export interface EventPage {
+	after: number;
+	upTo: number;
+	/** At most 1,000; a page also stops at 4 MiB of JSON. */
+	limit: number;
+}
+
+/** The snapshot the Conversation Durable Object stores with the run: the start snapshot plus its folder. */
+export interface RunSnapshot extends StartSnapshot {
+	runId: RunId;
+	/** The version the run starts from: the conversation's folder, or a new `base` with the attachments. */
+	baseVersionId: VersionId | null;
+	/** As added to the folder: final, possibly numbered names at the root, in upload order. */
+	attachments: AttachmentOut[];
+	limits: { folderBytes: number; folderEntries: number; runUploadBytes: number };
+}
+
+/**
+ * `RunOut` with its events typed. The API answers this shape; the type exists because RPC types cannot
+ * carry the generated `EventOut`'s `unknown` data.
+ */
+export type RunView = Omit<RunOut, "events"> & { events: RunEvent[] };
+
+/**
+ * A run as a Durable Object returns it: `RunView` without its events. A run's events have no size bound
+ * and Workers RPC refuses a result over 32 MiB, so the Worker pages through them
+ * with `getRunEvents` up to `eventSeq` while it streams the response. `eventSeq` is read with the status in
+ * one synchronous step, and events are append-only, so the body it assembles is consistent.
+ */
+export type RunHead = Omit<RunOut, "events"> & { eventSeq: number };
+
+export type ConversationHead = Omit<ConversationDetail, "runs"> & { runs: RunHead[] };
+
+/** A page of events stops at this much JSON, whatever its limit (`EventPage`). */
 export const PAGE_BYTES = 4 * 1024 * 1024;
 export const PAGE_LIMIT = 1000;
 
@@ -115,7 +165,7 @@ export interface StoreListeners {
 }
 
 export interface FinishOptions {
-	/** Only if this attempt is still the run's (runs 2.2). */
+	/** Only if this attempt is still the run's. */
 	attempt?: number;
 	/** Only if the run is in this state. */
 	fromStatus?: RunStatus;
@@ -413,7 +463,7 @@ export class RunStore {
 		return this.#sql.exec<RunRow>(`SELECT ${RUN_COLUMNS} FROM runs WHERE id = ?`, id).toArray()[0] ?? null;
 	}
 
-	/** At most one run is queued, provisioning or running (runs 1.1). */
+	/** At most one run is queued, provisioning or running. */
 	activeRun(): RunRow | null {
 		return this.#sql.exec<RunRow>(`SELECT ${RUN_COLUMNS} FROM runs WHERE status IN ${ACTIVE_SQL} ORDER BY created_at DESC LIMIT 1`).toArray()[0] ?? null;
 	}
@@ -503,7 +553,7 @@ export class RunStore {
 		});
 	}
 
-	/** provisioning → running, once per attempt, keeping the run's first start time (runs 2.1). */
+	/** provisioning → running, once per attempt, keeping the run's first start time. */
 	startAttempt(fence: AttemptFence): boolean {
 		return this.write(() => {
 			const changed = this.#sql
@@ -520,7 +570,7 @@ export class RunStore {
 		});
 	}
 
-	/** The gate's new attempt: attempt + 1 and the restart marker, the deadline unchanged (runs 2.4). */
+	/** The gate's new attempt: attempt + 1 and the restart marker, the deadline unchanged. */
 	restart(runId: RunId, attempt: number): void {
 		const now = this.now();
 		this.#sql.exec("UPDATE runs SET attempt = ?, attempt_started_at = ?, status = 'provisioning' WHERE id = ?", attempt, now, runId);
@@ -530,7 +580,7 @@ export class RunStore {
 	}
 
 	/**
-	 * The one way a run ends, once, from an active state (runs 2.2): status, code, message cut to 500, the
+	 * The one way a run ends, once, from an active state: status, code, message cut to 500, the
 	 * folder published, and the terminal status event, in one transaction.
 	 */
 	finish(runId: RunId, end: RunEnd, options: FinishOptions = {}): boolean {
@@ -564,7 +614,7 @@ export class RunStore {
 		});
 	}
 
-	// Usage (runs 7.6).
+	// Usage.
 
 	/** Counts a tool call if the fence is current; false means RUN_ENDED, not counted. */
 	countToolCall(fence: AttemptFence): boolean {
@@ -602,7 +652,7 @@ export class RunStore {
 		return this.#sql.exec<{ text: string }>("SELECT text FROM tool_arguments WHERE run_id = ? AND call_id = ?", runId, callId).toArray()[0]?.text ?? null;
 	}
 
-	// Events (runs 6.1).
+	// Events.
 
 	/**
 	 * Appends with the next seq. A fenced append whose attempt is no longer current, or an `active` one

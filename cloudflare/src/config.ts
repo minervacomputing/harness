@@ -36,7 +36,7 @@ export interface Settings {
 	debug: boolean;
 	signupOpen: boolean;
 	emailFrom: string;
-	/** A turn's wall-clock limit, or null for none (today's default). */
+	/** A turn's wall-clock limit, or null for none (the default). */
 	runTimeoutMs: number | null;
 	model: {
 		provider: ModelProvider;

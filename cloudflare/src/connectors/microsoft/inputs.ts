@@ -2,8 +2,8 @@
 //
 // - `after(schema, fn)`: `fn` runs on the value once its own checks passed, may change it (a well-known
 //   folder name lowercased, a time put in UTC) or refuse it with a TextError, which is the field's message.
-// - `modelValidator(fn)`: it runs only once every field passed, and its TextError is reported at the input
-//   as a whole.
+// - `objectCheck(fn)`: a check across the fields of an object, run only once every field passed; its
+//   TextError is reported at the input as a whole.
 //
 // Any other error a check throws (a TypeError, a RangeError) is not a validation error: it propagates, and
 // the call fails generically.
@@ -39,7 +39,7 @@ export function plainTextOf<S extends z.ZodType<string>>(schema: S) {
  * A check of a strict object: `fn` sees the validated fields, and runs only when they all passed (zod would
  * run it after a field's length check failed too).
  */
-export function modelValidator<T>(fn: (value: T) => void): (payload: core.ParsePayload<T>) => void {
+export function objectCheck<T>(fn: (value: T) => void): (payload: core.ParsePayload<T>) => void {
 	return (payload) => {
 		if (payload.issues.length > 0) return;
 		try {
