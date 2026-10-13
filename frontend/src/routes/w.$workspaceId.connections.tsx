@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, useLocation } from '@tanstack/react-router'
 import { ChevronDownIcon, SearchIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { z } from 'zod'
 import {
   authorizeMutation,
   connectKeyMutation,
@@ -24,54 +25,54 @@ import { Alert, ErrorNote, Notice, PageHeader, Spinner, Status } from '@/compone
 import { errorMessage } from '@/lib/http'
 import { cn } from '@/lib/utils'
 
-/** `connected` arrives after connecting an app; `open` comes from links elsewhere that point at one. */
-type Search = { connected?: string; error?: string; open?: string }
+/**
+ * `open` lists the connections whose panels are open, so a reload or the back button shows the same view.
+ * `connected` arrives after connecting an app, and that connection is open too. A link from elsewhere that points
+ * at one connection opens it and names its row in the hash, which scrolls to it.
+ */
+const connectionsSearch = z.object({
+  connected: z.string().optional().catch(undefined),
+  error: z.string().optional().catch(undefined),
+  open: z.array(z.string()).optional().catch(undefined),
+})
 
 export const Route = createFileRoute('/w/$workspaceId/connections')({
-  validateSearch: (search: Record<string, unknown>): Search => ({
-    connected: typeof search.connected === 'string' ? search.connected : undefined,
-    error: typeof search.error === 'string' ? search.error : undefined,
-    open: typeof search.open === 'string' ? search.open : undefined,
-  }),
+  validateSearch: connectionsSearch,
   component: ConnectionsPage,
 })
 
 // Apps offered before the user searches or asks for all of them.
 const SUGGESTED = 3
 
-/** Which connections are open, kept for the browser tab so coming back shows the same view. */
-function useOpenConnections(workspaceId: string, initiallyOpen?: string) {
-  const storageKey = `minerva-open-connections:${workspaceId}`
-  const [open, setOpen] = useState<Set<string>>(() => {
-    let stored: string[] = []
-    try {
-      // oxlint-disable-next-line no-restricted-globals -- until F2, which moves the open connections into the URL
-      stored = JSON.parse(sessionStorage.getItem(storageKey) ?? '[]')
-    } catch {
-      // Storage can be unavailable; every connection then starts closed.
-    }
-    return new Set([...stored, ...(initiallyOpen ? [initiallyOpen] : [])])
-  })
-  useEffect(() => {
-    try {
-      // oxlint-disable-next-line no-restricted-globals -- until F2
-      sessionStorage.setItem(storageKey, JSON.stringify([...open]))
-    } catch {
-      // Not remembering is fine.
-    }
-  }, [open, storageKey])
-  const toggle = (id: string) =>
-    setOpen(previous => {
-      const next = new Set(previous)
-      if (!next.delete(id)) next.add(id)
-      return next
+const openIds = (search: z.infer<typeof connectionsSearch>) => new Set([...(search.open ?? []), ...(search.connected ? [search.connected] : [])])
+
+/** Opens or closes a connection. Not a step of its own in the history, and the page stays where it is. */
+function useToggleConnection() {
+  const navigate = Route.useNavigate()
+  return (id: string) =>
+    navigate({
+      search: previous => {
+        const open = openIds(previous)
+        if (!open.delete(id)) open.add(id)
+        // Closing the connection just made also drops its notice; otherwise it would open again.
+        const connected = previous.connected && open.has(previous.connected) ? previous.connected : undefined
+        return { ...previous, connected, open: open.size ? [...open] : undefined }
+      },
+      replace: true,
+      resetScroll: false,
     })
-  // A connection made with a key or added in place arrives without reloading the page.
-  useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- until F2, which moves the open connections into the URL
-    if (initiallyOpen) setOpen(previous => (previous.has(initiallyOpen) ? previous : new Set(previous).add(initiallyOpen)))
-  }, [initiallyOpen])
-  return [open, toggle] as const
+}
+
+/**
+ * The section each open connection was in when it opened. It stays there while open, so saving does not move it
+ * from under the user.
+ */
+function usePinnedSections(rows: { id: string; attention: boolean }[], open: Set<string>) {
+  const [pinned, setPinned] = useState<ReadonlyMap<string, boolean>>(new Map())
+  const next = new Map<string, boolean>()
+  for (const { id, attention } of rows) if (open.has(id)) next.set(id, pinned.get(id) ?? attention)
+  if (next.size !== pinned.size || [...next].some(([id, attention]) => pinned.get(id) !== attention)) setPinned(next)
+  return next
 }
 
 function useAuthorize() {
@@ -87,29 +88,28 @@ function ConnectionsPage() {
   const path = { workspace_id: workspaceId }
   const connectors = useQuery(listConnectorsOptions({ path }))
   const connections = useQuery(listConnectionsOptions({ path }))
-  const shown = search.connected ?? search.open
-  const [open, toggle] = useOpenConnections(workspaceId, shown)
-  // An open connection stays in the section it was opened in, so saving does not move it from under the user.
-  const pinned = useRef(new Map<string, boolean>())
+  const hash = useLocation({ select: location => location.hash })
+  const open = openIds(search)
+  const toggle = useToggleConnection()
 
   // Once per link, so saving or refetching later does not pull the page back. Focus follows for the keyboard.
+  const shown = search.connected ? `connection-${search.connected}` : hash.startsWith('connection-') ? hash : undefined
   const scrolledTo = useRef<string>(undefined)
   useEffect(() => {
     if (!shown || scrolledTo.current === shown || !connections.data) return
-    const row = document.getElementById(`connection-${shown}`)
+    const row = document.getElementById(shown)
     if (!row) return
     scrolledTo.current = shown
     row.scrollIntoView({ block: 'start', behavior: 'smooth' })
     row.querySelector('button')?.focus({ preventScroll: true })
   }, [shown, connections.data])
 
-  // oxlint-disable-next-line react/refs -- until F2, which reworks the open connections
-  const rows = (connections.data ?? []).map(connection => {
-    const setup = setupOf(connection)
-    if (!open.has(connection.id)) pinned.current.delete(connection.id)
-    else if (!pinned.current.has(connection.id)) pinned.current.set(connection.id, setup.attention)
-    return { connection, setup, attention: pinned.current.get(connection.id) ?? setup.attention }
-  })
+  const current = (connections.data ?? []).map(connection => ({ connection, setup: setupOf(connection) }))
+  const pinned = usePinnedSections(
+    current.map(({ connection, setup }) => ({ id: connection.id, attention: setup.attention })),
+    open,
+  )
+  const rows = current.map(r => ({ ...r, attention: pinned.get(r.connection.id) ?? r.setup.attention }))
   const attention = rows.filter(r => r.attention)
   const ready = rows.filter(r => !r.attention)
   // One list, so a connection that changes section keeps its open editor and unsaved choices.
@@ -191,11 +191,11 @@ function AddApps({
   firstTime: boolean
 }) {
   const path = { workspace_id: workspaceId }
-  const navigate = useNavigate()
+  const navigate = Route.useNavigate()
   const queryClient = useQueryClient()
   const authorize = useAuthorize()
   const onConnected = (connection: ConnectionOut) => {
-    navigate({ to: '.', search: { connected: connection.id } })
+    void navigate({ search: previous => ({ connected: connection.id, open: [...openIds(previous)] }) })
     invalidateConnections(queryClient, workspaceId)
   }
   const enable = useMutation({ ...enableMutation(), onSuccess: onConnected })

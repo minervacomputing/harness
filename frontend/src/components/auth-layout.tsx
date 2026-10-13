@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { Logo } from '@/components/brand/logo'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { type AuthState, pendingPath } from '@/lib/auth'
+import { isLocalPath } from '@/lib/guards'
 
 export function AuthLayout({
   title,
@@ -51,7 +52,7 @@ export function AuthLayout({
 export function useContinueAuth() {
   const navigate = useNavigate()
   return (state: AuthState, next?: string) => {
-    if (state.kind === 'authenticated') return navigate({ to: next && next.startsWith('/') ? next : '/' })
+    if (state.kind === 'authenticated') return navigate({ to: next && isLocalPath(next) ? next : '/' })
     return navigate({ to: pendingPath(state.pending) ?? '/login', search: next ? { next } : {} })
   }
 }

@@ -58,7 +58,9 @@ export function AttentionList({ workspaceId, connections, className }: { workspa
             <Link
               to="/w/$workspaceId/connections"
               params={{ workspaceId }}
-              search={{ open: connection.id }}
+              search={{ open: [connection.id] }}
+              hash={`connection-${connection.id}`}
+              hashScrollIntoView={false}
               title={`Open ${connection.provider_name} under Connections`}
               className="flex items-center gap-3 px-3 py-2 outline-none hover:bg-secondary/60 focus-visible:ring-[3px] focus-visible:ring-ring/25 focus-visible:ring-inset"
             >

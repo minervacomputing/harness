@@ -2,10 +2,10 @@ import { createFileRoute, redirect } from '@tanstack/react-router'
 import { AuthLayout, useContinueAuth } from '@/components/auth-layout'
 import { CodeForm } from '@/components/code-form'
 import { auth, useAuthStep } from '@/lib/auth'
-import { redirectIfSignedIn, validateNext } from '@/lib/guards'
+import { nextSearch, redirectIfSignedIn } from '@/lib/guards'
 
 export const Route = createFileRoute('/login_/mfa')({
-  validateSearch: validateNext,
+  validateSearch: nextSearch,
   beforeLoad: async ({ context }) => {
     const state = await redirectIfSignedIn(context.queryClient)
     if (state.pending !== 'mfa_authenticate') throw redirect({ to: '/login' })

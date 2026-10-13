@@ -1,6 +1,7 @@
 import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { z } from 'zod'
 import { createConversationMutation, listAgentsOptions } from '@/api/@tanstack/react-query.gen'
 import { AgentIntro } from '@/components/chat/agent-intro'
 import { useChatRuntime } from '@/components/chat/runtime'
@@ -11,7 +12,7 @@ import { useDocumentTitle } from '@/lib/title'
 
 export const Route = createFileRoute('/w/$workspaceId/chat/')({
   // ?agent=<id> starts the chat with that agent, for example from the Agents page.
-  validateSearch: (search: Record<string, unknown>): { agent?: string } => (typeof search.agent === 'string' ? { agent: search.agent } : {}),
+  validateSearch: z.object({ agent: z.string().optional().catch(undefined) }),
   component: NewChat,
 })
 

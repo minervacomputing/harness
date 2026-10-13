@@ -1,12 +1,26 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { notFound, redirect } from '@tanstack/react-router'
+import { z } from 'zod'
 import { meOptions } from '@/api/@tanstack/react-query.gen'
 import { authQuery } from '@/lib/auth'
 
-export type NextSearch = { next?: string }
+/**
+ * Whether `next` is a path on this site. It must start with `/` and still be on this origin once resolved, so
+ * `//host` and `/\host`, which browsers read as another site, are refused.
+ */
+export function isLocalPath(next: string) {
+  if (!next.startsWith('/')) return false
+  try {
+    return new URL(next, window.location.origin).origin === window.location.origin
+  } catch {
+    return false
+  }
+}
 
-export const validateNext = (search: Record<string, unknown>): NextSearch =>
-  typeof search.next === 'string' && search.next.startsWith('/') ? { next: search.next } : {}
+/** The page to continue to after signing in. A missing, malformed or foreign `next` is dropped. */
+export const nextSearch = z.object({
+  next: z.string().refine(isLocalPath).optional().catch(undefined),
+})
 
 /** Auth pages are for signed-out visitors; signed-in users go straight to the app. */
 export async function redirectIfSignedIn(queryClient: QueryClient) {
