@@ -1,4 +1,4 @@
-// What Atlassian connectors share, ported from backend/connectors/atlassian/__init__.py: OAuth 2.0 (3LO),
+// What Atlassian connectors share: OAuth 2.0 (3LO),
 // the sites a token reaches, and a client base.
 //
 // Atlassian allows one callback URL per OAuth app, so each connector has its own app (`MINERVA_JIRA_*`,
@@ -17,7 +17,6 @@ import { OperationError, denied } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
-import { sortByCodePoint } from "../../lib/order.ts";
 import { model, optionalStr } from "./model.ts";
 import { quoteSegment } from "../../lib/urlsplit.ts";
 
@@ -174,7 +173,7 @@ export class AtlassianClient implements ProviderClient {
 				if (CLOUD_ID.test(cloudId) && site.scopes.includes(this.scope) && !found.has(cloudId)) found.set(cloudId, site.withId(cloudId));
 			}
 			if (found.size > MAX_SITES) throw new OperationError("PROVIDER_LIMIT", `This account reaches more ${this.provider} sites than Minerva reads.`);
-			this.#sites = sortByCodePoint(found.keys()).map((key) => found.get(key) as Site);
+			this.#sites = [...found.keys()].sort().map((key) => found.get(key) as Site);
 		}
 		return this.#sites;
 	}

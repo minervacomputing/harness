@@ -15,7 +15,6 @@ import { OperationError } from "../../src/gateway/connector.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { MAX_ALIAS_SUFFIX, MAX_TOOL_NAME, Registry } from "../../src/gateway/registry.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
-import { codePointLength } from "../../src/lib/text.ts";
 import { type OAuth2, planRefresh, tokenBody, tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
 import { Scenario, type ScenarioConnection, USER } from "./executor-fakes.ts";
 
@@ -369,11 +368,11 @@ describe("discovery", () => {
 		expect(hubspot.requests.length).toBe(requests);
 	});
 
-	test("a search folds case as Python's casefold does", async () => {
+	test("a search ignores case", async () => {
 		const hubspot = new FakeHubSpot();
 		hubspot.pipelines.set("400", { id: "400", label: "Großkunden", displayOrder: 3, archived: false, stages: [] });
 		const connector = hubspotConnector();
-		const found = await connector.discover(hubspot.client(), "record", { query: "GROSS", cursor: null });
+		const found = await connector.discover(hubspot.client(), "record", { query: "GROß", cursor: null });
 		expect(found.items).toEqual([{ id: "pipeline:400", name: "Deals in Großkunden" }]);
 	});
 
@@ -417,7 +416,7 @@ describe("reads", () => {
 
 		run = await start(hubspot, { companies: READ });
 		const acme = items(await run.ok("hubspot_get_company", { company_id: ACME }))[0] as JsonObject;
-		expect(codePointLength(acme.description as string)).toBe(2000);
+		expect((acme.description as string).length).toBe(2000);
 		expect(acme.description_truncated).toBe(true);
 		expect(await run.code("hubspot_get_contact", { contact_id: ADA })).toBe("POLICY_DENIED");
 	});

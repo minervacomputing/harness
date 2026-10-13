@@ -31,11 +31,9 @@ import { z } from "zod";
 import type { Binding, Connector, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
-import { DIGIT_CLASS } from "../../lib/digits.ts";
-import { sliceCodePoints, truncate } from "../../lib/text.ts";
-import { casefold } from "../../lib/casefold.ts";
+import { sliceText, truncate, TextError } from "../../lib/text.ts";
 import { ID, accountLabel, consent, oauth } from "../microsoft/index.ts";
-import { after, modelValidator, plainTextOf, singleLineOf, valueError } from "../microsoft/inputs.ts";
+import { after, modelValidator, plainTextOf, singleLineOf } from "../microsoft/inputs.ts";
 import {
 	MICROS_PER_DAY,
 	type PyDateTime,
@@ -63,10 +61,9 @@ const MAX_WINDOW = 366n * MICROS_PER_DAY;
 export const READ_CONSENT = consent("Calendars.Read", "Calendars.ReadWrite");
 export const WRITE_CONSENT = consent("Calendars.ReadWrite");
 
-/** Python's `\d` is any decimal digit (Unicode 16's Nd, as lib/digits.ts pins it), as these are. */
-const D = DIGIT_CLASS;
-export const DATE = new RegExp(`^${D}{4}-${D}{2}-${D}{2}$`, "u");
-export const DATE_TIME = new RegExp(`^${D}{4}-${D}{2}-${D}{2}T${D}{2}:${D}{2}(:${D}{2}(\\.${D}{1,6})?)?(Z|[+-]([01]${D}|2[0-3]):[0-5]${D})$`, "u");
+/** ASCII digits only. */
+export const DATE = /^\d{4}-\d{2}-\d{2}$/u;
+export const DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]([01]\d|2[0-3]):[0-5]\d)$/u;
 // Times are converted and windows widened here, so years stay well inside what Python's dates hold.
 const FIRST_YEAR = 1900;
 const LAST_YEAR = 2999;
@@ -75,29 +72,29 @@ function inYears(year: number): boolean {
 	return year >= FIRST_YEAR && year <= LAST_YEAR;
 }
 
-/** `_date_time`. Python's own ValueErrors (an invalid date, say) are reported as they are. */
+/** A date-time with an offset. The parser's own refusals (an invalid date, say) are reported as they are. */
 export function checkDateTime(value: string): string {
-	if (!DATE_TIME.test(value)) throw valueError("must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00");
-	if (!inYears(datetimeFromIsoFormat(value).year)) throw valueError("must be between the years 1900 and 2999");
+	if (!DATE_TIME.test(value)) throw new TextError("must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00");
+	if (!inYears(datetimeFromIsoFormat(value).year)) throw new TextError("must be between the years 1900 and 2999");
 	return value;
 }
 
 /** `_date_or_date_time`. */
 export function checkDateOrDateTime(value: string): string {
 	if (DATE.test(value)) {
-		if (!inYears(dateFromIsoFormat(value).year)) throw valueError("must be between the years 1900 and 2999");
+		if (!inYears(dateFromIsoFormat(value).year)) throw new TextError("must be between the years 1900 and 2999");
 		return value;
 	}
 	return checkDateTime(value);
 }
 
 function checkZone(value: string): string {
-	if (!ZONES.has(value)) throw valueError("must be an IANA time zone Microsoft accepts, like Europe/Berlin or America/New_York");
+	if (!ZONES.has(value)) throw new TextError("must be an IANA time zone Microsoft accepts, like Europe/Berlin or America/New_York");
 	return value;
 }
 
 function checkCalendarRef(value: string): string {
-	if (value !== PRIMARY && !ID.test(value)) throw valueError('must be a calendar id from list_calendars, or "primary"');
+	if (value !== PRIMARY && !ID.test(value)) throw new TextError('must be a calendar id from list_calendars, or "primary"');
 	return value;
 }
 
@@ -149,9 +146,9 @@ async function calendarId(client: CalendarClient, ref: string): Promise<string> 
 /** `_time`: how an event's start or end is shown. */
 export function shownTime(value: Time | null, allDay: boolean): string | null {
 	if (value === null) return null;
-	const moment = sliceCodePoints(value.date_time, 0, 19);
+	const moment = sliceText(value.date_time, 0, 19);
 	// Graph answers all-day events at midnight UTC, whatever zone was asked for (see the module).
-	if (allDay) return sliceCodePoints(moment, 0, 10);
+	if (allDay) return sliceText(moment, 0, 10);
 	if ((value.time_zone || "").toUpperCase() === "UTC") return `${moment}Z`;
 	return `${moment} ${value.time_zone === null ? "None" : value.time_zone}`;
 }
@@ -233,8 +230,8 @@ export const ListEvents = z
 		modelValidator((data: { time_min: string | null; time_max: string | null }) => {
 			if (data.time_min && data.time_max) {
 				const span = instant(datetimeFromIsoFormat(data.time_max)) - instant(datetimeFromIsoFormat(data.time_min));
-				if (span <= 0n) throw valueError("time_max must be after time_min");
-				if (span > MAX_WINDOW) throw valueError("time_min and time_max may be at most 366 days apart");
+				if (span <= 0n) throw new TextError("time_max must be after time_min");
+				if (span > MAX_WINDOW) throw new TextError("time_min and time_max may be at most 366 days apart");
 			}
 		}),
 	)
@@ -346,16 +343,16 @@ export const CreateEvent = z
 	.check(
 		modelValidator((data: CreateEventData) => {
 			const allDay = DATE.test(data.start);
-			if (allDay !== DATE.test(data.end)) throw valueError("start and end must both be dates or both be date-times");
+			if (allDay !== DATE.test(data.end)) throw new TextError("start and end must both be dates or both be date-times");
 			let ordered: boolean;
 			if (allDay) {
 				ordered = dateOrdinal(dateFromIsoFormat(data.end)) > dateOrdinal(dateFromIsoFormat(data.start));
-				if (data.time_zone === null) throw valueError("time_zone is required for all-day events");
+				if (data.time_zone === null) throw new TextError("time_zone is required for all-day events");
 			} else {
 				ordered = instant(datetimeFromIsoFormat(data.end)) > instant(datetimeFromIsoFormat(data.start));
-				if (data.time_zone !== null) throw valueError("time_zone is only for all-day events; give timed events an offset");
+				if (data.time_zone !== null) throw new TextError("time_zone is only for all-day events; give timed events an offset");
 			}
-			if (!ordered) throw valueError("end must be after start");
+			if (!ordered) throw new TextError("end must be after start");
 		}),
 	)
 	.meta({ title: "CreateEvent" });
@@ -451,8 +448,8 @@ export function outlookCalendarConnector(options: CalendarOptions = {}): Connect
 		async discover(client, _kind, { query }) {
 			let calendars = await allCalendars(client);
 			if (query) {
-				const text = casefold(query);
-				calendars = calendars.filter((c) => casefold(c.name).includes(text));
+				const text = query.toLowerCase();
+				calendars = calendars.filter((c) => c.name.toLowerCase().includes(text));
 			}
 			return { items: calendars.map((c) => ({ id: c.id, name: c.name })) };
 		},

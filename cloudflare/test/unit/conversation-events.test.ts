@@ -1,5 +1,4 @@
-// Event payloads and how runs end (runs 2.3, 6.2; frontend 4.4; harness 8.6, 12.2), ported from
-// backend/runs/services.py (`finish`), gateway/views.py (worker events) and the worker's chat cards.
+// Event payloads and how runs end: the worker's events and the chat's cards.
 
 import { describe, expect, test } from "vitest";
 import {
@@ -21,7 +20,7 @@ import {
 } from "../../src/conversation/events.ts";
 
 describe("how runs end", () => {
-	test("codes and messages are today's", () => {
+	test("codes and messages", () => {
 		expect(COMPLETED).toEqual({ status: "completed", code: "", message: "" });
 		expect(CANCELLED).toEqual({ status: "cancelled", code: "cancelled", message: "Stopped." });
 		expect(EMERGENCY_STOP).toEqual({ status: "cancelled", code: "emergency_stop", message: "Stopped." });
@@ -43,8 +42,10 @@ describe("how runs end", () => {
 		expect(terminalStatus(COMPLETED)).toEqual({ status: "completed" });
 		expect(terminalStatus(CANCELLED)).toEqual({ status: "cancelled", message: "Stopped." });
 		expect(terminalStatus({ status: "failed", code: "folder_limit", message: "" })).toEqual({ status: "failed" });
-		const long = terminalStatus({ status: "failed", code: "folder_limit", message: `${"é".repeat(499)}😀😀` });
-		expect(long).toEqual({ status: "failed", message: `${"é".repeat(499)}😀` });
+		const long = terminalStatus({ status: "failed", code: "folder_limit", message: `${"é".repeat(498)}😀😀` });
+		expect(long).toEqual({ status: "failed", message: `${"é".repeat(498)}😀` });
+		// A cut never leaves half a character.
+		expect(terminalStatus({ status: "failed", code: "folder_limit", message: `${"é".repeat(499)}😀` })).toEqual({ status: "failed", message: "é".repeat(499) });
 	});
 });
 
@@ -59,7 +60,8 @@ describe("phases", () => {
 
 	test("a phase's text is cut to 300 characters", () => {
 		expect(phaseEvent("Thinking")).toEqual({ type: "phase", data: { text: "Thinking" } });
-		expect(phaseEvent(`${"x".repeat(299)}😀😀`)).toEqual({ type: "phase", data: { text: `${"x".repeat(299)}😀` } });
+		expect(phaseEvent(`${"x".repeat(298)}😀😀`)).toEqual({ type: "phase", data: { text: `${"x".repeat(298)}😀` } });
+		expect(phaseEvent(`${"x".repeat(299)}😀`)).toEqual({ type: "phase", data: { text: "x".repeat(299) } });
 	});
 });
 

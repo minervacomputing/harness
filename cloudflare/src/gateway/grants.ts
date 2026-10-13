@@ -1,15 +1,14 @@
-// Layers and grants, the pure parts of backend/permissions/services.py (connectors 4): the policy a run
+// Layers and grants, the pure parts: the policy a run
 // starts with, built from the Workspace Durable Object's rows, and the checks and plan of a grant edit.
 // Storing the rows, bumping the layer's version and revoking runs are the Workspace's (step 2b).
 
 import type { ConnectionId, UserId } from "../contracts/common.ts";
 import type { Connector } from "../contracts/connectors.ts";
 import type { GrantChange, GrantRow } from "../contracts/policy.ts";
-import { compareCodePoints, sortByCodePoint } from "../lib/order.ts";
-import { codePointLength, pythonRepr } from "../lib/text.ts";
 import { ACCOUNT_KIND, actionOf, kindOf, requiresOf } from "./connector.ts";
 import { ANY, Layer, type LayerName, Policy } from "./policy.ts";
 import type { Registry } from "./registry.ts";
+import { compareText } from "../lib/arrays.ts";
 
 export type Level = GrantRow["layer"];
 
@@ -80,7 +79,7 @@ export function userGrants(grants: readonly GrantRow[], connectionId: Connection
 	return grants
 		.filter((grant) => grant.layer === "user" && grant.connectionId === connectionId && grant.effect === "allow")
 		.filter((grant) => userId === null || grant.subject === userId)
-		.sort((a, b) => compareCodePoints(a.kind, b.kind) || compareCodePoints(a.resourceId, b.resourceId));
+		.sort((a, b) => compareText(a.kind, b.kind) || compareText(a.resourceId, b.resourceId));
 }
 
 /** Every action the user (or, with null, any user) allows on some resource of the connection. */
@@ -99,8 +98,8 @@ export function checkChanges(connector: Connector, connectionId: ConnectionId, c
 	const seen = new Set<string>();
 	for (const change of changes) {
 		const kind = kindOf(connector, change.kind);
-		if (kind === null) throw new InvalidGrants(`${connector.name} has no resources of type ${pythonRepr(change.kind)}.`);
-		if (!change.id || codePointLength(change.id) > 200) throw new InvalidGrants("Choose a resource.");
+		if (kind === null) throw new InvalidGrants(`${connector.name} has no resources of type ${JSON.stringify(change.kind)}.`);
+		if (!change.id || change.id.length > 200) throw new InvalidGrants("Choose a resource.");
 		if (change.id === ANY && !kind.wildcard) throw new InvalidGrants(`Permissions for ${kind.label.toLowerCase()} resources are set one at a time.`);
 		if (kind.id === ACCOUNT_KIND && change.id !== connectionId) throw new InvalidGrants("Account permissions apply to the connection itself.");
 		const key = resourceKey(change.kind, change.id);
@@ -108,7 +107,7 @@ export function checkChanges(connector: Connector, connectionId: ConnectionId, c
 		seen.add(key);
 		for (const actionId of change.actions) {
 			if (!kind.actions.includes(actionId)) {
-				throw new InvalidGrants(`${connector.name} does not support ${pythonRepr(actionId)} on ${kind.label.toLowerCase()}.`);
+				throw new InvalidGrants(`${connector.name} does not support ${JSON.stringify(actionId)} on ${kind.label.toLowerCase()}.`);
 			}
 		}
 	}
@@ -135,11 +134,11 @@ export function checkState(connector: Connector, state: GrantState, names: Reado
 	for (const entry of state.values()) if (entry.actions.size > 0) count++;
 	if (count > MAX_GRANTS_PER_CONNECTION) throw new InvalidGrants(`A connection can have at most ${MAX_GRANTS_PER_CONNECTION} permissions.`);
 	const requires = requiresOf(connector);
-	const entries = [...state.values()].sort((a, b) => compareCodePoints(a.kind, b.kind) || compareCodePoints(a.id, b.id));
+	const entries = [...state.values()].sort((a, b) => compareText(a.kind, b.kind) || compareText(a.id, b.id));
 	for (const { kind, id, actions } of entries) {
 		if (!kinds.has(kind)) continue;
 		const inherited = state.get(resourceKey(kind, ANY))?.actions ?? new Set<string>();
-		for (const actionId of sortByCodePoint(actions)) {
+		for (const actionId of [...actions].sort()) {
 			const required = requires(actionId);
 			if (required !== null && !actions.has(required) && !inherited.has(required)) {
 				const name = names.get(resourceKey(kind, id)) || id;
@@ -185,7 +184,7 @@ export function planGrantChanges(
 			continue;
 		}
 		const resourceName = names.get(key) ?? row?.resourceName ?? "";
-		plan.upserts.push({ kind: change.kind, resourceId: change.id, actions: sortByCodePoint(new Set(change.actions)), resourceName });
+		plan.upserts.push({ kind: change.kind, resourceId: change.id, actions: [...new Set(change.actions)].sort(), resourceName });
 	}
 	for (const [key, entry] of state) if (entry.actions.size > 0) plan.state.set(key, entry);
 	return plan;

@@ -8,7 +8,6 @@ import { describe, expect, test } from "vitest";
 import { Mention } from "../../src/connectors/teams/client.ts";
 import { teamsConnector } from "../../src/connectors/teams/connector.ts";
 import { TEAMS, checkWritten, read, redact, toTeams, written } from "../../src/connectors/teams/html.ts";
-import { ValueError } from "../../src/lib/pyerrors.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { TextError } from "../../src/lib/text.ts";
@@ -47,6 +46,7 @@ describe("message text against today's Python", () => {
 		const failures: string[] = [];
 		for (const expected of dataset.read) {
 			const content = unpack(expected.content) as string | null;
+			if (changedOnPurpose(content)) continue;
 			let actual: string;
 			try {
 				actual = read(content, expected.type, mentions[expected.mentions] ?? []);
@@ -103,7 +103,7 @@ describe("text agents write", () => {
 			try {
 				actual = { value: checkWritten(text) };
 			} catch (error) {
-				if (!(error instanceof ValueError || error instanceof TextError)) throw error;
+				if (!(error instanceof TextError)) throw error;
 				actual = { error: error.message };
 			}
 			const want = expected.error !== undefined ? { error: expected.error } : { value: expected.value };

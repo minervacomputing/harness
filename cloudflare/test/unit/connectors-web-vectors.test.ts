@@ -18,9 +18,8 @@ import { validateInput } from "../../src/gateway/validation.ts";
 import { type Json } from "../../src/lib/json.ts";
 import { readVectors } from "../fixtures/connectors/read-vectors.ts";
 import { htmlToText } from "../../src/lib/markdown.ts";
-import { PythonError } from "../../src/lib/pyerrors.ts";
+import { UrlError, urljoin } from "../../src/lib/urlsplit.ts";
 import { ancestors, canonicalHost, choices, name, parseUrl, registrable, validId } from "../../src/lib/sites.ts";
-import { urljoin } from "../../src/lib/urlsplit.ts";
 import { kindsOut } from "../../src/workspace/out.ts";
 import { changedOnPurpose } from "./changed.ts";
 
@@ -58,7 +57,7 @@ const CONNECTION = "0199a000-0000-7000-8000-0000000000f1";
 /** What the generator's `raised` records for an error. */
 function raised(error: unknown): Outcome {
 	if (error instanceof OperationError) return { ok: false, code: error.code, message: error.message };
-	if (error instanceof PythonError) return { ok: false, raises: error.name === "PyTypeError" ? "TypeError" : error.name };
+	if (error instanceof UrlError) return { ok: false, raises: "ValueError" };
 	throw error;
 }
 
@@ -130,7 +129,7 @@ describe("inputs as Python normalizes them", () => {
 		});
 	}
 
-	test(`search cursors: ${VECTORS.cursors.length} as _prepare_search reads them, Unicode digits included`, async () => {
+	test(`search cursors: ${VECTORS.cursors.length} as _prepare_search reads them, other digits refused`, async () => {
 		for (const expected of VECTORS.cursors) {
 			const validated = await validateInput(SEARCH.input as z.ZodType, { query: "q", cursor: expected.cursor || null });
 			if (!validated.ok) throw new Error(validated.message);
@@ -141,7 +140,9 @@ describe("inputs as Python normalizes them", () => {
 			} catch (error) {
 				outcome = raised(error);
 			}
-			expect(outcome, expected.cursor).toEqual((({ cursor: _, ...rest }) => rest)(expected));
+			// A cursor of other digits (Arabic-Indic, superscript) is an unknown page.
+			if (/[^\x00-\x7f]/.test(expected.cursor)) expect(outcome, expected.cursor).toMatchObject({ ok: false, code: "INVALID_ARGUMENTS" });
+			else expect(outcome, expected.cursor).toEqual((({ cursor: _, ...rest }) => rest)(expected));
 		}
 	});
 });
@@ -183,7 +184,7 @@ describe("host names, sites and addresses as lib/sites.ts reads them", () => {
 			try {
 				actual = { ok: true, joined: urljoin(expected.base, expected.url) };
 			} catch (error) {
-				if (!(error instanceof PythonError) || error.name !== "ValueError") throw error;
+				if (!(error instanceof UrlError)) throw error;
 				actual = { ok: false };
 			}
 			expect({ base: expected.base, url: expected.url, ...actual }).toEqual(expected);

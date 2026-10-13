@@ -1,21 +1,16 @@
-// Folder manifests (files 4; backend/files/manifest.py, and the pure parts of backend/files/runs.py): the
-// validation of what a scan reports, the form a version stores and its digest, warnings, and what a turn
-// changed. Ported check by check, in today's order, with today's messages (paths in them as Python's `repr`).
+// Folder manifests: the validation of what a scan reports, the form a version stores and its digest,
+// warnings, and what a turn changed. Messages quote paths as JSON does.
 //
 // Manifests come from the container's scan, so they are untrusted: every one is validated here before it
-// is recorded (files 15.1). They arrive over RPC as structured clones, not JSON text, so JavaScript numbers
-// only: an integral float such as `1.0`, which Python refuses as a mode or mtime, cannot be told from `1`
-// (files risk 4, a harmless widening). Booleans are refused, as Python refuses them.
+// is recorded. They arrive over RPC as structured clones, not JSON text, so an integral float such as `1.0`
+// cannot be told from `1` (a harmless widening). Booleans are refused.
 //
-// NFC and the Cc category come from the runtime's Unicode tables, as Python's come from its own (Unicode
-// 16.0 in Python 3.14; files risk 23): a name normalized differently by the two would be refused here.
+// NFC and the Cc category come from the runtime's Unicode tables. Paths are sorted by UTF-16 code unit.
 
 import type { Sha256 } from "../contracts/common.ts";
 import type { FileMode, StoredEntries, WireManifest } from "../contracts/files.ts";
 import { utf8Strict } from "../lib/bytes.ts";
 import { hashInput } from "../lib/canonical.ts";
-import { compareCodePoints, sortByCodePoint } from "../lib/order.ts";
-import { codePointLength, pythonRepr } from "../lib/text.ts";
 import {
 	CHANGES_KEPT,
 	FILE_MODES,
@@ -69,7 +64,7 @@ export function hashesOf(manifest: { files: Map<string, FileEntry> } | StoredEnt
 	return hashes;
 }
 
-/** Python's `isinstance(value, dict)`: a plain object, as a structured clone or a parsed JSON value has them. */
+/** A plain object, as a structured clone or a parsed JSON value has them. */
 function isDict(value: unknown): value is { [key: string]: unknown } {
 	if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
 	const prototype = Object.getPrototypeOf(value);
@@ -90,25 +85,25 @@ function utf8Length(text: string): number {
 	return ENCODER.encode(text).length;
 }
 
-/** `_check_path`, in its order. */
+/** The path check: NFC, no control characters, at most 32 segments of at most 255 bytes, none empty, `.` or `..`. */
 function checkPath(path: unknown): string {
 	if (typeof path !== "string") throw new InvalidManifest("A path is a string.");
 	if (!path.isWellFormed()) throw new InvalidManifest("A path is valid UTF-8.");
 	if (utf8Length(path) > MAX_PATH_BYTES) throw new InvalidManifest(`A path has at most ${MAX_PATH_BYTES} bytes.`);
-	if (path.normalize("NFC") !== path) throw new InvalidManifest(`${pythonRepr(path)} is not in NFC.`);
-	if (CONTROL.test(path)) throw new InvalidManifest(`${pythonRepr(path)} contains a control character.`);
+	if (path.normalize("NFC") !== path) throw new InvalidManifest(`${JSON.stringify(path)} is not in NFC.`);
+	if (CONTROL.test(path)) throw new InvalidManifest(`${JSON.stringify(path)} contains a control character.`);
 	const segments = path.split("/");
-	if (segments.length > MAX_DEPTH) throw new InvalidManifest(`${pythonRepr(path)} is more than ${MAX_DEPTH} levels deep.`);
+	if (segments.length > MAX_DEPTH) throw new InvalidManifest(`${JSON.stringify(path)} is more than ${MAX_DEPTH} levels deep.`);
 	for (const segment of segments) {
 		if (segment === "" || segment === "." || segment === "..") {
-			throw new InvalidManifest(`${pythonRepr(path)} is not a relative path without empty, . or .. segments.`);
+			throw new InvalidManifest(`${JSON.stringify(path)} is not a relative path without empty, . or .. segments.`);
 		}
-		if (utf8Length(segment) > MAX_SEGMENT_BYTES) throw new InvalidManifest(`${pythonRepr(path)} has a name longer than ${MAX_SEGMENT_BYTES} bytes.`);
+		if (utf8Length(segment) > MAX_SEGMENT_BYTES) throw new InvalidManifest(`${JSON.stringify(path)} has a name longer than ${MAX_SEGMENT_BYTES} bytes.`);
 	}
 	return path;
 }
 
-/** Whether a path passes `_check_path` (hydration checks every path it is sent, files 8.1). */
+/** Whether a path passes the path check (hydration checks every path it is sent). */
 export function isValidPath(path: unknown): path is string {
 	try {
 		checkPath(path);
@@ -119,7 +114,7 @@ export function isValidPath(path: unknown): path is string {
 }
 
 /**
- * `parse(data, max_entries)` (files 4.2): throws InvalidManifest, or QuotaExceeded("folder_entries"). The
+ * The scan's manifest checked: throws InvalidManifest, or QuotaExceeded("folder_entries"). The
  * cheap entry check comes before any entry is examined, and the count includes implied directories, checked
  * as each is added.
  */
@@ -138,21 +133,20 @@ export function parseManifest(data: unknown, maxEntries: number): Manifest {
 		}
 		const path = checkPath(item.path);
 		const { sha256, mode, mtime } = item;
-		if (!isSha256(sha256)) throw new InvalidManifest(`${pythonRepr(path)}: sha256 is 64 lowercase hex digits.`);
-		if (!isInt(mode) || !FILE_MODES.includes(mode)) throw new InvalidManifest(`${pythonRepr(path)}: mode is 0644 or 0755.`);
+		if (!isSha256(sha256)) throw new InvalidManifest(`${JSON.stringify(path)}: sha256 is 64 lowercase hex digits.`);
+		if (!isInt(mode) || !FILE_MODES.includes(mode)) throw new InvalidManifest(`${JSON.stringify(path)}: mode is 0644 or 0755.`);
 		if (!isInt(mtime) || mtime < 0 || mtime > MAX_MTIME) {
-			throw new InvalidManifest(`${pythonRepr(path)}: mtime is an integer number of milliseconds within range.`);
+			throw new InvalidManifest(`${JSON.stringify(path)}: mtime is an integer number of milliseconds within range.`);
 		}
-		if (files.has(path)) throw new InvalidManifest(`${pythonRepr(path)} is listed twice.`);
+		if (files.has(path)) throw new InvalidManifest(`${JSON.stringify(path)} is listed twice.`);
 		files.set(path, { sha256, mode: mode as FileMode, mtime });
 	}
 
-	// Python keeps the listed directories in a set, whose order is the hash's: insertion order here, the
-	// same answer whenever at most one entry is wrong.
+	// Listed directories are checked in the order given.
 	const dirs = new Set<string>();
 	for (const item of rawDirs) {
 		const path = checkPath(item);
-		if (files.has(path) || dirs.has(path)) throw new InvalidManifest(`${pythonRepr(path)} is listed twice.`);
+		if (files.has(path) || dirs.has(path)) throw new InvalidManifest(`${JSON.stringify(path)} is listed twice.`);
 		dirs.add(path);
 	}
 
@@ -163,8 +157,8 @@ export function parseManifest(data: unknown, maxEntries: number): Manifest {
 		while (end > 0) {
 			const parent = path.slice(0, end);
 			if (implied.has(parent)) break;
-			if (files.has(parent)) throw new InvalidManifest(`${pythonRepr(parent)} is both a file and a directory.`);
-			if (dirs.has(parent)) throw new InvalidManifest(`${pythonRepr(parent)} is listed as an empty directory but has entries.`);
+			if (files.has(parent)) throw new InvalidManifest(`${JSON.stringify(parent)} is both a file and a directory.`);
+			if (dirs.has(parent)) throw new InvalidManifest(`${JSON.stringify(parent)} is listed as an empty directory but has entries.`);
 			implied.add(parent);
 			if (files.size + dirs.size + implied.size > maxEntries) throw new QuotaExceeded("folder_entries");
 			end = path.lastIndexOf("/", end - 1);
@@ -172,13 +166,13 @@ export function parseManifest(data: unknown, maxEntries: number): Manifest {
 	}
 	const entryCount = files.size + dirs.size + implied.size;
 	if (entryCount > maxEntries) throw new QuotaExceeded("folder_entries");
-	return { files, dirs: sortByCodePoint(dirs), entryCount };
+	return { files, dirs: [...dirs].sort(), entryCount };
 }
 
-/** `stored_entries(manifest, sizes)` (files 4.3): files by path in code point order, each with its size from the store. */
+/** The stored form: files by path in UTF-16 order, each with its size from the store. */
 export function storedEntries(manifest: Manifest, sizes: ReadonlyMap<Sha256, number>): StoredEntries {
 	const files: StoredEntries["files"] = {};
-	for (const path of sortByCodePoint(manifest.files.keys())) {
+	for (const path of [...manifest.files.keys()].sort()) {
 		const entry = manifest.files.get(path) as FileEntry;
 		const size = sizes.get(entry.sha256);
 		if (size === undefined) throw new Error("A file's size is not known.");
@@ -189,15 +183,15 @@ export function storedEntries(manifest: Manifest, sizes: ReadonlyMap<Sha256, num
 }
 
 /**
- * A version's files in code point order. An object's own order puts integer-like keys ("9", "10") first,
+ * A version's files in UTF-16 order. An object's own order puts integer-like keys ("9", "10") first,
  * so the entries' order is never read from the object itself.
  */
 export function filesOf(entries: StoredEntries): [string, StoredEntries["files"][string]][] {
-	return sortByCodePoint(Object.keys(entries.files)).map((path) => [path, entries.files[path] as StoredEntries["files"][string]]);
+	return Object.keys(entries.files).sort().map((path) => [path, entries.files[path] as StoredEntries["files"][string]]);
 }
 
 /**
- * `digest(entries)`: SHA-256 over `minerva:folder-version:` and the canonical JSON (lib/canonical.ts) of the
+ * The version's digest: SHA-256 over `minerva:folder-version:` and the canonical JSON (lib/canonical.ts) of the
  * entries, as UTF-8, which does not depend on the order of the input. The store keeps that JSON as the
  * version's text and hashes the same (store.ts `#insertVersion`).
  */
@@ -215,7 +209,7 @@ export function entryCountOf(entries: StoredEntries): number {
 	return Object.keys(entries.files).length + directories(entries).size;
 }
 
-/** The first segment of every file and directory at the root: what attachment names are numbered against (files 10). */
+/** The first segment of every file and directory at the root: what attachment names are numbered against. */
 export function rootNames(entries: StoredEntries | null): Set<string> {
 	const names = new Set<string>();
 	if (entries === null) return names;
@@ -232,7 +226,7 @@ export function wireOf(entries: StoredEntries): WireManifest {
 }
 
 /**
- * `_same(current, manifest)` (files 7.3): the same paths with the same hash, mode and mtime, and the same
+ * Whether a manifest is the current version: the same paths with the same hash, mode and mtime, and the same
  * empty directories; sizes are not compared. With no current version, only an empty manifest is the same.
  */
 export function sameManifest(current: StoredEntries | null, manifest: Manifest): boolean {
@@ -253,12 +247,12 @@ export interface StoredWarnings {
 	items: { path: string; reason: string }[];
 }
 
-// What `unicodedata.category(char) in ("Cc", "Cs")` refuses: control characters and lone surrogates.
+// Control characters and lone surrogates.
 const CONTROL_OR_SURROGATE = /[\p{Cc}\p{Cs}]/u;
 
 /**
- * `parse_warnings(data)` (files 7.5): at most 100 items, a total that counts them below 2^31, a known reason
- * each, and a path of 1 to 1,024 code points without control characters or lone surrogates. Throws
+ * The scan's warnings: at most 100 items, a total that counts them below 2^31, a known reason each, and a
+ * path of 1 to 1,024 UTF-16 units without control characters or lone surrogates. Throws
  * InvalidManifest.
  */
 export function parseWarnings(data: unknown): StoredWarnings {
@@ -272,7 +266,7 @@ export function parseWarnings(data: unknown): StoredWarnings {
 			throw new InvalidManifest('A warning is {"path", "reason"}, with a known reason.');
 		}
 		const path = item.path;
-		if (typeof path !== "string" || path.length === 0 || codePointLength(path) > WARNING_PATH_CHARS || CONTROL_OR_SURROGATE.test(path)) {
+		if (typeof path !== "string" || path.length === 0 || path.length > WARNING_PATH_CHARS || CONTROL_OR_SURROGATE.test(path)) {
 			throw new InvalidManifest("A warning's path is empty, too long, or has control characters.");
 		}
 		kept.push({ path, reason: item.reason });
@@ -280,7 +274,7 @@ export function parseWarnings(data: unknown): StoredWarnings {
 	return { total, items: kept };
 }
 
-/** `_directories(entries)`: every directory of a version, listed or implied. */
+/** Every directory of a version, listed or implied. */
 export function directories(entries: StoredEntries | null): Set<string> {
 	const implied = new Set<string>();
 	if (entries === null) return implied;
@@ -298,7 +292,7 @@ export function directories(entries: StoredEntries | null): Set<string> {
 
 type ChangeKind = "added" | "modified" | "deleted" | "dirs_added" | "dirs_deleted";
 
-/** What a turn changed (files 7.7), in the shape `RunOut.folder_changes` has. */
+/** What a turn changed, in the shape `RunOut.folder_changes` has. */
 export type FolderChanges = {
 	counts: { [kind in ChangeKind]: number };
 	added: { path: string; size: number }[];
@@ -311,14 +305,14 @@ export type FolderChanges = {
 type ChangeEntries = { files: { [path: string]: { sha256: string; mode: number; size: number } }; dirs: string[] };
 
 /**
- * `folder_changes(before, after)`: files added, modified (contents or mode; mtime alone does not count) and
+ * What a turn changed: files added, modified (contents or mode; mtime alone does not count) and
  * deleted, and directories added and deleted (listed or implied), each list cut to its first 100 in code
  * point order with complete counts; null when nothing changed.
  */
 export function folderChanges(before: ChangeEntries | null, after: ChangeEntries): FolderChanges | null {
 	const old = (before ?? { files: {}, dirs: [] }).files;
 	const now = after.files;
-	const sorted = (paths: Iterable<string>) => sortByCodePoint(paths);
+	const sorted = (paths: Iterable<string>) => [...paths].sort();
 	const added = sorted(Object.keys(now).filter((path) => !Object.hasOwn(old, path)));
 	const modified = sorted(
 		Object.keys(now).filter((path) => {
@@ -344,6 +338,3 @@ export function folderChanges(before: ChangeEntries | null, after: ChangeEntries
 		dirs_deleted: dirsDeleted.slice(0, CHANGES_KEPT),
 	};
 }
-
-/** Code point order for anything keyed by path. */
-export const byPath = compareCodePoints;

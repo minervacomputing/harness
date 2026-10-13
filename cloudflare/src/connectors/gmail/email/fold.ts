@@ -2,7 +2,6 @@
 // the SMTP policy Gmail's messages are written with: lines of at most 78 characters joined by CRLF, ASCII
 // only, anything else as UTF-8 encoded words. Lengths and slices count code points, as Python's do.
 
-import { codePointLength } from "../../../lib/text.ts";
 import { encodeWord } from "./ew.ts";
 import { HeaderParseError, at } from "./errors.ts";
 import {
@@ -28,7 +27,7 @@ import {
 export const MAX_LINE_LENGTH = 78;
 export const LINESEP = "\r\n";
 
-const cpLen = codePointLength;
+const cpLen = (text: string): number => [...text].length;
 
 function cpSlice(text: string, start: number, end?: number): string {
 	return Array.from(text).slice(start, end).join("");

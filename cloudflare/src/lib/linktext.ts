@@ -1,13 +1,12 @@
 // The text of nested links without quadratic work, for the HTML readers that show a link as "label (address)"
-// (intercom/html.py and teams/html.py `_Reader`): Python joins and strips each label as its link closes and
-// puts the result in the enclosing label, so links nested n deep copy the text n times. Here a closed link's
+// (Intercom's and Teams' html.ts): each label is joined and stripped as its link closes and put in the
+// enclosing label, which, done naively, copies the text of links nested n deep n times. Here a closed link's
 // text is a `Joined` of the pieces it was made of, built in time proportional to its own pieces, and the
 // whole text is written out once at the end.
 
-import { pythonLstrip, pythonRstrip } from "./text.ts";
 
 /**
- * Text made of pieces, never empty, that neither starts nor ends with whitespace (Python's `str.isspace`):
+ * Text made of pieces, never empty, that neither starts nor ends with whitespace (as `trim()` counts it):
  * every one is a stripped label, or a stripped label followed by " (address)".
  */
 export class Joined {
@@ -48,13 +47,13 @@ export function written(pieces: readonly Piece[]): string {
 export function stripped(label: readonly Piece[]): Piece {
 	let start = 0;
 	let end = label.length;
-	while (start < end && typeof label[start] === "string" && !pythonLstrip(label[start] as string)) start++;
-	while (end > start && typeof label[end - 1] === "string" && !pythonRstrip(label[end - 1] as string)) end--;
+	while (start < end && typeof label[start] === "string" && !(label[start] as string).trimStart()) start++;
+	while (end > start && typeof label[end - 1] === "string" && !(label[end - 1] as string).trimEnd()) end--;
 	if (start === end) return "";
 	const parts = label.slice(start, end);
-	if (typeof parts[0] === "string") parts[0] = pythonLstrip(parts[0]);
+	if (typeof parts[0] === "string") parts[0] = parts[0].trimStart();
 	const last = parts.length - 1;
-	if (typeof parts[last] === "string") parts[last] = pythonRstrip(parts[last]);
+	if (typeof parts[last] === "string") parts[last] = parts[last].trimEnd();
 	return parts.length === 1 ? (parts[0] as Piece) : new Joined(parts);
 }
 

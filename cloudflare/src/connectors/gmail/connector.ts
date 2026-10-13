@@ -1,4 +1,4 @@
-// Gmail, through the Gmail API, ported from backend/connectors/gmail/connector.py. Mail is read per label,
+// Gmail, through the Gmail API. Mail is read per label,
 // sent per recipient, and drafted per account.
 //
 // Minerva connects through the operator's Google app, shared with Google Calendar and Drive (see
@@ -43,7 +43,6 @@
 
 import type { Connector } from "../../contracts/connectors.ts";
 import { ACCOUNT_KIND } from "../../gateway/connector.ts";
-import { casefold } from "../../lib/casefold.ts";
 import { oauth } from "../google/index.ts";
 import { setOwn } from "../google/model.ts";
 import * as addresses from "../../lib/addresses.ts";
@@ -107,9 +106,9 @@ export function gmailConnector(options: GmailOptions = {}): Connector<GmailClien
 				return { items: addresses.choices(query).map((item) => ({ id: item, name: addresses.name(item) })) };
 			}
 			const labels = await Labels.fetch(client);
-			const folded = query ? casefold(query) : null;
+			const folded = query ? query.toLowerCase() : null;
 			const items = [...labels.grantable.keys()].map((labelId) => ({ id: labelId, name: labels.name(labelId) }));
-			return { items: items.filter((item) => !folded || casefold(item.name).includes(folded)) };
+			return { items: items.filter((item) => !folded || item.name.toLowerCase().includes(folded)) };
 		},
 		async describe(client, kind, ids) {
 			const names: { [id: string]: string } = {};

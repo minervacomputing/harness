@@ -8,7 +8,6 @@ import type { Json, JsonObject } from "../lib/json.ts";
 import type { Connector, Operation } from "../contracts/connectors.ts";
 import { sha256Hex } from "../lib/hash.ts";
 import { hashInput } from "../lib/canonical.ts";
-import { sortByCodePoint } from "../lib/order.ts";
 import { isRecord } from "../lib/schema.ts";
 import { ACCOUNT_KIND, actionOf, kindOf, nests, operationOf, requiresOf, termsOf } from "./connector.ts";
 import { compareLists } from "./policy.ts";
@@ -254,17 +253,17 @@ export function validate(connectors: readonly Connector[]): void {
 /** What the fingerprint covers: everything that decides what a tool means, and not its description. */
 export function meaning(connector: Connector, op: Operation<never>): JsonObject {
 	const terms = termsOf(op);
-	const actions = sortByCodePoint(new Set([...op.needs.map(([, action]) => action), terms.outputAction]));
+	const actions = [...new Set([...op.needs.map(([, action]) => action), terms.outputAction])].sort();
 	const kinds = new Set(op.needs.map(([kind]) => kind));
 	// Object.fromEntries defines own properties, so an id such as "__proto__" stays a key.
 	const requires: JsonObject = Object.fromEntries(actions.map((action) => [action, chainOf(connector, action)]));
 	const declared: JsonObject = Object.fromEntries(
 		connector.kinds
 			.filter((kind) => kinds.has(kind.id))
-			.map((kind) => [kind.id, { actions: sortByCodePoint(kind.actions), wildcard: kind.wildcard ?? false, hierarchical: kind.hierarchical ?? false }]),
+			.map((kind) => [kind.id, { actions: [...kind.actions].sort(), wildcard: kind.wildcard ?? false, hierarchical: kind.hierarchical ?? false }]),
 	);
 	const consent: Json =
-		terms.consent === null ? null : terms.consent.map((option) => sortByCodePoint(new Set(option))).sort(compareLists);
+		terms.consent === null ? null : terms.consent.map((option) => [...new Set(option)].sort()).sort(compareLists);
 	return {
 		revision: terms.revision,
 		input: inputSchema(op),

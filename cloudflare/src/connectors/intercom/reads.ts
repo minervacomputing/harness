@@ -3,7 +3,6 @@
 import { z } from "zod";
 import type { Binding, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
 import { OperationError, defineOperation } from "../../gateway/connector.ts";
-import { casefold } from "../../lib/casefold.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
 import { SINGLE_LINE, isSingleLine, truncate } from "../../lib/text.ts";
 import { type Attachment, type Author, type Conversation, type IntercomClient, type Part, idNumber } from "./client.ts";
@@ -167,8 +166,8 @@ function firstText(conversation: Conversation): string | null {
  * includes the hidden labels of links to Intercom; a match there alone would reveal them.
  */
 function showsWords(text: string | null, searched: string[]): boolean {
-	const folded = casefold(text ?? "");
-	return searched.every((word) => folded.includes(casefold(word)));
+	const folded = (text ?? "").toLowerCase();
+	return searched.every((word) => folded.includes(word.toLowerCase()));
 }
 
 /** The search, built from fields: one inbox, ANDed with the other filters. */

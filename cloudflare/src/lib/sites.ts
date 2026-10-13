@@ -1,6 +1,5 @@
-// backend/connectors/web/sites.py: how web addresses become the Web connector's site resources, and the
-// host names mail domains are checked with (`canonical_host`, `registrable`, `is_reserved`, for
-// connectors/addresses.py). A site resource is one host name, canonical: lowercase ASCII (IDNA), no
+// How web addresses become the Web connector's site resources, and the host names mail domains are checked
+// with (`canonicalHost`, `registrable`, `isReserved`, for addresses.ts). A site resource is one host name, canonical: lowercase ASCII (IDNA), no
 // trailing dot, no port. Grants use either an exact host (`docs.python.org`) or a domain with everything
 // under it (`*.python.org`, which also covers `python.org` itself). A host's ancestors are those `*.`
 // patterns from the host itself up to its registrable domain, so no grant can span a public suffix:
@@ -11,23 +10,19 @@
 // special-use names (`localhost`, `.internal`, `.local`, `.arpa`, `.onion`, ...) are refused before
 // anything resolves them. A host is a bare name: lib/idna.ts refuses any ASCII but letters, digits, hyphens
 // and dots before the runtime maps it, so a path, user name, port or percent sign never reaches the
-// runtime's host parser (which would cut it off). An address is split here as Python splits it and shown in
-// Python's spelling (`WebURL.text`); what is requested is the runtime's serialization of that
+// runtime's host parser (which would cut it off). An address is split by lib/urlsplit.ts and shown as split
+// (`WebURL.text`); what is requested is the runtime's serialization of that
 // (`WebURL.href`), refused unless it names the same scheme and host on the default port.
 //
-// The Public Suffix List comes from tldts in place of Python's publicsuffixlist (with
-// `accept_unknown=False`, private domains included): a suffix tldts knows by no rule is unknown. Where the
-// two read the list differently, publicsuffixlist's reading is kept: a name that is itself the root of a
-// wildcard rule (`kobe.jp` under `*.kobe.jp`) is a public suffix, so nothing registers it. The snapshot of
-// the list is tldts's, which can differ from the Python package's by the rules either has added since.
+// The Public Suffix List comes from tldts, private domains included: a suffix tldts knows by no rule is
+// unknown. A name that is itself the root of a wildcard rule (`kobe.jp` under `*.kobe.jp`) is a public
+// suffix, so nothing registers it.
 
 import { parse } from "tldts";
 import { OperationError } from "../gateway/connector.ts";
-import { codePointLength, isPythonSpace, pythonStrip } from "./text.ts";
 import { IdnaError, idnaEncode } from "./idna.ts";
 import { isIpAddress } from "./ipaddress.ts";
-import { ValueError } from "./pyerrors.ts";
-import { hostnameOf, portOf, quote, urljoin, urlsplitStrict } from "./urlsplit.ts";
+import { UrlError, hostnameOf, portOf, quote, urljoin, urlsplitStrict } from "./urlsplit.ts";
 
 export const PATTERN_PREFIX = "*.";
 export const MAX_URL = 2000;
@@ -81,8 +76,8 @@ export function registrable(host: string): string | null {
 
 /** The canonical host name, or INVALID_URL. With `reserved`, names under .example are accepted too. */
 export function canonicalHost(raw: string, reserved = false): string {
-	const text = pythonStrip(raw).replace(/\.+$/, "");
-	if (!text || codePointLength(text) > 253) throw invalidHost();
+	const text = raw.trim().replace(/\.+$/, "");
+	if (!text || text.length > 253) throw invalidHost();
 	if (isIpAddress(text.replace(/^[[\]]+|[[\]]+$/g, "")) !== null) throw new OperationError("INVALID_URL", "Use the site's domain name, not an IP address.");
 	let host: string;
 	try {
@@ -168,28 +163,23 @@ export class WebURL {
 		this.href = href;
 	}
 
-	/** The address as the agent is shown it, Python's spelling. */
+	/** The address as the agent is shown it. */
 	get text(): string {
 		return `${this.scheme}://${this.host}${this.target}`;
 	}
 }
 
-function notAllowed(raw: string): boolean {
-	for (const char of raw) {
-		const point = char.codePointAt(0) as number;
-		if (isPythonSpace(point) || point < 0x20 || point === 0x7f || char === "\\") return true;
-	}
-	return false;
-}
+/** Whitespace (U+FEFF too), control characters (C0, DEL and C1, which holds U+0085) and backslashes. */
+const NOT_ALLOWED = /[\s\u0000-\u001f\u007f-\u009f\\]/u;
 
 /**
  * A web address as Minerva will request it, or INVALID_URL. `base` resolves relative redirects. The
  * request is built from the parts checked here, never from the raw text, so what is authorized is what is
- * sent. Where Python's `urljoin` or `urlsplit` raise ValueError (brackets around what is no IPv6 address),
- * so does this, which is no owned error: the call fails generically, as it does today.
+ * sent. Where `urljoin` or `urlsplit` throw UrlError (brackets around what is no IPv6 address), so does
+ * this, which is no owned error: the call fails generically.
  */
 export function parseUrl(raw: string, base: WebURL | null = null): WebURL {
-	if (codePointLength(raw) > MAX_URL || notAllowed(raw)) throw new OperationError("INVALID_URL", "This web address contains characters that are not allowed.");
+	if (raw.length > MAX_URL || NOT_ALLOWED.test(raw)) throw new OperationError("INVALID_URL", "This web address contains characters that are not allowed.");
 	const text = base === null ? raw : urljoin(base.text, raw);
 	const parts = urlsplitStrict(text);
 	const scheme = parts.scheme.toLowerCase();
@@ -201,7 +191,7 @@ export function parseUrl(raw: string, base: WebURL | null = null): WebURL {
 	try {
 		port = portOf(netloc);
 	} catch (error) {
-		if (error instanceof ValueError) throw new OperationError("INVALID_URL", "This web address has an invalid port.");
+		if (error instanceof UrlError) throw new OperationError("INVALID_URL", "This web address has an invalid port.");
 		throw error;
 	}
 	if (port !== null && port !== standard) throw new OperationError("INVALID_URL", "Only web addresses on the standard ports can be opened.");

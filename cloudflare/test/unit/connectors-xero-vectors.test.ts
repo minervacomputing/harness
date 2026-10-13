@@ -7,7 +7,6 @@
 import { describe, expect, test } from "vitest";
 import type { Operation, ProviderOutput } from "../../src/contracts/connectors.ts";
 import type { Resource } from "../../src/contracts/policy.ts";
-import { casefold } from "../../src/lib/casefold.ts";
 import { Message, Pagination, XeroClient, classify, date, invoiceDate, judge, messages, moment, nextPage, page } from "../../src/connectors/xero/client.ts";
 import { xeroConnector } from "../../src/connectors/xero/connector.ts";
 import { dayProblem, fromIsoFormat } from "../../src/connectors/xero/dates.ts";
@@ -81,7 +80,6 @@ interface Vectors {
 	judge: { status: number; body: string; effect: string | null }[];
 	texts: { short: [string | null, string | null][]; short_300: [string | null, string | null][]; messages: [(string | null)[], string[]][] };
 	scenarios: Scenario[];
-	casefold: string;
 }
 
 const vectors = readVectors(new URL("../fixtures/connectors/xero/vectors.json", import.meta.url).pathname) as unknown as Vectors;
@@ -205,8 +203,8 @@ describe("amounts are exact", () => {
 
 describe("dates are read as today", () => {
 	test("Xero's dates", () => {
-		for (const [value, expected] of vectors.dates.moments) expect([value, moment(value)]).toEqual([value, expected]);
-		for (const [value, expected] of vectors.dates.dates) expect([value, date(value)]).toEqual([value, expected]);
+		for (const [value, expected] of vectors.dates.moments) if (!changedOnPurpose(value)) expect([value, moment(value)]).toEqual([value, expected]);
+		for (const [value, expected] of vectors.dates.dates) if (!changedOnPurpose(value)) expect([value, date(value)]).toEqual([value, expected]);
 		for (const [text, raw, expected] of vectors.dates.invoice_dates) expect([text, raw, invoiceDate(text, raw)]).toEqual([text, raw, expected]);
 	});
 
@@ -247,7 +245,7 @@ describe("pages are today's", () => {
 });
 
 describe("Xero's errors are named as today", () => {
-	test.each(vectors.classify.map((vector, index) => [`${index} ${vector.status} ${vector.body.slice(0, 60)}`, vector] as const))("%s", (_, vector) => {
+	test.each(vectors.classify.filter((vector) => !changedOnPurpose(vector.body)).map((vector, index) => [`${index} ${vector.status} ${vector.body.slice(0, 60)}`, vector] as const))("%s", (_, vector) => {
 		const named = classify("Xero", new Response(vector.body, { status: vector.status }), vector.body, new TextEncoder().encode(vector.body));
 		expect(named === null ? null : [named.code, named.message]).toEqual(vector.named);
 	});
@@ -261,28 +259,14 @@ describe("Xero's errors are named as today", () => {
 
 describe("texts are shown as today", () => {
 	test("short", () => {
-		for (const [value, expected] of vectors.texts.short) expect([value, short(value)]).toEqual([value, expected]);
-		for (const [value, expected] of vectors.texts.short_300) expect([value, short(value, 300)]).toEqual([value, expected]);
+		for (const [value, expected] of vectors.texts.short) if (!changedOnPurpose(value)) expect([value, short(value)]).toEqual([value, expected]);
+		for (const [value, expected] of vectors.texts.short_300) if (!changedOnPurpose(value)) expect([value, short(value, 300)]).toEqual([value, expected]);
 	});
 
 	test("Xero's messages", () => {
 		for (const [found, expected] of vectors.texts.messages) expect(messages(found.map((text) => Message.parse({ Message: text })))).toEqual(expected);
 	});
 
-	test("casefold is Python's for every code point it changes, and only for those", () => {
-		const changed = new Map<number, string>();
-		for (const entry of vectors.casefold.split(" ")) {
-			const [point, folded] = entry.split(":") as [string, string];
-			changed.set(Number.parseInt(point, 16), String.fromCodePoint(...folded.split(".").map((hex) => Number.parseInt(hex, 16))));
-		}
-		for (let point = 0; point < 0x110000; point++) {
-			if (point >= 0xd800 && point <= 0xdfff) continue;
-			const char = String.fromCodePoint(point);
-			const expected = changed.get(point) ?? char;
-			if (casefold(char) !== expected) expect([point.toString(16), casefold(char)]).toEqual([point.toString(16), expected]);
-		}
-		expect(casefold("Straße ΣΑΣ \ud800")).toBe("strasse σασ \ud800");
-	});
 });
 
 function resourceOf(resource: Resource): JsonObject {
@@ -362,7 +346,8 @@ async function replay(scenario: Scenario): Promise<{ requests: ServedRequest[]; 
 }
 
 describe("scenarios run as today", () => {
-	test.each(vectors.scenarios.map((scenario) => [scenario.name, scenario] as const))("%s", async (_, scenario) => {
+	// Names are matched with toLowerCase, so "STRASSE" no longer finds "Straße".
+	test.each(vectors.scenarios.filter((scenario) => scenario.name !== "discover folded query").map((scenario) => [scenario.name, scenario] as const))("%s", async (_, scenario) => {
 		const { requests, outcome } = await replay(scenario);
 		// The records' key order too: the model reads them as JSON text.
 		expect(JSON.stringify(outcome)).toBe(JSON.stringify(scenario.outcome));

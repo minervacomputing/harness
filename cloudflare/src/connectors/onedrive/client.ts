@@ -1,5 +1,4 @@
-// Microsoft Graph for files in OneDrive and SharePoint document libraries, ported from
-// backend/connectors/onedrive/client.py.
+// Microsoft Graph for files in OneDrive and SharePoint document libraries.
 //
 // Items are addressed by drive and item id (`/drives/{drive}/items/{item}`), never by path, except for the
 // name of a file being created. A file's content comes from the pre-authenticated download URL Graph gives
@@ -14,7 +13,6 @@ import type { ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
 import type { Json } from "../../lib/json.ts";
-import { codePointLength } from "../../lib/text.ts";
 import { API_URL, type Classify, Graph, MAX_RESPONSE_BYTES, classify, errorCode, jsonOf, nextCursor, pageParam, segment } from "../microsoft/index.ts";
 import { Invalid, dict, int, model, nullable, optional, required, str } from "../microsoft/model.ts";
 import { isDict, truthy } from "../../lib/json.ts";
@@ -86,7 +84,7 @@ export const driveClassify: Classify = (provider, response, body, bytes) => {
  * refuses (`<`, `>`, `[`, `]`, `^`, `|`), and Unicode hosts, are refused here and read by Python.
  */
 export function downloadAllowed(url: string): boolean {
-	if (codePointLength(url) > 8000 || url.includes("\\") || [...url].some((char) => (char.codePointAt(0) as number) <= 0x20 || char === "\u007f")) return false;
+	if (url.length > 8000 || url.includes("\\") || [...url].some((char) => (char.codePointAt(0) as number) <= 0x20 || char === "\u007f")) return false;
 	const authority = /^https:\/\/([^/?#]*)/i.exec(url)?.[1];
 	if (!authority) return false;
 	const at = authority.lastIndexOf("@");
@@ -213,7 +211,7 @@ export class DriveClient extends Graph {
 			if (!isDict(container)) throw this.unexpected();
 			more = more || (Object.hasOwn(container, "moreResultsAvailable") && container.moreResultsAvailable === true);
 			const hits = Object.hasOwn(container, "hits") ? container.hits : null;
-			// A TypeError here (hits that cannot be iterated) is not caught, as today.
+			// A TypeError here (hits that cannot be iterated) is not caught.
 			for (const hit of truthy(hits) ? iterated(hits) : []) {
 				const resource = isDict(hit) && Object.hasOwn(hit, "resource") ? hit.resource : null;
 				if (!isDict(resource)) continue;

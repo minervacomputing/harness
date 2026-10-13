@@ -1,4 +1,4 @@
-// Mail addresses as resources, ported from backend/connectors/addresses.py: who agents may send mail to.
+// Mail addresses as resources: who agents may send mail to.
 //
 // A recipient resource is one address, canonical: lowercase, ASCII, its domain in IDNA form. Grants use an
 // exact address (`ada@example.com`) or everyone at one domain (`*@example.com`), which is an address's only
@@ -17,10 +17,9 @@
 // mail sent to one address to other people, and `*@` a shared provider such as gmail.com is everyone with
 // an account there.
 //
-// Gmail and Outlook share these rules (connectors/addresses.py serves both today), so they share this module.
+// Gmail and Outlook share these rules, so they share this module.
 
 import { OperationError } from "../gateway/connector.ts";
-import { codePointLength, pythonStrip } from "./text.ts";
 import { canonicalHost, isReserved, registrable } from "./sites.ts";
 
 export const PATTERN_PREFIX = "*@";
@@ -52,16 +51,16 @@ function domainOf(raw: string): string {
 
 /** The canonical address, or INVALID_ADDRESS. */
 export function parse(raw: string): string {
-	const text = pythonStrip(raw).toLowerCase();
-	if (codePointLength(text) > MAX_ADDRESS || text.split("@").length !== 2) throw invalid();
+	const text = raw.trim().toLowerCase();
+	if (text.length > MAX_ADDRESS || text.split("@").length !== 2) throw invalid();
 	const [local, domain] = text.split("@") as [string, string];
-	if (codePointLength(local) > MAX_LOCAL || !LOCAL.test(local)) throw invalid();
+	if (local.length > MAX_LOCAL || !LOCAL.test(local)) throw invalid();
 	const address = `${local}@${domainOf(domain)}`;
-	if (codePointLength(address) > MAX_ADDRESS) throw invalid();
+	if (address.length > MAX_ADDRESS) throw invalid();
 	return address;
 }
 
-/** `checked` as a field validator's check: the canonical address, or the message Pydantic shows. */
+/** `checked` as a field validator's check: the canonical address, or the message the field shows. */
 export function checked(raw: string): { ok: true; address: string } | { ok: false; message: string } {
 	try {
 		return { ok: true, address: parse(raw) };
@@ -108,7 +107,7 @@ export function name(resourceId: string): string {
 
 /** What a user can allow for a pasted address (the address, then its domain) or a domain. */
 export function choices(query: string): string[] {
-	const text = pythonStrip(query).toLowerCase();
+	const text = query.trim().toLowerCase();
 	if (text.includes("@") && !text.startsWith("@") && !isPattern(text)) {
 		const address = parse(text);
 		return [address, ...ancestors(address)];

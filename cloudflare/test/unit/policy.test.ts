@@ -1,4 +1,4 @@
-// Ported from backend/tests/test_policy.py, case by case.
+// Permission evaluation: layers, grants, wildcards and denies, and the policy snapshot.
 
 import { describe, expect, test } from "vitest";
 import type { Resource } from "../../src/contracts/policy.ts";
@@ -7,7 +7,7 @@ import { parseJson } from "../../src/lib/json.ts";
 
 const WORK = resource("c1", "project", "work");
 const PRIVATE = resource("c1", "project", "private");
-// test_policy.py raises ValueError; this is the one refusal.
+// The one refusal.
 const WILDCARD_REFUSED = new Error("The wildcard selects grants; it is not a resource.");
 
 type Grants = [id: string, actions: string[]][];
@@ -63,17 +63,17 @@ test("the snapshot lists keys sorted and once, and survives structured cloning",
 		]),
 	]);
 	const json = policy.toJson();
-	// Code point order, as Python's sorted(): U+E000 before U+1F600, which UTF-16 order would swap.
+	// UTF-16 order, as `<` compares strings: the emoji's high surrogate (U+D83D) sorts before U+E000.
 	const sorted = [
-		["c1", "project", privateUse, "read"],
 		["c1", "project", emoji, "read"],
+		["c1", "project", privateUse, "read"],
 	];
 	expect(json).toEqual([{ name: "user", restricted: true, allows: sorted, denies: sorted }]);
 	expect(Policy.fromJson(structuredClone(json)).toJson()).toEqual(json);
 });
 
 test("a snapshot not of toJson's shape is refused, never read as unrestricted", () => {
-	// Python's from_json raises KeyError on a missing key: a layer without restricted must not pass everything.
+	// A missing key is refused: a layer without restricted must not pass everything.
 	const valid = { name: "user", restricted: true, allows: [], denies: [] };
 	const broken: unknown[] = [
 		{ name: "user", allows: [], denies: [] },
@@ -92,7 +92,7 @@ test("a snapshot not of toJson's shape is refused, never read as unrestricted", 
 	expect(Policy.fromJson([valid] as never).permits(WORK, "read")).toBe(false);
 });
 
-test("a layer cannot change once built, as Python's frozen one", () => {
+test("a layer cannot change once built", () => {
 	const guarded = layer("user", true, [[ANY, ["read"]]], [["hidden", ["read"]]]);
 	const policy = new Policy([guarded]);
 	const unknown = resource("c1", "project", "r", [], true);
@@ -258,10 +258,7 @@ test("permitsAny sees allows on nested folders across layers", () => {
 	expect(denied.permitsAny("c1", "project", "read", undefined, true)).toBe(false);
 });
 
-/**
- * A seeded PRNG (mulberry32) with the calls the Python test makes. It does not reproduce Python's
- * Mersenne Twister sequence: the property must hold for any layers, so any seeded stream tests it.
- */
+/** A seeded PRNG (mulberry32): the property must hold for any layers, so any seeded stream tests it. */
 function seeded(seed: number) {
 	let state = seed >>> 0;
 	const random = () => {

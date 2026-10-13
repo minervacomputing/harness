@@ -7,10 +7,11 @@ import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
 import type { User } from "../microsoft/index.ts";
-import { after, modelValidator, plainTextOf, singleLineOf, valueError } from "../microsoft/inputs.ts";
+import { after, modelValidator, plainTextOf, singleLineOf } from "../microsoft/inputs.ts";
 import * as addresses from "../../lib/addresses.ts";
 import { type GraphClient, type Message, REPLY_FIELDS, type Recipient } from "./client.ts";
 import { FOLDER, RECIPIENT, SEND_CONSENT, Tree, confirmMessage, locate, messageId } from "./mailbox.ts";
+import { TextError } from "../../lib/text.ts";
 
 export const MAX_RECIPIENTS = 10;
 export const MAX_BODY = 20_000;
@@ -18,7 +19,7 @@ export const MAX_BODY = 20_000;
 /** `addresses.checked` as a field validator. */
 function checkedAddress(raw: string): string {
 	const checked = addresses.checked(raw);
-	if (!checked.ok) throw valueError(checked.message);
+	if (!checked.ok) throw new TextError(checked.message);
 	return checked.address;
 }
 
@@ -56,8 +57,8 @@ export const SendMessage = z
 	.check(
 		modelValidator((data: { to: string[]; cc: string[]; bcc: string[] }) => {
 			const everyone = [...data.to, ...data.cc, ...data.bcc];
-			if (new Set(everyone).size !== everyone.length) throw valueError("each address may appear only once");
-			if (everyone.length > MAX_RECIPIENTS) throw valueError(`a message may go to at most ${MAX_RECIPIENTS} addresses`);
+			if (new Set(everyone).size !== everyone.length) throw new TextError("each address may appear only once");
+			if (everyone.length > MAX_RECIPIENTS) throw new TextError(`a message may go to at most ${MAX_RECIPIENTS} addresses`);
 		}),
 	)
 	.meta({ title: "SendMessage" });
@@ -125,8 +126,7 @@ export function replyTargets(message: Message): string[] {
  * `smtp:` proxy addresses, beside other kinds such as `X500:`).
  */
 export function ownAddresses(user: User): Set<string> {
-	// Python slices code points; these prefixes are ASCII, so a code unit slice of a well-formed prefix agrees.
-	const aliases = user.proxy_addresses.filter((raw) => Array.from(raw).slice(0, 5).join("").toLowerCase() === "smtp:").map((raw) => Array.from(raw).slice(5).join(""));
+	const aliases = user.proxy_addresses.filter((raw) => raw.slice(0, 5).toLowerCase() === "smtp:").map((raw) => raw.slice(5));
 	const own = new Set<string>();
 	for (const raw of [user.mail, user.user_principal_name, ...aliases]) {
 		const address = parsedOrNull(raw);

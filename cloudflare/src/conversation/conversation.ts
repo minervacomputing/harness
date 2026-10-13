@@ -48,7 +48,7 @@ import { EncryptionKeys, credentialBinding } from "../lib/encryption.ts";
 import { parseJson } from "../lib/json.ts";
 import { isUuid, uuid7 } from "../lib/random.ts";
 import { appliedMigrations, migrate } from "../lib/sqlite.ts";
-import { codePointLength, pythonStrip, sliceCodePoints } from "../lib/text.ts";
+import { sliceText } from "../lib/text.ts";
 import { MODEL_REF, MINERVA_API, MINERVA_PROVIDER, MODEL_ALIAS, minervaProvider, type ModelHost } from "../model/provider.ts";
 import { routeOf } from "../model/route.ts";
 import { sandboxSpec } from "../sandbox/constants.ts";
@@ -91,7 +91,7 @@ const BG = Object.freeze({ abortSignal: undefined, value: () => undefined, toStr
 const NEVER_MS = 2_000_000_000;
 
 /**
- * pi's settings (harness 3.1): a failed model call ends the turn, as today (any retry delay pi might use
+ * pi's settings (harness 3.1): a failed model call ends the turn (any retry delay pi might use
  * stays at or under 60 s, so a long wait is never mistaken for a restart); no background compaction; no
  * partial commits, so an interrupted answer is asked again; and no context kept in memory after a turn,
  * which would keep every object active, and billed, for 10 minutes (spike: PiHarness, fact 17).
@@ -104,13 +104,13 @@ const PI_SETTINGS: HarnessSettings = {
 	contextRetentionMs: 0,
 };
 
-/** Today's answer for a second message while a run is active (runs 3.1). */
+/** The answer to a second message while a run is active. */
 export const BUSY_MESSAGE = "Wait for the current answer to finish, or stop it.";
 export const EMPTY_MESSAGE = "Write a message or attach a file.";
 
 /** A watch job wakes the object this long after a run is stored, until pi has its input (plan: Attempts and recovery). */
 export const WATCH_MS = 20_000;
-/** An answer is a WorkerEvent text of at most this many characters today; a longer one failed its run. */
+/** An answer is a WorkerEvent text of at most this many characters; a longer one fails its run. */
 export const ANSWER_CHARS = 100_000;
 /** The lost-write sweep runs this long after a dispatch at the latest: the write window and its grace. */
 const SWEEP_AFTER_MS = 60_000 + 30_000;
@@ -225,8 +225,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	async postMessage(caller: Caller, input: Required<MessageIn>, key: string | null = null): Promise<Outcome<PostedView>> {
 		const conversation = this.#owned(caller);
 		if (!conversation) return { ok: false, refusal: NOT_FOUND };
-		// MessageIn is validated by the Worker (20,000 characters, at most 100 UUIDs, no lone surrogate, which
-		// Pydantic refuses as string_unicode); anything else here is a bug, not a user's input.
+		// MessageIn is validated by the Worker (20,000 characters, at most 100 UUIDs, no lone
+		// surrogate); anything else here is a bug, not a user's input.
 		if (
 			typeof input.content !== "string" ||
 			!input.content.isWellFormed() ||
@@ -236,7 +236,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		) {
 			throw new TypeError("The Worker validates a message before it reaches the conversation.");
 		}
-		if (pythonStrip(input.content) === "" && input.attachments.length === 0) return { ok: false, refusal: { status: 400, detail: EMPTY_MESSAGE } };
+		if (input.content.trim() === "" && input.attachments.length === 0) return { ok: false, refusal: { status: 400, detail: EMPTY_MESSAGE } };
 		const digest = key === null ? null : await messageDigest(input);
 		const runId = uuid7();
 		const decision = await this.#store.outside(() =>
@@ -413,7 +413,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 					this.#store.insertMessage({ id: messageId, role: "user", content: start.content, attachments, runId, createdAt: now });
 					this.#store.insertRun({ id: runId, snapshot, deadline: snapshot.deadline, baseVersionId, createdAt: now });
 					this.#store.append(runId, statusEvent({ status: "queued" }));
-					const title = current.title ? undefined : sliceCodePoints(start.content || attachments.map((item) => item.path).join(", "), 0, 80);
+					const title = current.title ? undefined : sliceText(start.content || attachments.map((item) => item.path).join(", "), 0, 80);
 					this.#store.touch({ title });
 					this.#store.deleteStart(runId);
 					// Pushed in this transaction (Lifecycle's queue is SQL), so a stored run always has its wake-up.
@@ -769,10 +769,10 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	/**
 	 * `complete` (runs 2.2): the assistant message, the `message` event and `completed`, in one transaction and
 	 * in that order, only while the attempt is current. An empty answer, or one past what a WorkerEvent could
-	 * carry, fails the run instead, as today. Outside pi's transactions (store.ts `outside`), as every end.
+	 * carry, fails the run instead. Outside pi's transactions (store.ts `outside`), as every end.
 	 */
 	async #complete(fence: AttemptFence, text: string): Promise<void> {
-		if (!text || codePointLength(text) > ANSWER_CHARS) {
+		if (!text || text.length > ANSWER_CHARS) {
 			this.#log(text ? "the answer is too long" : "the model turn ended without a response");
 			await this.#fail(fence, WORKER_FAILED);
 			return;
@@ -790,8 +790,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * The loop's failure ends the run only while its attempt is current: today's gateway dropped a replaced or
-	 * expired attempt's `failed` event, and an expired run is marked `timed_out` by its deadline instead.
+	 * The loop's failure ends the run only while its attempt is current: a replaced or expired attempt's
+	 * `failed` event is dropped, and an expired run is marked `timed_out` by its deadline instead.
 	 */
 	async #fail(fence: AttemptFence, end: RunEnd): Promise<void> {
 		await this.#store.outside(() =>
@@ -991,8 +991,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	 * handled). An instance without the attempt's LocalRun (the object restarted after pi settled the turn,
 	 * for example while the final checkpoint ran or after it failed) has nothing to save: its container is
 	 * replaced, and every result pi recorded was released only after a checkpoint saved it, so the run's last
-	 * checkpoint is the folder as the turn left it, but for a change the rehash would have found. Today's
-	 * worker did the same: the next worker's LocalCalls had admitted no call, so its `finish` saved nothing.
+	 * checkpoint is the folder as the turn left it, but for a change the rehash would have found.
 	 */
 	async #finishLocal(fence: AttemptFence): Promise<boolean> {
 		const local = this.#locals.get(fence.runId);
@@ -1015,7 +1014,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	/**
 	 * The attempt's local calls cannot go on (local.ts), and no held result is released before this settles:
 	 * a folder over its limits fails the turn with `folder_limit` and that limit's own message (runs 2.3),
-	 * then the object is reset, so pi never commits a held result (today's `storage.fail`); a container that
+	 * then the object is reset, so pi never commits a held result; a container that
 	 * failed its hardening or checks fails the turn as `worker_failed` (no local call ran in it); anything
 	 * else ends the attempt by resetting the object, and the next attempt starts from the last checkpoint.
 	 */
@@ -1308,7 +1307,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	#showPhase(fence: AttemptFence): void {
-		// Saving files first, then a call waiting for its container, then today's order (events.ts `phaseOf`).
+		// Saving files first, then a call waiting for its container, then the order of events.ts `phaseOf`.
 		const saving = this.#saving.has(fence.runId);
 		this.#phase(fence, !saving && this.#waiting.has(fence.runId) ? "Preparing files" : phaseOf(saving, this.#running.get(fence.runId)?.values() ?? []));
 	}

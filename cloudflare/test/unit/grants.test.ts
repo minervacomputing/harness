@@ -1,7 +1,5 @@
-// The pure parts of permissions/services.py, with the grant-edit cases of backend/tests/test_contract.py
-// (test_access_settings_understand_wildcards, test_api_key_connections_act_on_their_account,
-// test_a_connection_has_a_limited_number_of_grants, test_a_wildcard_on_a_kind_without_wildcards_is_ignored)
-// and test_api.py (test_access_settings_are_validated). The provider's `describe` step between the checks
+// Layers and grants, the pure parts (gateway/grants.ts): wildcards, connections that act on their account,
+// the limit on grants, wildcards on kinds without them, and the validation of access settings. The provider's `describe` step between the checks
 // and the plan belongs to the API (step 5).
 
 import { describe, expect, test } from "vitest";
@@ -45,23 +43,25 @@ function refusal(run: () => unknown): string {
 }
 
 describe("checkChanges", () => {
-	test("each refusal, in today's words", () => {
+	test("each refusal", () => {
 		const check = (...changes: GrantChange[]) => refusal(() => checkChanges(mixed, CONNECTION, changes));
 		expect(check()).toBe("Nothing to change.");
 		expect(check(...Array.from({ length: 101 }, (_, i) => change(FOLDER, `f${i}`, ["read"])))).toBe("Change at most 100 resources at once.");
-		expect(check(change("task", "work", ["read"]))).toBe("Mixed has no resources of type 'task'.");
-		expect(check(change(ACCOUNT_KIND, CONNECTION, ["read"]))).toBe("Mixed has no resources of type 'account'.");
+		expect(check(change("task", "work", ["read"]))).toBe('Mixed has no resources of type "task".');
+		expect(check(change(ACCOUNT_KIND, CONNECTION, ["read"]))).toBe('Mixed has no resources of type "account".');
 		expect(check(change("it's", "work", ["read"]))).toBe(`Mixed has no resources of type "it's".`);
+		expect(check(change('a"b', "work", ["read"]))).toBe('Mixed has no resources of type "a\\"b".');
 		expect(check(change(FOLDER, "", ["read"]))).toBe("Choose a resource.");
 		expect(check(change(FOLDER, "x".repeat(201), ["read"]))).toBe("Choose a resource.");
 		expect(check(change(LABEL, ANY, ["read"]))).toBe("Permissions for label resources are set one at a time.");
 		expect(check(change(FOLDER, "inbox", ["read"]), change(FOLDER, "inbox", []))).toBe("Each resource can only be listed once.");
-		expect(check(change(FOLDER, "inbox", ["delete"]))).toBe("Mixed does not support 'delete' on folder.");
-		expect(check(change(LABEL, "red", ["create"]))).toBe("Mixed does not support 'create' on label.");
+		expect(check(change(FOLDER, "inbox", ["delete"]))).toBe('Mixed does not support "delete" on folder.');
+		expect(check(change(LABEL, "red", ["create"]))).toBe('Mixed does not support "create" on label.');
 	});
 
-	test("ids are counted in code points, and a wildcard is fine on a wildcard kind", () => {
-		expect(() => checkChanges(mixed, CONNECTION, [change(FOLDER, "\u{1f600}".repeat(200), ["read"])])).not.toThrow();
+	test("ids are counted in UTF-16 units, and a wildcard is fine on a wildcard kind", () => {
+		expect(() => checkChanges(mixed, CONNECTION, [change(FOLDER, "\u{1f600}".repeat(100), ["read"])])).not.toThrow();
+		expect(refusal(() => checkChanges(mixed, CONNECTION, [change(FOLDER, `a${"\u{1f600}".repeat(100)}`, ["read"])]))).toBe("Choose a resource.");
 		expect(() => checkChanges(mixed, CONNECTION, [change(FOLDER, ANY, ["read"]), change(FOLDER, "archive", ["create"])])).not.toThrow();
 		expect(() => checkChanges(mixed, CONNECTION, Array.from({ length: 100 }, (_, i) => change(FOLDER, `f${i}`, ["read"])))).not.toThrow();
 	});

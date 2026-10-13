@@ -7,7 +7,7 @@ import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation } from "../../gateway/connector.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
 import { record } from "../../lib/schema.ts";
-import { SINGLE_LINE, codePointLength, isSingleLine } from "../../lib/text.ts";
+import { SINGLE_LINE, isSingleLine, sliceText } from "../../lib/text.ts";
 import { DataSource, type Database, type NotionClient, Page, databaseName, searchIncomplete, sourceDatabaseId, sourceName } from "./client.ts";
 import { redact } from "./markdown.ts";
 import {
@@ -34,7 +34,7 @@ const cursorField = () => z.string().trim().max(MAX_CURSOR).nullable().default(n
 
 function nextCursor(cursor: string | null, hasMore: boolean): string | null {
 	if (!hasMore || !cursor) return null;
-	if (codePointLength(cursor) > MAX_CURSOR) throw new OperationError("PROVIDER_LIMIT", "Notion returned a page token that is too long.");
+	if (cursor.length > MAX_CURSOR) throw new OperationError("PROVIDER_LIMIT", "Notion returned a page token that is too long.");
 	return cursor;
 }
 
@@ -54,12 +54,6 @@ function databaseRecord(resource: Resource, database: Database, extra: JsonObjec
 			...extra,
 		},
 	};
-}
-
-function sliceCodePoints(text: string, start: number, end: number): string {
-	// Code points, as Python slices; most pages have no astral characters to count.
-	if (!/[\ud800-\udfff]/.test(text)) return text.slice(start, end);
-	return Array.from(text).slice(start, end).join("");
 }
 
 const Search = z
@@ -158,12 +152,12 @@ export const READ_PAGE = defineOperation<z.output<typeof ReadPage>>({
 				const body = await tree.client.markdown(resource.id);
 				const text = redact(body.markdown);
 				const end = data.offset + data.max_chars;
-				const total = codePointLength(text);
+				const total = text.length;
 				return {
 					records: [
 						pageRecord(resource, page, {
 							properties: readable(page.properties),
-							text: sliceCodePoints(text, data.offset, end),
+							text: sliceText(text, data.offset, end),
 							offset: data.offset,
 							total_chars: total,
 							truncated: end < total || body.truncated,

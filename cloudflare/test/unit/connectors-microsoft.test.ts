@@ -11,15 +11,16 @@ import { outlookCalendarConnector } from "../../src/connectors/outlook_calendar/
 import { nextCursor as teamsNextCursor, pageParams as teamsPageParams } from "../../src/connectors/teams/client.ts";
 import { teamsConnector } from "../../src/connectors/teams/connector.ts";
 import { consent, consentAll, classify, nextCursor, pageParam, segment } from "../../src/connectors/microsoft/index.ts";
-import { OverflowError, ValueError } from "../../src/lib/pyerrors.ts";
 import { dateFromIsoFormat, datetimeFromIsoFormat } from "../../src/lib/isoformat.ts";
 import { outlookConnector } from "../../src/connectors/outlook/connector.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
 import { Registry } from "../../src/gateway/registry.ts";
-import { casefold } from "../../src/lib/casefold.ts";
 import { utf8 } from "../../src/lib/bytes.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
 import { declarationOf, vectors } from "../fixtures/connectors/microsoft/runs.ts";
+import { TextError } from "../../src/lib/text.ts";
+import { UrlError } from "../../src/lib/urlsplit.ts";
+import { changedOnPurpose, jsonQuoted } from "./changed.ts";
 
 /** generate.py's `outcome`: what a call gives, or the error it raises. */
 function outcome(call: () => unknown): { [key: string]: unknown } {
@@ -27,16 +28,22 @@ function outcome(call: () => unknown): { [key: string]: unknown } {
 		return { value: call() };
 	} catch (error) {
 		if (error instanceof OperationError) return { error: error.code, message: error.message };
-		if (error instanceof ValueError) return { error: "ValueError", message: error.message };
+		if (error instanceof TextError || error instanceof UrlError) return { error: "ValueError", message: error.message };
 		if (error instanceof TypeError) return { error: "TypeError" };
 		throw error;
 	}
 }
 
 /** The vector's outcome without the message of a TypeError, which Python words its own way. */
+/** An isoformat outcome with its message in JSON's quotes. */
+function quoted(outcome: unknown): unknown {
+	const message = (outcome as { e?: unknown }).e;
+	return typeof message === "string" ? { e: jsonQuoted(message) } : outcome;
+}
+
 function expectedOutcome(entry: { [key: string]: unknown }): { [key: string]: unknown } {
 	const { link: _link, cursor: _cursor, ...rest } = entry;
-	return rest;
+	return typeof rest.message === "string" ? { ...rest, message: jsonQuoted(rest.message) } : rest;
 }
 
 describe("the declarations", () => {
@@ -112,21 +119,22 @@ describe("Graph's paging", () => {
 	});
 
 	test("next_cursor agrees with Python on links, fuzzed ones included", () => {
-		const cases = vectors("microsoft").next_cursor as { link: string | number | null }[];
-		expect(cases.length).toBeGreaterThan(250);
+		const all = vectors("microsoft").next_cursor as { link: string | number | null }[];
+		expect(all.length).toBeGreaterThan(250);
+		const cases = all.filter((entry) => !changedOnPurpose(entry));
 		const actual = cases.map((entry) => outcome(() => nextCursor(entry.link)));
 		expect(actual.map((item) => (item.error === "TypeError" ? { error: "TypeError" } : item))).toEqual(cases.map((entry) => expectedOutcome(entry)));
 	});
 
 	test("page_param agrees with Python on cursors", () => {
-		const cases = vectors("microsoft").page_param as { cursor: string }[];
+		const cases = (vectors("microsoft").page_param as { cursor: string }[]).filter((entry) => !changedOnPurpose(entry.cursor));
 		expect(cases.map((entry) => outcome(() => pageParam(entry.cursor)))).toEqual(cases.map((entry) => expectedOutcome(entry)));
 	});
 
 	test("Teams' page cursors and links agree with Python, fuzzed links included", () => {
-		const cursors = vectors("microsoft").teams_page_params as { cursor: string }[];
+		const cursors = (vectors("microsoft").teams_page_params as { cursor: string }[]).filter((entry) => !changedOnPurpose(entry.cursor));
 		expect(cursors.map((entry) => outcome(() => teamsPageParams(entry.cursor)))).toEqual(cursors.map((entry) => expectedOutcome(entry)));
-		const links = vectors("microsoft").teams_next_cursor as { link: string | number | null }[];
+		const links = (vectors("microsoft").teams_next_cursor as { link: string | number | null }[]).filter((entry) => !changedOnPurpose(entry));
 		expect(links.length).toBeGreaterThan(100);
 		expect(links.map((entry) => outcome(() => teamsNextCursor(entry.link)))).toEqual(links.map((entry) => expectedOutcome(entry)));
 	});
@@ -215,15 +223,16 @@ describe("consent", () => {
 
 describe("Python's datetime.fromisoformat and date.fromisoformat", () => {
 	test("agree on the generated texts, with their messages", () => {
-		const cases = vectors("microsoft").isoformat as { t: string; dt: unknown; d: unknown }[];
-		expect(cases.length).toBeGreaterThanOrEqual(1500);
+		const all = vectors("microsoft").isoformat as { t: string; dt: unknown; d: unknown }[];
+		expect(all.length).toBeGreaterThanOrEqual(1500);
+		const cases = all.filter(({ t }) => !changedOnPurpose(t)).map(({ t, dt, d }) => ({ t, dt: quoted(dt), d: quoted(d) }));
 		const actual = cases.map(({ t }) => {
 			let dt: unknown;
 			try {
 				const value = datetimeFromIsoFormat(t);
 				dt = { v: [value.year, value.month, value.day, value.hour, value.minute, value.second, value.microsecond], o: value.offset };
 			} catch (error) {
-				if (!(error instanceof ValueError || error instanceof OverflowError)) throw error;
+				if (!(error instanceof TextError || error instanceof RangeError)) throw error;
 				dt = { e: error.message };
 			}
 			let d: unknown;
@@ -231,19 +240,11 @@ describe("Python's datetime.fromisoformat and date.fromisoformat", () => {
 				const value = dateFromIsoFormat(t);
 				d = [value.year, value.month, value.day];
 			} catch (error) {
-				if (!(error instanceof ValueError)) throw error;
+				if (!(error instanceof TextError)) throw error;
 				d = { e: error.message };
 			}
 			return { t, dt, d };
 		});
 		expect(actual).toEqual(cases);
-	});
-});
-
-describe("case folding", () => {
-	test("str.casefold() agrees with Python on mixed samples", () => {
-		const cases = vectors("microsoft").casefold as [string, string][];
-		expect(cases.length).toBeGreaterThan(150);
-		expect(cases.map(([text]) => casefold(text))).toEqual(cases.map(([, folded]) => folded));
 	});
 });

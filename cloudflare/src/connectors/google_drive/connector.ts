@@ -14,7 +14,7 @@ import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
 import { fromUtf8, utf8 } from "../../lib/bytes.ts";
 import { isDict, type Json, type JsonObject, parseJson } from "../../lib/json.ts";
-import { SINGLE_LINE, codePointLength, isSingleLine, sliceCodePoints } from "../../lib/text.ts";
+import { SINGLE_LINE, isSingleLine, sliceText } from "../../lib/text.ts";
 import { digitsOr, jsonInteger } from "../google/digits.ts";
 import { oauth } from "../google/index.ts";
 import { setOwn } from "../google/model.ts";
@@ -210,7 +210,7 @@ function record(resource: Resource, file: DriveFile, extra: JsonObject = {}): Sc
 }
 
 function nextCursor(token: string | null): string | null {
-	if (token && codePointLength(token) > 1000) throw new OperationError("PROVIDER_LIMIT", "Google Drive returned a page token that is too long.");
+	if (token && token.length > 1000) throw new OperationError("PROVIDER_LIMIT", "Google Drive returned a page token that is too long.");
 	return token;
 }
 
@@ -466,8 +466,8 @@ export function googleDriveConnector(options: DriveOptions = {}): Connector<Goog
 					async execute(): Promise<ProviderOutput> {
 						const file = await tree.confirm(resource);
 						const text = await textOf(tree.client, file, limits);
-						const truncated = codePointLength(text) > data.max_chars;
-						return { records: [record(resource, file, { text: sliceCodePoints(text, 0, data.max_chars), truncated })] };
+						const truncated = text.length > data.max_chars;
+						return { records: [record(resource, file, { text: sliceText(text, 0, data.max_chars), truncated })] };
 					},
 				};
 			},

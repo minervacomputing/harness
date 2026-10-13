@@ -1,4 +1,4 @@
-// Intercom (backend/connectors/intercom/connector.py). Resources are inboxes; agents read and search
+// Intercom. Resources are inboxes; agents read and search
 // conversations, add internal notes and reply to customers.
 //
 // A connection is one teammate (admin) in one Intercom workspace, and writes are sent as that teammate. The
@@ -22,7 +22,6 @@
 
 import type { Connector, DiscoveryItem, DiscoveryPage } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
-import { casefold } from "../../lib/casefold.ts";
 import { ID, IntercomClient } from "./client.ts";
 import { INBOX, NO_TEAM, NO_TEAM_NAME } from "./inboxes.ts";
 import { GET_CONVERSATION, LIST_INBOXES, SEARCH_CONVERSATIONS, short } from "./reads.ts";
@@ -78,9 +77,9 @@ export const intercom: Connector<IntercomClient> = {
 
 	async discover(client, _kind, { query, cursor }): Promise<DiscoveryPage> {
 		if (cursor !== null) throw new OperationError("INVALID_CURSOR", "This page token is invalid.");
-		const folded = query ? casefold(query) : null;
+		const folded = query ? query.toLowerCase() : null;
 		const items = await inboxes(client);
-		return { items: items.filter((item) => folded === null || casefold(item.name).includes(folded)) };
+		return { items: items.filter((item) => folded === null || item.name.toLowerCase().includes(folded)) };
 	},
 
 	async describe(client, _kind, ids) {

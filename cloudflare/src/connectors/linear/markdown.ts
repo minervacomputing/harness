@@ -1,4 +1,4 @@
-// Issue and comment text as agents see it and write it (backend/connectors/linear/markdown.py).
+// Issue and comment text as agents see it and write it.
 //
 // Linear writes links to its own objects as plain linear.app addresses, and those carry titles: an issue's
 // address ends in its title, a project's or document's in its name. Such a link in an issue the agent may
@@ -12,25 +12,23 @@
 // Text may not show images from anywhere but Linear's own uploads, since a reader's browser would load them
 // from another site, nor use HTML that loads or links anything.
 //
-// The expressions are Python's, with `re`'s semantics written out (python.ts): `\s` and `\w` are Unicode
-// classes of their own, `\d` is any decimal digit, `.` is anything but a newline, IGNORECASE also matches
-// U+0130 and U+0131 to `i`, and every expression has the `u` flag so that a class matches a code point.
+// Every expression has the `u` flag, so that a class matches a code point; IGNORECASE also matches U+0130
+// and U+0131 to `i` (python.ts). An address runs up to whitespace, but U+FEFF, which `\s` counts and no
+// one sees, stays part of it, so that it cannot end an address early.
 
-import { decoded, isPlainText, PLAIN_TEXT, PYTHON_SPACE_CLASS, WORD_CLASS } from "../../lib/text.ts";
-import { DIGIT_CLASS } from "../../lib/digits.ts";
-import { compareCodePoints } from "../../lib/order.ts";
+import { decoded, isPlainText, PLAIN_TEXT, WORD_CLASS } from "../../lib/text.ts";
 import { RE_I, RE_LETTERS_EXTRA } from "./python.ts";
+import { compareText } from "../../lib/arrays.ts";
 
 export const MAX_ISSUE_LINKS = 10;
 
-const S = PYTHON_SPACE_CLASS;
 const LINEAR = String.raw`l${RE_I}near\.app`;
 const SEGMENT = String.raw`[A-Za-z0-9_${RE_LETTERS_EXTRA}-]+`;
 
 const ANY_LINEAR = new RegExp(LINEAR, "giu");
 /** An address of an object in Linear; group 3 is the rest of its path. */
 const LINEAR_URL = new RegExp(
-	String.raw`(?<![${WORD_CLASS}.@-])(?:https?://)?${LINEAR}/(${SEGMENT})(?:/(${SEGMENT}))?((?:/[^${S}()<>\[\]"'\x60]*)?)`,
+	String.raw`(?<![${WORD_CLASS}.@-])(?:https?://)?${LINEAR}/(${SEGMENT})(?:/(${SEGMENT}))?((?:/(?:[^\s()<>\[\]"'\x60]|\uFEFF)*)?)`,
 	"giu",
 );
 /** Punctuation that ends a sentence after an address rather than belonging to it. */
@@ -41,32 +39,32 @@ const TRAILING = /[.,;:!?]+$/u;
  */
 const LABELLED_LINK = new RegExp(
 	String.raw`!?\[(?:\\[^\n]|[^\]\[\\\n]|\[(?:\\[^\n]|[^\]\[\\\n])*\])*\]` +
-		String.raw`\([${S}]*<?((?:https?://)?${LINEAR}/[^${S}()<>]*)>?` +
-		String.raw`(?:[${S}]+(?:"(?:\\[^\n]|[^"\\\n])*"|'(?:\\[^\n]|[^'\\\n])*'|\((?:\\[^\n]|[^()\\\n])*\)))?[${S}]*\)`,
+		String.raw`\(\s*<?((?:https?://)?${LINEAR}/(?:[^\s()<>]|\uFEFF)*)>?` +
+		String.raw`(?:\s+(?:"(?:\\[^\n]|[^"\\\n])*"|'(?:\\[^\n]|[^'\\\n])*'|\((?:\\[^\n]|[^()\\\n])*\)))?\s*\)`,
 	"giu",
 );
 const OWN_ID = /-([0-9a-fA-F]{8,})$/u;
-export const IDENTIFIER = new RegExp(`^[A-Za-z0-9]{1,10}-${DIGIT_CLASS}{1,9}$`, "u");
+export const IDENTIFIER = /^[A-Za-z0-9]{1,10}-\d{1,9}$/u;
 
 /** An issue address as agents may write it: workspace, identifier and optionally the title part. */
 const ISSUE_LINK = new RegExp(
-	String.raw`^https?://${LINEAR}/(${SEGMENT})/${RE_I}ssue/([A-Za-z0-9${RE_LETTERS_EXTRA}]{1,10}-${DIGIT_CLASS}{1,9})(?:/[A-Za-z0-9${RE_LETTERS_EXTRA}-]*)?$`,
+	String.raw`^https?://${LINEAR}/(${SEGMENT})/${RE_I}ssue/([A-Za-z0-9${RE_LETTERS_EXTRA}]{1,10}-\d{1,9})(?:/[A-Za-z0-9${RE_LETTERS_EXTRA}-]*)?$`,
 	"iu",
 );
 /** `https?://$` searched between two positions: `$` is the window's end, or before a newline that ends it. */
 const SCHEME = /https?:\/\/(?=\n?$)/iu;
 /** All that any parser could take as part of an address: up to whitespace or an angle bracket. */
-const RUN = new RegExp(String.raw`[^${S}<>]*`, "uy");
+const RUN = /(?:[^\s<>]|\uFEFF)*/uy;
 /** What may follow an address without being part of it: punctuation, closing brackets, emphasis, quotes. */
 const AFTER = /[.,;:!?)\]*_~'"]+$/u;
 const IMAGE = new RegExp(
-	String.raw`!\[[^\]\n]*\]\([${S}]*<?https://uploads\.linear\.app/[^${S}()<>]+>?(?:[${S}]+"[^"\n]*")?[${S}]*\)`,
+	String.raw`!\[[^\]\n]*\]\(\s*<?https://uploads\.linear\.app/[^\s()<>]+>?(?:\s+"[^"\n]*")?\s*\)`,
 	"gu",
 );
-const TAG = new RegExp(String.raw`<[${S}]*/?[${S}]*([A-Za-z][${WORD_CLASS}:-]*)([^<>]*)>`, "gu");
+const TAG = new RegExp(String.raw`<\s*/?\s*([A-Za-z][${WORD_CLASS}:-]*)([^<>]*)>`, "gu");
 /** `\b` before a word character is "not after one". */
 const LINK_ATTRIBUTE = new RegExp(
-	String.raw`(?<![${WORD_CLASS}])(?:src|url|href|data|srcset|poster|act${RE_I}on|background)[${S}]*=`,
+	String.raw`(?<![${WORD_CLASS}])(?:src|url|href|data|srcset|poster|act${RE_I}on|background)\s*=`,
 	"iu",
 );
 const LOADING_TAGS: ReadonlySet<string> = new Set(["img", "image", "iframe", "embed", "object", "video", "audio", "source", "link"]);
@@ -109,7 +107,7 @@ export const TOO_MANY_LINKS = `may link to at most ${MAX_ISSUE_LINKS} Linear iss
 export const NOT_AN_ISSUE_LINK =
 	"may link to Linear only with issue addresses (https://linear.app/<workspace>/issue/<ID>), each followed by a space or the end of the link; Linear turns other Linear links into mentions";
 
-/** What text an agent writes may not do, or null: `check_written`'s ValueError. A field validator. */
+/** What text an agent writes may not do, or null: the field's refusal. */
 export function writtenProblem(text: string): string | null {
 	if (!isPlainText(text)) return PLAIN_TEXT;
 	const rest = text.replace(IMAGE, "");
@@ -152,5 +150,5 @@ export function issueLinks(text: string): [string, string][] {
 	const links = linksOf(text.replace(IMAGE, ""));
 	if (typeof links === "string") throw new TypeError(links);
 	const unique = new Map(links.map((link) => [JSON.stringify(link), link]));
-	return [...unique.values()].sort((a, b) => compareCodePoints(a[0], b[0]) || compareCodePoints(a[1], b[1]));
+	return [...unique.values()].sort((a, b) => compareText(a[0], b[0]) || compareText(a[1], b[1]));
 }

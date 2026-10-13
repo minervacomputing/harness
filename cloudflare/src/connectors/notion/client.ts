@@ -1,4 +1,4 @@
-// The Notion API client, ported from backend/connectors/notion/client.py: a thin client over ProviderHTTP
+// The Notion API client: a thin client over ProviderHTTP
 // whose responses are validated before use. The models read as Pydantic's lax models with `extra="ignore"`
 // do: unknown fields dropped, booleans also from 0, 1 and words such as "true", strings only from strings.
 // Objects whose keys are Notion's (properties, rich text items, search results) are checked and kept as
@@ -10,7 +10,7 @@ import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
 import { type Json, type JsonObject, isDict, parseJson } from "../../lib/json.ts";
-import { has, own, pythonStr } from "./python.ts";
+import { asText, has, own } from "./python.ts";
 
 export const API_URL = "https://api.notion.com/v1";
 /** Pinned: the markdown endpoints and data sources behave as documented for this version. */
@@ -194,7 +194,7 @@ export function textOf(items: Json | undefined): string {
 			const type = own(mention, "type") as string;
 			const target = own(mention, type);
 			const targetId = isDict(target) ? own(target, "id") : null;
-			parts.push(`(mention of ${type} ${pythonStr(targetId)})`);
+			parts.push(`(mention of ${type} ${asText(targetId)})`);
 		} else {
 			const text = has(item, "plain_text") ? item.plain_text : "";
 			parts.push(typeof text === "string" ? text : "");

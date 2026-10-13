@@ -26,7 +26,6 @@ import type { ReservedUpload } from "../contracts/workspace.ts";
 import { utf8Strict } from "../lib/bytes.ts";
 import { canonicalJson, hashLabel } from "../lib/canonical.ts";
 import { parseJson } from "../lib/json.ts";
-import { sortByCodePoint } from "../lib/order.ts";
 import { tokenHex, uuid7 } from "../lib/random.ts";
 import { first, type Sql, type SqlValue } from "../lib/sql.ts";
 import { splitParts, VALUE_PART } from "../lib/text.ts";
@@ -101,7 +100,7 @@ export interface FolderDeps {
 	random?(): string;
 }
 
-/** A parent that no longer exists (store.py `StaleParent`); its message is empty, as Python's is. */
+/** A parent that no longer exists; its message is empty. */
 export class StaleParent extends Error {
 	constructor() {
 		super("");
@@ -109,7 +108,7 @@ export class StaleParent extends Error {
 	}
 }
 
-/** A manifest names contents the store does not have (store.py `UnknownBlob`), sorted. */
+/** A manifest names contents the store does not have, sorted. */
 export class UnknownBlob extends Error {
 	readonly hashes: Sha256[];
 
@@ -337,7 +336,7 @@ export class FolderStore {
 			if (this.version(parentId) === null) throw new StaleParent();
 			for (const entry of Object.values(this.entries(parentId).files)) if (hashes.has(entry.sha256)) sizes.set(entry.sha256, entry.size);
 		}
-		const fresh = sortByCodePoint([...hashes].filter((hash) => !sizes.has(hash)));
+		const fresh = [...hashes].filter((hash) => !sizes.has(hash)).sort();
 		if (fresh.length) {
 			const found = this.#stored(fresh);
 			const missing = fresh.filter((hash) => !found.has(hash));
@@ -354,7 +353,7 @@ export class FolderStore {
 		const versionId = this.#deps.conversation()?.folderVersionId ?? null;
 		const row = versionId === null ? null : this.version(versionId);
 		if (row === null) return { versionId: null, bytes: 0, entries: 0, rootNames: [] };
-		return { versionId, bytes: row.size, entries: row.entry_count, rootNames: sortByCodePoint(rootNames(this.entries(row.id))) };
+		return { versionId, bytes: row.size, entries: row.entry_count, rootNames: [...rootNames(this.entries(row.id))].sort() };
 	}
 
 	// Blobs and the byte total (files 3, 12.1, 15.2).
@@ -673,7 +672,7 @@ export class FolderStore {
 
 	/**
 	 * Records the run's folder as the scan reports it, on top of its last checkpoint (or its base version):
-	 * validated in today's order (stale, conflict, the manifest, the warnings, identical), then the files whose
+	 * validated in this order (stale, conflict, the manifest, the warnings, identical), then the files whose
 	 * contents the run may not read yet are uploaded by `upload` (the Sandbox streams each into R2 under a key
 	 * recorded here first, with its hash, which R2 checks) after the folder's size, the run's upload budget
 	 * and the workspace's quota allow them, and the checkpoint is recorded with their claims and grants in one
@@ -721,7 +720,7 @@ export class FolderStore {
 			const claimed = isSizes(scan.sizes) ? scan.sizes : null;
 			const toUpload = new Map<Sha256, { path: string; size: number }>();
 			const sizes: number[] = [];
-			for (const path of sortByCodePoint(manifest.files.keys())) {
+			for (const path of [...manifest.files.keys()].sort()) {
 				const entry = manifest.files.get(path) as { sha256: Sha256 };
 				if (readable.has(entry.sha256)) {
 					const size = known.get(entry.sha256)?.size;

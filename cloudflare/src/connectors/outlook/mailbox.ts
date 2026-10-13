@@ -5,9 +5,10 @@ import { z } from "zod";
 import type { Binding } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, denied } from "../../gateway/connector.ts";
-import { after, valueError } from "../microsoft/inputs.ts";
+import { after } from "../microsoft/inputs.ts";
 import { ID, consent } from "../microsoft/index.ts";
 import { type Folder, type GraphClient, type Message, ordinary } from "./client.ts";
+import { TextError } from "../../lib/text.ts";
 
 export const FOLDER = "folder";
 export const RECIPIENT = "recipient";
@@ -33,13 +34,13 @@ export function folderRef() {
 	return after(z.string().trim().min(1).max(512), (value: string) => {
 		if (WELL_KNOWN.includes(value.toLowerCase())) return value.toLowerCase();
 		if (ID.test(value)) return value;
-		throw valueError(`must be a folder id, or one of: ${WELL_KNOWN.join(", ")}`);
+		throw new TextError(`must be a folder id, or one of: ${WELL_KNOWN.join(", ")}`);
 	}).describe(`A folder id from list_folders, or a well-known folder: ${WELL_KNOWN.join(", ")}.`);
 }
 
 export function messageId() {
 	return after(z.string().trim().min(10).max(512), (value: string) => {
-		if (!ID.test(value)) throw valueError("must be a message id from list_messages");
+		if (!ID.test(value)) throw new TextError("must be a message id from list_messages");
 		return value;
 	});
 }

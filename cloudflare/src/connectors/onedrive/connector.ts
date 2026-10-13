@@ -29,10 +29,9 @@ import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
 import { fromUtf8 } from "../../lib/bytes.ts";
-import { codePointLength, pythonStrip, sliceCodePoints } from "../../lib/text.ts";
-import { decimalValue } from "../../lib/digits.ts";
+import { sliceText, TextError } from "../../lib/text.ts";
 import { accountLabel, consent, oauth, pageParam } from "../microsoft/index.ts";
-import { after, singleLineOf, valueError } from "../microsoft/inputs.ts";
+import { after, singleLineOf } from "../microsoft/inputs.ts";
 import { mapLimited } from "../microsoft/limit.ts";
 import { DriveClient, type DriveItem } from "./client.ts";
 import { type Kind, extract, isKind } from "./office.ts";
@@ -409,7 +408,7 @@ async function search(client: DriveClient, text: string, limit: number, cursor: 
 		if (cursor !== null) {
 			const skip = pageParam(cursor).$skip;
 			if (skip === undefined) throw new OperationError("INVALID_CURSOR", "This page token is invalid.");
-			offset = decimalValue(skip);
+			offset = Number(skip);
 		}
 		let more: boolean;
 		[items, more] = await client.searchWork(text, offset, limit);
@@ -506,7 +505,7 @@ export function extensionOf(name: string): string {
 export function readable(item: DriveItem): Kind | "text" {
 	if (item.remote_item !== null) throw new OperationError("UNSUPPORTED_FILE", `This points to an item in another drive. Use its id instead: ${target(item)}.`);
 	if (item.file === null) throw new OperationError("UNSUPPORTED_FILE", "This is not a file.");
-	const mime = pythonStrip((item.file.mime_type || "").split(";")[0] as string).toLowerCase();
+	const mime = ((item.file.mime_type || "").split(";")[0] as string).trim().toLowerCase();
 	const extension = extensionOf(item.name).toLowerCase();
 	const office = OFFICE.get(mime);
 	if (office !== undefined) return office;
@@ -549,8 +548,8 @@ const READ_FILE = defineOperation<z.output<typeof ReadFile>>({
 			async execute(): Promise<ProviderOutput> {
 				const current = await tree.confirm(resource, true);
 				const text = await textOf(tree.client, current, data.max_chars + 1);
-				const truncated = codePointLength(text) > data.max_chars;
-				return { records: [record(resource, current, { text: sliceCodePoints(text, 0, data.max_chars), truncated })] };
+				const truncated = text.length > data.max_chars;
+				return { records: [record(resource, current, { text: sliceText(text, 0, data.max_chars), truncated })] };
 			},
 		};
 	},
@@ -558,18 +557,18 @@ const READ_FILE = defineOperation<z.output<typeof ReadFile>>({
 
 /** `_upload_size`. */
 function uploadSize(value: string): string {
-	if (new TextEncoder().encode(value).length > MAX_UPLOAD_BYTES) throw valueError(`must be at most ${MAX_UPLOAD_BYTES} bytes as UTF-8`);
+	if (new TextEncoder().encode(value).length > MAX_UPLOAD_BYTES) throw new TextError(`must be at most ${MAX_UPLOAD_BYTES} bytes as UTF-8`);
 	return value;
 }
 
 /** `_file_name`. */
 function fileName(value: string): string {
-	if (INVALID_NAME.test(value)) throw valueError('must not contain any of " * : < > ? / \\ |');
+	if (INVALID_NAME.test(value)) throw new TextError('must not contain any of " * : < > ? / \\ |');
 	const lowered = value.toLowerCase();
 	if (value.endsWith(".") || DEVICES.has(lowered.split(".")[0] as string) || RESERVED_NAMES.has(lowered)) {
-		throw valueError("is a name OneDrive and SharePoint do not allow");
+		throw new TextError("is a name OneDrive and SharePoint do not allow");
 	}
-	if (value.startsWith("~$") || lowered.includes("_vti_")) throw valueError("is a name OneDrive and SharePoint do not allow");
+	if (value.startsWith("~$") || lowered.includes("_vti_")) throw new TextError("is a name OneDrive and SharePoint do not allow");
 	return value;
 }
 

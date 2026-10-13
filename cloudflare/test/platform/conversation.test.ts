@@ -410,14 +410,18 @@ describe("starting a run", () => {
 		await settled(stub, runId);
 	});
 
-	test("the title is the first message cut to 80 characters, an emoji being one", async () => {
+	test("the title is the first message cut to 80 UTF-16 units, never splitting an emoji", async () => {
 		const { stub } = await conversation();
-		const runId = await posted(stub, `${"x".repeat(79)}😀😀`);
-		expect((await stub.getConversation(CALLER))?.title).toBe(`${"x".repeat(79)}😀`);
+		const runId = await posted(stub, `${"x".repeat(78)}😀😀`);
+		expect((await stub.getConversation(CALLER))?.title).toBe(`${"x".repeat(78)}😀`);
 		await settled(stub, runId);
 		const second = await posted(stub, "Another");
-		expect((await stub.getConversation(CALLER))?.title).toBe(`${"x".repeat(79)}😀`);
+		expect((await stub.getConversation(CALLER))?.title).toBe(`${"x".repeat(78)}😀`);
 		await settled(stub, second);
+		const { stub: other } = await conversation();
+		const split = await posted(other, `${"x".repeat(79)}😀`);
+		expect((await other.getConversation(CALLER))?.title).toBe("x".repeat(79));
+		await settled(other, split);
 	});
 
 	test("a cancel during beginRun leaves a tombstone, and the run is stored cancelled", async () => {

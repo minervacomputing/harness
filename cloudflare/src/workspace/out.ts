@@ -1,6 +1,5 @@
-// The API's shapes as the Workspace builds them, ported from backend/connections/api.py (`_connection_out`,
-// `_allowed`, `_kinds`, `_actions`, `get_access`), connections/oauth.py (`consent_needed`,
-// `requested_scopes`) and agents/api.py (`_out`) (connectors 11.7, 13; web-api 8.3, 8.5).
+// The API's shapes as the Workspace builds them: connections with their access, the scopes consent asks
+// for, and agents.
 
 import type { AccessOut, ActionOut, AgentOut, AllowedOut, ConnectionOut, ConversationOut, GrantOut, KindOut } from "../contracts/api.ts";
 import type { Caller, UserId } from "../contracts/common.ts";
@@ -8,7 +7,6 @@ import type { Connector, Operation } from "../contracts/connectors.ts";
 import type { GrantRow } from "../contracts/policy.ts";
 import { actionOf, consentGiven, kindOf } from "../gateway/connector.ts";
 import { ANY } from "../gateway/policy.ts";
-import { sortByCodePoint } from "../lib/order.ts";
 import { isoTime } from "../lib/time.ts";
 
 /** Names of resources shown per allowed action in a connection's summary. */
@@ -88,7 +86,7 @@ export function requestedScopes(connector: Connector, actions: ReadonlySet<strin
 	const base = new Set(requested);
 	const extra = new Set<string>();
 	for (const [op] of lacking(connector, [], actions)) for (const scope of op.consent?.[0] ?? []) extra.add(scope);
-	return [...requested, ...sortByCodePoint([...extra].filter((scope) => !base.has(scope)))];
+	return [...requested, ...[...extra].filter((scope) => !base.has(scope)).sort()];
 }
 
 /** `_allowed`: the user's grants by action, in the connector's order of kinds and actions. `grants` are in (kind, id) order. */

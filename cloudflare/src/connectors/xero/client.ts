@@ -1,5 +1,5 @@
 // Xero's Accounting API, and the identity endpoints that name the user and the organisations they connected,
-// ported from backend/connectors/xero/client.py.
+//.
 //
 // Every accounting request names its organisation in the `xero-tenant-id` header, always one Minerva has
 // already authorized. Models mirror Xero's JSON, whose keys are in PascalCase; fields Xero leaves out stay
@@ -17,10 +17,8 @@ import type { Effect, OperationErrorShape, ProviderClient, ProviderIo, ProviderR
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
-import { DIGIT_CLASS, digitValue } from "../../lib/digits.ts";
 import { isDict, type Json, parseJson, parseModelJson, truthy } from "../../lib/json.ts";
-import { compareCodePoints } from "../../lib/order.ts";
-import { pythonCollapse, truncate } from "../../lib/text.ts";
+import { truncate } from "../../lib/text.ts";
 import { type Decimal, fromNumber } from "./decimal.ts";
 
 export const API_URL = "https://api.xero.com";
@@ -37,10 +35,9 @@ export const MAX_PAGE = 100_000;
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
 const PAGE = /^[1-9][0-9]{0,5}$/;
-// Xero's JSON dates: /Date(1518685950940+0000)/, milliseconds since the epoch and an offset. Python's `\d`
-// takes any decimal digit, and `int()` reads them all.
-const JSON_DATE = new RegExp(`^/Date\\((-?${DIGIT_CLASS}{1,15})([+-]${DIGIT_CLASS}{4})?\\)/$`, "u");
-const DATE_STRING = new RegExp(`^(${DIGIT_CLASS}{4}-${DIGIT_CLASS}{2}-${DIGIT_CLASS}{2})(T[0-9:.]+)?$`, "u");
+// Xero's JSON dates: /Date(1518685950940+0000)/, milliseconds since the epoch and an offset, in ASCII digits.
+const JSON_DATE = /^\/Date\((-?\d{1,15})([+-]\d{4})?\)\/$/u;
+const DATE_STRING = /^(\d{4}-\d{2}-\d{2})(T[0-9:.]+)?$/u;
 const TOO_LARGE = (): OperationError => new OperationError("RESPONSE_TOO_LARGE", "Xero's response was too large to read.");
 
 /** The id in Minerva's spelling, or null when it is not a UUID. */
@@ -219,7 +216,7 @@ const Failure = z.object({ Type: text(), Elements: z.array(Element).default([]),
 export function messages(found: readonly Message[]): string[] {
 	const shown: string[] = [];
 	for (const message of found) {
-		const line = pythonCollapse(message.Message ?? "");
+		const line = (message.Message ?? "").trim().replace(/\s+/g, " ");
 		// As today: the whole line is compared with what was kept, which is each line cut to MAX_MESSAGE.
 		if (line && !shown.includes(line)) shown.push(truncate(line, MAX_MESSAGE)[0]);
 	}
@@ -310,19 +307,6 @@ export function date(value: string | null): string | null {
 	return match === null ? null : (match[1] as string);
 }
 
-/** Python's `int()` of a sign and decimal digits from any script (lib/digits.ts). */
-function digitsValue(text: string): number {
-	let out = "";
-	for (const char of text) {
-		if (char === "-") {
-			out += char;
-			continue;
-		}
-		out += String(digitValue(char) ?? 0);
-	}
-	return Number(out);
-}
-
 /** The first and last second `datetime.fromtimestamp(..., UTC)` takes: years 1 to 9999. */
 const MIN_SECONDS = -62135596800;
 const MAX_SECONDS = 253402300799;
@@ -333,7 +317,7 @@ export function moment(value: string | null): string | null {
 	if (match === null) return null;
 	// fromtimestamp(ms / 1000) shown to the second (isoformat's timespec drops the fraction): the second the
 	// instant falls in. At most 15 digits, so the milliseconds are a safe integer.
-	const milliseconds = digitsValue(match[1] as string);
+	const milliseconds = Number(match[1]);
 	const seconds = (milliseconds - (((milliseconds % 1000) + 1000) % 1000)) / 1000;
 	if (seconds < MIN_SECONDS || seconds > MAX_SECONDS) return null;
 	return `${new Date(seconds * 1000).toISOString().slice(0, 19)}Z`;
@@ -430,7 +414,7 @@ export class XeroClient implements ProviderClient {
 				if (tenant !== null && connection.tenantType === "ORGANISATION" && !kept.has(tenant)) kept.set(tenant, { ...connection, tenantId: tenant });
 			}
 			if (kept.size > MAX_ORGANISATIONS) throw new OperationError("PROVIDER_LIMIT", "This connection reaches more Xero organisations than Minerva reads.");
-			this.#organisations = [...kept.keys()].sort(compareCodePoints).map((key) => kept.get(key) as Connection);
+			this.#organisations = [...kept.keys()].sort().map((key) => kept.get(key) as Connection);
 		}
 		return this.#organisations;
 	}

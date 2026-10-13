@@ -1,7 +1,6 @@
-// Manifests (files 4, 7.5, 7.7; backend/files/manifest.py and the pure parts of backend/files/runs.py):
-// validation in today's order with today's messages, the stored form and its digest, folder sizes,
-// warnings and what a turn changed, against the vectors today's Python wrote (files-vectors.py), and
-// test_files_manifest.py ported case by case.
+// Manifests: validation and its messages, the stored form and its digest, folder sizes, warnings and what a
+// turn changed, against the vectors Python wrote (files-vectors.py; changed.ts lists where they now differ),
+// and cases of their own.
 
 import { describe, expect, test } from "vitest";
 import type { StoredEntries } from "../../src/contracts/files.ts";
@@ -26,6 +25,7 @@ import { sha256HexSync } from "../../src/files/sha256.ts";
 import { hex, utf8 } from "../../src/lib/bytes.ts";
 import { canonicalJson } from "../../src/lib/canonical.ts";
 import { type Json, parseJson } from "../../src/lib/json.ts";
+import { changedOnPurpose, jsonQuoted } from "./changed.ts";
 import { filesVectors } from "./files-support.ts";
 
 const vectors = filesVectors();
@@ -65,7 +65,8 @@ describe("Python's vectors", () => {
 		expect(cases.length).toBeGreaterThan(70);
 		for (const { data, max_entries, outcome: expected } of cases) {
 			const actual = outcome(() => parsed(data, max_entries));
-			expect([data, actual]).toEqual([data, expected]);
+			const message = (expected as { invalid?: string }).invalid;
+			expect([data, actual]).toEqual([data, message === undefined ? expected : { invalid: jsonQuoted(message) }]);
 			// Python's dict keeps the order files were given in, and so does the parse.
 			if ("ok" in (expected as object)) {
 				expect(Object.keys((actual as { ok: { files: object } }).ok.files)).toEqual(Object.keys((expected as { ok: { files: object } }).ok.files));
@@ -90,12 +91,14 @@ describe("Python's vectors", () => {
 
 	test("what a turn changed", () => {
 		for (const vector of vectors.folder_changes as { before: Json; after: Json; changes: Json }[]) {
+			if (changedOnPurpose(vector)) continue;
 			expect(folderChanges(vector.before as never, vector.after as never)).toEqual(vector.changes);
 		}
 	});
 
 	test("warnings: the stored form, or the refusal", () => {
 		for (const { data, outcome: expected } of vectors.warnings as { data: Json; outcome: Json }[]) {
+			if (changedOnPurpose(data)) continue;
 			const actual = outcome(() => parseWarnings(data) as unknown as Json);
 			if (JSON.stringify(data) === '{"total":1,"items":[]}' && "invalid" in (expected as object)) {
 				// Python's `1.0`, a float it refuses as a total; a parsed or cloned JavaScript number cannot be
@@ -210,14 +213,14 @@ describe("parsing a manifest", () => {
 });
 
 describe("the stored form", () => {
-	test("paths that are object keys in JavaScript stay own entries, in code point order", () => {
+	test("paths that are object keys in JavaScript stay own entries, in UTF-16 order", () => {
 		const paths = ["__proto__", "constructor", "10", "9", "\u{1F600}", "", "Z"];
 		const manifest = parseManifest({ files: paths.map((path) => file(path)), dirs: [] }, 100);
 		const entries = storedEntries(manifest, new Map([[A, 3]]));
 		expect(Object.hasOwn(entries.files, "__proto__")).toBe(true);
 		expect(Object.getPrototypeOf(entries.files)).toBe(Object.prototype);
-		// Code point order puts U+E000 before an emoji, which UTF-16 order would not; and "10" before "9".
-		expect(filesOf(entries).map(([path]) => path)).toEqual(["10", "9", "Z", "__proto__", "constructor", "", "\u{1F600}"]);
+		// UTF-16 order puts an emoji (a surrogate pair) before U+E000, and "10" before "9".
+		expect(filesOf(entries).map(([path]) => path)).toEqual(["10", "9", "Z", "__proto__", "constructor", "\u{1F600}", ""]);
 		const text = canonicalJson(entries, { identity: true });
 		const again = parseJson(text) as unknown as StoredEntries;
 		expect(Object.hasOwn(again.files, "__proto__")).toBe(true);

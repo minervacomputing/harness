@@ -1,4 +1,4 @@
-// Microsoft Graph for Teams, ported from backend/connectors/teams/client.py: the teams the account joined,
+// Microsoft Graph for Teams: the teams the account joined,
 // their channels, and channel messages.
 //
 // Teams pages messages with a `$skiptoken` that is not always the URL-safe token other Graph lists use (it
@@ -8,13 +8,12 @@
 import type { ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
-import { codePointLength } from "../../lib/text.ts";
 import { API_URL, Graph, queryOf, segment } from "../microsoft/index.ts";
 import { type Reader, bool, dict, int, list, model, nullable, optional, required, str } from "../microsoft/model.ts";
 import { extend } from "../../lib/arrays.ts";
 
 export const CHANNEL_FIELDS = "id,displayName,description,membershipType,webUrl";
-/** Mutable so that tests can lower it (backend/tests/test_teams.py patches MAX_PAGES). */
+/** Mutable so that tests can lower it. */
 export const LIMITS = { maxPages: 10 };
 /** What the run's page token table stores, less the prefix. */
 const TOKEN = /^[\x21-\x7e]{1,990}$/;
@@ -83,7 +82,7 @@ export function pageParams(cursor: string | null): { [name: string]: string } {
 export function nextCursor(nextLink: unknown): string | null {
 	if (nextLink === null || nextLink === undefined) return null;
 	const unusable = new OperationError("PROVIDER_LIMIT", "Microsoft Graph returned a page link Minerva cannot use.");
-	if (typeof nextLink !== "string" || codePointLength(nextLink) > 4000) throw unusable;
+	if (typeof nextLink !== "string" || nextLink.length > 4000) throw unusable;
 	const token = queryOf(nextLink).get("$skiptoken");
 	if (token === undefined || token.length !== 1 || !TOKEN.test(token[0] as string)) throw unusable;
 	return `${PREFIX}${token[0]}`;

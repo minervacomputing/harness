@@ -12,7 +12,7 @@ import * as mime from "../../src/connectors/gmail/mime.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
 import * as addresses from "../../src/lib/addresses.ts";
 import { charsetKnown, decodeCharset, decodeCharsetStrictly } from "../../src/lib/charset.ts";
-import { ValueError } from "../../src/lib/pyerrors.ts";
+import { ValueError } from "../../src/connectors/gmail/email/errors.ts";
 
 function bytes(hex: string): Uint8Array {
 	return Uint8Array.from(hex.replaceAll(" ", "").match(/../g) ?? [], (pair) => Number.parseInt(pair, 16));
@@ -515,12 +515,12 @@ export function emailTests(): void {
 			expect([apart.text, apart.unavailable]).toEqual(["", true]);
 		});
 
-		test("header text is cut at 2000 characters, a filename at 200, on a code point", () => {
-			expect(Array.from(mime.headerText("ä".repeat(3000)) as string)).toHaveLength(mime.MAX_HEADER);
-			expect(Array.from(mime.headerText("😀".repeat(2500)) as string)).toHaveLength(mime.MAX_HEADER);
-			expect(mime.headerText(`=?utf-8?b?${base64(new TextEncoder().encode("😀".repeat(2500)))}?=`)).toBe("😀".repeat(mime.MAX_HEADER));
+		test("header text is cut at 2000 UTF-16 units, a filename at 200, never inside a character", () => {
+			expect(mime.headerText("ä".repeat(3000))).toHaveLength(mime.MAX_HEADER);
+			expect(mime.headerText(`a${"😀".repeat(2500)}`)).toBe(`a${"😀".repeat(mime.MAX_HEADER / 2 - 1)}`);
+			expect(mime.headerText(`=?utf-8?b?${base64(new TextEncoder().encode("😀".repeat(2500)))}?=`)).toBe("😀".repeat(mime.MAX_HEADER / 2));
 			const found = mime.content(Part.parse({ mimeType: "application/pdf", filename: "😀".repeat(500), headers: [], body: { size: 1 } }));
-			expect(Array.from(found.attachments[0]?.filename as string)).toHaveLength(mime.MAX_FILENAME);
+			expect(found.attachments[0]?.filename).toBe("😀".repeat(mime.MAX_FILENAME / 2));
 		});
 
 		test("long and adversarial headers are decoded in about linear time", () => {

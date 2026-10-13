@@ -21,20 +21,13 @@
 // id, the app a member, not archived, and not shared with another organization. What stays outside
 // Minerva's reach: Slack workflows and other apps that react to messages, and who joins a channel after it
 // was granted.
-//
-// The patterns are Python's: `\d` is any Unicode decimal digit (and `float()` reads those too), `\s` is
-// `str.isspace()`, which differs from JavaScript's (U+0085 and U+001C to U+001F in, U+FEFF out). Digits and
-// `str.lower()` follow Python's Unicode 16, not the runtime's (unicode.ts).
 
 import { z } from "zod";
 import type { Account, Binding, Connector, DiscoveryItem, DiscoveryPage, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
 import type { JsonObject } from "../../lib/json.ts";
-import { PLAIN_TEXT, PYTHON_SPACE_CLASS, isPlainText, truncate } from "../../lib/text.ts";
-import { casefold } from "../../lib/casefold.ts";
-import { DIGIT_CLASS, digitValue } from "../../lib/digits.ts";
-import { pythonLower } from "../../lib/lower.ts";
+import { PLAIN_TEXT, TextError, isPlainText, truncate } from "../../lib/text.ts";
 import { type Channel, type Message, NOT_IN_CHANNEL_MESSAGE, SlackClient, isConversationChannel, shownName } from "./client.ts";
 import { NO_SLACK_LINKS, escape, linksToSlack, redact } from "./mrkdwn.ts";
 import { IsoFormatError, isoTimestamp, utcIsoformat } from "./times.ts";
@@ -54,8 +47,8 @@ const HIDDEN: ReadonlySet<string> = new Set(["NOT_FOUND", "PROVIDER_FORBIDDEN", 
 
 const CHANNEL_ID = /^[CG][A-Z0-9]{8,20}$/;
 /** Slack channel names: lowercase, no spaces or periods, at most 80 characters. */
-const CHANNEL_NAME = new RegExp(`^[^${PYTHON_SPACE_CLASS}#<>|@,.&A-Z]{1,80}$`, "u");
-const TS = new RegExp(`^${DIGIT_CLASS}{9,10}\\.${DIGIT_CLASS}{6}$`, "u");
+const CHANNEL_NAME = /^[^\s#<>|@,.&A-Z]{1,80}$/u;
+const TS = /^\d{9,10}\.\d{6}$/u;
 const USER_ID = /^[UWB][A-Z0-9]{2,20}$/;
 const MENTION = /<@([UW][A-Z0-9]{2,20})(?:\|[^<>]*)?>/g;
 const CURSOR = /^[A-Za-z0-9=+/_-]{1,500}$/;
@@ -63,14 +56,6 @@ const CURSOR = /^[A-Za-z0-9=+/_-]{1,500}$/;
 export const CHANNEL_NAME_MESSAGE = 'must be a channel name such as "#general", or a channel id such as "C0123ABCDEF"';
 export const TS_MESSAGE = 'must be a message ts such as "1727780000.123456"';
 export const MOMENT_MESSAGE = "must be an ISO 8601 time such as 2026-10-01T09:00:00Z";
-
-/** Python's ValueError from a field validator: its message becomes the validation error's. */
-export class ValueError extends Error {
-	constructor(message: string) {
-		super(message);
-		this.name = "ValueError";
-	}
-}
 
 export interface SlackLimits {
 	/** Pages of channels read to find one by name (MAX_RESOLVE_PAGES). */
@@ -82,9 +67,9 @@ export interface SlackLimits {
 /** `_channel_name`: a channel id, or `#name`. Throws with the validator's message. */
 export function channelName(value: string): string {
 	if (CHANNEL_ID.test(value)) return value;
-	const name = pythonLower(value.startsWith("#") ? value.slice(1) : value);
+	const name = (value.startsWith("#") ? value.slice(1) : value).toLowerCase();
 	if (CHANNEL_NAME.test(name)) return `#${name}`;
-	throw new ValueError(CHANNEL_NAME_MESSAGE);
+	throw new TextError(CHANNEL_NAME_MESSAGE);
 }
 
 export function isTs(value: string): boolean {
@@ -96,18 +81,18 @@ export function moment(value: string): string {
 	try {
 		return isoTimestamp(value);
 	} catch (error) {
-		if (error instanceof IsoFormatError) throw new ValueError(MOMENT_MESSAGE);
+		if (error instanceof IsoFormatError) throw new TextError(MOMENT_MESSAGE);
 		throw error;
 	}
 }
 
-/** An AfterValidator that returns a new value, whose ValueError is the field's message. */
+/** An AfterValidator that returns a new value, whose TextError is the field's message. */
 function after(convert: (value: string) => string) {
 	return (value: string, ctx: z.RefinementCtx): string => {
 		try {
 			return convert(value);
 		} catch (error) {
-			if (!(error instanceof ValueError)) throw error;
+			if (!(error instanceof TextError)) throw error;
 			ctx.addIssue({ code: "custom", message: error.message });
 			return z.NEVER;
 		}
@@ -124,14 +109,14 @@ function isMoment(value: string): boolean {
 		moment(value);
 		return true;
 	} catch (error) {
-		if (error instanceof ValueError) return false;
+		if (error instanceof TextError) return false;
 		throw error;
 	}
 }
 
 /**
  * A time, checked here and turned into a Slack timestamp by `withMoments` on the whole input: zod's JSON
- * Schema leaves out the default of a field that transforms, which Pydantic's shows (`"default": null`).
+ * Schema leaves out the default of a field that transforms.
  */
 const Moment = () => z.string().trim().min(1).max(40).describe("An ISO 8601 time.").refine(isMoment, MOMENT_MESSAGE);
 
@@ -244,9 +229,7 @@ async function confirmForWriting(binding: Binding, resource: Resource): Promise<
 /** `_time`: a message ts as an ISO time in UTC, or null. */
 export function isoTime(ts: string | null): string | null {
 	if (ts === null || !TS.test(ts)) return null;
-	// `float(ts)` reads any decimal digits; TS let only those and one "." through.
-	const ascii = Array.from(ts, (char) => (char === "." ? char : String(digitValue(char)))).join("");
-	return utcIsoformat(Number(ascii)).replaceAll("+00:00", "Z");
+	return utcIsoformat(Number(ts)).replaceAll("+00:00", "Z");
 }
 
 function topicOf(channel: Channel, field: "topic" | "purpose"): string | null {
@@ -553,13 +536,13 @@ export function slackConnector(options: Partial<SlackLimits> = {}): Connector<Sl
 				const [channels, after] = await slack.channels({ limit: limits.resolvePage, cursor: checkedCursor(cursor) });
 				return { items: channels.filter(listable).map(item), nextCursor: nextCursor(after) };
 			}
-			const folded = casefold(query.startsWith("#") ? query.slice(1) : query);
+			const folded = (query.startsWith("#") ? query.slice(1) : query).toLowerCase();
 			const matches: Channel[] = [];
 			let after: string | null = null;
 			for (let page = 0; page < limits.resolvePages; page++) {
 				let channels: Channel[];
 				[channels, after] = await slack.channels({ limit: limits.resolvePage, cursor: after });
-				extend(matches, channels.filter((channel) => listable(channel) && casefold(channel.name).includes(folded)));
+				extend(matches, channels.filter((channel) => listable(channel) && channel.name.toLowerCase().includes(folded)));
 				after = nextCursor(after);
 				if (after === null) return { items: matches.map(item) };
 			}

@@ -5,7 +5,7 @@ import { describe, expect, test } from "vitest";
 import { OperationError } from "../../src/gateway/connector.ts";
 import { IdnaError, idnaEncode } from "../../src/lib/idna.ts";
 import { isIpAddress } from "../../src/lib/ipaddress.ts";
-import { ValueError } from "../../src/lib/pyerrors.ts";
+import { UrlError } from "../../src/lib/urlsplit.ts";
 import { parseUrl } from "../../src/lib/sites.ts";
 import { IDNA_CASES, IP_CASES, UNICODE_17_POINT, UNICODE_18_POINT, URL_CASES } from "./hosts.ts";
 
@@ -23,8 +23,8 @@ function parsed(raw: string): readonly [string | null, string | null] {
 		const url = parseUrl(raw);
 		return [url.text, url.href];
 	} catch (error) {
-		// ValueError where Python's urlsplit raises it (a netloc that NFKC makes into another), a generic failure.
-		if (error instanceof OperationError || error instanceof ValueError) return [null, null];
+		// An address that cannot be split (a netloc that NFKC makes into another): a generic failure.
+		if (error instanceof OperationError || error instanceof UrlError) return [null, null];
 		throw error;
 	}
 }
@@ -37,7 +37,7 @@ export function hostTests(): void {
 			expect(Object.fromEntries(IDNA_CASES.map(([name]) => [name, encoded(name)]))).toEqual(expected);
 		});
 
-		test("the runtime's Unicode is 17, the version lib/idna.ts was checked for (review it, and its UNICODE_17 and RIGHT_TO_LEFT, when this fails)", () => {
+		test("the runtime's Unicode is 17, the version lib/idna.ts was checked for (review it, and its RIGHT_TO_LEFT, when this fails)", () => {
 			expect(/\p{Assigned}/u.test(UNICODE_17_POINT)).toBe(true);
 			expect(/\p{Assigned}/u.test(UNICODE_18_POINT)).toBe(false);
 		});

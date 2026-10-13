@@ -16,14 +16,14 @@ import {
 	windowOf,
 } from "../../src/connectors/outlook_calendar/connector.ts";
 import { ZONES } from "../../src/connectors/outlook_calendar/zones.ts";
-import { ValueError } from "../../src/lib/pyerrors.ts";
+import { TextError } from "../../src/lib/text.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
 import { ceilingRow, jsonResponse, operation, received, startRun, vectors, type Received } from "../fixtures/connectors/microsoft/runs.ts";
-import { changedOnPurpose } from "./changed.ts";
+import { changedOnPurpose, jsonQuoted } from "./changed.ts";
 
 type JsonObject = { [key: string]: Json };
 
@@ -191,9 +191,15 @@ function outcome(call: () => unknown): { [key: string]: unknown } {
 		return { value: call() };
 	} catch (error) {
 		if (error instanceof OperationError) return { error: error.code };
-		if (error instanceof ValueError) return { error: "ValueError", message: error.message };
+		if (error instanceof TextError) return { error: "ValueError", message: error.message };
 		throw error;
 	}
+}
+
+/** An outcome the vectors recorded, its message in JSON's quotes. */
+function quotedOutcome(outcome: unknown): unknown {
+	const message = (outcome as { message?: unknown }).message;
+	return typeof message === "string" ? { ...(outcome as object), message: jsonQuoted(message) } : outcome;
 }
 
 describe("connecting and discovery", () => {
@@ -294,13 +300,15 @@ describe("times and tool inputs, as today's Python reads them", () => {
 	test("_date_time agrees with Python on 43 texts", () => {
 		const cases = vectors("outlook_calendar").date_time as { [raw: string]: unknown };
 		expect(Object.keys(cases)).toHaveLength(43);
-		expect(Object.fromEntries(Object.keys(cases).map((raw) => [raw, outcome(() => checkDateTime(raw))]))).toEqual(cases);
+		const kept = Object.keys(cases).filter((raw) => !changedOnPurpose(raw));
+		expect(Object.fromEntries(kept.map((raw) => [raw, outcome(() => checkDateTime(raw))]))).toEqual(Object.fromEntries(kept.map((raw) => [raw, quotedOutcome(cases[raw])])));
 	});
 
 	test("_date_or_date_time agrees with Python on dates and times", () => {
 		const cases = vectors("outlook_calendar").date_or_date_time as { [raw: string]: unknown };
 		expect(Object.keys(cases)).toHaveLength(56);
-		expect(Object.fromEntries(Object.keys(cases).map((raw) => [raw, outcome(() => checkDateOrDateTime(raw))]))).toEqual(cases);
+		const kept = Object.keys(cases).filter((raw) => !changedOnPurpose(raw));
+		expect(Object.fromEntries(kept.map((raw) => [raw, outcome(() => checkDateOrDateTime(raw))]))).toEqual(Object.fromEntries(kept.map((raw) => [raw, quotedOutcome(cases[raw])])));
 	});
 
 	test("_utc agrees with Python, fractions of a second kept", () => {

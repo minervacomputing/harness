@@ -5,10 +5,9 @@ import { z } from "zod";
 import type { Binding, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
 import { defineOperation } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
-import { codePointLength, singleLine, sliceCodePoints } from "../../lib/text.ts";
+import { singleLine, sliceText, TextError } from "../../lib/text.ts";
 import { ID } from "../microsoft/index.ts";
-import { after, modelValidator, valueError } from "../microsoft/inputs.ts";
-import { ValueError } from "../../lib/pyerrors.ts";
+import { after, modelValidator } from "../microsoft/inputs.ts";
 import { asUtc, datetimeFromIsoFormat, toUtc, utcStamp } from "../../lib/isoformat.ts";
 import { FULL_FIELDS, type Folder, type GraphClient, type Message, type Recipient, ordinary } from "./client.ts";
 import { FOLDER, READ_CONSENT, Tree, confirmMessage, folderRef, locate, messageId } from "./mailbox.ts";
@@ -28,7 +27,7 @@ function clientOf(binding: Binding): GraphClient {
 function searchText(value: string | null): string | null {
 	if (value === null) throw new TypeError("'NoneType' object is not iterable");
 	singleLine(value);
-	if (value.includes('"') || value.includes("\\")) throw valueError("must not contain double quotes or backslashes");
+	if (value.includes('"') || value.includes("\\")) throw new TextError("must not contain double quotes or backslashes");
 	return value;
 }
 
@@ -38,7 +37,7 @@ export function moment(value: string): string {
 	try {
 		parsed = datetimeFromIsoFormat(value);
 	} catch (error) {
-		if (error instanceof ValueError) throw valueError("must be an ISO 8601 time such as 2026-10-01T09:00:00Z");
+		if (error instanceof TextError) throw new TextError("must be an ISO 8601 time such as 2026-10-01T09:00:00Z");
 		throw error;
 	}
 	if (parsed.offset === null) parsed = asUtc(parsed);
@@ -159,7 +158,7 @@ export const ListMessages = z
 	.check(
 		modelValidator((data: { query: string | null; unread_only: boolean; after: string | null; before: string | null }) => {
 			if (data.query !== null && (data.unread_only || data.after || data.before)) {
-				throw valueError("query cannot be combined with unread_only, after or before");
+				throw new TextError("query cannot be combined with unread_only, after or before");
 			}
 		}),
 	)
@@ -240,14 +239,13 @@ export const READ_MESSAGE = defineOperation<z.output<typeof ReadMessage>>({
 				const message = await confirmMessage(binding as Binding<GraphClient>, tree, resource, data.message, FULL_FIELDS, true);
 				const attachments = message.has_attachments ? await client.attachments(message.id, MAX_ATTACHMENTS) : [];
 				const text = message.body ? message.body.content : "";
-				// Python slices and counts code points.
-				const total = codePointLength(text);
+				const total = text.length;
 				const end = data.offset + data.max_chars;
 				const record: { [key: string]: Json } = {
 					...summary(message),
 					reply_to: people(message.reply_to),
 					bcc: people(message.bcc_recipients),
-					body: sliceCodePoints(text, data.offset, end),
+					body: sliceText(text, data.offset, end),
 					offset: data.offset,
 					total_chars: total,
 					next_offset: end < total ? end : null,

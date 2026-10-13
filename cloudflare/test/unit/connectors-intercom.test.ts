@@ -94,11 +94,11 @@ describe("connecting and discovery", () => {
 		expect(await intercom.describe(http, INBOX, ["x"])).toEqual({});
 	});
 
-	test("names are matched case-folded, and a team without a name is named by its id", async () => {
+	test("names are matched ignoring case, and a team without a name is named by its id", async () => {
 		const fake = new FakeIntercom();
 		(fake.teams[0] as JsonObject).name = "Straße";
 		(fake.teams[1] as JsonObject).name = null;
-		const page = await intercom.discover(client(fake), INBOX, { query: "STRASSE", cursor: null });
+		const page = await intercom.discover(client(fake), INBOX, { query: "STRAßE", cursor: null });
 		expect(page.items.map((item) => [item.id, item.name])).toEqual([[SUPPORT, "Straße"]]);
 		expect(await intercom.describe(client(fake), INBOX, [BILLING])).toEqual({ [BILLING]: "Team 2" });
 		// An empty query lists everything.
@@ -630,7 +630,7 @@ describe("text agents read", () => {
 	});
 
 	test("every spelling of an Intercom host is hidden when read and refused when written", () => {
-		for (const text of ["intercom%2Ecom", "intercom&#46;com", "intercom\u2024com", "\u0131ntercom.com", "see intercom.com now", "Ada (ada@intercom.io)"]) {
+		for (const text of ["intercom%2Ecom", "intercom&#46;com", "intercom\u2024com", "\u0131ntercom.com", "see intercom.com now", "Ada (ada@intercom.io)", "see inter\ufeffcom.com now"]) {
 			expect(redact(text).replace("[Intercom link]", ""), text).not.toMatch(/intercom/i);
 			expect(redact(text), text).toContain("[Intercom link]");
 		}

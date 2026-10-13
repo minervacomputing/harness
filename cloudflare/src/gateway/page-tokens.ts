@@ -1,5 +1,4 @@
-// Run-bound page tokens (backend/connectors/executor.py `_issue_cursor`, `_resolve_cursor`; connectors
-// 7.3, runs 5.5): the model never sees a provider's cursor, only an opaque token bound to the run, the
+// Run-bound page tokens: the model never sees a provider's cursor, only an opaque token bound to the run, the
 // tool name (alias included) and the hash of the other normalized arguments, so a token cannot be replayed
 // against another query. At most 200 per run; tokens are never deleted while the run is active.
 
@@ -8,7 +7,6 @@ import { sha256Hex } from "../lib/hash.ts";
 import { hashInput } from "../lib/canonical.ts";
 import { tokenUrlsafe } from "../lib/random.ts";
 import type { Sql } from "../lib/sql.ts";
-import { codePointLength } from "../lib/text.ts";
 import { MAX_TOOL_NAME, MAX_UPSTREAM_CURSOR } from "./schema.ts";
 
 export const MAX_PAGE_TOKENS = 200;
@@ -55,14 +53,14 @@ export class PageTokens {
 	/**
 	 * A new token for the provider's cursor, or null when the run already holds 200 (LIMIT_REACHED, which the
 	 * model sees instead of the page: the provider was already called). A cursor or tool name longer than
-	 * today's columns throws, as Postgres does there.
+	 * its column, in UTF-16 code units, throws.
 	 */
 	issue(runId: RunId, tool: string, hash: string, upstreamCursor: string): string | null {
 		return this.#sql.transaction(() => {
-			// The limit first, then the row, as executor.py `_issue_cursor` counts before it creates.
+			// The limit first, then the row: the count is checked before a token is created.
 			if (this.count(runId) >= MAX_PAGE_TOKENS) return null;
-			if (codePointLength(upstreamCursor) > MAX_UPSTREAM_CURSOR) throw new Error(`The provider's cursor is longer than the ${MAX_UPSTREAM_CURSOR} characters a page token holds.`);
-			if (codePointLength(tool) > MAX_TOOL_NAME) throw new Error(`The tool name is longer than the ${MAX_TOOL_NAME} characters a page token holds.`);
+			if (upstreamCursor.length > MAX_UPSTREAM_CURSOR) throw new Error(`The provider's cursor is longer than the ${MAX_UPSTREAM_CURSOR} characters a page token holds.`);
+			if (tool.length > MAX_TOOL_NAME) throw new Error(`The tool name is longer than the ${MAX_TOOL_NAME} characters a page token holds.`);
 			const token = tokenUrlsafe(PAGE_TOKEN_BYTES);
 			this.#sql.exec(
 				"INSERT INTO page_tokens (token, run_id, tool, query_hash, upstream_cursor, created_at) VALUES (?, ?, ?, ?, ?, ?)",

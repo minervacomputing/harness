@@ -1,4 +1,4 @@
-// Outlook mail through Microsoft Graph, ported from backend/connectors/outlook/connector.py. Folders are read
+// Outlook mail through Microsoft Graph. Folders are read
 // per folder; mail is sent per recipient.
 //
 // Minerva connects through the Entra app the Microsoft connectors share (connectors/microsoft). The base
@@ -31,7 +31,6 @@
 
 import type { Connector, DiscoveryItem, DiscoveryPage } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
-import { casefold } from "../../lib/casefold.ts";
 import { ID, accountLabel, oauth } from "../microsoft/index.ts";
 import { mapLimited } from "../microsoft/limit.ts";
 import * as addresses from "../../lib/addresses.ts";
@@ -119,8 +118,8 @@ export function outlookConnector(): Connector<GraphClient> {
 				return { items: addresses.choices(query).map((item) => ({ id: item, name: addresses.name(item) })) };
 			}
 			const found = await allFolders(client);
-			const folded = query ? casefold(query) : null;
-			const items: DiscoveryItem[] = found.filter(([, path]) => !folded || casefold(path).includes(folded)).map(([id, path]) => ({ id, name: path }));
+			const folded = query ? query.toLowerCase() : null;
+			const items: DiscoveryItem[] = found.filter(([, path]) => !folded || path.toLowerCase().includes(folded)).map(([id, path]) => ({ id, name: path }));
 			return { items };
 		},
 

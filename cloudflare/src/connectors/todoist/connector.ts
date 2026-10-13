@@ -7,7 +7,7 @@
 // - A created task's record carries the project Todoist put it in, and is filtered by that project.
 // - Searching uses Todoist's filter query, which is account wide: the results are kept to the project.
 // - Discovery lists Todoist's own pages, or, with a search, every project (at most 20 pages), whose names
-//   are matched case-folded as Python folds (lib/casefold.ts).
+//   are matched ignoring case (`toLowerCase`).
 //
 // The registration request, the token exchange and the refresh are the generic OAuth flow's
 // (workspace/credentials.ts; the authorize and registration steps come with the API); this declares their
@@ -17,8 +17,6 @@
 import { z } from "zod";
 import type { Binding, Connector, DiscoveryItem, Prepared, ScopedRecord } from "../../contracts/connectors.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
-import { pythonStrip } from "../../lib/text.ts";
-import { casefold } from "../../lib/casefold.ts";
 import { TodoistClient, type TodoistTask } from "./client.ts";
 import { extend } from "../../lib/arrays.ts";
 
@@ -31,7 +29,7 @@ export const TOO_MANY_PROJECTS = "This Todoist account has more projects than Mi
  * input schema the model sees.
  */
 const ObjectId = (title: string) => z.string().trim().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/).meta({ title });
-/** Todoist's filter operators, which a search must not use: replaced with spaces (connector.py `_prepare_list_tasks`). */
+/** Todoist's filter operators, which a search must not use: replaced with spaces. */
 const FILTER_OPERATORS = /[&|!()#@,\\]/g;
 
 function clientOf(binding: Binding): TodoistClient {
@@ -48,7 +46,7 @@ function taskRecord(binding: Binding, task: TodoistTask): ScopedRecord {
 			title: task.content,
 			description: task.description,
 			priority: task.priority,
-			// Python's `or`: an empty string falls back to the date.
+			// An empty string falls back to the date.
 			due: task.due ? task.due.string || task.due.date : null,
 			completed: task.checked,
 		},
@@ -114,8 +112,8 @@ const LIST_TASKS = defineOperation<z.output<typeof ListTasks>>({
 				let tasks: TodoistTask[];
 				let next: string | null;
 				if (data.search) {
-					// Stripped as Python's `str.strip()` strips, after the input's own stripping (lib/schema.ts).
-					const text = pythonStrip(data.search.replace(FILTER_OPERATORS, " "));
+					// Filter operators become spaces, then the text is trimmed again.
+					const text = data.search.replace(FILTER_OPERATORS, " ").trim();
 					const page = await client.filterTasks(`search: ${text}`, options);
 					// The filter is account wide.
 					tasks = page.results.filter((task) => task.project_id === data.project_id);
@@ -213,8 +211,8 @@ export function todoistConnector(): Connector<TodoistClient> {
 
 		async discover(client, _kind, { query, cursor }) {
 			if (query) {
-				const text = casefold(query);
-				return { items: (await allProjects(client)).filter((project) => casefold(project.name).includes(text)), nextCursor: null };
+				const text = query.toLowerCase();
+				return { items: (await allProjects(client)).filter((project) => project.name.toLowerCase().includes(text)), nextCursor: null };
 			}
 			const page = await client.projects(cursor);
 			return { items: page.results.map((project) => ({ id: project.id, name: project.name })), nextCursor: page.next_cursor };

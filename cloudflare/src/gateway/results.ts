@@ -9,7 +9,7 @@ import type { DeniedCode, ToolCallOutcome, ToolResult } from "../contracts/execu
 import type { ToolRef } from "../contracts/runs.ts";
 import { saltedHmacHex } from "../lib/hash.ts";
 import { isDict, type Json, type JsonObject } from "../lib/json.ts";
-import { sliceCodePoints } from "../lib/text.ts";
+import { sliceText } from "../lib/text.ts";
 import { OperationError } from "./connector.ts";
 import type { Registry } from "./registry.ts";
 import { toolLabel } from "./tools.ts";
@@ -22,7 +22,7 @@ function frozen<T>(value: T): T {
 	return value;
 }
 
-/** Every tool's output schema, declared to the model and to scripts (executor.py RESULT_SCHEMA; connectors 6). */
+/** Every tool's output schema, declared to the model and to scripts. */
 export const RESULT_SCHEMA: JsonObject = frozen({
 	type: "object",
 	properties: {
@@ -97,7 +97,7 @@ export interface ShownCall {
  * label is looked up by that start, and is the bare name for an unknown tool.
  */
 export function shownCall(registry: Registry, refs: ReadonlyMap<string, ToolRef>, name: string, args: Json | undefined): ShownCall {
-	const tool = sliceCodePoints(name, 0, 64);
+	const tool = sliceText(name, 0, 64);
 	return { tool, label: toolLabel(registry, refs.get(tool), tool), arguments: argumentsSummary(args) };
 }
 

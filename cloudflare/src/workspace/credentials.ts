@@ -1,5 +1,4 @@
-// Stored credentials and their refresh, ported from backend/connections/credentials.py and the token parts
-// of oauth.py (connectors 9, 11.1, 11.4, 11.5). The Workspace keeps them encrypted; these helpers read a
+// Stored credentials and their refresh. The Workspace keeps them encrypted; these helpers read a
 // decrypted payload, decide whether it needs a refresh, and run the generic OAuth2 refresh a connector's
 // `auth` declaration describes, through an injected `fetch`. Storing the result, the single flight and the
 // generation fence are the Workspace's (core.ts).
@@ -7,11 +6,9 @@
 import type { Auth, Connector } from "../contracts/connectors.ts";
 import { base64, utf8 } from "../lib/bytes.ts";
 import { type Json, type JsonObject, parseJson, truthy } from "../lib/json.ts";
-import { sortByCodePoint } from "../lib/order.ts";
-import { pythonSplit } from "../lib/text.ts";
 import type { ClientCredentials, Log, OAuthClients } from "./ports.ts";
 
-/** Refresh OAuth access tokens with less than this left (credentials.py REFRESH_MARGIN_SECONDS). */
+/** Refresh OAuth access tokens with less than this left. */
 export const REFRESH_MARGIN_SECONDS = 120;
 /** httpx's timeout for token requests. */
 export const TOKEN_TIMEOUT_MS = 20_000;
@@ -47,7 +44,7 @@ export function scopesOf(payload: JsonObject): string[] | null {
 	if (kindOf(payload) !== "oauth2") return null;
 	const scopes = own(payload, "scopes");
 	if (!Array.isArray(scopes) || !scopes.every((scope) => typeof scope === "string")) return null;
-	return sortByCodePoint(new Set(scopes as string[]));
+	return [...new Set(scopes as string[])].sort();
 }
 
 /** Epoch seconds, or null when the token does not expire. */
@@ -70,7 +67,7 @@ export function parseScopes(body: JsonObject): string[] | null {
 	let scope = Object.hasOwn(body, "scope") ? body.scope : own(body, "scopes");
 	if (Array.isArray(scope) && scope.every((item) => typeof item === "string")) scope = scope.join(" ");
 	if (typeof scope !== "string") return null;
-	return sortByCodePoint(new Set(pythonSplit(scope.replaceAll(",", " "))));
+	return [...new Set(scope.replaceAll(",", " ").split(/\s+/).filter(Boolean))].sort();
 }
 
 /** `_token_body`: a JSON object without an `error` key and with a string `access_token`, else null. */
@@ -99,8 +96,8 @@ function jsonField(text: string, field: string): string | null {
 }
 
 /**
- * `_token_payload(body)`. `expires_at` is set only from an integer `expires_in` under a year; as in Python,
- * where a bool is an int, `true` counts as 1. (A JSON `3600.0`, a float in Python, reads as an integer here.)
+ * The stored token payload. `expires_at` is set only from an integer `expires_in` under a year, where `true`
+ * counts as 1 and a JSON `3600.0` reads as an integer.
  */
 export function tokenPayload(body: JsonObject, nowMs: number): JsonObject {
 	const refresh = own(body, "refresh_token");
@@ -175,7 +172,7 @@ export function tokenRequest(oauth: OAuth2, creds: ClientCredentials, fields: [s
 export type RefreshResult =
 	/** New tokens to store as the next generation. */
 	| { kind: "refreshed"; payload: JsonObject }
-	/** `None` in Python: the grant is no longer valid, so the connection needs reconnecting. */
+	/** Null: the grant is no longer valid, so the connection needs reconnecting. */
 	| { kind: "invalid" }
 	/**
 	 * PROVIDER_UNAVAILABLE, the connection unchanged. `reached` false: the request may or may not have

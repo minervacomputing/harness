@@ -1,17 +1,15 @@
-// What a run starts with, ported from backend/runs/services.py (`_tools_for`, `_instructions`) and the
-// gateway's tool labels (gateway/mcp.py), with the worker's rule for how many tools the model sees
+// What a run starts with: its tools, their labels and its instructions, with the worker's rule for how many tools the model sees
 // (worker/src/main.ts). Pure functions: the Workspace Durable Object's `beginRun` calls `startSnapshot` in
 // the same synchronous step that registers the run (plan: Starting a run).
 
 import type { AgentId, ConnectionId, ConversationId, EpochMs, UserId, WorkspaceId } from "../contracts/common.ts";
 import type { StartSnapshot, ToolRef } from "../contracts/runs.ts";
-import { compareCodePoints } from "../lib/order.ts";
-import { pythonStrip } from "../lib/text.ts";
 import { runStartLabel } from "../lib/time.ts";
 import { consentGiven, nests, offered, operationOf, requiresOf } from "./connector.ts";
 import { effectivePolicy, type ProviderOf, type RunLayers } from "./grants.ts";
 import type { Policy } from "./policy.ts";
 import type { Registry } from "./registry.ts";
+import { compareText } from "../lib/arrays.ts";
 
 export const SAFETY_INSTRUCTIONS =
 	"You are an agent inside Minerva. Use the provided tools for all facts about connected accounts and for " +
@@ -48,7 +46,7 @@ export function usableBy(connection: ConnectionInfo, userId: UserId): boolean {
 export function toolsFor(registry: Registry, connections: readonly ConnectionInfo[], userId: UserId, policy: Policy): ToolRef[] {
 	const refs: ToolRef[] = [];
 	const counts = new Map<string, number>();
-	const ordered = [...connections].sort((a, b) => a.createdAt - b.createdAt || compareCodePoints(a.id, b.id));
+	const ordered = [...connections].sort((a, b) => a.createdAt - b.createdAt || compareText(a.id, b.id));
 	for (const connection of ordered) {
 		if (!usableBy(connection, userId)) continue;
 		const connector = registry.find(connection.provider);
@@ -74,7 +72,7 @@ export function toolsFor(registry: Registry, connections: readonly ConnectionInf
 
 /** The run's instructions; models do not know the date, and calendar questions are relative to it. */
 export function runInstructions(agentInstructions: string, createdAt: EpochMs): string {
-	return pythonStrip(`${SAFETY_INSTRUCTIONS}\nThe run started on ${runStartLabel(createdAt)} UTC.\n\n${agentInstructions}`);
+	return `${SAFETY_INSTRUCTIONS}\nThe run started on ${runStartLabel(createdAt)} UTC.\n\n${agentInstructions}`.trim();
 }
 
 /**

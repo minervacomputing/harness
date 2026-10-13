@@ -1,5 +1,6 @@
-// Passwords (web-api spec 5.10, plan: The web API). The rules are Django's validators as configured today;
-// the hash is scrypt instead of Django's PBKDF2, whose 1,500,000 iterations WebCrypto refuses.
+// Passwords (plan: The web API). The rules are Django's default validators, with lengths in code points
+// (characters as people count them); the hash is scrypt instead of Django's PBKDF2, whose 1,500,000
+// iterations WebCrypto refuses.
 //
 // A hash is `scrypt$<log2 N>$<r>$<p>$<salt>$<key>` (salt 16 bytes, key 32, both base64 without padding),
 // so the parameters can be raised later and old hashes still verified (`needsRehash`). N 2^15, r 8, p 3
@@ -14,11 +15,9 @@
 // a sign-in with an unknown address, which it hashes the password for so it takes as long as a wrong one.
 
 import { scrypt } from "node:crypto";
-import { pythonIsDigit } from "../lib/digits.ts";
 import { timingSafeEqual } from "../lib/hash.ts";
-import { pythonLower } from "../lib/lower.ts";
 import { randomBytes } from "../lib/random.ts";
-import { WORD_CLASS, codePointLength, pythonStrip } from "../lib/text.ts";
+import { WORD_CLASS } from "../lib/text.ts";
 import { COMMON_PASSWORDS } from "./common-passwords.ts";
 
 export interface ScryptParams {
@@ -113,7 +112,7 @@ let common: Set<string> | null = null;
 
 function isCommon(password: string): boolean {
 	common ??= new Set(COMMON_PASSWORDS.split("\n"));
-	return common.has(pythonStrip(pythonLower(password)));
+	return common.has(password.toLowerCase().trim());
 }
 
 /** difflib.SequenceMatcher(a, b).quick_ratio(): an upper bound of the ratio from the characters alone. */
@@ -133,8 +132,8 @@ export function quickRatio(a: string, b: string): number {
 }
 
 function exceedsMaximumLengthRatio(password: string, value: string): boolean {
-	const passwordLength = codePointLength(password);
-	const valueLength = codePointLength(value);
+	const passwordLength = [...password].length;
+	const valueLength = [...value].length;
 	return passwordLength >= 10 * valueLength && valueLength < (MAX_SIMILARITY / 2) * passwordLength;
 }
 
@@ -142,8 +141,8 @@ const NON_WORD = new RegExp(`[^${WORD_CLASS}]+`, "u");
 
 /** UserAttributeSimilarityValidator over the attributes the user model has: only `email` (verbose name "email"). */
 function tooSimilar(password: string, user: { email: string }): boolean {
-	const lowered = pythonLower(password);
-	const value = pythonLower(user.email);
+	const lowered = password.toLowerCase();
+	const value = user.email.toLowerCase();
 	if (!value) return false;
 	for (const part of [...value.split(NON_WORD), value]) {
 		if (exceedsMaximumLengthRatio(lowered, part)) continue;
@@ -155,10 +154,10 @@ function tooSimilar(password: string, user: { email: string }): boolean {
 export function validatePassword(password: string, user?: { email: string }): PasswordError[] {
 	const errors: PasswordError[] = [];
 	if (user && tooSimilar(password, user)) errors.push({ message: "The password is too similar to the email.", code: "password_too_similar" });
-	if (codePointLength(password) < MIN_LENGTH) {
+	if ([...password].length < MIN_LENGTH) {
 		errors.push({ message: `This password is too short. It must contain at least ${MIN_LENGTH} characters.`, code: "password_too_short" });
 	}
 	if (isCommon(password)) errors.push({ message: "This password is too common.", code: "password_too_common" });
-	if (pythonIsDigit(password)) errors.push({ message: "This password is entirely numeric.", code: "password_entirely_numeric" });
+	if (/^\p{N}+$/u.test(password)) errors.push({ message: "This password is entirely numeric.", code: "password_entirely_numeric" });
 	return errors;
 }

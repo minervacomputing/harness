@@ -65,10 +65,10 @@ describe("connecting", () => {
 		expect(fake.requests.every((request) => request.headers.get("authorization") === "Bearer token")).toBe(true);
 	});
 
-	test("discovery matches names case-folded, and stops at a cap", async () => {
+	test("discovery matches names ignoring case, and stops at a cap", async () => {
 		const fake = new FakeLinear();
 		(fake.teams.ops as { name: string }).name = "Straße";
-		const found = await linear.discover(client(fake), TEAM, { query: "STRASSE", cursor: null });
+		const found = await linear.discover(client(fake), TEAM, { query: "STRAßE", cursor: null });
 		expect(found.items.map((item) => item.name)).toEqual(["Straße (OPS)"]);
 		// A search reads at most 10 pages of 100 teams.
 		let pages = 0;

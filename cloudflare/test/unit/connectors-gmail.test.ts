@@ -364,6 +364,9 @@ describe("MIME", () => {
 		[["grace"], null],
 		[["a@example.com, bad"], null],
 		[["<>"], null],
+		[["ada \ufeff@example.com"], null],
+		[["ada@example.com , \ufeffbob@example.com"], null],
+		[["ada@example.com \ufeff(Ada)"], null],
 	];
 	for (const [values, expected] of reading) {
 		test(`test_reply_addresses_are_read_strictly ${JSON.stringify(values)}`, () => {

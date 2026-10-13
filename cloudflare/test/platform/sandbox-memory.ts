@@ -32,7 +32,6 @@ import type {
 import type { FolderWarnings } from "../../src/contracts/files.ts";
 import type { SandboxPort } from "../../src/conversation/local-run.ts";
 import { hex } from "../../src/lib/bytes.ts";
-import { compareCodePoints } from "../../src/lib/order.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 
 const ROOT = "/workspace/";
@@ -277,7 +276,7 @@ export class MemorySandbox implements SandboxPort {
 		if (!this.#owns(fence)) return STALE;
 		this.log.push(options.rehashAll ? "scan rehash" : "scan");
 		if (this.faults.limit) return { ok: false, limit: this.faults.limit };
-		const paths = [...this.files.keys()].sort(compareCodePoints);
+		const paths = [...this.files.keys()].sort();
 		const files = [];
 		const sizes: { [path: string]: number } = {};
 		for (const path of paths) {
@@ -290,7 +289,7 @@ export class MemorySandbox implements SandboxPort {
 			const parts = path.split("/");
 			for (let i = 1; i < parts.length; i++) parents.add(parts.slice(0, i).join("/"));
 		}
-		const dirs = [...this.dirs].filter((dir) => !parents.has(dir)).sort(compareCodePoints);
+		const dirs = [...this.dirs].filter((dir) => !parents.has(dir)).sort();
 		return { ok: true, manifest: { files, dirs }, sizes, warnings: this.faults.warnings ?? { total: 0, items: [] } };
 	}
 

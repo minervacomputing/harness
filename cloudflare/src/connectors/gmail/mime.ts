@@ -1,4 +1,4 @@
-// Reading and writing mail as Gmail carries it, ported from backend/connectors/gmail/mime.py: MIME parts,
+// Reading and writing mail as Gmail carries it: MIME parts,
 // headers and raw RFC 5322 messages.
 //
 // Reading takes the text of a message from its MIME tree: plain text where a part offers it, otherwise HTML
@@ -15,8 +15,7 @@
 // folding and quoted-printable bodies for the messages Minerva sends.
 
 import { OperationError } from "../../gateway/connector.ts";
-import { PYTHON_SPACE_CLASS, codePointLength, pythonSplit, pythonStrip, sliceCodePoints } from "../../lib/text.ts";
-import { casefold } from "../../lib/casefold.ts";
+import { sliceText } from "../../lib/text.ts";
 import * as addresses from "../../lib/addresses.ts";
 import type { Part } from "./client.ts";
 import { b64decodeUrlsafeStrict } from "./email/base64.ts";
@@ -56,14 +55,14 @@ export class Content {
 
 /** What `str.isprintable()` refuses: categories Other and Separator, except the ASCII space. */
 const UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Zs}]/u;
-const SPACES = new RegExp(`[${PYTHON_SPACE_CLASS}]+`, "g");
+const SPACES = /\s+/g;
 
 /** A header's value for display: encoded words decoded, on one line, cut to a bounded length. */
 export function headerText(value: string | null): string | null {
 	if (value === null) return null;
 	let shown = "";
 	for (const char of decodeWords(value)) shown += char !== " " && UNPRINTABLE.test(char) ? " " : char;
-	return sliceCodePoints(pythonStrip(shown.replace(SPACES, " ")), 0, MAX_HEADER);
+	return sliceText(shown.replace(SPACES, " ").trim(), 0, MAX_HEADER);
 }
 
 function header(part: Part, name: string): string | null {
@@ -88,7 +87,7 @@ function decodeBody(part: Part): string | null {
 	if (body.data === null) return !body.size ? "" : null;
 	let data: Uint8Array;
 	try {
-		data = b64decodeUrlsafeStrict(body.data + "=".repeat((4 - (codePointLength(body.data) % 4)) % 4));
+		data = b64decodeUrlsafeStrict(body.data + "=".repeat((4 - (body.data.length % 4)) % 4));
 	} catch (error) {
 		if (error instanceof BinasciiError || error instanceof ValueError) return null;
 		throw error;
@@ -104,8 +103,8 @@ function isAttachment(part: Part): boolean {
 function addAttachment(content: Content, part: Part): void {
 	if (content.attachments.length >= MAX_ATTACHMENTS) return;
 	content.attachments.push({
-		filename: part.filename ? sliceCodePoints(headerText(part.filename) as string, 0, MAX_FILENAME) : null,
-		mime_type: sliceCodePoints(part.mime_type.toLowerCase(), 0, 100) || null,
+		filename: part.filename ? sliceText(headerText(part.filename) as string, 0, MAX_FILENAME) : null,
+		mime_type: sliceText(part.mime_type.toLowerCase(), 0, 100) || null,
 		size: part.body ? part.body.size : null,
 	});
 }
@@ -156,7 +155,7 @@ function render(content: Content, part: Part, depth: number): string | null {
 	}
 	// No base address: relative links, which mean nothing outside the sender's mail client, are dropped.
 	if (mimeType === "text/html") [text] = htmlToText(text);
-	return pythonStrip(text.replaceAll("\r\n", "\n"));
+	return text.replaceAll("\r\n", "\n").trim();
 }
 
 export function content(payload: Part | null): Content {
@@ -226,7 +225,7 @@ export function mailboxes(values: readonly string[]): string[] | null {
 }
 
 export function messageId(value: string | null): string | null {
-	const stripped = value ? pythonStrip(value) : null;
+	const stripped = value ? value.trim() : null;
 	return stripped && MESSAGE_ID.test(stripped) ? stripped : null;
 }
 
@@ -239,15 +238,15 @@ export function threading(messageIds: readonly string[], references: readonly st
 	const original = messageId(messageIds[0] as string);
 	if (original === null) return null;
 	// A References header that appears twice is left out rather than guessed at.
-	const named = references.length === 1 ? pythonSplit(references[0] as string) : [];
+	const named = references.length === 1 ? (references[0] as string).split(/\s+/).filter(Boolean) : [];
 	const chain = named.filter((ref) => MESSAGE_ID.test(ref) && ref !== original);
 	return [original, [...chain.slice(-(MAX_REFERENCES - 1)), original].join(" ")];
 }
 
 export function replySubject(subject: string | null): string {
 	const text = headerText(subject) || "";
-	if (casefold(sliceCodePoints(text, 0, 3)) === "re:") return sliceCodePoints(text, 0, 900);
-	return sliceCodePoints(`Re: ${text}`, 0, 900);
+	if (sliceText(text, 0, 3).toLowerCase() === "re:") return sliceText(text, 0, 900);
+	return sliceText(`Re: ${text}`, 0, 900);
 }
 
 /**

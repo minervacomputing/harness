@@ -24,7 +24,6 @@
 //   Extended-B, Garay and others its IDNA tables lack), and A-labels whose Punycode holds "xn--".
 
 import { domainToASCII, domainToUnicode } from "node:url";
-import { isUnicode17 } from "./unicode.ts";
 
 /** Python's IDNAError, a UnicodeError: the text cannot be encoded. */
 export class IdnaError extends Error {
@@ -91,11 +90,7 @@ function property(point: number): Property {
 	if (isContexto(point)) return "CONTEXTO";
 	if (EXCEPTIONS_DISALLOWED.has(point)) return "DISALLOWED";
 	const char = String.fromCodePoint(point);
-	// What Unicode 17 assigned is refused: the idna package ran on Python 3.14's Unicode 16, which knows nothing of
-	// it, and so does lib/unicode.ts. Dropping that would accept it as Python 3.15 does: a visible change, for the
-	// user to approve. test/unit/unicode.test.ts fails when the runtime moves on, since its new scripts would need
-	// the same review (RIGHT_TO_LEFT too).
-	if (!ASSIGNED.test(char) || isUnicode17(point)) return "DISALLOWED";
+	if (!ASSIGNED.test(char)) return "DISALLOWED";
 	if (inRange(point, 0x61, 0x7a) || inRange(point, 0x30, 0x39) || point === 0x2d) return "PVALID";
 	if (point === 0x200c || point === 0x200d) return "CONTEXTJ";
 	if (UNSTABLE_OR_IGNORABLE.test(char) || inDisallowedBlock(point)) return "DISALLOWED";

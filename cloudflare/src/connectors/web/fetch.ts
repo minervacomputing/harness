@@ -1,14 +1,14 @@
-// Fetching web pages, ported from backend/connectors/web/fetch.py: Minerva's fetcher must never become a
+// Fetching web pages: Minerva's fetcher must never become a
 // way into private networks.
 //
-// Today's backend resolves the host on every hop, refuses it unless every address is public, and connects to
-// the checked address itself. A Worker's fetch cannot pin a DNS answer, so that guard is now the platform's:
+// That needs the host resolved on every hop, refused unless every address is public, and the checked
+// address connected to itself. A Worker's fetch cannot pin a DNS answer, so that guard is the platform's:
 // Cloudflare refuses a Worker's request to a private, loopback, link-local, CGNAT, ULA or metadata address,
 // whichever name led there (also after a redirect), and to any IP literal that is not Cloudflare's, with a
 // 403 from `server: cloudflare` whose body is "error code: 1003" (1002 for a name that resolves to such an
 // address, 1102 for loopback names such as `localhost` and `localtest.me`), or, since this request has an
 // Accept header, Cloudflare's error page headed "Error 1002" (gateway/http.ts `platformRefusal`). That is measured, not
-// documented (plan: Spike results), so it is recognised here and reported with today's SITE_NOT_PUBLIC
+// documented (plan: Spike results), so it is recognised here and reported with the SITE_NOT_PUBLIC
 // message. Everything else is still decided here, before anything is sent: the address is parsed and its
 // host checked (lib/sites.ts: no IP literal in any spelling, no special-use name, only names under a known
 // public suffix), redirects are followed only within the same host and never from https to http (anything
@@ -22,8 +22,8 @@
 // the URL's own (there is no checked address to connect to); the runtime adds `Cf-Worker`; what is requested
 // is the runtime URL parser's serialization of the checked address (`WebURL.href`, on every hop, checked to
 // name the authorized scheme and host on the default port), which differs from the address shown where
-// WHATWG and Python spell a path or query differently (`'` in a query, dot segments in a path); a header value that is not UTF-8 is read with replacement characters where httpx would
-// read every header as Latin-1; an invalid certificate is not told apart from any other failure; and an
+// WHATWG spells a path or query differently (`'` in a query, dot segments in a path); a header value that
+// is not UTF-8 is read with replacement characters; an invalid certificate is not told apart from any other failure; and an
 // origin that answers 403 from `server: cloudflare` with the platform's exact refusal text is reported as a
 // private site rather than as HTTP 403.
 
@@ -31,9 +31,8 @@ import type { ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { NotSent, PhaseTimeout, ProgrammingError, platformRefusal } from "../../gateway/http.ts";
 import { charsetKnown, decodeCharset } from "../../lib/charset.ts";
-import { PythonError } from "../../lib/pyerrors.ts";
 import { type WebURL, parseUrl } from "../../lib/sites.ts";
-import { PYTHON_SPACE_CLASS, pythonStrip } from "../../lib/text.ts";
+import { UrlError } from "../../lib/urlsplit.ts";
 import { Inflater, unsupportedEncoding } from "./inflate.ts";
 
 export const USER_AGENT = "Minerva/0.1 (governed AI agent; reads a page when a user's agent asks)";
@@ -106,12 +105,12 @@ export function notPublic(): OperationError {
 	return new OperationError("SITE_NOT_PUBLIC", "This site's name points to a private network, which Minerva does not open.");
 }
 
-/** The whole fetch ran out of time (Python's `asyncio.timeout(TOTAL_SECONDS)`). */
+/** The whole fetch ran out of time (TOTAL_SECONDS). */
 class TotalTimeout extends Error {}
 
 // What a response says about its body.
 
-const CHARSET_PARAM = new RegExp(`charset[${PYTHON_SPACE_CLASS}]*=[${PYTHON_SPACE_CLASS}]*"?([A-Za-z0-9._:-]+)`, "iu");
+const CHARSET_PARAM = /charset\s*=\s*"?([A-Za-z0-9._:-]+)/iu;
 /** `rb"<meta[^>]+charset\s*=\s*[\"']?([A-Za-z0-9._:-]+)"` with IGNORECASE, over bytes read as Latin-1. */
 const META_CHARSET = /<meta[^>]+charset[ \t\n\r\f\v]*=[ \t\n\r\f\v]*["']?([A-Za-z0-9._:-]+)/i;
 
@@ -127,7 +126,7 @@ function mediaType(value: string): [mime: string, charset: string | null] {
 	const mime = semicolon < 0 ? value : value.slice(0, semicolon);
 	const params = semicolon < 0 ? "" : value.slice(semicolon + 1);
 	const match = CHARSET_PARAM.exec(params);
-	return [pythonStrip(mime).toLowerCase(), match ? (match[1] as string) : null];
+	return [mime.trim().toLowerCase(), match ? (match[1] as string) : null];
 }
 
 /** `bytes.lstrip()`: ASCII whitespace. */
@@ -171,7 +170,7 @@ function charset(body: Uint8Array, declared: string | null, form: "html" | "text
 	return "utf-8";
 }
 
-/** fetch.py `decode`: (media type, form, text) of a response body. */
+/** The media type, form and text of a response body. */
 export function decode(body: Uint8Array, contentType: string): [mime: string, form: "html" | "text", text: string] {
 	const [mime, declared] = mediaType(contentType);
 	const form = formOf(mime, body);
@@ -189,7 +188,7 @@ function race<T>(promise: Promise<T>, aborted: Promise<never>): Promise<T> {
 /** `_body` over the pieces of a body as they arrive: decompressed, capped before and after (MAX_BODY). */
 export class Body {
 	readonly #inflater: Inflater;
-	/** The page so far, in one buffer that grows as Python's bytearray does: a page in many small pieces costs no more than one. */
+	/** The page so far, in one buffer that grows by doubling: a page in many small pieces costs no more than one. */
 	#buffer = new Uint8Array(0);
 	#received = 0;
 	#size = 0;
@@ -198,7 +197,7 @@ export class Body {
 	constructor(contentEncoding: string | null) {
 		const encodings = (contentEncoding ?? "")
 			.split(",")
-			.map((encoding) => pythonStrip(encoding).toLowerCase())
+			.map((encoding) => encoding.trim().toLowerCase())
 			.filter((encoding) => encoding && encoding !== "identity");
 		if (encodings.length > 1) throw unsupportedEncoding();
 		this.#inflater = new Inflater(encodings[0] ?? null, tooLarge);
@@ -289,8 +288,8 @@ export class Fetcher {
 	/**
 	 * The platform's refusal code of an error response, read from at most a kilobyte of its body. The
 	 * platform sends its refusal at once; a body that does not come within REFUSAL_MS, or fails, is an
-	 * ordinary error response, as Python reports one without reading it. The wait also ends with the fetch's
-	 * total time: Python, which reads no error body, answers within it with the error response.
+	 * ordinary error response. The wait also ends with the fetch's total time, which the error response is
+	 * answered within.
 	 */
 	async #refusal(response: Response, deadline: Deadline): Promise<number | null> {
 		if (response.headers.get("server")?.toLowerCase() !== "cloudflare") return null;
@@ -379,8 +378,8 @@ export class Fetcher {
 			if (error instanceof TotalTimeout) throw error;
 			// The run no longer admits requests, or a programming error: as they are.
 			if (error instanceof NotSent || error instanceof ProgrammingError) throw error;
-			// Owned errors, and the parsers' own (Python-style) errors: as they are.
-			if (error instanceof OperationError || error instanceof PythonError) throw error;
+			// Owned errors, and an address that cannot be split: as they are.
+			if (error instanceof OperationError || error instanceof UrlError) throw error;
 			// The network failed, or a wait outlasted its phase (httpx's HTTPError).
 			throw unreachable();
 		}

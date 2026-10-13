@@ -1,6 +1,5 @@
-// The call wrapper around the pipeline (backend/gateway/mcp.py `call_tool`, `list_tools`; runs 5.2, 5.3):
-// the tool-call parts of test_gateway.py and test_attempts.py, case by case, plus the event and result
-// shapes the chat and the model read (events contract; frontend 4.4).
+// The call wrapper around the pipeline: listing and calling tools across attempts, plus the event and
+// result shapes the chat and the model read.
 
 import { describe, expect, test } from "vitest";
 import type { ToolCallAllowed } from "../../src/contracts/events.ts";
@@ -96,10 +95,10 @@ describe("tools/call", () => {
 		expect(run.events).toEqual([{ tool: "x".repeat(64), label: "x".repeat(64), arguments: {}, decision: "error", code: "UNKNOWN_OPERATION", message: "This operation is not available." }]);
 	});
 
-	test("a name is cut by code points, never inside a surrogate pair", async () => {
+	test("a name is cut at 64 units, never inside a surrogate pair", async () => {
 		const run = await start(new FakeTodoist());
-		await run.call(`${"\u{1f600}".repeat(70)}`, {});
-		expect(run.events[0]?.tool).toBe("\u{1f600}".repeat(64));
+		await run.call(`a${"\u{1f600}".repeat(40)}`, {});
+		expect(run.events[0]?.tool).toBe(`a${"\u{1f600}".repeat(31)}`);
 	});
 
 	test("tool calls are counted but not limited", async () => {

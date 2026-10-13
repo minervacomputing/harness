@@ -1,4 +1,4 @@
-// Database properties as agents read and set them, ported from backend/connectors/notion/properties.py.
+// Database properties as agents read and set them.
 //
 // Only properties that hold the row's own values are shown. Rollups and formulas are left out because they
 // can carry values from related pages the agent may not read; files because their links grant access by
@@ -12,10 +12,8 @@
 
 import { OperationError } from "../../gateway/connector.ts";
 import { type Json, type JsonObject, isDict, truthy } from "../../lib/json.ts";
-import { codePointLength, pythonRepr } from "../../lib/text.ts";
 import { hasTitledMention, textOf } from "./client.ts";
-import { DIGIT_CLASS as DIGIT } from "../../lib/digits.ts";
-import { own, pythonStr, pythonValueRepr } from "./python.ts";
+import { asText, own } from "./python.ts";
 
 export const READABLE: ReadonlySet<string> = new Set([
 	"title",
@@ -54,7 +52,7 @@ export const WRITABLE: ReadonlySet<string> = new Set([
 export const FILTERABLE = READABLE;
 export const MAX_TEXT = 2000;
 export const MAX_OPTIONS = 100;
-const DATE = new RegExp(`^${DIGIT}{4}-${DIGIT}{2}-${DIGIT}{2}(T${DIGIT}{2}:${DIGIT}{2}(:${DIGIT}{2}(\\.${DIGIT}{1,6})?)?(Z|[+-]${DIGIT}{2}:${DIGIT}{2})?)?$`, "u");
+const DATE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:\d{2})?)?$/u;
 
 /** Properties as Notion lists them: a JSON object of property objects. */
 export type Properties = { [name: string]: JsonObject } | JsonObject;
@@ -112,7 +110,7 @@ function valueOf(kind: string, value: Json): Json {
 		case "unique_id": {
 			if (!isDict(value)) return null;
 			const [prefix, number] = [own(value, "prefix"), own(value, "number")];
-			return truthy(prefix) ? `${pythonStr(prefix)}-${pythonStr(number)}` : number;
+			return truthy(prefix) ? `${asText(prefix)}-${asText(number)}` : number;
 		}
 		case "relation":
 			return Array.isArray(value) ? value.filter(isDict).map((related) => own(related, "id")) : [];
@@ -173,20 +171,20 @@ function invalid(message: string): OperationError {
 
 function richText(name: string, value: Json, required = false): Json[] {
 	if (value === null && !required) return [];
-	if (typeof value !== "string" || codePointLength(value) > MAX_TEXT) throw invalid(`${pythonRepr(name)} takes text of at most ${MAX_TEXT} characters.`);
+	if (typeof value !== "string" || value.length > MAX_TEXT) throw invalid(`${JSON.stringify(name)} takes text of at most ${MAX_TEXT} characters.`);
 	return value ? [{ type: "text", text: { content: value } }] : [];
 }
 
 function plain(name: string, value: Json): string | null {
-	if (value !== null && (typeof value !== "string" || codePointLength(value) > MAX_TEXT)) {
-		throw invalid(`${pythonRepr(name)} takes text of at most ${MAX_TEXT} characters, or null.`);
+	if (value !== null && (typeof value !== "string" || value.length > MAX_TEXT)) {
+		throw invalid(`${JSON.stringify(name)} takes text of at most ${MAX_TEXT} characters, or null.`);
 	}
 	return value || null;
 }
 
 function option(name: string, prop: JsonObject, value: Json): JsonObject {
 	// The options are not listed here: an agent may edit a row without being allowed to read its database.
-	if (typeof value !== "string" || !optionsOf(prop).includes(value)) throw invalid(`${pythonRepr(name)} takes one of its existing options, as get_database shows them.`);
+	if (typeof value !== "string" || !optionsOf(prop).includes(value)) throw invalid(`${JSON.stringify(name)} takes one of its existing options, as get_database shows them.`);
 	return { name: value };
 }
 
@@ -199,7 +197,7 @@ function date(name: string, value: Json): Json {
 		!Object.values(given).every((item) => typeof item === "string" && DATE.test(item)) ||
 		!Object.hasOwn(given, "start")
 	) {
-		throw invalid(`${pythonRepr(name)} takes a date like "2026-10-01", or {"start": ..., "end": ...}, or null.`);
+		throw invalid(`${JSON.stringify(name)} takes a date like "2026-10-01", or {"start": ..., "end": ...}, or null.`);
 	}
 	return given;
 }
@@ -213,28 +211,28 @@ function convert(name: string, prop: JsonObject, value: Json): JsonObject {
 			return { rich_text: richText(name, value) };
 		case "number":
 			// A number too large for a double ("1e400") parses as an infinity, in Python too.
-			if (value !== null && (typeof value !== "number" || !Number.isFinite(value))) throw invalid(`${pythonRepr(name)} takes a number, or null.`);
+			if (value !== null && (typeof value !== "number" || !Number.isFinite(value))) throw invalid(`${JSON.stringify(name)} takes a number, or null.`);
 			return { number: value };
 		case "select":
 			return { select: value === null ? null : option(name, prop, value) };
 		case "status":
 			return { status: option(name, prop, value) };
 		case "multi_select":
-			if (!Array.isArray(value) || value.length > MAX_OPTIONS || new Set(value.map(pythonStr)).size !== value.length) {
-				throw invalid(`${pythonRepr(name)} takes a list of distinct existing options.`);
+			if (!Array.isArray(value) || value.length > MAX_OPTIONS || new Set(value.map(asText)).size !== value.length) {
+				throw invalid(`${JSON.stringify(name)} takes a list of distinct existing options.`);
 			}
 			return { multi_select: value.map((item) => option(name, prop, item)) };
 		case "date":
 			return { date: date(name, value) };
 		case "checkbox":
-			if (typeof value !== "boolean") throw invalid(`${pythonRepr(name)} takes true or false.`);
+			if (typeof value !== "boolean") throw invalid(`${JSON.stringify(name)} takes true or false.`);
 			return { checkbox: value };
 		case "url":
 		case "email":
 		case "phone_number":
 			return entries([[kind, plain(name, value)]]);
 	}
-	throw invalid(`Minerva does not set ${pythonStr(kind)} properties such as ${pythonRepr(name)}.`);
+	throw invalid(`Minerva does not set ${asText(kind)} properties such as ${JSON.stringify(name)}.`);
 }
 
 /** Notion property values for what the agent asked to set, checked against the schema. */
@@ -244,9 +242,9 @@ export function writable(properties: Json, values: JsonObject): JsonObject {
 	const ids = byId(props);
 	for (const name of Object.keys(values)) {
 		const prop = props.get(name);
-		if (prop === undefined) throw invalid(`There is no property named ${pythonRepr(name)}.`);
+		if (prop === undefined) throw invalid(`There is no property named ${JSON.stringify(name)}.`);
 		// Notion reads these keys as names or ids.
-		if ((ids.get(name) ?? prop) !== prop) throw invalid(`The property name ${pythonRepr(name)} is also another property's id; rename it in Notion.`);
+		if ((ids.get(name) ?? prop) !== prop) throw invalid(`The property name ${JSON.stringify(name)} is also another property's id; rename it in Notion.`);
 		converted.push([name, convert(name, prop, values[name] as Json)]);
 	}
 	return entries(converted);
@@ -277,7 +275,7 @@ function walkFilter(props: Map<string, JsonObject>, ids: Map<string, JsonObject>
 		const name = value.property as Json;
 		// Notion takes a name or an id here; a name may equal another property's id, so both must pass.
 		const matches = typeof name === "string" ? [props.get(name), ids.get(name)].filter((prop): prop is JsonObject => prop !== undefined) : [];
-		if (matches.length === 0) throw invalid(`There is no property named ${pythonValueRepr(name)}.`);
+		if (matches.length === 0) throw invalid(`There is no property named ${JSON.stringify(name)}.`);
 		for (const prop of matches) {
 			const type = own(prop, "type") as string;
 			if (!FILTERABLE.has(type)) throw invalid(`Minerva does not filter or sort by ${type} properties.`);

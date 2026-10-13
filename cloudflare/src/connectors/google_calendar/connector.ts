@@ -5,13 +5,11 @@ import { z } from "zod";
 import type { Binding, Connector, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
-import { codePointLength, sliceCodePoints } from "../../lib/text.ts";
-import { casefold } from "../../lib/casefold.ts";
+import { sliceText, TextError } from "../../lib/text.ts";
 import { oauth } from "../google/index.ts";
 import { setOwn } from "../google/model.ts";
 import { type EventTime, type GoogleCalendar, GoogleCalendarClient, type GoogleEvent, calendarName } from "./client.ts";
 import { dateFromIsoFormat, datetimeFromIsoFormat, dateOrdinal, instant } from "../../lib/isoformat.ts";
-import { ValueError } from "../../lib/pyerrors.ts";
 import { DATE, checkDateOrDateTime, checkDateTime, nowIso } from "./times.ts";
 import { ZONES } from "../../lib/zones.ts";
 import { extend } from "../../lib/arrays.ts";
@@ -29,13 +27,13 @@ export const MAX_ATTENDEES = 50;
 export const READ_CONSENT = [[READ_SCOPE], [FULL_SCOPE]];
 export const WRITE_CONSENT = [[READ_SCOPE, EVENTS_SCOPE], [FULL_SCOPE]];
 
-/** An AfterValidator: `check` throws ValueError with the message the model sees. */
+/** A field check: `check` throws TextError with the message the model sees. */
 function after(check: (value: string) => unknown) {
 	return (value: string, ctx: z.RefinementCtx<string>) => {
 		try {
 			check(value);
 		} catch (error) {
-			if (!(error instanceof ValueError)) throw error;
+			if (!(error instanceof TextError)) throw error;
 			ctx.addIssue({ code: "custom", message: error.message, input: value });
 		}
 	};
@@ -52,7 +50,7 @@ function passes(check: (value: string) => unknown, value: unknown): value is str
 		check(value);
 		return true;
 	} catch (error) {
-		if (error instanceof ValueError) return false;
+		if (error instanceof TextError) return false;
 		throw error;
 	}
 }
@@ -119,7 +117,7 @@ function timeOf(value: EventTime | null): string | null {
 
 function eventRecord(binding: Binding, calendarId: string, event: GoogleEvent): ScopedRecord {
 	let description = event.description;
-	if (description && codePointLength(description) > MAX_DESCRIPTION) description = `${sliceCodePoints(description, 0, MAX_DESCRIPTION)} [truncated]`;
+	if (description && description.length > MAX_DESCRIPTION) description = `${sliceText(description, 0, MAX_DESCRIPTION)} [truncated]`;
 	const attendees = event.attendees.slice(0, MAX_ATTENDEES).map((a) => ({ email: a.email, name: a.display_name, response: a.response_status }));
 	return {
 		resource: binding.resource(CALENDAR, calendarId),
@@ -284,7 +282,7 @@ export function googleCalendarConnector(options: CalendarOptions = {}): Connecto
 						let nextCursor: string | null = null;
 						if (page.next_page_token) {
 							nextCursor = JSON.stringify({ page: page.next_page_token, time_min: timeMin });
-							if (codePointLength(nextCursor) > 1000) throw new OperationError("PROVIDER_LIMIT", "Google Calendar returned a page token that is too long.");
+							if (nextCursor.length > 1000) throw new OperationError("PROVIDER_LIMIT", "Google Calendar returned a page token that is too long.");
 						}
 						return { records: page.items.map((event) => eventRecord(binding, calendarId, event)), nextCursor };
 					},
@@ -352,10 +350,10 @@ export function googleCalendarConnector(options: CalendarOptions = {}): Connecto
 		async discover(client, _kind, { query }) {
 			let calendars = await allCalendars(client, maxPages);
 			if (query) {
-				const text = casefold(query);
-				calendars = calendars.filter((c) => casefold(calendarName(c)).includes(text));
+				const text = query.toLowerCase();
+				calendars = calendars.filter((c) => calendarName(c).toLowerCase().includes(text));
 			}
-			return { items: calendars.filter((c) => codePointLength(c.id) <= 200).map((c) => ({ id: c.id, name: calendarName(c) })) };
+			return { items: calendars.filter((c) => c.id.length <= 200).map((c) => ({ id: c.id, name: calendarName(c) })) };
 		},
 		async describe(client, _kind, ids) {
 			const wanted = new Set(ids);

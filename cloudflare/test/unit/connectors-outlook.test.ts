@@ -7,7 +7,7 @@ import { describe, expect, test } from "vitest";
 import { type GraphClient } from "../../src/connectors/outlook/client.ts";
 import { outlookConnector } from "../../src/connectors/outlook/connector.ts";
 import { LIMITS } from "../../src/connectors/outlook/mailbox.ts";
-import { OverflowError } from "../../src/lib/pyerrors.ts";
+import { TextError } from "../../src/lib/text.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
@@ -266,8 +266,8 @@ describe("times and tool inputs, as today's Python reads them", () => {
 			try {
 				actual[raw] = { value: moment(raw) };
 			} catch (error) {
-				if (error instanceof OverflowError) actual[raw] = { error: "OverflowError" };
-				else if (error instanceof Error && error.name === "ValueError") actual[raw] = { error: "ValueError", message: error.message };
+				if (error instanceof RangeError) actual[raw] = { error: "OverflowError" };
+				else if (error instanceof TextError) actual[raw] = { error: "ValueError", message: error.message };
 				else throw error;
 			}
 		}
@@ -305,7 +305,7 @@ describe("times and tool inputs, as today's Python reads them", () => {
 					actual.push(result.ok ? { args, data: result.data } : { args, refused: true });
 				} catch (error) {
 					// A time beyond the calendar's range fails the call rather than refusing the argument.
-					if (error instanceof OverflowError) actual.push({ args, raises: "OverflowError" });
+					if (error instanceof RangeError) actual.push({ args, raises: "OverflowError" });
 					else if (error instanceof TypeError) actual.push({ args, raises: "TypeError" });
 					else throw error;
 				}
@@ -567,13 +567,13 @@ describe("reading", () => {
 		expect(rest?.next_offset).toBeNull();
 	});
 
-	test("a body is counted and cut in code points", async () => {
+	test("a body is counted in UTF-16 units and cut between characters", async () => {
 		const graph = new FakeGraph();
 		(graph.messages[FROM_GRACE] as JsonObject).body = { contentType: "text", content: "😀".repeat(600) };
 		const run = await start(graph, folder(INBOX));
 		const [message] = await items(run, "outlook_read_message", { message: FROM_GRACE, max_chars: 500 });
-		expect(message?.total_chars).toBe(600);
-		expect(message?.body).toBe("😀".repeat(500));
+		expect(message?.total_chars).toBe(1200);
+		expect(message?.body).toBe("😀".repeat(250));
 		expect(message?.next_offset).toBe(500);
 	});
 

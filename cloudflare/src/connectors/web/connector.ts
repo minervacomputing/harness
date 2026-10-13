@@ -16,11 +16,9 @@ import { z } from "zod";
 import type { Binding, Connector, Prepared, ProviderClient, ProviderIo, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { ACCOUNT_KIND, OperationError, defineOperation } from "../../gateway/connector.ts";
-import { decimalValue, isDigitOnly, pythonIsDigit } from "../../lib/digits.ts";
 import { htmlToText } from "../../lib/markdown.ts";
-import { ValueError } from "../../lib/pyerrors.ts";
 import { MAX_URL, ancestors, canonicalHost, choices, name, parseUrl, validId } from "../../lib/sites.ts";
-import { SINGLE_LINE, codePointLength, isSingleLine, pythonStrip, sliceCodePoints } from "../../lib/text.ts";
+import { SINGLE_LINE, isSingleLine, sliceText } from "../../lib/text.ts";
 import { Fetcher, Moved } from "./fetch.ts";
 import { BraveSearch, MAX_PAGE, plain } from "./search.ts";
 
@@ -66,12 +64,9 @@ const Search = z
 
 const FRESHNESS: { readonly [name: string]: string } = { day: "pd", week: "pw", month: "pm", year: "py" };
 
-/** `int(cursor) if cursor and cursor.isdigit() else 0`; `int()` raises ValueError on digits it does not read (superscripts). */
+/** The page a cursor names: its number when it is ASCII digits, else the first. */
 function cursorPage(cursor: string | null): number {
-	if (!cursor) return 0;
-	if (!pythonIsDigit(cursor)) return 0;
-	if ([...cursor].some((char) => isDigitOnly(char))) throw new ValueError(`invalid literal for int() with base 10: '${cursor}'`);
-	return decimalValue(cursor);
+	return cursor && /^\d+$/.test(cursor) ? Number(cursor) : 0;
 }
 
 export const SEARCH = defineOperation<z.output<typeof Search>>({
@@ -113,7 +108,7 @@ export const SEARCH = defineOperation<z.output<typeof Search>>({
 							title: plain(result.title),
 							url: url.text,
 							site: url.host,
-							snippet: sliceCodePoints(plain(result.description), 0, MAX_SNIPPET),
+							snippet: sliceText(plain(result.description), 0, MAX_SNIPPET),
 							age: result.age,
 						},
 					});
@@ -157,7 +152,7 @@ export const READ_PAGE = defineOperation<z.output<typeof ReadPage>>({
 				let text = outcome.text;
 				if (outcome.form === "html") [text, title] = htmlToText(outcome.text, outcome.url.text);
 				const end = data.offset + data.max_chars;
-				const total = codePointLength(text);
+				const total = text.length;
 				return {
 					records: [
 						{
@@ -166,7 +161,7 @@ export const READ_PAGE = defineOperation<z.output<typeof ReadPage>>({
 								url: outcome.url.text,
 								title,
 								content_type: outcome.contentType,
-								text: sliceCodePoints(text, data.offset, end),
+								text: sliceText(text, data.offset, end),
 								offset: data.offset,
 								total_chars: total,
 								next_offset: end < total ? end : null,
@@ -187,11 +182,11 @@ function configuredBraveKey(): string | null {
 }
 
 export interface WebOptions {
-	/** The operator's Brave Search key, read each time (Python's `config().brave_search_api_key`); null when unset. */
+	/** The operator's Brave Search key, read each time; null when unset. */
 	braveKey?: () => string | null;
 }
 
-/** connectors/web/connector.py `WebConnector`. A fresh declaration; the registry freezes the one it is given. */
+/** The Web connector. A fresh declaration; the registry freezes the one it is given. */
 export function webConnector(options: WebOptions = {}): Connector<WebClient> {
 	const braveKey = options.braveKey ?? configuredBraveKey;
 	return {
@@ -222,7 +217,7 @@ export function webConnector(options: WebOptions = {}): Connector<WebClient> {
 
 		client(_secret: string, io: ProviderIo) {
 			const key = braveKey();
-			// An empty key is set but refused nowhere: search is offered and then unavailable, as with Python's empty SecretStr.
+			// An empty key is set but refused nowhere: search is offered and then unavailable.
 			return new WebClient(new Fetcher(io), key ? new BraveSearch(key, io) : null);
 		},
 
@@ -232,7 +227,7 @@ export function webConnector(options: WebOptions = {}): Connector<WebClient> {
 
 		async discover(_client, _kind, { query }) {
 			if (!query) return { items: [] };
-			const text = pythonStrip(query);
+			const text = query.trim();
 			// A pasted address, or a host name with or without a path.
 			const slash = text.indexOf("/");
 			const host = text.includes("://") ? parseUrl(text).host : canonicalHost(slash < 0 ? text : text.slice(0, slash));

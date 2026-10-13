@@ -17,17 +17,15 @@
 //
 // Numbers in an event are read as `_number` reads them, with what a JavaScript number cannot tell: a number
 // written with a fraction of zero (20.0, which Python reads as a float and leaves out) counts as the integer,
-// and an integer beyond 2^53 is left out (null) rather than shown rounded. A string of decimal digits from any
-// script is a number, as Python's `int()` reads it; one that Python's `str.isdigit()` takes but `int()`
-// refuses (superscripts, circled digits) is left out here, where Python's call fails with the generic error.
+// and an integer beyond 2^53 is left out (null) rather than shown rounded. A string is a number only when
+// it is ASCII digits.
 
 import { z } from "zod";
 import type { Binding, Prepared, ProviderOutput } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
-import { DIGIT_CLASS, digitValue } from "../../lib/digits.ts";
 import type { Json } from "../../lib/json.ts";
-import { SINGLE_LINE, isSingleLine, pythonCollapse, truncate } from "../../lib/text.ts";
+import { SINGLE_LINE, isSingleLine, truncate } from "../../lib/text.ts";
 import { requestAddress } from "./address.ts";
 import { EVENT_ID, ID, type Issue, type Project, SLUG, type SentryClient, type SentryEvent } from "./client.ts";
 import { isDict } from "../../lib/json.ts";
@@ -166,7 +164,7 @@ function items(value: Json): Fields[] {
 
 export function short(value: Json | undefined, limit: number = MAX_SHORT): string | null {
 	if (typeof value !== "string") return null;
-	const [shown] = truncate(pythonCollapse(value), limit);
+	const [shown] = truncate(value.trim().replace(/\s+/g, " "), limit);
 	return shown || null;
 }
 
@@ -174,16 +172,12 @@ function textOf(value: Json, limit: number): [string | null, boolean] {
 	return truncate(typeof value === "string" && value ? value : null, limit);
 }
 
-const DIGITS = new RegExp(`^${DIGIT_CLASS}+$`, "u");
-
-/** `_number`: an int (never a bool), or a string of decimal digits read as `int()` reads it; else null. */
+/** A safe integer, or one written as ASCII digits; else null. */
 export function numberOf(value: Json | undefined): number | null {
 	if (typeof value === "boolean") return null;
 	if (typeof value === "number") return Number.isSafeInteger(value) ? value + 0 : null;
-	if (typeof value !== "string" || !DIGITS.test(value)) return null;
-	let digits = "";
-	for (const char of value) digits += String(digitValue(char) as number);
-	const number = Number(digits);
+	if (typeof value !== "string" || !/^\d+$/.test(value)) return null;
+	const number = Number(value);
 	return Number.isSafeInteger(number) ? number : null;
 }
 

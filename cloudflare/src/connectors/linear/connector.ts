@@ -1,4 +1,4 @@
-// Linear (backend/connectors/linear/connector.py). Resources are teams; what is allowed on a team also
+// Linear. Resources are teams; what is allowed on a team also
 // covers its sub-teams.
 //
 // Teams are one hierarchical kind (Linear has sub-teams), keyed by Linear's team id. Every issue belongs to
@@ -31,7 +31,6 @@
 
 import type { Connector, DiscoveryItem, DiscoveryPage } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
-import { casefold } from "../../lib/casefold.ts";
 import { LinearClient, type Team } from "./client.ts";
 import { GET_ISSUE, GET_TEAM, LIST_ISSUES, LIST_TEAMS, SEARCH_ISSUES } from "./reads.ts";
 import { TEAM, UUID, checkedCursor, nextCursor } from "./teams.ts";
@@ -92,12 +91,12 @@ export const linear: Connector<LinearClient> = {
 			const found = await client.teams({ first: 100, after: checkedCursor(cursor) });
 			return { items: found.nodes.map(item), nextCursor: nextCursor(found.pageInfo) };
 		}
-		const folded = casefold(query);
+		const folded = query.toLowerCase();
 		const matches: Team[] = [];
 		let after: string | null = null;
 		for (let page = 0; page < MAX_DISCOVERY_PAGES; page++) {
 			const found = await client.teams({ first: 100, after });
-			extend(matches, found.nodes.filter((team) => casefold(team.name).includes(folded) || casefold(team.key).includes(folded)));
+			extend(matches, found.nodes.filter((team) => team.name.toLowerCase().includes(folded) || team.key.toLowerCase().includes(folded)));
 			after = nextCursor(found.pageInfo);
 			if (after === null) return { items: matches.map(item), nextCursor: null };
 		}

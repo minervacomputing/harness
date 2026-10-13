@@ -1,4 +1,4 @@
-// Jira Cloud, ported from backend/connectors/jira/connector.py. Resources are sites and their projects;
+// Jira Cloud. Resources are sites and their projects;
 // agents read, search, comment on, create and move issues.
 //
 // One connection reaches the Jira sites the user picked on Atlassian's consent screen (see `atlassian`).
@@ -29,8 +29,6 @@
 
 import type { Connector, DiscoveryItem, DiscoveryPage } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
-import { casefold } from "../../lib/casefold.ts";
-import { DIGIT_CLASS, decimalValue } from "../../lib/digits.ts";
 import { CLOUD_ID, type Site, oauth } from "../atlassian/index.ts";
 import { JiraClient, type Project } from "./client.ts";
 import { ID, PROJECT, projectId, unseen } from "./issues.ts";
@@ -41,7 +39,7 @@ export const DISCOVERY_PAGE = 50;
 export const MAX_DESCRIBE = 100;
 export const CONCURRENCY = 8;
 
-const CURSOR = new RegExp(`^(${DIGIT_CLASS}{1,2}):(${DIGIT_CLASS}{1,6})$`, "u");
+const CURSOR = /^(\d{1,2}):(\d{1,6})$/u;
 
 function projectName(site: Site, project: Project, sites: readonly Site[]): string {
 	const name = `${project.name || project.key} (${project.key})`;
@@ -52,8 +50,8 @@ function projectName(site: Site, project: Project, sites: readonly Site[]): stri
 export function discoveryCursor(cursor: string | null, sites: readonly unknown[]): [number, number] {
 	if (cursor === null) return [0, 0];
 	const match = CURSOR.exec(cursor);
-	if (match === null || decimalValue(match[1] as string) >= sites.length) throw new OperationError("INVALID_CURSOR", "This page token is invalid.");
-	return [decimalValue(match[1] as string), decimalValue(match[2] as string)];
+	if (match === null || Number(match[1]) >= sites.length) throw new OperationError("INVALID_CURSOR", "This page token is invalid.");
+	return [Number(match[1]), Number(match[2])];
 }
 
 /** Runs `work` on each item, at most `limit` at once, keeping their order. */
@@ -108,10 +106,10 @@ export function jiraConnector(): Connector<JiraClient> {
 		async discover(client, _kind, { query, cursor }): Promise<DiscoveryPage> {
 			const sites = await client.sites();
 			const [index, start] = discoveryCursor(cursor, sites);
-			const folded = query ? casefold(query) : null;
+			const folded = query ? query.toLowerCase() : null;
 			const items: DiscoveryItem[] = [];
 			if (cursor === null) {
-				for (const site of sites) if (folded === null || casefold(site.label).includes(folded)) items.push({ id: site.id, name: site.label });
+				for (const site of sites) if (folded === null || site.label.toLowerCase().includes(folded)) items.push({ id: site.id, name: site.label });
 			}
 			if (sites.length === 0) return { items, nextCursor: null };
 			const site = sites[index] as Site;

@@ -6,7 +6,7 @@ import type { Binding, Prepared, ProviderOutput, ScopedRecord } from "../../cont
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation } from "../../gateway/connector.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
-import { SINGLE_LINE, htmlUnescape, isSingleLine, sliceCodePoints } from "../../lib/text.ts";
+import { SINGLE_LINE, htmlUnescape, isSingleLine, sliceText } from "../../lib/text.ts";
 import { digitsOr } from "../google/digits.ts";
 import { type GmailClient, ID, type Message, type MessageRef, headersOf } from "./client.ts";
 import { CONNECTION_ERRORS, LABEL, Labels, READ_CONSENT, SPAM_TRASH, SYSTEM_LABELS, confirm, locate, messageIdInput, moved, sameResource } from "./mailbox.ts";
@@ -50,7 +50,7 @@ function summary(message: Message): JsonObject {
 		subject: first(message, "Subject"),
 		date: first(message, "Date"),
 		// Gmail escapes the snippet as HTML.
-		snippet: message.snippet ? sliceCodePoints(mime.headerText(htmlUnescape(message.snippet)) as string, 0, MAX_SNIPPET) : null,
+		snippet: message.snippet ? sliceText(mime.headerText(htmlUnescape(message.snippet)) as string, 0, MAX_SNIPPET) : null,
 		unread: message.label_ids.includes("UNREAD"),
 	};
 }

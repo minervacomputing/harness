@@ -4,9 +4,7 @@ import { z } from "zod";
 import type { Prepared, ProviderOutput } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation } from "../../gateway/connector.ts";
-import { casefold } from "../../lib/casefold.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
-import { sortByCodePoint } from "../../lib/order.ts";
 import { SINGLE_LINE, isSingleLine } from "../../lib/text.ts";
 import { type LinearClient, MAX_ISSUE_DEPTH, type ParentIssue, type State, type Written } from "./client.ts";
 import { issueLinks, redact, writtenProblem } from "./markdown.ts";
@@ -112,8 +110,8 @@ function unknownName(what: string): OperationError {
 }
 
 function pick<T>(items: T[], name: string, keys: (item: T) => (string | null)[], what: string): T {
-	const folded = casefold(name);
-	const found = items.filter((item) => keys(item).some((key) => key && casefold(key) === folded));
+	const folded = name.toLowerCase();
+	const found = items.filter((item) => keys(item).some((key) => key && key.toLowerCase() === folded));
 	if (found.length !== 1) throw unknownName(what);
 	return found[0] as T;
 }
@@ -139,7 +137,7 @@ async function labelIds(client: LinearClient, teamId: string, names: string[]): 
 }
 
 async function assigneeId(client: LinearClient, teamId: string, name: string): Promise<string> {
-	if (casefold(name) === "me") return (await client.viewer()).id;
+	if (name.toLowerCase() === "me") return (await client.viewer()).id;
 	const members = (await client.members(teamId))[0].filter((member) => member.active);
 	return pick(members, name, (member) => [member.name, member.displayName], "member").id;
 }
@@ -303,7 +301,7 @@ function oneChange(value: UpdateFields): string | null {
 	if (changes.every((change) => change === null) && !value.unassign && !value.clear_due_date) return "change at least one field";
 	if (value.assignee !== null && value.unassign) return "give either assignee or unassign";
 	if (value.due_date !== null && value.clear_due_date) return "give either due_date or clear_due_date";
-	const names = (labels: string[] | null) => (Array.isArray(labels) ? labels.filter((name) => typeof name === "string").map(casefold) : []);
+	const names = (labels: string[] | null) => (Array.isArray(labels) ? labels.filter((name) => typeof name === "string").map((name) => name.toLowerCase()) : []);
 	const added = new Set(names(value.add_labels));
 	if (names(value.remove_labels).some((name) => added.has(name))) return "a label cannot be both added and removed";
 	return null;
@@ -383,7 +381,7 @@ export const UPDATE_ISSUE = defineOperation<z.output<typeof UpdateIssue>>({
 					}
 				}
 				const updated = await client.updateIssue(issueId, input);
-				const record = writtenRecord(resource, updated, { changed: sortByCodePoint(Object.keys(input)) });
+				const record = writtenRecord(resource, updated, { changed: Object.keys(input).sort() });
 				return { records: [{ resource, data: record }] };
 			},
 		};

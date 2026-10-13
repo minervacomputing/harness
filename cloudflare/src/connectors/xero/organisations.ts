@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { Binding } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, denied } from "../../gateway/connector.ts";
-import { pythonCollapse, truncate } from "../../lib/text.ts";
+import { truncate } from "../../lib/text.ts";
 import { UUID, type Connection, type XeroClient, uuid } from "./client.ts";
 
 export const ORGANISATION = "organisation";
@@ -52,7 +52,7 @@ export const invoiceId = () => requiredId(INVOICE_NOTE);
 
 /** A text as records show it: whitespace collapsed, cut to `limit` characters, and null when empty. */
 export function short(value: string | null | undefined, limit = MAX_SHORT): string | null {
-	const [shown] = truncate(value ? pythonCollapse(value) : null, limit);
+	const [shown] = truncate(value ? value.trim().replace(/\s+/g, " ") : null, limit);
 	return shown || null;
 }
 

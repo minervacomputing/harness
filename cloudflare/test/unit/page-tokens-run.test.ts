@@ -1,5 +1,5 @@
-// gateway/page-tokens.ts on real SQLite (connectors 7.3, runs 5.5): opaque, run-bound, query-bound tokens,
-// at most 200 per run, today's column limits; and the query hash over the normalized fields.
+// gateway/page-tokens.ts on real SQLite: opaque, run-bound, query-bound tokens, at most 200 per run, the
+// column limits in UTF-16 code units; and the query hash over the normalized fields.
 
 import { describe, expect, test } from "vitest";
 import { MAX_PAGE_TOKENS, PageTokens, queryHash } from "../../src/gateway/page-tokens.ts";
@@ -41,11 +41,12 @@ describe("page tokens", () => {
 		expect(tokens.count(RUN)).toBe(0);
 	});
 
-	test("a cursor longer than today's column refuses, as Postgres did", () => {
+	test("a cursor or tool name longer than a page token holds refuses", () => {
 		const tokens = new PageTokens(ledgerSql());
 		expect(tokens.issue(RUN, "t", "h", "x".repeat(1000))).not.toBeNull();
-		// Counted in code points: an emoji is one.
-		expect(tokens.issue(RUN, "t", "h", "\u{1f600}".repeat(1000))).not.toBeNull();
+		// Counted in UTF-16 units: an emoji is two.
+		expect(tokens.issue(RUN, "t", "h", "\u{1f600}".repeat(500))).not.toBeNull();
+		expect(() => tokens.issue(RUN, "t", "h", "\u{1f600}".repeat(501))).toThrow(/1000 characters/);
 		expect(() => tokens.issue(RUN, "t", "h", "x".repeat(1001))).toThrow(/1000 characters/);
 		expect(() => tokens.issue(RUN, "x".repeat(129), "h", "1")).toThrow(/128 characters/);
 	});

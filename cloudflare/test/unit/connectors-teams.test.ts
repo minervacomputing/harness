@@ -469,6 +469,8 @@ describe("reading", () => {
 			"https://teams.microsoftonline.cn/l/x",
 			"https://dod.teams.microsoft.us/l/x",
 			"msteams://x",
+			// U+FEFF is whitespace to JavaScript but invisible, so it does not split an address into harmless words.
+			"https://te\ufeffams.microsoft.com/l/x",
 		]) {
 			expect(read(`<p>see ${address}, ok</p>`, "html", [])).toBe("see [Teams link] ok");
 			expect(read(`see ${address}`, "text", [])).toBe("see [Teams link]");

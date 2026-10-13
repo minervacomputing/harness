@@ -1,10 +1,9 @@
-// Names and types of uploaded files (files 9.2, 9.3, 10; backend/files/uploads.py): a browser's file name
+// Names and types of uploaded files: a browser's file name
 // made a valid name at the folder's root, the numbered name an attachment gets when its name is taken,
-// and the media type sniffed for display. Python slices by code point, so these do too: a surrogate pair is
-// never split (files risk 3). Categories and NFC come from the runtime's Unicode tables.
+// and the media type sniffed for display. Names are cut by UTF-16 code unit, but a surrogate pair is never
+// split. Categories and NFC come from the runtime's Unicode tables.
 
 import { fromUtf8Strict } from "../lib/bytes.ts";
-import { pythonRstrip, pythonStrip } from "../lib/text.ts";
 import { MAX_EXTENSION_CHARS, MAX_SEGMENT_BYTES } from "./limits.ts";
 
 const ENCODER = new TextEncoder();
@@ -24,7 +23,7 @@ function utf8Length(text: string): number {
 export function cleanName(raw: string): string {
 	const segments = raw.replaceAll("\\", "/").split("/");
 	let name = (segments[segments.length - 1] as string).replace(UNWANTED, "");
-	name = pythonStrip(name.normalize("NFC"));
+	name = name.normalize("NFC").trim();
 	if (name === "" || name === "." || name === "..") name = "file";
 	const [stem, extension] = split(name);
 	return fit(stem, extension);
@@ -53,7 +52,7 @@ export function fit(stem: string, extension: string, suffix = ""): string {
 	// No more characters than the name has bytes, so the loop is short for any name the browser sends.
 	let points = Array.from(stem).slice(0, MAX_SEGMENT_BYTES);
 	for (;;) {
-		const name = (pythonRstrip(points.join("")) + suffix + extension).normalize("NFC");
+		const name = (points.join("").trimEnd() + suffix + extension).normalize("NFC");
 		if (utf8Length(name) <= MAX_SEGMENT_BYTES && name !== "" && name !== "." && name !== "..") return name;
 		if (points.length === 0) {
 			// Only the extension is too long, which split prevents; keep what fits, a cut character dropped.
@@ -127,7 +126,7 @@ export function sniff(head: Uint8Array, name: string): string {
 function isText(head: Uint8Array): boolean {
 	if (head.includes(0)) return false;
 	for (let cut = 0; cut < 4; cut++) {
-		// `head[: len(head) - cut]`, with Python's slicing: an end below zero counts from the end.
+		// The first `length - cut` bytes; an end below zero counts from the end.
 		let end = head.length - cut;
 		if (end < 0) end = Math.max(0, head.length + end);
 		try {
@@ -146,7 +145,7 @@ function isText(head: Uint8Array): boolean {
  * blank value are dropped, `+` is a space, and a percent escape that is not valid UTF-8 refuses the whole
  * query; a `%` without two hex digits stays as it is. Null when the request must be refused with "Name the
  * file with ?name=.". `query` is the URL's search without `?`; the URL parser has already escaped anything
- * that was not ASCII, which today's ASGI app refused instead.
+ * that was not ASCII.
  */
 export function uploadName(query: string): string | null {
 	const names: string[] = [];

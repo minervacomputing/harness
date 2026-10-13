@@ -1,12 +1,12 @@
 // Python 3.14's `urllib.parse` as the connectors use it: `urlsplit` with every check that makes it raise
-// ValueError (brackets, IPv6 and IPvFuture hosts, characters that NFKC turns into delimiters), the result's
+// UrlError (brackets, IPv6 and IPvFuture hosts, characters that NFKC turns into delimiters), the result's
 // `hostname` and `port`, `urljoin` (3.14's, which keeps an empty query or fragment apart from a missing
 // one) and `quote`, ported line by line. Moved here from connectors/sentry/address.ts for the Web connector
 // (lib/sites.ts `parseUrl`, lib/markdown.ts links), which needs all of it.
 //
 // NFKC comes from the runtime's Unicode tables, Python's from its own (Unicode 16); a character assigned
 // since then could normalize differently. The connectors that read a link's query or host (slack, microsoft,
-// notion, atlassian, github, sentry, web) all use this port; `urlsplitStrict` raises ValueError with Python's
+// notion, atlassian, github, sentry, web) all use this port; `urlsplitStrict` raises UrlError with Python's
 // messages, `urlsplit` gives null instead. Bracketed hosts are read as addresses by lib/ipaddress.ts (ipaddr.js).
 //
 // Kept, not replaced by the runtime's `URL`: WHATWG parsing repairs and re-spells what Python keeps (it
@@ -18,9 +18,15 @@
 // address checked here (lib/sites.ts `WebURL.href`), so the host fetched is the host authorized.
 
 import { isIpAddress } from "./ipaddress.ts";
-import { pythonLower } from "./lower.ts";
-import { ValueError } from "./pyerrors.ts";
-import { pythonRepr, unquote } from "./text.ts";
+import { unquote } from "./text.ts";
+
+/** An address `urlsplitStrict`, `portOf` or `urljoin` cannot split. */
+export class UrlError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "UrlError";
+	}
+}
 
 /** `urlsplit(url)`'s five parts. */
 export interface SplitResult {
@@ -116,12 +122,12 @@ function isAscii(text: string): boolean {
 /** `_check_bracketed_host`: an IPvFuture literal or an IPv6 address (`ipaddress.ip_address`, scope ids included), never IPv4. */
 function checkBracketedHost(hostname: string): void {
 	if (hostname.startsWith("v") || hostname.startsWith("V")) {
-		if (!/^[vV][a-fA-F0-9]+\.[^\n]+$/.test(hostname)) throw new ValueError("IPvFuture address is invalid");
+		if (!/^[vV][a-fA-F0-9]+\.[^\n]+$/.test(hostname)) throw new UrlError("IPvFuture address is invalid");
 		return;
 	}
 	const kind = isIpAddress(hostname);
-	if (kind === null) throw new ValueError(`${pythonRepr(hostname)} does not appear to be an IPv4 or IPv6 address`);
-	if (kind === "v4") throw new ValueError("An IPv4 address cannot be in brackets");
+	if (kind === null) throw new UrlError(`${JSON.stringify(hostname)} does not appear to be an IPv4 or IPv6 address`);
+	if (kind === "v4") throw new UrlError("An IPv4 address cannot be in brackets");
 }
 
 /** `_check_bracketed_netloc`. */
@@ -131,9 +137,9 @@ function checkBracketedNetloc(netloc: string): void {
 	let hostname: string;
 	if (open) {
 		// No data is allowed before a bracket, nor after it but before the port delimiter.
-		if (before) throw new ValueError("Invalid IPv6 URL");
+		if (before) throw new UrlError("Invalid IPv6 URL");
 		const [inside, , port] = partition(bracketed, "]");
-		if (port && !port.startsWith(":")) throw new ValueError("Invalid IPv6 URL");
+		if (port && !port.startsWith(":")) throw new UrlError("Invalid IPv6 URL");
 		hostname = inside;
 	} else {
 		hostname = partition(hostAndPort, ":")[0];
@@ -148,11 +154,11 @@ function checkNetloc(netloc: string | null): void {
 	const normalized = bare.normalize("NFKC");
 	if (bare === normalized) return;
 	if ([..."/?#@:"].some((char) => normalized.includes(char))) {
-		throw new ValueError(`netloc '${netloc}' contains invalid characters under NFKC normalization`);
+		throw new UrlError(`netloc ${JSON.stringify(netloc)} contains invalid characters under NFKC normalization`);
 	}
 }
 
-/** `_urlsplit(url, None)`; ValueError, with Python's message, where it raises. */
+/** `_urlsplit(url, None)`; UrlError, with Python's message, where it raises. */
 function splitParts(input: string): Parts {
 	let url = input.replace(LEADING_C0_OR_SPACE, "").replace(UNSAFE, "");
 	let scheme: string | null = null;
@@ -172,7 +178,7 @@ function splitParts(input: string): Parts {
 		url = url.slice(end);
 		const open = netloc.includes("[");
 		const close = netloc.includes("]");
-		if (open !== close) throw new ValueError("Invalid IPv6 URL");
+		if (open !== close) throw new UrlError("Invalid IPv6 URL");
 		if (open && close) checkBracketedNetloc(netloc);
 	}
 	if (url.includes("#")) [url, , fragment] = partition(url, "#");
@@ -185,17 +191,17 @@ function result(parts: Parts): SplitResult {
 	return { scheme: parts.scheme ?? "", netloc: parts.netloc ?? "", path: parts.path, query: parts.query ?? "", fragment: parts.fragment ?? "" };
 }
 
-/** `urllib.parse.urlsplit(url)`, or null where it raises ValueError. */
+/** `urllib.parse.urlsplit(url)`, or null where it raises UrlError. */
 export function urlsplit(input: string): SplitResult | null {
 	try {
 		return result(splitParts(input));
 	} catch (error) {
-		if (error instanceof ValueError) return null;
+		if (error instanceof UrlError) return null;
 		throw error;
 	}
 }
 
-/** `urllib.parse.urlsplit(url)`; ValueError, with Python's message, where it raises. */
+/** `urllib.parse.urlsplit(url)`; UrlError, with Python's message, where it raises. */
 export function urlsplitStrict(input: string): SplitResult {
 	return result(splitParts(input));
 }
@@ -239,16 +245,16 @@ export function hostnameOf(netloc: string): string | null {
 	const hostname = hostinfo(netloc)[0];
 	if (!hostname) return null;
 	const [host, percent, zone] = partition(hostname, "%");
-	return pythonLower(host) + percent + zone;
+	return host.toLowerCase() + percent + zone;
 }
 
-/** The result's `port`: null when none is written; ValueError unless it is ASCII digits for 0 to 65535. */
+/** The result's `port`: null when none is written; UrlError unless it is ASCII digits for 0 to 65535. */
 export function portOf(netloc: string): number | null {
 	const port = hostinfo(netloc)[1];
 	if (port === null) return null;
-	if (!/^[0-9]+$/.test(port)) throw new ValueError(`Port could not be cast to integer value as '${port}'`);
+	if (!/^[0-9]+$/.test(port)) throw new UrlError(`Port could not be cast to integer value as '${port}'`);
 	const value = Number(port);
-	if (value > 65535) throw new ValueError("Port out of range 0-65535");
+	if (value > 65535) throw new UrlError("Port out of range 0-65535");
 	return value;
 }
 
@@ -267,7 +273,7 @@ function unsplit(scheme: string | null, netloc: string | null, path: string, que
 	return url;
 }
 
-/** `urllib.parse.urljoin(base, url)`; ValueError where splitting either raises. */
+/** `urllib.parse.urljoin(base, url)`; UrlError where splitting either raises. */
 export function urljoin(base: string, url: string): string {
 	if (!base) return url;
 	if (!url) return base;

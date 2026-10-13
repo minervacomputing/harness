@@ -5,17 +5,16 @@ import { z } from "zod";
 import type { Binding } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, denied } from "../../gateway/connector.ts";
-import { DIGIT_CLASS } from "../../lib/digits.ts";
 import { CLOUD_ID, type Site } from "../atlassian/index.ts";
 import type { Issue, JiraClient, Project } from "./client.ts";
 
 export const PROJECT = "project";
 const HIDDEN: ReadonlySet<string> = new Set(["NOT_FOUND", "PROVIDER_FORBIDDEN"]);
 
-/** `\d` is Python's: decimal digits of any script. */
-export const ID = new RegExp(`^${DIGIT_CLASS}{1,18}$`, "u");
+/** ASCII digits only. */
+export const ID = /^\d{1,18}$/u;
 const PROJECT_KEY = /^[A-Z][A-Z0-9_]{0,254}$/;
-const ISSUE_KEY = new RegExp(`^[A-Z][A-Z0-9_]{0,254}-${DIGIT_CLASS}{1,9}$`, "u");
+const ISSUE_KEY = /^[A-Z][A-Z0-9_]{0,254}-\d{1,9}$/u;
 
 export const SITE_ID_DESCRIPTION = "The site's id, from list_projects. Needed only when the connection reaches several sites.";
 

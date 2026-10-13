@@ -1,4 +1,4 @@
-// Message text as agents see it and write it (backend/connectors/intercom/html.py).
+// Message text as agents see it and write it.
 //
 // Intercom stores messages as HTML. Read text is the HTML turned into plain text:
 // - a link to Intercom (the app, the API, its file hosts or help centers), or a relative one, which Intercom
@@ -12,9 +12,9 @@
 // Written text is escaped and sent as HTML paragraphs, so it is shown literally: it cannot format anything or
 // mention a teammate. It may not address Intercom in any encoding.
 //
-// The HTML is read with a port of Python's HTMLParser (lib/htmlparser.ts), so the text is today's.
+// The HTML is read with lib/htmlparser.ts.
 
-import { decoded, plainText, PYTHON_SPACE_CLASS, pythonRstrip, pythonStrip, TextError } from "../../lib/text.ts";
+import { decoded, plainText, TextError, WORDS } from "../../lib/text.ts";
 import { type Attribute, HTMLParser } from "../../lib/htmlparser.ts";
 import { endsWithNewline, linkText, type Piece, written as writtenOut } from "../../lib/linktext.ts";
 import { RE_I, RE_LETTERS_EXTRA } from "./python.ts";
@@ -25,12 +25,11 @@ import { RE_I, RE_LETTERS_EXTRA } from "./python.ts";
 const INTERCOM = new RegExp(`${RE_I}ntercom[a-z0-9${RE_LETTERS_EXTRA}-]*\\.[a-z${RE_LETTERS_EXTRA}]{2}|${RE_I}ntercom:`, "iu");
 // Links shown with their address. Others, relative ones included (Intercom shows them on its own host), are hidden.
 const SHOWN_LINK = new RegExp(`^(?:https?://|ma${RE_I}lto:|tel:)`, "iu");
-const WORD = new RegExp(`[^${PYTHON_SPACE_CLASS}]+`, "gu");
 const BLOCKS: ReadonlySet<string> = new Set(["p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "pre", "ul", "ol", "table", "li", "blockquote"]);
 const DROPPED: ReadonlySet<string> = new Set(["script", "style", "head", "title", "template", "iframe", "object", "embed", "svg", "math", "noscript"]);
 export const LINK = "[Intercom link]";
 export const NOT_INTERCOM = "must not link to Intercom";
-const PARAGRAPHS = new RegExp(`\\n[${PYTHON_SPACE_CLASS}]*\\n`, "u");
+const PARAGRAPHS = /\n\s*\n/u;
 
 /** Whether `text` addresses Intercom in any encoding; browsers drop tabs and newlines inside addresses. */
 export function toIntercom(text: string): boolean {
@@ -39,12 +38,12 @@ export function toIntercom(text: string): boolean {
 
 /** Plain text with every word that addresses Intercom replaced. */
 export function redact(text: string): string {
-	return text.replace(WORD, (word) => (toIntercom(word) ? LINK : word));
+	return text.replace(WORDS, (word) => (toIntercom(word) ? LINK : word));
 }
 
 type Link = [href: string, label: Piece[]];
 
-/** html.py `_Reader`. */
+/** Reads a body's HTML into text and links, leaving out hidden elements. */
 class Reader extends HTMLParser {
 	readonly out: Piece[] = [];
 	/** A link being read: its address and the text of its label. */
@@ -124,8 +123,8 @@ class Reader extends HTMLParser {
 		// A link never closed is shown as text, without its address.
 		for (let at = this.links.length - 1; at >= 0; at--) for (const text of (this.links[at] as Link)[1]) this.out.push(text);
 		const lines = writtenOut(this.out).replaceAll(" ", " ").split("\n");
-		const joined = lines.map(pythonRstrip).join("\n");
-		return redact(pythonStrip(joined.replace(/\n{3,}/g, "\n\n")));
+		const joined = lines.map((line) => line.trimEnd()).join("\n");
+		return redact(joined.replace(/\n{3,}/g, "\n\n").trim());
 	}
 }
 
@@ -148,23 +147,23 @@ export function writtenProblem(text: string): string | null {
 	return toIntercom(text) ? NOT_INTERCOM : null;
 }
 
-/** html.py `check_written`: the text, or a TextError with the reason it is refused. Used as a field validator. */
+/** The text, or a TextError with the reason it is refused. Used as a field validator. */
 export function checkWritten(text: string): string {
 	const problem = writtenProblem(text);
 	if (problem !== null) throw new TextError(problem);
 	return text;
 }
 
-/** Python's `html.escape(text)`, quotes included. */
+/** HTML-escaped text, quotes included. */
 function escape(text: string): string {
 	return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#x27;");
 }
 
 /** The HTML that shows `text` literally: a paragraph per blank-line-separated block. */
 export function written(text: string): string {
-	const blocks = pythonStrip(text.replaceAll("\r\n", "\n")).split(PARAGRAPHS);
+	const blocks = text.replaceAll("\r\n", "\n").trim().split(PARAGRAPHS);
 	return blocks
-		.filter((block) => pythonStrip(block))
+		.filter((block) => block.trim())
 		.map((block) => `<p>${escape(block).replaceAll("\n", "<br>")}</p>`)
 		.join("");
 }

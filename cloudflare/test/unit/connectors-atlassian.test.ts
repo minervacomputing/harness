@@ -9,11 +9,7 @@ import { confluenceConnector } from "../../src/connectors/confluence/connector.t
 import { jiraConnector } from "../../src/connectors/jira/connector.ts";
 import * as adf from "../../src/connectors/atlassian/adf.ts";
 import { Site, oauth } from "../../src/connectors/atlassian/index.ts";
-import { pythonInt } from "../../src/connectors/atlassian/python.ts";
-import { parseQs, urlsplitStrict } from "../../src/lib/urlsplit.ts";
-import { casefold } from "../../src/lib/casefold.ts";
-import { DIGIT_CLASS_BODY } from "../../src/lib/digits.ts";
-import { PYTHON_SPACE_CLASS, WORD_CLASS } from "../../src/lib/text.ts";
+import { UrlError, parseQs, urlsplitStrict } from "../../src/lib/urlsplit.ts";
 import { ListingModel, PageModel } from "../../src/connectors/confluence/client.ts";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
 import { CommentModel, IssueModel, ProjectModel } from "../../src/connectors/jira/client.ts";
@@ -21,22 +17,13 @@ import { OperationError, offered } from "../../src/gateway/connector.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import { type Json, parseJson } from "../../src/lib/json.ts";
 import { TextError } from "../../src/lib/text.ts";
+import { changedOnPurpose } from "./changed.ts";
 import { planRefresh } from "../../src/workspace/credentials.ts";
 
 type Outcome = { value?: Json; error?: string; message?: string };
 
 interface Vectors {
-	unicode: {
-		version: string;
-		assigned: [number, number][];
-		word: [number, number][];
-		digit: [number, number][];
-		space: [number, number][];
-		lower: { [point: string]: string };
-		upper: { [point: string]: string };
-		casefold: { [point: string]: string };
-		ignorecase: { [letter: string]: number[] };
-	};
+	unicode: { ignorecase: { [letter: string]: number[] } };
 	adf: {
 		hosts: string[][];
 		read: { document: Json; results: ({ hosts: string[] } & Outcome)[] }[];
@@ -45,7 +32,6 @@ interface Vectors {
 		check_hosts: { text: string; results: Outcome[] }[];
 		check_written: ({ text: string } & Outcome)[];
 		written: ({ text: string } & Outcome)[];
-		dates: { timestamp: Json; value: string }[];
 	};
 	sites: { site: { id: string; name: string | null; url: string | null }; host: string | null; label: string }[];
 	confluence: { next_token: ({ next: string | null } & Outcome)[] };
@@ -61,16 +47,10 @@ function outcome(run: () => Json | undefined | void): Outcome {
 		return { value: value === undefined ? null : value };
 	} catch (error) {
 		if (error instanceof OperationError) return { error: error.code, message: error.message };
-		if (error instanceof TextError || (error instanceof Error && error.name === "ValueError")) return { error: "ValueError", message: error.message };
+		if (error instanceof TextError || error instanceof UrlError) return { error: "ValueError", message: error.message };
 		if (error instanceof TypeError) return { error: "TypeError" };
 		throw error;
 	}
-}
-
-function points(ranges: [number, number][]): Set<number> {
-	const set = new Set<number>();
-	for (const [start, end] of ranges) for (let point = start; point <= end; point++) set.add(point);
-	return set;
 }
 
 function doc(...content: Json[]): Json {
@@ -87,36 +67,8 @@ function text(value: string, href?: string): Json {
 
 const SECRET = "SECRET merger";
 
-describe("Python's string semantics, per assigned code point", () => {
+describe("patterns and parsing", () => {
 	const unicode = VECTORS.unicode;
-	const assigned = [...points(unicode.assigned)];
-
-	test("re's \\w, \\d and \\s", () => {
-		const word = points(unicode.word);
-		const digit = points(unicode.digit);
-		const space = points(unicode.space);
-		const isWord = new RegExp(`^[${WORD_CLASS}]$`, "u");
-		const isDigit = new RegExp(`^[${DIGIT_CLASS_BODY}]$`, "u");
-		const isSpace = new RegExp(`^[${PYTHON_SPACE_CLASS}]$`, "u");
-		const wrong = assigned.filter((point) => {
-			const char = String.fromCodePoint(point);
-			return isWord.test(char) !== word.has(point) || isDigit.test(char) !== digit.has(point) || isSpace.test(char) !== space.has(point);
-		});
-		expect(wrong).toEqual([]);
-	});
-
-	test("str.casefold(), str.lower() and str.upper()", () => {
-		const wrong: string[] = [];
-		for (const point of assigned) {
-			const char = String.fromCodePoint(point);
-			if (casefold(char) !== (unicode.casefold[point] ?? char)) wrong.push(`casefold ${point.toString(16)}`);
-			if (char.toLowerCase() !== (unicode.lower[point] ?? char)) wrong.push(`lower ${point.toString(16)}`);
-			if (char.toUpperCase() !== (unicode.upper[point] ?? char)) wrong.push(`upper ${point.toString(16)}`);
-		}
-		// Unicode 17 (the runtime's) gave these two letters capitals; Python 3.14 has Unicode 16.
-		expect(wrong).toEqual(["upper a7d3", "upper a7d5"]);
-		expect(casefold("Straße ΣΑΣ ﬁ Ꭰꭰ ẞ ı")).toBe("strasse σασ fi ᎠᎠ ss ı");
-	});
 
 	test("re.IGNORECASE matches i with İ and ı, s with ſ and k with the Kelvin sign, as the patterns do", () => {
 		expect(unicode.ignorecase.i).toEqual([0x130, 0x131]);
@@ -126,11 +78,9 @@ describe("Python's string semantics, per assigned code point", () => {
 		expect(others).toEqual([]);
 	});
 
-	test("int() of a JSON value, through the ADF date", () => {
-		for (const { timestamp, value } of VECTORS.adf.dates) expect(adf.date(timestamp), JSON.stringify(timestamp)).toBe(value);
-		expect(pythonInt(" +1_000 ")).toBe(1000n);
-		expect(pythonInt("١٢")).toBe(12n);
-		expect(pythonInt("1__0")).toBeNull();
+	test("an ADF date's timestamp, a number or digits in milliseconds", () => {
+		expect([adf.date(1759276800000), adf.date("1759276800000"), adf.date(" -86400000 ")]).toEqual(["2025-10-01", "2025-10-01", "1969-12-31"]);
+		for (const timestamp of ["١٢", "1_000", "1e3", "", null, true, 1e20]) expect(adf.date(timestamp), JSON.stringify(timestamp)).toBe("[date]");
 	});
 
 	test("urlsplit's query and parse_qs, through Confluence's next links (exact outcomes in connectors-confluence)", () => {
@@ -153,9 +103,10 @@ describe("ADF, against Python's adf.py", () => {
 
 	test("redact, internal and check_hosts, for every set of hosts", () => {
 		const hosts = VECTORS.adf.hosts;
-		for (const { text: value, results } of VECTORS.adf.redact) results.forEach((expected, index) => expect(outcome(() => adf.redact(value, hosts[index])), value).toEqual(expected));
-		for (const { text: value, results } of VECTORS.adf.internal) results.forEach((expected, index) => expect(outcome(() => adf.internal(value, hosts[index])), value).toEqual(expected));
-		for (const { text: value, results } of VECTORS.adf.check_hosts) {
+		const kept = (cases: { text: string; results: Outcome[] }[]) => cases.filter(({ text }) => !changedOnPurpose(text));
+		for (const { text: value, results } of kept(VECTORS.adf.redact)) results.forEach((expected, index) => expect(outcome(() => adf.redact(value, hosts[index])), value).toEqual(expected));
+		for (const { text: value, results } of kept(VECTORS.adf.internal)) results.forEach((expected, index) => expect(outcome(() => adf.internal(value, hosts[index])), value).toEqual(expected));
+		for (const { text: value, results } of kept(VECTORS.adf.check_hosts)) {
 			results.forEach((expected, index) => expect(outcome(() => adf.checkHosts(value, hosts[index] as string[])), value).toEqual(expected));
 		}
 	});

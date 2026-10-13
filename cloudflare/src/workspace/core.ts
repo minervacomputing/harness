@@ -45,9 +45,8 @@ import type { Registry } from "../gateway/registry.ts";
 import { type ConnectionInfo, startSnapshot } from "../gateway/tools.ts";
 import { type Binding, type EncryptionKeys, type Sealed, credentialBinding } from "../lib/encryption.ts";
 import { type JsonObject, parseJson } from "../lib/json.ts";
-import { compareCodePoints, sortByCodePoint } from "../lib/order.ts";
 import { uuid7 } from "../lib/random.ts";
-import { VALUE_PART, sliceCodePoints, splitParts } from "../lib/text.ts";
+import { VALUE_PART, sliceText, splitParts } from "../lib/text.ts";
 import { EXPIRED, asPayload, expiresAtOf, keepRefreshToken, needsRefresh, planRefresh, type RefreshResult, scopesOf } from "./credentials.ts";
 import {
 	ATTACHED_TWICE,
@@ -68,6 +67,7 @@ import { type AgentView, type ConnectionView, accessOut, agentOut, connectionOut
 import type { ConversationClient, Log, OAuthClients, ObjectStore, Timers, WorkspaceSettings } from "./ports.ts";
 import { MIGRATIONS } from "./schema.ts";
 import { type SqlRow as Row, type Sql, type SqlValue, first, migrate } from "../lib/sql.ts";
+import { compareText } from "../lib/arrays.ts";
 
 /** A start not activated within this is expired and its reservations released (plan: Starting a run). */
 export const START_TTL_MS = 10 * 60 * 1000;
@@ -81,11 +81,11 @@ export const RETRY_PAUSE_MS = 500;
 export const PURGE_AGAIN_MS = 60 * 60 * 1000;
 /** A conversation whose object was not initialized within this is deleted. */
 export const CREATE_TTL_MS = 10 * 60 * 1000;
-/** Display names are kept to the 300 characters of today's column. */
+/** Display names are kept to 300 characters (UTF-16 code units), never cutting one in half. */
 const RESOURCE_NAME_MAX = 300;
 
 export const NOT_FOUND = "Not Found";
-/** `_usable`'s refusal of another user's connection (connections/api.py), which differs from a missing one's. */
+/** The refusal of another user's connection, which differs from a missing one's. */
 export const NOT_YOURS = "Not found.";
 export const RUN_ENDED = "This run is no longer active.";
 export const CHOOSE_CONNECTIONS = "Choose connections you can use.";
@@ -236,7 +236,7 @@ interface PurgeRow extends Row {
 	done_at: number | null;
 }
 
-/** Which live runs a change stops: today's rules (connectors 4.6; runs 8). */
+/** Which live runs a change stops. */
 interface RunMatch {
 	userId?: UserId;
 	agentId?: AgentId;
@@ -387,7 +387,7 @@ export class WorkspaceCore implements WorkspaceApi {
 				actions: jsonList(row.actions),
 				effect: row.effect,
 			}))
-			.sort((a, b) => compareCodePoints(a.kind, b.kind) || compareCodePoints(a.resourceId, b.resourceId));
+			.sort((a, b) => compareText(a.kind, b.kind) || compareText(a.resourceId, b.resourceId));
 	}
 
 	/** `user_grants(connection, user)`: one user's allow grants on the connection, in (kind, id) order. */
@@ -444,7 +444,7 @@ export class WorkspaceCore implements WorkspaceApi {
 	async listConnections(caller: Caller): Promise<ConnectionOut[]> {
 		const own = this.#sql.exec<ConnectionRow>("SELECT * FROM connections WHERE owner_id = ? ORDER BY created_at, id", caller.userId);
 		const shared = this.#sql.exec<ConnectionRow>("SELECT * FROM connections WHERE owner_id IS NULL ORDER BY created_at, id");
-		// Python would fail the whole list for a connection whose connector is gone; it is left out instead.
+		// A connection whose connector is gone is left out.
 		return [...own, ...shared].map((row) => this.#connectionOut(caller, row)).filter((out) => out !== null);
 	}
 
@@ -452,7 +452,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		const usable = this.#usable(caller, connectionId);
 		if (!usable.ok) return usable;
 		const connector = this.#registry.find(usable.value.provider);
-		// Python fails with a 500 for a connection whose connector is gone; it is not found instead.
+		// A connection whose connector is gone is not found.
 		if (connector === null) return refuse(404, NOT_FOUND);
 		return ok(accessOut(connector, this.#view(usable.value), this.#userGrants(connectionId, caller.userId)));
 	}
@@ -465,7 +465,7 @@ export class WorkspaceCore implements WorkspaceApi {
 			usable.value.owner_id === null
 				? this.#grants("l.level = 'user' AND g.connection_id = ? AND g.effect = 'allow'", connectionId)
 				: this.#userGrants(connectionId, caller.userId);
-		return sortByCodePoint(new Set(grants.flatMap((grant) => grant.actions)));
+		return [...new Set(grants.flatMap((grant) => grant.actions))].sort();
 	}
 
 	async connectionAccount(connectionId: ConnectionId): Promise<ConnectionAccount | null> {
@@ -631,10 +631,10 @@ export class WorkspaceCore implements WorkspaceApi {
 			throw error;
 		}
 		const named = new Map<string, string>();
-		for (const [key, name] of Object.entries(names)) named.set(key, sliceCodePoints(storable(name), 0, RESOURCE_NAME_MAX));
+		for (const [key, name] of Object.entries(names)) named.set(key, sliceText(storable(name), 0, RESOURCE_NAME_MAX));
 		// Account grants are named with the connection's label and need no provider call (connectors 11.9).
 		for (const change of changes) {
-			if (change.kind === ACCOUNT_KIND && change.actions.length) named.set(resourceKey(change.kind, change.id), sliceCodePoints(connection.label, 0, RESOURCE_NAME_MAX));
+			if (change.kind === ACCOUNT_KIND && change.actions.length) named.set(resourceKey(change.kind, change.id), sliceText(connection.label, 0, RESOURCE_NAME_MAX));
 		}
 		const now = this.#now();
 		const layerId = `user:${caller.userId}`;
@@ -680,8 +680,8 @@ export class WorkspaceCore implements WorkspaceApi {
 	}
 
 	async markUnauthorized(connectionId: ConnectionId, generation: number): Promise<void> {
-		// A refresh in flight is about to replace the credentials the call was rejected with: wait for it, as
-		// Python's update waits for the refresh's row lock, so its new generation is not marked.
+		// A refresh in flight is about to replace the credentials the call was rejected with: wait for it, so
+		// its new generation is not marked.
 		const refreshing = this.#refreshes.get(connectionId);
 		if (refreshing !== undefined) await refreshing.catch(() => null);
 		// Compare-and-set: credentials replaced since the failed call are not marked (connectors 9.2).
@@ -731,7 +731,7 @@ export class WorkspaceCore implements WorkspaceApi {
 			if (outcome.kind === "expired") return { refused: "CONNECTION_UNAUTHORIZED", message: EXPIRED };
 			if (outcome.kind === "unavailable") return { refused: "PROVIDER_UNAVAILABLE", message: outcome.message };
 			if (outcome.kind === "refreshed") {
-				// A token that expires soon again is still lent: one refresh per lease, as today.
+				// A token that expires soon again is still lent: one refresh per lease.
 				const after = this.#leaseCheck(connectionId, purpose);
 				if ("refusal" in after) return after.refusal;
 				if (after.row.generation === outcome.generation && after.row.refresh_state === "fresh") return this.#leaseOf(after.row);
@@ -1403,8 +1403,8 @@ export class WorkspaceCore implements WorkspaceApi {
 			if (arriving.n >= UPLOADS_IN_FLIGHT) return refuse(429, UPLOADING_TOO_MANY);
 			const held = first<{ n: number }>(this.#sql, "SELECT count(*) AS n FROM uploads WHERE user_id = ?", caller.userId) as { n: number };
 			if (held.n >= PENDING_UPLOADS) return refuse(429, TOO_MANY_UPLOADS);
-			// Reserved before the body is written, so concurrent uploads count each other (files 12.1, CHANGE:
-			// every upload counts, where today's dedupe charged only new contents).
+			// Reserved before the body is written, so concurrent uploads count each other (every upload counts,
+			// not only new contents).
 			if (!this.#fits(upload.size)) return refuse(413, NO_ROOM);
 			const id = uuid7(now);
 			const key = `uploads/${workspace.id}/${caller.userId}/${id}`;
@@ -1472,7 +1472,7 @@ export class WorkspaceCore implements WorkspaceApi {
 			if (revision === undefined ? row.bytes_revision > 0 : revision <= row.bytes_revision) return { ok: true };
 			if (revision !== undefined) this.#sql.exec("UPDATE conversations SET bytes_revision = ? WHERE id = ?", revision, conversationId);
 			// The uploads a start of this conversation reserved are being copied into it, and are consumed when
-			// it is activated: counted once, as attaching them is today, not as the upload and its copy.
+			// it is activated: counted once, as an attachment, not as the upload and its copy.
 			const moving = first<{ n: number }>(
 				this.#sql,
 				"SELECT coalesce(sum(u.size), 0) AS n FROM uploads u JOIN runs r ON r.id = u.run_id WHERE r.conversation_id = ? AND r.state = 'starting'",

@@ -1,16 +1,13 @@
-// Readable text from HTML, in a Markdown-like form: backend/connectors/web/markdown.py's `html_to_text`,
-// for the Web connector's pages and Gmail's HTML parts (which convert with no base address, so a link is
-// its href as written). Built on Python's html.parser.HTMLParser (3.14, lib/htmlparser.ts), since pages are
-// hostile input. Scripts, styles, frames, forms and navigation are dropped. Links keep absolute http(s)
+// Readable text from HTML, in a Markdown-like form, for the Web connector's pages and Gmail's HTML parts
+// (which convert with no base address, so a link is its href as written). Built on lib/htmlparser.ts, since
+// pages are hostile input. Scripts, styles, frames, forms and navigation are dropped. Links keep absolute http(s)
 // targets; images keep only their alt text, so the conversation never gains a remote image that could
 // carry data out when shown. Moved here from connectors/gmail/html.ts.
 
-import { DIGIT_CLASS } from "./digits.ts";
 import { type Attribute, HTMLParser } from "./htmlparser.ts";
-import { PYTHON_SPACE_CLASS, codePointLength, pythonRstrip, pythonStrip } from "./text.ts";
 import { urljoin, urlsplit } from "./urlsplit.ts";
 
-const SPACES = new RegExp(`[${PYTHON_SPACE_CLASS}]+`, "g");
+const SPACES = /\s+/g;
 
 const SKIPPED = new Set([
 	"script",
@@ -72,7 +69,7 @@ const MAX_LINK = 500;
 const MAX_DEPTH = 20;
 
 function squash(text: string): string {
-	return pythonStrip(text.replace(SPACES, " "));
+	return text.replace(SPACES, " ").trim();
 }
 
 /** `_link(base_url, href)`: an absolute http(s) address, made safe for a Markdown link, or null. */
@@ -80,13 +77,13 @@ function link(baseUrl: string, href: string | null | undefined): string | null {
 	if (!href) return null;
 	let absolute: string;
 	try {
-		absolute = urljoin(baseUrl, pythonStrip(href));
+		absolute = urljoin(baseUrl, href.trim());
 	} catch {
 		// urljoin's ValueError: a malformed address.
 		return null;
 	}
 	const parts = urlsplit(absolute);
-	if (parts === null || (parts.scheme !== "http" && parts.scheme !== "https") || codePointLength(absolute) > MAX_LINK) return null;
+	if (parts === null || (parts.scheme !== "http" && parts.scheme !== "https") || absolute.length > MAX_LINK) return null;
 	// Brackets and spaces would break the Markdown link.
 	return absolute.replaceAll(" ", "%20").replaceAll("(", "%28").replaceAll(")", "%29");
 }
@@ -110,7 +107,7 @@ class Converter extends HTMLParser {
 	/** Ends the line, with at least `count` line breaks in a row. */
 	private newline(count = 1): void {
 		const tail = this.out.slice(-6).join("").replace(/ +$/, "");
-		const have = pythonStrip(tail) ? tail.length - tail.replace(/\n+$/, "").length : count;
+		const have = tail.trim() ? tail.length - tail.replace(/\n+$/, "").length : count;
 		if (have < count) this.out.push("\n".repeat(count - have));
 	}
 
@@ -162,7 +159,7 @@ class Converter extends HTMLParser {
 		} else if (tag === "hr") {
 			this.out.push("---\n");
 		} else if (tag === "img") {
-			const alt = pythonStrip(values.get("alt") || "");
+			const alt = (values.get("alt") || "").trim();
 			if (alt) this.out.push(`[image: ${squash(alt)}]`);
 		} else if (tag === "a") {
 			// Links do not nest: a new one closes the open one, as browsers do.
@@ -226,13 +223,13 @@ class Converter extends HTMLParser {
 	}
 }
 
-const LIST_ITEM = new RegExp(`^[${PYTHON_SPACE_CLASS}]*([-*]|${DIGIT_CLASS}+\\.) `, "u");
+const LIST_ITEM = /^\s*([-*]|\d+\.) /u;
 
 function tidy(text: string): string {
 	const cleaned: string[] = [];
 	let code = false;
 	for (const raw of text.split("\n")) {
-		let line = pythonRstrip(raw);
+		let line = raw.trimEnd();
 		if (line.replace(/^ +/, "").startsWith("```")) {
 			code = !code;
 			cleaned.push(line.replace(/^ +/, ""));
@@ -248,7 +245,7 @@ function tidy(text: string): string {
 		if (line.startsWith("| ")) line = line.slice(2);
 		cleaned.push(line);
 	}
-	return pythonStrip(cleaned.join("\n").replace(/\n{3,}/g, "\n\n"));
+	return cleaned.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /** `html_to_text(html, base_url)`: (text, title). */

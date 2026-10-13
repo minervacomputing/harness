@@ -5,17 +5,16 @@ import { z } from "zod";
 import type { Binding } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, denied } from "../../gateway/connector.ts";
-import { DIGIT_CLASS } from "../../lib/digits.ts";
 import { CLOUD_ID, type Site } from "../atlassian/index.ts";
 import type { ConfluenceClient, Page, Space } from "./client.ts";
 
 export const SPACE = "space";
 const HIDDEN: ReadonlySet<string> = new Set(["NOT_FOUND", "PROVIDER_FORBIDDEN"]);
 
-/** `\d` is Python's: decimal digits of any script. */
-export const ID = new RegExp(`^${DIGIT_CLASS}{1,18}$`, "u");
+/** ASCII digits only. */
+export const ID = /^\d{1,18}$/u;
 /** Ids as calls give them: written as Confluence writes them, so another spelling cannot tell an existing space from a missing one. */
-export const CANONICAL_ID = new RegExp(`^[1-9]${DIGIT_CLASS}{0,17}$`, "u");
+export const CANONICAL_ID = /^[1-9]\d{0,17}$/u;
 export const SPACE_KEY = /^~?[A-Za-z0-9_:-]{1,255}$/;
 
 export const SITE_ID_DESCRIPTION = "The site's id, from list_spaces. Needed only when the connection reaches several sites.";

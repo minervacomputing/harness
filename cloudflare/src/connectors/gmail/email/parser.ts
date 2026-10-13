@@ -8,12 +8,18 @@
 // finds the same boundaries as Python's code points; lengths that matter (folding) are counted by code
 // point in fold.ts.
 
-import { pythonLstrip, pythonRstrip, pythonSplit } from "../../../lib/text.ts";
 import { decodeEncodedWord } from "./ew.ts";
 import { Defect, HeaderParseError, KeyError, ValueError, at } from "./errors.ts";
 import { extend } from "../../../lib/arrays.ts";
 
 export const WSP = new Set([" ", "\t"]);
+/**
+ * Folding white space as a header carries it. Only these are skipped or dropped: any other invisible or
+ * Unicode space (U+FEFF, U+00A0) stays in the token, where it makes the address one Minerva refuses.
+ */
+const FWS = /[ \t\r\n]+/;
+const LEADING_FWS = /^[ \t\r\n]+/;
+const TRAILING_FWS = /[ \t\r\n]+$/;
 const CFWS_LEADER = new Set([" ", "\t", "("]);
 export const SPECIALS = new Set([..."()<>@,:;.\\\"[]"]);
 const ATOM_ENDS = new Set([...SPECIALS, ...WSP]);
@@ -421,7 +427,7 @@ class Domain extends TokenList {
 	}
 
 	get domain(): string {
-		return pythonSplit(super.value).join("");
+		return super.value.split(FWS).join("");
 	}
 }
 
@@ -463,7 +469,7 @@ class AddrSpec extends TokenList {
 
 	override get value(): string {
 		if (this.length < 3) return this.at(0).value;
-		return pythonRstrip(this.at(0).value) + this.at(1).value + pythonLstrip(this.at(2).value);
+		return this.at(0).value.replace(TRAILING_FWS, "") + this.at(1).value + this.at(2).value.replace(LEADING_FWS, "");
 	}
 }
 
@@ -553,7 +559,7 @@ class DomainLiteral extends TokenList {
 	}
 
 	get domain(): string {
-		return pythonSplit(super.value).join("");
+		return super.value.split(FWS).join("");
 	}
 }
 
@@ -634,7 +640,7 @@ function getPtextToEndchars(value: string, endchars: string): [string, string, b
 }
 
 export function getFws(value: string): Parsed<Terminal> {
-	const newvalue = pythonLstrip(value);
+	const newvalue = value.replace(LEADING_FWS, "");
 	return [whiteSpaceTerminal(value.slice(0, value.length - newvalue.length), "fws"), newvalue];
 }
 
@@ -656,7 +662,7 @@ export function getEncodedWord(value: string, terminalType = "vtext"): Parsed<En
 		remainder = again < 0 ? [] : [remstr.slice(again + 2)];
 		tok = `${tok}?=${rest}`;
 	}
-	if (pythonSplit(tok).length > 1) ew.defects.push(invalid("whitespace inside encoded word"));
+	if (tok.split(/\s+/).filter(Boolean).length > 1) ew.defects.push(invalid("whitespace inside encoded word"));
 	ew.cte = value;
 	value = remainder.join("");
 	let decoded: ReturnType<typeof decodeEncodedWord>;

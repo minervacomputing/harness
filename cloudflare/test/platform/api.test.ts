@@ -1,8 +1,6 @@
-// The JSON API of step 5c over the Worker, D1 and the Workspace Durable Object (web-api 7, 8.2, 8.3, 8.5):
-// membership, agents, connectors, connections and access, and the demo's off answers. Ported from
-// backend/tests/test_api.py, test_tenancy.py, test_web.py and test_demo.py where they test the API. Provider
-// calls go to fakes through `PROVIDER_NETWORK` (src/api/providers.ts), as the Python tests use httpx's mock
-// transport.
+// The JSON API over the Worker, D1 and the Workspace Durable Object: membership, agents, connectors,
+// connections and access, and the demo's off answers. Provider calls go to fakes through `PROVIDER_NETWORK`
+// (src/api/providers.ts).
 
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
@@ -79,7 +77,7 @@ async function teamWorkspace(members: [Account, Role][]): Promise<string> {
 	return ws;
 }
 
-/** Fake Todoist API v1 (backend/tests/conftest.py `FakeTodoist`). */
+/** Fake Todoist API v1. */
 class FakeTodoist {
 	readonly projects = [
 		{ id: "work", name: "Work" },
@@ -306,7 +304,7 @@ describe("agents (web-api 8.3)", () => {
 });
 
 describe("connectors and connections (web-api 8.5)", () => {
-	test("connectors this instance can connect, in today's order", async () => {
+	test("connectors this instance can connect, in order", async () => {
 		const ada = await account();
 		const listed = (await ada.browser.call("GET", `/api/workspaces/${ada.ws}/connectors`)).body;
 		// OAuth connectors need a configured client or dynamic registration (Todoist); the test build configures
@@ -385,7 +383,7 @@ describe("connectors and connections (web-api 8.5)", () => {
 		expect(resources.next_cursor).toBeNull();
 		// Projects do not nest, so there is nothing to browse into.
 		expectDetail(await ada.browser.call("GET", `${url}/resources?kind=project&parent=work`), 422, "Only resources that nest can be browsed, and not while searching.");
-		expectDetail(await ada.browser.call("GET", `${url}/resources?kind=task`), 422, "Todoist has no resources of type 'task'.");
+		expectDetail(await ada.browser.call("GET", `${url}/resources?kind=task`), 422, 'Todoist has no resources of type "task".');
 		expect((await ada.browser.call("GET", `${url}/resources`)).body.detail).toEqual([{ type: "invalid_type", loc: ["query", "kind"], msg: "Invalid input: expected string, received undefined" }]);
 		expect((await ada.browser.call("GET", `${url}/resources?kind=project&q=${"q".repeat(101)}`)).body.detail[0].type).toBe("too_big");
 		const bad = [
@@ -404,8 +402,8 @@ describe("connectors and connections (web-api 8.5)", () => {
 		expect(answers.map((answer) => answer.body.detail)).toEqual([
 			"Create tasks on Work also requires Read tasks.",
 			"Choose a project that the connected account can see.",
-			"Todoist does not support 'delete' on project.",
-			"Todoist has no resources of type 'task'.",
+			'Todoist does not support "delete" on project.',
+			'Todoist has no resources of type "task".',
 			"Each resource can only be listed once.",
 		]);
 		expect((await ada.browser.call("PATCH", url, { changes: [] })).body.detail[0].type).toBe("too_small");
@@ -543,7 +541,7 @@ describe("connectors and connections (web-api 8.5)", () => {
 		// The test build reaches only its fake provider, so Todoist's registration fails (test/platform/oauth.test.ts).
 		expectDetail(await ada.browser.call("POST", `${base}/todoist/authorize`), 503, "Could not register Minerva with Todoist. Try again later.");
 		const connection = await todoistConnection(ada);
-		expectDetail(await ada.browser.call("POST", `${base}/${connection}/reconnect`, { actions: ["delete"] }), 422, "Todoist has no action 'delete'.");
+		expectDetail(await ada.browser.call("POST", `${base}/${connection}/reconnect`, { actions: ["delete"] }), 422, 'Todoist has no action "delete".');
 		expect((await ada.browser.call("POST", `${base}/${connection}/reconnect`, { actions: Array(11).fill("read") })).body.detail[0].type).toBe("too_big");
 		expectDetail(await ada.browser.call("POST", `${base}/${connection}/reconnect`, { actions: ["create"] }), 503, "Could not register Minerva with Todoist. Try again later.");
 		expectDetail(await ada.browser.call("POST", `${base}/${uuid7()}/reconnect`, {}), 404, "Not Found");

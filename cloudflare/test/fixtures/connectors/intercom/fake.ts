@@ -1,9 +1,8 @@
-// backend/tests/test_intercom.py's FakeIntercom: Intercom's REST API in memory, behind an injected `fetch`.
+// Intercom's REST API in memory, behind an injected `fetch`.
 //
 // The workspace has teams Support (1) and Billing (2, whose name is secret). Conversation 100 is in Support
 // and links to 101, which is in Billing; 102 has no team, and 103 is assigned only to a teammate.
 
-import { casefold } from "../../../../src/lib/casefold.ts";
 import { type Json, type JsonObject, parseJson } from "../../../../src/lib/json.ts";
 
 export const SECRET = "SECRET merger";
@@ -183,7 +182,7 @@ export class FakeIntercom {
 				} else if (filter.field === "source.body") {
 					if (filter.operator !== "~") this.problems.push(`source.body ${String(filter.operator)}`);
 					const source = found.source as JsonObject;
-					if (!casefold(source.body as string).includes(casefold(value as string))) return false;
+					if (!(source.body as string).toLowerCase().includes((value as string).toLowerCase())) return false;
 				} else {
 					this.problems.push(`field ${String(filter.field)}`);
 				}

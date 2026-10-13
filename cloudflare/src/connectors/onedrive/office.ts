@@ -1,10 +1,9 @@
-// Text out of Word, PowerPoint and Excel files (Office Open XML), for reading only, ported from
-// backend/connectors/onedrive/office.py.
+// Text out of Word, PowerPoint and Excel files (Office Open XML), for reading only.
 //
 // These files are zip archives of XML parts (zip.ts), and only the parts that hold the text are read. Each
 // part is streamed through a SAX parser (saxes, with namespaces), which keeps no tree. A document type
 // declaration, and with it any entity, is refused. Decompression is metered across all the parts read, 64
-// KiB at a time as today, and reading stops once the text reaches its limit. Nothing a document refers to
+// KiB at a time, and reading stops once the text reaches its limit. Nothing a document refers to
 // is fetched or opened: links, embedded objects and external relationships are ignored. Formulas are not
 // evaluated, so Excel cells give the values the file stored.
 //
@@ -17,8 +16,7 @@
 
 import { SaxesParser, type SaxesAttributeNS, type SaxesTagNS } from "saxes";
 import { OperationError } from "../../gateway/connector.ts";
-import { codePointLength, sliceCodePoints } from "../../lib/text.ts";
-import { DIGIT_CLASS, decimalValue, isDigitOnly } from "../../lib/digits.ts";
+import { sliceText } from "../../lib/text.ts";
 import { BadZip, Zip } from "./zip.ts";
 
 export const MAX_ENTRIES = 5000;
@@ -29,11 +27,7 @@ export const MAX_SHARED_STRINGS = 1_000_000;
 export const MAX_SLIDES = 1000;
 export const MAX_COLUMNS = 200;
 export const CHUNK = 64 * 1024;
-/** Python's `int()` refuses strings of more digits (sys.int_info.default_max_str_digits). */
-const MAX_INT_DIGITS = 4300;
-/** `\A([A-Z]{1,3})\d+\Z`, where Python's `\d` is any decimal digit (Unicode 16). */
-const CELL = new RegExp(`^([A-Z]{1,3})${DIGIT_CLASS}+$`, "u");
-const DECIMAL = new RegExp(`^${DIGIT_CLASS}$`, "u");
+const CELL = /^([A-Z]{1,3})\d+$/u;
 const XMLNS = "http://www.w3.org/2000/xmlns/";
 
 export type Kind = "docx" | "pptx" | "xlsx";
@@ -49,7 +43,7 @@ function tooLarge(): OperationError {
 /** The text reached its limit; reading stops. */
 class Full extends Error {}
 
-/** A ValueError raised while a part is read: the part is unreadable. */
+/** A part that cannot be read. */
 class Unparsable extends Error {}
 
 class Text {
@@ -71,13 +65,14 @@ class Text {
 
 	add(value: string): void {
 		if (this.full) throw new Full();
-		const kept = sliceCodePoints(value, 0, this.remaining);
+		const kept = sliceText(value, 0, this.remaining);
 		this.parts.push(kept);
-		this.size += codePointLength(kept);
+		// A value cut short ends the text, even when the cut left a unit free rather than split a pair.
+		this.size = kept.length < value.length ? this.limit : this.size + kept.length;
 	}
 
 	value(): string {
-		return sliceCodePoints(this.parts.join(""), 0, this.limit);
+		return sliceText(this.parts.join(""), 0, this.limit);
 	}
 }
 
@@ -339,7 +334,7 @@ export class Archive {
 		} catch (error) {
 			if (error instanceof Full) return;
 			if (error instanceof OperationError) throw error;
-			// expat's errors, a bad zip, zlib's errors, EOFError, ValueError and RuntimeError.
+			// The XML parser's errors, a bad zip, a bad stream, or a part cut short.
 			throw unreadable();
 		}
 	}
@@ -446,7 +441,7 @@ async function sharedStrings(archive: Archive, part: string): Promise<string[]> 
 		(data) => {
 			// Phonetic guides (rPh) repeat a reading of the text, not the text.
 			if (depth.t && !depth.rPh) {
-				total += codePointLength(data);
+				total += data.length;
 				if (total > MAX_SHARED_TEXT) throw tooLarge();
 				current.push(data);
 			}
@@ -463,18 +458,10 @@ function column(reference: string | undefined, fallback: number): number {
 	return index - 1;
 }
 
-/** `int(raw) if raw.isdigit() else -1`, where `int()` raises a ValueError for a digit that is not decimal. */
+/** A shared string's index written as ASCII digits, or -1 for anything else. Any index past the strings' count is out of range alike. */
 function sharedIndex(raw: string): number {
-	const chars = Array.from(raw);
-	if (!chars.length || !chars.every((char) => DECIMAL.test(char) || isDigitOnly(char))) return -1;
-	if (chars.some((char) => !DECIMAL.test(char)) || chars.length > MAX_INT_DIGITS) throw new Unparsable("int");
-	let index = 0;
-	for (const char of chars) {
-		index = index * 10 + decimalValue(char);
-		// Any index past the strings' count is out of range alike.
-		if (index > MAX_SHARED_STRINGS) return MAX_SHARED_STRINGS + 1;
-	}
-	return index;
+	if (!/^\d+$/.test(raw)) return -1;
+	return Math.min(Number(raw), MAX_SHARED_STRINGS + 1);
 }
 
 function cellText(kind: string | undefined, raw: string, strings: readonly string[]): string {
@@ -543,9 +530,9 @@ async function excel(archive: Archive, text: Text): Promise<void> {
 				const cells: string[] = [];
 				const last = Math.max(...row.keys());
 				for (let i = 0; i <= last; i++) {
-					const kept = sliceCodePoints(row.get(i) ?? "", 0, budget);
+					const kept = sliceText(row.get(i) ?? "", 0, budget);
 					cells.push(kept);
-					budget -= codePointLength(kept) + 1;
+					budget -= kept.length + 1;
 					if (budget <= 0) break;
 				}
 				text.add(csvRow(cells));

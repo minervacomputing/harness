@@ -1,4 +1,4 @@
-// Xero, ported from backend/connectors/xero/connector.py. Resources are organisations; agents read contacts,
+// Xero. Resources are organisations; agents read contacts,
 // invoices, bills, accounts and tax rates, and create draft sales invoices and draft bills.
 //
 // A connection is one Xero user, and reaches the organisations they picked when connecting (Xero's
@@ -21,7 +21,6 @@
 
 import type { Account, Connector, DiscoveryPage } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
-import { casefold } from "../../lib/casefold.ts";
 import { XeroClient } from "./client.ts";
 import { ORGANISATION, label } from "./organisations.ts";
 import { GET_INVOICE, LIST_ACCOUNTS, LIST_ORGANISATIONS, LIST_TAX_RATES, SEARCH_CONTACTS, SEARCH_INVOICES } from "./reads.ts";
@@ -68,9 +67,9 @@ export function xeroConnector(): Connector<XeroClient> {
 		},
 		async discover(client, _kind, { query, cursor }): Promise<DiscoveryPage> {
 			if (cursor !== null) throw new OperationError("INVALID_CURSOR", "This page token is invalid.");
-			const folded = query ? casefold(query) : null;
+			const folded = query ? query.toLowerCase() : null;
 			const items = (await client.organisations()).map((organisation) => ({ id: organisation.tenantId, name: label(organisation) }));
-			return { items: items.filter((item) => folded === null || casefold(item.name).includes(folded)) };
+			return { items: items.filter((item) => folded === null || item.name.toLowerCase().includes(folded)) };
 		},
 		async describe(client, _kind, ids): Promise<{ [id: string]: string }> {
 			const wanted = new Set(ids);

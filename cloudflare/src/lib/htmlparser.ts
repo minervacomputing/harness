@@ -16,15 +16,14 @@
 // - a character reference stands before "</" in the text of a title or textarea.
 // Only the character references come from a library (`entities`, in text.ts and `unescapeAttributeValue`).
 //
-// Python indexes strings by code point and JavaScript by UTF-16 unit. Every index here comes from a search
-// in the same string, so the two agree, except where Python counts characters: the 34 characters the parser
-// looks back for a character reference cut by the end of the input, and `feed`'s threshold.
+// Indexes and lengths are UTF-16 units, except the 34 characters the parser looks back for a character
+// reference cut by the end of the input, which are counted by code point so that a pair is never cut.
 //
 // With `convert_charrefs=True`, text is searched only up to the next "<" (or, in an element whose content is
 // raw text, up to its end tag), so the parser's branches for "&" are never reached and are left out.
 
 import { decodeHTMLAttribute } from "entities/decode";
-import { codePointLength, htmlUnescape, pythonStrip } from "./text.ts";
+import { htmlUnescape } from "./text.ts";
 
 export type Attribute = [name: string, value: string | null];
 
@@ -104,8 +103,7 @@ export class HTMLParser {
 
 	/** Feeds text to the parser; what cannot be parsed yet is kept for the next call. */
 	feed(data: string): void {
-		// Python counts characters.
-		this.#pendingLength += codePointLength(data);
+		this.#pendingLength += data.length;
 		if (this.#pendingLength < this.#parseThreshold) {
 			this.#pending.push(data);
 			return;
@@ -117,9 +115,9 @@ export class HTMLParser {
 			this.#pending = [];
 		}
 		this.#pendingLength = 0;
-		const n = codePointLength(this.#rawdata);
+		const n = this.#rawdata.length;
 		this.#goahead(false);
-		const left = codePointLength(this.#rawdata);
+		const left = this.#rawdata.length;
 		this.#parseThreshold = left < n ? 1 : left;
 	}
 
@@ -326,7 +324,7 @@ export class HTMLParser {
 			attrs.push([name.toLowerCase(), value]);
 			k = end(m);
 		}
-		const rest = pythonStrip(rawdata.slice(k, endpos));
+		const rest = rawdata.slice(k, endpos).trim();
 		if (rest !== ">" && rest !== "/>") {
 			this.handleData(rawdata.slice(i, endpos));
 			return endpos;

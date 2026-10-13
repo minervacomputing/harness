@@ -11,7 +11,6 @@ import type { z } from "zod";
 import type { Connector, ProviderOutput, Requirement } from "../../src/contracts/connectors.ts";
 import type { GrantRow } from "../../src/contracts/policy.ts";
 import { CONNECTORS } from "../../src/connectors/index.ts";
-import { casefold } from "../../src/lib/casefold.ts";
 import { type TodoistClient, laxBool, laxInt, numberAsId, numberAsStr } from "../../src/connectors/todoist/client.ts";
 import { todoistConnector } from "../../src/connectors/todoist/connector.ts";
 import { OperationError, binding, offered, termsOf } from "../../src/gateway/connector.ts";
@@ -101,7 +100,6 @@ interface Vectors {
 	};
 	lax: { json: string; int: { ok: boolean; value?: number }; bool: { ok: boolean; value?: boolean }; str: { ok: boolean; value?: string } }[];
 	scenarios: { name: string; call: Call; responses: ScriptedResponse[]; requests: RecordedRequest[]; outcome: Outcome }[];
-	casefold: string;
 }
 
 const VECTORS = rawVectors as unknown as Vectors;
@@ -298,10 +296,12 @@ describe("responses as Python's models read them", () => {
 	test.each(VECTORS.lax.filter((expected) => !changedOnPurpose(parseJson(expected.json))))("$json", (expected) => {
 		const value = parseJson(expected.json);
 		const read = (out: unknown) => (out === null ? { ok: false } : { ok: true, value: out });
-		expect({ int: read(laxInt(value)), bool: read(laxBool(value)), str: read(numberAsStr(value)) }).toEqual({ int: expected.int, bool: expected.bool, str: expected.str });
-		// The account id is Python's too, except for a number that may have lost digits, which it refuses.
+		// A number is written as JavaScript writes it ("1e-7", "Infinity"), where Python wrote "1e-07" and "inf".
+		const str = typeof value === "number" && expected.str.ok ? { ok: true, value: String(value) } : expected.str;
+		expect({ int: read(laxInt(value)), bool: read(laxBool(value)), str: read(numberAsStr(value)) }).toEqual({ int: expected.int, bool: expected.bool, str });
+		// The account id is the same, except for a number that may have lost digits, which it refuses.
 		const unsure = typeof value === "number" && !Number.isSafeInteger(value) && (Number.isInteger(value) || !Number.isFinite(value));
-		expect(read(numberAsId(value))).toEqual(unsure ? { ok: false } : expected.str);
+		expect(read(numberAsId(value))).toEqual(unsure ? { ok: false } : str);
 	});
 
 	test("the account id is refused where it may have lost digits, and its labels are not", async () => {
@@ -315,14 +315,14 @@ describe("responses as Python's models read them", () => {
 		const refused = scripted([{ status: 200, body: '{"id": 90071992547409930, "full_name": "Ada"}', type: "application/json" }]);
 		await expect(connector.account(connector.client(TOKEN, settingsIo(refused.fetch)))).rejects.toThrow("Todoist returned an unexpected response.");
 		const labelled = scripted([{ status: 200, body: '{"id": "u1", "full_name": 1e20}', type: "application/json" }]);
-		expect(await connector.account(connector.client(TOKEN, settingsIo(labelled.fetch)))).toEqual({ id: "u1", label: "1e+20" });
+		expect(await connector.account(connector.client(TOKEN, settingsIo(labelled.fetch)))).toEqual({ id: "u1", label: "100000000000000000000" });
 	});
 
-	test("where a JavaScript number cannot hold what Python reads (client.ts)", () => {
-		// Python reads 12.0 as a float, whose str() is "12.0", and keeps every digit of a long integer.
+	test("numbers a JavaScript number cannot hold exactly (client.ts)", () => {
+		// A number is text as JavaScript writes the double it was read as.
 		expect(numberAsStr(parseJson("12.0"))).toBe("12");
-		expect(numberAsStr(parseJson("123456789012345678"))).toBe("1.2345678901234568e+17");
-		// Python keeps an int beyond 2^53 exactly, written out or as a string; it is refused here, never rounded.
+		expect(numberAsStr(parseJson("123456789012345678"))).toBe("123456789012345680");
+		// An int beyond 2^53, written out or as a string, is refused, never rounded.
 		expect(laxInt(parseJson("9007199254740992"))).toBeNull();
 		expect(laxInt("9007199254740993")).toBeNull();
 		expect(laxInt("9".repeat(400))).toBeNull();
@@ -331,8 +331,11 @@ describe("responses as Python's models read them", () => {
 	});
 });
 
+// Names are matched with toLowerCase rather than casefold, and a query is trimmed of JavaScript's whitespace.
+const CHANGED_SCENARIOS = new Set(["discover by a casefolded name", "discover by sharp s", "discover by final sigma", "discover by a ligature", "search tasks with Python whitespace"]);
+
 describe("against scripted Todoist responses, as Python's connector", () => {
-	test.each(VECTORS.scenarios.map((scenario) => [scenario.name, scenario] as const))("%s", async (_, scenario) => {
+	test.each(VECTORS.scenarios.filter((scenario) => !CHANGED_SCENARIOS.has(scenario.name)).map((scenario) => [scenario.name, scenario] as const))("%s", async (_, scenario) => {
 		const { requests, outcome } = await replay(scenario.call, scenario.responses);
 		// httpx and URLSearchParams escape a few characters differently ("~" and "*"); the decoded
 		// parameters, the path and the host are compared.
@@ -360,32 +363,6 @@ describe("against scripted Todoist responses, as Python's connector", () => {
 		const prepared = await op?.prepare(binding(CONNECTION, client), { project_id: "work", title: "x" } as never);
 		expect(prepared?.requirements.length).toBe(1);
 		expect(script.requests).toEqual([]);
-	});
-});
-
-describe("casefold", () => {
-	const table = new Map(
-		VECTORS.casefold.split(" ").map((entry): [number, string] => {
-			const [point, folded] = entry.split(":") as [string, string];
-			return [Number.parseInt(point, 16), String.fromCodePoint(...folded.split(".").map((unit) => Number.parseInt(unit, 16)))];
-		}),
-	);
-
-	test(`is Python ${VECTORS.python}'s for every code point (Unicode ${VECTORS.unicode})`, () => {
-		expect(table.size).toBe(1557);
-		const wrong: string[] = [];
-		for (let point = 0; point <= 0x10ffff; point++) {
-			if (point >= 0xd800 && point <= 0xdfff) continue;
-			const char = String.fromCodePoint(point);
-			if (casefold(char) !== (table.get(point) ?? char)) wrong.push(point.toString(16));
-		}
-		expect(wrong).toEqual([]);
-	});
-
-	test("folds a string one code point at a time and keeps lone surrogates", () => {
-		expect(casefold("Große STRAẞE ΣΑΣ ﬁ İ")).toBe("grosse strasse σασ fi i̇");
-		expect(casefold("\ud800A\udfffB")).toBe("\ud800a\udfffb");
-		expect(casefold("\u{10400}")).toBe("\u{10428}");
 	});
 });
 

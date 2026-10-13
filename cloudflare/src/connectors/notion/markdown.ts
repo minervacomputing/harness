@@ -1,4 +1,4 @@
-// Page text as agents see it and write it, ported from backend/connectors/notion/markdown.py.
+// Page text as agents see it and write it.
 //
 // Notion's page markdown names other pages: child pages and databases with their titles, mentions with the
 // mentioned page's title, links whose address carries the page's title, and synced blocks with content that
@@ -18,12 +18,12 @@
 // none of it afterwards, the page as a whole may gain none, and the edit may not change code fences or the
 // parity of backticks.
 //
-// The patterns are Python's, with its `\s`, `\w`, `\b` and IGNORECASE spelled out (patterns.ts). Positions
-// are UTF-16 offsets here and code points in Python; they are only used within the same text, so the
-// outcome is the same.
+// The patterns spell out `\w`, `\b` and IGNORECASE for the `u` flag (patterns.ts). An address runs up to
+// whitespace, but U+FEFF, which `\s` counts and no one sees, stays part of it, so that it cannot end an
+// address before the page id that carries its title.
 
 import { OperationError } from "../../gateway/connector.ts";
-import { PYTHON_SPACE_CLASS, WORD_CLASS, pythonRstrip, pythonStrip } from "../../lib/text.ts";
+import { WORD_CLASS } from "../../lib/text.ts";
 import {
 	ALNUM_DASH_CASELESS,
 	HEX_CASELESS,
@@ -37,7 +37,8 @@ import {
 
 /** Tags whose content is another object's title. */
 export const TITLED = ["page", "database", "mention-page", "mention-database", "mention-data-source", "mention-agent"] as const;
-const TITLED_OPEN = new RegExp(`<(${TITLED.map(ignoreCase).join("|")})(?=[${PYTHON_SPACE_CLASS}/>])([^<>]*)>`, "gu");
+/** A titled tag's name ends at whitespace or any control character too, so that an odd separator hides more, not less. */
+const TITLED_OPEN = new RegExp(`<(${TITLED.map(ignoreCase).join("|")})(?=[\\s\\p{Cc}/>])([^<>]*)>`, "gu");
 const URL_ATTRIBUTE = new RegExp(`${WORD_START}url="([^"<>]*)"`, "u");
 export const SYNCED_OPEN = "<synced_block_reference";
 export const SYNCED_CLOSE = "</synced_block_reference>";
@@ -71,11 +72,11 @@ export const DENIED_TAGS: ReadonlySet<string> = new Set([
 	"meeting-notes",
 	"meeting_notes",
 ]);
-const TAG = new RegExp(`<[${PYTHON_SPACE_CLASS}]*/?[${PYTHON_SPACE_CLASS}]*([A-Za-z][${WORD_CLASS}:-]*)([^<>]*)>`, "gu");
-const LINK_ATTRIBUTE = new RegExp(`${WORD_START}(?:${["src", "url", "href", "data", "srcset", "poster", "action"].map(ignoreCase).join("|")})[${PYTHON_SPACE_CLASS}]*=`, "u");
+const TAG = new RegExp(`<\\s*/?\\s*([A-Za-z][${WORD_CLASS}:-]*)([^<>]*)>`, "gu");
+const LINK_ATTRIBUTE = new RegExp(`${WORD_START}(?:${["src", "url", "href", "data", "srcset", "poster", "action"].map(ignoreCase).join("|")})\\s*=`, "u");
 const NOTION_MENTION = new RegExp(
-	`^(?:[${PYTHON_SPACE_CLASS}]+url="https://(?:www\\.)?notion\\.so/[^"${PYTHON_SPACE_CLASS}<>]*"[${PYTHON_SPACE_CLASS}]*/?[${PYTHON_SPACE_CLASS}]*` +
-		`|[${PYTHON_SPACE_CLASS}]+url="https://[a-z0-9-]+\\.notion\\.site/[^"${PYTHON_SPACE_CLASS}<>]*"[${PYTHON_SPACE_CLASS}]*/?[${PYTHON_SPACE_CLASS}]*)$`,
+	`^(?:\\s+url="https://(?:www\\.)?notion\\.so/[^"\\s<>]*"\\s*/?\\s*` +
+		`|\\s+url="https://[a-z0-9-]+\\.notion\\.site/[^"\\s<>]*"\\s*/?\\s*)$`,
 	"u",
 );
 export const MENTIONS: ReadonlySet<string> = new Set(["mention-page", "mention-database"]);
@@ -83,7 +84,7 @@ export const MAX_WIDENING = 20;
 /** A Notion page address; the part before the id is the page's title. */
 const NOTION_URL = new RegExp(
 	`${ignoreCase("https://")}(?:(?:${ignoreCase("www.")})?${ignoreCase("notion.so")}|[${ALNUM_DASH_CASELESS}]+${ignoreCase(".notion.site")})` +
-		`/[^${PYTHON_SPACE_CLASS}"'<>()\\[\\]]*?([${HEX_CASELESS}]{32})(?![${HEX_CASELESS}])[^${PYTHON_SPACE_CLASS}"'<>()\\[\\]]*`,
+		`/(?:[^\\s"'<>()\\[\\]]|\\uFEFF)*?([${HEX_CASELESS}]{32})(?![${HEX_CASELESS}])(?:[^\\s"'<>()\\[\\]]|\\uFEFF)*`,
 	"gu",
 );
 const FENCE = new RegExp(`${LINE_START}[ \\t]*(\`{3,}|~{3,})`, "gu");
@@ -121,13 +122,13 @@ function redactTitled(markdown: string): string {
 		const tag = url ? `<${name} url="${url[1]}"` : `<${name}`;
 		const end = match.index + match[0].length;
 		parts.push(markdown.slice(position, match.index));
-		if (pythonRstrip(attributes).endsWith("/")) {
+		if (attributes.trimEnd().endsWith("/")) {
 			parts.push(`${tag}/>`);
 			position = end;
 			continue;
 		}
 		parts.push(`${tag}></${name}>`);
-		const close = search(new RegExp(`</${ignoreCase(name)}[${PYTHON_SPACE_CLASS}]*>`, "gu"), markdown, end);
+		const close = search(new RegExp(`</${ignoreCase(name)}\\s*>`, "gu"), markdown, end);
 		if (close === null) return parts.join("");
 		position = close.index + close[0].length;
 	}
@@ -153,7 +154,7 @@ function refusals(text: string): [text: string, reason: string][] {
 		const attributes = match[2] as string;
 		if (DENIED_TAGS.has(name)) found.push([match[0], `must not contain <${name}> tags`]);
 		else if (MENTIONS.has(name)) {
-			if (pythonStrip(attributes) && !NOTION_MENTION.test(attributes)) found.push([match[0], `<${name}> must link to a notion.so page`]);
+			if (attributes.trim() && !NOTION_MENTION.test(attributes)) found.push([match[0], `<${name}> must link to a notion.so page`]);
 		} else if (LINK_ATTRIBUTE.test(attributes)) found.push([match[0], "must not contain tags that link to other sites; use [text](url) links"]);
 	}
 	return found;
@@ -175,7 +176,7 @@ function once(text: string, part: string): boolean {
 }
 
 function hiddenWithin(visible: string, start: number, end: number): boolean {
-	// Python's `search(text, pos, endpos)`: nothing after `endpos` is seen.
+	// Nothing after `endpos` is seen.
 	return search(HIDDEN_MARK, visible.slice(0, end), start) !== null;
 }
 

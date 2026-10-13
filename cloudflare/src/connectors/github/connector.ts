@@ -26,10 +26,8 @@ import { z } from "zod";
 import type { Binding, Connector, DiscoveryItem, DiscoveryPage, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
-import { casefold } from "../../lib/casefold.ts";
-import { pythonIsDigit } from "../../lib/digits.ts";
 import { isDict, type Json, type JsonObject, parseJson } from "../../lib/json.ts";
-import { PLAIN_TEXT, SINGLE_LINE, codePointLength, isPlainText, isSingleLine, truncate } from "../../lib/text.ts";
+import { PLAIN_TEXT, SINGLE_LINE, isPlainText, isSingleLine, truncate } from "../../lib/text.ts";
 import { fromUtf8 } from "../../lib/bytes.ts";
 import { type Comment, type Entry, GitHubClient, type Issue, MAX_INLINE_FILE, type Pull, type Repository } from "./client.ts";
 import { extend } from "../../lib/arrays.ts";
@@ -250,8 +248,8 @@ export function pageParams(cursor: string | null): { [key: string]: string } {
 	const valid =
 		isDict(state) &&
 		Object.keys(state).every((key) => key === "page" || key === "after") &&
-		Object.values(state).every((value) => typeof value === "string" && codePointLength(value) > 0 && codePointLength(value) <= 500 && isPrintable(value)) &&
-		(!Object.hasOwn(state, "page") || (pythonIsDigit(state.page as string) && codePointLength(state.page as string) <= 6));
+		Object.values(state).every((value) => typeof value === "string" && value.length > 0 && value.length <= 500 && isPrintable(value)) &&
+		(!Object.hasOwn(state, "page") || /^\d{1,6}$/.test(state.page as string));
 	if (!valid) throw new OperationError("INVALID_CURSOR", INVALID_CURSOR);
 	return state as { [key: string]: string };
 }
@@ -261,12 +259,7 @@ export function pageCursor(params: { [key: string]: string } | null): string | n
 	return params !== null && Object.keys(params).length > 0 ? JSON.stringify(params) : null;
 }
 
-/**
- * Python's `isinstance(value, int)` for a parsed JSON value: an integer, or a boolean (an int in Python) as 0
- * or 1. Python would then send a page of `true` to GitHub as "true", which is sent as "1" here.
- */
-function pythonInt(value: Json | undefined): number | null {
-	if (typeof value === "boolean") return Number(value);
+function integer(value: Json | undefined): number | null {
 	return typeof value === "number" && Number.isInteger(value) ? value : null;
 }
 
@@ -282,8 +275,8 @@ export function repositoriesCursor(cursor: string | null): [installation: number
 	try {
 		const state = parseJson(cursor);
 		if (isDict(state) && Object.hasOwn(state, "installation") && Object.hasOwn(state, "page")) {
-			installation = pythonInt(state.installation);
-			page = pythonInt(state.page);
+			installation = integer(state.installation);
+			page = integer(state.page);
 		}
 	} catch {
 		// Not JSON: invalid, as below.
@@ -461,7 +454,7 @@ function getPullRequest(maxPatchChars: number) {
 						let patchTruncated = false;
 						if (patch !== null) {
 							[patch, patchTruncated] = truncate(patch, Math.max(budget, 0));
-							budget -= codePointLength(patch);
+							budget -= patch.length;
 						}
 						listed.push({
 							path: file.filename,
@@ -686,13 +679,13 @@ export function githubConnector(options: GitHubOptions = {}): Connector<GitHubCl
 				const [found, following] = await repositoriesPage(client, cursor, 100);
 				return { items: found.map(item), nextCursor: following };
 			}
-			const text = casefold(query);
+			const text = query.toLowerCase();
 			const matches: Repository[] = [];
 			let following: string | null = null;
 			for (let round = 0; round < MAX_DISCOVERY_PAGES; round++) {
 				let found: Repository[];
 				[found, following] = await repositoriesPage(client, following, 100);
-				extend(matches, found.filter((repository) => casefold(repository.full_name).includes(text)));
+				extend(matches, found.filter((repository) => repository.full_name.toLowerCase().includes(text)));
 				if (following === null) return { items: matches.map(item), nextCursor: null };
 			}
 			throw new OperationError("PROVIDER_LIMIT", "There are more repositories than Minerva can search.");
@@ -706,7 +699,7 @@ export function githubConnector(options: GitHubOptions = {}): Connector<GitHubCl
 				while (next < ids.length) {
 					const index = next++;
 					const repoId = ids[index] as string;
-					if (!pythonIsDigit(repoId)) continue;
+					if (!/^\d+$/.test(repoId)) continue;
 					try {
 						found[index] = await client.repository(repoId);
 					} catch (error) {

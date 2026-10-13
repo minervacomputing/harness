@@ -5,8 +5,7 @@ import type { Binding, Prepared, ProviderOutput, ScopedRecord } from "../../cont
 import type { Resource } from "../../contracts/policy.ts";
 import { defineOperation } from "../../gateway/connector.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
-import { compareCodePoints } from "../../lib/order.ts";
-import { SINGLE_LINE, isSingleLine, pythonSplit, truncate } from "../../lib/text.ts";
+import { SINGLE_LINE, isSingleLine, truncate } from "../../lib/text.ts";
 import { type IssueSummary, type Label, type Team, authorOf } from "./client.ts";
 import { redact } from "./markdown.ts";
 import {
@@ -27,6 +26,7 @@ import {
 	teamMoved,
 	teamResource,
 } from "./teams.ts";
+import { compareText } from "../../lib/arrays.ts";
 
 export const MAX_READ_DESCRIPTION = 20_000;
 export const MAX_READ_COMMENT = 4_000;
@@ -200,7 +200,7 @@ export const SEARCH_ISSUES = defineOperation<z.output<typeof SearchIssues>>({
 			async execute(): Promise<ProviderOutput> {
 				// Titles only: Linear's text search also matches descriptions, whose links carry titles of issues
 				// in other teams, so which issues matched would reveal words of those titles.
-				const words = pythonSplit(data.query).slice(0, MAX_SEARCH_WORDS);
+				const words = data.query.split(/\s+/).filter(Boolean).slice(0, MAX_SEARCH_WORDS);
 				const conditions = [...stateCondition(data.state), ...words.map((word) => ({ title: { containsIgnoreCase: word } }))];
 				return issuePage(binding, resource, conditions, data.limit, data.cursor);
 			},
@@ -235,7 +235,7 @@ export const GET_ISSUE = defineOperation<z.output<typeof IssueInput>>({
 				}
 				const children = issue.children.nodes;
 				const comments: Json[] = [];
-				const ordered = [...issue.comments.nodes].sort((a, b) => compareCodePoints(a.createdAt || "", b.createdAt || ""));
+				const ordered = [...issue.comments.nodes].sort((a, b) => compareText(a.createdAt || "", b.createdAt || ""));
 				for (const comment of ordered) {
 					if (comment.hideInLinear) continue;
 					const [body, bodyTruncated] = truncate(redact(comment.body), MAX_READ_COMMENT);

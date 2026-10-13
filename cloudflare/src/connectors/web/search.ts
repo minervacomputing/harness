@@ -1,4 +1,4 @@
-// Brave Search API, ported from backend/connectors/web/search.py: web results as titles, addresses and
+// Brave Search API: web results as titles, addresses and
 // snippets, never page contents.
 //
 // The key is the operator's. A key Brave refuses means search is unavailable on this instance, not that the
@@ -9,13 +9,13 @@ import type { ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
 import { laxBool } from "../../lib/lax.ts";
-import { PYTHON_SPACE_CLASS, htmlUnescape, pythonStrip } from "../../lib/text.ts";
+import { htmlUnescape } from "../../lib/text.ts";
 
 export const BASE_URL = "https://api.search.brave.com/res/v1/";
 /** Brave pages by result page, from 0. */
 export const MAX_PAGE = 9;
 
-// The answer as Pydantic reads it in lax mode, unknown fields ignored: a missing string is "", a null one
+// The answer, unknown fields ignored: a missing string is "", a null one
 // fails the whole answer.
 const BraveResult = z.object({
 	title: z.string().default(""),
@@ -32,11 +32,11 @@ const BraveResponse = z.object({
 export type BraveResponse = z.output<typeof BraveResponse>;
 
 const TAGS = /<[^>]*>/g;
-const SPACES = new RegExp(`[${PYTHON_SPACE_CLASS}]+`, "g");
+const SPACES = /\s+/g;
 
 /** Snippets may carry markup for highlighting; keep only the text. */
 export function plain(text: string): string {
-	return pythonStrip(htmlUnescape(text.replace(TAGS, "")).replace(SPACES, " "));
+	return htmlUnescape(text.replace(TAGS, "")).replace(SPACES, " ").trim();
 }
 
 function unavailable(): OperationError {

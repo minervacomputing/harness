@@ -1,4 +1,4 @@
-// Stripe, through its REST API with a restricted key, ported from backend/connectors/stripe/connector.py.
+// Stripe, through its REST API with a restricted key.
 // Agents read customers and what is billed to them, refund payments and credit customer balances, each
 // within amount caps users choose.
 //
@@ -21,7 +21,7 @@
 
 import type { Account, Connector, DiscoveryItem, DiscoveryPage } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
-import { codePointLength, pythonStrip, sliceCodePoints } from "../../lib/text.ts";
+import { sliceText } from "../../lib/text.ts";
 import { CUSTOMER_ID, type Customer, KEY, SEARCH_PAGE, StripeClient, nextCursor } from "./client.ts";
 import * as money from "./money.ts";
 import { GET_CUSTOMER, LIST_CUSTOMERS, LIST_INVOICES, LIST_PAYMENTS, LIST_SUBSCRIPTIONS } from "./reads.ts";
@@ -93,8 +93,8 @@ async function describe(client: StripeClient, kind: string, ids: string[]): Prom
 }
 
 async function search(client: StripeClient, query: string, pageToken: string | null): Promise<DiscoveryPage> {
-	const value = sliceCodePoints(pythonStrip(query.replace(UNQUOTED, "")), 0, 100);
-	if (codePointLength(value) < 3) return { items: [], nextCursor: null };
+	const value = sliceText(query.replace(UNQUOTED, "").trim(), 0, 100);
+	if (value.length < 3) return { items: [], nextCursor: null };
 	if (pageToken !== null && !(pageToken.startsWith("s:") && SEARCH_PAGE.test(pageToken.slice(2)))) throw invalidCursor();
 	const page = await client.searchCustomers(`email~"${value}" OR name~"${value}"`, {
 		limit: DISCOVER_PAGE,
@@ -110,7 +110,7 @@ async function amounts(client: StripeClient, query: string | null): Promise<Disc
 	let currency: string;
 	if (query) {
 		try {
-			currency = money.currency(pythonStrip(query));
+			currency = money.currency(query.trim());
 		} catch (error) {
 			if (!(error instanceof money.MoneyError)) throw error;
 			return { items: [], nextCursor: null };
@@ -186,8 +186,8 @@ export function stripeConnector(): Connector<StripeClient> {
 
 		async discover(client, kind, { query, cursor: pageCursor }): Promise<DiscoveryPage> {
 			if (kind === AMOUNT) return amounts(client, query);
-			if (query && CUSTOMER_ID.test(pythonStrip(query))) {
-				const described = await describe(client, CUSTOMER, [pythonStrip(query)]);
+			if (query && CUSTOMER_ID.test(query.trim())) {
+				const described = await describe(client, CUSTOMER, [query.trim()]);
 				return { items: Object.entries(described).map(([id, name]) => ({ id, name })), nextCursor: null };
 			}
 			if (query) return search(client, query, pageCursor);

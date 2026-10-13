@@ -5,7 +5,7 @@
 // test/fixtures/connectors/intercom/vectors.json compares it with Python on hand-written and random strings.
 
 import { type PyDateTime, datetimeFromIsoFormat, pad, unixMicros } from "../../lib/isoformat.ts";
-import { ValueError } from "../../lib/pyerrors.ts";
+import { TextError } from "../../lib/text.ts";
 
 /** What the times records show: 9999-12-31T23:59:59 is the last. */
 const MAX_TIMESTAMP = 253_402_300_799;
@@ -13,7 +13,7 @@ const MAX_TIMESTAMP = 253_402_300_799;
 export type IsoMoment = PyDateTime;
 
 /**
- * `datetime.fromisoformat(value)`, or null where it raises ValueError. A string with a lone surrogate is
+ * `datetime.fromisoformat(value)`, or null where it refuses the value. A string with a lone surrogate is
  * refused outright: Python takes one standing for the separator, but values reach here as JSON text, and
  * the port has always refused them.
  */
@@ -22,7 +22,7 @@ export function fromIsoFormat(value: string): IsoMoment | null {
 	try {
 		return datetimeFromIsoFormat(value);
 	} catch (error) {
-		if (error instanceof ValueError) return null;
+		if (error instanceof TextError) return null;
 		throw error;
 	}
 }

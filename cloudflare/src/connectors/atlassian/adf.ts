@@ -1,5 +1,4 @@
-// Atlassian Document Format (ADF) as agents read it and write it, ported from
-// backend/connectors/atlassian/adf.py.
+// Atlassian Document Format (ADF) as agents read it and write it.
 //
 // Jira and Confluence store rich text as ADF, a JSON tree. Read text is that tree as plain text, without
 // what could show an object the agent may not read:
@@ -17,13 +16,13 @@
 // notify anyone or format anything. It may not contain an address to Atlassian in any encoding, since
 // Atlassian may show it as a smart link previewing something the agent may not read.
 //
-// As in Python, a node whose `type` is a list or an object raises a TypeError (the frozenset lookups cannot
-// hash it), which the model sees as the generic failure.
+// A node whose `type` is a list or an object raises a TypeError, which the model sees as the generic
+// failure.
 
 import type { Json } from "../../lib/json.ts";
-import { decoded, isPlainText, PLAIN_TEXT, PYTHON_SPACE_CLASS, pythonRstrip, pythonStrip, TextError } from "../../lib/text.ts";
+import { decoded, isPlainText, PLAIN_TEXT, TextError, WORDS } from "../../lib/text.ts";
 import { OperationError } from "../../gateway/connector.ts";
-import { IGNORECASE_I, pythonInt } from "./python.ts";
+import { IGNORECASE_I } from "./python.ts";
 
 export const LINK = "[Atlassian link]";
 export const UNSUPPORTED = "[unsupported content]";
@@ -36,7 +35,6 @@ const ATLASSIAN = new RegExp(
 	"iu",
 );
 const SCHEME = /^[a-z\u0130\u0131][a-z0-9+.\-\u0130\u0131]*:/iu;
-const WORD = new RegExp(`[^${PYTHON_SPACE_CLASS}]+`, "gu");
 
 export const ATLASSIAN_ADDRESS =
 	"must not contain Atlassian addresses: Atlassian may show them as previews of issues or pages you may not read";
@@ -91,28 +89,29 @@ function namesHost(flat: string, hosts: readonly string[]): boolean {
  * relative address, which resolves on the site showing it.
  */
 export function internal(address: string, hosts: readonly string[] = []): boolean {
-	const flat = pythonStrip(flattened(address));
+	const flat = flattened(address).trim();
 	if (ATLASSIAN.test(flat) || namesHost(flat, hosts)) return true;
 	return !SCHEME.test(flat) || flat.startsWith("//");
 }
 
 /** Plain text with every word that addresses Atlassian replaced. */
 export function redact(text: string, hosts: readonly string[] = []): string {
-	return text.replace(WORD, (word) => {
+	return text.replace(WORDS, (word) => {
 		const flat = flattened(word);
 		return ATLASSIAN.test(flat) || namesHost(flat, hosts) ? LINK : word;
 	});
 }
 
-/** The earliest and latest instants Python's datetime holds, in milliseconds: years 1 to 9999. */
-const MIN_MS = -62_135_596_800_000n;
-const MAX_MS = 253_402_300_799_999n;
+/** The earliest and latest instants shown, in milliseconds: years 1 to 9999. */
+const MIN_MS = -62_135_596_800_000;
+const MAX_MS = 253_402_300_799_999;
 
-/** `datetime.fromtimestamp(int(timestamp) / 1000, UTC).date().isoformat()`, or "[date]" where it raises. */
+/** A date node's day from its timestamp in milliseconds (an integer, or one written as digits), or "[date]". */
 export function date(timestamp: Json | undefined): string {
-	const ms = pythonInt(timestamp);
-	if (ms === null || ms < MIN_MS || ms > MAX_MS) return "[date]";
-	return new Date(Number(ms)).toISOString().slice(0, 10);
+	const text = typeof timestamp === "string" ? timestamp.trim() : null;
+	const ms = typeof timestamp === "number" ? Math.trunc(timestamp) : text !== null && /^[+-]?\d{1,16}$/.test(text) ? Number(text) : null;
+	if (ms === null || !(ms >= MIN_MS && ms <= MAX_MS)) return "[date]";
+	return new Date(ms).toISOString().slice(0, 10);
 }
 
 class Reader {
@@ -181,7 +180,7 @@ class Reader {
 	}
 
 	flush(href: string, label: string[]): void {
-		const text = pythonStrip(label.join(""));
+		const text = label.join("").trim();
 		if (!href || internal(href, this.hosts)) this.out.push(LINK);
 		else if (text && text !== href) this.out.push(`${text} (${href})`);
 		else this.out.push(href);
@@ -249,7 +248,7 @@ class Reader {
 
 	result(): string {
 		const lines = this.out.join("").replaceAll("\u00a0", " ").split("\n");
-		let joined = pythonStrip(lines.map(pythonRstrip).join("\n").replace(/\n{3,}/g, "\n\n"));
+		let joined = lines.map((line) => line.trimEnd()).join("\n").replace(/\n{3,}/g, "\n\n").trim();
 		if (this.cut) joined = joined ? `${joined}\n[more content not shown]` : "[more content not shown]";
 		return redact(joined, this.hosts);
 	}
@@ -290,7 +289,7 @@ export function checkWritten(text: string): string {
 /** An ADF document showing `text` literally: paragraphs at blank lines, line breaks within them. */
 export function written(text: string): { [key: string]: Json } {
 	const paragraphs: Json[] = [];
-	for (const block of pythonStrip(text.replaceAll("\r\n", "\n").replaceAll("\r", "\n")).split(/\n[ \t]*\n/)) {
+	for (const block of text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").trim().split(/\n[ \t]*\n/)) {
 		const content: Json[] = [];
 		for (const line of block.split("\n")) {
 			if (content.length) content.push({ type: "hardBreak" });

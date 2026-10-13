@@ -1,9 +1,9 @@
-// Run events and how runs end: payloads exactly as today's backend stores them (runs 2.3, 6.2; frontend 4.4).
+// Run events and how runs end: their payloads, as the frontend reads them.
 // Appending, with seq numbers and fences, is the store's (store.ts).
 
 import type { NewRunEvent, PhaseText, StatusEventData } from "../contracts/events.ts";
 import type { CancelReason, RunEnd, RunStatus } from "../contracts/runs.ts";
-import { sliceCodePoints } from "../lib/text.ts";
+import { sliceText } from "../lib/text.ts";
 
 /** `error_message` and a terminal status's `message` are cut to this many characters. */
 export const ERROR_MESSAGE_CHARS = 500;
@@ -35,7 +35,7 @@ export function endFor(reason: CancelReason): RunEnd {
 /** `{status}`, with `message` cut to 500 characters only when the run has one; `completed` never does. */
 export function terminalStatus(end: RunEnd): StatusEventData {
 	if (end.status === "completed" || !end.message) return { status: end.status } as StatusEventData;
-	return { status: end.status, message: sliceCodePoints(end.message, 0, ERROR_MESSAGE_CHARS) };
+	return { status: end.status, message: sliceText(end.message, 0, ERROR_MESSAGE_CHARS) };
 }
 
 export function statusEvent(data: StatusEventData): NewRunEvent {
@@ -43,7 +43,7 @@ export function statusEvent(data: StatusEventData): NewRunEvent {
 }
 
 export function phaseEvent(text: PhaseText | string): NewRunEvent {
-	return { type: "phase", data: { text: sliceCodePoints(text, 0, PHASE_CHARS) } };
+	return { type: "phase", data: { text: sliceText(text, 0, PHASE_CHARS) } };
 }
 
 /**

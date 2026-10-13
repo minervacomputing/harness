@@ -1,7 +1,5 @@
-// Connections and access in the Workspace, over node:sqlite: saving connections and built-in services
-// (connectors 11.6, 11.9), access settings and grant edits (connectors 4.5, 13; the access cases of
-// backend/tests/test_api.py and test_contract.py), consent (11.7) and the Needs-reconnecting
-// compare-and-set (9.2).
+// Connections and access in the Workspace, over node:sqlite: saving connections and built-in services,
+// access settings and grant edits, consent and the Needs-reconnecting compare-and-set.
 
 import { describe, expect, test } from "vitest";
 import { resourceKey } from "../../src/gateway/grants.ts";
@@ -196,8 +194,8 @@ describe("access settings", () => {
 		const id = await connectMixed(h, {});
 		const bad: [{ kind: string; id: string; actions: string[] }[], string][] = [
 			[[{ kind: "folder", id: "inbox", actions: ["create"] }], "Create on Inbox also requires Read."],
-			[[{ kind: "folder", id: "inbox", actions: ["delete"] }], "Mixed does not support 'delete' on folder."],
-			[[{ kind: "task", id: "inbox", actions: ["read"] }], "Mixed has no resources of type 'task'."],
+			[[{ kind: "folder", id: "inbox", actions: ["delete"] }], 'Mixed does not support "delete" on folder.'],
+			[[{ kind: "task", id: "inbox", actions: ["read"] }], 'Mixed has no resources of type "task".'],
 			[
 				[
 					{ kind: "folder", id: "inbox", actions: ["read"] },
@@ -206,7 +204,7 @@ describe("access settings", () => {
 				"Each resource can only be listed once.",
 			],
 			[[{ kind: "label", id: "*", actions: ["read"] }], "Permissions for label resources are set one at a time."],
-			[[{ kind: "account", id: id, actions: ["read"] }], "Mixed has no resources of type 'account'."],
+			[[{ kind: "account", id: id, actions: ["read"] }], 'Mixed has no resources of type "account".'],
 			[[], "Nothing to change."],
 		];
 		for (const [changes, detail] of bad) {

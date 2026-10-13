@@ -1,4 +1,4 @@
-// Confluence Cloud, ported from backend/connectors/confluence/connector.py. Resources are sites and their
+// Confluence Cloud. Resources are sites and their
 // spaces; agents read and search pages, comment on them and create them.
 //
 // One connection reaches the Confluence sites the user picked on Atlassian's consent screen (see
@@ -32,8 +32,6 @@
 
 import type { Connector, DiscoveryItem, DiscoveryPage } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
-import { casefold } from "../../lib/casefold.ts";
-import { DIGIT_CLASS, decimalValue } from "../../lib/digits.ts";
 import { CLOUD_ID, type Site, oauth } from "../atlassian/index.ts";
 import { BATCH_LIMIT, ConfluenceClient, type Space } from "./client.ts";
 import { ID, SPACE, spaceId } from "./pages.ts";
@@ -43,7 +41,7 @@ import { ADD_COMMENT, CREATE_PAGE } from "./writes.ts";
 export const DISCOVERY_PAGE = 50;
 export const MAX_DESCRIBE = BATCH_LIMIT;
 
-const CURSOR = new RegExp(`^(${DIGIT_CLASS}{1,2}):([\\x21-\\x7e]{0,990})$`, "u");
+const CURSOR = /^(\d{1,2}):([\x21-\x7e]{0,990})$/u;
 
 function spaceName(site: Site, space: Space, sites: readonly Site[]): string {
 	let name = `${space.name || space.key} (${space.key})`;
@@ -55,8 +53,8 @@ function spaceName(site: Site, space: Space, sites: readonly Site[]): string {
 export function discoveryCursor(cursor: string | null, sites: readonly unknown[]): [number, string | null] {
 	if (cursor === null) return [0, null];
 	const match = CURSOR.exec(cursor);
-	if (match === null || decimalValue(match[1] as string) >= sites.length) throw new OperationError("INVALID_CURSOR", "This page token is invalid.");
-	return [decimalValue(match[1] as string), match[2] || null];
+	if (match === null || Number(match[1]) >= sites.length) throw new OperationError("INVALID_CURSOR", "This page token is invalid.");
+	return [Number(match[1]), match[2] || null];
 }
 
 export function confluenceConnector(): Connector<ConfluenceClient> {
@@ -99,16 +97,16 @@ export function confluenceConnector(): Connector<ConfluenceClient> {
 		async discover(client, _kind, { query, cursor }): Promise<DiscoveryPage> {
 			const sites = await client.sites();
 			const [index, token] = discoveryCursor(cursor, sites);
-			const folded = query ? casefold(query) : null;
+			const folded = query ? query.toLowerCase() : null;
 			const items: DiscoveryItem[] = [];
 			if (cursor === null) {
-				for (const site of sites) if (folded === null || casefold(site.label).includes(folded)) items.push({ id: site.id, name: site.label });
+				for (const site of sites) if (folded === null || site.label.toLowerCase().includes(folded)) items.push({ id: site.id, name: site.label });
 			}
 			if (sites.length === 0) return { items, nextCursor: null };
 			const site = sites[index] as Site;
 			const [spaces, after] = await client.spaces(site.id, { limit: DISCOVERY_PAGE, cursor: token });
 			for (const space of spaces) {
-				if (ID.test(space.id) && (folded === null || casefold(`${space.name || ""} ${space.key}`).includes(folded))) {
+				if (ID.test(space.id) && (folded === null || `${space.name || ""} ${space.key}`.toLowerCase().includes(folded))) {
 					items.push({ id: spaceId(site, space.id), name: spaceName(site, space, sites) });
 				}
 			}

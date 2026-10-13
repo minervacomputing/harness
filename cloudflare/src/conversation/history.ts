@@ -4,7 +4,7 @@
 // seeded with this history when it is created; a resumed attempt keeps what its session holds.
 
 import type { AttachmentOut, FolderChangesOut } from "../contracts/api.ts";
-import { codePointLength, sliceCodePoints } from "../lib/text.ts";
+import { sliceText } from "../lib/text.ts";
 
 /** Earlier messages the gateway hands the loop (runs 4.2). */
 export const HISTORY_LIMIT = 20;
@@ -108,10 +108,10 @@ export function historyOf(messages: readonly StoredMessage[], runId: string): Re
 	return earlier.map((message) => ({ role: message.role, content: withFiles(message) }));
 }
 
-/** `clip`: over 30,000 characters keeps the first 30,000 and adds the suffix. Characters are code points. */
+/** Over 30,000 UTF-16 units keeps the first 30,000, never splitting a pair, and adds the suffix. */
 export function clip(text: string): string {
-	if (codePointLength(text) <= MESSAGE_LIMIT) return text;
-	return `${sliceCodePoints(text, 0, MESSAGE_LIMIT)}${CLIPPED}`;
+	if (text.length <= MESSAGE_LIMIT) return text;
+	return `${sliceText(text, 0, MESSAGE_LIMIT)}${CLIPPED}`;
 }
 
 /**
@@ -124,7 +124,7 @@ export function recentHistory(history: readonly Replayed[]): Replayed[] {
 	for (let i = history.length - 1; i >= 0; i--) {
 		const message = history[i] as Replayed;
 		const content = clip(message.content);
-		const length = codePointLength(content);
+		const length = content.length;
 		if (used + length > HISTORY_BUDGET) break;
 		used += length;
 		kept.unshift({ role: message.role, content });

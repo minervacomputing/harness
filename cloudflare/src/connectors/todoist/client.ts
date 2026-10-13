@@ -14,14 +14,13 @@
 // a rounded or infinite number; Python refuses floats from about 9.2e18 (int_parsing_size) as well.
 // The user's id is the connection's account id, which must be exact: a number that may have lost digits
 // (an integral one beyond 2^53, or an infinity, which an integer written out with 309 digits becomes) is
-// refused there too, where Python writes the digits it read (or "1e+20" and "inf" for a float written so),
-// so two accounts can never share an id; its labels take Python's `str()` of the number as it now is.
+// refused there too, so two accounts can never share an id; its labels are the number as JavaScript writes
+// it ("100000000000000000000", "Infinity").
 // Todoist's ids are strings and its priorities 1 to 4 in API v1.
 
 import { z } from "zod";
 import type { ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
-import { pythonFloat } from "../../lib/text.ts";
 
 export const API_URL = "https://api.todoist.com/api/v1";
 
@@ -54,17 +53,10 @@ export function laxBool(value: unknown): boolean | null {
 	return TRUE_WORDS.has(word) ? true : FALSE_WORDS.has(word) ? false : null;
 }
 
-/**
- * A str with `coerce_numbers_to_str`: a number as Python's `str()` writes it, an int up to 2^53 and a
- * float beyond (json.loads reads 1e400 as infinity, written "inf").
- */
+/** A string as it is, or a number as JavaScript writes it. */
 export function numberAsStr(value: unknown): string | null {
 	if (typeof value === "string") return value;
-	if (typeof value !== "number") return null;
-	if (Number.isSafeInteger(value)) return String(value + 0);
-	if (Number.isNaN(value)) return "nan";
-	if (!Number.isFinite(value)) return value > 0 ? "inf" : "-inf";
-	return pythonFloat(value);
+	return typeof value === "number" ? String(value + 0) : null;
 }
 
 /**

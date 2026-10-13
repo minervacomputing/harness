@@ -4,7 +4,7 @@
 
 import { describe, expect, test } from "vitest";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
-import { digitsOr, jsonInteger, NotAnInteger } from "../../src/connectors/google/digits.ts";
+import { digitsOr, jsonInteger } from "../../src/connectors/google/digits.ts";
 import { GoogleUser, NOT_CONFIGURED, RATE_LIMITED, TOO_LARGE, classify, oauth, reasons, segment } from "../../src/connectors/google/index.ts";
 import { googleCalendarConnector } from "../../src/connectors/google_calendar/connector.ts";
 import { googleDriveConnector } from "../../src/connectors/google_drive/connector.ts";
@@ -91,12 +91,10 @@ describe("the OAuth app", () => {
 	});
 });
 
-describe("numeric strings, as int(text) if text.isdigit() else fallback", () => {
-	test("ASCII and other decimal digits are read, anything else is the fallback", () => {
+describe("numeric strings", () => {
+	test("ASCII digits are read, anything else is the fallback", () => {
 		expect(digitsOr("0", null)).toBe(0n);
 		expect(digitsOr("1048576", null)).toBe(1048576n);
-		expect(digitsOr("١٢٣", null)).toBe(123n);
-		expect(digitsOr("１２", null)).toBe(12n);
 		expect(digitsOr("", "x")).toBe("x");
 		expect(digitsOr(null, "x")).toBe("x");
 		expect(digitsOr("12a", "x")).toBe("x");
@@ -105,10 +103,8 @@ describe("numeric strings, as int(text) if text.isdigit() else fallback", () => 
 		expect(digitsOr("1.5", "x")).toBe("x");
 	});
 
-	test("a digit int() refuses (a superscript, a circled digit) raises, as Python's ValueError does", () => {
-		for (const text of ["²", "1³", "①", "⁰", "\u{1f100}"]) expect(() => digitsOr(text, null)).toThrow(NotAnInteger);
-		// isdigit() is false for a lone fraction or a Roman numeral, so those are the fallback.
-		for (const text of ["½", "Ⅰ", "⑧½"]) expect(digitsOr(text, null)).toBeNull();
+	test("other digits are no number", () => {
+		for (const text of ["²", "1³", "①", "١٢", "１２", "½"]) expect(digitsOr(text, null)).toBeNull();
 	});
 
 	test("an integer goes into JSON as a number, unless a number cannot hold it exactly", () => {

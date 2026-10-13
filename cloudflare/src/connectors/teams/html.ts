@@ -1,4 +1,4 @@
-// Message text as agents see it and write it, ported from backend/connectors/teams/html.py.
+// Message text as agents see it and write it.
 //
 // Teams stores channel messages as HTML. Read text is the HTML turned into plain text, without what could
 // show another channel or team the agent may not read:
@@ -18,22 +18,19 @@
 // needs an `<at>` element and a list of mentions) or format anything. It may not link to Teams, in any
 // encoding: Teams can show a preview of a linked message or channel, which may be one the agent may not read.
 //
-// The HTML is tokenized as Python's HTMLParser tokenizes it (lib/htmlparser.ts).
+// The HTML is tokenized by lib/htmlparser.ts.
 
 import { type Attribute, HTMLParser } from "../../lib/htmlparser.ts";
-import { PYTHON_SPACE_CLASS, decoded, plainText, pythonRstrip, pythonStrip } from "../../lib/text.ts";
-import { valueError } from "../microsoft/inputs.ts";
+import { decoded, plainText, TextError, WORDS } from "../../lib/text.ts";
 import type { Mention } from "./client.ts";
 import { extend } from "../../lib/arrays.ts";
 import { endsWithNewline, linkText, type Piece, written as writtenOut } from "../../lib/linktext.ts";
 
 /**
- * An address to Teams, case-insensitive as Python's `re.IGNORECASE` is: with Unicode's simple case folding
- * (so "ſ" is an "s" and "K" a "k"), and "İ" and "ı" as "i", which Python's engine adds.
+ * An address to Teams, case-insensitive with Unicode's simple case folding (so "ſ" is an "s" and "K" a
+ * "k"), and "İ" and "ı" as "i".
  */
 export const TEAMS = /teams\.(?:m[iİı]crosoft\.(?:com|us)|l[iİı]ve\.com|cloud\.m[iİı]crosoft|m[iİı]crosoftonl[iİı]ne\.cn|off[iİı]ce\.com)|msteams:/iu;
-/** Python's `\S+`: runs of what `str.isspace()` does not count as whitespace. */
-const WORD = new RegExp(`[^${PYTHON_SPACE_CLASS}]+`, "gu");
 const BLOCKS: ReadonlySet<string> = new Set(["p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "pre", "ul", "ol", "table", "li"]);
 const DROPPED: ReadonlySet<string> = new Set(["attachment", "script", "style", "head", "title", "template"]);
 
@@ -44,7 +41,7 @@ export function toTeams(text: string): boolean {
 
 /** Plain text with every word that addresses Teams replaced. */
 export function redact(text: string): string {
-	return text.replace(WORD, (word) => (toTeams(word) ? "[Teams link]" : word));
+	return text.replace(WORDS, (word) => (toTeams(word) ? "[Teams link]" : word));
 }
 
 /**
@@ -159,15 +156,15 @@ class Reader extends HTMLParser {
 		// A link never closed is shown as text, without its address.
 		for (const [, label] of [...this.links].reverse()) extend(this.out, label);
 		const lines = writtenOut(this.out).replaceAll("\u00a0", " ").split("\n");
-		const joined = lines.map(pythonRstrip).join("\n");
-		return redact(pythonStrip(joined.replace(/\n{3,}/g, "\n\n")));
+		const joined = lines.map((line) => line.trimEnd()).join("\n");
+		return redact(joined.replace(/\n{3,}/g, "\n\n").trim());
 	}
 }
 
 /** The text an agent is shown. */
 export function read(content: string | null, contentType: string | null, mentions: readonly Mention[]): string {
 	if (!content) return "";
-	if ((contentType || "").toLowerCase() === "text") return redact(pythonStrip(content));
+	if ((contentType || "").toLowerCase() === "text") return redact(content.trim());
 	const reader = new Reader(shownMentions(mentions));
 	reader.run(content);
 	return reader.text();
@@ -177,7 +174,7 @@ export function read(content: string | null, contentType: string | null, mention
 export function checkWritten(text: string): string {
 	plainText(text);
 	if (toTeams(text)) {
-		throw valueError("must not link to Teams: Teams may show the linked message or channel, which may be one you may not read");
+		throw new TextError("must not link to Teams: Teams may show the linked message or channel, which may be one you may not read");
 	}
 	return text;
 }

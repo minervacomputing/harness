@@ -14,7 +14,7 @@
 // no step goes through `Date`, whose milliseconds would drop the microseconds of a Slack `ts`.
 
 import { datetimeFromIsoFormat, fromOrdinal, pad, unixMicros } from "../../lib/isoformat.ts";
-import { ValueError } from "../../lib/pyerrors.ts";
+import { TextError } from "../../lib/text.ts";
 
 export class IsoFormatError extends Error {
 	constructor() {
@@ -31,14 +31,14 @@ const EPOCH_ORDINAL = 719_163;
 
 /**
  * `datetime.fromisoformat(value)` as the instant it names, in microseconds since 1970-01-01T00:00:00Z; a
- * time without a zone is UTC. Throws IsoFormatError for anything Python refuses (its ValueError, whichever
- * message).
+ * time without a zone is UTC. Throws IsoFormatError for anything the parser refuses, whichever
+ * message.
  */
 export function isoInstant(value: string): bigint {
 	try {
 		return unixMicros(datetimeFromIsoFormat(value));
 	} catch (error) {
-		if (error instanceof ValueError) throw new IsoFormatError();
+		if (error instanceof TextError) throw new IsoFormatError();
 		throw error;
 	}
 }

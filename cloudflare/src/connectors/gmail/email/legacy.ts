@@ -3,7 +3,6 @@
 // `get_content_disposition`), with `_parseparam`'s quirks and RFC 2231 parameters. (A header's text, with its
 // encoded words, is decoded by postal-mime: gmail/mime.ts `headerText`.)
 
-import { pythonLstrip, pythonRstrip, pythonStrip } from "../../../lib/text.ts";
 import { decodeCharsetStrictly } from "../../../lib/charset.ts";
 
 /** `str.splitlines()`. */
@@ -52,8 +51,8 @@ export function parseParam(value: string): string[] {
 		}
 		if (end < 0) end = s.length;
 		const i = find(s, "=", start, end);
-		const f = i === -1 ? s.slice(start, end) : `${pythonRstrip(s.slice(start, i)).toLowerCase()}=${pythonLstrip(s.slice(i + 1, end))}`;
-		plist.push(pythonStrip(f));
+		const f = i === -1 ? s.slice(start, end) : `${s.slice(start, i).trimEnd().toLowerCase()}=${s.slice(i + 1, end).trimStart()}`;
+		plist.push(f.trim());
 		start = end;
 	}
 	return plist;
@@ -62,7 +61,7 @@ export function parseParam(value: string): string[] {
 /** `email.message._splitparam(param)[0]`. */
 function splitParamHead(param: string): string {
 	const at = param.indexOf(";");
-	return pythonStrip(at < 0 ? param : param.slice(0, at));
+	return (at < 0 ? param : param.slice(0, at)).trim();
 }
 
 /** `email.utils.unquote`. */
@@ -158,7 +157,7 @@ export class ContentHeaders {
 		if (value === null) return null;
 		const params: [string, string][] = parseParam(value).map((p) => {
 			const at = p.indexOf("=");
-			return at < 0 ? [pythonStrip(p), ""] : [pythonStrip(p.slice(0, at)), pythonStrip(p.slice(at + 1))];
+			return at < 0 ? [p.trim(), ""] : [p.slice(0, at).trim(), p.slice(at + 1).trim()];
 		});
 		return decodeParams(params);
 	}

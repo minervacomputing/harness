@@ -619,6 +619,14 @@ describe("Office files", () => {
 		expect(await unreadable(() => extract("docx", data, 1000))).toBe("UNSUPPORTED_FILE");
 	});
 
+	test("office text is cut to a prefix, never splitting an emoji", async () => {
+		const runs = `<w:document xmlns:w="${W}"><w:body><w:p><w:r><w:t>ab😀</w:t></w:r><w:r><w:t>Z</w:t></w:r></w:p></w:body></w:document>`;
+		const data = zipped({ "_rels/.rels": rels(["rId1", "officeDocument", "word/document.xml"]), "word/document.xml": runs });
+		const cuts = [];
+		for (const limit of [2, 3, 4, 5]) cuts.push(await extract("docx", data, limit));
+		expect(cuts).toEqual(["ab", "ab", "ab😀", "ab😀Z"]);
+	});
+
 	test("test_office_archives_are_bounded", async () => {
 		const padding = " ".repeat(MAX_EXPANDED + 1);
 		const expanding = zipped({

@@ -17,12 +17,11 @@
 // null) and each caller decides what that means (docs/plans/cloudflare.md, "Dates and time zones"), so
 // there are no gaps or folds to resolve here.
 //
-// Errors are Python's (lib/pyerrors.ts): `ValueError`, which a tool input reports as the field's message, and
-// `OverflowError`, which it does not catch, so the call fails generically.
+// Errors: TextError (lib/text.ts), which a tool input reports as the field's message, and RangeError, which
+// it does not catch, so the call fails generically.
 
 import { utf8 } from "./bytes.ts";
-import { OverflowError, ValueError } from "./pyerrors.ts";
-import { pythonRepr } from "./text.ts";
+import { TextError } from "./text.ts";
 
 /** `calendar.isleap(year)`. */
 function isLeap(year: number): boolean {
@@ -282,24 +281,24 @@ function parseTime(text: Bytes, start: number): [Clock, [seconds: number, micros
 	return [clock, [sign * (tz.hour * 3600 + tz.minute * 60 + tz.second) + 0, sign * tz.microsecond + 0]];
 }
 
-function invalid(text: string): ValueError {
-	return new ValueError(`Invalid isoformat string: ${pythonRepr(text)}`);
+function invalid(text: string): TextError {
+	return new TextError(`Invalid isoformat string: ${JSON.stringify(text)}`);
 }
 
 /** `check_date_args`. */
 function checkDate(year: number, month: number, day: number): void {
-	if (year < MINYEAR || year > MAXYEAR) throw new ValueError(`year must be in ${MINYEAR}..${MAXYEAR}, not ${year}`);
-	if (month < 1 || month > 12) throw new ValueError(`month must be in 1..12, not ${month}`);
+	if (year < MINYEAR || year > MAXYEAR) throw new TextError(`year must be in ${MINYEAR}..${MAXYEAR}, not ${year}`);
+	if (month < 1 || month > 12) throw new TextError(`month must be in 1..12, not ${month}`);
 	const dim = daysInMonth(year, month);
-	if (day < 1 || day > dim) throw new ValueError(`day ${day} must be in range 1..${dim} for month ${month} in year ${year}`);
+	if (day < 1 || day > dim) throw new TextError(`day ${day} must be in range 1..${dim} for month ${month} in year ${year}`);
 }
 
 /** `check_time_args`. */
 function checkTime(clock: Clock): void {
-	if (clock.hour < 0 || clock.hour > 23) throw new ValueError(`hour must be in 0..23, not ${clock.hour}`);
-	if (clock.minute < 0 || clock.minute > 59) throw new ValueError(`minute must be in 0..59, not ${clock.minute}`);
-	if (clock.second < 0 || clock.second > 59) throw new ValueError(`second must be in 0..59, not ${clock.second}`);
-	if (clock.microsecond < 0 || clock.microsecond > 999999) throw new ValueError(`microsecond must be in 0..999999, not ${clock.microsecond}`);
+	if (clock.hour < 0 || clock.hour > 23) throw new TextError(`hour must be in 0..23, not ${clock.hour}`);
+	if (clock.minute < 0 || clock.minute > 59) throw new TextError(`minute must be in 0..59, not ${clock.minute}`);
+	if (clock.second < 0 || clock.second > 59) throw new TextError(`second must be in 0..59, not ${clock.second}`);
+	if (clock.microsecond < 0 || clock.microsecond > 999999) throw new TextError(`microsecond must be in 0..999999, not ${clock.microsecond}`);
 }
 
 const DAY_MICROS = 86_400_000_000;
@@ -307,7 +306,7 @@ const DAY_MICROS = 86_400_000_000;
 /** `new_timezone`: an offset strictly between -24 h and 24 h. */
 function checkOffset(offset: number): void {
 	if (Math.abs(offset) >= DAY_MICROS) {
-		throw new ValueError(`offset must be a timedelta strictly between -timedelta(hours=24) and timedelta(hours=24), not ${timedeltaRepr(BigInt(offset))}`);
+		throw new TextError(`offset must be a timedelta strictly between -timedelta(hours=24) and timedelta(hours=24), not ${timedeltaRepr(BigInt(offset))}`);
 	}
 }
 
@@ -386,7 +385,7 @@ export function datetimeFromIsoFormat(text: string): PyDateTime {
 		const dim = daysInMonth(year, month);
 		if (day <= dim) {
 			if (clock.minute !== 0 || clock.second !== 0 || clock.microsecond !== 0) {
-				throw new ValueError("minute, second, and microsecond must be 0 when hour is 24");
+				throw new TextError("minute, second, and microsecond must be 0 when hour is 24");
 			}
 			clock = { ...clock, hour: 0 };
 			day += 1;
@@ -426,7 +425,7 @@ export function isoDate(value: string): string | null {
 		const { year, month, day } = dateFromIsoFormat(value);
 		return `${pad(year, 4)}-${pad(month)}-${pad(day)}`;
 	} catch (error) {
-		if (error instanceof ValueError) return null;
+		if (error instanceof TextError) return null;
 		throw error;
 	}
 }
@@ -449,7 +448,7 @@ export function unixMicros(value: PyDateTime): bigint {
 	return wallMicros(value) - EPOCH_MICROS - BigInt(value.offset ?? 0);
 }
 
-/** A datetime at `micros` of wall clock with `offset`, or OverflowError outside years 1 to 9999. */
+/** A datetime at `micros` of wall clock with `offset`, or RangeError outside years 1 to 9999. */
 function atWall(micros: bigint, offset: number | null): PyDateTime {
 	let days = micros / MICROS_PER_DAY;
 	let rest = micros % MICROS_PER_DAY;
@@ -457,7 +456,7 @@ function atWall(micros: bigint, offset: number | null): PyDateTime {
 		rest += MICROS_PER_DAY;
 		days -= 1n;
 	}
-	if (days < 1n || days > BigInt(ordinal(MAXYEAR, 12, 31))) throw new OverflowError("date value out of range");
+	if (days < 1n || days > BigInt(ordinal(MAXYEAR, 12, 31))) throw new RangeError("date value out of range");
 	const date = fromOrdinal(Number(days));
 	const time = Number(rest);
 	const microsecond = time % 1_000_000;

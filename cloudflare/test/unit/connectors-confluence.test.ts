@@ -11,7 +11,9 @@ import { confluenceConnector, discoveryCursor } from "../../src/connectors/confl
 import { MAX_SPACE_PAGES, searchWords } from "../../src/connectors/confluence/reads.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
+import { changedOnPurpose } from "./changed.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
+import { UrlError } from "../../src/lib/urlsplit.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
 import { Scenario, USER, jsonResponse } from "./executor-fakes.ts";
 
@@ -46,7 +48,7 @@ function outcome(run: () => Json): Outcome {
 		return { value: run() };
 	} catch (error) {
 		if (error instanceof OperationError) return { error: error.code, message: error.message };
-		if (error instanceof Error && error.name === "ValueError") return { error: "ValueError", message: error.message };
+		if (error instanceof UrlError) return { error: "ValueError", message: error.message };
 		throw error;
 	}
 }
@@ -405,7 +407,7 @@ describe("connecting and discovery", () => {
 
 	test("the pure helpers answer as Python's", () => {
 		const vectors = VECTORS.confluence;
-		for (const { cursor, ...expected } of vectors.page_params) expect(outcome(() => pageParams(cursor)), String(cursor)).toEqual(expected);
+		for (const { cursor, ...expected } of vectors.page_params) if (!changedOnPurpose(cursor)) expect(outcome(() => pageParams(cursor)), String(cursor)).toEqual(expected);
 		for (const { next, ...expected } of vectors.next_token) {
 			const found = outcome(() => nextToken(ListingModel.parse({ results: [], _links: next !== null ? { next } : {} })));
 			// A malformed address is Python's ValueError, which the model sees as the generic failure: its
@@ -413,7 +415,7 @@ describe("connecting and discovery", () => {
 			if (expected.error === "ValueError") expect(found.error, String(next)).toBe("ValueError");
 			else expect(found, String(next)).toEqual(expected);
 		}
-		for (const { cursor, ...expected } of vectors.discover_cursor) expect(outcome(() => discoveryCursor(cursor, [null, null])), String(cursor)).toEqual(expected);
+		for (const { cursor, ...expected } of vectors.discover_cursor) if (!changedOnPurpose(cursor)) expect(outcome(() => discoveryCursor(cursor, [null, null])), String(cursor)).toEqual(expected);
 		for (const { text: value, ...expected } of vectors.search_words) expect(outcome(() => searchWords(value)), value).toEqual(expected);
 		for (const { value, document: expected } of vectors.documents) {
 			expect(document(BodyModel.parse({ atlas_doc_format: { value } })), JSON.stringify(value)).toEqual(expected);

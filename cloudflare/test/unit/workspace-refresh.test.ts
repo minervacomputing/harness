@@ -1,6 +1,5 @@
-// Credential leases and refresh (plan: Credentials and refresh; connectors 9.3, 11.1, 11.4, 11.5), over
-// node:sqlite with a fake token endpoint: backend/tests/test_connections.py and the refresh cases of
-// test_contract.py, the refusal codes, the single flight, and the fault cases: a crash during a rotating
+// Credential leases and refresh (plan: Credentials and refresh), over node:sqlite with a fake token
+// endpoint: leases and refreshes, the refusal codes, the single flight, and the fault cases: a crash during a rotating
 // refresh (restart while `refreshing`) and a reconnect or delete during one.
 
 import { describe, expect, test } from "vitest";
@@ -426,7 +425,7 @@ describe("token bodies", () => {
 		expect(tokenPayload({ access_token: "a", expires_in: 3600.5 }, now)).not.toHaveProperty("expires_at");
 		expect(tokenPayload({ access_token: "a", expires_in: 365 * 24 * 3600 }, now)).not.toHaveProperty("expires_at");
 		expect(tokenPayload({ access_token: "a", expires_in: "3600" }, now)).not.toHaveProperty("expires_at");
-		// A bool is an int in Python.
+		// `true` counts as 1.
 		expect(tokenPayload({ access_token: "a", expires_in: true }, now).expires_at).toBe(seconds + 1);
 		expect(tokenPayload({ access_token: "a", refresh_token: "r" }, now).refresh_token).toBe("r");
 	});
@@ -434,7 +433,7 @@ describe("token bodies", () => {
 	test("scopes from `scope` or `scopes`, a list or a string, commas and whitespace, sorted and unique (Linear)", () => {
 		expect(parseScopes({ scope: ["read", "write"] })).toEqual(["read", "write"]);
 		expect(parseScopes({ scope: "read,issues:create" })).toEqual(["issues:create", "read"]);
-		expect(parseScopes({ scope: " b  a,a\u001fc " })).toEqual(["a", "b", "c"]);
+		expect(parseScopes({ scope: " b  a,a\u2003c " })).toEqual(["a", "b", "c"]);
 		expect(parseScopes({ scopes: ["crm.objects.contacts.read"] })).toEqual(["crm.objects.contacts.read"]);
 		expect(parseScopes({ scope: null, scopes: "ignored" })).toBeNull();
 		expect(parseScopes({ scope: ["read", 1] })).toBeNull();

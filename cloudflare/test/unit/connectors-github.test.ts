@@ -7,8 +7,6 @@ import { describe, expect, test } from "vitest";
 import type { Connector, ProviderClient } from "../../src/contracts/connectors.ts";
 import type { GrantRow } from "../../src/contracts/policy.ts";
 import { CONNECTORS } from "../../src/connectors/index.ts";
-import { casefold } from "../../src/lib/casefold.ts";
-import { pythonIsDigit } from "../../src/lib/digits.ts";
 import { API_URL, Comment, Entry, Issue, Pull, Repository, forbidden, httpxHeader, nextPage, segment } from "../../src/connectors/github/client.ts";
 import {
 	type GitHubOptions,
@@ -38,6 +36,7 @@ import { EXPIRED, type OAuth2, tokenBody, tokenPayload, tokenRequest } from "../
 import { oauthClients } from "../../src/workspace/env.ts";
 import { connectionOut } from "../../src/workspace/out.ts";
 import raw from "../fixtures/connectors/github/vectors.json" with { type: "json" };
+import { changedOnPurpose } from "./changed.ts";
 import { Scenario, jsonResponse, userGrants } from "./executor-fakes.ts";
 import {
 	ADA,
@@ -265,10 +264,10 @@ describe("the connector and its settings page", () => {
 			"/repositories/1",
 			"/repositories/404",
 		]);
-		// isdigit() also takes other digits, which are asked for and not found; ids that are not digits never are.
+		// Ids that are not ASCII digits are never asked for.
 		const before = github.requests.length;
 		expect(await gh.describe(client, REPOSITORY, ["\u00b2", "\u0663", "", "-1", "1 "])).toEqual({});
-		expect(github.requests.slice(before).map((sent) => sent.url.pathname)).toEqual(["/repositories/%C2%B2", "/repositories/%D9%A3"]);
+		expect(github.requests.slice(before)).toEqual([]);
 	});
 
 	test("the install link needs a valid slug", () => {
@@ -348,16 +347,13 @@ describe("runs", () => {
 			});
 		}
 		expect(github.requests.every((sent) => sent.url.origin === API_URL)).toBe(true);
-		// The Location is read as httpx reads headers: UTF-8 when it is, so an id in other digits is asked for
-		// (and, not found, denied as unseen); otherwise Latin-1, where a superscript is no decimal digit.
+		// An id in other digits, in the Location's UTF-8 or Latin-1, is not followed.
 		const sent = github.requests.length;
-		github.renamed.set("ada/old-notes", `${API_URL}/repositories/\u00d9\u00a3`);
-		expect(await run.code("github_get_repository", { repository: "ada/old-notes" })).toBe("POLICY_DENIED");
-		expect(github.requests.slice(sent).map((request) => request.url.pathname)).toEqual(["/repos/ada/old-notes", "/repositories/%D9%A3"]);
-		for (const location of [`${API_URL}/repositories/\u00b2`, `${API_URL}/repositories/\u00d9\u00a3\u00ff`]) {
+		for (const location of [`${API_URL}/repositories/\u00d9\u00a3`, `${API_URL}/repositories/\u00b2`, `${API_URL}/repositories/\u00d9\u00a3\u00ff`]) {
 			github.renamed.set("ada/old-notes", location);
 			expect(await run.code("github_get_repository", { repository: "ada/old-notes" })).toBe("PROVIDER_FAILED");
 		}
+		expect(github.requests.slice(sent).map((request) => request.url.pathname)).toEqual(Array(3).fill("/repos/ada/old-notes"));
 		// Any 3xx is judged as a redirect, as httpx counts them: one without a Location is unexpected, and a 304
 		// to /repositories/<id> is followed there too.
 		github.renamed.set("ada/old-notes", null);
@@ -621,11 +617,9 @@ interface Vectors {
 	page_cursors: { cursor: string | null; params?: { [key: string]: string }; error?: [string, string] }[];
 	rendered_cursors: { params: { [key: string]: string } | null; cursor: string | null }[];
 	repository_cursors: { cursor: string; state?: [number, number]; error?: [string, string] }[];
-	digits: { text: string; isdigit: boolean }[];
 	base64: { text: string; hex?: string; error?: string }[];
 	files: { entry: Data; max_chars: number; record?: Data; error?: [string, string] }[];
 	forbidden: { headers: { [name: string]: string }; body: string; error: [string, string] }[];
-	folds: { query: string; name: string; match: boolean }[];
 	records: {
 		repositories: { data: Data; record: Data; item: string }[];
 		issues: { data: Data; record: Data; with_body: Data }[];
@@ -705,6 +699,7 @@ describe("vectors from today's Python", () => {
 
 	test("the Link header's next page", () => {
 		for (const vector of vectors.links) {
+			if (changedOnPurpose(vector.link)) continue;
 			const response = new Response(null, vector.link ? { headers: { link: vector.link } } : {});
 			expect(nextPage(response), vector.link).toEqual(vector.next);
 		}
@@ -729,9 +724,19 @@ describe("vectors from today's Python", () => {
 
 	test("listing cursors", () => {
 		for (const vector of vectors.page_cursors) {
+			// A page is ASCII digits; Python's isdigit() also took "²" and "①".
+			const page = vector.params?.page;
+			if (page !== undefined && !/^\d+$/.test(page)) {
+				expect(failure(() => pageParams(vector.cursor)), vector.cursor ?? "null").toEqual(["INVALID_CURSOR", "This page token is invalid."]);
+				continue;
+			}
+			if (changedOnPurpose(vector.cursor)) continue;
 			const error = failure(() => pageParams(vector.cursor));
 			if (vector.error !== undefined) expect(error, vector.cursor ?? "null").toEqual(vector.error);
-			else sameJson(pageParams(vector.cursor), vector.params);
+			else {
+				expect(error, vector.cursor ?? "null").toBeNull();
+				sameJson(pageParams(vector.cursor), vector.params);
+			}
 		}
 		const read = (cursor: string | null) => (cursor === null ? null : parseJson(cursor));
 		for (const vector of vectors.rendered_cursors) expect(read(pageCursor(vector.params))).toEqual(read(vector.cursor));
@@ -739,14 +744,15 @@ describe("vectors from today's Python", () => {
 
 	test("repository cursors", () => {
 		for (const vector of vectors.repository_cursors) {
+			// Booleans are no integers here.
+			if (/true|false/.test(vector.cursor ?? "")) {
+				expect(failure(() => repositoriesCursor(vector.cursor)), vector.cursor).toEqual(["INVALID_CURSOR", "This page token is invalid."]);
+				continue;
+			}
 			const error = failure(() => repositoriesCursor(vector.cursor));
 			if (vector.error !== undefined) expect(error, vector.cursor).toEqual(vector.error);
 			else expect(repositoriesCursor(vector.cursor), vector.cursor).toEqual(vector.state);
 		}
-	});
-
-	test("digits, as isdigit() reads them", () => {
-		for (const vector of vectors.digits) expect(pythonIsDigit(vector.text), JSON.stringify(vector.text)).toBe(vector.isdigit);
 	});
 
 	test("base64, as b64decode reads it", () => {
@@ -758,6 +764,7 @@ describe("vectors from today's Python", () => {
 
 	test("files", () => {
 		for (const vector of vectors.files) {
+			if (changedOnPurpose(vector)) continue;
 			const entry = Entry.parse(vector.entry);
 			const error = failure(() => fileRecord(entry, vector.max_chars));
 			if (vector.error !== undefined) expect(error, vector.entry.path as string).toEqual(vector.error);
@@ -773,21 +780,19 @@ describe("vectors from today's Python", () => {
 		}
 	});
 
-	test("discovery's search folds case as casefold() does", () => {
-		for (const vector of vectors.folds) expect(casefold(vector.name).includes(casefold(vector.query)), vector.query).toBe(vector.match);
-	});
-
 	test("records", () => {
 		for (const vector of vectors.records.repositories) {
 			sameJson(repositoryRecord(Repository.parse(vector.data)), vector.record);
 			expect(item(Repository.parse(vector.data)).name).toBe(vector.item);
 		}
 		for (const vector of vectors.records.issues) {
+			if (changedOnPurpose(vector)) continue;
 			sameJson(issueRecord(Issue.parse(vector.data)), vector.record);
 			sameJson(issueRecord(Issue.parse(vector.data), { body: true }), vector.with_body);
 		}
-		for (const vector of vectors.records.comments) sameJson(commentRecord(Comment.parse(vector.data)), vector.record);
+		for (const vector of vectors.records.comments) if (!changedOnPurpose(vector)) sameJson(commentRecord(Comment.parse(vector.data)), vector.record);
 		for (const vector of vectors.records.pulls) {
+			if (changedOnPurpose(vector)) continue;
 			sameJson(pullRecord(Pull.parse(vector.data)), vector.record);
 			sameJson(pullRecord(Pull.parse(vector.data), { body: true }), vector.with_body);
 		}

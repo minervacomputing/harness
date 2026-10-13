@@ -20,7 +20,7 @@ import * as mime from "../../src/connectors/gmail/mime.ts";
 import { canonicalHost, registrable } from "../../src/lib/sites.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
 import type { Json } from "../../src/lib/json.ts";
-import { htmlUnescape, sliceCodePoints } from "../../src/lib/text.ts";
+import { htmlUnescape, sliceText } from "../../src/lib/text.ts";
 import { operation, validationOutcomes } from "../fixtures/connectors/google/runs.ts";
 import { gmailVectors } from "../fixtures/connectors/google/vectors.ts";
 
@@ -192,7 +192,7 @@ describe("header text", () => {
 
 	test("snippets are unescaped, flattened and cut at 300", () => {
 		for (const item of vectors.snippets as { value: string; ok: string }[]) {
-			expect(sliceCodePoints(mime.headerText(htmlUnescape(item.value)) as string, 0, 300)).toBe(item.ok);
+			expect(sliceText(mime.headerText(htmlUnescape(item.value)) as string, 0, 300)).toBe(item.ok);
 		}
 	});
 });

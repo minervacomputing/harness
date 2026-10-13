@@ -79,9 +79,9 @@ export const IDNA_CASES: readonly (readonly [name: string, ascii: string | null,
 	["127.0.0.1", null, "an IPv4 address"],
 	["example.123", null, "a numeric last label"],
 	["example.0x1f", null, "a hexadecimal last label"],
-	// Unicode 17's additions, refused as before.
-	["\u{10940}.com", null, "a Sidetic letter (Unicode 17)"],
-	["\u{323b0}.com", null, "a CJK ideograph from Extension J (Unicode 17)"],
+	// Unicode 17's additions, valid as the runtime's tables say.
+	["\u{10940}.com", "xn--ql9c.com", "a Sidetic letter (Unicode 17)"],
+	["\u{323b0}.com", "xn--031o.com", "a CJK ideograph from Extension J (Unicode 17)"],
 ];
 
 /** A code point Unicode 17 assigns and one only Unicode 18 does: lib/idna.ts was checked for 17. */

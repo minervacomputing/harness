@@ -1,7 +1,7 @@
 // Connectors, connections and access. The Workspace
 // Durable Object holds connections and grants and their rules (`_usable`, who may change a shared
-// connection, saving credentials, grant plans and the revocation they cause); the routes here check in
-// Python's order, make the provider calls (providers.ts) and answer. OAuth flows are flows.ts's, their
+// connection, saving credentials, grant plans and the revocation they cause); the routes here check
+// the request, make the provider calls (providers.ts) and answer. OAuth flows are flows.ts's, their
 // clients oauth-clients.ts's.
 
 import { z } from "zod";
@@ -15,7 +15,6 @@ import { ANY } from "../gateway/policy.ts";
 import { HttpError, detail, json } from "../http/errors.ts";
 import { UUID } from "../http/paths.ts";
 import type { App } from "../http/router.ts";
-import { pythonRepr } from "../lib/text.ts";
 import { actionsOut, authOf, isAdmin, kindsOut, requestedScopes } from "../workspace/out.ts";
 import { CONNECTION_FLOWS, ConnectionFlowError, type FlowStart } from "./flows.ts";
 import { available } from "./oauth-clients.ts";
@@ -115,7 +114,7 @@ export function connectionRoutes(app: App): void {
 			adminsOnly(m, access, "Only workspace admins can reconnect shared connections.");
 			if (connector.auth.type === "builtin") return detail(422, `${connector.name} has no account to reconnect.`);
 			const unknown = actions.find((action) => !connector.actions.some((declared) => declared.id === action));
-			if (unknown !== undefined) return detail(422, `${connector.name} has no action ${pythonRepr(unknown)}.`);
+			if (unknown !== undefined) return detail(422, `${connector.name} has no action ${JSON.stringify(unknown)}.`);
 			if (connector.auth.type !== "oauth2") return detail(503, `${connector.name} does not connect through OAuth.`);
 			// A shared connection serves every member who allows something on it.
 			const allowed = (await m.object.allowedActions(m.caller, access.connection.id)) ?? [];
@@ -142,7 +141,7 @@ export function connectionRoutes(app: App): void {
 		memberRoute(async (c, m) => {
 			const query = readQuery(c.req.raw, ResourceQuery);
 			const { access, connector } = await usable(m, param(c, "connection"));
-			if (kindOf(connector, query.kind) === null) return detail(422, `${connector.name} has no resources of type ${pythonRepr(query.kind)}.`);
+			if (kindOf(connector, query.kind) === null) return detail(422, `${connector.name} has no resources of type ${JSON.stringify(query.kind)}.`);
 			const browse = (connector.browsable ?? []).includes(query.kind) && !query.q;
 			if (query.parent !== undefined && !browse) return detail(422, "Only resources that nest can be browsed, and not while searching.");
 			let page: DiscoveryPage;

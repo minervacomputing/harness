@@ -5,8 +5,28 @@
 // decode_header, a CharsetError) escapes the connector as it does today, and the call fails with the
 // executor's generic error.
 
-export { IndexError, KeyError, LookupError, PyTypeError, PythonError, UnicodeDecodeError, UnicodeEncodeError, UnicodeError, ValueError, at } from "../../../lib/pyerrors.ts";
-import { PythonError, ValueError } from "../../../lib/pyerrors.ts";
+export class PythonError extends Error {
+	constructor(message = "") {
+		super(message);
+		this.name = new.target.name;
+	}
+}
+
+export class ValueError extends PythonError {}
+export class UnicodeError extends ValueError {}
+export class UnicodeDecodeError extends UnicodeError {}
+export class UnicodeEncodeError extends UnicodeError {}
+export class LookupError extends PythonError {}
+export class KeyError extends LookupError {}
+export class IndexError extends LookupError {}
+export class PyTypeError extends PythonError {}
+
+/** `s[i]` as Python indexes a str: by code point here only where the caller passes code points. */
+export function at<T>(items: ArrayLike<T>, index: number): T {
+	const i = index < 0 ? items.length + index : index;
+	if (i < 0 || i >= items.length) throw new IndexError("index out of range");
+	return items[i] as T;
+}
 
 /** email.errors.MessageError and its subclasses: none of the above, so callers above never catch them. */
 export class MessageError extends PythonError {}

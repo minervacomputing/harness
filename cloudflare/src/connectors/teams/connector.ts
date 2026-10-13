@@ -25,11 +25,9 @@ import type { Binding, Connector, DiscoveryItem, Prepared, ProviderOutput, Scope
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
-import { truncate } from "../../lib/text.ts";
-import { casefold } from "../../lib/casefold.ts";
-import { DIGIT_CLASS, decimalValue } from "../../lib/digits.ts";
+import { truncate, TextError } from "../../lib/text.ts";
 import { accountLabel, consent, consentAll, oauth } from "../microsoft/index.ts";
-import { after, pythonPattern, valueError } from "../microsoft/inputs.ts";
+import { after } from "../microsoft/inputs.ts";
 import { mapLimited } from "../microsoft/limit.ts";
 import { type Channel, type Message, type Team, TeamsClient } from "./client.ts";
 import * as html from "./html.ts";
@@ -54,24 +52,24 @@ const WRITABLE: ReadonlySet<string | null> = new Set(["standard", "private"]);
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CHANNEL_ID = /^19:[A-Za-z0-9._=+-]{1,200}@thread\.[a-z0-9]{1,20}$/;
-/** Python's `\d` is any decimal digit (Unicode 16, as the pinned table in lib/digits.ts has it). */
-const MESSAGE_ID = new RegExp(`^${DIGIT_CLASS}{1,20}$`, "u");
-const OFFSET = new RegExp(`^${DIGIT_CLASS}{1,4}$`, "u");
+/** ASCII digits only. */
+const MESSAGE_ID = /^\d{1,20}$/u;
+const OFFSET = /^\d{1,4}$/u;
 
 function checkTeamId(value: string): string {
 	const folded = value.toLowerCase();
-	if (!GUID.test(folded)) throw valueError("must be a team id (a GUID) from list_teams or list_channels");
+	if (!GUID.test(folded)) throw new TextError("must be a team id (a GUID) from list_teams or list_channels");
 	return folded;
 }
 
 function checkChannelId(value: string): string {
-	if (!CHANNEL_ID.test(value)) throw valueError('must be a channel id such as "19:…@thread.tacv2", from list_channels');
+	if (!CHANNEL_ID.test(value)) throw new TextError('must be a channel id such as "19:…@thread.tacv2", from list_channels');
 	return value;
 }
 
 const TeamId = () => after(z.string().trim().min(36).max(36).describe("A team's id."), checkTeamId);
 const ChannelId = () => after(z.string().trim().min(1).max(240).describe("A channel's id."), checkChannelId);
-const MessageId = () => z.string().trim().regex(pythonPattern("^\\d{1,20}$", MESSAGE_ID));
+const MessageId = () => z.string().trim().regex(MESSAGE_ID);
 const Cursor = () => z.string().trim().max(1000);
 const WrittenText = () =>
 	after(z.string().trim().min(1).max(MAX_TEXT).describe("Plain text, shown literally: no formatting, mentions or links to Teams."), html.checkWritten);
@@ -428,7 +426,7 @@ const REPLY = defineOperation<z.output<typeof Reply>>({
 function offsetOf(cursor: string | null): number {
 	if (cursor === null) return 0;
 	if (!OFFSET.test(cursor)) throw new OperationError("INVALID_CURSOR", "This page token is invalid.");
-	return decimalValue(cursor);
+	return Number(cursor);
 }
 
 async function teamItems(client: TeamsClient, teams: readonly Team[]): Promise<[Team, Channel[]][]> {
@@ -481,7 +479,7 @@ export function teamsConnector(options: { baseUrl?: string } = {}): Connector<Te
 		async discover(client, _kind, { query, cursor }) {
 			const teams = await joined(client);
 			const start = offsetOf(cursor);
-			const folded = query ? casefold(query) : null;
+			const folded = query ? query.toLowerCase() : null;
 			const items: DiscoveryItem[] = [];
 			let end = start;
 			while (end < teams.length && end - start < (folded ? DISCOVERY_SCAN : LIMITS.discoveryPage)) {
@@ -490,7 +488,7 @@ export function teamsConnector(options: { baseUrl?: string } = {}): Connector<Te
 				for (const [team, channels] of await teamItems(client, chunk)) {
 					const name = teamName(team);
 					const found: DiscoveryItem[] = [{ id: team.id, name }, ...channels.map((c) => ({ id: c.id, name: `${name} / ${c.display_name || c.id}` }))];
-					extend(items, found.filter((item) => folded === null || casefold(item.name).includes(folded)));
+					extend(items, found.filter((item) => folded === null || item.name.toLowerCase().includes(folded)));
 				}
 				if (!folded || items.length) break;
 			}

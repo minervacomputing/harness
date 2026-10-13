@@ -1,10 +1,10 @@
-// Pure permission evaluation, ported from backend/permissions/policy.py (connectors 3). No storage, so it
+// Pure permission evaluation. No storage, so it
 // is cheap to test exhaustively. The Workspace Durable Object builds a run's policy at start (grants.ts)
 // and offers tools with `permitsAny` (tools.ts); the executor checks every call with `permits`.
 
 import type { ConnectionId } from "../contracts/common.ts";
 import type { Any, GrantKey, LayerSnapshot, PolicySnapshot, Resource } from "../contracts/policy.ts";
-import { compareCodePoints, sortByCodePoint } from "../lib/order.ts";
+import { compareText } from "../lib/arrays.ts";
 
 /** A grant on every resource of a kind, including ones created later. Never a real resource id. */
 export const ANY: Any = "*";
@@ -45,23 +45,23 @@ function encode(connectionId: string, kind: string, id: string, action: string):
 	return JSON.stringify([connectionId, kind, id, action]);
 }
 
-/** Python's order of lists of strings: element by element, a prefix first. */
+/** Lists of strings in order: element by element (UTF-16 order), a prefix first. */
 export function compareLists(a: readonly string[], b: readonly string[]): number {
 	for (let i = 0; i < Math.min(a.length, b.length); i++) {
-		const order = compareCodePoints(a[i] as string, b[i] as string);
+		const order = compareText(a[i] as string, b[i] as string);
 		if (order !== 0) return order;
 	}
 	return a.length - b.length;
 }
 
-/** Unique keys in the order `to_json` writes them, frozen like Python's tuples, so they cannot drift from the sets. */
+/** Unique keys in the order `toJson` writes them, frozen, so they cannot drift from the sets. */
 function canonical(keys: Iterable<GrantKey>): readonly GrantKey[] {
 	const unique = new Map<string, GrantKey>();
 	for (const key of keys) unique.set(encode(...key), Object.freeze([key[0], key[1], key[2], key[3]]) as GrantKey);
 	return Object.freeze([...unique.values()].sort(compareLists));
 }
 
-/** Immutable, as Python's frozen dataclass: the instance and its keys are frozen, the sets private. */
+/** Immutable: the instance and its keys are frozen, the sets private. */
 export class Layer {
 	readonly name: LayerName;
 	readonly restricted: boolean;
@@ -181,7 +181,7 @@ export class Policy {
 					if (key[0] === connectionId && key[1] === kind && actions.includes(key[3])) denied.add(key[2]);
 				}
 			}
-			candidates.push([UNMENTIONED, ...sortByCodePoint([...mentioned].filter((item) => !denied.has(item)))]);
+			candidates.push([UNMENTIONED, ...[...mentioned].filter((item) => !denied.has(item)).sort()]);
 		}
 		return candidates.some((ids) => actions.every((item) => this.#permits(connectionId, kind, ids, item)));
 	}
@@ -197,7 +197,7 @@ export class Policy {
 	}
 
 	/**
-	 * Throws on data not of `toJson`'s shape, as Python's `from_json` raises on a missing key, so a snapshot
+	 * Throws on data not of `toJson`'s shape, a missing key included, so a snapshot
 	 * read back from storage fails closed: a layer without `restricted` never passes everything.
 	 */
 	static fromJson(data: PolicySnapshot): Policy {

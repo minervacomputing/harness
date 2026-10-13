@@ -401,6 +401,10 @@ describe("page text", () => {
 		expect(redact('<mention-page url="u" title="Secret">\nSecret\n</mention-page>')).toBe('<mention-page url="u"></mention-page>');
 		// A tag left open hides the rest of the page.
 		expect(redact("a <page>Secret\nmore")).toBe("a <page></page>");
+		// Any whitespace or control character ends a titled tag's name.
+		for (const separator of ["\u0085", "\u001f", "\ufeff", "\u00a0"]) {
+			expect(redact(`<page${separator}url="u">Secret</page> after`), JSON.stringify(separator)).toBe('<page url="u"></page> after');
+		}
 		// Synced content may contain its own closing tag as text.
 		const synced = "Mine\n<synced_block_reference url='x'>\n```xml\n</synced_block_reference>\n```\nSecret acquisition plan\n</synced_block_reference>\nAfter";
 		const shown = redact(synced);
@@ -927,12 +931,13 @@ describe("beyond test_notion.py", () => {
 		expect(notion.writes).toEqual([]);
 	});
 
-	test("read_page counts characters as Python does", async () => {
+	test("read_page counts UTF-16 units and never cuts a character in half", async () => {
 		const notion = fakeNotion();
 		const run = await start(notion, { home: ["read"] });
 		notion.markdown[ID.private] = "😀😀😀ab";
 		const [read] = (await run.ok("notion_read_page", { page_id: ID.private, offset: 1, max_chars: 2 })).result.items;
-		expect([read?.text, read?.total_chars, read?.truncated]).toEqual(["😀😀", 5, true]);
+		// Offset 1 and end 3 fall inside the first and second emoji: the window moves back to whole characters.
+		expect([read?.text, read?.total_chars, read?.truncated]).toEqual(["😀", 8, true]);
 	});
 
 	test("a database with several data sources needs data_source_id", async () => {
@@ -1019,6 +1024,6 @@ describe("beyond test_notion.py", () => {
 		// parseJson reads "1e400" as an infinity.
 		const huge = parseJson('{"Score": 1e400}') as JsonObject;
 		const numbers: JsonObject = { Score: { id: "sc", type: "number", number: {} } };
-		expect(refused(() => writable(numbers, huge))).toMatchObject({ code: "INVALID_ARGUMENTS", message: "'Score' takes a number, or null." });
+		expect(refused(() => writable(numbers, huge))).toMatchObject({ code: "INVALID_ARGUMENTS", message: '"Score" takes a number, or null.' });
 	});
 });

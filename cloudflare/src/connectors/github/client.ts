@@ -21,8 +21,6 @@ import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP, defaultForbidden } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
 import { isDict, type Json, parseJson } from "../../lib/json.ts";
-import { DIGIT_CLASS } from "../../lib/digits.ts";
-import { PYTHON_SPACE_CLASS, pythonFloat, pythonRepr } from "../../lib/text.ts";
 import { parseQs, quoteSegment, urlsplitStrict } from "../../lib/urlsplit.ts";
 
 export const API_URL = "https://api.github.com";
@@ -37,21 +35,9 @@ const PROVIDER = "GitHub";
 /** `quote(value, safe="")` (lib/urlsplit.ts). */
 export const segment = quoteSegment;
 
-/** Python's `str(value)` for a parsed JSON value: a string as it is, anything else as its `repr`. */
-export function pythonStr(value: Json): string {
-	return typeof value === "string" ? value : pythonReprJson(value);
-}
-
-function pythonReprJson(value: Json): string {
-	if (value === null) return "None";
-	if (value === true) return "True";
-	if (value === false) return "False";
-	if (typeof value === "number") return Number.isSafeInteger(value) ? String(value) : pythonFloat(value);
-	if (typeof value === "string") return pythonRepr(value);
-	if (Array.isArray(value)) return `[${value.map(pythonReprJson).join(", ")}]`;
-	return `{${Object.entries(value)
-		.map(([key, item]) => `${pythonRepr(key)}: ${pythonReprJson(item)}`)
-		.join(", ")}}`;
+/** A JSON value as text: a string as it is, anything else as JSON. */
+function textOf(value: Json): string {
+	return typeof value === "string" ? value : JSON.stringify(value);
 }
 
 /** JSON's text from bytes as `json.loads` reads them: UTF-8, a byte order mark skipped, invalid UTF-8 refused. */
@@ -69,7 +55,7 @@ function messageOf(body: string): string {
 		return "";
 	}
 	if (!isDict(data)) return "";
-	return Object.hasOwn(data, "message") ? pythonStr(data.message as Json) : "";
+	return Object.hasOwn(data, "message") ? textOf(data.message as Json) : "";
 }
 
 /** GitHub reports rate limits, and what the App may not do, as 403 (client.py `forbidden`). */
@@ -202,10 +188,9 @@ export interface Page<T> {
 	next: { [key: string]: string } | null;
 }
 
-/** A repository id in a redirect: `\d{1,20}`, where `\d` is any decimal digit (Nd). */
-const ID = new RegExp(`^${DIGIT_CLASS}{1,20}$`, "u");
-/** `<([^>]+)>;\s*rel="next"`, with `re`'s `\s` (Python's whitespace, which JavaScript's `\s` is not). */
-const NEXT_LINK = new RegExp(`<([^>]+)>;[${PYTHON_SPACE_CLASS}]*rel="next"`, "u");
+/** A repository id in a redirect: 1 to 20 ASCII digits. */
+const ID = /^\d{1,20}$/u;
+const NEXT_LINK = /<([^>]+)>;\s*rel="next"/u;
 
 /** client.py `_next`: the `page` and `after` of the Link header's next page, or null. */
 export function nextPage(response: Response): { [key: string]: string } | null {
@@ -331,8 +316,7 @@ export class GitHubClient implements ProviderClient {
 	async find(owner: string, name: string): Promise<Repository> {
 		const response = await this.http.request({ method: "GET", path: `/repos/${segment(owner)}/${segment(name)}`, redirects: true });
 		if (response.status >= 300 && response.status < 400) {
-			// Followed only to /repositories/<id> on the API host: `re.fullmatch(base + r"/repositories/(\d{1,20})")`,
-			// where `\d` is any decimal digit (Nd), so an id in another script is asked for and not found.
+			// Followed only to /repositories/<id> on the API host, the id in ASCII digits.
 			const location = httpxHeader(response.headers, "location") ?? "";
 			const prefix = `${this.#baseUrl}/repositories/`;
 			const id = location.startsWith(prefix) ? location.slice(prefix.length) : null;

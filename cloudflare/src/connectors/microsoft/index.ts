@@ -1,4 +1,4 @@
-// What Microsoft connectors share, ported from backend/connectors/microsoft/__init__.py: one Entra app,
+// What Microsoft connectors share: one Entra app,
 // Graph consent, and a Graph client base.
 //
 // Minerva connects with delegated permissions through one Entra app for work, school and personal accounts
@@ -13,9 +13,7 @@ import type { Auth, Consent, OperationErrorShape, ProviderClient, ProviderIo } f
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP, defaultForbidden } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
-import { DIGIT_CLASS } from "../../lib/digits.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
-import { codePointLength } from "../../lib/text.ts";
 import { parseQs, quoteSegment, urlsplitStrict } from "../../lib/urlsplit.ts";
 import { type Reader, Invalid, isDict, list, model, nullable, optional, required, str } from "./model.ts";
 
@@ -25,8 +23,7 @@ export const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 export const IMMUTABLE_IDS = 'IdType="ImmutableId"';
 /** Graph's ids are URL-safe base64. */
 export const ID = /^[A-Za-z0-9=_-]{10,512}$/;
-// Python's `\d` is any decimal digit (Unicode 16's Nd, as lib/digits.ts pins it), as these are.
-const SKIP = new RegExp(`^${DIGIT_CLASS}{1,6}$`, "u");
+const SKIP = /^\d{1,6}$/u;
 const SKIPTOKEN = /^[A-Za-z0-9._~=+/%:-]{1,880}$/;
 /** The mailbox exists but Graph cannot reach it: on-premises Exchange, or an inactive account. */
 export const UNSUPPORTED_MAILBOX: ReadonlySet<string> = new Set(["MailboxNotEnabledForRESTAPI", "MailboxNotSupportedForRESTAPI"]);
@@ -50,7 +47,6 @@ export function oauth(...scopes: string[]): OAuth2 {
  */
 export function consent(...scopes: string[]): Consent {
 	const spellings = scopes.flatMap((scope) => [scope, `${GRAPH}/${scope}`]);
-	// Python's str.lower(), which is the runtime's for these ASCII names.
 	const all = [...spellings, ...spellings.map((form) => form.toLowerCase())];
 	return [...new Set(all)].map((form) => [form]);
 }
@@ -64,7 +60,7 @@ export function consentAll(...scopes: string[]): Consent {
 	return options;
 }
 
-/** Python's `quote(value, safe="")` (lib/urlsplit.ts). */
+/** Every character but letters, digits and `_.-~` percent-encoded (lib/urlsplit.ts). */
 export const segment = quoteSegment;
 
 /** JSON's text from bytes as `json.loads` reads UTF-8: a byte order mark skipped, invalid UTF-8 refused. */
@@ -128,8 +124,8 @@ export function pageParam(cursor: string): { [name: string]: string } {
 }
 
 /**
- * Python's `parse_qs(urlsplit(url).query)`: the URL split as `urlsplit` splits it (and refused with its
- * ValueError where it raises), then the query split on `&`, pairs without `=` or with an empty value left out,
+ * `parse_qs(urlsplit(url).query)`: the URL split as `urlsplit` splits it (refused with UrlError where it
+ * throws), then the query split on `&`, pairs without `=` or with an empty value left out,
  * `+` read as a space and `%XX` unquoted (lib/urlsplit.ts).
  */
 export function queryOf(url: string): Map<string, string[]> {
@@ -140,7 +136,7 @@ export function queryOf(url: string): Map<string, string[]> {
 export function nextCursor(nextLink: unknown): string | null {
 	if (nextLink === null || nextLink === undefined) return null;
 	const unusable = new OperationError("PROVIDER_LIMIT", "Microsoft Graph returned a page link Minerva cannot use.");
-	if (typeof nextLink !== "string" || codePointLength(nextLink) > 4000) throw unusable;
+	if (typeof nextLink !== "string" || nextLink.length > 4000) throw unusable;
 	const query = queryOf(nextLink);
 	const token = query.get("$skiptoken");
 	const skip = query.get("$skip");

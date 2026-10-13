@@ -1,5 +1,5 @@
-// History replay (runs 4.2; harness 3.3), ported from backend/runs/services.py (`history`, `_with_files`,
-// `_paths`) and worker/src/main.ts (`clip`, `recentHistory`), with the cases test_files_web.py pins.
+// History replay: the turns, their files and what they changed, and worker/src/main.ts's `clip` and
+// `recentHistory`.
 
 import { describe, expect, test } from "vitest";
 import type { FolderChangesOut } from "../../src/contracts/api.ts";
@@ -50,7 +50,7 @@ describe("file notes", () => {
 		expect(withFiles(user)).toBe("Summarize\n\n[The user attached a.pdf to this message, in your folder.]");
 	});
 
-	test("an answer notes what its turn changed, by kind, with today's verbs", () => {
+	test("an answer notes what its turn changed, by kind, with its verbs", () => {
 		const answer = message({
 			role: "assistant",
 			content: "Done.",
@@ -119,11 +119,11 @@ describe("instructions", () => {
 });
 
 describe("clipping and the budget", () => {
-	test("a message over 30,000 characters keeps 30,000 and the suffix; characters are code points", () => {
+	test("a message over 30,000 UTF-16 units keeps 30,000 and the suffix, never half a character", () => {
 		expect(clip("a".repeat(MESSAGE_LIMIT))).toBe("a".repeat(MESSAGE_LIMIT));
 		expect(clip("a".repeat(MESSAGE_LIMIT + 1))).toBe(`${"a".repeat(MESSAGE_LIMIT)}${CLIPPED}`);
-		expect(clip("😀".repeat(MESSAGE_LIMIT))).toBe("😀".repeat(MESSAGE_LIMIT));
-		expect(clip("😀".repeat(MESSAGE_LIMIT + 1))).toBe(`${"😀".repeat(MESSAGE_LIMIT)}${CLIPPED}`);
+		expect(clip("😀".repeat(MESSAGE_LIMIT / 2))).toBe("😀".repeat(MESSAGE_LIMIT / 2));
+		expect(clip(`a${"😀".repeat(MESSAGE_LIMIT / 2)}`)).toBe(`a${"😀".repeat(MESSAGE_LIMIT / 2 - 1)}${CLIPPED}`);
 		expect(CLIPPED).toBe("\n\n[The rest of this message was left out.]");
 	});
 

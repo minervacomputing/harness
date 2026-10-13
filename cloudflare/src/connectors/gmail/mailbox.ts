@@ -9,7 +9,6 @@ import { z } from "zod";
 import type { Binding } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, denied } from "../../gateway/connector.ts";
-import { casefold } from "../../lib/casefold.ts";
 import { type Format, type GmailClient, ID, type Label, type Message } from "./client.ts";
 
 export const LABEL = "label";
@@ -90,7 +89,7 @@ export class Labels {
 			if (!ID.test(label.id)) continue;
 			if (label.type === "user" || SYSTEM_LABELS.has(label.id)) this.grantable.set(label.id, label);
 			if (label.type === "user") {
-				const folded = casefold(label.name);
+				const folded = label.name.toLowerCase();
 				if (!this.userNames.has(folded)) this.userNames.set(folded, label.id);
 			}
 		}
@@ -122,7 +121,7 @@ export class Labels {
 		const parts = label.name.split("/");
 		const found: [number, string][] = [];
 		for (let end = parts.length - 1; end > 0; end--) {
-			const parent = this.userNames.get(casefold(parts.slice(0, end).join("/")));
+			const parent = this.userNames.get(parts.slice(0, end).join("/").toLowerCase());
 			if (parent !== undefined && parent !== labelId && !found.some(([, p]) => p === parent)) found.push([end, parent]);
 		}
 		return found;

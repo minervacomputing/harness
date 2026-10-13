@@ -13,14 +13,15 @@ import { MOMENT_MESSAGE, isoTime, moment as slackMoment } from "../../src/connec
 import { isoInstant } from "../../src/connectors/slack/times.ts";
 import { NOT_A_DATE, OUT_OF_RANGE, dayProblem } from "../../src/connectors/xero/dates.ts";
 import { dateFromIsoFormat, datetimeFromIsoFormat, isoDate, isoformat, unixMicros } from "../../src/lib/isoformat.ts";
+import { TextError } from "../../src/lib/text.ts";
 import { ZONES } from "../../src/lib/zones.ts";
 
-/** The message of the ValueError (lib/pyerrors.ts, or Slack's own) a call raises, or "accepted". */
+/** The message of the TextError a call raises (a validator's refusal), or "accepted". */
 function refusal(run: () => unknown): string {
 	try {
 		run();
 	} catch (error) {
-		if (error instanceof Error && error.name === "ValueError") return error.message;
+		if (error instanceof TextError) return error.message;
 		throw error;
 	}
 	return "accepted";
@@ -37,7 +38,7 @@ const LOCAL_TIMES = [
 	["the second Berlin 02:30 of the fold, by its offset", "2026-10-25T02:30:00+01:00", "1792891800.000000", 1792891800, "2026-10-25T01:30:00Z"],
 ] as const;
 
-// [text, what Python's datetime.fromisoformat makes of it (isoformat()), or the ValueError it raises]
+// [text, what Python's datetime.fromisoformat makes of it (isoformat()), or the message it is refused with]
 const GRAMMAR: readonly (readonly [string, string, boolean])[] = [
 	["2026-10-01", "2026-10-01T00:00:00", true],
 	["20261001T0900", "2026-10-01T09:00:00", true],
@@ -58,10 +59,10 @@ const GRAMMAR: readonly (readonly [string, string, boolean])[] = [
 	["2026-13-01", "month must be in 1..12, not 13", false],
 	["0000-01-01", "year must be in 1..9999, not 0", false],
 	["9999-12-31T24:00", "year must be in 1..9999, not 10000", false],
-	["2026-10-01T09,5", "Invalid isoformat string: '2026-10-01T09,5'", false],
-	["2026-10-01T", "Invalid isoformat string: '2026-10-01T'", false],
-	["2026-10-01T09:00:00.Z", "Invalid isoformat string: '2026-10-01T09:00:00.Z'", false],
-	["2026-10-01T\u0660\u0669:00", "Invalid isoformat string: '2026-10-01T\u0660\u0669:00'", false],
+	["2026-10-01T09,5", 'Invalid isoformat string: "2026-10-01T09,5"', false],
+	["2026-10-01T", 'Invalid isoformat string: "2026-10-01T"', false],
+	["2026-10-01T09:00:00.Z", 'Invalid isoformat string: "2026-10-01T09:00:00.Z"', false],
+	["2026-10-01T\u0660\u0669:00", 'Invalid isoformat string: "2026-10-01T\u0660\u0669:00"', false],
 ];
 
 /** Whole seconds and microseconds of an instant as the ISO text of the UTC time. */
@@ -160,8 +161,8 @@ export function dateTests(): void {
 		test("date.fromisoformat reads week dates and stops after the date", () => {
 			expect(dateFromIsoFormat("2026-W53-1")).toEqual({ year: 2026, month: 12, day: 28 });
 			expect(dateFromIsoFormat("20261001xx")).toEqual({ year: 2026, month: 10, day: 1 });
-			expect(refusal(() => dateFromIsoFormat("1900-W53-1"))).toBe("Invalid isoformat string: '1900-W53-1'");
-			expect(refusal(() => dateFromIsoFormat("2026-10-01T09:00"))).toBe("Invalid isoformat string: '2026-10-01T09:00'");
+			expect(refusal(() => dateFromIsoFormat("1900-W53-1"))).toBe('Invalid isoformat string: "1900-W53-1"');
+			expect(refusal(() => dateFromIsoFormat("2026-10-01T09:00"))).toBe('Invalid isoformat string: "2026-10-01T09:00"');
 		});
 
 		test("the connectors that call it say what they say when it refuses", () => {

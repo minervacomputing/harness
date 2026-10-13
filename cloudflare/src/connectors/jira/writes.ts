@@ -4,9 +4,7 @@
 import { z } from "zod";
 import type { Consent, Prepared, ProviderOutput } from "../../contracts/connectors.ts";
 import { OperationError, defineOperation } from "../../gateway/connector.ts";
-import { casefold } from "../../lib/casefold.ts";
 import type { JsonObject } from "../../lib/json.ts";
-import { sortByCodePoint } from "../../lib/order.ts";
 import { PLAIN_TEXT, SINGLE_LINE, isPlainText, isSingleLine } from "../../lib/text.ts";
 import * as adf from "../atlassian/adf.ts";
 import { ID, PROJECT, confirmIssue, hosts, issueName, link, projectName, projectResource, resolveIssue, resolveProject, siteId } from "./issues.ts";
@@ -31,7 +29,7 @@ export const WRITE_NOTE =
 	"Everyone who can browse the project sees what you write, posted as the signed-in user; watchers are notified, and the project's automation rules in Jira may make further changes.";
 
 export function names(values: readonly (string | null)[]): string {
-	const sorted = sortByCodePoint(new Set(values.filter((value): value is string => Boolean(value))));
+	const sorted = [...new Set(values.filter((value): value is string => Boolean(value)))].sort();
 	const shown = sorted.slice(0, MAX_LISTED).join(", ");
 	return shown ? shown + (sorted.length > MAX_LISTED ? ", …" : "") : "none";
 }
@@ -94,8 +92,8 @@ export const CREATE_ISSUE = defineOperation<z.output<typeof CreateIssue>>({
 				const client = binding.client as JiraClient;
 				// Sub-tasks need a parent issue, which this operation does not take.
 				const types = (await client.issueTypes(site.id, project.id)).filter((type) => !type.subtask && type.id);
-				const folded = casefold(data.issue_type);
-				const matching = types.filter((type) => type.name && casefold(type.name) === folded);
+				const folded = data.issue_type.toLowerCase();
+				const matching = types.filter((type) => type.name && type.name.toLowerCase() === folded);
 				if (matching.length !== 1) {
 					throw new OperationError("INVALID_ARGUMENTS", `No single issue type in this project has that name. Types: ${names(types.map((type) => type.name))}.`);
 				}
@@ -127,9 +125,9 @@ const TransitionIssue = z.strictObject({
 });
 
 export function pick(transitions: readonly Transition[], wanted: string): Transition {
-	const folded = casefold(wanted);
-	const byStatus = transitions.filter((transition) => transition.to?.name && casefold(transition.to.name) === folded);
-	const byName = transitions.filter((transition) => transition.name && casefold(transition.name) === folded);
+	const folded = wanted.toLowerCase();
+	const byStatus = transitions.filter((transition) => transition.to?.name && transition.to.name.toLowerCase() === folded);
+	const byName = transitions.filter((transition) => transition.name && transition.name.toLowerCase() === folded);
 	for (const found of [byStatus, byName]) {
 		if (new Set(found.map((transition) => transition.id)).size === 1) return found[0] as Transition;
 	}

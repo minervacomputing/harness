@@ -28,7 +28,6 @@ import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
 import { type Json, parseJson, parseModelJson } from "../../lib/json.ts";
-import { PYTHON_SPACE_CLASS } from "../../lib/text.ts";
 
 export const PROVIDER = "Sentry";
 export const API_URL = "https://sentry.io";
@@ -41,8 +40,8 @@ export const MAX_RESPONSE = 4 * 1024 * 1024;
 export const MAX_EVENT = 8 * 1024 * 1024;
 /** Sentry's cursors look like "1727950000000:0:0"; they are checked, never followed as addresses. */
 const CURSOR = /^[0-9A-Za-z.:_-]{1,200}$/;
-/** Python's `\s` in a str pattern: the characters `str.isspace()` takes. */
-const SPACE = `[${PYTHON_SPACE_CLASS}]`;
+/** Whitespace around a Link header's parameters. */
+const SPACE = `\\s`;
 const LINK = new RegExp(`<[^>]*>((?:${SPACE}*;${SPACE}*[a-z]+="[^"]*")*)`, "g");
 const PARAM = /([a-z]+)="([^"]*)"/g;
 

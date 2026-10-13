@@ -1,5 +1,4 @@
-// HubSpot's CRM: contacts, companies and deals, through a public app installed with OAuth (ported from
-// backend/connectors/hubspot/connector.py).
+// HubSpot's CRM: contacts, companies and deals, through a public app installed with OAuth.
 //
 // The connection is the HubSpot account (portal) the app was installed in. HubSpot's tokens carry the app's
 // scopes, not the installing user's HubSpot permissions: an agent reaches every contact, company and deal the
@@ -17,7 +16,6 @@
 // scope.ts, the HTTP client in client.ts and the response models in models.ts.
 
 import type { Connector, DiscoveryItem } from "../../contracts/connectors.ts";
-import { casefold } from "../../lib/casefold.ts";
 import { HubSpotClient } from "./client.ts";
 import type { Pipeline } from "./models.ts";
 import { GET_COMPANY, GET_CONTACT, GET_DEAL, LIST_PIPELINES, SEARCH_COMPANIES, SEARCH_CONTACTS, SEARCH_DEALS } from "./reads.ts";
@@ -96,8 +94,8 @@ export function hubspotConnector(): Connector<HubSpotClient> {
 		async discover(client, _kind, { query }) {
 			let items = [...collectionItems(), ...(await client.pipelines()).filter((found) => !found.archived).map(pipelineItem)];
 			if (query) {
-				const folded = casefold(query);
-				items = items.filter((item) => casefold(item.name).includes(folded));
+				const folded = query.toLowerCase();
+				items = items.filter((item) => item.name.toLowerCase().includes(folded));
 			}
 			return { items };
 		},
