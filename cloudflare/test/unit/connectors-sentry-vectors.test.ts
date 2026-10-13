@@ -10,7 +10,7 @@ import { describe, expect, test } from "vitest";
 import type { z } from "zod";
 import type { ProviderOutput, Requirement } from "../../src/contracts/connectors.ts";
 import { requestAddress } from "../../src/connectors/sentry/address.ts";
-import { Issue, Project, type SentryClient, laxInt, linkCursor, nextCursor } from "../../src/connectors/sentry/client.ts";
+import { Issue, Project, type SentryClient, linkCursor, nextCursor } from "../../src/connectors/sentry/client.ts";
 import { sentryConnector } from "../../src/connectors/sentry/connector.ts";
 import { eventRecord, issueDetail, issueRecord, numberOf, short } from "../../src/connectors/sentry/reads.ts";
 import { OperationError, binding, offered, termsOf } from "../../src/gateway/connector.ts";
@@ -18,7 +18,7 @@ import { CallIo, settingsIo } from "../../src/gateway/http.ts";
 import { queryHash } from "../../src/gateway/page-tokens.ts";
 import { inputSchema } from "../../src/gateway/registry.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
-import { type Json, parseJson } from "../../src/lib/json.ts";
+import type { Json } from "../../src/lib/json.ts";
 import { readVectors } from "../fixtures/connectors/read-vectors.ts";
 import { kindsOut } from "../../src/workspace/out.ts";
 import { changedOnPurpose } from "./changed.ts";
@@ -90,7 +90,6 @@ interface Vectors {
 		}[];
 	};
 	inputs: { [operation: string]: ({ raw: Json; ok: true; fields: Fields; query_hash: string } | { raw: Json; ok: false; message: string })[] };
-	lax: { json: string; int: { ok: boolean; value?: number }; str: { ok: boolean; value?: string }; id: { ok: boolean; value?: string } }[];
 	scenarios: { name: string; call: Call; routes: { [path: string]: ScriptedResponse[] }; requests: RecordedRequest[]; outcome: Outcome }[];
 	links: ({ link: string; cursor: string | null } | { link: string; error: string })[];
 	numbers: ({ value: Json; number: number | null } | { value: Json; raises: true } | { value: Json; beyond: true })[];
@@ -257,31 +256,30 @@ describe("inputs as Python normalizes them", () => {
 	}
 });
 
-describe("responses as Python's models read them", () => {
-	test.each(VECTORS.lax.filter((expected) => !changedOnPurpose(parseJson(expected.json))))("$json", (expected) => {
-		const value = parseJson(expected.json);
-		const read = <T>(schema: z.ZodType<T>, data: Json, pick: (parsed: T) => Json) => {
-			const result = schema.safeParse(data);
-			return result.success ? { ok: true, value: pick(result.data) } : { ok: false };
-		};
+describe("Sentry's answers", () => {
+	test("fields of another type do not fit", () => {
 		const base = { id: "101", project: { id: "11" } };
-		// Python keeps an int beyond 2^53 exactly; it is refused here, never rounded.
-		const beyond = typeof expected.int.value === "number" && !Number.isSafeInteger(expected.int.value);
-		expect(read(Issue, { ...base, userCount: value }, (issue) => issue.userCount)).toEqual(beyond ? { ok: false } : expected.int);
-		expect(read(Issue, { ...base, title: value }, (issue) => issue.title)).toEqual(expected.str);
-		expect(read(Project, { id: value, slug: "web" }, (project) => project.id)).toEqual(expected.id);
+		expect(Issue.parse({ ...base, userCount: 12 }).userCount).toBe(12);
+		for (const odd of [{ userCount: "12" }, { userCount: 12.5 }, { userCount: true }, { userCount: 2 ** 53 }, { title: 5 }, { project: { id: 11 } }]) {
+			expect(Issue.safeParse({ ...base, ...odd }).success, JSON.stringify(odd)).toBe(false);
+		}
+		expect(Project.safeParse({ id: 11, slug: "web" }).success).toBe(false);
 	});
 
-	test("where a JavaScript number cannot hold what Python reads", () => {
-		expect(VECTORS.lax.find((item) => item.json === '"9007199254740993"')?.int).toEqual({ ok: true, value: 9007199254740993 });
-		expect(laxInt("9007199254740993")).toBeNull();
-		expect(laxInt(parseJson("9007199254740992"))).toBeNull();
-		expect(laxInt(parseJson("12.0"))).toBe(12);
+	test("a list sent as an empty object or string is an unexpected response", async () => {
+		for (const body of ["{}", '""']) {
+			const script = scripted({ "/api/0/organizations/": [{ status: 200, body, headers: {} }] });
+			const client: SentryClient = sentryConnector().client(TOKEN, settingsIo(script.fetch));
+			await expect(client.organisations()).rejects.toMatchObject({ code: "PROVIDER_FAILED" });
+		}
 	});
 });
 
+// A list sent as an empty object or string is an unexpected response (Sentry's answers, above).
+const CHANGED_SCENARIOS = new Set(["account with organisations as an empty object", "account with organisations as an empty string", "discover projects as an empty object"]);
+
 describe("against scripted Sentry responses, as Python's connector", () => {
-	test.each(VECTORS.scenarios.filter((scenario) => !changedOnPurpose(scenario)).map((scenario) => [scenario.name, scenario] as const))("%s", async (_, scenario) => {
+	test.each(VECTORS.scenarios.filter((scenario) => !changedOnPurpose(scenario) && !CHANGED_SCENARIOS.has(scenario.name)).map((scenario) => [scenario.name, scenario] as const))("%s", async (_, scenario) => {
 		const { requests, outcome, left } = await replay(scenario.call, scenario.routes);
 		if (scenario.call.kind === "describe") {
 			// Requests run concurrently: compare what was sent, and the names, in any order.

@@ -9,12 +9,12 @@
 // parameter out of it (`$skip` or `$skiptoken`), checks it, and rebuilds the request itself. Graph's own
 // error texts never reach the model.
 
+import { z } from "zod";
 import type { Auth, Consent, OperationErrorShape, ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP, defaultForbidden } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
-import { type Json, parseJson } from "../../lib/json.ts";
-import { type Reader, Invalid, isDict, list, model, nullable, optional, required, str } from "./model.ts";
+import { isDict, type Json, type JsonObject, parseJson } from "../../lib/json.ts";
 
 export const GRAPH = "https://graph.microsoft.com";
 export const API_URL = `${GRAPH}/v1.0`;
@@ -59,16 +59,14 @@ export function consentAll(...scopes: string[]): Consent {
 	return options;
 }
 
-/** JSON's text from bytes as `json.loads` reads UTF-8: a byte order mark skipped, invalid UTF-8 refused. */
+/** JSON from strict UTF-8 bytes. Throws for invalid UTF-8 or JSON. */
 export function jsonOf(bytes: Uint8Array): Json {
-	const start = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
-	return parseJson(fromUtf8Strict(bytes.subarray(start)));
+	return parseJson(fromUtf8Strict(bytes));
 }
 
-/**
- * Graph's error code from an error body, if it names one. The body is read as `response.json()` reads it, from
- * its bytes: one that is not UTF-8, or not JSON, names nothing.
- */
+const ErrorBody = z.object({ error: z.object({ code: z.string() }) });
+
+/** Graph's error code from an error body, if it names one: a body that is not UTF-8, not JSON or not so shaped names nothing. */
 export function errorCode(bytes: Uint8Array): string | null {
 	let parsed: Json;
 	try {
@@ -76,13 +74,8 @@ export function errorCode(bytes: Uint8Array): string | null {
 	} catch {
 		return null;
 	}
-	// `response.json().get("error", {}).get("code")`: a body that is not an object, or an error that is not
-	// one, names nothing.
-	if (!isDict(parsed)) return null;
-	const error = Object.hasOwn(parsed, "error") ? parsed.error : {};
-	if (!isDict(error)) return null;
-	const code = Object.hasOwn(error, "code") ? error.code : null;
-	return typeof code === "string" ? code : null;
+	const found = ErrorBody.safeParse(parsed);
+	return found.success ? found.data.error.code : null;
 }
 
 export type Classify = (provider: string, response: Response, body: string, bytes: Uint8Array) => OperationErrorShape | null;
@@ -100,14 +93,14 @@ export const classify: Classify = (provider, response, _body, bytes) => {
 	return null;
 };
 
-export const User = model({
-	id: required(str),
-	display_name: optional(nullable(str), null),
-	mail: optional(nullable(str), null),
-	user_principal_name: optional(nullable(str), null),
-	proxy_addresses: optional(list(str), []),
+export const User = z.object({
+	id: z.string(),
+	displayName: z.string().nullable().default(null),
+	mail: z.string().nullable().default(null),
+	userPrincipalName: z.string().nullable().default(null),
+	proxyAddresses: z.array(z.string()).default([]),
 });
-export type User = ReturnType<typeof User>;
+export type User = z.output<typeof User>;
 
 /** The query parameter a cursor stands for, or INVALID_CURSOR. */
 export function pageParam(cursor: string): { [name: string]: string } {
@@ -125,10 +118,10 @@ export function queryOf(link: string): URLSearchParams {
 }
 
 /** The cursor for Graph's next page, taken out of its nextLink; the link itself is never requested. */
-export function nextCursor(nextLink: unknown): string | null {
-	if (nextLink === null || nextLink === undefined) return null;
+export function nextCursor(nextLink: string | null): string | null {
+	if (nextLink === null) return null;
 	const unusable = new OperationError("PROVIDER_LIMIT", "Microsoft Graph returned a page link Minerva cannot use.");
-	if (typeof nextLink !== "string" || nextLink.length > 4000) throw unusable;
+	if (nextLink.length > 4000) throw unusable;
 	const query = queryOf(nextLink);
 	const token = query.getAll("$skiptoken");
 	const skip = query.getAll("$skip");
@@ -166,7 +159,7 @@ export class Graph implements ProviderClient {
 		return this.http.unexpected(cause);
 	}
 
-	async get(path: string, options: { params?: { [name: string]: string }; prefer?: string } = {}): Promise<{ [key: string]: Json }> {
+	async get(path: string, options: { params?: { [name: string]: string }; prefer?: string } = {}): Promise<JsonObject> {
 		const response = await this.http.bounded(
 			{ method: "GET", path, ...(options.params === undefined ? {} : { query: options.params }), headers: { Prefer: options.prefer ?? IMMUTABLE_IDS } },
 			MAX_RESPONSE_BYTES,
@@ -179,22 +172,20 @@ export class Graph implements ProviderClient {
 			throw this.unexpected(error);
 		}
 		if (!isDict(body)) throw this.unexpected();
-		return body as { [key: string]: Json };
+		return body;
 	}
 
-	parse<T>(reader: Reader<T>, value: unknown): T {
-		try {
-			return reader(value);
-		} catch (error) {
-			if (error instanceof Invalid) throw this.unexpected(error);
-			throw error;
-		}
+	/** `value` read with `schema`; one that does not fit is an unexpected response. */
+	parse<T>(schema: z.ZodType<T>, value: unknown): T {
+		const found = schema.safeParse(value);
+		if (!found.success) throw this.unexpected(found.error);
+		return found.data;
 	}
 
-	page<T>(reader: Reader<T>, body: { [key: string]: Json }): [T[], string | null] {
-		const items = Object.hasOwn(body, "value") ? body.value : undefined;
-		if (!Array.isArray(items)) throw this.unexpected();
-		return [items.map((item) => this.parse(reader, item)), nextCursor(Object.hasOwn(body, "@odata.nextLink") ? body["@odata.nextLink"] : null)];
+	/** A page of a Graph list: its items, and the cursor `next` takes out of its `@odata.nextLink`. */
+	page<T>(schema: z.ZodType<T>, body: JsonObject, next: (link: string | null) => string | null = nextCursor): [T[], string | null] {
+		const page = this.parse(z.object({ value: z.array(schema), "@odata.nextLink": z.string().nullable().default(null) }), body);
+		return [page.value, next(page["@odata.nextLink"])];
 	}
 
 	async me(): Promise<User> {
@@ -204,5 +195,5 @@ export class Graph implements ProviderClient {
 
 /** The label of an account as every Microsoft connector shows it. */
 export function accountLabel(user: User, fallback: string): string {
-	return user.mail || user.user_principal_name || user.display_name || fallback;
+	return user.mail || user.userPrincipalName || user.displayName || fallback;
 }

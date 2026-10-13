@@ -4,18 +4,15 @@
 // Responses are validated before use, and read with a byte limit: a conversation carries up to 500 parts.
 // Intercom's error messages are never passed on.
 //
-// Responses are read as Pydantic's models read them (`extra="ignore"`, lax): unknown fields are dropped,
-// integers may come as whole floats, booleans or numeric strings, booleans as 0, 1 or words such as "true";
-// strings are strings. One deliberate difference: a number beyond 2^53, which JavaScript cannot hold exactly,
-// makes the response unexpected (`laxInt`), where Python would, say, place a conversation in a team whose id
-// a number would round to another team's.
+// Unknown fields in a response are dropped; a field of another type, or an integer beyond 2^53 (which a
+// number would round, say, to another team's id), makes the response unexpected.
 
 import { z } from "zod";
 import type { OperationErrorShape, ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
-import { type Json, parseJson, parseModelJson } from "../../lib/json.ts";
+import { type Json, parseJson } from "../../lib/json.ts";
 
 export const API_URL = "https://api.intercom.io";
 export const VERSION = "2.16";
@@ -26,72 +23,8 @@ export const MAX_TEAMS = 500;
 /** Intercom's cursors are opaque; they are checked, never followed as addresses. */
 const CURSOR = /^[\x21-\x7e]{1,900}$/;
 
-// Pydantic's lax ints and bools.
-
-const INT_TEXT = /^[+-]?[0-9]+(?:_[0-9]+)*(?:\.0+)?$/;
-const MAX_INT_TEXT = 4300;
-const TRUE_WORDS = /^(?:1|t|true|y|yes|on)$/i;
-const FALSE_WORDS = /^(?:0|f|false|n|no|off)$/i;
-
-/**
- * pydantic-core's `strip_leading_zeros`: what follows leading zeros (and underscores among them), keeping a
- * zero before a decimal mark, or the last character when nothing else follows; null when the text does not
- * start with a zero.
- */
-function stripLeadingZeros(text: string): string | null {
-	if (text[0] !== "0") return null;
-	for (let i = 1; i < text.length; i++) {
-		const c = text[i] as string;
-		if (c === "0" || c === "_") continue;
-		if ((c >= "1" && c <= "9") || c === "-" || c === "+") return text.slice(i);
-		if (c === ".") return text.slice(i - 1);
-		return null;
-	}
-	return text.slice(-1);
-}
-
-/**
- * An int as Pydantic reads one in lax mode: an integer, a float without a fraction, a boolean, or a string of
- * digits (with a sign, underscores between digits, leading zeros and a fraction of zeros) between White_Space.
- * A number beyond 2^53, which JavaScript cannot hold exactly, is refused, where Pydantic reads an integer of
- * any size (and a float up to 2^63).
- */
-export function laxInt(): z.ZodType<number, unknown> {
-	return z.unknown().transform((value, ctx) => {
-		let number: number | null = null;
-		if (typeof value === "number" && Number.isInteger(value)) number = value;
-		else if (typeof value === "boolean") number = value ? 1 : 0;
-		else if (typeof value === "string") {
-			const trimmed = value.trim();
-			// Leading zeros are stripped after the sign.
-			const sign = trimmed[0] === "+" || trimmed[0] === "-" ? (trimmed[0] as string) : "";
-			const stripped = stripLeadingZeros(trimmed.slice(sign.length));
-			const text = stripped === null ? trimmed : sign + stripped;
-			// Longer strings are refused, as Python refuses to read them.
-			if (text.length <= MAX_INT_TEXT && INT_TEXT.test(text)) number = Number(text.replace(/\.0+$/, "").replaceAll("_", ""));
-		}
-		if (number !== null && Number.isSafeInteger(number)) return number === 0 ? 0 : number;
-		ctx.addIssue({ code: "custom", message: "Input should be a valid integer" });
-		return z.NEVER;
-	});
-}
-
-/** A bool as Pydantic reads one in lax mode. */
-export function laxBool(): z.ZodType<boolean, unknown> {
-	return z.unknown().transform((value, ctx) => {
-		if (typeof value === "boolean") return value;
-		if (value === 0 || value === 1) return value === 1;
-		if (typeof value === "string" && TRUE_WORDS.test(value)) return true;
-		if (typeof value === "string" && FALSE_WORDS.test(value)) return false;
-		ctx.addIssue({ code: "custom", message: "Input should be a valid boolean" });
-		return z.NEVER;
-	});
-}
-
-/** `str | None = None`. */
 const maybeText = () => z.string().nullable().default(null);
-/** `int | None = None`. */
-const maybeInt = () => laxInt().nullable().default(null);
+const maybeInt = () => z.int().nullable().default(null);
 
 // The models.
 
@@ -100,7 +33,7 @@ export const App = z.object({ id_code: z.string(), name: maybeText() });
 export const Me = z.object({ id: z.string(), name: maybeText(), email: maybeText(), app: App.nullable().default(null) });
 export type Me = z.output<typeof Me>;
 
-export const Team = z.object({ id: z.string(), name: maybeText(), admin_ids: z.array(laxInt()).default([]) });
+export const Team = z.object({ id: z.string(), name: maybeText(), admin_ids: z.array(z.int()).default([]) });
 export type Team = z.output<typeof Team>;
 
 const Teams = z.object({ teams: z.array(Team).default([]) });
@@ -118,7 +51,7 @@ const Source = z.object({
 	body: maybeText(),
 	author: Author.nullable().default(null),
 	attachments: z.array(Attachment).default([]),
-	redacted: laxBool().default(false),
+	redacted: z.boolean().default(false),
 });
 
 export const Part = z.object({
@@ -128,11 +61,11 @@ export const Part = z.object({
 	created_at: maybeInt(),
 	author: Author.nullable().default(null),
 	attachments: z.array(Attachment).default([]),
-	redacted: laxBool().default(false),
+	redacted: z.boolean().default(false),
 });
 export type Part = z.output<typeof Part>;
 
-const Parts = z.object({ conversation_parts: z.array(Part).default([]), total_count: laxInt().default(0) });
+const Parts = z.object({ conversation_parts: z.array(Part).default([]), total_count: z.int().default(0) });
 
 export const Conversation = z.object({
 	id: z.string(),
@@ -144,7 +77,7 @@ export const Conversation = z.object({
 	priority: maybeText(),
 	// Required: where a conversation is decides who may see it, so a response without it is not guessed at.
 	// Intercom gives 0 for no team.
-	team_assignee_id: z.custom<unknown>((value) => value !== undefined, { message: "Field required" }).pipe(laxInt().nullable()),
+	team_assignee_id: z.int().nullable(),
 	source: Source.nullable().default(null),
 	conversation_parts: Parts.nullable().default(null),
 });
@@ -155,31 +88,23 @@ const Next = z.object({ starting_after: maybeText() });
 const Pages = z.object({ next: Next.nullable().default(null) });
 const SearchPage = z.object({ conversations: z.array(Found).default([]), pages: Pages.nullable().default(null) });
 
-/** The codes of a failed response's `errors`, as Python reads them: a value it cannot hash raises TypeError. */
-function errorCodes(body: string): Set<Json> {
+const ErrorBody = z.object({ errors: z.array(z.unknown()) });
+const ErrorItem = z.object({ code: z.string() });
+
+/** The string codes of a failed response's `errors`; none for any other shape. */
+function errorCodes(body: string): Set<string> {
 	let data: Json;
 	try {
-		// json.loads of the body's bytes skips a byte order mark.
-		data = parseJson(body.startsWith("﻿") ? body.slice(1) : body);
+		data = parseJson(body);
 	} catch {
 		return new Set();
 	}
-	// `response.json().get("errors") or []`: anything but an object has no `.get`.
-	if (typeof data !== "object" || data === null || Array.isArray(data)) return new Set();
-	const errors = Object.hasOwn(data, "errors") ? data.errors : null;
-	// An empty or false value is no errors; a number or `true` cannot be iterated.
-	if (!errors || (typeof errors === "object" && !Array.isArray(errors) && Object.keys(errors).length === 0)) return new Set();
-	if (typeof errors === "number" || errors === true) throw new TypeError("The errors of Intercom's response are not iterable.");
-	// A string iterates characters and an object its keys: neither yields dicts.
-	if (!Array.isArray(errors)) return new Set();
-	const codes = new Set<Json>();
-	for (const item of errors) {
-		if (typeof item !== "object" || item === null || Array.isArray(item)) continue;
-		const code = Object.hasOwn(item, "code") ? (item.code as Json) : null;
-		if (typeof code === "object" && code !== null) throw new TypeError("An error code of Intercom's response cannot be hashed.");
-		codes.add(code);
-	}
-	return codes;
+	const parsed = ErrorBody.safeParse(data);
+	if (!parsed.success) return new Set();
+	return new Set(parsed.data.errors.flatMap((item) => {
+		const found = ErrorItem.safeParse(item);
+		return found.success ? [found.data.code] : [];
+	}));
 }
 
 export function classify(_provider: string, response: Response, body: string): OperationErrorShape | null {
@@ -237,8 +162,7 @@ export class IntercomClient implements ProviderClient {
 		const bytes = new Uint8Array(await response.arrayBuffer());
 		let data: Json;
 		try {
-			// Pydantic's JSON parser refuses an escaped lone surrogate anywhere in the document.
-			data = parseModelJson(fromUtf8Strict(bytes));
+			data = parseJson(fromUtf8Strict(bytes));
 		} catch (error) {
 			throw this.#http.unexpected(error);
 		}
@@ -249,7 +173,6 @@ export class IntercomClient implements ProviderClient {
 
 	#checked(conversation: Conversation, conversationId: string | null = null): Conversation {
 		if (!ID.test(conversation.id) || (conversationId !== null && conversation.id !== conversationId)) throw this.unexpected();
-		// laxInt refused a team id beyond 2^53, which a number would have rounded to another team's.
 		if (conversation.team_assignee_id !== null && conversation.team_assignee_id < 0) throw this.unexpected();
 		return conversation;
 	}

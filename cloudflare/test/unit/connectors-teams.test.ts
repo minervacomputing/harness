@@ -184,7 +184,12 @@ async function ids(run: Run, tool: string, args: Json): Promise<string[]> {
 	return (await items(run, tool, args)).map((item) => item.id as string);
 }
 
-const mentions = (...found: [number, Json][]): readonly Mention[] => found.map(([id, mentioned]) => Mention({ id, mentioned }));
+const mentions = (...found: [number, Json][]): readonly Mention[] => found.map(([id, mentioned]) => Mention.parse({ id, mentioned }));
+
+test("a mention's id is Graph's integer", () => {
+	expect(Mention.parse({ id: 0 }).id).toBe(0);
+	for (const id of ["0", 1.5, true]) expect(Mention.safeParse({ id }).success, JSON.stringify(id)).toBe(false);
+});
 
 afterEach(() => {
 	LIMITS.discoveryPage = 10;
@@ -253,7 +258,7 @@ describe("connecting and discovery", () => {
 			expect(() => pageParams(cursor), cursor).toThrow(expect.objectContaining({ code: "INVALID_CURSOR" }));
 		}
 		expect(nextCursor(null)).toBeNull();
-		for (const link of ["https://graph.microsoft.com/v1.0/x?$skip=2", "https://x/?$skiptoken=a%20b", 5]) {
+		for (const link of ["https://graph.microsoft.com/v1.0/x?$skip=2", "https://x/?$skiptoken=a%20b"]) {
 			expect(() => nextCursor(link)).toThrow(expect.objectContaining({ code: "PROVIDER_LIMIT" }));
 		}
 	});

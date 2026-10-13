@@ -408,7 +408,10 @@ describe("connecting and discovery", () => {
 		for (const { cursor, ...expected } of vectors.discover_cursor) if (!changedOnPurpose(cursor)) expect(outcome(() => discoveryCursor(cursor, [null, null])), String(cursor)).toEqual(expected);
 		for (const { text: value, ...expected } of vectors.search_words) expect(outcome(() => searchWords(value)), value).toEqual(expected);
 		for (const { value, document: expected } of vectors.documents) {
-			expect(document(BodyModel.parse({ atlas_doc_format: { value } })), JSON.stringify(value)).toEqual(expected);
+			const parsed = BodyModel.safeParse({ atlas_doc_format: { value } });
+			// A body value that is not a string does not fit.
+			if (value !== null && value !== undefined && typeof value !== "string") expect(parsed.success, JSON.stringify(value)).toBe(false);
+			else expect(document(parsed.data ?? null), JSON.stringify(value)).toEqual(expected);
 		}
 	});
 

@@ -83,7 +83,7 @@ export function contentType(part: Part): ContentHeaders {
 /** The part's body as text, or null when Gmail keeps it apart or it cannot be decoded. */
 function decodeBody(part: Part): string | null {
 	const body = part.body;
-	if (body === null || body.attachment_id) return null;
+	if (body === null || body.attachmentId) return null;
 	if (body.data === null) return !body.size ? "" : null;
 	let data: Uint8Array;
 	try {
@@ -104,7 +104,7 @@ function addAttachment(content: Content, part: Part): void {
 	if (content.attachments.length >= MAX_ATTACHMENTS) return;
 	content.attachments.push({
 		filename: part.filename ? sliceText(headerText(part.filename) as string, 0, MAX_FILENAME) : null,
-		mime_type: sliceText(part.mime_type.toLowerCase(), 0, 100) || null,
+		mime_type: sliceText(part.mimeType.toLowerCase(), 0, 100) || null,
 		size: part.body ? part.body.size : null,
 	});
 }
@@ -115,7 +115,7 @@ function render(content: Content, part: Part, depth: number): string | null {
 		content.unavailable = true;
 		return null;
 	}
-	const mimeType = part.mime_type.toLowerCase();
+	const mimeType = part.mimeType.toLowerCase();
 	// An attachment is never read, whatever it holds, including a multipart one.
 	if (mimeType === "message/rfc822" || isAttachment(part)) {
 		addAttachment(content, part);
@@ -123,7 +123,7 @@ function render(content: Content, part: Part, depth: number): string | null {
 	}
 	if (mimeType === "multipart/alternative") {
 		// Plain text where the sender offered it; otherwise the richest alternative, which comes last.
-		const ordered = [...part.parts].reverse().sort((a, b) => Number(a.mime_type.toLowerCase() !== "text/plain") - Number(b.mime_type.toLowerCase() !== "text/plain"));
+		const ordered = [...part.parts].reverse().sort((a, b) => Number(a.mimeType.toLowerCase() !== "text/plain") - Number(b.mimeType.toLowerCase() !== "text/plain"));
 		for (const child of ordered) {
 			const text = render(content, child, depth + 1);
 			if (text !== null) return text;

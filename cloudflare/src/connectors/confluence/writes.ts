@@ -51,7 +51,7 @@ export const ADD_COMMENT = defineOperation<z.output<typeof AddComment>>({
 					written: true,
 					id: comment.id,
 					page_id: page.id,
-					created: comment.version ? comment.version.created_at : null,
+					created: comment.version ? comment.version.createdAt : null,
 					link: link(site, page.id),
 				};
 				return { records: [{ resource, data: record }] };
@@ -110,10 +110,10 @@ export const CREATE_PAGE = defineOperation<z.output<typeof CreatePage>>({
 					written: true,
 					id: page.id,
 					site_id: site.id,
-					space_id: page.space_id,
+					space_id: page.spaceId,
 					link: link(site, page.id),
 				};
-				return { records: [{ resource: spaceResource(binding, site, page.space_id), data: record }] };
+				return { records: [{ resource: spaceResource(binding, site, page.spaceId), data: record }] };
 			},
 		};
 	},

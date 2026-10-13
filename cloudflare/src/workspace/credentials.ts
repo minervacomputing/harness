@@ -10,7 +10,7 @@ import type { ClientCredentials, Log, OAuthClients } from "./ports.ts";
 
 /** Refresh OAuth access tokens with less than this left. */
 export const REFRESH_MARGIN_SECONDS = 120;
-/** httpx's timeout for token requests. */
+/** The timeout for token requests. */
 export const TOKEN_TIMEOUT_MS = 20_000;
 /** A token response larger than this is not a token response. */
 export const TOKEN_BODY_LIMIT = 1 << 20;
@@ -33,7 +33,7 @@ export function asPayload(value: Json): JsonObject {
 
 export type CredentialKind = "oauth2" | "api_key" | "builtin";
 
-/** Payloads written before `kind` was recorded are OAuth (connectors 9.1). */
+/** Payloads written before `kind` was recorded are OAuth. */
 export function kindOf(payload: JsonObject): CredentialKind {
 	const kind = own(payload, "kind");
 	return kind === "api_key" || kind === "builtin" ? kind : "oauth2";
@@ -96,8 +96,8 @@ function jsonField(text: string, field: string): string | null {
 }
 
 /**
- * The stored token payload. `expires_at` is set only from an integer `expires_in` under a year, where `true`
- * counts as 1 and a JSON `3600.0` reads as an integer.
+ * The stored token payload. `expires_at` is set only from a JSON number `expires_in` that is an integer
+ * under a year (`3600.0` is one); a string or a boolean sets none.
  */
 export function tokenPayload(body: JsonObject, nowMs: number): JsonObject {
 	const refresh = own(body, "refresh_token");
@@ -107,8 +107,7 @@ export function tokenPayload(body: JsonObject, nowMs: number): JsonObject {
 		refresh_token: refresh === undefined ? null : refresh,
 		scopes: parseScopes(body),
 	};
-	const raw = own(body, "expires_in");
-	const expiresIn = typeof raw === "boolean" ? Number(raw) : raw;
+	const expiresIn = own(body, "expires_in");
 	if (typeof expiresIn === "number" && Number.isInteger(expiresIn) && expiresIn < MAX_EXPIRES_IN) {
 		payload.expires_at = Math.floor(nowMs / 1000) + expiresIn;
 	}
@@ -116,9 +115,9 @@ export function tokenPayload(body: JsonObject, nowMs: number): JsonObject {
 }
 
 /**
- * `_keep_refresh_token`: providers may omit the refresh token when an account reconnects. The previous one
+ * Providers may omit the refresh token when an account reconnects. The previous one
  * is kept only if the same recorded client issued both, and with it the endpoint that issued it, where it
- * is only ever sent (connectors 11.6).
+ * is only ever sent.
  */
 export function keepRefreshToken(previous: JsonObject, tokens: JsonObject): JsonObject {
 	if (own(tokens, "kind") !== "oauth2" || truthy(own(tokens, "refresh_token")) || !truthy(own(previous, "refresh_token"))) return tokens;
@@ -133,7 +132,7 @@ export function redirectUri(siteUrl: string, slug: string): string {
 
 /**
  * `issuing_client`: the client that issued a connection's tokens, which alone can refresh them. Tokens
- * saved before the issuer was recorded (no `client_id`) are tried with the current client (connectors 11.1).
+ * saved before the issuer was recorded (no `client_id`) are tried with the current client.
  */
 export async function issuingClient(connector: Connector, oauth: OAuth2, clientId: Json | undefined, clients: OAuthClients, siteUrl: string): Promise<ClientCredentials | null> {
 	const issuer = clientId ?? null;

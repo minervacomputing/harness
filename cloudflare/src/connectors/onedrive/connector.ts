@@ -48,7 +48,7 @@ export const MAX_SITES = 25;
 export const MAX_SITE_LIBRARIES = 20;
 export const MAX_TEXT_BYTES = 2 * 1024 * 1024;
 export const MAX_UPLOAD_BYTES = 1024 * 1024;
-/** Mutable for tests only (Python's module constants, which tests patch). */
+/** Mutable for tests only. */
 export const LIMITS = { maxDepth: 32, maxLookups: 150, maxOfficeBytes: 10 * 1024 * 1024 };
 const PERSONAL_DRIVE = /^[0-9A-Fa-f]{16}$/;
 const DRIVE_PART = "[A-Za-z0-9!_=-]{1,200}";
@@ -114,17 +114,17 @@ function split(resourceId: string): [string, string] {
 }
 
 function driveOf(client: DriveClient, item: DriveItem): string {
-	const drive = item.parent_reference ? item.parent_reference.drive_id : null;
+	const drive = item.parentReference ? item.parentReference.driveId : null;
 	if (!drive || !DRIVE_FULL.test(drive) || !ITEM_FULL.test(item.id)) throw client.unexpected();
 	return driveKey(drive);
 }
 
 /** The id of the item another drive's item this one points to, if it does. */
 function target(item: DriveItem): string | null {
-	const remote = item.remote_item;
-	const ref = remote ? remote.parent_reference : null;
-	if (remote === null || ref === null || !remote.id || !ref.drive_id) return null;
-	const found = key(ref.drive_id, remote.id);
+	const remote = item.remoteItem;
+	const ref = remote ? remote.parentReference : null;
+	if (remote === null || ref === null || !remote.id || !ref.driveId) return null;
+	const found = key(ref.driveId, remote.id);
 	return ITEM_ID.test(found) ? found : null;
 }
 
@@ -192,8 +192,8 @@ class Tree {
 		let current = item;
 		for (;;) {
 			if (current.root !== null) return [within, false];
-			const ref = current.parent_reference;
-			if (ref === null || !ref.id || !ref.drive_id || driveKey(ref.drive_id) !== drive) return [within, true];
+			const ref = current.parentReference;
+			if (ref === null || !ref.id || !ref.driveId || driveKey(ref.driveId) !== drive) return [within, true];
 			const parentKey = key(drive, ref.id);
 			if (parentKey === own || within.includes(parentKey) || within.length >= LIMITS.maxDepth) return [within, true];
 			if (!ITEM_ID.test(parentKey)) return [within, true];
@@ -227,7 +227,7 @@ class Tree {
 
 function typeOf(item: DriveItem): string {
 	if (item.root !== null) return "library";
-	if (item.remote_item !== null) return "shortcut";
+	if (item.remoteItem !== null) return "shortcut";
 	if (item.folder !== null) return "folder";
 	if (item.package !== null) return "package";
 	return "file";
@@ -240,10 +240,10 @@ function record(resource: Resource, item: DriveItem, extra: { [key: string]: Jso
 			id: resource.id,
 			name: item.name,
 			type: typeOf(item),
-			mime_type: item.file ? item.file.mime_type : null,
+			mime_type: item.file ? item.file.mimeType : null,
 			size: item.size,
-			modified_time: item.last_modified_date_time,
-			link: item.web_url,
+			modified_time: item.lastModifiedDateTime,
+			link: item.webUrl,
 			parent_id: resource.within.length ? (resource.within[0] as string) : null,
 			target_id: target(item),
 			...extra,
@@ -252,7 +252,7 @@ function record(resource: Resource, item: DriveItem, extra: { [key: string]: Jso
 }
 
 function folderOf(item: DriveItem): DriveItem {
-	if (item.remote_item !== null) throw new OperationError("UNSUPPORTED_FILE", `This points to an item in another drive. Use its id instead: ${target(item)}.`);
+	if (item.remoteItem !== null) throw new OperationError("UNSUPPORTED_FILE", `This points to an item in another drive. Use its id instead: ${target(item)}.`);
 	if (item.folder === null && item.root === null) throw new OperationError("UNSUPPORTED_FILE", "This is not a folder.");
 	return item;
 }
@@ -275,7 +275,7 @@ async function libraries(client: DriveClient): Promise<[[DriveItem, string][], b
 	const mine = await client.myDrive();
 	if (mine !== null) {
 		found.push([await client.myRoot(), "OneDrive"]);
-		if (mine.drive_type === "personal") return [found, false];
+		if (mine.driveType === "personal") return [found, false];
 	}
 	let sites: Awaited<ReturnType<DriveClient["followedSites"]>>[0];
 	let more: boolean;
@@ -294,7 +294,7 @@ async function libraries(client: DriveClient): Promise<[[DriveItem, string][], b
 		}
 	});
 	const named = sites.flatMap((site, index) =>
-		(perSite[index] ?? []).filter((drive) => drive.drive_type === "documentLibrary").map((drive) => [drive, `${site.display_name || site.name || "Site"} / ${drive.name}`] as const),
+		(perSite[index] ?? []).filter((drive) => drive.driveType === "documentLibrary").map((drive) => [drive, `${site.displayName || site.name || "Site"} / ${drive.name}`] as const),
 	);
 	const roots = await mapLimited(named, CONCURRENCY, async ([drive]) => {
 		try {
@@ -376,9 +376,9 @@ const LIST_FOLDER = defineOperation<z.output<typeof ListFolder>>({
 					// A child that does not name this folder as its parent is not placed by this listing.
 					.filter(
 						(child) =>
-							child.parent_reference !== null &&
-							child.parent_reference.id === current.id &&
-							driveKey(child.parent_reference.drive_id || "") === drive &&
+							child.parentReference !== null &&
+							child.parentReference.id === current.id &&
+							driveKey(child.parentReference.driveId || "") === drive &&
 							ITEM_ID.test(key(drive, child.id)),
 					)
 					.map((child) => record(binding.resource(ITEM, key(drive, child.id), within, resource.partial), child));
@@ -401,7 +401,7 @@ async function search(client: DriveClient, text: string, limit: number, cursor: 
 	const mine = await client.myDrive();
 	let items: DriveItem[];
 	let next: string | null;
-	if (mine !== null && mine.drive_type === "personal") {
+	if (mine !== null && mine.driveType === "personal") {
 		[items, next] = await client.searchPersonal(text, limit, cursor);
 	} else {
 		let offset = 0;
@@ -418,7 +418,7 @@ async function search(client: DriveClient, text: string, limit: number, cursor: 
 	for (const item of items) {
 		let found = target(item);
 		if (found === null) {
-			const drive = item.parent_reference ? item.parent_reference.drive_id : null;
+			const drive = item.parentReference ? item.parentReference.driveId : null;
 			found = drive ? key(drive, item.id) : null;
 		}
 		if (found && ITEM_ID.test(found) && !ids.includes(found)) ids.push(found);
@@ -503,9 +503,9 @@ export function extensionOf(name: string): string {
 
 /** `_readable`: how a file is read, "text" or the Office format whose text is extracted. */
 export function readable(item: DriveItem): Kind | "text" {
-	if (item.remote_item !== null) throw new OperationError("UNSUPPORTED_FILE", `This points to an item in another drive. Use its id instead: ${target(item)}.`);
+	if (item.remoteItem !== null) throw new OperationError("UNSUPPORTED_FILE", `This points to an item in another drive. Use its id instead: ${target(item)}.`);
 	if (item.file === null) throw new OperationError("UNSUPPORTED_FILE", "This is not a file.");
-	const mime = ((item.file.mime_type || "").split(";")[0] as string).trim().toLowerCase();
+	const mime = ((item.file.mimeType || "").split(";")[0] as string).trim().toLowerCase();
 	const extension = extensionOf(item.name).toLowerCase();
 	const office = OFFICE.get(mime);
 	if (office !== undefined) return office;
@@ -520,8 +520,9 @@ async function textOf(client: DriveClient, item: DriveItem, limit: number): Prom
 	const kind = readable(item);
 	const sizeLimit = kind === "text" ? MAX_TEXT_BYTES : LIMITS.maxOfficeBytes;
 	if (item.size !== null && item.size > sizeLimit) throw new OperationError("FILE_TOO_LARGE", `Minerva reads files of this type up to ${sizeLimit} bytes.`);
-	if (!item.download_url) throw new OperationError("PROVIDER_FORBIDDEN", "OneDrive does not offer this file for download.");
-	const body = await client.content(item.download_url, sizeLimit);
+	const url = item["@microsoft.graph.downloadUrl"];
+	if (!url) throw new OperationError("PROVIDER_FORBIDDEN", "OneDrive does not offer this file for download.");
+	const body = await client.content(url, sizeLimit);
 	if (kind === "text") {
 		const text = fromUtf8(body);
 		return text.startsWith("\ufeff") ? text.slice(1) : text;
@@ -603,8 +604,8 @@ const CREATE_FILE = defineOperation<z.output<typeof CreateFile>>({
 				const created = await tree.client.upload(drive, current.id, data.name, new TextEncoder().encode(data.content));
 				const found = key(drive, created.id);
 				if (!ITEM_ID.test(found)) throw tree.client.unexpected();
-				const ref = created.parent_reference;
-				const placed = ref !== null && ref.id === current.id && driveKey(ref.drive_id || drive) === drive;
+				const ref = created.parentReference;
+				const placed = ref !== null && ref.id === current.id && driveKey(ref.driveId || drive) === drive;
 				// The record names where Graph says it put the file; anywhere else is not placed by this call.
 				const [within, partial] = placed ? [[resource.id, ...resource.within], resource.partial] : [[], true];
 				return { records: [record(binding.resource(ITEM, found, within, partial), created)] };

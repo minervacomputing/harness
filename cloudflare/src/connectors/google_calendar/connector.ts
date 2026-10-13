@@ -7,7 +7,6 @@ import { OperationError, defineOperation, denied } from "../../gateway/connector
 import { type Json, parseJson } from "../../lib/json.ts";
 import { sliceText } from "../../lib/text.ts";
 import { oauth } from "../google/index.ts";
-import { setOwn } from "../google/model.ts";
 import { type EventTime, type GoogleCalendar, GoogleCalendarClient, type GoogleEvent, calendarName } from "./client.ts";
 import { epochMicros, isDate, isTimeZone, parseDate, parseZonedDateTime } from "../../lib/dates.ts";
 import { extend } from "../../lib/arrays.ts";
@@ -60,8 +59,8 @@ async function allCalendars(client: GoogleCalendarClient, maxPages: number): Pro
 	for (let page = 0; page < maxPages; page++) {
 		const found = await client.calendars(token);
 		extend(calendars, found.items);
-		if (!found.next_page_token) return calendars;
-		token = found.next_page_token;
+		if (!found.nextPageToken) return calendars;
+		token = found.nextPageToken;
 	}
 	throw new OperationError("PROVIDER_LIMIT", "This Google account has more calendars than Minerva can list.");
 }
@@ -85,13 +84,13 @@ async function calendarIdOf(client: GoogleCalendarClient, calendarId: string): P
 
 function timeOf(value: EventTime | null): string | null {
 	if (value === null) return null;
-	return value.date_time || value.date;
+	return value.dateTime || value.date;
 }
 
 function eventRecord(binding: Binding, calendarId: string, event: GoogleEvent): ScopedRecord {
 	let description = event.description;
 	if (description && description.length > MAX_DESCRIPTION) description = `${sliceText(description, 0, MAX_DESCRIPTION)} [truncated]`;
-	const attendees = event.attendees.slice(0, MAX_ATTENDEES).map((a) => ({ email: a.email, name: a.display_name, response: a.response_status }));
+	const attendees = event.attendees.slice(0, MAX_ATTENDEES).map((a) => ({ email: a.email, name: a.displayName, response: a.responseStatus }));
 	return {
 		resource: binding.resource(CALENDAR, calendarId),
 		data: {
@@ -103,14 +102,14 @@ function eventRecord(binding: Binding, calendarId: string, event: GoogleEvent): 
 			location: event.location,
 			start: timeOf(event.start),
 			end: timeOf(event.end),
-			all_day: Boolean(event.start && event.start.date && !event.start.date_time),
-			time_zone: event.start ? event.start.time_zone : null,
+			all_day: Boolean(event.start && event.start.date && !event.start.dateTime),
+			time_zone: event.start ? event.start.timeZone : null,
 			organizer: event.organizer ? event.organizer.email : null,
 			attendees,
 			// The attendee list is incomplete when Google or Minerva left some out.
-			attendees_incomplete: event.attendees_omitted || event.attendees.length > MAX_ATTENDEES,
-			link: event.html_link,
-			recurring_event_id: event.recurring_event_id,
+			attendees_incomplete: event.attendeesOmitted || event.attendees.length > MAX_ATTENDEES,
+			link: event.htmlLink,
+			recurring_event_id: event.recurringEventId,
 		},
 	};
 }
@@ -213,7 +212,7 @@ export function googleCalendarConnector(options: CalendarOptions = {}): Connecto
 						return {
 							records: calendars.map((c) => ({
 								resource: binding.resource(CALENDAR, c.id),
-								data: { id: c.id, name: calendarName(c), primary: c.primary, access_role: c.access_role, time_zone: c.time_zone },
+								data: { id: c.id, name: calendarName(c), primary: c.primary, access_role: c.accessRole, time_zone: c.timeZone },
 							})),
 						};
 					},
@@ -249,8 +248,8 @@ export function googleCalendarConnector(options: CalendarOptions = {}): Connecto
 							pageToken: state ? (state.page as string) : null,
 						});
 						let nextCursor: string | null = null;
-						if (page.next_page_token) {
-							nextCursor = JSON.stringify({ page: page.next_page_token, time_min: timeMin });
+						if (page.nextPageToken) {
+							nextCursor = JSON.stringify({ page: page.nextPageToken, time_min: timeMin });
 							if (nextCursor.length > 1000) throw new OperationError("PROVIDER_LIMIT", "Google Calendar returned a page token that is too long.");
 						}
 						return { records: page.items.map((event) => eventRecord(binding, calendarId, event)), nextCursor };
@@ -326,9 +325,8 @@ export function googleCalendarConnector(options: CalendarOptions = {}): Connecto
 		},
 		async describe(client, _kind, ids) {
 			const wanted = new Set(ids);
-			const names: { [id: string]: string } = {};
-			for (const c of await allCalendars(client, maxPages)) if (wanted.has(c.id)) setOwn(names, c.id, calendarName(c));
-			return names;
+			// Object.fromEntries defines own properties, even for an id such as "__proto__".
+			return Object.fromEntries((await allCalendars(client, maxPages)).filter((c) => wanted.has(c.id)).map((c) => [c.id, calendarName(c)]));
 		},
 	};
 }

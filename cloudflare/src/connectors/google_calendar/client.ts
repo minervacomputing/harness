@@ -6,46 +6,45 @@ import type { ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
 import { ProviderHTTP, segment } from "../../gateway/http.ts";
 import type { Json } from "../../lib/json.ts";
 import { GoogleUser, USERINFO_URL, classify } from "../google/index.ts";
-import { laxBool, model } from "../google/model.ts";
 
 export const API_URL = "https://www.googleapis.com/calendar/v3";
 
-export const GoogleCalendar = model({
+export const GoogleCalendar = z.object({
 	id: z.string(),
 	summary: z.string().default(""),
-	summary_override: z.string().nullable().default(null),
-	primary: laxBool.default(false),
-	access_role: z.string(),
-	time_zone: z.string().nullable().default(null),
+	summaryOverride: z.string().nullable().default(null),
+	primary: z.boolean().default(false),
+	accessRole: z.string(),
+	timeZone: z.string().nullable().default(null),
 });
 export type GoogleCalendar = z.output<typeof GoogleCalendar>;
 
 /** `GoogleCalendar.name`: the user's own name for it, else its summary, else its id. */
 export function calendarName(calendar: GoogleCalendar): string {
-	return calendar.summary_override || calendar.summary || calendar.id;
+	return calendar.summaryOverride || calendar.summary || calendar.id;
 }
 
-const CalendarPage = model({
+const CalendarPage = z.object({
 	items: z.array(GoogleCalendar).default([]),
-	next_page_token: z.string().nullable().default(null),
+	nextPageToken: z.string().nullable().default(null),
 });
 export type CalendarPage = z.output<typeof CalendarPage>;
 
-export const EventTime = model({
+export const EventTime = z.object({
 	date: z.string().nullable().default(null),
-	date_time: z.string().nullable().default(null),
-	time_zone: z.string().nullable().default(null),
+	dateTime: z.string().nullable().default(null),
+	timeZone: z.string().nullable().default(null),
 });
 export type EventTime = z.output<typeof EventTime>;
 
-const Person = model({
+const Person = z.object({
 	email: z.string().nullable().default(null),
-	display_name: z.string().nullable().default(null),
-	response_status: z.string().nullable().default(null),
+	displayName: z.string().nullable().default(null),
+	responseStatus: z.string().nullable().default(null),
 });
 
 /** Cancelled and private events can carry little more than an id. */
-export const GoogleEvent = model({
+export const GoogleEvent = z.object({
 	id: z.string(),
 	status: z.string().nullable().default(null),
 	summary: z.string().nullable().default(null),
@@ -55,15 +54,15 @@ export const GoogleEvent = model({
 	end: EventTime.nullable().default(null),
 	organizer: Person.nullable().default(null),
 	attendees: z.array(Person).default([]),
-	attendees_omitted: laxBool.default(false),
-	html_link: z.string().nullable().default(null),
-	recurring_event_id: z.string().nullable().default(null),
+	attendeesOmitted: z.boolean().default(false),
+	htmlLink: z.string().nullable().default(null),
+	recurringEventId: z.string().nullable().default(null),
 });
 export type GoogleEvent = z.output<typeof GoogleEvent>;
 
-const EventPage = model({
+const EventPage = z.object({
 	items: z.array(GoogleEvent).default([]),
-	next_page_token: z.string().nullable().default(null),
+	nextPageToken: z.string().nullable().default(null),
 });
 export type EventPage = z.output<typeof EventPage>;
 

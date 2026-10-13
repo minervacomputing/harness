@@ -17,7 +17,6 @@ import { OperationError, denied } from "../../gateway/connector.ts";
 import { ProviderHTTP, segment } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
-import { model, optionalStr } from "./model.ts";
 
 export const API_URL = "https://api.atlassian.com";
 export const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -43,10 +42,16 @@ export function oauth(app: string, ...scopes: string[]): Extract<Auth, { type: "
 	};
 }
 
-export const MeModel = model({ account_id: z.string(), name: optionalStr, email: optionalStr });
+/** Atlassian's `/me` answers in snake case. */
+export const MeModel = z.object({ account_id: z.string(), name: z.string().nullable().default(null), email: z.string().nullable().default(null) });
 export type Me = z.output<typeof MeModel>;
 
-const SiteModel = model({ id: z.string(), name: optionalStr, url: optionalStr, scopes: z.array(z.string()).default([]) });
+const SiteModel = z.object({
+	id: z.string(),
+	name: z.string().nullable().default(null),
+	url: z.string().nullable().default(null),
+	scopes: z.array(z.string()).default([]),
+});
 
 /** A site (one Atlassian cloud) as `accessible-resources` lists it. */
 export class Site {
@@ -60,11 +65,6 @@ export class Site {
 		this.name = fields.name;
 		this.url = fields.url;
 		this.scopes = fields.scopes;
-	}
-
-	static parse(value: unknown): Site | null {
-		const parsed = SiteModel.safeParse(value);
-		return parsed.success ? new Site(parsed.data) : null;
 	}
 
 	/** The site's host, when Atlassian gave a usable address. */
@@ -159,12 +159,9 @@ export class AtlassianClient implements ProviderClient {
 	/** The sites this connection may use, once each, ordered by cloud id. */
 	async sites(): Promise<Site[]> {
 		if (this.#sites === null) {
-			const body = await this.get("/oauth/token/accessible-resources");
-			if (!Array.isArray(body)) throw this.unexpected();
+			const listed = this.parse(z.array(SiteModel), await this.get("/oauth/token/accessible-resources"));
 			const found = new Map<string, Site>();
-			for (const item of body) {
-				const site = Site.parse(item);
-				if (site === null) throw this.unexpected();
+			for (const site of listed.map((fields) => new Site(fields))) {
 				const cloudId = site.id.toLowerCase();
 				if (CLOUD_ID.test(cloudId) && site.scopes.includes(this.scope) && !found.has(cloudId)) found.set(cloudId, site.withId(cloudId));
 			}

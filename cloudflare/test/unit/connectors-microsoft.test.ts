@@ -10,11 +10,14 @@ import { onedriveConnector } from "../../src/connectors/onedrive/connector.ts";
 import { outlookCalendarConnector } from "../../src/connectors/outlook_calendar/connector.ts";
 import { nextCursor as teamsNextCursor, pageParams as teamsPageParams } from "../../src/connectors/teams/client.ts";
 import { teamsConnector } from "../../src/connectors/teams/connector.ts";
-import { consent, consentAll, classify, nextCursor, pageParam } from "../../src/connectors/microsoft/index.ts";
+import { z } from "zod";
+import { Graph, consent, consentAll, classify, nextCursor, pageParam } from "../../src/connectors/microsoft/index.ts";
 import { outlookConnector } from "../../src/connectors/outlook/connector.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
+import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import { utf8 } from "../../src/lib/bytes.ts";
+import type { JsonObject } from "../../src/lib/json.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
 import { declarationOf, vectors } from "../fixtures/connectors/microsoft/runs.ts";
 import { TextError } from "../../src/lib/text.ts";
@@ -103,7 +106,6 @@ describe("Graph's paging", () => {
 			`${base}?$skiptoken=${"a".repeat(881)}`,
 			`${base}?$top=5`,
 			base,
-			42,
 			"x".repeat(4001),
 		]) {
 			expect(() => nextCursor(link)).toThrow(expect.objectContaining({ code: "PROVIDER_LIMIT" }));
@@ -116,11 +118,21 @@ describe("Graph's paging", () => {
 	});
 
 	test("next_cursor agrees with Python on links, fuzzed ones included", () => {
-		const all = vectors("microsoft").next_cursor as { link: string | number | null }[];
+		// A link that is not a string is refused by the page's schema before nextCursor sees it.
+		const all = (vectors("microsoft").next_cursor as { link: string | number | null }[]).filter((entry): entry is { link: string | null } => typeof entry.link !== "number");
 		expect(all.length).toBeGreaterThan(250);
 		const cases = all.filter((entry) => !changedOnPurpose(entry));
 		const actual = cases.map((entry) => outcome(() => nextCursor(entry.link)));
 		expect(actual.map((item) => (item.error === "TypeError" ? { error: "TypeError" } : item))).toEqual(cases.map((entry) => expectedOutcome(entry)));
+	});
+
+	test("a page that does not fit, its link included, is an unexpected response", () => {
+		const graph = new Graph("Microsoft Graph", "t", settingsIo(async () => new Response(null, { status: 500 })));
+		const item = z.object({ id: z.string() });
+		expect(graph.page(item, { value: [{ id: "a" }] })).toEqual([[{ id: "a" }], null]);
+		for (const body of [{ value: [], "@odata.nextLink": 5 }, { value: "x" }, { value: [{ id: 1 }] }, {}] as JsonObject[]) {
+			expect(() => graph.page(item, body), JSON.stringify(body)).toThrow(expect.objectContaining({ code: "PROVIDER_FAILED" }));
+		}
 	});
 
 	test("page_param agrees with Python on cursors", () => {
@@ -131,7 +143,9 @@ describe("Graph's paging", () => {
 	test("Teams' page cursors and links agree with Python, fuzzed links included", () => {
 		const cursors = (vectors("microsoft").teams_page_params as { cursor: string }[]).filter((entry) => !changedOnPurpose(entry.cursor));
 		expect(cursors.map((entry) => outcome(() => teamsPageParams(entry.cursor)))).toEqual(cursors.map((entry) => expectedOutcome(entry)));
-		const links = (vectors("microsoft").teams_next_cursor as { link: string | number | null }[]).filter((entry) => !changedOnPurpose(entry));
+		const links = (vectors("microsoft").teams_next_cursor as { link: string | number | null }[]).filter(
+			(entry): entry is { link: string | null } => typeof entry.link !== "number" && !changedOnPurpose(entry),
+		);
 		expect(links.length).toBeGreaterThan(100);
 		expect(links.map((entry) => outcome(() => teamsNextCursor(entry.link)))).toEqual(links.map((entry) => expectedOutcome(entry)));
 	});

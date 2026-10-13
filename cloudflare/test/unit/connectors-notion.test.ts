@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, test } from "vitest";
 import type { GrantRow } from "../../src/contracts/policy.ts";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
-import { MAX_MARKDOWN_BYTES, NOTION_VERSION } from "../../src/connectors/notion/client.ts";
+import { MAX_MARKDOWN_BYTES, NOTION_VERSION, Page, SearchPage } from "../../src/connectors/notion/client.ts";
 import { notionConnector } from "../../src/connectors/notion/connector.ts";
 import { SYNCED_HIDDEN, planEdits, redact, writtenRefusal } from "../../src/connectors/notion/markdown.ts";
 import { canonical, objectId } from "../../src/connectors/notion/pages.ts";
@@ -365,6 +365,30 @@ function refused(run: () => unknown): OperationError {
 	}
 	throw new Error("not refused");
 }
+
+describe("Notion's answers", () => {
+	const ID = "0000000000000000000000000000000a";
+	const page = { object: "page", id: ID, parent: { type: "page_id", page_id: ID } };
+
+	test("unknown fields are dropped and missing ones take their defaults", () => {
+		expect(Page.parse({ ...page, extra: 1, in_trash: true })).toEqual({
+			...page,
+			parent: { type: "page_id", page_id: ID, database_id: null, data_source_id: null, block_id: null },
+			url: null,
+			in_trash: true,
+			is_locked: false,
+			created_time: null,
+			last_edited_time: null,
+			properties: {},
+		});
+	});
+
+	test("a value of another type is refused, not converted", () => {
+		for (const in_trash of [1, "true", "yes", null]) expect(Page.safeParse({ ...page, in_trash }).success, String(in_trash)).toBe(false);
+		expect(SearchPage.safeParse({ results: [], has_more: "yes" }).success).toBe(false);
+		expect(Page.safeParse({ ...page, properties: { Name: "x" } }).success).toBe(false);
+	});
+});
 
 describe("ids and links", () => {
 	test("ids are canonical and links are parsed", () => {

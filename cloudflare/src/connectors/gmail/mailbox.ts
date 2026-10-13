@@ -155,10 +155,10 @@ export class Labels {
 	 * know makes the chain partial, so any deny on a label hides the message.
 	 */
 	message(binding: Binding, message: Message): Resource {
-		if (message.label_ids.includes(CHAT)) throw unsupportedMessage();
+		if (message.labelIds.includes(CHAT)) throw unsupportedMessage();
 		const within: string[] = [];
 		let partial = false;
-		for (const labelId of message.label_ids) {
+		for (const labelId of message.labelIds) {
 			if (MARKS.has(labelId)) continue;
 			if (!this.grantable.has(labelId)) {
 				partial = true;

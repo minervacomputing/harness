@@ -6,19 +6,7 @@
 
 import { describe, expect, test } from "vitest";
 import type { z } from "zod";
-import {
-	Block,
-	BotUser,
-	Comment,
-	CommentPage,
-	DataSource,
-	Database,
-	Page,
-	PageMarkdown,
-	SearchPage,
-	hasTitledMention,
-	textOf,
-} from "../../src/connectors/notion/client.ts";
+import { hasTitledMention, textOf } from "../../src/connectors/notion/client.ts";
 import { notionConnector } from "../../src/connectors/notion/connector.ts";
 import { planEdits, redact, showsSyncedContent, writtenRefusal } from "../../src/connectors/notion/markdown.ts";
 import { canonical, objectId } from "../../src/connectors/notion/pages.ts";
@@ -172,23 +160,6 @@ describe("operation inputs", () => {
 		else {
 			expect(result.ok).toBe(true);
 			same(result.ok ? result.data : null, want.data);
-		}
-	});
-});
-
-describe("Notion's responses", () => {
-	const MODELS: { [name: string]: z.ZodType } = { Page, Database, DataSource, Block, SearchPage, PageMarkdown, Comment, CommentPage, BotUser };
-
-	test("every model has vectors", () => {
-		expect(new Set(cases<[string, Json, Json]>("models").map(([name]) => name))).toEqual(new Set(Object.keys(MODELS)));
-	});
-
-	test.each(cases<[string, Json, Json]>("models"))("%s from %j", (name, value, expected) => {
-		const parsed = (MODELS[name] as z.ZodType).safeParse(value);
-		if (expected === null) expect(parsed.success).toBe(false);
-		else {
-			expect(parsed.success).toBe(true);
-			same(parsed.data, expected);
 		}
 	});
 });

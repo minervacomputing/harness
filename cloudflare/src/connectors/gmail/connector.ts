@@ -44,7 +44,6 @@
 import type { Connector } from "../../contracts/connectors.ts";
 import { ACCOUNT_KIND } from "../../gateway/connector.ts";
 import { oauth } from "../google/index.ts";
-import { setOwn } from "../google/model.ts";
 import * as addresses from "../../lib/addresses.ts";
 import { GmailClient } from "./client.ts";
 import { LABEL, Labels, READONLY_SCOPE, RECIPIENT } from "./mailbox.ts";
@@ -111,14 +110,10 @@ export function gmailConnector(options: GmailOptions = {}): Connector<GmailClien
 			return { items: items.filter((item) => !folded || item.name.toLowerCase().includes(folded)) };
 		},
 		async describe(client, kind, ids) {
-			const names: { [id: string]: string } = {};
-			if (kind === RECIPIENT) {
-				for (const id of ids) if (addresses.validId(id)) setOwn(names, id, addresses.name(id));
-				return names;
-			}
+			// Object.fromEntries defines own properties, even for an id such as "__proto__".
+			if (kind === RECIPIENT) return Object.fromEntries(ids.filter((id) => addresses.validId(id)).map((id) => [id, addresses.name(id)]));
 			const labels = await Labels.fetch(client);
-			for (const id of ids) if (labels.grantable.has(id)) setOwn(names, id, labels.name(id));
-			return names;
+			return Object.fromEntries(ids.filter((id) => labels.grantable.has(id)).map((id) => [id, labels.name(id)]));
 		},
 	};
 }

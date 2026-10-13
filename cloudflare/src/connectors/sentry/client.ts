@@ -8,26 +8,15 @@
 // Every response is read with a byte limit and validated before use. Pages are followed by the cursor in the
 // `Link` header; only the cursor is taken from it, never its address. Sentry's error messages are not passed on.
 //
-// Responses are read as the Python client reads them, in two ways:
-// - A single object (the user, a project, an issue, a short id) as `model_validate_json` reads it: JSON
-//   without a byte order mark, and a lone surrogate escape anywhere refuses the whole response.
-// - A list (organisations, projects, issues) and an event as `json.loads` reads them: a byte order mark is
-//   skipped and lone surrogates are kept. Iterating what it parsed, Python takes an empty object or an
-//   empty string for an empty list, and refuses any other non-list; so does this.
-// Both parse with parseJson, which refuses NaN and Infinity (Python reads them) and text that is not UTF-8
-// (`json.loads` also reads UTF-16 and UTF-32, and surrogates encoded in UTF-8); Sentry sends none of these.
-//
-// The models read fields in Pydantic's lax mode, ignoring fields they do not name: a str takes only a
-// string, and an int also takes a boolean, an integral number and a string written as an int (" 12 ",
-// "1_000", "12.0"). An int beyond 2^53, which Python keeps exactly, is refused rather than rounded, as a
-// JavaScript number cannot hold it (Sentry's counts never come near).
+// Responses are strict UTF-8 JSON. Fields not named here are dropped; a field of another type makes the
+// response unexpected.
 
 import { z } from "zod";
 import type { ProviderClient, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
-import { type Json, parseJson, parseModelJson } from "../../lib/json.ts";
+import { type Json, isDict, parseJson } from "../../lib/json.ts";
 
 export const PROVIDER = "Sentry";
 export const API_URL = "https://sentry.io";
@@ -52,36 +41,8 @@ export const INVALID_CURSOR = "This page token is invalid.";
 export const TOO_LARGE = "Sentry's response was too large to read.";
 export const ONE_ORGANISATION = "Sentry did not name the one organisation this connection reaches.";
 
-// Pydantic's lax mode.
-
-/** A str as Pydantic reads it as an int: White_Space around, a sign, digits with single underscores between, `.0` and more zeros. */
-const INT_TEXT = /^[+-]?[0-9]+(?:_[0-9]+)*(?:\.0+)?$/;
-
-/** An int a number holds exactly; `+ 0` turns -0 into 0, as Python's ints have no negative zero. */
-function exactInt(value: number): number | null {
-	return Number.isSafeInteger(value) ? value + 0 : null;
-}
-
-/** Pydantic's lax `int`, or null where it fails (or the int is beyond 2^53). */
-export function laxInt(value: unknown): number | null {
-	if (typeof value === "boolean") return value ? 1 : 0;
-	if (typeof value === "number") return exactInt(value);
-	if (typeof value !== "string") return null;
-	const text = value.trim();
-	if (!INT_TEXT.test(text)) return null;
-	return exactInt(Number(text.replace(/\.0+$/, "").replaceAll("_", "")));
-}
-
-const LaxInt = z.unknown().transform((value, ctx) => {
-	const out = laxInt(value);
-	if (out !== null) return out;
-	ctx.issues.push({ code: "custom", message: "Input should be a valid integer", input: value });
-	return z.NEVER;
-}) as unknown as z.ZodType<number>;
-
-// `X | None = None`: a missing field takes the default, null is None, anything else is validated.
 const text = () => z.string().nullable().default(null);
-const integer = () => LaxInt.nullable().default(null);
+const integer = () => z.int().nullable().default(null);
 
 export const User = z.object({ id: z.string(), name: text(), email: text() });
 export type User = z.output<typeof User>;
@@ -145,7 +106,7 @@ export function cursor(value: string | null): string | null {
 /** The cursor of the next page in a `Link` header, when Sentry says it has results. */
 export function linkCursor(header: string): string | null {
 	for (const match of header.matchAll(LINK)) {
-		// `dict(_PARAM.findall(...))`: the last value of a name wins.
+		// The last value of a name wins.
 		const params = new Map<string, string>();
 		for (const [, name, value] of (match[1] as string).matchAll(PARAM)) params.set(name as string, value as string);
 		if (params.get("rel") === "next" && params.get("results") === "true") {
@@ -157,10 +118,7 @@ export function linkCursor(header: string): string | null {
 	return null;
 }
 
-/**
- * The cursor of the next page, from the `Link` header. Fetch reads a header's bytes as Latin-1, where httpx
- * reads them as UTF-8 when every header is; only a header with non-ASCII bytes could tell them apart.
- */
+/** The cursor of the next page, from the `Link` header. */
 export function nextCursor(response: Response): string | null {
 	return linkCursor(response.headers.get("link") ?? "");
 }
@@ -169,14 +127,6 @@ export function nextCursor(response: Response): string | null {
 export function invalidCursor(error: unknown, sent: string | null): unknown {
 	if (error instanceof OperationError && error.code === "PROVIDER_REJECTED" && sent !== null) return new OperationError("INVALID_CURSOR", INVALID_CURSOR);
 	return error;
-}
-
-/** The items Python's `for item in response.json()` iterates: a list's, or none of an empty object or string. */
-function iterated(value: Json): Json[] | null {
-	if (Array.isArray(value)) return value;
-	if (value === "") return [];
-	if (typeof value === "object" && value !== null && Object.keys(value).length === 0) return [];
-	return null;
 }
 
 /** A query string in the order given, for a request that repeats a parameter (ProviderHTTP's query takes one value each). */
@@ -227,42 +177,24 @@ export class SentryClient implements ProviderClient {
 		return http.bounded({ method: "GET", path, query }, limit, new OperationError("RESPONSE_TOO_LARGE", TOO_LARGE));
 	}
 
-	/** `model.model_validate_json(response.content)`. */
+	/** The response's JSON, fitted to `schema`. */
 	async #model<T>(schema: z.ZodType<T>, response: Response): Promise<T> {
-		const bytes = new Uint8Array(await response.arrayBuffer());
-		let data: Json;
-		try {
-			// jiter refuses a byte order mark (kept by the decoding, then refused by parseJson), invalid UTF-8 and
-			// lone surrogate escapes anywhere in the text.
-			data = parseModelJson(fromUtf8Strict(bytes));
-		} catch (error) {
-			throw this.unexpected(error);
-		}
-		const result = schema.safeParse(data);
+		const result = schema.safeParse(await this.#json(response));
 		if (!result.success) throw this.unexpected(result.error);
 		return result.data;
 	}
 
-	/** `response.json()`: `json.loads` on the body's bytes. */
 	async #json(response: Response): Promise<Json> {
 		const bytes = new Uint8Array(await response.arrayBuffer());
 		try {
-			const start = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
-			return parseJson(fromUtf8Strict(bytes.subarray(start)));
+			return parseJson(fromUtf8Strict(bytes));
 		} catch (error) {
 			throw this.unexpected(error);
 		}
 	}
 
-	/** `[model.model_validate(item) for item in response.json()]`. */
-	async #list<T>(schema: z.ZodType<T>, response: Response): Promise<T[]> {
-		const items = iterated(await this.#json(response));
-		if (items === null) throw this.unexpected();
-		return items.map((item) => {
-			const result = schema.safeParse(item);
-			if (!result.success) throw this.unexpected(result.error);
-			return result.data;
-		});
+	#list<T>(schema: z.ZodType<T>, response: Response): Promise<T[]> {
+		return this.#model(z.array(schema), response);
 	}
 
 	async user(): Promise<User> {
@@ -373,7 +305,7 @@ export class SentryClient implements ProviderClient {
 	/** One event of an issue, as Sentry sent it; reads.ts picks what is shown. */
 	async event(issueId: string, event: string): Promise<SentryEvent> {
 		const found = await this.#json(await this.#orgRead(`/issues/${issueId}/events/${event}/`, {}, MAX_EVENT));
-		if (typeof found !== "object" || found === null || Array.isArray(found)) throw this.unexpected();
+		if (!isDict(found)) throw this.unexpected();
 		return found;
 	}
 }

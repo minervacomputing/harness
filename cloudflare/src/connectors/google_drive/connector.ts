@@ -17,7 +17,6 @@ import { isDict, type Json, type JsonObject, parseJson } from "../../lib/json.ts
 import { SINGLE_LINE, isSingleLine, sliceText } from "../../lib/text.ts";
 import { digitsOr, jsonInteger } from "../google/digits.ts";
 import { oauth } from "../google/index.ts";
-import { setOwn } from "../google/model.ts";
 import { type DriveFile, FOLDER, GoogleDriveClient, SHORTCUT, isFolder, quoted } from "./client.ts";
 import { extend } from "../../lib/arrays.ts";
 
@@ -61,7 +60,7 @@ const TEXT_TYPES: ReadonlySet<string> = new Set([
 	"application/x-httpd-php",
 ]);
 
-/** What a deployment fixes and Python's tests patch. */
+/** What a deployment fixes and tests change. */
 export interface DriveLimits {
 	maxDepth: number;
 	maxLookups: number;
@@ -150,7 +149,7 @@ export class Tree {
 		const within: string[] = [];
 		let current = file;
 		for (;;) {
-			if (current.id === root || (current.drive_id && current.id === current.drive_id)) return [within, false];
+			if (current.id === root || (current.driveId && current.id === current.driveId)) return [within, false];
 			const parents = current.parents ?? [];
 			if (parents.length > 1) throw new OperationError("UNSUPPORTED_FILE", "This file is in several folders, which Minerva does not support.");
 			// Shared with the account without its folder, or orphaned.
@@ -158,7 +157,7 @@ export class Tree {
 			const parentId = parents[0] as string;
 			if (parentId === file.id || within.includes(parentId) || within.length >= this.limits.maxDepth) return [within, true];
 			within.push(parentId);
-			if (parentId === root || (current.drive_id && parentId === current.drive_id)) return [within, false];
+			if (parentId === root || (current.driveId && parentId === current.driveId)) return [within, false];
 			const parent = await this.parent(parentId);
 			if (parent === null || parent.id !== parentId) return [within, true];
 			current = parent;
@@ -189,21 +188,21 @@ export class Tree {
 
 function record(resource: Resource, file: DriveFile, extra: JsonObject = {}): ScopedRecord {
 	const size = digitsOr(file.size, null);
-	const shortcut = file.shortcut_details;
+	const shortcut = file.shortcutDetails;
 	return {
 		resource,
 		data: {
 			id: file.id,
 			name: file.name,
-			type: TYPES.get(file.mime_type) ?? "file",
-			mime_type: file.mime_type,
+			type: TYPES.get(file.mimeType) ?? "file",
+			mime_type: file.mimeType,
 			size: size === null ? null : jsonInteger(size, "Google Drive"),
-			modified_time: file.modified_time,
-			link: file.web_view_link,
+			modified_time: file.modifiedTime,
+			link: file.webViewLink,
 			parent_id: resource.within[0] ?? null,
-			shared_drive_id: file.drive_id,
+			shared_drive_id: file.driveId,
 			trashed: file.trashed,
-			shortcut_target_id: shortcut ? shortcut.target_id : null,
+			shortcut_target_id: shortcut ? shortcut.targetId : null,
 			...extra,
 		},
 	};
@@ -219,16 +218,16 @@ function isText(mimeType: string): boolean {
 }
 
 async function textOf(client: GoogleDriveClient, file: DriveFile, limits: DriveLimits): Promise<string> {
-	if (file.mime_type === SHORTCUT) {
-		const target = file.shortcut_details ? file.shortcut_details.target_id : null;
+	if (file.mimeType === SHORTCUT) {
+		const target = file.shortcutDetails ? file.shortcutDetails.targetId : null;
 		throw new OperationError("UNSUPPORTED_FILE", `This is a shortcut. Read its target instead: file id ${target ?? "None"}.`);
 	}
-	if (file.capabilities && file.capabilities.can_download === false) throw new OperationError("PROVIDER_FORBIDDEN", "The owner of this file does not allow downloading it.");
-	const exported = EXPORTS.get(file.mime_type);
+	if (file.capabilities && file.capabilities.canDownload === false) throw new OperationError("PROVIDER_FORBIDDEN", "The owner of this file does not allow downloading it.");
+	const exported = EXPORTS.get(file.mimeType);
 	let body: Uint8Array;
 	if (exported !== undefined) {
 		body = await client.export(file.id, exported, limits.maxExportBytes);
-	} else if (isText(file.mime_type)) {
+	} else if (isText(file.mimeType)) {
 		const size = digitsOr(file.size, null);
 		if (size !== null && size > BigInt(limits.maxTextBytes)) throw new OperationError("FILE_TOO_LARGE", `Minerva reads text files up to ${limits.maxTextBytes} bytes.`);
 		body = await client.content(file.id, limits.maxTextBytes);
@@ -376,13 +375,13 @@ export function googleDriveConnector(options: DriveOptions = {}): Connector<Goog
 					async execute(): Promise<ProviderOutput> {
 						const folder = await tree.confirm(resource);
 						if (!isFolder(folder)) throw new OperationError("UNSUPPORTED_FILE", "This is not a folder.");
-						if (folder.capabilities && folder.capabilities.can_list_children === false) {
+						if (folder.capabilities && folder.capabilities.canListChildren === false) {
 							throw new OperationError("PROVIDER_FORBIDDEN", "Google Drive does not let this account list this folder.");
 						}
 						const page = await tree.client.files(`${quoted(folder.id)} in parents and trashed = false`, {
 							limit: data.limit,
 							pageToken: data.cursor,
-							driveId: folder.drive_id,
+							driveId: folder.driveId,
 							orderBy: "folder,name",
 						});
 						const within = [folder.id, ...resource.within];
@@ -390,7 +389,7 @@ export function googleDriveConnector(options: DriveOptions = {}): Connector<Goog
 							// A child that does not name this folder as its only parent is not placed by this listing.
 							.filter((child) => child.parents !== null && child.parents.length === 1 && child.parents[0] === folder.id)
 							.map((child) => record(binding.resource(FILE, child.id, within, resource.partial), child));
-						return { records, nextCursor: nextCursor(page.next_page_token), incomplete: page.incomplete_search };
+						return { records, nextCursor: nextCursor(page.nextPageToken), incomplete: page.incompleteSearch };
 					},
 				};
 			},
@@ -426,7 +425,7 @@ export function googleDriveConnector(options: DriveOptions = {}): Connector<Goog
 							}
 							records.push(record(resource, file));
 						}
-						return { records, nextCursor: nextCursor(page.next_page_token), incomplete: page.incomplete_search };
+						return { records, nextCursor: nextCursor(page.nextPageToken), incomplete: page.incompleteSearch };
 					},
 				};
 			},
@@ -489,7 +488,7 @@ export function googleDriveConnector(options: DriveOptions = {}): Connector<Goog
 					async execute(): Promise<ProviderOutput> {
 						const folder = await tree.confirm(resource);
 						if (!isFolder(folder)) throw new OperationError("UNSUPPORTED_FILE", "This is not a folder.");
-						if (folder.capabilities && folder.capabilities.can_add_children === false) {
+						if (folder.capabilities && folder.capabilities.canAddChildren === false) {
 							throw new OperationError("PROVIDER_FORBIDDEN", "Google Drive does not let this account add files to this folder.");
 						}
 						const metadata: JsonObject = { name: data.name, parents: [folder.id] };
@@ -534,7 +533,7 @@ export function googleDriveConnector(options: DriveOptions = {}): Connector<Goog
 					allDrives: true,
 					orderBy: "folder,name",
 				});
-				return { items: page.files.map(item), nextCursor: page.next_page_token ? discoveryCursor("search", page.next_page_token) : null };
+				return { items: page.files.map(item), nextCursor: page.nextPageToken ? discoveryCursor("search", page.nextPageToken) : null };
 			}
 			const items: DiscoveryItem[] = [];
 			if (state === null) {
@@ -544,7 +543,7 @@ export function googleDriveConnector(options: DriveOptions = {}): Connector<Goog
 			if (state.phase === "drives") {
 				const drives = await client.drives(state.page);
 				extend(items, drives.drives.map((d) => ({ id: d.id, name: `${d.name} (shared drive)` })));
-				if (drives.next_page_token) return { items, nextCursor: discoveryCursor("drives", drives.next_page_token) };
+				if (drives.nextPageToken) return { items, nextCursor: discoveryCursor("drives", drives.nextPageToken) };
 				return { items, nextCursor: discoveryCursor("folders", null) };
 			}
 			const page = await client.files(`mimeType = ${quoted(FOLDER)} and trashed = false`, {
@@ -554,7 +553,7 @@ export function googleDriveConnector(options: DriveOptions = {}): Connector<Goog
 				orderBy: "name",
 			});
 			extend(items, page.files.map(item));
-			return { items, nextCursor: page.next_page_token ? discoveryCursor("folders", page.next_page_token) : null };
+			return { items, nextCursor: page.nextPageToken ? discoveryCursor("folders", page.nextPageToken) : null };
 		},
 		/**
 		 * Folders only: My Drive, shared drives and folders shared with the account at the top, then the
@@ -571,7 +570,7 @@ export function googleDriveConnector(options: DriveOptions = {}): Connector<Goog
 				if (state.phase === "drives") {
 					const drives = await client.drives(state.page);
 					extend(items, drives.drives.map((d) => ({ id: d.id, name: `${d.name} (shared drive)`, expandable: true })));
-					const [phase, token] = drives.next_page_token ? ["drives", drives.next_page_token] : ["shared", null];
+					const [phase, token] = drives.nextPageToken ? ["drives", drives.nextPageToken] : ["shared", null];
 					return { items, nextCursor: browseCursor(phase, token, null) };
 				}
 				const page = await client.files(`sharedWithMe = true and mimeType = ${quoted(FOLDER)} and trashed = false`, {
@@ -580,21 +579,21 @@ export function googleDriveConnector(options: DriveOptions = {}): Connector<Goog
 					orderBy: "name",
 				});
 				extend(items, page.files.map((f) => ({ id: f.id, name: `${f.name}/ (shared with you)`, expandable: true })));
-				const token = page.next_page_token;
+				const token = page.nextPageToken;
 				return { items, nextCursor: token ? browseCursor("shared", token, null) : null };
 			}
 			const folder = await client.file(parent);
 			if (!isFolder(folder)) throw new OperationError("UNSUPPORTED_FILE", "This is not a folder.");
-			if (folder.capabilities && folder.capabilities.can_list_children === false) {
+			if (folder.capabilities && folder.capabilities.canListChildren === false) {
 				throw new OperationError("PROVIDER_FORBIDDEN", "Google Drive does not let this account list this folder.");
 			}
 			const page = await client.files(`${quoted(folder.id)} in parents and mimeType = ${quoted(FOLDER)} and trashed = false`, {
 				limit: 100,
 				pageToken: state ? state.page : null,
-				driveId: folder.drive_id,
+				driveId: folder.driveId,
 				orderBy: "name",
 			});
-			const token = page.next_page_token;
+			const token = page.nextPageToken;
 			return {
 				items: page.files.map((f) => ({ id: f.id, name: item(f).name, expandable: true })),
 				nextCursor: token ? browseCursor("folders", token, parent) : null,
@@ -607,7 +606,7 @@ export function googleDriveConnector(options: DriveOptions = {}): Connector<Goog
 				let file: DriveFile;
 				try {
 					file = await client.file(fileId);
-					if (file.drive_id && file.id === file.drive_id) return `${(await client.drive(file.id)).name} (shared drive)`;
+					if (file.driveId && file.id === file.driveId) return `${(await client.drive(file.id)).name} (shared drive)`;
 				} catch (error) {
 					if (error instanceof OperationError && (error.code === "NOT_FOUND" || error.code === "PROVIDER_FORBIDDEN")) return null;
 					throw error;
@@ -618,12 +617,11 @@ export function googleDriveConnector(options: DriveOptions = {}): Connector<Goog
 				ids.map((id) => () => name(id)),
 				DESCRIBE_CONCURRENCY,
 			);
-			const out: { [id: string]: string } = {};
-			ids.forEach((id, index) => {
+			// Object.fromEntries defines own properties, even for an id such as "__proto__".
+			return Object.fromEntries(ids.flatMap((id, index) => {
 				const found = names[index];
-				if (found !== null && found !== undefined) setOwn(out, id, found);
-			});
-			return out;
+				return found === null || found === undefined ? [] : [[id, found]];
+			}));
 		},
 	};
 }

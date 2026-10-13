@@ -118,8 +118,7 @@ describe("connecting and discovery", () => {
 		expect((await connector.account(xero.client())).label).toBe("Ada");
 		xero.me = { name: "Ada" };
 		expect((await raised(connector.account(xero.client()))).code).toBe("PROVIDER_FAILED");
-		// model_validate_json refuses a lone surrogate even in a field the model ignores.
-		xero.me = { sub: "u-991", given_name: "Ada", note: "\ud800" };
+		xero.me = { sub: 991, given_name: "Ada" };
 		expect((await raised(connector.account(xero.client()))).code).toBe("PROVIDER_FAILED");
 		xero.me = { sub: "u-991" };
 		xero.connections = xero.connections.filter((connection) => connection.tenantType !== "ORGANISATION");
@@ -221,13 +220,7 @@ describe("connecting and discovery", () => {
 		expect(classified(400, { Type: "ValidationException" })?.message).toBe("Xero rejected this.");
 		expect(classified(400, { Type: "QueryParseException", Message: SECRET })).toBeNull();
 		expect(classified(400, "<html>")).toBeNull();
-		// Pydantic's JSON refuses a lone surrogate escape anywhere, and bytes that are not UTF-8.
-		expect(classified(400, '{"Type":"ValidationException","Note":"\\ud800"}')).toBeNull();
-		expect(classified(400, '{"Type":"ValidationException","\\udc00":1}')).toBeNull();
-		// Even in a value a later duplicate key replaces, and past jiter's nesting limit.
-		expect(classified(400, '{"Type":"ValidationException","Note":"\\ud800","Note":"ok"}')).toBeNull();
-		expect(classified(400, `{"Type":"ValidationException","Note":${"[".repeat(200)}1${"]".repeat(200)}}`)).toBeNull();
-		expect(classified(400, `{"Type":"ValidationException","Note":${"[".repeat(199)}1${"]".repeat(199)}}`)?.code).toBe("PROVIDER_REJECTED");
+		// Bytes that are not UTF-8 are not Xero's JSON.
 		const latin = Uint8Array.from('{"Type":"ValidationException","Message":"caf\u00e9"}', (char) => char.charCodeAt(0));
 		expect(classify("Xero", new Response(latin, { status: 400 }), "", latin)).toBeNull();
 		const forbidden = classified(403, { Detail: SECRET });
@@ -245,6 +238,9 @@ describe("connecting and discovery", () => {
 		expect(judged(200, { Invoices: [refused] })).toBe("not_applied");
 		expect(judged(200, { Invoices: [{ ...refused, InvoiceID: INVOICE }] })).toBeNull();
 		expect(judged(200, { Invoices: [{ InvoiceID: INVOICE }] })).toBeNull();
+		// An id of another type leaves the write unknown.
+		expect(judged(200, { Invoices: [{ ...refused, InvoiceID: 5 }] })).toBe("unknown");
+		expect(judged(200, { Invoices: [{ ...refused, InvoiceID: null }] })).toBe("not_applied");
 		expect(judged(200, { Invoices: [] })).toBeNull();
 		expect(judged(200, [refused])).toBeNull();
 		expect(judged(400, { Invoices: [refused] })).toBeNull();

@@ -358,7 +358,7 @@ describe("the connector outside a run", () => {
 		const graph = new FakeGraph();
 		graph.hook = (_method, path, params) => (path === "/me" && (params.$select ?? "").includes("proxyAddresses") ? jsonResponse(400, { error: { code: "BadRequest" } }) : null);
 		const user = await graph.client().identities();
-		expect([user.mail, user.proxy_addresses]).toEqual(["me@contoso.com", []]);
+		expect([user.mail, user.proxyAddresses]).toEqual(["me@contoso.com", []]);
 	});
 
 	test("an on-premises mailbox is named as unsupported", async () => {

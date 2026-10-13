@@ -52,64 +52,6 @@ export function parseJson(text: string): Json {
 	return value;
 }
 
-/** How many non-empty arrays and objects may nest in a provider's answer that `parseModelJson` reads. */
-export const MAX_MODEL_JSON_DEPTH = 200;
-
-/**
- * A provider's JSON answer (already decoded from strict UTF-8, a byte order mark kept so that it is
- * refused): `parseJson`, then refused when any string token holds a lone surrogate, keys and the values of
- * keys repeated later included (which the parsed value no longer shows), or when more than 200 non-empty
- * arrays and objects nest (an empty one does not count). Throws SyntaxError.
- */
-export function parseModelJson(text: string): Json {
-	const value = parseJson(text);
-	const holds: boolean[] = [];
-	let depth = 0;
-	for (let at = 0; at < text.length; at++) {
-		const unit = text.charCodeAt(at);
-		if (unit === 0x22) at = wellFormedString(text, at);
-		else if (unit === 0x5b || unit === 0x7b) {
-			let next = at + 1;
-			while (isJsonSpace(text.charCodeAt(next))) next++;
-			const empty = text.charCodeAt(next) === 0x5d || text.charCodeAt(next) === 0x7d;
-			holds.push(!empty);
-			if (!empty && ++depth > MAX_MODEL_JSON_DEPTH) throw new SyntaxError("Arrays and objects nest too deeply for the model.");
-		} else if ((unit === 0x5d || unit === 0x7d) && holds.pop()) depth--;
-	}
-	return value;
-}
-
-function isJsonSpace(unit: number): boolean {
-	return unit === 0x20 || unit === 0x09 || unit === 0x0a || unit === 0x0d;
-}
-
-/** The index of the quote closing the string token opening at `start`; SyntaxError for a lone surrogate in it. */
-function wellFormedString(text: string, start: number): number {
-	let high = false;
-	for (let at = start + 1; at < text.length; at++) {
-		let unit = text.charCodeAt(at);
-		if (unit === 0x22) {
-			if (high) lone();
-			return at;
-		}
-		if (unit === 0x5c) {
-			unit = text.charCodeAt(++at);
-			if (unit === 0x75) {
-				unit = Number.parseInt(text.slice(at + 1, at + 5), 16);
-				at += 4;
-			}
-		}
-		const low = unit >= 0xdc00 && unit <= 0xdfff;
-		if (high !== low) lone();
-		high = !high && unit >= 0xd800 && unit <= 0xdbff;
-	}
-	throw new SyntaxError("Unterminated string.");
-}
-
-function lone(): never {
-	throw new SyntaxError("A lone surrogate in a string.");
-}
-
 /**
  * Refuses text whose arrays and objects nest deeper than `limit`, as the parser below does, so the native
  * path cannot hand a deeper value to the recursive writers. Only for text without a backslash: its

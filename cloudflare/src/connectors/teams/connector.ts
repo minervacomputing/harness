@@ -125,7 +125,7 @@ async function confirmForWriting(binding: Binding, resource: Resource): Promise<
 	const channels = await channelsOf(clientOf(binding), resource.within[0] as string);
 	const channel = (channels ?? []).find((c) => c.id === resource.id);
 	if (channel === undefined) throw new OperationError("CHANNEL_MOVED", "This channel changed in Teams while Minerva was using it, or access was lost.");
-	if (!WRITABLE.has(channel.membership_type)) {
+	if (!WRITABLE.has(channel.membershipType)) {
 		throw new OperationError(
 			"EXTERNAL_CHANNEL",
 			"Minerva posts only to standard and private channels, not to shared channels, which can include people of other organizations.",
@@ -135,8 +135,8 @@ async function confirmForWriting(binding: Binding, resource: Resource): Promise<
 
 /** `_in`: whether Graph says the message is in this channel. */
 function isIn(message: Message, resource: Resource): boolean {
-	const identity = message.channel_identity;
-	return identity !== null && teamKey(identity.team_id) === resource.within[0] && identity.channel_id === resource.id && MESSAGE_ID.test(message.id);
+	const identity = message.channelIdentity;
+	return identity !== null && teamKey(identity.teamId) === resource.within[0] && identity.channelId === resource.id && MESSAGE_ID.test(message.id);
 }
 
 function plain(value: string | null): string | null {
@@ -148,42 +148,42 @@ function channelData(teamId: string, channel: Channel): { [key: string]: Json } 
 	return {
 		id: channel.id,
 		team_id: teamId,
-		name: channel.display_name,
+		name: channel.displayName,
 		description: plain(channel.description),
-		membership: channel.membership_type,
-		link: channel.web_url,
+		membership: channel.membershipType,
+		link: channel.webUrl,
 	};
 }
 
 function teamData(team: Team): { [key: string]: Json } {
-	return { id: team.id, type: "team", name: team.display_name, description: plain(team.description), archived: team.is_archived };
+	return { id: team.id, type: "team", name: team.displayName, description: plain(team.description), archived: team.isArchived };
 }
 
 function messageData(message: Message, resource: Resource): { [key: string]: Json } {
-	const deleted = message.deleted_date_time !== null;
-	const sender = message.sender;
+	const deleted = message.deletedDateTime !== null;
+	const sender = message.from;
 	const author = sender ? (sender.user ?? sender.application) : null;
 	const record: { [key: string]: Json } = {
 		id: message.id,
 		team_id: resource.within[0] as string,
 		channel_id: resource.id,
-		reply_to_id: message.reply_to_id,
-		created_time: message.created_date_time,
-		edited_time: message.last_edited_date_time,
+		reply_to_id: message.replyToId,
+		created_time: message.createdDateTime,
+		edited_time: message.lastEditedDateTime,
 		deleted,
-		author: author ? author.display_name : null,
+		author: author ? author.displayName : null,
 		author_id: author ? author.id : null,
 		importance: message.importance,
-		link: message.web_url,
+		link: message.webUrl,
 	};
 	if (deleted) return { ...record, subject: null, text: "", text_truncated: false, reactions: [], files: [] };
 	const body = message.body;
-	const [text, truncated] = truncate(html.read(body ? body.content : null, body ? body.content_type : null, message.mentions), MAX_READ_TEXT);
+	const [text, truncated] = truncate(html.read(body ? body.content : null, body ? body.contentType : null, message.mentions), MAX_READ_TEXT);
 	const counts = new Map<string, number>();
 	for (const reaction of message.reactions) {
-		if (reaction.reaction_type) counts.set(reaction.reaction_type, (counts.get(reaction.reaction_type) ?? 0) + 1);
+		if (reaction.reactionType) counts.set(reaction.reactionType, (counts.get(reaction.reactionType) ?? 0) + 1);
 	}
-	const files = message.attachments.filter((a) => a.content_type === "reference");
+	const files = message.attachments.filter((a) => a.contentType === "reference");
 	Object.assign(record, {
 		subject: plain(message.subject),
 		text,
@@ -198,7 +198,7 @@ function messageData(message: Message, resource: Resource): { [key: string]: Jso
 
 /** `_messages`: user messages Graph places in this channel; system events (members added, renames) left out. */
 function messageRecords(messages: readonly Message[], resource: Resource): ScopedRecord[] {
-	return messages.filter((m) => m.message_type === "message" && isIn(m, resource)).map((m) => ({ resource, data: messageData(m, resource) }));
+	return messages.filter((m) => m.messageType === "message" && isIn(m, resource)).map((m) => ({ resource, data: messageData(m, resource) }));
 }
 
 function notAThread(): OperationError {
@@ -214,7 +214,7 @@ async function threadRoot(binding: Binding, resource: Resource, messageId: strin
 		if (unseen(error)) throw notAThread();
 		throw error;
 	}
-	if (message.id !== messageId || message.reply_to_id !== null || !isIn(message, resource)) throw notAThread();
+	if (message.id !== messageId || message.replyToId !== null || !isIn(message, resource)) throw notAThread();
 	return message;
 }
 
@@ -343,7 +343,7 @@ const READ_THREAD = defineOperation<z.output<typeof ReadThread>>({
 					if (unseen(error)) throw notAThread();
 					throw error;
 				}
-				records = [...records, ...messageRecords(replies.filter((r) => r.reply_to_id === data.message_id), resource)];
+				records = [...records, ...messageRecords(replies.filter((r) => r.replyToId === data.message_id), resource)];
 				return { records, nextCursor: cursor };
 			},
 		};
@@ -355,15 +355,15 @@ export const WRITE_NOTE =
 	"sees it, posted as the signed-in user. Shared channels are refused.";
 
 function posted(binding: Binding, resource: Resource, message: Message, replyTo: string | null): { [key: string]: Json } {
-	if (!isIn(message, resource) || message.reply_to_id !== replyTo) throw clientOf(binding).unexpected();
+	if (!isIn(message, resource) || message.replyToId !== replyTo) throw clientOf(binding).unexpected();
 	return {
 		written: true,
 		id: message.id,
 		team_id: resource.within[0] as string,
 		channel_id: resource.id,
 		reply_to_id: replyTo,
-		created_time: message.created_date_time,
-		link: message.web_url,
+		created_time: message.createdDateTime,
+		link: message.webUrl,
 	};
 }
 
@@ -413,7 +413,7 @@ const REPLY = defineOperation<z.output<typeof Reply>>({
 			requirements: [{ need: resource, action: "reply" }],
 			async execute(): Promise<ProviderOutput> {
 				const root = await threadRoot(binding, resource, data.message_id);
-				if (root.message_type !== "message" || root.deleted_date_time !== null) throw notAThread();
+				if (root.messageType !== "message" || root.deletedDateTime !== null) throw notAThread();
 				// Last before the write, so the channel is checked as close to it as Graph allows.
 				await confirmForWriting(binding, resource);
 				const message = await clientOf(binding).post(data.team_id, data.channel_id, html.written(data.text), data.message_id);
@@ -435,8 +435,8 @@ async function teamItems(client: TeamsClient, teams: readonly Team[]): Promise<[
 }
 
 function teamName(team: Team): string {
-	const name = team.display_name || team.id;
-	return team.is_archived ? `${name} (archived)` : name;
+	const name = team.displayName || team.id;
+	return team.isArchived ? `${name} (archived)` : name;
 }
 
 export function teamsConnector(options: { baseUrl?: string } = {}): Connector<TeamsClient> {
@@ -487,7 +487,7 @@ export function teamsConnector(options: { baseUrl?: string } = {}): Connector<Te
 				end += chunk.length;
 				for (const [team, channels] of await teamItems(client, chunk)) {
 					const name = teamName(team);
-					const found: DiscoveryItem[] = [{ id: team.id, name }, ...channels.map((c) => ({ id: c.id, name: `${name} / ${c.display_name || c.id}` }))];
+					const found: DiscoveryItem[] = [{ id: team.id, name }, ...channels.map((c) => ({ id: c.id, name: `${name} / ${c.displayName || c.id}` }))];
 					extend(items, found.filter((item) => folded === null || item.name.toLowerCase().includes(folded)));
 				}
 				if (!folded || items.length) break;
@@ -504,7 +504,7 @@ export function teamsConnector(options: { baseUrl?: string } = {}): Connector<Te
 			for (const team of teams) if (wanted.has(team.id)) name(team.id, teamName(team));
 			if ([...wanted].some((id) => CHANNEL_ID.test(id))) {
 				for (const [team, channels] of await teamItems(client, teams)) {
-					for (const channel of channels) if (wanted.has(channel.id)) name(channel.id, `${teamName(team)} / ${channel.display_name || channel.id}`);
+					for (const channel of channels) if (wanted.has(channel.id)) name(channel.id, `${teamName(team)} / ${channel.displayName || channel.id}`);
 				}
 			}
 			return names;

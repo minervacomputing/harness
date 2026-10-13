@@ -97,7 +97,7 @@ const SearchPages = z.strictObject({
 });
 
 function updated(page: Page): string | null {
-	return page.version ? page.version.created_at : null;
+	return page.version ? page.version.createdAt : null;
 }
 
 export const SEARCH_PAGES = defineOperation<z.output<typeof SearchPages>>({
@@ -137,16 +137,16 @@ export const SEARCH_PAGES = defineOperation<z.output<typeof SearchPages>>({
 				const siteHosts = hosts(await client.sites());
 				const records: ScopedRecord[] = [];
 				for (const page of pages) {
-					if (page.status !== "current" || page.space_id === null || !ID.test(page.space_id)) continue;
+					if (page.status !== "current" || page.spaceId === null || !ID.test(page.spaceId)) continue;
 					const record: JsonObject = {
 						id: page.id,
 						site_id: site.id,
-						space_id: page.space_id,
+						space_id: page.spaceId,
 						title: short(page.title, siteHosts),
 						updated: updated(page),
 						link: link(site, page.id),
 					};
-					records.push({ resource: spaceResource(binding, site, page.space_id), data: record });
+					records.push({ resource: spaceResource(binding, site, page.spaceId), data: record });
 				}
 				return { records, nextCursor: next };
 			},
@@ -164,7 +164,7 @@ function comment(found: Comment, siteHosts: readonly string[]): JsonObject {
 	return {
 		id: found.id,
 		// The latest version's time: Confluence gives a comment's creation time only with its version history.
-		updated: found.version ? found.version.created_at : null,
+		updated: found.version ? found.version.createdAt : null,
 		text: body,
 		text_truncated: truncated,
 	};
@@ -172,10 +172,10 @@ function comment(found: Comment, siteHosts: readonly string[]): JsonObject {
 
 /** The parent page, read fresh, when it is a current page in the same space; otherwise nothing. */
 async function parent(client: ConfluenceClient, site: Site, resource: Resource, page: Page, siteHosts: readonly string[]): Promise<Json> {
-	if (page.parent_id === null || page.parent_type !== "page" || !ID.test(page.parent_id)) return null;
-	const found = await client.pages(site.id, [page.parent_id]);
+	if (page.parentId === null || page.parentType !== "page" || !ID.test(page.parentId)) return null;
+	const found = await client.pages(site.id, [page.parentId]);
 	const above = found[0] ?? null;
-	if (above === null || above.space_id === null || spaceId(site, above.space_id) !== resource.id) return null;
+	if (above === null || above.spaceId === null || spaceId(site, above.spaceId) !== resource.id) return null;
 	return { id: above.id, title: short(above.title, siteHosts) };
 }
 
@@ -204,10 +204,10 @@ export const GET_PAGE = defineOperation<z.output<typeof GetPage>>({
 				const record: JsonObject = {
 					id: page.id,
 					site_id: site.id,
-					space_id: page.space_id,
+					space_id: page.spaceId,
 					title: short(page.title, siteHosts),
 					parent: above,
-					created: page.created_at,
+					created: page.createdAt,
 					updated: updated(page),
 					version: page.version ? page.version.number : null,
 					body,

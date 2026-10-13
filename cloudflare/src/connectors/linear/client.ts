@@ -6,9 +6,8 @@
 // before running it (a malformed request, or only rate limit and authentication errors); anything else
 // leaves its outcome unknown, which pauses further writes. Read responses are streamed with a byte limit.
 //
-// Responses are read as Pydantic's models read them (`extra="ignore"`, lax): unknown fields are dropped,
-// booleans may come as 0, 1 or words such as "true", numbers as numeric strings; strings are strings; a
-// field is read by the camelCase name Linear sends, or else by its snake_case name.
+// Responses are read by the camelCase names Linear sends; unknown fields are dropped, and a field of another
+// type makes the response unexpected.
 //
 // `judge` and `classify` read a body as Python's `response.json()` does (pyjson.ts). Reads parse bodies as
 // the core's `json()` does, UTF-8 only, so a body Python would also read as UTF-16 or UTF-32, or with an
@@ -19,7 +18,7 @@ import type { Effect, OperationErrorShape, ProviderClient, ProviderIo } from "..
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
 import { fromUtf8Strict, utf8 } from "../../lib/bytes.ts";
-import { isDict, type Json, type JsonObject, parseJson, truthy } from "../../lib/json.ts";
+import { isDict, type Json, type JsonObject, parseJson } from "../../lib/json.ts";
 import { pythonLoads } from "./pyjson.ts";
 import { strOf } from "./python.ts";
 import { extend } from "../../lib/arrays.ts";
@@ -45,77 +44,11 @@ export const TEAM_FIELDS = `id key name description private ${nested("id", MAX_T
 const ISSUE_SUMMARY = "id identifier title priorityLabel dueDate updatedAt url state { name type } assignee { name } team { id }";
 const PAGE_INFO = "pageInfo { hasNextPage endCursor }";
 
-// Pydantic's lax booleans and floats.
-
-const TRUE_WORDS = /^(?:1|t|true|y|yes|on)$/i;
-const FALSE_WORDS = /^(?:0|f|false|n|no|off)$/i;
-/** Rust's `f64::from_str` for finite numbers, as pydantic-core parses a float from a string. */
-const FLOAT = /^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/;
-
-/**
- * A float from a string as pydantic-core reads it: White_Space trimmed, then underscores dropped unless one
- * leads, trails or follows another ("1_000.5" is 1000.5, "_1" is refused), then Rust's parse.
- */
-function floatOf(text: string): number | null {
-	const trimmed = text.trim();
-	if (trimmed.startsWith("_") || trimmed.endsWith("_") || trimmed.includes("__")) return null;
-	const bare = trimmed.replaceAll("_", "");
-	return FLOAT.test(bare) ? Number(bare) : null;
-}
-
-export function laxBool(): z.ZodType<boolean, unknown> {
-	return z.unknown().transform((value, ctx) => {
-		if (typeof value === "boolean") return value;
-		if (value === 0 || value === 1) return value === 1;
-		if (typeof value === "string" && TRUE_WORDS.test(value)) return true;
-		if (typeof value === "string" && FALSE_WORDS.test(value)) return false;
-		ctx.addIssue({ code: "custom", message: "Input should be a valid boolean" });
-		return z.NEVER;
-	});
-}
-
-/** A float; one that is not finite (Python would take "nan" or "inf") is refused, as no JSON can carry it on. */
-export function laxFloat(): z.ZodType<number, unknown> {
-	return z.unknown().transform((value, ctx) => {
-		const number = typeof value === "boolean" ? Number(value) : typeof value === "string" ? floatOf(value) : value;
-		if (typeof number === "number" && Number.isFinite(number)) return number;
-		ctx.addIssue({ code: "custom", message: "Input should be a valid number" });
-		return z.NEVER;
-	});
-}
-
-const text = () => z.string();
 const maybeText = () => z.string().nullable().default(null);
-
-/** The snake_case name of a field Linear names in camelCase: `to_camel`'s inverse for the names here. */
-function snakeOf(alias: string): string {
-	return alias.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
-}
-
-/**
- * A response model as client.py's `Model` reads one: unknown fields dropped (`extra="ignore"`), each field
- * by its camelCase alias (`alias_generator=to_camel`), which is what Linear sends, or by its snake_case
- * name where the alias is missing (`populate_by_name=True`).
- */
-function model<Shape extends z.ZodRawShape>(shape: Shape) {
-	const renamed = Object.keys(shape)
-		.map((alias): [alias: string, name: string] => [alias, snakeOf(alias)])
-		.filter(([alias, name]) => alias !== name);
-	const object = z.object(shape);
-	return z.preprocess((value) => {
-		if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
-		const fields = value as { [key: string]: unknown };
-		const missing = renamed.filter(([alias, name]) => !Object.hasOwn(fields, alias) && Object.hasOwn(fields, name));
-		if (!missing.length) return value;
-		const copy: { [key: string]: unknown } = { ...fields };
-		for (const [alias, name] of missing) copy[alias] = fields[name];
-		return copy;
-	}, object);
-}
 
 // The models.
 
-export const PageInfo = model({ hasNextPage: laxBool().default(false), endCursor: maybeText() });
+export const PageInfo = z.object({ hasNextPage: z.boolean().default(false), endCursor: maybeText() });
 export type PageInfo = z.output<typeof PageInfo>;
 
 export interface TeamRef {
@@ -123,38 +56,38 @@ export interface TeamRef {
 	parent: TeamRef | null;
 }
 
-export const TeamRef: z.ZodType<TeamRef, unknown> = z.lazy(() => model({ id: text(), parent: TeamRef.nullable().default(null) }));
+export const TeamRef: z.ZodType<TeamRef, unknown> = z.lazy(() => z.object({ id: z.string(), parent: TeamRef.nullable().default(null) }));
 
 const teamFields = {
-	id: text(),
+	id: z.string(),
 	parent: TeamRef.nullable().default(null),
-	key: text(),
-	name: text(),
+	key: z.string(),
+	name: z.string(),
 	description: maybeText(),
-	private: laxBool().default(false),
+	private: z.boolean().default(false),
 };
-export const Team = model(teamFields);
+export const Team = z.object(teamFields);
 export type Team = z.output<typeof Team>;
 
-const Teams = model({ nodes: z.array(Team), pageInfo: PageInfo });
+const Teams = z.object({ nodes: z.array(Team), pageInfo: PageInfo });
 export type Teams = z.output<typeof Teams>;
 
-const Named = model({ name: maybeText() });
+const Named = z.object({ name: maybeText() });
 export type Named = z.output<typeof Named>;
 
-export const State = model({ id: maybeText(), name: text(), type: text() });
+export const State = z.object({ id: maybeText(), name: z.string(), type: z.string() });
 export type State = z.output<typeof State>;
 
-export const Person = model({ id: text(), name: text(), displayName: maybeText(), active: laxBool().default(true) });
+export const Person = z.object({ id: z.string(), name: z.string(), displayName: maybeText(), active: z.boolean().default(true) });
 export type Person = z.output<typeof Person>;
 
-export const Label = model({ id: text(), name: text(), isGroup: laxBool().default(false), parent: Named.nullable().default(null) });
+export const Label = z.object({ id: z.string(), name: z.string(), isGroup: z.boolean().default(false), parent: Named.nullable().default(null) });
 export type Label = z.output<typeof Label>;
 
-export const IssueSummary = model({
-	id: text(),
-	identifier: text(),
-	title: text(),
+export const IssueSummary = z.object({
+	id: z.string(),
+	identifier: z.string(),
+	title: z.string(),
 	priorityLabel: maybeText(),
 	dueDate: maybeText(),
 	updatedAt: maybeText(),
@@ -165,20 +98,20 @@ export const IssueSummary = model({
 });
 export type IssueSummary = z.output<typeof IssueSummary>;
 
-const IssueList = model({ nodes: z.array(IssueSummary), pageInfo: PageInfo });
-const TeamIssues = model({ ...teamFields, issues: IssueList });
+const IssueList = z.object({ nodes: z.array(IssueSummary), pageInfo: PageInfo });
+const TeamIssues = z.object({ ...teamFields, issues: IssueList });
 export type TeamIssues = z.output<typeof TeamIssues>;
 
-const Labels = model({ nodes: z.array(Named), pageInfo: PageInfo });
+const Labels = z.object({ nodes: z.array(Named), pageInfo: PageInfo });
 
-const Relative = model({ identifier: text(), title: text(), state: State.nullable().default(null), team: TeamRef });
-const Relatives = model({ nodes: z.array(Relative), pageInfo: PageInfo });
+const Relative = z.object({ identifier: z.string(), title: z.string(), state: State.nullable().default(null), team: TeamRef });
+const Relatives = z.object({ nodes: z.array(Relative), pageInfo: PageInfo });
 
-export const Comment = model({
-	id: text(),
-	body: text().default(""),
+export const Comment = z.object({
+	id: z.string(),
+	body: z.string().default(""),
 	createdAt: maybeText(),
-	hideInLinear: laxBool().default(false),
+	hideInLinear: z.boolean().default(false),
 	// Only its id is asked for.
 	parent: TeamRef.nullable().default(null),
 	user: Named.nullable().default(null),
@@ -193,15 +126,15 @@ export function authorOf(comment: Comment): string | null {
 	return null;
 }
 
-const Comments = model({ nodes: z.array(Comment), pageInfo: PageInfo });
+const Comments = z.object({ nodes: z.array(Comment), pageInfo: PageInfo });
 
-const Issue = model({
-	id: text(),
-	identifier: text(),
-	title: text(),
+const Issue = z.object({
+	id: z.string(),
+	identifier: z.string(),
+	title: z.string(),
 	description: maybeText(),
 	priorityLabel: maybeText(),
-	estimate: laxFloat().nullable().default(null),
+	estimate: z.number().nullable().default(null),
 	dueDate: maybeText(),
 	url: maybeText(),
 	createdAt: maybeText(),
@@ -220,7 +153,7 @@ const Issue = model({
 });
 export type Issue = z.output<typeof Issue>;
 
-const IssuePlace = model({ id: text(), identifier: text(), team: Team });
+const IssuePlace = z.object({ id: z.string(), identifier: z.string(), team: Team });
 export type IssuePlace = z.output<typeof IssuePlace>;
 
 export interface ParentIssue {
@@ -229,29 +162,29 @@ export interface ParentIssue {
 	parent: ParentIssue | null;
 }
 
-const ParentIssue: z.ZodType<ParentIssue, unknown> = z.lazy(() => model({ id: text(), team: TeamRef, parent: ParentIssue.nullable().default(null) }));
+const ParentIssue: z.ZodType<ParentIssue, unknown> = z.lazy(() => z.object({ id: z.string(), team: TeamRef, parent: ParentIssue.nullable().default(null) }));
 
-const IssueForUpdate = model({ id: text(), identifier: text(), team: Team, parent: ParentIssue.nullable().default(null) });
+const IssueForUpdate = z.object({ id: z.string(), identifier: z.string(), team: Team, parent: ParentIssue.nullable().default(null) });
 export type IssueForUpdate = z.output<typeof IssueForUpdate>;
 
 // Only the ids of the issue and parent are asked for.
-const CommentPlace = model({ id: text(), issue: TeamRef.nullable().default(null), parent: TeamRef.nullable().default(null) });
+const CommentPlace = z.object({ id: z.string(), issue: TeamRef.nullable().default(null), parent: TeamRef.nullable().default(null) });
 export type CommentPlace = z.output<typeof CommentPlace>;
 
-export const Organization = model({ name: text(), urlKey: text() });
+export const Organization = z.object({ name: z.string(), urlKey: z.string() });
 export type Organization = z.output<typeof Organization>;
 
-const Viewer = model({ id: text(), name: text() });
+const Viewer = z.object({ id: z.string(), name: z.string() });
 export type Viewer = z.output<typeof Viewer>;
 
-const Me = model({ viewer: Viewer, organization: Organization });
+const Me = z.object({ viewer: Viewer, organization: Organization });
 export type Me = z.output<typeof Me>;
 
 /** What a write returns: the issue it created or changed. */
-const Written = model({ id: text(), identifier: text(), title: text(), url: maybeText(), state: State.nullable().default(null), team: TeamRef });
+const Written = z.object({ id: z.string(), identifier: z.string(), title: z.string(), url: maybeText(), state: State.nullable().default(null), team: TeamRef });
 export type Written = z.output<typeof Written>;
 
-const WrittenComment = model({ id: text(), createdAt: maybeText() });
+const WrittenComment = z.object({ id: z.string(), createdAt: maybeText() });
 export type WrittenComment = z.output<typeof WrittenComment>;
 
 // Errors and outcomes.
@@ -455,65 +388,58 @@ export class LinearClient implements ProviderClient {
 	}
 
 	/** Every node of a connection, up to MAX_LIST_PAGES pages; and whether more were left out. */
-	async #pages(document: string, variables: Variables, ...path: string[]): Promise<[Json[], boolean]> {
-		const nodes: Json[] = [];
-		let after: Json | undefined = null;
+	async #pages<T>(schema: z.ZodType<T, unknown>, document: string, variables: Variables, ...path: string[]): Promise<[T[], boolean]> {
+		const connection = z.object({ nodes: z.array(schema), pageInfo: PageInfo });
+		const nodes: T[] = [];
+		let after: string | null = null;
 		for (let page = 0; page < MAX_LIST_PAGES; page++) {
-			let value: Json | undefined = await this.query(document, { ...variables, after: after ?? null });
-			for (const key of path) value = get(value, key);
-			const found = get(value, "nodes");
-			const info = get(value, "pageInfo");
-			if (!Array.isArray(found) || !isDict(info)) throw this.unexpected();
-			extend(nodes, found);
-			after = get(info, "endCursor");
-			if (!truthy(get(info, "hasNextPage")) || typeof after !== "string") return [nodes, truthy(get(info, "hasNextPage"))];
+			const found: { nodes: T[]; pageInfo: PageInfo } = await this.#model(connection, document, { ...variables, after }, ...path);
+			extend(nodes, found.nodes);
+			after = found.pageInfo.endCursor;
+			if (!found.pageInfo.hasNextPage || after === null) return [nodes, found.pageInfo.hasNextPage];
 		}
 		return [nodes, true];
 	}
 
-	#validate<T>(schema: z.ZodType<T, unknown>, items: Json[]): T[] {
-		const parsed = z.array(schema).safeParse(items);
-		if (!parsed.success) throw this.unexpected(parsed.error);
-		return parsed.data;
-	}
-
 	async states(teamId: string): Promise<[State[], boolean]> {
-		const [nodes, more] = await this.#pages(
+		return this.#pages(
+			State,
 			`query States($id: String!, $after: String) { team(id: $id) { states(first: 100, after: $after) { nodes { id name type } ${PAGE_INFO} } } }`,
 			{ id: teamId },
 			"team",
 			"states",
 		);
-		return [this.#validate(State, nodes), more];
 	}
 
 	/** Labels issues in the team can have: the team's own and the workspace's. */
 	async labels(teamId: string): Promise<[Label[], boolean]> {
 		const fields = `nodes { id name isGroup parent { name } } ${PAGE_INFO}`;
 		const [own, moreOwn] = await this.#pages(
+			Label,
 			`query TeamLabels($id: String!, $after: String) { team(id: $id) { labels(first: 250, after: $after) { ${fields} } } }`,
 			{ id: teamId },
 			"team",
 			"labels",
 		);
 		const [shared, moreShared] = await this.#pages(
+			Label,
 			`query WorkspaceLabels($after: String) { issueLabels(first: 250, after: $after, filter: { team: { null: true } }) { ${fields} } }`,
 			{},
 			"issueLabels",
 		);
 		const labels = new Map<string, Label>();
-		for (const label of this.#validate(Label, [...own, ...shared])) if (!labels.has(label.id)) labels.set(label.id, label);
+		for (const label of [...own, ...shared]) if (!labels.has(label.id)) labels.set(label.id, label);
 		return [[...labels.values()], moreOwn || moreShared];
 	}
 
 	async members(teamId: string): Promise<[Person[], boolean]> {
-		const [nodes, more] = await this.#pages(
+		return this.#pages(
+			Person,
 			`query Members($id: String!, $after: String) { team(id: $id) { members(first: 250, after: $after) { nodes { id name displayName active } ${PAGE_INFO} } } }`,
 			{ id: teamId },
 			"team",
 			"members",
 		);
-		return [this.#validate(Person, nodes), more];
 	}
 
 	issuePlace(issueId: string): Promise<IssuePlace> {

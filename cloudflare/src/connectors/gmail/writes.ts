@@ -92,7 +92,7 @@ const SEND_MESSAGE = defineOperation<SendMessageInput>({
 				const record: JsonObject = {
 					sent: true,
 					id: sent.id,
-					thread_id: sent.thread_id,
+					thread_id: sent.threadId,
 					to: data.to,
 					cc: data.cc,
 					bcc: data.bcc,
@@ -145,8 +145,8 @@ async function replyable(binding: Binding, resource: Resource, messageId: string
 	const sentBy = mime.mailboxes(headersOf(message, "Sender"));
 	const ours = (found: string[]) => found.some((address) => own.has(address));
 	if (
-		message.label_ids.includes("SENT") ||
-		message.label_ids.includes("DRAFT") ||
+		message.labelIds.includes("SENT") ||
+		message.labelIds.includes("DRAFT") ||
 		sender === null ||
 		ours(sender) ||
 		(headersOf(message, "Sender").length > 0 && (sentBy === null || ours(sentBy)))
@@ -187,8 +187,8 @@ const REPLY = defineOperation<ReplyInput>({
 			requirements: [{ need: resource, action: "read" }, ...targets.map((target): Requirement => ({ need: recipient(binding, target), action: "send" }))],
 			async execute(): Promise<ProviderOutput> {
 				const message = await replyable(binding, resource, data.message, targets);
-				const sent = await (binding.client as GmailClient).send(replyRaw(message, targets, data.body), message.thread_id);
-				const record: JsonObject = { replied: true, id: sent.id, thread_id: sent.thread_id, to: targets };
+				const sent = await (binding.client as GmailClient).send(replyRaw(message, targets, data.body), message.threadId);
+				const record: JsonObject = { replied: true, id: sent.id, thread_id: sent.threadId, to: targets };
 				return { records: [{ resource, data: record }] };
 			},
 		};
@@ -225,7 +225,7 @@ const CREATE_DRAFT = defineOperation<CreateDraftInput>({
 				const record: JsonObject = {
 					draft_id: draft.id,
 					id: draft.message.id,
-					thread_id: draft.message.thread_id,
+					thread_id: draft.message.threadId,
 					to: data.to,
 					cc: data.cc,
 					bcc: data.bcc,
@@ -259,11 +259,11 @@ const CREATE_REPLY_DRAFT = defineOperation<ReplyInput>({
 			],
 			async execute(): Promise<ProviderOutput> {
 				const message = await replyable(binding, resource, data.message, targets);
-				const draft = await (binding.client as GmailClient).createDraft(replyRaw(message, targets, data.body), message.thread_id);
+				const draft = await (binding.client as GmailClient).createDraft(replyRaw(message, targets, data.body), message.threadId);
 				const record: JsonObject = {
 					draft_id: draft.id,
 					id: draft.message.id,
-					thread_id: draft.message.thread_id,
+					thread_id: draft.message.threadId,
 					in_reply_to: message.id,
 					to: targets,
 				};

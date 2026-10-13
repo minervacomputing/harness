@@ -33,7 +33,6 @@ interface Vectors {
 		written: ({ text: string } & Outcome)[];
 	};
 	sites: { site: { id: string; name: string | null; url: string | null }; host: string | null; label: string }[];
-	models: { [model: string]: ({ input: Json } & Outcome)[] };
 }
 
 const VECTORS = parseJson(readFileSync(new URL("../fixtures/connectors/atlassian/vectors.json", import.meta.url).pathname, "utf8")) as unknown as Vectors;
@@ -205,18 +204,24 @@ describe("sites", () => {
 	});
 });
 
-describe("provider responses, as the clients' Pydantic models read them", () => {
-	const models = { page: PageModel, listing: ListingModel, project: ProjectModel, issue: IssueModel, comment: CommentModel };
-	for (const [name, schema] of Object.entries(models)) {
-		test(name, () => {
-			const cases = VECTORS.models[name] ?? [];
-			expect(cases.length).toBeGreaterThan(0);
-			for (const { input, ...expected } of cases) {
-				const parsed = schema.safeParse(input);
-				expect(parsed.success ? { value: parsed.data } : { error: "ValidationError" }, JSON.stringify(input)).toEqual(expected);
-			}
-		});
-	}
+describe("provider answers", () => {
+	test("are read by their wire names; unknown fields are dropped", () => {
+		const listing = ListingModel.parse({ results: [{ id: "1" }], _links: { next: "/wiki/api/v2/pages?cursor=abc", base: "x" }, extra: 1 });
+		expect(listing).toEqual({ results: [{ id: "1" }], _links: { next: "/wiki/api/v2/pages?cursor=abc" } });
+		const page = PageModel.parse({ id: "7", spaceId: "9", parentId: "3", createdAt: "2026-01-01T00:00:00Z", version: { number: 2 }, body: { atlas_doc_format: { value: "{}" } } });
+		expect([page.spaceId, page.parentId, page.version?.number, page.body?.atlas_doc_format?.value]).toEqual(["9", "3", 2, "{}"]);
+		const issue = IssueModel.parse({ id: "10", key: "ENG-1", fields: { status: { name: "Done", statusCategory: { key: "done" } }, assignee: { displayName: "Ada" } } });
+		expect([issue.fields.status?.statusCategory?.key, issue.fields.assignee?.displayName]).toEqual(["done", "Ada"]);
+		expect(ProjectModel.parse({ id: "1", key: "ENG", projectTypeKey: "software" }).projectTypeKey).toBe("software");
+	});
+
+	test("a value of another type is refused, not converted", () => {
+		expect(ProjectModel.safeParse({ id: "1", key: "ENG", archived: "true" }).success).toBe(false);
+		expect(ProjectModel.safeParse({ id: 1, key: "ENG" }).success).toBe(false);
+		expect(PageModel.safeParse({ id: "7", version: { number: "2" } }).success).toBe(false);
+		expect(CommentModel.safeParse({ id: "5", created: 5 }).success).toBe(false);
+		expect(IssueModel.safeParse({ id: "10" }).success).toBe(false);
+	});
 });
 
 describe("the declarations", () => {

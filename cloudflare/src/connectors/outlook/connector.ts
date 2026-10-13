@@ -57,11 +57,11 @@ async function allFolders(client: GraphClient): Promise<[string, string][]> {
 			let folders: Folder[];
 			[folders, cursor] = await client.folders(parent, 100, cursor);
 			for (const folder of folders) {
-				if (folder.parent_folder_id !== (parent || root) || !ID.test(folder.id) || !ordinary(folder)) continue;
-				const path = prefix + folder.display_name;
+				if (folder.parentFolderId !== (parent || root) || !ID.test(folder.id) || !ordinary(folder)) continue;
+				const path = prefix + folder.displayName;
 				found.push([folder.id, path]);
-				// Python's truthiness: a count of 0 or none adds nothing.
-				if (folder.child_folder_count) queue.push([folder.id, `${path}/`]);
+				// A count of 0 or none adds nothing.
+				if (folder.childFolderCount) queue.push([folder.id, `${path}/`]);
 			}
 			if (cursor === null) break;
 		}

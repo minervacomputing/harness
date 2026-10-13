@@ -295,8 +295,11 @@ describe("the client and connecting", () => {
 		expect(await connector.account(hubspot.client())).toEqual({ id: "4242", label: "Acme Corp (4242)" });
 		await expect(connector.account(hubspot.client("other"))).rejects.toMatchObject({ code: "CONNECTION_UNAUTHORIZED" });
 		// Without a name, the account is named by its number.
-		hubspot.hook = (request) => (request.url.pathname.startsWith("/account-info/") ? json(200, { portalId: "007", portalName: "" }) : null);
+		hubspot.hook = (request) => (request.url.pathname.startsWith("/account-info/") ? json(200, { portalId: 7, portalName: "" }) : null);
 		expect(await connector.account(hubspot.client())).toEqual({ id: "7", label: "HubSpot 7" });
+		// A portal id sent as a string does not fit.
+		hubspot.hook = (request) => (request.url.pathname.startsWith("/account-info/") ? json(200, { portalId: "7" }) : null);
+		await expect(connector.account(hubspot.client())).rejects.toMatchObject({ code: "PROVIDER_FAILED" });
 	});
 
 	test("HubSpot's tokens carry their scopes (test_hubspot_tokens_carry_their_scopes)", async () => {
@@ -651,10 +654,9 @@ describe("the port's own", () => {
 		// A search page whose offset HubSpot would not write.
 		hubspot.hook = (request) => (request.url.pathname.endsWith("/search") ? json(200, { results: [], paging: { next: { after: "010" } } }) : null);
 		expect(await run.code("hubspot_search_contacts", {})).toBe("PROVIDER_FAILED");
-		// A lone surrogate escape fails a read anywhere, as Pydantic's JSON parser refuses it, even in a field
-		// the model ignores; a write's answer is read with json.loads, which keeps it.
-		hubspot.hook = (request) => (request.method === "GET" ? new Response(`{"id":"${ADA}","unused":"\\ud800"}`, { status: 200 }) : null);
-		expect(await run.code("hubspot_get_contact", { contact_id: ADA })).toBe("PROVIDER_FAILED");
+		// A lone surrogate escape is kept as the JSON says, in a read and in a write's answer.
+		hubspot.hook = (request) => (request.method === "GET" ? new Response(`{"id":"${ADA}","properties":{"email":"\\ud800"}}`, { status: 200 }) : null);
+		expect(items(await run.ok("hubspot_get_contact", { contact_id: ADA }))[0]?.email).toBe("\ud800");
 		const writer = await start(hubspot, { contacts: ["read", "create"] });
 		hubspot.hook = (request) => (request.method === "POST" && request.url.pathname === `${PREFIX}contacts` ? new Response('{"id":"960","properties":{"email":"\\udc00"}}', { status: 200 }) : null);
 		expect(items(await writer.ok("hubspot_create_contact", { email: "lone@example.com" }))[0]?.email).toBe("\udc00");

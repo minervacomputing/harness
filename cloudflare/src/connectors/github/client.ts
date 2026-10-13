@@ -7,9 +7,8 @@
 //   synchronously), so `classify` words every 403 instead; it sees the same headers and body. The body is
 //   UTF-8 with invalid bytes replaced, where Python's `response.json()` refused such a body and so ignored
 //   its message.
-// - Response models are zod's objects with defaults; unknown fields are dropped, as with Pydantic's
-//   `extra="ignore"`. Pydantic's lax coercions (a number sent as a string, 1 for true) are not made: such a
-//   response is an unexpected one.
+// - Response models are zod objects with defaults; unknown fields are dropped, and a field of another type
+//   (a number sent as a string, 1 for true) makes the response unexpected.
 // - The next page's address in the Link header is read with the runtime's URL parser. The base64 of file
 //   contents is read with Python's non-validating `b64decode` rules, so a file reads as it did in Python. A
 //   redirect's Location is decoded as httpx decodes headers. (A Link header that is not ASCII failed every

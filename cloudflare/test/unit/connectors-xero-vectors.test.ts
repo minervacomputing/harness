@@ -7,7 +7,7 @@
 import { describe, expect, test } from "vitest";
 import type { Operation, ProviderOutput } from "../../src/contracts/connectors.ts";
 import type { Resource } from "../../src/contracts/policy.ts";
-import { Message, Pagination, XeroClient, classify, date, invoiceDate, judge, messages, moment, nextPage, page } from "../../src/connectors/xero/client.ts";
+import { Message, Pagination, XeroClient, classify, date, invoiceDate, messages, moment, nextPage, page } from "../../src/connectors/xero/client.ts";
 import { xeroConnector } from "../../src/connectors/xero/connector.ts";
 import { fromNumber, money, number } from "../../src/connectors/xero/decimal.ts";
 import { short } from "../../src/connectors/xero/organisations.ts";
@@ -75,7 +75,6 @@ interface Vectors {
 	};
 	pages: { page: [string | null, number | Failure][]; next: [number | null | "empty", number, number, number, string | null][] };
 	classify: { status: number; body: string; named: [string, string] | null }[];
-	judge: { status: number; body: string; effect: string | null }[];
 	texts: { short: [string | null, string | null][]; short_300: [string | null, string | null][]; messages: [(string | null)[], string[]][] };
 	scenarios: Scenario[];
 }
@@ -240,12 +239,6 @@ describe("Xero's errors are named as today", () => {
 		const named = classify("Xero", new Response(vector.body, { status: vector.status }), vector.body, new TextEncoder().encode(vector.body));
 		expect(named === null ? null : [named.code, named.message]).toEqual(vector.named);
 	});
-
-	test.each(vectors.judge.map((vector, index) => [`${index} ${vector.status} ${vector.body.slice(0, 80)}`, vector] as const))("judge %s", (_, vector) => {
-		const response = () => new Response(vector.body, { status: vector.status });
-		if (vector.effect === "raises") expect(() => judge(response(), vector.body)).toThrow(TypeError);
-		else expect(judge(response(), vector.body)).toBe(vector.effect);
-	});
 });
 
 describe("texts are shown as today", () => {
@@ -336,9 +329,11 @@ async function replay(scenario: Scenario): Promise<{ requests: ServedRequest[]; 
 	return { requests, outcome };
 }
 
+const CHANGED_SCENARIOS = new Set(["discover folded query", "discover byte order mark"]);
+
 describe("scenarios run as today", () => {
-	// Names are matched with toLowerCase, so "STRASSE" no longer finds "Straße".
-	test.each(vectors.scenarios.filter((scenario) => scenario.name !== "discover folded query" && !changedOnPurpose(scenario.call)).map((scenario) => [scenario.name, scenario] as const))("%s", async (_, scenario) => {
+	// Names are matched with toLowerCase, so "STRASSE" no longer finds "Straße"; a byte order mark is not JSON.
+	test.each(vectors.scenarios.filter((scenario) => !CHANGED_SCENARIOS.has(scenario.name) && !changedOnPurpose(scenario.call)).map((scenario) => [scenario.name, scenario] as const))("%s", async (_, scenario) => {
 		const { requests, outcome } = await replay(scenario);
 		// The records' key order too: the model reads them as JSON text.
 		expect(JSON.stringify(outcome)).toBe(JSON.stringify(scenario.outcome));

@@ -395,28 +395,25 @@ describe("reading", () => {
 		expect(await run.code("intercom_search_conversations", { inbox: SUPPORT })).toBe("INVALID_ARGUMENTS");
 	});
 
-	test("answers are read as Pydantic reads them", async () => {
+	test("an answer that does not fit is an unexpected response", async () => {
 		const fake = new FakeIntercom();
 		const run = await start(fake, { "*": ["read"] });
 		const raw = (text: string) => {
 			fake.hook = (method, path) => (method === "GET" && path === "/conversations/102" ? new Response(text, { status: 200 }) : null);
 		};
 		const refund = JSON.stringify(fake.conversations["102"]);
-		// Pydantic's JSON parser refuses an escaped lone surrogate anywhere, a byte order mark and trailing text.
-		for (const text of [refund.replace('"Refund"', '"\\ud800"'), refund.replace('"type":"conversation"', '"\\udfff":1'), `﻿${refund}`, `${refund} x`]) {
+		for (const text of [
+			`${refund} x`,
+			refund.replace('"created_at":1790000000', '"created_at":"1790000000"'),
+			refund.replace('"redacted":false', '"redacted":0'),
+		]) {
 			raw(text);
-			expect(await run.code("intercom_get_conversation", { conversation: "102" })).toBe("PROVIDER_FAILED");
+			expect(await run.code("intercom_get_conversation", { conversation: "102" }), text.slice(0, 80)).toBe("PROVIDER_FAILED");
 		}
-		// A surrogate pair, whitespace around the document, and lax ints, bools and nulls are read.
-		raw(` ${refund.replace('"Refund"', '"\\ud83d\\ude00"').replace('"created_at":1790000000', '"created_at":"1790000000"').replace('"redacted":false', '"redacted":0')}\n`);
+		// A surrogate pair and whitespace around the document are read.
+		raw(` ${refund.replace('"Refund"', '"\\ud83d\\ude00"')}\n`);
 		const [found] = await items(run, "intercom_get_conversation", { conversation: "102" });
 		expect([found?.title, found?.created]).toEqual(["\u{1f600}", "2026-09-21T14:13:20Z"]);
-		// A reply's answer is read as json.loads reads it, which keeps a lone surrogate.
-		const writer = await start(fake, { [SUPPORT]: ["read", "note"] });
-		fake.hook = (method, path) =>
-			method === "POST" && path.endsWith("/reply") ? new Response(JSON.stringify(fake.conversations["100"]).replace('"Login issue"', '"\\ud800"'), { status: 200 }) : null;
-		const [note] = (await writer.ok("intercom_add_note", { conversation: "100", text: "x" })).result.items;
-		expect([note?.written, note?.inbox]).toEqual([true, SUPPORT]);
 	});
 
 	test("search answers are checked", async () => {

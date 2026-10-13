@@ -42,14 +42,19 @@ const dataset = vectors("teams") as {
 describe("message text against today's Python", () => {
 	test("read: the text of every body, with its mentions", () => {
 		expect(dataset.read.length).toBeGreaterThan(1500);
-		const mentions = dataset.mention_sets.map((items) => items.map((item) => Mention(item)));
+		// Sets whose ids Python read from strings no longer parse; their cases are skipped.
+		const mentions = dataset.mention_sets.map((items) => {
+			const parsed = items.map((item) => Mention.safeParse(item));
+			return parsed.every((item) => item.success) ? parsed.map((item) => item.data as Mention) : null;
+		});
 		const failures: string[] = [];
 		for (const expected of dataset.read) {
 			const content = unpack(expected.content) as string | null;
-			if (changedOnPurpose(content)) continue;
+			const set = expected.mentions === undefined ? [] : mentions[expected.mentions];
+			if (changedOnPurpose(content) || set === null) continue;
 			let actual: string;
 			try {
-				actual = read(content, expected.type, mentions[expected.mentions] ?? []);
+				actual = read(content, expected.type, set ?? []);
 			} catch (error) {
 				actual = `threw ${String(error)}`;
 			}

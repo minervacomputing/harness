@@ -287,7 +287,7 @@ describe("times and tool inputs, as today's Python reads them", () => {
 	test("the event times Graph reports are shown as _time shows them", () => {
 		const cases = vectors("outlook_calendar").times as { time: JsonObject; all_day: boolean; shown: string | null }[];
 		expect(cases).toHaveLength(9);
-		expect(cases.map(({ time, all_day }) => shownTime(Time(time), all_day))).toEqual(cases.map(({ shown }) => shown));
+		expect(cases.map(({ time, all_day }) => shownTime(Time.parse(time), all_day))).toEqual(cases.map(({ shown }) => shown));
 	});
 
 	for (const [key, name] of [

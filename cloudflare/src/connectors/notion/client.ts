@@ -1,8 +1,8 @@
-// The Notion API client: a thin client over ProviderHTTP
-// whose responses are validated before use. The models read as Pydantic's lax models with `extra="ignore"`
-// do: unknown fields dropped, booleans also from 0, 1 and words such as "true", strings only from strings.
-// Objects whose keys are Notion's (properties, rich text items, search results) are checked and kept as
-// they were parsed, so a property named "__proto__" is an ordinary key.
+// The Notion API client: a thin client over ProviderHTTP whose responses are
+// validated before use. Unknown fields are dropped, and a field of another type
+// makes the response unexpected. Objects whose keys are Notion's (properties,
+// rich text items, search results) are checked and kept as they were parsed, so
+// a property named "__proto__" is an ordinary key.
 
 import { z } from "zod";
 import type { OperationErrorShape, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
@@ -17,41 +17,21 @@ export const API_URL = "https://api.notion.com/v1";
 export const NOTION_VERSION = "2026-03-11";
 export const MAX_MARKDOWN_BYTES = 4 * 1024 * 1024;
 
-const TRUE_WORDS: ReadonlySet<string> = new Set(["1", "on", "t", "true", "y", "yes"]);
-const FALSE_WORDS: ReadonlySet<string> = new Set(["0", "off", "f", "false", "n", "no"]);
+const maybeText = () => z.string().nullable().default(null);
 
-/** Pydantic's lax `bool` with a default for a missing field. */
-function laxBool(fallback: boolean) {
-	return z.unknown().transform((value, ctx): boolean => {
-		if (value === undefined) return fallback;
-		if (typeof value === "boolean") return value;
-		if (value === 0 || value === 1) return value === 1;
-		if (typeof value === "string") {
-			const word = value.toLowerCase();
-			if (TRUE_WORDS.has(word)) return true;
-			if (FALSE_WORDS.has(word)) return false;
-		}
-		ctx.issues.push({ code: "custom", message: "Input should be a valid boolean", input: value });
-		return z.NEVER;
-	});
-}
-
-/** `str | None = None`. */
-const maybeStr = () => z.string().nullable().default(null);
-
-/** `dict[str, dict[str, Any]] = {}`, kept as parsed. */
+/** An object of objects, `{}` when missing, kept as parsed. */
 const dictOfDicts = () =>
 	z.custom<{ [name: string]: JsonObject }>((value) => isDict(value) && Object.values(value).every(isDict)).default(() => ({}));
 
-/** `list[dict[str, Any]] = []`, kept as parsed. */
+/** A list of objects, `[]` when missing, kept as parsed. */
 const listOfDicts = () => z.custom<JsonObject[]>((value) => Array.isArray(value) && value.every(isDict)).default(() => []);
 
 export const Parent = z.object({
 	type: z.string(),
-	page_id: maybeStr(),
-	database_id: maybeStr(),
-	data_source_id: maybeStr(),
-	block_id: maybeStr(),
+	page_id: maybeText(),
+	database_id: maybeText(),
+	data_source_id: maybeText(),
+	block_id: maybeText(),
 });
 export type Parent = z.output<typeof Parent>;
 
@@ -59,11 +39,11 @@ export const Page = z.object({
 	object: z.string(),
 	id: z.string(),
 	parent: Parent,
-	url: maybeStr(),
-	in_trash: laxBool(false),
-	is_locked: laxBool(false),
-	created_time: maybeStr(),
-	last_edited_time: maybeStr(),
+	url: maybeText(),
+	in_trash: z.boolean().default(false),
+	is_locked: z.boolean().default(false),
+	created_time: maybeText(),
+	last_edited_time: maybeText(),
 	properties: dictOfDicts(),
 });
 export type Page = z.output<typeof Page>;
@@ -83,9 +63,9 @@ export const Database = z.object({
 	id: z.string(),
 	parent: Parent,
 	title: listOfDicts(),
-	url: maybeStr(),
-	in_trash: laxBool(false),
-	is_inline: laxBool(false),
+	url: maybeText(),
+	in_trash: z.boolean().default(false),
+	is_inline: z.boolean().default(false),
 	data_sources: z.array(DataSourceRef).default(() => []),
 });
 export type Database = z.output<typeof Database>;
@@ -119,8 +99,8 @@ const RequestStatus = z.object({ type: z.string().default("complete") });
 
 export const SearchPage = z.object({
 	results: listOfDicts(),
-	next_cursor: maybeStr(),
-	has_more: laxBool(false),
+	next_cursor: maybeText(),
+	has_more: z.boolean().default(false),
 	request_status: RequestStatus.nullable().default(null),
 });
 export type SearchPage = z.output<typeof SearchPage>;
@@ -133,7 +113,7 @@ export function searchIncomplete(page: SearchPage): boolean {
 export const PageMarkdown = z.object({
 	id: z.string(),
 	markdown: z.string(),
-	truncated: laxBool(false),
+	truncated: z.boolean().default(false),
 	unknown_block_ids: z.array(z.string()).default(() => []),
 });
 export type PageMarkdown = z.output<typeof PageMarkdown>;
@@ -142,9 +122,9 @@ const Author = z.object({ id: z.string() });
 
 export const Comment = z.object({
 	id: z.string(),
-	discussion_id: maybeStr(),
+	discussion_id: maybeText(),
 	parent: Parent,
-	created_time: maybeStr(),
+	created_time: maybeText(),
 	created_by: Author.nullable().default(null),
 	rich_text: listOfDicts(),
 });
@@ -152,16 +132,16 @@ export type Comment = z.output<typeof Comment>;
 
 export const CommentPage = z.object({
 	results: z.array(Comment).default(() => []),
-	next_cursor: maybeStr(),
-	has_more: laxBool(false),
+	next_cursor: maybeText(),
+	has_more: z.boolean().default(false),
 });
 export type CommentPage = z.output<typeof CommentPage>;
 
-const Bot = z.object({ workspace_id: maybeStr(), workspace_name: maybeStr() });
+const Bot = z.object({ workspace_id: maybeText(), workspace_name: maybeText() });
 
 export const BotUser = z.object({
 	id: z.string(),
-	name: maybeStr(),
+	name: maybeText(),
 	type: z.string(),
 	bot: Bot.nullable().default(null),
 });

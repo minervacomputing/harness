@@ -9,7 +9,6 @@ import { concat, utf8 } from "../../lib/bytes.ts";
 import { type JsonObject } from "../../lib/json.ts";
 import { tokenHex } from "../../lib/random.ts";
 import { GoogleUser, USERINFO_URL, classify } from "../google/index.ts";
-import { laxBool, model } from "../google/model.ts";
 
 export const API_URL = "https://www.googleapis.com/drive/v3";
 export const UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files";
@@ -25,53 +24,53 @@ export function quoted(text: string): string {
 	return `'${text.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
 }
 
-const Capabilities = model({
-	can_add_children: laxBool.nullable().default(null),
-	can_list_children: laxBool.nullable().default(null),
-	can_download: laxBool.nullable().default(null),
+const Capabilities = z.object({
+	canAddChildren: z.boolean().nullable().default(null),
+	canListChildren: z.boolean().nullable().default(null),
+	canDownload: z.boolean().nullable().default(null),
 });
 
-const ShortcutDetails = model({
-	target_id: z.string().nullable().default(null),
-	target_mime_type: z.string().nullable().default(null),
+const ShortcutDetails = z.object({
+	targetId: z.string().nullable().default(null),
+	targetMimeType: z.string().nullable().default(null),
 });
 
-export const DriveFile = model({
+export const DriveFile = z.object({
 	id: z.string(),
 	name: z.string().default(""),
-	mime_type: z.string().default(""),
+	mimeType: z.string().default(""),
 	parents: z.array(z.string()).nullable().default(null),
-	drive_id: z.string().nullable().default(null),
+	driveId: z.string().nullable().default(null),
 	size: z.string().nullable().default(null),
-	modified_time: z.string().nullable().default(null),
-	web_view_link: z.string().nullable().default(null),
-	trashed: laxBool.default(false),
-	shortcut_details: ShortcutDetails.nullable().default(null),
+	modifiedTime: z.string().nullable().default(null),
+	webViewLink: z.string().nullable().default(null),
+	trashed: z.boolean().default(false),
+	shortcutDetails: ShortcutDetails.nullable().default(null),
 	capabilities: Capabilities.nullable().default(null),
 });
 export type DriveFile = z.output<typeof DriveFile>;
 
 export function isFolder(file: DriveFile): boolean {
-	return file.mime_type === FOLDER;
+	return file.mimeType === FOLDER;
 }
 
-const FilePage = model({
+const FilePage = z.object({
 	files: z.array(DriveFile).default([]),
-	next_page_token: z.string().nullable().default(null),
-	incomplete_search: laxBool.default(false),
+	nextPageToken: z.string().nullable().default(null),
+	incompleteSearch: z.boolean().default(false),
 });
 export type FilePage = z.output<typeof FilePage>;
 
-const SharedDrive = model({ id: z.string(), name: z.string().default("") });
+const SharedDrive = z.object({ id: z.string(), name: z.string().default("") });
 export type SharedDrive = z.output<typeof SharedDrive>;
 
-const DrivePage = model({
+const DrivePage = z.object({
 	drives: z.array(SharedDrive).default([]),
-	next_page_token: z.string().nullable().default(null),
+	nextPageToken: z.string().nullable().default(null),
 });
 export type DrivePage = z.output<typeof DrivePage>;
 
-const RootId = model({ id: z.string() });
+const RootId = z.object({ id: z.string() });
 
 export interface FileQuery {
 	limit: number;

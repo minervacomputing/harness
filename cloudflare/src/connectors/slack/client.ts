@@ -18,8 +18,7 @@ import type { Effect, ProviderClient, ProviderIo } from "../../contracts/connect
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
-import { type Json, type JsonObject, parseJson } from "../../lib/json.ts";
-import { dict, laxBool, laxInt } from "../../lib/lax.ts";
+import { isDict, type Json, type JsonObject, parseJson } from "../../lib/json.ts";
 
 export const API_URL = "https://slack.com/api";
 export const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -162,38 +161,39 @@ export function judge(response: Response, text: string): Effect | null {
 	return "unknown";
 }
 
-// The answers' models: Pydantic's lax mode, unknown fields ignored (lax.ts).
+// What Slack answers, unknown fields dropped.
 
-const str = () => z.string();
-const optionalStr = () => z.string().nullable().default(null);
+const optionalText = () => z.string().nullable().default(null);
+/** A JSON object, whatever it holds. */
+const object = () => z.custom<JsonObject>(isDict);
 
 export const Identity = z.object({
-	team_id: str(),
-	team: str().default(""),
-	user_id: str(),
-	user: str().default(""),
-	is_enterprise_install: laxBool().default(false),
+	team_id: z.string(),
+	team: z.string().default(""),
+	user_id: z.string(),
+	user: z.string().default(""),
+	is_enterprise_install: z.boolean().default(false),
 });
 export type Identity = z.output<typeof Identity>;
 
-const Text = z.object({ value: str().default("") });
+const Text = z.object({ value: z.string().default("") });
 
 export const Channel = z.object({
-	id: str(),
-	name: str().default(""),
-	is_channel: laxBool().default(false),
-	is_group: laxBool().default(false),
-	is_im: laxBool().default(false),
-	is_mpim: laxBool().default(false),
-	is_private: laxBool().default(false),
-	is_archived: laxBool().default(false),
+	id: z.string(),
+	name: z.string().default(""),
+	is_channel: z.boolean().default(false),
+	is_group: z.boolean().default(false),
+	is_im: z.boolean().default(false),
+	is_mpim: z.boolean().default(false),
+	is_private: z.boolean().default(false),
+	is_archived: z.boolean().default(false),
 	// Left out by some methods; unknown counts as not a member.
-	is_member: laxBool().nullable().default(null),
-	is_ext_shared: laxBool().default(false),
-	is_pending_ext_shared: laxBool().default(false),
+	is_member: z.boolean().nullable().default(null),
+	is_ext_shared: z.boolean().default(false),
+	is_pending_ext_shared: z.boolean().default(false),
 	topic: Text.nullable().default(null),
 	purpose: Text.nullable().default(null),
-	num_members: laxInt().nullable().default(null),
+	num_members: z.number().int().nullable().default(null),
 });
 export type Channel = z.output<typeof Channel>;
 
@@ -202,42 +202,42 @@ export function isConversationChannel(channel: Channel): boolean {
 	return (channel.is_channel || channel.is_group) && !channel.is_im && !channel.is_mpim;
 }
 
-const Reaction = z.object({ name: str().default(""), count: laxInt().default(0) });
+const Reaction = z.object({ name: z.string().default(""), count: z.number().int().default(0) });
 
 const File = z.object({
-	id: optionalStr(),
-	name: optionalStr(),
-	title: optionalStr(),
-	mimetype: optionalStr(),
-	size: laxInt().nullable().default(null),
+	id: optionalText(),
+	name: optionalText(),
+	title: optionalText(),
+	mimetype: optionalText(),
+	size: z.number().int().nullable().default(null),
 });
 
 export const Message = z.object({
-	ts: str(),
-	type: optionalStr(),
-	subtype: optionalStr(),
-	user: optionalStr(),
-	bot_id: optionalStr(),
-	username: optionalStr(),
-	text: str().default(""),
-	thread_ts: optionalStr(),
-	reply_count: laxInt().nullable().default(null),
-	latest_reply: optionalStr(),
-	edited: dict().nullable().default(null),
+	ts: z.string(),
+	type: optionalText(),
+	subtype: optionalText(),
+	user: optionalText(),
+	bot_id: optionalText(),
+	username: optionalText(),
+	text: z.string().default(""),
+	thread_ts: optionalText(),
+	reply_count: z.number().int().nullable().default(null),
+	latest_reply: optionalText(),
+	edited: object().nullable().default(null),
 	reactions: z.array(Reaction).default(() => []),
 	files: z.array(File).default(() => []),
-	attachments: z.array(dict()).default(() => []),
-	blocks: z.array(dict()).default(() => []),
+	attachments: z.array(object()).default(() => []),
+	blocks: z.array(object()).default(() => []),
 });
 export type Message = z.output<typeof Message>;
 
-const Profile = z.object({ display_name: str().default(""), real_name: str().default("") });
+const Profile = z.object({ display_name: z.string().default(""), real_name: z.string().default("") });
 
 export const User = z.object({
-	id: str(),
-	name: str().default(""),
-	real_name: str().default(""),
-	deleted: laxBool().default(false),
+	id: z.string(),
+	name: z.string().default(""),
+	real_name: z.string().default(""),
+	deleted: z.boolean().default(false),
 	profile: Profile.nullable().default(null),
 });
 export type User = z.output<typeof User>;
@@ -248,7 +248,7 @@ export function shownName(user: User): string {
 	return user.real_name || (user.profile ? user.profile.real_name : "") || user.name;
 }
 
-export const Posted = z.object({ channel: optionalStr(), ts: optionalStr() });
+export const Posted = z.object({ channel: optionalText(), ts: optionalText() });
 export type Posted = z.output<typeof Posted>;
 
 type Params = { [name: string]: string | number | null | undefined };

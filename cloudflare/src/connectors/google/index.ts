@@ -1,16 +1,15 @@
 // What Google connectors share: one OAuth app, the
 // OpenID account, and how Google reports errors.
 //
-// Google reports rate limits, an API that is not enabled and some size limits as 403. Python reads them in
-// ProviderHTTP's `forbidden` hook from the response's JSON; here that hook is synchronous and has no body,
-// so the same mapping runs in `classify` (which gets the body and runs first) for 403s, and a 403 it does
-// not name falls through to the default PROVIDER_FORBIDDEN, as `default_forbidden` did.
+// Google reports rate limits, an API that is not enabled and some size limits as 403, named by a `reason`
+// in the body. ProviderHTTP's `forbidden` hook has no body, so `classify` (which gets the body and runs
+// first) reads them for 403s; a 403 it does not name falls through to the default PROVIDER_FORBIDDEN.
 
 import { z } from "zod";
 import type { Auth, OperationErrorShape } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
-import { isDict, type Json, parseJson } from "../../lib/json.ts";
-import { model } from "./model.ts";
+import { parseJson } from "../../lib/json.ts";
+
 
 export const USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo";
 export const RATE_LIMITED: ReadonlySet<string> = new Set(["rateLimitExceeded", "userRateLimitExceeded"]);
@@ -37,53 +36,26 @@ export function oauth(...scopes: string[]): Extract<Auth, { type: "oauth2" }> {
 	};
 }
 
-/** `dict.get(key, default)` on an own key. */
-function get(value: { [key: string]: Json }, key: string, fallback: Json): Json {
-	return Object.hasOwn(value, key) ? (value[key] as Json) : fallback;
-}
+const ErrorBody = z.object({
+	error: z.object({ errors: z.array(z.unknown()).default([]), details: z.array(z.unknown()).default([]) }),
+});
+const Reason = z.object({ reason: z.string() });
 
-class Unreadable extends Error {}
-
-/**
- * The `reason`s of `error.errors[]` and `error.details[]`, as `_reasons` reads them: any shape Python's
- * `.get` would fail on (an item or `error` that is not an object, a body that is not JSON) yields none at
- * all (so does a reason that is a list or an object, which a Python set cannot hold), and only string reasons
- * are kept.
- */
+/** The string `reason`s of an error body's `error.errors[]` and `error.details[]`; none for any other shape. */
 export function reasons(body: string): Set<string> {
+	let data: unknown;
 	try {
-		let data: Json;
-		try {
-			data = parseJson(body);
-		} catch {
-			throw new Unreadable();
-		}
-		if (!isDict(data)) throw new Unreadable();
-		const error = get(data, "error", {});
-		if (!isDict(error)) throw new Unreadable();
-		const found = new Set<Json>();
-		for (const field of ["errors", "details"]) {
-			for (const item of iterate(get(error, field, []))) {
-				if (!isDict(item)) throw new Unreadable();
-				const reason = get(item, "reason", null);
-				// A list or an object cannot go into Python's set: the TypeError that follows reads as no reasons at all.
-				if (typeof reason === "object" && reason !== null) throw new Unreadable();
-				found.add(reason);
-			}
-		}
-		return new Set([...found].filter((reason): reason is string => typeof reason === "string"));
-	} catch (error) {
-		if (error instanceof Unreadable) return new Set();
-		throw error;
+		data = parseJson(body);
+	} catch {
+		return new Set();
 	}
-}
-
-/** What Python's `for item in value` yields: a list's items, a dict's keys, a string's characters; else TypeError. */
-function iterate(value: Json): Json[] {
-	if (Array.isArray(value)) return value;
-	if (typeof value === "string") return Array.from(value);
-	if (isDict(value)) return Object.keys(value);
-	throw new Unreadable();
+	const parsed = ErrorBody.safeParse(data);
+	if (!parsed.success) return new Set();
+	const { errors, details } = parsed.data.error;
+	return new Set([...errors, ...details].flatMap((item) => {
+		const found = Reason.safeParse(item);
+		return found.success ? [found.data.reason] : [];
+	}));
 }
 
 /** Google's 403s that are not about the account: rate limits, a disabled API, an export too large; else null. */
@@ -110,12 +82,9 @@ export function classify(provider: string, response: Response, body: string): Op
 }
 
 /** The OpenID userinfo: `sub` is stable, the email address can change. */
-export const GoogleUser = model(
-	{
-		sub: z.string(),
-		email: z.string().nullable().default(null),
-		name: z.string().nullable().default(null),
-	},
-	{ camel: false },
-);
+export const GoogleUser = z.object({
+	sub: z.string(),
+	email: z.string().nullable().default(null),
+	name: z.string().nullable().default(null),
+});
 export type GoogleUser = z.output<typeof GoogleUser>;

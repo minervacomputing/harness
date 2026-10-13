@@ -425,8 +425,7 @@ describe("token bodies", () => {
 		expect(tokenPayload({ access_token: "a", expires_in: 3600.5 }, now)).not.toHaveProperty("expires_at");
 		expect(tokenPayload({ access_token: "a", expires_in: 365 * 24 * 3600 }, now)).not.toHaveProperty("expires_at");
 		expect(tokenPayload({ access_token: "a", expires_in: "3600" }, now)).not.toHaveProperty("expires_at");
-		// `true` counts as 1.
-		expect(tokenPayload({ access_token: "a", expires_in: true }, now).expires_at).toBe(seconds + 1);
+		expect(tokenPayload({ access_token: "a", expires_in: true }, now)).not.toHaveProperty("expires_at");
 		expect(tokenPayload({ access_token: "a", refresh_token: "r" }, now).refresh_token).toBe("r");
 	});
 

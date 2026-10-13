@@ -38,7 +38,7 @@ function short(value: string | null, siteHosts: readonly string[]): string | nul
 function status(issue: Pick<Issue, "fields">): Json {
 	const found = issue.fields.status;
 	if (found === null) return null;
-	const category = found.status_category;
+	const category = found.statusCategory;
 	return { name: found.name, category: category ? category.name : null };
 }
 
@@ -49,7 +49,7 @@ function projectData(site: Site, project: Project): JsonObject {
 		site: site.label,
 		key: project.key,
 		name: project.name,
-		type: project.project_type_key,
+		type: project.projectTypeKey,
 		archived: Boolean(project.archived),
 	};
 }
@@ -156,7 +156,7 @@ export const SEARCH_ISSUES = defineOperation<z.output<typeof SearchIssues>>({
 						status: status(issue),
 						type: fields.issuetype ? fields.issuetype.name : null,
 						priority: fields.priority ? fields.priority.name : null,
-						assignee: fields.assignee ? fields.assignee.display_name : null,
+						assignee: fields.assignee ? fields.assignee.displayName : null,
 						updated: fields.updated,
 						link: link(site, issue.key),
 					};
@@ -174,7 +174,7 @@ function comment(found: Comment, siteHosts: readonly string[]): JsonObject {
 	const [body, truncated] = truncate(adf.read(found.body, siteHosts), MAX_COMMENT);
 	return {
 		id: found.id,
-		author: found.author ? found.author.display_name : null,
+		author: found.author ? found.author.displayName : null,
 		created: found.created,
 		updated: found.updated,
 		text: body,
@@ -190,8 +190,8 @@ function relations(issue: Issue): [string, string][] {
 	for (const subtask of fields.subtasks) found.push([subtask.id, "subtask"]);
 	for (const issueLink of fields.issuelinks) {
 		const kind = issueLink.type;
-		if (issueLink.outward_issue !== null) found.push([issueLink.outward_issue.id, (kind ? kind.outward : null) || "related"]);
-		if (issueLink.inward_issue !== null) found.push([issueLink.inward_issue.id, (kind ? kind.inward : null) || "related"]);
+		if (issueLink.outwardIssue !== null) found.push([issueLink.outwardIssue.id, (kind ? kind.outward : null) || "related"]);
+		if (issueLink.inwardIssue !== null) found.push([issueLink.inwardIssue.id, (kind ? kind.inward : null) || "related"]);
 	}
 	const seen = new Set<string>();
 	return found.filter((relation) => {
@@ -256,8 +256,8 @@ export const GET_ISSUE = defineOperation<z.output<typeof GetIssue>>({
 					status: status(issue),
 					type: fields.issuetype ? fields.issuetype.name : null,
 					priority: fields.priority ? fields.priority.name : null,
-					assignee: fields.assignee ? fields.assignee.display_name : null,
-					reporter: fields.reporter ? fields.reporter.display_name : null,
+					assignee: fields.assignee ? fields.assignee.displayName : null,
+					reporter: fields.reporter ? fields.reporter.displayName : null,
 					labels: fields.labels,
 					created: fields.created,
 					updated: fields.updated,

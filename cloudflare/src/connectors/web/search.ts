@@ -8,15 +8,13 @@ import { z } from "zod";
 import type { ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
-import { laxBool } from "../../lib/lax.ts";
 import { htmlUnescape } from "../../lib/text.ts";
 
 export const BASE_URL = "https://api.search.brave.com/res/v1/";
 /** Brave pages by result page, from 0. */
 export const MAX_PAGE = 9;
 
-// The answer, unknown fields ignored: a missing string is "", a null one
-// fails the whole answer.
+// The answer, unknown fields dropped: a missing string is "", a null one fails the whole answer.
 const BraveResult = z.object({
 	title: z.string().default(""),
 	url: z.string(),
@@ -24,7 +22,7 @@ const BraveResult = z.object({
 	age: z.string().nullable().default(null),
 });
 const Web = z.object({ results: z.array(BraveResult).default([]) });
-const Query = z.object({ more_results_available: laxBool().default(false) });
+const Query = z.object({ more_results_available: z.boolean().default(false) });
 const BraveResponse = z.object({
 	web: Web.default({ results: [] }),
 	query: Query.default({ more_results_available: false }),

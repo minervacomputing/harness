@@ -218,7 +218,7 @@ describe("how a file is read", () => {
 	test("readable: text, an Office format, or the refusal", () => {
 		const failures: string[] = [];
 		for (const expected of dataset.readable) {
-			const item = DriveItem({ id: "x", name: expected.name, file: expected.mime === null ? {} : { mimeType: expected.mime } });
+			const item = DriveItem.parse({ id: "x", name: expected.name, file: expected.mime === null ? {} : { mimeType: expected.mime } });
 			let actual: { value?: string; error?: string; message?: string };
 			try {
 				actual = { value: onedrive.readable(item) };

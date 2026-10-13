@@ -34,7 +34,6 @@ type Outcome = { value?: Json; error?: string; message?: string };
 const VECTORS = parseJson(readFileSync(new URL("../fixtures/connectors/atlassian/vectors.json", import.meta.url).pathname, "utf8")) as unknown as {
 	jira: {
 		page_params: ({ cursor: string | null } & Outcome)[];
-		next_cursor: ({ body: JsonObject } & Outcome)[];
 		discover_cursor: ({ cursor: string | null } & Outcome)[];
 		search_words: ({ text: string } & Outcome)[];
 		names: { values: (string | null)[]; value: string }[];
@@ -393,14 +392,14 @@ describe("connecting and discovery", () => {
 		expect(pageParams(`t:${TOKEN}`)).toEqual({ nextPageToken: TOKEN });
 		for (const cursor of ["x:abc", "t:", "t:a b", `t:${"a".repeat(991)}`, "t:é"]) expect(() => pageParams(cursor), cursor).toThrow(expect.objectContaining({ code: "INVALID_CURSOR" }));
 		expect(nextCursor({ nextPageToken: "abc", isLast: true })).toBeNull();
-		expect(nextCursor({})).toBeNull();
-		for (const token of ["a b", 5, "a".repeat(991)]) expect(() => nextCursor({ nextPageToken: token }), String(token)).toThrow(expect.objectContaining({ code: "PROVIDER_LIMIT" }));
+		expect(nextCursor({ nextPageToken: null, isLast: false })).toBeNull();
+		expect(nextCursor({ nextPageToken: "abc", isLast: false })).toBe("t:abc");
+		for (const token of ["a b", "a".repeat(991)]) expect(() => nextCursor({ nextPageToken: token, isLast: false }), token).toThrow(expect.objectContaining({ code: "PROVIDER_LIMIT" }));
 	});
 
 	test("the pure helpers answer as Python's", () => {
 		const vectors = VECTORS.jira;
 		for (const { cursor, ...expected } of vectors.page_params) if (!changedOnPurpose(cursor)) expect(outcome(() => pageParams(cursor)), String(cursor)).toEqual(expected);
-		for (const { body, ...expected } of vectors.next_cursor) expect(outcome(() => nextCursor(body)), JSON.stringify(body)).toEqual(expected);
 		for (const { cursor, ...expected } of vectors.discover_cursor) if (!changedOnPurpose(cursor)) expect(outcome(() => discoveryCursor(cursor, [null, null])), String(cursor)).toEqual(expected);
 		for (const { text: value, ...expected } of vectors.search_words) expect(outcome(() => searchWords(value)), value).toEqual(expected);
 		for (const { values, value } of vectors.names) expect(names(values)).toBe(value);
@@ -747,5 +746,11 @@ describe("writing", () => {
 		const types = await jira.client().issueTypes(ACME, "10000");
 		expect(types.map((type) => type.id)).toEqual(["1", "2", "3", "4", "5", "6", "7"]);
 		expect(jira.reads("/issuetypes").map((request) => request.params.startAt)).toEqual(["0", "3", "6"]);
+	});
+
+	test("issue types under another name are an unexpected response", async () => {
+		const jira = new FakeJira();
+		jira.hook = (_method, path) => (path.endsWith("/issuetypes") ? jsonResponse(200, { values: [], total: 0 }) : null);
+		await expect(jira.client().issueTypes(ACME, "10000")).rejects.toMatchObject({ code: "PROVIDER_FAILED" });
 	});
 });

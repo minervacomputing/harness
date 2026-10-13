@@ -1,5 +1,4 @@
-// A thin client for the Stripe API, authenticated with a restricted key, ported from
-// backend/connectors/stripe/client.py.
+// A thin client for the Stripe API, authenticated with a restricted key.
 //
 // The API version is pinned, so response shapes do not change under Minerva. Responses are validated before
 // use. Stripe's errors carry a type and a code: a key without a permission is a `permission_error` (403), an
@@ -8,16 +7,15 @@
 //
 // Requests go through ProviderHTTP: reads are bounded GETs with their parameters in the query, and the two
 // writes are form-encoded POSTs, the one mutating request of their operation's execute step. Responses are
-// read as the Python models read them, ignoring fields they do not name. Unlike Pydantic's lax mode, a
-// number or boolean sent as a string is refused as an unexpected response, and so is an integer beyond
-// 2^53, which JSON parsing here would already have rounded (Stripe sends neither).
+// strict UTF-8 JSON; fields not named here are dropped, and a field of another type (a number sent as a
+// string, an integer beyond 2^53) makes the response unexpected.
 
 import { z } from "zod";
 import type { OperationErrorShape, ProviderClient, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
-import { isDict, type Json, parseJson, parseModelJson } from "../../lib/json.ts";
+import { isDict, type Json, parseJson } from "../../lib/json.ts";
 
 export const API_URL = "https://api.stripe.com/v1";
 export const API_VERSION = "2025-08-27.basil";
@@ -41,7 +39,7 @@ export const REFUSALS: ReadonlyMap<string, string> = new Map([
 	["refund_disputed_payment", "This payment is disputed; Stripe does not refund disputed payments."],
 ]);
 
-// Pydantic's `str | None = None` and the like: a missing field takes the default; other fields are ignored.
+// A missing field takes its default; fields not named are dropped.
 const text = () => z.string().nullable().default(null);
 const integer = () => z.int().nullable().default(null);
 
@@ -161,7 +159,7 @@ export const BalanceTransaction = z.object({
 });
 export type BalanceTransaction = z.output<typeof BalanceTransaction>;
 
-/** A list or search page (client.py `Page[T]`). */
+/** A list or search page. */
 export function Page<T extends z.ZodType<{ id: string }>>(item: T) {
 	return z.object({ data: z.array(item).default([]), has_more: z.boolean().default(false), next_page: text() });
 }
@@ -171,15 +169,11 @@ export interface Page<T> {
 	next_page: string | null;
 }
 
-/**
- * client.py `classify`: Stripe's error named by its type and code, never by its message. httpx's
- * `response.json()` reads the bytes, skipping a byte order mark; `body` is ProviderHTTP's text of them.
- */
+/** Stripe's error named by its type and code, never by its message. A body that is not a JSON object names nothing. */
 export function classify(_provider: string, response: Response, body: string): OperationErrorShape | null {
 	let error: Json | undefined;
 	try {
-		const parsed = parseJson(body.startsWith("﻿") ? body.slice(1) : body);
-		// `response.json().get("error", {})`, and `.get` on what that is: anything but a dict is no name.
+		const parsed = parseJson(body);
 		if (!isDict(parsed)) return null;
 		error = Object.hasOwn(parsed, "error") ? parsed.error : {};
 		if (!isDict(error)) return null;
@@ -210,7 +204,7 @@ export function nextCursor(page: Page<{ id: string }>): string | null {
 
 type Params = { [name: string]: string | number | null | undefined };
 
-/** client.py `_params`: parameters that are None are left out. */
+/** Query parameters; null and undefined ones are left out. */
 function params(values: Params): ProviderRequest["query"] {
 	const out: { [name: string]: string | number } = {};
 	for (const [key, value] of Object.entries(values)) if (value !== null && value !== undefined) out[key] = value;
@@ -251,9 +245,7 @@ export class StripeClient implements ProviderClient {
 		);
 		let data: Json;
 		try {
-			// `model_validate_json`: the body as UTF-8 JSON, a byte order mark refused, and a lone surrogate
-			// anywhere in it refused too, in a field the model ignores or a key as well.
-			data = parseModelJson(fromUtf8Strict(new Uint8Array(await response.arrayBuffer())));
+			data = parseJson(fromUtf8Strict(new Uint8Array(await response.arrayBuffer())));
 		} catch (error) {
 			throw this.unexpected(error);
 		}

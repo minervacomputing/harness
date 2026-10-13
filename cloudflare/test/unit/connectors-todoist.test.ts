@@ -11,7 +11,7 @@ import type { z } from "zod";
 import type { Connector, ProviderOutput, Requirement } from "../../src/contracts/connectors.ts";
 import type { GrantRow } from "../../src/contracts/policy.ts";
 import { CONNECTORS } from "../../src/connectors/index.ts";
-import { type TodoistClient, laxBool, laxInt, numberAsId, numberAsStr } from "../../src/connectors/todoist/client.ts";
+import { type TodoistClient, TodoistTask } from "../../src/connectors/todoist/client.ts";
 import { todoistConnector } from "../../src/connectors/todoist/connector.ts";
 import { OperationError, binding, offered, termsOf } from "../../src/gateway/connector.ts";
 import { CallIo, settingsIo } from "../../src/gateway/http.ts";
@@ -19,7 +19,7 @@ import { writeKey } from "../../src/gateway/ledger.ts";
 import { queryHash } from "../../src/gateway/page-tokens.ts";
 import { Registry, inputSchema } from "../../src/gateway/registry.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
-import { type Json, parseJson } from "../../src/lib/json.ts";
+import type { Json } from "../../src/lib/json.ts";
 import { tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
 import { allowedOut, consentNeeded, kindsOut, requestedScopes } from "../../src/workspace/out.ts";
 import rawVectors from "../fixtures/connectors/todoist/vectors.json" with { type: "json" };
@@ -98,7 +98,6 @@ interface Vectors {
 	inputs: {
 		[operation: string]: ({ raw: Json; ok: true; fields: { [key: string]: Json }; query_hash: string; write_key: string | null } | { raw: Json; ok: false; message: string })[];
 	};
-	lax: { json: string; int: { ok: boolean; value?: number }; bool: { ok: boolean; value?: boolean }; str: { ok: boolean; value?: string } }[];
 	scenarios: { name: string; call: Call; responses: ScriptedResponse[]; requests: RecordedRequest[]; outcome: Outcome }[];
 }
 
@@ -292,47 +291,36 @@ describe("inputs as Python normalizes them", () => {
 	}
 });
 
-describe("responses as Python's models read them", () => {
-	test.each(VECTORS.lax.filter((expected) => !changedOnPurpose(parseJson(expected.json))))("$json", (expected) => {
-		const value = parseJson(expected.json);
-		const read = (out: unknown) => (out === null ? { ok: false } : { ok: true, value: out });
-		// A number is written as JavaScript writes it ("1e-7", "Infinity"), where Python wrote "1e-07" and "inf".
-		const str = typeof value === "number" && expected.str.ok ? { ok: true, value: String(value) } : expected.str;
-		expect({ int: read(laxInt(value)), bool: read(laxBool(value)), str: read(numberAsStr(value)) }).toEqual({ int: expected.int, bool: expected.bool, str });
-		// The account id is the same, except for a number that may have lost digits, which it refuses.
-		const unsure = typeof value === "number" && !Number.isSafeInteger(value) && (Number.isInteger(value) || !Number.isFinite(value));
-		expect(read(numberAsId(value))).toEqual(unsure ? { ok: false } : str);
+describe("Todoist's answers", () => {
+	test("fields of another type do not fit", () => {
+		const task = { id: "t1", project_id: "work", content: "x" };
+		expect(TodoistTask.parse(task)).toEqual({ ...task, description: "", priority: 1, due: null, checked: false });
+		for (const odd of [{ priority: "4" }, { priority: 1.5 }, { checked: 1 }, { checked: "true" }, { id: 1 }]) {
+			expect(TodoistTask.safeParse({ ...task, ...odd }).success, JSON.stringify(odd)).toBe(false);
+		}
 	});
 
-	test("the account id is refused where it may have lost digits, and its labels are not", async () => {
-		expect([numberAsId(parseJson("1e20")), numberAsId(parseJson("1e400")), numberAsId(parseJson("9007199254740993"))]).toEqual([null, null, null]);
-		expect([numberAsId(parseJson("9007199254740991")), numberAsId(parseJson("12.5")), numberAsId("90071992547409930")]).toEqual([
-			"9007199254740991",
-			"12.5",
-			"90071992547409930",
-		]);
+	test("the account id is Todoist's string", async () => {
 		const connector = todoistConnector();
-		const refused = scripted([{ status: 200, body: '{"id": 90071992547409930, "full_name": "Ada"}', type: "application/json" }]);
+		const refused = scripted([{ status: 200, body: '{"id": 12, "full_name": "Ada"}', type: "application/json" }]);
 		await expect(connector.account(connector.client(TOKEN, settingsIo(refused.fetch)))).rejects.toThrow("Todoist returned an unexpected response.");
-		const labelled = scripted([{ status: 200, body: '{"id": "u1", "full_name": 1e20}', type: "application/json" }]);
-		expect(await connector.account(connector.client(TOKEN, settingsIo(labelled.fetch)))).toEqual({ id: "u1", label: "100000000000000000000" });
-	});
-
-	test("numbers a JavaScript number cannot hold exactly (client.ts)", () => {
-		// A number is text as JavaScript writes the double it was read as.
-		expect(numberAsStr(parseJson("12.0"))).toBe("12");
-		expect(numberAsStr(parseJson("123456789012345678"))).toBe("123456789012345680");
-		// An int beyond 2^53, written out or as a string, is refused, never rounded.
-		expect(laxInt(parseJson("9007199254740992"))).toBeNull();
-		expect(laxInt("9007199254740993")).toBeNull();
-		expect(laxInt("9".repeat(400))).toBeNull();
-		// Python takes a float from 2^53 to about 9.2e18 as an int.
-		expect(laxInt(parseJson("1e18"))).toBeNull();
+		const found = scripted([{ status: 200, body: '{"id": "u1", "full_name": "Ada"}', type: "application/json" }]);
+		expect(await connector.account(connector.client(TOKEN, settingsIo(found.fetch)))).toEqual({ id: "u1", label: "Ada" });
 	});
 });
 
-// Names are matched with toLowerCase rather than casefold, and a query is trimmed of JavaScript's whitespace.
-const CHANGED_SCENARIOS = new Set(["discover by a casefolded name", "discover by sharp s", "discover by final sigma", "discover by a ligature", "search tasks with Python whitespace"]);
+// Names are matched with toLowerCase rather than casefold, a query is trimmed of JavaScript's whitespace,
+// and numbers or words sent for strings, ints and booleans do not fit (Todoist's answers, above).
+const CHANGED_SCENARIOS = new Set([
+	"discover by a casefolded name",
+	"discover by sharp s",
+	"discover by final sigma",
+	"discover by a ligature",
+	"search tasks with Python whitespace",
+	"account with a numeric id",
+	"account with a fractional id",
+	"list tasks with lax numbers and booleans",
+]);
 
 describe("against scripted Todoist responses, as Python's connector", () => {
 	test.each(VECTORS.scenarios.filter((scenario) => !CHANGED_SCENARIOS.has(scenario.name)).map((scenario) => [scenario.name, scenario] as const))("%s", async (_, scenario) => {

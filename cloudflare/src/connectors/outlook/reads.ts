@@ -42,8 +42,8 @@ const Moment = () => after(z.string().trim().min(1).max(40).describe("An ISO 860
 const Cursor = () => z.string().trim().max(1000);
 
 function person(recipient: Recipient | null): Json {
-	if (recipient === null || recipient.email_address === null) return null;
-	return { name: recipient.email_address.name, address: recipient.email_address.address };
+	if (recipient === null || recipient.emailAddress === null) return null;
+	return { name: recipient.emailAddress.name, address: recipient.emailAddress.address };
 }
 
 function people(recipients: readonly Recipient[]): Json[] {
@@ -53,19 +53,19 @@ function people(recipients: readonly Recipient[]): Json[] {
 function summary(message: Message): { [key: string]: Json } {
 	return {
 		id: message.id,
-		conversation_id: message.conversation_id,
-		folder_id: message.parent_folder_id,
+		conversation_id: message.conversationId,
+		folder_id: message.parentFolderId,
 		subject: message.subject,
-		from: person(message.from_),
-		to: people(message.to_recipients),
-		cc: people(message.cc_recipients),
-		received: message.received_date_time,
-		sent: message.sent_date_time,
-		is_read: message.is_read,
-		is_draft: message.is_draft,
-		has_attachments: message.has_attachments,
+		from: person(message.from),
+		to: people(message.toRecipients),
+		cc: people(message.ccRecipients),
+		received: message.receivedDateTime,
+		sent: message.sentDateTime,
+		is_read: message.isRead,
+		is_draft: message.isDraft,
+		has_attachments: message.hasAttachments,
 		importance: message.importance,
-		preview: message.body_preview,
+		preview: message.bodyPreview,
 		categories: message.categories,
 	};
 }
@@ -73,10 +73,10 @@ function summary(message: Message): { [key: string]: Json } {
 function folderData(folder: Folder, parentId: string | null): { [key: string]: Json } {
 	return {
 		id: folder.id,
-		name: folder.display_name,
+		name: folder.displayName,
 		parent_id: parentId,
-		unread: folder.unread_item_count,
-		total: folder.total_item_count,
+		unread: folder.unreadItemCount,
+		total: folder.totalItemCount,
 	};
 }
 
@@ -108,7 +108,7 @@ export const LIST_FOLDERS = defineOperation<z.output<typeof ListFolders>>({
 					const root = await tree.root();
 					const [folders, cursor] = await client.folders(null, data.limit, data.cursor);
 					const records: ScopedRecord[] = folders
-						.filter((folder) => folder.parent_folder_id === root && ID.test(folder.id) && ordinary(folder))
+						.filter((folder) => folder.parentFolderId === root && ID.test(folder.id) && ordinary(folder))
 						.map((folder) => ({ resource: binding.resource(FOLDER, folder.id), data: folderData(folder, null) }));
 					return { records, nextCursor: cursor };
 				},
@@ -123,7 +123,7 @@ export const LIST_FOLDERS = defineOperation<z.output<typeof ListFolders>>({
 				const within = [folder.id, ...resource.within];
 				const records: ScopedRecord[] = folders
 					// A folder that does not name this one as its parent is not placed by this listing.
-					.filter((child) => child.parent_folder_id === folder.id && ID.test(child.id) && !within.includes(child.id) && ordinary(child))
+					.filter((child) => child.parentFolderId === folder.id && ID.test(child.id) && !within.includes(child.id) && ordinary(child))
 					.map((child) => ({ resource: binding.resource(FOLDER, child.id, within), data: folderData(child, folder.id) }));
 				return { records, nextCursor: cursor };
 			},
@@ -195,7 +195,7 @@ export const LIST_MESSAGES = defineOperation<ListMessagesData>({
 				});
 				const records: ScopedRecord[] = messages
 					// Mail that lives in another folder (as in a search folder) is not this folder's to show.
-					.filter((message) => message.parent_folder_id === folder.id && ID.test(message.id))
+					.filter((message) => message.parentFolderId === folder.id && ID.test(message.id))
 					.map((message) => ({ resource, data: summary(message) }));
 				return { records, nextCursor: cursor };
 			},
@@ -230,19 +230,19 @@ export const READ_MESSAGE = defineOperation<z.output<typeof ReadMessage>>({
 			requirements: [{ need: resource, action: "read" }],
 			async execute(): Promise<ProviderOutput> {
 				const message = await confirmMessage(binding as Binding<GraphClient>, tree, resource, data.message, FULL_FIELDS, true);
-				const attachments = message.has_attachments ? await client.attachments(message.id, MAX_ATTACHMENTS) : [];
+				const attachments = message.hasAttachments ? await client.attachments(message.id, MAX_ATTACHMENTS) : [];
 				const text = message.body ? message.body.content : "";
 				const total = text.length;
 				const end = data.offset + data.max_chars;
 				const record: { [key: string]: Json } = {
 					...summary(message),
-					reply_to: people(message.reply_to),
-					bcc: people(message.bcc_recipients),
+					reply_to: people(message.replyTo),
+					bcc: people(message.bccRecipients),
 					body: sliceText(text, data.offset, end),
 					offset: data.offset,
 					total_chars: total,
 					next_offset: end < total ? end : null,
-					attachments: attachments.map((a) => ({ name: a.name, content_type: a.content_type, size: a.size, inline: a.is_inline })),
+					attachments: attachments.map((a) => ({ name: a.name, content_type: a.contentType, size: a.size, inline: a.isInline })),
 				};
 				return { records: [{ resource, data: record }] };
 			},

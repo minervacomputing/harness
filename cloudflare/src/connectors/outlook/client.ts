@@ -6,11 +6,11 @@
 // accepts mail with 202, refuses before sending with 4xx, and leaves the outcome unknown otherwise. A 202
 // means accepted, not delivered: delivery is asynchronous, and a bounce arrives later as mail.
 
+import { z } from "zod";
 import type { ProviderIo } from "../../contracts/connectors.ts";
 import { type Json } from "../../lib/json.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { API_URL, Graph, IMMUTABLE_IDS, User, pageParam } from "../microsoft/index.ts";
-import { bool, int, list, model, nullable, optional, required, str } from "../microsoft/model.ts";
 import { segment } from "../../gateway/http.ts";
 
 export const TEXT_BODY = `${IMMUTABLE_IDS}, outlook.body-content-type="text"`;
@@ -22,63 +22,64 @@ export const SUMMARY_FIELDS =
 export const REPLY_FIELDS = "id,parentFolderId,from,sender,replyTo,isDraft";
 export const FULL_FIELDS = `${SUMMARY_FIELDS},replyTo,bccRecipients,body`;
 
-export const Folder = model({
-	id: required(str),
-	display_name: optional(str, ""),
-	parent_folder_id: optional(nullable(str), null),
-	child_folder_count: optional(nullable(int), null),
-	unread_item_count: optional(nullable(int), null),
-	total_item_count: optional(nullable(int), null),
-	is_hidden: optional(nullable(bool), null),
+export const Folder = z.object({
+	id: z.string(),
+	displayName: z.string().default(""),
+	parentFolderId: z.string().nullable().default(null),
+	childFolderCount: z.number().int().nullable().default(null),
+	unreadItemCount: z.number().int().nullable().default(null),
+	totalItemCount: z.number().int().nullable().default(null),
+	isHidden: z.boolean().nullable().default(null),
 	// Graph names the type only of folders that are not plain mail folders, such as search folders.
-	odata_type: optional(nullable(str), null, "@odata.type"),
+	"@odata.type": z.string().nullable().default(null),
 });
-export type Folder = ReturnType<typeof Folder>;
+export type Folder = z.output<typeof Folder>;
 
 /**
  * A mail folder that holds its own mail and that Outlook shows: not a search folder, which collects mail from
  * other folders wherever it sits, and not hidden.
  */
 export function ordinary(folder: Folder): boolean {
-	return folder.is_hidden !== true && (folder.odata_type === null || folder.odata_type === MAIL_FOLDER);
+	const type = folder["@odata.type"];
+	return folder.isHidden !== true && (type === null || type === MAIL_FOLDER);
 }
 
-export const EmailAddress = model({ name: optional(nullable(str), null), address: optional(nullable(str), null) });
-export const Recipient = model({ email_address: optional(nullable(EmailAddress), null) });
-export type Recipient = ReturnType<typeof Recipient>;
-const Body = model({ content_type: optional(nullable(str), null), content: optional(str, "") });
+export const EmailAddress = z.object({ name: z.string().nullable().default(null), address: z.string().nullable().default(null) });
+export const Recipient = z.object({ emailAddress: EmailAddress.nullable().default(null) });
+export type Recipient = z.output<typeof Recipient>;
+const Body = z.object({ contentType: z.string().nullable().default(null), content: z.string().default("") });
 
-export const Message = model({
-	id: required(str),
-	conversation_id: optional(nullable(str), null),
-	parent_folder_id: optional(nullable(str), null),
-	subject: optional(nullable(str), null),
-	from_: optional(nullable(Recipient), null, "from"),
-	sender: optional(nullable(Recipient), null),
-	to_recipients: optional(list(Recipient), []),
-	cc_recipients: optional(list(Recipient), []),
-	bcc_recipients: optional(list(Recipient), []),
-	reply_to: optional(list(Recipient), []),
-	received_date_time: optional(nullable(str), null),
-	sent_date_time: optional(nullable(str), null),
-	is_read: optional(nullable(bool), null),
-	is_draft: optional(nullable(bool), null),
-	has_attachments: optional(nullable(bool), null),
-	importance: optional(nullable(str), null),
-	body_preview: optional(nullable(str), null),
-	categories: optional(list(str), []),
-	body: optional(nullable(Body), null),
+export const Message = z.object({
+	id: z.string(),
+	conversationId: z.string().nullable().default(null),
+	parentFolderId: z.string().nullable().default(null),
+	subject: z.string().nullable().default(null),
+	from: Recipient.nullable().default(null),
+	sender: Recipient.nullable().default(null),
+	toRecipients: z.array(Recipient).default([]),
+	ccRecipients: z.array(Recipient).default([]),
+	bccRecipients: z.array(Recipient).default([]),
+	replyTo: z.array(Recipient).default([]),
+	receivedDateTime: z.string().nullable().default(null),
+	sentDateTime: z.string().nullable().default(null),
+	isRead: z.boolean().nullable().default(null),
+	isDraft: z.boolean().nullable().default(null),
+	hasAttachments: z.boolean().nullable().default(null),
+	importance: z.string().nullable().default(null),
+	bodyPreview: z.string().nullable().default(null),
+	categories: z.array(z.string()).default([]),
+	body: Body.nullable().default(null),
 });
-export type Message = ReturnType<typeof Message>;
+export type Message = z.output<typeof Message>;
 
-export const Attachment = model({
-	id: optional(nullable(str), null),
-	name: optional(nullable(str), null),
-	content_type: optional(nullable(str), null),
-	size: optional(nullable(int), null),
-	is_inline: optional(nullable(bool), null),
+export const Attachment = z.object({
+	id: z.string().nullable().default(null),
+	name: z.string().nullable().default(null),
+	contentType: z.string().nullable().default(null),
+	size: z.number().int().nullable().default(null),
+	isInline: z.boolean().nullable().default(null),
 });
-export type Attachment = ReturnType<typeof Attachment>;
+export type Attachment = z.output<typeof Attachment>;
 
 /** Thin client for the parts of Microsoft Graph Outlook uses. Responses are validated. */
 export class GraphClient extends Graph {

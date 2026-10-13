@@ -42,8 +42,8 @@ function first(message: Message, name: string): string | null {
 function summary(message: Message): JsonObject {
 	return {
 		id: message.id,
-		thread_id: message.thread_id,
-		label_ids: message.label_ids.filter((label) => ID.test(label)),
+		thread_id: message.threadId,
+		label_ids: message.labelIds.filter((label) => ID.test(label)),
 		from: first(message, "From"),
 		to: first(message, "To"),
 		cc: first(message, "Cc"),
@@ -51,7 +51,7 @@ function summary(message: Message): JsonObject {
 		date: first(message, "Date"),
 		// Gmail escapes the snippet as HTML.
 		snippet: message.snippet ? sliceText(mime.headerText(htmlUnescape(message.snippet)) as string, 0, MAX_SNIPPET) : null,
-		unread: message.label_ids.includes("UNREAD"),
+		unread: message.labelIds.includes("UNREAD"),
 	};
 }
 
@@ -275,8 +275,8 @@ const READ_THREAD = defineOperation<z.output<typeof ReadThread>>({
 				if (thread.id !== data.thread) throw client.unexpected();
 				const labels = await Labels.fetch(client);
 				const keyed = thread.messages
-					.filter((m) => m.thread_id === thread.id && ID.test(m.id))
-					.map((m) => ({ message: m, key: digitsOr(m.internal_date ?? "", 0n) as bigint }));
+					.filter((m) => m.threadId === thread.id && ID.test(m.id))
+					.map((m) => ({ message: m, key: digitsOr(m.internalDate ?? "", 0n) as bigint }));
 				keyed.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 				const messages = keyed.map((item) => item.message);
 				const records: ScopedRecord[] = [];

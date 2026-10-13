@@ -127,19 +127,19 @@ async function calendarId(client: CalendarClient, ref: string): Promise<string> 
 /** How an event's start or end is shown. */
 export function shownTime(value: Time | null, allDay: boolean): string | null {
 	if (value === null) return null;
-	const moment = sliceText(value.date_time, 0, 19);
+	const moment = sliceText(value.dateTime, 0, 19);
 	// Graph answers all-day events at midnight UTC, whatever zone was asked for (see the module).
 	if (allDay) return sliceText(moment, 0, 10);
-	if ((value.time_zone || "").toUpperCase() === "UTC") return `${moment}Z`;
-	return `${moment} ${value.time_zone === null ? "None" : value.time_zone}`;
+	if ((value.timeZone || "").toUpperCase() === "UTC") return `${moment}Z`;
+	return `${moment} ${value.timeZone === null ? "None" : value.timeZone}`;
 }
 
 function eventRecord(binding: Binding, calendar: string, event: Event): ScopedRecord {
-	const allDay = Boolean(event.is_all_day);
+	const allDay = Boolean(event.isAllDay);
 	const [body, cut] = truncate(event.body ? event.body.content : null, MAX_BODY);
 	const attendees = event.attendees.slice(0, MAX_ATTENDEES).map((a) => ({
-		email: a.email_address ? a.email_address.address : null,
-		name: a.email_address ? a.email_address.name : null,
+		email: a.emailAddress ? a.emailAddress.address : null,
+		name: a.emailAddress ? a.emailAddress.name : null,
 		type: a.type,
 		response: a.status ? a.status.response : null,
 	}));
@@ -154,17 +154,17 @@ function eventRecord(binding: Binding, calendar: string, event: Event): ScopedRe
 			start: shownTime(event.start, allDay),
 			end: shownTime(event.end, allDay),
 			all_day: allDay,
-			cancelled: Boolean(event.is_cancelled),
-			show_as: event.show_as,
+			cancelled: Boolean(event.isCancelled),
+			show_as: event.showAs,
 			sensitivity: event.sensitivity,
-			location: event.location ? event.location.display_name : null,
-			organizer: event.organizer && event.organizer.email_address ? event.organizer.email_address.address : null,
+			location: event.location ? event.location.displayName : null,
+			organizer: event.organizer && event.organizer.emailAddress ? event.organizer.emailAddress.address : null,
 			attendees,
 			attendees_incomplete: event.attendees.length > MAX_ATTENDEES,
-			online_meeting_url: event.online_meeting ? event.online_meeting.join_url : null,
-			link: event.web_link,
+			online_meeting_url: event.onlineMeeting ? event.onlineMeeting.joinUrl : null,
+			link: event.webLink,
 			type: event.type,
-			series_master_id: event.series_master_id,
+			series_master_id: event.seriesMasterId,
 			categories: event.categories,
 		},
 	};
@@ -191,7 +191,7 @@ const LIST_CALENDARS = defineOperation<z.output<typeof ListCalendars>>({
 				return {
 					records: calendars.map((c) => ({
 						resource: binding.resource(CALENDAR, c.id),
-						data: { id: c.id, name: c.name, default: Boolean(c.is_default_calendar), can_edit: c.can_edit, owner: c.owner ? c.owner.address : null },
+						data: { id: c.id, name: c.name, default: Boolean(c.isDefaultCalendar), can_edit: c.canEdit, owner: c.owner ? c.owner.address : null },
 					})),
 				};
 			},

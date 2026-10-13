@@ -1,30 +1,13 @@
 // The HubSpot connector against what today's Python computes (test/fixtures/connectors/hubspot/vectors.json,
 // written by generate.py beside it): every operation's input normalization and validation messages, with
-// the query hashes and write keys of the normalized arguments, the response models' lax reading, and the
-// helpers whose words or arithmetic matter.
+// the query hashes and write keys of the normalized arguments, and the helpers whose words or arithmetic matter.
 
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import type { Operation } from "../../src/contracts/connectors.ts";
 import { HubSpotClient, classify } from "../../src/connectors/hubspot/client.ts";
 import { SCOPES, hubspotConnector } from "../../src/connectors/hubspot/connector.ts";
-import {
-	type Batch,
-	type Details,
-	type HubRecord,
-	type Pipeline,
-	type Pipelines,
-	type Reader,
-	type SearchPage,
-	type Stage,
-	fromJsonText,
-	readBatch,
-	readDetails,
-	readPipeline,
-	readPipelines,
-	readRecord,
-	readSearchPage,
-} from "../../src/connectors/hubspot/models.ts";
+import { HubRecord, Pipeline, SearchPage } from "../../src/connectors/hubspot/models.ts";
 import { pipelineData } from "../../src/connectors/hubspot/reads.ts";
 import { type SearchOptions, after, following, recordData, searchBody } from "../../src/connectors/hubspot/scope.ts";
 import { noteHtml } from "../../src/connectors/hubspot/writes.ts";
@@ -55,7 +38,6 @@ interface Vectors {
 	declaration: JsonObject;
 	schemas: [string, JsonObject][];
 	inputs: InputVector[];
-	responses: { model: string; text: string; json_mode: Json; python_mode: Json }[];
 	note_html: [string, string][];
 	after: [string | null, number, string | null | Failure][];
 	following: [JsonObject, number, [string | null, boolean] | Failure][];
@@ -174,68 +156,6 @@ describe("inputs, as the executor validates them", () => {
 	});
 });
 
-// The models' readings, written as Python dumps them (snake_case, integers as strings).
-
-function dumpRecord(record: HubRecord): JsonObject {
-	return { id: record.id, properties: Object.fromEntries(record.properties), archived: record.archived };
-}
-
-function dumpStage(stage: Stage): JsonObject {
-	return { id: stage.id, label: stage.label, display_order: String(stage.displayOrder), archived: stage.archived, metadata: Object.fromEntries(stage.metadata) };
-}
-
-function dumpPipeline(pipeline: Pipeline): JsonObject {
-	return { id: pipeline.id, label: pipeline.label, display_order: String(pipeline.displayOrder), archived: pipeline.archived, stages: pipeline.stages.map(dumpStage) };
-}
-
-const MODELS: { [name: string]: (value: Json) => JsonObject } = {
-	Details: (value) => {
-		const found: Details = readDetails(value);
-		return { portal_id: String(found.portalId), portal_name: found.portalName, ui_domain: found.uiDomain };
-	},
-	Record: (value) => dumpRecord(readRecord(value)),
-	SearchPage: (value) => {
-		const page: SearchPage = readSearchPage(value);
-		const paging = page.paging === null ? null : { next: page.paging.next === null ? null : { after: page.paging.next.after } };
-		return { total: String(page.total), results: page.results.map(dumpRecord), paging };
-	},
-	Batch: (value) => {
-		const batch: Batch = readBatch(value);
-		return { results: batch.results.map(dumpRecord) };
-	},
-	Pipeline: (value) => dumpPipeline(readPipeline(value)),
-	Pipelines: (value) => {
-		const found: Pipelines = readPipelines(value);
-		return { results: found.results.map(dumpPipeline) };
-	},
-};
-
-/**
- * A response as the client reads it: "json" as `_read` does (`model_validate_json`, client.ts `#read`),
- * "python" as a write's answer is read (`json.loads`, then `model_validate`; ProviderHTTP.json, then the
- * model), or null when it does not fit.
- */
-function reading(model: string, text: string, mode: "json" | "python" = "json"): JsonObject | null {
-	const read = MODELS[model] as Reader<JsonObject>;
-	try {
-		return mode === "json" ? fromJsonText(read, text) : read(parseJson(text));
-	} catch {
-		return null;
-	}
-}
-
-describe("responses, as the client's models read them", () => {
-	test.each(vectors.responses.map((vector) => [`${vector.model} ${vector.text.slice(0, 80)}`, vector] as const))("%s", (_, vector) => {
-		expect(reading(vector.model, vector.text, "json")).toEqual(vector.json_mode);
-		expect(reading(vector.model, vector.text, "python")).toEqual(vector.python_mode);
-	});
-
-	test("a JSON number beyond 2^53 is refused where Python reads it exactly", () => {
-		expect(reading("Details", '{"portalId": 9007199254740993}')).toBeNull();
-		expect(reading("Details", '{"portalId": "9007199254740993"}')).toEqual({ portal_id: "9007199254740993", portal_name: null, ui_domain: null });
-	});
-});
-
 describe("helpers", () => {
 	const client = new HubSpotClient("t", settingsIo(async () => new Response(null, { status: 500 })));
 
@@ -248,15 +168,15 @@ describe("helpers", () => {
 	});
 
 	test("the next page's offset, and searches cut at 10,000", () => {
-		for (const [page, limit, expected] of vectors.following) expect(failure(() => following(client, readSearchPage(page), limit))).toEqual(expected);
+		for (const [page, limit, expected] of vectors.following) expect(failure(() => following(client, SearchPage.parse(page), limit))).toEqual(expected);
 	});
 
 	test("record data cuts long fields and flags them", () => {
-		for (const vector of vectors.record_data) if (!changedOnPurpose(vector.record)) expect(recordData(readRecord(vector.record), vector.properties)).toEqual(vector.data);
+		for (const vector of vectors.record_data) if (!changedOnPurpose(vector.record)) expect(recordData(HubRecord.parse(vector.record), vector.properties)).toEqual(vector.data);
 	});
 
 	test("pipelines list their stages in order, archived ones left out", () => {
-		for (const vector of vectors.pipeline_data) expect(pipelineData(readPipeline(vector.pipeline))).toEqual(vector.data);
+		for (const vector of vectors.pipeline_data) expect(pipelineData(Pipeline.parse(vector.pipeline))).toEqual(vector.data);
 	});
 
 	test("search bodies", () => {
