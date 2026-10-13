@@ -64,7 +64,7 @@ DELETE FROM verification WHERE identifier LIKE '2fa-%' AND value = ?
 
 ### 2. A password change in flight can overwrite a reset
 
-**Verified, reproduced, not fixed: the owner should confirm this as a trade-off.**
+**Verified, reproduced, not fixed. Decided (owner, 2026-10-13): accepted as a trade-off**, recorded in [plain-better-auth.md](plain-better-auth.md)'s accepted trade-offs. Recovery from this attacker's authenticator is a reset, then C3.
 
 - `changePassword` reads the credential (`update-user.mjs:165`).
 - It hashes the new password and verifies the current one against what it read: two scrypt runs (`:167-171`).
@@ -99,7 +99,7 @@ Two smaller points:
   - It would be a database hook (`account.update.before`, for `/change-password`). The hook does the write itself, as a compare-and-swap on the stored hash, and skips Better Auth's write.
   - When the swap finds the hash changed, the hook must throw. Returning `false` only skips the write, and `changePassword` would go on to revoke sessions and make a new one.
   - The hook doesn't see the hash Better Auth read. It would re-read the hash and re-verify the current password against it (a third scrypt), or carry the hash over from a before-hook through per-request state, which plain auth removed.
-- **What the owner is asked to accept.** This goes beyond the accepted "Races" trade-off, which names a surviving session. Here an attacker who controls the account keeps their own password while the owner's reset reports success. A concession of its own, not made harmless by the two-factor route above.
+- **What the owner accepted.** This goes beyond the accepted "Races" trade-off, which names a surviving session. Here an attacker who controls the account keeps their own password while the owner's reset reports success. A concession of its own, not made harmless by the two-factor route above.
 
 ### 3. A resend leaves the older code stored, and a wrong guess can bring a code back
 
@@ -188,7 +188,7 @@ opencode also listed these; each matches a trade-off in [plain-better-auth.md](p
 
 ## Units
 
-In order, each with its tests, the checks, and an opencode review of its diff. No frontend or contract change.
+In order, each with its tests, the checks, and an opencode review of its diff. C1 and C2 change no frontend or contract; C3 adds a contract procedure and its form.
 
 - **C1. Pending challenges end with the password** (finding 1):
   - `onPasswordReset` and the `/change-password` after-hook in `auth-options.ts`;
@@ -196,10 +196,27 @@ In order, each with its tests, the checks, and an opencode review of its diff. N
   - the `DELETE` in `auth.ts`;
   - the tests.
 - **C2. One stored code per address** (finding 3, hardening): migration 0008 and its tests.
+- **C3. An instance admin removes a user's two-factor** (open question 1, decided by the owner on 2026-10-13):
+  - **Why.** Someone with the password and a session can put their own authenticator on the account (`/two-factor/enable` asks only for the password), and no reset removes it. Better Auth's admin plugin has no route for removing it, so it is ours.
+  - **Procedure.** `instance.users.removeTwoFactor`, `POST /api/instance/users/remove-two-factor` with `{ email }`, as `instance.admins.add` takes an address. Under `/api/instance`, so the mount checks the caller is an admin before the body is read.
+  - **What it removes**, in one D1 batch (one transaction), each statement requiring `CALLER_IS_ADMIN` so a role removed meanwhile changes nothing:
+    - the user's `twoFactor` rows: the TOTP secret and backup codes;
+    - `user.twoFactorEnabled`, set to 0, which two-factor's sign-in hook reads;
+    - pending challenges (`2fa-<random>` holding the user's id): the C1 statement;
+    - trusted devices (`trust-device-…` holding the user's id), which would otherwise skip a second factor set up again;
+    - every session of the user, so whoever took the account over is signed out.
+  - **What it leaves.** The password, and challenges' attempt counters, which hold a number and expire with their challenge.
+  - **Recovering a taken-over account: reset first, then remove.** Once two-factor is gone the password alone signs in, so whoever knows it could sign in and set up their authenticator again. The owner first resets the password by email code, which ends every session and the attacker's password; the reset doesn't need the second factor. Then the admin removes two-factor, and the owner signs in with the new password. The instance page says so.
+  - **Races.** As in C1, a request already past its reads can still finish (the accepted races):
+    - a challenge completion or a sign-in can still make a session;
+    - a two-factor setup's `/two-factor/verify-totp` that read its unverified authenticator and its session before the batch still sets `twoFactorEnabled` and makes a session after it (`two-factor/totp/index.mjs:205-222`). The flag is then on with no authenticator, and sign-in asks for a second factor nobody has. Removing again clears it: the removal is idempotent.
+  - **Answers.** 204. `NO_SUCH_USER` for an address no account has (also if the user is deleted between the lookup and the batch). For an account without two-factor, 204 as well, and it is signed out: the removal is idempotent, and signing out is useful to recovery on its own.
+  - **Not your own: `OWN_TWO_FACTOR` (422, a new code).** An admin turns off their own two-factor on the account page, where Better Auth asks for the password. Allowing it here would let a stolen admin session drop its own second factor without the password. An admin who lost their authenticator has no session to call this from anyway; another admin removes it. A sole admin without authenticator or backup codes is recovered by the operator in D1.
+    - **Not a boundary.** A stolen admin session can still name an account it controls as admin (`instance.admins.add` asks for no password either) and remove the first admin's two-factor from there; it shows in the list of admins. An admin's session holds the admin's powers, so this refusal only keeps the direct path to the account page, where the password is asked.
+  - **Frontend.** A "Remove two-factor" form by address on the instance page, with a confirm, the refusal's message or a success notice. Its field has a name of its own (a field's name is its input's id, and the admins' form has `email`).
+  - **Tests.** `instance.test.ts`: an admin's removal ends the authenticator, backup codes, challenges, trusted devices and sessions, the password alone then signs in, and a device trusted before is challenged once two-factor is set up again; other users are untouched; an account without two-factor; refusals (unknown address, own account, a non-admin, a visitor, another site, an empty address); a removal past the mount's check whose caller loses the role meanwhile changes nothing. `contract.test.ts`: a visitor and a non-admin are refused before the body.
 
-## Open questions for the owner
+## Decided by the owner (2026-10-13)
 
-1. **Recovering a taken-over account.** Someone with the password and a session can put their own authenticator on the account, and no reset undoes it. Should an instance admin be able to remove a user's two-factor? Better Auth's admin plugin has no route for it, so it would be one of ours. It would not undo an overwritten password (finding 2), only let a reset work again afterwards.
-2. **Finding 2 as a trade-off.** An in-flight password change can overwrite a reset. Accept it as described, or fix it with the compare-and-swap hook?
-
-Neither blocks C1 or C2.
+1. **Recovering a taken-over account.** Someone with the password and a session can put their own authenticator on the account, and no reset undoes it. **An instance admin can remove a user's two-factor** (C3). The owner resets the password first (a reset needs no second factor), then the removal lets them sign in again. It does not undo an overwritten password (finding 2); the owner resets again.
+2. **Finding 2 as a trade-off.** An in-flight password change can overwrite a reset. **Accepted** as described; no compare-and-swap hook.
