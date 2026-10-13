@@ -27,7 +27,6 @@ import remarkGfm from 'remark-gfm'
 import { type LocalTool, type MessageFiles, NARRATION, type ToolCallResult, type TurnFiles } from '@/components/chat/model'
 import { Button } from '@/components/ui/button'
 import { ErrorNote, Spinner, Status, type StatusTone } from '@/components/ui/misc'
-import { useDemoVisitor } from '@/lib/demo'
 import { formatSize } from '@/lib/uploads'
 import { cn } from '@/lib/utils'
 
@@ -433,16 +432,10 @@ function ComposerAttachment({ attachment }: { attachment: Attachment }) {
 }
 
 function Composer() {
-  const visitor = useDemoVisitor()
-  // Demo visitors cannot upload files; the conversation page gives them no attachment adapter.
-  const canAttach = !visitor
   const failure = useAuiState(s => s.composer.attachments.find(a => a.status.type === 'incomplete'))
   return (
     <div className="space-y-1.5">
-      <ComposerPrimitive.AttachmentDropzone
-        disabled={!canAttach}
-        className="border border-border-strong bg-card shadow-(--inset-well) focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/25 data-[dragging=true]:border-ring data-[dragging=true]:bg-secondary"
-      >
+      <ComposerPrimitive.AttachmentDropzone className="border border-border-strong bg-card shadow-(--inset-well) focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/25 data-[dragging=true]:border-ring data-[dragging=true]:bg-secondary">
         <ComposerPrimitive.Root>
           <AuiIf condition={s => s.composer.attachments.length > 0}>
             <div className="flex flex-wrap gap-1.5 px-2 pt-2">
@@ -450,17 +443,15 @@ function Composer() {
             </div>
           </AuiIf>
           <div className="flex items-end gap-2 p-2">
-            {canAttach && (
-              <ComposerPrimitive.AddAttachment asChild multiple>
-                <Button size="icon-sm" variant="ghost" aria-label="Attach files" title="Attach files">
-                  <PaperclipIcon />
-                </Button>
-              </ComposerPrimitive.AddAttachment>
-            )}
+            <ComposerPrimitive.AddAttachment asChild multiple>
+              <Button size="icon-sm" variant="ghost" aria-label="Attach files" title="Attach files">
+                <PaperclipIcon />
+              </Button>
+            </ComposerPrimitive.AddAttachment>
             <ComposerPrimitive.Input
               autoFocus
               rows={1}
-              placeholder={canAttach ? 'Message your agent, or drop files here' : 'Message your agent'}
+              placeholder="Message your agent, or drop files here"
               className="max-h-48 min-h-9 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-faint"
             />
             <AuiIf condition={s => !s.thread.isRunning}>
@@ -485,9 +476,7 @@ function Composer() {
           {failure.name}: {failure.status.message ?? 'The file could not be uploaded.'}
         </ErrorNote>
       )}
-      <p className="text-center text-xs text-muted-foreground">
-        {visitor ? 'The agent only reaches what the owner allowed under Connections.' : 'Agents only reach what you allow under Connections.'}
-      </p>
+      <p className="text-center text-xs text-muted-foreground">Agents only reach what you allow under Connections.</p>
     </div>
   )
 }

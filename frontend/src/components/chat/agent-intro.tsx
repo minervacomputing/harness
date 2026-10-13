@@ -9,7 +9,6 @@ import { setupOf } from '@/components/connections/summary'
 import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/input'
 import { ErrorNote, Notice, Spinner } from '@/components/ui/misc'
-import { useDemoVisitor } from '@/lib/demo'
 import { errorMessage } from '@/lib/http'
 
 const HEADING = 'text-xl font-medium tracking-[-0.015em]'
@@ -31,7 +30,6 @@ export function AgentIntro({
   onChoose?: (agentId: string) => void
 }) {
   const connections = useQuery(listConnectionsOptions({ path: { workspace_id: workspaceId } }))
-  const visitor = useDemoVisitor()
   if (!agents)
     return (
       <div className="flex justify-center py-16">
@@ -92,7 +90,7 @@ export function AgentIntro({
           <>
             {connections.isPending && <Spinner className="mx-auto" />}
             {connections.error && <ErrorNote className="text-left">{errorMessage(connections.error, 'Could not load its apps.')}</ErrorNote>}
-            {blocked.length > 0 && !visitor && (
+            {blocked.length > 0 && (
               <section aria-labelledby="agent-attention" className="mx-auto max-w-md space-y-2 text-left">
                 <h2 id="agent-attention" className="label">
                   Needs your attention
@@ -104,7 +102,7 @@ export function AgentIntro({
             {connections.data && (
               <p className="text-sm text-muted-foreground">
                 {ready.length
-                  ? `Ask about anything in these apps. It works only within the access ${visitor ? 'the owner allowed' : 'you grant'}.`
+                  ? 'Ask about anything in these apps. It works only within the access you grant.'
                   : 'Its apps can be used once they are fixed. Until then it can only chat.'}
               </p>
             )}
@@ -112,19 +110,17 @@ export function AgentIntro({
         ) : (
           <>
             <p className="text-sm text-muted-foreground">This agent has no connected apps yet, so it can only chat.</p>
-            {!visitor && (
-              <Notice className="text-left">
-                Connect an app under{' '}
-                <Link to="/w/$workspaceId/connections" params={{ workspaceId }} className="underline underline-offset-4">
-                  Connections
-                </Link>
-                , choose what it may access, then add the connection to this agent under{' '}
-                <Link to="/w/$workspaceId/agents" params={{ workspaceId }} className="underline underline-offset-4">
-                  Agents
-                </Link>
-                .
-              </Notice>
-            )}
+            <Notice className="text-left">
+              Connect an app under{' '}
+              <Link to="/w/$workspaceId/connections" params={{ workspaceId }} className="underline underline-offset-4">
+                Connections
+              </Link>
+              , choose what it may access, then add the connection to this agent under{' '}
+              <Link to="/w/$workspaceId/agents" params={{ workspaceId }} className="underline underline-offset-4">
+                Agents
+              </Link>
+              .
+            </Notice>
           </>
         ))}
     </div>

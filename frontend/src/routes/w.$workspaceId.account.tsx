@@ -9,7 +9,6 @@ import { ThemeToggle } from '@/components/theme-toggle'
 import { Button } from '@/components/ui/button'
 import { Alert, ErrorNote, PageHeader } from '@/components/ui/misc'
 import { auth, authQuery, fieldErrors, useSignOut } from '@/lib/auth'
-import { useDemo } from '@/lib/demo'
 import { setupQuery } from '@/lib/instance'
 
 export const Route = createFileRoute('/w/$workspaceId/account')({
@@ -21,7 +20,6 @@ function AccountPage() {
   const { data: state } = useQuery(authQuery)
   const user = state?.kind === 'authenticated' ? state.user : context.user
   const signOut = useSignOut()
-  const demo = useDemo()
   // Until someone claims it, any signed-in user can find the setup here; it works only with the setup key.
   const setupNeeded = useQuery(setupQuery).data?.needed === true
   return (
@@ -30,17 +28,8 @@ function AccountPage() {
       <div className="max-w-3xl px-4 py-6 md:px-8">
         <SettingsList>
           <Setting title="Email" description={<span className="font-mono text-[12px] text-foreground">{user.email}</span>} />
-          {demo?.visitor ? (
-            <Setting
-              title="Demo account"
-              description={`You sign in with a code sent to this address. Your chats are private and deleted after ${demo.chat_retention_hours} hours.`}
-            />
-          ) : (
-            <>
-              <PasswordSetting />
-              <TwoFactorSetting />
-            </>
-          )}
+          <PasswordSetting />
+          <TwoFactorSetting />
           {setupNeeded && (
             <Setting
               title="Set up this server"

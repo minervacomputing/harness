@@ -19,7 +19,6 @@ import { setupOf, summarize } from '@/components/connections/summary'
 import { SubmitButton, submitForm, TextAreaField, TextField } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { Checkbox, ErrorNote, PageHeader, Spinner, Status } from '@/components/ui/misc'
-import { useDemoVisitor } from '@/lib/demo'
 import { errorMessage } from '@/lib/http'
 
 export const Route = createFileRoute('/w/$workspaceId/agents')({
@@ -32,17 +31,15 @@ function AgentsPage() {
   const agents = useQuery(listAgentsOptions({ path }))
   const connections = useQuery(listConnectionsOptions({ path }))
   const [editing, setEditing] = useState<string | 'new' | null>(null)
-  const visitor = useDemoVisitor()
   const form = (agent?: AgentOut) => <AgentForm workspaceId={workspaceId} agent={agent} connections={connections.data ?? []} onDone={() => setEditing(null)} />
 
   return (
     <div>
       <PageHeader
         title="Agents"
-        description={`Each agent has its own instructions and the connections it may use. What it can do inside them is limited by the access ${visitor ? 'the owner set' : 'you set'} under Connections.`}
+        description="Each agent has its own instructions and the connections it may use. What it can do inside them is limited by the access you set under Connections."
         actions={
-          editing !== 'new' &&
-          !visitor && (
+          editing !== 'new' && (
             <Button variant={editing ? 'outline' : 'default'} onClick={() => setEditing('new')}>
               <PlusIcon /> New agent
             </Button>

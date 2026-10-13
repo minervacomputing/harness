@@ -11,7 +11,6 @@ import {
   listConnectionsOptions,
   listConversationsQueryKey,
   listFilesQueryKey,
-  meQueryKey,
 } from '@/api/@tanstack/react-query.gen'
 import { AppIcons, connectionsOf } from '@/components/agents/agent-apps'
 import { AgentIntro } from '@/components/chat/agent-intro'
@@ -20,7 +19,6 @@ import { buildMessages, messageText, pendingMessages, refusedMessage, sendingAtt
 import { Thread } from '@/components/chat/thread'
 import { Button } from '@/components/ui/button'
 import { ErrorNote, Spinner } from '@/components/ui/misc'
-import { useDemoVisitor } from '@/lib/demo'
 import { errorMessage } from '@/lib/http'
 import { newSendKey, sendMessage } from '@/lib/messages'
 import { ACTIVE_STATUSES, useRunEvents } from '@/lib/run-stream'
@@ -73,14 +71,9 @@ function ConversationPage() {
       }
       return posted.data
     },
-    onSuccess: async () => {
-      await refresh()
-      // A demo visitor's allowance of messages changed.
-      void queryClient.invalidateQueries({ queryKey: meQueryKey() })
-    },
+    onSuccess: refresh,
   })
   const cancel = useMutation({ ...cancelRunMutation(), onSuccess: refresh })
-  const visitor = useDemoVisitor()
   const adapter = useUploadAdapter(workspaceId)
   const [filesOpen, setFilesOpen] = useState(false)
   const filesButton = useRef<HTMLButtonElement>(null)
@@ -98,8 +91,7 @@ function ConversationPage() {
     messages,
     convertMessage: toThreadMessage,
     isRunning: post.isPending || (!!liveRun && !settled),
-    // Demo visitors cannot upload files.
-    adapters: visitor ? {} : { attachments: adapter },
+    adapters: { attachments: adapter },
     onNew: async message => {
       const content = messageText(message)
       const ids = (message.attachments ?? []).map(attachment => attachment.id)
