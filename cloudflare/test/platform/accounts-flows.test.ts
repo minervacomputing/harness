@@ -12,7 +12,7 @@ import { SETUP_KEY_HEADER, claimSetup } from "../../src/accounts/instance.ts";
 import { PASSWORD_ALREADY_SET } from "../../src/api/accounts.ts";
 import { createApp } from "../../src/http/router.ts";
 import { uuid7 } from "../../src/lib/random.ts";
-import { Browser, PASSWORD, SESSION_COOKIE, contractError, emailsTo, enableTwoFactor, installEmailLog, lastCode, signInWithCode, signedIn, totp, uniqueEmail } from "./accounts-helpers.ts";
+import { type Answer, Browser, PASSWORD, SESSION_COOKIE, contractError, emailsTo, enableTwoFactor, installEmailLog, lastCode, signInWithCode, signedIn, totp, uniqueEmail } from "./accounts-helpers.ts";
 
 installEmailLog();
 
@@ -25,6 +25,44 @@ async function users(email: string): Promise<number> {
 
 async function sessions(userId: string): Promise<number> {
 	return (await db.prepare(`SELECT count(*) AS n FROM "session" WHERE "userId" = ?`).bind(userId).first<{ n: number }>())!.n;
+}
+
+/**
+ * A browser's fetch through the Worker with a D1 binding that, after the first statement `when` matches, waits
+ * until `release` before answering it: one request held between two of its statements while others run.
+ */
+function holdAfter(when: (sql: string) => boolean): { fetcher: (request: Request) => Promise<Response>; reached: Promise<void>; holding: () => boolean; release: () => void } {
+	let release!: () => void;
+	let reach!: () => void;
+	const gate = new Promise<void>((resolve) => (release = resolve));
+	const reached = new Promise<void>((resolve) => (reach = resolve));
+	let held = false;
+	const statement = (prepared: D1PreparedStatement, sql: string): D1PreparedStatement => {
+		const answer = async <T>(result: Promise<T>): Promise<T> => {
+			const value = await result;
+			if (!held && when(sql)) {
+				held = true;
+				reach();
+				await gate;
+			}
+			return value;
+		};
+		return {
+			bind: (...values: unknown[]) => statement(prepared.bind(...values), sql),
+			all: () => answer(prepared.all()),
+			run: () => answer(prepared.run()),
+			first: (column?: string) => answer(column === undefined ? prepared.first() : prepared.first(column)),
+			raw: (options?: { columnNames?: boolean }) => answer(prepared.raw(options as { columnNames: true })),
+		} as unknown as D1PreparedStatement;
+	};
+	const database = {
+		prepare: (sql: string) => statement(db.prepare(sql), sql),
+		batch: (statements: D1PreparedStatement[]) => db.batch(statements),
+		exec: (sql: string) => db.exec(sql),
+		withSession: (constraint?: string) => db.withSession(constraint),
+	} as unknown as D1Database;
+	const app = createApp();
+	return { fetcher: (request) => Promise.resolve(app.fetch(request, { ...env, DB: database }, createExecutionContext())), reached, holding: () => held, release };
 }
 
 async function sendCode(email: string, browser = new Browser(), headers: Record<string, string> = {}) {
@@ -293,6 +331,10 @@ describe("email codes", () => {
 		expect([expired.status, expired.body.code]).toEqual([400, "OTP_EXPIRED"]);
 	});
 
+	async function storedCodes(identifier: string): Promise<number> {
+		return (await db.prepare(`SELECT count(*) AS n FROM verification WHERE identifier = ?`).bind(identifier).first<{ n: number }>())!.n;
+	}
+
 	test("are stored encrypted, work once, and a resend replaces the code", async () => {
 		const { email } = await signedIn();
 		await sendCode(email);
@@ -301,9 +343,46 @@ describe("email codes", () => {
 		expect(stored?.value).not.toContain(older);
 		await sendCode(email);
 		const newer = lastCode(email);
+		expect(await storedCodes(`sign-in-otp-${email}`)).toBe(1);
 		if (older !== newer) expect((await new Browser().auth("/sign-in/email-otp", { email, otp: older })).status).toBe(400);
 		expect((await new Browser().auth("/sign-in/email-otp", { email, otp: newer })).status).toBe(200);
 		expect((await new Browser().auth("/sign-in/email-otp", { email, otp: newer })).status).toBe(400);
+	});
+
+	// A check consumes the newest code, then deletes the rest in a statement of its own. A request that came
+	// between the two could use a code a resend had replaced (docs/plans/auth-fixes.md, finding 3); with one
+	// stored code per address there is none left to use.
+	test("a code a resend replaced is refused, even while another check is between its two statements", async () => {
+		const { email } = await signedIn();
+		for (const [send, check, identifier] of [
+			[() => sendCode(email), (otp: string, browser: Browser) => browser.auth("/sign-in/email-otp", { email, otp }), `sign-in-otp-${email}`],
+			[() => new Browser().auth("/email-otp/request-password-reset", { email }), (otp: string, browser: Browser) => browser.auth("/email-otp/reset-password", { email, otp, password: NEW_PASSWORD }), `forget-password-otp-${email}`],
+		] as const) {
+			await send();
+			const older = lastCode(email);
+			let newer = older;
+			while (newer === older) {
+				await send();
+				newer = lastCode(email);
+			}
+			expect(await storedCodes(identifier)).toBe(1);
+			// A wrong guess, held after it consumed the stored code and before it deletes the rest.
+			const held = holdAfter((sql) => /^delete from "verification"/i.test(sql) && /returning/i.test(sql));
+			const guess = check(newer === "000000" ? "111111" : "000000", new Browser(held.fetcher));
+			let intercepted: Answer;
+			try {
+				// A guess that answers without reaching the statement fails the test instead of leaving it waiting.
+				await Promise.race([held.reached, guess]);
+				expect(held.holding()).toBe(true);
+				intercepted = await check(older, new Browser());
+			} finally {
+				held.release();
+			}
+			const guessed = await guess;
+			expect([guessed.status, guessed.body.code]).toEqual([400, "INVALID_OTP"]);
+			expect([intercepted.status, intercepted.body.code]).toEqual([400, "INVALID_OTP"]);
+			expect((await check(newer, new Browser())).status).toBe(200);
+		}
 	});
 });
 

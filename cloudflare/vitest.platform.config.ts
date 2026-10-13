@@ -24,7 +24,7 @@ export default defineConfig(async () => {
 				miniflare: {
 					bindings: { TEST_MIGRATIONS: migrations },
 					// Empty databases the schema tests migrate themselves (test/platform/accounts-schema.test.ts).
-					d1Databases: ["UPGRADE_DB", "UPGRADE_TWO_FACTOR_DB", "UPGRADE_PLAIN_DB"],
+					d1Databases: ["UPGRADE_DB", "UPGRADE_TWO_FACTOR_DB", "UPGRADE_PLAIN_DB", "UPGRADE_VERIFICATION_DB"],
 					// cloudflare.config.ts binds the Worker's own classes by its name; the tests run it under
 					// another name, so the bindings name the classes alone.
 					durableObjects: {

@@ -1,6 +1,7 @@
-// The D1 schema for accounts (migrations/0003_better_auth.sql, 0007_plain_auth.sql): Better Auth's tables
-// match what our configuration expects, ours reference them, an instance made with 0001 and 0002 upgrades
-// with its people and workspaces, and 0007 clears what our old policy stored (an empty install is the
+// The D1 schema for accounts (migrations/0003_better_auth.sql, 0007_plain_auth.sql,
+// 0008_verification_identifier.sql): Better Auth's tables match what our configuration expects, ours
+// reference them, an instance made with 0001 and 0002 upgrades with its people and workspaces, 0007 clears
+// what our old policy stored, and 0008 keeps one verification value per identifier (an empty install is the
 // database every other platform test runs on).
 
 import { applyD1Migrations, type D1Migration } from "cloudflare:test";
@@ -12,7 +13,7 @@ import { authOptions } from "../../src/accounts/auth-options.ts";
 import { getAuth, handleAuth } from "../../src/accounts/auth.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 
-const bindings = env as Env & { TEST_MIGRATIONS: D1Migration[]; UPGRADE_DB: D1Database; UPGRADE_TWO_FACTOR_DB: D1Database; UPGRADE_PLAIN_DB: D1Database };
+const bindings = env as Env & { TEST_MIGRATIONS: D1Migration[]; UPGRADE_DB: D1Database; UPGRADE_TWO_FACTOR_DB: D1Database; UPGRADE_PLAIN_DB: D1Database; UPGRADE_VERIFICATION_DB: D1Database };
 
 /** A password hash in the format of our own hasher before 0007, which Better Auth's does not read. */
 const OLD_HASH = `scrypt$15$8$3$${"c2FsdHNhbHRzYWx0c2FsdA"}$${"A".repeat(43)}`;
@@ -247,5 +248,44 @@ describe("0007: plain Better Auth", () => {
 		// A password in Better Auth's format still signs in; one in the old format is gone.
 		expect((await signIn(db, "grace@example.com", "a long enough passphrase")).status).toBe(200);
 		expect((await signIn(db, "ada@example.com", "a long enough passphrase")).status).toBe(401);
+	});
+});
+
+describe("0008: one verification value per identifier", () => {
+	const insert = (db: D1Database, id: string, identifier: string, value: string, createdAt: string) =>
+		db.prepare(`INSERT INTO verification (id, identifier, value, "expiresAt", "createdAt", "updatedAt") VALUES (?, ?, ?, ?, ?, ?)`).bind(id, identifier, value, createdAt, createdAt, createdAt);
+
+	test("a second value for an identifier is refused", async () => {
+		const now = new Date().toISOString();
+		const identifier = `sign-in-otp-${uuid7()}@example.com`;
+		await insert(env.DB, uuid7(), identifier, "first:0", now).run();
+		await expect(insert(env.DB, uuid7(), identifier, "second:0", now).run()).rejects.toThrow(/UNIQUE constraint failed/);
+	});
+
+	test("keeps the newest of each identifier, the greater id on a tie, and leaves the others alone", async () => {
+		const db = bindings.UPGRADE_VERIFICATION_DB;
+		const migrations = bindings.TEST_MIGRATIONS;
+		const unique = migrations.findIndex((migration) => migration.name.startsWith("0008_"));
+		await applyD1Migrations(db, migrations.slice(0, unique));
+		const [earlier, later] = [new Date(Date.now() - 60_000).toISOString(), new Date().toISOString()];
+		const [tieFirst, tieSecond] = [uuid7(), uuid7()];
+		await db.batch([
+			insert(db, uuid7(), "sign-in-otp-ada@example.com", "older:0", earlier),
+			insert(db, uuid7(), "sign-in-otp-ada@example.com", "newer:0", later),
+			insert(db, tieSecond, "forget-password-otp-ada@example.com", "tie-second:0", later),
+			insert(db, tieFirst, "forget-password-otp-ada@example.com", "tie-first:0", later),
+			insert(db, uuid7(), "sign-in-otp-grace@example.com", "alone:0", earlier),
+		]);
+
+		await applyD1Migrations(db, migrations.slice(unique));
+
+		const { results } = await db.prepare("SELECT identifier, value FROM verification ORDER BY identifier").all();
+		expect(results).toEqual([
+			{ identifier: "forget-password-otp-ada@example.com", value: "tie-second:0" },
+			{ identifier: "sign-in-otp-ada@example.com", value: "newer:0" },
+			{ identifier: "sign-in-otp-grace@example.com", value: "alone:0" },
+		]);
+		const index = await db.prepare(`SELECT "unique" FROM pragma_index_list('verification') WHERE name = 'verification_identifier_idx'`).first();
+		expect(index).toEqual({ unique: 1 });
 	});
 });

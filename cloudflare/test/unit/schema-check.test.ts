@@ -257,7 +257,7 @@ if (args[0] === "d1" && args[1] === "list") {
 		const result = run(() => {});
 		expect(result.err.replace(/\(node:\d+\)[^\n]*\n/g, "").replace(/\(Use `node --trace[^\n]*\n/g, "")).toBe("");
 		expect(result.status).toBe(0);
-		expect(result.out).toMatch(/^The schema of minerva-cf matches the migrations \(\d+ tables, \d+ columns, \d+ indexes and other objects, 7 migrations\)\.\n$/);
+		expect(result.out).toMatch(/^The schema of minerva-cf matches the migrations \(\d+ tables, \d+ columns, \d+ indexes and other objects, 8 migrations\)\.\n$/);
 		expect(result.calls.map((call) => call.slice(0, 2).join(" "))).toEqual(["d1 list", ...Array(6).fill("d1 query")]);
 		for (const call of result.calls.slice(1)) expect(call[4], call[4]).toMatch(/^SELECT /);
 		expect(result.out + result.err).not.toContain(DATABASE_ID);
