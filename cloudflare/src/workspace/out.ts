@@ -5,7 +5,8 @@ import { type Connector, type Operation, actionOf, consentGiven, kindOf } from "
 import type { GrantRow } from "../gateway/grants.ts";
 import { ANY } from "../gateway/policy.ts";
 import { isoTime } from "../lib/dates.ts";
-import type { AccessOut, ActionOut, AgentOut, AllowedOut, ConnectionOut, ConversationOut, GrantOut, KindOut } from "../shared/api.ts";
+import type { Agent } from "@minerva/contract";
+import type { AccessOut, ActionOut, AllowedOut, ConnectionOut, ConversationOut, GrantOut, KindOut } from "../shared/api.ts";
 import type { Caller, UserId } from "../shared/rpc.ts";
 
 /** Names of resources shown per allowed action in a connection's summary. */
@@ -158,15 +159,15 @@ export interface AgentView {
 	createdAt: number;
 }
 
-/** `can_edit`: the agent's owner, or a workspace owner or admin. */
-export function agentOut(caller: Caller, agent: AgentView): AgentOut {
+/** `canEdit`: the agent's owner, or a workspace owner or admin. */
+export function agentOut(caller: Caller, agent: AgentView): Agent {
 	return {
 		id: agent.id,
 		name: agent.name,
 		instructions: agent.instructions,
-		connection_ids: [...agent.connectionIds],
-		can_edit: agent.ownerId === caller.userId || isAdmin(caller),
-		created_at: isoTime(agent.createdAt),
+		connectionIds: [...agent.connectionIds],
+		canEdit: agent.ownerId === caller.userId || isAdmin(caller),
+		createdAt: isoTime(agent.createdAt),
 	};
 }
 

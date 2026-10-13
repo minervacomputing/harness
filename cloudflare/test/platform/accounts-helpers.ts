@@ -5,9 +5,15 @@ import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, expect, vi, type MockInstance } from "vitest";
 import { HASHING, SCRYPT } from "../../src/accounts/passwords.ts";
 import { uuid7 } from "../../src/lib/random.ts";
+import { REFUSALS, type RefusalCode } from "../../src/shared/rpc.ts";
 
 export const ORIGIN = "http://localhost";
 export const PASSWORD = "a long enough passphrase";
+
+/** A refusal's body in the contract's error shape (http/errors.ts `errorAnswer`). */
+export function contractError(code: RefusalCode, message: string): { defined: true; code: RefusalCode; status: number; message: string } {
+	return { defined: true, code, status: REFUSALS[code], message };
+}
 
 let ipCounter = 0;
 let log: MockInstance<typeof console.log>;

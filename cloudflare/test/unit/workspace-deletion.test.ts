@@ -2,6 +2,7 @@
 // tombstone first, cancel through the outbox and wait for the acknowledgement, then the Conversation
 // object destroys itself, and again an hour later; an alarm finishes a deletion that was interrupted.
 
+import { NewAgent } from "@minerva/contract";
 import { describe, expect, test } from "vitest";
 import { NOT_FOUND, PURGE_AGAIN_MS } from "../../src/workspace/core.ts";
 import { ADA, GRACE, begin, conversation, harness, outbox, registered, running, settle, type Harness } from "./workspace-support.ts";
@@ -112,7 +113,7 @@ describe("deleting a conversation", () => {
 describe("deleting an agent", () => {
 	test("cancels its runs, every user's, then deletes its conversations, every user's", async () => {
 		const h = await harness();
-		const agent = await h.core.createAgent(ADA, { name: "Doomed" });
+		const agent = await h.core.createAgent(ADA, NewAgent.parse({ name: "Doomed" }));
 		if (!agent.ok) throw new Error("not created");
 		const adas = await running(h, { conversationId: await conversation(h, ADA, agent.value.id) });
 		const graces = await running(h, { conversationId: await conversation(h, GRACE, agent.value.id), caller: GRACE });

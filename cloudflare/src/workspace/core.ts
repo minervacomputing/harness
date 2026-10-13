@@ -21,7 +21,8 @@ import { type Binding, type EncryptionKeys, type Sealed, credentialBinding } fro
 import { type JsonObject, parseJson } from "../lib/json.ts";
 import { uuid7 } from "../lib/random.ts";
 import { VALUE_PART, sliceText, splitParts } from "../lib/text.ts";
-import type { AccessOut, AgentIn, AgentOut, ConnectionOut, ConversationOut, UploadOut } from "../shared/api.ts";
+import type { Agent, NewAgent } from "@minerva/contract";
+import type { AccessOut, ConnectionOut, ConversationOut, UploadOut } from "../shared/api.ts";
 import type {
 	AgentId,
 	Caller,
@@ -143,16 +144,16 @@ export interface WorkspaceApi {
 	init(input: WorkspaceInit): Promise<void>;
 
 	// Agents.
-	listAgents(caller: Caller): Promise<AgentOut[]>;
-	getAgent(caller: Caller, agentId: AgentId): Promise<AgentOut | null>;
+	listAgents(caller: Caller): Promise<Agent[]>;
+	getAgent(caller: Caller, agentId: AgentId): Promise<Agent | null>;
 	/** 422 "Choose connections you can use." when an added connection is unknown, broken or someone else's. */
-	createAgent(caller: Caller, input: AgentIn): Promise<Outcome<AgentOut>>;
+	createAgent(caller: Caller, input: NewAgent): Promise<Outcome<Agent>>;
 	/**
 	 * A full replace. 403 "You cannot change this agent." unless the caller owns the agent or is a workspace
 	 * owner or admin. A changed connection set revokes the agent's active runs (`agent_connections_changed`)
 	 * before answering.
 	 */
-	updateAgent(caller: Caller, agentId: AgentId, input: AgentIn): Promise<Outcome<{ agent: AgentOut; revocation: Revocation }>>;
+	updateAgent(caller: Caller, agentId: AgentId, input: NewAgent): Promise<Outcome<{ agent: Agent; revocation: Revocation }>>;
 	/** 422 "Keep at least one agent."; cancels the agent's runs ("Stopped.") and deletes its conversations. */
 	deleteAgent(caller: Caller, agentId: AgentId): Promise<Outcome<{ revocation: Revocation }>>;
 
@@ -1042,16 +1043,16 @@ export class WorkspaceCore implements WorkspaceApi {
 		for (const id of connectionIds) this.#sql.exec("INSERT INTO agent_connections (agent_id, connection_id) VALUES (?, ?)", agentId, id);
 	}
 
-	async listAgents(caller: Caller): Promise<AgentOut[]> {
+	async listAgents(caller: Caller): Promise<Agent[]> {
 		return this.#sql.exec<AgentRow>("SELECT * FROM agents ORDER BY created_at, id").map((row) => agentOut(caller, this.#agentView(row)));
 	}
 
-	async getAgent(caller: Caller, agentId: AgentId): Promise<AgentOut | null> {
+	async getAgent(caller: Caller, agentId: AgentId): Promise<Agent | null> {
 		const row = this.#agentRow(agentId);
 		return row === null ? null : agentOut(caller, this.#agentView(row));
 	}
 
-	async createAgent(caller: Caller, input: AgentIn): Promise<Outcome<AgentOut>> {
+	async createAgent(caller: Caller, input: NewAgent): Promise<Outcome<Agent>> {
 		const fields = agentFields(input);
 		const now = this.#now();
 		const row = this.#commit(() => {
@@ -1081,13 +1082,13 @@ export class WorkspaceCore implements WorkspaceApi {
 		return ok(row);
 	}
 
-	async updateAgent(caller: Caller, agentId: AgentId, input: AgentIn): Promise<Outcome<{ agent: AgentOut; revocation: Revocation }>> {
+	async updateAgent(caller: Caller, agentId: AgentId, input: NewAgent): Promise<Outcome<{ agent: Agent; revocation: Revocation }>> {
 		const editable = this.#editable(caller, agentId);
 		if (!editable.ok) return editable;
 		// A full replace: omitted fields reset to their defaults.
 		const fields = agentFields(input);
 		const now = this.#now();
-		const saved = this.#commit((): { entries: number[]; agent: AgentOut } | null => {
+		const saved = this.#commit((): { entries: number[]; agent: Agent } | null => {
 			const before = new Set(this.#agentConnectionIds(agentId));
 			const connections = this.#chosenConnections(caller, fields.connectionIds, before);
 			if (connections === null) return null;
@@ -1766,7 +1767,7 @@ function jsonScopes(payload: JsonObject): string | null {
 	return scopes === null ? null : JSON.stringify(scopes);
 }
 
-/** AgentIn with its defaults: a PUT is a full replace. Validated by the Worker's schema. */
-function agentFields(input: AgentIn): { name: string; instructions: string; connectionIds: string[] } {
-	return { name: storable(input.name), instructions: storable(input.instructions ?? ""), connectionIds: input.connection_ids ?? [] };
+/** A new agent or a replacement (a full replace), as the contract's schema validated it, made storable. */
+function agentFields(input: NewAgent): { name: string; instructions: string; connectionIds: string[] } {
+	return { name: storable(input.name), instructions: storable(input.instructions), connectionIds: input.connectionIds };
 }

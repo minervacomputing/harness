@@ -2,12 +2,13 @@ import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { z } from 'zod'
-import { createConversationMutation, listAgentsOptions } from '@/api/@tanstack/react-query.gen'
+import { createConversationMutation } from '@/api/@tanstack/react-query.gen'
 import { AgentIntro } from '@/components/chat/agent-intro'
 import { useChatRuntime } from '@/components/chat/runtime'
 import { Thread } from '@/components/chat/thread'
 import { ErrorNote } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
+import { orpc } from '@/lib/orpc'
 import { pageHead } from '@/lib/title'
 
 export const Route = createFileRoute('/w/$workspaceId/chat/')({
@@ -21,7 +22,7 @@ function NewChat() {
   const { workspaceId } = Route.useParams()
   const { agent: wanted } = Route.useSearch()
   const navigate = useNavigate()
-  const agents = useQuery(listAgentsOptions({ path: { workspace_id: workspaceId } }))
+  const agents = useQuery(orpc.agents.list.queryOptions({ input: { workspaceId } }))
   // An agent named in the link that no longer exists is not swapped for another one silently.
   const agent = wanted ? agents.data?.find(a => a.id === wanted) : agents.data?.[0]
   const choose = (agentId: string) => navigate({ to: '/w/$workspaceId/chat', params: { workspaceId }, search: { agent: agentId }, replace: true })

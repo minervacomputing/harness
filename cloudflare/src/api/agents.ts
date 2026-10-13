@@ -1,60 +1,29 @@
-// Agents, over the Workspace Durable Object, which holds
-// the rules: who may edit (`#editable`), which connections may be added (`#chosenConnections`), the full
-// replace, the revocation of the agent's runs when its connection set changes, and the last agent kept.
+// Agents (contract/src/agents.ts), over the Workspace Durable Object, which holds the rules: who may edit
+// (`#editable`), which connections may be added (`#chosenConnections`), the full replace, the revocation of
+// the agent's runs when its connection set changes, and the last agent kept.
 
-import { z } from "zod";
-import { json, notFound } from "../http/errors.ts";
-import { UUID } from "../http/paths.ts";
-import type { App } from "../http/router.ts";
-import { readBody, uuid } from "./input.ts";
-import { afterRevocation, memberRoute, param, valueOf } from "./members.ts";
+import { api, checkStopped, inWorkspace, refusal, unwrap } from "./procedures.ts";
 
-/** `AgentIn`: a PUT is a full replace, so omitted fields take these defaults. */
-export const AgentIn = z.object({
-	name: z.string().min(1).max(120),
-	instructions: z.string().max(8000).default(""),
-	connection_ids: z.array(uuid()).max(20).default([]),
+const agents = api.agents.use(inWorkspace);
+
+export const agentProcedures = agents.router({
+	list: agents.list.handler(({ context: { member } }) => member.object.listAgents(member.caller)),
+
+	get: agents.get.handler(async ({ context: { member }, input }) => {
+		const agent = await member.object.getAgent(member.caller, input.agentId);
+		if (agent === null) throw refusal("NOT_FOUND", "Not found.");
+		return agent;
+	}),
+
+	create: agents.create.handler(async ({ context: { member }, input: { workspaceId: _, ...agent } }) => unwrap(await member.object.createAgent(member.caller, agent))),
+
+	update: agents.update.handler(async ({ context: { member }, input: { workspaceId: _, agentId, ...fields } }) => {
+		const { agent, revocation } = unwrap(await member.object.updateAgent(member.caller, agentId, fields));
+		checkStopped(revocation);
+		return agent;
+	}),
+
+	delete: agents.delete.handler(async ({ context: { member }, input }) => {
+		checkStopped(unwrap(await member.object.deleteAgent(member.caller, input.agentId)).revocation);
+	}),
 });
-
-const AGENTS = `/api/workspaces/:workspace${UUID}/agents`;
-const AGENT = `${AGENTS}/:agent${UUID}`;
-
-export function agentRoutes(app: App): void {
-	app.get(
-		AGENTS,
-		memberRoute(async (_c, m) => json(200, await m.object.listAgents(m.caller))),
-	);
-
-	app.post(
-		AGENTS,
-		memberRoute(async (c, m) => {
-			const input = await readBody(c.req.raw, AgentIn);
-			return json(201, valueOf(await m.object.createAgent(m.caller, input)));
-		}),
-	);
-
-	app.get(
-		AGENT,
-		memberRoute(async (c, m) => {
-			const agent = await m.object.getAgent(m.caller, param(c, "agent"));
-			return agent === null ? notFound() : json(200, agent);
-		}),
-	);
-
-	app.put(
-		AGENT,
-		memberRoute(async (c, m) => {
-			const input = await readBody(c.req.raw, AgentIn);
-			const { agent, revocation } = valueOf(await m.object.updateAgent(m.caller, param(c, "agent"), input));
-			return afterRevocation(revocation, json(200, agent));
-		}),
-	);
-
-	app.delete(
-		AGENT,
-		memberRoute(async (c, m) => {
-			const { revocation } = valueOf(await m.object.deleteAgent(m.caller, param(c, "agent")));
-			return afterRevocation(revocation, json(204, null));
-		}),
-	);
-}

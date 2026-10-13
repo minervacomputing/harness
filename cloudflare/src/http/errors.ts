@@ -1,5 +1,12 @@
-// The API's refusals: `{"code": …, "detail": …}` with the code's status (shared/rpc.ts REFUSALS). Better
-// Auth answers /api/auth in its own format. Every JSON response is `no-store`.
+// The API's refusals, with the code's status (shared/rpc.ts REFUSALS), in one of two shapes while the routes
+// move to the contract (contract/, api/orpc.ts):
+//
+// - the contract's, `{"defined": true, "code": …, "status": …, "message": …}` (`errorAnswer`): every route of
+//   the contract, and what the router answers before or instead of a route (CSRF, the declared body cap, no
+//   such route, a crash, too many session cookies);
+// - `{"code": …, "detail": …}` (`refused`): the Hono routes not yet moved.
+//
+// Better Auth answers /api/auth in its own format. Every JSON response is `no-store`.
 
 import type { core } from "zod";
 import { REFUSALS, type RefusalCode } from "../shared/rpc.ts";
@@ -13,7 +20,12 @@ export function json(status: number, body: unknown, headers?: HeadersInit): Resp
 	return response;
 }
 
-/** A refusal with this code and text. */
+/** A refusal in the contract's error shape (above), which its clients read as a declared error. */
+export function errorAnswer(code: RefusalCode, message: string): Response {
+	return json(REFUSALS[code], { defined: true, code, status: REFUSALS[code], message });
+}
+
+/** A refusal with this code and text, in the shape of the routes not yet moved to the contract. */
 export function refused(code: RefusalCode, detail: string, headers?: HeadersInit): Response {
 	return json(REFUSALS[code], { code, detail }, headers);
 }
@@ -23,18 +35,26 @@ export function unauthorized(): Response {
 	return refused("UNAUTHORIZED", "Unauthorized");
 }
 
-/** No such route, or nothing the caller may see there. */
+/** Nothing the caller may see there (the routes not yet moved to the contract). */
 export function notFound(): Response {
 	return refused("NOT_FOUND", "Not found.");
 }
 
 /** An unsafe request that did not come from the site's pages (http/csrf.ts). */
 export function crossSite(): Response {
-	return refused("CROSS_SITE", "Cross-site request refused.");
+	return errorAnswer("CROSS_SITE", "Cross-site request refused.");
 }
 
+/** No route answers this method and path. */
+export function noRoute(): Response {
+	return errorAnswer("NOT_FOUND", "Not found.");
+}
+
+/** What a crash answers. */
+export const SERVER_ERROR = "Something went wrong on the server.";
+
 export function serverError(): Response {
-	return refused("INTERNAL_SERVER_ERROR", "Something went wrong on the server.");
+	return errorAnswer("INTERNAL_SERVER_ERROR", SERVER_ERROR);
 }
 
 /** Thrown to answer a request early with a ready response. */

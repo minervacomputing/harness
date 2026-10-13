@@ -31,7 +31,7 @@
 import { createHmac } from "node:crypto";
 import type { GenericEndpointContext } from "better-auth";
 import { APIError, getSessionFromCtx, isAPIError } from "better-auth/api";
-import { HttpError, refused } from "../http/errors.ts";
+import { HttpError, errorAnswer } from "../http/errors.ts";
 import { timingSafeEqual } from "../lib/hash.ts";
 import { uuid7 } from "../lib/random.ts";
 import { type AuthPolicy, CODE_ATTEMPTS } from "./auth-options.ts";
@@ -504,7 +504,7 @@ export function sessionTokens(header: string | null): string[] {
 		const dot = value.lastIndexOf(".");
 		const token = dot > 0 ? value.slice(0, dot) : value;
 		if (token) tokens.add(token);
-		if (tokens.size > MAX_SESSION_COOKIES) throw new HttpError(refused("TOO_MANY_SESSION_COOKIES", "Too many session cookies."));
+		if (tokens.size > MAX_SESSION_COOKIES) throw new HttpError(errorAnswer("TOO_MANY_SESSION_COOKIES", "Too many session cookies."));
 	}
 	return [...tokens];
 }

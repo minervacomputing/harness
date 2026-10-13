@@ -4,6 +4,7 @@
 // delivering, credentials sealed with the Worker's key, upload objects deleted from the workspace's own
 // bucket (EU included), and that the port hook cannot be reached over RPC.
 
+import { NewAgent } from "@minerva/contract";
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, test } from "vitest";
@@ -110,7 +111,7 @@ describe("the Workspace object", () => {
 		if (!saved.ok) throw new Error(saved.refusal.detail);
 		const connection = saved.value.id;
 		const [agent] = await stub.listAgents(ADA);
-		await stub.updateAgent(ADA, agent?.id as string, { name: "Assistant", connection_ids: [connection] });
+		await stub.updateAgent(ADA, agent?.id as string, NewAgent.parse({ name: "Assistant", connectionIds: [connection] }));
 		await stub.applyGrantChanges(ADA, connection, [{ kind: "folder", id: "inbox", actions: ["read"] }], {});
 		const created = await stub.createConversation(ADA, agent?.id as string);
 		if (!created.ok) throw new Error(created.refusal.detail);

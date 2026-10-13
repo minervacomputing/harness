@@ -5,7 +5,7 @@ import { createHmac } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { settings } from "../config.ts";
 import { UNPARSEABLE, readJson } from "../http/body.ts";
-import { HttpError, notFound, refused } from "../http/errors.ts";
+import { HttpError, noRoute, refused } from "../http/errors.ts";
 import type { Json } from "../lib/json.ts";
 import { AUTH_BASE_PATH, type OtpType, authOptions } from "./auth-options.ts";
 import { type EmailKind, render, sendEmail } from "./emails.ts";
@@ -103,7 +103,7 @@ export function getAuth(env: Env, policy: Policy = policyFor(env)): Auth {
  */
 export async function handleAuth(env: Env, request: Request): Promise<Response> {
 	const path = new URL(request.url).pathname;
-	if (!path.startsWith(`${AUTH_BASE_PATH}/`) || !BROWSER_ROUTES.has(`${request.method} ${path.slice(AUTH_BASE_PATH.length)}`)) return notFound();
+	if (!path.startsWith(`${AUTH_BASE_PATH}/`) || !BROWSER_ROUTES.has(`${request.method} ${path.slice(AUTH_BASE_PATH.length)}`)) return noRoute();
 	const headers = new Headers(request.headers);
 	const cookies = withoutTrustedDevice(headers.get("Cookie"));
 	if (cookies) headers.set("Cookie", cookies);

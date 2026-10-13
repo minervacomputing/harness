@@ -2,13 +2,12 @@
 // frontend/src/api/types.gen.ts. Durable Objects return these where an endpoint passes their answer
 // through, so the API keeps every field, enum value and limit.
 //
-// The request schemas (AgentIn, MessageIn, …) are zod schemas read with api/input.ts's `readBody`.
+// The request schemas (MessageIn, …) are zod schemas read with api/input.ts's `readBody`. The agents' shapes
+// are already the contract's (contract/, `Agent` and `NewAgent`); the rest move there resource by resource.
 
 export type {
 	AccessOut,
 	ActionOut,
-	AgentIn,
-	AgentOut,
 	AllowedOut,
 	AttachmentOut,
 	ConnectionOut,

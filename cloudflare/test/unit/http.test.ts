@@ -3,7 +3,7 @@ import { z } from "zod";
 import { serveAsset } from "../../src/http/assets.ts";
 import { MAX_JSON_BODY, readJson } from "../../src/http/body.ts";
 import { fromSite } from "../../src/http/csrf.ts";
-import { notFound, refused, unauthorized, validationError, validationItems } from "../../src/http/errors.ts";
+import { errorAnswer, notFound, refused, unauthorized, validationError, validationItems } from "../../src/http/errors.ts";
 import { DEFAULT_CSP, withSecurityHeaders } from "../../src/http/headers.ts";
 import { OWN_SIZE_LIMIT, UPLOAD_ROUTE, createApp } from "../../src/http/router.ts";
 import { settingsEnv } from "./settings.ts";
@@ -50,6 +50,9 @@ describe("error shapes", () => {
 		expect([missing.status, await missing.json()]).toEqual([404, { code: "NOT_FOUND", detail: "Not found." }]);
 		const invalid = validationError([{ type: "too_big", loc: ["body", "name"], msg: "Too big" }]);
 		expect([invalid.status, await invalid.json()]).toEqual([422, { code: "VALIDATION_FAILED", detail: [{ type: "too_big", loc: ["body", "name"], msg: "Too big" }] }]);
+		// The contract's shape, for its routes and what the router answers itself.
+		const contract = errorAnswer("KEEP_ONE_AGENT", "Keep at least one agent.");
+		expect([contract.status, contract.headers.get("Cache-Control"), await contract.json()]).toEqual([422, "no-store", { defined: true, code: "KEEP_ONE_AGENT", status: 422, message: "Keep at least one agent." }]);
 	});
 
 	test("validation errors are zod's issues, located where the value came from", () => {
@@ -132,7 +135,7 @@ describe("router", () => {
 		for (const path of ["/api/nope", "/api/me/", "/api/workspaces/not-a-uuid/agents", "/api/csrf"]) {
 			const response = await createApp().request(path, { method: "POST", headers: site }, env);
 			expect(response.status).toBe(404);
-			expect(await response.json()).toEqual({ code: "NOT_FOUND", detail: "Not found." });
+			expect(await response.json()).toEqual({ defined: true, code: "NOT_FOUND", status: 404, message: "Not found." });
 			expect(response.headers.get("Content-Security-Policy")).toBe(DEFAULT_CSP);
 		}
 	});
@@ -144,7 +147,7 @@ describe("router", () => {
 		// Only POSTs under /api/auth/ are exempt (Better Auth's route answers them all), not every method there.
 		app.delete("/api/auth/session", () => (ran.push("auth"), unauthorized()));
 		app.use("/api/mounted/*", async () => (ran.push("mounted"), unauthorized()));
-		const crossSite = { code: "CROSS_SITE", detail: "Cross-site request refused." };
+		const crossSite = { defined: true, code: "CROSS_SITE", status: 403, message: "Cross-site request refused." };
 		for (const [method, path] of [["POST", "/api/route"], ["DELETE", "/api/auth/session"], ["POST", "/api/mounted/x"], ["POST", "/api/nope"], ["PUT", "/api/health"]]) {
 			const response = await app.request(path!, { method, headers: { Origin: "https://evil.example" } }, env);
 			expect([method, path, response.status, await response.json()]).toEqual([method, path, 403, crossSite]);
@@ -173,7 +176,7 @@ describe("router", () => {
 		for (const path of ["/api/route", "/api/nope"]) {
 			const response = await app.request(path, { method: "POST", headers: big }, env);
 			expect(response.status, path).toBe(413);
-			expect(await response.json()).toEqual({ code: "PAYLOAD_TOO_LARGE", detail: "The request is too large." });
+			expect(await response.json()).toEqual({ defined: true, code: "PAYLOAD_TOO_LARGE", status: 413, message: "The request is too large." });
 		}
 		// The upload's own limit applies instead (50 MB): this one gets as far as its missing name.
 		const upload = await app.request(`/api/workspaces/${"0".repeat(8)}-0000-7000-8000-${"0".repeat(12)}/uploads`, { method: "POST", headers: big }, env);

@@ -1,17 +1,10 @@
+import type { Agent } from '@minerva/contract'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { PlusIcon } from 'lucide-react'
 import { useState } from 'react'
-import {
-  createAgentMutation,
-  deleteAgentMutation,
-  listAgentsOptions,
-  listAgentsQueryKey,
-  listConnectionsOptions,
-  listConversationsQueryKey,
-  updateAgentMutation,
-} from '@/api/@tanstack/react-query.gen'
-import type { AgentOut, ConnectionOut } from '@/api/types.gen'
+import { listConnectionsOptions, listConversationsQueryKey } from '@/api/@tanstack/react-query.gen'
+import type { ConnectionOut } from '@/api/types.gen'
 import { AppIcons, connectionsOf } from '@/components/agents/agent-apps'
 import { AppIcon } from '@/components/connections/app-icon'
 import { setupOf, summarize } from '@/components/connections/summary'
@@ -19,6 +12,7 @@ import { useAppForm } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { Checkbox, ErrorNote, PageHeader, Spinner, Status } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
+import { orpc } from '@/lib/orpc'
 import { pageHead } from '@/lib/title'
 
 export const Route = createFileRoute('/w/$workspaceId/agents')({
@@ -29,10 +23,10 @@ export const Route = createFileRoute('/w/$workspaceId/agents')({
 function AgentsPage() {
   const { workspaceId } = Route.useParams()
   const path = { workspace_id: workspaceId }
-  const agents = useQuery(listAgentsOptions({ path }))
+  const agents = useQuery(orpc.agents.list.queryOptions({ input: { workspaceId } }))
   const connections = useQuery(listConnectionsOptions({ path }))
   const [editing, setEditing] = useState<string | 'new' | null>(null)
-  const form = (agent?: AgentOut) => <AgentForm workspaceId={workspaceId} agent={agent} connections={connections.data ?? []} onDone={() => setEditing(null)} />
+  const form = (agent?: Agent) => <AgentForm workspaceId={workspaceId} agent={agent} connections={connections.data ?? []} onDone={() => setEditing(null)} />
 
   return (
     <div>
@@ -91,7 +85,7 @@ function AgentRow({
   onEdit,
 }: {
   workspaceId: string
-  agent: AgentOut
+  agent: Agent
   connections: ConnectionOut[]
   editing: boolean
   onEdit: () => void
@@ -119,7 +113,7 @@ function AgentRow({
           Chat
         </Link>
       </Button>
-      {agent.can_edit && (
+      {agent.canEdit && (
         <Button variant="ghost" size="sm" aria-expanded={editing} onClick={onEdit}>
           {editing ? 'Close' : 'Edit'}
         </Button>
@@ -128,31 +122,31 @@ function AgentRow({
   )
 }
 
-function AgentForm({ workspaceId, agent, connections, onDone }: { workspaceId: string; agent?: AgentOut; connections: ConnectionOut[]; onDone: () => void }) {
+function AgentForm({ workspaceId, agent, connections, onDone }: { workspaceId: string; agent?: Agent; connections: ConnectionOut[]; onDone: () => void }) {
   const queryClient = useQueryClient()
-  const path = { workspace_id: workspaceId }
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: listAgentsQueryKey({ path }) })
-  const create = useMutation({ ...createAgentMutation(), onSuccess: invalidate })
-  const update = useMutation({ ...updateAgentMutation(), onSuccess: invalidate })
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: orpc.agents.key() })
+  const create = useMutation(orpc.agents.create.mutationOptions({ onSuccess: invalidate }))
+  const update = useMutation(orpc.agents.update.mutationOptions({ onSuccess: invalidate }))
   // Deleting an agent deletes its conversations: the sidebar list changes, and none may be shown from the cache.
-  const remove = useMutation({
-    ...deleteAgentMutation(),
-    onSuccess: () => {
-      queryClient.removeQueries({ queryKey: [{ _id: 'getConversation' }] })
-      return Promise.all([invalidate(), queryClient.invalidateQueries({ queryKey: listConversationsQueryKey({ path }) })])
-    },
-  })
+  const remove = useMutation(
+    orpc.agents.delete.mutationOptions({
+      onSuccess: () => {
+        queryClient.removeQueries({ queryKey: [{ _id: 'getConversation' }] })
+        return Promise.all([invalidate(), queryClient.invalidateQueries({ queryKey: listConversationsQueryKey({ path: { workspace_id: workspaceId } }) })])
+      },
+    }),
+  )
   const error = create.error ?? update.error ?? remove.error
 
   const form = useAppForm({
     defaultValues: {
       name: agent?.name ?? '',
       instructions: agent?.instructions ?? '',
-      connection_ids: agent?.connection_ids ?? [],
+      connectionIds: agent?.connectionIds ?? [],
     },
     onSubmit: async ({ value }) => {
-      if (agent) await update.mutateAsync({ path: { ...path, agent_id: agent.id }, body: value })
-      else await create.mutateAsync({ path, body: value })
+      if (agent) await update.mutateAsync({ ...value, workspaceId, agentId: agent.id })
+      else await create.mutateAsync({ ...value, workspaceId })
       onDone()
     },
   })
@@ -173,7 +167,7 @@ function AgentForm({ workspaceId, agent, connections, onDone }: { workspaceId: s
             />
           )}
         </form.AppField>
-        <form.Field name="connection_ids">
+        <form.Field name="connectionIds">
           {field => (
             <fieldset className="grid gap-2">
               <legend className="mb-2 text-[13px] font-medium">Connections</legend>
@@ -220,7 +214,7 @@ function AgentForm({ workspaceId, agent, connections, onDone }: { workspaceId: s
                 disabled={remove.isPending}
                 onClick={() => {
                   if (!confirm(`Delete ${agent.name}? Its conversations are deleted too.`)) return
-                  remove.mutate({ path: { ...path, agent_id: agent.id } }, { onSuccess: onDone })
+                  remove.mutate({ workspaceId, agentId: agent.id }, { onSuccess: onDone })
                 }}
               >
                 Delete

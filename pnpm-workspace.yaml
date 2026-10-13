@@ -1,0 +1,14 @@
+# One pnpm workspace for the Worker, the frontend and the API contract they share (one lockfile, here).
+# `pnpm install` anywhere in it installs all three.
+packages:
+  - contract
+  - cloudflare
+  - frontend
+
+# pnpm 10 reads onlyBuiltDependencies; pnpm 11 reads allowBuilds.
+onlyBuiltDependencies:
+  - esbuild
+  - workerd
+allowBuilds:
+  esbuild: true
+  workerd: true

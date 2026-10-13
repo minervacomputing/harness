@@ -4,6 +4,7 @@
 // emergency stop, and the fault cases: a crash after the grant commit, a lost acknowledgement, a
 // Conversation that cannot be reached, and a second change while a cancel is still owed.
 
+import { NewAgent } from "@minerva/contract";
 import { describe, expect, test } from "vitest";
 import type { Caller } from "../../src/shared/rpc.ts";
 import { BARRIER_MS } from "../../src/workspace/core.ts";
@@ -61,21 +62,21 @@ describe("which runs a change stops", () => {
 		const { h, agent } = await shared();
 		const adas = await running(h);
 		const graces = await running(h, { caller: GRACE });
-		const other = await h.core.createAgent(ADA, { name: "Other" });
+		const other = await h.core.createAgent(ADA, NewAgent.parse({ name: "Other" }));
 		if (!other.ok) throw new Error("not created");
 		const elsewhere = await running(h, { conversationId: await conversation(h, ADA, other.value.id) });
-		const connections = (await h.core.getAgent(ADA, agent))?.connection_ids ?? [];
-		const renamed = await h.core.updateAgent(ADA, agent, { name: "Renamed", connection_ids: connections });
+		const connections = (await h.core.getAgent(ADA, agent))?.connectionIds ?? [];
+		const renamed = await h.core.updateAgent(ADA, agent, NewAgent.parse({ name: "Renamed", connectionIds: connections }));
 		expect(renamed.ok && renamed.value.revocation).toBe("acknowledged");
 		expect(outbox(h)).toEqual([]);
-		await h.core.updateAgent(ADA, agent, { name: "Renamed", connection_ids: [] });
+		await h.core.updateAgent(ADA, agent, NewAgent.parse({ name: "Renamed", connectionIds: [] }));
 		expect(reasons(h)).toEqual({ [adas.input.runId]: "agent_connections_changed", [graces.input.runId]: "agent_connections_changed" });
 		expect(registered(h, elsewhere.input.runId)?.revoked).toBeNull();
 	});
 
 	test("deleting an agent or a conversation is a plain cancel", async () => {
 		const { h } = await shared();
-		const second = await h.core.createAgent(ADA, { name: "Second" });
+		const second = await h.core.createAgent(ADA, NewAgent.parse({ name: "Second" }));
 		if (!second.ok) throw new Error("not created");
 		const ofAgent = await running(h, { conversationId: await conversation(h, ADA, second.value.id) });
 		const ofChat = await running(h);
@@ -230,17 +231,17 @@ describe("the barrier", () => {
 
 	test("an agent deleted while its update waits for the cancels: the update answers the agent as it saved it", async () => {
 		const { h, agent } = await shared();
-		await h.core.createAgent(ADA, { name: "Other" });
+		await h.core.createAgent(ADA, NewAgent.parse({ name: "Other" }));
 		await running(h);
 		h.conversations.mode = "hold";
-		const update = h.core.updateAgent(ADA, agent, { name: "Changed", connection_ids: [] });
+		const update = h.core.updateAgent(ADA, agent, NewAgent.parse({ name: "Changed", connectionIds: [] }));
 		await settle();
 		const deletion = h.core.deleteAgent(ADA, agent);
 		await settle();
 		for (const release of h.conversations.held) release();
 		expect((await deletion).ok).toBe(true);
 		const updated = await update;
-		expect(updated.ok && updated.value.agent).toMatchObject({ id: agent, name: "Changed", connection_ids: [] });
+		expect(updated.ok && updated.value.agent).toMatchObject({ id: agent, name: "Changed", connectionIds: [] });
 	});
 
 	test("a delivery in flight is shared by the request and the alarm", async () => {

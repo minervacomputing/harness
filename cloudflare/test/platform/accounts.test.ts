@@ -14,7 +14,7 @@ import { workspaceObject } from "../../src/addressing.ts";
 import { MAX_JSON_BODY } from "../../src/http/body.ts";
 import { createApp } from "../../src/http/router.ts";
 import { uuid7 } from "../../src/lib/random.ts";
-import { Browser, ORIGIN, PASSWORD, emailsTo, installEmailLog, lastCode, signUp, signedIn, uniqueEmail, withProductionHashing } from "./accounts-helpers.ts";
+import { Browser, ORIGIN, PASSWORD, contractError, emailsTo, installEmailLog, lastCode, signUp, signedIn, uniqueEmail, withProductionHashing } from "./accounts-helpers.ts";
 
 installEmailLog();
 
@@ -333,7 +333,7 @@ describe("CSRF: Better Auth's origins on its routes, ours on ours", () => {
 		for (const caller of [browser, new Browser()]) {
 			const answer = await caller.call("POST", "/api/dev/seed", undefined, { Origin: "https://evil.example" });
 			expect(answer.status).toBe(403);
-			expect(answer.body).toEqual({ code: "CROSS_SITE", detail: "Cross-site request refused." });
+			expect(answer.body).toEqual(contractError("CROSS_SITE", "Cross-site request refused."));
 		}
 	});
 

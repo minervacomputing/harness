@@ -2,7 +2,7 @@
 
 setup: services
 	cd backend && uv sync
-	cd worker && pnpm install --frozen-lockfile
+	cd worker && pnpm install --frozen-lockfile --ignore-workspace
 	cd frontend && pnpm install --frozen-lockfile
 	$(MAKE) migrate seed worker-image
 

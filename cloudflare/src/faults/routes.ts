@@ -84,7 +84,7 @@ export async function setUpWorkspace(
 	if (!granted.ok) throw new Error(`The grants were refused: ${granted.refusal.detail}`);
 	const [agent] = await ws.listAgents(caller);
 	if (!agent) throw new Error("The workspace has no agent.");
-	const updated = await ws.updateAgent(caller, agent.id, { name: agent.name, instructions: "You are a test agent. Use the tools when asked.", connection_ids: [connectionId] });
+	const updated = await ws.updateAgent(caller, agent.id, { name: agent.name, instructions: "You are a test agent. Use the tools when asked.", connectionIds: [connectionId] });
 	if (!updated.ok) throw new Error(`The agent was refused: ${updated.refusal.detail}`);
 	return { connectionId, agentId: agent.id };
 }

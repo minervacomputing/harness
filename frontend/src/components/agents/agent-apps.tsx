@@ -1,15 +1,16 @@
 /** The apps an agent can reach: shared by the agents list, the chat header and a new chat. */
 import { Link } from '@tanstack/react-router'
 import { ChevronRightIcon } from 'lucide-react'
-import type { AgentOut, ConnectionOut } from '@/api/types.gen'
+import type { Agent } from '@minerva/contract'
+import type { ConnectionOut } from '@/api/types.gen'
 import { AppIcon } from '@/components/connections/app-icon'
 import { setupOf } from '@/components/connections/summary'
 import { Status } from '@/components/ui/misc'
 import { cn } from '@/lib/utils'
 
 /** The agent's connections in the order of the Connections page. Ones that no longer exist are left out. */
-export function connectionsOf(agent: AgentOut, connections: ConnectionOut[] | undefined) {
-  return (connections ?? []).filter(connection => agent.connection_ids.includes(connection.id))
+export function connectionsOf(agent: Agent, connections: ConnectionOut[] | undefined) {
+  return (connections ?? []).filter(connection => agent.connectionIds.includes(connection.id))
 }
 
 const named = (connection: ConnectionOut) => `${connection.provider_name} · ${connection.label}`

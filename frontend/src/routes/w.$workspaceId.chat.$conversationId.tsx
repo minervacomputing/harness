@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { BotIcon, FolderIcon } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
-import { cancelRunMutation, getConversationOptions, listAgentsOptions, listConnectionsOptions } from '@/api/@tanstack/react-query.gen'
+import { cancelRunMutation, getConversationOptions, listConnectionsOptions } from '@/api/@tanstack/react-query.gen'
 import { AppIcons, connectionsOf } from '@/components/agents/agent-apps'
 import { AgentIntro } from '@/components/chat/agent-intro'
 import { FilesPanel } from '@/components/chat/files-panel'
@@ -14,6 +14,7 @@ import { Thread } from '@/components/chat/thread'
 import { Button } from '@/components/ui/button'
 import { ErrorNote, Spinner } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
+import { orpc } from '@/lib/orpc'
 import { ACTIVE_STATUSES, useRunEvents } from '@/lib/run-stream'
 import { documentTitle } from '@/lib/title'
 import { cn } from '@/lib/utils'
@@ -35,7 +36,7 @@ function ConversationPage() {
   const queryClient = useQueryClient()
   const path = { workspace_id: workspaceId, conversation_id: conversationId }
   const conversation = useQuery(getConversationOptions({ path }))
-  const agents = useQuery(listAgentsOptions({ path: { workspace_id: workspaceId } }))
+  const agents = useQuery(orpc.agents.list.queryOptions({ input: { workspaceId } }))
   const connections = useQuery(listConnectionsOptions({ path: { workspace_id: workspaceId } }))
   const agent = agents.data?.find(a => a.id === conversation.data?.agent_id)
   const title = conversation.data?.title || 'New conversation'

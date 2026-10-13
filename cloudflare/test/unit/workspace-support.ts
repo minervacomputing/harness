@@ -371,7 +371,7 @@ export async function defaultAgent(h: Harness): Promise<string> {
 export async function attach(h: Harness, agentId: string, connectionIds: string[], caller: Caller = ADA): Promise<void> {
 	const agent = await h.core.getAgent(caller, agentId);
 	if (agent === null) throw new Error("No such agent.");
-	const updated = await h.core.updateAgent(caller, agentId, { name: agent.name, instructions: agent.instructions, connection_ids: connectionIds });
+	const updated = await h.core.updateAgent(caller, agentId, { name: agent.name, instructions: agent.instructions, connectionIds });
 	if (!updated.ok) throw new Error(updated.refusal.detail);
 }
 

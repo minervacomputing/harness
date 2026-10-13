@@ -10,8 +10,8 @@ import { workspaceObject } from "../../src/addressing.ts";
 import { PROVIDER_NETWORK } from "../../src/api/providers.ts";
 import { STILL_STOPPING, afterRevocation } from "../../src/api/members.ts";
 import { uuid7 } from "../../src/lib/random.ts";
-import type { Caller, RefusalCode, Role } from "../../src/shared/rpc.ts";
-import { type Answer, Browser, installEmailLog, signedIn } from "./accounts-helpers.ts";
+import { type Caller, REFUSALS, type RefusalCode, type Role } from "../../src/shared/rpc.ts";
+import { type Answer, Browser, contractError, installEmailLog, signedIn } from "./accounts-helpers.ts";
 
 installEmailLog();
 
@@ -130,18 +130,24 @@ function expectRefusal(answer: Answer, status: number, code: RefusalCode, detail
 	expect([answer.status, answer.body], JSON.stringify(answer.body)).toEqual([status, { code, detail }]);
 }
 
+/** A refusal of the contract's routes (the agents), or of the router. */
+function expectDeclared(answer: Answer, code: RefusalCode, message: string): void {
+	expect([answer.status, answer.body], JSON.stringify(answer.body)).toEqual([REFUSALS[code], contractError(code, message)]);
+}
+
 describe("membership", () => {
 	test("another user's workspace is 401 on every route, before validation and the handler", async () => {
 		const ada = await account();
 		const grace = await account("grace");
-		for (const path of ["agents", "connections", "connectors"]) {
+		for (const path of ["connections", "connectors"]) {
 			expectRefusal(await ada.browser.call("GET", `/api/workspaces/${grace.ws}/${path}`), 401, "UNAUTHORIZED", "Unauthorized");
 		}
+		expectDeclared(await ada.browser.call("GET", `/api/workspaces/${grace.ws}/agents`), "UNAUTHORIZED", "Unauthorized");
 		// The body would be refused, but the workspace is checked first.
-		expectRefusal(await ada.browser.call("POST", `/api/workspaces/${grace.ws}/agents`, { name: "" }), 401, "UNAUTHORIZED", "Unauthorized");
+		expectDeclared(await ada.browser.call("POST", `/api/workspaces/${grace.ws}/agents`, { name: "" }), "UNAUTHORIZED", "Unauthorized");
 		expectRefusal(await ada.browser.call("POST", `/api/workspaces/${grace.ws}/connections/web/enable`), 401, "UNAUTHORIZED", "Unauthorized");
 		// A workspace that does not exist answers the same; a non-UUID one matches no route.
-		expectRefusal(await ada.browser.call("GET", `/api/workspaces/${uuid7()}/agents`), 401, "UNAUTHORIZED", "Unauthorized");
+		expectDeclared(await ada.browser.call("GET", `/api/workspaces/${uuid7()}/agents`), "UNAUTHORIZED", "Unauthorized");
 		expect((await ada.browser.call("GET", "/api/workspaces/not-a-uuid/agents")).status).toBe(404);
 		expect((await ada.browser.call("GET", `/api/workspaces/${grace.ws.toUpperCase()}/agents`)).status).toBe(404);
 	});
@@ -149,11 +155,11 @@ describe("membership", () => {
 	test("without a session it is 401, and an unsafe request from another site is 403 first", async () => {
 		const ada = await account();
 		const anonymous = new Browser();
-		expectRefusal(await anonymous.call("GET", `/api/workspaces/${ada.ws}/agents`), 401, "UNAUTHORIZED", "Unauthorized");
-		expectRefusal(await anonymous.call("POST", `/api/workspaces/${ada.ws}/agents`, { name: "A" }), 401, "UNAUTHORIZED", "Unauthorized");
-		expectRefusal(await anonymous.call("POST", `/api/workspaces/${ada.ws}/agents`, { name: "A" }, { Origin: "https://evil.example" }), 403, "CROSS_SITE", "Cross-site request refused.");
-		expectRefusal(await ada.browser.call("POST", `/api/workspaces/${ada.ws}/agents`, { name: "A" }, { Origin: "null" }), 403, "CROSS_SITE", "Cross-site request refused.");
-		expectRefusal(await ada.browser.call("DELETE", `/api/workspaces/${ada.ws}/agents/${uuid7()}`, undefined, { Origin: "https://evil.example" }), 403, "CROSS_SITE", "Cross-site request refused.");
+		expectDeclared(await anonymous.call("GET", `/api/workspaces/${ada.ws}/agents`), "UNAUTHORIZED", "Unauthorized");
+		expectDeclared(await anonymous.call("POST", `/api/workspaces/${ada.ws}/agents`, { name: "A" }), "UNAUTHORIZED", "Unauthorized");
+		expectDeclared(await anonymous.call("POST", `/api/workspaces/${ada.ws}/agents`, { name: "A" }, { Origin: "https://evil.example" }), "CROSS_SITE", "Cross-site request refused.");
+		expectDeclared(await ada.browser.call("POST", `/api/workspaces/${ada.ws}/agents`, { name: "A" }, { Origin: "null" }), "CROSS_SITE", "Cross-site request refused.");
+		expectDeclared(await ada.browser.call("DELETE", `/api/workspaces/${ada.ws}/agents/${uuid7()}`, undefined, { Origin: "https://evil.example" }), "CROSS_SITE", "Cross-site request refused.");
 	});
 
 	test("sign-up provisions one agent and the layers; each user sees only their own workspace's agents", async () => {
@@ -162,7 +168,7 @@ describe("membership", () => {
 		const mine = await ada.browser.call("GET", `/api/workspaces/${ada.ws}/agents`);
 		const theirs = await grace.browser.call("GET", `/api/workspaces/${grace.ws}/agents`);
 		expect(mine.body).toEqual([
-			{ id: expect.any(String), name: "Assistant", instructions: "You are a helpful, concise assistant.", connection_ids: [], can_edit: true, created_at: expect.stringMatching(/Z$/) },
+			{ id: expect.any(String), name: "Assistant", instructions: "You are a helpful, concise assistant.", connectionIds: [], canEdit: true, createdAt: expect.stringMatching(/Z$/) },
 		]);
 		expect(theirs.body).toHaveLength(1);
 		expect(theirs.body[0].id).not.toBe(mine.body[0].id);
@@ -198,7 +204,7 @@ describe("agents", () => {
 		for (const codeMode of [true, false]) {
 			const created = await ada.browser.call("POST", url, { name: "Scripted", instructions: "Be brief.", code_mode: codeMode });
 			expect(created.status).toBe(201);
-			expect(created.body).toEqual({ id: expect.any(String), name: "Scripted", instructions: "Be brief.", connection_ids: [], can_edit: true, created_at: expect.any(String) });
+			expect(created.body).toEqual({ id: expect.any(String), name: "Scripted", instructions: "Be brief.", connectionIds: [], canEdit: true, createdAt: expect.any(String) });
 		}
 		const listed = (await ada.browser.call("GET", url)).body;
 		expect(listed.map((agent: { name: string }) => agent.name)).toEqual(["Assistant", "Scripted", "Scripted"]);
@@ -210,32 +216,33 @@ describe("agents", () => {
 		expect(replaced.body).toMatchObject({ id, name: "Renamed", instructions: "" });
 		expect(replaced.body).not.toHaveProperty("code_mode");
 		expect((await ada.browser.call("DELETE", `${url}/${id}`)).status).toBe(204);
-		expectRefusal(await ada.browser.call("GET", `${url}/${id}`), 404, "NOT_FOUND", "Not found.");
-		expectRefusal(await ada.browser.call("PUT", `${url}/${id}`, { name: "Gone" }), 404, "NOT_FOUND", "Not found.");
-		expectRefusal(await ada.browser.call("DELETE", `${url}/${id}`), 404, "NOT_FOUND", "Not found.");
+		expectDeclared(await ada.browser.call("GET", `${url}/${id}`), "NOT_FOUND", "Not found.");
+		expectDeclared(await ada.browser.call("PUT", `${url}/${id}`, { name: "Gone" }), "NOT_FOUND", "Not found.");
+		expectDeclared(await ada.browser.call("DELETE", `${url}/${id}`), "NOT_FOUND", "Not found.");
 	});
 
 	test("the last agent stays", async () => {
 		const ada = await account();
 		const url = `/api/workspaces/${ada.ws}/agents`;
 		const [only] = (await ada.browser.call("GET", url)).body;
-		expectRefusal(await ada.browser.call("DELETE", `${url}/${only.id}`), 422, "KEEP_ONE_AGENT", "Keep at least one agent.");
+		expectDeclared(await ada.browser.call("DELETE", `${url}/${only.id}`), "KEEP_ONE_AGENT", "Keep at least one agent.");
 	});
 
 	test("bodies are validated after the membership check", async () => {
 		const ada = await account();
 		const url = `/api/workspaces/${ada.ws}/agents`;
+		const invalid = (message: string, issues: { path: (string | number)[]; message: string; code: string }[]) => ({ ...contractError("VALIDATION_FAILED", message), data: { issues } });
 		const long = await ada.browser.call("POST", url, { name: "x".repeat(121) });
-		expect([long.status, long.body.code]).toEqual([422, "VALIDATION_FAILED"]);
-		expect(long.body.detail).toEqual([{ type: "too_big", loc: ["body", "name"], msg: "Too big: expected string to have <=120 characters" }]);
-		expect((await ada.browser.call("POST", url, {})).body.detail).toEqual([{ type: "invalid_type", loc: ["body", "name"], msg: "Invalid input: expected string, received undefined" }]);
-		expect((await ada.browser.call("POST", url, { name: "" })).body.detail[0].type).toBe("too_small");
-		expect((await ada.browser.call("POST", url, { name: "A", connection_ids: ["nope"] })).body.detail).toEqual([{ type: "invalid_format", loc: ["body", "connection_ids", 0], msg: "Invalid UUID" }]);
+		const tooBig = "Too big: expected string to have <=120 characters";
+		expect([long.status, long.body]).toEqual([422, invalid(`name: ${tooBig}`, [{ path: ["name"], message: tooBig, code: "too_big" }])]);
+		expect((await ada.browser.call("POST", url, {})).body.data.issues).toEqual([{ path: ["name"], message: "Invalid input: expected string, received undefined", code: "invalid_type" }]);
+		expect((await ada.browser.call("POST", url, { name: "" })).body.data.issues[0].code).toBe("too_small");
+		expect((await ada.browser.call("POST", url, { name: "A", connectionIds: ["nope"] })).body.data.issues).toEqual([{ path: ["connectionIds", 0], message: "Invalid UUID", code: "invalid_format" }]);
 		const many = Array.from({ length: 21 }, () => uuid7());
-		expect((await ada.browser.call("POST", url, { name: "A", connection_ids: many })).body.detail[0].type).toBe("too_big");
-		// An empty body is refused as a whole; one that is not JSON is 400.
-		expect((await ada.browser.call("POST", url, "")).body).toEqual({ code: "VALIDATION_FAILED", detail: [{ type: "invalid_type", loc: ["body"], msg: "Invalid input: expected a JSON body" }] });
-		expectRefusal(await ada.browser.call("POST", url, "{nope"), 400, "INVALID_JSON", "The body is not valid JSON.");
+		expect((await ada.browser.call("POST", url, { name: "A", connectionIds: many })).body.data.issues[0].code).toBe("too_big");
+		// An empty body is no fields at all; one that is not JSON is 400.
+		expect((await ada.browser.call("POST", url, "")).body.data.issues[0].path).toEqual(["name"]);
+		expectDeclared(await ada.browser.call("POST", url, "{nope"), "INVALID_JSON", "The body is not valid JSON.");
 	});
 
 	test("added connections must be the caller's and usable; ones the agent has may stay", async () => {
@@ -244,18 +251,18 @@ describe("agents", () => {
 		const url = `/api/workspaces/${ada.ws}/agents`;
 		// An agent can only use connections of its user: not another workspace's.
 		const foreign = await todoistConnection(grace);
-		expectRefusal(await ada.browser.call("POST", url, { name: "Sneaky", connection_ids: [foreign] }), 422, "CHOOSE_CONNECTIONS", "Choose connections you can use.");
+		expectDeclared(await ada.browser.call("POST", url, { name: "Sneaky", connectionIds: [foreign] }), "CHOOSE_CONNECTIONS", "Choose connections you can use.");
 		// An id in another spelling of the UUID is the same connection.
 		const mine = await todoistConnection(ada);
-		const created = await ada.browser.call("POST", url, { name: "Helper", connection_ids: [mine.toUpperCase(), mine.replaceAll("-", "")] });
+		const created = await ada.browser.call("POST", url, { name: "Helper", connectionIds: [mine.toUpperCase(), mine.replaceAll("-", "")] });
 		expect(created.status).toBe(201);
-		expect(created.body.connection_ids).toEqual([mine]);
+		expect(created.body.connectionIds).toEqual([mine]);
 		// An agent keeps a connection that needs reconnecting.
 		await object(ada.ws).markUnauthorized(mine, 1);
 		const agent = `${url}/${created.body.id}`;
-		expect((await ada.browser.call("PUT", agent, { name: "Renamed", connection_ids: [mine] })).status).toBe(200);
-		expect((await ada.browser.call("PUT", agent, { name: "Renamed", connection_ids: [] })).status).toBe(200);
-		expectRefusal(await ada.browser.call("PUT", agent, { name: "Renamed", connection_ids: [mine] }), 422, "CHOOSE_CONNECTIONS", "Choose connections you can use.");
+		expect((await ada.browser.call("PUT", agent, { name: "Renamed", connectionIds: [mine] })).status).toBe(200);
+		expect((await ada.browser.call("PUT", agent, { name: "Renamed", connectionIds: [] })).status).toBe(200);
+		expectDeclared(await ada.browser.call("PUT", agent, { name: "Renamed", connectionIds: [mine] }), "CHOOSE_CONNECTIONS", "Choose connections you can use.");
 	});
 
 	test("changing an agent's connections stops its active runs; a rename does not", async () => {
@@ -264,16 +271,16 @@ describe("agents", () => {
 		const ws = object(ada.ws);
 		const [assistant] = (await ada.browser.call("GET", `/api/workspaces/${ada.ws}/agents`)).body;
 		const url = `/api/workspaces/${ada.ws}/agents/${assistant.id}`;
-		expect((await ada.browser.call("PUT", url, { name: "Assistant", connection_ids: [connection] })).status).toBe(200);
+		expect((await ada.browser.call("PUT", url, { name: "Assistant", connectionIds: [connection] })).status).toBe(200);
 		const conversation = await ws.createConversation(caller(ada), assistant.id);
 		if (!conversation.ok) throw new Error(conversation.refusal.detail);
 		const runId = uuid7();
 		const begun = await ws.beginRun({ runId, conversationId: conversation.value.id, userId: ada.userId, agentId: assistant.id, uploadIds: [], folder: { bytes: 0, entries: 0 } });
 		expect(begun.ok).toBe(true);
 		expect(await ws.activate(runId)).toEqual({ state: "active" });
-		expect((await ada.browser.call("PUT", url, { name: "Renamed", connection_ids: [connection] })).status).toBe(200);
+		expect((await ada.browser.call("PUT", url, { name: "Renamed", connectionIds: [connection] })).status).toBe(200);
 		expect(await ws.activate(runId)).toEqual({ state: "active" });
-		expect((await ada.browser.call("PUT", url, { name: "Renamed", connection_ids: [] })).status).toBe(200);
+		expect((await ada.browser.call("PUT", url, { name: "Renamed", connectionIds: [] })).status).toBe(200);
 		expect(await ws.activate(runId)).toEqual({ state: "revoked", reason: "agent_connections_changed" });
 	});
 
@@ -288,16 +295,16 @@ describe("agents", () => {
 		]);
 		const url = `/api/workspaces/${team}/agents`;
 		const [assistant] = (await ada.browser.call("GET", url)).body;
-		// Every member sees the workspace's agents; can_edit says who may change them.
-		expect((await grace.browser.call("GET", url)).body).toEqual([{ ...assistant, can_edit: false }]);
-		expect((await alan.browser.call("GET", url)).body).toEqual([{ ...assistant, can_edit: true }]);
-		expectRefusal(await grace.browser.call("PUT", `${url}/${assistant.id}`, { name: "Mine" }), 403, "CANNOT_CHANGE_AGENT", "You cannot change this agent.");
-		expectRefusal(await grace.browser.call("DELETE", `${url}/${assistant.id}`), 403, "CANNOT_CHANGE_AGENT", "You cannot change this agent.");
+		// Every member sees the workspace's agents; canEdit says who may change them.
+		expect((await grace.browser.call("GET", url)).body).toEqual([{ ...assistant, canEdit: false }]);
+		expect((await alan.browser.call("GET", url)).body).toEqual([{ ...assistant, canEdit: true }]);
+		expectDeclared(await grace.browser.call("PUT", `${url}/${assistant.id}`, { name: "Mine" }), "CANNOT_CHANGE_AGENT", "You cannot change this agent.");
+		expectDeclared(await grace.browser.call("DELETE", `${url}/${assistant.id}`), "CANNOT_CHANGE_AGENT", "You cannot change this agent.");
 		expect((await alan.browser.call("PUT", `${url}/${assistant.id}`, { name: "Admin's" })).status).toBe(200);
 		const own = await grace.browser.call("POST", url, { name: "Grace's" });
-		expect(own.body.can_edit).toBe(true);
+		expect(own.body.canEdit).toBe(true);
 		expect((await grace.browser.call("PUT", `${url}/${own.body.id}`, { name: "Still Grace's" })).status).toBe(200);
-		expect((await ada.browser.call("GET", `${url}/${own.body.id}`)).body.can_edit).toBe(true);
+		expect((await ada.browser.call("GET", `${url}/${own.body.id}`)).body.canEdit).toBe(true);
 		expect((await grace.browser.call("DELETE", `${url}/${own.body.id}`)).status).toBe(204);
 	});
 });
@@ -525,9 +532,9 @@ describe("connectors and connections", () => {
 		expect((await ada.browser.call("GET", `${base}/${shared}/access`)).body.grants).toEqual([]);
 		// An admin may remove it; it leaves every agent.
 		const [assistant] = (await ada.browser.call("GET", `/api/workspaces/${team}/agents`)).body;
-		expect((await ada.browser.call("PUT", `/api/workspaces/${team}/agents/${assistant.id}`, { name: "A", connection_ids: [shared] })).status).toBe(200);
+		expect((await ada.browser.call("PUT", `/api/workspaces/${team}/agents/${assistant.id}`, { name: "A", connectionIds: [shared] })).status).toBe(200);
 		expect((await alan.browser.call("DELETE", `${base}/${shared}`)).status).toBe(204);
-		expect((await ada.browser.call("GET", `/api/workspaces/${team}/agents/${assistant.id}`)).body.connection_ids).toEqual([]);
+		expect((await ada.browser.call("GET", `/api/workspaces/${team}/agents/${assistant.id}`)).body.connectionIds).toEqual([]);
 		expectRefusal(await ada.browser.call("GET", `${base}/${shared}/access`), 404, "NOT_FOUND", "Not found.");
 		expect((await ada.browser.call("DELETE", `${base}/${personal}`)).status).toBe(204);
 	});

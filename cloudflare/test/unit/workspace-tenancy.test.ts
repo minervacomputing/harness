@@ -1,8 +1,8 @@
 // The Workspace's provisioning, agents and conversation index, over node:sqlite: tenancy as Workspace
 // invariants, and agents.
 
+import { NewAgent } from "@minerva/contract";
 import { describe, expect, test } from "vitest";
-import type { AgentIn } from "../../src/shared/api.ts";
 import { CHOOSE_CONNECTIONS, DEFAULT_AGENT, KEEP_ONE_AGENT, NOT_FOUND } from "../../src/workspace/core.ts";
 import { ADA, GRACE, OTHER, USER, WORKSPACE, attach, connectMixed, conversation, database, defaultAgent, harness } from "./workspace-support.ts";
 
@@ -15,7 +15,7 @@ describe("provisioning", () => {
 		]);
 		const agents = await h.core.listAgents(ADA);
 		expect(agents).toEqual([
-			{ id: expect.any(String), name: DEFAULT_AGENT.name, instructions: DEFAULT_AGENT.instructions, connection_ids: [], can_edit: true, created_at: new Date(h.timers.now()).toISOString() },
+			{ id: expect.any(String), name: DEFAULT_AGENT.name, instructions: DEFAULT_AGENT.instructions, connectionIds: [], canEdit: true, createdAt: new Date(h.timers.now()).toISOString() },
 		]);
 		expect(h.sql.exec("SELECT owner_id, model_alias FROM agents")).toEqual([{ owner_id: USER, model_alias: "default" }]);
 		expect(h.core.workspaceRef()).toEqual({ id: WORKSPACE, jurisdiction: null });
@@ -32,7 +32,7 @@ describe("provisioning", () => {
 	test("two workspaces see only their own agents", async () => {
 		const mine = await harness();
 		const theirs = await harness({ db: database() });
-		await theirs.core.createAgent(GRACE, { name: "Theirs" });
+		await theirs.core.createAgent(GRACE, NewAgent.parse({ name: "Theirs" }));
 		expect((await mine.core.listAgents(ADA)).map((agent) => agent.name)).toEqual(["Assistant"]);
 		expect((await theirs.core.listAgents(GRACE)).map((agent) => agent.name)).toEqual(["Assistant", "Theirs"]);
 	});
@@ -49,33 +49,33 @@ describe("provisioning", () => {
 describe("agents", () => {
 	test("every member sees every agent; only its owner or an admin may change it", async () => {
 		const h = await harness();
-		const created = await h.core.createAgent(GRACE, { name: "Grace's", instructions: "Be brief." });
+		const created = await h.core.createAgent(GRACE, NewAgent.parse({ name: "Grace's", instructions: "Be brief." }));
 		expect(created.ok).toBe(true);
 		if (!created.ok) return;
-		expect(created.value).toMatchObject({ name: "Grace's", instructions: "Be brief.", connection_ids: [], can_edit: true });
+		expect(created.value).toMatchObject({ name: "Grace's", instructions: "Be brief.", connectionIds: [], canEdit: true });
 		const seen = await h.core.listAgents({ userId: USER, role: "member" });
-		expect(seen.map((agent) => [agent.name, agent.can_edit])).toEqual([
+		expect(seen.map((agent) => [agent.name, agent.canEdit])).toEqual([
 			["Assistant", true],
 			["Grace's", false],
 		]);
-		expect(await h.core.updateAgent({ userId: USER, role: "member" }, created.value.id, { name: "Mine now" })).toEqual({
+		expect(await h.core.updateAgent({ userId: USER, role: "member" }, created.value.id, NewAgent.parse({ name: "Mine now" }))).toEqual({
 			ok: false,
 			refusal: { code: "CANNOT_CHANGE_AGENT", detail: "You cannot change this agent." },
 		});
 		expect(await h.core.deleteAgent({ userId: USER, role: "member" }, created.value.id)).toMatchObject({ ok: false, refusal: { code: "CANNOT_CHANGE_AGENT" } });
 		// An owner or admin may.
-		expect(await h.core.updateAgent({ userId: USER, role: "admin" }, created.value.id, { name: "Renamed" })).toMatchObject({ ok: true });
+		expect(await h.core.updateAgent({ userId: USER, role: "admin" }, created.value.id, NewAgent.parse({ name: "Renamed" }))).toMatchObject({ ok: true });
 		expect(await h.core.getAgent(ADA, "0199a000-0000-7000-8000-0000000000ff")).toBeNull();
-		expect(await h.core.updateAgent(ADA, "0199a000-0000-7000-8000-0000000000ff", { name: "x" })).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: NOT_FOUND } });
+		expect(await h.core.updateAgent(ADA, "0199a000-0000-7000-8000-0000000000ff", NewAgent.parse({ name: "x" }))).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: NOT_FOUND } });
 	});
 
 	test("unknown body fields from an older client never reach the answer", async () => {
 		const h = await harness();
 		for (const value of [true, false]) {
-			const created = await h.core.createAgent(ADA, { name: "Scripted", code_mode: value } as AgentIn);
-			expect(created.ok && Object.keys(created.value).sort()).toEqual(["can_edit", "connection_ids", "created_at", "id", "instructions", "name"]);
+			const created = await h.core.createAgent(ADA, NewAgent.parse({ name: "Scripted", code_mode: value }));
+			expect(created.ok && Object.keys(created.value).sort()).toEqual(["canEdit", "connectionIds", "createdAt", "id", "instructions", "name"]);
 		}
-		const updated = await h.core.updateAgent(ADA, await defaultAgent(h), { name: "Assistant", code_mode: false } as AgentIn);
+		const updated = await h.core.updateAgent(ADA, await defaultAgent(h), NewAgent.parse({ name: "Assistant", code_mode: false }));
 		expect(updated.ok && "code_mode" in updated.value.agent).toBe(false);
 	});
 
@@ -83,9 +83,9 @@ describe("agents", () => {
 		const h = await harness();
 		const agent = await defaultAgent(h);
 		const connection = await connectMixed(h, {});
-		await h.core.updateAgent(ADA, agent, { name: "A", instructions: "Do things.", connection_ids: [connection] });
-		const replaced = await h.core.updateAgent(ADA, agent, { name: "B" });
-		expect(replaced.ok && replaced.value.agent).toMatchObject({ name: "B", instructions: "", connection_ids: [] });
+		await h.core.updateAgent(ADA, agent, NewAgent.parse({ name: "A", instructions: "Do things.", connectionIds: [connection] }));
+		const replaced = await h.core.updateAgent(ADA, agent, NewAgent.parse({ name: "B" }));
+		expect(replaced.ok && replaced.value.agent).toMatchObject({ name: "B", instructions: "", connectionIds: [] });
 	});
 
 	test("agents can only use connections of their user", async () => {
@@ -93,12 +93,12 @@ describe("agents", () => {
 		const graces = await connectMixed(h, {}, { caller: GRACE, account: "acct-grace" });
 		const foreign = "0199a000-0000-7000-8000-0000000000ee";
 		for (const ids of [[graces], [foreign]]) {
-			expect(await h.core.createAgent(ADA, { name: "Sneaky", connection_ids: ids })).toEqual({ ok: false, refusal: { code: "CHOOSE_CONNECTIONS", detail: CHOOSE_CONNECTIONS } });
+			expect(await h.core.createAgent(ADA, NewAgent.parse({ name: "Sneaky", connectionIds: ids }))).toEqual({ ok: false, refusal: { code: "CHOOSE_CONNECTIONS", detail: CHOOSE_CONNECTIONS } });
 		}
 		// The same id twice is one connection.
 		const mine = await connectMixed(h, {});
-		const created = await h.core.createAgent(ADA, { name: "Fine", connection_ids: [mine, mine] });
-		expect(created.ok && created.value.connection_ids).toEqual([mine]);
+		const created = await h.core.createAgent(ADA, NewAgent.parse({ name: "Fine", connectionIds: [mine, mine] }));
+		expect(created.ok && created.value.connectionIds).toEqual([mine]);
 	});
 
 	test("an agent keeps a connection that needs reconnecting, and cannot add it back", async () => {
@@ -107,23 +107,23 @@ describe("agents", () => {
 		const connection = await connectMixed(h, {});
 		await attach(h, agent, [connection]);
 		h.sql.exec("UPDATE connections SET status = 'error'");
-		expect(await h.core.updateAgent(ADA, agent, { name: "Renamed", connection_ids: [connection] })).toMatchObject({ ok: true });
-		expect(await h.core.updateAgent(ADA, agent, { name: "Renamed", connection_ids: [] })).toMatchObject({ ok: true });
+		expect(await h.core.updateAgent(ADA, agent, NewAgent.parse({ name: "Renamed", connectionIds: [connection] }))).toMatchObject({ ok: true });
+		expect(await h.core.updateAgent(ADA, agent, NewAgent.parse({ name: "Renamed", connectionIds: [] }))).toMatchObject({ ok: true });
 		// Adding it back is adding a connection, which must be usable.
-		expect(await h.core.updateAgent(ADA, agent, { name: "Renamed", connection_ids: [connection] })).toEqual({ ok: false, refusal: { code: "CHOOSE_CONNECTIONS", detail: CHOOSE_CONNECTIONS } });
+		expect(await h.core.updateAgent(ADA, agent, NewAgent.parse({ name: "Renamed", connectionIds: [connection] }))).toEqual({ ok: false, refusal: { code: "CHOOSE_CONNECTIONS", detail: CHOOSE_CONNECTIONS } });
 	});
 
 	test("an agent keeps someone else's connection it already has", async () => {
 		const h = await harness();
-		const agent = await h.core.createAgent(GRACE, { name: "Shared work" });
+		const agent = await h.core.createAgent(GRACE, NewAgent.parse({ name: "Shared work" }));
 		if (!agent.ok) throw new Error("not created");
 		const graces = await connectMixed(h, {}, { caller: GRACE, account: "acct-grace" });
 		await attach(h, agent.value.id, [graces], GRACE);
 		// An admin edits Grace's agent: her connection may stay, but the admin cannot add one of her others.
 		const admin = { userId: USER, role: "admin" } as const;
-		expect(await h.core.updateAgent(admin, agent.value.id, { name: "Renamed", connection_ids: [graces] })).toMatchObject({ ok: true });
+		expect(await h.core.updateAgent(admin, agent.value.id, NewAgent.parse({ name: "Renamed", connectionIds: [graces] }))).toMatchObject({ ok: true });
 		const another = await connectMixed(h, {}, { caller: GRACE, account: "acct-grace-2" });
-		expect(await h.core.updateAgent(admin, agent.value.id, { name: "Renamed", connection_ids: [graces, another] })).toMatchObject({ ok: false, refusal: { code: "CHOOSE_CONNECTIONS" } });
+		expect(await h.core.updateAgent(admin, agent.value.id, NewAgent.parse({ name: "Renamed", connectionIds: [graces, another] }))).toMatchObject({ ok: false, refusal: { code: "CHOOSE_CONNECTIONS" } });
 	});
 
 	test("deleting a connection removes it from every agent", async () => {
@@ -132,14 +132,14 @@ describe("agents", () => {
 		const connection = await connectMixed(h, {});
 		await attach(h, agent, [connection]);
 		expect(await h.core.deleteConnection(ADA, connection)).toEqual({ ok: true, value: { revocation: "acknowledged" } });
-		expect((await h.core.getAgent(ADA, agent))?.connection_ids).toEqual([]);
+		expect((await h.core.getAgent(ADA, agent))?.connectionIds).toEqual([]);
 	});
 
 	test("the last agent cannot be deleted; deleting one removes its conversations", async () => {
 		const h = await harness();
 		const first = await defaultAgent(h);
 		expect(await h.core.deleteAgent(ADA, first)).toEqual({ ok: false, refusal: { code: "KEEP_ONE_AGENT", detail: KEEP_ONE_AGENT } });
-		const second = await h.core.createAgent(ADA, { name: "Second" });
+		const second = await h.core.createAgent(ADA, NewAgent.parse({ name: "Second" }));
 		if (!second.ok) throw new Error("not created");
 		const chat = await conversation(h, ADA, second.value.id);
 		const kept = await conversation(h, ADA, first);

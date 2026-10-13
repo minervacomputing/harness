@@ -14,7 +14,7 @@ import { type DownloadEnv, serveDownload } from "../../src/files/download.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import type { FakeScript } from "../../src/model/fake.ts";
 import { WORKSPACE_PORTS } from "../../src/workspace/workspace.ts";
-import { type Answer, Browser, ORIGIN, installEmailLog, signedIn } from "./accounts-helpers.ts";
+import { type Answer, Browser, ORIGIN, contractError, installEmailLog, signedIn } from "./accounts-helpers.ts";
 
 installEmailLog();
 
@@ -573,7 +573,7 @@ describe("uploads", () => {
 			browser.fetcher(new Request(`${ORIGIN}${path}${query}`, { method, headers: { "CF-Connecting-IP": browser.ip, ...headers }, body: method === "GET" ? undefined : "hello" }));
 		const cookies = (browser: Browser) => [...browser.cookies].map(([name, value]) => `${name}=${value}`).join("; ");
 		const good = (browser: Browser) => ({ Cookie: cookies(browser), Origin: ORIGIN });
-		const refused = { code: "CROSS_SITE", detail: "Cross-site request refused." };
+		const refused = contractError("CROSS_SITE", "Cross-site request refused.");
 		const usePost = { code: "METHOD_NOT_ALLOWED", detail: "Use POST." };
 		const nameIt = { code: "FILE_NAME_MISSING", detail: "Name the file with ?name=." };
 		const unauthorized = { code: "UNAUTHORIZED", detail: "Unauthorized" };

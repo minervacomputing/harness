@@ -4,7 +4,7 @@
 // them, from our CSRF check (http/router.ts).
 
 import { settings } from "../config.ts";
-import { json, notFound, unauthorized } from "../http/errors.ts";
+import { json, noRoute, unauthorized } from "../http/errors.ts";
 import type { App } from "../http/router.ts";
 import { currentSession, handleAuth, withSessionCookies } from "./auth.ts";
 import { checkMailer } from "./emails.ts";
@@ -41,7 +41,7 @@ export function accountRoutes(app: App): void {
 
 	// `make seed` for the local Worker, run by scripts/seed.ts; absent outside debug.
 	app.post("/api/dev/seed", async (c) => {
-		if (!settings(c.env).debug) return notFound();
+		if (!settings(c.env).debug) return noRoute();
 		return json(200, { lines: await seed(c.env) });
 	});
 }

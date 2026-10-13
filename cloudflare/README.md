@@ -10,6 +10,7 @@ The experiment of [docs/plans/cloudflare.md](../docs/plans/cloudflare.md): the s
 | `scripts/` | Deploy (`deploy.ts`, with `resources.ts`, `schema-check.ts`, `bundle.ts`, `builds.ts`), reset (`reset.ts`), secrets (`secrets.ts`), the frontend's assets (`assets.ts`), offline development |
 | `migrations/` | D1 `minerva-cf`: accounts and the workspace directory |
 | `src/index.ts`, `src/http/` | The router, error shapes, CSRF by origin, security headers, the JSON body reader, `/assets/`, the probe |
+| `../contract/` | The API's contract (oRPC and zod): each endpoint's method, path, input, output and errors. `src/api/orpc.ts` serves it under `/api/` after the routes not moved yet, and the frontend's client is derived from it |
 | `src/lib/` | JSON parsing (`parseJson`, which the runtime's key bug needs), canonical JSON (RFC 8785) for hashes, AES-GCM encryption at rest, zod records without prototype keys, text, dates, HTML, hosts and addresses, hashes, ids, the SQL interface every object's logic runs on (`sql.ts`) and its schema steps |
 | `src/workspace/` | The Workspace Durable Object: connections and credentials with refresh, layers, grants, agents, the run registry, the revocation outbox, uploads, deletion (`core.ts` over `lib/sql.ts`; `workspace.ts` is the object) |
 | `src/conversation/` | The Conversation Durable Object: messages, runs, attempts and the gate, events and the stream's WebSocket, history replay, the run's tools, PiHarness, the local tools and their checkpoint barrier (`local.ts`, `local-run.ts`); `ports.ts` wires the Workspace, the executor, the ledger and the model |
@@ -30,8 +31,7 @@ The experiment of [docs/plans/cloudflare.md](../docs/plans/cloudflare.md): the s
 Node 24, pnpm 10 and the `cf` CLI, signed in (`cf auth login`).
 
 ```sh
-pnpm install
-pnpm --dir ../frontend install
+pnpm install   # the repository's pnpm workspace: this Worker, ../frontend and ../contract, one lockfile at the root
 pnpm secrets   # writes ../.env.cloudflare (mode 600) with fresh secrets; never prints them
 ```
 

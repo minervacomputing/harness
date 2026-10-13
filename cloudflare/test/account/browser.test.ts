@@ -675,8 +675,8 @@ describe("the browser walk on the test Worker", () => {
 		await page.getByRole("checkbox", { name: /Notes/ }).check();
 		await button("Save").click();
 		await button("Save").waitFor({ state: "hidden" });
-		const agent = await api<{ connection_ids: string[] }>("GET", `/api/workspaces/${workspaceId}/agents/${agentId}`);
-		expect(agent.body.connection_ids).toEqual([notes?.id]);
+		const agent = await api<{ connectionIds: string[] }>("GET", `/api/workspaces/${workspaceId}/agents/${agentId}`);
+		expect(agent.body.connectionIds).toEqual([notes?.id]);
 		expectClean();
 	}, 90_000);
 

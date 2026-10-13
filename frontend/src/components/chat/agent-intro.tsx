@@ -1,9 +1,9 @@
 /** What a chat with no messages yet shows: who the agent is and what it can reach. */
+import type { Agent } from '@minerva/contract'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { BotIcon } from 'lucide-react'
 import { listConnectionsOptions } from '@/api/@tanstack/react-query.gen'
-import type { AgentOut } from '@/api/types.gen'
 import { AppIcons, AttentionList, connectionsOf } from '@/components/agents/agent-apps'
 import { setupOf } from '@/components/connections/summary'
 import { Button } from '@/components/ui/button'
@@ -22,8 +22,8 @@ export function AgentIntro({
 }: {
   workspaceId: string
   /** Undefined while loading. */
-  agents: AgentOut[] | undefined
-  agent: AgentOut | undefined
+  agents: Agent[] | undefined
+  agent: Agent | undefined
   /** The link named an agent that does not exist (any more). */
   unknown?: boolean
   /** Set when the user may pick the agent, which is only before the first message. */
@@ -86,7 +86,7 @@ export function AgentIntro({
       )}
       {unknown && <Notice className="text-left">The agent in this link no longer exists. Choose another one to start chatting.</Notice>}
       {agent &&
-        (agent.connection_ids.length ? (
+        (agent.connectionIds.length ? (
           <>
             {connections.isPending && <Spinner className="mx-auto" />}
             {connections.error && <ErrorNote className="text-left">{errorMessage(connections.error, 'Could not load its apps.')}</ErrorNote>}

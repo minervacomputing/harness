@@ -7,11 +7,11 @@ import { env, exports } from "cloudflare:workers";
 import { describe, expect, test } from "vitest";
 import { MAX_JSON_BODY, readJson } from "../../src/http/body.ts";
 import { uuid7 } from "../../src/lib/random.ts";
-import { Browser, ORIGIN, installEmailLog, signedIn } from "./accounts-helpers.ts";
+import { Browser, ORIGIN, contractError, installEmailLog, signedIn } from "./accounts-helpers.ts";
 
 installEmailLog();
 
-const REFUSED = { code: "CROSS_SITE", detail: "Cross-site request refused." };
+const REFUSED = contractError("CROSS_SITE", "Cross-site request refused.");
 const EVIL = "https://evil.example";
 
 interface Account {
@@ -70,7 +70,7 @@ describe("CSRF by origin", () => {
 		const body = JSON.stringify({ name: "A" });
 		expect(await raw(agents, { headers: { ...JSON_TYPE, Origin: EVIL }, body })).toEqual({ status: 403, body: REFUSED });
 		expect(await raw(agents, { headers: JSON_TYPE, body })).toEqual({ status: 403, body: REFUSED });
-		expect(await raw(agents, { headers: { ...JSON_TYPE, Origin: ORIGIN }, body })).toEqual({ status: 401, body: { code: "UNAUTHORIZED", detail: "Unauthorized" } });
+		expect(await raw(agents, { headers: { ...JSON_TYPE, Origin: ORIGIN }, body })).toEqual({ status: 401, body: contractError("UNAUTHORIZED", "Unauthorized") });
 	});
 
 	test("a path no route matches is checked before its 404", async () => {
@@ -131,7 +131,7 @@ describe("JSON bodies", () => {
 			const headers: Record<string, string> = { Origin: ORIGIN, ...(type === null ? {} : { "Content-Type": type }) };
 			const answer = await raw(agents, { browser: a.browser, headers, body });
 			expect([type, answer.status], JSON.stringify(answer.body)).toEqual([type, status]);
-			if (status === 415) expect(answer.body).toEqual({ code: "UNSUPPORTED_MEDIA_TYPE", detail: "Send the body as application/json." });
+			if (status === 415) expect(answer.body).toEqual(contractError("UNSUPPORTED_MEDIA_TYPE", "Send the body as application/json."));
 			// Not a member: 401 before the body's type is looked at.
 			expect([type, (await raw(agents, { browser: grace.browser, headers, body })).status]).toEqual([type, 401]);
 		}
@@ -141,7 +141,7 @@ describe("JSON bodies", () => {
 		const a = await account();
 		const agents = `/api/workspaces/${a.ws}/agents`;
 		const headers = { ...JSON_TYPE, Origin: ORIGIN };
-		const tooLarge = { status: 413, body: { code: "PAYLOAD_TOO_LARGE", detail: "The request is too large." } };
+		const tooLarge = { status: 413, body: contractError("PAYLOAD_TOO_LARGE", "The request is too large.") };
 		expect(await raw(agents, { browser: a.browser, headers: { ...headers, "Content-Length": String(MAX_JSON_BODY + 1) }, body: "{}" })).toEqual(tooLarge);
 		const chunk = new TextEncoder().encode(" ".repeat(1024 * 1024));
 		let sent = 0;
@@ -152,7 +152,7 @@ describe("JSON bodies", () => {
 			},
 		});
 		expect(await raw(agents, { browser: a.browser, headers, body: streamed })).toEqual(tooLarge);
-		const unparseable = { status: 400, body: { code: "INVALID_JSON", detail: "The body is not valid JSON." } };
+		const unparseable = { status: 400, body: contractError("INVALID_JSON", "The body is not valid JSON.") };
 		expect(await raw(agents, { browser: a.browser, headers, body: new Uint8Array([0x7b, 0x22, 0x6e, 0x61, 0x6d, 0x65, 0x22, 0x3a, 0x22, 0xff, 0x22, 0x7d]) })).toEqual(unparseable);
 		expect(await raw(agents, { browser: a.browser, headers, body: '{"name":' })).toEqual(unparseable);
 		const escaped = await raw(agents, { browser: a.browser, headers, body: '{"n\\u0061me": "Escaped"}' });

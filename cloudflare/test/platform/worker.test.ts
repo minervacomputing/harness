@@ -27,7 +27,7 @@ describe("the router in workerd", () => {
 
 	test("an unknown API path is 404 NOT_FOUND", async () => {
 		const response = await exports.default.fetch("http://localhost/api/workspaces", { method: "POST", headers: { Origin: "http://localhost" } });
-		expect([response.status, await response.json()]).toEqual([404, { code: "NOT_FOUND", detail: "Not found." }]);
+		expect([response.status, await response.json()]).toEqual([404, { defined: true, code: "NOT_FOUND", status: 404, message: "Not found." }]);
 	});
 
 	test("every unsafe route refuses a request from another site, or from nowhere", async () => {
@@ -39,7 +39,7 @@ describe("the router in workerd", () => {
 			const path = route.path.replace(/:[a-z]+(\{(?:[^{}]|\{[^{}]*\})*\})?/gi, "0199a000-0000-7000-8000-000000000001");
 			for (const headers of [{}, { Origin: "https://evil.example" }] as Record<string, string>[]) {
 				const response = await exports.default.fetch(`http://localhost${path}`, { method: route.method, headers });
-				expect([response.status, await response.json()], `${route.method} ${route.path}`).toEqual([403, { code: "CROSS_SITE", detail: "Cross-site request refused." }]);
+				expect([response.status, await response.json()], `${route.method} ${route.path}`).toEqual([403, { defined: true, code: "CROSS_SITE", status: 403, message: "Cross-site request refused." }]);
 			}
 		}
 	});
@@ -49,7 +49,7 @@ describe("the router in workerd", () => {
 		const retired = await saltedHmacHex("minerva.probe", "probe", env.MINERVA_SECRET_KEY, "SHA-256");
 		for (const headers of [{}, { [PROBE_HEADER]: "0".repeat(64) }, { [PROBE_HEADER]: retired }, { "X-Minerva-Probe": retired }] as Record<string, string>[]) {
 			const response = await exports.default.fetch("http://localhost/api/probe", { headers });
-			expect([response.status, await response.json()]).toEqual([404, { code: "NOT_FOUND", detail: "Not found." }]);
+			expect([response.status, await response.json()]).toEqual([404, { defined: true, code: "NOT_FOUND", status: 404, message: "Not found." }]);
 		}
 	});
 

@@ -5,7 +5,7 @@ import { createRoot } from 'react-dom/client'
 import { meOptions } from '@/api/@tanstack/react-query.gen'
 import type { MeOut } from '@/api/types.gen'
 import { type AuthState, authQuery } from '@/lib/auth'
-import { installClientInterceptors } from '@/lib/http'
+import { installClientInterceptors, retryQuery } from '@/lib/http'
 import { installPreloadErrorReload } from '@/lib/reload'
 import '@/lib/theme'
 import { routeTree } from '@/routeTree.gen'
@@ -15,7 +15,7 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 10_000,
-      retry: (count, error) => count < 2 && !(typeof error === 'object' && error && 'detail' in error),
+      retry: retryQuery,
     },
   },
 })

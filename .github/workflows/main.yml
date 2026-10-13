@@ -49,11 +49,11 @@ jobs:
           cache: pnpm
           cache-dependency-path: |
             worker/pnpm-lock.yaml
-            frontend/pnpm-lock.yaml
+            pnpm-lock.yaml
       - name: Install
         run: |
           (cd backend && uv sync --frozen)
-          (cd worker && pnpm install --frozen-lockfile)
+          (cd worker && pnpm install --frozen-lockfile --ignore-workspace)
           (cd frontend && pnpm install --frozen-lockfile)
       - run: make lint
       - run: make test
