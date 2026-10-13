@@ -616,7 +616,7 @@ describe("the browser walk on the test Worker", () => {
 		await page.waitForURL(/\/login\/code/);
 		await field("Sign-in code").waitFor();
 		await screenshot("login-code");
-		await field("Sign-in code").fill(await emailedCode(EMAIL, /Sign-In Code/));
+		await field("Sign-in code").fill(await emailedCode(EMAIL, /sign-in code/));
 		await paced("/sign-in/email-otp");
 		await button("Sign in").click();
 		await twoFactor(recovery[0] as string);
@@ -632,7 +632,7 @@ describe("the browser walk on the test Worker", () => {
 		await button("Send reset code").click();
 		await field("Reset code").waitFor();
 		await screenshot("reset-password-code");
-		await field("Reset code").fill(await emailedCode(EMAIL, /Password Reset Code/));
+		await field("Reset code").fill(await emailedCode(EMAIL, /password reset code/));
 		await field("New password").fill(NEW_PASSWORD);
 		await button("Set new password").click();
 		await page.waitForURL(/\/login/);

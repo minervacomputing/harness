@@ -1,4 +1,5 @@
-// The account emails, for the site "Minerva" at the host of MINERVA_SITE_URL.
+// The account emails: an email code to sign in (which also signs up a new address) and one to reset a
+// password, for the site "Minerva" at the host of MINERVA_SITE_URL.
 //
 // With MINERVA_DEBUG on, an email is written to the Worker's log; otherwise it goes through the Email Sending binding `EMAIL`. A
 // Worker with neither refuses every request (`checkMailer`), so a deploy cannot silently drop codes. Codes
@@ -6,7 +7,7 @@
 
 import { settings, type SettingsEnv } from "../config.ts";
 
-export type EmailKind = "verify_signup" | "verify_login" | "already_exists" | "login_code" | "unknown_account" | "password_reset_code";
+export type CodeKind = "sign-in" | "password-reset";
 
 export interface Email {
 	to: string;
@@ -18,51 +19,17 @@ export interface MailEnv extends SettingsEnv {
 	EMAIL?: SendEmail;
 }
 
-const SUBJECTS: Record<EmailKind, string> = {
-	verify_signup: "Please Confirm Your Email Address",
-	verify_login: "Please Confirm Your Email Address",
-	already_exists: "Account Already Exists",
-	login_code: "Sign-In Code",
-	unknown_account: "Unknown Account",
-	password_reset_code: "Password Reset Code",
+const PURPOSE: Record<CodeKind, { subject: string; action: string }> = {
+	"sign-in": { subject: "Your Minerva sign-in code", action: "sign in to Minerva" },
+	"password-reset": { subject: "Your Minerva password reset code", action: "reset your Minerva password" },
 };
 
-const IGNORE = "This mail can be safely ignored if you did not initiate this action.";
-
-function content(kind: EmailKind, to: string, site: { url: string; domain: string }, code: string | undefined): string {
-	switch (kind) {
-		case "verify_signup":
-		case "verify_login":
-			return (
-				`You're receiving this email because user ${to} has given your email address to register an account on ${site.domain}.\n\n` +
-				`Your email verification code is listed below. Please enter it in your open browser window.\n\n${code}`
-			);
-		case "already_exists":
-			return (
-				"You are receiving this email because you or someone else tried to signup for an\naccount using email address:\n\n" +
-				`${to}\n\n` +
-				"However, an account using that email address already exists.  In case you have\n" +
-				"forgotten about this, please use the password forgotten procedure to recover\nyour account:\n\n" +
-				`${site.url}/reset-password`
-			);
-		case "login_code":
-			return `Your sign-in code is listed below. Please enter it in your open browser window.\n\n${code}\n\n${IGNORE}`;
-		case "unknown_account":
-			return (
-				`You are receiving this email because you, or someone else, tried to access an account with email ${to}. ` +
-				"However, we do not have any record of such an account in our database.\n\n" +
-				`${IGNORE}\n\nIf it was you, you can sign up for an account using the link below.\n\n${site.url}/signup`
-			);
-		case "password_reset_code":
-			return `Your password reset code is listed below. Please enter it in your open browser window.\n\n${code}\n\n${IGNORE}`;
-	}
-}
-
-/** An email to `to`, who is named by their address. */
-export function render(kind: EmailKind, to: string, siteUrl: string, code?: string): Email {
-	const site = { url: siteUrl, domain: new URL(siteUrl).host };
-	const body = `Hello from Minerva!\n\n${content(kind, to, site, code)}\n\nThank you for using Minerva!\n${site.domain}`;
-	return { to, subject: `[Minerva] ${SUBJECTS[kind]}`, body };
+/** An email with a code that works for `minutes`. */
+export function codeEmail(kind: CodeKind, to: string, code: string, siteUrl: string, minutes: number): Email {
+	const { subject, action } = PURPOSE[kind];
+	const host = new URL(siteUrl).host;
+	const body = `Enter this code to ${action} at ${host}:\n\n${code}\n\nIt expires in ${minutes} minutes. If you did not ask for it, you can ignore this email.\n`;
+	return { to, subject, body };
 }
 
 /** `Name <address>` or a bare address, as MINERVA_EMAIL_FROM is written. */

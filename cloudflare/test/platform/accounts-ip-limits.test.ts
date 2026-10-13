@@ -2,8 +2,8 @@
 // passes, a burst is refused, and the guards against guessing do not rest on these numbers.
 
 import { describe, expect, test } from "vitest";
+import { BROWSER_ROUTES } from "../../src/accounts/auth.ts";
 import { IP_RULES } from "../../src/accounts/ip-limits.ts";
-import { BROWSER_ROUTES } from "../../src/accounts/policy.ts";
 import { Browser, PASSWORD, enableTwoFactor, installEmailLog, lastCode, signedIn, totp, uniqueEmail } from "./accounts-helpers.ts";
 
 installEmailLog();
@@ -55,12 +55,10 @@ describe("a person's pace passes", () => {
 		expect((await statuses(20, (b) => b.auth("/sign-out", {}), new Browser())).every((status) => status !== 429)).toBe(true);
 	});
 
-	test("ten code requests in a minute for different addresses, and ten sign-ups, are answered", async () => {
+	test("ten code requests in a minute for different addresses, new ones signing up among them, are answered", async () => {
 		const requests = await statuses(10, (browser) => browser.auth("/email-otp/send-verification-otp", { email: uniqueEmail(), type: "sign-in" }));
 		expect(requests).toEqual(Array(10).fill(200));
-		const signUps = await statuses(10, (browser) => browser.auth("/sign-up/email", { email: uniqueEmail(), password: PASSWORD, name: "" }));
-		expect(signUps.every((status) => status !== 429)).toBe(true);
-	}, 30_000);
+	});
 });
 
 describe("a burst is refused", () => {
@@ -93,7 +91,7 @@ describe("a burst is refused", () => {
 	});
 
 	test("the eleventh code or second factor checked in a row is refused", async () => {
-		const wrongCode = await statuses(11, (browser) => browser.auth("/email-otp/verify-email", { email: uniqueEmail(), otp: "000000" }));
+		const wrongCode = await statuses(11, (browser) => browser.auth("/sign-in/email-otp", { email: uniqueEmail(), otp: "000000" }));
 		expect(wrongCode.slice(0, 10).every((status) => status !== 429)).toBe(true);
 		expect(wrongCode[10]).toBe(429);
 		const wrongSecondFactor = await statuses(11, (browser) => browser.auth("/two-factor/verify-totp", { code: "000000" }));

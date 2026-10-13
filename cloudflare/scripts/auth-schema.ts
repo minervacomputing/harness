@@ -5,7 +5,7 @@
 
 import { DatabaseSync } from "node:sqlite";
 import { betterAuth } from "better-auth";
-import { type AuthPolicy, authOptions } from "../src/accounts/auth-options.ts";
+import { authOptions } from "../src/accounts/auth-options.ts";
 
 const unused = async (): Promise<never> => {
 	throw new Error("Not available while generating the schema.");
@@ -18,11 +18,9 @@ export const auth = betterAuth(
 		debug: true,
 		// An empty SQLite database: the CLI compares against it, so it prints every table.
 		database: new DatabaseSync(":memory:"),
-		hashCode: unused,
+		allowSignUp: false,
 		sendCode: unused,
 		userCreated: unused,
 		sessionCreated: unused,
-		rehashed: unused,
-		policy: new Proxy({}, { get: () => unused }) as AuthPolicy,
 	}),
 );

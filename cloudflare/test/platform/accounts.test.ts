@@ -1,20 +1,20 @@
 // Accounts on Better Auth in local workerd over D1 (plan: The web API): sign-up and recoverable
 // provisioning, the session our routes read, /api/me, passwords, rate limits, the CSRF boundary between
-// Better Auth's routes and ours, tenancy and the seed. Security policy (two-factor across sign-in
-// methods, account-scoped limits, revocation) is tested in accounts-policy.test.ts.
+// Better Auth's routes and ours, tenancy and the seed. The sign-in, sign-up, two-factor and password flows
+// are in accounts-flows.test.ts.
 
 import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, test, vi } from "vitest";
+import { hashPassword } from "better-auth/crypto";
 import { currentSession, getAuth } from "../../src/accounts/auth.ts";
-import { HASHING, hashPassword } from "../../src/accounts/passwords.ts";
 import { provision } from "../../src/accounts/provision.ts";
 import { SEED_ACCOUNTS, seed } from "../../src/accounts/seed.ts";
 import { workspaceObject } from "../../src/addressing.ts";
 import { MAX_JSON_BODY } from "../../src/http/body.ts";
 import { createApp } from "../../src/http/router.ts";
 import { uuid7 } from "../../src/lib/random.ts";
-import { Browser, ORIGIN, PASSWORD, contractError, emailsTo, installEmailLog, lastCode, signUp, signedIn, uniqueEmail, withProductionHashing } from "./accounts-helpers.ts";
+import { Browser, ORIGIN, PASSWORD, contractError, emailsTo, installEmailLog, signInWithCode, signedIn, uniqueEmail } from "./accounts-helpers.ts";
 
 installEmailLog();
 
@@ -64,12 +64,13 @@ async function bareUser(email = uniqueEmail()): Promise<string> {
 }
 
 describe("sign-up and provisioning", () => {
-	test("sign-up provisions the organization, workspace and object; the address must be verified before signing in", async () => {
-		const { browser, email } = await signUp();
-		expect(emailsTo(email).map((sent) => sent.subject)).toEqual(["[Minerva] Please Confirm Your Email Address"]);
-		const id = await userId(email);
+	test("an email code signs a new address up, provisioned; its password comes after", async () => {
+		const email = uniqueEmail();
+		const { browser, userId: id } = await signInWithCode(email);
+		expect(emailsTo(email).map((sent) => sent.subject)).toEqual(["Your Minerva sign-in code"]);
 		const made = await provisioned(id);
 		expect(made).toMatchObject(COMPLETE);
+		expect(await db.prepare(`SELECT "emailVerified" AS verified FROM "user" WHERE id = ?`).bind(id).first()).toEqual({ verified: 1 });
 
 		const stub = workspaceObject(env, { id: made.workspaceId!, jurisdiction: null });
 		await runInDurableObject(stub, (_, state) => {
@@ -82,42 +83,29 @@ describe("sign-up and provisioning", () => {
 			expect(agents).toEqual([{ owner_id: id, name: "Assistant" }]);
 		});
 
-		const early = await browser.auth("/sign-in/email", { email, password: PASSWORD });
-		expect(early.status).toBe(403);
-		expect(early.body.code).toBe("EMAIL_NOT_VERIFIED");
-		// No session: only the cookie that binds the password to this browser until the address is verified.
-		expect(early.response.headers.getSetCookie().map((cookie) => cookie.split("=")[0])).toEqual(["minerva.email_binding"]);
-
-		// Verifying signs in.
-		expect((await browser.auth("/email-otp/verify-email", { email, otp: lastCode(email) })).status).toBe(200);
 		const me = await browser.call("GET", "/api/me");
 		expect(me.status).toBe(200);
 		expect(me.body).toEqual({
 			user: { id, email, name: "", role: "user" },
 			workspaces: [{ id: made.workspaceId, name: "Personal", kind: "personal", role: "owner" }],
 		});
+		// No password yet: none signs in, until the signed-in user sets one.
+		expect((await new Browser().auth("/sign-in/email", { email, password: PASSWORD })).status).toBe(401);
+		expect((await browser.call("POST", "/api/me/password", { password: PASSWORD })).status).toBe(204);
+		expect((await new Browser().auth("/sign-in/email", { email, password: PASSWORD })).status).toBe(200);
 	});
 
-	test("the password is stored in our scrypt format, with production's parameters", () =>
-		withProductionHashing(async () => {
-			const { email } = await signUp();
-			const row = await db.prepare(`SELECT password FROM account WHERE "userId" = ? AND "providerId" = 'credential'`).bind(await userId(email)).first<{ password: string }>();
-			expect(row?.password).toMatch(/^scrypt\$15\$8\$3\$[A-Za-z0-9+/]{22}\$[A-Za-z0-9+/]{43}$/);
-		}));
-
-	test("closed sign-up creates nothing", async () => {
-		const closed = getAuth({ ...env, MINERVA_SIGNUP_OPEN: "false" });
-		const email = uniqueEmail();
-		await expect(closed.api.signUpEmail({ body: { email, password: PASSWORD, name: "" } })).rejects.toThrow();
-		expect(await db.prepare(`SELECT count(*) AS n FROM "user" WHERE email = ?`).bind(email).first()).toEqual({ n: 0 });
+	test("the password is stored in Better Auth's format", async () => {
+		const { userId: id } = await signedIn();
+		const row = await db.prepare(`SELECT password FROM account WHERE "userId" = ? AND "providerId" = 'credential'`).bind(id).first<{ password: string }>();
+		expect(row?.password).toMatch(/^[0-9a-f]{32}:[0-9a-f]{128}$/);
 	});
 
-	test("an email code never creates an account", async () => {
-		const browser = new Browser();
+	test("our own server code builds Better Auth with sign-up off: a valid code for a new address makes nobody", async () => {
+		const auth = getAuth(env);
 		const email = uniqueEmail();
-		await browser.auth("/email-otp/send-verification-otp", { email, type: "sign-in" });
-		const answer = await browser.auth("/sign-in/email-otp", { email, otp: "000000" });
-		expect(answer.status).toBeGreaterThanOrEqual(400);
+		const otp = await auth.api.createVerificationOTP({ body: { email, type: "sign-in" } });
+		await expect(auth.api.signInEmailOTP({ body: { email, otp } })).rejects.toThrow();
 		expect(await db.prepare(`SELECT count(*) AS n FROM "user" WHERE email = ?`).bind(email).first()).toEqual({ n: 0 });
 	});
 
@@ -193,8 +181,7 @@ describe("sessions and /api/me", () => {
 
 	test("the session cookie is host-only, HttpOnly and Lax; a cookie the client chose is never a session", async () => {
 		const forged = "attacker-chosen-token";
-		const { browser: first, email } = await signUp();
-		await first.auth("/email-otp/verify-email", { email, otp: lastCode(email) });
+		const { email } = await signedIn();
 		const browser = new Browser();
 		browser.cookies.set("minerva.session_token", forged);
 		expect((await browser.call("GET", "/api/me")).status).toBe(401);
@@ -238,51 +225,13 @@ describe("sessions and /api/me", () => {
 });
 
 describe("passwords and rate limits", () => {
-	test("an unknown address answers as a wrong password and costs a hash", async () => {
+	test("an unknown address answers as a wrong password", async () => {
 		const { email } = await signedIn();
-		// A new hash reads the parameters it gets (passwords.ts HASHING); verifying a stored one does not.
-		const cheap = HASHING.params;
-		let hashes = 0;
-		Object.defineProperty(HASHING, "params", { configurable: true, get: () => (hashes++, cheap) });
-		const attempt = async (address: string) => {
-			hashes = 0;
-			const answer = await new Browser().auth("/sign-in/email", { email: address, password: "not the passphrase" });
-			return { answer, hashed: hashes };
-		};
-		let wrong: Awaited<ReturnType<typeof attempt>>;
-		let unknown: Awaited<ReturnType<typeof attempt>>;
-		try {
-			wrong = await attempt(email);
-			unknown = await attempt(uniqueEmail());
-		} finally {
-			Object.defineProperty(HASHING, "params", { configurable: true, writable: true, value: cheap });
-		}
-		expect(unknown.answer.status).toBe(wrong.answer.status);
-		expect(unknown.answer.body).toEqual(wrong.answer.body);
-		expect(wrong.hashed).toBe(0);
-		expect(unknown.hashed).toBeGreaterThan(0);
+		const wrong = await new Browser().auth("/sign-in/email", { email, password: "not the passphrase" });
+		const unknown = await new Browser().auth("/sign-in/email", { email: uniqueEmail(), password: "not the passphrase" });
+		expect([unknown.status, unknown.body]).toEqual([wrong.status, wrong.body]);
+		expect(wrong.status).toBe(401);
 	});
-
-	test("a hash with older scrypt parameters is replaced when it verifies; sessions stay", () =>
-		withProductionHashing(async () => {
-			const { browser: before, email, userId: id } = await signedIn();
-			const old = await hashPassword(PASSWORD, { logN: 10, r: 8, p: 1 });
-			await db.prepare(`UPDATE account SET password = ? WHERE "userId" = ?`).bind(old, id).run();
-			// Writing a hash is a password change as far as sessions go: the session made before it ends.
-			expect((await before.call("GET", "/api/me")).status).toBe(401);
-			// A session made while the old hash is stored (by an email code, which checks no password)...
-			const browser = new Browser();
-			expect((await browser.auth("/email-otp/send-verification-otp", { email, type: "sign-in" })).status).toBe(200);
-			expect((await browser.auth("/sign-in/email-otp", { email, otp: lastCode(email) })).status).toBe(200);
-			const stored = async () => (await db.prepare(`SELECT password FROM account WHERE "userId" = ?`).bind(id).first<{ password: string }>())?.password;
-			expect((await new Browser().auth("/sign-in/email", { email, password: "wrong passphrase" })).status).toBe(401);
-			expect(await stored()).toBe(old);
-			expect((await new Browser().auth("/sign-in/email", { email, password: PASSWORD })).status).toBe(200);
-			expect(await stored()).toMatch(/^scrypt\$15\$8\$3\$/);
-			// ...keeps working after the rehash: its stamp moved to the new hash with it.
-			expect((await browser.call("GET", "/api/me")).status).toBe(200);
-		}),
-	);
 
 	test("sign-in attempts are limited per IP and counted in D1", async () => {
 		const browser = new Browser();
@@ -376,8 +325,7 @@ describe("tenancy", () => {
 	test("two users' workspaces see only their own agent", async () => {
 		const agents = [];
 		for (const name of ["ada", "grace"]) {
-			const { email } = await signUp(uniqueEmail(name));
-			const id = await userId(email);
+			const { userId: id } = await signedIn(uniqueEmail(name));
 			const { workspaceId } = await provisioned(id);
 			const listed = await workspaceObject(env, { id: workspaceId!, jurisdiction: null }).listAgents({ userId: id, role: "owner" });
 			expect(listed).toHaveLength(1);

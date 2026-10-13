@@ -3,7 +3,7 @@
 //
 // - the contract's, `{"defined": true, "code": …, "status": …, "message": …}` (`errorAnswer`): every route of
 //   the contract, and what the router answers before or instead of a route (CSRF, the declared body cap, no
-//   such route, a crash, too many session cookies);
+//   such route, a crash);
 // - `{"code": …, "detail": …}` (`refused`): the Hono routes not yet moved.
 //
 // Better Auth answers /api/auth in its own format. Every JSON response is `no-store`.

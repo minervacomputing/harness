@@ -2,14 +2,13 @@
 // change. Every admin route reads the caller's role from D1, and every change requires it again in its
 // own statement, so a role removed a moment ago counts, even for a request already past the first check.
 
-import type { Context } from "hono";
 import { z } from "zod";
 import { readBody } from "../api/input.ts";
 import { settings } from "../config.ts";
-import { HttpError, json, notFound, refused, unauthorized } from "../http/errors.ts";
+import { HttpError, json, notFound, refused } from "../http/errors.ts";
 import { UUID } from "../http/paths.ts";
-import type { App, AppEnv } from "../http/router.ts";
-import { type CurrentSession, currentSession, withSessionCookies } from "./auth.ts";
+import type { App } from "../http/router.ts";
+import { type CurrentSession, sessionRoute, signedIn } from "./auth.ts";
 import { ADMINS_ONLY, ALREADY_SET_UP, INVALID_KEY, LAST_ADMIN, NO_SUCH_USER, claimSetup, isSetUp, setupKeyValid, signupOverride } from "./instance.ts";
 
 const SetupIn = z.object({ key: z.string().min(1).max(500) });
@@ -20,12 +19,6 @@ interface AdminOut {
 	id: string;
 	email: string;
 	name: string;
-}
-
-/** The signed-in user, or the anonymous 401. */
-function signedIn(session: CurrentSession): NonNullable<CurrentSession["user"]> {
-	if (!session.user) throw new HttpError(unauthorized());
-	return session.user;
 }
 
 /** The SQL condition that the caller (the next parameter) is an admin: in each change's own statement, so a role removed meanwhile counts. */
@@ -48,21 +41,6 @@ async function settingsOut(env: Env): Promise<Response> {
 async function adminsOut(env: Env): Promise<Response> {
 	const rows = await env.DB.prepare(`SELECT id, email, name FROM "user" WHERE role = 'admin' ORDER BY "createdAt", id`).all<AdminOut>();
 	return json(200, rows.results);
-}
-
-/** A route that reads the session and answers with its cookies, whatever it throws. */
-function sessionRoute(handler: (env: Env, request: Request, session: CurrentSession, c: Context<AppEnv>) => Promise<Response>): (c: Context<AppEnv>) => Promise<Response> {
-	return async (c) => {
-		const session = await currentSession(c.env, c.req.raw);
-		let response: Response;
-		try {
-			response = await handler(c.env, c.req.raw, session, c);
-		} catch (error) {
-			if (!(error instanceof HttpError)) throw error;
-			response = error.response;
-		}
-		return withSessionCookies(response, session);
-	};
 }
 
 export function instanceRoutes(app: App): void {

@@ -162,7 +162,7 @@ describe("D1 enforces the accounts schema's rules", () => {
 	// Storage lasts for the whole file, so each test starts from empty tables.
 	beforeEach(async () => {
 		await env.DB.batch(
-			["oauth_flows", "memberships", "workspaces", "member", "organization", "session", "user", "rate_limits", "oauth_clients"].map((table) =>
+			["oauth_flows", "memberships", "workspaces", "member", "organization", "session", "user", "oauth_clients"].map((table) =>
 				env.DB.prepare(`DELETE FROM "${table}"`),
 			),
 		);

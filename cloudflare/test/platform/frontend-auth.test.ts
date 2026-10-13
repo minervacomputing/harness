@@ -7,8 +7,7 @@
 
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { useCheapHashing } from "./cheap-hashing.ts";
-import { Browser, ORIGIN, PASSWORD, installEmailLog, lastCode, emailsTo, nextTotp, totp, uniqueEmail } from "./accounts-helpers.ts";
+import { Browser, ORIGIN, PASSWORD, installEmailLog, lastCode, emailsTo, nextTotp, signInWithCode, totp, uniqueEmail } from "./accounts-helpers.ts";
 
 installEmailLog();
 
@@ -83,7 +82,6 @@ async function load(next = new Browser()): Promise<void> {
 		return browser.fetch(request);
 	});
 	vi.resetModules();
-	await useCheapHashing();
 	const [auth, client, account, tanstack] = await Promise.all([
 		// @ts-expect-error The frontend is outside this project's types; the vitest alias resolves it (vitest.platform.config.ts).
 		import("@/lib/auth.ts"),
@@ -124,10 +122,10 @@ async function failure(step: Promise<unknown>): Promise<{ message: string; field
 	return { message: (error as Error).message, fields: frontend.fieldErrors(error) };
 }
 
-/** Signs up and verifies through the client; verifying signs in. */
+/** A new account with a password, signed in in this page's browser: an email code, then the password. */
 async function newAccount(email = uniqueEmail()): Promise<string> {
-	expect(await frontend.auth.signup({ email, password: PASSWORD })).toEqual({ kind: "anonymous", pending: "verify-email" });
-	expect(await frontend.auth.verifyEmail({ code: lastCode(email) })).toEqual(signedIn);
+	await signInWithCode(email, {}, browser);
+	expect((await browser.call("POST", "/api/me/password", { password: PASSWORD })).status).toBe(204);
 	return email;
 }
 

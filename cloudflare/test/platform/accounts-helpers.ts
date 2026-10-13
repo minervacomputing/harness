@@ -1,9 +1,9 @@
-// Shared by the accounts platform tests: a browser with cookies, an Origin and an IP of its own, and the emails
-// written to the log (debug is on), from which the tests read codes. Better Auth's routes are at /api/auth.
+// Shared by the accounts platform tests: a browser with cookies, an Origin and an IP of its own, the emails
+// written to the log (debug is on), from which the tests read codes, and accounts made as the sign-up page
+// makes them. Better Auth's routes are at /api/auth.
 
-import { env, exports } from "cloudflare:workers";
+import { exports } from "cloudflare:workers";
 import { afterEach, beforeEach, expect, vi, type MockInstance } from "vitest";
-import { HASHING, SCRYPT } from "../../src/accounts/passwords.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { REFUSALS, type RefusalCode } from "../../src/shared/rpc.ts";
 
@@ -46,28 +46,6 @@ export function lastCode(address: string): string {
 	const code = sent ? /\n\n([0-9]{6})(\n|$)/.exec(sent.body)?.[1] : undefined;
 	if (!code) throw new Error(`No code was sent to ${address}`);
 	return code;
-}
-
-/**
- * Freezes the clock a second into a fresh fixed window (rate-limits.ts counts per address and per user in
- * fixed windows of 10 s to 300 s by `Date.now()`), so a test that counts attempts to the limit never
- * straddles two windows, whatever the time of day, and never waits for one. Only `Date` is faked; call
- * `vi.useRealTimers()` after the test.
- */
-export function freezeClockInWindow(): void {
-	const longest = 300_000;
-	vi.useFakeTimers({ toFake: ["Date"], now: (Math.floor(Date.now() / longest) + 1) * longest + 1_000 });
-}
-
-/** Runs a test with production's scrypt cost, for the tests of rehashing; the others hash cheaply (setup.ts). */
-export async function withProductionHashing<T>(run: () => Promise<T>): Promise<T> {
-	const cheap = HASHING.params;
-	HASHING.params = SCRYPT;
-	try {
-		return await run();
-	} finally {
-		HASHING.params = cheap;
-	}
 }
 
 export function uniqueEmail(name = "ada"): string {
@@ -135,21 +113,22 @@ export class Browser {
 	}
 }
 
-/** Signs up; the verification code is in the log. */
-export async function signUp(email = uniqueEmail(), password = PASSWORD): Promise<{ browser: Browser; email: string }> {
-	const browser = new Browser();
-	const answer = await browser.auth("/sign-up/email", { email, password, name: "" });
-	expect(answer.status, JSON.stringify(answer.body)).toBe(200);
-	return { browser, email };
+/** Signs in with an email code from a browser of its own (which signs up a new address while sign-up is open). */
+export async function signInWithCode(email: string, headers: Record<string, string> = {}, browser = new Browser()): Promise<{ browser: Browser; userId: string }> {
+	const sent = await browser.auth("/email-otp/send-verification-otp", { email, type: "sign-in" }, headers);
+	expect(sent.status, JSON.stringify(sent.body)).toBe(200);
+	const signedIn = await browser.auth("/sign-in/email-otp", { email, otp: lastCode(email) }, headers);
+	expect(signedIn.status, JSON.stringify(signedIn.body)).toBe(200);
+	expect(signedIn.body.token).toEqual(expect.any(String));
+	return { browser, userId: signedIn.body.user.id };
 }
 
-/** A verified, signed-in account: verifying in the browser that signed up signs in. */
-export async function signedIn(email = uniqueEmail()): Promise<{ browser: Browser; email: string; userId: string }> {
-	const { browser } = await signUp(email);
-	const verified = await browser.auth("/email-otp/verify-email", { email, otp: lastCode(email) });
-	expect(verified.status, JSON.stringify(verified.body)).toBe(200);
-	expect(verified.body.token).toEqual(expect.any(String));
-	return { browser, email, userId: verified.body.user.id };
+/** A new account, signed in, as the sign-up page makes it: an email code, then its first password. */
+export async function signedIn(email = uniqueEmail(), password = PASSWORD): Promise<{ browser: Browser; email: string; userId: string }> {
+	const { browser, userId } = await signInWithCode(email);
+	const set = await browser.call("POST", "/api/me/password", { password });
+	expect(set.status, JSON.stringify(set.body)).toBe(204);
+	return { browser, email, userId };
 }
 
 /** The session cookie's value in a browser (debug is on, so the name has no `__Secure-` prefix). */
@@ -179,17 +158,9 @@ export async function totp(uri: string, at = Date.now()): Promise<string> {
 	return String(value % 1_000_000).padStart(6, "0");
 }
 
-/**
- * The code for the next time step, which Better Auth still accepts: a code works once, so after the one
- * that turned two-factor on, a sign-in in the same 30 s needs the next.
- */
+/** The code for the next time step, which Better Auth still accepts (it allows one step either side). */
 export function nextTotp(uri: string): Promise<string> {
 	return totp(uri, Date.now() + 30_000);
-}
-
-/** Forgets the time steps the user's authenticator has used, as if they had passed (a test cannot wait 30 s). */
-export async function forgetUsedTotp(userId: string): Promise<void> {
-	await env.DB.prepare(`DELETE FROM totp_steps WHERE two_factor_id IN (SELECT id FROM "twoFactor" WHERE "userId" = ?)`).bind(userId).run();
 }
 
 /** Turns two-factor on for a signed-in browser's user: the TOTP URI and backup codes. */

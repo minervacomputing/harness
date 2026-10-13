@@ -6,8 +6,7 @@
 
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { useCheapHashing } from "./cheap-hashing.ts";
-import { Browser, ORIGIN, PASSWORD, installEmailLog, lastCode, uniqueEmail } from "./accounts-helpers.ts";
+import { Browser, ORIGIN, PASSWORD, installEmailLog, lastCode, signInWithCode, uniqueEmail } from "./accounts-helpers.ts";
 
 installEmailLog();
 
@@ -50,7 +49,6 @@ async function load(next = new Browser()): Promise<void> {
 	browser = next;
 	vi.stubGlobal("fetch", browser.fetch);
 	vi.resetModules();
-	await useCheapHashing();
 	const [authModule, authClient, instance, guards, http, generated] = await Promise.all([
 		// @ts-expect-error The frontend is outside this project's types; the vitest alias resolves it (vitest.platform.config.ts).
 		import("@/lib/auth.ts"),
@@ -119,11 +117,10 @@ async function failure(step: Promise<unknown>): Promise<unknown> {
 	throw new Error("The call did not fail");
 }
 
-/** Signs up and verifies through the client; the client is signed in after. */
+/** A new account, signed in by email code in this page's browser. */
 async function signedInUser(name = "ada"): Promise<string> {
 	const email = uniqueEmail(name);
-	await frontend.auth.signup({ email, password: PASSWORD });
-	expect(await frontend.auth.verifyEmail({ code: lastCode(email) })).toEqual({ kind: "signed-in" });
+	await signInWithCode(email, {}, browser);
 	return email;
 }
 
@@ -216,8 +213,7 @@ describe("the instance page's calls", () => {
 		const administrator = browser;
 		const colleague = uniqueEmail("grace");
 		await load();
-		await frontend.auth.signup({ email: colleague, password: PASSWORD });
-		await frontend.auth.verifyEmail({ code: lastCode(colleague) });
+		await signInWithCode(colleague, {}, browser);
 		await load(administrator);
 
 		expect(frontend.errorMessage(await failure(frontend.instance.addAdmin("nobody@example.com")))).toBe("No user has this email address.");

@@ -51,12 +51,6 @@ test("compatibility normalization decides who or what something is nowhere", () 
 	expect(normalizing.map(({ path }) => path).sort()).toEqual(["files/manifest.ts", "files/names.ts", "lib/text.ts", "sandbox/scan.ts"]);
 });
 
-test("nothing in src lowers the cost of password hashes", () => {
-	// The platform tests assign HASHING.params (test/platform/cheap-hashing.ts); a deployment never does.
-	const users = sourceCode().filter(({ code }) => /\bHASHING\s*\.\s*params\s*=[^=]/.test(code));
-	expect(users.map(({ path }) => path)).toEqual([]);
-});
-
 /**
  * What a module imports or re-exports, as TypeScript's own pre-processor reads it: `import … from`,
  * `export … from`, a bare `import "…"` (run for its side effects, as src/faults/index.ts is) and

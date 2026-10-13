@@ -8,11 +8,11 @@
 // browser walk downloads through minerva-cf-files-test, the deployed download origin). `web/get`, `web/get-many`
 // and `web/raw` fetch web addresses as the Web connector does (web.ts), for test/account/web-egress.test.ts.
 // `setup-reopen` deletes the instance's setup claim (not the admins it made), so each browser walk claims the
-// first-run setup through its page. `scrypt` hashes one password with the given parameters and nothing else,
-// so the request's CPU time is the hash's: how the scrypt parameters were measured on the edge.
+// first-run setup through its page. `password-hash` hashes one password with Better Auth's hasher and does
+// nothing else, so the request's CPU time is the hash's: how a password's cost is measured on the edge.
 
+import { hashPassword } from "better-auth/crypto";
 import { conversationObject, filesBucket, sandboxObject, workspaceObject } from "../addressing.ts";
-import { hashPassword } from "../accounts/passwords.ts";
 import type { GrantChange } from "../gateway/grants.ts";
 import { timingSafeEqual } from "../lib/hash.ts";
 import { serveDownload } from "../files/download.ts";
@@ -95,24 +95,13 @@ async function reopenSetup(db: D1Database): Promise<unknown> {
 	return { reopened: (deleted.meta.changes ?? 0) > 0 };
 }
 
-/** OWASP's equivalent scrypt settings (r 8, trading memory, 128 · r · N bytes, for CPU), all the measurement may ask for. */
-const OWASP_SCRYPT: ReadonlyArray<{ logN: number; r: number; p: number }> = [
-	{ logN: 17, r: 8, p: 1 },
-	{ logN: 16, r: 8, p: 2 },
-	{ logN: 15, r: 8, p: 3 },
-	{ logN: 14, r: 8, p: 5 },
-	{ logN: 13, r: 8, p: 10 },
-];
-
-/** One hash with one of OWASP's settings (or none, `rounds` 0, for the request's own cost), and the clocks around it. */
-async function timeScrypt(body: Body): Promise<unknown> {
-	const params = OWASP_SCRYPT.find((item) => item.logN === body.logN && item.r === body.r && item.p === body.p);
-	if (!params) return { refused: "Only OWASP's equivalent settings are measured." };
+/** One hash with Better Auth's hasher (or none, `rounds` 0, for the request's own cost), and the clocks around it. */
+async function timePasswordHash(body: Body): Promise<unknown> {
 	const rounds = body.rounds === 0 ? 0 : 1;
 	const wall = Date.now();
 	const perf = performance.now();
-	if (rounds) await hashPassword("a password for the measurement", params);
-	return { params, rounds, dateMs: Date.now() - wall, perfMs: performance.now() - perf };
+	if (rounds) await hashPassword("a password for the measurement");
+	return { rounds, dateMs: Date.now() - wall, perfMs: performance.now() - perf };
 }
 
 async function operation(op: string, body: Body, env: Env, exports: Cloudflare.Exports): Promise<unknown> {
@@ -123,7 +112,7 @@ async function operation(op: string, body: Body, env: Env, exports: Cloudflare.E
 	if (op === "web/get-many") return webGetMany(((body.urls ?? []) as Json[]).map(String), body.together === true);
 	if (op === "web/raw") return webRaw(String(body.url), typeof body.accept === "string" ? body.accept : null);
 	if (op === "setup-reopen") return reopenSetup(env.DB);
-	if (op === "scrypt") return timeScrypt(body);
+	if (op === "password-hash") return timePasswordHash(body);
 	const ref = body.workspace;
 	const caller: Caller = { userId: body.userId, role: "owner" };
 	const ws = workspaceOf(env, ref);
