@@ -5,8 +5,10 @@ import { newPassword, useAppForm } from '@/components/form'
 import { ErrorNote } from '@/components/ui/misc'
 import { auth, authQuery, fieldErrors, useAuthStep } from '@/lib/auth'
 import { redirectIfSignedIn } from '@/lib/guards'
+import { pageHead } from '@/lib/title'
 
 export const Route = createFileRoute('/reset-password')({
+  head: pageHead('Reset your password'),
   beforeLoad: async ({ context }) => {
     await redirectIfSignedIn(context.queryClient)
   },

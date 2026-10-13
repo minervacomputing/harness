@@ -9,8 +9,10 @@ import { Button } from '@/components/ui/button'
 import { Alert, ErrorNote, PageHeader } from '@/components/ui/misc'
 import { auth, authQuery, fieldErrors, useSignOut } from '@/lib/auth'
 import { setupQuery } from '@/lib/instance'
+import { pageHead } from '@/lib/title'
 
 export const Route = createFileRoute('/w/$workspaceId/account')({
+  head: pageHead('Account'),
   component: AccountPage,
 })
 

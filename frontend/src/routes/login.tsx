@@ -5,8 +5,10 @@ import { emailAddress, useAppForm } from '@/components/form'
 import { ErrorNote } from '@/components/ui/misc'
 import { auth, fieldErrors, useAuthStep } from '@/lib/auth'
 import { nextSearch, redirectIfSignedIn } from '@/lib/guards'
+import { pageHead } from '@/lib/title'
 
 export const Route = createFileRoute('/login')({
+  head: pageHead('Sign in'),
   validateSearch: nextSearch,
   beforeLoad: async ({ context }) => {
     await redirectIfSignedIn(context.queryClient)

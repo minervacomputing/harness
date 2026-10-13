@@ -11,11 +11,13 @@ import { Input, Label, Select, Textarea } from '@/components/ui/input'
 import { Alert, Badge, Checkbox, ErrorNote, Kbd, Notice, PageHeader, Progress, RadioGroup, RadioItem, Spinner, Status, Switch } from '@/components/ui/misc'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Segmented, SegmentedItem, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { pageHead } from '@/lib/title'
 import { cn } from '@/lib/utils'
 
 // Development only: every component in the design system, in both themes.
 // Keep this page up to date when you add or change a component (see .agents/skills/minerva-design).
 export const Route = createFileRoute('/dev/components')({
+  head: pageHead('Components'),
   beforeLoad: () => {
     if (!import.meta.env.DEV) throw notFound()
   },

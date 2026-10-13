@@ -8,9 +8,10 @@ import { useChatRuntime } from '@/components/chat/runtime'
 import { Thread } from '@/components/chat/thread'
 import { ErrorNote } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
-import { useDocumentTitle } from '@/lib/title'
+import { pageHead } from '@/lib/title'
 
 export const Route = createFileRoute('/w/$workspaceId/chat/')({
+  head: pageHead('New chat'),
   // ?agent=<id> starts the chat with that agent, for example from the Agents page.
   validateSearch: z.object({ agent: z.string().optional().catch(undefined) }),
   component: NewChat,
@@ -20,7 +21,6 @@ function NewChat() {
   const { workspaceId } = Route.useParams()
   const { agent: wanted } = Route.useSearch()
   const navigate = useNavigate()
-  useDocumentTitle('New chat')
   const agents = useQuery(listAgentsOptions({ path: { workspace_id: workspaceId } }))
   // An agent named in the link that no longer exists is not swapped for another one silently.
   const agent = wanted ? agents.data?.find(a => a.id === wanted) : agents.data?.[0]

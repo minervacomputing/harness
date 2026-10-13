@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Alert, ErrorNote, Notice, PageHeader, Spinner, Status } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
+import { pageHead } from '@/lib/title'
 import { cn } from '@/lib/utils'
 
 /**
@@ -37,6 +38,7 @@ const connectionsSearch = z.object({
 })
 
 export const Route = createFileRoute('/w/$workspaceId/connections')({
+  head: pageHead('Connections'),
   validateSearch: connectionsSearch,
   component: ConnectionsPage,
 })

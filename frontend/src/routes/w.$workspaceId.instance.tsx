@@ -11,8 +11,10 @@ import { Segmented, SegmentedItem } from '@/components/ui/tabs'
 import { requireInstanceAdmin } from '@/lib/guards'
 import { errorMessage } from '@/lib/http'
 import { addAdmin, type InstanceAdmin, instanceAdminsQuery, type InstanceSettings, instanceSettingsQuery, removeAdmin, updateSignupOpen } from '@/lib/instance'
+import { pageHead } from '@/lib/title'
 
 export const Route = createFileRoute('/w/$workspaceId/instance')({
+  head: pageHead('Instance'),
   beforeLoad: ({ context }) => requireInstanceAdmin(context.queryClient),
   component: InstancePage,
 })

@@ -8,9 +8,11 @@ import { Alert, ErrorNote, Spinner } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
 import { requireSignedIn } from '@/lib/guards'
 import { claimSetup, setupQuery } from '@/lib/instance'
+import { pageHead } from '@/lib/title'
 
 /** The first-run setup: the person who runs this server claims it with the setup key. */
 export const Route = createFileRoute('/setup')({
+  head: pageHead('Set up this server'),
   beforeLoad: async ({ context }) => {
     await requireSignedIn(context.queryClient, '/setup')
   },

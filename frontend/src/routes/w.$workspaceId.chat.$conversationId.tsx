@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button'
 import { ErrorNote, Spinner } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
 import { ACTIVE_STATUSES, useRunEvents } from '@/lib/run-stream'
-import { useDocumentTitle } from '@/lib/title'
+import { documentTitle } from '@/lib/title'
 import { cn } from '@/lib/utils'
 import { downloadUrl } from '@/lib/uploads'
 
@@ -39,7 +39,6 @@ function ConversationPage() {
   const connections = useQuery(listConnectionsOptions({ path: { workspace_id: workspaceId } }))
   const agent = agents.data?.find(a => a.id === conversation.data?.agent_id)
   const title = conversation.data?.title || 'New conversation'
-  useDocumentTitle(title)
 
   const refresh = () => refreshConversation(queryClient, path)
 
@@ -72,6 +71,8 @@ function ConversationPage() {
   const error = chat.error ?? cancel.error ?? conversation.error
   return (
     <AssistantRuntimeProvider runtime={chat.runtime}>
+      {/* The title changes once the first answer names the conversation, so it is not the route's `head`. */}
+      <title>{documentTitle(title)}</title>
       <div className="flex h-full flex-col">
         <header className="flex min-h-12 shrink-0 items-center gap-4 border-b px-4 py-2 md:px-6">
           <h1 className="min-w-0 flex-1 truncate text-sm font-medium" title={title}>

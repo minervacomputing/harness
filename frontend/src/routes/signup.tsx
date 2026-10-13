@@ -6,8 +6,10 @@ import { ErrorNote } from '@/components/ui/misc'
 import { auth, fieldErrors, useAuthStep } from '@/lib/auth'
 import { nextSearch, redirectIfSignedIn } from '@/lib/guards'
 import { setupQuery } from '@/lib/instance'
+import { pageHead } from '@/lib/title'
 
 export const Route = createFileRoute('/signup')({
+  head: pageHead('Create your account'),
   validateSearch: nextSearch,
   beforeLoad: async ({ context }) => {
     await redirectIfSignedIn(context.queryClient)

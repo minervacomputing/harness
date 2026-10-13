@@ -19,8 +19,10 @@ import { useAppForm } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { Checkbox, ErrorNote, PageHeader, Spinner, Status } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
+import { pageHead } from '@/lib/title'
 
 export const Route = createFileRoute('/w/$workspaceId/agents')({
+  head: pageHead('Agents'),
   component: AgentsPage,
 })
 

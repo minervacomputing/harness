@@ -3,8 +3,10 @@ import { AuthLayout, useContinueAuth } from '@/components/auth-layout'
 import { CodeForm } from '@/components/code-form'
 import { auth, useAuthStep } from '@/lib/auth'
 import { nextSearch, redirectIfSignedIn } from '@/lib/guards'
+import { pageHead } from '@/lib/title'
 
 export const Route = createFileRoute('/login_/mfa')({
+  head: pageHead('Two-factor authentication'),
   validateSearch: nextSearch,
   beforeLoad: async ({ context }) => {
     const state = await redirectIfSignedIn(context.queryClient)

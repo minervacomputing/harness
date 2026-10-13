@@ -6,8 +6,10 @@ import { ErrorNote } from '@/components/ui/misc'
 import { auth, useAuthStep } from '@/lib/auth'
 import { nextSearch, redirectIfSignedIn } from '@/lib/guards'
 import { errorMessage } from '@/lib/http'
+import { pageHead } from '@/lib/title'
 
 export const Route = createFileRoute('/verify-email')({
+  head: pageHead('Check your email'),
   validateSearch: nextSearch,
   beforeLoad: async ({ context }) => {
     const state = await redirectIfSignedIn(context.queryClient)
