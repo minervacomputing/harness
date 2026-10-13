@@ -316,7 +316,7 @@ function isMismatch(error: unknown): boolean {
 type PlannedFile = CheckpointUploadPlan["files"][number];
 
 /**
- * Streams the plan's files from the container into R2 (plan: Checkpoints, step 5): one minerva-fs process
+ * Streams the plan's files from the container into R2 (plan: Checkpoints): one minerva-fs process
  * sends them in order, each re-opened without following links and refused if it is no longer a regular file
  * of its scanned size; a small file is read whole and put while the next ones arrive, a large one is
  * streamed straight into its put. Each put has the file's length and the SHA-256 R2 checks; a file without a

@@ -230,7 +230,7 @@ export class WriteLedger {
 			.map((row) => ({ runId: row.run_id, key: row.key }));
 	}
 
-	/** Drops a run's writes, for retention once the run has ended (plan: open question 5). */
+	/** Drops a run's writes, for retention once the run has ended. */
 	forget(runId: RunId): void {
 		this.#sql.exec("DELETE FROM run_writes WHERE run_id = ?", runId);
 	}

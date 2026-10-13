@@ -4,7 +4,7 @@ import { z } from "zod";
 import { type Binding, OperationError, type Prepared, type ProviderOutput, type ScopedRecord, defineOperation } from "../../gateway/connector.ts";
 import type { Resource } from "../../gateway/policy.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
-import { SINGLE_LINE, htmlUnescape, isSingleLine, sliceText } from "../../lib/text.ts";
+import { SINGLE_LINE, decodeCharacterReferences, isSingleLine, sliceText } from "../../lib/text.ts";
 import { type GmailClient, ID, type Message, type MessageRef, headersOf } from "./client.ts";
 import { CONNECTION_ERRORS, LABEL, Labels, READ_CONSENT, SPAM_TRASH, SYSTEM_LABELS, confirm, locate, messageIdInput, moved, sameResource } from "./mailbox.ts";
 import * as mime from "./mime.ts";
@@ -47,7 +47,7 @@ function summary(message: Message): JsonObject {
 		subject: first(message, "Subject"),
 		date: first(message, "Date"),
 		// Gmail escapes the snippet as HTML.
-		snippet: message.snippet ? sliceText(mime.headerText(htmlUnescape(message.snippet)) as string, 0, MAX_SNIPPET) : null,
+		snippet: message.snippet ? sliceText(mime.headerText(decodeCharacterReferences(message.snippet)) as string, 0, MAX_SNIPPET) : null,
 		unread: message.labelIds.includes("UNREAD"),
 	};
 }

@@ -100,8 +100,8 @@ export interface CancelAck {
 	runId: RunId;
 	/**
 	 * `stopping`: the run's local revoked flag is set and the run is being stopped. `tombstoned`: the run is
-	 * not stored yet, so a start that is still in flight stores it as cancelled (plan: Strict revocation,
-	 * step 4). `ended`: it had already ended.
+	 * not stored yet, so a start that is still in flight stores it as cancelled (plan: Strict
+	 * revocation). `ended`: it had already ended.
 	 */
 	state: "stopping" | "tombstoned" | "ended";
 }
@@ -556,7 +556,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * `activate` (plan: Starting a run, step 5): until the Workspace answers, sent again by the watch job and whenever the object
+	 * `activate` (plan: Starting a run): until the Workspace answers, sent again by the watch job and whenever the object
 	 * starts. Active: the run is provisioned and its loop starts. Revoked: it stops with that reason. Expired:
 	 * it fails (`start_expired`). Ended: the Workspace no longer tracks it, so no revocation could reach it;
 	 * it stops ("Stopped.").

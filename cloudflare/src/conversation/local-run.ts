@@ -1,13 +1,13 @@
 // One attempt's folder in its container (plan: Checkpoints, The sandbox lifecycle): the
 // Sandbox prepared for the attempt (started, hardened, verified) and hydrated from the run's last
-// checkpoint, else its base version; the checkpoint barrier (local.ts `LocalCalls`) whose checkpoints run the
-// plan's steps 3 to 6 against it; and the ExecutionEnv each local call gets.
+// checkpoint, else its base version; the checkpoint barrier (local.ts `LocalCalls`) whose checkpoints run
+// against it; and the ExecutionEnv each local call gets.
 //
 // A checkpoint: kill the agent's processes and check the cgroup is empty, scan the folder as the agent's
 // user, validate the scan and record the keys of the contents the run may not read yet, let the Sandbox
 // stream those files from the container into R2 (R2 checks each SHA-256; file contents never cross an RPC),
 // and record the checkpoint for the attempt on top of its previous one. Only then are the held results
-// released (step 7). Any failure ends the attempt through `fail` before a result is released; a folder over
+// released. Any failure ends the attempt through `fail` before a result is released; a folder over
 // its limits fails the turn.
 //
 // Preparation starts when the attempt's loop starts, so the container is usually ready by the first local
@@ -177,7 +177,7 @@ export class LocalRun {
 		if (!killed.ok) throw new LocalToolStuck(killed.message);
 	}
 
-	/** The plan's steps 4 to 6; step 3 (killStrays) ran just before (local.ts `#save`). */
+	/** Scans, uploads and records a checkpoint; the agent's processes were killed just before (local.ts `#save`). */
 	async #checkpoint(options: { rehashAll?: boolean }): Promise<void> {
 		const fence = await this.#ready();
 		const scanned = await this.#deps.sandbox().scan(fence, { rehashAll: options.rehashAll === true });

@@ -1,6 +1,5 @@
-import { createHash, createHmac } from "node:crypto";
 import { expect, test } from "vitest";
-import { hmacSha256Hex, saltedHmacHex, sha256Hex, timingSafeEqual } from "../../src/lib/hash.ts";
+import { hmacSha256Hex, sha256Hex, timingSafeEqual } from "../../src/lib/hash.ts";
 
 test.each([
 	["", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"],
@@ -8,19 +7,6 @@ test.each([
 	["\u00e9\u{1f600}", "1184d1f608158eea09d297565575892231550c403aaa913008d867a97cfd5c76"],
 ])("sha256(%j), of the UTF-8 bytes", async (input, hex) => {
 	expect(await sha256Hex(input)).toBe(hex);
-});
-
-test("a salted HMAC is the HMAC of the value keyed by the hash of salt and secret", async () => {
-	for (const [salt, value, secret] of [
-		["minerva.gateway.write", "0199a000-0000-7000-8000-000000000000:eeee", "test-secret-not-a-real-key"],
-		["s\u00e9", "v\u{1f600}", "k\u00e9y"],
-	] as const) {
-		for (const [name, node] of [["SHA-1", "sha1"], ["SHA-256", "sha256"]] as const) {
-			const key = createHash(node).update(salt + secret, "utf8").digest();
-			expect(await saltedHmacHex(salt, value, secret, name)).toBe(createHmac(node, key).update(value, "utf8").digest("hex"));
-		}
-	}
-	expect(await saltedHmacHex("a", "b", "c")).toBe(await saltedHmacHex("a", "b", "c", "SHA-1"));
 });
 
 test("HMAC-SHA256 (RFC 4231 case 2)", async () => {

@@ -92,7 +92,7 @@ export interface FolderUsage {
 }
 
 /**
- * What a checkpoint takes (plan: Checkpoints, steps 4 to 6): the scan's report as the container
+ * What a checkpoint takes (plan: Checkpoints): the scan's report as the container
  * made it, untrusted (ScanResult's `manifest`, `sizes` and `warnings`), and the version the working copy
  * was built on, which must still be the run's (its last checkpoint, else its base version).
  */
@@ -591,7 +591,7 @@ export class FolderStore {
 		return first<RunFolder>(this.#sql, "SELECT status, attempt, base_version_id, checkpoint_version_id, uploaded_bytes FROM runs WHERE id = ?", runId);
 	}
 
-	// Attachments (plan: Starting a run, steps 3 and 4).
+	// Attachments (plan: Starting a run).
 
 	/**
 	 * Before the start's transaction: the base version the message's uploads make, at the folder's root with

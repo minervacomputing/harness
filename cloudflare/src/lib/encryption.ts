@@ -73,9 +73,7 @@ export interface Sealed {
 }
 
 const UNREADABLE = "Stored data could not be decrypted.";
-const NOT_M2 = `Stored data is not in format ${FORMAT}, the only one this version reads.`;
-// Fernet tokens start with the version byte 0x80 and a timestamp's zero high bytes.
-const FERNET = /^gAAAAA/;
+const NOT_M2 = `Stored data is not an ${FORMAT} envelope.`;
 
 export class EncryptionKeys {
 	/** The key id that encrypts. */
@@ -89,9 +87,6 @@ export class EncryptionKeys {
 
 	/** Parses MINERVA_ENCRYPTION_KEYS and derives its keys. Throws EncryptionError, naming entries by position. */
 	static async parse(value: string): Promise<EncryptionKeys> {
-		if (value.trim().startsWith("[")) {
-			throw new EncryptionError("MINERVA_ENCRYPTION_KEYS is a JSON list, which this version does not read: write its entries comma separated, as id:secret,id:secret.");
-		}
 		const entries = value.split(",").map((entry) => entry.trim()).filter(Boolean);
 		if (entries.length === 0) throw new EncryptionError("MINERVA_ENCRYPTION_KEYS needs at least one key.");
 		const keys = new Map<string, ReadonlyMap<Purpose, Key>>();
@@ -199,12 +194,7 @@ function associatedData(keyId: string, binding: Binding): Uint8Array {
 
 function parseEnvelope(text: string): { keyId: string; body: Uint8Array } {
 	const parts = text.split(".");
-	if (parts[0] !== FORMAT) {
-		// What instances stored before step 6b: they are not read, so the operator learns what to do.
-		// Reconnecting cannot replace it (a reconnect reads the old credentials first): the instance starts afresh.
-		if (FERNET.test(text)) throw new EncryptionError(`${NOT_M2} It is a Fernet token from before step 6b, which no version reads any more: reset the instance's data.`);
-		throw new EncryptionError(NOT_M2);
-	}
+	if (parts[0] !== FORMAT) throw new EncryptionError(NOT_M2);
 	if (parts.length !== 3) throw new EncryptionError(UNREADABLE);
 	const [, keyId, encoded] = parts as [string, string, string];
 	if (!KEY_ID.test(keyId) || !BASE64URL.test(encoded)) throw new EncryptionError(UNREADABLE);

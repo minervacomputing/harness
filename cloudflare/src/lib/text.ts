@@ -89,7 +89,7 @@ const INVISIBLE = /[\p{Cf}\p{Noncharacter_Code_Point}\0-\x08\v\f\x0e-\x1f\x7f-\x
  */
 export function decoded(text: string): string {
 	for (let round = 0; round < 3; round++) {
-		text = htmlUnescape(unquote(text)).normalize("NFKC");
+		text = decodeCharacterReferences(percentDecode(text)).normalize("NFKC");
 		text = text.replace(INVISIBLE, "");
 		text = text.replace(/[\u3002\uff0e\uff61]/g, ".").replaceAll("\\", "");
 	}
@@ -119,7 +119,7 @@ export function percentEncode(value: string): string {
  * U+FFFD for invalid sequences; other characters pass through, and a `%` without two hex digits stays as it
  * is. Unlike `decodeURIComponent`, it never throws.
  */
-export function unquote(text: string): string {
+export function percentDecode(text: string): string {
 	if (!text.includes("%")) return text;
 	return text.replace(/[\u0000-\u007f]+/g, (run) => {
 		if (!run.includes("%")) return run;
@@ -144,7 +144,7 @@ const CHARREF = /&(#[0-9]+;?|#[xX][0-9a-fA-F]+;?|[^\t\n\f <&#;]{1,32};?)/gu;
  * Named and numeric character references undone, with HTML5's rules: names are the `entities` package's
  * table, with the standard's rule for a name without ";" (the longest name that starts the reference).
  */
-export function htmlUnescape(text: string): string {
+export function decodeCharacterReferences(text: string): string {
 	if (!text.includes("&")) return text;
 	return text.replace(CHARREF, (whole, reference: string) => {
 		if (reference[0] !== "#") return decodeHTML(whole);

@@ -9,7 +9,7 @@
 // and `web/raw` fetch web addresses as the Web connector does (web.ts), for test/account/web-egress.test.ts.
 // `setup-reopen` deletes the instance's setup claim (not the admins it made), so each browser walk claims the
 // first-run setup through its page. `scrypt` hashes one password with the given parameters and nothing else,
-// so the request's CPU time is the hash's (plan: Step 7, the scrypt measurement).
+// so the request's CPU time is the hash's: how the scrypt parameters were measured on the edge.
 
 import { conversationObject, filesBucket, sandboxObject, workspaceObject } from "../addressing.ts";
 import { hashPassword } from "../accounts/passwords.ts";

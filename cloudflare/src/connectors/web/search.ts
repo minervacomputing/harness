@@ -7,7 +7,7 @@
 import { z } from "zod";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP, type ProviderIo } from "../../gateway/http.ts";
-import { htmlUnescape } from "../../lib/text.ts";
+import { decodeCharacterReferences } from "../../lib/text.ts";
 
 export const BASE_URL = "https://api.search.brave.com/res/v1/";
 /** Brave pages by result page, from 0. */
@@ -33,7 +33,7 @@ const SPACES = /\s+/g;
 
 /** Snippets may carry markup for highlighting; keep only the text. */
 export function plain(text: string): string {
-	return htmlUnescape(text.replace(TAGS, "")).replace(SPACES, " ").trim();
+	return decodeCharacterReferences(text.replace(TAGS, "")).replace(SPACES, " ").trim();
 }
 
 function unavailable(): OperationError {

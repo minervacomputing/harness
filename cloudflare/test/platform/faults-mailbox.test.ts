@@ -8,10 +8,16 @@ import { describe, expect, test } from "vitest";
 import { MAIL_TRANSPORT, render, sendEmail } from "../../src/accounts/emails.ts";
 import { signDownload } from "../../src/files/links.ts";
 import { FAULTS_HEADER, faultsToken } from "../../src/faults/token.ts";
-import { saltedHmacHex } from "../../src/lib/hash.ts";
+import { hex } from "../../src/lib/bytes.ts";
+import { digest, hmac } from "../../src/lib/hash.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 
 const ORIGIN = "http://localhost";
+
+/** How the token was derived before 2026-10-13: HMAC-SHA256 of `value` keyed by SHA-256 of `salt + secret`. */
+async function retiredToken(salt: string, value: string, secretKey: string): Promise<string> {
+	return hex(await hmac("SHA-256", await digest("SHA-256", salt + secretKey), value));
+}
 
 async function driver(op: string, body: unknown, token?: string): Promise<Response> {
 	return exports.default.fetch(
@@ -50,14 +56,17 @@ describe("the test build's mailbox", () => {
 		expect(listed.emails[0]!.seq).toBeLessThan(listed.emails[1]!.seq);
 
 		// Without the driver's token the path is the Worker's, which has no such route (from the site's own
-		// origin; from anywhere else it is refused before that, as every unsafe request is). The token of before
-		// 2026-10-12, which the test Worker's logs kept whole under the header's old name, is refused too.
+		// origin; from anywhere else it is refused before that, as every unsafe request is). The tokens of earlier
+		// derivations (before 2026-10-12, the test Worker's logs kept them whole under the header's old name) and
+		// the right token under that old name are refused too.
 		const refused = await driver("emails", { to }, "wrong");
 		expect(refused.status).toBe(404);
-		const retired = await saltedHmacHex("minerva.faults", "faults", env.MINERVA_SECRET_KEY, "SHA-256");
-		expect((await driver("emails", { to }, retired)).status).toBe(404);
+		for (const salt of ["minerva.faults", "minerva.faults-token"]) {
+			expect((await driver("emails", { to }, await retiredToken(salt, "faults", env.MINERVA_SECRET_KEY))).status).toBe(404);
+		}
+		const token = await faultsToken(env.MINERVA_SECRET_KEY);
 		const oldName = await exports.default.fetch(
-			new Request(`${ORIGIN}/api/faults/emails`, { method: "POST", headers: { "X-Minerva-Faults": retired, "content-type": "application/json", Origin: ORIGIN }, body: JSON.stringify({ to }) }),
+			new Request(`${ORIGIN}/api/faults/emails`, { method: "POST", headers: { "X-Minerva-Faults": token, "content-type": "application/json", Origin: ORIGIN }, body: JSON.stringify({ to }) }),
 		);
 		expect(oldName.status).toBe(404);
 		expect(await refused.text()).not.toContain("123456");

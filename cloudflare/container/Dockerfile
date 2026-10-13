@@ -1,12 +1,11 @@
-# The sandbox image (plan: The sandbox lifecycle; Configuration, minerva-cf-sandbox): one Firecracker VM per
-# turn, started by the Sandbox Durable Object (src/sandbox/) with no route out. It holds no agent loop: the
-# loop runs in the Conversation Durable Object, and every agent command and file operation arrives as an
-# exec, run through the wrapper in src/sandbox/wrapper.ts as uid 1000 with no capabilities, inside the agent
-# cgroup the hardening exec creates. The image is today's worker image (worker/Dockerfile) without Node: the
-# same Python packages and versions, installed from hashed wheels only and compiled at build time, and the
-# same command-line tools, plus what the hardening needs (util-linux's setpriv and mount, coreutils' timeout,
-# procps) and tini as PID 1. Built for linux/amd64 by `cf build` (cloudflare.config.ts). Nothing is added at
-# run time: the hardening remounts / read-only before any agent command runs.
+# The sandbox image: one Firecracker VM per turn, started by the Sandbox Durable Object (src/sandbox/) with
+# no route out. It holds no agent loop: the loop runs in the Conversation Durable Object, and every agent
+# command and file operation arrives as an exec, run through the wrapper in src/sandbox/wrapper.ts as uid 1000
+# with no capabilities, inside the agent cgroup the hardening exec creates. It has Python with the packages in
+# python/requirements.txt, installed from hashed wheels only and compiled at build time, the command-line tools
+# agent commands use, what the hardening needs (util-linux's setpriv and mount, coreutils' timeout, procps)
+# and tini as PID 1. Built for linux/amd64 by `cf build` (cloudflare.config.ts). Nothing is added at run time:
+# the hardening remounts / read-only before any agent command runs.
 
 # Debian bookworm, whose Python is 3.11, the version python/requirements.txt is compiled for. Pinned by the
 # digest of its image index (amd64 for the platform, arm64 for local tests).
@@ -24,7 +23,7 @@ RUN python3 -m venv /opt/python \
     && find /opt/python -name __pycache__ -prune -exec rm -rf {} +
 
 FROM ${BASE}
-# The tools the agent's commands may use (today's), and what the hardening and the wrapper run.
+# The tools the agent's commands may use, and what the hardening and the wrapper run.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        python3 file jq poppler-utils ripgrep sqlite3 unzip zip \
