@@ -1,8 +1,6 @@
-// backend/tests/test_slack.py, case by case: the Slack connector against an in-memory Slack Web API behind
-// an injected `fetch`, and runs through the executor (executor-fakes.ts `Scenario`, which is
-// connector_runs.py's claimed run). The text cases (`redact`, `check_written`, `escape`, `judge`) are in
-// connectors-slack-text.test.ts with the vectors from today's Python. Also: the registry accepts the
-// declaration, whose fingerprints are printed and pinned.
+// The Slack connector against an in-memory Slack Web API behind an injected `fetch`, and runs through the
+// executor (executor-fakes.ts `Scenario`); the text rules (`redact`, `writtenProblem`, `escape`, `judge`);
+// and the registry accepting the declaration, whose fingerprints are printed and pinned.
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -10,8 +8,9 @@ import { describe, expect, test } from "vitest";
 import type { z } from "zod";
 import type { ToolCallOutcome } from "../../src/contracts/executor.ts";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
-import { SlackClient } from "../../src/connectors/slack/client.ts";
+import { SlackClient, judge } from "../../src/connectors/slack/client.ts";
 import { CHANNEL, slackConnector } from "../../src/connectors/slack/connector.ts";
+import { escape, redact, writtenProblem } from "../../src/connectors/slack/mrkdwn.ts";
 import { OperationError, termsOf } from "../../src/gateway/connector.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry, inputSchema } from "../../src/gateway/registry.ts";
@@ -71,7 +70,7 @@ function json(status: number, body: Json | unknown): Response {
 }
 
 /**
- * Slack's Web API (test_slack.py `FakeSlack`). Channels: #general and #random (public; the app is only in
+ * Slack's Web API. Channels: #general and #random (public; the app is only in
  * #general), #private (private, the app is in it), #hidden (private, the app is not in it, so it does not
  * exist for the app), #partner (shared with another organization) and #old (archived).
  */
@@ -221,7 +220,7 @@ class FakeSlack {
 	}
 }
 
-/** Starts a run for an agent with the user's Slack connection, holding `grants` on channels (test_slack.py `start`). */
+/** Starts a run for an agent with the user's Slack connection, holding `grants` on channels. */
 function start(slack: FakeSlack, grants: { [channel: string]: string[] }, connector = slackConnector()): Promise<Scenario> {
 	return Scenario.start({
 		connectors: [connector],
@@ -236,7 +235,7 @@ function items(outcome: ToolCallOutcome): JsonObject[] {
 	return outcome.result.items as JsonObject[];
 }
 
-/** The one item of a result: Python's `[item] = ...` requires exactly one. */
+/** The one item of a result; there must be exactly one. */
 function only(outcome: ToolCallOutcome): JsonObject {
 	const found = items(outcome);
 	expect(found).toHaveLength(1);
@@ -253,7 +252,7 @@ async function failure(promise: Promise<unknown>): Promise<OperationError> {
 	throw new Error("The call succeeded.");
 }
 
-describe("connecting (test_slack.py)", () => {
+describe("connecting", () => {
 	test("account, discovery and names", async () => {
 		const slack = new FakeSlack();
 		const connector = slackConnector();
@@ -354,7 +353,7 @@ describe("connecting (test_slack.py)", () => {
 	});
 });
 
-describe("runs (test_slack.py)", () => {
+describe("runs", () => {
 	test("channels without a grant or out of reach look alike", async () => {
 		const slack = new FakeSlack();
 		const run = await start(slack, { [GENERAL]: ["read"] });
@@ -524,8 +523,6 @@ describe("runs (test_slack.py)", () => {
 		expect(general.ts).toBe("1727780100.000200");
 	});
 });
-
-// Beyond test_slack.py: what the port adds or changes.
 
 describe("the port", () => {
 	test("a post whose answer is not UTF-8 stays unknown, as json.loads refuses it", async () => {
@@ -728,5 +725,63 @@ describe("registry", () => {
 		expect(CONNECTORS.some((connector) => connector.slug === "slack")).toBe(true);
 		const registry = await connectorRegistry();
 		expect(registry.get("slack").name).toBe("Slack");
+	});
+});
+
+describe("text and judging", () => {
+	test("read text hides names of linked channels", () => {
+		const shown = redact(
+			`<#${PRIVATE}|${SECRET}> <https://acme.slack.com/archives/${PRIVATE}/p1|${SECRET}> ` +
+				`<https://acme%2Eslack.com/x|${SECRET}> <https://acme.slack-gov.com/archives/${PRIVATE}/p1|${SECRET}> ` +
+				`<slack://channel?team=T0ACME&id=${PRIVATE}|${SECRET}> ` +
+				`<https://example.com|docs> <@U0ADA|ada> <#${GENERAL}>`,
+		);
+		expect(shown).not.toContain(SECRET);
+		expect(shown).toContain(`<#${PRIVATE}>`);
+		expect(shown).toContain(`<https://acme.slack.com/archives/${PRIVATE}/p1>`);
+		for (const kept of ["<https://example.com|docs>", "<@U0ADA|ada>", `<#${GENERAL}>`]) expect(shown).toContain(kept);
+	});
+
+	test.each([
+		"see https://acme.slack.com/archives/C0GENERAL1/p1727780000000100",
+		"slack.com/archives/C1",
+		"acme.slack%2Ecom/archives",
+		"acme.slack&#46;com/archives",
+		"acme.slack\uff0ecom/archives",
+		"acme.slack\u200b.com",
+		"acme.slack\\.com",
+		"files.slack-files.com/x",
+		"https://acme.slack-gov.com/archives/C0PRIVATE1/p1",
+		"slack://channel?team=T0ACME&id=C0PRIVATE1",
+		"bell\x07",
+	])("written text may not link to Slack: %j", (written) => {
+		expect(writtenProblem(written)).not.toBeNull();
+	});
+
+	test("written text is escaped", () => {
+		expect(writtenProblem("*Done* & <!channel> <@U0ADA> <https://x|y>\n- next")).toBeNull();
+		expect(escape("a & <!here> <@U0ADA>")).toBe("a &amp; &lt;!here&gt; &lt;@U0ADA&gt;");
+	});
+
+	test("judge claims only what Slack confirms", () => {
+		const response = (status: number, body: unknown): [Response, string] => {
+			const text = typeof body === "string" ? body : JSON.stringify(body);
+			return [new Response([101, 103, 204, 205, 304].includes(status) ? null : text, { status }), text];
+		};
+		const judged = (status: number, body: unknown) => judge(...response(status, body));
+		expect(judged(200, { ok: true, ts: "1.2" })).toBe("applied");
+		for (const error of ["not_in_channel", "is_archived", "ratelimited", "invalid_auth", "msg_too_long", "accesslimited"]) {
+			expect(judged(200, { ok: false, error })).toBe("not_applied");
+		}
+		for (const error of ["internal_error", "fatal_error", "request_timeout", "something_new", null]) {
+			expect(judged(200, { ok: false, error })).toBe("unknown");
+		}
+		expect(judged(200, "<html>")).toBe("unknown");
+		expect(judged(200, [1])).toBe("unknown");
+		// Slack answers with 200; any other success status is judged by its body all the same.
+		expect(judged(201, { ok: false, error: "not_in_channel" })).toBe("not_applied");
+		expect(judged(204, "")).toBe("unknown");
+		expect(judged(429, { ok: false, error: "ratelimited" })).toBeNull();
+		expect(judged(500, "")).toBeNull();
 	});
 });

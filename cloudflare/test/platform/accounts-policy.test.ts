@@ -6,7 +6,7 @@
 import { createExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { GenericEndpointContext } from "better-auth";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { getAuth, handleAuth } from "../../src/accounts/auth.ts";
 import { hashPassword } from "../../src/accounts/passwords.ts";
 import { BROWSER_ROUTES, Policy } from "../../src/accounts/policy.ts";
@@ -14,9 +14,10 @@ import { RateLimits } from "../../src/accounts/rate-limits.ts";
 import { runInScope } from "../../src/accounts/scope.ts";
 import { claimTotpStep } from "../../src/accounts/totp.ts";
 import { createApp } from "../../src/http/router.ts";
-import { Browser, ORIGIN, PASSWORD, SESSION_COOKIE, emailsTo, enableTwoFactor, forgetUsedTotp, installEmailLog, lastCode, nextTotp, signUp, signedIn, totp, uniqueEmail, withinWindows } from "./accounts-helpers.ts";
+import { Browser, ORIGIN, PASSWORD, SESSION_COOKIE, emailsTo, enableTwoFactor, forgetUsedTotp, freezeClockInWindow, installEmailLog, lastCode, nextTotp, signUp, signedIn, totp, uniqueEmail, withProductionHashing } from "./accounts-helpers.ts";
 
 installEmailLog();
+afterEach(() => vi.useRealTimers());
 
 const db = env.DB;
 const NEW_PASSWORD = "another long enough passphrase";
@@ -300,20 +301,22 @@ describe("credential stamps", () => {
 		expect(await runInScope({ holder: null }, () => policy.sessionCreating({ userId }, { path: "/sign-up/email" } as GenericEndpointContext))).toBe(false);
 	});
 
-	test("a rehash while a session is replaced (two-factor turned off) keeps the new session valid", async () => {
-		const { browser: first, email, userId } = await signedIn();
-		const { uri } = await enableTwoFactor(first);
-		await db.prepare(`UPDATE account SET password = ? WHERE "userId" = ?`).bind(await hashPassword(PASSWORD, { logN: 14, r: 8, p: 1 }), userId).run();
-		// A session made while the older hash is stored: an email code, then the second factor.
-		const browser = new Browser();
-		expect((await browser.auth("/email-otp/send-verification-otp", { email, type: "sign-in" })).status).toBe(200);
-		expect((await browser.auth("/sign-in/email-otp", { email, otp: lastCode(email) })).body.twoFactorRedirect).toBe(true);
-		expect((await browser.auth("/two-factor/verify-totp", { code: await nextTotp(uri) })).status).toBe(200);
-		// Turning two-factor off checks the password (rehashing it) and replaces the session.
-		expect((await browser.auth("/two-factor/disable", { password: PASSWORD })).status).toBe(200);
-		expect((await db.prepare(`SELECT password FROM account WHERE "userId" = ?`).bind(userId).first<{ password: string }>())!.password).toMatch(/^scrypt\$15\$8\$3\$/);
-		expect((await browser.call("GET", "/api/me")).status).toBe(200);
-	});
+	test("a rehash while a session is replaced (two-factor turned off) keeps the new session valid", () =>
+		withProductionHashing(async () => {
+			const { browser: first, email, userId } = await signedIn();
+			const { uri } = await enableTwoFactor(first);
+			await db.prepare(`UPDATE account SET password = ? WHERE "userId" = ?`).bind(await hashPassword(PASSWORD, { logN: 10, r: 8, p: 1 }), userId).run();
+			// A session made while the older hash is stored: an email code, then the second factor.
+			const browser = new Browser();
+			expect((await browser.auth("/email-otp/send-verification-otp", { email, type: "sign-in" })).status).toBe(200);
+			expect((await browser.auth("/sign-in/email-otp", { email, otp: lastCode(email) })).body.twoFactorRedirect).toBe(true);
+			expect((await browser.auth("/two-factor/verify-totp", { code: await nextTotp(uri) })).status).toBe(200);
+			// Turning two-factor off checks the password (rehashing it) and replaces the session.
+			expect((await browser.auth("/two-factor/disable", { password: PASSWORD })).status).toBe(200);
+			expect((await db.prepare(`SELECT password FROM account WHERE "userId" = ?`).bind(userId).first<{ password: string }>())!.password).toMatch(/^scrypt\$15\$8\$3\$/);
+			expect((await browser.call("GET", "/api/me")).status).toBe(200);
+		}),
+	);
 
 	test("a password change is written only over the password it checked, so a reset meanwhile is never undone", async () => {
 		const { email, userId } = await signedIn();
@@ -449,7 +452,7 @@ describe("email codes", () => {
 
 describe("limits per address and per user", () => {
 	test("failed sign-ins: five per address across IPs, refused before the password is checked; a reset clears them", async () => {
-		await withinWindows([300, 20_000]);
+		freezeClockInWindow();
 		const { email } = await signedIn();
 		const statuses = [];
 		for (let i = 0; i < 5; i++) statuses.push((await new Browser().auth("/sign-in/email", { email, password: "not the passphrase" })).status);
@@ -459,19 +462,19 @@ describe("limits per address and per user", () => {
 		expect(refused.body).toEqual({ code: "TOO_MANY_LOGIN_ATTEMPTS", message: "Too many failed login attempts. Try again later." });
 		await resetPassword(email);
 		expect((await new Browser().auth("/sign-in/email", { email, password: NEW_PASSWORD })).status).toBe(200);
-	}, 60000);
+	});
 
 	test("failed sign-ins at once cannot overrun the budget, and a right password costs nothing", async () => {
-		await withinWindows([300, 20_000]);
+		freezeClockInWindow();
 		const { email } = await signedIn();
 		for (let i = 0; i < 6; i++) expect((await new Browser().auth("/sign-in/email", { email, password: PASSWORD })).status).toBe(200);
 		const answers = await Promise.all(Array.from({ length: 10 }, () => new Browser().auth("/sign-in/email", { email, password: "not the passphrase" })));
 		expect(answers.filter((answer) => answer.status === 401)).toHaveLength(5);
 		expect(answers.filter((answer) => answer.status === 429)).toHaveLength(5);
-	}, 60000);
+	});
 
 	test("codes: three sign-in codes a minute per address, one verification email per 10 s, five resets a minute", async () => {
-		await withinWindows([60, 15_000], [10, 5_000]);
+		freezeClockInWindow();
 		const { email } = await signedIn();
 		const send = async (path: string, body: object) => (await new Browser().auth(path, body)).status;
 		const login = [];
@@ -485,10 +488,10 @@ describe("limits per address and per user", () => {
 		expect(resets).toEqual([200, 200, 200, 200, 200, 429]);
 		// Reset codes come only from request-password-reset; email changes are not available.
 		for (const type of ["forget-password", "change-email"]) expect(await send("/email-otp/send-verification-otp", { email, type })).toBe(400);
-	}, 40000);
+	});
 
 	test("password changes: five a minute per user, whatever the IP", async () => {
-		await withinWindows([60, 15_000]);
+		freezeClockInWindow();
 		const { browser } = await signedIn();
 		const statuses = [];
 		for (let i = 0; i < 6; i++) {
@@ -496,7 +499,7 @@ describe("limits per address and per user", () => {
 			statuses.push(answer.status);
 		}
 		expect(statuses).toEqual([400, 400, 400, 400, 400, 429]);
-	}, 40000);
+	});
 
 	test("two-factor changes ask for the password every time", async () => {
 		const { browser } = await signedIn();
@@ -598,7 +601,7 @@ describe("what the browser reaches, and who creates accounts", () => {
 	});
 
 	test("a taken address at sign-up answers as a new one and tells its owner, once per 10 s", async () => {
-		await withinWindows([10, 5_000]);
+		freezeClockInWindow();
 		const { email } = await signedIn();
 		const fresh = await new Browser().auth("/sign-up/email", { email: uniqueEmail(), password: PASSWORD, name: "" });
 		const taken = await new Browser().auth("/sign-up/email", { email, password: PASSWORD, name: "" });
@@ -606,7 +609,7 @@ describe("what the browser reaches, and who creates accounts", () => {
 		expect(taken.status).toBe(fresh.status);
 		expect(Object.keys(taken.body).sort()).toEqual(Object.keys(fresh.body).sort());
 		expect(emailsTo(email).filter((sent) => sent.subject === "[Minerva] Account Already Exists")).toHaveLength(1);
-	}, 20000);
+	});
 
 	test("an interrupted sign-up (the user written, not its password) recovers by signing up again and resetting", async () => {
 		const { email } = await signUp();

@@ -1,58 +1,43 @@
-// allauth's rate limits (web-api spec 5.7) as counters in D1, shared by every isolate rather than per
-// process as today. allauth keeps a sliding log of timestamps per key; this keeps one row per key and fixed
-// window, and estimates the sliding count as the current window's count plus the previous window's,
-// weighted by how much of it the sliding window still covers. A refused attempt is not counted, as in
-// allauth; checking the previous window (closed, so it no longer changes) and then counting with a
-// conditional upsert keeps the limit under concurrency.
+// The policy's rate limits per address and per user, as counters in D1 shared by every isolate. A key has
+// one row per fixed window; the sliding count is estimated as the current window's count plus the previous
+// window's, weighted by how much of it the sliding window still covers. A refused attempt is not counted;
+// checking the previous window (closed, so it no longer changes) and then counting with a conditional
+// upsert keeps the limit under concurrency. Windows follow `Date.now()`; tests fake the clock instead of
+// waiting (test/platform/accounts-helpers.ts).
 //
-// Keys hold an HMAC of the address, user or IP under MINERVA_SECRET_KEY, never the value itself.
+// Keys hold an HMAC of the address or user under MINERVA_SECRET_KEY, never the value itself.
 //
-// The policy (policy.ts) counts the per-address and per-user rates; per IP, Better Auth's own limiter
-// counts every route in D1 instead, with the numbers of ip-limits.ts (auth-options.ts), so the `ip` rates
-// here and `manage_email` (email changes are not available yet) are kept as today's table but not applied.
+// Per IP, Better Auth's own limiter counts every route in D1 instead, with the numbers of ip-limits.ts
+// (auth-options.ts).
 
 import { hmacSha256Hex } from "../lib/hash.ts";
 
 export interface Rate {
-	/** The scope of the key: the client's IP, an address (`key`), or the signed-in user. */
-	per: "ip" | "key" | "user";
+	/** The scope of the key: an address (`key`) or the signed-in user. */
+	per: "key" | "user";
 	amount: number;
 	seconds: number;
 }
 
-/** allauth's defaults; `confirm_email` limits sending codes, one per address every 10 s. */
+/** The limits the policy applies; `confirm_email` limits sending codes, one per address every 10 s. */
 export const RATE_LIMITS = {
-	login: [{ per: "ip", amount: 30, seconds: 60 }],
-	login_failed: [
-		{ per: "ip", amount: 10, seconds: 60 },
-		{ per: "key", amount: 5, seconds: 300 },
-	],
-	signup: [{ per: "ip", amount: 20, seconds: 60 }],
-	request_login_code: [
-		{ per: "ip", amount: 20, seconds: 60 },
-		{ per: "key", amount: 3, seconds: 60 },
-	],
-	reset_password: [
-		{ per: "ip", amount: 20, seconds: 60 },
-		{ per: "key", amount: 5, seconds: 60 },
-	],
-	reset_password_from_key: [{ per: "ip", amount: 20, seconds: 60 }],
+	login_failed: [{ per: "key", amount: 5, seconds: 300 }],
+	request_login_code: [{ per: "key", amount: 3, seconds: 60 }],
+	reset_password: [{ per: "key", amount: 5, seconds: 60 }],
 	confirm_email: [{ per: "key", amount: 1, seconds: 10 }],
 	change_password: [{ per: "user", amount: 5, seconds: 60 }],
 	reauthenticate: [{ per: "user", amount: 10, seconds: 60 }],
-	manage_email: [{ per: "user", amount: 10, seconds: 60 }],
 } as const satisfies Record<string, readonly Rate[]>;
 
 export type Action = keyof typeof RATE_LIMITS;
 
 export interface Subject {
-	/** Missing when only the per-address or per-user counts matter (clearing them). */
-	ip?: string;
+	/** The address for a rate per `key`, the user for a rate per `user`; a rate whose value is missing is skipped. */
 	key?: string;
 	user?: string;
 }
 
-/** A counted attempt, which can be taken back (`rollback`) as allauth does after a successful login. */
+/** A counted attempt, which can be taken back (`rollback`), as after a successful login. */
 export interface Usage {
 	rows: { key: string; windowStart: number }[];
 }
@@ -60,19 +45,17 @@ export interface Usage {
 export class RateLimits {
 	readonly #db: D1Database;
 	readonly #secret: string;
-	readonly #now: () => number;
 
-	constructor(db: D1Database, secret: string, now: () => number = Date.now) {
+	constructor(db: D1Database, secret: string) {
 		this.#db = db;
 		this.#secret = secret;
-		this.#now = now;
 	}
 
 	async #keys(action: Action, subject: Subject): Promise<{ key: string; rate: Rate }[]> {
 		const keys: { key: string; rate: Rate }[] = [];
 		for (const rate of RATE_LIMITS[action] as readonly Rate[]) {
-			const value = rate.per === "ip" ? subject.ip : rate.per === "key" ? subject.key : subject.user;
-			// allauth skips a rate whose value is missing (no address, or nobody signed in).
+			const value = rate.per === "key" ? subject.key : subject.user;
+			// No address, or nobody signed in: the rate does not apply.
 			if (value === undefined) continue;
 			const digest = await hmacSha256Hex(this.#secret, `minerva.accounts.rate-limit\u0000${rate.per}\u0000${value}`);
 			keys.push({ key: `${action}:${rate.per}:${rate.seconds}:${digest}`, rate });
@@ -91,9 +74,9 @@ export class RateLimits {
 		return { windowStart, cap: Math.ceil(rate.amount - (previous?.count ?? 0) * weight) };
 	}
 
-	/** Whether every rate of the action still allows an attempt, without counting one (allauth's dry run). */
+	/** Whether every rate of the action still allows an attempt, without counting one. */
 	async allows(action: Action, subject: Subject): Promise<boolean> {
-		const now = this.#now();
+		const now = Date.now();
 		for (const { key, rate } of await this.#keys(action, subject)) {
 			const { windowStart, cap } = await this.#capacity(key, rate, now);
 			const current = await this.#db
@@ -106,11 +89,11 @@ export class RateLimits {
 	}
 
 	/**
-	 * Counts an attempt against every rate of the action, or returns null when one of them is used up. As in
-	 * allauth, the rates before the one that refused stay counted.
+	 * Counts an attempt against every rate of the action, or returns null when one of them is used up. The rates
+	 * before the one that refused stay counted.
 	 */
 	async consume(action: Action, subject: Subject): Promise<Usage | null> {
-		const now = this.#now();
+		const now = Date.now();
 		const usage: Usage = { rows: [] };
 		for (const { key, rate } of await this.#keys(action, subject)) {
 			const { windowStart, cap } = await this.#capacity(key, rate, now);

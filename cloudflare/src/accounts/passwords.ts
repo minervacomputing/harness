@@ -29,6 +29,13 @@ export interface ScryptParams {
 
 export const SCRYPT: Readonly<ScryptParams> = { logN: 15, r: 8, p: 3 };
 
+/**
+ * The parameters new hashes get, and the ones `needsRehash` measures a stored hash against. Always SCRYPT
+ * in a deployment: no setting or binding changes it. Only the platform tests lower it
+ * (test/platform/cheap-hashing.ts), so that accounts there do not each cost a production hash.
+ */
+export const HASHING: { params: Readonly<ScryptParams> } = { params: SCRYPT };
+
 const SALT_BYTES = 16;
 const KEY_BYTES = 32;
 const ENCODED = /^scrypt\$([0-9]{1,2})\$([0-9]{1,2})\$([0-9]{1,2})\$([A-Za-z0-9+/]+)\$([A-Za-z0-9+/]+)$/;
@@ -57,7 +64,7 @@ function derive(password: string, salt: Uint8Array, params: ScryptParams): Promi
 	});
 }
 
-export async function hashPassword(password: string, params: ScryptParams = SCRYPT): Promise<string> {
+export async function hashPassword(password: string, params: ScryptParams = HASHING.params): Promise<string> {
 	const salt = randomBytes(SALT_BYTES);
 	const key = await derive(password, salt, params);
 	return `scrypt$${params.logN}$${params.r}$${params.p}$${base64(salt)}$${base64(key)}`;
@@ -83,10 +90,11 @@ export async function verifyPassword(password: string, encoded: string): Promise
 	return timingSafeEqual(key, parsed.key);
 }
 
-/** A hash made with weaker parameters than today's, to be replaced after the next successful sign-in. */
+/** A hash made with weaker parameters than new hashes get, to be replaced after the next successful sign-in. */
 export function needsRehash(encoded: string): boolean {
 	const parsed = parse(encoded);
-	return !parsed || parsed.params.logN < SCRYPT.logN || parsed.params.r < SCRYPT.r || parsed.params.p < SCRYPT.p;
+	const { logN, r, p } = HASHING.params;
+	return !parsed || parsed.params.logN < logN || parsed.params.r < r || parsed.params.p < p;
 }
 
 // The validators, in Django's order: similarity to the user's attributes (only when a user is known:

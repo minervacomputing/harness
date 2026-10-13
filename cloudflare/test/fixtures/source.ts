@@ -22,22 +22,3 @@ export function withoutComments(text: string): string {
 export function sourceCode(): { path: string; code: string }[] {
 	return files(SOURCE).map((path) => ({ path: path.slice(SOURCE.length), code: withoutComments(readFileSync(path, "utf8")) }));
 }
-
-/** The names of the calls chained after `start` (`.min(2).trim()` gives `["min", "trim"]`), over any white space. */
-export function chainedCalls(code: string, start: number): string[] {
-	const names: string[] = [];
-	let at = start;
-	for (;;) {
-		const next = /^\s*\.\s*([A-Za-z_$][\w$]*)\s*/.exec(code.slice(at));
-		if (!next) return names;
-		names.push(next[1] as string);
-		at += next[0].length;
-		if (code[at] !== "(") continue;
-		let depth = 0;
-		for (; at < code.length; at++) {
-			if (code[at] === "(") depth++;
-			else if (code[at] === ")" && --depth === 0) break;
-		}
-		at++;
-	}
-}

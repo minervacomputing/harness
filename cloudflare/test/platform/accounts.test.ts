@@ -7,14 +7,14 @@ import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, test, vi } from "vitest";
 import { currentSession, getAuth } from "../../src/accounts/auth.ts";
-import { hashPassword } from "../../src/accounts/passwords.ts";
+import { HASHING, hashPassword } from "../../src/accounts/passwords.ts";
 import { provision } from "../../src/accounts/provision.ts";
 import { SEED_ACCOUNTS, seed } from "../../src/accounts/seed.ts";
 import { workspaceObject } from "../../src/addressing.ts";
 import { MAX_JSON_BODY } from "../../src/http/body.ts";
 import { createApp } from "../../src/http/router.ts";
 import { uuid7 } from "../../src/lib/random.ts";
-import { Browser, ORIGIN, PASSWORD, emailsTo, installEmailLog, lastCode, signUp, signedIn, uniqueEmail } from "./accounts-helpers.ts";
+import { Browser, ORIGIN, PASSWORD, emailsTo, installEmailLog, lastCode, signUp, signedIn, uniqueEmail, withProductionHashing } from "./accounts-helpers.ts";
 
 installEmailLog();
 
@@ -99,11 +99,12 @@ describe("sign-up and provisioning", () => {
 		});
 	});
 
-	test("the password is stored in our scrypt format", async () => {
-		const { email } = await signUp();
-		const row = await db.prepare(`SELECT password FROM account WHERE "userId" = ? AND "providerId" = 'credential'`).bind(await userId(email)).first<{ password: string }>();
-		expect(row?.password).toMatch(/^scrypt\$15\$8\$3\$[A-Za-z0-9+/]{22}\$[A-Za-z0-9+/]{43}$/);
-	});
+	test("the password is stored in our scrypt format, with production's parameters", () =>
+		withProductionHashing(async () => {
+			const { email } = await signUp();
+			const row = await db.prepare(`SELECT password FROM account WHERE "userId" = ? AND "providerId" = 'credential'`).bind(await userId(email)).first<{ password: string }>();
+			expect(row?.password).toMatch(/^scrypt\$15\$8\$3\$[A-Za-z0-9+/]{22}\$[A-Za-z0-9+/]{43}$/);
+		}));
 
 	test("closed sign-up creates nothing", async () => {
 		const closed = getAuth({ ...env, MINERVA_SIGNUP_OPEN: "false" });
@@ -240,37 +241,49 @@ describe("sessions and /api/me", () => {
 describe("passwords and rate limits", () => {
 	test("an unknown address answers as a wrong password and costs a hash", async () => {
 		const { email } = await signedIn();
-		const time = async (address: string) => {
-			const started = performance.now();
+		// A new hash reads the parameters it gets (passwords.ts HASHING); verifying a stored one does not.
+		const cheap = HASHING.params;
+		let hashes = 0;
+		Object.defineProperty(HASHING, "params", { configurable: true, get: () => (hashes++, cheap) });
+		const attempt = async (address: string) => {
+			hashes = 0;
 			const answer = await new Browser().auth("/sign-in/email", { email: address, password: "not the passphrase" });
-			return { answer, ms: performance.now() - started };
+			return { answer, hashed: hashes };
 		};
-		const wrong = await time(email);
-		const unknown = await time(uniqueEmail());
+		let wrong: Awaited<ReturnType<typeof attempt>>;
+		let unknown: Awaited<ReturnType<typeof attempt>>;
+		try {
+			wrong = await attempt(email);
+			unknown = await attempt(uniqueEmail());
+		} finally {
+			Object.defineProperty(HASHING, "params", { configurable: true, writable: true, value: cheap });
+		}
 		expect(unknown.answer.status).toBe(wrong.answer.status);
 		expect(unknown.answer.body).toEqual(wrong.answer.body);
-		// scrypt takes tens of milliseconds; skipping it would take one or two.
-		expect(unknown.ms).toBeGreaterThan(wrong.ms / 3);
+		expect(wrong.hashed).toBe(0);
+		expect(unknown.hashed).toBeGreaterThan(0);
 	});
 
-	test("a hash with older scrypt parameters is replaced when it verifies; sessions stay", async () => {
-		const { browser: before, email, userId: id } = await signedIn();
-		const old = await hashPassword(PASSWORD, { logN: 14, r: 8, p: 1 });
-		await db.prepare(`UPDATE account SET password = ? WHERE "userId" = ?`).bind(old, id).run();
-		// Writing a hash is a password change as far as sessions go: the session made before it ends.
-		expect((await before.call("GET", "/api/me")).status).toBe(401);
-		// A session made while the old hash is stored (by an email code, which checks no password)...
-		const browser = new Browser();
-		expect((await browser.auth("/email-otp/send-verification-otp", { email, type: "sign-in" })).status).toBe(200);
-		expect((await browser.auth("/sign-in/email-otp", { email, otp: lastCode(email) })).status).toBe(200);
-		const stored = async () => (await db.prepare(`SELECT password FROM account WHERE "userId" = ?`).bind(id).first<{ password: string }>())?.password;
-		expect((await new Browser().auth("/sign-in/email", { email, password: "wrong passphrase" })).status).toBe(401);
-		expect(await stored()).toBe(old);
-		expect((await new Browser().auth("/sign-in/email", { email, password: PASSWORD })).status).toBe(200);
-		expect(await stored()).toMatch(/^scrypt\$15\$8\$3\$/);
-		// ...keeps working after the rehash: its stamp moved to the new hash with it.
-		expect((await browser.call("GET", "/api/me")).status).toBe(200);
-	});
+	test("a hash with older scrypt parameters is replaced when it verifies; sessions stay", () =>
+		withProductionHashing(async () => {
+			const { browser: before, email, userId: id } = await signedIn();
+			const old = await hashPassword(PASSWORD, { logN: 10, r: 8, p: 1 });
+			await db.prepare(`UPDATE account SET password = ? WHERE "userId" = ?`).bind(old, id).run();
+			// Writing a hash is a password change as far as sessions go: the session made before it ends.
+			expect((await before.call("GET", "/api/me")).status).toBe(401);
+			// A session made while the old hash is stored (by an email code, which checks no password)...
+			const browser = new Browser();
+			expect((await browser.auth("/email-otp/send-verification-otp", { email, type: "sign-in" })).status).toBe(200);
+			expect((await browser.auth("/sign-in/email-otp", { email, otp: lastCode(email) })).status).toBe(200);
+			const stored = async () => (await db.prepare(`SELECT password FROM account WHERE "userId" = ?`).bind(id).first<{ password: string }>())?.password;
+			expect((await new Browser().auth("/sign-in/email", { email, password: "wrong passphrase" })).status).toBe(401);
+			expect(await stored()).toBe(old);
+			expect((await new Browser().auth("/sign-in/email", { email, password: PASSWORD })).status).toBe(200);
+			expect(await stored()).toMatch(/^scrypt\$15\$8\$3\$/);
+			// ...keeps working after the rehash: its stamp moved to the new hash with it.
+			expect((await browser.call("GET", "/api/me")).status).toBe(200);
+		}),
+	);
 
 	test("sign-in attempts are limited per IP and counted in D1", async () => {
 		const browser = new Browser();

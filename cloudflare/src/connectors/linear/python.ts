@@ -4,7 +4,7 @@
 // lib/text.ts).
 //
 // Category data come from the runtime's Unicode tables, as Python's come from its own (Python 3.14 has
-// Unicode 16). (`str.casefold()` is lib/casefold.ts, which test/fixtures/unicode/ pins against Python.)
+// Unicode 16). (`str.casefold()` is lib/casefold.ts.)
 
 import { pythonFloat } from "../../lib/json.ts";
 import type { Json } from "../../lib/json.ts";

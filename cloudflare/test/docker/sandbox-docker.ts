@@ -1,6 +1,6 @@
 // A local stand-in for `ctx.container`: the sandbox image (cloudflare/container/) in a Docker container,
 // driven through `docker exec`, so the Sandbox's logic, the wrapper, the hardening, minerva-fs and the
-// ExecutionEnv run for real in unit tests (test/unit/sandbox-local.test.ts). It behaves as the platform's
+// ExecutionEnv run for real in Docker tests (test/docker/sandbox-local.test.ts). It behaves as the platform's
 // does where the Sandbox depends on it: exec'd processes are root, session leaders with no parent, have
 // only the environment they are given, and an aborted exec kills its process (exit 137).
 //

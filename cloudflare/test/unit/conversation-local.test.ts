@@ -3,7 +3,7 @@
 // held until a checkpoint saved them, read-only rounds without one, a failed checkpoint ending the attempt
 // before any result is released, the watchdog, the chat's cards, the bash tool's environment and timeouts,
 // and the fixed order. The file tools run against pi's own Node environment in a temporary directory; the
-// container's (minerva-fs, FIFOs, the stray killer) is test/unit/conversation-local-docker.test.ts's.
+// container's (minerva-fs, FIFOs, the stray killer) is test/docker/conversation-local-docker.test.ts's.
 
 import type { ToolExecutionApi, ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";

@@ -74,14 +74,15 @@ Vite's dev server loads the Worker's sources itself, so the `workerSources()` pl
 
 ```sh
 pnpm typecheck       # generates cf's types, then tsc for the Worker, Node scripts and download Worker
-pnpm test:unit       # Vitest in Node: lib/, http/, settings, the contracts' types, rules on the sources; the sandbox's Docker-backed tests use the image `pnpm sandbox:image` builds
+pnpm test:unit       # Vitest in Node: lib/, http/, settings, the contracts' types, rules on the sources
+pnpm test:docker     # the Sandbox against the real image in a local container (needs Docker and the image `pnpm sandbox:image` builds; skips without them)
 pnpm test:platform   # the Worker in local workerd: router, Durable Objects with SQLite, D1, the protocols' fault tests
 pnpm test:account    # the deployed Workers (needs the origins above, ../.env.cloudflare and cf signed in), and the browser walk on the test Worker (needs its settings and Chrome)
 pnpm test:faults     # the account's fault tests, sandbox lab and end-to-end turns, against the test Worker (below)
 pnpm test:cm         # code mode's fault rows on the account, against its lab Worker; not part of test:faults (below)
 ```
 
-The platform tests use `@cloudflare/vitest-plugin`, which loads `cloudflare.config.ts` itself (`experimental.newConfig`) in mode `test`, which builds the test Worker's entry (`src/faults/index.ts`) under local names of its own (`minerva-cf-local`, never production's, and only under vitest): the same Worker with the fake Notes connector, its provider object and the fault points. Remote bindings are off, so they never reach the account. `test/platform/protocols.test.ts` runs the real Workspace and Conversation objects, the executor with its ledger in the Conversation's SQLite, leases and refreshes against the fake provider, and the fake model, and injects the faults of the plan's Start and revocation, Attempts, Writes and Refresh rows (`ctx.abort()` at named points, with or without syncing first, lost answers, held steps). The unit tests compare `lib/` with vectors from today's Python; regenerate them with `cd ../backend && uv run python -I ../cloudflare/test/fixtures/generate.py`. The account tests call the token-gated `/api/probe` (`src/http/probe.ts`), with the token derived from `MINERVA_SECRET_KEY`, and read the Workers' settings with `cf`.
+The platform tests use `@cloudflare/vitest-plugin`, which loads `cloudflare.config.ts` itself (`experimental.newConfig`) in mode `test`, which builds the test Worker's entry (`src/faults/index.ts`) under local names of its own (`minerva-cf-local`, never production's, and only under vitest): the same Worker with the fake Notes connector, its provider object and the fault points. Remote bindings are off, so they never reach the account. `test/platform/protocols.test.ts` runs the real Workspace and Conversation objects, the executor with its ledger in the Conversation's SQLite, leases and refreshes against the fake provider, and the fake model, and injects the faults of the plan's Start and revocation, Attempts, Writes and Refresh rows (`ctx.abort()` at named points, with or without syncing first, lost answers, held steps). The account tests call the token-gated `/api/probe` (`src/http/probe.ts`), with the token derived from `MINERVA_SECRET_KEY`, and read the Workers' settings with `cf`.
 
 ## First deploy
 

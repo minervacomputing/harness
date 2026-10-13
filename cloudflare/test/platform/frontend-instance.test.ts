@@ -6,6 +6,7 @@
 
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { useCheapHashing } from "./cheap-hashing.ts";
 import { Browser, ORIGIN, PASSWORD, installEmailLog, lastCode, uniqueEmail } from "./accounts-helpers.ts";
 
 installEmailLog();
@@ -54,6 +55,7 @@ async function load(next = new Browser()): Promise<void> {
 		},
 	});
 	vi.resetModules();
+	await useCheapHashing();
 	// @ts-expect-error The frontend is outside this project's types; the vitest alias resolves it (vitest.platform.config.ts).
 	const [authModule, instance, guards, http, generated] = await Promise.all([import("@/lib/auth.ts"), import("@/lib/instance.ts"), import("@/lib/guards.ts"), import("@/lib/http.ts"), import("@/api/client.gen.ts")]);
 	// The app's client has an empty base URL (the page's origin); workerd needs an absolute one.

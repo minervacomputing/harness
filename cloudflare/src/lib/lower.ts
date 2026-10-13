@@ -8,8 +8,7 @@
 //   come out the other way. A run beside one is lowercased with a cased stand-in ("a") on that side, which
 //   puts the rule in the same position as with the letter.
 //
-// A test compares the result with Python's for every code point in four positions around a sigma
-// (test/fixtures/unicode-tests.ts). `str.casefold()` is lib/casefold.ts.
+// `str.casefold()` is lib/casefold.ts.
 
 import { UNICODE_17_CLASS } from "./unicode.ts";
 

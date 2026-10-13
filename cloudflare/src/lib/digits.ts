@@ -67,11 +67,6 @@ export function digitValue(char: string): number | null {
 	return null;
 }
 
-/** The decimal digits' ranges, for the tests. */
-export function decimalRanges(): [number, number][] {
-	return DECIMALS.map(([first, last]): [number, number] => [first, last]);
-}
-
 /** `int(text)` of a string of decimal digits (one a `\d+` pattern matched); a character that is no digit counts as 0. */
 export function decimalValue(text: string): number {
 	let value = 0;

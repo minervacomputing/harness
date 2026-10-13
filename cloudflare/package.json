@@ -13,6 +13,7 @@
     "types": "cf workers types && cd files-worker && cf workers types",
     "typecheck": "pnpm types && tsc -p tsconfig.json && tsc -p tsconfig.node.json && tsc -p files-worker/tsconfig.json",
     "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:docker": "vitest run --config vitest.docker.config.ts",
     "test:platform": "vitest run --config vitest.platform.config.ts",
     "test:account": "vitest run --config vitest.account.config.ts",
     "test:faults": "vitest run --config vitest.faults.config.ts",

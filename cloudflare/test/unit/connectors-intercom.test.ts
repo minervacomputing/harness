@@ -1,11 +1,11 @@
-// backend/tests/test_intercom.py, case by case: the Intercom connector against an in-memory Intercom API
-// (test/fixtures/connectors/intercom/fake.ts) behind the executor's injected `fetch`, with the real executor,
-// ledger and page tokens (executor-fakes.ts `Scenario`). The text case and the comparisons with Python's
-// vectors are in connectors-intercom-text.test.ts.
+// The Intercom connector against an in-memory Intercom API (test/fixtures/connectors/intercom/fake.ts)
+// behind the executor's injected `fetch`, with the real executor, ledger and page tokens (executor-fakes.ts
+// `Scenario`); and the text agents are shown (`read`, `written`).
 
 import { describe, expect, test } from "vitest";
 import { type IntercomClient, MAX_RESPONSE, Conversation as ConversationSchema, classify, cursor } from "../../src/connectors/intercom/client.ts";
 import { intercom } from "../../src/connectors/intercom/connector.ts";
+import { checkWritten, read, redact, written } from "../../src/connectors/intercom/html.ts";
 import { INBOX } from "../../src/connectors/intercom/inboxes.ts";
 import { MAX_MESSAGES, messages } from "../../src/connectors/intercom/reads.ts";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
@@ -33,7 +33,7 @@ import { Scenario, userGrants } from "./executor-fakes.ts";
 
 const CONNECTION = "0199a000-0000-7000-8000-00000000002a";
 
-/** A run for an agent with the user's Intercom connection, holding `grants` ({inbox: actions}) (test_intercom.py `start`). */
+/** A run for an agent with the user's Intercom connection, holding `grants` ({inbox: actions}). */
 function start(fake: FakeIntercom, grants: { [inbox: string]: string[] }, ceiling: GrantRow[] = []): Promise<Scenario> {
 	return Scenario.start({
 		connectors: [intercom],
@@ -44,7 +44,7 @@ function start(fake: FakeIntercom, grants: { [inbox: string]: string[] }, ceilin
 	});
 }
 
-/** A deny in the workspace ceiling, which stays unrestricted (connector_runs.py `ceiling`). */
+/** A deny in the workspace ceiling, which stays unrestricted. */
 function deny(inbox: string, actions: string[] = ["read"]): GrantRow {
 	return { layer: "ceiling", subject: null, connectionId: CONNECTION, kind: INBOX, resourceId: inbox, resourceName: "", actions, effect: "deny" };
 }
@@ -256,7 +256,7 @@ describe("reading", () => {
 
 	test("long conversations show their latest messages", async () => {
 		const fake = new FakeIntercom();
-		// test_intercom.py patches MAX_MESSAGES to 2; here the same conversation is shown with that limit.
+		// The same conversation, shown with a limit of two messages.
 		const read = ConversationSchema.parse(copy(fake.conversations["100"] as JsonObject));
 		const [shown, more] = messages(read, 2);
 		expect(shown.map((message) => message.id)).toEqual(["s100", "205", "206"]);
@@ -292,7 +292,7 @@ describe("reading", () => {
 	test("a team id beyond what a JavaScript number holds is not guessed at", async () => {
 		const fake = new FakeIntercom();
 		const run = await start(fake, { "*": ["read"] });
-		// Python would place it in team 12345678901234567890; a number would round it to another team.
+		// Read as a number, 12345678901234567890 would round to another team's id.
 		fake.hook = (method, path) =>
 			method === "GET" && path === "/conversations/102"
 				? new Response(JSON.stringify(fake.conversations["102"]).replace('"team_assignee_id":0', '"team_assignee_id":12345678901234567890'), { status: 200 })
@@ -600,5 +600,79 @@ describe("writing", () => {
 		expect(again.repeat).toBe(true);
 		expect(again.result).toEqual(first.result);
 		expect(fake.writes).toHaveLength(1);
+	});
+});
+
+describe("text agents read", () => {
+	test("HTML is read as text without links to Intercom", () => {
+		const SECRET = "SECRET merger";
+		expect(read('<a href="https://www.intercom.com/x">a <b>label</b></a> after')).toBe("[Intercom link] after");
+		expect(read('<a href="https://example.com" href="https://app.intercom.com">x</a>')).toBe("[Intercom link]");
+		expect(read('<a href="https://intercom-attachments-1.com/f">f</a>')).toBe("[Intercom link]");
+		expect(read("<p>one</p><ul><li>two</li><li>three</li></ul>")).toBe("one\n- two\n- three");
+		expect(read("<p>see app.intercom.com/a/x</p>")).toBe("see [Intercom link]");
+		expect(read(`<p>open</p><script>${SECRET}`)).toBe("open");
+		expect(read(`<svg><svg></svg>${SECRET}</svg>shown`)).toBe("shown");
+		expect(read('<a href="https://example.com">https://example.com</a>')).toBe("https://example.com");
+		for (const host of ["intercomassets.com", "static.intercomassets.eu", "x.intercomcdn.eu", "intercomusercontent.com", "intercom-attachments.eu"]) {
+			expect(read(`<a href="https://${host}/f">${SECRET}</a>`)).toBe("[Intercom link]");
+		}
+		// Relative links resolve against Intercom's own pages.
+		for (const href of ["/a/inbox/abc123/conversation/101", "conversation/101", "//app.intercom.com/x", "java\tscript:x"]) {
+			expect(read(`<a href="${href}">${SECRET}</a>`)).toBe("[Intercom link]");
+		}
+		expect(read(`<a href="mailto:a@example.com">${SECRET}</a>`)).not.toBe("[Intercom link]");
+		expect(read(`<a href="">${SECRET}</a>`)).toBe("[Intercom link]");
+		expect(read(`<a href>${SECRET}</a>`)).toBe("[Intercom link]");
+		expect(read("<a>plain</a>")).toBe("plain");
+		expect(read(null)).toBe("");
+		expect(written("a & b\r\n\r\n\r\nc")).toBe("<p>a &amp; b</p><p>c</p>");
+	});
+
+	test("every spelling of an Intercom host is hidden when read and refused when written", () => {
+		for (const text of ["intercom%2Ecom", "intercom&#46;com", "intercom\u2024com", "\u0131ntercom.com", "see intercom.com now", "Ada (ada@intercom.io)"]) {
+			expect(redact(text).replace("[Intercom link]", ""), text).not.toMatch(/intercom/i);
+			expect(redact(text), text).toContain("[Intercom link]");
+		}
+		for (const html of ["%69ntercom.com", "&#x69;ntercom.com", "INTERCOM:", '<a href="https://example.com/?u=app%2Eintercom%2Ecom">x</a>', '<a href="https://example.com/?u=%2569ntercom.com">x</a>']) {
+			expect(read(html), html).toBe("[Intercom link]");
+		}
+		for (const text of ["APP%2EINTERCOM%2ECOM/x", "intercom:x", "inter\ncom.com", "inter\tcom.com", "intercom&#46;com", "intercom\uff0ecom", "\u200bintercom.io"]) {
+			expect(() => checkWritten(text), text).toThrow("must not link to Intercom");
+		}
+		for (const text of ["bell \u0007", "\u0000"]) expect(() => checkWritten(text), text).toThrow("must not contain control characters");
+	});
+
+	test("what an unclosed or self-closed script or svg could hide stays hidden", () => {
+		expect(read("<script/>a</script>b")).toBe("b");
+		expect(read("<svg/>after")).toBe("");
+	});
+
+	test("a large document is read in time", () => {
+		// A 4 MB body of unclosed attributes must not backtrack for long.
+		const started = performance.now();
+		read(`<p ${"a=b ".repeat(200_000)}`);
+		read(`<a href="https://example.com">${"x<b>y</b>".repeat(100_000)}`);
+		read("<".repeat(500_000));
+		expect(performance.now() - started).toBeLessThan(10_000);
+	});
+});
+
+describe("nested links", () => {
+	const H = "https://example.com/";
+
+	test("a link to Intercom inside another link is hidden too", () => {
+		expect(read(`<a href="${H}"><a href="https://app.intercom.com/x">SECRET merger</a></a>`)).not.toContain("SECRET");
+	});
+
+	test("links nested a hundred thousand deep are read in about linear time", () => {
+		// Each closing link once joined its whole label again, so the text was copied once per level
+		// (60,000 levels, about 2 MB, took seconds).
+		const depth = 100_000;
+		const started = performance.now();
+		const text = read(`${`<a href="${H}">`.repeat(depth)}x${"</a>".repeat(depth)}`);
+		expect(performance.now() - started).toBeLessThan(2000);
+		expect(text === `x${` (${H})`.repeat(depth)}`).toBe(true);
+		expect(read(`${`<a href="${H}">`.repeat(depth)}${H}${"</a>".repeat(depth)}`)).toBe(H);
 	});
 });

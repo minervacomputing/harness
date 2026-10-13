@@ -1,6 +1,6 @@
 // What the Sandbox's logic (core.ts) needs from its object: the container, its storage, the bucket, a
 // clock and ids. The object (sandbox.ts) passes `ctx.container`, `ctx.storage.sql` and the workspace's
-// bucket; unit tests pass fakes, and the local container tests a Docker container (test/unit/).
+// bucket; unit tests pass fakes, and the local container tests a Docker container (test/docker/).
 
 import type { WorkspaceRef } from "../contracts/common.ts";
 import { hex } from "../lib/bytes.ts";

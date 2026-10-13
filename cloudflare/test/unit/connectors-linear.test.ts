@@ -1,12 +1,12 @@
-// backend/tests/test_linear.py's connecting and run cases, case by case: the Linear connector against an
-// in-memory Linear GraphQL API (test/fixtures/connectors/linear/fake.ts) behind the executor's injected
-// `fetch`, with the real executor, ledger and page tokens (executor-fakes.ts `Scenario`). The text,
-// judge and ancestry cases are in connectors-linear-text.test.ts.
+// The Linear connector against an in-memory Linear GraphQL API (test/fixtures/connectors/linear/fake.ts)
+// behind the executor's injected `fetch`, with the real executor, ledger and page tokens (executor-fakes.ts
+// `Scenario`); and its pure rules: the text agents read and write, the judge of writes, team ancestry.
 
 import { describe, expect, test } from "vitest";
-import type { LinearClient } from "../../src/connectors/linear/client.ts";
+import { type LinearClient, MAX_TEAM_DEPTH, type TeamRef, judge } from "../../src/connectors/linear/client.ts";
 import { DESCRIBE_BATCH, MAX_DISCOVERY_PAGES, linear } from "../../src/connectors/linear/connector.ts";
-import { TEAM } from "../../src/connectors/linear/teams.ts";
+import { issueLinks, redact, writtenProblem } from "../../src/connectors/linear/markdown.ts";
+import { TEAM, ancestry } from "../../src/connectors/linear/teams.ts";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
 import type { GrantRow } from "../../src/contracts/policy.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
@@ -19,7 +19,7 @@ import { Scenario, userGrants } from "./executor-fakes.ts";
 
 const CONNECTION = "0199a000-0000-7000-8000-00000000001e";
 
-/** A run for an agent with the user's Linear connection, holding `grants` on teams (test_linear.py `start`). */
+/** A run for an agent with the user's Linear connection, holding `grants` on teams. */
 function start(fake: FakeLinear, grants: { [team: string]: string[] }, ceiling: GrantRow[] = []): Promise<Scenario> {
 	const teams = Object.fromEntries(Object.entries(grants).map(([name, actions]) => [ID[name] ?? name, actions]));
 	return Scenario.start({
@@ -31,7 +31,7 @@ function start(fake: FakeLinear, grants: { [team: string]: string[] }, ceiling: 
 	});
 }
 
-/** A deny in the workspace ceiling (connector_runs.py `ceiling`), which stays unrestricted. */
+/** A deny in the workspace ceiling, which stays unrestricted. */
 function deny(team: string, actions: string[] = ["read"]): GrantRow {
 	return { layer: "ceiling", subject: null, connectionId: CONNECTION, kind: TEAM, resourceId: ID[team] as string, resourceName: "", actions, effect: "deny" };
 }
@@ -185,8 +185,7 @@ describe("connecting", () => {
 });
 
 /**
- * What each operation means today, over zod's JSON Schema of its input (not Pydantic's, so not today's
- * Python values). A change here makes running runs' tools fail with OPERATION_CHANGED: update it only with
+ * What each operation means, over zod's JSON Schema of its input. A change here makes running runs' tools fail with OPERATION_CHANGED: update it only with
  * a change of meaning, and bump `revision` when the declaration does not show one.
  */
 const FINGERPRINTS: { [operation: string]: string } = {
@@ -570,5 +569,119 @@ describe("runs", () => {
 			name === "Issue" ? new Response(JSON.stringify({ errors: [{ message: "internal detail 42", extensions: { type: "internal" } }] }), { status: 200 }) : null;
 		expect(await run.error("linear_get_issue", { issue: "ENG-1" })).toEqual({ code: "PROVIDER_FAILED", message: "Linear could not complete this request." });
 		expect(JSON.stringify(run.events)).not.toContain("internal detail");
+	});
+});
+
+/** A UUID with the number `n` in its last digits. */
+function uuid(n: number): string {
+	const hex = n.toString(16).padStart(32, "0");
+	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function response(status: number, body: unknown): [Response, string] {
+	const text = typeof body === "string" ? body : JSON.stringify(body);
+	return [new Response(text, { status }), text];
+}
+
+function judged(status: number, body: unknown): string | null {
+	const [res, text] = response(status, body);
+	return judge(res, text);
+}
+
+describe("text, judging and ancestry", () => {
+	test("read text hides titles of linked objects", () => {
+		const SECRET = "Secret ops thing";
+		const shown = redact(
+			`[${SECRET}](https://linear.app/acme/issue/OPS-1/secret-ops-thing) and ` +
+				"https://linear.app/Acme/issue/ops-2/other-title, " +
+				"https://linear.app/acme/project/secret-roadmap-0a1b2c3d4e5f/overview, " +
+				"linear.app/acme/view/hush-hush, https://linear.app/acme, " +
+				"![shot](https://uploads.linear.app/a/b.png), " +
+				`[\\[SEC\\] ${SECRET} \\[x\\]](https://linear.app/acme/issue/OPS-1/x), ` +
+				`[[${SECRET}]](https://linear.app/acme/issue/OPS-1 'tip'), ` +
+				`![${SECRET}](https://linear.app/acme/issue/OPS-1 (${SECRET})), ` +
+				`[${SECRET}](https://linear.app/acme/issue/OPS-1 "a \\"quote\\"")`,
+		);
+		for (const hidden of ["ecret", "other-title", "roadmap", "hush"]) expect(shown).not.toContain(hidden);
+		expect(shown).toContain("https://linear.app/acme/issue/OPS-1 and");
+		expect(shown).toContain("https://linear.app/Acme/issue/OPS-2,");
+		expect(shown).toContain("https://linear.app/acme/project/0a1b2c3d4e5f,");
+		expect(shown).toContain("https://linear.app/acme/view,");
+		expect(shown).toContain("![shot](https://uploads.linear.app/a/b.png)");
+		expect(shown).not.toContain("SEC");
+		expect(redact(null)).toBeNull();
+	});
+
+	test.each([
+		"![x](https://evil.example/p.png)",
+		"<img src=https://evil.example/p.png>",
+		'<a href="https://evil.example">x</a>',
+		"<iframe>",
+		"https://linear.app/acme/project/roadmap-0a1b2c3d4e5f",
+		"linear.app/acme/issue/ENG-1",
+		"https://linear.app/acme/issue/ENG-1.evil",
+		"[x](https://linear.app/acme/issue/ENG-1/../../issue/OPS-1)",
+		"[x](https://linear.app/acme/issue/ENG-1/x_/../../OPS-1)",
+		"[x](https://linear.app/acme/issue/ENG-1'/../OPS-1)",
+		"https://linear.app/acme/issue/ENG-1)/../OPS-1",
+		"https://linear.app/acme/issue/ENG-1\\)/../OPS-1",
+		"https://linear.app/acme/issue/ENG-1/%2e%2e",
+		"https://linear.app/acme/issue/ENG-1?x=1",
+		"https://linear.app/acme/issue/ENG-1#top",
+		"[x](https://linear%2eapp/acme/issue/OPS-1)",
+		"[x](https://linear&#46;app/acme/issue/OPS-1)",
+		"[x](https://linear\\.app/acme/issue/OPS-1)",
+		"[x](https://linear。app/acme/issue/OPS-1)",
+		"[x](https://ｌｉｎｅａｒ.app/acme/issue/OPS-1)",
+		"[x](https://linear​.app/acme/issue/OPS-1)",
+		"https://linear.app/acme/settings/api",
+		"[ENG-1](https://linear.app/acme/team/ENG)",
+		"nul\x00",
+		Array.from({ length: 11 }, (_, n) => `https://linear.app/acme/issue/ENG-${n + 1}`).join(" "),
+	])("written text may only add words: %j", (written) => {
+		expect(writtenProblem(written)).not.toBeNull();
+	});
+
+	test("written text allows markdown, uploads and issue links", () => {
+		const written =
+			"Plain **markdown** with [a link](https://example.com), <br>, " +
+			"![shot](https://uploads.linear.app/a/b.png), [docs](https://linear.app/Acme/issue/eng-2/write-docs) " +
+			"and https://linear.app/acme/issue/ENG-2. (https://linear.app/acme/issue/ENG-2), 100% sure, " +
+			"**https://linear.app/acme/issue/ENG-2**, <https://linear.app/acme/issue/ENG-2/>";
+		expect(writtenProblem(written)).toBeNull();
+		expect(issueLinks(written)).toEqual([["acme", "ENG-2"]]);
+	});
+
+	test("judge claims only what Linear confirms", () => {
+		const error = { message: "x", extensions: { type: "internal error" } };
+		expect(judged(200, { data: { issueCreate: { success: true } } })).toBe("applied");
+		// Errors raised before anything ran.
+		const malformed = { message: "x", extensions: { type: "graphql error", code: "GRAPHQL_VALIDATION_FAILED" } };
+		expect(judged(400, { errors: [malformed] })).toBe("not_applied");
+		const limited = { message: "x", extensions: { type: "Ratelimited", code: "RATELIMITED" } };
+		expect(judged(400, { data: null, errors: [limited] })).toBe("not_applied");
+		// Anything else may have been applied.
+		expect(judged(400, { errors: [error] })).toBe("unknown");
+		expect(judged(200, { data: null, errors: [malformed] })).toBe("unknown");
+		expect(judged(200, { data: null, errors: [error] })).toBe("unknown");
+		expect(judged(200, { data: { issueCreate: { success: false } } })).toBe("unknown");
+		expect(judged(200, "<html>")).toBe("unknown");
+		expect(judged(502, "<html>")).toBeNull();
+	});
+
+	test("team chains beyond the limit are partial", () => {
+		const chain = (levels: number): TeamRef => {
+			let team: TeamRef = { id: uuid(1000), parent: null };
+			for (let n = 0; n < levels; n++) team = { id: uuid(n + 1), parent: team };
+			return team;
+		};
+		let [within, partial] = ancestry(chain(MAX_TEAM_DEPTH));
+		expect([within.length, partial]).toEqual([MAX_TEAM_DEPTH, false]);
+		[within, partial] = ancestry(chain(MAX_TEAM_DEPTH + 1));
+		expect([within.length, partial]).toEqual([MAX_TEAM_DEPTH, true]);
+		// A cycle, or a parent that is not a team id, ends the chain as partial.
+		const loop: TeamRef = { id: uuid(1), parent: { id: uuid(2), parent: { id: uuid(1).toUpperCase(), parent: null } } };
+		expect(ancestry(loop)).toEqual([[uuid(2)], true]);
+		expect(ancestry({ id: uuid(1), parent: { id: "not-a-team", parent: null } })).toEqual([[], true]);
 	});
 });

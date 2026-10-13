@@ -1,6 +1,6 @@
 // The checkpoint barrier with the real container (plan: Checkpoints): an attempt's LocalRun
 // (src/conversation/local-run.ts) over the Sandbox's logic and the sandbox image in a local Docker container
-// (test/unit/sandbox-docker.ts), and the folder's store over node:sqlite (test/unit/files-support.ts). pi's
+// (test/docker/sandbox-docker.ts), and the folder's store over node:sqlite (test/unit/files-support.ts). pi's
 // own read, write, edit and bash run through the container's ExecutionEnv; checkpoints kill strays, scan as
 // the agent's user, stream changed files into the bucket and record versions. Covered: results held until
 // saved and released in order, read-only rounds without a checkpoint, the final rehash, FIFOs refused by
@@ -22,9 +22,9 @@ import { SandboxCore } from "../../src/sandbox/core.ts";
 import type { Delivered } from "../../src/sandbox/output.ts";
 import { type BucketPort, CHECK_MISMATCH } from "../../src/sandbox/ports.ts";
 import { SANDBOX_MIGRATIONS } from "../../src/sandbox/store.ts";
-import { CONVERSATION, sha, WORKSPACE, World } from "./files-support.ts";
+import { CONVERSATION, sha, WORKSPACE, World } from "../unit/files-support.ts";
 import { DockerContainer, dockerReady } from "./sandbox-docker.ts";
-import { openDatabase } from "./sqlite.ts";
+import { openDatabase } from "../unit/sqlite.ts";
 
 const READY = dockerReady();
 const WS = { id: WORKSPACE, jurisdiction: null } as const;

@@ -1,7 +1,6 @@
-// lib/htmlparser.ts, the port of Python's HTMLParser: its events are compared with Python's for every
-// document of test/fixtures/connectors/intercom/vectors.json (connectors-intercom-text.test.ts). Here, the
-// time it takes on markup built to make a parser rescan its input: the expressions are Python's, which
-// can backtrack, and a page is the attacker's. Each takes about 10 to 100 ms; a quadratic parser would
+// lib/htmlparser.ts, the port of Python's HTMLParser: the time it takes on markup built to make a parser
+// rescan its input: the expressions are Python's, which can backtrack, and a page is the attacker's. Each takes
+// about 10 to 100 ms; a quadratic parser would
 // take a minute.
 
 import { describe, expect, test } from "vitest";

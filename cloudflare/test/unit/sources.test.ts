@@ -4,6 +4,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
 import ts from "typescript";
 import { expect, test } from "vitest";
+import { sourceCode } from "../fixtures/source.ts";
 
 const ROOT = new URL("../../", import.meta.url).pathname;
 
@@ -28,6 +29,30 @@ test("JSON is read only through lib/json.ts's parseJson", () => {
 		for (const [line, number] of code(path)) if (/\bJSON\.parse\(|\.json\(\)/.test(line)) offenders.push(`${path}:${number}`);
 	}
 	expect(offenders).toEqual([]);
+});
+
+test("no schema coerces: tool inputs are the types they name", () => {
+	// zod's coercion reads "0x10" as 16 and any non-empty string as true.
+	const users = sourceCode().filter(({ code }) => /\bz\s*\.\s*coerce\b|\bcoerce\s*\.\s*(number|string|boolean|bigint|date)\b/.test(code));
+	expect(users.map(({ path }) => path)).toEqual([]);
+});
+
+// NFKC folds look-alikes (fullwidth letters, ligatures, "①") into other characters. It is used to refuse and
+// to redact, never to match: `decoded` finds an address hidden in an encoded link, and `checkNetloc` refuses
+// a host that NFKC would turn into a delimiter. Identities, grants, names and searches are compared as typed.
+test("compatibility normalization decides who or what something is nowhere", () => {
+	const compatibility = sourceCode().filter(({ code }) => /["'`]NFK[CD]["'`]/.test(code));
+	expect(compatibility.map(({ path }) => path).sort()).toEqual(["lib/text.ts", "lib/urlsplit.ts"]);
+	// Whatever its argument: a form held in a variable normalizes as well, and the default is NFC. NFC is for
+	// file names and manifest paths, NFD is in IDNA's rules, NFKC above; nothing else normalizes.
+	const normalizing = sourceCode().filter(({ code }) => /\.normalize\s*\(/.test(code));
+	expect(normalizing.map(({ path }) => path).sort()).toEqual(["files/manifest.ts", "files/names.ts", "lib/idna.ts", "lib/text.ts", "lib/urlsplit.ts"]);
+});
+
+test("nothing in src lowers the cost of password hashes", () => {
+	// The platform tests assign HASHING.params (test/platform/cheap-hashing.ts); a deployment never does.
+	const users = sourceCode().filter(({ code }) => /\bHASHING\s*\.\s*params\s*=[^=]/.test(code));
+	expect(users.map(({ path }) => path)).toEqual([]);
 });
 
 test("string limits count code points (lib/schema.ts)", () => {

@@ -3,6 +3,7 @@
 
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, expect, vi, type MockInstance } from "vitest";
+import { HASHING, SCRYPT } from "../../src/accounts/passwords.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 
 export const ORIGIN = "http://localhost";
@@ -42,23 +43,24 @@ export function lastCode(address: string): string {
 }
 
 /**
- * Waits for the next fixed window when fewer than `needed` ms of the current one are left, for each
- * `[seconds, needed]`. Our per-address and per-user limits (rate-limits.ts) count in fixed windows of that
- * length, and a test that counts attempts to the limit would otherwise straddle two windows now and then
- * (the earlier window only weighs in part), and see no refusal where it expects one.
+ * Freezes the clock a second into a fresh fixed window (rate-limits.ts counts per address and per user in
+ * fixed windows of 10 s to 300 s by `Date.now()`), so a test that counts attempts to the limit never
+ * straddles two windows, whatever the time of day, and never waits for one. Only `Date` is faked; call
+ * `vi.useRealTimers()` after the test.
  */
-export async function withinWindows(...windows: [seconds: number, needed: number][]): Promise<void> {
-	for (;;) {
-		const now = Date.now();
-		const wait = Math.max(
-			0,
-			...windows.map(([seconds, needed]) => {
-				const left = seconds * 1000 - (now % (seconds * 1000));
-				return left < needed ? left + 50 : 0;
-			}),
-		);
-		if (wait === 0) return;
-		await new Promise((resolve) => setTimeout(resolve, wait));
+export function freezeClockInWindow(): void {
+	const longest = 300_000;
+	vi.useFakeTimers({ toFake: ["Date"], now: (Math.floor(Date.now() / longest) + 1) * longest + 1_000 });
+}
+
+/** Runs a test with production's scrypt cost, for the tests of rehashing; the others hash cheaply (setup.ts). */
+export async function withProductionHashing<T>(run: () => Promise<T>): Promise<T> {
+	const cheap = HASHING.params;
+	HASHING.params = SCRYPT;
+	try {
+		return await run();
+	} finally {
+		HASHING.params = cheap;
 	}
 }
 

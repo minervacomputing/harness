@@ -5,10 +5,7 @@
 // unassigned one (no case, no letter, escaped by `repr()`), so every result for text that does not hold them
 // is the runtime's, and every result for text that does is Python's.
 //
-// UNICODE_17 is exactly the code points the runtime assigns and Python 3.14 does not. test/unit/unicode.test.ts
-// derives it from Python's unassigned code points (test/fixtures/unicode/generate.py, run on Python 3.14) and
-// the runtime's `\p{Cn}`, so it fails when the runtime moves to Unicode 18: its new code points are then in
-// neither list. That is the moment to decide whether Python (3.15 has Unicode 17) has moved too.
+// UNICODE_17 is exactly the code points the runtime assigns and Python 3.14 does not.
 
 /** Ranges in a table: `<first>-<last>` (or one code point), `/2` for every other one, in hex. */
 export function hexRanges(table: string): [first: number, last: number, step: number][] {

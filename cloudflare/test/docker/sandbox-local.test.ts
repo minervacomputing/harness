@@ -19,7 +19,7 @@ import type { ContainerPort, SandboxPorts } from "../../src/sandbox/ports.ts";
 import { prepareSandbox } from "../../src/sandbox/session.ts";
 import { SANDBOX_MIGRATIONS } from "../../src/sandbox/store.ts";
 import { DockerContainer, dockerReady, MemoryBucket, sha256Hex } from "./sandbox-docker.ts";
-import { openDatabase } from "./sqlite.ts";
+import { openDatabase } from "../unit/sqlite.ts";
 
 const READY = dockerReady();
 /** A context without cancellation: the adapter only reads its abort signal. */

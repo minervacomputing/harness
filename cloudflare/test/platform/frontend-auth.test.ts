@@ -4,6 +4,7 @@
 // browser. The client reaches the Worker through a Browser's cookie jar in place of `fetch`.
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { useCheapHashing } from "./cheap-hashing.ts";
 import { Browser, ORIGIN, PASSWORD, installEmailLog, lastCode, emailsTo, nextTotp, totp, uniqueEmail } from "./accounts-helpers.ts";
 
 installEmailLog();
@@ -90,6 +91,7 @@ async function load(next = new Browser()): Promise<void> {
 		return browser.fetch(request);
 	});
 	vi.resetModules();
+	await useCheapHashing();
 	// @ts-expect-error The frontend is outside this project's types; the vitest alias resolves it (vitest.platform.config.ts).
 	frontend = (await import("@/lib/auth.ts")) as Frontend;
 	// @ts-expect-error The frontend is outside this project's types; the vitest alias resolves it (vitest.platform.config.ts).
