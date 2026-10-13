@@ -1,4 +1,4 @@
-// The minerva-cf Worker: the API router, /assets/ and the Durable Object classes. Static assets (the
+// The app Worker: the API router, /assets/ and the Durable Object classes. Static assets (the
 // frontend's build) answer every other path before this runs.
 
 import { ASSETS_PREFIX, serveAsset } from "./http/assets.ts";

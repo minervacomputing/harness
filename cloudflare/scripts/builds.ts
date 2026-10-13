@@ -5,6 +5,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { namesOf } from "./instance.ts";
 
 export const OUTPUT = ".cloudflare/output/v0/workers/default/worker.config.json";
 
@@ -77,16 +78,17 @@ function buckets(worker: BuiltWorker): string[] {
 
 /**
  * What is wrong with an instance's two builds, one line each; empty when the download origin is the
- * instance's own. It fails closed: the app must be `expected.app`, the download origin `expected.files`,
- * bound to exactly the app's buckets, every bucket one of the instance's (`<app>-files`, `<app>-files-eu`),
- * with MINERVA_DOWNLOAD_KEY its only secret and the app's MINERVA_DOWNLOAD_ORIGIN. So a test build can never
+ * instance's own. It fails closed: the app must be the instance's Worker and the download origin its download
+ * Worker (scripts/instance.ts), bound to exactly the app's buckets, every bucket one of the instance's, with
+ * MINERVA_DOWNLOAD_KEY its only secret and the app's MINERVA_DOWNLOAD_ORIGIN. So a test build can never
  * deploy over production's download origin or read production's buckets, nor the other way round.
  */
-export function filesBuildProblems(app: BuiltWorker, files: BuiltWorker, expected: { app: string; files: string }): string[] {
+export function filesBuildProblems(app: BuiltWorker, files: BuiltWorker, instance: string): string[] {
+	const expected = namesOf(instance);
 	const problems: string[] = [];
 	if (app.name !== expected.app) problems.push(`The app's build is ${app.name ?? "unnamed"}, not ${expected.app}.`);
-	if (files.name !== expected.files) problems.push(`The download origin's build is ${files.name ?? "unnamed"}, not ${expected.files}.`);
-	const own = new Set([`${expected.app}-files`, `${expected.app}-files-eu`]);
+	if (files.name !== expected.download) problems.push(`The download origin's build is ${files.name ?? "unnamed"}, not ${expected.download}.`);
+	const own = new Set([expected.bucket, expected.bucketEu]);
 	for (const [worker, build] of [
 		["app", app],
 		["download origin", files],
@@ -138,9 +140,10 @@ export function liveAppProblems(live: Record<string, LiveBinding> | undefined, a
 }
 
 /**
- * Whether a container (an application's name) is the instance's own: `<instance>-<word>`, one word, as
- * cloudflare.config.ts names it (`${name}-sandbox`). So minerva-cf-test-sandbox is never production's.
+ * Whether a container (an application's name) is the instance's own: exactly the name scripts/instance.ts
+ * derives (`<instance>-sandbox`), which cloudflare.config.ts gives it. So the test instance's sandbox is never
+ * production's, and a container that merely starts with the instance's name is not its own.
  */
 export function ownContainer(instance: string, name: string): boolean {
-	return name.startsWith(`${instance}-`) && /^[a-z0-9]+$/.test(name.slice(instance.length + 1));
+	return name === namesOf(instance).container;
 }

@@ -1,10 +1,10 @@
-// The browser walk (plan: Step 5, unit 5f; Step 7): the real frontend, served by the test Worker minerva-cf-test
+// The browser walk (plan: Step 5, unit 5f; Step 7): the real frontend, served by the test instance's Worker
 // as its assets, driven in headless Chrome through its pages. Sign-up with the emailed code and the setup key,
 // the first-run setup claimed on its page, the instance admin page, sign-out and sign-in with a password,
 // two-factor turned on and used (TOTP computed here, a recovery code), sign-in by emailed code, a password
 // reset, an agent, a connection to the fake Notes connector through its OAuth flow, a chat turn with the fake
 // model that writes a file, that file downloaded through the app's redirect to the deployed download origin
-// minerva-cf-files-test (and that origin refusing the link unsigned, tampered with and expired), one short
+// (the test instance's download Worker, and that origin refusing the link unsigned, tampered with and expired), one short
 // turn with Workers AI, and sign-out. Every page is watched for console errors and warnings, uncaught
 // exceptions, failed requests and unexpected error statuses.
 //
@@ -31,7 +31,7 @@ import { FAULTS_HEADER, faultsToken } from "../../src/faults/token.ts";
 import { LINK_LIFETIME_MS } from "../../src/files/limits.ts";
 import { signDownload } from "../../src/files/links.ts";
 import { FALLBACK_RESOLVERS, fetchDeployed, secret, testVar, testWorker } from "./client.ts";
-import { chromeFailure, testOrigins } from "./origins.ts";
+import { chromeFailure, testNames, testOrigins } from "./origins.ts";
 
 const TEST_SECRETS = new URL("../../../.env.cloudflare-test", import.meta.url);
 const TEST_VARS = new URL("../../../.env.cloudflare-test.vars", import.meta.url);
@@ -43,7 +43,7 @@ const TEST_VARS = new URL("../../../.env.cloudflare-test.vars", import.meta.url)
 function setting(): { origin: string; secretKey: string; setupKey: string; downloadOrigin: string; downloadKey: string } {
 	if (!existsSync(TEST_VARS) || !existsSync(TEST_SECRETS)) throw new Error("The browser walk needs the test Worker's settings and secrets (cloudflare/README.md, The test Worker).");
 	const { origin, secretKey } = testWorker();
-	const { downloadOrigin } = testOrigins(origin, testVar("MINERVA_DOWNLOAD_ORIGIN"), { site: "MINERVA_SITE_URL", download: "MINERVA_DOWNLOAD_ORIGIN" });
+	const { downloadOrigin } = testOrigins(origin, testVar("MINERVA_DOWNLOAD_ORIGIN"), { site: "MINERVA_SITE_URL", download: "MINERVA_DOWNLOAD_ORIGIN" }, testNames());
 	return { origin, secretKey, setupKey: secret("MINERVA_SETUP_KEY", TEST_SECRETS), downloadOrigin, downloadKey: secret("MINERVA_DOWNLOAD_KEY", TEST_SECRETS) };
 }
 
@@ -442,7 +442,7 @@ async function settledDeploy(): Promise<void> {
 const fromOrigin = (url: URL) => fetchDeployed(url.href, { timeoutMs: 30_000 });
 
 /**
- * The deployed download origin (minerva-cf-files-test) with the link the app signed: it serves it again, as an
+ * The deployed download origin (the test instance's download Worker) with the link the app signed: it serves it again, as an
  * attachment, and refuses it without its signature (401), with the signature or a signed field changed (404),
  * and expired (404). The expired link is signed here with the instance's download key, exactly as the app signs
  * (src/files/links.ts), five minutes and a minute before now; the same fields signed now are served, so the
@@ -513,7 +513,7 @@ describe("the browser walk on the test Worker", () => {
 			if (consent.state !== null) back.searchParams.set("state", consent.state);
 			await route.fulfill({ status: 302, headers: { location: back.toString() } });
 		});
-		// A download goes to the deployed download origin (minerva-cf-files-test) through the app's redirect; the
+		// A download goes to the deployed download origin (the test instance's download Worker) through the app's redirect; the
 		// signed link it was redirected to is kept for the refusals. Chrome's download manager makes the requests.
 		context.on("request", (request) => {
 			const url = new URL(request.url());

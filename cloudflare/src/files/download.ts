@@ -1,4 +1,4 @@
-// The download origin's handler, which files-worker/ serves as minerva-cf-files: a GET of a signed link
+// The download origin's handler, which files-worker/ serves as the instance's download Worker: a GET of a signed link
 // (links.ts) on this origin streams the object from the workspace's bucket as an attachment that cannot
 // run: `application/octet-stream`, `Content-Disposition: attachment`, `nosniff`, `Content-Security-Policy:
 // sandbox`, `Cache-Control: private, no-store`, with single byte ranges. Every refusal is the same 404

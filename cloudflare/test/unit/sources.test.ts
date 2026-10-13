@@ -4,6 +4,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
 import ts from "@typescript/typescript6";
 import { expect, test } from "vitest";
+import { LOCAL_SANDBOX_IMAGE } from "../../scripts/instance.ts";
 import { REFUSALS } from "../../src/shared/rpc.ts";
 import { sourceCode } from "../fixtures/source.ts";
 
@@ -80,9 +81,9 @@ test("imports are found in every form, side-effect imports included", () => {
 });
 
 test("the production entry reaches nothing of the test build", () => {
-	// src/faults/ is the test Worker's (minerva-cf-test): fault points, a fake connector, a driver, and the
+	// src/faults/ is the test instance's: fault points, a fake connector, a driver, and the
 	// fake model. src/faults/index.ts takes effect when it is loaded, so even a bare import of it from
-	// src/index.ts would put its ports in minerva-cf: no module the entry reaches may be one of them.
+	// src/index.ts would put its ports in production: no module the entry reaches may be one of them.
 	const reached = new Set<string>();
 	const pending = [join("src", "index.ts")];
 	while (pending.length) {
@@ -206,4 +207,20 @@ test("every refusal code is sent somewhere", () => {
 		for (const [line] of code(path)) for (const match of line.matchAll(/"([A-Z][A-Z_]+)"/g)) used.add(match[1]!);
 	}
 	expect(Object.keys(REFUSALS).filter((code) => !used.has(code))).toEqual([]);
+});
+
+test("only scripts/instance.ts names one of our instances: every other resource name is derived from it", () => {
+	// Comments included, so that a message or a note cannot go stale when a name changes. The unit test of the
+	// derivation is the one other place that states them.
+	const ours = ["minerva", "cf"].join("-");
+	const own = new Set(["scripts/instance.ts", "test/unit/instance.test.ts"]);
+	const roots = readdirSync(ROOT).filter((file) => /^vitest\..+\.ts$/.test(file));
+	const paths = [...["src", "scripts", "test", "files-worker", "reset-worker"].flatMap(sources), ...roots, "cloudflare.config.ts", "vite.config.ts", "package.json"];
+	const offenders = paths.filter((path) => !path.includes("node_modules") && !own.has(path) && readFileSync(join(ROOT, path), "utf8").includes(ours));
+	expect(offenders).toEqual([]);
+});
+
+test("the sandbox image tag that `pnpm sandbox:image` builds is the one the Docker tests run", () => {
+	const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { scripts: Record<string, string> };
+	expect(pkg.scripts["sandbox:image"]).toBe(`docker build -t ${LOCAL_SANDBOX_IMAGE} container`);
 });

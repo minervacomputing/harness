@@ -9,7 +9,7 @@
 // was read with (plan: Events and the stream, Reading runs).
 //
 // Downloads stay a Hono route: they are checked here, then redirected to a link signed for the download
-// Worker (minerva-cf-files, files/links.ts), which serves the object from its own origin as a sandboxed
+// Worker (files-worker/, files/links.ts), which serves the object from its own origin as a sandboxed
 // attachment. Agent files are never served from this origin.
 
 import type { Context } from "hono";

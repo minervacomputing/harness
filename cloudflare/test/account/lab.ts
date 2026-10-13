@@ -1,4 +1,4 @@
-// The sandbox lab of the test Worker minerva-cf-test (src/faults/lab.ts: `POST /api/faults/sandbox/<op>`
+// The sandbox lab of the test instance (src/faults/lab.ts: `POST /api/faults/sandbox/<op>`
 // behind the driver's token), shared by sandbox.test.ts and sandbox-faults.test.ts. The lab keeps nothing: the
 // client keeps each sandbox's fence from its prepare (or start) and sends it with each later operation on
 // that sandbox. Every sandbox named here is remembered before its first request, so `destroyAll()` in a

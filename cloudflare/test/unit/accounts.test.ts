@@ -15,7 +15,7 @@ function settingsEnv(overrides: Partial<SettingsEnv> = {}): SettingsEnv {
 		MINERVA_RUN_TIMEOUT_SECONDS: "",
 		MINERVA_MODEL_PROVIDER: "workers-ai",
 		MINERVA_MODEL_NAME: "@cf/example/model",
-		MINERVA_MODEL_GATEWAY: "minerva-cf",
+		MINERVA_MODEL_GATEWAY: "acme",
 		MINERVA_MODEL_API: "chat",
 		MINERVA_MODEL_MAX_OUTPUT_TOKENS: "8192",
 		MINERVA_MODEL_REASONING_EFFORT: "",

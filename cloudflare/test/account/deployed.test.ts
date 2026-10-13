@@ -5,7 +5,11 @@ import { MIGRATIONS as SCRIPTS_MIGRATIONS } from "../../src/scripts/schema.ts";
 import { MIGRATIONS as WORKSPACE_MIGRATIONS } from "../../src/workspace/schema.ts";
 import { PROBE_HEADER, probeToken } from "../../src/http/probe-token.ts";
 import { SANDBOX_MIGRATIONS } from "../../src/sandbox/schema.ts";
+import { namesOf, todaysInstance } from "../../scripts/instance.ts";
 import { cf, fetchDeployed, origin, secret } from "./client.ts";
+
+/** The instance this suite probes: production (`pnpm test:account`). */
+const NAMES = namesOf(todaysInstance(false));
 
 const NIL = "00000000-0000-0000-0000-000000000000";
 
@@ -23,7 +27,7 @@ function expectSecurityHeaders(headers: Headers) {
 	for (const [name, value] of Object.entries(SECURITY)) expect(headers.get(name), name).toBe(value);
 }
 
-describe("minerva-cf", () => {
+describe(NAMES.app, () => {
 	const site = origin("MINERVA_SITE_URL");
 
 	test("/api/health answers with the security headers", async () => {
@@ -82,7 +86,7 @@ describe("minerva-cf", () => {
 	});
 });
 
-describe("inside minerva-cf (/api/probe)", () => {
+describe(`inside ${NAMES.app} (/api/probe)`, () => {
 	const site = origin("MINERVA_SITE_URL");
 
 	test("without its token it is a plain 404", async () => {
@@ -124,7 +128,7 @@ describe("preview URLs", () => {
 	}
 
 	test("are off for both Workers", () => {
-		for (const name of ["minerva-cf", "minerva-cf-files"]) {
+		for (const name of [NAMES.app, NAMES.download]) {
 			const info = cf<WorkerInfo>(["workers", "get", name]);
 			expect(info.subdomain.enabled, name).toBe(true);
 			expect(info.subdomain.previews_enabled, name).toBe(false);
@@ -133,7 +137,7 @@ describe("preview URLs", () => {
 
 	test("no version of the download Worker answers at its preview origin", async () => {
 		const host = new URL(origin("MINERVA_DOWNLOAD_ORIGIN")).host;
-		const versions = cf<{ id: string; urls?: string[] }[]>(["workers", "versions", "list", "--worker-id", "minerva-cf-files"]);
+		const versions = cf<{ id: string; urls?: string[] }[]>(["workers", "versions", "list", "--worker-id", NAMES.download]);
 		expect(versions.length).toBeGreaterThan(0);
 		for (const version of versions) {
 			expect(version.urls ?? []).toEqual([]);
@@ -144,7 +148,7 @@ describe("preview URLs", () => {
 	});
 });
 
-describe("minerva-cf-files", () => {
+describe(NAMES.download, () => {
 	test("answers 404 until downloads are built, as a sandboxed response", async () => {
 		const reply = await fetchDeployed(`${origin("MINERVA_DOWNLOAD_ORIGIN")}/anything`);
 		expect(reply.status).toBe(404);

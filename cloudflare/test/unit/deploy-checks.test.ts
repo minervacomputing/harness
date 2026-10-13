@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { type BuiltWorker, buildAccount, buildDigest, filesBuildProblems, liveAppProblems, ownContainer } from "../../scripts/builds.ts";
+import { namesOf } from "../../scripts/instance.ts";
 import { ARCHIVE_MAX_AGE, type LifecycleRule, lifecycleExtras, lifecycleMatches, lifecycleProblems } from "../../scripts/lifecycle.ts";
 import { hideSecrets, redact } from "../../scripts/run.ts";
 
@@ -78,78 +79,89 @@ function files(name: string, buckets: [string, string], origin = ORIGIN): BuiltW
 	};
 }
 
-const TEST_BUCKETS: [string, string] = ["minerva-cf-test-files", "minerva-cf-test-files-eu"];
-const PRODUCTION_BUCKETS: [string, string] = ["minerva-cf-files", "minerva-cf-files-eu"];
-const TEST = { app: "minerva-cf-test", files: "minerva-cf-files-test" };
-const PRODUCTION = { app: "minerva-cf", files: "minerva-cf-files" };
+const TEST_NAMES = namesOf("acme-test");
+const PRODUCTION_NAMES = namesOf("acme");
+const TEST_BUCKETS: [string, string] = [TEST_NAMES.bucket, TEST_NAMES.bucketEu];
+const PRODUCTION_BUCKETS: [string, string] = [PRODUCTION_NAMES.bucket, PRODUCTION_NAMES.bucketEu];
 
 describe("the download origin's build", () => {
 	test("passes when it is the instance's own, for either instance", () => {
-		expect(filesBuildProblems(app("minerva-cf-test", TEST_BUCKETS), files("minerva-cf-files-test", TEST_BUCKETS), TEST)).toEqual([]);
-		expect(filesBuildProblems(app("minerva-cf", PRODUCTION_BUCKETS), files("minerva-cf-files", PRODUCTION_BUCKETS), PRODUCTION)).toEqual([]);
+		expect(filesBuildProblems(app("acme-test", TEST_BUCKETS), files("acme-test-files", TEST_BUCKETS), "acme-test")).toEqual([]);
+		expect(filesBuildProblems(app("acme", PRODUCTION_BUCKETS), files("acme-files", PRODUCTION_BUCKETS), "acme")).toEqual([]);
 	});
 
 	test("a test build that would replace production's Worker or read its buckets is refused", () => {
-		const testApp = app("minerva-cf-test", TEST_BUCKETS);
-		expect(filesBuildProblems(testApp, files("minerva-cf-files", TEST_BUCKETS), TEST)).toEqual(["The download origin's build is minerva-cf-files, not minerva-cf-files-test."]);
-		const reading = filesBuildProblems(testApp, files("minerva-cf-files-test", PRODUCTION_BUCKETS), TEST);
-		expect(reading).toContain("The download origin's build binds buckets that are not minerva-cf-test's: minerva-cf-files, minerva-cf-files-eu.");
+		const testApp = app("acme-test", TEST_BUCKETS);
+		expect(filesBuildProblems(testApp, files("acme-files", TEST_BUCKETS), "acme-test")).toEqual(["The download origin's build is acme-files, not acme-test-files."]);
+		const reading = filesBuildProblems(testApp, files("acme-test-files", PRODUCTION_BUCKETS), "acme-test");
+		expect(reading).toContain("The download origin's build binds buckets that are not acme-test's: acme-files, acme-files-eu.");
 		expect(reading.some((line) => line.startsWith("The download origin's buckets"))).toBe(true);
 		// Both builds pointing at production's buckets still fail: the buckets must be the test app's own.
-		expect(filesBuildProblems(app("minerva-cf-test", PRODUCTION_BUCKETS), files("minerva-cf-files-test", PRODUCTION_BUCKETS), TEST)).toContain("The app's build binds buckets that are not minerva-cf-test's: minerva-cf-files, minerva-cf-files-eu.");
+		expect(filesBuildProblems(app("acme-test", PRODUCTION_BUCKETS), files("acme-test-files", PRODUCTION_BUCKETS), "acme-test")).toContain("The app's build binds buckets that are not acme-test's: acme-files, acme-files-eu.");
 	});
 
 	test("a production build that names the test instance's resources is refused", () => {
-		expect(filesBuildProblems(app("minerva-cf-test", TEST_BUCKETS), files("minerva-cf-files", PRODUCTION_BUCKETS), PRODUCTION)).toContain("The app's build is minerva-cf-test, not minerva-cf.");
-		expect(filesBuildProblems(app("minerva-cf", PRODUCTION_BUCKETS), files("minerva-cf-files", TEST_BUCKETS), PRODUCTION)).toContain("The download origin's build binds buckets that are not minerva-cf's: minerva-cf-test-files, minerva-cf-test-files-eu.");
+		expect(filesBuildProblems(app("acme-test", TEST_BUCKETS), files("acme-files", PRODUCTION_BUCKETS), "acme")).toContain("The app's build is acme-test, not acme.");
+		expect(filesBuildProblems(app("acme", PRODUCTION_BUCKETS), files("acme-files", TEST_BUCKETS), "acme")).toContain("The download origin's build binds buckets that are not acme's: acme-test-files, acme-test-files-eu.");
 	});
 
 	test("its origin must be the app's, and the link key its only secret", () => {
-		const testApp = app("minerva-cf-test", TEST_BUCKETS);
-		expect(filesBuildProblems(testApp, files("minerva-cf-files-test", TEST_BUCKETS, "https://other.minerva.example"), TEST)).toEqual(["The download origin's MINERVA_DOWNLOAD_ORIGIN is not the app's."]);
-		const extra = files("minerva-cf-files-test", TEST_BUCKETS);
+		const testApp = app("acme-test", TEST_BUCKETS);
+		expect(filesBuildProblems(testApp, files("acme-test-files", TEST_BUCKETS, "https://other.minerva.example"), "acme-test")).toEqual(["The download origin's MINERVA_DOWNLOAD_ORIGIN is not the app's."]);
+		const extra = files("acme-test-files", TEST_BUCKETS);
 		extra.env = { ...extra.env, MINERVA_SECRET_KEY: { type: "secret" } };
-		expect(filesBuildProblems(testApp, extra, TEST)).toEqual(["The download origin must hold MINERVA_DOWNLOAD_KEY alone, not MINERVA_DOWNLOAD_KEY, MINERVA_SECRET_KEY."]);
-		const bound = files("minerva-cf-files-test", TEST_BUCKETS);
-		bound.env = { ...bound.env, DB: { type: "d1", name: "minerva-cf-test" } };
-		expect(filesBuildProblems(testApp, bound, TEST)).toEqual(["The download origin's build has bindings it should not have: r2, r2, text, secret, d1."]);
+		expect(filesBuildProblems(testApp, extra, "acme-test")).toEqual(["The download origin must hold MINERVA_DOWNLOAD_KEY alone, not MINERVA_DOWNLOAD_KEY, MINERVA_SECRET_KEY."]);
+		const bound = files("acme-test-files", TEST_BUCKETS);
+		bound.env = { ...bound.env, DB: { type: "d1", name: "acme-test" } };
+		expect(filesBuildProblems(testApp, bound, "acme-test")).toEqual(["The download origin's build has bindings it should not have: r2, r2, text, secret, d1."]);
 	});
 
 	test("one bucket missing is a difference from the app's", () => {
-		const single = files("minerva-cf-files-test", TEST_BUCKETS);
+		const single = files("acme-test-files", TEST_BUCKETS);
 		delete single.env?.FILES_EU;
-		expect(filesBuildProblems(app("minerva-cf-test", TEST_BUCKETS), single, TEST)).toEqual([
-			"The download origin's buckets (FILES=minerva-cf-test-files) are not the app's (FILES=minerva-cf-test-files, FILES_EU=minerva-cf-test-files-eu (eu)).",
+		expect(filesBuildProblems(app("acme-test", TEST_BUCKETS), single, "acme-test")).toEqual([
+			"The download origin's buckets (FILES=acme-test-files) are not the app's (FILES=acme-test-files, FILES_EU=acme-test-files-eu (eu)).",
 		]);
+	});
+
+	test("an instance whose name the derivation cannot take is refused before anything is compared", () => {
+		expect(() => filesBuildProblems(app("acme", PRODUCTION_BUCKETS), files("acme-files", PRODUCTION_BUCKETS), "acme-files")).toThrow("cannot end in -files");
 	});
 });
 
 describe("what a deploy compares with the deployed app", () => {
 	const live = {
-		FILES: { type: "r2_bucket", bucket_name: "minerva-cf-test-files" },
-		FILES_EU: { type: "r2_bucket", bucket_name: "minerva-cf-test-files-eu", jurisdiction: "eu" },
+		FILES: { type: "r2_bucket", bucket_name: "acme-test-files" },
+		FILES_EU: { type: "r2_bucket", bucket_name: "acme-test-files-eu", jurisdiction: "eu" },
 		MINERVA_DOWNLOAD_ORIGIN: { type: "plain_text", text: ORIGIN },
 		MINERVA_DOWNLOAD_KEY: { type: "secret_text" },
 	};
 
 	test("the same buckets and origin pass", () => {
-		expect(liveAppProblems(live, app("minerva-cf-test", TEST_BUCKETS))).toEqual([]);
+		expect(liveAppProblems(live, app("acme-test", TEST_BUCKETS))).toEqual([]);
 	});
 
 	test("another origin, other buckets or no deployed bindings fail", () => {
-		expect(liveAppProblems({ ...live, MINERVA_DOWNLOAD_ORIGIN: { type: "plain_text", text: "https://other.minerva.example" } }, app("minerva-cf-test", TEST_BUCKETS))).toEqual(["The deployed app's MINERVA_DOWNLOAD_ORIGIN is not its local build's."]);
-		expect(liveAppProblems(live, app("minerva-cf-test", PRODUCTION_BUCKETS))).toHaveLength(1);
-		expect(liveAppProblems(undefined, app("minerva-cf-test", TEST_BUCKETS))).toHaveLength(2);
+		expect(liveAppProblems({ ...live, MINERVA_DOWNLOAD_ORIGIN: { type: "plain_text", text: "https://other.minerva.example" } }, app("acme-test", TEST_BUCKETS))).toEqual(["The deployed app's MINERVA_DOWNLOAD_ORIGIN is not its local build's."]);
+		expect(liveAppProblems(live, app("acme-test", PRODUCTION_BUCKETS))).toHaveLength(1);
+		expect(liveAppProblems(undefined, app("acme-test", TEST_BUCKETS))).toHaveLength(2);
 	});
 });
 
 describe("what a reset accepts as the instance's own", () => {
-	test("a container is <instance>-<word>, so the test sandbox is never production's", () => {
-		expect(ownContainer("minerva-cf-test", "minerva-cf-test-sandbox")).toBe(true);
-		expect(ownContainer("minerva-cf", "minerva-cf-sandbox")).toBe(true);
-		expect(ownContainer("minerva-cf", "minerva-cf-test-sandbox")).toBe(false);
-		expect(ownContainer("minerva-cf-test", "minerva-cf-sandbox")).toBe(false);
-		expect(ownContainer("minerva-cf", "minerva-cf-")).toBe(false);
+	test("a container is exactly <instance>-sandbox, so the test sandbox is never production's", () => {
+		expect(ownContainer("acme-test", "acme-test-sandbox")).toBe(true);
+		expect(ownContainer("acme", "acme-sandbox")).toBe(true);
+		expect(ownContainer("acme", "acme-test-sandbox")).toBe(false);
+		expect(ownContainer("acme-test", "acme-sandbox")).toBe(false);
+		expect(ownContainer("acme", "acme-")).toBe(false);
+	});
+
+	test("a container that is any other word, or only starts with the instance's name, is not its own", () => {
+		expect(ownContainer("acme", "acme-worker")).toBe(false);
+		expect(ownContainer("acme", "acme-sandbox-2")).toBe(false);
+		expect(ownContainer("acme", "acme-sandboxes")).toBe(false);
+		expect(ownContainer("acme", "acme")).toBe(false);
 	});
 });
 
@@ -160,7 +172,7 @@ describe("the checked build", () => {
 			const output = join(dir, ".cloudflare", "output", "v0", "workers", "default");
 			mkdirSync(output, { recursive: true });
 			writeFileSync(join(dir, ".cloudflare", "output", "v0", "config.json"), JSON.stringify({ buildContext: {} }));
-			writeFileSync(join(output, "worker.config.json"), JSON.stringify({ name: "minerva-cf-test" }));
+			writeFileSync(join(output, "worker.config.json"), JSON.stringify({ name: "acme-test" }));
 			writeFileSync(join(output, "index.js"), "export default {}");
 			check(dir, output);
 		} finally {
@@ -172,7 +184,7 @@ describe("the checked build", () => {
 		withBuild((dir, output) => {
 			const checked = buildDigest(dir);
 			expect(buildDigest(dir)).toBe(checked);
-			writeFileSync(join(output, "worker.config.json"), JSON.stringify({ name: "minerva-cf" }));
+			writeFileSync(join(output, "worker.config.json"), JSON.stringify({ name: "acme" }));
 			expect(buildDigest(dir)).not.toBe(checked);
 		});
 	});
@@ -201,7 +213,7 @@ describe("what the scripts print", () => {
 			writeFileSync(file, 'MINERVA_SECRET_KEY="0123456789abcdef0123456789abcdef"\nexport MINERVA_DOWNLOAD_KEY=fedcba9876543210fedcba9876543210\nMINERVA_SETUP_KEY="abcdefabcdefabcdefabcdef" # as dotenv reads it\nMINERVA_DEBUG=true\n');
 			hideSecrets(file);
 			hideSecrets(join(dir, "missing.env"));
-			expect(redact("key 0123456789abcdef0123456789abcdef and fedcba9876543210fedcba9876543210, true, at https://minerva-cf-test.someone.workers.dev/x")).toBe("key <id> and <id>, true, at https://<workers.dev>/x");
+			expect(redact("key 0123456789abcdef0123456789abcdef and fedcba9876543210fedcba9876543210, true, at https://acme-test.someone.workers.dev/x")).toBe("key <id> and <id>, true, at https://<workers.dev>/x");
 			expect(redact("setup abcdefabcdefabcdefabcdef.")).toBe("setup <id>.");
 		} finally {
 			rmSync(dir, { recursive: true, force: true });

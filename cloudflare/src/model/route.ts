@@ -1,10 +1,10 @@
 // Where model requests go, from the MINERVA_MODEL_* settings (plan: The harness, Model). Read at
 // each call, so a deploy that changes them applies to the next request.
 //
-// Every upstream but the fake goes through the Worker's own AI Gateway (`MINERVA_MODEL_GATEWAY`, minerva-cf,
-// prompt logging off), never createAI's default gateway, which logs prompts: Workers AI models through
-// `env.AI.run`, OpenAI and Anthropic models through the gateway's universal endpoint over the same binding,
-// with the provider key the gateway holds (no key lives in the Worker).
+// Every upstream but the fake goes through the Worker's own AI Gateway (`MINERVA_MODEL_GATEWAY`, named for the
+// instance by the build, prompt logging off), never createAI's default gateway, which logs prompts: Workers AI
+// models through `env.AI.run`, OpenAI and Anthropic models through the gateway's universal endpoint over the
+// same binding, with the provider key the gateway holds (no key lives in the Worker).
 
 import type { Api, Model, Provider, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { createAI, type WorkersAIModelId } from "agents/models/pi-ai";

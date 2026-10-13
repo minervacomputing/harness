@@ -12,6 +12,7 @@
 // Node's modules come through `process.getBuiltinModule`: the unit tests are type-checked with the Worker's
 // runtime types, which lack Node's.
 
+import { LOCAL_SANDBOX_IMAGE } from "../../scripts/instance.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { migrate, type Sql, sqliteSql } from "../../src/lib/sql.ts";
 import type { ExecRequest } from "../../src/sandbox/commands.ts";
@@ -58,7 +59,7 @@ interface NodeModules {
 const node = (globalThis as unknown as { process: NodeModules }).process;
 const decoder = new TextDecoder();
 
-export const LOCAL_IMAGE = node.env.MINERVA_SANDBOX_IMAGE ?? "minerva-cf-sandbox:local";
+export const LOCAL_IMAGE = node.env.MINERVA_SANDBOX_IMAGE ?? LOCAL_SANDBOX_IMAGE;
 
 function docker(args: string[], input?: Uint8Array): Spawned {
 	return node.getBuiltinModule("node:child_process").spawnSync("docker", args, { ...(input ? { input } : {}), timeout: 120_000 });

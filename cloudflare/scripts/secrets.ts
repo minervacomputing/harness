@@ -1,5 +1,5 @@
 // The Workers' secrets live in ../.env.cloudflare at the repository root (gitignored, mode 600) and are
-// uploaded with `cf deploy --secrets-file`. The test Worker (minerva-cf-test) has its own, in
+// uploaded with `cf deploy --secrets-file`. The test instance has its own, in
 // ../.env.cloudflare-test (`--test`), so its fault driver's token and its keys are not production's. The
 // local dev server (`pnpm dev:offline`) reads its own in .dev.vars here (`--offline`), gitignored like the
 // others. This script never prints a value.
@@ -15,6 +15,7 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { MIN_SETUP_KEY_LENGTH, OAUTH_APPS, clientSecretNames, connectorClientSecrets } from "../src/config.ts";
 import { EncryptionKeys } from "../src/lib/encryption.ts";
+import { todaysInstance } from "./instance.ts";
 
 const TEST = process.argv.includes("--test");
 const OFFLINE = process.argv.includes("--offline");
@@ -74,7 +75,7 @@ function generate(): void {
 	const added = Object.keys(REQUIRED).filter((name) => !values.get(name));
 	for (const name of added) values.set(name, (REQUIRED[name] as () => string)());
 	const lines = [
-		`# Secrets of the ${OFFLINE ? "local dev server (pnpm dev:offline)" : TEST ? "minerva-cf-test Worker" : "minerva-cf Workers"} (cloudflare/). Never commit or print them.`,
+		`# Secrets of the ${OFFLINE ? "local dev server (pnpm dev:offline)" : `${todaysInstance(TEST)} instance`} (cloudflare/). Never commit or print them.`,
 		...[...values].map(([name, value]) => `${name}="${value}"`),
 		"",
 		"# Optional: model keys (uploaded once declared) and connector clients (set both names of an app):",

@@ -53,8 +53,8 @@ export function sandboxObject(
 }
 
 /**
- * The bucket that keeps the workspace's files: an EU workspace's blobs and uploads stay in
- * `minerva-cf-files-eu`, created in R2's EU jurisdiction, and every other workspace's in `minerva-cf-files`.
+ * The bucket that keeps the workspace's files: an EU workspace's blobs and uploads stay in the instance's EU
+ * bucket (`FILES_EU`, created in R2's EU jurisdiction), and every other workspace's in its default one (`FILES`).
  * Keys are the same in both (plan: Data placement).
  */
 export function filesBucket(env: Env, workspace: WorkspaceRef): R2Bucket {

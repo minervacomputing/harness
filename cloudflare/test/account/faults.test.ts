@@ -1,6 +1,6 @@
-// Fault tests on the account, for what only the platform shows (plan: Testing): the test Worker
-// minerva-cf-test, built from the same code with the fake Notes connector, its provider object, fault
-// points and a token-gated driver (src/faults/, driver.ts). Each test makes its own workspace and
+// Fault tests on the account, for what only the platform shows (plan: Testing): the test
+// instance, built from the same code with the fake Notes connector, its provider object, fault points and a
+// token-gated driver (src/faults/, driver.ts). Each test makes its own workspace and
 // conversation, and they all run at once. One row per mechanism the platform could change; the cases of the
 // executor's and the ledger's logic around them run in local workerd (test/platform/protocols.test.ts):
 //
@@ -20,7 +20,7 @@
 //   record, release and pi's commit; the container destroyed at the run's end.
 //
 // The memory-limit resets are resets.test.ts's, the sandbox itself sandbox.test.ts's and
-// sandbox-faults.test.ts's. Run with `pnpm test:faults` after `pnpm run deploy:test`; never against minerva-cf.
+// sandbox-faults.test.ts's. Run with `pnpm test:faults` after `pnpm run deploy:test`; never against production.
 
 import { afterAll, describe, expect, test } from "vitest";
 import {

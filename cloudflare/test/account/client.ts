@@ -8,7 +8,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { Resolver } from "node:dns/promises";
 import { lookup as systemLookup, type LookupAddress } from "node:dns";
 import { request } from "node:https";
-import { TEST_APP, testOrigin } from "./origins.ts";
+import { testNames, testOrigin } from "./origins.ts";
 
 const VARS = new URL("../../../.env.cloudflare.vars", import.meta.url);
 if (existsSync(VARS)) process.loadEnvFile(VARS);
@@ -33,11 +33,11 @@ export function testVar(name: string): string | undefined {
 }
 
 /**
- * The test Worker minerva-cf-test: its origin from ../.env.cloudflare-test.vars, checked to be the test
+ * The test instance's app Worker: its origin from ../.env.cloudflare-test.vars, checked to be the test
  * Worker's own before any request is sent (origins.ts), and its secret key.
  */
 export function testWorker(): { origin: string; secretKey: string } {
-	const origin = testOrigin(testVar("MINERVA_SITE_URL"), TEST_APP, "MINERVA_SITE_URL in .env.cloudflare-test.vars");
+	const origin = testOrigin(testVar("MINERVA_SITE_URL"), testNames().app, "MINERVA_SITE_URL in .env.cloudflare-test.vars");
 	return { origin, secretKey: secret("MINERVA_SECRET_KEY", TEST_SECRETS) };
 }
 

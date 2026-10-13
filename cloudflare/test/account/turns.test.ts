@@ -1,4 +1,4 @@
-// End-to-end turns on the test Worker minerva-cf-test (plan: Steps 3 and 4; Testing, Account tests), through
+// End-to-end turns on the test instance (plan: Steps 3 and 4; Testing, Account tests), through
 // the real Conversation Durable Object, its container, the Scripts Durable Object and the Workers' R2 store:
 // the agent writes a file with Python through bash, runs a script (`run_script`) that calls the fake Notes
 // connector's tool, and the conversation's folder version, published with the run, contains the file. One turn

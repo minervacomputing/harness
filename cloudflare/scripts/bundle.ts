@@ -6,6 +6,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { namesOf, todaysInstance } from "./instance.ts";
 
 const OUTPUT = fileURLToPath(new URL("../.cloudflare/output/v0/workers/default/", import.meta.url));
 // Strings only the test build has: src/faults/'s objects (the fake provider and the mailbox that captures
@@ -15,7 +16,7 @@ const MARKERS = ["FaultProvider", "FaultMailbox", "fault_plan", "notes.fake.inva
 
 const test = process.argv.includes("--test");
 const config = JSON.parse(readFileSync(join(OUTPUT, "worker.config.json"), "utf8")) as { name: string };
-const expected = test ? "minerva-cf-test" : "minerva-cf";
+const expected = namesOf(todaysInstance(test)).app;
 if (config.name !== expected) {
 	console.error(`The build in .cloudflare/output/ is ${config.name}, not ${expected}.`);
 	process.exit(1);

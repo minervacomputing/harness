@@ -7,7 +7,7 @@ import { COMPACTION_PROMPT_START, forcePayload, isCompaction, outputCap, refusal
 import type { ModelRoute } from "../../src/model/route.ts";
 
 function route(fields: Partial<ModelRoute> = {}): ModelRoute {
-	return { provider: "openai", name: "gpt-test", gateway: "minerva-cf", api: "chat", cap: 1000, reasoningEffort: "", reasoningSummary: "", ...fields };
+	return { provider: "openai", name: "gpt-test", gateway: "acme", api: "chat", cap: 1000, reasoningEffort: "", reasoningSummary: "", ...fields };
 }
 
 function context(messages: Message[]): TranscriptContext {

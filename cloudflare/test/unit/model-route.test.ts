@@ -14,7 +14,7 @@ const BINDING = { aiGatewayLogId: null, run: async () => ({}), gateway: () => ({
 describe("routes", () => {
 	test("the settings name the model, its gateway, its API, its cap and reasoning", () => {
 		const route = routeOf(parse(settingsEnv({ MINERVA_MODEL_MAX_OUTPUT_TOKENS: "1000", MINERVA_MODEL_REASONING_EFFORT: "low" })));
-		expect(route).toEqual({ provider: "workers-ai", name: "@cf/zai-org/glm-5.3-flash", gateway: "minerva-cf", api: "chat", cap: 1000, reasoningEffort: "low", reasoningSummary: "" });
+		expect(route).toEqual({ provider: "workers-ai", name: "@cf/zai-org/glm-5.3-flash", gateway: "acme", api: "chat", cap: 1000, reasoningEffort: "low", reasoningSummary: "" });
 		expect(parse(settingsEnv({ MINERVA_MODEL_PROVIDER: "fake" })).model.provider).toBe("fake");
 		expect(() => parse(settingsEnv({ MINERVA_MODEL_PROVIDER: "openrouter" }))).toThrow("MINERVA_MODEL_PROVIDER must be one of 'workers-ai', 'openai', 'anthropic', 'fake'.");
 	});

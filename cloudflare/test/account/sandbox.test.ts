@@ -1,5 +1,5 @@
-// The sandbox on the account (plan: Testing, Account tests; The sandbox lifecycle), through the test Worker
-// minerva-cf-test's sandbox lab (lab.ts), which runs production's Sandbox object with its container: one
+// The sandbox on the account (plan: Testing, Account tests; The sandbox lifecycle), through the test instance's
+// sandbox lab (lab.ts), which runs production's Sandbox object with its container: one
 // container, prepared once and used by each test in turn: the hardening's postconditions, pi's ExecutionEnv
 // conformance suite (24 cases, one skipped) over the adapter with output through an RpcTarget, the probe
 // (network over HTTP and TLS, its checks at once), commands as the bash tool runs them, strays and a fork bomb

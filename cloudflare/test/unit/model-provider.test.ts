@@ -13,7 +13,7 @@ import { CONTEXT_OVERFLOW, PROVIDER_ERROR, type Segment } from "../../src/model/
 import type { AttemptFence } from "../../src/shared/rpc.ts";
 
 const FENCE: AttemptFence = { runId: "0199a000-0000-7000-8000-000000000001", attempt: 2 };
-const ROUTE: ModelRoute = { provider: "fake", name: "fake", gateway: "minerva-cf", api: "chat", cap: 1000, reasoningEffort: "", reasoningSummary: "" };
+const ROUTE: ModelRoute = { provider: "fake", name: "fake", gateway: "acme", api: "chat", cap: 1000, reasoningEffort: "", reasoningSummary: "" };
 
 class Host implements ModelHost {
 	active = true;
@@ -279,7 +279,7 @@ function silent(signal: AbortSignal): Promise<Response> {
 	return new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
 }
 
-const OPENAI: ModelRoute = { provider: "openai", name: "gpt-test", gateway: "minerva-cf", api: "responses", cap: 1000, reasoningEffort: "low", reasoningSummary: "auto" };
+const OPENAI: ModelRoute = { provider: "openai", name: "gpt-test", gateway: "acme", api: "responses", cap: 1000, reasoningEffort: "low", reasoningSummary: "auto" };
 
 function overGateway(gateway: FakeGateway, route: Partial<ModelRoute> = {}, quietMs?: number) {
 	const host = new Host();

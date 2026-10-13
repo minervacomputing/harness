@@ -3,19 +3,20 @@
 // additive, so the running version keeps working (plan: Versions). cf would otherwise create a missing D1
 // database or bucket with default settings on deploy (no lifecycle rule, no schema, no jurisdiction), so a
 // missing one stops the deploy here. Resource ids are never printed. `pnpm run deploy` runs it (through
-// scripts/deploy.ts), and `pnpm run deploy:test` with `--test` for the test Worker's own minerva-cf-test
-// resources; `--check` only checks, for a deploy of the download origin alone.
+// scripts/deploy.ts), and `pnpm run deploy:test` with `--test` for the test instance's own resources (their
+// names come from scripts/instance.ts); `--check` only checks, for a deploy of the download origin alone.
 
 import { execFileSync } from "node:child_process";
+import { namesOf, todaysInstance } from "./instance.ts";
 import { type LifecycleRule, lifecycleProblems } from "./lifecycle.ts";
 
-const PREFIX = process.argv.includes("--test") ? "minerva-cf-test" : "minerva-cf";
-const D1 = PREFIX;
+const NAMES = namesOf(todaysInstance(process.argv.includes("--test")));
+const D1 = NAMES.d1;
 const BUCKETS: { name: string; jurisdiction: string | null }[] = [
-	{ name: `${PREFIX}-files`, jurisdiction: null },
-	{ name: `${PREFIX}-files-eu`, jurisdiction: "eu" },
+	{ name: NAMES.bucket, jurisdiction: null },
+	{ name: NAMES.bucketEu, jurisdiction: "eu" },
 ];
-const GATEWAY = PREFIX;
+const GATEWAY = NAMES.gateway;
 
 function cf(args: string[]): unknown {
 	try {

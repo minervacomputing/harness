@@ -1,13 +1,15 @@
 import { bindings, defineConfig, exports } from "cf/config";
 import * as entrypoint from "./src/index.ts" with { type: "cf-worker" };
+import { namesOf, todaysInstance } from "../../../scripts/instance.ts";
 
 // The code-mode lab (test/account/scripts.test.ts): code mode's real objects (src/scripts/) behind a
-// stand-in conversation with fake tools, deployed as minerva-cf-cm only while its account tests run, then
-// deleted (cloudflare/README.md, Code mode). It holds no data and no secret but its own driver token
-// (CM_TOKEN, in ../.env.cloudflare-cm at the repository root, which is gitignored).
+// stand-in conversation with fake tools, deployed as the test instance's lab (`<name>-cm`, scripts/instance.ts)
+// only while its account tests run, then deleted (cloudflare/README.md, Code mode). It holds no data and no
+// secret but its own driver token (CM_TOKEN, in ../.env.cloudflare-cm at the repository root, which is
+// gitignored).
 export default defineConfig({
 	worker: {
-		name: "minerva-cf-cm",
+		name: namesOf(todaysInstance(true)).lab,
 		compatibilityDate: "2026-10-06",
 		compatibilityFlags: ["nodejs_compat"],
 		entrypoint,

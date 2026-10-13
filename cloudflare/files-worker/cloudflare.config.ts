@@ -1,5 +1,6 @@
 import { bindings, defineConfig } from "cf/config";
 import * as entrypoint from "./src/index.ts" with { type: "cf-worker" };
+import { LOCAL_INSTANCES, type Names, namesOf, todaysInstance } from "../scripts/instance.ts";
 
 // The download origin (plan: Files, Downloads): serves agent files from R2 behind links the app signs
 // with MINERVA_DOWNLOAD_KEY, on an origin of its own, as sandboxed attachments. It holds no other secret.
@@ -9,10 +10,11 @@ import * as entrypoint from "./src/index.ts" with { type: "cf-worker" };
 // the deployed origin), which must exist and give an https origin; other builds read the environment, with a
 // local default.
 //
-// Mode `production` is minerva-cf-files, over the app's buckets, with ../../.env.cloudflare.vars. Mode
-// `faults` is the test Worker's own download origin, minerva-cf-files-test, over minerva-cf-test's buckets,
-// with ../../.env.cloudflare-test.vars (the same file as the test app's, so the origins match); it refuses
-// any name of production's, and scripts/deploy.ts checks the built output again before uploading it.
+// Every name comes from scripts/instance.ts (`namesOf`): the Worker is the instance's download Worker, over the
+// instance's two buckets. Mode `production` is production's, with ../../.env.cloudflare.vars. Mode `faults` is
+// the test instance's own, with ../../.env.cloudflare-test.vars (the same file as the test app's, so the
+// origins match); it refuses any name of production's, and scripts/deploy.ts checks the built output again
+// before uploading it. Other modes are local and take a local name.
 
 // This file runs in Node but is type-checked with the Worker's runtime types, which lack Node's.
 const here = (import.meta as unknown as { url: string }).url;
@@ -24,26 +26,23 @@ interface BuildProcess {
 const build = (globalThis as unknown as { process: BuildProcess }).process;
 
 interface Target {
-	name: string;
-	files: string;
-	filesEu: string;
+	names: Names;
 	/** The settings file of a deployed build; null reads the environment. */
 	vars: URL | null;
 }
 
-const PRODUCTION: Target = { name: "minerva-cf-files", files: "minerva-cf-files", filesEu: "minerva-cf-files-eu", vars: new URL("../../.env.cloudflare.vars", here) };
-const TEST: Target = { name: "minerva-cf-files-test", files: "minerva-cf-test-files", filesEu: "minerva-cf-test-files-eu", vars: new URL("../../.env.cloudflare-test.vars", here) };
-
 function targetFor(mode: string | undefined): Target {
-	if (mode === "production") return PRODUCTION;
+	if (mode === "production") return { names: namesOf(todaysInstance(false)), vars: new URL("../../.env.cloudflare.vars", here) };
 	if (mode === "faults") {
+		const names = namesOf(todaysInstance(true));
 		// Fails closed: the test build never takes a name or a bucket of production's.
-		const production = new Set([PRODUCTION.name, PRODUCTION.files, PRODUCTION.filesEu]);
-		const taken = [TEST.name, TEST.files, TEST.filesEu].filter((name) => production.has(name));
+		const production = namesOf(todaysInstance(false));
+		const own = new Set([production.download, production.bucket, production.bucketEu]);
+		const taken = [names.download, names.bucket, names.bucketEu].filter((name) => own.has(name));
 		if (taken.length) throw new Error(`The test files Worker would bind production's ${taken.join(", ")}.`);
-		return TEST;
+		return { names, vars: new URL("../../.env.cloudflare-test.vars", here) };
 	}
-	return { ...PRODUCTION, vars: null };
+	return { names: namesOf(LOCAL_INSTANCES.test), vars: null };
 }
 
 function downloadOrigin(target: Target): string {
@@ -78,7 +77,7 @@ export default defineConfig(({ mode }) => {
 	const target = targetFor(mode);
 	return {
 		worker: {
-			name: target.name,
+			name: target.names.download,
 			compatibilityDate: "2026-10-06",
 			compatibilityFlags: ["nodejs_compat"],
 			entrypoint,
@@ -89,8 +88,8 @@ export default defineConfig(({ mode }) => {
 			// Signed links travel in query strings; keep them out of the logs.
 			observability: { enabled: true, redactQueryString: true },
 			env: {
-				FILES: bindings.r2({ name: target.files }),
-				FILES_EU: bindings.r2({ name: target.filesEu, jurisdiction: "eu" }),
+				FILES: bindings.r2({ name: target.names.bucket }),
+				FILES_EU: bindings.r2({ name: target.names.bucketEu, jurisdiction: "eu" }),
 				MINERVA_DOWNLOAD_ORIGIN: bindings.text(downloadOrigin(target)),
 				MINERVA_DOWNLOAD_KEY: bindings.secret(),
 			},

@@ -3,8 +3,7 @@ import * as faultsEntrypoint from "./src/faults/index.ts" with { type: "cf-worke
 import * as entrypoint from "./src/index.ts" with { type: "cf-worker" };
 import { parseFrom } from "./src/accounts/emails.ts";
 import { checkBuild, connectorClientSecrets, parse, type SettingsEnv } from "./src/config.ts";
-
-const NAME = "minerva-cf";
+import { LOCAL_INSTANCES, type Names, namesOf, todaysInstance } from "./scripts/instance.ts";
 
 // Plain settings are text bindings, read when the Worker is built and checked then with src/config.ts's
 // parser, so a malformed value fails the build. Development and tests read the environment, with the
@@ -14,27 +13,30 @@ const NAME = "minerva-cf";
 // off. No build but the test build's accepts the fake model, which only its entry contains. Secrets never
 // go here: they are in ../.env.cloudflare.
 
-// The test Worker (mode `faults`, `pnpm run deploy:test`) is minerva-cf-test: the same code built from
-// src/faults/index.ts, which adds a fake connector, its provider object, fault points and a token-gated
-// driver for the account tests, with resources of its own (minerva-cf-test-*) and its settings from
-// ../.env.cloudflare-test.vars, under the same rules as production's. The platform tests (mode `test`, under
-// names of their own, locally) run that entry too. Production builds src/index.ts, which imports nothing of
-// src/faults/.
+// Every name comes from scripts/instance.ts (`namesOf`): the Worker, the database, the AI Gateway, the buckets
+// and the container application all follow the instance's name, and MINERVA_MODEL_GATEWAY is derived from it
+// (a vars file that sets it is refused).
+
+// The test instance (mode `faults`, `pnpm run deploy:test`) is the same code built from src/faults/index.ts,
+// which adds a fake connector, its provider object, fault points and a token-gated driver for the account
+// tests, with resources of its own and its settings from ../.env.cloudflare-test.vars, under the same rules as
+// production's. The platform tests (mode `test`, under a local name, locally) run that entry too. Production
+// builds src/index.ts, which imports nothing of src/faults/.
 
 // Mode `offline` is the dev server's (`pnpm dev:offline`, cloudflare/README.md, Local development): the test
 // build's entry (it has the fake model), debug on, no AI binding (Workers AI and the AI Gateway need an
-// account) and the container only if Docker runs, with names of its own (minerva-cf-dev). It exists only
+// account) and the container only if Docker runs, under a local name (LOCAL_INSTANCES.offline). It exists only
 // under `vite --mode offline`, which marks the process (vite.config.ts); `cf build` or `cf deploy` in that mode
-// stops, so a local build cannot be deployed by accident.
+// stops, so a local build cannot be deployed by accident. Any other mode (cf's default, which `cf workers
+// types` uses, and `development`, which `pnpm startup` builds in) builds production's entry with the
+// environment's settings under the platform tests' local name, which reaches no instance. `cf build` itself
+// is mode `production`.
 
 // This file runs in Node but is type-checked with the Worker's runtime types, which lack Node's.
 const here = (import.meta as unknown as { url: string }).url;
 
 interface Target {
-	name: string;
-	d1: string;
-	files: string;
-	filesEu: string;
+	names: Names;
 	/** The settings file of a deployed build; null reads the environment. */
 	vars: URL | null;
 	/** The secrets file `cf deploy --secrets-file` uploads, for a deployed build; null reads the environment. */
@@ -45,35 +47,23 @@ interface Target {
 }
 
 function targetFor(mode: string | undefined): Target {
-	const own = { name: NAME, d1: "minerva-cf", files: "minerva-cf-files", filesEu: "minerva-cf-files-eu" };
-	if (mode === "production") return { ...own, vars: new URL("../.env.cloudflare.vars", here), secrets: new URL("../.env.cloudflare", here), faults: false, offline: false };
+	if (mode === "production") return { names: namesOf(todaysInstance(false)), vars: new URL("../.env.cloudflare.vars", here), secrets: new URL("../.env.cloudflare", here), faults: false, offline: false };
 	if (mode === "faults") {
-		return {
-			name: "minerva-cf-test",
-			d1: "minerva-cf-test",
-			files: "minerva-cf-test-files",
-			filesEu: "minerva-cf-test-files-eu",
-			vars: new URL("../.env.cloudflare-test.vars", here),
-			secrets: new URL("../.env.cloudflare-test", here),
-			faults: true,
-			offline: false,
-		};
+		return { names: namesOf(todaysInstance(true)), vars: new URL("../.env.cloudflare-test.vars", here), secrets: new URL("../.env.cloudflare-test", here), faults: true, offline: false };
 	}
 	if (mode === "offline") {
 		// Only the dev server, which vite.config.ts marks: a build or deploy in this mode would carry the
 		// fake model and the debug settings into an account.
 		if (build.env.MINERVA_DEV_OFFLINE !== "1") throw new Error("Mode offline is the dev server's (pnpm dev:offline); it cannot be built or deployed.");
-		const dev = "minerva-cf-dev";
-		return { name: dev, d1: dev, files: `${dev}-files`, filesEu: `${dev}-files-eu`, vars: null, secrets: null, faults: true, offline: true };
+		return { names: namesOf(LOCAL_INSTANCES.offline), vars: null, secrets: null, faults: true, offline: true };
 	}
 	if (mode === "test") {
-		// The platform tests' (vitest sets VITEST): the test build's entry under names of its own, never
-		// production's, so even a deploy in this mode could not put the fault code in minerva-cf.
+		// The platform tests' (vitest sets VITEST): the test build's entry under a local name, never an
+		// instance's, so even a deploy in this mode could not put the fault code in one.
 		if (build.env.VITEST !== "true") throw new Error("Mode test is the platform tests' (vitest); deploy the test build with mode faults.");
-		const local = "minerva-cf-local";
-		return { name: local, d1: local, files: `${local}-files`, filesEu: `${local}-files-eu`, vars: null, secrets: null, faults: true, offline: false };
+		return { names: namesOf(LOCAL_INSTANCES.test), vars: null, secrets: null, faults: true, offline: false };
 	}
-	return { ...own, vars: null, secrets: null, faults: false, offline: false };
+	return { names: namesOf(LOCAL_INSTANCES.test), vars: null, secrets: null, faults: false, offline: false };
 }
 interface BuildProcess {
 	env: Record<string, string | undefined>;
@@ -86,7 +76,8 @@ const build = (globalThis as unknown as { process: BuildProcess }).process;
 /** The id of the dev server's local D1 database in mode `offline`: nothing in an account. */
 const OFFLINE_D1_ID = "00000000-0000-4000-8000-00000000d1d1";
 
-const DEFAULTS: SettingsEnv = {
+/** The settings with a default. MINERVA_MODEL_GATEWAY is not one: the build sets it to the instance's name. */
+const DEFAULTS: Omit<SettingsEnv, "MINERVA_MODEL_GATEWAY"> = {
 	MINERVA_SITE_URL: "http://localhost:5173",
 	MINERVA_DOWNLOAD_ORIGIN: "http://localhost:8788",
 	MINERVA_DEBUG: "false",
@@ -95,7 +86,6 @@ const DEFAULTS: SettingsEnv = {
 	MINERVA_RUN_TIMEOUT_SECONDS: "",
 	MINERVA_MODEL_PROVIDER: "workers-ai",
 	MINERVA_MODEL_NAME: "@cf/zai-org/glm-5.3-flash",
-	MINERVA_MODEL_GATEWAY: "minerva-cf",
 	MINERVA_MODEL_API: "chat",
 	MINERVA_MODEL_MAX_OUTPUT_TOKENS: "8192",
 	MINERVA_MODEL_REASONING_EFFORT: "",
@@ -113,7 +103,7 @@ const DEFAULTS: SettingsEnv = {
  * written to the log, cookies work over http), the fake model (the test build's entry has it), and a
  * fake model name for the settings parser.
  */
-const OFFLINE_DEFAULTS: Partial<SettingsEnv> = {
+const OFFLINE_DEFAULTS: Partial<Omit<SettingsEnv, "MINERVA_MODEL_GATEWAY">> = {
 	MINERVA_DEBUG: "true",
 	MINERVA_MODEL_PROVIDER: "fake",
 	MINERVA_MODEL_NAME: "fake-1",
@@ -152,8 +142,14 @@ function connectorSecrets(target: Target) {
 
 function settingsFor(target: Target): SettingsEnv {
 	const source = target.vars ? deployedVars(target.vars) : build.env;
+	// The gateway is the instance's own, whatever a file or the shell says: a vars file that sets it is a
+	// mistake that would send the model's requests through another gateway, so it stops the build.
+	if (target.vars && source.MINERVA_MODEL_GATEWAY !== undefined) {
+		throw new Error(`MINERVA_MODEL_GATEWAY is not a setting: the build sets it to the instance's name. Remove it from ../${target.vars.pathname.split("/").pop()}.`);
+	}
 	const defaults = target.offline ? { ...DEFAULTS, ...OFFLINE_DEFAULTS } : DEFAULTS;
-	const values = Object.fromEntries(Object.entries(defaults).map(([name, fallback]) => [name, source[name] ?? fallback])) as unknown as SettingsEnv;
+	const settings = Object.fromEntries(Object.entries(defaults).map(([name, fallback]) => [name, source[name] ?? fallback]));
+	const values = { ...settings, MINERVA_MODEL_GATEWAY: target.names.gateway } as unknown as SettingsEnv;
 	const parsed = parse(values);
 	checkBuild(parsed, { deployed: target.vars !== null, testBuild: target.faults });
 	return values;
@@ -162,13 +158,13 @@ function settingsFor(target: Target): SettingsEnv {
 /**
  * The sandbox's Container application (plan: The sandbox lifecycle): the image in container/, started by the
  * Sandbox Durable Object (`durable_object` scheduling), which picks the instance, starts it with no route out
- * and passes it nothing secret. Its name follows the Worker's, so the test Worker has an application of its
- * own. The platform tests run in local workerd, which has no containers: there the class has none, and a
- * start says so.
+ * and passes it nothing secret. Its name follows the instance's (scripts/instance.ts), so every instance has an
+ * application of its own. The platform tests run in local workerd, which has no containers: there the class has
+ * none, and a start says so.
  */
 function sandboxContainer(target: Target) {
 	return defineContainer({
-		name: `${target.name}-sandbox`,
+		name: target.names.container,
 		schedulingPolicy: "durable-object",
 		images: { base: { dockerfile: "./container/Dockerfile" } },
 		observability: { enabled: true, logs: { enabled: true } },
@@ -192,7 +188,7 @@ export default defineConfig(({ mode }) => {
 	return {
 		...(container ? { containers: [container] } : {}),
 		worker: {
-			name: target.name,
+			name: target.names.app,
 			compatibilityDate: "2026-10-06",
 			compatibilityFlags: ["nodejs_compat"],
 			// One module type for the Env cf infers: both entries export the same classes.
@@ -209,22 +205,22 @@ export default defineConfig(({ mode }) => {
 			env: {
 				ASSETS: bindings.assets(),
 				// The dev server's database has an id of its own, only so that `cf d1 migrations apply --local` can name it.
-				DB: bindings.d1({ name: target.d1, ...(target.offline ? { id: OFFLINE_D1_ID } : {}) }),
+				DB: bindings.d1({ name: target.names.d1, ...(target.offline ? { id: OFFLINE_D1_ID } : {}) }),
 				// An EU workspace's files stay in a bucket in R2's EU jurisdiction (src/addressing.ts).
-				FILES: bindings.r2({ name: target.files }),
-				FILES_EU: bindings.r2({ name: target.filesEu, jurisdiction: "eu" }),
+				FILES: bindings.r2({ name: target.names.bucket }),
+				FILES_EU: bindings.r2({ name: target.names.bucketEu, jurisdiction: "eu" }),
 				// Workers AI has no local simulation: in local dev it is the account's, and the tests leave it off.
 				// Mode offline has none at all: it runs the fake model and needs no account.
 				...(target.offline ? {} : { AI: bindings.ai({ dev: { remote: true } }) }),
 				LOADER: bindings.workerLoader(),
-				WORKSPACE: bindings.durableObject({ worker: target.name, exportName: "Workspace" }),
-				CONVERSATION: bindings.durableObject({ worker: target.name, exportName: "Conversation" }),
-				SCRIPTS: bindings.durableObject({ worker: target.name, exportName: "Scripts" }),
+				WORKSPACE: bindings.durableObject({ worker: target.names.app, exportName: "Workspace" }),
+				CONVERSATION: bindings.durableObject({ worker: target.names.app, exportName: "Conversation" }),
+				SCRIPTS: bindings.durableObject({ worker: target.names.app, exportName: "Scripts" }),
 				// The test build's fake provider (src/faults/provider.ts) and the mailbox that keeps its emails (mailbox.ts).
 				...(target.faults
 					? {
-							FAULT_PROVIDER: bindings.durableObject({ worker: target.name, exportName: "FaultProvider" }),
-							FAULT_MAILBOX: bindings.durableObject({ worker: target.name, exportName: "FaultMailbox" }),
+							FAULT_PROVIDER: bindings.durableObject({ worker: target.names.app, exportName: "FaultProvider" }),
+							FAULT_MAILBOX: bindings.durableObject({ worker: target.names.app, exportName: "FaultMailbox" }),
 						}
 					: {}),
 				// Sign-up and sign-in codes (src/accounts/emails.ts), sent from MINERVA_EMAIL_FROM's address only. The

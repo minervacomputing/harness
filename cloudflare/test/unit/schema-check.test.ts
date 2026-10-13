@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, test } from "vitest";
+import { namesOf, todaysInstance } from "../../scripts/instance.ts";
 import { APPLIED_SQL, COLUMNS_SQL, FOREIGN_KEYS_SQL, OBJECTS_SQL, TABLES_SQL, UNIQUES_SQL, compareMigrations, compareSchemas, expectedSchema, normalized, readOnly, rowsFrom, schemaOf } from "../../scripts/schema.ts";
 
 const DIR = new URL("../../migrations/", import.meta.url);
@@ -211,6 +212,9 @@ describe("what may be sent to the database", () => {
 
 describe("scripts/schema-check.ts, with a stand-in for cf that answers from a local SQLite file", () => {
 	const SCRIPT = new URL("../../scripts/schema-check.ts", import.meta.url).pathname;
+	// The database each flag reads (scripts/instance.ts: today's flags choose the instance).
+	const PRODUCTION = namesOf(todaysInstance(false)).d1;
+	const TEST = namesOf(todaysInstance(true)).d1;
 	const DATABASE_ID = "11111111-2222-4333-8444-555555555555";
 	// `cf d1 list` and `cf d1 query` as a node script: the answers come from the file in FAKE_D1, every call is logged.
 	const FAKE_CF = `#!/usr/bin/env node
@@ -257,17 +261,17 @@ if (args[0] === "d1" && args[1] === "list") {
 		const result = run(() => {});
 		expect(result.err.replace(/\(node:\d+\)[^\n]*\n/g, "").replace(/\(Use `node --trace[^\n]*\n/g, "")).toBe("");
 		expect(result.status).toBe(0);
-		expect(result.out).toMatch(/^The schema of minerva-cf matches the migrations \(\d+ tables, \d+ columns, \d+ indexes and other objects, 8 migrations\)\.\n$/);
+		expect(result.out).toMatch(new RegExp(`^The schema of ${PRODUCTION} matches the migrations \\(\\d+ tables, \\d+ columns, \\d+ indexes and other objects, 8 migrations\\)\\.\\n$`));
 		expect(result.calls.map((call) => call.slice(0, 2).join(" "))).toEqual(["d1 list", ...Array(6).fill("d1 query")]);
 		for (const call of result.calls.slice(1)) expect(call[4], call[4]).toMatch(/^SELECT /);
 		expect(result.out + result.err).not.toContain(DATABASE_ID);
 	});
 
-	test("with --test it reads minerva-cf-test", () => {
+	test("with --test it reads the test instance's database", () => {
 		const result = run(() => {}, {}, ["--test"]);
 		expect(result.status).toBe(0);
-		expect(result.calls[0]).toEqual(["d1", "list", "--name", "minerva-cf-test"]);
-		expect(result.out).toContain("The schema of minerva-cf-test matches");
+		expect(result.calls[0]).toEqual(["d1", "list", "--name", TEST]);
+		expect(result.out).toContain(`The schema of ${TEST} matches`);
 	});
 
 	test("fails on a missing column and an unapplied migration, naming both and nothing of the id", () => {
@@ -276,7 +280,7 @@ if (args[0] === "d1" && args[1] === "list") {
 			db.exec(`DELETE FROM d1_migrations WHERE name = '${FILES.at(-1)}'`);
 		});
 		expect(result.status).toBe(1);
-		expect(result.err).toContain("The schema of minerva-cf is not what the migrations make:");
+		expect(result.err).toContain(`The schema of ${PRODUCTION} is not what the migrations make:`);
 		expect(result.err).toContain("- Column session.ipAddress is missing.");
 		expect(result.err).toContain(`- Migration ${FILES.at(-1)} is not applied.`);
 		expect(result.out + result.err).not.toContain(DATABASE_ID);
@@ -295,7 +299,7 @@ if (args[0] === "d1" && args[1] === "list") {
 		expect(unreadable.out + unreadable.err).not.toContain(DATABASE_ID);
 		const missing = run(() => {}, { FAKE_NO_DATABASE: "1" });
 		expect(missing.status).toBe(2);
-		expect(missing.err).toContain("No D1 database named minerva-cf.");
+		expect(missing.err).toContain(`No D1 database named ${PRODUCTION}.`);
 		expect(missing.calls).toHaveLength(1);
 		// An answer it cannot parse throws where nothing catches it: still 2, never drift's 1.
 		const garbage = run(() => {}, { FAKE_GARBAGE: "1" });

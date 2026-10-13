@@ -1,5 +1,5 @@
 // Memory-limit resets on the account (plan: Testing): faults that allocate until the isolate passes its memory
-// limit and is reset, which local workerd cannot do, through the test Worker minerva-cf-test's driver
+// limit and is reset, which local workerd cannot do, through the test instance's driver
 // (driver.ts). A reset takes every object of its isolate with it, so these run one at a time, and only after
 // every other file of `pnpm test:faults` has finished (vitest.faults.config.ts):
 //
@@ -9,7 +9,7 @@
 // - repeated in a tool until the cap, and nothing runs after it. Last, so no later reset could cut short
 //   what would run after it in the 45 s it is watched.
 //
-// Run with `pnpm test:faults` after `pnpm run deploy:test`; never against minerva-cf.
+// Run with `pnpm test:faults` after `pnpm run deploy:test`; never against production.
 
 import { afterAll, describe, expect, test } from "vitest";
 import { cards, finish, LIST, LIST_INBOX, later, post, provider, reads, restarts, script, settled, sh, world } from "./driver.ts";

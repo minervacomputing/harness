@@ -17,7 +17,7 @@
     "test:platform": "vitest run --config vitest.platform.config.ts",
     "test:account": "vitest run --config vitest.account.config.ts",
     "test:faults": "vitest run --config vitest.faults.config.ts",
-    "sandbox:image": "docker build -t minerva-cf-sandbox:local container",
+    "sandbox:image": "docker build -t minerva-sandbox:local container",
     "test:cm": "vitest run --config vitest.cm.config.ts",
     "seed": "node scripts/seed.ts",
     "startup": "node scripts/startup.ts --build",

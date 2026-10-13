@@ -1,5 +1,6 @@
 import { defineConfig, exports } from "cf/config";
 import * as entrypoint from "./src/index.ts" with { type: "cf-worker" };
+import { namesOf, todaysInstance } from "../scripts/instance.ts";
 
 // The quiesced instance, deployed by scripts/reset.ts in place of an instance's app while its data is reset
 // (cloudflare/README.md, Resetting an instance). It takes the app's name and retires every Durable Object
@@ -10,8 +11,8 @@ import * as entrypoint from "./src/index.ts" with { type: "cf-worker" };
 //
 // The name and the classes are read from the app's build in ../.cloudflare/output/ (`cf build`, which
 // scripts/reset.ts runs first), never from a pattern, and only for the instance the mode names: mode
-// `reset-faults` for the test Worker minerva-cf-test and `reset-production` for minerva-cf. Any other mode,
-// cf's default included, stops the build.
+// `reset-faults` for the test instance and `reset-production` for production (scripts/instance.ts names
+// both). Any other mode, cf's default included, stops the build.
 
 // This file runs in Node but is type-checked with the Worker's runtime types, which lack Node's.
 const here = (import.meta as unknown as { url: string }).url;
@@ -20,7 +21,7 @@ interface BuildProcess {
 }
 const build = (globalThis as unknown as { process: BuildProcess }).process;
 
-const TARGETS: Record<string, string> = { "reset-faults": "minerva-cf-test", "reset-production": "minerva-cf" };
+const TARGETS: Record<string, string> = { "reset-faults": namesOf(todaysInstance(true)).app, "reset-production": namesOf(todaysInstance(false)).app };
 
 interface BuiltWorker {
 	name?: string;

@@ -1,6 +1,6 @@
 # Plan: instances by name
 
-Status: plan, 2026-10-13; nothing here is built. This is unit 2 of [self-hosting-and-cloud.md](self-hosting-and-cloud.md), Part 1. It starts after frontend cleanup A3 is committed, because A3 also changes `test/account/browser.test.ts`. opencode reviewed a first draft, and its findings are folded in.
+Status: plan, 2026-10-13; sub-unit 2a (derived names) is done, 2026-10-14, and the rest is not built. This is unit 2 of [self-hosting-and-cloud.md](self-hosting-and-cloud.md), Part 1. It starts after frontend cleanup A3 is committed, because A3 also changes `test/account/browser.test.ts`. opencode reviewed a first draft, and its findings are folded in.
 
 ## Why
 

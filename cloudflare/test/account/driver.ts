@@ -1,5 +1,5 @@
 // The test Worker's fault driver (src/faults/routes.ts: `POST /api/faults/<op>` behind its token), shared by
-// the account suites that run turns on minerva-cf-test: faults.test.ts, resets.test.ts and turns.test.ts.
+// the account suites that run turns on the test instance: faults.test.ts, resets.test.ts and turns.test.ts.
 // Each world is a workspace of its own, with the fake Notes connection and an agent.
 //
 // Every world and run made here is remembered, so each file can `drain()` in its afterAll: stop the runs still

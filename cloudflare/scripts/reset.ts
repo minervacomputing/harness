@@ -2,14 +2,14 @@
 // Resetting an instance). For an instance that holds nothing worth keeping, such as after a change of a stored
 // format; it cannot be undone.
 //
-//   node scripts/reset.ts --test                 lists what a reset of minerva-cf-test deletes; changes nothing
+//   node scripts/reset.ts --test                 lists what a reset of the test instance deletes; changes nothing
 //   node scripts/reset.ts --test --yes           resets it; then `pnpm run deploy:test`
-//   node scripts/reset.ts --production [--yes]   the same for minerva-cf; then `pnpm run deploy`
+//   node scripts/reset.ts --production [--yes]   the same for production; then `pnpm run deploy`
 //
 // `pnpm assets` first. In order:
 // 1. Pins every cf command to one account (scripts/run.ts, pinAccount), then builds the app and the quiesced
 //    instance (reset-worker/), locally. Every name below comes from the app's build, and each must be the
-//    instance's own (NAME, NAME-files, NAME-files-eu), or nothing happens.
+//    instance's own (scripts/instance.ts: its database, its two buckets, its container), or nothing happens.
 // 2. Checks that the Worker, the database and the buckets the build binds exist on that account, that the
 //    Worker has no Durable Object namespace of a class the build does not export, and that the container
 //    applications linked to its namespaces are the build's own, by exact name. Nothing identifying is
@@ -36,6 +36,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildAccount, buildDigest, ownContainer, readBuild } from "./builds.ts";
+import { namesOf, todaysInstance } from "./instance.ts";
 import { type LifecycleRule, lifecycleExtras, lifecycleMatches, lifecycleProblems } from "./lifecycle.ts";
 import { CommandFailed, ROOT, cfJson, hide, hideOrigin, lock, pinAccount, redact, run } from "./run.ts";
 import { readOnly, rowsFrom } from "./schema.ts";
@@ -48,11 +49,13 @@ if (unknown.length || TEST === args.includes("--production")) {
 	process.exit(2);
 }
 const YES = args.includes("--yes");
-const NAME = TEST ? "minerva-cf-test" : "minerva-cf";
+const INSTANCE = todaysInstance(TEST);
+const NAMES = namesOf(INSTANCE);
+const NAME = NAMES.app;
 const MODE = TEST ? "faults" : "production";
 const FLAG = TEST ? ["--test"] : [];
 /** The only names a reset touches. */
-const OWN = new Set([NAME, `${NAME}-files`, `${NAME}-files-eu`]);
+const OWN = new Set([NAMES.d1, NAMES.bucket, NAMES.bucketEu]);
 const RESET_DIR = join(ROOT, "reset-worker");
 const PAGE = 1000;
 const LOCATION_HINTS = ["apac", "eeur", "enam", "weur", "wnam", "oc"];
@@ -201,7 +204,7 @@ try {
 			.filter((name): name is string => typeof name === "string"),
 	);
 	const foreign = [d1Name, ...buckets.map((bucket) => bucket.name)].filter((name) => !OWN.has(name));
-	const foreignContainers = [...containers].filter((name) => !ownContainer(NAME, name));
+	const foreignContainers = [...containers].filter((name) => !ownContainer(INSTANCE, name));
 	if (foreign.length || foreignContainers.length) stop(`The app's build of ${NAME} names resources that are not its own: ${[...foreign, ...foreignContainers].join(", ")}.`);
 	const tombstones = Object.entries(quiet.exports ?? {});
 	const retired = tombstones

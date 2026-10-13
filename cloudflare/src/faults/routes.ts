@@ -5,7 +5,7 @@
 // under `sandbox/` drive a Sandbox object of their own (lab.ts). `emails` and `emails-clear` read and empty
 // the mailbox the build's emails go to (mailbox.ts); `download` serves a signed download link as the
 // download origin (files-worker/) would, from the test Worker's own buckets, for the platform tests (the
-// browser walk downloads through minerva-cf-files-test, the deployed download origin). `setup-reopen` deletes
+// browser walk downloads through the test instance's deployed download origin). `setup-reopen` deletes
 // the instance's setup claim (not the admins it made), so each browser walk claims the first-run setup through
 // its page. `password-hash` hashes one password with Better Auth's hasher and does nothing else, so the
 // request's CPU time is the hash's: how a password's cost is measured on the edge.

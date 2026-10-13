@@ -1,4 +1,4 @@
-// The Sandbox's fault rows and the folder's limits on the account, through the test Worker minerva-cf-test's
+// The Sandbox's fault rows and the folder's limits on the account, through the test instance's
 // sandbox lab (lab.ts) with production's Sandbox object, its container and the fault seams of
 // src/faults/sandbox.ts. Each test has a sandbox of its own, and they all run at once, alongside
 // sandbox.test.ts:

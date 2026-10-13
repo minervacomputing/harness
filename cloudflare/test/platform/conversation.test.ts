@@ -754,7 +754,7 @@ describe("the model", () => {
 
 	test("a failure's text, which createAI also copies into its diagnostics, is nowhere in storage, the run's events or the logs", async () => {
 		const secret = "SYNTHETIC_SECRET";
-		const route = (provider: ModelRoute["provider"]): ModelRoute => ({ provider, name: provider === "workers-ai" ? "@cf/zai-org/glm-5.3-flash" : "gpt-test", gateway: "minerva-cf-local", api: "responses", cap: 1000, reasoningEffort: "", reasoningSummary: "" });
+		const route = (provider: ModelRoute["provider"]): ModelRoute => ({ provider, name: provider === "workers-ai" ? "@cf/zai-org/glm-5.3-flash" : "gpt-test", gateway: "acme", api: "responses", cap: 1000, reasoningEffort: "", reasoningSummary: "" });
 		// AI Gateway's universal endpoint answering a 401 that echoes the key, and Workers AI throwing such text.
 		const binding = {
 			aiGatewayLogId: null,

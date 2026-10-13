@@ -1,4 +1,4 @@
-// The code-mode lab, deployed as minerva-cf-cm for test/account/scripts.test.ts (cloudflare.config.ts
+// The code-mode lab, deployed as the test instance's lab for test/account/scripts.test.ts (cloudflare.config.ts
 // here), and deleted after: production's Scripts object and conversation-side runner (src/scripts/), behind
 // `Lab`, a stand-in for the Conversation Durable Object with the run's queue (4 at once, writes one at a
 // time) in front of fake tools that record what they did in its SQLite.

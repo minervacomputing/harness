@@ -1,7 +1,7 @@
 // Deploys an instance: the app and its download origin (cloudflare/README.md, Deploy).
 //
-//   node scripts/deploy.ts                 minerva-cf and minerva-cf-files (`pnpm run deploy`)
-//   node scripts/deploy.ts --test          the test Worker minerva-cf-test and minerva-cf-files-test (`pnpm run deploy:test`)
+//   node scripts/deploy.ts                 production's app and download origin (`pnpm run deploy`)
+//   node scripts/deploy.ts --test          the test instance's (`pnpm run deploy:test`)
 //   … --files-only                         only the download origin, after a deploy whose last step failed
 //
 // One deploy or reset runs at a time from a checkout, and every cf command goes to one account (`lock` and
@@ -21,6 +21,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type LiveBinding, buildAccount, buildDigest, fileDigest, filesBuildProblems, liveAppProblems, readBuild } from "./builds.ts";
+import { namesOf, todaysInstance } from "./instance.ts";
 import { CommandFailed, ROOT, cfJson, hide, hideOrigin, hideSecrets, lock, pinAccount, readEnv, run } from "./run.ts";
 
 const args = process.argv.slice(2);
@@ -32,8 +33,8 @@ if (unknown.length) {
 const TEST = args.includes("--test");
 const FILES_ONLY = args.includes("--files-only");
 const MODE = TEST ? "faults" : "production";
-const APP = TEST ? "minerva-cf-test" : "minerva-cf";
-const FILES = TEST ? "minerva-cf-files-test" : "minerva-cf-files";
+const INSTANCE = todaysInstance(TEST);
+const { app: APP, download: FILES } = namesOf(INSTANCE);
 const SECRETS = join(ROOT, "..", TEST ? ".env.cloudflare-test" : ".env.cloudflare");
 const FLAG = TEST ? ["--test"] : [];
 const FILES_DIR = join(ROOT, "files-worker");
@@ -118,7 +119,7 @@ try {
 	const app = readBuild(ROOT);
 	hideOrigin(app.env?.MINERVA_SITE_URL?.value);
 	hideOrigin(app.env?.MINERVA_DOWNLOAD_ORIGIN?.value);
-	const problems = filesBuildProblems(app, readBuild(FILES_DIR), { app: APP, files: FILES });
+	const problems = filesBuildProblems(app, readBuild(FILES_DIR), INSTANCE);
 	if (problems.length) throw new CommandFailed(problems.join("\n"));
 	unchanged(ROOT, built.app);
 	unchanged(FILES_DIR, built.files);

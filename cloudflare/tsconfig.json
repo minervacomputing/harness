@@ -16,6 +16,6 @@
 		"noUnusedLocals": true,
 		"skipLibCheck": true
 	},
-	"include": ["src", "test/unit", "test/docker", "test/platform", "test/account/scripts-worker/src", "reset-worker/src", "reset-worker/cloudflare.config.ts", "cloudflare.config.ts", ".cloudflare/types"],
+	"include": ["src", "test/unit", "test/docker", "test/platform", "test/account/scripts-worker/src", "test/account/scripts-worker/cloudflare.config.ts", "reset-worker/src", "reset-worker/cloudflare.config.ts", "cloudflare.config.ts", ".cloudflare/types"],
 	"exclude": ["test/unit/sources.test.ts", "test/unit/schema-check.test.ts", "test/unit/deploy-checks.test.ts"]
 }

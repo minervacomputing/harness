@@ -1,5 +1,5 @@
-// Code mode on the account (plan: Code mode, Testing; table row Scripts), against the lab Worker
-// minerva-cf-cm (test/account/scripts-worker/): production's Scripts object and conversation-side runner
+// Code mode on the account (plan: Code mode, Testing; table row Scripts), against the test
+// instance's lab Worker (test/account/scripts-worker/): production's Scripts object and conversation-side runner
 // behind a stand-in conversation. It settles the teardown the spikes disagreed on (an awaited loopback
 // entrypoint against resetting the Scripts object after each script) and runs the faults that need the real
 // platform: a CPU-bound guest while the conversation answers, a timeout during a write, calls after return,

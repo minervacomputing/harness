@@ -1,4 +1,4 @@
-// The minerva-cf-files Worker: the download origin (plan: Files, Downloads). It checks that a request came
+// The download Worker: the download origin (plan: Files, Downloads). It checks that a request came
 // to its own origin and carries a link the app signed with MINERVA_DOWNLOAD_KEY (src/files/links.ts), then
 // streams the object from the workspace's bucket (FILES, or FILES_EU for an EU workspace) as a sandboxed
 // attachment (src/files/download.ts). It holds no other secret and reaches nothing else.

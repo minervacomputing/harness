@@ -1,9 +1,9 @@
 // The test build's Worker (cloudflare.config.ts, modes `faults` and `test`): the same Worker as
 // src/index.ts, plus the fake Notes connector and its provider (connector.ts, provider.ts), fault points in
 // the Conversation's and the Workspace's ports (ports.ts, plan.ts), a mailbox that keeps the emails it
-// would send (mailbox.ts), and a token-gated driver at /api/faults/ for the account tests (routes.ts). It is deployed only as minerva-cf-test; the production
-// build's entry is src/index.ts, which imports nothing from here (a unit test checks it), so none of this
-// is in minerva-cf.
+// would send (mailbox.ts), and a token-gated driver at /api/faults/ for the account tests (routes.ts). It is
+// deployed only as a test instance; the production build's entry is src/index.ts, which imports nothing from
+// here (a unit test checks it), so none of this is in production.
 
 import worker from "../index.ts";
 import { CONNECTOR_SOURCE, servedConnectors } from "../connectors/index.ts";
