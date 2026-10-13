@@ -177,13 +177,13 @@ describe("connecting and discovery", () => {
 	});
 });
 
-/** What each operation means today; a change here makes running runs' tools fail with OPERATION_CHANGED. */
+/** What each operation means; a change here makes running runs' tools fail with OPERATION_CHANGED. */
 const FINGERPRINTS: { [operation: string]: string } = {
-	list_inboxes: "b139269685507f12",
-	search_conversations: "297e3bd691041759",
-	get_conversation: "54f910a8a614f10f",
-	add_note: "de083cccf00a35c6",
-	reply: "36c938f5dfcf6975",
+	list_inboxes: "0c2508dbac534a3c",
+	search_conversations: "03ab010ca8c02fec",
+	get_conversation: "26e41a62b7a2f78d",
+	add_note: "a7a26100ad1fa560",
+	reply: "333c352b155f52de",
 };
 
 describe("reading", () => {
@@ -414,6 +414,11 @@ describe("reading", () => {
 		raw(` ${refund.replace('"Refund"', '"\\ud83d\\ude00"')}\n`);
 		const [found] = await items(run, "intercom_get_conversation", { conversation: "102" });
 		expect([found?.title, found?.created]).toEqual(["\u{1f600}", "2026-09-21T14:13:20Z"]);
+		// Bodies are strict UTF-8; a byte order mark is dropped.
+		raw(`\ufeff${refund}`);
+		expect((await items(run, "intercom_get_conversation", { conversation: "102" }))[0]?.id).toBe("102");
+		fake.hook = (method, path) => (method === "GET" && path === "/conversations/102" ? new Response(new Uint8Array([0x7b, 0xff, 0x7d]), { status: 200 }) : null);
+		expect(await run.code("intercom_get_conversation", { conversation: "102" })).toBe("PROVIDER_FAILED");
 	});
 
 	test("search answers are checked", async () => {
@@ -638,6 +643,20 @@ describe("text agents read", () => {
 			expect(() => checkWritten(text), text).toThrow("must not link to Intercom");
 		}
 		for (const text of ["bell \u0007", "\u0000"]) expect(() => checkWritten(text), text).toThrow("must not contain control characters");
+	});
+
+	test("the dotted capital I and the dotless i are read as i, and ASCII case does not matter", () => {
+		const SECRET = "SECRET merger";
+		for (const text of ["\u0130NTERCOM.COM", "\u0130ntercom.io", "app.\u0131ntercom.com", "x.intercomcdn.\u0130o", "\u0131ntercom:x", "INTERCOM.IO"]) {
+			expect(redact(text), text).toBe("[Intercom link]");
+			expect(() => checkWritten(text), text).toThrow("must not link to Intercom");
+		}
+		for (const href of ["https://\u0130ntercom.com/x", "HTTPS://APP.INTERCOM.COM/x"]) expect(read(`<a href="${href}">${SECRET}</a>`), href).toBe("[Intercom link]");
+		// A scheme is ASCII: one written with a lookalike letter is a relative link, hidden like one.
+		for (const href of ["ma\u0130lto:a@example.com", "maılto:a@example.com", "HT\u0131TPS://example.com/"]) {
+			expect(read(`<a href="${href}">${SECRET}</a>`), href).toBe("[Intercom link]");
+		}
+		expect(read(`<a href="MAILTO:a@example.com">${SECRET}</a>`)).toBe(`${SECRET} (MAILTO:a@example.com)`);
 	});
 
 	test("what an unclosed or self-closed script or svg could hide stays hidden", () => {

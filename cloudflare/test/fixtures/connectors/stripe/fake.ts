@@ -1,4 +1,4 @@
-// backend/tests/test_stripe.py's FakeStripe behind an injected `fetch`: the Stripe API for one account.
+// A fake Stripe API for one account, behind an injected `fetch`.
 // Customers: Ada and Grace (USD), Eve (no currency yet) and a deleted one. Charges belong to Ada, Grace, or
 // no customer (a guest payment). Ids and addresses are made up; addresses use reserved example domains.
 
@@ -54,7 +54,7 @@ export interface Seen {
 
 export type Hook = (method: string, path: string, params: URLSearchParams) => Response | null;
 
-/** `urllib.parse.parse_qs` as the Python fake reads a form: blank values dropped, the first of each kept. */
+/** A form body: blank values dropped, the first of each name kept. */
 function parseForm(body: string): { [name: string]: string } {
 	const form: { [name: string]: string } = {};
 	for (const [name, value] of new URLSearchParams(body)) if (value !== "" && !Object.hasOwn(form, name)) form[name] = value;

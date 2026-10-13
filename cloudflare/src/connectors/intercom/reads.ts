@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { Binding, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
 import { OperationError, defineOperation } from "../../gateway/connector.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
-import { SINGLE_LINE, isSingleLine, truncate } from "../../lib/text.ts";
+import { SINGLE_LINE, WORD_CLASS, isSingleLine, truncate } from "../../lib/text.ts";
 import { type Attachment, type Author, type Conversation, type IntercomClient, type Part, idNumber } from "./client.ts";
 import { epochMicros, parseInstant } from "../../lib/dates.ts";
 import * as html from "./html.ts";
@@ -22,7 +22,6 @@ import {
 	resolveInbox,
 	unplaced,
 } from "./inboxes.ts";
-import { RE_WORD_CHAR } from "./python.ts";
 
 export const MAX_SEARCH_WORDS = 5;
 export const CONCURRENCY = 5;
@@ -32,7 +31,7 @@ export const MAX_MESSAGES = 50;
 export const MAX_SHORT = 500;
 export const MAX_ATTACHMENTS = 20;
 
-const WORD = new RegExp(`${RE_WORD_CHAR}+`, "gu");
+const WORD = new RegExp(`[${WORD_CLASS}]+`, "gu");
 // Parts that carry a message. Others (assignments, state changes, tags, events) say who did what, which can
 // name teams and teammates elsewhere; they are left out.
 const MESSAGE_PARTS: ReadonlySet<string> = new Set(["comment", "note", "quick_reply", "close"]);
@@ -43,7 +42,7 @@ const CONTACTS: ReadonlySet<string> = new Set(["user", "lead", "contact"]);
 export const NOT_ISO = "must be an ISO 8601 date or time such as 2026-10-01T09:00:00Z";
 export const NOT_IN_RANGE = "must be a time between the years 2000 and 2100";
 
-/** `Cursor | None = None`: a page token, at most 1000 characters. */
+/** A page token, at most 1000 characters, or null. */
 const Cursor = () => z.string().trim().max(1000).nullable().default(null);
 
 /** Text shown to agents, links to Intercom hidden, at most `limit` characters; null for none. */
@@ -86,8 +85,7 @@ function header(conversation: Conversation): JsonObject {
 
 // list_inboxes
 
-// Each input is titled with the name of its Pydantic model, which validation errors name.
-const ListInboxes = z.strictObject({}).meta({ title: "ListInboxes" });
+const ListInboxes = z.strictObject({});
 
 export const LIST_INBOXES = defineOperation<z.output<typeof ListInboxes>>({
 	name: "list_inboxes",
@@ -156,7 +154,7 @@ const SearchConversations = z.strictObject({
 	updated_after: Since().nullable().default(null),
 	limit: z.int().min(1).max(20).default(10),
 	cursor: Cursor(),
-}).meta({ title: "SearchConversations" });
+});
 type SearchConversations = z.output<typeof SearchConversations>;
 
 function firstText(conversation: Conversation): string | null {
@@ -294,7 +292,7 @@ export function messages(conversation: Conversation, limit: number = MAX_MESSAGE
 	return [out, more];
 }
 
-const GetConversation = z.strictObject({ conversation: ConversationId() }).meta({ title: "GetConversation" });
+const GetConversation = z.strictObject({ conversation: ConversationId() });
 type GetConversation = z.output<typeof GetConversation>;
 
 export const GET_CONVERSATION = defineOperation<GetConversation>({

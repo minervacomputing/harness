@@ -1,13 +1,12 @@
 // The text of nested links without quadratic work, for the HTML readers that show a link as "label (address)"
-// (Intercom's and Teams' html.ts): each label is joined and stripped as its link closes and put in the
+// (Intercom's and Teams' html.ts): each label is joined and trimmed as its link closes and put in the
 // enclosing label, which, done naively, copies the text of links nested n deep n times. Here a closed link's
 // text is a `Joined` of the pieces it was made of, built in time proportional to its own pieces, and the
 // whole text is written out once at the end.
 
-
 /**
  * Text made of pieces, never empty, that neither starts nor ends with whitespace (as `trim()` counts it):
- * every one is a stripped label, or a stripped label followed by " (address)".
+ * every one is a trimmed label, or a trimmed label followed by " (address)".
  */
 export class Joined {
 	readonly parts: readonly Piece[];
@@ -41,10 +40,10 @@ export function written(pieces: readonly Piece[]): string {
 }
 
 /**
- * `"".join(label).strip()`. Only strings can carry whitespace at the ends (a `Joined` has none), so the
+ * The label's text, trimmed. Only strings can carry whitespace at the ends (a `Joined` has none), so the
  * strings of whitespace at either end are dropped and the ones next to them trimmed.
  */
-export function stripped(label: readonly Piece[]): Piece {
+function trimmed(label: readonly Piece[]): Piece {
 	let start = 0;
 	let end = label.length;
 	while (start < end && typeof label[start] === "string" && !(label[start] as string).trimStart()) start++;
@@ -57,9 +56,9 @@ export function stripped(label: readonly Piece[]): Piece {
 	return parts.length === 1 ? (parts[0] as Piece) : new Joined(parts);
 }
 
-/** What a closed link shows: `text and href and text != href ? f"{text} ({href})" : text or href`, text stripped. */
+/** What a closed link shows: "label (address)", or the label alone when it is the address, or the address alone when there is no label. */
 export function linkText(label: readonly Piece[], href: string): Piece {
-	const text = stripped(label);
+	const text = trimmed(label);
 	if (text.length && href && !(text.length === href.length && written([text]) === href)) return new Joined([text, " (", href, ")"]);
 	return text.length ? text : href;
 }

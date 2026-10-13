@@ -2,6 +2,7 @@
 //
 // Requests go to api.intercom.io, which Intercom routes to the workspace's region (US, EU or Australia).
 // Responses are validated before use, and read with a byte limit: a conversation carries up to 500 parts.
+// Bodies are strict UTF-8 JSON; a byte order mark is dropped.
 // Intercom's error messages are never passed on.
 //
 // Unknown fields in a response are dropped; a field of another type, or an integer beyond 2^53 (which a
@@ -11,7 +12,6 @@ import { z } from "zod";
 import type { OperationErrorShape, ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
-import { fromUtf8Strict } from "../../lib/bytes.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
 
 export const API_URL = "https://api.intercom.io";
@@ -159,10 +159,9 @@ export class IntercomClient implements ProviderClient {
 			MAX_RESPONSE,
 			new OperationError("RESPONSE_TOO_LARGE", "Intercom's response was too large to read."),
 		);
-		const bytes = new Uint8Array(await response.arrayBuffer());
 		let data: Json;
 		try {
-			data = parseJson(fromUtf8Strict(bytes));
+			data = parseJson(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(await response.arrayBuffer()));
 		} catch (error) {
 			throw this.#http.unexpected(error);
 		}

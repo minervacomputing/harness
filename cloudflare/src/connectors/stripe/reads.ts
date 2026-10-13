@@ -21,7 +21,7 @@ function amountOf(minor: number | bigint | null, currency: string | null): strin
 	return money.major(minor, currency.toLowerCase());
 }
 
-/** reads.py `_text`: a long text cut, and flagged as `<name>_truncated`. */
+/** A long text cut, and flagged as `<name>_truncated`. */
 function textInto(record: Fields, name: string, value: string | null): void {
 	const [kept, cut] = truncate(value, MAX_TEXT);
 	record[name] = kept;
@@ -140,7 +140,7 @@ const ListCustomers = z.strictObject({
 		.describe("Only customers with exactly this email address. Only one page is returned."),
 	limit: limit(),
 	cursor: pageCursor(),
-}).meta({ title: "ListCustomers" });
+});
 
 export const LIST_CUSTOMERS = defineOperation<z.output<typeof ListCustomers>>({
 	name: "list_customers",
@@ -166,7 +166,7 @@ export const LIST_CUSTOMERS = defineOperation<z.output<typeof ListCustomers>>({
 	},
 });
 
-const GetCustomer = z.strictObject({ customer: customerId() }).meta({ title: "GetCustomer" });
+const GetCustomer = z.strictObject({ customer: customerId() });
 
 export const GET_CUSTOMER = defineOperation<z.output<typeof GetCustomer>>({
 	name: "get_customer",
@@ -198,7 +198,7 @@ const ListPayments = z.strictObject({
 	customer: customerId().nullable().default(null).describe("Only this customer's payments."),
 	limit: limit(),
 	cursor: pageCursor(),
-}).meta({ title: "ListPayments" });
+});
 
 export const LIST_PAYMENTS = defineOperation<z.output<typeof ListPayments>>({
 	name: "list_payments",
@@ -224,7 +224,7 @@ const ListInvoices = z.strictObject({
 	status: z.enum(["draft", "open", "paid", "uncollectible", "void"]).nullable().default(null),
 	limit: limit(),
 	cursor: pageCursor(),
-}).meta({ title: "ListInvoices" });
+});
 
 export const LIST_INVOICES = defineOperation<z.output<typeof ListInvoices>>({
 	name: "list_invoices",
@@ -254,7 +254,7 @@ const ListSubscriptions = z.strictObject({
 		.describe("Leave out for every subscription that is not canceled."),
 	limit: limit(),
 	cursor: pageCursor(),
-}).meta({ title: "ListSubscriptions" });
+});
 
 export const LIST_SUBSCRIPTIONS = defineOperation<z.output<typeof ListSubscriptions>>({
 	name: "list_subscriptions",

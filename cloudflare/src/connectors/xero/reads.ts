@@ -47,7 +47,7 @@ export function kindOf(type: string | null): InvoiceKind | null {
 	return null;
 }
 
-const ListOrganisations = z.strictObject({}).meta({ title: "ListOrganisations" });
+const ListOrganisations = z.strictObject({});
 
 export const LIST_ORGANISATIONS = defineOperation<z.output<typeof ListOrganisations>>({
 	name: "list_organisations",
@@ -81,19 +81,9 @@ function address(found: Address): Fields {
 	};
 }
 
-/** Python's truthiness of a record's value: an empty list or text is false. */
-function present(value: Json | undefined): boolean {
-	return Array.isArray(value) ? value.length > 0 : value !== null && value !== undefined && value !== "" && value !== false && value !== 0;
-}
-
 function outstanding(found: Outstanding | null): Fields | null {
 	if (found === null) return null;
 	return { outstanding: money(found.Outstanding), overdue: money(found.Overdue) };
-}
-
-/** Python's `str.strip()` is empty: only its whitespace. */
-function blank(value: string): boolean {
-	return short(value) === null;
 }
 
 export function contactRecord(found: Contact): Fields {
@@ -112,15 +102,13 @@ export function contactRecord(found: Contact): Fields {
 		is_supplier: found.IsSupplier,
 		default_currency: found.DefaultCurrency,
 		tax_number: short(found.TaxNumber),
-		addresses: found.Addresses.filter((item) => {
-			const shown = address(item);
-			return ["lines", "city", "country"].some((key) => present(shown[key]));
-		})
-			.map(address)
+		// An address without lines, city or country says nothing.
+		addresses: found.Addresses.map(address)
+			.filter((shown) => (shown.lines as string[]).length > 0 || shown.city !== null || shown.country !== null)
 			.slice(0, MAX_LISTED),
 		phones: phones
-			.filter((phone) => !blank(phone))
 			.map((phone) => short(phone))
+			.filter((phone) => phone !== null)
 			.slice(0, MAX_LISTED),
 		people: found.ContactPersons.map((person) => ({
 			name: short([person.FirstName, person.LastName].filter((part) => part).join(" ")),
@@ -140,8 +128,7 @@ const SearchContacts = z
 		include_archived: z.boolean().default(false),
 		limit: limit(),
 		cursor: cursor(),
-	})
-	.meta({ title: "SearchContacts" });
+	});
 
 export const SEARCH_CONTACTS = defineOperation<z.output<typeof SearchContacts>>({
 	name: "search_contacts",
@@ -200,8 +187,7 @@ const SearchInvoices = z
 		date_to: day().nullable().default(null),
 		limit: limit(),
 		cursor: cursor(),
-	})
-	.meta({ title: "SearchInvoices" });
+	});
 
 type SearchInvoicesInput = z.output<typeof SearchInvoices>;
 type Query = NonNullable<ProviderRequest["query"]>;
@@ -262,7 +248,7 @@ export const SEARCH_INVOICES = defineOperation<SearchInvoicesInput>({
 	},
 });
 
-const GetInvoice = z.strictObject({ organisation: organisationId(), invoice: invoiceId() }).meta({ title: "GetInvoice" });
+const GetInvoice = z.strictObject({ organisation: organisationId(), invoice: invoiceId() });
 
 function lines(found: Invoice): Json[] {
 	return found.LineItems.slice(0, MAX_LINES).map((item) => {
@@ -320,7 +306,7 @@ export const GET_INVOICE = defineOperation<z.output<typeof GetInvoice>>({
 	},
 });
 
-const ListAccounts = z.strictObject({ organisation: organisationId() }).meta({ title: "ListAccounts" });
+const ListAccounts = z.strictObject({ organisation: organisationId() });
 
 export const LIST_ACCOUNTS = defineOperation<z.output<typeof ListAccounts>>({
 	name: "list_accounts",
@@ -351,7 +337,7 @@ export const LIST_ACCOUNTS = defineOperation<z.output<typeof ListAccounts>>({
 	},
 });
 
-const ListTaxRates = z.strictObject({ organisation: organisationId() }).meta({ title: "ListTaxRates" });
+const ListTaxRates = z.strictObject({ organisation: organisationId() });
 
 export const LIST_TAX_RATES = defineOperation<z.output<typeof ListTaxRates>>({
 	name: "list_tax_rates",

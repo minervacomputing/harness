@@ -1,5 +1,4 @@
-// HubSpot's read operations: contacts, companies, deal pipelines and deals (ported from
-// backend/connectors/hubspot/reads.py).
+// HubSpot's read operations: contacts, companies, deal pipelines and deals.
 //
 // Records carry no associated record ids. What is associated with what is found with a search filter, which
 // needs Read on both sides: contacts of a company need Read on the contacts and on the company. HubSpot pages
@@ -72,7 +71,6 @@ async function fetchRecord(client: HubSpotClient, objectType: string, recordId: 
 
 const SearchContacts = z.strictObject({
 	query: Query().nullable().default(null).describe("Words to find in names, email addresses, phone numbers and company names."),
-	// Today a null email failed the call (its validator was given None); here it is no email, as a null query is.
 	email: Line(3, 254).nullable().default(null).describe("Only the contact with exactly this email address."),
 	company_id: CompanyId().nullable().default(null).describe("Only contacts associated with this company."),
 	deal_id: DealId().nullable().default(null).describe("Only contacts associated with this deal."),
@@ -148,7 +146,6 @@ export const GET_CONTACT = defineOperation<z.output<typeof GetContact>>({
 
 const SearchCompanies = z.strictObject({
 	query: Query().nullable().default(null).describe("Words to find in names, domains, websites and phone numbers."),
-	// As the contacts' email: a null domain is no domain, where today it failed the call.
 	domain: Line(3, 253).nullable().default(null).describe("Only companies with exactly this domain, such as example.com."),
 	contact_id: ContactId().nullable().default(null).describe("Only companies associated with this contact."),
 	deal_id: DealId().nullable().default(null).describe("Only companies associated with this deal."),
@@ -316,7 +313,7 @@ export const SEARCH_DEALS = defineOperation<z.output<typeof SearchDeals>>({
 				});
 				const page = await client.search(DEALS, body);
 				const [nextCursor, incomplete] = following(client, page, data.limit);
-				// By id, the last answer for an id kept, as a dict comprehension keeps it.
+				// By id; should HubSpot answer an id twice, the last answer counts.
 				const fresh = new Map<string, HubRecord>();
 				const ids = page.results.map((found) => found.id);
 				for (const found of await client.batch(DEALS, ids, DEAL_PROPERTIES)) fresh.set(found.id, found);

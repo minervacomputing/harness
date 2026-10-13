@@ -7,14 +7,13 @@
 //
 // Requests go through ProviderHTTP: reads are bounded GETs with their parameters in the query, and the two
 // writes are form-encoded POSTs, the one mutating request of their operation's execute step. Responses are
-// strict UTF-8 JSON; fields not named here are dropped, and a field of another type (a number sent as a
+// strict UTF-8 JSON (a byte order mark dropped); fields not named here are dropped, and a field of another type (a number sent as a
 // string, an integer beyond 2^53) makes the response unexpected.
 
 import { z } from "zod";
 import type { OperationErrorShape, ProviderClient, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
-import { fromUtf8Strict } from "../../lib/bytes.ts";
 import { isDict, type Json, parseJson } from "../../lib/json.ts";
 
 export const API_URL = "https://api.stripe.com/v1";
@@ -245,7 +244,7 @@ export class StripeClient implements ProviderClient {
 		);
 		let data: Json;
 		try {
-			data = parseJson(fromUtf8Strict(new Uint8Array(await response.arrayBuffer())));
+			data = parseJson(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(await response.arrayBuffer()));
 		} catch (error) {
 			throw this.unexpected(error);
 		}

@@ -6,15 +6,14 @@
 // each): they describe the organisation's own data, in an organisation the call was allowed to use. Its other
 // error texts are not.
 //
-// Responses are strict UTF-8 JSON; fields not named here are dropped, and amounts become exact decimals
-// (decimal.ts). A field of another type (a number or boolean sent as a string, an integral amount of 2^53 or
-// more, which JSON parsing may already have rounded) makes the response unexpected.
+// Responses are strict UTF-8 JSON, a byte order mark dropped. Fields not named here are dropped, and amounts
+// become exact decimals (decimal.ts). A field of another type (a number or boolean sent as a string, an
+// integral amount of 2^53 or more, which JSON parsing may already have rounded) makes the response unexpected.
 
 import { z } from "zod";
 import type { Effect, OperationErrorShape, ProviderClient, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
-import { fromUtf8Strict } from "../../lib/bytes.ts";
 import { isDict, type Json, parseJson } from "../../lib/json.ts";
 import { truncate } from "../../lib/text.ts";
 import { type Decimal, fromNumber } from "./decimal.ts";
@@ -328,7 +327,7 @@ type Query = NonNullable<ProviderRequest["query"]>;
 
 /** A UTF-8 JSON body; anything else is not one. */
 function jsonOf(bytes: Uint8Array): Json {
-	return parseJson(fromUtf8Strict(bytes));
+	return parseJson(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes));
 }
 
 export class XeroClient implements ProviderClient {
@@ -441,7 +440,7 @@ export class XeroClient implements ProviderClient {
 	/**
 	 * The one write: PUT creates and never updates (POST would update an invoice it matches). Refusals are
 	 * asked for as 400s; a 200 that still carries them is refused here too. `body` is the request's JSON text,
-	 * whose amounts are written as their decimals (decimal.ts `jsonText`).
+	 * whose amounts are written as their decimals (writes.ts `jsonBody`).
 	 */
 	async createInvoice(tenant: string, body: string): Promise<Invoice> {
 		const found = await this.#http.parsed(

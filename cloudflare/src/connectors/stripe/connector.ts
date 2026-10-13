@@ -50,7 +50,7 @@ function listCursor(value: string | null): string | null {
 	return cursor(value.slice(2));
 }
 
-/** `work` for each item, at most `concurrency` at once, results in the items' order (asyncio.gather). */
+/** `work` for each item, at most `concurrency` at once, results in the items' order; the first failure stops it. */
 async function gathered<T, R>(items: readonly T[], concurrency: number, work: (item: T) => Promise<R>): Promise<R[]> {
 	const results: R[] = [];
 	let next = 0;

@@ -18,14 +18,17 @@
 import { decoded, plainText, TextError, WORDS } from "../../lib/text.ts";
 import { type Attribute, Hidden, type Tokens, tokenize } from "../../lib/html.ts";
 import { endsWithNewline, linkText, type Piece, written as writtenOut } from "../../lib/linktext.ts";
-import { RE_I, RE_LETTERS_EXTRA } from "./python.ts";
 
+/** "i" and the lookalikes that case folding does not match to it, the dotted capital I and the dotless i. */
+const I = "[i\u0130\u0131]";
+const LOOKALIKES = "\u0130\u0131";
 // Intercom's hosts: the app and API, file hosts (intercomcdn, intercomassets, intercomusercontent,
 // intercom-attachments) and help centers, in every region. Other hosts that start with "intercom" are hidden
-// too. IGNORECASE as `re` reads it (python.ts).
-const INTERCOM = new RegExp(`${RE_I}ntercom[a-z0-9${RE_LETTERS_EXTRA}-]*\\.[a-z${RE_LETTERS_EXTRA}]{2}|${RE_I}ntercom:`, "iu");
-// Links shown with their address. Others, relative ones included (Intercom shows them on its own host), are hidden.
-const SHOWN_LINK = new RegExp(`^(?:https?://|ma${RE_I}lto:|tel:)`, "iu");
+// too, in any case and with the lookalikes of "i" ("ſ" and the Kelvin sign fold under the `iu` flags).
+const INTERCOM = new RegExp(`${I}ntercom[a-z0-9${LOOKALIKES}-]*\\.[a-z${LOOKALIKES}]{2}|${I}ntercom:`, "iu");
+// Links shown with their address, by an ASCII scheme: a lookalike letter makes a link relative. Others,
+// relative ones included (Intercom shows them on its own host), are hidden.
+const SHOWN_LINK = /^(?:https?:\/\/|mailto:|tel:)/i;
 const BLOCKS: ReadonlySet<string> = new Set(["p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "pre", "ul", "ol", "table", "li", "blockquote"]);
 const DROPPED: ReadonlySet<string> = new Set([
 	"script",

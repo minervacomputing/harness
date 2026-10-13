@@ -15,12 +15,11 @@ import * as money from "./money.ts";
 import { AMOUNT, CUSTOMER, amount, amountText, billed, currencyCode, customer, customerId, paymentId } from "./scope.ts";
 
 /**
- * writes.py `Money._exact`, a model validator: the amount must be one Stripe takes exactly in the currency.
- * Pydantic runs it only once every field passed; validation.ts drops it otherwise, so it only has to skip
- * what it cannot read.
+ * The amount must be one Stripe takes exactly in the currency. It runs on the whole input, also when a field
+ * failed its own check, so it reads the amount only when it is a string and the currency a valid code.
  */
 function exact(value: { amount?: unknown; currency?: unknown }, ctx: z.RefinementCtx): void {
-	if (typeof value.amount !== "string" || typeof value.currency !== "string") return;
+	if (typeof value.amount !== "string" || typeof value.currency !== "string" || !money.CURRENCY.test(value.currency)) return;
 	try {
 		money.parse(value.amount, value.currency);
 	} catch (error) {
@@ -52,7 +51,6 @@ function checkRefund(charge: Charge, currency: string, minor: number): void {
 	if (BigInt(minor) > left) throw refusal(`Only ${money.display(left, currency)} of this payment is left to refund.`);
 }
 
-// The fields of writes.py's `Money` come first, as Pydantic orders a subclass's fields.
 const RefundPayment = z
 	.strictObject({
 		amount: amountText(
@@ -62,8 +60,7 @@ const RefundPayment = z
 		payment: paymentId(),
 		reason: z.enum(["duplicate", "requested_by_customer"]).nullable().default(null),
 	})
-	.superRefine(exact)
-	.meta({ title: "RefundPayment" });
+	.superRefine(exact);
 
 export const REFUND_PAYMENT = defineOperation<z.output<typeof RefundPayment>>({
 	name: "refund_payment",
@@ -116,8 +113,7 @@ const CreditCustomer = z
 		customer: customerId(),
 		description: z.string().trim().min(1).max(350).refine(isSingleLine, SINGLE_LINE).describe("Why the credit is given; the customer may see it."),
 	})
-	.superRefine(exact)
-	.meta({ title: "CreditCustomer" });
+	.superRefine(exact);
 
 export const CREDIT_CUSTOMER = defineOperation<z.output<typeof CreditCustomer>>({
 	name: "credit_customer",

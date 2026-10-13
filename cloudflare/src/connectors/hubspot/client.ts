@@ -9,7 +9,6 @@ import type { z } from "zod";
 import type { ProviderClient, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
-import { fromUtf8Strict } from "../../lib/bytes.ts";
 import { type Json, type JsonObject, isDict, parseJson } from "../../lib/json.ts";
 import { Batch, Details, HubRecord, Pipeline, Pipelines, SearchPage } from "./models.ts";
 
@@ -77,13 +76,12 @@ export class HubSpotClient implements ProviderClient {
 		return found.data;
 	}
 
-	/** A read streamed up to 4 MiB: strict UTF-8 JSON that fits `schema`. */
+	/** A read streamed up to 4 MiB: UTF-8 JSON (a byte order mark dropped) that fits `schema`. */
 	async #read<T>(schema: z.ZodType<T>, request: ProviderRequest): Promise<T> {
 		const response = await this.#http.bounded(request, MAX_RESPONSE, new OperationError("RESPONSE_TOO_LARGE", "HubSpot's response was too large to read."));
-		const bytes = new Uint8Array(await response.arrayBuffer());
 		let data: Json;
 		try {
-			data = parseJson(fromUtf8Strict(bytes));
+			data = parseJson(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(await response.arrayBuffer()));
 		} catch (error) {
 			throw this.unexpected(error);
 		}

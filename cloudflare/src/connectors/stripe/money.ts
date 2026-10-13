@@ -1,11 +1,10 @@
-// Amounts as Stripe carries them, and the amount kind that caps refunds and credits, ported from
-// backend/connectors/stripe/money.py.
+// Amounts as Stripe carries them, and the amount kind that caps refunds and credits.
 //
 // Stripe gives amounts in a currency's smallest unit: cents for USD, yen for JPY (a zero-decimal currency),
 // and thousandths for the three-decimal currencies, whose amounts Stripe wants divisible by ten. ISK and UGX
 // have no fractions, but Stripe still carries them in hundredths that are always 00 (5 UGX is 500). Agents
 // give amounts in major units, as a decimal string ("12.50"), and Minerva converts them exactly: the digits
-// are shifted as text and counted as BigInt, never as a float, which is what money.py does with Decimal.
+// are shifted as text and counted as BigInt, never as a float.
 //
 // Users cap amounts with the hierarchical `amount` kind. An amount, `usd=1250`, is never granted itself. It
 // sits inside every tier that covers it and inside its currency:
@@ -51,7 +50,7 @@ export const CURRENCY = /^[a-z]{3}$/;
 const TIER = /^([a-z]{3})(<=|>)([1-9][0-9]{0,8})$/;
 const DECIMAL = /^[0-9]{1,12}(\.[0-9]{1,3})?$/;
 
-/** What money.py raises as ValueError: the reason an amount or currency is refused, worded for the model. */
+/** The reason an amount or currency is refused, worded for the model. */
 export class MoneyError extends Error {
 	constructor(message: string) {
 		super(message);
@@ -81,7 +80,7 @@ export function parse(value: string, currency: string): number {
 	if (!DECIMAL.test(value)) throw new MoneyError("must be a positive decimal amount such as 12.50");
 	const places = exponent(currency);
 	const [whole, fraction = ""] = value.split(".") as [string, string?];
-	// Decimal(value) * 10 ** places is integral exactly when the digits past `places` are all zeros.
+	// The amount is a whole number of the smallest unit exactly when the digits past `places` are all zeros.
 	if (/[^0]/.test(fraction.slice(places))) throw new MoneyError(`has more decimals than ${currency.toUpperCase()} has`);
 	const minor = BigInt(whole + fraction.slice(0, places).padEnd(places, "0"));
 	if (WHOLE_UNIT.has(currency) && minor % 100n !== 0n) throw new MoneyError(`must be a whole number of ${currency.toUpperCase()}`);
@@ -91,9 +90,8 @@ export function parse(value: string, currency: string): number {
 }
 
 /**
- * An amount in the smallest unit as a decimal string in major units: 1250 cents is "12.50", as money.py's
- * `f"{Decimal(minor).scaleb(-places):.{shown}f}"` writes it, sign included. `minor` must be an integer; a
- * difference of two amounts comes as BigInt, so it stays exact past 2^53.
+ * An amount in the smallest unit as a decimal string in major units, sign included: 1250 cents is "12.50".
+ * `minor` must be an integer; a difference of two amounts comes as BigInt, so it stays exact past 2^53.
  */
 export function major(minor: number | bigint, currency: string): string {
 	const value = BigInt(minor);
@@ -142,7 +140,7 @@ export function choices(currency: string): string[] {
 	return [currency, ...steps.map((step) => `${currency}<=${step}`), ...steps.map((step) => `${currency}>${step}`)];
 }
 
-/** A three-letter currency code, lowercased as money.py's `currency` does; MoneyError otherwise. */
+/** A three-letter currency code, lowercased; MoneyError otherwise. */
 export function currency(value: string): string {
 	const lowered = value.toLowerCase();
 	if (!CURRENCY.test(lowered)) throw new MoneyError("must be a three-letter currency code such as usd");

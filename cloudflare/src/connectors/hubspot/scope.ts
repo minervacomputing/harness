@@ -72,8 +72,7 @@ export const DEAL_PROPERTIES: readonly string[] = [
 export const MAX_TEXT = 500;
 export const MAX_DESCRIPTION = 2000;
 
-// Input fields (Pydantic's Annotated types). A constraint is a zod check, an AfterValidator a refinement
-// whose message the model reads as the field's.
+// Input fields. A refinement's message is what the model reads when the field is refused.
 
 function recordId(what: string, source: string) {
 	return z.string().trim().min(1).max(20)
@@ -92,7 +91,7 @@ export const StageId = () =>
 	z.string().trim().min(1).max(100)
 		.refine((value) => PIPELINE_ID.test(value), { message: "must be a stage id from list_pipelines" })
 		.describe("A deal stage id from list_pipelines.");
-/** A single line of text with these limits (`AfterValidator(single_line)`). */
+/** A single line of text with these limits. */
 export const Line = (min: number, max: number) => z.string().trim().min(min).max(max).refine(isSingleLine, { message: SINGLE_LINE });
 export const Query = () => Line(1, 200);
 export const Limit = () => z.int().min(1).max(50);
