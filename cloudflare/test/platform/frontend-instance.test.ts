@@ -6,7 +6,7 @@
 
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { Browser, ORIGIN, PASSWORD, installEmailLog, lastCode, signInWithCode, uniqueEmail } from "./accounts-helpers.ts";
+import { Browser, ORIGIN, PASSWORD, emailsTo, installEmailLog, lastCode, signInWithCode, uniqueEmail } from "./accounts-helpers.ts";
 
 installEmailLog();
 
@@ -15,8 +15,11 @@ const KEY = env.MINERVA_SETUP_KEY;
 interface Frontend {
 	auth: {
 		signup(v: { email: string; password: string; setupKey?: string }): Promise<{ kind: string; pending?: string | null }>;
-		verifyEmail(v: { code: string }): Promise<{ kind: string }>;
+		resendCode(): Promise<void>;
+		confirmLoginCode(v: { code: string }): Promise<{ kind: string; pending?: string | null }>;
+		setSignUpPassword(): Promise<"set" | "kept">;
 	};
+	authQuery: { queryKey: unknown[]; queryFn(context: { client: unknown; signal: AbortSignal }): Promise<{ kind: string }> };
 	AuthError: new (...args: never[]) => Error & { fields: Record<string, string> };
 	fieldErrors(error: unknown): Record<string, string>;
 	setupQuery: { queryFn(context: { signal: AbortSignal }): Promise<{ needed: boolean }> };
@@ -36,6 +39,8 @@ interface Frontend {
 
 let browser: Browser;
 let frontend: Frontend;
+/** The requests the page sent: where, the setup key header, and the body. */
+let sent: Array<{ path: string; key: string | null; body: string }>;
 
 class MemoryStorage {
 	readonly #items = new Map<string, string>();
@@ -47,7 +52,12 @@ class MemoryStorage {
 /** The page as it loads: fresh modules, this browser's cookies behind `fetch`, the interceptors main.tsx installs. */
 async function load(next = new Browser()): Promise<void> {
 	browser = next;
-	vi.stubGlobal("fetch", browser.fetch);
+	sent = [];
+	vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+		const request = new Request(typeof input === "string" ? new URL(input, ORIGIN) : input, init);
+		sent.push({ path: new URL(request.url).pathname, key: request.headers.get("X-Minerva-Setup-Key"), body: await request.clone().text() });
+		return browser.fetch(request);
+	});
 	vi.resetModules();
 	const [authModule, authClient, instance, guards, http, generated] = await Promise.all([
 		// @ts-expect-error The frontend is outside this project's types; the vitest alias resolves it (vitest.platform.config.ts).
@@ -68,6 +78,7 @@ async function load(next = new Browser()): Promise<void> {
 	http.installClientInterceptors(() => {});
 	frontend = {
 		auth: authModule.auth,
+		authQuery: authModule.authQuery,
 		AuthError: authClient.AuthError,
 		fieldErrors: authClient.fieldErrors,
 		setupQuery: instance.setupQuery,
@@ -129,39 +140,47 @@ describe("sign-up with the setup key", () => {
 		await env.DB.prepare("INSERT INTO instance_settings (id, signup_open, updated_at) VALUES (1, 0, ?)").bind(Date.now()).run();
 	});
 
-	test("sends the key in X-Minerva-Setup-Key; without it, or with a wrong one, sign-up stays closed", async () => {
+	const codeStep = { kind: "anonymous", pending: "sign-in-code" };
+	const users = async (email: string) => (await env.DB.prepare(`SELECT count(*) AS n FROM "user" WHERE email = ?`).bind(email).first<{ n: number }>())!.n;
+
+	test("without the key, or with a wrong one, an unknown address is answered as any other, and no code makes it an account", async () => {
 		expect(await frontend.setupQuery.queryFn({ signal: signal() })).toEqual({ needed: true });
 		const email = uniqueEmail("operator");
-
-		const closed = await failure(frontend.auth.signup({ email, password: PASSWORD }));
-		expect(closed).toBeInstanceOf(frontend.AuthError);
-		expect((closed as Error).message).toBe("Sign-up is not open on this server.");
-		expect(frontend.fieldErrors(closed)).toEqual({});
-
-		// A key that does not open it is said to be the problem, on the key's own field.
-		const wrong = await failure(frontend.auth.signup({ email, password: PASSWORD, setupKey: "wrong" }));
-		expect(frontend.fieldErrors(wrong)).toEqual({ setupKey: expect.stringContaining("setup key does not open it") });
-		expect(await env.DB.prepare(`SELECT 1 FROM "user" WHERE email = ?`).bind(email).first()).toBeNull();
-
-		// Only spaces around the key are the page's doing; the key itself is the server's.
-		const admitted = await frontend.auth.signup({ email, password: PASSWORD, setupKey: ` ${KEY} ` });
-		expect(admitted).toEqual({ kind: "anonymous", pending: "verify-email" });
-		expect(await frontend.auth.verifyEmail({ code: lastCode(email) })).toEqual({ kind: "signed-in" });
+		expect(await frontend.auth.signup({ email, password: PASSWORD })).toEqual(codeStep);
+		expect(await frontend.auth.signup({ email, password: PASSWORD, setupKey: "wrong" })).toEqual(codeStep);
+		await frontend.auth.resendCode();
+		expect(emailsTo(email)).toEqual([]);
+		expect(frontend.fieldErrors(await failure(frontend.auth.confirmLoginCode({ code: "123456" })))).toEqual({ code: "Incorrect code." });
+		expect(await users(email)).toBe(0);
 	});
 
-	test("the key is kept nowhere: not in the stored step and not in any cookie", async () => {
+	test("with the key, a resend and the code make the account and set its password; the key travels in one header and is kept nowhere", async () => {
 		const email = uniqueEmail("operator");
-		await frontend.auth.signup({ email, password: PASSWORD, setupKey: KEY });
-		const stored = JSON.stringify(sessionStorage.getItem("minerva.auth.step"));
-		expect(stored).not.toContain(KEY);
+		// Only spaces around the key are the page's doing; the key itself is the server's.
+		expect(await frontend.auth.signup({ email, password: PASSWORD, setupKey: ` ${KEY} ` })).toEqual(codeStep);
+		await frontend.auth.resendCode();
+		expect(emailsTo(email)).toHaveLength(2);
+		expect(await frontend.auth.confirmLoginCode({ code: lastCode(email) })).toEqual({ kind: "setting-password" });
+		expect(await frontend.auth.setSignUpPassword()).toBe("set");
+		expect((await new Browser().auth("/sign-in/email", { email, password: PASSWORD })).status).toBe(200);
+
+		// Each code request and the code's sign-in carried it in the header; nothing else did, and no body.
+		const codes = ["/api/auth/email-otp/send-verification-otp", "/api/auth/sign-in/email-otp"];
+		expect(sent.filter((request) => codes.includes(request.path)).map((request) => request.key)).toEqual([KEY, KEY, KEY]);
+		expect(sent.filter((request) => !codes.includes(request.path) && request.key !== null)).toEqual([]);
+		expect(sent.map((request) => request.body).join("\n")).not.toContain(KEY);
+		expect(JSON.stringify(sessionStorage.getItem("minerva.auth.step"))).not.toContain(KEY);
 		expect(JSON.stringify([...browser.cookies])).not.toContain(KEY);
 		expect(browser.setCookies.join("\n")).not.toContain(KEY);
 	});
 
-	test("claiming the setup after the sign-up makes the account the administrator, once", async () => {
+	test("a reload between the code and the password: the operator is signed in without one, and claiming the setup makes them the administrator, once", async () => {
 		const email = uniqueEmail("operator");
 		await frontend.auth.signup({ email, password: PASSWORD, setupKey: KEY });
-		await frontend.auth.verifyEmail({ code: lastCode(email) });
+		await frontend.auth.confirmLoginCode({ code: lastCode(email) });
+		await load(browser);
+		expect(await frontend.authQuery.queryFn({ client: { setQueryData: () => {} }, signal: signal() })).toMatchObject({ kind: "authenticated" });
+		expect(sessionStorage.getItem("minerva.auth.step")).toBeNull();
 
 		const wrong = await failure(frontend.instance.claimSetup("not the key"));
 		expect(frontend.errorMessage(wrong)).toBe("This setup key is not valid.");
@@ -174,8 +193,10 @@ describe("sign-up with the setup key", () => {
 
 		// The key admits nobody once the setup is claimed.
 		await load();
-		const late = await failure(frontend.auth.signup({ email: uniqueEmail("late"), password: PASSWORD, setupKey: KEY }));
-		expect(frontend.fieldErrors(late)).toHaveProperty("setupKey");
+		const late = uniqueEmail("late");
+		await frontend.auth.signup({ email: late, password: PASSWORD, setupKey: KEY });
+		expect(emailsTo(late)).toEqual([]);
+		expect(await users(late)).toBe(0);
 	});
 
 	test("a visitor without a session cannot claim, and the page is told to sign in", async () => {

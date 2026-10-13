@@ -3,7 +3,7 @@ import { useAppForm } from '@/components/form'
 import { ErrorNote } from '@/components/ui/misc'
 import { fieldErrors } from '@/lib/auth-client'
 
-/** One code input with submit, shared by email verification, sign-in codes, and two-factor codes. */
+/** One code input with submit, shared by emailed codes and two-factor codes. */
 export function CodeForm({
   label,
   submitLabel,
