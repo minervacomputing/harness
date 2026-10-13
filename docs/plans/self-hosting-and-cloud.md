@@ -11,7 +11,7 @@ The line between the two is cloudflare.md's (Instance and control plane): what a
 
 ## Where things stand
 
-- On the `cloudflare` branch, steps 1 to 7 are done, the backend cleanup ([cleanup.md](cleanup.md)) is done, and the frontend cleanup ([frontend-cleanup.md](frontend-cleanup.md)) has F0 to F3, A1 and A2's `message` event done, with A3 and A4 left and the first message's design in [first-message.md](first-message.md). The sandbox's move to the Sandbox SDK is under way on the `sandbox-sdk` branch. Production `minerva-cf` is deployed and its first admin has claimed it.
+- On the `cloudflare` branch, steps 1 to 7 are done, the backend cleanup ([cleanup.md](cleanup.md)) is done, and so is the frontend cleanup: the API is one oRPC contract (`contract/`) with camelCase fields, the frontend is on TypeScript 7 with type-aware lint rules, and the run events are camelCase (production was reset for it). The first message's design is in [first-message.md](first-message.md). Left from the cleanup: `cloudflare/` and `contract/` have no linter (one oxlint setup for the workspace), `no-deprecated` stays off until the frontend leaves TanStack Query's and assistant-ui's deprecated APIs, and `@typescript/typescript6` stays until `cloudflare/test/unit/sources.test.ts` has another parser. The sandbox's move to the Sandbox SDK is under way on the `sandbox-sdk` branch. Production `minerva-cf` is deployed and its first admin has claimed it.
 - The branch is not pushed. `main`, and so the public repository, is still Django, and `.github/workflows/main.yml` tests Django, builds its images and deploys staging to the VPS.
 - A self-hoster today would edit `minerva-cf` out of about 200 lines in 48 files, run six `cf` commands by hand (`cloudflare/README.md`, First deploy), write two env files, and need a zone on Cloudflare for email: the operator's own sign-up must verify its address by an emailed code before it can claim the instance (`src/accounts/instance.ts`). The zone stays a requirement (unit 3).
 - Operator state is per checkout, not per instance: `.env.cloudflare`, `.env.cloudflare.vars` and `.cloudflare/deployed.json` have fixed paths, and `deployed.json` is a local record for `deploy:files`, not a release history.
@@ -20,7 +20,7 @@ The line between the two is cloudflare.md's (Instance and control plane): what a
 
 One unit per fresh agent, in order. Each ends like the earlier steps: its tests pass, opencode reviews the diff, and it is committed on `cloudflare`.
 
-1. **Freeze the stored formats.** Before an instance outside ours holds data: frontend-cleanup A4 (camelCase run events, which production stores), then an inventory of everything stored:
+1. **Freeze the stored formats.** Before an instance outside ours holds data: an inventory of everything stored:
    - D1's tables, Better Auth's included;
    - each Durable Object's tables, including pi's `pi_*` and the Agents SDK's `cf_agents_*` in the Conversation object, which their packages own;
    - stored hashes and tokens: write keys, fingerprints, page tokens, folder digests;
@@ -121,7 +121,7 @@ How it is built:
 - **Billing.** Cashier (Stripe) handles subscriptions, Checkout, the Customer Portal and Stripe's webhooks, and reports usage as meter events. The billable model is the control plane's mirror of an instance's organization (its id and instance), not a user, since customers have no accounts in the control plane (Decisions 1).
 - **Admin.** Filament for the operator admin. Only operators sign in to it, with two-factor.
 - **Background work.** Queued jobs and the scheduler deliver entitlements to the instances, pull or receive their usage, process webhooks, and later provision dedicated instances through Cloudflare's API.
-- **The contract with the instance.** The management API is declared in the instance's oRPC contract (frontend-cleanup A3), whose OpenAPI document is what the Laravel side follows. The control plane's CI checks its client against that document and runs its integration tests against the test instance. Signing, nonces, key rotation and entitlement versions (Decisions 2) are implemented on both sides; a small shared test vector (a signed request and its expected verdict) keeps the two implementations agreeing.
+- **The contract with the instance.** The management API is declared in the instance's oRPC contract (`contract/`), whose OpenAPI document is what the Laravel side follows. The control plane's CI checks its client against that document and runs its integration tests against the test instance. Signing, nonces, key rotation and entitlement versions (Decisions 2) are implemented on both sides; a small shared test vector (a signed request and its expected verdict) keeps the two implementations agreeing.
 
 Considered and not chosen: TypeScript on Workers with PlanetScale Postgres through Hyperdrive (one language and types shared across the contract, but no admin framework); Django (known from `main`, but no first-party managed host); Rails (nothing Laravel lacks for this job).
 
