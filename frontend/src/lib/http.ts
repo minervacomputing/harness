@@ -7,7 +7,7 @@ export function csrfToken(): string {
   return match ? decodeURIComponent(match[1]) : ''
 }
 
-/** Sets the CSRF cookie once per page load; Django requires it for every unsafe request. */
+/** Sets the CSRF cookie once per page load; the API requires its token on every unsafe request outside `/api/auth`. */
 let csrfReady: Promise<void> | null = null
 export function ensureCsrf(): Promise<void> {
   csrfReady ??= fetch('/api/csrf', { credentials: 'same-origin' }).then(() => undefined)
@@ -26,8 +26,8 @@ export function installClientInterceptors(onUnauthorized: () => void) {
     if (response.status === 401) onUnauthorized()
     return response
   })
-  // A body that is not JSON comes from something in front of the app (a proxy's error page) or from
-  // Django's bare 500 page; the client throws it as raw text, so it is replaced by a sentence.
+  // A body that is not JSON comes from something in front of the app (a proxy's error page) or from a
+  // crash; the client throws it as raw text, so it is replaced by a sentence.
   client.interceptors.error.use((error, response) => {
     if (typeof error !== 'string' || !response) return error
     return {
@@ -39,7 +39,7 @@ export function installClientInterceptors(onUnauthorized: () => void) {
   })
 }
 
-/** Turns API errors (Ninja `{detail}`, validation lists, network failures) into one readable sentence. */
+/** Turns API errors (`{detail}`, validation lists, network failures) into one readable sentence. */
 export function errorMessage(error: unknown, fallback = 'Something went wrong. Try again.'): string {
   if (!error) return fallback
   if (typeof error === 'string') return error

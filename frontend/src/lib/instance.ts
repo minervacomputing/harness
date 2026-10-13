@@ -1,7 +1,7 @@
 /**
  * The Worker's instance routes (cloudflare/src/accounts/instance-routes.ts): the first-run setup, and what
- * instance admins change. They are not in the generated client (its schema comes from the Django app), so
- * they are called through the same client and get its CSRF header, its 401 handling and its error shapes.
+ * instance admins change. They are not in the generated client's schema, so they are called through the
+ * same client and get its CSRF header, its 401 handling and its error shapes.
  * The server is the authority on every one of them; the pages only decide what to show.
  */
 import { queryOptions } from '@tanstack/react-query'

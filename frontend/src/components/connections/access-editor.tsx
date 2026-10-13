@@ -35,7 +35,7 @@ export function refreshResources(queryClient: QueryClient, workspaceId: string, 
 // Listings come from the provider. Reopening a connection reuses them; Refresh asks again.
 const RESOURCES_STALE_MS = 5 * 60_000
 
-// The access API accepts at most this many changes per save (permissions.services.MAX_CHANGES).
+// The access API accepts at most this many changes per save (MAX_CHANGES in cloudflare/src/gateway/grants.ts).
 const MAX_CHANGES = 100
 const ALL = '*'
 const keyOf = (kind: string, id: string) => `${kind}\u0000${id}`

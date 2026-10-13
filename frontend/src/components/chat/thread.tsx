@@ -182,8 +182,7 @@ function Work({ indices, children }: { indices: readonly number[]; children: Rea
 }
 
 function appOf(toolName: string, result: ToolCallResult | undefined): string {
-  const label = result?.label ?? describeTool(toolName)
-  return label.split(':')[0]
+  return (result?.label ?? toolName).split(':')[0]
 }
 
 /** A disclosure, not `<details>`: the tool cards inside use the `group-open` variant for their own chevrons. */
@@ -252,14 +251,6 @@ function UnloadedImage({ src, alt }: ComponentProps<'img'>) {
   )
 }
 
-/** For tool events recorded before the backend sent a label. */
-function describeTool(name: string): string {
-  const [alias, ...rest] = name.split('_')
-  const provider = alias.replace(/(\d+)$/, ' ($1)')
-  const action = rest.join(' ')
-  return `${provider.charAt(0).toUpperCase()}${provider.slice(1)}: ${action}`
-}
-
 const DECISION_LABEL: Record<ToolCallResult['decision'], string> = {
   allowed: 'Done',
   denied: 'Not allowed',
@@ -288,7 +279,7 @@ export const ToolCall: ToolCallMessagePartComponent = ({ toolName, args, result 
       <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3 py-2 [&::-webkit-details-marker]:hidden">
         <ChevronRightIcon className="size-3.5 text-muted-foreground transition-transform group-open:rotate-90" />
         <WrenchIcon className={cn('size-3.5', outcome ? DECISION_ICON[outcome.decision] : 'text-info')} />
-        <span className="flex-1 truncate font-mono text-[12.5px]">{outcome?.label ?? describeTool(toolName)}</span>
+        <span className="flex-1 truncate font-mono text-[12.5px]">{outcome?.label ?? toolName}</span>
         {outcome ? (
           <Status tone={DECISION_TONE[outcome.decision]}>{DECISION_LABEL[outcome.decision]}</Status>
         ) : (

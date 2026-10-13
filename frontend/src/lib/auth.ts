@@ -3,9 +3,9 @@
  * two-factor. Sessions are HttpOnly cookies the browser keeps; `GET /api/me` says who is signed in, and
  * that answer is the one `authQuery` caches.
  *
- * Better Auth has no server-side "pending step" the way allauth's headless API had. Where a sign-in
- * continues (a code to enter, a second factor) is remembered here, in `sessionStorage`, as the same
- * `pending` the pages already route on. Only the address and the step are kept, never a secret.
+ * Better Auth does not tell the client which step a sign-in is at. Where it continues (a code to enter, a
+ * second factor) is remembered here, in `sessionStorage`, as the `pending` the pages route on. Only the
+ * address and the step are kept, never a secret.
  */
 import { type QueryClient, queryOptions, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
@@ -139,8 +139,8 @@ const LOCKED = 'Too many failed login attempts. Try again later.'
 type Fields = { code?: string; password?: string; wrongPassword?: { param: string; message: string } }
 
 /**
- * Better Auth's `{code, message}` as the sentence and field today's pages show. Messages are allauth's where
- * the same thing went wrong; the password rules' messages come from the server (Django's validators).
+ * Better Auth's `{code, message}` as the sentence and field the pages show. The password rules' messages
+ * come from the server.
  */
 function failure(error: Failure, fields: Fields = {}): AuthError {
   const one = (message: string, param?: string) => new AuthError([{ message, code: error.code ?? 'error', param }])
@@ -311,7 +311,7 @@ async function signInWithPassword(email: string, password: string): Promise<Auth
   const result = await call(client.signIn.email({ email, password }))
   if (result.ok) return afterFirstFactor(result.data, email)
   if (result.error.code === 'EMAIL_NOT_VERIFIED') {
-    // Reached only with the right password. A code goes out and the address is verified first (allauth's verify_email stage).
+    // Reached only with the right password. A code goes out and the address is verified first.
     await sendVerificationCode(email)
     held = { email, password, until: Date.now() + PENDING_MS.verify_email }
     setPending('verify_email', email)
@@ -362,7 +362,7 @@ export const auth = {
     return anonymous()
   },
 
-  /** Verifies the address; signs in after, as allauth did, when the password is still at hand. */
+  /** Verifies the address, then signs in when the password is still at hand. */
   async verifyEmail({ key }: { key: string }): Promise<AuthState> {
     const email = pendingEmail('verify_email')
     const result = await call(client.emailOtp.verifyEmail({ email, otp: key }))

@@ -6,7 +6,7 @@ import type { Uploaded } from '@/lib/uploads'
 export type LocalTool = { tool: 'read' | 'write' | 'edit' | 'bash'; summary: string; excerpt: string }
 
 /** `local` is set on a call the agent ran in the conversation's folder rather than on a connected app. */
-export type ToolCallResult = { decision: 'allowed' | 'denied' | 'error'; message?: string; label?: string; local?: LocalTool }
+export type ToolCallResult = { decision: 'allowed' | 'denied' | 'error'; message?: string; label: string; local?: LocalTool }
 
 /** What a finished turn did to the folder; downloads come from `version`, the folder it left. */
 export type TurnFiles = { changes: FolderChangesOut | null; warnings: FolderWarningsOut | null; version: string | null }
@@ -54,7 +54,7 @@ function collect(events: EventOut[]): { parts: Part[]; callOf: WeakMap<Part, unk
     } else if (event.type === 'tool_call') {
       const data = event.data as {
         tool: string
-        label?: string
+        label: string
         decision: ToolCallResult['decision']
         message?: string
         arguments?: Record<string, never>
