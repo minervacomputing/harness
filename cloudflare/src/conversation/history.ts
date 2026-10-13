@@ -49,7 +49,7 @@ export interface Replayed {
 	content: string;
 }
 
-/** `_paths`: the first 20 joined by ", ", then " and N more" when the total is larger. */
+/** The first 20 joined by ", ", then " and N more" when the total is larger. */
 export function notePaths(paths: readonly (string | { path: string })[], total: number): string {
 	const names = paths
 		.slice(0, NOTE_PATHS)
@@ -59,7 +59,7 @@ export function notePaths(paths: readonly (string | { path: string })[], total: 
 	return more > 0 ? `${names} and ${more} more` : names;
 }
 
-/** `_with_files`: a user's message notes the files attached to it, an answer the files its turn changed. */
+/** A user's message notes the files attached to it, an answer the files its turn changed. */
 export function withFiles(message: Pick<StoredMessage, "role" | "content" | "attachments" | "changes">): string {
 	let note: string;
 	if (message.role === "user") {

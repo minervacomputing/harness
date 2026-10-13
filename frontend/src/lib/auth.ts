@@ -43,7 +43,6 @@ function readPending(): Pending | null {
 }
 
 function writePending(pending: Pending | null) {
-  if (pending?.step !== 'verify-email') forgetPassword()
   unstored = undefined
   try {
     if (pending) sessionStorage.setItem(PENDING_KEY, JSON.stringify(pending))
@@ -69,29 +68,6 @@ function pendingEmail(step: Step): string {
   const pending = readPending()
   if (pending?.step === step) return pending.email
   throw new AuthError('That step timed out. Go back to sign in and start again.', undefined, true)
-}
-
-// --- Until A1: the password held while an address is verified ----------------------------------------
-// Verifying an address does not sign in yet (the Worker has `autoSignInAfterVerification` off), so the password typed at sign-up, or at a
-// sign-in that found the address unverified, stays in memory (never storage) until the step ends or its time runs out, and then signs in.
-// A1 deletes `held` and its uses; `verifyEmail` then hands its answer to `afterFirstFactor`.
-
-let held: { email: string; password: string; timer: ReturnType<typeof setTimeout> } | null = null
-
-function forgetPassword() {
-  if (held) clearTimeout(held.timer)
-  held = null
-}
-
-function holdPassword(email: string, password: string) {
-  forgetPassword()
-  held = { email, password, timer: setTimeout(forgetPassword, STEPS['verify-email'].minutes * 60_000) }
-}
-
-function takePassword(email: string): string | null {
-  const password = held?.email === email ? held.password : null
-  forgetPassword()
-  return password
 }
 
 // --- State ---------------------------------------------------------------------------------------------
@@ -133,36 +109,24 @@ export function authStep<Vars>(run: (vars: Vars) => Promise<StepResult>) {
 
 const normalize = (email: string) => email.trim().toLowerCase()
 
-/** Asks for the code that verifies an address. One request per address in 10 s is `TOO_MANY_REQUESTS` (accounts/policy.ts): a code just went out. */
-async function sendVerificationCode(email: string) {
-  try {
-    await client.emailOtp.sendVerificationOtp({ email, type: 'email-verification' })
-  } catch (error) {
-    if (failureOf(error).code !== 'TOO_MANY_REQUESTS') throw error
-  }
-}
-
-/** A first factor (password or email code) answered: signed in, or on to the second factor that Better Auth asks for with `twoFactorRedirect`. */
+/** A first factor (password, email code or verifying the address) answered: signed in, or on to the second factor that Better Auth asks for with `twoFactorRedirect`. */
 function afterFirstFactor(answer: unknown, email: string): StepResult {
   if (typeof answer === 'object' && answer !== null && 'twoFactorRedirect' in answer && answer.twoFactorRedirect) return setPending('second-factor', email)
   clearPending()
   return { kind: 'signed-in' }
 }
 
-async function signInWithPassword(email: string, password: string): Promise<StepResult> {
-  try {
-    return afterFirstFactor(await client.signIn.email({ email, password }), email)
-  } catch (error) {
-    if (failureOf(error).code !== 'EMAIL_NOT_VERIFIED') throw error
-  }
-  // Reached only with the right password. A code goes out and the address is verified first.
-  await sendVerificationCode(email)
-  holdPassword(email, password)
-  return setPending('verify-email', email)
-}
-
 export const auth = {
-  login: withAuthErrors(({ email, password }: { email: string; password: string }) => signInWithPassword(normalize(email), password)),
+  /** With the right password, an address still to be verified is sent a code by the server, and verifying it signs in. */
+  login: withAuthErrors(async ({ email, password }: { email: string; password: string }) => {
+    const address = normalize(email)
+    try {
+      return afterFirstFactor(await client.signIn.email({ email: address, password }), address)
+    } catch (error) {
+      if (failureOf(error).code !== 'EMAIL_NOT_VERIFIED') throw error
+      return setPending('verify-email', address)
+    }
+  }),
 
   /**
    * `setupKey` is the operator's key (cloudflare/src/accounts/instance.ts): it admits the first sign-up on a
@@ -179,21 +143,23 @@ export const auth = {
       if (!key || failureOf(error).code !== 'EMAIL_PASSWORD_SIGN_UP_DISABLED') throw error
       throw new AuthError('Sign-up is not open, and this setup key does not open it. It is not valid, or the server is already set up.', 'setupKey')
     }
-    holdPassword(address, password)
     return setPending('verify-email', address)
   }),
 
-  /** Verifies the address, then signs in with the password if it is still held. */
-  verifyEmail: withAuthErrors(async ({ code }: { code: string }): Promise<StepResult> => {
+  /** Verifying the address signs in, or goes on to the second factor. */
+  verifyEmail: withAuthErrors(async ({ code }: { code: string }) => {
     const email = pendingEmail('verify-email')
-    await client.emailOtp.verifyEmail({ email, otp: code })
-    const password = takePassword(email)
-    clearPending()
-    if (password === null) return anonymous()
-    return signInWithPassword(email, password).catch(anonymous) // verified; signing in is left to the sign-in page
+    return afterFirstFactor(await client.emailOtp.verifyEmail({ email, otp: code }), email)
   }, true),
 
-  resendVerification: withAuthErrors(() => sendVerificationCode(pendingEmail('verify-email')), true),
+  /** One request per address in 10 s is `TOO_MANY_REQUESTS` (accounts/policy.ts): a code just went out. */
+  resendVerification: withAuthErrors(async () => {
+    try {
+      await client.emailOtp.sendVerificationOtp({ email: pendingEmail('verify-email'), type: 'email-verification' })
+    } catch (error) {
+      if (failureOf(error).code !== 'TOO_MANY_REQUESTS') throw error
+    }
+  }, true),
 
   /** Succeeds for any valid address, whether or not an account has it; the server emails only an account. */
   requestLoginCode: withAuthErrors(async ({ email }: { email: string }) => {

@@ -1,8 +1,7 @@
 // The run event stream (plan: Events and the stream): `GET
 // /api/workspaces/{ws}/runs/{run}/stream` as server-sent events, relayed from the Conversation Durable
 // Object's hibernatable WebSocket (conversation/stream.ts). Signed out is 401 `Unauthorized`; not a member,
-// or not the caller's run in this workspace, 404 `Not found` (lowercase, and
-// unlike the JSON API's 401). The cursor is Last-Event-ID, else `?after=`, else 0; a value that is not all
+// or not the caller's run in this workspace, 404 `NOT_FOUND` (unlike the JSON API's 401). The cursor is Last-Event-ID, else `?after=`, else 0; a value that is not all
 // digits counts as 0.
 //
 // Each event is written as `id: <seq>\nevent: <type>\ndata: <JSON on one line>\n\n`, `event: end\ndata: {}`
@@ -21,7 +20,7 @@ import { currentSession, withSessionCookies } from "../accounts/auth.ts";
 import { conversationObject } from "../addressing.ts";
 import type { Conversation } from "../conversation/conversation.ts";
 import { STREAM_PATH } from "../conversation/stream.ts";
-import { HttpError, detail, unauthorized } from "../http/errors.ts";
+import { HttpError, notFound, unauthorized } from "../http/errors.ts";
 import { UUID } from "../http/paths.ts";
 import type { App, AppEnv } from "../http/router.ts";
 import { parseJson } from "../lib/json.ts";
@@ -48,10 +47,6 @@ const MAX_CURSOR = 999_999_999_999_999;
 const KEEPALIVE = ": keepalive\n\n";
 const END = "event: end\ndata: {}\n\n";
 const RECONNECT = 1013;
-
-function streamNotFound(): Response {
-	return detail(404, "Not found");
-}
 
 /** Last-Event-ID, else the last `?after=`, else "0"; all digits or 0. */
 export function streamCursor(request: Request): number {
@@ -256,17 +251,17 @@ async function stream(c: Context<AppEnv>): Promise<Response> {
 	try {
 		m = await member(c.env, session, param(c, "workspace"));
 	} catch (error) {
-		if (error instanceof HttpError) return withSessionCookies(streamNotFound(), session);
+		if (error instanceof HttpError) return withSessionCookies(notFound(), session);
 		throw error;
 	}
 	const runId = param(c, "run");
 	const located = await m.object.locateRun(m.caller, runId);
-	if (located === null) return withSessionCookies(streamNotFound(), session);
+	if (located === null) return withSessionCookies(notFound(), session);
 	const stub = conversationObject(c.env, m.workspace, located.conversationId);
 	const userId = m.caller.userId;
 	const after = streamCursor(c.req.raw);
 	const socket = await openSocket(stub, runId, userId, after);
-	if (socket === null) return withSessionCookies(streamNotFound(), session);
+	if (socket === null) return withSessionCookies(notFound(), session);
 	const request = c.req.raw;
 	const workspaceId = param(c, "workspace");
 	const relay = new Relay(after, (cursor) => openSocket(stub, runId, userId, cursor), async () => {

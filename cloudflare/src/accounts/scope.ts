@@ -17,8 +17,11 @@ export interface Holder {
 export interface AuthScope {
 	/** Set by the policy's before hook on the routes that act for a signed-in user. */
 	holder: Holder | null;
-	/** The password hash this request verified (a sign-in), after any rehash. */
-	verifiedHash?: string;
+	/**
+	 * The password hash this request verified (a sign-in), after any rehash; for a verification that signs in,
+	 * the password it kept (null when it dropped it). Its session is stamped with it, not with what is stored.
+	 */
+	verifiedHash?: string | null;
 	/** The password hash this request wrote (a password change or reset). */
 	writtenHash?: string;
 	/** The address a first factor was given: the session is stamped with it, not with whatever is stored. */
@@ -33,6 +36,12 @@ export interface AuthScope {
 	signupAdmitted?: boolean;
 	/** A password sign-in counted against the address's failed logins, taken back unless it failed. */
 	loginUsage?: Usage;
+	/** A password sign-in: Better Auth sends an unverified address a code from within it. */
+	passwordSignIn?: boolean;
+	/** An email code this request would have made was withheld (policy.ts): nothing is stored or sent. */
+	codeWithheld?: boolean;
+	/** The credential this browser set or proved before verifying its address, from its signed cookie (policy.ts). */
+	binding?: string;
 }
 
 const storage = new AsyncLocalStorage<AuthScope>();

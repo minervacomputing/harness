@@ -124,7 +124,7 @@ async function failure(step: Promise<unknown>): Promise<{ message: string; field
 	return { message: (error as Error).message, fields: frontend.fieldErrors(error) };
 }
 
-/** Signs up and verifies through the client, which signs in with the password it held. */
+/** Signs up and verifies through the client; verifying signs in. */
 async function newAccount(email = uniqueEmail()): Promise<string> {
 	expect(await frontend.auth.signup({ email, password: PASSWORD })).toEqual({ kind: "anonymous", pending: "verify-email" });
 	expect(await frontend.auth.verifyEmail({ code: lastCode(email) })).toEqual(signedIn);
@@ -150,9 +150,9 @@ describe("sign-up, verification and sign-in", () => {
 
 		expect(await failure(frontend.auth.verifyEmail({ code: "000000" }))).toEqual({ message: "Incorrect code.", fields: { code: "Incorrect code." } });
 		await frontend.auth.resendVerification();
-		// The reload forgot the password, so verifying leaves signing in to the sign-in page.
-		expect(await frontend.auth.verifyEmail({ code: lastCode(email) })).toEqual(noStep);
-		expect(await frontend.auth.login({ email, password: PASSWORD })).toEqual(signedIn);
+		// Verifying signs in, after a reload too: the page holds no password.
+		expect(await frontend.auth.verifyEmail({ code: lastCode(email) })).toEqual(signedIn);
+		expect(storage.contents).not.toContain(email);
 
 		// /api/me is the source of the state, and fills the `me` query the app reads.
 		const queryClient = new query.QueryClient();
@@ -184,14 +184,46 @@ describe("sign-up, verification and sign-in", () => {
 		expect(await failure(frontend.auth.login({ email: uniqueEmail("nobody"), password: PASSWORD }))).toEqual(expected);
 	});
 
-	test("an unverified account that signs in with its password is sent a code and goes on to verify", async () => {
+	test("an unverified account that signs in with its password is sent a code by the server and goes on to verify", async () => {
 		const email = uniqueEmail();
 		expect((await new Browser().auth("/sign-up/email", { email, password: PASSWORD, name: "" })).status).toBe(200);
+		// Later: the sign-up's code has expired.
+		await env.DB.prepare(`DELETE FROM verification WHERE identifier = ?`).bind(`email-verification-otp-${email}`).run();
 		const before = emailsTo(email).length;
+		expect(await frontend.auth.login({ email, password: PASSWORD })).toEqual({ kind: "anonymous", pending: "verify-email" });
+		expect(emailsTo(email).length).toBe(before + 1);
+		// Signing in again while that code is usable sends no other.
 		expect(await frontend.auth.login({ email, password: PASSWORD })).toEqual({ kind: "anonymous", pending: "verify-email" });
 		expect(emailsTo(email).length).toBe(before + 1);
 		expect(await frontend.auth.verifyEmail({ code: lastCode(email) })).toEqual(signedIn);
 		expect(await state()).toMatchObject({ kind: "authenticated", user: { email } });
+	});
+
+	test("an address someone else signed up with: its owner verifies it and is signed in without that password", async () => {
+		const email = uniqueEmail("owner");
+		const attacker = "the attacker's own passphrase";
+		expect((await new Browser().auth("/sign-up/email", { email, password: attacker, name: "" })).status).toBe(200);
+		expect(await frontend.auth.signup({ email, password: PASSWORD })).toEqual({ kind: "anonymous", pending: "verify-email" });
+		// Past the 10 s between codes that the "Account Already Exists" email started.
+		vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 11_000 });
+		await frontend.auth.resendVerification();
+		expect(await frontend.auth.verifyEmail({ code: lastCode(email) })).toEqual(signedIn);
+		expect(await state()).toMatchObject({ kind: "authenticated", user: { email } });
+		await load();
+		const refused = { message: "The email address or password is not correct.", fields: { password: "The email address or password is not correct." } };
+		expect(await failure(frontend.auth.login({ email, password: attacker }))).toEqual(refused);
+		expect(await failure(frontend.auth.login({ email, password: PASSWORD }))).toEqual(refused);
+	});
+
+	test("a code for an address already verified does not sign in, and says so", async () => {
+		const email = await newAccount();
+		await load();
+		expect(await frontend.auth.signup({ email, password: PASSWORD })).toEqual({ kind: "anonymous", pending: "verify-email" });
+		vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 11_000 });
+		await frontend.auth.resendVerification();
+		const already = "This email address is already verified. Sign in instead.";
+		expect(await failure(frontend.auth.verifyEmail({ code: lastCode(email) }))).toEqual({ message: already, fields: { code: already } });
+		expect(await state()).toEqual({ kind: "anonymous", pending: "verify-email" });
 	});
 
 	test("an expired verification code leaves the step open, and a new code finishes it", async () => {

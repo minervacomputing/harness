@@ -179,8 +179,8 @@ describe("uploads", () => {
 
 	test("a body longer or shorter than declared is refused and leaves nothing", async () => {
 		const w = await world();
-		expect(await receiveUpload(w.recorder, w.bucket, CALLER, { name: "a", size: 4, body: body("hello") })).toEqual({ ok: false, refusal: { status: 400, detail: BODY_LONGER } });
-		expect(await receiveUpload(w.recorder, w.bucket, CALLER, { name: "a", size: 6, body: body("hello") })).toEqual({ ok: false, refusal: { status: 400, detail: BODY_SHORTER } });
+		expect(await receiveUpload(w.recorder, w.bucket, CALLER, { name: "a", size: 4, body: body("hello") })).toEqual({ ok: false, refusal: { code: "CONTENT_LENGTH_MISMATCH", detail: BODY_LONGER } });
+		expect(await receiveUpload(w.recorder, w.bucket, CALLER, { name: "a", size: 6, body: body("hello") })).toEqual({ ok: false, refusal: { code: "CONTENT_LENGTH_MISMATCH", detail: BODY_SHORTER } });
 		expect(await w.workspaceRows("SELECT * FROM uploads")).toEqual([]);
 		expect((await w.bucket.list({ prefix: `uploads/${w.ref.id}/` })).objects).toEqual([]);
 	});
@@ -188,7 +188,7 @@ describe("uploads", () => {
 	test("a body still arriving at the deadline is refused (408) and abandoned", async () => {
 		const w = await world();
 		const stalled = new ReadableStream<Uint8Array>({ start: (controller) => controller.enqueue(new Uint8Array(3)) });
-		expect(await receiveUpload(w.recorder, w.bucket, CALLER, { name: "slow", size: 10, body: stalled }, { deadlineMs: 50 })).toEqual({ ok: false, refusal: { status: 408, detail: TOO_SLOW } });
+		expect(await receiveUpload(w.recorder, w.bucket, CALLER, { name: "slow", size: 10, body: stalled }, { deadlineMs: 50 })).toEqual({ ok: false, refusal: { code: "UPLOAD_TIMEOUT", detail: TOO_SLOW } });
 		expect(await w.workspaceRows("SELECT * FROM uploads")).toEqual([]);
 		// Its write was stopped with it: nothing is stored, now or later.
 		await sleep(50);
@@ -225,7 +225,7 @@ describe("uploads", () => {
 		setTimeout(held.release, 150);
 		const data = new TextEncoder().encode("a whole body");
 		const answer = await receiveUpload(w.recorder, held.bucket, CALLER, { name: "late", size: data.length, body: body(data) }, { deadlineMs: 50 });
-		expect(answer).toEqual({ ok: false, refusal: { status: 408, detail: TOO_SLOW } });
+		expect(answer).toEqual({ ok: false, refusal: { code: "UPLOAD_TIMEOUT", detail: TOO_SLOW } });
 		// It answered after the write ended, not before.
 		expect(held.settled).toBe(true);
 		expect(await w.workspaceRows("SELECT * FROM uploads")).toEqual([]);
@@ -247,7 +247,7 @@ describe("uploads", () => {
 			{ name: "later", size: data.length, body: body(data) },
 			{ deadlineMs: 50, settleMs: 20, waitUntil: (promise) => work.push(promise) },
 		);
-		expect(answer).toEqual({ ok: false, refusal: { status: 408, detail: TOO_SLOW } });
+		expect(answer).toEqual({ ok: false, refusal: { code: "UPLOAD_TIMEOUT", detail: TOO_SLOW } });
 		expect(held.settled).toBe(false);
 		expect(work).toHaveLength(1);
 		held.release();
@@ -273,7 +273,7 @@ describe("uploads", () => {
 		for (let i = 0; i < 30; i++) await w.upload(`f${i}`, "x");
 		expect(await receiveUpload(w.recorder, w.bucket, CALLER, { name: "one too many", size: 1, body: watched() })).toEqual({
 			ok: false,
-			refusal: { status: 429, detail: "You have too many files waiting to be sent. Send or remove some, or try again tomorrow." },
+			refusal: { code: "TOO_MANY_UPLOADS_WAITING", detail: "You have too many files waiting to be sent. Send or remove some, or try again tomorrow." },
 		});
 		expect(pulled).toBe(false);
 	});
@@ -449,7 +449,7 @@ describe("attachments at a run's start", () => {
 		const [row] = await w.workspaceRows<{ key: string }>("SELECT key FROM uploads WHERE id = ?", gone.id);
 		await w.bucket.delete(row?.key as string);
 		const posted = await w.conversation.postMessage(CALLER, { content: DONE, attachments: [kept.id, gone.id] });
-		expect(posted).toEqual({ ok: false, refusal: { status: 400, detail: NO_LONGER_AVAILABLE } });
+		expect(posted).toEqual({ ok: false, refusal: { code: "ATTACHMENT_UNAVAILABLE", detail: NO_LONGER_AVAILABLE } });
 		const head = await w.conversation.getConversation(CALLER);
 		expect([head?.messages, head?.runs]).toEqual([[], []]);
 		// Released: attachable again.

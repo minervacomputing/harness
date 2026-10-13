@@ -32,11 +32,15 @@ export interface AuthPolicy {
 	verificationCreating(verification: { identifier: string; value: string; expiresAt: Date }, endpoint: GenericEndpointContext | null): Promise<boolean>;
 	/** A password hash a request checked successfully (after any rehash). */
 	passwordVerified(hash: string): void;
-	/** A password hash a request is about to store in a new account. */
-	passwordWritten(hash: string): void;
+	/** A credential account about to be created; false refuses it (a sign-up whose address was verified meanwhile). */
+	accountCreating(account: { userId?: unknown; password?: unknown }, endpoint: GenericEndpointContext | null): Promise<false | undefined>;
 	/** An account about to be updated; false when the policy wrote it itself (a conditional password change). */
 	accountUpdating(account: { password?: unknown }, endpoint: GenericEndpointContext | null): Promise<false | undefined>;
 	existingUserSignedUp(email: string): Promise<void>;
+	/** An address about to be marked verified, after its code was accepted. */
+	emailVerifying(user: { id: string; emailVerified: boolean }): Promise<void>;
+	/** Whether this request's email code was withheld, so nothing is sent. */
+	codeWithheld(): boolean;
 }
 
 export interface AuthDeps {
@@ -89,6 +93,9 @@ function passwordHasher(deps: AuthDeps) {
 	};
 }
 
+/** Wrong guesses an email code takes before it is used up. */
+export const CODE_ATTEMPTS = 3;
+
 /** Two weeks; a session in use is extended once a day. */
 export const SESSION_SECONDS = 14 * 24 * 3600;
 
@@ -112,11 +119,6 @@ function policyPlugin(policy: AuthPolicy) {
 			after: [{ matcher: () => true, handler: createAuthMiddleware(async (ctx) => policy.after(ctx as unknown as GenericEndpointContext)) }],
 		},
 	} satisfies BetterAuthPlugin;
-}
-
-function passwordWrite(deps: AuthDeps, account: { password?: unknown }): undefined {
-	if (typeof account.password === "string") deps.policy.passwordWritten(account.password);
-	return undefined;
 }
 
 /** Where Better Auth answers; the router sends `${AUTH_BASE_PATH}/*` to it. */
@@ -145,7 +147,16 @@ export function authOptions(deps: AuthDeps) {
 			// Sign-up with a taken address answers as for a new one; the owner gets an email instead.
 			onExistingUserSignUp: async ({ user }: { user: { email: string } }) => deps.policy.existingUserSignedUp(user.email),
 		},
-		emailVerification: { sendOnSignUp: true, autoSignInAfterVerification: false },
+		emailVerification: {
+			// Codes, not links: the email-OTP plugin's `overrideDefaultEmailVerification` sends them. An unverified
+			// sign-in with the right password gets one from the server (policy.ts keeps a code still live).
+			sendOnSignUp: true,
+			sendOnSignIn: true,
+			// Verifying signs in, as a first factor (FIRST_FACTOR): two-factor still applies. A password this
+			// browser did not set or prove is dropped first (policy.ts `emailVerifying`).
+			autoSignInAfterVerification: true,
+			beforeEmailVerification: async (user: { id: string; emailVerified: boolean }) => deps.policy.emailVerifying(user),
+		},
 		session: {
 			expiresIn: SESSION_SECONDS,
 			updateAge: 24 * 3600,
@@ -194,19 +205,19 @@ export function authOptions(deps: AuthDeps) {
 			},
 			verification: { create: { before: async (verification, endpoint) => deps.policy.verificationCreating(verification, endpoint ?? null) } },
 			account: {
-				create: { before: async (account) => passwordWrite(deps, account) },
+				create: { before: async (account, endpoint) => deps.policy.accountCreating(account, endpoint ?? null) },
 				update: { before: async (account, endpoint) => deps.policy.accountUpdating(account, endpoint ?? null) },
 			},
 		},
 		plugins: [
 			policyPlugin(deps.policy),
 			emailOTP({
-				sendVerificationOTP: ({ email, otp, type }) => deps.sendCode(email, otp, type),
+				// A code the policy withheld (policy.ts `verificationCreating`) was never stored, and is not sent.
+				sendVerificationOTP: async ({ email, otp, type }) => (deps.policy.codeWithheld() ? undefined : deps.sendCode(email, otp, type)),
 				overrideDefaultEmailVerification: true,
-				sendVerificationOnSignUp: true,
 				// A code for an unknown address never creates an account.
 				disableSignUp: true,
-				allowedAttempts: 3,
+				allowedAttempts: CODE_ATTEMPTS,
 				storeOTP: { hash: (otp: string) => deps.hashCode(otp) },
 			}),
 			everyFirstFactor(twoFactor({ issuer: "Minerva" }), FIRST_FACTOR),

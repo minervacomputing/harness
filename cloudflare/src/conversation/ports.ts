@@ -20,7 +20,7 @@ import { durableSql } from "../lib/sql.ts";
 import { type ModelRoute, type Upstream, upstreamOf } from "../model/route.ts";
 import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan } from "../sandbox/folder.ts";
 import type { AttachmentOut, FolderOut } from "../shared/api.ts";
-import type { AttemptFence, ConversationId, EpochMs, Outcome, RunId, RunStatus, VersionId, WorkspaceRef } from "../shared/rpc.ts";
+import { type AttemptFence, type ConversationId, type EpochMs, type Outcome, type RunId, type RunStatus, type VersionId, type WorkspaceRef, refuse } from "../shared/rpc.ts";
 import type { WorkspaceApi } from "../workspace/core.ts";
 import type { GateDecision } from "./gate.ts";
 import type { SandboxPort } from "./local-run.ts";
@@ -145,7 +145,7 @@ export const emptyFolder = (context: PortsContext): FolderPort => ({
 	usage: () => ({ versionId: context.folderVersionId(), bytes: 0, entries: 0, rootNames: [] }),
 	prepareAttachments: async (_runId, uploads) =>
 		uploads.length
-			? { ok: false, refusal: { status: 400, detail: "An attached file is no longer available. Remove it and attach it again." } }
+			? refuse("ATTACHMENT_UNAVAILABLE", "An attached file is no longer available. Remove it and attach it again.")
 			: { ok: true, value: { uploads: [], state: {} } },
 	commitAttachments: () => ({ baseVersionId: context.folderVersionId(), attachments: [] }),
 	publish: (_runId, run) => ({ resultVersionId: run.checkpointVersionId ?? run.baseVersionId, changes: null }),

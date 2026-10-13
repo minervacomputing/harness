@@ -95,7 +95,7 @@ The integration tests stay in `cloudflare/test/platform` for now, because that i
 
 ## Units
 
-Status (2026-10-13): F0–F3 are done on the `frontend-cleanup` branch. S is done: go, with conditions ([orpc-trial-findings.md](orpc-trial-findings.md)), and A1 and A3 below include what it found. A1–A4 wait for the backend agent.
+Status (2026-10-13): F0–F3, S, A1 and A2's `message` event are done and merged into `cloudflare`; the test Worker runs A1 (browser walk and fault suites pass). A2's first-message change moved out (below). Next: A3.
 
 The frontend units (F) touch `frontend/`, the four frontend tests, and for F0 the Makefile and AGENTS.md. They can start now. Work on them in a git worktree off the `cloudflare` branch, because the main checkout holds the other agent's uncommitted work.
 
@@ -139,7 +139,7 @@ Before each commit: `pnpm check` and `pnpm build` in `frontend/`, the Worker's `
 
 **A2. Smaller protocol changes.**
 - The `message` event names the model call that wrote the answer, so `finishedParts` drops its comparison.
-- A first message creates its conversation in the same request, with the `Idempotency-Key`. The new-chat page then has no create-then-delete on refusal and can retry the whole send. This needs a design first, reviewed like A1: a conversation is created by the Workspace object while start keys live in the Conversation object, so the design says which object owns a first message's key, how a repeated or concurrent send finds the conversation the first one created, what a failure between the two steps leaves, and what a refusal removes. If that is not small, it leaves this plan for the backend's.
+- A first message creates its conversation in the same request, with the `Idempotency-Key`. The new-chat page then has no create-then-delete on refusal and can retry the whole send. This needs a design first, reviewed like A1: a conversation is created by the Workspace object while start keys live in the Conversation object, so the design says which object owns a first message's key, how a repeated or concurrent send finds the conversation the first one created, what a failure between the two steps leaves, and what a refusal removes. If that is not small, it leaves this plan for the backend's. Moved out (2026-10-13): the design, [first-message.md](first-message.md), is not small (about 200 lines in `cloudflare/src`, both objects' invariants and the start protocol), so it waits for a backend plan. Until then the new-chat page keeps create, send and delete-on-refusal, and A3 declares today's two endpoints.
 
 **A3. The oRPC contract**, on 1.x pinned exactly (2.0 once it is final; read `v1.orpc.dev` meanwhile). The findings' last section has the details; in short:
 - **The contract** is a pnpm workspace package (`contract/`, depending on zod and `@orpc/contract`) that both packages import, with no Cloudflare imports. It declares every endpoint: method, path, zod input, output and errors. Names say what things are (`Agent`, `Conversation`, `NewAgent`), not `AgentOut` and `AgentIn`. Outputs are zod schemas for small resources and `type<T>()` for the streamed reads and for writes, so a write that succeeded never answers 500 because its output failed validation. The run events are the `RunEvent` union, so `components/chat/model.ts` drops its casts.

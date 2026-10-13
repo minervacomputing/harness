@@ -11,9 +11,9 @@ import type { Outcome, Refusal } from "../shared/rpc.ts";
 /** The largest JSON request body, in bytes. */
 export const MAX_JSON_BODY = 2_621_440;
 
-export const NOT_JSON: Refusal = { status: 415, detail: "Send the body as application/json." };
-export const TOO_LARGE: Refusal = { status: 413, detail: "The request is too large." };
-export const UNPARSEABLE: Refusal = { status: 400, detail: "Cannot parse request body" };
+export const NOT_JSON: Refusal = { code: "UNSUPPORTED_MEDIA_TYPE", detail: "Send the body as application/json." };
+export const TOO_LARGE: Refusal = { code: "PAYLOAD_TOO_LARGE", detail: "The request is too large." };
+export const UNPARSEABLE: Refusal = { code: "INVALID_JSON", detail: "The body is not valid JSON." };
 
 /** The body's JSON value, undefined for an empty body, or why it is refused (above). */
 export async function readJson(request: Request): Promise<Outcome<Json | undefined>> {

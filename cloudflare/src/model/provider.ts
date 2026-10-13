@@ -17,6 +17,8 @@
 //   a compaction's summary), tool-call argument text kept as the model sent it, and when the call settles
 //   (attempt or not) the last usage report recorded, or the call counted unmetered if it streamed without
 //   one or was stopped; a call the provider refused or that never reached it is neither;
+// - names the call in the message it finished with (`callOf`), so the run's `message` event can say which
+//   call's text the answer replaces;
 // - keeps provider text out of everything pi gets (tap.ts `screened`): a failure's text is replaced with
 //   "The model provider reported an error.", or for a context overflow with words pi-ai still classifies as
 //   one, so pi compacts and asks again; createAI's diagnostics, which copy that text, are dropped from every
@@ -323,7 +325,9 @@ function wrapped(context: TranscriptContext, streamOptions: SimpleStreamOptions 
 					options.host.log(`The model provider did not answer within ${Math.round(quietMs / 1000)} s.`);
 					event = { type: "error", reason: "error", error: { ...event.error, stopReason: "error", errorMessage: PROVIDER_ERROR } };
 				}
-				out.push(relayed(event, options.host, status));
+				const relayedEvent = relayed(event, options.host, status);
+				// pi's result is the `done` event's message, so the call is named there.
+				out.push(relayedEvent.type === "done" ? { ...relayedEvent, message: withCall(relayedEvent.message, call) } : relayedEvent);
 				if (now() - lastFlush > TEXT_FLUSH_MS) {
 					lastFlush = now();
 					flush();
@@ -377,6 +381,20 @@ function withArguments(message: AssistantMessage, reparsed: ReadonlyMap<string, 
 		...message,
 		content: message.content.map((block) => (block.type === "toolCall" && reparsed.has(block.id) ? { ...block, arguments: reparsed.get(block.id) as JsonObject } : block)),
 	};
+}
+
+/** The diagnostic that names the call that wrote a message: the 8-hex id its deltas were published with. */
+const CALL_DIAGNOSTIC = "minerva.call";
+
+/** A screened message with its call named, in `diagnostics`, which pi-ai keeps wherever it copies a message. */
+function withCall(message: AssistantMessage, call: string): AssistantMessage {
+	return { ...message, diagnostics: [...(message.diagnostics ?? []), { type: CALL_DIAGNOSTIC, timestamp: message.timestamp, details: { call } }] };
+}
+
+/** The model call that wrote a message pi stored, when the wrapper named it. */
+export function callOf(message: AssistantMessage): string | undefined {
+	const call = message.diagnostics?.find((diagnostic) => diagnostic.type === CALL_DIAGNOSTIC)?.details?.call;
+	return typeof call === "string" ? call : undefined;
 }
 
 /** An upstream event as pi gets it (tap.ts `screenedEvent`); a failure is logged without the provider's text. */

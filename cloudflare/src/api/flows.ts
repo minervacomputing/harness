@@ -20,12 +20,11 @@ import { type CurrentSession, currentSession, withSessionCookies } from "../acco
 import { settings } from "../config.ts";
 import { connectorRegistry } from "../connectors/index.ts";
 import { type Connector, type CredentialPayload, OperationError } from "../gateway/connector.ts";
-import { HttpError } from "../http/errors.ts";
+import { HttpError, refused } from "../http/errors.ts";
 import type { App } from "../http/router.ts";
 import { timingSafeEqual } from "../lib/hash.ts";
 import type { WorkspaceRef } from "../shared/rpc.ts";
 import { TOKEN_TIMEOUT_MS, answerJson, boundedBody, issuingClient, tokenBody, tokenPayload, tokenRequest } from "../workspace/credentials.ts";
-import { NOT_YOURS } from "../workspace/core.ts";
 import { isAdmin } from "../workspace/out.ts";
 import { type Member, member, param } from "./members.ts";
 import { FLOW_CLIENTS, clientCredentials, oauthOf } from "./oauth-clients.ts";
@@ -49,7 +48,7 @@ export interface FlowStart {
 	scopes: string[] | null;
 }
 
-/** How long a flow may take, from the authorization to the callback (`pop_flow`). */
+/** How long a flow may take, from the authorization to the callback (`popFlow`). */
 export const FLOW_MS = 600_000;
 
 export const EXPIRED_FLOW = "This connection attempt expired or did not start here. Please try again.";
@@ -58,7 +57,7 @@ export const EXPIRED_FLOW = "This connection attempt expired or did not start he
 export const CALLBACK_ROUTE = "/api/oauth/:provider{[-a-zA-Z0-9_]+}/callback";
 
 export const CONNECTION_FLOWS: { start(flow: FlowStart): Promise<string> } = {
-	/** `authorization_url`: stores the session's flow and answers where the user grants access. */
+	/** Stores the session's flow and answers where the user grants access. */
 	async start({ env, member: m, connector, connectionId, scopes }) {
 		const oauth = oauthOf(connector);
 		const creds = await clientCredentials(env, m.workspace, connector);
@@ -104,7 +103,7 @@ interface FlowRow {
 
 const FLOW_COLUMNS = "state, verifier, provider, workspace_id, connection_id, client_id, issued_at";
 
-/** `pop_flow`: the session's flow for this provider and state, deleted whatever follows; null if there is none or it expired. */
+/** The session's flow for this provider and state, deleted whatever follows; null if there is none or it expired. */
 async function popFlow(db: D1Database, sessionId: string, provider: string, state: string | null, now: number): Promise<FlowRow | null> {
 	const flow = await db.prepare(`SELECT ${FLOW_COLUMNS} FROM oauth_flows WHERE session_id = ?`).bind(sessionId).first<FlowRow>();
 	if (flow === null) return null;
@@ -192,7 +191,7 @@ async function callback(env: Env, request: Request, provider: string, session: C
 			throw error;
 		}
 		const saved = await m.object.saveConnection(m.caller, { provider: connector.slug, account, credentials: tokens, connectionId: flow.connection_id });
-		if (!saved.ok) throw new ConnectionFlowError(saved.refusal.detail === NOT_YOURS ? "This connection belongs to someone else." : saved.refusal.detail);
+		if (!saved.ok) throw new ConnectionFlowError(saved.refusal.detail);
 		return redirect(site, page, [["connected", saved.value.id]]);
 	} catch (error) {
 		if (error instanceof ConnectionFlowError) return redirect(site, page, [["error", error.message]]);
@@ -206,5 +205,5 @@ export function flowRoutes(app: App): void {
 		return withSessionCookies(await callback(c.env, c.req.raw, param(c, "provider"), session), session);
 	});
 	// GET only, after the CSRF check the router makes on unsafe methods.
-	app.on(["POST", "PUT", "PATCH", "DELETE", "OPTIONS"], CALLBACK_ROUTE, () => new Response(null, { status: 405, headers: { Allow: "GET" } }));
+	app.on(["POST", "PUT", "PATCH", "DELETE", "OPTIONS"], CALLBACK_ROUTE, () => refused("METHOD_NOT_ALLOWED", "Use GET.", { Allow: "GET" }));
 }

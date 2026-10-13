@@ -1,5 +1,5 @@
 // The instance's administration (plan: Instance and control plane). An instance admin is a user whose
-// Better Auth role is 'admin' (the admin plugin's; `/api/me` reports it as `is_staff`), apart from the
+// Better Auth role is 'admin' (the admin plugin's; `/api/me` reports it), apart from the
 // organization and workspace roles: it grants no access to anyone's workspaces, only these routes. The
 // admin plugin's own endpoints (impersonation, bans, deletion, roles) stay closed to the browser
 // (policy.ts BROWSER_ROUTES); admins are named and removed here instead.

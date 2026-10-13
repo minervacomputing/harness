@@ -24,7 +24,7 @@ const NAME = OFFLINE ? ".dev.vars" : TEST ? ".env.cloudflare-test" : ".env.cloud
 const FILE = fileURLToPath(new URL(OFFLINE ? `../${NAME}` : `../../${NAME}`, import.meta.url));
 
 const REQUIRED: Record<string, () => string> = {
-	// Signs and keys our own values (as Django's SECRET_KEY: secrets.token_urlsafe(50)).
+	// Signs and keys our own values: 50 random bytes in URL-safe base64.
 	MINERVA_SECRET_KEY: () => urlsafe(50),
 	// Keys for encryption at rest (src/lib/encryption.ts): `id:secret` entries, comma separated, a secret
 	// being 32 random bytes in URL-safe base64; the first encrypts. A key written before step 6b (Fernet,

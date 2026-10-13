@@ -7,6 +7,7 @@ import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, test } from "vitest";
 import { ADMINS_ONLY, ALREADY_SET_UP, INVALID_KEY, LAST_ADMIN, NO_SUCH_USER, SETUP_KEY_HEADER, claimSetup } from "../../src/accounts/instance.ts";
 import { uuid7 } from "../../src/lib/random.ts";
+import type { RefusalCode } from "../../src/shared/rpc.ts";
 import { type Answer, Browser, PASSWORD, installEmailLog, lastCode, signedIn, uniqueEmail } from "./accounts-helpers.ts";
 
 installEmailLog();
@@ -33,12 +34,12 @@ async function user(name = "ada"): Promise<User> {
 	return { browser, userId, email };
 }
 
-function expectDetail(answer: Answer, status: number, detail: string): void {
-	expect([answer.status, answer.body], JSON.stringify(answer.body)).toEqual([status, { detail }]);
+function expectRefusal(answer: Answer, status: number, code: RefusalCode, detail: string): void {
+	expect([answer.status, answer.body], JSON.stringify(answer.body)).toEqual([status, { code, detail }]);
 }
 
 async function isStaff(u: User): Promise<boolean> {
-	return (await u.browser.call("GET", "/api/me")).body.user.is_staff;
+	return (await u.browser.call("GET", "/api/me")).body.user.role === "admin";
 }
 
 async function admins(): Promise<string[]> {
@@ -58,9 +59,9 @@ describe("first-run setup", () => {
 		expect((await anonymous.call("POST", "/api/setup", { key: KEY })).status).toBe(401);
 		// The router's CSRF check comes first, as for every unsafe route.
 		expect((await ada.browser.call("POST", "/api/setup", { key: KEY }, { Origin: "https://evil.example" })).status).toBe(403);
-		expectDetail(await ada.browser.call("POST", "/api/setup", { key: "wrong" }), 403, INVALID_KEY);
-		expectDetail(await ada.browser.call("POST", "/api/setup", { key: KEY.slice(0, -1) }), 403, INVALID_KEY);
-		expectDetail(await ada.browser.call("POST", "/api/setup", { key: `${KEY} ` }), 403, INVALID_KEY);
+		expectRefusal(await ada.browser.call("POST", "/api/setup", { key: "wrong" }), 403, "INVALID_SETUP_KEY", INVALID_KEY);
+		expectRefusal(await ada.browser.call("POST", "/api/setup", { key: KEY.slice(0, -1) }), 403, "INVALID_SETUP_KEY", INVALID_KEY);
+		expectRefusal(await ada.browser.call("POST", "/api/setup", { key: `${KEY} ` }), 403, "INVALID_SETUP_KEY", INVALID_KEY);
 		expect((await ada.browser.call("POST", "/api/setup")).status).toBe(415);
 		expect((await ada.browser.call("POST", "/api/setup", "")).status).toBe(422);
 		expect(await admins()).toEqual([]);
@@ -68,13 +69,13 @@ describe("first-run setup", () => {
 		await setUp(ada);
 		expect(await isStaff(ada)).toBe(true);
 		expect((await anonymous.call("GET", "/api/setup")).body).toEqual({ needed: false });
-		expectDetail(await grace.browser.call("POST", "/api/setup", { key: KEY }), 409, ALREADY_SET_UP);
-		expectDetail(await ada.browser.call("POST", "/api/setup", { key: KEY }), 409, ALREADY_SET_UP);
+		expectRefusal(await grace.browser.call("POST", "/api/setup", { key: KEY }), 409, "ALREADY_SET_UP", ALREADY_SET_UP);
+		expectRefusal(await ada.browser.call("POST", "/api/setup", { key: KEY }), 409, "ALREADY_SET_UP", ALREADY_SET_UP);
 		expect(await isStaff(grace)).toBe(false);
 		expect(await admins()).toEqual([ada.userId]);
 		// Setup stays done when its admin is removed or deleted.
 		await env.DB.prepare(`UPDATE "user" SET role = 'user' WHERE id = ?`).bind(ada.userId).run();
-		expectDetail(await grace.browser.call("POST", "/api/setup", { key: KEY }), 409, ALREADY_SET_UP);
+		expectRefusal(await grace.browser.call("POST", "/api/setup", { key: KEY }), 409, "ALREADY_SET_UP", ALREADY_SET_UP);
 	});
 
 	test("of concurrent claims, by several users or one, exactly one makes an admin", async () => {
@@ -127,8 +128,8 @@ describe("the instance admin", () => {
 		const grace = await user("grace");
 		await setUp(ada);
 		// Grace owns her personal workspace and organization: no instance admin for that.
-		expectDetail(await grace.browser.call("GET", "/api/instance/settings"), 403, ADMINS_ONLY);
-		expectDetail(await grace.browser.call("GET", "/api/instance/admins"), 403, ADMINS_ONLY);
+		expectRefusal(await grace.browser.call("GET", "/api/instance/settings"), 403, "INSTANCE_ADMINS_ONLY", ADMINS_ONLY);
+		expectRefusal(await grace.browser.call("GET", "/api/instance/admins"), 403, "INSTANCE_ADMINS_ONLY", ADMINS_ONLY);
 		// Ada administers the instance, not Grace's workspace.
 		const graceWs = (await grace.browser.call("GET", "/api/me")).body.workspaces[0].id;
 		expect((await ada.browser.call("GET", `/api/workspaces/${graceWs}/connections`)).status).toBe(401);
@@ -156,13 +157,13 @@ describe("the instance admin", () => {
 		expect(added.status).toBe(200);
 		expect(added.body.map((a: { id: string }) => a.id).sort()).toEqual([ada.userId, grace.userId].sort());
 		expect(await isStaff(grace)).toBe(true);
-		expectDetail(await ada.browser.call("POST", "/api/instance/admins", { email: "nobody@example.com" }), 404, NO_SUCH_USER);
+		expectRefusal(await ada.browser.call("POST", "/api/instance/admins", { email: "nobody@example.com" }), 404, "NO_SUCH_USER", NO_SUCH_USER);
 		expect((await ada.browser.call("DELETE", `/api/instance/admins/${uuid7()}`)).status).toBe(404);
 
 		expect((await grace.browser.call("DELETE", `/api/instance/admins/${ada.userId}`)).status).toBe(204);
 		// The role is read on every request.
-		expectDetail(await ada.browser.call("GET", "/api/instance/admins"), 403, ADMINS_ONLY);
-		expectDetail(await grace.browser.call("DELETE", `/api/instance/admins/${grace.userId}`), 422, LAST_ADMIN);
+		expectRefusal(await ada.browser.call("GET", "/api/instance/admins"), 403, "INSTANCE_ADMINS_ONLY", ADMINS_ONLY);
+		expectRefusal(await grace.browser.call("DELETE", `/api/instance/admins/${grace.userId}`), 422, "KEEP_ONE_ADMIN", LAST_ADMIN);
 
 		expect((await grace.browser.call("POST", "/api/instance/admins", { email: ada.email })).status).toBe(200);
 		const [one, two] = await Promise.all([
@@ -197,7 +198,7 @@ describe("the instance admin", () => {
 		expect((await grace.browser.call("DELETE", `/api/instance/admins/${ada.userId}`)).status).toBe(204);
 		release();
 		const answer = await pending;
-		expect([answer.status, await answer.json()]).toEqual([403, { detail: ADMINS_ONLY }]);
+		expect([answer.status, await answer.json()]).toEqual([403, { code: "INSTANCE_ADMINS_ONLY", detail: ADMINS_ONLY }]);
 		expect(await admins()).toEqual([grace.userId]);
 	});
 
@@ -220,7 +221,7 @@ describe("the instance admin", () => {
 		expect((await new Browser().auth("/sign-up/email", { email, password: PASSWORD, name: "" })).status).toBe(200);
 		expect((await ada.browser.call("PATCH", "/api/instance/settings", { signup_open: "no" })).status).toBe(422);
 		expect((await ada.browser.call("PATCH", "/api/instance/settings", {})).status).toBe(422);
-		expectDetail(await grace.browser.call("PATCH", "/api/instance/settings", { signup_open: false }), 403, ADMINS_ONLY);
+		expectRefusal(await grace.browser.call("PATCH", "/api/instance/settings", { signup_open: false }), 403, "INSTANCE_ADMINS_ONLY", ADMINS_ONLY);
 		expect((await ada.browser.call("GET", "/api/instance/settings")).body.signup_open).toBe(true);
 	});
 });

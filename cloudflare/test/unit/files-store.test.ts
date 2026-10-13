@@ -869,11 +869,11 @@ describe("attachments", () => {
 		const w = new World({ folderBytes: 3 });
 		const run = w.run({ status: "queued" });
 		const big = await w.upload("big.bin", "mine");
-		expect(await w.store.prepareAttachments(run, [big])).toEqual({ ok: false, refusal: { status: 413, detail: "These files would make this conversation's folder larger than 0.00000286102 MB." } });
+		expect(await w.store.prepareAttachments(run, [big])).toEqual({ ok: false, refusal: { code: "FOLDER_FULL", detail: "These files would make this conversation's folder larger than 0.00000286102 MB." } });
 		w.settings.folderBytes = 268_435_456;
 		w.settings.folderEntries = 1;
 		const two = [await w.upload("a", "1"), await w.upload("b", "2")];
-		expect(await w.store.prepareAttachments(run, two)).toEqual({ ok: false, refusal: { status: 413, detail: "These files would put more than 1 files and folders in this conversation's folder." } });
+		expect(await w.store.prepareAttachments(run, two)).toEqual({ ok: false, refusal: { code: "FOLDER_FULL", detail: "These files would put more than 1 files and folders in this conversation's folder." } });
 		w.settings.folderEntries = 10_000;
 		expect(w.blobRows()).toEqual([]);
 		expect(w.bucket.keys()).toEqual([]);
@@ -885,10 +885,10 @@ describe("attachments", () => {
 		const run = w.run({ status: "queued" });
 		const gone = await w.upload("gone.txt", "gone");
 		w.bucket.objects.delete(gone.key);
-		expect(await w.store.prepareAttachments(run, [await w.upload("fine.txt", "fine"), gone])).toEqual({ ok: false, refusal: { status: 400, detail: NO_LONGER_AVAILABLE } });
+		expect(await w.store.prepareAttachments(run, [await w.upload("fine.txt", "fine"), gone])).toEqual({ ok: false, refusal: { code: "ATTACHMENT_UNAVAILABLE", detail: NO_LONGER_AVAILABLE } });
 		const corrupt = await w.upload("corrupt.txt", "corrupt");
 		w.bucket.objects.set(corrupt.key, new TextEncoder().encode("changed"));
-		expect(await w.store.prepareAttachments(run, [corrupt])).toEqual({ ok: false, refusal: { status: 400, detail: NO_LONGER_AVAILABLE } });
+		expect(await w.store.prepareAttachments(run, [corrupt])).toEqual({ ok: false, refusal: { code: "ATTACHMENT_UNAVAILABLE", detail: NO_LONGER_AVAILABLE } });
 		expect(w.blobRows().every((row) => row.state === "doomed")).toBe(true);
 		await w.sweepAt(w.now);
 		expect(w.bucket.keys()).toEqual([]);
@@ -946,7 +946,7 @@ describe("attachments", () => {
 		const w = new World();
 		w.counter.limit = 3;
 		const run = w.run({ status: "queued" });
-		expect(await w.store.prepareAttachments(run, [await w.upload("a.txt", "hello")])).toEqual({ ok: false, refusal: { status: 413, detail: NO_ROOM } });
+		expect(await w.store.prepareAttachments(run, [await w.upload("a.txt", "hello")])).toEqual({ ok: false, refusal: { code: "WORKSPACE_FULL", detail: NO_ROOM } });
 		expect(w.bucket.keys()).toEqual([]);
 	});
 
@@ -966,7 +966,7 @@ describe("attachments", () => {
 	test("a deleted conversation copies nothing", async () => {
 		const w = new World();
 		w.sql.exec("UPDATE conversation SET deleted_at = ?", w.now);
-		expect(await w.store.prepareAttachments(w.run({ status: "queued" }), [await w.upload("a", "a")])).toEqual({ ok: false, refusal: { status: 404, detail: "Not Found" } });
+		expect(await w.store.prepareAttachments(w.run({ status: "queued" }), [await w.upload("a", "a")])).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: "Not found." } });
 	});
 });
 

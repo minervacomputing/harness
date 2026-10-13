@@ -273,9 +273,9 @@ describe("a chat turn", () => {
 		const first = await post(a, conversation, say(SLOW));
 		expect(first.status).toBe(201);
 		const busy = await post(a, conversation, "again");
-		expect([busy.status, busy.body]).toEqual([409, { detail: "Wait for the current answer to finish, or stop it." }]);
+		expect([busy.status, busy.body]).toEqual([409, { code: "CONVERSATION_BUSY", detail: "Wait for the current answer to finish, or stop it." }]);
 		const empty = await post(a, conversation, "  \n ");
-		expect([empty.status, empty.body]).toEqual([400, { detail: "Write a message or attach a file." }]);
+		expect([empty.status, empty.body]).toEqual([400, { code: "EMPTY_MESSAGE", detail: "Write a message or attach a file." }]);
 		const detail = await a.browser.call("GET", `/api/workspaces/${a.ws}/conversations/${conversation}`);
 		expect([detail.body.messages.length, detail.body.runs.length]).toEqual([1, 1]);
 		await a.browser.call("POST", `/api/workspaces/${a.ws}/runs/${first.body.run.id}/cancel`);
@@ -314,7 +314,7 @@ describe("a chat turn", () => {
 		const version = await a.browser.call("GET", `/api/workspaces/${a.ws}/conversations/${nowhere}/files?version=nope`);
 		expect([version.status, version.body.detail[0].type]).toEqual([422, "invalid_format"]);
 		const key = await post(a, nowhere, "x", [], { "Idempotency-Key": "has space" });
-		expect([key.status, key.body]).toEqual([400, { detail: "The Idempotency-Key header must be 1 to 255 visible ASCII characters." }]);
+		expect([key.status, key.body]).toEqual([400, { code: "INVALID_IDEMPOTENCY_KEY", detail: "The Idempotency-Key header must be 1 to 255 visible ASCII characters." }]);
 	});
 });
 
@@ -378,7 +378,7 @@ describe("the event stream", () => {
 		// Cut off without `end`: the browser reconnects, and a signed-out reconnect is 401.
 		expect([rest.some((item) => item.event === "end"), sse.failure]).toEqual([false, null]);
 		const again = await stream(a, run, { lastEventId: "1" });
-		expect([again.response.status, await again.response.json()]).toEqual([401, { detail: "Unauthorized" }]);
+		expect([again.response.status, await again.response.json()]).toEqual([401, { code: "UNAUTHORIZED", detail: "Unauthorized" }]);
 	});
 
 	test("a member removed from the workspace loses the stream at the next check", async () => {
@@ -449,7 +449,7 @@ describe("a start retried with the same key", () => {
 		expect([one.status, two.status]).toEqual([201, 201]);
 		expect([two.body.run.id, two.body.message.id]).toEqual([one.body.run.id, one.body.message.id]);
 		const other = await post(a, conversation, "Something else", [], key);
-		expect([other.status, other.body]).toEqual([422, { detail: "This Idempotency-Key was used for a different message." }]);
+		expect([other.status, other.body]).toEqual([422, { code: "IDEMPOTENCY_KEY_REUSED", detail: "This Idempotency-Key was used for a different message." }]);
 		expect((await post(a, conversation, content)).status).toBe(409);
 		await settled(a, one.body.run.id);
 		const later = await post(a, conversation, content, [], key);
@@ -479,18 +479,18 @@ describe("tenancy", () => {
 			["DELETE", `/uploads/${upload}`],
 		] as const) {
 			const answer = await ada.browser.call(method, `${base}${path}`, method === "POST" ? { content: "x", agent_id: grace.agent } : undefined);
-			expect([method, path, answer.status, answer.body]).toEqual([method, path, 401, { detail: "Unauthorized" }]);
+			expect([method, path, answer.status, answer.body]).toEqual([method, path, 401, { code: "UNAUTHORIZED", detail: "Unauthorized" }]);
 		}
 		expect((await upload_(ada, grace.ws)).status).toBe(401);
 		const sse = await stream(ada, run, { ws: grace.ws });
-		expect([sse.response.status, await sse.response.json()]).toEqual([404, { detail: "Not found" }]);
+		expect([sse.response.status, await sse.response.json()]).toEqual([404, { code: "NOT_FOUND", detail: "Not found." }]);
 		const download = await ada.browser.call("GET", `${base}/conversations/${theirs}/files/download?path=x`);
-		expect([download.status, download.body]).toEqual([404, { detail: "Not Found" }]);
+		expect([download.status, download.body]).toEqual([404, { code: "NOT_FOUND", detail: "Not found." }]);
 		// Anonymous.
 		const anonymous = new Browser();
 		for (const path of [`/api/workspaces/${ada.ws}/conversations`, `${base}/runs/${run}/stream`, `${base}/conversations/${theirs}/files/download?path=x`]) {
 			const answer = await anonymous.call("GET", path);
-			expect([path, answer.status, answer.body]).toEqual([path, 401, { detail: "Unauthorized" }]);
+			expect([path, answer.status, answer.body]).toEqual([path, 401, { code: "UNAUTHORIZED", detail: "Unauthorized" }]);
 		}
 		// Their upload is still theirs.
 		expect((await grace.browser.call("DELETE", `${base}/uploads/${upload}`)).status).toBe(204);
@@ -512,10 +512,10 @@ describe("tenancy", () => {
 			["POST", `/runs/${run}/cancel`],
 		] as const) {
 			const answer = await ada.browser.call(method, `${mine}${path}`, method === "POST" ? { content: "x" } : undefined);
-			expect([method, path, answer.status, answer.body.detail]).toEqual([method, path, 404, expect.stringMatching(/^Not Found/)]);
+			expect([method, path, answer.status, answer.body]).toEqual([method, path, 404, { code: "NOT_FOUND", detail: "Not found." }]);
 		}
 		const sse = await stream(ada, run);
-		expect([sse.response.status, await sse.response.json()]).toEqual([404, { detail: "Not found" }]);
+		expect([sse.response.status, await sse.response.json()]).toEqual([404, { code: "NOT_FOUND", detail: "Not found." }]);
 		expect((await settled(grace, run)).body.status).toBe("completed");
 		const detail = await grace.browser.call("GET", `/api/workspaces/${grace.ws}/conversations/${theirs}`);
 		expect(detail.body.messages.map((message: { content: string }) => message.content)).toEqual(["secret", "Done."]);
@@ -573,21 +573,24 @@ describe("uploads", () => {
 			browser.fetcher(new Request(`${ORIGIN}${path}${query}`, { method, headers: { "CF-Connecting-IP": browser.ip, ...headers }, body: method === "GET" ? undefined : "hello" }));
 		const cookies = (browser: Browser) => [...browser.cookies].map(([name, value]) => `${name}=${value}`).join("; ");
 		const good = (browser: Browser) => ({ Cookie: cookies(browser), Origin: ORIGIN });
-		const refused = "Cross-site request refused.";
-		const cases: [string, Response, number, string][] = [
+		const refused = { code: "CROSS_SITE", detail: "Cross-site request refused." };
+		const usePost = { code: "METHOD_NOT_ALLOWED", detail: "Use POST." };
+		const nameIt = { code: "FILE_NAME_MISSING", detail: "Name the file with ?name=." };
+		const unauthorized = { code: "UNAUTHORIZED", detail: "Unauthorized" };
+		const cases: [string, Response, number, object][] = [
 			["no origin", await send(a.browser, "", { Cookie: cookies(a.browser) }), 403, refused],
 			["foreign origin", await send(a.browser, "", { ...good(a.browser), Origin: "https://evil.example" }), 403, refused],
 			["same-site origin", await send(a.browser, "", { ...good(a.browser), Origin: "http://app.localhost", "Sec-Fetch-Site": "same-site" }), 403, refused],
 			["foreign PUT", await send(a.browser, "?name=a.txt", { ...good(a.browser), Origin: "https://evil.example" }, "PUT"), 403, refused],
-			["PUT", await send(a.browser, "?name=a.txt", good(a.browser), "PUT"), 405, "Use POST."],
-			["GET", await send(a.browser, "?name=a.txt", {}, "GET"), 405, "Use POST."],
-			["no name", await send(a.browser, "", good(a.browser)), 400, "Name the file with ?name=."],
-			["two names", await send(a.browser, "?name=a&name=b", good(a.browser)), 400, "Name the file with ?name=."],
-			["anonymous", await send(new Browser(), "?name=a.txt", { Origin: ORIGIN }), 401, "Unauthorized"],
-			["same origin by Sec-Fetch-Site", await send(new Browser(), "?name=a.txt", { "Sec-Fetch-Site": "same-origin" }), 401, "Unauthorized"],
-			["not a member", await send(grace.browser, "?name=a.txt", good(grace.browser)), 401, "Unauthorized"],
+			["PUT", await send(a.browser, "?name=a.txt", good(a.browser), "PUT"), 405, usePost],
+			["GET", await send(a.browser, "?name=a.txt", {}, "GET"), 405, usePost],
+			["no name", await send(a.browser, "", good(a.browser)), 400, nameIt],
+			["two names", await send(a.browser, "?name=a&name=b", good(a.browser)), 400, nameIt],
+			["anonymous", await send(new Browser(), "?name=a.txt", { Origin: ORIGIN }), 401, unauthorized],
+			["same origin by Sec-Fetch-Site", await send(new Browser(), "?name=a.txt", { "Sec-Fetch-Site": "same-origin" }), 401, unauthorized],
+			["not a member", await send(grace.browser, "?name=a.txt", good(grace.browser)), 401, unauthorized],
 		];
-		for (const [name, response, status, detail] of cases) expect([name, response.status, await response.json()]).toEqual([name, status, { detail }]);
+		for (const [name, response, status, body] of cases) expect([name, response.status, await response.json()]).toEqual([name, status, body]);
 		// Over the upload limit (50 MB), by its declared length.
 		const big = await a.browser.fetcher(
 			new Request(`${ORIGIN}${path}?name=big.bin`, {
@@ -596,7 +599,7 @@ describe("uploads", () => {
 				body: new Uint8Array(52_428_801),
 			}),
 		);
-		expect([big.status, await big.json()]).toEqual([413, { detail: "A file can be at most 50 MB." }]);
+		expect([big.status, await big.json()]).toEqual([413, { code: "FILE_TOO_LARGE", detail: "A file can be at most 50 MB." }]);
 		expect((await env.FILES.list({ prefix: `uploads/${a.ws}/` })).objects).toEqual([]);
 	});
 
@@ -623,7 +626,7 @@ describe("uploads", () => {
 		const arriving = async () => (await env.FILES.list({ prefix: `uploads/${a.ws}/` })).objects.length;
 		await sleep(300);
 		const fourth = await upload(a, "fast");
-		expect([fourth.status, fourth.body]).toEqual([429, { detail: "You are uploading too many files at once." }]);
+		expect([fourth.status, fourth.body]).toEqual([429, { code: "TOO_MANY_UPLOADS_AT_ONCE", detail: "You are uploading too many files at once." }]);
 		for (const hold of held) hold.resolve();
 		expect((await Promise.all(slow)).map((response) => response.status)).toEqual([201, 201, 201]);
 		expect(await arriving()).toBe(3);
@@ -631,7 +634,7 @@ describe("uploads", () => {
 		for (let i = 0; i < 25; i++) await uploaded(a, `n${i}`, `n${i}.txt`);
 		const racing = await Promise.all([0, 1, 2].map((i) => upload(a, `r${i}`, `r${i}.txt`)));
 		expect(racing.map((answer) => answer.status).sort()).toEqual([201, 201, 429]);
-		expect(racing.find((answer) => answer.status === 429)?.body).toEqual({ detail: "You have too many files waiting to be sent. Send or remove some, or try again tomorrow." });
+		expect(racing.find((answer) => answer.status === 429)?.body).toEqual({ code: "TOO_MANY_UPLOADS_WAITING", detail: "You have too many files waiting to be sent. Send or remove some, or try again tomorrow." });
 		expect((await upload(a, "one more")).status).toBe(429);
 	}, 60_000);
 
@@ -641,13 +644,13 @@ describe("uploads", () => {
 		const ids = [];
 		for (let i = 0; i < 11; i++) ids.push(await uploaded(a, `file ${i}`, `f${i}.txt`));
 		const tooMany = await post(a, conversation, "", ids);
-		expect([tooMany.status, tooMany.body]).toEqual([400, { detail: "Attach at most 10 files to a message." }]);
+		expect([tooMany.status, tooMany.body]).toEqual([400, { code: "TOO_MANY_ATTACHMENTS", detail: "Attach at most 10 files to a message." }]);
 		const twice = await post(a, conversation, "hi", [ids[0] as string, ids[0] as string]);
-		expect([twice.status, twice.body]).toEqual([400, { detail: "A file is attached twice." }]);
+		expect([twice.status, twice.body]).toEqual([400, { code: "ATTACHED_TWICE", detail: "A file is attached twice." }]);
 		const grace = await account("grace");
 		const theirs = await uploaded(grace, "theirs");
 		const foreign = await post(a, conversation, "hi", [theirs]);
-		expect([foreign.status, foreign.body]).toEqual([400, { detail: "An attached file is no longer available. Remove it and attach it again." }]);
+		expect([foreign.status, foreign.body]).toEqual([400, { code: "ATTACHMENT_UNAVAILABLE", detail: "An attached file is no longer available. Remove it and attach it again." }]);
 		const detail = await a.browser.call("GET", `/api/workspaces/${a.ws}/conversations/${conversation}`);
 		expect([detail.body.title, detail.body.messages, detail.body.runs]).toEqual(["", [], []]);
 		const answer = await post(a, conversation, "", ids.slice(0, 2));
@@ -714,7 +717,7 @@ describe("files and downloads", () => {
 		const download = `/api/workspaces/${a.ws}/conversations/${conversation}/files/download`;
 		for (const query of ["path=missing.txt", "path=notes.txt&version=nope", `path=notes.txt&version=${other.base}`, ""]) {
 			const answer = await a.browser.call("GET", `${download}?${query}`);
-			expect([query, answer.status, answer.body]).toEqual([query, 404, { detail: "Not Found" }]);
+			expect([query, answer.status, answer.body]).toEqual([query, 404, { code: "NOT_FOUND", detail: "Not found." }]);
 		}
 		const link = (await a.browser.fetch(`${download}?path=notes.txt`, { redirect: "manual" })).headers.get("Location") as string;
 		const now = Date.now();

@@ -25,9 +25,9 @@ describe("deleting a conversation", () => {
 		// Its blobs are gone, so they no longer count.
 		expect(h.core.usedBytes()).toBe(0);
 		// From the tombstone on, nothing starts in it and it is not listed.
-		expect((await begin(h, { conversationId: input.conversationId })).answer).toEqual({ ok: false, refusal: { status: 404, detail: NOT_FOUND } });
+		expect((await begin(h, { conversationId: input.conversationId })).answer).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: NOT_FOUND } });
 		expect(await h.core.listConversations(ADA)).toEqual([]);
-		expect(await h.core.deleteConversation(ADA, input.conversationId)).toEqual({ ok: false, refusal: { status: 404, detail: NOT_FOUND } });
+		expect(await h.core.deleteConversation(ADA, input.conversationId)).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: NOT_FOUND } });
 		expect(h.core.nextWake()).toBe(h.timers.now() + PURGE_AGAIN_MS);
 		await h.timers.advance(PURGE_AGAIN_MS);
 		await h.core.alarm();
@@ -97,14 +97,14 @@ describe("deleting a conversation", () => {
 		const { input } = await begin(h);
 		await h.core.deleteConversation(ADA, input.conversationId);
 		expect(outbox(h)).toMatchObject([{ reason: "cancelled", ack_state: "tombstoned" }]);
-		expect(await h.core.beginRun(input)).toEqual({ ok: false, refusal: { status: 409, detail: "Stopped." } });
+		expect(await h.core.beginRun(input)).toEqual({ ok: false, refusal: { code: "RUN_STOPPED", detail: "Stopped." } });
 		expect(await h.core.activate(input.runId)).toEqual({ state: "revoked", reason: "cancelled" });
 	});
 
 	test("only the caller's own", async () => {
 		const h = await harness();
 		const theirs = await conversation(h, GRACE);
-		expect(await h.core.deleteConversation(ADA, theirs)).toEqual({ ok: false, refusal: { status: 404, detail: NOT_FOUND } });
+		expect(await h.core.deleteConversation(ADA, theirs)).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: NOT_FOUND } });
 		expect(h.conversations.destroyed).toEqual([]);
 	});
 });

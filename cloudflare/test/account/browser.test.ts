@@ -542,8 +542,7 @@ describe("the browser walk on the test Worker", () => {
 		await field("Verification code").waitFor();
 		await screenshot("verify-email");
 		await field("Verification code").fill(await emailedCode(EMAIL, /Please Confirm Your Email Address/));
-		// Verified, the page signs in with the password it still holds.
-		await paced("/sign-in/email");
+		// Verifying signs in.
 		await button("Verify email").click();
 
 		// The first-run setup, claimed with the key on its page.
@@ -558,9 +557,9 @@ describe("the browser walk on the test Worker", () => {
 		workspaceId = await inApp();
 		await screenshot("signed-up");
 		expect((await api<{ needed: boolean }>("GET", "/api/setup")).body).toEqual({ needed: false });
-		const me = await api<{ user: { email: string; is_staff: boolean } }>("GET", "/api/me");
+		const me = await api<{ user: { email: string; role: "admin" | "user" } }>("GET", "/api/me");
 		expect(me.body.user.email).toBe(EMAIL);
-		expect(me.body.user.is_staff).toBe(true);
+		expect(me.body.user.role).toBe("admin");
 
 		// The instance admin page, from the sidebar's link (shown to admins only), with this admin listed.
 		await page.getByRole("link", { name: "Instance", exact: true }).click();

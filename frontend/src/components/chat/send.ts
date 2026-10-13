@@ -25,23 +25,28 @@ export function newSend(path: ConversationPath, body: MessageIn): Send {
   return { path, body, key }
 }
 
-/** A send that failed. `status` is the server's answer, missing when the request did not reach it. */
+/** A send that failed. `status` is the server's answer, missing when the request did not reach it; `code` is
+ * the refusal's, missing when the answer was not our server's. */
 export class SendError extends Error {
+  readonly code: string | undefined
+
   constructor(
     readonly status: number | undefined,
     error: unknown,
   ) {
     super(errorMessage(error))
+    const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined
+    this.code = typeof code === 'string' ? code : undefined
   }
 
-  /** The server refused the message before any run started (4xx, or 503 while it is busy), so the composer may
-   * have it back. Anything else may have started the run. */
+  /** The server refused the message before any run started (4xx, or a start that failed and left nothing
+   * behind), so the composer may have it back. Anything else may have started the run. */
   get refused(): boolean {
     const status = this.status ?? 0
-    return (status >= 400 && status < 500) || status === 503
+    return (status >= 400 && status < 500) || this.code === 'START_FAILED'
   }
 
-  /** The answer of a server that is briefly not there: a proxy's, a restart's, a revocation still stopping. */
+  /** The answer of a server that is briefly not there (a proxy's, a restart's), or a start worth sending again. */
   get transient(): boolean {
     return this.status === undefined || this.status === 502 || this.status === 503 || this.status === 504
   }

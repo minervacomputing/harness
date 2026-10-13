@@ -110,23 +110,17 @@ function withNarration(parts: Part[]): Part[] {
 
 /**
  * A finished turn: the final message replaces the answer that streamed, which is the text after the last tool call and
- * all text from the model call that wrote it (a tool call can finish while the answer streams). The last call to stream
- * text wrote the answer only if its text is the answer: a refusal, or an answer that did not stream, leaves the last
- * streamed text to be narration.
+ * all text from the model call that wrote it, as the `message` event names it (a tool call can finish while the answer
+ * streams). Events stored before the event named its call take the last call to stream text, which wrote the answer
+ * then: the Worker publishes the text of every call but a compaction's.
  */
 function finishedParts(events: EventOut[], answer: string): Part[] {
   const { parts, callOf } = collect(events)
   const lastTool = parts.findLastIndex(part => part.type === 'tool-call')
   const lastText = parts.findLast(part => part.type === 'text')
-  const lastCall = lastText && callOf.get(lastText)
-  const streamed = parts.flatMap(part => (part.type === 'text' && callOf.get(part) === lastCall ? [part.text] : [])).join('')
-  const answerCall = lastCall != null && squash(streamed) === squash(answer) ? lastCall : undefined
-  const kept = parts.filter((part, i) => part.type !== 'text' || (i < lastTool && (answerCall == null || callOf.get(part) !== answerCall)))
+  const answerCall = events.findLast(e => e.type === 'message')?.data.call ?? (lastText && callOf.get(lastText))
+  const kept = parts.filter((part, i) => part.type !== 'text' || (i < lastTool && callOf.get(part) !== answerCall))
   return [...withNarration(kept), { type: 'text', text: answer }]
-}
-
-function squash(text: string): string {
-  return text.replaceAll(/\s+/g, ' ').trim()
 }
 
 function latestStatus(events: EventOut[]): RunOut['status'] | undefined {

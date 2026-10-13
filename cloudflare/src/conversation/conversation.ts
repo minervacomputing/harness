@@ -44,7 +44,7 @@ import { type Json, parseJson } from "../lib/json.ts";
 import { isUuid, uuid7 } from "../lib/random.ts";
 import { appliedMigrations, migrate } from "../lib/sqlite.ts";
 import { sliceText } from "../lib/text.ts";
-import { MODEL_REF, MINERVA_API, MINERVA_PROVIDER, MODEL_ALIAS, minervaProvider, type ModelHost } from "../model/provider.ts";
+import { callOf, MODEL_REF, MINERVA_API, MINERVA_PROVIDER, MODEL_ALIAS, minervaProvider, type ModelHost } from "../model/provider.ts";
 import { routeOf } from "../model/route.ts";
 import { sandboxSpec } from "../sandbox/constants.ts";
 import { outputSink } from "../sandbox/sink.ts";
@@ -53,7 +53,7 @@ import { isReset, type ScriptsClient } from "../scripts/run.ts";
 import type { ScriptsApi } from "../scripts/scripts.ts";
 import { scriptTool } from "../scripts/tool.ts";
 import type { FolderOut, MessageIn, MessageOut } from "../shared/api.ts";
-import type { AttemptFence, Caller, Outcome, Refusal, RunId, VersionId } from "../shared/rpc.ts";
+import { type AttemptFence, type Caller, type Outcome, type Refusal, type RunId, type VersionId, refuse } from "../shared/rpc.ts";
 import { START_FAILED } from "../workspace/core.ts";
 import {
 	ACTING,
@@ -222,7 +222,7 @@ const LIVE_TASKS = ["pending", "running", "waiting", "completing"] as const;
 export const ATTEMPT_ENDED = "The attempt ended: ";
 
 /** A conversation, or a 404: another user's conversation looks like none. */
-const NOT_FOUND = { status: 404, detail: "Not Found" } as const;
+const NOT_FOUND = refuse("NOT_FOUND", "Not found.");
 
 type Job = { fn: string; payload?: unknown; job: { id: string; payload: unknown } };
 
@@ -320,7 +320,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	 */
 	async postMessage(caller: Caller, input: Required<MessageIn>, key: string | null = null): Promise<Outcome<PostedView>> {
 		const conversation = this.#owned(caller);
-		if (!conversation) return { ok: false, refusal: NOT_FOUND };
+		if (!conversation) return NOT_FOUND;
 		// MessageIn is validated by the Worker (20,000 characters, at most 100 UUIDs, no lone
 		// surrogate); anything else here is a bug, not a user's input.
 		if (
@@ -332,7 +332,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		) {
 			throw new TypeError("The Worker validates a message before it reaches the conversation.");
 		}
-		if (input.content.trim() === "" && input.attachments.length === 0) return { ok: false, refusal: { status: 400, detail: EMPTY_MESSAGE } };
+		if (input.content.trim() === "" && input.attachments.length === 0) return refuse("EMPTY_MESSAGE", EMPTY_MESSAGE);
 		const digest = key === null ? null : await messageDigest(input);
 		const runId = uuid7();
 		const decision = await this.#store.outside(() =>
@@ -348,8 +348,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				return "start";
 			}),
 		);
-		if (decision === "busy") return { ok: false, refusal: { status: 409, detail: BUSY_MESSAGE } };
-		if (decision === "reused") return { ok: false, refusal: { status: 422, detail: KEY_REUSED } };
+		if (decision === "busy") return refuse("CONVERSATION_BUSY", BUSY_MESSAGE);
+		if (decision === "reused") return refuse("IDEMPOTENCY_KEY_REUSED", KEY_REUSED);
 		if (decision !== "start") return this.#replay(decision.replay);
 		return this.#begin(runId);
 	}
@@ -359,7 +359,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		if (this.#store.start(runId)) return this.#begin(runId);
 		const run = this.#store.run(runId);
 		const message = run ? this.#store.runMessage(runId) : null;
-		if (!run || !message) return { ok: false, refusal: NOT_FOUND };
+		if (!run || !message) return NOT_FOUND;
 		return { ok: true, value: this.#posted(message, run) };
 	}
 
@@ -460,7 +460,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	async #beginOnce(runId: RunId): Promise<Outcome<PostedView>> {
 		const start = this.#store.start(runId);
 		const conversation = this.#store.conversation();
-		if (!start || !conversation) return { ok: false, refusal: NOT_FOUND };
+		if (!start || !conversation) return NOT_FOUND;
 		const folder = this.#folder() as FolderPort;
 		const usage = folder.usage();
 		const uploadIds = idsOf(start);
@@ -529,12 +529,12 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			// again every time the watch sent it, holding the conversation busy: it is refused now instead, and
 			// its registration released (plan: Starting a run: a refusal leaves nothing behind).
 			this.#log("a start could not be stored", error);
-			return this.#refuseStart(runId, { ok: false, refusal: { status: 503, detail: START_FAILED } });
+			return this.#refuseStart(runId, refuse("START_FAILED", START_FAILED));
 		}
 		if (stored === null) {
 			// Deleted meanwhile: the registration is released. A run another flow stored is left alone.
 			if (this.#store.releases().includes(runId)) this.#defer(() => this.#releaseRefused(runId));
-			return { ok: false, refusal: NOT_FOUND };
+			return NOT_FOUND;
 		}
 		this.#touchIndex();
 		const run = this.#store.run(runId) as RunRow;
@@ -844,7 +844,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		const entry = entries.get(submission.answer) ?? (await this.#entry(run, submission.answer));
 		// The folder as the turn left it, before the turn counts as complete.
 		if (!(await this.#finishLocal(fence))) return;
-		await this.#complete(fence, answerText(entry));
+		await this.#complete(fence, answerOf(entry));
 	}
 
 	/** pi settled the run's submission while the object was away: reconcile from pi's record, stop what is left. */
@@ -867,7 +867,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	 * in that order, only while the attempt is current. An empty answer, or one past what a WorkerEvent could
 	 * carry, fails the run instead. Outside pi's transactions (store.ts `outside`), as every end.
 	 */
-	async #complete(fence: AttemptFence, text: string): Promise<void> {
+	async #complete(fence: AttemptFence, { text, call }: Answer): Promise<void> {
 		if (!text || text.length > ANSWER_CHARS) {
 			this.#log(text ? "the answer is too long" : "the model turn ended without a response");
 			await this.#fail(fence, WORKER_FAILED);
@@ -879,7 +879,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				const now = this.#store.now();
 				const id = uuid7(now);
 				this.#store.insertMessage({ id, role: "assistant", content: text, attachments: [], runId: fence.runId, createdAt: now });
-				this.#store.append(fence.runId, { type: "message", data: { id, content: text } });
+				this.#store.append(fence.runId, { type: "message", data: { id, content: text, ...(call === undefined ? {} : { call }) } });
 				this.#store.finish(fence.runId, COMPLETED, { attempt: fence.attempt });
 			}),
 		);
@@ -1544,14 +1544,17 @@ async function replay(tx: Tx, id: PiConversationId, history: { role: "user" | "a
 	}
 }
 
-/** The answer: the text blocks of the assistant message joined and trimmed. */
-function answerText(entry: EntryRecord | undefined): string {
+type Answer = { text: string; call: string | undefined };
+
+/** The answer: the text blocks of the assistant message joined and trimmed, and the model call that wrote it. */
+function answerOf(entry: EntryRecord | undefined): Answer {
 	const message = entry?.model?.[0];
-	if (message?.role !== "assistant") return "";
-	return message.content
+	if (message?.role !== "assistant") return { text: "", call: undefined };
+	const text = message.content
 		.flatMap((block) => (block.type === "text" ? [block.text] : []))
 		.join("")
 		.trim();
+	return { text, call: callOf(message) };
 }
 
 /** Settles like `promise`, or rejects after `ms`, leaving it to run on. */

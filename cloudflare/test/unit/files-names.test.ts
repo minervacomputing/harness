@@ -144,16 +144,16 @@ describe("an upload's request, before its body", () => {
 
 	test("POST, one Content-Length of digits at most the limit, then exactly one name, cleaned", () => {
 		expect(checkUploadRequest(request({}), 10)).toEqual({ ok: true, value: { size: 5, name: "Q3 report.pdf" } });
-		expect(checkUploadRequest(request({ method: "PUT", length: null, query: "" }), 10)).toEqual({ ok: false, refusal: { status: 405, detail: "Use POST." } });
-		expect(checkUploadRequest(request({ length: null, query: "" }), 10)).toEqual({ ok: false, refusal: { status: 411, detail: "Send a Content-Length." } });
+		expect(checkUploadRequest(request({ method: "PUT", length: null, query: "" }), 10)).toEqual({ ok: false, refusal: { code: "METHOD_NOT_ALLOWED", detail: "Use POST." } });
+		expect(checkUploadRequest(request({ length: null, query: "" }), 10)).toEqual({ ok: false, refusal: { code: "LENGTH_REQUIRED", detail: "Send a Content-Length." } });
 		// The runtime strips a header value's surrounding whitespace.
 		for (const length of ["-5", "", "5, 5", "0x5", "5.0", "+5"]) {
-			expect(checkUploadRequest(request({ length, query: "" }), 10)).toEqual({ ok: false, refusal: { status: 400, detail: "Invalid Content-Length." } });
+			expect(checkUploadRequest(request({ length, query: "" }), 10)).toEqual({ ok: false, refusal: { code: "INVALID_CONTENT_LENGTH", detail: "Invalid Content-Length." } });
 		}
-		expect(checkUploadRequest(request({ length: "11", query: "" }), 10)).toEqual({ ok: false, refusal: { status: 413, detail: "A file can be at most 0.00000953674 MB." } });
-		expect(checkUploadRequest(request({ length: "52428801", query: "" }), 52_428_800)).toEqual({ ok: false, refusal: { status: 413, detail: "A file can be at most 50 MB." } });
+		expect(checkUploadRequest(request({ length: "11", query: "" }), 10)).toEqual({ ok: false, refusal: { code: "FILE_TOO_LARGE", detail: "A file can be at most 0.00000953674 MB." } });
+		expect(checkUploadRequest(request({ length: "52428801", query: "" }), 52_428_800)).toEqual({ ok: false, refusal: { code: "FILE_TOO_LARGE", detail: "A file can be at most 50 MB." } });
 		for (const query of ["", "?name=", "?name=a&name=b", "?other=1", "?name=%ff"]) {
-			expect(checkUploadRequest(request({ query }), 10)).toEqual({ ok: false, refusal: { status: 400, detail: "Name the file with ?name=." } });
+			expect(checkUploadRequest(request({ query }), 10)).toEqual({ ok: false, refusal: { code: "FILE_NAME_MISSING", detail: "Name the file with ?name=." } });
 		}
 		expect(checkUploadRequest(request({ length: "0", query: "?name=.." }), 10)).toEqual({ ok: true, value: { size: 0, name: "file" } });
 	});

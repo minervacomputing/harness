@@ -319,7 +319,7 @@ export async function harness(options: { settings?: Partial<WorkspaceSettings>; 
 /** The connection's decrypted credentials, as stored. */
 /** The access of an answer that must have one. */
 export function accessOf(outcome: Outcome<AccessOut>): AccessOut {
-	if (!outcome.ok) throw new Error(`No access: ${outcome.refusal.status} ${outcome.refusal.detail}`);
+	if (!outcome.ok) throw new Error(`No access: ${outcome.refusal.code} ${outcome.refusal.detail}`);
 	return outcome.value;
 }
 

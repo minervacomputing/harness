@@ -1345,9 +1345,13 @@
             "title": "Id",
             "type": "string"
           },
-          "is_staff": {
-            "title": "Is Staff",
-            "type": "boolean"
+          "role": {
+            "enum": [
+              "admin",
+              "user"
+            ],
+            "title": "Role",
+            "type": "string"
           },
           "name": {
             "title": "Name",
@@ -1358,7 +1362,7 @@
           "id",
           "email",
           "name",
-          "is_staff"
+          "role"
         ],
         "title": "UserOut",
         "type": "object"

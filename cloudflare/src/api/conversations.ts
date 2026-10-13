@@ -22,7 +22,7 @@ import type { Conversation } from "../conversation/conversation.ts";
 import { START_KEY } from "../conversation/start-keys.ts";
 import type { ConversationHead, RunHead } from "../conversation/store.ts";
 import { downloadLinkFor } from "../files/links.ts";
-import { HttpError, detail, json, notFound, unauthorized, validationError } from "../http/errors.ts";
+import { HttpError, json, notFound, refused, unauthorized, validationError } from "../http/errors.ts";
 import { UUID } from "../http/paths.ts";
 import type { App, AppEnv } from "../http/router.ts";
 import type { ConversationId, RunId } from "../shared/rpc.ts";
@@ -53,20 +53,16 @@ type ConversationStub = DurableObjectStub<Conversation>;
 /** Events per page while a body is streamed; the object also stops a page at 4 MiB. */
 const EVENT_PAGE = 1000;
 
-function debugOf(c: Context<AppEnv>): boolean {
-	return settings(c.env).debug;
-}
-
-/** The caller's conversation in this workspace, or `get_object_or_404`'s 404. */
+/** The caller's conversation in this workspace, or 404. */
 async function ownConversation(c: Context<AppEnv>, m: Member, conversationId: ConversationId): Promise<ConversationStub> {
-	if (!(await m.object.ownsConversation(m.caller, conversationId))) throw new HttpError(notFound("No Conversation matches the given query.", debugOf(c)));
+	if (!(await m.object.ownsConversation(m.caller, conversationId))) throw new HttpError(notFound());
 	return conversationObject(c.env, m.workspace, conversationId);
 }
 
 /** The object of the caller's run in this workspace, or 404. */
 async function ownRun(c: Context<AppEnv>, m: Member, runId: RunId): Promise<ConversationStub> {
 	const located = await m.object.locateRun(m.caller, runId);
-	if (located === null) throw new HttpError(notFound("No Run matches the given query.", debugOf(c)));
+	if (located === null) throw new HttpError(notFound());
 	return conversationObject(c.env, m.workspace, located.conversationId);
 }
 
@@ -80,7 +76,7 @@ function wellFormed(content: string): void {
 function startKey(request: Request): string | null {
 	const key = request.headers.get(IDEMPOTENCY_KEY);
 	if (key === null) return null;
-	if (!START_KEY.test(key)) throw new HttpError(detail(400, INVALID_KEY));
+	if (!START_KEY.test(key)) throw new HttpError(refused("INVALID_IDEMPOTENCY_KEY", INVALID_KEY));
 	return key;
 }
 
@@ -137,14 +133,14 @@ function conversationBody(stub: ConversationStub, m: Member, head: ConversationH
 }
 
 /**
- * `GET …/files/download?path=&version=`: signed out 401; anything else wrong 404 "Not Found"
+ * `GET …/files/download?path=&version=`: signed out 401; anything else wrong 404
  * (not a member, an invalid version, another user's conversation, a checkpoint, no such path). A file
  * found is a 302 to a link signed for the download origin, good for five minutes.
  */
 async function download(c: Context<AppEnv>): Promise<Response> {
 	const session = await currentSession(c.env, c.req.raw);
 	if (!session.user || !session.sessionId) return withSessionCookies(unauthorized(), session);
-	const missing = () => withSessionCookies(detail(404, "Not Found"), session);
+	const missing = () => withSessionCookies(notFound(), session);
 	let m: Member;
 	try {
 		m = await member(c.env, session, param(c, "workspace"));
@@ -188,7 +184,7 @@ export function conversationRoutes(app: App): void {
 		memberRoute(async (c, m) => {
 			const stub = await ownConversation(c, m, param(c, "conversation"));
 			const head = await stub.getConversation(m.caller);
-			if (head === null) return notFound("No Conversation matches the given query.", debugOf(c));
+			if (head === null) return notFound();
 			return conversationBody(stub, m, head);
 		}),
 	);
@@ -218,7 +214,7 @@ export function conversationRoutes(app: App): void {
 			const query = readQuery(c.req.raw, FilesQuery);
 			const stub = await ownConversation(c, m, param(c, "conversation"));
 			const folder = await stub.listFiles(m.caller, query.version ?? null);
-			return folder === null ? notFound("No FolderVersion matches the given query.", debugOf(c)) : json(200, folder);
+			return folder === null ? notFound() : json(200, folder);
 		}),
 	);
 
@@ -238,7 +234,7 @@ export function conversationRoutes(app: App): void {
 			const runId = param(c, "run");
 			const stub = await ownRun(c, m, runId);
 			const run = await stub.getRun(m.caller, runId);
-			return run === null ? notFound("No Run matches the given query.", debugOf(c)) : runBody(stub, m, run);
+			return run === null ? notFound() : runBody(stub, m, run);
 		}),
 	);
 
@@ -248,7 +244,7 @@ export function conversationRoutes(app: App): void {
 			const runId = param(c, "run");
 			const stub = await ownRun(c, m, runId);
 			const run = await stub.cancelRun(m.caller, runId);
-			return run === null ? notFound("No Run matches the given query.", debugOf(c)) : runBody(stub, m, run);
+			return run === null ? notFound() : runBody(stub, m, run);
 		}),
 	);
 }

@@ -11,15 +11,15 @@ import { filesBucket } from "../addressing.ts";
 import { settings } from "../config.ts";
 import { checkUploadRequest, receiveUpload } from "../files/uploads.ts";
 import { USE_POST } from "../files/limits.ts";
-import { HttpError, detail, json, unauthorized } from "../http/errors.ts";
+import { HttpError, json, refused, unauthorized } from "../http/errors.ts";
 import { UPLOAD_ROUTE } from "../http/paths.ts";
 import type { App, AppEnv } from "../http/router.ts";
-import { type Member, member, param, refused } from "./members.ts";
+import { type Member, member, param } from "./members.ts";
 
 async function upload(c: Context<AppEnv>): Promise<Response> {
 	const config = settings(c.env);
 	const checked = checkUploadRequest(c.req.raw, config.files.uploadBytes);
-	if (!checked.ok) return refused(checked.refusal);
+	if (!checked.ok) return refused(checked.refusal.code, checked.refusal.detail);
 	const session = await currentSession(c.env, c.req.raw);
 	if (!session.user || !session.sessionId) return withSessionCookies(unauthorized(), session);
 	let m: Member;
@@ -38,11 +38,11 @@ async function upload(c: Context<AppEnv>): Promise<Response> {
 		}
 	};
 	const outcome = await receiveUpload(m.object, filesBucket(c.env, m.workspace), m.caller, { ...checked.value, body: c.req.raw.body }, { waitUntil });
-	return withSessionCookies(outcome.ok ? json(201, outcome.value) : refused(outcome.refusal), session);
+	return withSessionCookies(outcome.ok ? json(201, outcome.value) : refused(outcome.refusal.code, outcome.refusal.detail), session);
 }
 
 export function uploadRoutes(app: App): void {
 	app.post(UPLOAD_ROUTE, upload);
 	// Every other method is "Use POST.", after the router's CSRF check.
-	app.on(["GET", "PUT", "PATCH", "DELETE", "OPTIONS"], UPLOAD_ROUTE, () => detail(405, USE_POST));
+	app.on(["GET", "PUT", "PATCH", "DELETE", "OPTIONS"], UPLOAD_ROUTE, () => refused("METHOD_NOT_ALLOWED", USE_POST, { Allow: "POST" }));
 }

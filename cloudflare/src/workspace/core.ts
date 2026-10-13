@@ -29,7 +29,6 @@ import type {
 	ConversationId,
 	EpochMs,
 	Outcome,
-	Refusal,
 	RunId,
 	RunStatus,
 	Sha256,
@@ -37,6 +36,7 @@ import type {
 	UserId,
 	WorkspaceRef,
 } from "../shared/rpc.ts";
+import { refuse } from "../shared/rpc.ts";
 import { EXPIRED, asPayload, expiresAtOf, keepRefreshToken, needsRefresh, planRefresh, type RefreshResult, scopesOf } from "./credentials.ts";
 import {
 	ATTACHED_TWICE,
@@ -131,7 +131,7 @@ export interface ConnectionAccount {
  * generation, scopes, refresh state), permission layers and grants, agents, unattached uploads with their
  * reservations, the registry of runs, the revocation outbox and byte counters; an index of conversations.
  * Reached only by typed RPC from our own code, after the Worker checked membership in D1. `Caller` is the
- * Worker's verified user and role; every refusal is `{status, detail}`.
+ * Worker's verified user and role; every refusal is `{code, detail}` (shared/rpc.ts REFUSALS).
  */
 export interface WorkspaceApi {
 	/**
@@ -166,8 +166,8 @@ export interface WorkspaceApi {
 	/** 403 for a shared connection and a non-admin; revokes the caller's runs (`connection_removed`). */
 	deleteConnection(caller: Caller, connectionId: ConnectionId): Promise<Outcome<{ revocation: Revocation }>>;
 	/**
-	 * `_usable`, then the caller's access: 404 "Not Found" when the connection does not exist, "Not found."
-	 * when it is another user's personal one. Never calls the provider. The Worker reads a connection's
+	 * `#usable`, then the caller's access: 404 `NOT_FOUND` when the connection does not exist or is another
+	 * user's personal one. Never calls the provider. The Worker reads a connection's
 	 * provider, owner and the caller's grants from this before every settings request.
 	 */
 	getAccess(caller: Caller, connectionId: ConnectionId): Promise<Outcome<AccessOut>>;
@@ -296,9 +296,7 @@ export const CREATE_TTL_MS = 10 * 60 * 1000;
 /** Display names are kept to 300 characters (UTF-16 code units), never cutting one in half. */
 const RESOURCE_NAME_MAX = 300;
 
-export const NOT_FOUND = "Not Found";
-/** The refusal of another user's connection, which differs from a missing one's. */
-export const NOT_YOURS = "Not found.";
+export const NOT_FOUND = "Not found.";
 export const RUN_ENDED = "This run is no longer active.";
 export const CHOOSE_CONNECTIONS = "Choose connections you can use.";
 export const CANNOT_CHANGE = "You cannot change this agent.";
@@ -309,14 +307,8 @@ export const START_FAILED = "The agent could not finish this run. Try again.";
 
 export const DEFAULT_AGENT = { name: "Assistant", instructions: "You are a helpful, concise assistant.", modelAlias: "default" } as const;
 
-type Status = Refusal["status"];
-
 function ok<T>(value: T): Outcome<T> {
 	return { ok: true, value };
-}
-
-function refuse<T>(status: Status, detail: string): Outcome<T> {
-	return { ok: false, refusal: { status, detail } };
 }
 
 /** How a run stopped from outside ends (conversation/events.ts `RunEnd`). */
@@ -623,11 +615,11 @@ export class WorkspaceCore implements WorkspaceApi {
 		return first<ConnectionRow>(this.#sql, "SELECT * FROM connections WHERE provider = ? AND external_account_id = ?", provider, accountId);
 	}
 
-	/** `_usable`: the caller's own or a shared connection; another user's personal one is "Not found.". */
+	/** The caller's own or a shared connection; another user's personal one is not found, as a missing one. */
 	#usable(caller: Caller, id: ConnectionId): Outcome<ConnectionRow> {
 		const row = this.#connection(id);
-		if (row === null) return refuse(404, NOT_FOUND);
-		if (row.owner_id !== null && row.owner_id !== caller.userId) return refuse(404, NOT_YOURS);
+		if (row === null) return refuse("NOT_FOUND", NOT_FOUND);
+		if (row.owner_id !== null && row.owner_id !== caller.userId) return refuse("NOT_FOUND", NOT_FOUND);
 		return ok(row);
 	}
 
@@ -665,7 +657,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		if (!usable.ok) return usable;
 		const connector = this.#registry.find(usable.value.provider);
 		// A connection whose connector is gone is not found.
-		if (connector === null) return refuse(404, NOT_FOUND);
+		if (connector === null) return refuse("NOT_FOUND", NOT_FOUND);
 		return ok(accessOut(connector, this.#view(usable.value), this.#userGrants(connectionId, caller.userId)));
 	}
 
@@ -725,8 +717,8 @@ export class WorkspaceCore implements WorkspaceApi {
 
 	async enableBuiltin(caller: Caller, provider: string): Promise<Outcome<ConnectionOut>> {
 		const connector = this.#registry.find(provider);
-		if (connector === null) return refuse(404, UNKNOWN_PROVIDER);
-		if (connector.auth.type !== "builtin") return refuse(422, `${connector.name} is connected through its own sign-in.`);
+		if (connector === null) return refuse("UNKNOWN_PROVIDER", UNKNOWN_PROVIDER);
+		if (connector.auth.type !== "builtin") return refuse("WRONG_CONNECTION_METHOD", `${connector.name} is connected through its own sign-in.`);
 		// One per user, found again by its account id, the user's id.
 		const found = this.#connectionByAccount(provider, caller.userId);
 		if (found !== null) return ok(this.#connectionOut(caller, found) as ConnectionOut);
@@ -745,7 +737,7 @@ export class WorkspaceCore implements WorkspaceApi {
 
 	async saveConnection(caller: Caller, input: SaveConnectionInput): Promise<Outcome<ConnectionOut>> {
 		const connector = this.#registry.find(input.provider);
-		if (connector === null) return refuse(404, UNKNOWN_PROVIDER);
+		if (connector === null) return refuse("UNKNOWN_PROVIDER", UNKNOWN_PROVIDER);
 		const tokens = input.credentials as unknown as JsonObject;
 		const account = { id: storable(input.account.id), label: storable(input.account.label) };
 		const apiKey = connector.auth.type === "api_key";
@@ -754,17 +746,17 @@ export class WorkspaceCore implements WorkspaceApi {
 		for (let round = 0; round < 5; round++) {
 			let target: ConnectionRow | null;
 			if (input.connectionId !== null) {
-				// `_target`: renewing one connection needs the same provider and the same account.
+				// Renewing one connection needs the same provider and the same account.
 				target = this.#connection(input.connectionId);
-				if (target === null || target.provider !== connector.slug) return refuse(422, `This ${connector.name} connection was removed. Connect it again.`);
+				if (target === null || target.provider !== connector.slug) return refuse("CONNECTION_REMOVED", `This ${connector.name} connection was removed. Connect it again.`);
 				// The Worker checks these before asking the provider; checked again where the row is.
-				if (target.owner_id !== null && target.owner_id !== caller.userId) return refuse(404, NOT_YOURS);
+				if (target.owner_id !== null && target.owner_id !== caller.userId) return refuse("NOT_FOUND", NOT_FOUND);
 				if (target.owner_id === null && !isAdmin(caller)) {
-					return refuse(403, apiKey ? "Only workspace admins can replace the key of shared connections." : "Only workspace admins can reconnect shared connections.");
+					return refuse("WORKSPACE_ADMINS_ONLY", apiKey ? "Only workspace admins can replace the key of shared connections." : "Only workspace admins can reconnect shared connections.");
 				}
 				if (target.external_account_id !== account.id) {
 					return refuse(
-						422,
+						"DIFFERENT_ACCOUNT",
 						apiKey
 							? `This key is for a different ${connector.name} account. Use a key for ${target.label}.`
 							: `You signed in to a different ${connector.name} account. Sign in as ${target.label}.`,
@@ -775,7 +767,7 @@ export class WorkspaceCore implements WorkspaceApi {
 			}
 			// A shared connection (no owner) is only renewed through its own flow, which admins start.
 			const shared = target !== null && target.owner_id === null && input.connectionId !== null;
-			if (target !== null && target.owner_id !== caller.userId && !shared) return refuse(422, ALREADY_CONNECTED);
+			if (target !== null && target.owner_id !== caller.userId && !shared) return refuse("ALREADY_CONNECTED", ALREADY_CONNECTED);
 			// A refresh in flight may be rotating the refresh token this save would keep: let it finish first,
 			// then read again, so the token kept is the one it stored.
 			const refreshing = target === null ? undefined : this.#refreshes.get(target.id);
@@ -813,7 +805,7 @@ export class WorkspaceCore implements WorkspaceApi {
 	async deleteConnection(caller: Caller, connectionId: ConnectionId): Promise<Outcome<{ revocation: Revocation }>> {
 		const usable = this.#usable(caller, connectionId);
 		if (!usable.ok) return usable;
-		if (usable.value.owner_id === null && !isAdmin(caller)) return refuse(403, "Only workspace admins can remove shared connections.");
+		if (usable.value.owner_id === null && !isAdmin(caller)) return refuse("WORKSPACE_ADMINS_ONLY", "Only workspace admins can remove shared connections.");
 		const now = this.#now();
 		const entries = this.#commit(() => {
 			// Its grants cascade and it leaves every agent; the deleting user's runs stop.
@@ -835,11 +827,11 @@ export class WorkspaceCore implements WorkspaceApi {
 		if (!usable.ok) return usable;
 		const connection = usable.value;
 		const connector = this.#registry.find(connection.provider);
-		if (connector === null) return refuse(404, NOT_FOUND);
+		if (connector === null) return refuse("NOT_FOUND", NOT_FOUND);
 		try {
 			checkChanges(connector, connectionId, changes);
 		} catch (error) {
-			if (error instanceof InvalidGrants) return refuse(422, error.message);
+			if (error instanceof InvalidGrants) return refuse("INVALID_ACCESS_CHANGE", error.message);
 			throw error;
 		}
 		const named = new Map<string, string>();
@@ -884,7 +876,7 @@ export class WorkspaceCore implements WorkspaceApi {
 				return { entries, access: accessOut(connector, this.#view(connection), this.#userGrants(connectionId, caller.userId)) };
 			});
 		} catch (error) {
-			if (error instanceof InvalidGrants) return refuse(422, error.message);
+			if (error instanceof InvalidGrants) return refuse("INVALID_ACCESS_CHANGE", error.message);
 			throw error;
 		}
 		const revocation = await this.#deliver(saved.entries);
@@ -1033,7 +1025,7 @@ export class WorkspaceCore implements WorkspaceApi {
 	}
 
 	/**
-	 * `_connections`: every id names a connection of the workspace, and every added one (not kept from
+	 * Every id names a connection of the workspace, and every added one (not kept from
 	 * before) is usable by the editor. Ones the agent already has may stay as they are, so a connection that
 	 * needs reconnecting, or belongs to someone else, does not block other changes.
 	 */
@@ -1078,14 +1070,14 @@ export class WorkspaceCore implements WorkspaceApi {
 			this.#setAgentConnections(id, connections);
 			return this.#agentRow(id) as AgentRow;
 		});
-		return row === null ? refuse(422, CHOOSE_CONNECTIONS) : ok(agentOut(caller, this.#agentView(row)));
+		return row === null ? refuse("CHOOSE_CONNECTIONS", CHOOSE_CONNECTIONS) : ok(agentOut(caller, this.#agentView(row)));
 	}
 
-	/** `_editable`: 404, then 403 unless the caller owns the agent or administers the workspace. */
+	/** 404, then 403 unless the caller owns the agent or administers the workspace. */
 	#editable(caller: Caller, agentId: AgentId): Outcome<AgentRow> {
 		const row = this.#agentRow(agentId);
-		if (row === null) return refuse(404, NOT_FOUND);
-		if (row.owner_id !== caller.userId && !isAdmin(caller)) return refuse(403, CANNOT_CHANGE);
+		if (row === null) return refuse("NOT_FOUND", NOT_FOUND);
+		if (row.owner_id !== caller.userId && !isAdmin(caller)) return refuse("CANNOT_CHANGE_AGENT", CANNOT_CHANGE);
 		return ok(row);
 	}
 
@@ -1107,7 +1099,7 @@ export class WorkspaceCore implements WorkspaceApi {
 			// As saved: the agent may change again, or go, while the cancels are delivered.
 			return { entries, agent: agentOut(caller, this.#agentView(this.#agentRow(agentId) as AgentRow)) };
 		});
-		if (saved === null) return refuse(422, CHOOSE_CONNECTIONS);
+		if (saved === null) return refuse("CHOOSE_CONNECTIONS", CHOOSE_CONNECTIONS);
 		return ok({ agent: saved.agent, revocation: await this.#deliver(saved.entries) });
 	}
 
@@ -1130,7 +1122,7 @@ export class WorkspaceCore implements WorkspaceApi {
 			this.#sql.exec("DELETE FROM agents WHERE id = ?", agentId);
 			return { entries, conversations };
 		});
-		if (deleted === null) return refuse(422, KEEP_ONE_AGENT);
+		if (deleted === null) return refuse("KEEP_ONE_AGENT", KEEP_ONE_AGENT);
 		const revocation = await this.#deliver(deleted.entries);
 		await this.#purgeNow(deleted.conversations);
 		return ok({ revocation });
@@ -1155,7 +1147,7 @@ export class WorkspaceCore implements WorkspaceApi {
 	}
 
 	async createConversation(caller: Caller, agentId: AgentId): Promise<Outcome<ConversationOut>> {
-		if (this.#agentRow(agentId) === null) return refuse(404, NOT_FOUND);
+		if (this.#agentRow(agentId) === null) return refuse("NOT_FOUND", NOT_FOUND);
 		const now = this.#now();
 		const id = uuid7(now);
 		const workspace = this.workspaceRef();
@@ -1174,7 +1166,7 @@ export class WorkspaceCore implements WorkspaceApi {
 			this.#sql.exec("UPDATE conversations SET ready = 1 WHERE id = ?", id);
 			return current;
 		});
-		return row === null ? refuse(404, NOT_FOUND) : ok(conversationOut(row));
+		return row === null ? refuse("NOT_FOUND", NOT_FOUND) : ok(conversationOut(row));
 	}
 
 	async listConversations(caller: Caller): Promise<ConversationOut[]> {
@@ -1200,7 +1192,7 @@ export class WorkspaceCore implements WorkspaceApi {
 	}
 
 	async deleteConversation(caller: Caller, conversationId: ConversationId): Promise<Outcome<{ revocation: Revocation }>> {
-		if (this.#ownConversation(caller, conversationId) === null) return refuse(404, NOT_FOUND);
+		if (this.#ownConversation(caller, conversationId) === null) return refuse("NOT_FOUND", NOT_FOUND);
 		const now = this.#now();
 		const entries = this.#commit(() => {
 			// Tombstone first: no new run starts in it from here on. Its active run stops as a plain cancel.
@@ -1248,10 +1240,10 @@ export class WorkspaceCore implements WorkspaceApi {
 		if (run.conversation_id !== input.conversationId || run.user_id !== input.userId || run.agent_id !== input.agentId) {
 			throw new Error("A run id was reused for another start.");
 		}
-		if (run.revoked !== null) return refuse(409, stopMessage(run.revoked));
-		if (this.#expireOverdue(run, now)) return refuse(503, START_FAILED);
+		if (run.revoked !== null) return refuse("RUN_STOPPED", stopMessage(run.revoked));
+		if (this.#expireOverdue(run, now)) return refuse("START_FAILED", START_FAILED);
 		const answer = run.state === "starting" || run.state === "active" ? this.#answer(run.id) : null;
-		if (answer === null) return refuse(503, START_FAILED);
+		if (answer === null) return refuse("START_FAILED", START_FAILED);
 		return ok(answer);
 	}
 
@@ -1260,8 +1252,8 @@ export class WorkspaceCore implements WorkspaceApi {
 		const ids = input.uploadIds;
 		const { messageAttachments } = this.#deps.settings;
 		if (ids.length === 0) return ok([]);
-		if (ids.length > messageAttachments) return refuse(400, tooManyAttachments(messageAttachments));
-		if (new Set(ids).size !== ids.length) return refuse(400, ATTACHED_TWICE);
+		if (ids.length > messageAttachments) return refuse("TOO_MANY_ATTACHMENTS", tooManyAttachments(messageAttachments));
+		if (new Set(ids).size !== ids.length) return refuse("ATTACHED_TWICE", ATTACHED_TWICE);
 		// The user's own, complete and not reserved by another start; another user's, a pending or a deleted
 		// one is simply not there.
 		const rows = this.#sql.exec<UploadRow>(
@@ -1269,7 +1261,7 @@ export class WorkspaceCore implements WorkspaceApi {
 			JSON.stringify(ids),
 			input.userId,
 		);
-		if (rows.length !== ids.length) return refuse(400, NO_LONGER_AVAILABLE);
+		if (rows.length !== ids.length) return refuse("ATTACHMENT_UNAVAILABLE", NO_LONGER_AVAILABLE);
 		const byId = new Map(rows.map((row) => [row.id, row]));
 		return ok(ids.map((id) => byId.get(id) as UploadRow));
 	}
@@ -1290,18 +1282,18 @@ export class WorkspaceCore implements WorkspaceApi {
 				conversation.user_id !== input.userId ||
 				conversation.agent_id !== input.agentId
 			) {
-				return refuse(404, NOT_FOUND);
+				return refuse("NOT_FOUND", NOT_FOUND);
 			}
 			const agent = this.#agentRow(input.agentId);
-			if (agent === null) return refuse(404, NOT_FOUND);
+			if (agent === null) return refuse("NOT_FOUND", NOT_FOUND);
 			const attachable = this.#attachable(input);
 			if (!attachable.ok) return attachable;
 			const uploads = attachable.value;
 			if (uploads.length) {
 				// Each attachment is a new file at the folder's root: one entry, and its pages.
-				if (input.folder.entries + uploads.length > folderEntries) return refuse(413, overFolder("folder_entries", folderEntries, folderBytes));
+				if (input.folder.entries + uploads.length > folderEntries) return refuse("FOLDER_FULL", overFolder("folder_entries", folderEntries, folderBytes));
 				const bytes = input.folder.bytes + uploads.reduce((sum, upload) => sum + pages(upload.size), 0);
-				if (bytes > folderBytes) return refuse(413, overFolder("folder_bytes", folderEntries, folderBytes));
+				if (bytes > folderBytes) return refuse("FOLDER_FULL", overFolder("folder_bytes", folderEntries, folderBytes));
 			}
 			this.#ensureUserLayer(input.userId, now);
 			const workspace = this.workspaceRef();
@@ -1612,12 +1604,12 @@ export class WorkspaceCore implements WorkspaceApi {
 				caller.userId,
 				now - UPLOAD_DEADLINE_MS,
 			) as { n: number };
-			if (arriving.n >= UPLOADS_IN_FLIGHT) return refuse(429, UPLOADING_TOO_MANY);
+			if (arriving.n >= UPLOADS_IN_FLIGHT) return refuse("TOO_MANY_UPLOADS_AT_ONCE", UPLOADING_TOO_MANY);
 			const held = first<{ n: number }>(this.#sql, "SELECT count(*) AS n FROM uploads WHERE user_id = ?", caller.userId) as { n: number };
-			if (held.n >= PENDING_UPLOADS) return refuse(429, TOO_MANY_UPLOADS);
+			if (held.n >= PENDING_UPLOADS) return refuse("TOO_MANY_UPLOADS_WAITING", TOO_MANY_UPLOADS);
 			// Reserved before the body is written, so concurrent uploads count each other (every upload counts,
 			// not only new contents).
-			if (!this.#fits(upload.size)) return refuse(413, NO_ROOM);
+			if (!this.#fits(upload.size)) return refuse("WORKSPACE_FULL", NO_ROOM);
 			const id = uuid7(now);
 			const key = `uploads/${workspace.id}/${caller.userId}/${id}`;
 			this.#sql.exec(
@@ -1637,9 +1629,9 @@ export class WorkspaceCore implements WorkspaceApi {
 		const now = this.#now();
 		return this.#commit((): Outcome<UploadOut> => {
 			const row = first<UploadRow>(this.#sql, "SELECT * FROM uploads WHERE id = ? AND user_id = ?", id, caller.userId);
-			if (row === null) return refuse(404, NOT_FOUND);
+			if (row === null) return refuse("NOT_FOUND", NOT_FOUND);
 			if (row.state === "pending") {
-				if (stored.size > row.size && !this.#fits(stored.size - row.size)) return refuse(413, NO_ROOM);
+				if (stored.size > row.size && !this.#fits(stored.size - row.size)) return refuse("WORKSPACE_FULL", NO_ROOM);
 				this.#sql.exec(
 					"UPDATE uploads SET state = 'complete', sha256 = ?, size = ?, media_type = ?, completed_at = ? WHERE id = ?",
 					stored.sha256,

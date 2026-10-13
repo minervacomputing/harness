@@ -10,6 +10,12 @@
 //   it, in the same statement that changes it: nothing depends on a later delete. A session made from a
 //   sign-in, a second factor or a password check takes the stamp of the credential that was checked, so
 //   one that a reset overtook while it was being made is stale from the start.
+// - Verification signs in, binding the password to the browser. Sign-up and a password sign-in to an
+//   unverified address leave a signed cookie with the stamp of the password this browser set or proved.
+//   Verifying the address keeps that password and signs in; without the cookie, or for another password,
+//   the account's password and sessions go first (as Better Auth's email-code sign-in does for an
+//   unverified address), so whoever signed up with someone else's address keeps no way in once its owner
+//   verifies it. An address already verified is not verified again: the code signs nobody in.
 // - Two factors for every sign-in. A first factor (password, email code, a verification that signs in)
 //   for a user with two-factor makes only a placeholder session, already expired and stamped as pending,
 //   which Better Auth's two-factor hook (widened to all of them, auth-options.ts) deletes before it
@@ -25,9 +31,10 @@
 import { createHmac } from "node:crypto";
 import type { GenericEndpointContext } from "better-auth";
 import { APIError, getSessionFromCtx, isAPIError } from "better-auth/api";
-import { HttpError, detail } from "../http/errors.ts";
+import { HttpError, refused } from "../http/errors.ts";
 import { timingSafeEqual } from "../lib/hash.ts";
-import type { AuthPolicy } from "./auth-options.ts";
+import { uuid7 } from "../lib/random.ts";
+import { type AuthPolicy, CODE_ATTEMPTS } from "./auth-options.ts";
 import { validatePassword } from "./passwords.ts";
 import type { Action, RateLimits, Subject } from "./rate-limits.ts";
 import { type AuthScope, type Holder, currentScope } from "./scope.ts";
@@ -77,6 +84,11 @@ const CHALLENGE_STAMP = "minerva-stamp-";
 /** Email codes (`<type>-otp-<address>`), and the routes that send a new one in place of the last. */
 const EMAIL_CODE = /^(?:sign-in|email-verification|forget-password|change-email)-otp-/;
 const CODE_SENDS = new Set(["/email-otp/send-verification-otp", "/email-otp/request-password-reset", "/sign-up/email"]);
+const VERIFICATION_CODE = "email-verification-otp-";
+
+/** The signed cookie holding the stamp of the password a browser set or proved before verifying its address. */
+const BINDING_COOKIE = "email_binding";
+const BINDING_SECONDS = 3600;
 
 /** Session cookies of any prefix; their values are `<token>.<signature>`. */
 const SESSION_COOKIE = /session_token$/;
@@ -118,6 +130,10 @@ function signUpDisabled(): APIError {
 
 function passwordChanged(): APIError {
 	return APIError.from("BAD_REQUEST", { code: "INVALID_PASSWORD", message: "Invalid password" });
+}
+
+function alreadyVerified(): APIError {
+	return APIError.from("BAD_REQUEST", { code: "EMAIL_ALREADY_VERIFIED", message: "This email address is already verified." });
 }
 
 function challengeExpired(): APIError {
@@ -220,8 +236,12 @@ export class Policy implements AuthPolicy {
 				const usage = await this.#deps.limits.consume("login_failed", { key: email });
 				if (!usage) throw tooMany("TOO_MANY_LOGIN_ATTEMPTS", "Too many failed login attempts. Try again later.");
 				scope.loginUsage = usage;
+				scope.passwordSignIn = true;
 				return undefined;
 			}
+			case "/email-otp/verify-email":
+				scope.binding = (await ctx.getSignedCookie(ctx.context.createAuthCookie(BINDING_COOKIE).name, ctx.context.secret)) || undefined;
+				return undefined;
 			case "/sign-up/email":
 				// Sign-up has no user yet, so the password is not compared with one.
 				checkPassword(body.password);
@@ -272,14 +292,66 @@ export class Policy implements AuthPolicy {
 		const scope = currentScope();
 		if (!scope) return;
 		const returned = (ctx.context as { returned?: unknown }).returned;
+		const code = isAPIError(returned) ? (returned.body as { code?: unknown } | undefined)?.code : undefined;
 		if (ctx.path === "/sign-in/email" && scope.loginUsage) {
-			const wrong = isAPIError(returned) && (returned.body as { code?: unknown } | undefined)?.code === "INVALID_EMAIL_OR_PASSWORD";
-			if (!wrong) await this.#deps.limits.rollback(scope.loginUsage);
+			if (code !== "INVALID_EMAIL_OR_PASSWORD") await this.#deps.limits.rollback(scope.loginUsage);
+		}
+		// The password this browser just set, or proved for an address still to be verified, is bound to it.
+		const email = (ctx.body as Body | undefined)?.email;
+		if (ctx.path === "/sign-up/email" && !isAPIError(returned) && scope.writtenHash !== undefined && typeof email === "string") {
+			await this.#bind(ctx, email.toLowerCase(), scope.writtenHash);
+		}
+		if (ctx.path === "/sign-in/email" && code === "EMAIL_NOT_VERIFIED" && typeof scope.verifiedHash === "string" && typeof email === "string") {
+			await this.#bind(ctx, email.toLowerCase(), scope.verifiedHash);
+		}
+		if (ctx.path === "/email-otp/verify-email" && !isAPIError(returned) && scope.binding !== undefined) {
+			const cookie = ctx.context.createAuthCookie(BINDING_COOKIE);
+			ctx.setCookie(cookie.name, "", { ...cookie.attributes, maxAge: 0 });
 		}
 		if (ctx.path === "/email-otp/reset-password" && !isAPIError(returned)) {
 			const email = (ctx.body as Body | undefined)?.email;
 			if (typeof email === "string") await this.#deps.limits.clear("login_failed", { key: email.toLowerCase() });
 		}
+	}
+
+	/** Sets the binding cookie for an unverified account whose password is still `hash`. */
+	async #bind(ctx: GenericEndpointContext, email: string, hash: string): Promise<void> {
+		const row = await this.#deps.db.prepare(`SELECT id FROM "user" WHERE email = ?`).bind(email).first<{ id: string }>();
+		const user = row && (await this.#credentials(row.id));
+		if (!row || !user || user.emailVerified || user.password !== hash) return;
+		const cookie = ctx.context.createAuthCookie(BINDING_COOKIE, { maxAge: BINDING_SECONDS });
+		await ctx.setSignedCookie(cookie.name, this.stamp(row.id, user.email, hash), ctx.context.secret, cookie.attributes);
+	}
+
+	/**
+	 * After a verification code was accepted, before the address is marked verified and the session made. A
+	 * password this browser did not set or prove (no binding, or one for another password) is not the
+	 * mailbox owner's: it goes, with any session, and the owner is signed in without it.
+	 */
+	async emailVerifying(user: { id: string; emailVerified: boolean }): Promise<void> {
+		const scope = currentScope();
+		if (!scope) return;
+		const current = await this.#credentials(user.id);
+		// Verified meanwhile too (a reset verifies the address): nothing to verify, and nothing to drop.
+		if (user.emailVerified || current?.emailVerified) throw alreadyVerified();
+		if (scope.binding && current?.password && timingSafeEqual(scope.binding, this.stamp(user.id, current.email, current.password))) {
+			// The session is stamped with this password, so a reset that overtakes the verification wins.
+			scope.verifiedHash = current.password;
+			return;
+		}
+		scope.verifiedHash = null;
+		// One batch, while the address is still unverified (a reset that verified it meanwhile keeps its password),
+		// marking it verified, so a sign-up's password cannot land after it (accountCreating).
+		const unverified = `EXISTS (SELECT 1 FROM "user" WHERE id = ? AND "emailVerified" = 0)`;
+		await this.#deps.db.batch([
+			this.#deps.db.prepare(`DELETE FROM account WHERE "userId" = ? AND ${unverified}`).bind(user.id, user.id),
+			this.#deps.db.prepare(`DELETE FROM "session" WHERE "userId" = ? AND ${unverified}`).bind(user.id, user.id),
+			this.#deps.db.prepare(`UPDATE "user" SET "emailVerified" = 1, "updatedAt" = ? WHERE id = ?`).bind(new Date().toISOString(), user.id),
+		]);
+	}
+
+	codeWithheld(): boolean {
+		return currentScope()?.codeWithheld === true;
 	}
 
 	/** Users are created by a sign-up the before hook admitted, and by our own server code (seed); nothing else. */
@@ -300,7 +372,7 @@ export class Policy implements AuthPolicy {
 		if (!user?.emailVerified) return false;
 		if (FIRST_FACTOR.has(path)) {
 			// The address and password this sign-in checked, not whatever is stored now: a change in between wins.
-			const stamp = this.stamp(session.userId, scope.claimedEmail ?? user.email, scope.verifiedHash ?? user.password);
+			const stamp = this.stamp(session.userId, scope.claimedEmail ?? user.email, scope.verifiedHash !== undefined ? scope.verifiedHash : user.password);
 			scope.signIn = { userId: session.userId, stamp };
 			if (user.twoFactorEnabled) return { data: { credentialStamp: PENDING, expiresAt: new Date(0) } };
 			return { data: { credentialStamp: stamp } };
@@ -323,6 +395,17 @@ export class Policy implements AuthPolicy {
 	/** A two-factor challenge is made only for a first factor this request passed; its stamp is kept beside it. */
 	async verificationCreating(verification: { identifier: string; value: string; expiresAt: Date }, endpoint: GenericEndpointContext | null): Promise<boolean> {
 		if (EMAIL_CODE.test(verification.identifier)) {
+			// A password sign-in to an unverified address sends a code only when it has none still usable, so
+			// signing in again neither sends another nor voids the one on its way. "Send a new code" replaces it.
+			const scope = currentScope();
+			// A new one counts against the address's emails like "Send a new code" (one in 10 s), whoever knows the password.
+			if (scope?.passwordSignIn && endpoint && verification.identifier.startsWith(VERIFICATION_CODE)) {
+				const address = verification.identifier.slice(VERIFICATION_CODE.length);
+				if ((await usableCode(endpoint, verification.identifier)) || !(await this.#deps.limits.consume("confirm_email", { key: address }))) {
+					scope.codeWithheld = true;
+					return false;
+				}
+			}
 			// A new code replaces the address's earlier ones, so only the latest code can be used, even by
 			// requests racing in other isolates (Better Auth consumes the newest row, then deletes the rest).
 			if (endpoint && CODE_SENDS.has(endpoint.path ?? "")) await endpoint.context.internalAdapter.deleteVerificationByIdentifier(verification.identifier);
@@ -344,9 +427,29 @@ export class Policy implements AuthPolicy {
 		if (scope) scope.verifiedHash = hash;
 	}
 
-	passwordWritten(hash: string): void {
+	/**
+	 * Better Auth writes a sign-up's user, then its password. The password is written here instead, in one
+	 * statement conditional on the address still being unverified: an owner who verified it in between
+	 * (emailVerifying drops passwords and marks it verified in one batch) never gets it back. A reset's new
+	 * credential is the owner's own and goes through.
+	 */
+	async accountCreating(account: { userId?: unknown; password?: unknown }, endpoint: GenericEndpointContext | null): Promise<false | undefined> {
 		const scope = currentScope();
-		if (scope) scope.writtenHash = hash;
+		if (!scope || typeof account.password !== "string") return undefined;
+		if (endpoint?.path !== "/sign-up/email" || typeof account.userId !== "string") {
+			scope.writtenHash = account.password;
+			return undefined;
+		}
+		const now = new Date().toISOString();
+		const written = await this.#deps.db
+			.prepare(
+				`INSERT INTO account (id, "accountId", "providerId", "userId", password, "createdAt", "updatedAt") ` +
+					`SELECT ?, id, 'credential', id, ?, ?, ? FROM "user" WHERE id = ? AND "emailVerified" = 0`,
+			)
+			.bind(uuid7(), account.password, now, now, account.userId)
+			.run();
+		if (written.meta.changes > 0) scope.writtenHash = account.password;
+		return false;
 	}
 
 	/**
@@ -374,6 +477,13 @@ export class Policy implements AuthPolicy {
 	}
 }
 
+/** Whether an email code is stored for the identifier that has not expired or used up its attempts. */
+async function usableCode(endpoint: GenericEndpointContext, identifier: string): Promise<boolean> {
+	const row = await endpoint.context.internalAdapter.findVerificationValue(identifier);
+	if (!row || row.expiresAt <= new Date()) return false;
+	return Number(row.value.slice(row.value.lastIndexOf(":") + 1)) < CODE_ATTEMPTS;
+}
+
 /**
  * The tokens of every session cookie in a Cookie header (better-call's reading: quotes and %-escapes).
  * Every one is checked, so padding the header cannot push the one Better Auth reads out of reach.
@@ -394,7 +504,7 @@ export function sessionTokens(header: string | null): string[] {
 		const dot = value.lastIndexOf(".");
 		const token = dot > 0 ? value.slice(0, dot) : value;
 		if (token) tokens.add(token);
-		if (tokens.size > MAX_SESSION_COOKIES) throw new HttpError(detail(400, "Too many session cookies."));
+		if (tokens.size > MAX_SESSION_COOKIES) throw new HttpError(refused("TOO_MANY_SESSION_COOKIES", "Too many session cookies."));
 	}
 	return [...tokens];
 }

@@ -31,12 +31,9 @@ describe("the router in workerd", () => {
 		expect(response.headers.get("Cache-Control")).toBe("no-store");
 	});
 
-	test("an unknown API path is 404 {detail}", async () => {
+	test("an unknown API path is 404 NOT_FOUND", async () => {
 		const response = await exports.default.fetch("http://localhost/api/workspaces", { method: "POST", headers: { Origin: "http://localhost" } });
-		expect(response.status).toBe(404);
-		const body = (await response.json()) as { detail: string };
-		// Debug is on in these tests, so the reason is appended.
-		expect(body.detail).toMatch(/^Not Found/);
+		expect([response.status, await response.json()]).toEqual([404, { code: "NOT_FOUND", detail: "Not found." }]);
 	});
 
 	test("every unsafe route refuses a request from another site, or from nowhere", async () => {
@@ -48,7 +45,7 @@ describe("the router in workerd", () => {
 			const path = route.path.replace(/:[a-z]+(\{(?:[^{}]|\{[^{}]*\})*\})?/gi, "0199a000-0000-7000-8000-000000000001");
 			for (const headers of [{}, { Origin: "https://evil.example" }] as Record<string, string>[]) {
 				const response = await exports.default.fetch(`http://localhost${path}`, { method: route.method, headers });
-				expect([response.status, await response.json()], `${route.method} ${route.path}`).toEqual([403, { detail: "Cross-site request refused." }]);
+				expect([response.status, await response.json()], `${route.method} ${route.path}`).toEqual([403, { code: "CROSS_SITE", detail: "Cross-site request refused." }]);
 			}
 		}
 	});
@@ -61,8 +58,7 @@ describe("the router in workerd", () => {
 		const refused = [{}, { [PROBE_HEADER]: "0".repeat(64) }, { [PROBE_HEADER]: token.toUpperCase() }, { "X-Minerva-Probe": token }, ...earlier.map((old) => ({ [PROBE_HEADER]: old }))];
 		for (const headers of refused as Record<string, string>[]) {
 			const response = await exports.default.fetch("http://localhost/api/probe", { headers });
-			expect(response.status).toBe(404);
-			expect(((await response.json()) as { detail: string }).detail).toMatch(/^Not Found/);
+			expect([response.status, await response.json()]).toEqual([404, { code: "NOT_FOUND", detail: "Not found." }]);
 		}
 	});
 

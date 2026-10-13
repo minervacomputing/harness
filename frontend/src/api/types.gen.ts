@@ -798,9 +798,9 @@ export type UserOut = {
      */
     id: string;
     /**
-     * Is Staff
+     * Role
      */
-    is_staff: boolean;
+    role: 'admin' | 'user';
     /**
      * Name
      */

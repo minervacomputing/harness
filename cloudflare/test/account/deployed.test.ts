@@ -34,10 +34,10 @@ describe("minerva-cf", () => {
 		expect(reply.headers.get("cache-control")).toBe("no-store");
 	});
 
-	test("a missing API route is 404 {detail}", async () => {
+	test("a missing API route is 404 NOT_FOUND", async () => {
 		const reply = await fetchDeployed(`${site}/api/no-such-route`, { method: "POST", headers: { origin: site } });
 		expect(reply.status).toBe(404);
-		expect(JSON.parse(reply.text)).toEqual({ detail: "Not Found" });
+		expect(JSON.parse(reply.text)).toEqual({ code: "NOT_FOUND", detail: "Not found." });
 		expectSecurityHeaders(reply.headers);
 	});
 
@@ -45,7 +45,7 @@ describe("minerva-cf", () => {
 		for (const headers of [{}, { origin: "https://evil.example" }] as Record<string, string>[]) {
 			const reply = await fetchDeployed(`${site}/api/no-such-route`, { method: "POST", headers });
 			expect(reply.status).toBe(403);
-			expect(JSON.parse(reply.text)).toEqual({ detail: "Cross-site request refused." });
+			expect(JSON.parse(reply.text)).toEqual({ code: "CROSS_SITE", detail: "Cross-site request refused." });
 			expectSecurityHeaders(reply.headers);
 		}
 	});
@@ -89,7 +89,7 @@ describe("inside minerva-cf (/api/probe)", () => {
 		for (const headers of [{}, { [PROBE_HEADER]: "0".repeat(64) }] as Record<string, string>[]) {
 			const reply = await fetchDeployed(`${site}/api/probe`, { headers });
 			expect(reply.status).toBe(404);
-			expect(JSON.parse(reply.text)).toEqual({ detail: "Not Found" });
+			expect(JSON.parse(reply.text)).toEqual({ code: "NOT_FOUND", detail: "Not found." });
 		}
 	});
 

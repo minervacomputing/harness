@@ -4,12 +4,12 @@
 
 import { z } from "zod";
 import { readJson } from "../http/body.ts";
-import { HttpError, detail, validationError, validationItems } from "../http/errors.ts";
+import { HttpError, refused, validationError, validationItems } from "../http/errors.ts";
 
 /** The body (http/body.ts `readJson`: 415, 413 or 400), validated: an empty one is a 422 at `body`. */
 export async function readBody<S extends z.ZodType>(request: Request, schema: S): Promise<z.output<S>> {
 	const body = await readJson(request);
-	if (!body.ok) throw new HttpError(detail(body.refusal.status, body.refusal.detail));
+	if (!body.ok) throw new HttpError(refused(body.refusal.code, body.refusal.detail));
 	if (body.value === undefined) throw new HttpError(validationError([{ type: "invalid_type", loc: ["body"], msg: "Invalid input: expected a JSON body" }]));
 	const parsed = schema.safeParse(body.value);
 	if (!parsed.success) throw new HttpError(validationError(validationItems(parsed.error.issues, "body")));

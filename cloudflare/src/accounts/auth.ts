@@ -5,7 +5,7 @@ import { createHmac } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { settings } from "../config.ts";
 import { UNPARSEABLE, readJson } from "../http/body.ts";
-import { HttpError, detail, notFound } from "../http/errors.ts";
+import { HttpError, notFound, refused } from "../http/errors.ts";
 import type { Json } from "../lib/json.ts";
 import { AUTH_BASE_PATH, type OtpType, authOptions } from "./auth-options.ts";
 import { type EmailKind, render, sendEmail } from "./emails.ts";
@@ -111,7 +111,7 @@ export async function handleAuth(env: Env, request: Request): Promise<Response> 
 	let body: string | null = null;
 	if (request.body) {
 		const read = await readJson(request);
-		if (!read.ok) return detail(read.refusal.status, read.refusal.detail);
+		if (!read.ok) return refused(read.refusal.code, read.refusal.detail);
 		headers.set("Content-Type", "application/json");
 		if (read.value !== undefined) body = plainJson(read.value);
 	}
@@ -129,7 +129,7 @@ function plainJson(value: Json): string {
 		if (Array.isArray(node)) node.forEach(check);
 		else if (node !== null && typeof node === "object") {
 			for (const [key, child] of Object.entries(node)) {
-				if (!PLAIN_KEY.test(key)) throw new HttpError(detail(UNPARSEABLE.status, UNPARSEABLE.detail));
+				if (!PLAIN_KEY.test(key)) throw new HttpError(refused(UNPARSEABLE.code, UNPARSEABLE.detail));
 				check(child);
 			}
 		}

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { serveAsset } from "../../src/http/assets.ts";
 import { MAX_JSON_BODY, readJson } from "../../src/http/body.ts";
 import { fromSite } from "../../src/http/csrf.ts";
-import { detail, notFound, validationItems } from "../../src/http/errors.ts";
+import { notFound, refused, unauthorized, validationError, validationItems } from "../../src/http/errors.ts";
 import { DEFAULT_CSP, withSecurityHeaders } from "../../src/http/headers.ts";
 import { OWN_SIZE_LIMIT, UPLOAD_ROUTE, createApp } from "../../src/http/router.ts";
 import { settingsEnv } from "./settings.ts";
@@ -41,13 +41,15 @@ describe("CSRF", () => {
 });
 
 describe("error shapes", () => {
-	test("a refusal is its detail", async () => {
-		const response = detail(409, "Wait for the current answer to finish, or stop it.");
+	test("a refusal is its code, with the code's status, and its detail", async () => {
+		const response = refused("CONVERSATION_BUSY", "Wait for the current answer to finish, or stop it.");
 		expect(response.status).toBe(409);
 		expect(response.headers.get("Cache-Control")).toBe("no-store");
-		expect(await response.json()).toEqual({ detail: "Wait for the current answer to finish, or stop it." });
-		expect(await notFound("no such agent").json()).toEqual({ detail: "Not Found" });
-		expect(await notFound("no such agent", true).json()).toEqual({ detail: "Not Found: no such agent" });
+		expect(await response.json()).toEqual({ code: "CONVERSATION_BUSY", detail: "Wait for the current answer to finish, or stop it." });
+		const missing = notFound();
+		expect([missing.status, await missing.json()]).toEqual([404, { code: "NOT_FOUND", detail: "Not found." }]);
+		const invalid = validationError([{ type: "too_big", loc: ["body", "name"], msg: "Too big" }]);
+		expect([invalid.status, await invalid.json()]).toEqual([422, { code: "VALIDATION_FAILED", detail: [{ type: "too_big", loc: ["body", "name"], msg: "Too big" }] }]);
 	});
 
 	test("validation errors are zod's issues, located where the value came from", () => {
@@ -96,18 +98,18 @@ describe("JSON bodies", () => {
 	test("refuses every other type with 415", async () => {
 		for (const type of [null, "text/plain", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x", "application/problem+json", "application/jsonx", "application/json, text/plain"]) {
 			const read = await readJson(request('{"a":1}', type === null ? {} : { "Content-Type": type }));
-			expect(read, String(type)).toEqual({ ok: false, refusal: { status: 415, detail: "Send the body as application/json." } });
+			expect(read, String(type)).toEqual({ ok: false, refusal: { code: "UNSUPPORTED_MEDIA_TYPE", detail: "Send the body as application/json." } });
 		}
 	});
 
 	test("refuses what does not parse, or is not UTF-8, with 400", async () => {
 		for (const body of ["{nope", new Uint8Array([0x7b, 0x22, 0xff, 0x22, 0x3a, 0x31, 0x7d])]) {
-			expect(await readJson(request(body))).toEqual({ ok: false, refusal: { status: 400, detail: "Cannot parse request body" } });
+			expect(await readJson(request(body))).toEqual({ ok: false, refusal: { code: "INVALID_JSON", detail: "The body is not valid JSON." } });
 		}
 	});
 
 	test("refuses a declared or streamed body over 2.5 MB with 413", async () => {
-		const tooLarge = { ok: false, refusal: { status: 413, detail: "The request is too large." } };
+		const tooLarge = { ok: false, refusal: { code: "PAYLOAD_TOO_LARGE", detail: "The request is too large." } };
 		expect(await readJson(request("{}", { "Content-Type": "application/json", "Content-Length": String(MAX_JSON_BODY + 1) }))).toEqual(tooLarge);
 		expect(await readJson(request(`"${"x".repeat(MAX_JSON_BODY)}"`))).toEqual(tooLarge);
 		expect(await readJson(request(`"${"x".repeat(MAX_JSON_BODY - 2)}"`))).toMatchObject({ ok: true });
@@ -126,11 +128,11 @@ describe("router", () => {
 		expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
 	});
 
-	test("a missing route is 404 Not Found, with the security headers", async () => {
+	test("a missing route is 404 NOT_FOUND, with the security headers", async () => {
 		for (const path of ["/api/nope", "/api/me/", "/api/workspaces/not-a-uuid/agents", "/api/csrf"]) {
 			const response = await createApp().request(path, { method: "POST", headers: site }, env);
 			expect(response.status).toBe(404);
-			expect(await response.json()).toEqual({ detail: "Not Found" });
+			expect(await response.json()).toEqual({ code: "NOT_FOUND", detail: "Not found." });
 			expect(response.headers.get("Content-Security-Policy")).toBe(DEFAULT_CSP);
 		}
 	});
@@ -138,14 +140,14 @@ describe("router", () => {
 	test("every unsafe request fails closed from another site, before any route runs, matched or not", async () => {
 		const app = createApp();
 		const ran: string[] = [];
-		app.post("/api/route", () => (ran.push("route"), detail(401, "Unauthorized")));
+		app.post("/api/route", () => (ran.push("route"), unauthorized()));
 		// Only POSTs under /api/auth/ are exempt (Better Auth's route answers them all), not every method there.
-		app.delete("/api/auth/session", () => (ran.push("auth"), detail(401, "Unauthorized")));
-		app.use("/api/mounted/*", async () => (ran.push("mounted"), detail(401, "Unauthorized")));
-		const refused = { detail: "Cross-site request refused." };
+		app.delete("/api/auth/session", () => (ran.push("auth"), unauthorized()));
+		app.use("/api/mounted/*", async () => (ran.push("mounted"), unauthorized()));
+		const crossSite = { code: "CROSS_SITE", detail: "Cross-site request refused." };
 		for (const [method, path] of [["POST", "/api/route"], ["DELETE", "/api/auth/session"], ["POST", "/api/mounted/x"], ["POST", "/api/nope"], ["PUT", "/api/health"]]) {
 			const response = await app.request(path!, { method, headers: { Origin: "https://evil.example" } }, env);
-			expect([method, path, response.status, await response.json()]).toEqual([method, path, 403, refused]);
+			expect([method, path, response.status, await response.json()]).toEqual([method, path, 403, crossSite]);
 			expect(response.headers.get("Content-Security-Policy")).toBe(DEFAULT_CSP);
 		}
 		expect(ran).toEqual([]);
@@ -155,10 +157,10 @@ describe("router", () => {
 		const uploads = `/api/workspaces/${"0".repeat(8)}-0000-7000-8000-${"0".repeat(12)}/uploads`;
 		expect((await app.request(uploads, { method: "POST" }, env)).status).toBe(403);
 		const upload = await app.request(uploads, { method: "POST", headers: site }, env);
-		expect([upload.status, await upload.json()]).toEqual([411, { detail: "Send a Content-Length." }]);
+		expect([upload.status, await upload.json()]).toEqual([411, { code: "LENGTH_REQUIRED", detail: "Send a Content-Length." }]);
 		for (const method of ["PUT", "PATCH", "DELETE"]) {
 			const other = await app.request(uploads, { method, headers: site }, env);
-			expect([method, other.status, await other.json()]).toEqual([method, 405, { detail: "Use POST." }]);
+			expect([method, other.status, await other.json()]).toEqual([method, 405, { code: "METHOD_NOT_ALLOWED", detail: "Use POST." }]);
 		}
 		expect(ran).toEqual(["route", "mounted"]);
 		expect([...OWN_SIZE_LIMIT]).toEqual(["POST", "PUT", "PATCH", "DELETE"].map((method) => `${method} ${UPLOAD_ROUTE}`));
@@ -166,16 +168,16 @@ describe("router", () => {
 
 	test("a declared body over 2.5 MB is 413 everywhere but the upload", async () => {
 		const app = createApp();
-		app.post("/api/route", () => detail(401, "Unauthorized"));
+		app.post("/api/route", () => unauthorized());
 		const big = { ...site, "Content-Length": String(MAX_JSON_BODY + 1) };
 		for (const path of ["/api/route", "/api/nope"]) {
 			const response = await app.request(path, { method: "POST", headers: big }, env);
 			expect(response.status, path).toBe(413);
-			expect(await response.json()).toEqual({ detail: "The request is too large." });
+			expect(await response.json()).toEqual({ code: "PAYLOAD_TOO_LARGE", detail: "The request is too large." });
 		}
 		// The upload's own limit applies instead (50 MB): this one gets as far as its missing name.
 		const upload = await app.request(`/api/workspaces/${"0".repeat(8)}-0000-7000-8000-${"0".repeat(12)}/uploads`, { method: "POST", headers: big }, env);
-		expect([upload.status, await upload.json()]).toEqual([400, { detail: "Name the file with ?name=." }]);
+		expect([upload.status, await upload.json()]).toEqual([400, { code: "FILE_NAME_MISSING", detail: "Name the file with ?name=." }]);
 	});
 });
 

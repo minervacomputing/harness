@@ -173,7 +173,7 @@ describe("sign-up with the setup key", () => {
 		await frontend.instance.claimSetup(KEY);
 		expect(await frontend.setupQuery.queryFn({ signal: signal() })).toEqual({ needed: false });
 		expect(frontend.errorMessage(await failure(frontend.instance.claimSetup(KEY)))).toBe("This instance is already set up.");
-		expect((await browser.call("GET", "/api/me")).body.user.is_staff).toBe(true);
+		expect((await browser.call("GET", "/api/me")).body.user.role).toBe("admin");
 
 		// The key admits nobody once the setup is claimed.
 		await load();

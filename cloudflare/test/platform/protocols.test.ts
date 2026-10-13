@@ -81,7 +81,7 @@ function script(turns: FakeTurn[]): string {
 
 async function post(w: World, turns: FakeTurn[]): Promise<RunId> {
 	const outcome = await w.conversation.postMessage(CALLER, { content: script(turns), attachments: [] });
-	if (!outcome.ok) throw new Error(`Refused: ${outcome.refusal.status} ${outcome.refusal.detail}`);
+	if (!outcome.ok) throw new Error(`Refused: ${outcome.refusal.code} ${outcome.refusal.detail}`);
 	return outcome.value.run.id;
 }
 
@@ -451,7 +451,7 @@ describe("starts the store refuses", () => {
 		});
 		// The refused start here is one without attachments.
 		const first = await w.conversation.postMessage(CALLER, { content: script([{ text: "Hi." }]), attachments: [] });
-		expect(first).toEqual({ ok: false, refusal: { status: 503, detail: START_FAILED } });
+		expect(first).toEqual({ ok: false, refusal: { code: "START_FAILED", detail: START_FAILED } });
 		const inside = await runInDurableObject(w.conversation, (_instance, state) => ({
 			starts: state.storage.sql.exec("SELECT run_id FROM starts").toArray().length,
 			runs: state.storage.sql.exec("SELECT id FROM runs").toArray().length,
@@ -572,6 +572,10 @@ describe("attempts", () => {
 		const events = await eventsOf(w, runId);
 		expect(restarts(events)).toEqual([2]);
 		expect(events.at(-2)).toMatchObject({ type: "message", data: { content: "A sentence long enough for several deltas." } });
+		// The message names the call that wrote it: the new attempt's, which streamed last.
+		const last = events.findLast((event) => event.type === "text_delta");
+		expect(last?.data).toMatchObject({ text: expect.any(String), call: expect.stringMatching(/^[0-9a-f]{8}$/) });
+		expect(events.at(-2)?.data).toMatchObject({ call: last?.data.call });
 	});
 
 	test("resets until the cap: the third attempt's death ends the run as worker_exited, and pi runs nothing after", async () => {

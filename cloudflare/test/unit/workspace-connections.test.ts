@@ -3,7 +3,7 @@
 
 import { describe, expect, test } from "vitest";
 import { resourceKey } from "../../src/gateway/grants.ts";
-import { ALREADY_CONNECTED, NOT_FOUND, NOT_YOURS, UNKNOWN_PROVIDER } from "../../src/workspace/core.ts";
+import { ALREADY_CONNECTED, NOT_FOUND, UNKNOWN_PROVIDER } from "../../src/workspace/core.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
 import { EncryptionError } from "../../src/lib/encryption.ts";
 import { ADA, GRACE, OTHER, USER, accessOf, binding, column, connectMixed, credentials, grant, harness, setCredentials } from "./workspace-support.ts";
@@ -43,19 +43,19 @@ describe("saving connections", () => {
 			});
 		expect(await reconnect("acct-2", id)).toEqual({
 			ok: false,
-			refusal: { status: 422, detail: "You signed in to a different Mixed account. Sign in as Fake account." },
+			refusal: { code: "DIFFERENT_ACCOUNT", detail: "You signed in to a different Mixed account. Sign in as Fake account." },
 		});
 		const keyed = await h.core.saveConnection(ADA, { provider: "keyed", account: { id: "k-1", label: "Key account" }, credentials: { kind: "api_key", key: "k1" }, connectionId: null });
 		if (!keyed.ok) throw new Error(keyed.refusal.detail);
 		expect(await reconnect("k-2", keyed.value.id, "keyed")).toEqual({
 			ok: false,
-			refusal: { status: 422, detail: "This key is for a different Keyed account. Use a key for Key account." },
+			refusal: { code: "DIFFERENT_ACCOUNT", detail: "This key is for a different Keyed account. Use a key for Key account." },
 		});
 		await h.core.deleteConnection(ADA, id);
-		expect(await reconnect("acct-1", id)).toEqual({ ok: false, refusal: { status: 422, detail: "This Mixed connection was removed. Connect it again." } });
+		expect(await reconnect("acct-1", id)).toEqual({ ok: false, refusal: { code: "CONNECTION_REMOVED", detail: "This Mixed connection was removed. Connect it again." } });
 		expect(await h.core.saveConnection(ADA, { provider: "nope", account: { id: "x", label: "x" }, credentials: { kind: "builtin" }, connectionId: null })).toEqual({
 			ok: false,
-			refusal: { status: 404, detail: UNKNOWN_PROVIDER },
+			refusal: { code: "UNKNOWN_PROVIDER", detail: UNKNOWN_PROVIDER },
 		});
 	});
 
@@ -84,7 +84,7 @@ describe("saving connections", () => {
 	test("someone else's personal connection cannot be renewed", async () => {
 		const h = await harness();
 		const id = await connectMixed(h, {});
-		await expect(connectMixed(h, {}, { caller: GRACE, connectionId: id })).rejects.toThrow(NOT_YOURS);
+		await expect(connectMixed(h, {}, { caller: GRACE, connectionId: id })).rejects.toThrow(NOT_FOUND);
 	});
 
 	test("reconnecting keeps a refresh token only from the same client", async () => {
@@ -137,8 +137,8 @@ describe("built-in services", () => {
 		expect(first.ok && first.value).toMatchObject({ provider: "webby", auth: "builtin", label: "Webby", allowed: [], consent_needed: [] });
 		const graces = await h.core.enableBuiltin(GRACE, "webby");
 		expect(graces.ok && first.ok && graces.value.id !== first.value.id).toBe(true);
-		expect(await h.core.enableBuiltin(ADA, "mixed")).toEqual({ ok: false, refusal: { status: 422, detail: "Mixed is connected through its own sign-in." } });
-		expect(await h.core.enableBuiltin(ADA, "nope")).toEqual({ ok: false, refusal: { status: 404, detail: UNKNOWN_PROVIDER } });
+		expect(await h.core.enableBuiltin(ADA, "mixed")).toEqual({ ok: false, refusal: { code: "WRONG_CONNECTION_METHOD", detail: "Mixed is connected through its own sign-in." } });
+		expect(await h.core.enableBuiltin(ADA, "nope")).toEqual({ ok: false, refusal: { code: "UNKNOWN_PROVIDER", detail: UNKNOWN_PROVIDER } });
 		expect(first.ok && (await credentials(h, first.value.id))).toEqual({ kind: "builtin" });
 	});
 });
@@ -157,13 +157,13 @@ describe("listing and removing connections", () => {
 	test("removing: another user's is not found, a shared one needs an admin, grants go with it", async () => {
 		const h = await harness();
 		const theirs = await connectMixed(h, {}, { caller: GRACE, account: "theirs" });
-		expect(await h.core.deleteConnection(ADA, theirs)).toEqual({ ok: false, refusal: { status: 404, detail: NOT_YOURS } });
-		expect(await h.core.deleteConnection(ADA, "0199a000-0000-7000-8000-0000000000ff")).toEqual({ ok: false, refusal: { status: 404, detail: NOT_FOUND } });
+		expect(await h.core.deleteConnection(ADA, theirs)).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: NOT_FOUND } });
+		expect(await h.core.deleteConnection(ADA, "0199a000-0000-7000-8000-0000000000ff")).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: NOT_FOUND } });
 		const shared = await connectMixed(h, {}, { account: "shared" });
 		h.sql.exec("UPDATE connections SET owner_id = NULL WHERE id = ?", shared);
 		expect(await h.core.deleteConnection({ userId: USER, role: "member" }, shared)).toEqual({
 			ok: false,
-			refusal: { status: 403, detail: "Only workspace admins can remove shared connections." },
+			refusal: { code: "WORKSPACE_ADMINS_ONLY", detail: "Only workspace admins can remove shared connections." },
 		});
 		await grant(h, shared, { inbox: ["read"] });
 		expect(await h.core.deleteConnection(ADA, shared)).toEqual({ ok: true, value: { revocation: "acknowledged" } });
@@ -186,7 +186,7 @@ describe("access settings", () => {
 			{ id: "create", label: "Create", requires: "read" },
 		]);
 		expect(h.server.calls).toEqual([]);
-		expect(await h.core.getAccess(GRACE, id)).toEqual({ ok: false, refusal: { status: 404, detail: "Not found." } });
+		expect(await h.core.getAccess(GRACE, id)).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: NOT_FOUND } });
 	});
 
 	test("invalid changes are refused, all or nothing", async () => {
@@ -208,14 +208,14 @@ describe("access settings", () => {
 			[[], "Nothing to change."],
 		];
 		for (const [changes, detail] of bad) {
-			expect(await h.core.applyGrantChanges(ADA, id, changes, names(["inbox", "Inbox"]))).toEqual({ ok: false, refusal: { status: 422, detail } });
+			expect(await h.core.applyGrantChanges(ADA, id, changes, names(["inbox", "Inbox"]))).toEqual({ ok: false, refusal: { code: "INVALID_ACCESS_CHANGE", detail } });
 		}
 		expect(h.sql.exec("SELECT count(*) AS n FROM grants")).toEqual([{ n: 0 }]);
 		expect(h.sql.exec("SELECT version FROM layers WHERE id = ?", `user:${USER}`)).toEqual([{ version: 1 }]);
 		const saved = await h.core.applyGrantChanges(ADA, id, [{ kind: "folder", id: "inbox", actions: ["read", "create"] }], names(["inbox", "Inbox"]));
 		expect(saved.ok && saved.value.access.grants).toEqual([{ kind: "folder", id: "inbox", name: "Inbox", actions: ["create", "read"] }]);
 		expect(h.sql.exec("SELECT version FROM layers WHERE id = ?", `user:${USER}`)).toEqual([{ version: 2 }]);
-		expect(await h.core.applyGrantChanges(GRACE, id, [{ kind: "folder", id: "inbox", actions: ["read"] }], {})).toEqual({ ok: false, refusal: { status: 404, detail: NOT_YOURS } });
+		expect(await h.core.applyGrantChanges(GRACE, id, [{ kind: "folder", id: "inbox", actions: ["read"] }], {})).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: NOT_FOUND } });
 	});
 
 	test("wildcards: a requirement may rest on one, which then cannot be removed", async () => {
@@ -226,7 +226,7 @@ describe("access settings", () => {
 		expect(saved.access.grants).toContainEqual({ kind: "folder", id: "archive", name: null, actions: ["create"] });
 		expect(await h.core.applyGrantChanges(ADA, id, [{ kind: "folder", id: "*", actions: [] }], {})).toEqual({
 			ok: false,
-			refusal: { status: 422, detail: "Create on archive also requires Read." },
+			refusal: { code: "INVALID_ACCESS_CHANGE", detail: "Create on archive also requires Read." },
 		});
 		expect((await h.core.applyGrantChanges(ADA, id, [{ kind: "folder", id: "archive", actions: [] }], {})).ok).toBe(true);
 		expect((await h.core.applyGrantChanges(ADA, id, [{ kind: "folder", id: "*", actions: [] }], {})).ok).toBe(true);
@@ -261,7 +261,7 @@ describe("access settings", () => {
 			h.sql.exec("INSERT INTO grants (layer_id, connection_id, kind, resource_id, actions, effect) VALUES (?, ?, 'folder', ?, '[\"read\"]', 'allow')", `user:${USER}`, id, `f${i}`);
 		}
 		const add = () => h.core.applyGrantChanges(ADA, id, [{ kind: "folder", id: "inbox", actions: ["read"] }], names(["inbox", "Inbox"]));
-		expect(await add()).toEqual({ ok: false, refusal: { status: 422, detail: "A connection can have at most 500 permissions." } });
+		expect(await add()).toEqual({ ok: false, refusal: { code: "INVALID_ACCESS_CHANGE", detail: "A connection can have at most 500 permissions." } });
 		expect((await h.core.applyGrantChanges(ADA, id, [{ kind: "folder", id: "f0", actions: [] }], {})).ok).toBe(true);
 		expect((await add()).ok).toBe(true);
 	});
@@ -273,7 +273,7 @@ describe("access settings", () => {
 		const id = saved.value.id;
 		expect(await h.core.applyGrantChanges(ADA, id, [{ kind: "account", id: "someone-else", actions: ["read"] }], {})).toEqual({
 			ok: false,
-			refusal: { status: 422, detail: "Account permissions apply to the connection itself." },
+			refusal: { code: "INVALID_ACCESS_CHANGE", detail: "Account permissions apply to the connection itself." },
 		});
 		const granted = await h.core.applyGrantChanges(ADA, id, [{ kind: "account", id, actions: ["read"] }], {});
 		expect(granted.ok && granted.value.access.grants).toEqual([{ kind: "account", id, name: "Fake account", actions: ["read"] }]);

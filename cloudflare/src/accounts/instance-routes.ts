@@ -6,7 +6,7 @@ import type { Context } from "hono";
 import { z } from "zod";
 import { readBody } from "../api/input.ts";
 import { settings } from "../config.ts";
-import { HttpError, detail, json, unauthorized } from "../http/errors.ts";
+import { HttpError, json, notFound, refused, unauthorized } from "../http/errors.ts";
 import { UUID } from "../http/paths.ts";
 import type { App, AppEnv } from "../http/router.ts";
 import { type CurrentSession, currentSession, withSessionCookies } from "./auth.ts";
@@ -35,7 +35,7 @@ const CALLER_IS_ADMIN = `EXISTS (SELECT 1 FROM "user" WHERE id = ? AND role = 'a
 async function admin(env: Env, session: CurrentSession): Promise<string> {
 	const user = signedIn(session);
 	const row = await env.DB.prepare(`SELECT role FROM "user" WHERE id = ?`).bind(user.id).first<{ role: string | null }>();
-	if (row?.role !== "admin") throw new HttpError(detail(403, ADMINS_ONLY));
+	if (row?.role !== "admin") throw new HttpError(refused("INSTANCE_ADMINS_ONLY", ADMINS_ONLY));
 	return user.id;
 }
 
@@ -74,8 +74,8 @@ export function instanceRoutes(app: App): void {
 		sessionRoute(async (env, request, session) => {
 			const user = signedIn(session);
 			const { key } = await readBody(request, SetupIn);
-			if (!(await setupKeyValid(env, key))) return detail(403, INVALID_KEY);
-			if (!(await claimSetup(env.DB, user.id))) return detail(409, ALREADY_SET_UP);
+			if (!(await setupKeyValid(env, key))) return refused("INVALID_SETUP_KEY", INVALID_KEY);
+			if (!(await claimSetup(env.DB, user.id))) return refused("ALREADY_SET_UP", ALREADY_SET_UP);
 			return new Response(null, { status: 204 });
 		}),
 	);
@@ -100,7 +100,7 @@ export function instanceRoutes(app: App): void {
 			)
 				.bind(value, Date.now(), userId, userId)
 				.run();
-			if (saved.meta.changes === 0) return detail(403, ADMINS_ONLY);
+			if (saved.meta.changes === 0) return refused("INSTANCE_ADMINS_ONLY", ADMINS_ONLY);
 			return settingsOut(env);
 		}),
 	);
@@ -123,7 +123,7 @@ export function instanceRoutes(app: App): void {
 				.first<{ id: string }>();
 			if (promoted === null) {
 				await admin(env, session);
-				return detail(404, NO_SUCH_USER);
+				return refused("NO_SUCH_USER", NO_SUCH_USER);
 			}
 			return adminsOut(env);
 		}),
@@ -144,8 +144,8 @@ export function instanceRoutes(app: App): void {
 			if (demoted.meta.changes > 0) return new Response(null, { status: 204 });
 			await admin(env, session);
 			const target = await env.DB.prepare(`SELECT role FROM "user" WHERE id = ?`).bind(userId).first<{ role: string | null }>();
-			if (target?.role !== "admin") return detail(404, "Not Found");
-			return detail(422, LAST_ADMIN);
+			if (target?.role !== "admin") return notFound();
+			return refused("KEEP_ONE_ADMIN", LAST_ADMIN);
 		}),
 	);
 }
