@@ -65,6 +65,11 @@ function build(env: Env, allowSignUp: boolean) {
 				await provision(env, userId).catch((error: unknown) => console.error("Provisioning failed; it is retried on the next sign-in", userId, error));
 			},
 			sessionCreated: (userId) => ensureProvisioned(env, userId),
+			passwordReplaced: async (userId) => {
+				// Two-factor's pending challenges: `2fa-<random>` rows holding the user's id. Their attempt counters
+				// (`2fa-attempts-…`) hold a number, and trusted devices (`trust-device-…`) stay (plain-better-auth.md).
+				await env.DB.prepare(`DELETE FROM verification WHERE identifier LIKE '2fa-%' AND value = ?`).bind(userId).run();
+			},
 		}),
 	);
 }

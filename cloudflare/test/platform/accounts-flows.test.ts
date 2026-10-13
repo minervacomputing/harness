@@ -220,6 +220,56 @@ describe("resets and changes end sessions", () => {
 		expect((await new Browser().auth("/sign-in/email", { email, password: NEW_PASSWORD })).status).toBe(200);
 	});
 
+	/** Whether a browser's pending second-factor challenge is still stored. */
+	async function challengeStored(userId: string): Promise<boolean> {
+		return (await db.prepare(`SELECT 1 FROM verification WHERE identifier LIKE '2fa-%' AND value = ?`).bind(userId).first()) !== null;
+	}
+
+	test("a reset ends the second-factor challenges started before it, and only the user's own", async () => {
+		const { browser, email } = await signedIn();
+		const { uri, backupCodes } = await enableTwoFactor(browser);
+		const other = await signedIn();
+		const { uri: otherUri } = await enableTwoFactor(other.browser);
+		// Two of the target's challenges, after an email code and after a password; the other user's after a password.
+		const target = new Browser();
+		await sendCode(email, target);
+		expect((await target.auth("/sign-in/email-otp", { email, otp: lastCode(email) })).body.twoFactorRedirect).toBe(true);
+		const targetByPassword = new Browser();
+		expect((await targetByPassword.auth("/sign-in/email", { email, password: PASSWORD })).body.twoFactorRedirect).toBe(true);
+		const bystander = new Browser();
+		expect((await bystander.auth("/sign-in/email", { email: other.email, password: PASSWORD })).body.twoFactorRedirect).toBe(true);
+
+		await reset(email, NEW_PASSWORD);
+		const refused = await target.auth("/two-factor/verify-backup-code", { code: backupCodes[0] });
+		expect([refused.status, refused.body.code]).toEqual([401, "INVALID_TWO_FACTOR_COOKIE"]);
+		expect((await target.call("GET", "/api/me")).status).toBe(401);
+		const alsoRefused = await targetByPassword.auth("/two-factor/verify-totp", { code: await totp(uri) });
+		expect([alsoRefused.status, alsoRefused.body.code]).toEqual([401, "INVALID_TWO_FACTOR_COOKIE"]);
+		expect((await bystander.auth("/two-factor/verify-totp", { code: await totp(otherUri) })).status).toBe(200);
+
+		const again = new Browser();
+		expect((await again.auth("/sign-in/email", { email, password: NEW_PASSWORD })).body.twoFactorRedirect).toBe(true);
+		expect((await again.auth("/two-factor/verify-totp", { code: await totp(uri) })).status).toBe(200);
+		expect((await again.call("GET", "/api/me")).status).toBe(200);
+	});
+
+	test("a password change ends them too, even without revokeOtherSessions; a refused change does not", async () => {
+		const { browser, email, userId } = await signedIn();
+		const { uri } = await enableTwoFactor(browser);
+		const pending = new Browser();
+		expect((await pending.auth("/sign-in/email", { email, password: PASSWORD })).body.twoFactorRedirect).toBe(true);
+		const wrong = await browser.auth("/change-password", { currentPassword: NEW_PASSWORD, newPassword: NEW_PASSWORD });
+		expect([wrong.status, wrong.body.code]).toEqual([400, "INVALID_PASSWORD"]);
+		expect(await challengeStored(userId)).toBe(true);
+
+		const changed = await browser.auth("/change-password", { currentPassword: PASSWORD, newPassword: NEW_PASSWORD });
+		expect(changed.status, JSON.stringify(changed.body)).toBe(200);
+		expect(await challengeStored(userId)).toBe(false);
+		const refused = await pending.auth("/two-factor/verify-totp", { code: await totp(uri) });
+		expect([refused.status, refused.body.code]).toEqual([401, "INVALID_TWO_FACTOR_COOKIE"]);
+		expect((await pending.call("GET", "/api/me")).status).toBe(401);
+	});
+
 	test("a password change with revokeOtherSessions ends the others and keeps this browser signed in", async () => {
 		const { browser, email } = await signedIn();
 		const other = new Browser();

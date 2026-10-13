@@ -22,5 +22,6 @@ export const auth = betterAuth(
 		sendCode: unused,
 		userCreated: unused,
 		sessionCreated: unused,
+		passwordReplaced: unused,
 	}),
 );

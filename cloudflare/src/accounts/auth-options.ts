@@ -11,9 +11,11 @@
 // What we add on top (provisioning, provision.ts) is written to recover from a crash between statements.
 //
 // Ours around it: sign-up only by email code, open or closed per request (`allowSignUp`, auth.ts), the
-// two-factor challenge after an email code too (`everyFirstFactor`), and provisioning.
+// two-factor challenge after an email code too (`everyFirstFactor`), challenges ended with the password
+// (`passwordReplaced`), and provisioning.
 
 import type { BetterAuthOptions } from "better-auth";
+import { createAuthMiddleware, isAPIError } from "better-auth/api";
 import { admin, emailOTP, organization, twoFactor } from "better-auth/plugins";
 import { uuid7 } from "../lib/random.ts";
 import { IP_LIMIT_OPTIONS } from "./ip-limits.ts";
@@ -35,6 +37,8 @@ export interface AuthDeps {
 	userCreated(userId: string): Promise<void>;
 	/** After any session is created: provisioning is repaired if a crash left it pending. */
 	sessionCreated(userId: string): Promise<void>;
+	/** After a reset or a successful change of the user's password: their pending two-factor challenges end. */
+	passwordReplaced(userId: string): Promise<void>;
 }
 
 /** Wrong guesses an email code takes before it is used up. */
@@ -84,6 +88,19 @@ export function authOptions(deps: AuthDeps) {
 			requireEmailVerification: true,
 			minPasswordLength: MIN_PASSWORD_LENGTH,
 			revokeSessionsOnPasswordReset: true,
+			// A challenge proven with the old password would otherwise still make a session for 10 minutes after
+			// the reset (docs/plans/auth-fixes.md, finding 1). Called before the sessions are revoked; an error is
+			// the reset's, so it is retried rather than reported as done.
+			onPasswordReset: async ({ user }: { user: { id: string } }) => deps.passwordReplaced(user.id),
+		},
+		hooks: {
+			// Better Auth has no callback for a change, so its route ends the challenges here, after it succeeded.
+			// After-hooks run for a failure too: a wrong current password ends nothing.
+			after: createAuthMiddleware(async (ctx) => {
+				if (ctx.path !== "/change-password" || isAPIError(ctx.context.returned)) return;
+				const userId = ctx.context.session?.user.id;
+				if (userId) await deps.passwordReplaced(userId);
+			}),
 		},
 		session: {
 			expiresIn: SESSION_SECONDS,

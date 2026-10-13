@@ -57,7 +57,7 @@ const never = async (): Promise<never> => {
 describe("the D1 schema", () => {
 	test("Better Auth's tables have exactly the columns our configuration expects", async () => {
 		const schema = getSchema(
-			authOptions({ siteUrl: "http://localhost", secret: "s".repeat(32), debug: true, allowSignUp: false, sendCode: never, userCreated: never, sessionCreated: never }),
+			authOptions({ siteUrl: "http://localhost", secret: "s".repeat(32), debug: true, allowSignUp: false, sendCode: never, userCreated: never, sessionCreated: never, passwordReplaced: never }),
 		);
 		expect(Object.keys(schema).sort()).toEqual(BETTER_AUTH_TABLES);
 		for (const [table, { fields }] of Object.entries(schema)) {

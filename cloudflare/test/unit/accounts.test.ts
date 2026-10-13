@@ -102,7 +102,7 @@ describe("Better Auth's options", () => {
 	const never = async (): Promise<never> => {
 		throw new Error("unused");
 	};
-	const options = (allowSignUp: boolean) => authOptions({ siteUrl: "http://localhost", secret: "s".repeat(32), debug: true, allowSignUp, sendCode: never, userCreated: never, sessionCreated: never });
+	const options = (allowSignUp: boolean) => authOptions({ siteUrl: "http://localhost", secret: "s".repeat(32), debug: true, allowSignUp, sendCode: never, userCreated: never, sessionCreated: never, passwordReplaced: never });
 	const plugin = (allowSignUp: boolean, id: string) => options(allowSignUp).plugins.find((candidate) => candidate.id === id);
 
 	test("no user is made from a password; an email code makes one only when sign-up is allowed", () => {
