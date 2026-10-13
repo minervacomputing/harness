@@ -8,7 +8,7 @@ import { OperationError, defineOperation } from "../../gateway/connector.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
 import { record } from "../../lib/schema.ts";
 import { SINGLE_LINE, isSingleLine, sliceText } from "../../lib/text.ts";
-import { DataSource, type Database, type NotionClient, Page, databaseName, searchIncomplete, sourceDatabaseId, sourceName } from "./client.ts";
+import { DataSource, type Database, type NotionClient, Page, databaseName, own, searchIncomplete, sourceDatabaseId, sourceName } from "./client.ts";
 import { redact } from "./markdown.ts";
 import {
 	JSON_SIZE_ERROR,
@@ -26,7 +26,6 @@ import {
 	parentId,
 } from "./pages.ts";
 import { checkFilter, mentionsHidden, readable, schema } from "./properties.ts";
-import { has } from "./python.ts";
 
 export const MAX_CURSOR = 1000;
 
@@ -56,13 +55,11 @@ function databaseRecord(resource: Resource, database: Database, extra: JsonObjec
 	};
 }
 
-const Search = z
-	.strictObject({
-		text: z.string().trim().max(200).refine(isSingleLine, SINGLE_LINE).nullable().default(null),
-		limit: z.int().min(1).max(50).default(20),
-		cursor: cursorField(),
-	})
-	.meta({ title: "Search" });
+const Search = z.strictObject({
+	text: z.string().trim().max(200).refine(isSingleLine, SINGLE_LINE).nullable().default(null),
+	limit: z.int().min(1).max(50).default(20),
+	cursor: cursorField(),
+});
 
 export const SEARCH = defineOperation<z.output<typeof Search>>({
 	name: "search",
@@ -81,7 +78,7 @@ export const SEARCH = defineOperation<z.output<typeof Search>>({
 				const records: ScopedRecord[] = [];
 				const databases = new Set<string>();
 				for (const item of found.results) {
-					const object = has(item, "object") ? item.object : null;
+					const object = own(item, "object");
 					if (object === "page") {
 						const parsed = Page.safeParse(item);
 						if (!parsed.success) continue;
@@ -106,7 +103,7 @@ export const SEARCH = defineOperation<z.output<typeof Search>>({
 	},
 });
 
-const PageInput = z.strictObject({ page_id: objectIdField() }).meta({ title: "PageInput" });
+const PageInput = z.strictObject({ page_id: objectIdField() });
 
 export const GET_PAGE = defineOperation<z.output<typeof PageInput>>({
 	name: "get_page",
@@ -129,13 +126,11 @@ export const GET_PAGE = defineOperation<z.output<typeof PageInput>>({
 export const READ_TEXT_NOTE =
 	"Links to child pages and databases, and mentions of pages, appear without their titles (use get_page or get_database to see one you may read). Content synced from other pages is hidden.";
 
-const ReadPage = z
-	.strictObject({
-		page_id: objectIdField(),
-		offset: z.int().min(0).max(10_000_000).default(0),
-		max_chars: z.int().min(1).max(100_000).default(20_000),
-	})
-	.meta({ title: "ReadPage" });
+const ReadPage = z.strictObject({
+	page_id: objectIdField(),
+	offset: z.int().min(0).max(10_000_000).default(0),
+	max_chars: z.int().min(1).max(100_000).default(20_000),
+});
 
 export const READ_PAGE = defineOperation<z.output<typeof ReadPage>>({
 	name: "read_page",
@@ -170,7 +165,7 @@ export const READ_PAGE = defineOperation<z.output<typeof ReadPage>>({
 	},
 });
 
-const DatabaseInput = z.strictObject({ database_id: objectIdField() }).meta({ title: "DatabaseInput" });
+const DatabaseInput = z.strictObject({ database_id: objectIdField() });
 
 export const GET_DATABASE = defineOperation<z.output<typeof DatabaseInput>>({
 	name: "get_database",
@@ -203,16 +198,14 @@ export const GET_DATABASE = defineOperation<z.output<typeof DatabaseInput>>({
 	},
 });
 
-const QueryDatabase = z
-	.strictObject({
-		database_id: objectIdField(),
-		data_source_id: optionalObjectIdField(),
-		filter: record(z.unknown()).refine(jsonSizeOk, JSON_SIZE_ERROR).describe("A Notion data source query filter.").nullable().default(null),
-		sorts: z.array(record(z.unknown())).max(10).refine(jsonSizeOk, JSON_SIZE_ERROR).describe("Notion data source query sorts.").nullable().default(null),
-		limit: z.int().min(1).max(100).default(25),
-		cursor: cursorField(),
-	})
-	.meta({ title: "QueryDatabase" });
+const QueryDatabase = z.strictObject({
+	database_id: objectIdField(),
+	data_source_id: optionalObjectIdField(),
+	filter: record(z.unknown()).refine(jsonSizeOk, JSON_SIZE_ERROR).describe("A Notion data source query filter.").nullable().default(null),
+	sorts: z.array(record(z.unknown())).max(10).refine(jsonSizeOk, JSON_SIZE_ERROR).describe("Notion data source query sorts.").nullable().default(null),
+	limit: z.int().min(1).max(100).default(25),
+	cursor: cursorField(),
+});
 
 export const QUERY_DATABASE = defineOperation<z.output<typeof QueryDatabase>>({
 	name: "query_database",
@@ -260,7 +253,7 @@ export const QUERY_DATABASE = defineOperation<z.output<typeof QueryDatabase>>({
 	},
 });
 
-const ListComments = z.strictObject({ page_id: objectIdField(), cursor: cursorField() }).meta({ title: "ListComments" });
+const ListComments = z.strictObject({ page_id: objectIdField(), cursor: cursorField() });
 
 export const LIST_COMMENTS = defineOperation<z.output<typeof ListComments>>({
 	name: "list_comments",

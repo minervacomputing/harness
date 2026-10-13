@@ -189,14 +189,14 @@ describe("connecting", () => {
  * a change of meaning, and bump `revision` when the declaration does not show one.
  */
 const FINGERPRINTS: { [operation: string]: string } = {
-	list_teams: "ad23616e6c157c11",
-	get_team: "21aec9431a2e420d",
-	list_issues: "19d6311c2186ae79",
-	search_issues: "360193e9ba60a18d",
-	get_issue: "ceaa7365274582d3",
-	create_issue: "1239a3b55271cef4",
-	add_comment: "d24e06a992ec7e60",
-	update_issue: "a8aa16aa03181ca2",
+	list_teams: "defe2daa8f3b2563",
+	get_team: "be69dbdd0e224f1a",
+	list_issues: "e422749f8096f060",
+	search_issues: "886b85411bbf39fb",
+	get_issue: "6ab0d963727c4a19",
+	create_issue: "fc05a953958bec85",
+	add_comment: "912669e9b6c9670b",
+	update_issue: "a22a8b5f01a29996",
 };
 
 describe("runs", () => {
@@ -513,7 +513,7 @@ describe("runs", () => {
 		expect(run.paused()).toBe(true);
 	});
 
-	test("a confirmation that is not UTF-8 leaves the write unknown, as json.loads refuses it", async () => {
+	test("a confirmation that is not UTF-8 JSON leaves the write unknown", async () => {
 		const fake = new FakeLinear();
 		const run = await start(fake, { eng: ["read", "create"] });
 		const confirmed = new TextEncoder().encode('{"data": {"issueCreate": {"success": true, "issue": null}}, "x": "?"}');
@@ -521,7 +521,15 @@ describe("runs", () => {
 		fake.hook = (name) => (name === "IssueCreate" ? new Response(confirmed, { status: 200 }) : null);
 		expect(await run.code("linear_create_issue", { team: "ENG", title: "a" })).toBe("WRITE_UNCERTAIN");
 		expect(run.writes().map((write) => write.status)).toEqual(["uncertain"]);
-		// An error status whose body is not UTF-8 goes by the status.
+		// A refusal in UTF-16 is not read either: the write may have run.
+		const fresh = new FakeLinear();
+		const other = await start(fresh, { eng: ["read", "create"] });
+		const refusal = JSON.stringify({ errors: [{ extensions: { type: "graphql error", code: "GRAPHQL_VALIDATION_FAILED" } }] });
+		const utf16 = new Uint8Array([0xff, 0xfe, ...new Uint8Array(Uint16Array.from(refusal, (char) => char.charCodeAt(0)).buffer)]);
+		fresh.hook = (name) => (name === "IssueCreate" ? new Response(utf16, { status: 400 }) : null);
+		expect(await other.code("linear_create_issue", { team: "ENG", title: "a" })).toBe("WRITE_UNCERTAIN");
+		expect(other.writes().map((write) => write.status)).toEqual(["uncertain"]);
+		// An error status whose body is not UTF-8 is named by the status.
 		const refused = new TextEncoder().encode('{"errors": [{"extensions": {"type": "forbidden"}}], "x": "?"}');
 		refused[refused.length - 3] = 0xff;
 		fake.hook = (name) => (name === "Issue" ? new Response(refused, { status: 404 }) : null);
@@ -610,6 +618,11 @@ describe("text, judging and ancestry", () => {
 		expect(shown).toContain("![shot](https://uploads.linear.app/a/b.png)");
 		expect(shown).not.toContain("SEC");
 		expect(redact(null)).toBeNull();
+		// Lookalike letters and any case: the dotted capital I and the dotless i count as "i".
+		for (const host of ["lınear.app", "l\u0130near.app", "LINEAR.APP"]) {
+			expect(redact(`https://${host}/acme/project/secret-roadmap-0a1b2c3d4e5f`), host).toBe("https://linear.app/acme/project/0a1b2c3d4e5f");
+			expect(redact(`https://${host}/acmeı/issue/ENG-1/secret-title`), host).not.toContain("secret");
+		}
 	});
 
 	test.each([
@@ -619,6 +632,7 @@ describe("text, judging and ancestry", () => {
 		"<iframe>",
 		"https://linear.app/acme/project/roadmap-0a1b2c3d4e5f",
 		"linear.app/acme/issue/ENG-1",
+		"https://\nlinear.app/acme/issue/ENG-1",
 		"https://linear.app/acme/issue/ENG-1.evil",
 		"[x](https://linear.app/acme/issue/ENG-1/../../issue/OPS-1)",
 		"[x](https://linear.app/acme/issue/ENG-1/x_/../../OPS-1)",
@@ -634,6 +648,11 @@ describe("text, judging and ancestry", () => {
 		"[x](https://linear。app/acme/issue/OPS-1)",
 		"[x](https://ｌｉｎｅａｒ.app/acme/issue/OPS-1)",
 		"[x](https://linear​.app/acme/issue/OPS-1)",
+		"[x](https://lınear.app/acme/project/roadmap-0a1b2c3d4e5f)",
+		"[x](https://l\u0130near.app/acme/view/x)",
+		"[x](HTTPS://LINEAR.APP/acme/team/ENG)",
+		'<a actıon="https://evil.example">',
+		'<a act\u0130on="https://evil.example">',
 		"https://linear.app/acme/settings/api",
 		"[ENG-1](https://linear.app/acme/team/ENG)",
 		"nul\x00",
@@ -665,8 +684,13 @@ describe("text, judging and ancestry", () => {
 		expect(judged(200, { data: null, errors: [malformed] })).toBe("unknown");
 		expect(judged(200, { data: null, errors: [error] })).toBe("unknown");
 		expect(judged(200, { data: { issueCreate: { success: false } } })).toBe("unknown");
+		// A body that is not a JSON object says nothing: only authentication and rate limits refuse before running.
 		expect(judged(200, "<html>")).toBe("unknown");
-		expect(judged(502, "<html>")).toBeNull();
+		expect(judged(400, "<html>")).toBe("unknown");
+		expect(judged(502, "<html>")).toBe("unknown");
+		expect(judged(400, "[]")).toBe("unknown");
+		expect(judged(401, "<html>")).toBe("not_applied");
+		expect(judged(429, "")).toBe("not_applied");
 	});
 
 	test("team chains beyond the limit are partial", () => {

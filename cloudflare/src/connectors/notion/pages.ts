@@ -14,8 +14,8 @@ export const MAX_HOPS = 64;
 export const MAX_FILTER = 8000;
 
 const UUID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/iu;
-/** `([0-9a-f]{32})$` under IGNORECASE; Python's `$` also matches before a final "\n". */
-const LINK_ID = /([0-9a-fA-F]{32})(?=\n?$)/u;
+/** The id at the end of a link's last path segment. */
+const LINK_ID = /([0-9a-f]{32})$/i;
 
 /** A Notion id as a lowercase UUID with dashes, or null when it is not one. */
 export function canonical(value: unknown): string | null {
@@ -65,14 +65,14 @@ function toObjectId<T>(value: string, ctx: z.core.$RefinementCtx<T>): string {
 	return z.NEVER;
 }
 
-/** `ObjectId`: a Notion id, or a link to the page or database, normalized to the id. */
+/** A Notion id, or a link to the page or database, normalized to the id. */
 export function objectIdField() {
 	return idString().transform(toObjectId);
 }
 
 /**
- * `ObjectId | None = None`. The default sits inside the transform, since zod's JSON Schema leaves out the
- * default of a field that transforms: so the model sees `"default": null`, as Pydantic shows it.
+ * An optional `objectIdField`, null by default. The default sits inside the transform, since zod's JSON
+ * Schema leaves out the default of a field that transforms.
  */
 export function optionalObjectIdField() {
 	return idString()
@@ -276,7 +276,7 @@ export function pageRecord(resource: Resource, page: Page, extra: JsonObject = {
 
 /** The database's data source the call uses, which must belong to this database itself. */
 export async function dataSource(client: NotionClient, database: Database, requested: string | null): Promise<DataSource> {
-	// A dict keyed by canonical id: in Notion's order, each id once.
+	// Canonical ids in Notion's order, each once; null for an id that is not one.
 	const sources = new Set(database.data_sources.map((source) => canonical(source.id)));
 	let chosen: string | null;
 	if (requested !== null) {
@@ -285,7 +285,7 @@ export async function dataSource(client: NotionClient, database: Database, reque
 	} else if (sources.size === 1) {
 		chosen = [...sources][0] as string | null;
 	} else {
-		const ids = [...sources].map((id) => id ?? "None").join(", ");
+		const ids = [...sources].filter((id) => id !== null).join(", ");
 		throw new OperationError("INVALID_ARGUMENTS", `This database has several data sources; pass data_source_id: ${ids}.`);
 	}
 	if (chosen === null) throw new OperationError("PROVIDER_FAILED", "Notion returned an unexpected response.");

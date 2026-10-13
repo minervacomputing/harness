@@ -7,20 +7,16 @@
 // leaves its outcome unknown, which pauses further writes. Read responses are streamed with a byte limit.
 //
 // Responses are read by the camelCase names Linear sends; unknown fields are dropped, and a field of another
-// type makes the response unexpected.
-//
-// `judge` and `classify` read a body as Python's `response.json()` does (pyjson.ts). Reads parse bodies as
-// the core's `json()` does, UTF-8 only, so a body Python would also read as UTF-16 or UTF-32, or with an
-// encoded surrogate or NaN, is an unexpected response here; Linear sends UTF-8 JSON.
+// type makes the response unexpected. Bodies are JSON in UTF-8 (a byte order mark is dropped); anything else
+// is not JSON: an unexpected response for a read, and an unknown outcome for a write unless its status says
+// Linear refused it before running it (see `judge`).
 
 import { z } from "zod";
 import type { Effect, OperationErrorShape, ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
-import { fromUtf8Strict, utf8 } from "../../lib/bytes.ts";
+import { utf8 } from "../../lib/bytes.ts";
 import { isDict, type Json, type JsonObject, parseJson } from "../../lib/json.ts";
-import { pythonLoads } from "./pyjson.ts";
-import { strOf } from "./python.ts";
 import { extend } from "../../lib/arrays.ts";
 
 export const API_URL = "https://api.linear.app";
@@ -189,7 +185,7 @@ export type WrittenComment = z.output<typeof WrittenComment>;
 
 // Errors and outcomes.
 
-/** `dict.get(key)`: an own key only, so a "__proto__" key is data and nothing is inherited. */
+/** An own key's value only, so a "__proto__" key is data and nothing is inherited. */
 function get(value: Json | undefined, key: string): Json | undefined {
 	return isDict(value) && Object.hasOwn(value, key) ? value[key] : undefined;
 }
@@ -213,11 +209,10 @@ export function errorFor(provider: string, errors: JsonObject[]): OperationError
 	const kinds = errors.map(kindOf);
 	const types = new Set(kinds.map(([kind]) => kind));
 	const codes = new Set(kinds.map(([, code]) => code));
-	// `str(error.get("message", ""))`: a message that is null reads "None".
 	const messages = errors
 		.map((error) => {
 			const message = get(error, "message");
-			return strOf(message === undefined ? "" : message).toLowerCase();
+			return typeof message === "string" ? message.toLowerCase() : "";
 		})
 		.join(" ");
 	if (types.has("ratelimited") || codes.has("RATELIMITED")) {
@@ -234,23 +229,18 @@ export function errorFor(provider: string, errors: JsonObject[]): OperationError
 	return new OperationError("PROVIDER_FAILED", `${provider} could not complete this request.`);
 }
 
-/**
- * A read's JSON, as the core's `json()` reads every body: UTF-8 with a byte order mark skipped. Python's
- * `response.json()` would also read UTF-16, UTF-32, encoded surrogates and NaN, which are refused here as
- * an unexpected response.
- */
-function strictJson(bytes: Uint8Array): Json {
-	const start = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
-	return parseJson(fromUtf8Strict(bytes.subarray(start)));
+/** A body as JSON: UTF-8, a byte order mark dropped; undefined when it is not JSON. */
+function jsonOf(bytes: Uint8Array): Json | undefined {
+	try {
+		return parseJson(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes));
+	} catch {
+		return undefined;
+	}
 }
 
-/**
- * Names the error of a failed response from its GraphQL errors; null goes by the status. Reads the bytes
- * received (`bytes`) as Python's `response.json()` does (pyjson.ts), not the text decoded with
- * replacement characters.
- */
+/** Names the error of a failed response from its GraphQL errors; null goes by the status. */
 export function classify(provider: string, _response: Response, body: string, bytes: Uint8Array = utf8(body)): OperationErrorShape | null {
-	const parsed = pythonLoads(bytes);
+	const parsed = jsonOf(bytes);
 	if (parsed === undefined) return null;
 	const errors = errorsOf(parsed);
 	return errors.length ? errorFor(provider, errors) : null;
@@ -264,15 +254,18 @@ function refusedBeforeRunning(error: JsonObject, hasData: boolean): boolean {
 	return !hasData && (kind === "graphql error" || MALFORMED.has(code));
 }
 
+/** Statuses that refuse a request before it runs, for a body that says nothing: authentication and rate limits. */
+const REFUSED_STATUSES: ReadonlySet<number> = new Set([401, 429]);
+
 /**
  * What a mutation did. Only Linear's confirmation counts as applied, and only a refusal before the
- * mutation ran as not applied: an error raised after it committed can look like any other. The body is read
- * as `classify` reads it; one that does not parse, invalid UTF-8 included, leaves a write Linear answered
- * with a success status unknown.
+ * mutation ran as not applied: an error raised after it committed can look like any other. A body that is
+ * not a JSON object (not UTF-8 or not JSON included) says neither, so the write is unknown unless its
+ * status is one that refuses before running.
  */
-export function judge(response: Response, body: string, bytes: Uint8Array = utf8(body)): Effect | null {
-	const parsed = pythonLoads(bytes);
-	if (!isDict(parsed)) return response.ok ? "unknown" : null;
+export function judge(response: Response, body: string, bytes: Uint8Array = utf8(body)): Effect {
+	const parsed = jsonOf(bytes);
+	if (!isDict(parsed)) return REFUSED_STATUSES.has(response.status) ? "not_applied" : "unknown";
 	const data = get(parsed, "data");
 	if (isDict(data)) {
 		for (const payload of Object.values(data)) if (get(payload, "success") === true) return "applied";
@@ -308,12 +301,8 @@ export class LinearClient implements ProviderClient {
 			MAX_RESPONSE_BYTES,
 			new OperationError("RESPONSE_TOO_LARGE", "Linear returned more than Minerva reads."),
 		);
-		let body: Json;
-		try {
-			body = strictJson(new Uint8Array(await response.arrayBuffer()));
-		} catch (error) {
-			throw this.unexpected(error);
-		}
+		const body = jsonOf(new Uint8Array(await response.arrayBuffer()));
+		if (body === undefined) throw this.unexpected();
 		const errors = errorsOf(body);
 		if (errors.length) throw errorFor("Linear", errors);
 		const data = get(body, "data");

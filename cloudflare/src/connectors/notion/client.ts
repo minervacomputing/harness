@@ -8,9 +8,7 @@ import { z } from "zod";
 import type { OperationErrorShape, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
-import { fromUtf8Strict } from "../../lib/bytes.ts";
 import { type Json, type JsonObject, isDict, parseJson } from "../../lib/json.ts";
-import { asText, has, own } from "./python.ts";
 
 export const API_URL = "https://api.notion.com/v1";
 /** Pinned: the markdown endpoints and data sources behave as documented for this version. */
@@ -18,6 +16,15 @@ export const NOTION_VERSION = "2026-03-11";
 export const MAX_MARKDOWN_BYTES = 4 * 1024 * 1024;
 
 const maybeText = () => z.string().nullable().default(null);
+
+/**
+ * The value of one of the object's own keys, or null. Keys that come from Notion or from the agent (property
+ * names, option names, a property's type) are read this way, so "constructor" or "__proto__" is an ordinary
+ * key.
+ */
+export function own(value: JsonObject, key: string): Json {
+	return Object.hasOwn(value, key) ? (value[key] as Json) : null;
+}
 
 /** An object of objects, `{}` when missing, kept as parsed. */
 const dictOfDicts = () =>
@@ -174,9 +181,9 @@ export function textOf(items: Json | undefined): string {
 			const type = own(mention, "type") as string;
 			const target = own(mention, type);
 			const targetId = isDict(target) ? own(target, "id") : null;
-			parts.push(`(mention of ${type} ${asText(targetId)})`);
+			parts.push(typeof targetId === "string" ? `(mention of ${type} ${targetId})` : `(mention of ${type})`);
 		} else {
-			const text = has(item, "plain_text") ? item.plain_text : "";
+			const text = own(item, "plain_text");
 			parts.push(typeof text === "string" ? text : "");
 		}
 	}
@@ -250,10 +257,8 @@ export class NotionClient {
 		);
 		let body: Json;
 		try {
-			const bytes = new Uint8Array(await response.arrayBuffer());
-			// As `response.json()` reads UTF-8: a byte order mark skipped, invalid UTF-8 refused.
-			const start = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
-			body = parseJson(fromUtf8Strict(bytes.subarray(start)));
+			// UTF-8, a byte order mark dropped; invalid UTF-8 is refused.
+			body = parseJson(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(await response.arrayBuffer()));
 		} catch (error) {
 			throw this.http.unexpected(error);
 		}

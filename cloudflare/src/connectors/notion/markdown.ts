@@ -18,33 +18,35 @@
 // none of it afterwards, the page as a whole may gain none, and the edit may not change code fences or the
 // parity of backticks.
 //
-// The patterns spell out `\w`, `\b` and IGNORECASE for the `u` flag (patterns.ts). An address runs up to
-// whitespace, but U+FEFF, which `\s` counts and no one sees, stays part of it, so that it cannot end an
-// address before the page id that carries its title.
+// Patterns that match words have the `iu` flags, whose case folding also matches "ſ" to "s" and the Kelvin
+// sign to "k"; the dotted capital I and the dotless i do not fold to "i", so the patterns name them as
+// lookalikes. A word boundary counts every letter and number as part of a word, not only ASCII ones. An
+// address runs up to whitespace, but U+FEFF, which `\s` counts and no one sees, stays part of it, so that it
+// cannot end an address before the page id that carries its title.
 
 import { OperationError } from "../../gateway/connector.ts";
 import { WORD_CLASS } from "../../lib/text.ts";
-import {
-	ALNUM_DASH_CASELESS,
-	HEX_CASELESS,
-	LINE_START,
-	WORD_END,
-	WORD_START,
-	countOf,
-	ignoreCase,
-	rfindBefore,
-} from "./patterns.ts";
+
+/** A lowercase ASCII word as a pattern for the `iu` flags, with "i" also matching its lookalikes. */
+function caseless(word: string): string {
+	return word.replaceAll(".", "\\.").replaceAll("i", "[i\\u0130\\u0131]");
+}
+
+const WORD_START = `(?<![${WORD_CLASS}])`;
+const WORD_END = `(?![${WORD_CLASS}])`;
 
 /** Tags whose content is another object's title. */
 export const TITLED = ["page", "database", "mention-page", "mention-database", "mention-data-source", "mention-agent"] as const;
 /** A titled tag's name ends at whitespace or any control character too, so that an odd separator hides more, not less. */
-const TITLED_OPEN = new RegExp(`<(${TITLED.map(ignoreCase).join("|")})(?=[\\s\\p{Cc}/>])([^<>]*)>`, "gu");
+const TITLED_OPEN = new RegExp(`<(${TITLED.map(caseless).join("|")})(?=[\\s\\p{Cc}/>])([^<>]*)>`, "giu");
+/** Each titled tag's name, in any case or with lookalikes. */
+const TITLED_NAMES = TITLED.map((name) => [name, new RegExp(`^${caseless(name)}$`, "iu")] as const);
 const URL_ATTRIBUTE = new RegExp(`${WORD_START}url="([^"<>]*)"`, "u");
 export const SYNCED_OPEN = "<synced_block_reference";
 export const SYNCED_CLOSE = "</synced_block_reference>";
 export const SYNCED_HIDDEN = "(Synced content from another page. Minerva does not show it.)";
 /** Anything on a line that makes an edit there depend on hidden text. */
-const HIDDEN_MARK = new RegExp(`</?(?:${[...TITLED, "synced_block_reference"].map(ignoreCase).join("|")})${WORD_END}`, "gu");
+const HIDDEN_MARK = new RegExp(`</?(?:${[...TITLED, "synced_block_reference"].map(caseless).join("|")})${WORD_END}`, "giu");
 
 /** Tags agents may not write. */
 export const DENIED_TAGS: ReadonlySet<string> = new Set([
@@ -73,7 +75,7 @@ export const DENIED_TAGS: ReadonlySet<string> = new Set([
 	"meeting_notes",
 ]);
 const TAG = new RegExp(`<\\s*/?\\s*([A-Za-z][${WORD_CLASS}:-]*)([^<>]*)>`, "gu");
-const LINK_ATTRIBUTE = new RegExp(`${WORD_START}(?:${["src", "url", "href", "data", "srcset", "poster", "action"].map(ignoreCase).join("|")})\\s*=`, "u");
+const LINK_ATTRIBUTE = new RegExp(`${WORD_START}(?:${["src", "url", "href", "data", "srcset", "poster", "action"].map(caseless).join("|")})\\s*=`, "iu");
 const NOTION_MENTION = new RegExp(
 	`^(?:\\s+url="https://(?:www\\.)?notion\\.so/[^"\\s<>]*"\\s*/?\\s*` +
 		`|\\s+url="https://[a-z0-9-]+\\.notion\\.site/[^"\\s<>]*"\\s*/?\\s*)$`,
@@ -83,11 +85,12 @@ export const MENTIONS: ReadonlySet<string> = new Set(["mention-page", "mention-d
 export const MAX_WIDENING = 20;
 /** A Notion page address; the part before the id is the page's title. */
 const NOTION_URL = new RegExp(
-	`${ignoreCase("https://")}(?:(?:${ignoreCase("www.")})?${ignoreCase("notion.so")}|[${ALNUM_DASH_CASELESS}]+${ignoreCase(".notion.site")})` +
-		`/(?:[^\\s"'<>()\\[\\]]|\\uFEFF)*?([${HEX_CASELESS}]{32})(?![${HEX_CASELESS}])(?:[^\\s"'<>()\\[\\]]|\\uFEFF)*`,
-	"gu",
+	`https://(?:(?:www\\.)?${caseless("notion.so")}|[a-z0-9\\u0130\\u0131-]+${caseless(".notion.site")})` +
+		`/(?:[^\\s"'<>()\\[\\]]|\\uFEFF)*?([0-9a-f]{32})(?![0-9a-f])(?:[^\\s"'<>()\\[\\]]|\\uFEFF)*`,
+	"giu",
 );
-const FENCE = new RegExp(`${LINE_START}[ \\t]*(\`{3,}|~{3,})`, "gu");
+/** A code fence at the start of a line: at the start of the text or after "\n" (not "\r" or a line separator). */
+const FENCE = /(?<![^\n])[ \t]*(`{3,}|~{3,})/gu;
 
 /**
  * Hides everything from the first synced reference to the last closing tag: synced content may itself
@@ -116,7 +119,8 @@ function redactTitled(markdown: string): string {
 	const parts: string[] = [];
 	let position = 0;
 	for (let match = search(TITLED_OPEN, markdown, position); match !== null; match = search(TITLED_OPEN, markdown, position)) {
-		const name = (match[1] as string).toLowerCase();
+		const written = match[1] as string;
+		const name = (TITLED_NAMES.find(([, pattern]) => pattern.test(written)) as readonly [string, RegExp])[0];
 		const attributes = match[2] as string;
 		const url = URL_ATTRIBUTE.exec(attributes);
 		const tag = url ? `<${name} url="${url[1]}"` : `<${name}`;
@@ -128,7 +132,7 @@ function redactTitled(markdown: string): string {
 			continue;
 		}
 		parts.push(`${tag}></${name}>`);
-		const close = search(new RegExp(`</${ignoreCase(name)}\\s*>`, "gu"), markdown, end);
+		const close = search(new RegExp(`</${caseless(name)}\\s*>`, "giu"), markdown, end);
 		if (close === null) return parts.join("");
 		position = close.index + close[0].length;
 	}
@@ -148,7 +152,7 @@ export function showsSyncedContent(markdown: string): boolean {
 
 /** What in the text would do more than add words to a page: (the text itself, why it is refused). */
 function refusals(text: string): [text: string, reason: string][] {
-	const found: [string, string][] = Array.from({ length: countOf(text, "![") }, (): [string, string] => ["![", "must not contain images"]);
+	const found: [string, string][] = Array.from({ length: text.split("![").length - 1 }, (): [string, string] => ["![", "must not contain images"]);
 	for (const match of text.matchAll(TAG)) {
 		const name = (match[1] as string).toLowerCase();
 		const attributes = match[2] as string;
@@ -160,7 +164,7 @@ function refusals(text: string): [text: string, reason: string][] {
 	return found;
 }
 
-/** Why the text would do more than add words to a page, or null. A field check (`check_written`). */
+/** Why the text would do more than add words to a page, or null. */
 export function writtenRefusal(text: string): string | null {
 	const refused = refusals(text);
 	return refused.length ? (refused[0] as [string, string])[1] : null;
@@ -175,8 +179,8 @@ function once(text: string, part: string): boolean {
 	return first !== -1 && text.indexOf(part, first + 1) === -1;
 }
 
+/** Whether a hidden mark starts at or after `start` and ends by `end`. */
 function hiddenWithin(visible: string, start: number, end: number): boolean {
-	// Nothing after `endpos` is seen.
 	return search(HIDDEN_MARK, visible.slice(0, end), start) !== null;
 }
 
@@ -185,12 +189,17 @@ export interface ContentUpdate {
 	new_str: string;
 }
 
+/** Where the line holding `at` starts. */
+function lineStartOf(text: string, at: number): number {
+	return at === 0 ? 0 : text.lastIndexOf("\n", at - 1) + 1;
+}
+
 function update(markdown: string, old: string, replacement: string): ContentUpdate {
 	const visible = redact(markdown);
 	if (!once(visible, old)) throw notApplied("The text to replace must appear exactly once in the page, as read_page shows it.");
 	const start = visible.indexOf(old);
 	const end = start + old.length;
-	let lineStart = rfindBefore(visible, "\n", start) + 1;
+	let lineStart = lineStartOf(visible, start);
 	const after = visible.indexOf("\n", end);
 	let lineEnd = after === -1 ? visible.length : after;
 	for (let round = 0; round < MAX_WIDENING; round++) {
@@ -213,7 +222,7 @@ function update(markdown: string, old: string, replacement: string): ContentUpda
 			return { old_str: anchored, new_str: replaced };
 		}
 		if (lineStart === 0 && lineEnd === visible.length) break;
-		if (lineStart > 0) lineStart = rfindBefore(visible, "\n", lineStart - 1) + 1;
+		if (lineStart > 0) lineStart = lineStartOf(visible, lineStart - 1);
 		if (lineEnd < visible.length) {
 			const following = visible.indexOf("\n", lineEnd + 1);
 			lineEnd = following === -1 ? visible.length : following;
@@ -226,6 +235,10 @@ function fences(text: string): string[] {
 	return Array.from(text.matchAll(FENCE), (match) => match[1] as string);
 }
 
+function backticks(text: string): number {
+	return text.split("`").length - 1;
+}
+
 function checkEdit(old: string, replacement: string): void {
 	if (refusals(replacement).length) {
 		throw notApplied(
@@ -233,7 +246,7 @@ function checkEdit(old: string, replacement: string): void {
 		);
 	}
 	const [before, after] = [fences(old), fences(replacement)];
-	if (before.length !== after.length || before.some((fence, index) => fence !== after[index]) || countOf(old, "`") % 2 !== countOf(replacement, "`") % 2) {
+	if (before.length !== after.length || before.some((fence, index) => fence !== after[index]) || backticks(old) % 2 !== backticks(replacement) % 2) {
 		throw notApplied(
 			"Minerva does not add or remove code fences or single backticks in an edit, since that changes how the rest of the page reads. Keep backticks paired.",
 		);
@@ -253,7 +266,7 @@ export function planEdits(markdown: string, edits: readonly (readonly [old: stri
 	let text = markdown;
 	for (const [old, replacement] of edits) {
 		const planned = update(text, old, replacement);
-		// `str.replace(old, new, 1)`, without JavaScript's `$` patterns in the replacement.
+		// The first occurrence, by position: `replace` would read `$` patterns in the replacement.
 		const at = text.indexOf(planned.old_str);
 		text = text.slice(0, at) + planned.new_str + text.slice(at + planned.old_str.length);
 		updates.push(planned);

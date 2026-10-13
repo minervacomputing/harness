@@ -32,8 +32,3 @@ export function jsonQuoted(message: string): string {
 		),
 	);
 }
-
-/** Whether an expected value spells Python's None, True, False, a list or a dict, where JSON's are written now. */
-export function showsPythonValues(expected: unknown): boolean {
-	return /\bNone\b|\bTrue\b|\bFalse\b|\['|\{'/.test(JSON.stringify(expected) ?? "");
-}
