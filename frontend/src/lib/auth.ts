@@ -3,12 +3,11 @@
  * Signing in and out load a whole page, so nothing one account fetched stays in memory for the next. The step a visitor is at (a code
  * to enter, a second factor) is kept in `sessionStorage`, because Better Auth does not say: only the address and the step, never a secret.
  */
+import { SETUP_KEY_HEADER } from '@minerva/contract'
+import { ORPCError } from '@orpc/client'
 import { mutationOptions, queryOptions } from '@tanstack/react-query'
-import { meOptions } from '@/api/@tanstack/react-query.gen'
-import type { MeOut } from '@/api/types.gen'
 import { AuthError, client, failureOf, withAuthErrors } from '@/lib/auth-client'
-import { serverErrorMessage } from '@/lib/http'
-import { SETUP_KEY_HEADER } from '@/lib/instance'
+import { orpc } from '@/lib/orpc'
 
 export type AuthUser = { id: string; email: string }
 /** What a visitor who is not signed in yet does next. */
@@ -76,11 +75,14 @@ function pendingEmail(step: Step): string {
 export const authQuery = queryOptions({
   queryKey: ['auth'],
   queryFn: async ({ client: queryClient, signal }): Promise<AuthState> => {
-    const response = await fetch('/api/me', { credentials: 'same-origin', signal })
-    if (response.status === 401) return anonymous()
-    if (!response.ok) throw new Error(serverErrorMessage(response.status))
-    const me = (await response.json()) as MeOut
-    queryClient.setQueryData(meOptions().queryKey, me)
+    let me
+    try {
+      me = await orpc.me.call(undefined, { signal, context: { signedOutIsAnswer: true } })
+    } catch (error) {
+      if (error instanceof ORPCError && error.status === 401) return anonymous()
+      throw error
+    }
+    queryClient.setQueryData(orpc.me.queryKey(), me)
     return { kind: 'authenticated', user: { id: me.user.id, email: me.user.email } }
   },
   staleTime: 60_000,

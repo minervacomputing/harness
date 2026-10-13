@@ -10,7 +10,7 @@ import { Alert, ErrorNote, PageHeader } from '@/components/ui/misc'
 import { account } from '@/lib/account'
 import { authQuery, signOut } from '@/lib/auth'
 import { fieldErrors } from '@/lib/auth-client'
-import { setupQuery } from '@/lib/instance'
+import { orpc } from '@/lib/orpc'
 import { pageHead } from '@/lib/title'
 
 export const Route = createFileRoute('/w/$workspaceId/account')({
@@ -23,7 +23,7 @@ function AccountPage() {
   const { data: state } = useQuery(authQuery)
   const user = state?.kind === 'authenticated' ? state.user : context.user
   // Until someone claims it, any signed-in user can find the setup here; it works only with the setup key.
-  const setupNeeded = useQuery(setupQuery).data?.needed === true
+  const setupNeeded = useQuery(orpc.setup.status.queryOptions()).data?.needed === true
   return (
     <div>
       <PageHeader title="Account" />

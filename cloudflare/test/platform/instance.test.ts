@@ -1,4 +1,4 @@
-// The instance's administration (src/accounts/instance.ts, instance-routes.ts): the first-run setup claimed
+// The instance's administration (src/accounts/instance.ts, api/accounts.ts): the first-run setup claimed
 // once, also by concurrent requests, the instance admin apart from organization and workspace roles (and
 // without the admin plugin's endpoints), the admins' list and sign-up setting, and the setup key admitting
 // the operator's sign-up on a closed instance until setup is done.
@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 import { ADMINS_ONLY, ALREADY_SET_UP, INVALID_KEY, LAST_ADMIN, NO_SUCH_USER, SETUP_KEY_HEADER, claimSetup } from "../../src/accounts/instance.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import type { RefusalCode } from "../../src/shared/rpc.ts";
-import { type Answer, Browser, PASSWORD, installEmailLog, lastCode, signedIn, uniqueEmail } from "./accounts-helpers.ts";
+import { type Answer, Browser, PASSWORD, contractError, installEmailLog, lastCode, signedIn, uniqueEmail } from "./accounts-helpers.ts";
 
 installEmailLog();
 
@@ -34,8 +34,13 @@ async function user(name = "ada"): Promise<User> {
 	return { browser, userId, email };
 }
 
-function expectRefusal(answer: Answer, status: number, code: RefusalCode, detail: string): void {
-	expect([answer.status, answer.body], JSON.stringify(answer.body)).toEqual([status, { code, detail }]);
+function expectRefusal(answer: Answer, status: number, code: RefusalCode, message: string): void {
+	expect([answer.status, answer.body], JSON.stringify(answer.body)).toEqual([status, contractError(code, message)]);
+}
+
+/** Claims the setup with `key` in its header, as the frontend sends it. */
+function claim(u: { browser: Browser }, key: string, headers: Record<string, string> = {}): Promise<Answer> {
+	return u.browser.call("POST", "/api/setup", undefined, { [SETUP_KEY_HEADER]: key, ...headers });
 }
 
 async function isStaff(u: User): Promise<boolean> {
@@ -47,7 +52,7 @@ async function admins(): Promise<string[]> {
 }
 
 async function setUp(u: User): Promise<void> {
-	expect((await u.browser.call("POST", "/api/setup", { key: KEY })).status).toBe(204);
+	expect((await claim(u, KEY)).status).toBe(204);
 }
 
 describe("first-run setup", () => {
@@ -56,38 +61,40 @@ describe("first-run setup", () => {
 		const grace = await user("grace");
 		const anonymous = new Browser();
 		expect((await anonymous.call("GET", "/api/setup")).body).toEqual({ needed: true });
-		expect((await anonymous.call("POST", "/api/setup", { key: KEY })).status).toBe(401);
+		expectRefusal(await claim({ browser: anonymous }, KEY), 401, "UNAUTHORIZED", "Unauthorized");
 		// The router's CSRF check comes first, as for every unsafe route.
-		expect((await ada.browser.call("POST", "/api/setup", { key: KEY }, { Origin: "https://evil.example" })).status).toBe(403);
-		expectRefusal(await ada.browser.call("POST", "/api/setup", { key: "wrong" }), 403, "INVALID_SETUP_KEY", INVALID_KEY);
-		expectRefusal(await ada.browser.call("POST", "/api/setup", { key: KEY.slice(0, -1) }), 403, "INVALID_SETUP_KEY", INVALID_KEY);
-		expectRefusal(await ada.browser.call("POST", "/api/setup", { key: `${KEY} ` }), 403, "INVALID_SETUP_KEY", INVALID_KEY);
-		expect((await ada.browser.call("POST", "/api/setup")).status).toBe(415);
-		expect((await ada.browser.call("POST", "/api/setup", "")).status).toBe(422);
+		expect((await claim(ada, KEY, { Origin: "https://evil.example" })).status).toBe(403);
+		expectRefusal(await claim(ada, "wrong"), 403, "INVALID_SETUP_KEY", INVALID_KEY);
+		expectRefusal(await claim(ada, KEY.slice(0, -1)), 403, "INVALID_SETUP_KEY", INVALID_KEY);
+		expectRefusal(await claim(ada, `${KEY}x`), 403, "INVALID_SETUP_KEY", INVALID_KEY);
+		// The key goes in its header only: in a body it is not read.
+		const inBody = await ada.browser.call("POST", "/api/setup", { key: KEY });
+		expect([inBody.status, inBody.body.code, inBody.body.data.issues[0].path]).toEqual([422, "VALIDATION_FAILED", ["headers", "x-minerva-setup-key"]]);
+		expect((await ada.browser.call("POST", "/api/setup")).status).toBe(422);
 		expect(await admins()).toEqual([]);
 
 		await setUp(ada);
 		expect(await isStaff(ada)).toBe(true);
 		expect((await anonymous.call("GET", "/api/setup")).body).toEqual({ needed: false });
-		expectRefusal(await grace.browser.call("POST", "/api/setup", { key: KEY }), 409, "ALREADY_SET_UP", ALREADY_SET_UP);
-		expectRefusal(await ada.browser.call("POST", "/api/setup", { key: KEY }), 409, "ALREADY_SET_UP", ALREADY_SET_UP);
+		expectRefusal(await claim(grace, KEY), 409, "ALREADY_SET_UP", ALREADY_SET_UP);
+		expectRefusal(await claim(ada, KEY), 409, "ALREADY_SET_UP", ALREADY_SET_UP);
 		expect(await isStaff(grace)).toBe(false);
 		expect(await admins()).toEqual([ada.userId]);
 		// Setup stays done when its admin is removed or deleted.
 		await env.DB.prepare(`UPDATE "user" SET role = 'user' WHERE id = ?`).bind(ada.userId).run();
-		expectRefusal(await grace.browser.call("POST", "/api/setup", { key: KEY }), 409, "ALREADY_SET_UP", ALREADY_SET_UP);
+		expectRefusal(await claim(grace, KEY), 409, "ALREADY_SET_UP", ALREADY_SET_UP);
 	});
 
 	test("of concurrent claims, by several users or one, exactly one makes an admin", async () => {
 		const users = await Promise.all(["ada", "grace", "alan", "edsger", "barbara"].map((name) => user(name)));
-		const statuses = await Promise.all(users.map((u) => u.browser.call("POST", "/api/setup", { key: KEY }).then((answer) => answer.status)));
+		const statuses = await Promise.all(users.map((u) => claim(u, KEY).then((answer) => answer.status)));
 		expect(statuses.filter((status) => status === 204)).toHaveLength(1);
 		expect(statuses.filter((status) => status === 409)).toHaveLength(4);
 		expect(await admins()).toEqual([users[statuses.indexOf(204)]!.userId]);
 
 		await env.DB.batch([env.DB.prepare("DELETE FROM instance_setup"), env.DB.prepare(`UPDATE "user" SET role = 'user'`)]);
 		const ada = users[0]!;
-		const same = await Promise.all(Array.from({ length: 4 }, () => ada.browser.call("POST", "/api/setup", { key: KEY }).then((answer) => answer.status)));
+		const same = await Promise.all(Array.from({ length: 4 }, () => claim(ada, KEY).then((answer) => answer.status)));
 		expect(same.sort()).toEqual([204, 409, 409, 409]);
 		// The claim itself, without the HTTP layer around it.
 		await env.DB.batch([env.DB.prepare("DELETE FROM instance_setup"), env.DB.prepare(`UPDATE "user" SET role = 'user'`)]);
@@ -198,7 +205,7 @@ describe("the instance admin", () => {
 		expect((await grace.browser.call("DELETE", `/api/instance/admins/${ada.userId}`)).status).toBe(204);
 		release();
 		const answer = await pending;
-		expect([answer.status, await answer.json()]).toEqual([403, { code: "INSTANCE_ADMINS_ONLY", detail: ADMINS_ONLY }]);
+		expect([answer.status, await answer.json()]).toEqual([403, contractError("INSTANCE_ADMINS_ONLY", ADMINS_ONLY)]);
 		expect(await admins()).toEqual([grace.userId]);
 	});
 
@@ -207,9 +214,9 @@ describe("the instance admin", () => {
 		const grace = await user("grace");
 		expect((await new Browser().call("GET", "/api/instance/settings")).status).toBe(401);
 		await setUp(ada);
-		expect((await ada.browser.call("GET", "/api/instance/settings")).body).toEqual({ signup_open: true, signup_open_override: null, signup_open_configured: true });
-		const closed = await ada.browser.call("PATCH", "/api/instance/settings", { signup_open: false });
-		expect(closed.body).toEqual({ signup_open: false, signup_open_override: false, signup_open_configured: true });
+		expect((await ada.browser.call("GET", "/api/instance/settings")).body).toEqual({ signupOpen: true, signupOpenOverride: null, signupOpenConfigured: true });
+		const closed = await ada.browser.call("PATCH", "/api/instance/settings", { signupOpen: false });
+		expect(closed.body).toEqual({ signupOpen: false, signupOpenOverride: false, signupOpenConfigured: true });
 		const email = uniqueEmail("late");
 		const refused = await new Browser().auth("/sign-up/email", { email, password: PASSWORD, name: "" });
 		expect([refused.status, refused.body]).toEqual([400, SIGN_UP_DISABLED]);
@@ -217,11 +224,11 @@ describe("the instance admin", () => {
 		// A weak password is still refused first, as before.
 		expect((await new Browser().auth("/sign-up/email", { email, password: "short", name: "" })).body.code).not.toBe(SIGN_UP_DISABLED.code);
 
-		expect((await ada.browser.call("PATCH", "/api/instance/settings", { signup_open: null })).body.signup_open).toBe(true);
+		expect((await ada.browser.call("PATCH", "/api/instance/settings", { signupOpen: null })).body.signupOpen).toBe(true);
 		expect((await new Browser().auth("/sign-up/email", { email, password: PASSWORD, name: "" })).status).toBe(200);
-		expect((await ada.browser.call("PATCH", "/api/instance/settings", { signup_open: "no" })).status).toBe(422);
+		expect((await ada.browser.call("PATCH", "/api/instance/settings", { signupOpen: "no" })).status).toBe(422);
 		expect((await ada.browser.call("PATCH", "/api/instance/settings", {})).status).toBe(422);
-		expectRefusal(await grace.browser.call("PATCH", "/api/instance/settings", { signup_open: false }), 403, "INSTANCE_ADMINS_ONLY", ADMINS_ONLY);
-		expect((await ada.browser.call("GET", "/api/instance/settings")).body.signup_open).toBe(true);
+		expectRefusal(await grace.browser.call("PATCH", "/api/instance/settings", { signupOpen: false }), 403, "INSTANCE_ADMINS_ONLY", ADMINS_ONLY);
+		expect((await ada.browser.call("GET", "/api/instance/settings")).body.signupOpen).toBe(true);
 	});
 });

@@ -1,8 +1,8 @@
 // The integration matrix of the contract's routes (api/orpc.ts): oRPC's OpenAPIHandler behind our router,
-// our mount and our body reader. It must pass before the hey-api client goes, and after every update of
-// @orpc/*: each row is a place where oRPC's own behaviour (its body reader, its matching, its errors)
-// would answer differently from ours. request-rules.test.ts has the content-type table, strict UTF-8 and
-// CSRF; api.test.ts the agents' refusals.
+// our mount and our body reader. It must pass after every update of @orpc/*: each row is a place where
+// oRPC's own behaviour (its body reader, its matching, its errors) would answer differently from ours.
+// request-rules.test.ts has the content-type table, strict UTF-8 and CSRF; api.test.ts the agents' refusals;
+// instance.test.ts the setup and the instance admin's rules.
 //
 // The rows that need a procedure of their own (an escaped key, a header) run a test-only contract through
 // the same `contractHandler`, in process; the others go through the Worker.
@@ -111,7 +111,7 @@ const testClient: JsonifiedClient<ContractRouterClient<typeof testContract>> = c
 	new OpenAPILink(testContract, {
 		url: `${ORIGIN}/api`,
 		fetch: async (request) => {
-			const { matched, response } = await testHandler.handle(request, { prefix: "/api", context: { request, env, member: null } });
+			const { matched, response } = await testHandler.handle(request, { prefix: "/api", context: { request, env, user: null, member: null, admin: false } });
 			return matched ? response : new Response(null, { status: 404 });
 		},
 	}),
@@ -124,7 +124,7 @@ describe("the body reader", () => {
 		JSON.parse(`{"${shape}":0,"\\\\":1}`);
 		expect(Object.keys(JSON.parse(`{"${shape}":0,"\\n":1}`))[1]).toBe("\\");
 		const request = new Request(`${ORIGIN}/api/test/keys`, { method: "POST", headers: JSON_TYPE, body: `{"${shape}":0,"\\n":1}` });
-		const raw = await testHandler.handle(request, { prefix: "/api", context: { request, env, member: null } });
+		const raw = await testHandler.handle(request, { prefix: "/api", context: { request, env, user: null, member: null, admin: false } });
 		expect(await raw.response?.json()).toEqual([shape, "\n"]);
 		// Through the typed client, which writes the key with JSON.stringify.
 		expect(await testClient.keys({ [shape]: 0, "\n": 1 })).toEqual([shape, "\n"]);
@@ -138,7 +138,7 @@ describe("the body reader", () => {
 			},
 		});
 		const request = new Request(`${ORIGIN}/api/test/keys`, { method: "POST", headers: JSON_TYPE, body, duplex: "half" } as RequestInit);
-		const { response } = await testHandler.handle(request, { prefix: "/api", context: { request, env, member: null } });
+		const { response } = await testHandler.handle(request, { prefix: "/api", context: { request, env, user: null, member: null, admin: false } });
 		expect([response?.status, await response?.json()]).toEqual([400, contractError("INVALID_JSON", "The body is not valid JSON.")]);
 	});
 
@@ -225,6 +225,102 @@ describe("session cookies", () => {
 		const gone = await ada.browser.call("GET", `/api/workspaces/${ada.ws}/agents`);
 		expect(answer(gone)).toEqual(UNAUTHORIZED);
 		expect(gone.response.headers.getSetCookie().some((cookie) => cookie.startsWith(`${SESSION_COOKIE}=`) && /Max-Age=0/.test(cookie))).toBe(true);
+	});
+});
+
+describe("outside a workspace", () => {
+	/** A body that never ends, and how much of it was pulled. */
+	function endless(): { body: ReadableStream<Uint8Array>; pulled: () => number } {
+		let pulled = 0;
+		const body = new ReadableStream<Uint8Array>({
+			pull: async (controller) => {
+				pulled++;
+				controller.enqueue(new TextEncoder().encode(" "));
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			},
+		});
+		return { body, pulled: () => pulled };
+	}
+
+	const BAD_BODIES: [string, string, Record<string, string>][] = [
+		["unparseable", '{"signupOpen":', {}],
+		["form", "signupOpen=false", { "Content-Type": "application/x-www-form-urlencoded" }],
+		["invalid", JSON.stringify({ signupOpen: "no" }), {}],
+	];
+	const ADMINS_ONLY = { status: 403, body: contractError("INSTANCE_ADMINS_ONLY", "Only instance admins can do this.") };
+
+	test("a visitor gets 401 before any body is read, on every route but the setup's status; no route is 404 for anyone", async () => {
+		const visitor = new Browser();
+		expect(answer(await visitor.call("GET", "/api/me"))).toEqual(UNAUTHORIZED);
+		expect(answer(await visitor.call("GET", "/api/instance/admins"))).toEqual(UNAUTHORIZED);
+		for (const [name, body, headers] of BAD_BODIES) {
+			expect([name, answer(await visitor.call("PATCH", "/api/instance/settings", body, headers))]).toEqual([name, UNAUTHORIZED]);
+			expect([name, answer(await visitor.call("POST", "/api/setup", body, { "X-Minerva-Setup-Key": "k", ...headers }))]).toEqual([name, UNAUTHORIZED]);
+		}
+		const slow = endless();
+		const response = await visitor.fetch(`${ORIGIN}/api/instance/admins`, { method: "POST", headers: JSON_TYPE, body: slow.body, duplex: "half" } as RequestInit);
+		expect([response.status, await response.json(), slow.pulled() < 3]).toEqual([401, UNAUTHORIZED.body, true]);
+		// The setup's status is the one public route, and says only that.
+		const status = await visitor.call("GET", "/api/setup");
+		expect([status.status, Object.keys(status.body)]).toEqual([200, ["needed"]]);
+		expect((await visitor.fetch(`${ORIGIN}/api/setup`, { method: "HEAD" })).status).toBe(200);
+		expect(answer(await visitor.call("GET", "/api/nothing-here"))).toEqual(NO_ROUTE);
+		expect(answer(await visitor.call("POST", "/api/me", {}))).toEqual(NO_ROUTE);
+	});
+
+	test("a user who is not an instance admin is refused before the body under /api/instance; an admin's body is read", async () => {
+		const grace = await account("grace");
+		for (const [name, body, headers] of BAD_BODIES) {
+			expect([name, answer(await grace.browser.call("PATCH", "/api/instance/settings", body, headers))]).toEqual([name, ADMINS_ONLY]);
+		}
+		const slow = endless();
+		const response = await grace.browser.fetch(`${ORIGIN}/api/instance/admins`, { method: "POST", headers: JSON_TYPE, body: slow.body, duplex: "half" } as RequestInit);
+		expect([response.status, await response.json(), slow.pulled() < 3]).toEqual([403, ADMINS_ONLY.body, true]);
+		expect(answer(await grace.browser.call("GET", "/api/instance/nothing-here"))).toEqual(NO_ROUTE);
+
+		await env.DB.prepare(`UPDATE "user" SET role = 'admin' WHERE id = ?`).bind(grace.userId).run();
+		try {
+			const read = BAD_BODIES.map(async ([name, body, headers]) => [name, (await grace.browser.call("PATCH", "/api/instance/settings", body, headers)).body.code]);
+			expect(await Promise.all(read)).toEqual([
+				["unparseable", "INVALID_JSON"],
+				["form", "UNSUPPORTED_MEDIA_TYPE"],
+				["invalid", "VALIDATION_FAILED"],
+			]);
+		} finally {
+			await env.DB.prepare(`UPDATE "user" SET role = 'user' WHERE id = ?`).bind(grace.userId).run();
+		}
+	});
+
+	test("a session Better Auth extends sends its cookie with every answer: success, public and refusals; a gone one is cleared", async () => {
+		const ada = await account();
+		const calls: [string, string, number][] = [
+			["GET", "/api/me", 200],
+			["GET", "/api/setup", 200],
+			["GET", "/api/instance/settings", 403],
+		];
+		for (const [method, path, status] of calls) {
+			await dueForRefresh(ada.userId);
+			const answered = await ada.browser.call(method, path);
+			expect([path, answered.status, setsSession(answered), answered.response.headers.get("Cache-Control")]).toEqual([path, status, true, "no-store"]);
+		}
+		await dueForRefresh(ada.userId);
+		const claimed = await ada.browser.call("POST", "/api/setup", undefined, { "X-Minerva-Setup-Key": "not the key" });
+		expect([claimed.body.code, setsSession(claimed)]).toEqual(["INVALID_SETUP_KEY", true]);
+		await env.DB.prepare(`DELETE FROM session WHERE "userId" = ?`).bind(ada.userId).run();
+		const gone = await ada.browser.call("GET", "/api/me");
+		expect(answer(gone)).toEqual(UNAUTHORIZED);
+		expect(gone.response.headers.getSetCookie().some((cookie) => cookie.startsWith(`${SESSION_COOKIE}=`) && /Max-Age=0/.test(cookie))).toBe(true);
+	});
+
+	test("the typed client reads who is signed in and carries the setup key in its header", async () => {
+		const ada = await account();
+		const api = client(ada.browser);
+		expect(await api.me()).toMatchObject({ user: { id: ada.userId, role: "user" }, workspaces: [{ id: ada.ws, kind: "personal", role: "owner" }] });
+		const wrong = await api.setup.claim({ headers: { "x-minerva-setup-key": "not the key" } }).catch((error: unknown) => error);
+		expect(wrong).toMatchObject({ defined: true, code: "INVALID_SETUP_KEY", status: 403 });
+		const empty = await api.setup.claim({ headers: { "x-minerva-setup-key": "" } }).catch((error: unknown) => error);
+		expect(empty).toMatchObject({ defined: true, code: "VALIDATION_FAILED", data: { issues: [{ path: ["headers", "x-minerva-setup-key"] }] } });
+		expect(await client(new Browser()).me().catch((error: unknown) => error)).toMatchObject({ defined: true, code: "UNAUTHORIZED", status: 401 });
 	});
 });
 

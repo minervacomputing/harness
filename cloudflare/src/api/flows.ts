@@ -20,7 +20,7 @@ import { type CurrentSession, currentSession, withSessionCookies } from "../acco
 import { settings } from "../config.ts";
 import { connectorRegistry } from "../connectors/index.ts";
 import { type Connector, type CredentialPayload, OperationError } from "../gateway/connector.ts";
-import { HttpError, refused } from "../http/errors.ts";
+import { HttpError, errorAnswer } from "../http/errors.ts";
 import type { App } from "../http/router.ts";
 import { timingSafeEqual } from "../lib/hash.ts";
 import type { WorkspaceRef } from "../shared/rpc.ts";
@@ -205,5 +205,5 @@ export function flowRoutes(app: App): void {
 		return withSessionCookies(await callback(c.env, c.req.raw, param(c, "provider"), session), session);
 	});
 	// GET only, after the CSRF check the router makes on unsafe methods.
-	app.on(["POST", "PUT", "PATCH", "DELETE", "OPTIONS"], CALLBACK_ROUTE, () => refused("METHOD_NOT_ALLOWED", "Use GET.", { Allow: "GET" }));
+	app.on(["POST", "PUT", "PATCH", "DELETE", "OPTIONS"], CALLBACK_ROUTE, () => errorAnswer("METHOD_NOT_ALLOWED", "Use GET.", { Allow: "GET" }));
 }

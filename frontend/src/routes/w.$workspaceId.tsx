@@ -3,8 +3,7 @@ import { createFileRoute, Link, notFound, Outlet, useRouterState } from '@tansta
 import { BotIcon, LogOutIcon, MenuIcon, PlugIcon, ShieldCheckIcon, SquarePenIcon, UserIcon, XIcon } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { type MouseEvent, useEffect, useState } from 'react'
-import { meOptions } from '@/api/@tanstack/react-query.gen'
-import type { WorkspaceOut } from '@/api/types.gen'
+import type { Workspace } from '@minerva/contract'
 import { Logo } from '@/components/brand/logo'
 import { ConversationList } from '@/components/chat/conversation-list'
 import { setupOf } from '@/components/connections/summary'
@@ -17,7 +16,7 @@ import { orpc } from '@/lib/orpc'
 export const Route = createFileRoute('/w/$workspaceId')({
   beforeLoad: async ({ context, params, location }) => {
     const user = await requireSignedIn(context.queryClient, location.href)
-    const me = await context.queryClient.ensureQueryData(meOptions())
+    const me = await context.queryClient.ensureQueryData(orpc.me.queryOptions())
     const workspace = me.workspaces.find(w => w.id === params.workspaceId)
     if (!workspace) throw notFound()
     return { user, workspace }
@@ -105,10 +104,10 @@ function AppShell() {
   )
 }
 
-function Sidebar({ workspace, user }: { workspace: WorkspaceOut; user: AuthUser }) {
+function Sidebar({ workspace, user }: { workspace: Workspace; user: AuthUser }) {
   const params = { workspaceId: workspace.id }
   // Only what to show: the server checks the role again on every instance request.
-  const isAdmin = useQuery(meOptions()).data?.user.role === 'admin'
+  const isAdmin = useQuery(orpc.me.queryOptions()).data?.user.role === 'admin'
 
   return (
     <>

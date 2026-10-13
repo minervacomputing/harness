@@ -1,8 +1,8 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { notFound, redirect } from '@tanstack/react-router'
 import { z } from 'zod'
-import { meOptions } from '@/api/@tanstack/react-query.gen'
 import { authQuery } from '@/lib/auth'
+import { orpc } from '@/lib/orpc'
 
 /**
  * Whether `next` is a path on this site. It must start with `/` and still be on this origin once resolved, so
@@ -42,6 +42,6 @@ export async function requireSignedIn(queryClient: QueryClient, next: string) {
  * every instance request.
  */
 export async function requireInstanceAdmin(queryClient: QueryClient) {
-  const me = await queryClient.fetchQuery({ ...meOptions(), staleTime: 0 })
+  const me = await queryClient.fetchQuery(orpc.me.queryOptions({ staleTime: 0 }))
   if (me.user.role !== 'admin') throw notFound()
 }

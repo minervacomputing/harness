@@ -6,7 +6,7 @@ import { ErrorNote } from '@/components/ui/misc'
 import { auth, authStep } from '@/lib/auth'
 import { fieldErrors } from '@/lib/auth-client'
 import { nextSearch, redirectIfSignedIn } from '@/lib/guards'
-import { setupQuery } from '@/lib/instance'
+import { orpc } from '@/lib/orpc'
 import { pageHead } from '@/lib/title'
 
 export const Route = createFileRoute('/signup')({
@@ -24,7 +24,7 @@ function SignupPage() {
   const signup = useMutation(authStep(auth.signup))
   const fields = fieldErrors(signup.error)
   // A server nobody administers yet takes the operator's setup key here, for when its sign-up is closed.
-  const setupNeeded = useQuery(setupQuery).data?.needed === true
+  const setupNeeded = useQuery(orpc.setup.status.queryOptions()).data?.needed === true
 
   const form = useAppForm({
     defaultValues: { email: '', password: '', setupKey: '' },

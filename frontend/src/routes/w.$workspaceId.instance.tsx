@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import type { InstanceSettings } from '@minerva/contract'
 import { z } from 'zod'
-import { meOptions } from '@/api/@tanstack/react-query.gen'
 import { Setting, SettingsList } from '@/components/account/setting'
 import { useAppForm } from '@/components/form'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Segmented, SegmentedItem } from '@/components/ui/tabs'
 import { requireInstanceAdmin } from '@/lib/guards'
 import { errorMessage } from '@/lib/http'
-import { addAdmin, type InstanceAdmin, instanceAdminsQuery, type InstanceSettings, instanceSettingsQuery, removeAdmin, updateSignupOpen } from '@/lib/instance'
+import { orpc } from '@/lib/orpc'
 import { pageHead } from '@/lib/title'
 
 export const Route = createFileRoute('/w/$workspaceId/instance')({
@@ -35,15 +35,15 @@ function InstancePage() {
 
 type SignupChoice = 'open' | 'closed' | 'default'
 const choiceOf = (settings: InstanceSettings): SignupChoice =>
-  settings.signup_open_override === null ? 'default' : settings.signup_open_override ? 'open' : 'closed'
+  settings.signupOpenOverride === null ? 'default' : settings.signupOpenOverride ? 'open' : 'closed'
 const overrideOf = (choice: SignupChoice): boolean | null => (choice === 'default' ? null : choice === 'open')
 
 function SignupSetting() {
   const queryClient = useQueryClient()
-  const settings = useQuery(instanceSettingsQuery)
+  const settings = useQuery(orpc.instance.settings.get.queryOptions())
   const save = useMutation({
-    mutationFn: (choice: SignupChoice) => updateSignupOpen(overrideOf(choice)),
-    onSuccess: saved => queryClient.setQueryData(instanceSettingsQuery.queryKey, saved),
+    mutationFn: (choice: SignupChoice) => orpc.instance.settings.update.call({ signupOpen: overrideOf(choice) }),
+    onSuccess: saved => queryClient.setQueryData(orpc.instance.settings.get.queryKey(), saved),
   })
   const current = settings.data
   return (
@@ -51,7 +51,7 @@ function SignupSetting() {
       title="Sign-up"
       description={
         current
-          ? `Anyone can create an account while sign-up is open. Now: ${current.signup_open ? 'open' : 'closed'}. Default follows the server's configuration, which is ${current.signup_open_configured ? 'open' : 'closed'}.`
+          ? `Anyone can create an account while sign-up is open. Now: ${current.signupOpen ? 'open' : 'closed'}. Default follows the server's configuration, which is ${current.signupOpenConfigured ? 'open' : 'closed'}.`
           : 'Whether anyone can create an account.'
       }
       action={
@@ -88,17 +88,19 @@ const anAccount = z.string().includes('@', { message: 'Enter the email address o
 function AdminsSetting() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
-  const me = useQuery(meOptions()).data?.user
-  const admins = useQuery(instanceAdminsQuery)
-  const replace = (list: InstanceAdmin[]) => queryClient.setQueryData(instanceAdminsQuery.queryKey, list)
-  const add = useMutation({ mutationFn: addAdmin, onSuccess: replace })
+  const me = useQuery(orpc.me.queryOptions()).data?.user
+  const admins = useQuery(orpc.instance.admins.list.queryOptions())
+  const add = useMutation({
+    mutationFn: (email: string) => orpc.instance.admins.add.call({ email }),
+    onSuccess: list => queryClient.setQueryData(orpc.instance.admins.list.queryKey(), list),
+  })
   const remove = useMutation({
-    mutationFn: removeAdmin,
+    mutationFn: (userId: string) => orpc.instance.admins.remove.call({ userId }),
     // The list and `/api/me` are read again either way. Whoever removed their own role loses this page.
     onSettled: async (_data, error, id) => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: instanceAdminsQuery.queryKey }),
-        queryClient.invalidateQueries({ queryKey: meOptions().queryKey }),
+        queryClient.invalidateQueries({ queryKey: orpc.instance.admins.list.queryKey() }),
+        queryClient.invalidateQueries({ queryKey: orpc.me.queryKey() }),
       ])
       if (!error && id === me?.id) await navigate({ to: '/' })
     },

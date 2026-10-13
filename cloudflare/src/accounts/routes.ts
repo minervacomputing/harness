@@ -1,15 +1,13 @@
-// Accounts: Better Auth's routes at /api/auth/* (its wire format, plan: The web API), `GET /api/me`
-//, the instance's setup and administration (instance-routes.ts) and the development seed
-// (6.4). Better Auth's routes check their own origin rules, so the router exempts POSTs to them, and only
-// them, from our CSRF check (http/router.ts).
+// Accounts: Better Auth's routes at /api/auth/* (its wire format, plan: The web API) and the development
+// seed (6.4). Who is signed in, the first-run setup and the instance's administration are the contract's
+// (api/accounts.ts). Better Auth's routes check their own origin rules, so the router exempts POSTs to them,
+// and only them, from our CSRF check (http/router.ts).
 
 import { settings } from "../config.ts";
-import { json, noRoute, unauthorized } from "../http/errors.ts";
+import { json, noRoute } from "../http/errors.ts";
 import type { App } from "../http/router.ts";
-import { currentSession, handleAuth, withSessionCookies } from "./auth.ts";
+import { handleAuth } from "./auth.ts";
 import { checkMailer } from "./emails.ts";
-import { instanceRoutes } from "./instance-routes.ts";
-import { ensureProvisioned, listWorkspaces } from "./provision.ts";
 import { seed } from "./seed.ts";
 
 /** The one route Better Auth answers; the router knows it by this path. */
@@ -23,21 +21,6 @@ export function accountRoutes(app: App): void {
 	});
 
 	app.on(["GET", "POST"], AUTH_ROUTE, (c) => handleAuth(c.env, c.req.raw));
-
-	app.get("/api/me", async (c) => {
-		const session = await currentSession(c.env, c.req.raw);
-		const user = session.user;
-		if (!user) return withSessionCookies(unauthorized(), session);
-		// A user whose provisioning a crash left pending gets it finished here (provision.ts).
-		await ensureProvisioned(c.env, user.id);
-		const body = {
-			user: { id: user.id, email: user.email, name: user.name, role: user.role === "admin" ? "admin" : "user" },
-			workspaces: await listWorkspaces(c.env, user.id),
-		};
-		return withSessionCookies(json(200, body), session);
-	});
-
-	instanceRoutes(app);
 
 	// `make seed` for the local Worker, run by scripts/seed.ts; absent outside debug.
 	app.post("/api/dev/seed", async (c) => {

@@ -1,6 +1,7 @@
 // The frontend's auth client (frontend/src/lib/auth.ts, auth-client.ts and account.ts) against the Worker: the
 // steps the sign-in, sign-up, verification, code, two-factor, reset and account pages take, the step each leaves
-// pending, and the field a failure names. No page is rendered. Signing in and signing out load a whole page in
+// pending, and the field a failure names; the operator's setup key at sign-up, and the instance pages' guard
+// (lib/guards.ts). The instance's own rules are instance.test.ts's. No page is rendered. Signing in and signing out load a whole page in
 // the app, which cannot happen here: a step answers `signed-in`, and a sign-out resolves only once the server
 // has ended the session; the pages act on those. The browser walk (test/account/browser.test.ts) drives the pages.
 // The client reaches the Worker through a Browser's cookie jar in place of `fetch`.
@@ -18,7 +19,7 @@ type StepResult = { kind: "signed-in" } | Anonymous;
 interface Frontend {
 	auth: {
 		login(v: { email: string; password: string }): Promise<StepResult>;
-		signup(v: { email: string; password: string }): Promise<StepResult>;
+		signup(v: { email: string; password: string; setupKey?: string }): Promise<StepResult>;
 		verifyEmail(v: { code: string }): Promise<StepResult>;
 		resendVerification(): Promise<void>;
 		requestLoginCode(v: { email: string }): Promise<StepResult>;
@@ -433,6 +434,46 @@ describe("password reset and change", () => {
 		await frontend.account.changePassword({ current: PASSWORD, next: another });
 		expect((await state()).kind).toBe("authenticated");
 		expect((await other.call("GET", "/api/me")).status).toBe(401);
+	});
+});
+
+describe("the setup key and the instance pages", () => {
+	const KEY = env.MINERVA_SETUP_KEY;
+	const reset = () => env.DB.batch([env.DB.prepare("DELETE FROM instance_setup"), env.DB.prepare("DELETE FROM instance_settings")]);
+	beforeEach(reset);
+	afterEach(reset);
+
+	test("on a closed server, sign-up sends the key in its one header and keeps it nowhere; without it, or a wrong one, sign-up stays closed", async () => {
+		await env.DB.prepare("INSERT INTO instance_settings (id, signup_open, updated_at) VALUES (1, 0, ?)").bind(Date.now()).run();
+		const email = uniqueEmail("operator");
+		expect(await failure(frontend.auth.signup({ email, password: PASSWORD }))).toEqual({ message: "Sign-up is not open on this server.", fields: {} });
+		// A key that does not open it is said to be the problem, on the key's own field.
+		expect((await failure(frontend.auth.signup({ email, password: PASSWORD, setupKey: "wrong" }))).fields).toEqual({
+			setupKey: expect.stringContaining("setup key does not open it"),
+		});
+		expect(await env.DB.prepare(`SELECT 1 FROM "user" WHERE email = ?`).bind(email).first()).toBeNull();
+		// Only spaces around the key are the page's doing.
+		expect(await frontend.auth.signup({ email, password: PASSWORD, setupKey: ` ${KEY} ` })).toEqual({ kind: "anonymous", pending: "verify-email" });
+		expect(storage.contents).not.toContain(KEY);
+		expect(JSON.stringify([...browser.cookies]) + browser.setCookies.join("\n")).not.toContain(KEY);
+		expect(await frontend.auth.verifyEmail({ code: lastCode(email) })).toEqual(signedIn);
+	});
+
+	test("the guard reads the role from the server on every visit; everyone else gets page-not-found, a visitor the 401", async () => {
+		// Here only: the guard brings in the router, which every load() would otherwise import again.
+		// @ts-expect-error The frontend is outside this project's types; the vitest alias resolves it.
+		const { requireInstanceAdmin } = (await import("@/lib/guards.ts")) as { requireInstanceAdmin(queryClient: QueryClient): Promise<void> };
+		const isNotFound = (error: unknown) => (error as { isNotFound?: unknown } | null)?.isNotFound === true;
+		const visitor = await requireInstanceAdmin(new query.QueryClient()).catch((error: unknown) => error);
+		expect([isNotFound(visitor), (visitor as { status?: number }).status]).toEqual([false, 401]);
+		const email = await newAccount();
+		// One client throughout, as the app keeps `/api/me` for seconds: a role given or removed counts at once.
+		const queryClient = new query.QueryClient();
+		expect(isNotFound(await requireInstanceAdmin(queryClient).catch((error: unknown) => error))).toBe(true);
+		await env.DB.prepare(`UPDATE "user" SET role = 'admin' WHERE email = ?`).bind(email).run();
+		await expect(requireInstanceAdmin(queryClient)).resolves.toBeUndefined();
+		await env.DB.prepare(`UPDATE "user" SET role = 'user' WHERE email = ?`).bind(email).run();
+		expect(isNotFound(await requireInstanceAdmin(queryClient).catch((error: unknown) => error))).toBe(true);
 	});
 });
 

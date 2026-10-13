@@ -1,7 +1,4 @@
-/**
- * The client of the API contract (contract/) and its TanStack Query utilities. The routes not in the contract yet are called through the
- * generated client (api/); both report a 401 to the same handler (lib/http.ts).
- */
+/** The client of the API contract (contract/) and its TanStack Query utilities. A 401 is reported to the app (lib/http.ts). */
 import { contract } from '@minerva/contract'
 import { createORPCClient } from '@orpc/client'
 import type { ContractRouterClient } from '@orpc/contract'
@@ -10,8 +7,11 @@ import { OpenAPILink } from '@orpc/openapi-client/fetch'
 import { createTanstackQueryUtils } from '@orpc/tanstack-query'
 import { NetworkError, noteAnswer } from '@/lib/http'
 
-/** What a call may ask of its request: `keepalive` lets it finish after the page is gone (a delete as the page closes). */
-type CallContext = { keepalive?: boolean }
+/**
+ * What a call may ask of its request: `keepalive` lets it finish after the page is gone (a delete as the page closes); `signedOutIsAnswer`
+ * is for asking who is signed in (lib/auth.ts), whose 401 is the answer, not news that the session ended.
+ */
+type CallContext = { keepalive?: boolean; signedOutIsAnswer?: boolean }
 
 /** The client of a Minerva instance's API, at its origin. */
 function apiClient(instanceUrl: string): JsonifiedClient<ContractRouterClient<typeof contract, CallContext>> {
@@ -24,7 +24,7 @@ function apiClient(instanceUrl: string): JsonifiedClient<ContractRouterClient<ty
         response = await fetch(request, { ...init, credentials: 'same-origin', ...(context.keepalive && { keepalive: true }) })
         // oRPC asks fetch not to follow redirects, which the API never sends: one comes from something in front of it (a sign-in proxy).
         if (response.type === 'opaqueredirect') throw new TypeError('Redirected')
-        noteAnswer(response)
+        if (!context.signedOutIsAnswer) noteAnswer(response)
         // The whole answer is read here, so one cut short is fetch's failure (a success, a streamed read included, did not arrive) or,
         // for an error answer, keeps its status (below).
         body = await response.arrayBuffer().catch((error: unknown) => {

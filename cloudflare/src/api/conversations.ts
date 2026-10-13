@@ -24,7 +24,7 @@ import { HttpError, errorAnswer } from "../http/errors.ts";
 import { UUID } from "../http/paths.ts";
 import type { App, AppEnv } from "../http/router.ts";
 import type { ConversationId, RunId } from "../shared/rpc.ts";
-import { canonicalUuid } from "./input.ts";
+import { canonicalUuid } from "@minerva/contract";
 import { type Member, member, param } from "./members.ts";
 import { api, checkStopped, inWorkspace, refusal, unwrap } from "./procedures.ts";
 

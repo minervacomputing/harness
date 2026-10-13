@@ -23,7 +23,7 @@ interface Frontend {
 			delete: Call<{ workspaceId: string; agentId: string }, void>;
 		};
 	};
-	installClientInterceptors(onUnauthorized: () => void): void;
+	onUnauthorized(handler: () => void): void;
 	errorMessage(error: unknown): string;
 	retryQuery(count: number, error: unknown): boolean;
 	NetworkError: new (...args: never[]) => Error;
@@ -63,7 +63,7 @@ beforeAll(async () => {
 		import("@/lib/http.ts"),
 	]);
 	frontend = { ...orpc, ...http } as Frontend;
-	frontend.installClientInterceptors(() => unauthorized++);
+	frontend.onUnauthorized(() => unauthorized++);
 });
 
 afterAll(() => {

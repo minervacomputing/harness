@@ -184,7 +184,7 @@ describe("provisioning recovers", () => {
 
 describe("sessions and /api/me", () => {
 	test("/api/me is 401 without a session and after signing out", async () => {
-		expect((await new Browser().call("GET", "/api/me")).body).toEqual({ code: "UNAUTHORIZED", detail: "Unauthorized" });
+		expect((await new Browser().call("GET", "/api/me")).body).toEqual(contractError("UNAUTHORIZED", "Unauthorized"));
 		const { browser } = await signedIn();
 		expect((await browser.call("GET", "/api/me")).status).toBe(200);
 		expect((await browser.auth("/sign-out", {})).status).toBe(200);
@@ -343,13 +343,13 @@ describe("CSRF: Better Auth's origins on its routes, ours on ours", () => {
 		expect((await new Browser().auth("/sign-in/email", escaped)).status).toBe(200);
 		const refused = await new Browser().auth("/sign-in/email", `{"\\\\": 1, "email": ${JSON.stringify(email)}, "password": ${JSON.stringify(PASSWORD)}}`);
 		expect(refused.status).toBe(400);
-		expect(refused.body).toEqual({ code: "INVALID_JSON", detail: "The body is not valid JSON." });
+		expect(refused.body).toEqual(contractError("INVALID_JSON", "The body is not valid JSON."));
 		const charset = await new Browser().auth("/sign-in/email", `{"\\\\": 1}`, { "Content-Type": "Application/JSON; charset=utf-8" });
-		expect([charset.status, charset.body]).toEqual([400, { code: "INVALID_JSON", detail: "The body is not valid JSON." }]);
+		expect([charset.status, charset.body]).toEqual([400, contractError("INVALID_JSON", "The body is not valid JSON.")]);
 		// Better Auth would parse any media type naming JSON, and forms: only application/json reaches it.
 		for (const type of ["application/problem+json", "application/jsonx", "text/plain", "application/x-www-form-urlencoded"]) {
 			const other = await new Browser().auth("/sign-in/email", `{"\\\\": 1}`, { "Content-Type": type });
-			expect([other.status, other.body], type).toEqual([415, { code: "UNSUPPORTED_MEDIA_TYPE", detail: "Send the body as application/json." }]);
+			expect([other.status, other.body], type).toEqual([415, contractError("UNSUPPORTED_MEDIA_TYPE", "Send the body as application/json.")]);
 		}
 	});
 
@@ -368,7 +368,7 @@ describe("CSRF: Better Auth's origins on its routes, ours on ours", () => {
 			new Request(`${ORIGIN}/api/auth/sign-in/email`, { method: "POST", headers: { Origin: ORIGIN, "Content-Type": "application/json" }, body, duplex: "half" } as RequestInit),
 		);
 		expect(streamed.status).toBe(413);
-		expect(await streamed.json()).toEqual({ code: "PAYLOAD_TOO_LARGE", detail: "The request is too large." });
+		expect(await streamed.json()).toEqual(contractError("PAYLOAD_TOO_LARGE", "The request is too large."));
 	});
 });
 

@@ -1,13 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { meQueryKey } from '@/api/@tanstack/react-query.gen'
 import { AuthLayout } from '@/components/auth-layout'
 import { useAppForm } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { Alert, ErrorNote, Spinner } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
 import { requireSignedIn } from '@/lib/guards'
-import { claimSetup, setupQuery } from '@/lib/instance'
+import { orpc } from '@/lib/orpc'
 import { pageHead } from '@/lib/title'
 
 /** The first-run setup: the person who runs this server claims it with the setup key. */
@@ -21,13 +20,15 @@ export const Route = createFileRoute('/setup')({
 
 function SetupPage() {
   const queryClient = useQueryClient()
-  const status = useQuery(setupQuery)
+  const status = useQuery(orpc.setup.status.queryOptions())
   const claim = useMutation({
-    mutationFn: claimSetup,
+    // The key travels in one header of this request. Its variables leave the mutation cache as soon as the page does.
+    mutationFn: (key: string) => orpc.setup.claim.call({ headers: { 'x-minerva-setup-key': key } }),
+    gcTime: 0,
     onSuccess: async () => {
       // The role changed: who is an administrator comes from `/api/me`, and the setup is closed now.
-      queryClient.setQueryData(setupQuery.queryKey, { needed: false })
-      await queryClient.invalidateQueries({ queryKey: meQueryKey() })
+      queryClient.setQueryData(orpc.setup.status.queryKey(), { needed: false })
+      await queryClient.invalidateQueries({ queryKey: orpc.me.queryKey() })
     },
   })
   const form = useAppForm({

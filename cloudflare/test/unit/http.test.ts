@@ -1,9 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { z } from "zod";
 import { serveAsset } from "../../src/http/assets.ts";
 import { MAX_JSON_BODY, readJson } from "../../src/http/body.ts";
 import { fromSite } from "../../src/http/csrf.ts";
-import { errorAnswer, notFound, refused, unauthorized, validationError, validationItems } from "../../src/http/errors.ts";
+import { errorAnswer, noRoute, unauthorized } from "../../src/http/errors.ts";
 import { DEFAULT_CSP, withSecurityHeaders } from "../../src/http/headers.ts";
 import { OWN_SIZE_LIMIT, UPLOAD_ROUTE, createApp } from "../../src/http/router.ts";
 import { settingsEnv } from "./settings.ts";
@@ -41,29 +40,17 @@ describe("CSRF", () => {
 });
 
 describe("error shapes", () => {
-	test("a refusal is its code, with the code's status, and its detail", async () => {
-		const response = refused("CONVERSATION_BUSY", "Wait for the current answer to finish, or stop it.");
-		expect(response.status).toBe(409);
-		expect(response.headers.get("Cache-Control")).toBe("no-store");
-		expect(await response.json()).toEqual({ code: "CONVERSATION_BUSY", detail: "Wait for the current answer to finish, or stop it." });
-		const missing = notFound();
-		expect([missing.status, await missing.json()]).toEqual([404, { code: "NOT_FOUND", detail: "Not found." }]);
-		const invalid = validationError([{ type: "too_big", loc: ["body", "name"], msg: "Too big" }]);
-		expect([invalid.status, await invalid.json()]).toEqual([422, { code: "VALIDATION_FAILED", detail: [{ type: "too_big", loc: ["body", "name"], msg: "Too big" }] }]);
-		// The contract's shape, for its routes and what the router answers itself.
-		const contract = errorAnswer("KEEP_ONE_AGENT", "Keep at least one agent.");
-		expect([contract.status, contract.headers.get("Cache-Control"), await contract.json()]).toEqual([422, "no-store", { defined: true, code: "KEEP_ONE_AGENT", status: 422, message: "Keep at least one agent." }]);
-	});
-
-	test("validation errors are zod's issues, located where the value came from", () => {
-		const schema = z.object({ name: z.string().min(1).max(3), ids: z.array(z.string()).max(2) });
-		const input = { name: "toolong", ids: ["a", "b", "c", 4] };
-		expect(validationItems(schema.safeParse(input).error?.issues ?? [], "body")).toEqual([
-			{ type: "too_big", loc: ["body", "name"], msg: "Too big: expected string to have <=3 characters" },
-			{ type: "invalid_type", loc: ["body", "ids", 3], msg: "Invalid input: expected string, received number" },
-			{ type: "too_big", loc: ["body", "ids"], msg: "Too big: expected array to have <=2 items" },
+	test("a refusal is the contract's: declared, its code with the code's status, and a sentence", async () => {
+		const response = errorAnswer("CONVERSATION_BUSY", "Wait for the current answer to finish, or stop it.");
+		expect([response.status, response.headers.get("Cache-Control"), await response.json()]).toEqual([
+			409,
+			"no-store",
+			{ defined: true, code: "CONVERSATION_BUSY", status: 409, message: "Wait for the current answer to finish, or stop it." },
 		]);
-		expect(validationItems(schema.safeParse({}).error?.issues ?? [], "query")[0]).toEqual({ type: "invalid_type", loc: ["query", "name"], msg: "Invalid input: expected string, received undefined" });
+		const missing = noRoute();
+		expect([missing.status, await missing.json()]).toEqual([404, { defined: true, code: "NOT_FOUND", status: 404, message: "Not found." }]);
+		const anonymous = unauthorized();
+		expect([anonymous.status, await anonymous.json()]).toEqual([401, { defined: true, code: "UNAUTHORIZED", status: 401, message: "Unauthorized" }]);
 	});
 });
 

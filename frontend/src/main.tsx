@@ -2,10 +2,10 @@ import { focusManager, hashKey, QueryClient, QueryClientProvider } from '@tansta
 import { createRouter, RouterProvider } from '@tanstack/react-router'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { meOptions } from '@/api/@tanstack/react-query.gen'
-import type { MeOut } from '@/api/types.gen'
+import type { Me } from '@minerva/contract'
 import { type AuthState, authQuery } from '@/lib/auth'
-import { installClientInterceptors, retryQuery } from '@/lib/http'
+import { onUnauthorized, retryQuery } from '@/lib/http'
+import { orpc } from '@/lib/orpc'
 import { installPreloadErrorReload } from '@/lib/reload'
 import '@/lib/theme'
 import { routeTree } from '@/routeTree.gen'
@@ -36,7 +36,7 @@ declare module '@tanstack/react-router' {
 
 installPreloadErrorReload()
 
-installClientInterceptors(() => {
+onUnauthorized(() => {
   void queryClient.invalidateQueries({ queryKey: authQuery.queryKey })
 })
 
@@ -46,12 +46,12 @@ const userOf = (state?: AuthState) => (state?.kind === 'authenticated' ? state.u
 let owner: string | null | undefined
 // Both queries of `GET /api/me` name the account; `['auth', 'two-factor']` is another query.
 const authHash = hashKey(authQuery.queryKey)
-const meHash = hashKey(meOptions().queryKey)
+const meHash = hashKey(orpc.me.queryKey())
 queryClient.getQueryCache().subscribe(event => {
   if (event.type !== 'updated' || event.action.type !== 'success') return
   const { queryHash, state } = event.query
   if (queryHash !== authHash && queryHash !== meHash) return
-  const user = queryHash === authHash ? userOf(state.data as AuthState | undefined) : (state.data as MeOut).user.id
+  const user = queryHash === authHash ? userOf(state.data as AuthState | undefined) : (state.data as Me).user.id
   if (owner === undefined) owner = user
   else if (user !== owner) window.location.reload()
 })
