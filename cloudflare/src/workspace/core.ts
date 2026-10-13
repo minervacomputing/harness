@@ -332,7 +332,7 @@ export class WorkspaceCore implements WorkspaceApi {
 				input.ownerId,
 				input.createdAt,
 			);
-			// web-api 6.3: an unrestricted ceiling, the owner's restricted layer, and the default agent.
+			// A new workspace: an unrestricted ceiling, the owner's restricted layer, and the default agent.
 			this.#sql.exec("INSERT OR IGNORE INTO layers (id, level, subject, restricted, updated_at) VALUES ('ceiling', 'ceiling', NULL, 0, ?)", now);
 			this.#ensureUserLayer(input.ownerId, now);
 			this.#sql.exec(
@@ -515,7 +515,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		const connector = this.#registry.find(provider);
 		if (connector === null) return refuse(404, UNKNOWN_PROVIDER);
 		if (connector.auth.type !== "builtin") return refuse(422, `${connector.name} is connected through its own sign-in.`);
-		// One per user (connectors 11.9), found again by its account id, the user's id.
+		// One per user, found again by its account id, the user's id.
 		const found = this.#connectionByAccount(provider, caller.userId);
 		if (found !== null) return ok(this.#connectionOut(caller, found) as ConnectionOut);
 		const payload: JsonObject = { kind: "builtin" };
@@ -604,7 +604,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		if (usable.value.owner_id === null && !isAdmin(caller)) return refuse(403, "Only workspace admins can remove shared connections.");
 		const now = this.#now();
 		const entries = this.#commit(() => {
-			// Its grants cascade and it leaves every agent; the deleting user's runs stop (connectors 4.6).
+			// Its grants cascade and it leaves every agent; the deleting user's runs stop.
 			this.#sql.exec("DELETE FROM grants WHERE connection_id = ?", connectionId);
 			this.#sql.exec("DELETE FROM agent_connections WHERE connection_id = ?", connectionId);
 			this.#sql.exec("DELETE FROM connections WHERE id = ?", connectionId);
@@ -632,7 +632,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		}
 		const named = new Map<string, string>();
 		for (const [key, name] of Object.entries(names)) named.set(key, sliceText(storable(name), 0, RESOURCE_NAME_MAX));
-		// Account grants are named with the connection's label and need no provider call (connectors 11.9).
+		// Account grants are named with the connection's label and need no provider call.
 		for (const change of changes) {
 			if (change.kind === ACCOUNT_KIND && change.actions.length) named.set(resourceKey(change.kind, change.id), sliceText(connection.label, 0, RESOURCE_NAME_MAX));
 		}
@@ -666,7 +666,7 @@ export class WorkspaceCore implements WorkspaceApi {
 				}
 				this.#sql.exec("UPDATE layers SET version = version + 1, updated_at = ? WHERE id = ?", now, layerId);
 				// Any change to a user's grants stops all of that user's active runs, queued ones included, not
-				// only those using this connection (connectors 4.5, step 7).
+				// only those using this connection (step 7).
 				const entries = this.#revoke({ userId: caller.userId }, "permissions_changed", now).entries;
 				// As saved: the connection may change again, or go, while the cancels are delivered.
 				return { entries, access: accessOut(connector, this.#view(connection), this.#userGrants(connectionId, caller.userId)) };
@@ -684,11 +684,11 @@ export class WorkspaceCore implements WorkspaceApi {
 		// its new generation is not marked.
 		const refreshing = this.#refreshes.get(connectionId);
 		if (refreshing !== undefined) await refreshing.catch(() => null);
-		// Compare-and-set: credentials replaced since the failed call are not marked (connectors 9.2).
+		// Compare-and-set: credentials replaced since the failed call are not marked.
 		this.#sql.exec("UPDATE connections SET status = 'error', updated_at = ? WHERE id = ? AND status = 'active' AND generation = ?", this.#now(), connectionId, generation);
 	}
 
-	// Credential leases (plan: Credentials and refresh; connectors 9.3).
+	// Credential leases (plan: Credentials and refresh).
 
 	/** The purpose's checks, then the connection's: a refusal, or the row to lend. Synchronous. */
 	#leaseCheck(connectionId: ConnectionId, purpose: { run: RunId; userId: UserId } | { settings: Caller }): { refusal: LeaseRefusal } | { row: ConnectionRow } {
@@ -789,7 +789,7 @@ export class WorkspaceCore implements WorkspaceApi {
 			const current = this.#connection(connectionId);
 			if (current === null || current.generation !== generation) return { kind: "moved" };
 			if (result.kind === "invalid") {
-				// "Needs reconnecting" (connectors 9.3).
+				// "Needs reconnecting".
 				this.#sql.exec("UPDATE connections SET status = 'error', refresh_state = 'fresh', refresh_generation = NULL, updated_at = ? WHERE id = ?", now, connectionId);
 				return { kind: "expired" };
 			}
@@ -801,7 +801,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		});
 	}
 
-	// Agents (web-api 8.3).
+	// Agents.
 
 	#agentRow(id: AgentId): AgentRow | null {
 		return first<AgentRow>(this.#sql, "SELECT * FROM agents WHERE id = ?", id);
@@ -909,7 +909,7 @@ export class WorkspaceCore implements WorkspaceApi {
 			const conversations = this.#sql
 				.exec<{ id: string }>("SELECT id FROM conversations WHERE agent_id = ? AND deleted_at IS NULL", agentId)
 				.map((row) => row.id);
-			// Its runs stop as a plain cancel ("Stopped."), then its conversations go with it (runs 8).
+			// Its runs stop as a plain cancel ("Stopped."), then its conversations go with it.
 			const entries = this.#revoke({ agentId }, "cancelled", now).entries;
 			for (const id of conversations) this.#tombstone(id, now);
 			this.#sql.exec("DELETE FROM agent_connections WHERE agent_id = ?", agentId);
@@ -1043,7 +1043,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		return ok(answer);
 	}
 
-	/** `uploads.attach`'s checks, in its order (files 10, steps 3 to 5). */
+	/** `uploads.attach`'s checks, in its order (steps 3 to 5). */
 	#attachable(input: BeginRunInput): Outcome<UploadRow[]> {
 		const ids = input.uploadIds;
 		const { messageAttachments } = this.#deps.settings;
@@ -1066,7 +1066,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		const now = this.#now();
 		const { folderBytes, folderEntries, runTimeoutMs } = this.#deps.settings;
 		// One synchronous transaction from the first check to the registration, so a grant change processed
-		// afterwards revokes this run, and one processed before is in its snapshot (connectors 4.4).
+		// afterwards revokes this run, and one processed before is in its snapshot.
 		return this.#commit((): BeginRunResult => {
 			const existing = this.#run(input.runId);
 			if (existing !== null) return this.#repeatBegin(existing, input, now);
@@ -1086,7 +1086,7 @@ export class WorkspaceCore implements WorkspaceApi {
 			if (!attachable.ok) return attachable;
 			const uploads = attachable.value;
 			if (uploads.length) {
-				// Each attachment is a new file at the folder's root: one entry, and its pages (files 10, step 8).
+				// Each attachment is a new file at the folder's root: one entry, and its pages (step 8).
 				if (input.folder.entries + uploads.length > folderEntries) return refuse(413, overFolder("folder_entries", folderEntries, folderBytes));
 				const bytes = input.folder.bytes + uploads.reduce((sum, upload) => sum + pages(upload.size), 0);
 				if (bytes > folderBytes) return refuse(413, overFolder("folder_bytes", folderEntries, folderBytes));
@@ -1369,7 +1369,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		);
 	}
 
-	// Uploads and bytes (files 9, 12; plan: Files).
+	// Uploads and bytes (plan: Files).
 
 	#doom(key: string, now: number): void {
 		this.#sql.exec("INSERT INTO doomed_objects (key, due_at) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET due_at = min(due_at, excluded.due_at)", key, now);
@@ -1393,7 +1393,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		const now = this.#now();
 		const workspace = this.workspaceRef();
 		return this.#commit((): Outcome<{ id: UploadId; key: string }> => {
-			// files 9.1 check 13: uploads still arriving; a pending one older than the body's deadline is not.
+			// Uploads still arriving; a pending one older than the body's deadline is not.
 			const arriving = first<{ n: number }>(
 				this.#sql,
 				"SELECT count(*) AS n FROM uploads WHERE user_id = ? AND state = 'pending' AND created_at > ?",
@@ -1562,7 +1562,7 @@ function jsonScopes(payload: JsonObject): string | null {
 	return scopes === null ? null : JSON.stringify(scopes);
 }
 
-/** AgentIn with its defaults: a PUT is a full replace (web-api 8.3). Validated by the Worker's schema. */
+/** AgentIn with its defaults: a PUT is a full replace. Validated by the Worker's schema. */
 function agentFields(input: AgentIn): { name: string; instructions: string; connectionIds: string[] } {
 	return { name: storable(input.name), instructions: storable(input.instructions ?? ""), connectionIds: input.connection_ids ?? [] };
 }

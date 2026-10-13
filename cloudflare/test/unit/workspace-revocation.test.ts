@@ -1,4 +1,4 @@
-// Strict revocation (plan: Strict revocation; connectors 4.6; runs 8), over node:sqlite with fake
+// Strict revocation (plan: Strict revocation), over node:sqlite with fake
 // Conversation objects: which runs each change stops and with which reason, the outbox written in the
 // change's own transaction, the acknowledgement barrier and its 10 s limit, the alarm's retries, the
 // emergency stop, and the fault cases: a crash after the grant commit, a lost acknowledgement, a
@@ -57,7 +57,7 @@ describe("which runs a change stops", () => {
 		expect(registered(h, graces.input.runId)?.revoked).toBeNull();
 	});
 
-	test("changing an agent's connections stops its runs, every user's; renaming it does not (test_api)", async () => {
+	test("changing an agent's connections stops its runs, every user's; renaming it does not", async () => {
 		const { h, agent } = await shared();
 		const adas = await running(h);
 		const graces = await running(h, { caller: GRACE });

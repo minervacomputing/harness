@@ -115,7 +115,7 @@ export interface StoreListeners {
 }
 
 export interface FinishOptions {
-	/** Only if this attempt is still the run's (runs 2.2). */
+	/** Only if this attempt is still the run's. */
 	attempt?: number;
 	/** Only if the run is in this state. */
 	fromStatus?: RunStatus;
@@ -413,7 +413,7 @@ export class RunStore {
 		return this.#sql.exec<RunRow>(`SELECT ${RUN_COLUMNS} FROM runs WHERE id = ?`, id).toArray()[0] ?? null;
 	}
 
-	/** At most one run is queued, provisioning or running (runs 1.1). */
+	/** At most one run is queued, provisioning or running. */
 	activeRun(): RunRow | null {
 		return this.#sql.exec<RunRow>(`SELECT ${RUN_COLUMNS} FROM runs WHERE status IN ${ACTIVE_SQL} ORDER BY created_at DESC LIMIT 1`).toArray()[0] ?? null;
 	}
@@ -503,7 +503,7 @@ export class RunStore {
 		});
 	}
 
-	/** provisioning → running, once per attempt, keeping the run's first start time (runs 2.1). */
+	/** provisioning → running, once per attempt, keeping the run's first start time. */
 	startAttempt(fence: AttemptFence): boolean {
 		return this.write(() => {
 			const changed = this.#sql
@@ -520,7 +520,7 @@ export class RunStore {
 		});
 	}
 
-	/** The gate's new attempt: attempt + 1 and the restart marker, the deadline unchanged (runs 2.4). */
+	/** The gate's new attempt: attempt + 1 and the restart marker, the deadline unchanged. */
 	restart(runId: RunId, attempt: number): void {
 		const now = this.now();
 		this.#sql.exec("UPDATE runs SET attempt = ?, attempt_started_at = ?, status = 'provisioning' WHERE id = ?", attempt, now, runId);
@@ -530,7 +530,7 @@ export class RunStore {
 	}
 
 	/**
-	 * The one way a run ends, once, from an active state (runs 2.2): status, code, message cut to 500, the
+	 * The one way a run ends, once, from an active state: status, code, message cut to 500, the
 	 * folder published, and the terminal status event, in one transaction.
 	 */
 	finish(runId: RunId, end: RunEnd, options: FinishOptions = {}): boolean {
@@ -564,7 +564,7 @@ export class RunStore {
 		});
 	}
 
-	// Usage (runs 7.6).
+	// Usage.
 
 	/** Counts a tool call if the fence is current; false means RUN_ENDED, not counted. */
 	countToolCall(fence: AttemptFence): boolean {
@@ -602,7 +602,7 @@ export class RunStore {
 		return this.#sql.exec<{ text: string }>("SELECT text FROM tool_arguments WHERE run_id = ? AND call_id = ?", runId, callId).toArray()[0]?.text ?? null;
 	}
 
-	// Events (runs 6.1).
+	// Events.
 
 	/**
 	 * Appends with the next seq. A fenced append whose attempt is no longer current, or an `active` one

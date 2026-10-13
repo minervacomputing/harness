@@ -1,9 +1,9 @@
-// The folder in the container (files 8; plan: Checkpoints): hydration streams the version's blobs from R2
+// The folder in the container (plan: Checkpoints): hydration streams the version's blobs from R2
 // into minerva-fs, each distinct blob once, a few gets ahead; the scan runs minerva-fs over /workspace with
 // the index the Sandbox keeps, so unchanged files are not hashed again; a checkpoint streams each file it is
 // asked for from the container into R2 under the key the Conversation recorded, with its known length and
 // the SHA-256 R2 checks. File contents never cross an RPC. The container's claims (the scan's manifest,
-// warnings and sizes) are only checked for their shape here; the Conversation validates them (files 4.2, 7.5).
+// warnings and sizes) are only checked for their shape here; the Conversation validates them.
 
 import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan, HydrateResult, ScanResult } from "../contracts/sandbox.ts";
 import type { FileMode, WarningReason } from "../contracts/files.ts";
@@ -60,7 +60,7 @@ function count(value: Json | undefined, max: number): number | null {
 	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= max ? value : null;
 }
 
-/** A manifest path: at most 1,024 UTF-8 bytes, so at most 1,024 UTF-16 units (files 4.2). */
+/** A manifest path: at most 1,024 UTF-8 bytes, so at most 1,024 UTF-16 units. */
 const PATH_UNITS = 1024;
 const DIGITS = /^-?[0-9]{1,24}$/;
 
@@ -214,7 +214,7 @@ export async function hydrate(machine: Machine, bucket: BucketPort, plan: Hydrat
 	}
 }
 
-/** The scan (files 8.2), in the container, with the Sandbox's index of the files it last hashed. */
+/** The scan, in the container, with the Sandbox's index of the files it last hashed. */
 export async function scan(
 	machine: Machine,
 	index: IndexEntry[],
@@ -261,7 +261,7 @@ export async function scan(
 		}
 		for (let i = 0; i < items; i++) {
 			const item = await jsonLine(wrapped.stdout);
-			// A warning's path is for display, at most 1,024 UTF-16 units and the ellipsis (files 7.5).
+			// A warning's path is for display, at most 1,024 UTF-16 units and the ellipsis.
 			if (!Array.isArray(item) || item.length !== 2 || typeof item[0] !== "string" || item[0].length > PATH_UNITS + 1 || !(REASONS as readonly Json[]).includes(item[1] ?? null)) {
 				return failed("The scan's report is unreadable.");
 			}

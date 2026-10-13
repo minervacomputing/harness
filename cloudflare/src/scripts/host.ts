@@ -1,6 +1,5 @@
 // What the Conversation Durable Object keeps for code mode, and the `ScriptToolHost` it gives `run_script`
-// (scripts/tool.ts): per run, its scripted calls across its scripts (today's `open`, per worker, so per
-// instance here); per instance, the lane that puts each script after the reset of the one before.
+// (scripts/tool.ts): per run, its scripted calls across its scripts (per instance); per instance, the lane that puts each script after the reset of the one before.
 
 import type { AttemptFence, EpochMs, Json, RunId } from "../contracts/common.ts";
 import type { ToolCallOutcome, ToolDeclaration } from "../contracts/executor.ts";

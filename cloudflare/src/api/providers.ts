@@ -1,9 +1,9 @@
-// The provider calls of the connection settings (web-api 8.5): the account behind a new API key, and the
+// The provider calls of the connection settings: the account behind a new API key, and the
 // access editor's discover, children and describe. They run here, in the Worker, as the contract has it
 // (contracts/workspace.ts): the Workspace lends the caller's credential (`lease` for `settings`, refreshed
 // first when it is about to expire), it is decrypted for the one call only, as the Conversation's executor
 // does for a run, and it is never stored or returned. A token the provider rejects marks the connection
-// Needs reconnecting, unless it got new credentials meanwhile (connections/credentials.py `open_client`).
+// Needs reconnecting, unless it got new credentials meanwhile.
 
 import type { WorkspaceRef } from "../contracts/common.ts";
 import type { Account, Connector, CredentialPayload, ProviderClient } from "../contracts/connectors.ts";
@@ -54,7 +54,7 @@ export function providerAccount(env: Env, workspace: WorkspaceRef, connector: Co
 	return call(env, workspace, connector, secret, (client) => connector.account(client));
 }
 
-/** The account a key belongs to; a provider's refusal is 422 with its message (connections/services.py `save_connection`). */
+/** The account a key belongs to; a provider's refusal is 422 with its message. */
 export async function keyAccount(env: Env, workspace: WorkspaceRef, connector: Connector, key: string): Promise<Account> {
 	try {
 		return await providerAccount(env, workspace, connector, key);

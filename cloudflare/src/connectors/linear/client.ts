@@ -16,7 +16,7 @@ import type { Effect, OperationErrorShape, ProviderClient, ProviderIo } from "..
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
 import { utf8 } from "../../lib/bytes.ts";
-import { isDict, type Json, type JsonObject, parseJson } from "../../lib/json.ts";
+import { isDict, type Json, type JsonObject, parseJsonBytes } from "../../lib/json.ts";
 import { extend } from "../../lib/arrays.ts";
 
 export const API_URL = "https://api.linear.app";
@@ -232,7 +232,7 @@ export function errorFor(provider: string, errors: JsonObject[]): OperationError
 /** A body as JSON: UTF-8, a byte order mark dropped; undefined when it is not JSON. */
 function jsonOf(bytes: Uint8Array): Json | undefined {
 	try {
-		return parseJson(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes));
+		return parseJsonBytes(bytes);
 	} catch {
 		return undefined;
 	}

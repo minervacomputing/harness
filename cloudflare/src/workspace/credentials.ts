@@ -4,8 +4,8 @@
 // generation fence are the Workspace's (core.ts).
 
 import type { Auth, Connector } from "../contracts/connectors.ts";
-import { base64, utf8 } from "../lib/bytes.ts";
-import { type Json, type JsonObject, parseJson, truthy } from "../lib/json.ts";
+import { base64, concatAll, utf8 } from "../lib/bytes.ts";
+import { type Json, type JsonObject, parseJsonBytes } from "../lib/json.ts";
 import type { ClientCredentials, Log, OAuthClients } from "./ports.ts";
 
 /** Refresh OAuth access tokens with less than this left. */
@@ -23,6 +23,11 @@ export type OAuth2 = Extract<Auth, { type: "oauth2" }>;
 
 function own(payload: JsonObject, key: string): Json | undefined {
 	return Object.hasOwn(payload, key) ? payload[key] : undefined;
+}
+
+/** A refresh token worth keeping or sending: a non-empty string. */
+function isToken(value: Json | undefined): value is string {
+	return typeof value === "string" && value !== "";
 }
 
 /** A decrypted payload: always an object; anything else is unreadable. */
@@ -53,15 +58,15 @@ export function expiresAtOf(payload: JsonObject): number | null {
 	return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-/** `_needs_refresh`: `expires_at` is set and less than 120 s away. */
+/** Whether `expires_at` is set and less than 120 s away. */
 export function needsRefresh(expiresAt: number | null, nowMs: number): boolean {
 	return expiresAt !== null && expiresAt - nowMs / 1000 < REFRESH_MARGIN_SECONDS;
 }
 
 /**
- * `_scopes(body)`: `scope`, else `scopes` (HubSpot). A list of strings is joined with spaces; a string is
- * split on commas (GitHub) and whitespace, then sorted and de-duplicated; anything else is unknown (connectors
- * 11.5). As `body.get("scope", …)` does, a `scope` present with null is null, not `scopes`.
+ * The granted scopes: `scope`, else `scopes` (HubSpot). A list of strings is joined with spaces; a string is
+ * split on commas (GitHub) and whitespace, then sorted and de-duplicated; anything else is unknown. A
+ * `scope` present with null is unknown, not `scopes`.
  */
 export function parseScopes(body: JsonObject): string[] | null {
 	let scope = Object.hasOwn(body, "scope") ? body.scope : own(body, "scopes");
@@ -70,29 +75,27 @@ export function parseScopes(body: JsonObject): string[] | null {
 	return [...new Set(scope.replaceAll(",", " ").split(/\s+/).filter(Boolean))].sort();
 }
 
-/** `_token_body`: a JSON object without an `error` key and with a string `access_token`, else null. */
-export function tokenBody(text: string): JsonObject | null {
-	let body: Json;
+/** A token answer's body as JSON (parseJsonBytes); undefined when it is not UTF-8 JSON. */
+export function answerJson(bytes: Uint8Array): Json | undefined {
 	try {
-		body = parseJson(text);
+		return parseJsonBytes(bytes);
 	} catch {
-		return null;
+		return undefined;
 	}
+}
+
+/** A token answer: a JSON object without an `error` key and with a string `access_token`, else null. */
+export function tokenBody(body: Json | undefined): JsonObject | null {
 	if (typeof body !== "object" || body === null || Array.isArray(body)) return null;
 	if (Object.hasOwn(body, "error") || typeof own(body, "access_token") !== "string") return null;
 	return body;
 }
 
-/** `_json_field`: a string field of a JSON object body, else null. */
-function jsonField(text: string, field: string): string | null {
-	try {
-		const body = parseJson(text);
-		if (typeof body !== "object" || body === null || Array.isArray(body)) return null;
-		const value = own(body, field);
-		return typeof value === "string" ? value : null;
-	} catch {
-		return null;
-	}
+/** A string field of a JSON object body, else null. */
+function jsonField(body: Json | undefined, field: string): string | null {
+	if (typeof body !== "object" || body === null || Array.isArray(body)) return null;
+	const value = own(body, field);
+	return typeof value === "string" ? value : null;
 }
 
 /**
@@ -120,7 +123,7 @@ export function tokenPayload(body: JsonObject, nowMs: number): JsonObject {
  * is only ever sent.
  */
 export function keepRefreshToken(previous: JsonObject, tokens: JsonObject): JsonObject {
-	if (own(tokens, "kind") !== "oauth2" || truthy(own(tokens, "refresh_token")) || !truthy(own(previous, "refresh_token"))) return tokens;
+	if (own(tokens, "kind") !== "oauth2" || isToken(own(tokens, "refresh_token")) || !isToken(own(previous, "refresh_token"))) return tokens;
 	const issuer = own(previous, "client_id") ?? null;
 	if (issuer === null || issuer !== (own(tokens, "client_id") ?? null)) return tokens;
 	return { ...tokens, refresh_token: previous.refresh_token as Json, token_url: own(previous, "token_url") ?? null };
@@ -148,7 +151,7 @@ export async function issuingClient(connector: Connector, oauth: OAuth2, clientI
 const TOKEN_HEADERS = { Accept: "application/json" };
 
 /**
- * `_token_request`: POST to the token endpoint with the client authenticated as the provider expects:
+ * A POST to the token endpoint with the client authenticated as the provider expects:
  * `basic` as HTTP Basic, otherwise `client_id` and `client_secret` first in the body; JSON or a form. Never
  * redirected: a refresh token goes only to the endpoint that issued it.
  */
@@ -184,9 +187,9 @@ export type RefreshPlan = { kind: "invalid" } | { kind: "send"; tokenUrl: string
 
 const DEAD_REFRESH_TOKENS: ReadonlySet<string> = new Set(["bad_refresh_token", "invalid_grant", "invalid_refresh_token"]);
 
-/** The body as text, up to TOKEN_BODY_LIMIT bytes; null beyond it. */
-export async function boundedText(response: Response): Promise<string | null> {
-	if (!response.body) return "";
+/** The body's bytes, up to TOKEN_BODY_LIMIT; null beyond it. */
+export async function boundedBody(response: Response): Promise<Uint8Array | null> {
+	if (!response.body) return new Uint8Array(0);
 	const reader = response.body.getReader();
 	const chunks: Uint8Array[] = [];
 	let size = 0;
@@ -200,13 +203,7 @@ export async function boundedText(response: Response): Promise<string | null> {
 		}
 		chunks.push(value);
 	}
-	const bytes = new Uint8Array(size);
-	let offset = 0;
-	for (const chunk of chunks) {
-		bytes.set(chunk, offset);
-		offset += chunk.byteLength;
-	}
-	return new TextDecoder("utf-8", { fatal: false, ignoreBOM: false }).decode(bytes);
+	return concatAll(chunks);
 }
 
 export interface RefreshDeps {
@@ -218,13 +215,12 @@ export interface RefreshDeps {
 }
 
 /**
- * `_refresh(connection, tokens)` up to the request: no refresh token, a connector that is not OAuth, or an
- * issuer that is no longer configured mean the grant is gone; otherwise the request to send (connectors
- * 9.3). `send` never throws: a transport error is `unavailable` with `reached` false.
+ * A refresh up to the request: no refresh token, a connector that is not OAuth, or an issuer that is no
+ * longer configured mean the grant is gone; otherwise the request to send. `send` never throws: a transport error is `unavailable` with `reached` false.
  */
 export async function planRefresh(connector: Connector, tokens: JsonObject, deps: RefreshDeps, connectionId: string): Promise<RefreshPlan> {
 	const refreshToken = own(tokens, "refresh_token");
-	if (!truthy(refreshToken) || typeof refreshToken !== "string") return { kind: "invalid" };
+	if (!isToken(refreshToken)) return { kind: "invalid" };
 	const oauth = connector.auth;
 	if (oauth.type !== "oauth2") return { kind: "invalid" };
 	const creds = await issuingClient(connector, oauth, own(tokens, "client_id"), deps.clients, deps.siteUrl);
@@ -240,7 +236,7 @@ export async function planRefresh(connector: Connector, tokens: JsonObject, deps
 	const cannotRefresh: RefreshResult = { kind: "unavailable", message: `${name} could not refresh the connection.`, reached: true };
 	const send = async (): Promise<RefreshResult> => {
 		let response: Response;
-		let text: string | null;
+		let bytes: Uint8Array | null;
 		try {
 			response = await deps.fetch(tokenUrl, {
 				...tokenRequest(oauth, creds, [
@@ -249,18 +245,19 @@ export async function planRefresh(connector: Connector, tokens: JsonObject, deps
 				]),
 				signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS),
 			});
-			text = await boundedText(response);
+			bytes = await boundedBody(response);
 		} catch {
 			return { kind: "unavailable", message: `${name} could not be reached.`, reached: false };
 		}
-		if (text === null) return cannotRefresh;
+		if (bytes === null) return cannotRefresh;
+		const answer = answerJson(bytes);
 		if (response.status === 400 || response.status === 401) return { kind: "invalid" };
 		// Atlassian refuses a refresh token that expired or was revoked with 403.
-		if (response.status === 403 && jsonField(text, "error") === "invalid_grant") return { kind: "invalid" };
+		if (response.status === 403 && jsonField(answer, "error") === "invalid_grant") return { kind: "invalid" };
 		if (response.status >= 400) return cannotRefresh;
-		const body = tokenBody(text);
+		const body = tokenBody(answer);
 		if (body === null) {
-			const error = jsonField(text, "error");
+			const error = jsonField(answer, "error");
 			// GitHub's and Slack's refusals of a refresh token that expired or was revoked; other refusals (a
 			// misconfigured client) are the operator's to fix and leave the connection as it is.
 			if (error !== null && DEAD_REFRESH_TOKENS.has(error)) return { kind: "invalid" };

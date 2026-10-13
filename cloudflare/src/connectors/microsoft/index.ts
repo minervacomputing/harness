@@ -13,8 +13,7 @@ import { z } from "zod";
 import type { Auth, Consent, OperationErrorShape, ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP, defaultForbidden } from "../../gateway/http.ts";
-import { fromUtf8Strict } from "../../lib/bytes.ts";
-import { isDict, type Json, type JsonObject, parseJson } from "../../lib/json.ts";
+import { isDict, type Json, type JsonObject, parseJsonBytes } from "../../lib/json.ts";
 
 export const GRAPH = "https://graph.microsoft.com";
 export const API_URL = `${GRAPH}/v1.0`;
@@ -59,18 +58,13 @@ export function consentAll(...scopes: string[]): Consent {
 	return options;
 }
 
-/** JSON from strict UTF-8 bytes. Throws for invalid UTF-8 or JSON. */
-export function jsonOf(bytes: Uint8Array): Json {
-	return parseJson(fromUtf8Strict(bytes));
-}
-
 const ErrorBody = z.object({ error: z.object({ code: z.string() }) });
 
 /** Graph's error code from an error body, if it names one: a body that is not UTF-8, not JSON or not so shaped names nothing. */
 export function errorCode(bytes: Uint8Array): string | null {
 	let parsed: Json;
 	try {
-		parsed = jsonOf(bytes);
+		parsed = parseJsonBytes(bytes);
 	} catch {
 		return null;
 	}
@@ -167,7 +161,7 @@ export class Graph implements ProviderClient {
 		);
 		let body: Json;
 		try {
-			body = jsonOf(new Uint8Array(await response.arrayBuffer()));
+			body = parseJsonBytes(await response.arrayBuffer());
 		} catch (error) {
 			throw this.unexpected(error);
 		}

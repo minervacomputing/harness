@@ -15,7 +15,7 @@
 //
 // The HTML is tokenized by lib/html.ts.
 
-import { decoded, plainText, TextError, WORDS } from "../../lib/text.ts";
+import { browserAddress, decoded, plainText, TextError, WORDS } from "../../lib/text.ts";
 import { type Attribute, Hidden, type Tokens, tokenize } from "../../lib/html.ts";
 import { endsWithNewline, linkText, type Piece, written as writtenOut } from "../../lib/linktext.ts";
 
@@ -26,8 +26,9 @@ const LOOKALIKES = "\u0130\u0131";
 // intercom-attachments) and help centers, in every region. Other hosts that start with "intercom" are hidden
 // too, in any case and with the lookalikes of "i" ("ſ" and the Kelvin sign fold under the `iu` flags).
 const INTERCOM = new RegExp(`${I}ntercom[a-z0-9${LOOKALIKES}-]*\\.[a-z${LOOKALIKES}]{2}|${I}ntercom:`, "iu");
-// Links shown with their address, by an ASCII scheme: a lookalike letter makes a link relative. Others,
-// relative ones included (Intercom shows them on its own host), are hidden.
+// Links shown with their address, by their scheme as a browser reads it (lib/text.ts `browserAddress`): a
+// lookalike letter makes a link relative. Others, relative ones included (Intercom shows them on its own
+// host), are hidden.
 const SHOWN_LINK = /^(?:https?:\/\/|mailto:|tel:)/i;
 const BLOCKS: ReadonlySet<string> = new Set(["p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "pre", "ul", "ol", "table", "li", "blockquote"]);
 const DROPPED: ReadonlySet<string> = new Set([
@@ -102,7 +103,7 @@ class Reader implements Tokens {
 		if (DROPPED.has(tag)) this.#hide(tag, "");
 		else if (tag === "a") {
 			const href = values.get("href") || "";
-			const address = decoded(href).replace(/[\u0000- ]/g, "");
+			const address = browserAddress(href);
 			// Readers disagree on which of repeated attributes counts. An empty href is the page itself.
 			const linked = values.has("href");
 			if (values.size !== attrs.length || toIntercom(href) || (linked && !SHOWN_LINK.test(address))) this.#hide(tag, LINK);

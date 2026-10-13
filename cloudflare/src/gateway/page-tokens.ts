@@ -22,7 +22,7 @@ export { PAGE_TOKEN_SCHEMA } from "./schema.ts";
 
 /**
  * SHA-256 over `minerva:query:` and the canonical JSON (lib/canonical.ts) of the validated, normalized
- * arguments with their defaults, without "cursor" (connectors 7.1 step 4, risk 2), so a token is valid only
+ * arguments with their defaults, without "cursor" (risk 2), so a token is valid only
  * for the same query. The tool name is bound beside it, in the token's row.
  */
 export async function queryHash(fields: { [key: string]: unknown }): Promise<string> {
@@ -80,7 +80,7 @@ export class PageTokens {
 		return row?.n ?? 0;
 	}
 
-	/** Drops a run's tokens, once the run has ended (connectors 7.3: they may go then). */
+	/** Drops a run's tokens, once the run has ended. */
 	forget(runId: RunId): void {
 		this.#sql.exec("DELETE FROM page_tokens WHERE run_id = ?", runId);
 	}

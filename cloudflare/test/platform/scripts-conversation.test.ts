@@ -192,7 +192,7 @@ function scriptResults(fakes: Fakes): { texts: string[]; isError: boolean }[] {
 }
 
 describe("run_script in the conversation", () => {
-	test("offered after the connector tools, with today's description; absent without them", async () => {
+	test("offered after the connector tools, with its description; absent without them", async () => {
 		const { stub, fakes } = await conversation();
 		await settled(stub, await posted(stub, [{ text: "Hi." }]));
 		expect(offered(fakes.contexts[0]).map((tool) => tool.name)).toEqual(["fake_read", "fake_write", "run_script", "read", "write", "edit", "bash"]);

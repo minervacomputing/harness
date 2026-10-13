@@ -1,5 +1,5 @@
 // The checkpoint barrier and the local tools (src/conversation/local.ts), ported case by case from
-// worker/test/local-tools.test.ts (harness 18, "LocalCalls and the gated wrapper", "Local tools"): results
+// worker/test/local-tools.test.ts ("LocalCalls and the gated wrapper", "Local tools"): results
 // held until a checkpoint saved them, read-only rounds without one, a failed checkpoint ending the attempt
 // before any result is released, the watchdog, the chat's cards, the bash tool's environment and timeouts,
 // and the fixed order. The file tools run against pi's own Node environment in a temporary directory; the

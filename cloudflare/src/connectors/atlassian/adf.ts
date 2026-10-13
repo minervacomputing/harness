@@ -17,7 +17,7 @@
 // Atlassian may show it as a smart link previewing something the agent may not read.
 
 import type { Json } from "../../lib/json.ts";
-import { decoded, WORDS } from "../../lib/text.ts";
+import { browserAddress, decoded, WORDS } from "../../lib/text.ts";
 import { OperationError } from "../../gateway/connector.ts";
 
 export const LINK = "[Atlassian link]";
@@ -89,7 +89,8 @@ function namesHost(flat: string, hosts: readonly string[]): boolean {
 export function internal(address: string, hosts: readonly string[] = []): boolean {
 	const flat = flattened(address).trim();
 	if (ATLASSIAN.test(flat) || namesHost(flat, hosts)) return true;
-	return !SCHEME.test(flat) || flat.startsWith("//");
+	const parsed = browserAddress(address);
+	return !SCHEME.test(parsed) || parsed.startsWith("//");
 }
 
 /** Plain text with every word that addresses Atlassian replaced. */

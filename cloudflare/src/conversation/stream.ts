@@ -1,4 +1,4 @@
-// The event stream's Durable Object side (plan: Events and the stream; frontend 8; contracts/conversation.ts,
+// The event stream's Durable Object side (plan: Events and the stream; contracts/conversation.ts,
 // StreamRequest). The Worker checks the session and the run's owner, then opens a hibernatable WebSocket
 // here with `after`; the Worker's SSE relay (step 5) writes each frame as `id`, `event`, `data`.
 //
@@ -38,7 +38,7 @@ function runTag(runId: RunId): string {
 	return `run:${runId}`;
 }
 
-/** `after` as the Worker sends it: digits only, else 0 (frontend 8.2). */
+/** `after` as the Worker sends it: digits only, else 0. */
 export function cursorOf(value: string | null): number {
 	return value !== null && /^[0-9]{1,15}$/.test(value) ? Number(value) : 0;
 }

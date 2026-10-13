@@ -1,4 +1,4 @@
-// Code mode (plan: Code mode; runs 4.5, harness 7). `run_script` keeps its description and rules. Each
+// Code mode (plan: Code mode). `run_script` keeps its description and rules. Each
 // script is a Dynamic Worker loaded with `globalOutbound: null`, no `env` and `limits.cpuMs` by the
 // per-conversation Scripts Durable Object, so a CPU-bound script never blocks the conversation. The
 // conversation resets the Scripts object after every script, which is what ends a guest that ignores its
@@ -52,7 +52,7 @@ export type ScriptOutputItem = ({ type: "text" } & ScriptText) | { type: "image"
 /**
  * The guest's only capability: an RpcTarget the Conversation Durable Object makes per script. It applies
  * the caps (100 open calls across the turn's scripts, 256 KB of argument JSON, stop after 100 refusals,
- * today's output limits) and queues calls with the direct ones (4 at once, writes one at a time). Once the
+ * the output limits) and queues calls with the direct ones (4 at once, writes one at a time). Once the
  * script ended or was stopped, later calls and prints get a promise that never settles, so a stopped
  * guest that awaits them stops.
  */
@@ -99,7 +99,7 @@ export interface ScriptError {
 }
 
 /**
- * pi-codemode's result contract (harness 7.3), which `run_script`'s rendering reads: notes first (a
+ * pi-codemode's result contract, which `run_script`'s rendering reads: notes first (a
  * failure clipped to 30,000 characters, then cancelled calls), the printed output, then the returned value,
  * or "The script printed and returned nothing." A script stopped for CPU or memory loses what it printed
  * since it last yielded.

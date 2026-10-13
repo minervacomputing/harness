@@ -84,7 +84,8 @@ const INVISIBLE = /[\p{Cf}\p{Noncharacter_Code_Point}\0-\x08\v\f\x0e-\x1f\x7f-\x
 
 /**
  * The text with the encodings a browser or renderer undoes in an address undone, three times over, and
- * without invisible characters, so that none of them splits an address into harmless parts.
+ * without invisible characters, so that none of them splits an address into harmless parts. For finding a
+ * host to hide, where reading too much is safe; never for a scheme (see `browserAddress`).
  */
 export function decoded(text: string): string {
 	for (let round = 0; round < 3; round++) {
@@ -93,6 +94,16 @@ export function decoded(text: string): string {
 		text = text.replace(/[\u3002\uff0e\uff61]/g, ".").replaceAll("\\", "");
 	}
 	return text;
+}
+
+/**
+ * An address as a browser's URL parser reads it: tabs and line breaks removed, and C0 controls and spaces
+ * stripped from both ends. Nothing else is decoded, so a scheme test on it sees what the browser sees: a
+ * scheme is ASCII letters, digits and `+-.`, and an address whose scheme has anything else (`httpſ:`, which
+ * NFKC in `decoded` turns into `https:`, `%68ttps:`, `h ttps:`) is relative.
+ */
+export function browserAddress(address: string): string {
+	return address.replace(/[\t\n\r]/g, "").replace(/^[\u0000- ]+|[\u0000- ]+$/g, "");
 }
 
 /**
@@ -132,8 +143,6 @@ const CHARREF = /&(#[0-9]+;?|#[xX][0-9a-fA-F]+;?|[^\t\n\f <&#;]{1,32};?)/gu;
 /**
  * Named and numeric character references undone, with HTML5's rules: names are the `entities` package's
  * table, with the standard's rule for a name without ";" (the longest name that starts the reference).
- * Numeric references to most C0 controls, DEL and the noncharacters become nothing, which the package
- * would keep.
  */
 export function htmlUnescape(text: string): string {
 	if (!text.includes("&")) return text;
@@ -142,21 +151,8 @@ export function htmlUnescape(text: string): string {
 		const hex = reference[1] === "x" || reference[1] === "X";
 		const point = Number.parseInt(reference.slice(hex ? 2 : 1).replace(/;$/, ""), hex ? 16 : 10);
 		// NUL, the surrogates and what is beyond Unicode become U+FFFD, and U+0080 to U+009F their Windows-1252 letters.
-		const replaced = replaceCodePoint(point);
-		return replaced === point && isDropped(point) ? "" : String.fromCodePoint(replaced);
+		return String.fromCodePoint(replaceCodePoint(point));
 	});
-}
-
-/** The code points a numeric reference makes into nothing: most C0 controls, DEL, and the noncharacters. */
-function isDropped(point: number): boolean {
-	return (
-		(point >= 0x1 && point <= 0x8) ||
-		point === 0xb ||
-		(point >= 0xe && point <= 0x1f) ||
-		point === 0x7f ||
-		(point >= 0xfdd0 && point <= 0xfdef) ||
-		(point & 0xfffe) === 0xfffe
-	);
 }
 
 /** Letters, numbers and the underscore, as the body of a character class for a pattern with the `u` flag. */

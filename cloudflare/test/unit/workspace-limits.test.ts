@@ -1,37 +1,20 @@
-// The Workspace's text helpers against Python's formatting: `format(x, "g")`, `size_text`, `f"{n:,}"` and
-// the attachment limits' messages (files 10; uploads.py `_over`), and the schema steps over node:sqlite.
+// The Workspace's limit messages and sizes, and its schema steps over node:sqlite.
 
 import { describe, expect, test } from "vitest";
 import { MIGRATIONS } from "../../src/workspace/schema.ts";
-import { formatG, overFolder, pages, sizeText, thousands, tooManyAttachments } from "../../src/workspace/limits.ts";
+import { overFolder, pages, sizeText, thousands, tooManyAttachments } from "../../src/workspace/limits.ts";
 import { migrate } from "../../src/lib/sql.ts";
 import { database, nodeSql } from "./workspace-support.ts";
 
-describe("Python's formatting", () => {
-	test("format(x, 'g'): six significant digits, trailing zeros dropped, exponents outside [-4, 6)", () => {
-		const cases: [number, string][] = [
-			[256, "256"],
-			[0.5, "0.5"],
-			[1.5, "1.5"],
-			[286.102294921875, "286.102"],
-			[100000, "100000"],
-			[999999, "999999"],
-			[999999.5, "1e+06"],
-			[1234567, "1.23457e+06"],
-			[0.0001, "0.0001"],
-			[0.00001234, "1.234e-05"],
-			[2, "2"],
-			[0, "0"],
-			[-3.25, "-3.25"],
-		];
-		for (const [value, text] of cases) expect(formatG(value), String(value)).toBe(text);
-	});
-
-	test("size_text and the thousands separator", () => {
+describe("limits in words", () => {
+	test("sizes in binary MB below a GiB, GB from there, up to six significant digits", () => {
 		expect(sizeText(268_435_456)).toBe("256 MB");
+		expect(sizeText(50 * 2 ** 20)).toBe("50 MB");
+		expect(sizeText(1_000_000)).toBe("0.953674 MB");
+		expect(sizeText(10)).toBe("0.00000953674 MB");
 		expect(sizeText(2 ** 30)).toBe("1 GB");
 		expect(sizeText(1.5 * 2 ** 30)).toBe("1.5 GB");
-		expect(sizeText(50 * 2 ** 20)).toBe("50 MB");
+		expect(sizeText(2 ** 40)).toBe("1024 GB");
 		expect(thousands(10_000)).toBe("10,000");
 		expect(thousands(999)).toBe("999");
 		expect(thousands(1_234_567)).toBe("1,234,567");

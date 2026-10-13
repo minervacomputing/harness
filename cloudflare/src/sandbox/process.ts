@@ -49,7 +49,7 @@ export interface RootResult {
 
 /**
  * Kills a process through its exec's AbortController, but only while it runs: an abort after the exit
- * raises an error in the object nothing can catch (worker-harness 17.3).
+ * raises an error in the object nothing can catch.
  */
 function stopper(proc: ExecProcess, controller: AbortController): () => void {
 	let exited = false;

@@ -12,7 +12,7 @@ import { z } from "zod";
 import type { OperationErrorShape, ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
-import { type Json, parseJson } from "../../lib/json.ts";
+import { type Json, parseJson, parseJsonBytes } from "../../lib/json.ts";
 
 export const API_URL = "https://api.intercom.io";
 export const VERSION = "2.16";
@@ -161,7 +161,7 @@ export class IntercomClient implements ProviderClient {
 		);
 		let data: Json;
 		try {
-			data = parseJson(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(await response.arrayBuffer()));
+			data = parseJsonBytes(await response.arrayBuffer());
 		} catch (error) {
 			throw this.#http.unexpected(error);
 		}

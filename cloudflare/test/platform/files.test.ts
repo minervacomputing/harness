@@ -1,4 +1,4 @@
-// Agent files in local workerd (plan: Files; files 9 to 11): uploads streamed into R2 while hashed and
+// Agent files in local workerd (plan: Files): uploads streamed into R2 while hashed and
 // recorded in the real Workspace object, the download origin's handler on the local buckets, the folder's
 // store on a Durable Object's own SQLite, attachments copied into a conversation's blobs by the real start
 // protocol, and the fault rows Files (plan: Testing): an attachment's copy crashed and retried, an R2

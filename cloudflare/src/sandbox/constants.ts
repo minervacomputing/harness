@@ -1,4 +1,4 @@
-// What the sandbox is made of, in one place (plan: The sandbox lifecycle; files 2, 8.5): the agent's user,
+// What the sandbox is made of, in one place (plan: The sandbox lifecycle): the agent's user,
 // the folder and temporary mounts, the agent cgroup, the commands' environment and the limits the Sandbox
 // Durable Object applies. The image (cloudflare/container/Dockerfile) must agree with the paths and with
 // COMMAND_PATH; a unit test reads the Dockerfile to check it.
@@ -20,24 +20,24 @@ export const MPLCONFIGDIR = "/tmp/matplotlib";
 /** The cgroup every agent process runs in, with the limits of the spec; `cgroup.kill` ends them all. */
 export const AGENT_CGROUP = "/sys/fs/cgroup/agent";
 
-/** The image's PATH for commands (the Dockerfile's ENV PATH): today's worker PATH, Python's environment first. */
+/** The image's PATH for commands (the Dockerfile's ENV PATH): the agent's Python environment first. */
 export const COMMAND_PATH = "/opt/python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 /** The file helper on the read-only root, run in Python's isolated mode without site packages. */
 export const PYTHON = "/usr/bin/python3";
 export const MINERVA_FS = "/opt/minerva/minerva-fs";
 
-/** Bash's fixed environment (files 8.5): exactly these, never anything of the Worker's. */
+/** Bash's fixed environment: exactly these, never anything of the Worker's. */
 export function commandEnvironment(): { [name: string]: string } {
 	return { PATH: COMMAND_PATH, HOME, TMPDIR: TMP, LANG: "C.UTF-8", MPLCONFIGDIR };
 }
 
 export const PAGE_BYTES = 4096;
-/** The base of the agent cgroup's memory limit; both tmpfs sizes are added (files 2). */
+/** The base of the agent cgroup's memory limit; both tmpfs sizes are added. */
 export const BASE_MEMORY_BYTES = 1024 * 1024 * 1024;
-/** `/tmp`'s size, as today's container provider gives it. */
+/** `/tmp`'s size. */
 export const TMP_BYTES = 256 * 1024 * 1024;
-/** The agent cgroup's `pids.max`, as today's container provider gives it. */
+/** The agent cgroup's `pids.max`. */
 export const PIDS_MAX = 256;
 
 /** The instance every sandbox runs on: `lite` takes about 100 ms per exec (plan: The sandbox lifecycle). */
@@ -46,13 +46,13 @@ export const INSTANCE = "standard-1" as const;
 /** A positional read answers at most this much; a caller asking for more reads again (contracts/sandbox.ts). */
 export const MAX_READ_BYTES = 4 * 1024 * 1024;
 /**
- * The largest file `readTextFile` reads whole (the edit tool's read). Today only Node's 2 GiB bounded it;
- * here the text crosses an RPC and lives in the Conversation Durable Object's 128 MB isolate.
+ * The largest file `readTextFile` reads whole (the edit tool's read):
+ * the text crosses an RPC and lives in the Conversation Durable Object's 128 MB isolate.
  */
 export const MAX_TEXT_BYTES = 8 * 1024 * 1024;
 /** A whole binary read, in pieces of MAX_READ_BYTES. */
 export const MAX_BINARY_BYTES = 16 * 1024 * 1024;
-/** A file operation's own limit, after which its processes are killed (files 2, "file tools: 120 s"). */
+/** A file operation's own limit, after which its processes are killed ("file tools: 120 s"). */
 export const FILE_OPERATION_SECONDS = 120;
 /** A command's processes get this long after `timeout`'s TERM before its KILL (`timeout -k 5`). */
 export const KILL_AFTER_SECONDS = 5;
@@ -72,7 +72,7 @@ export function workspaceBytes(folderBytes: number): number {
 }
 
 /**
- * The sandbox of a conversation's run with the folder limits of the settings (files 2): `/workspace` of the
+ * The sandbox of a conversation's run with the folder limits of the settings: `/workspace` of the
  * folder's size and entries, `/tmp` of 256 MiB, 256 processes, and memory of 1 GiB plus both tmpfs sizes.
  */
 export function sandboxSpec(

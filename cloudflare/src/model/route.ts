@@ -1,5 +1,5 @@
-// Where model requests go, from the MINERVA_MODEL_* settings (runs 7.1; plan: The harness, Model). Read at
-// each call, as today, so a deploy that changes them applies to the next request.
+// Where model requests go, from the MINERVA_MODEL_* settings (plan: The harness, Model). Read at
+// each call, so a deploy that changes them applies to the next request.
 //
 // Every upstream but the fake goes through the Worker's own AI Gateway (`MINERVA_MODEL_GATEWAY`, minerva-cf,
 // prompt logging off), never createAI's default gateway, which logs prompts: Workers AI models through
@@ -10,11 +10,10 @@ import type { Api, Model, Provider, SimpleStreamOptions } from "@earendil-works/
 import { createAI, type WorkersAIModelId } from "agents/models/pi-ai";
 import type { Settings } from "../config.ts";
 
-/** The context window the loop assumes (runs 4.3); compaction runs only when it is nearly full. */
+/** The context window the loop assumes; compaction runs only when it is nearly full. */
 export const CONTEXT_WINDOW = 128_000;
 /**
- * How long a model call's answer may be quiet, before it starts and between its chunks: the relay's httpx
- * read timeout (runs 2.5, 7.1). The wrapper times the start (model/provider.ts), createAI each chunk.
+ * How long a model call's answer may be quiet, before it starts and between its chunks. The wrapper times the start (model/provider.ts), createAI each chunk.
  */
 export const QUIET_MS = 120_000;
 

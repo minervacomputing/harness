@@ -1,6 +1,5 @@
-// Passwords (plan: The web API). The rules are Django's default validators, with lengths in code points
-// (characters as people count them); the hash is scrypt instead of Django's PBKDF2, whose 1,500,000
-// iterations WebCrypto refuses.
+// Passwords: the rules a new password must meet, with lengths in code points (characters as people count
+// them), and its scrypt hash.
 //
 // A hash is `scrypt$<log2 N>$<r>$<p>$<salt>$<key>` (salt 16 bytes, key 32, both base64 without padding),
 // so the parameters can be raised later and old hashes still verified (`needsRehash`). N 2^15, r 8, p 3
@@ -96,9 +95,9 @@ export function needsRehash(encoded: string): boolean {
 	return !parsed || parsed.params.logN < logN || parsed.params.r < r || parsed.params.p < p;
 }
 
-// The validators, in Django's order: similarity to the user's attributes (only when a user is known:
-// allauth's headless sign-up validates without one), minimum length 10, the common-password list, not
-// entirely numeric. Every failing validator adds its error.
+// The rules, in order: not too similar to the user's address (only when a user is known: sign-up validates
+// without one), at least 10 characters, not on the common-password list, not entirely numeric. Every
+// failing rule adds its error.
 
 export interface PasswordError {
 	message: string;
@@ -115,7 +114,7 @@ function isCommon(password: string): boolean {
 	return common.has(password.toLowerCase().trim());
 }
 
-/** difflib.SequenceMatcher(a, b).quick_ratio(): an upper bound of the ratio from the characters alone. */
+/** 2·M / (|a| + |b|), where M counts the characters the two share (as multisets): 1 for two empty texts. */
 export function quickRatio(a: string, b: string): number {
 	const left = Array.from(a);
 	const right = Array.from(b);
@@ -139,7 +138,10 @@ function exceedsMaximumLengthRatio(password: string, value: string): boolean {
 
 const NON_WORD = new RegExp(`[^${WORD_CLASS}]+`, "u");
 
-/** UserAttributeSimilarityValidator over the attributes the user model has: only `email` (verbose name "email"). */
+/**
+ * Whether the password is too similar to the address or one of its parts (split at non-word characters);
+ * a part much shorter than the password is skipped.
+ */
 function tooSimilar(password: string, user: { email: string }): boolean {
 	const lowered = password.toLowerCase();
 	const value = user.email.toLowerCase();

@@ -31,8 +31,7 @@ import type { RunStore } from "./store.ts";
 export type WorkspaceClient = Pick<WorkspaceApi, "beginRun" | "activate" | "release" | "conversationTouched" | "lease" | "markUnauthorized">;
 
 /**
- * The write ledger and page tokens (runs 5.5, 5.6; plan: Writes), today's RunWrite and RunPageToken in this
- * object's SQLite, built with the executor (gateway/). The object composes the executor's `RunStatePort`
+ * The write ledger and page tokens (plan: Writes), in this object's SQLite, built with the executor (gateway/). The object composes the executor's `RunStatePort`
  * from its own run checks and these, and calls the two maintenance methods itself.
  */
 export interface WriteLedger extends Pick<RunStatePort, "knownWrite" | "resolvePageToken" | "issuePageToken"> {
@@ -52,7 +51,7 @@ export interface WriteLedger extends Pick<RunStatePort, "knownWrite" | "resolveP
 	sweepLostWrites(now: EpochMs): { uncertain: RunId[]; nextAt: EpochMs | null };
 }
 
-/** What the ledger reads and writes of the run itself (`writes_uncertain` is a run column, runs 1.1). */
+/** What the ledger reads and writes of the run itself (`writes_uncertain` is a run column). */
 export interface LedgerRuns {
 	isCurrent(fence: AttemptFence): boolean;
 	deadline(runId: RunId): EpochMs | null;
@@ -61,7 +60,7 @@ export interface LedgerRuns {
 }
 
 /**
- * The run's folder (files spec; plan: Starting a run, Checkpoints, Files; src/files/). The start protocol
+ * The run's folder (plan: Starting a run, Checkpoints, Files; src/files/). The start protocol
  * calls `prepareAttachments` before its transaction (the copies into the conversation's blobs, recorded as
  * loose first) and `commitAttachments` inside it; `publish` runs in `finish`'s transaction. The sandbox
  * hydrates from `hydratePlan` and saves with `checkpoint`; `sweep` is the `files` Lifecycle job.
@@ -72,7 +71,7 @@ export interface FolderPort {
 	prepareAttachments(runId: RunId, uploads: ReservedUpload[]): Promise<Outcome<PreparedAttachments>>;
 	/** Synchronous, inside the start's transaction: the base version with the copies, claiming their loose keys. */
 	commitAttachments(runId: RunId, prepared: PreparedAttachments): { baseVersionId: VersionId | null; attachments: AttachmentOut[] };
-	/** Inside `finish`'s transaction (runs 2.2): the last checkpoint, else the base, becomes the folder. */
+	/** Inside `finish`'s transaction: the last checkpoint, else the base, becomes the folder. */
 	publish(runId: RunId, run: { baseVersionId: VersionId | null; checkpointVersionId: VersionId | null; status: RunStatus }): {
 		resultVersionId: VersionId | null;
 		changes: { [key: string]: unknown } | null;
@@ -81,11 +80,10 @@ export interface FolderPort {
 	resolve(versionId: VersionId | null, path: string): DownloadTarget | null;
 	/** Deletes the conversation's objects in R2 (plan: Files, Deletion). */
 	deleteObjects(): Promise<void>;
-	/** What a new attempt of the run hydrates (files 7.1): its last checkpoint, else its base version, with each file's R2 key. */
+	/** What a new attempt of the run hydrates: its last checkpoint, else its base version, with each file's R2 key. */
 	hydratePlan(runId: RunId): HydratePlan;
 	/**
-	 * A checkpoint of the run's folder from the container's scan (files 7.3; plan: Checkpoints, steps 4 to
-	 * 6): validated, the files whose contents the run may not read uploaded by `upload` (the Sandbox's
+	 * A checkpoint of the run's folder from the container's scan (plan: Checkpoints, steps 4 to 6): validated, the files whose contents the run may not read uploaded by `upload` (the Sandbox's
 	 * `checkpoint`, under keys recorded here first), then recorded for the fence's attempt on top of its
 	 * last checkpoint. Outside pi's transactions; the caller releases held results only after `ok`.
 	 */
@@ -175,7 +173,7 @@ export function gatewayExecutor(run: ExecutorContext, context: PortsContext): Ex
 /**
  * gateway/'s write ledger and page tokens over this object's SQLite (plan: Writes). The run checks are the
  * object's own, made in the same synchronous stretch as the claim; `writes_uncertain` mirrors the ledger's
- * uncertain rows (runs 1.1), set in the same transaction whenever one appears.
+ * uncertain rows, set in the same transaction whenever one appears.
  */
 export function gatewayLedger(storage: DurableObjectStorage, runs: LedgerRuns): WriteLedger {
 	const sql = durableSql(storage);

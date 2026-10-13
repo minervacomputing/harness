@@ -1019,7 +1019,7 @@ describe("connecting", () => {
 		expect(headers.get("authorization")).toBe(`Basic ${btoa("id:secret")}`);
 		expect(init.redirect).toBe("manual");
 		// Notion's answer: the tokens are kept, its own fields (bot_id) ignored, and it names no scopes.
-		const body = tokenBody(JSON.stringify({ access_token: "a", refresh_token: "r", bot_id: "b" }));
+		const body = tokenBody({ access_token: "a", refresh_token: "r", bot_id: "b" });
 		expect(body).not.toBeNull();
 		expect(tokenPayload(body as JsonObject, 0)).toEqual({ kind: "oauth2", access_token: "a", refresh_token: "r", scopes: null });
 	});

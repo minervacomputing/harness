@@ -77,8 +77,8 @@ export function argumentsSummary(args: Json | undefined): { [key: string]: Json 
 }
 
 /**
- * Lets the chat match a repeated write to its own card, whose arguments may be shown cut short: Django's
- * `salted_hmac("minerva.gateway.write", f"{run}:{key}")` with MINERVA_SECRET_KEY, 32 hex. Keyed, so it
+ * Lets the chat match a repeated write to its own card, whose arguments may be shown cut short: the salted
+ * HMAC of `{run}:{key}` under MINERVA_SECRET_KEY (lib/hash.ts), 32 hex. Keyed, so it
  * tells nothing about the arguments, and it differs between runs.
  */
 export async function writeId(secretKey: string, runId: RunId, writeKey: string): Promise<string> {

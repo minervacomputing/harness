@@ -2,7 +2,7 @@
 // of the Conversation Durable Object (conversation/schema.ts). Plain strings with no imports, so the
 // account tests (Node) can read the object's step ids without the Worker's types.
 
-/** Today's column sizes (RunPageToken.tool, .upstream_cursor): Postgres refuses longer values, and so does this. */
+/** The longest tool name and upstream cursor a page token keeps; longer values are refused. */
 export const MAX_TOOL_NAME = 128;
 export const MAX_UPSTREAM_CURSOR = 1000;
 

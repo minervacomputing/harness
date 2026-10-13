@@ -47,13 +47,13 @@ export interface SandboxSpec {
 	/** `/workspace` tmpfs: `size` the folder limit rounded down to pages, `nr_inodes` the entry limit plus one, uid 1000. */
 	folderBytes: number;
 	folderEntries: number;
-	/** `/tmp` tmpfs, noexec; 256 MiB today. */
+	/** `/tmp` tmpfs, noexec; 256 MiB. */
 	tmpBytes: number;
-	/** The agent cgroup's `pids.max`: 256 today. */
+	/** The agent cgroup's `pids.max`: 256. */
 	pidsMax: number;
 	/**
-	 * The agent cgroup's `memory.max`: the base (1 GiB today) plus both tmpfs sizes, `/workspace`'s rounded
-	 * down to pages (files 2). Pages the agent writes to a tmpfs are charged to its cgroup, so with the base
+	 * The agent cgroup's `memory.max`: the base (1 GiB) plus both tmpfs sizes, `/workspace`'s rounded
+	 * down to pages. Pages the agent writes to a tmpfs are charged to its cgroup, so with the base
 	 * alone a growing folder would OOM-kill commands, and stay charged, instead of failing with ENOSPC at
 	 * the folder's limit. The instance's memory must cover it (`standard-1`: 4 GiB).
 	 */
@@ -69,7 +69,7 @@ export type Refused = { refused: "stale" | "not_verified" | "busy"; message: str
 
 /**
  * One root exec with `set -eu`: tmpfs `/workspace` (size, nr_inodes, uid 1000), tmpfs `/tmp` noexec,
- * `/tmp/home` and `/tmp/matplotlib` owned by uid 1000 (bash's HOME and MPLCONFIGDIR, files 8.5), the
+ * `/tmp/home` and `/tmp/matplotlib` owned by uid 1000 (bash's HOME and MPLCONFIGDIR), the
  * cgroup `/sys/fs/cgroup/agent` with pids.max and memory.max (SandboxSpec), `mount -o remount,ro /`. Any
  * failure destroys the container and fails the turn.
  */
@@ -108,7 +108,7 @@ export interface ExecRequest {
 	cwd: string;
 	/**
 	 * Exactly the command's environment; nothing is inherited. Bash calls get PATH, HOME=/tmp/home,
-	 * TMPDIR=/tmp, LANG=C.UTF-8 and MPLCONFIGDIR=/tmp/matplotlib (files 8.5).
+	 * TMPDIR=/tmp, LANG=C.UTF-8 and MPLCONFIGDIR=/tmp/matplotlib.
 	 */
 	env: { [name: string]: string };
 	/**
@@ -207,7 +207,7 @@ export type WatchSnapshot = { entries: { [path: string]: string } } | { overflow
 /** The answer to a request: its value (`FsAnswers[op]`), or pi's error code. */
 export type FsResponse = { ok: true; value: FsAnswers[keyof FsAnswers] } | { ok: false; code: FileErrorCode; message: string };
 
-// The folder (files 8; plan: Checkpoints). File contents never cross an RPC: the Sandbox writes R2 itself.
+// The folder (plan: Checkpoints). File contents never cross an RPC: the Sandbox writes R2 itself.
 
 /** What a run starts from: the hydrate version's files, each read from R2 once per distinct hash. */
 export interface HydratePlan {
@@ -220,9 +220,9 @@ export type HydrateResult = { ok: true } | { ok: false; reason: "not_empty" | "i
 
 /**
  * The scan, run in the container as the dropped user, walking `/workspace` one component at a time with
- * O_NOFOLLOW (files 8.2): every entry counts against the entry limit, sizes in pages are checked before
+ * O_NOFOLLOW: every entry counts against the entry limit, sizes in pages are checked before
  * hashing, three tries if the folder changes, results sorted by code point. Its claims are untrusted: the
- * Conversation Durable Object validates the manifest and warnings again (files 4.2, 7.5).
+ * Conversation Durable Object validates the manifest and warnings again.
  */
 export type ScanResult =
 	| { ok: true; manifest: WireManifest; sizes: { [path: string]: number }; warnings: FolderWarnings }
@@ -233,8 +233,7 @@ export type ScanResult =
  * Files to save, each already recorded by the Conversation Durable Object under its R2 key before it is
  * written (plan: Files). The Sandbox streams each from the container into R2 with its claimed SHA-256,
  * which R2 checks, and reports what it stored. A file without a key has contents the conversation already
- * stores: its bytes are only hashed, as the proof that the run has them, and nothing is written (today's
- * store_blob writes nothing for contents it has).
+ * stores: its bytes are only hashed, as the proof that the run has them, and nothing is written.
  */
 export interface CheckpointUploadPlan {
 	files: { path: string; sha256: Sha256; size: number; key: string | null }[];

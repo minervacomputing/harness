@@ -1,5 +1,5 @@
 // The executor: the permission pipeline every connector tool call goes through, in the Conversation
-// Durable Object (connectors 7, runs 5; plan: What maps to what). It takes run state and credentials
+// Durable Object (plan: What maps to what). It takes run state and credentials
 // through the ports below, so it is tested in Node with fakes and an injected `fetch`.
 
 import type { AttemptFence, ConnectionId, EpochMs, Json, RunId, UserId } from "./common.ts";
@@ -10,7 +10,7 @@ import type { ToolRef } from "./runs.ts";
 
 /**
  * Every tool's result, also declared to the model and to scripts as each tool's output schema, with
- * `additionalProperties: false`; `{items: [], count: 0, total: 3}` must fail it (connectors 6).
+ * `additionalProperties: false`; `{items: [], count: 0, total: 3}` must fail it.
  */
 export interface ToolResult {
 	/** Records this run may see; their fields depend on the tool. */
@@ -25,7 +25,7 @@ export interface ToolResult {
 	outcome?: "applied_without_result";
 }
 
-/** A tool as the model sees it (runs 5.2): `readOnlyHint` false marks a write. */
+/** A tool as the model sees it: `readOnlyHint` false marks a write. */
 export interface ToolDeclaration {
 	name: string;
 	title: string;
@@ -35,7 +35,7 @@ export interface ToolDeclaration {
 	annotations: { readOnlyHint: boolean };
 }
 
-/** The codes whose refusal is `denied` in the chat; every other failure is `error` (runs 5.3). */
+/** The codes whose refusal is `denied` in the chat; every other failure is `error`. */
 export type DeniedCode = Extract<
 	CoreErrorCode,
 	"POLICY_DENIED" | "LIMIT_REACHED" | "WRITE_UNCERTAIN" | "WRITE_IN_PROGRESS" | "INVALID_CURSOR" | "CONSENT_REQUIRED" | "OPERATION_CHANGED"
@@ -60,8 +60,8 @@ export interface ToolCallRequest {
 }
 
 /**
- * The outcome of `invoke` (connectors 7.1; runs 5.3). What the model sees stays today's: the result's
- * JSON as text plus the structured result, or the error's message with `isError`.
+ * The outcome of `invoke`. The model sees the result's JSON as text plus the structured result, or the
+ * error's message with `isError`.
  */
 export type ToolCallOutcome =
 	| {
@@ -83,7 +83,7 @@ export type ToolCallOutcome =
 	  };
 
 /**
- * The pipeline, in order (connectors 7.1): current attempt (RUN_ENDED "This run is no longer active."),
+ * The pipeline, in order: current attempt (RUN_ENDED "This run is no longer active."),
  * tool lookup (UNKNOWN_OPERATION "This operation is not available.", OPERATION_CHANGED "This operation
  * changed after the run started. Send a new message to use it."), strict validation (INVALID_ARGUMENTS
  * "Invalid arguments. " plus up to 5 `loc: msg` joined by "; "), query hash, page token (INVALID_CURSOR
@@ -117,7 +117,7 @@ export interface ExecutorContext {
 	deadline?: EpochMs | null;
 }
 
-// The write ledger (runs 5.6; plan: Writes): today's RunWrite in the Conversation Durable Object's SQLite.
+// The write ledger, in the Conversation Durable Object's SQLite (plan: Writes).
 
 export type WriteStatus = "dispatched" | "succeeded" | "uncertain";
 
@@ -168,7 +168,7 @@ export interface RunStatePort {
 	/** Counts the call if the fence is current; false means RUN_ENDED, not counted. Calls are never limited. */
 	countToolCall(fence: AttemptFence): boolean;
 	knownWrite(runId: RunId, key: string): WriteRecord | null;
-	/** One write dispatched at a time per run; refused when paused, in progress or not current (runs 5.6). */
+	/** One write dispatched at a time per run; refused when paused, in progress or not current. */
 	dispatchWrite(fence: AttemptFence, key: string): DispatchResult | Promise<DispatchResult>;
 	/** Always recorded, even for an older attempt and even when the call that asked for it was cancelled (under waitUntil). */
 	settleWrite(runId: RunId, key: string, settlement: Settlement): void | Promise<void>;

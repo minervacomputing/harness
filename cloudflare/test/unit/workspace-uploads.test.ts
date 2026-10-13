@@ -1,4 +1,4 @@
-// Uploads and bytes in the Workspace (plan: Files; files 9, 12, 15.2), over node:sqlite: an upload is
+// Uploads and bytes in the Workspace (plan: Files), over node:sqlite: an upload is
 // recorded pending with a byte reservation before its object is written and complete after; a run start
 // reserves it and activation consumes it; alarms delete what was left behind. The workspace's bytes are
 // checked after every crash point: they are derived from the rows, so a crash can never leave them wrong.
@@ -57,7 +57,7 @@ describe("recording uploads", () => {
 	});
 });
 
-describe("the workspace's quota (files 12.1)", () => {
+describe("the workspace's quota", () => {
 	test("reserved when recorded: 11 bytes of 10 are refused, 6 and 4 fit, 1 more does not", async () => {
 		const h = await harness({ settings: { workspaceBytes: 10 } });
 		expect(await h.core.reserveUpload(ADA, { name: "x", size: 11 })).toEqual({ ok: false, refusal: { status: 413, detail: NO_ROOM } });
@@ -66,7 +66,7 @@ describe("the workspace's quota (files 12.1)", () => {
 		await reserve(h, 4);
 		expect(h.core.usedBytes()).toBe(10);
 		expect(await h.core.reserveUpload(ADA, { name: "x", size: 1 })).toEqual({ ok: false, refusal: { status: 413, detail: NO_ROOM } });
-		// CHANGE (files 15.2): every upload counts, where today's dedupe let the same 6 bytes in again.
+		// Every upload counts, even one with the same 6 bytes as another.
 		expect(await h.core.reserveUpload(ADA, { name: "x", size: 6 })).toMatchObject({ ok: false, refusal: { status: 413 } });
 	});
 
@@ -216,7 +216,7 @@ describe("bytes after every crash point", () => {
 		expect(h.objects.deleted).toEqual([key]);
 	});
 
-	test("an attachment is counted once while its start copies it, as attaching is today", async () => {
+	test("an attachment is counted once while its start copies it", async () => {
 		const h = await harness({ settings: { workspaceBytes: 100 } });
 		const chat = await conversation(h);
 		const { id } = await reserve(h, 60);

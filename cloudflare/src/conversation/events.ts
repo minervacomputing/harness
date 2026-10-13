@@ -7,14 +7,14 @@ import { sliceText } from "../lib/text.ts";
 
 /** `error_message` and a terminal status's `message` are cut to this many characters. */
 export const ERROR_MESSAGE_CHARS = 500;
-/** A phase's text is cut to this many characters (runs 4.5). */
+/** A phase's text is cut to this many characters. */
 export const PHASE_CHARS = 300;
-/** A local tool card's summary and excerpt (files 8.4; harness 8.6). */
+/** A local tool card's summary and excerpt. */
 export const SUMMARY_CHARS = 300;
 export const EXCERPT_CHARS = 2000;
 
 export const ACTIVE: ReadonlySet<RunStatus> = new Set(["queued", "provisioning", "running"]);
-/** The states in which a run's current attempt can act (runs 1.1, TOKEN_VALID). */
+/** The states in which a run's current attempt can act (TOKEN_VALID). */
 export const ACTING: ReadonlySet<RunStatus> = new Set(["provisioning", "running"]);
 
 export const COMPLETED: RunEnd = { status: "completed", code: "", message: "" };
@@ -25,7 +25,7 @@ export const WORKER_EXITED: RunEnd = { status: "failed", code: "worker_exited", 
 export const WORKER_FAILED: RunEnd = { status: "failed", code: "worker_failed", message: "The agent could not finish this run. Try again." };
 export const START_EXPIRED: RunEnd = { status: "failed", code: "start_expired", message: "The agent could not finish this run. Try again." };
 
-/** How a cancel from outside the object ends its run (plan: Strict revocation; runs 8). */
+/** How a cancel from outside the object ends its run (plan: Strict revocation). */
 export function endFor(reason: CancelReason): RunEnd {
 	if (reason === "cancelled") return CANCELLED;
 	if (reason === "emergency_stop") return EMERGENCY_STOP;
@@ -47,7 +47,7 @@ export function phaseEvent(text: PhaseText | string): NewRunEvent {
 }
 
 /**
- * The phase the chat shows while the loop runs, in the UI's order of precedence (harness 12.2): saving
+ * The phase the chat shows while the loop runs, in the UI's order of precedence: saving
  * files, then a script, then commands, then any tool, else thinking.
  */
 export function phaseOf(saving: boolean, running: Iterable<string>): PhaseText {
@@ -58,7 +58,7 @@ export function phaseOf(saving: boolean, running: Iterable<string>): PhaseText {
 	return names.length ? "Using tools" : "Thinking";
 }
 
-/** Storable text: NUL removed and lone surrogates replaced (harness 8.6). */
+/** Storable text: NUL removed and lone surrogates replaced. */
 export function storable(text: string): string {
 	return text.replaceAll("\u0000", "").toWellFormed();
 }
@@ -77,7 +77,7 @@ export function tail(text: string, limit: number): string {
 	return `…${points.slice(points.length - (limit - 1)).join("")}`;
 }
 
-/** A local tool card (files 8.4): for steps 3 and 4, which run read, write, edit and bash. */
+/** A local tool card: for steps 3 and 4, which run read, write, edit and bash. */
 export function localToolEvent(tool: "read" | "write" | "edit" | "bash", summary: string, ok: boolean, excerpt: string): NewRunEvent {
 	return {
 		type: "local_tool",

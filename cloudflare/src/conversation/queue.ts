@@ -1,4 +1,4 @@
-// The run's queue of connector tool calls (harness 5.3; runs 4.5), ported from worker/src/main.ts
+// The run's queue of connector tool calls, ported from worker/src/main.ts
 // `gatewayCalls` and worker/src/concurrency.ts: at most 4 calls at once, the rest waiting in order, and
 // writes one at a time in the order they were asked for. Direct calls share it with scripted ones
 // (`run_script`, step 4). A call keeps its slot until the executor answers, even when its caller stopped

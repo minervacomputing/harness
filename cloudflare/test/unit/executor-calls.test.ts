@@ -12,9 +12,10 @@ import {
 	modelContent,
 	writeId,
 } from "../../src/gateway/results.ts";
-import vectors from "./vectors.ts";
 import { todoistConnector } from "../../src/connectors/todoist/connector.ts";
-import { FakeClock, FakeTodoist, Gate, PROJECT, Scenario, TODOIST, todoistConnection, userGrants } from "./executor-fakes.ts";
+import { saltedHmacHex } from "../../src/lib/hash.ts";
+import { z } from "zod";
+import { FOLDER, FakeClock, FakeServer, FakeTodoist, Gate, MIXED, PROJECT, Scenario, TODOIST, mixedConnection, mixedConnector, todoistConnection, userGrants } from "./executor-fakes.ts";
 
 function start(todoist: FakeTodoist, projects: { [id: string]: string[] } = { work: ["read"] }, options: { concurrency?: number; deadline?: number | null } = {}) {
 	return Scenario.start({
@@ -48,7 +49,7 @@ function heldTodoist(todoist: FakeTodoist) {
 }
 
 describe("tools/list", () => {
-	test("tools are authorized and recorded (test_mcp_tools_are_authorized_and_recorded)", async () => {
+	test("tools are authorized and recorded", async () => {
 		const todoist = new FakeTodoist();
 		const run = await start(todoist);
 		const listed = run.executor.declarations();
@@ -238,6 +239,22 @@ describe("tools/call", () => {
 		expect(todoist.count("GET", "/tasks")).toBe(1);
 		expect(run.events.map((event) => event.decision)).toEqual(["denied"]);
 	});
+
+	test("a cursor that is not a page token's string is refused before the provider is asked", async () => {
+		const server = new FakeServer();
+		const base = mixedConnector(server);
+		const list = base.operations[0] as (typeof base.operations)[number];
+		const numbered = { ...list, paginated: true, input: z.strictObject({ cursor: z.number().int().nullable().default(null) }) } as unknown as typeof list;
+		const run = await Scenario.start({
+			connectors: [{ ...base, operations: [numbered] }],
+			connections: [mixedConnection()],
+			user: userGrants(MIXED, FOLDER, { inbox: ["read"] }),
+			fetch: server.fetch,
+		});
+		expect(await run.code(`mixed_${list.name}`, { cursor: 42 })).toBe("INVALID_CURSOR");
+		expect(await run.code(`mixed_${list.name}`, { cursor: 0 })).toBe("INVALID_CURSOR");
+		expect(server.calls).toEqual([]);
+	});
 });
 
 describe("attempts", () => {
@@ -367,11 +384,13 @@ describe("what the chat and the model read", () => {
 		expect(argumentsSummary(null)).toEqual({});
 	});
 
-	test("the write id is Django's salted_hmac, cut to 32 hex", async () => {
-		for (const vector of vectors.salted_hmac.slice(0, 3)) {
-			const [run, key] = vector.value.split(":") as [string, string];
-			expect(await writeId(vector.secret, run, key)).toBe(vector.sha1.slice(0, 32));
-		}
+	test("the write id is the run's salted HMAC of the key, cut to 32 hex", async () => {
+		const run = "0199a000-0000-7000-8000-000000000000";
+		const id = await writeId("test-secret-not-a-real-key", run, "e".repeat(64));
+		expect(id).toBe((await saltedHmacHex("minerva.gateway.write", `${run}:${"e".repeat(64)}`, "test-secret-not-a-real-key")).slice(0, 32));
+		expect(id).toMatch(/^[0-9a-f]{32}$/);
+		expect(await writeId("another-secret", run, "e".repeat(64))).not.toBe(id);
+		expect(await writeId("test-secret-not-a-real-key", run, "f".repeat(64))).not.toBe(id);
 	});
 
 	test("the model reads the result as its JSON, or the error's message", async () => {

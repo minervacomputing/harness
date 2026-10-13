@@ -2,7 +2,7 @@
 // placement). Authoritative for connections (encrypted credentials, status, generation, scopes, refresh
 // state), permission layers and grants, agents, unattached uploads with their reservations, the registry
 // of runs, the revocation outbox and byte counters; an index of conversations. Reached only by typed
-// RPC from our own code, after the Worker checked membership in D1 (web-api 7).
+// RPC from our own code, after the Worker checked membership in D1.
 
 import type { AccessOut, AgentIn, AgentOut, ConnectionOut, ConversationOut, UploadOut } from "./api.ts";
 import type {
@@ -40,7 +40,7 @@ export interface WorkspaceInit {
  */
 export interface ReservedUpload {
 	id: UploadId;
-	/** The cleaned name; numbered against the folder's root names when added (files 10). */
+	/** The cleaned name; numbered against the folder's root names when added. */
 	name: string;
 	size: number;
 	mediaType: string;
@@ -61,7 +61,7 @@ export interface BeginRunInput {
 }
 
 /**
- * `beginRun` refusals carry today's statuses and messages (runs 3.1; files 10): 404 for an unknown agent;
+ * `beginRun` refusals: 404 for an unknown agent;
  * 400 "Attach at most {n} files to a message.", "A file is attached twice.", "An attached file is no
  * longer available. Remove it and attach it again."; 413 "These files would put more than 10,000 files and
  * folders in this conversation's folder." or "These files would make this conversation's folder larger
@@ -125,18 +125,18 @@ export interface ConnectionAccount {
 
 /**
  * The Workspace Durable Object's RPC surface. `Caller` is the Worker's verified user and role; every
- * refusal is `{status, detail}` with today's wording (web-api 8.3 to 8.5, connectors 13).
+ * refusal is `{status, detail}`.
  */
 export interface WorkspaceApi {
 	/**
 	 * Creates the ceiling layer (unrestricted), the owner's user layer (restricted) and the default agent
 	 * ("Assistant", "You are a helpful, concise assistant.", model `default`, no connections). Idempotent;
 	 * the Worker retries it until it succeeds after the D1 batch that made the user, workspace and
-	 * membership (web-api 6.3).
+	 * membership.
 	 */
 	init(input: WorkspaceInit): Promise<void>;
 
-	// Agents (web-api 8.3).
+	// Agents.
 	listAgents(caller: Caller): Promise<AgentOut[]>;
 	getAgent(caller: Caller, agentId: AgentId): Promise<AgentOut | null>;
 	/** 422 "Choose connections you can use." when an added connection is unknown, broken or someone else's. */
@@ -150,25 +150,25 @@ export interface WorkspaceApi {
 	/** 422 "Keep at least one agent."; cancels the agent's runs ("Stopped.") and deletes its conversations. */
 	deleteAgent(caller: Caller, agentId: AgentId): Promise<Outcome<{ revocation: Revocation }>>;
 
-	// Connections and access (connectors 11, 13). Provider calls (account, discover, children, describe)
+	// Connections and access. Provider calls (account, discover, children, describe)
 	// happen in the Worker before these are called, with a credential from `lease`.
 	listConnections(caller: Caller): Promise<ConnectionOut[]>;
 	/** Built-in services: one per user, idempotent; 422 "{Name} is connected through its own sign-in." */
 	enableBuiltin(caller: Caller, provider: string): Promise<Outcome<ConnectionOut>>;
-	/** After an OAuth callback or a key check; encrypts the credentials and bumps the generation (connectors 11.6). */
+	/** After an OAuth callback or a key check; encrypts the credentials and bumps the generation. */
 	saveConnection(caller: Caller, input: SaveConnectionInput): Promise<Outcome<ConnectionOut>>;
 	/** 403 for a shared connection and a non-admin; revokes the caller's runs (`connection_removed`). */
 	deleteConnection(caller: Caller, connectionId: ConnectionId): Promise<Outcome<{ revocation: Revocation }>>;
 	/**
 	 * `_usable`, then the caller's access: 404 "Not Found" when the connection does not exist, "Not found."
 	 * when it is another user's personal one. Never calls the provider. The Worker reads a connection's
-	 * provider, owner and the caller's grants from this before every settings request (web-api 8.5).
+	 * provider, owner and the caller's grants from this before every settings request.
 	 */
 	getAccess(caller: Caller, connectionId: ConnectionId): Promise<Outcome<AccessOut>>;
 	/**
 	 * All or nothing, after `checkChanges` and the provider's `describe` of new concrete grants (names
 	 * given, keyed by gateway/grants.ts `resourceKey(kind, id)`), then `planGrantChanges`. 422 with
-	 * connectors 4.5's messages; at most 500 grants per connection. Revokes the caller's active runs
+	 * `checkChanges`'s messages; at most 500 grants per connection. Revokes the caller's active runs
 	 * (`permissions_changed`) in the same transaction, then waits for the acknowledgements.
 	 */
 	applyGrantChanges(
@@ -180,7 +180,7 @@ export interface WorkspaceApi {
 	/** The actions allowed on a connection: the caller's, or every member's for a shared one (reconnect scopes). */
 	allowedActions(caller: Caller, connectionId: ConnectionId): Promise<string[] | null>;
 	/**
-	 * The provider account behind a connection and whose connection it is, for an OAuth flow (web-api 9):
+	 * The provider account behind a connection and whose connection it is, for an OAuth flow:
 	 * `login_hint` on a reconnect and the callback's checks, which tell another user's connection apart from
 	 * one that is gone. Null when the connection does not exist.
 	 */
@@ -197,7 +197,7 @@ export interface WorkspaceApi {
 		connectionId: ConnectionId,
 		purpose: { run: RunId; userId: UserId } | { settings: Caller },
 	): Promise<CredentialLease | { refused: "RUN_ENDED" | "CONNECTION_UNAUTHORIZED" | "PROVIDER_UNAVAILABLE"; message: string }>;
-	/** Compare-and-set: `error` only if still `active` at this generation (connectors 9.2). */
+	/** Compare-and-set: `error` only if still `active` at this generation. */
 	markUnauthorized(connectionId: ConnectionId, generation: number): Promise<void>;
 
 	// Runs (plan: Starting a run).
@@ -221,7 +221,7 @@ export interface WorkspaceApi {
 	activate(runId: RunId): Promise<Registration>;
 	/** The run ended (or its start was refused after `beginRun`): it leaves the active registry; reservations not consumed are released. */
 	release(runId: RunId, status: RunStatus | "refused"): Promise<void>;
-	/** For `/runs/{run}` URLs: the caller's run's conversation, else null (frontend 13.1, 6). */
+	/** For `/runs/{run}` URLs: the caller's run's conversation, else null. */
 	locateRun(caller: Caller, runId: RunId): Promise<{ conversationId: ConversationId } | null>;
 	/** A Conversation Durable Object's acknowledgement of an outbox entry delivered earlier without one. */
 	acknowledgeCancel(entryId: number, runId: RunId): Promise<void>;
@@ -249,10 +249,10 @@ export interface WorkspaceApi {
 	 */
 	deleteConversation(caller: Caller, conversationId: ConversationId): Promise<Outcome<{ revocation: Revocation }>>;
 
-	// Uploads (files 9; plan: Files). Every object is recorded before it is written.
+	// Uploads (plan: Files). Every object is recorded before it is written.
 	/**
 	 * Records the upload as pending, with its key and a byte reservation against the workspace's quota,
-	 * before the Worker streams the body into R2. In files 9.1's order: 429 "You are uploading too many files
+	 * before the Worker streams the body into R2. In this order: 429 "You are uploading too many files
 	 * at once." (3 pending per user, younger than the body's 15 minutes); 429 "You have too many files waiting
 	 * to be sent. Send or remove some, or try again tomorrow." (30 per user); 413 "This workspace has no room
 	 * for more files."
@@ -266,7 +266,7 @@ export interface WorkspaceApi {
 	deleteUpload(caller: Caller, id: UploadId): Promise<void>;
 
 	/**
-	 * A conversation's absolute byte total, before it writes new blobs (files 15.2). Refused when the sum
+	 * A conversation's absolute byte total, before it writes new blobs. Refused when the sum
 	 * would pass MINERVA_FILES_WORKSPACE_BYTES; absolute totals make it idempotent. `revision` rises with
 	 * every report the conversation sends: one no newer than a report already seen changes nothing (it was
 	 * sent by an instance that has since reset). One without a revision, as an older caller sends, applies

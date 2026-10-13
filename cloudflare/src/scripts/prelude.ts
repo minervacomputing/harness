@@ -1,20 +1,19 @@
-// The guest's prelude (harness 7.3, 17.7): what a script sees inside its Dynamic Worker, ported from
-// pi-codemode 1.0.4's prelude (MIT, Earendil Works), which today's `run_script` runs in QuickJS. The
-// script is the body of an async arrow function in a CommonJS module (`codemode.js`), so it runs sloppy, as
-// today's `(async (tools, console) => {…})` did at QuickJS's top level, and its first line shares the
-// wrapper's, so line numbers match the code's. The CommonJS wrapper's `require`, `module`, `exports`,
+// The guest's prelude: what a script sees inside its Dynamic Worker, ported from pi-codemode 1.0.4's
+// prelude (MIT, Earendil Works). The script is the body of an async arrow function in a CommonJS module
+// (`codemode.js`), so it runs sloppy, as a function at the top level of a script does, and its first line
+// shares the wrapper's, so line numbers match the code's. The CommonJS wrapper's `require`, `module`, `exports`,
 // `__filename` and `__dirname` are shadowed.
 //
-// As today, before the script runs the prelude defines `tools` (each tool as `tools.<identifier>` and
+// Before the script runs the prelude defines `tools` (each tool as `tools.<identifier>` and
 // `tools["<name>"]`; reading a missing one throws with the close matches), `ALL_TOOLS`, `text`, `image`,
 // `exit`, `console.log/info/warn/error/debug` and synchronous `store`/`load` over a snapshot as read-only
 // globals, then freezes every built-in it can reach and makes the built-in globals read-only (pi-codemode's
-// lockdown, with the "override mistake" fixed for the usual properties). Unlike today, the platform's own
-// globals remain: timers work, `fetch` and `connect` throw (`globalOutbound: null`), and `eval` throws (the
+// lockdown, with the "override mistake" fixed for the usual properties). The platform's own globals
+// remain: timers work, `fetch` and `connect` throw (`globalOutbound: null`), and `eval` throws (the
 // platform refuses code generation).
 //
 // Nothing here is trusted: the host (scripts/session.ts) applies every bound again and the Scripts object
-// checks every answer (scripts/outcome.ts); the prelude only gives an honest script today's semantics. Its
+// checks every answer (scripts/outcome.ts); the prelude only gives an honest script its semantics. Its
 // one capability is `host`, the RpcTarget the conversation made for this script: `host.call(name, json)`
 // answers `{ok, value}` or `{ok: false, message}`, and `host.print(items)` takes printed output in batches
 // (one batch in flight, the rest sent when it settles, before every tool call and at the end), so what a
@@ -23,8 +22,7 @@
 // its head and the size of the rest (scripts/output.ts).
 //
 // `run()` answers `{ok: true, value, writes, unsettled}` or `{ok: false, error, unsettled}`: `value` is the
-// returned value's text (a string as is, else its JSON; a value JSON cannot write fails the script, as
-// today), `writes` the keys the script stored (`[key, json]`) or deleted (`[key]`), and `unsettled` the calls
+// returned value's text (a string as is, else its JSON; a value JSON cannot write fails the script), `writes` the keys the script stored (`[key, json]`) or deleted (`[key]`), and `unsettled` the calls
 // it started that had not settled, which counts calls started just before it returned that never reached
 // the host.
 //
@@ -582,7 +580,7 @@ export const GUEST_CORE = String.raw`(function (host, script, toolList, storeEnt
 	}
 
 	// Base64 of the signatures of the formats providers accept inline (PNG, JPEG except JPEG-LS, GIF,
-	// "RIFF....WEBP"). The model is shown ${IMAGE_OMITTED} in its place, as today, so the data never crosses.
+	// "RIFF....WEBP"). The model is shown ${IMAGE_OMITTED} in its place, so the data never crosses.
 	const IMAGE_SIGNATURES = [
 		["image/png", /^iVBORw0KGg/],
 		["image/jpeg", /^[/]9j[/](?!9)/],
@@ -637,7 +635,7 @@ export const GUEST_CORE = String.raw`(function (host, script, toolList, storeEnt
 	lockdown();
 
 	// The returned value's text: a string as is, else its JSON; nothing for a value JSON leaves out. A value
-	// JSON cannot write throws, which fails the script, as today.
+	// JSON cannot write throws, which fails the script.
 	function valueOf(value) {
 		if (value === undefined) return undefined;
 		const rendered = typeof value === "string" ? value : stringify(value);

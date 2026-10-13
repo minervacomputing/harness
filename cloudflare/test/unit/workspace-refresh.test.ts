@@ -99,7 +99,7 @@ describe("leases", () => {
 	});
 });
 
-describe("refresh (test_connections, test_contract)", () => {
+describe("refresh", () => {
 	test("keeps the refresh token when the provider omits it", async () => {
 		const h = await harness();
 		// A payload saved before `kind` was recorded is read as OAuth.

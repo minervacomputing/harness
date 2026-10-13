@@ -1,7 +1,5 @@
-// Conversations, messages, runs, the event stream, uploads and downloads through the Worker (web-api 8.4,
-// 10.3 to 10.5; frontend 8 to 10), over D1, the real Workspace and Conversation objects, the local buckets
-// and the fake model of the test build. Ported from backend/tests/test_api.py (conversations and runs),
-// test_files_web.py (uploads, attachments, downloads) and the spec's new SSE cases.
+// Conversations, messages, runs, the event stream, uploads and downloads through the Worker, over D1, the
+// real Workspace and Conversation objects, the local buckets and the fake model of the test build.
 
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
@@ -568,7 +566,7 @@ describe("uploads", () => {
 		expect((await a.browser.call("DELETE", `/api/workspaces/${a.ws}/uploads/${answer.body.id}`)).status).toBe(204);
 	});
 
-	test("refused before its body is read, in today's order", async () => {
+	test("refused before its body is read, in order", async () => {
 		const a = await account();
 		const grace = await account("grace");
 		const path = `/api/workspaces/${a.ws}/uploads`;

@@ -1,4 +1,4 @@
-// The stream tap's pure parts, ported from backend/models_access/taps.py and gateway/relay.py (runs 7.4):
+// The stream tap's pure parts:
 // text and reasoning collected into segments, flushed every 0.25 s per model call, provider text kept out
 // of everything pi gets (a context overflow still classified as one), and usage read from the last report.
 
@@ -10,7 +10,7 @@ export type Segment = [kind: "text" | "reasoning", text: string];
 /** After each upstream event, the collected segments are published once this long has passed since the last flush. */
 export const TEXT_FLUSH_MS = 250;
 
-/** What users and the transcript see instead of a provider's own error text (runs 7.4). */
+/** What users and the transcript see instead of a provider's own error text. */
 export const PROVIDER_ERROR = "The model provider reported an error.";
 /**
  * What a provider's context overflow becomes instead of its own text: our words, which pi-ai's
@@ -134,7 +134,7 @@ export function failureSummary(message: AssistantMessage, status: number | undef
 }
 
 /**
- * The tokens a call reported, or null when it settled without a usage report (an unmetered call, runs 7.6).
+ * The tokens a call reported, or null when it settled without a usage report (an unmetered call).
  * The input is the provider's own count, cached tokens included, as the relay read `input_tokens` or
  * `prompt_tokens`: pi-ai reports cache reads and writes apart from `input`. pi's message always has a
  * usage, so a report of none in and none out cannot be told from no report, and counts as none.

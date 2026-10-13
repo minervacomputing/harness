@@ -1,9 +1,6 @@
-// The emails allauth sends today (web-api spec 5.9), with the same subjects and bodies: the templates are
-// allauth's, rendered for the site "Minerva" at the host of MINERVA_SITE_URL, and
-// test/fixtures/accounts-vectors.json holds what Django renders for them.
+// The account emails, for the site "Minerva" at the host of MINERVA_SITE_URL.
 //
-// The transport changes (plan: The web API): with MINERVA_DEBUG on, an email is written to the Worker's
-// log, as `make dev` prints codes today; otherwise it goes through the Email Sending binding `EMAIL`. A
+// With MINERVA_DEBUG on, an email is written to the Worker's log; otherwise it goes through the Email Sending binding `EMAIL`. A
 // Worker with neither refuses every request (`checkMailer`), so a deploy cannot silently drop codes. Codes
 // never reach the log outside debug.
 
@@ -61,7 +58,7 @@ function content(kind: EmailKind, to: string, site: { url: string; domain: strin
 	}
 }
 
-/** The email as allauth renders it. `to` is also the user's display name, which is their address. */
+/** An email to `to`, who is named by their address. */
 export function render(kind: EmailKind, to: string, siteUrl: string, code?: string): Email {
 	const site = { url: siteUrl, domain: new URL(siteUrl).host };
 	const body = `Hello from Minerva!\n\n${content(kind, to, site, code)}\n\nThank you for using Minerva!\n${site.domain}`;

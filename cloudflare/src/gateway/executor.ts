@@ -1,6 +1,5 @@
-// The permission executor, ported from backend/connectors/executor.py and the call wrapper of
-// backend/gateway/mcp.py (connectors 7, runs 5.3): every connector tool call of a run goes through this
-// one pipeline, in today's order (contracts/executor.ts `Executor`):
+// The permission executor: every connector tool call of a run goes through this one pipeline, in this
+// order (contracts/executor.ts `Executor`):
 //
 // count the call and take a slot → current attempt → tool lookup and contract → strict validation →
 // query hash → page token → write key and known write → open the client (a credential lease fenced by
@@ -14,7 +13,7 @@
 // Cancelling a call (its signal, from pi's abort) answers the caller at once and starts nothing more: no
 // later step, and no new provider request. A write already dispatched still settles with its real
 // outcome, under the host's `waitUntil` (plan: Writes), bounded by its request's timeout and the
-// backstop; today the cancelled task cancelled its request too and the write became uncertain.
+// backstop.
 
 import type { z } from "zod";
 import type { EpochMs, RunId } from "../contracts/common.ts";
@@ -41,7 +40,6 @@ import { ANY, Policy } from "./policy.ts";
 import { type Registry, inputSchema } from "./registry.ts";
 import { RESULT_SCHEMA, type ShownCall, allowedEvent, appliedWithoutResult, publicError, refusedEvent, shownCall, writeId } from "./results.ts";
 import { validateInput } from "./validation.ts";
-import { truthy } from "../lib/json.ts";
 
 /** The provider client enforces the write's deadline; this only stops a connector that ignores it. */
 export const BACKSTOP_MS = 5000;
@@ -83,7 +81,7 @@ export function secretOf(payload: CredentialPayload): string {
 	return payload.access_token;
 }
 
-/** Whether a CONNECTION_UNAUTHORIZED is anywhere in the error's cause chain (credentials.py `_unauthorized`). */
+/** Whether a CONNECTION_UNAUTHORIZED is anywhere in the error's cause chain. */
 export function unauthorized(error: unknown): boolean {
 	const seen = new Set<unknown>();
 	let current: unknown = error;
@@ -107,7 +105,7 @@ function isRequirement(value: unknown, field: "need" | "enumerate"): boolean {
 	return typeof value === "object" && value !== null && field in value && typeof (value as { action?: unknown }).action === "string";
 }
 
-/** Why a resource from a connector is malformed, or null (executor.py `_shape_problem`). */
+/** Why a resource from a connector is malformed, or null. */
 function shapeProblem(connector: Connector, resource: Resource): string | null {
 	if (typeof resource !== "object" || resource === null || typeof resource.id !== "string" || !Array.isArray(resource.within) || typeof resource.partial !== "boolean") {
 		return "not a resource";
@@ -119,7 +117,7 @@ function shapeProblem(connector: Connector, resource: Resource): string | null {
 }
 
 /**
- * The records the run may see (executor.py `_result`; connectors 7.4). A record on another connection, of a
+ * The records the run may see. A record on another connection, of a
  * kind the operation does not need, malformed, or of a kind without the output action (even under an
  * unrestricted policy, which would pass any action) is a connector bug: logged and dropped. `count` is
  * what is left, so a page can be empty while the provider had records.
@@ -176,7 +174,7 @@ function unlessAborted<T>(promise: Promise<T>, signal: AbortSignal | undefined):
 	});
 }
 
-/** A per-run semaphore (mcp.py `_slot`): waits no longer than the run's deadline, else RUN_ENDED. */
+/** A per-run semaphore: waits no longer than the run's deadline, else RUN_ENDED. */
 class Slots {
 	#free: number;
 	readonly #waiting: (() => void)[] = [];
@@ -259,7 +257,7 @@ export class ToolExecutor implements Executor {
 		this.#slots = new Slots(host.concurrency ?? DEFAULT_CONCURRENCY);
 	}
 
-	/** The tools whose contract still resolves, as the model sees them (mcp.py `list_tools`). */
+	/** The tools whose contract still resolves, as the model sees them. */
 	declarations(): ToolDeclaration[] {
 		const out: ToolDeclaration[] = [];
 		for (const ref of this.#tools) {
@@ -324,7 +322,7 @@ export class ToolExecutor implements Executor {
 		return { ok: false, error: { code, message }, event };
 	}
 
-	/** Counts the call, then waits for a slot (mcp.py `call_tool`): calls are counted, never limited. */
+	/** Counts the call, then waits for a slot: calls are counted, never limited. */
 	async #call(request: ToolCallRequest): Promise<Done> {
 		if (request.fence.runId !== this.#runId || !this.#run.countToolCall(request.fence)) throw ended();
 		await this.#slots.acquire(this.#deadline, this.#clock, request.signal);
@@ -369,12 +367,14 @@ export class ToolExecutor implements Executor {
 		const hash = await queryHash(fields);
 		this.#step(request);
 		let data: { [key: string]: unknown } = fields;
-		if (terms.paginated && truthy(fields.cursor)) {
-			const upstream = this.#run.resolvePageToken(this.#runId, String(fields.cursor), request.name, hash);
+		const cursor = fields.cursor;
+		if (terms.paginated && cursor !== undefined && cursor !== null && cursor !== "") {
+			// A cursor is always a page token Minerva issued; anything else is refused.
+			const upstream = typeof cursor === "string" ? this.#run.resolvePageToken(this.#runId, cursor, request.name, hash) : null;
 			if (upstream === null) throw new OperationError("INVALID_CURSOR", INVALID_CURSOR_MESSAGE);
 			data = { ...fields, cursor: upstream };
 		}
-		// The full fields, so for a paginated write the page token too (connectors 7.1 step 6).
+		// The full fields, so for a paginated write the page token too.
 		const key = terms.mutates ? await writeKey(request.name, fields) : null;
 		this.#step(request);
 		if (key !== null) {
@@ -454,7 +454,7 @@ export class ToolExecutor implements Executor {
 		}
 		if (output !== null && output.nextCursor && terms.paginated) {
 			// After the provider call: the model sees the limit, not the page.
-			// Stored as text, as the CharField stored whatever cursor a connector returned.
+			// Stored as text, whatever type of cursor the connector returned.
 			const token = this.#run.issuePageToken(this.#runId, request.name, hash, String(output.nextCursor));
 			if (token === null) throw new OperationError("LIMIT_REACHED", LIMIT_REACHED_MESSAGE);
 			result = { ...result, next_cursor: token };
@@ -478,7 +478,7 @@ export class ToolExecutor implements Executor {
 
 	/**
 	 * Checks what prepare() says the call touches against the declaration, then against the policy
-	 * (connectors 7.2). A connector bug throws at once; denial is decided after the loop (risk 15).
+	 *. A connector bug throws at once; denial is decided after the loop (risk 15).
 	 */
 	#authorize(connector: Connector, op: Operation<never>, terms: OperationTerms, ref: ToolRef, requirements: readonly Requirement[]): void {
 		const where = `${ref.provider}.${op.name}`;
@@ -525,7 +525,7 @@ export class ToolExecutor implements Executor {
 		return visibleResult(connector, op, ref, this.#policy, output, this.#log);
 	}
 
-	/** The write's result, and whether an identical earlier write answered it (executor.py `_write`). */
+	/** The write's result, and whether an identical earlier write answered it. */
 	async #write(
 		request: ToolCallRequest,
 		connector: Connector,

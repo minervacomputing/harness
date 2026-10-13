@@ -1,4 +1,4 @@
-// The guest's prelude (src/scripts/prelude.ts) against pi-codemode 1.0.4's contract (harness 7.3), run in
+// The guest's prelude (src/scripts/prelude.ts) against pi-codemode 1.0.4's contract, run in
 // a realm of its own with a fake host (scripts-support.ts). What only the platform shows (eval, timers,
 // fetch, the loader's CommonJS) is in test/platform/scripts.test.ts.
 
@@ -75,7 +75,7 @@ describe("values", () => {
 });
 
 describe("output", () => {
-	test("text() and console, in order, formatted as today", async () => {
+	test("text() and console, in order, formatted", async () => {
 		const { printed } = await run(
 			"text('one'); text(5); text(undefined); text(null); text({ a: 1 }); text([1, 2]); console.log('a', { b: 1 }, [1], 2); console.error(new TypeError('bad')); console.info(); return 'done'",
 		);
@@ -92,7 +92,7 @@ describe("output", () => {
 		expect(h.prints.length).toBeLessThanOrEqual(3);
 	});
 
-	test("past the item limit the script fails with today's RangeError, and catching it does not resume output", async () => {
+	test("past the item limit the script fails with a RangeError, and catching it does not resume output", async () => {
 		const { answer, printed } = await run(`try { for (let i = 0; i <= ${MAX_OUTPUT_ITEMS}; i++) text("") } catch (error) { text("caught") } return "never"`);
 		expect(answer.ok).toBe(false);
 		expect(answer.error?.message).toBe(OUTPUT_LIMIT);
@@ -212,7 +212,7 @@ describe("store and load", () => {
 		expect(answer.writes).toEqual([["a", '{"n":1}'], ["b"], ["c", '"x"'], ["kept", "0"]]);
 	});
 
-	test("today's refusals: a key that is not a string, a value JSON cannot write, a value or a store too large", async () => {
+	test("refusals: a key that is not a string, a value JSON cannot write, a value or a store too large", async () => {
 		const { answer } = await run(
 			`const out = []; for (const f of [() => store(1, 1), () => load(1), () => store("f", () => 1), () => store("big", "x".repeat(262144)), () => { for (let i = 0; i < 5; i++) store("k" + i, "x".repeat(262000)) }]) { try { f() } catch (error) { out.push(error.constructor.name + ": " + error.message) } } return out`,
 		);
@@ -270,7 +270,7 @@ describe("exit and errors", () => {
 });
 
 describe("the sandbox's semantics", () => {
-	test("sloppy, as today's function at QuickJS's top level: undeclared globals, `this` the global object, the wrapper's names shadowed", async () => {
+	test("sloppy, as a function at the top level: undeclared globals, `this` the global object, the wrapper's names shadowed", async () => {
 		const { answer } = await run("undeclared = 5; return [undeclared, this === globalThis, typeof require, typeof module, typeof exports, typeof __filename]");
 		expect(JSON.parse(answer.value?.text ?? "")).toEqual([5, true, "undefined", "undefined", "undefined", "undefined"]);
 	});

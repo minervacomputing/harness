@@ -1,4 +1,4 @@
-// The connector contract's runtime parts, ported from backend/connectors/base.py: lookups on a
+// The connector contract's runtime parts: lookups on a
 // declaration, the defaults of an operation, consent, bindings and the owned error. The declaration
 // format itself is in contracts/connectors.ts; the registry (registry.ts) checks every declaration.
 
@@ -73,7 +73,7 @@ export function offered(connector: Connector, op: Operation<never>): boolean {
 	return connector.offered ? connector.offered(op) : true;
 }
 
-/** What an operation means beyond its input and needs, with base.py's defaults filled in. */
+/** What an operation means beyond its input and needs, with the defaults filled in. */
 export interface OperationTerms {
 	outputAction: string;
 	consent: Consent | null;
@@ -95,7 +95,7 @@ export function termsOf(op: Operation<never>): OperationTerms {
 /**
  * Whether the scopes the connection was granted cover the operation: any one set in full. Unknown scopes
  * (null) pass, so the provider is the one to refuse; known but empty ones fail every operation with
- * consent (connectors 11.7, risk 16).
+ * consent (risk 16).
  */
 export function consentGiven(consent: Consent | null | undefined, scopes: readonly string[] | null): boolean {
 	if (consent === null || consent === undefined || scopes === null) return true;

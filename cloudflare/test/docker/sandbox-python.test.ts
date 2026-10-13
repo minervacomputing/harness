@@ -1,6 +1,6 @@
 // minerva-fs (cloudflare/container/minerva/) in the image's own Python: its unit tests
-// (container/tests/test_minerva_fs.py, today's worker/test/folder.test.ts cases ported case by case), and
-// randomized comparisons of what it computes with what pi and today's worker compute: line scans against pi's
+// (container/tests/test_minerva_fs.py), and randomized comparisons of what it computes with what pi and
+// the Node worker (worker/) compute: line scans against pi's
 // LineScanner, the manifest policy for a path against worker/src/folder.ts's refusedPath, and a skipped
 // path's display against its displayPath. Skipped without Docker or the image (`pnpm sandbox:image`).
 
@@ -39,7 +39,7 @@ function random(seed: number): () => number {
 	};
 }
 
-// Today's manifest policy and display, from worker/src/folder.ts.
+// The Node worker's manifest policy and display, from worker/src/folder.ts.
 const encoder = new TextEncoder();
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 function refusedName(name: string, pathBytes: number, depth: number): string | null {
@@ -79,7 +79,7 @@ describe.skipIf(!READY)("minerva-fs in the image's Python", () => {
 		expect(result.status).toBe(0);
 	});
 
-	test("it computes what pi and today's worker compute", { timeout: 300_000 }, () => {
+	test("it computes what pi and the Node worker compute", { timeout: 300_000 }, () => {
 		const next = random(7);
 		const pieces = [[0x0a], [0x0d, 0x0a], [0x61], [0xc3, 0xa9], [0xe2, 0x82, 0xac], [0xf0, 0x9f, 0x98, 0x80], [0xef, 0xbb, 0xbf], [0xe2, 0x82], [0xff], [0x80], [0xed, 0xa0, 0x80], [0xf4, 0x90, 0x80, 0x80], [0xc0, 0xaf], [0x20]];
 		const scans: { hex: string; start: number; end?: number; chunk: number; bytes: Uint8Array }[] = [];

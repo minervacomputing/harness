@@ -1,5 +1,5 @@
-// Runs: states, attempts, how they end, and the snapshot a run starts with (runs 1 to 3; plan: Starting a
-// run, Attempts and recovery). The Conversation Durable Object owns its runs; the Workspace Durable
+// Runs: states, attempts, how they end, and the snapshot a run starts with (plan: Starting a run,
+// Attempts and recovery). The Conversation Durable Object owns its runs; the Workspace Durable
 // Object keeps a registry of active ones for revocation and for addressing `/runs/{run}` URLs.
 
 import type { AttachmentOut, ConversationDetail, MessageOut, RunOut } from "./api.ts";
@@ -7,16 +7,16 @@ import type { AgentId, ConnectionId, ConversationId, EpochMs, RunId, UserId, Ver
 import type { RunEvent } from "./events.ts";
 import type { PolicySnapshot } from "./policy.ts";
 
-/** `queued → provisioning → running → completed | failed | cancelled | timed_out` (runs 2.1). */
+/** `queued → provisioning → running → completed | failed | cancelled | timed_out`. */
 export type RunStatus = "queued" | "provisioning" | "running" | "completed" | "failed" | "cancelled" | "timed_out";
 
-/** At most one run per conversation is in one of these (runs 1.1). */
+/** At most one run per conversation is in one of these. */
 export type ActiveStatus = "queued" | "provisioning" | "running";
 
 /**
  * The states in which a run's current attempt may still act: call tools and models, append fenced events,
  * checkpoint. An expired run (deadline passed) counts as inactive for every check before it is marked
- * `timed_out` (runs 2.5).
+ * `timed_out`.
  */
 export type ActingStatus = "provisioning" | "running";
 
@@ -47,7 +47,7 @@ export interface AttemptRecord {
 }
 
 /**
- * Why a run ended (runs 2.3): the internal code, its status and the message users see (`RunOut.error_message`,
+ * Why a run ended: the internal code, its status and the message users see (`RunOut.error_message`,
  * ≤500 characters). The worker's own failure text and provider diagnostics are only logged.
  */
 export type RunEnd =
@@ -68,8 +68,7 @@ export type RunEnd =
 	| { status: "failed"; code: "state_unreadable"; message: "This run's saved state could not be read." };
 
 /**
- * `folder_limit` messages, by limit (runs 2.3; `mib(n)` is `${n / 2**20:.0f} MiB` from 1 MiB, else
- * `${n} bytes`): `folder_bytes` "The agent's files grew past the {mib} a conversation can keep.";
+ * `folder_limit` messages, by limit (`{mib}` is whole MiB from 1 MiB, else `{n} bytes`; files/limits.ts): `folder_bytes` "The agent's files grew past the {mib} a conversation can keep.";
  * `folder_entries` "The agent made more than the {n} files and folders a conversation can keep." (no
  * thousands separator); `run_uploads` "The agent saved more than the {mib} of files a turn may save.";
  * `workspace` "The workspace has used all of its storage for files."
@@ -77,7 +76,7 @@ export type RunEnd =
 export type FolderLimitMessage = string;
 
 /**
- * Strict revocation's reasons (connectors 4.6, runs 8): a user's grant change cancels all of that user's
+ * Strict revocation's reasons: a user's grant change cancels all of that user's
  * active runs, queued included; deleting a connection, the deleting user's; changing an agent's connection
  * set, that agent's. Deleting an agent or a conversation is a plain cancel ("Stopped.").
  */
@@ -91,11 +90,10 @@ export type RevocationReason = "permissions_changed" | "connection_removed" | "a
 export type CancelReason = RevocationReason | "cancelled" | "emergency_stop";
 
 /**
- * A tool as a run snapshots it, with today's field names (runs 3.3). `name` is `{alias}_{operation}`, the
+ * A tool as a run snapshots it. `name` is `{alias}_{operation}`, the
  * alias numbering usable connections per provider in `created_at` order (`todoist`, `todoist2`). The
  * model never names a connection; the executor takes it from here. `contract` is the operation's
- * fingerprint: 16 hex of SHA-256 over the canonical JSON of its meaning (connectors 2.2;
- * gateway/registry.ts); a mismatch at call time is `OPERATION_CHANGED`. Built by gateway/tools.ts `toolsFor`.
+ * fingerprint: 16 hex of SHA-256 over the canonical JSON of its meaning (gateway/registry.ts); a mismatch at call time is `OPERATION_CHANGED`. Built by gateway/tools.ts `toolsFor`.
  */
 export interface ToolRef {
 	name: string;
@@ -107,7 +105,7 @@ export interface ToolRef {
 
 /**
  * What the Workspace Durable Object's `beginRun` computes, in one synchronous step with registering the
- * run as active, so a grant change processed afterwards revokes it (plan: Starting a run; runs 3.2).
+ * run as active, so a grant change processed afterwards revokes it (plan: Starting a run).
  */
 export interface StartSnapshot {
 	workspaceId: WorkspaceId;
@@ -119,12 +117,12 @@ export interface StartSnapshot {
 	tools: ToolRef[];
 	/**
 	 * `SAFETY_INSTRUCTIONS`, `The run started on {Monday, 2026-10-10 14:03} UTC.`, a blank line and the
-	 * agent's instructions, stripped (runs 3.4). The folder paragraph is appended at turn start.
+	 * agent's instructions, stripped. The folder paragraph is appended at turn start.
 	 */
 	instructions: string;
-	/** Always `default` today (runs 1.7). */
+	/** Always `default`. */
 	modelAlias: string;
-	/** Fixed at start from MINERVA_RUN_TIMEOUT_SECONDS; never changes across attempts; null for none (runs 2.5). */
+	/** Fixed at start from MINERVA_RUN_TIMEOUT_SECONDS; never changes across attempts; null for none. */
 	deadline: EpochMs | null;
 	createdAt: EpochMs;
 	/** The connections the run's tools use, in tool order, for revocation by connection. */
@@ -134,14 +132,14 @@ export interface StartSnapshot {
 /** The snapshot the Conversation Durable Object stores with the run: the start snapshot plus its folder. */
 export interface RunSnapshot extends StartSnapshot {
 	runId: RunId;
-	/** The version the run starts from: the conversation's folder, or a new `base` with the attachments (files 10). */
+	/** The version the run starts from: the conversation's folder, or a new `base` with the attachments. */
 	baseVersionId: VersionId | null;
 	/** As added to the folder: final, possibly numbered names at the root, in upload order. */
 	attachments: AttachmentOut[];
 	limits: { folderBytes: number; folderEntries: number; runUploadBytes: number };
 }
 
-/** A run as the Conversation Durable Object keeps it (runs 1.1), apart from its events and writes. */
+/** A run as the Conversation Durable Object keeps it, apart from its events and writes. */
 export interface RunRecord {
 	id: RunId;
 	status: RunStatus;
@@ -162,7 +160,7 @@ export interface RunRecord {
 	writesUncertain: boolean;
 	checkpointVersionId: VersionId | null;
 	resultVersionId: VersionId | null;
-	/** Bytes the run has saved, failed and repeated uploads included (files 12.2). */
+	/** Bytes the run has saved, failed and repeated uploads included. */
 	uploadedBytes: number;
 	usage: { modelCalls: number; toolCalls: number; inputTokens: number; outputTokens: number; unmeteredModelCalls: number };
 	eventSeq: number;

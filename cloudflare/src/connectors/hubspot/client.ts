@@ -9,7 +9,7 @@ import type { z } from "zod";
 import type { ProviderClient, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
-import { type Json, type JsonObject, isDict, parseJson } from "../../lib/json.ts";
+import { type Json, type JsonObject, isDict, parseJson, parseJsonBytes } from "../../lib/json.ts";
 import { Batch, Details, HubRecord, Pipeline, Pipelines, SearchPage } from "./models.ts";
 
 export const API_URL = "https://api.hubapi.com";
@@ -81,7 +81,7 @@ export class HubSpotClient implements ProviderClient {
 		const response = await this.#http.bounded(request, MAX_RESPONSE, new OperationError("RESPONSE_TOO_LARGE", "HubSpot's response was too large to read."));
 		let data: Json;
 		try {
-			data = parseJson(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(await response.arrayBuffer()));
+			data = parseJsonBytes(await response.arrayBuffer());
 		} catch (error) {
 			throw this.unexpected(error);
 		}

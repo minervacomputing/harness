@@ -140,7 +140,7 @@ describe("connecting and discovery", () => {
 		]);
 		expect([...new URLSearchParams(exchange.body as string).keys()]).toEqual(["client_id", "client_secret", "code", "redirect_uri", "grant_type"]);
 		// Intercom's token answer carries no scopes and no expiry: the scopes are unknown, the token lasts.
-		const body = tokenBody(JSON.stringify({ token_type: "Bearer", token: "t", access_token: "t" })) as JsonObject;
+		const body = tokenBody({ token_type: "Bearer", token: "t", access_token: "t" }) as JsonObject;
 		expect(tokenPayload(body, Date.UTC(2026, 9, 12))).toEqual({ kind: "oauth2", access_token: "t", refresh_token: null, scopes: null });
 		expect([intercom.offered, intercom.manageLink, intercom.children, intercom.browsable]).toEqual([undefined, undefined, undefined, undefined]);
 	});
@@ -653,7 +653,7 @@ describe("text agents read", () => {
 		}
 		for (const href of ["https://\u0130ntercom.com/x", "HTTPS://APP.INTERCOM.COM/x"]) expect(read(`<a href="${href}">${SECRET}</a>`), href).toBe("[Intercom link]");
 		// A scheme is ASCII: one written with a lookalike letter is a relative link, hidden like one.
-		for (const href of ["ma\u0130lto:a@example.com", "maılto:a@example.com", "HT\u0131TPS://example.com/"]) {
+		for (const href of ["ma\u0130lto:a@example.com", "maılto:a@example.com", "HT\u0131TPS://example.com/", "http\u017f://example.com/", "\uff48\uff54\uff54\uff50\uff53://example.com/", "%68ttps://example.com/", "h ttps://example.com/", "\u200bhttps://example.com/"]) {
 			expect(read(`<a href="${href}">${SECRET}</a>`), href).toBe("[Intercom link]");
 		}
 		expect(read(`<a href="MAILTO:a@example.com">${SECRET}</a>`)).toBe(`${SECRET} (MAILTO:a@example.com)`);

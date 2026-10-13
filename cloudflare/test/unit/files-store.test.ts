@@ -1,8 +1,7 @@
 // A conversation's folder in its Durable Object (src/files/store.ts) over node:sqlite with the
-// Conversation's own schema and an in-memory bucket: versions (test_files_store.py), checkpoints and what
-// a run may read, publish at every end and the next run's start (the checkpoint parts of
-// test_files_gateway.py), attachments at a run's start (test_files_web.py), the sweep and loose objects
-// (test_files_sweep.py), and the Workspace's byte count after every crash point (plan: Files).
+// Conversation's own schema and an in-memory bucket: versions, checkpoints and what a run may read,
+// publish at every end and the next run's start, attachments at a run's start, the sweep and loose
+// objects, and the Workspace's byte count after every crash point (plan: Files).
 //
 // In the Durable Object a run uploads only within a checkpoint: the Sandbox writes each file whose
 // contents the run may not read under a key recorded first, so "an upload" below is a checkpoint's.
@@ -48,7 +47,7 @@ function attempt(call: () => unknown): ReturnType<typeof refusedWith> | null {
 	}
 }
 
-// test_files_store.py: versions
+// Versions
 
 describe("versions", () => {
 	test("a version records the sizes of its files", async () => {
@@ -161,7 +160,7 @@ describe("versions", () => {
 	});
 });
 
-// test_files_store.py and test_files_gateway.py: a run's uploads
+// A run's uploads
 
 describe("a run's uploads", () => {
 	test("new contents are stored once under the conversation's prefix, counted, granted and charged to the run", async () => {
@@ -493,7 +492,7 @@ describe("a run's uploads", () => {
 	});
 });
 
-// test_files_gateway.py: checkpoints
+// Checkpoints
 
 const entry = async (path: string, data: string, mode: 0o644 | 0o755 = 0o644, mtime = 0) => ({ path, sha256: await sha(data), mode, mtime });
 
@@ -800,7 +799,7 @@ describe("checkpoints", () => {
 	});
 });
 
-// test_files_web.py: attachments
+// Attachments
 
 describe("attachments", () => {
 	test("attachments are added at the root of the folder the run starts from, numbered against every root name", async () => {
@@ -867,11 +866,11 @@ describe("attachments", () => {
 		expect(w.versions()).toHaveLength(1);
 	});
 
-	test("attachments over the folder's limits are refused before anything is copied, with today's words", async () => {
+	test("attachments over the folder's limits are refused before anything is copied, in words", async () => {
 		const w = new World({ folderBytes: 3 });
 		const run = w.run({ status: "queued" });
 		const big = await w.upload("big.bin", "mine");
-		expect(await w.store.prepareAttachments(run, [big])).toEqual({ ok: false, refusal: { status: 413, detail: "These files would make this conversation's folder larger than 2.86102e-06 MB." } });
+		expect(await w.store.prepareAttachments(run, [big])).toEqual({ ok: false, refusal: { status: 413, detail: "These files would make this conversation's folder larger than 0.00000286102 MB." } });
 		w.settings.folderBytes = 268_435_456;
 		w.settings.folderEntries = 1;
 		const two = [await w.upload("a", "1"), await w.upload("b", "2")];
@@ -972,7 +971,7 @@ describe("attachments", () => {
 	});
 });
 
-// The web's view of the folder (files 11).
+// The web's view of the folder.
 
 describe("listing and resolving", () => {
 	test("the folder, or a version of it that is not a checkpoint; a path matched exactly", async () => {
@@ -992,7 +991,7 @@ describe("listing and resolving", () => {
 	});
 });
 
-// test_files_sweep.py
+// The sweep
 
 describe("the sweep", () => {
 	test("an object nothing claimed is deleted an hour after it was recorded, and again a day later", async () => {
@@ -1093,7 +1092,7 @@ describe("the sweep", () => {
 	});
 });
 
-// The Workspace's byte count (files 12.1, 15.2; plan: Files): never less than the conversation's objects
+// The Workspace's byte count (plan: Files): never less than the conversation's objects
 // hold, at every point a crash can leave it, and right again once the sweep has run.
 
 describe("the byte count after a crash", () => {

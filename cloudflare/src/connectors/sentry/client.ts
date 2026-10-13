@@ -15,8 +15,7 @@ import { z } from "zod";
 import type { ProviderClient, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
-import { fromUtf8Strict } from "../../lib/bytes.ts";
-import { type Json, isDict, parseJson } from "../../lib/json.ts";
+import { type Json, isDict, parseJsonBytes } from "../../lib/json.ts";
 
 export const PROVIDER = "Sentry";
 export const API_URL = "https://sentry.io";
@@ -185,9 +184,9 @@ export class SentryClient implements ProviderClient {
 	}
 
 	async #json(response: Response): Promise<Json> {
-		const bytes = new Uint8Array(await response.arrayBuffer());
+		const bytes = await response.arrayBuffer();
 		try {
-			return parseJson(fromUtf8Strict(bytes));
+			return parseJsonBytes(bytes);
 		} catch (error) {
 			throw this.unexpected(error);
 		}

@@ -1,17 +1,17 @@
-// The folder's tables in the Conversation Durable Object's SQLite (files 5, 15.3; plan: Data placement): a
+// The folder's tables in the Conversation Durable Object's SQLite (plan: Data placement): a
 // schema step of conversation/schema.ts, additive only (lib/sqlite.ts). Times are epoch milliseconds.
 
 /**
  * - `folder_versions`: one row per version; its contents (size, counts, digest, run, attempt) never change,
- *   while `kind` and `parent_id` may when a run publishes its checkpoint (files 4.3, 5).
+ *   while `kind` and `parent_id` may when a run publishes its checkpoint.
  * - `folder_version_parts`: a version's stored entries as canonical JSON, in parts under the 2 MB a value or
  *   a row may have (a manifest at the limits is about 11 MB).
  * - `folder_blobs`: the conversation's objects in R2, `blobs/<ws>/<conv>/<sha256>/<random>`, each recorded
- *   before it is written (files 3; plan: Files). `loose`: written ahead, not yet claimed, deleted once due an
+ *   before it is written (plan: Files). `loose`: written ahead, not yet claimed, deleted once due an
  *   hour later; `stored`: named by a version or uploaded by a run, one per contents; `doomed`: to delete,
  *   then deleted once more a day after the first deletion (`deletions`), for a write still in flight.
- * - `folder_grants`: contents a run uploaded, which it may read and name until it ends (files 6, RunBlob).
- * - `folder_counter`: the byte total last reported to the Workspace (files 12.1, 15.2).
+ * - `folder_grants`: contents a run uploaded, which it may read and name until it ends (RunBlob).
+ * - `folder_counter`: the byte total last reported to the Workspace.
  */
 export const FOLDER_SCHEMA = `
 CREATE TABLE folder_versions (
@@ -63,7 +63,7 @@ CREATE TABLE folder_counter (
 	reported INTEGER NOT NULL CHECK (reported >= 0)
 ) STRICT;
 
--- What a version holds and what a blob is never change (files 3, 4.3); a version's kind and parent may.
+-- What a version holds and what a blob is never change; a version's kind and parent may.
 CREATE TRIGGER folder_versions_immutable BEFORE UPDATE OF id, run_id, attempt, size, file_count, entry_count, digest, parts, created_at ON folder_versions
 BEGIN SELECT RAISE(ABORT, 'A folder version''s contents cannot change.'); END;
 CREATE TRIGGER folder_version_parts_immutable BEFORE UPDATE ON folder_version_parts

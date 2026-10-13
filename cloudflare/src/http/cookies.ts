@@ -1,4 +1,4 @@
-// The CSRF cookie, with Django's name and attributes (web-api spec 3.2): SameSite=Lax, on Path=/, without
+// The CSRF cookie, `csrftoken`: SameSite=Lax, on Path=/, without
 // a Domain, and Secure unless debug is on. The session cookie is Better Auth's (accounts/auth-options.ts).
 
 export const CSRF_COOKIE = "csrftoken";
@@ -11,7 +11,7 @@ export interface CookieOptions {
 	secure: boolean;
 }
 
-/** The cookies a request sent; the last of a repeated name wins, as in Django's `parse_cookie`. */
+/** The cookies a request sent; the last of a repeated name wins. */
 export function parseCookies(header: string | null): Map<string, string> {
 	const cookies = new Map<string, string>();
 	if (!header) return cookies;

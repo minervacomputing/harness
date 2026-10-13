@@ -8,7 +8,7 @@ import { z } from "zod";
 import type { OperationErrorShape, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
-import { type Json, type JsonObject, isDict, parseJson } from "../../lib/json.ts";
+import { type Json, type JsonObject, isDict, parseJsonBytes } from "../../lib/json.ts";
 
 export const API_URL = "https://api.notion.com/v1";
 /** Pinned: the markdown endpoints and data sources behave as documented for this version. */
@@ -257,8 +257,7 @@ export class NotionClient {
 		);
 		let body: Json;
 		try {
-			// UTF-8, a byte order mark dropped; invalid UTF-8 is refused.
-			body = parseJson(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(await response.arrayBuffer()));
+			body = parseJsonBytes(await response.arrayBuffer());
 		} catch (error) {
 			throw this.http.unexpected(error);
 		}

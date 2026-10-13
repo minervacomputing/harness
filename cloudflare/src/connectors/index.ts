@@ -26,7 +26,7 @@ import { onedriveConnector } from "./onedrive/connector.ts";
 import { teamsConnector } from "./teams/connector.ts";
 import { webConnector } from "./web/connector.ts";
 
-// In today's order (backend/connectors/registry.py `_declared`): the connectors page lists them so.
+// In the order the connectors page lists them.
 export const CONNECTORS: readonly Connector[] = [
 	todoistConnector(),
 	googleCalendarConnector(),

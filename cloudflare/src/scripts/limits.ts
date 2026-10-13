@@ -1,12 +1,11 @@
-// Code mode's bounds and the words scripts and the model see (harness 7; plan: Code mode), from
-// worker/src/main.ts, worker/src/script-store.ts and pi-codemode 1.0.4's prelude and host, which today's
-// `run_script` runs in. Numbers and words that changed on this platform are marked "New".
+// Code mode's bounds and the words scripts and the model see (plan: Code mode), many of them from
+// pi-codemode 1.0.4's prelude and host. Those this platform adds or changes are marked "New".
 
 export const SCRIPT_TOOL = "run_script";
 
-/** The wall clock, enforced by the Conversation Durable Object, cut to the run's deadline (harness 7.4). */
+/** The wall clock, enforced by the Conversation Durable Object, cut to the run's deadline. */
 export const SCRIPT_TIMEOUT_MS = 120_000;
-/** A call's time when the run has no deadline (harness 5.2 `remainingMs`). */
+/** A call's time when the run has no deadline. */
 export const CALL_TIMEOUT_MS = 10 * 60 * 1000;
 /**
  * New: computation is cut by the guest's `limits.cpuMs`, which the platform enforces about 2 to 8 s late
@@ -14,16 +13,16 @@ export const CALL_TIMEOUT_MS = 10 * 60 * 1000;
  * runs in, never the conversation.
  */
 export const SCRIPT_CPU_MS = 30_000;
-/** New: about what a guest may hold before the platform stops it; there is no lower setting (today 64 MiB). */
+/** New: about what a guest may hold before the platform stops it; there is no lower setting. */
 export const SCRIPT_MEMORY_LABEL = "about 256 MB";
 
 /** The run's queue runs at most this many connector calls at once (conversation/queue.ts). */
 export const CALLS_AT_ONCE = 4;
-/** Scripted calls that may wait at once, across the turn's scripts (harness 7.5). */
+/** Scripted calls that may wait at once, across the turn's scripts. */
 export const SCRIPT_CALLS_OPEN = 100;
-/** A scripted call's arguments, as UTF-8 JSON (harness 7.5). */
+/** A scripted call's arguments, as UTF-8 JSON. */
 export const SCRIPT_ARGS_BYTES = 256 * 1024;
-/** Refusals of one script before it is stopped (harness 7.5). */
+/** Refusals of one script before it is stopped. */
 export const SCRIPT_REFUSALS = 100;
 /** `store()` values kept for the turn, as UTF-8 JSON (worker/src/script-store.ts). */
 export const STORE_BYTES = 1024 * 1024;
@@ -45,7 +44,7 @@ export const MAX_OUTPUT_ITEMS = 100_000;
 export const HEAD_CHARS = 1024 * 1024 + 4;
 /** New: the keys one script may delete from the store, in characters, so its answer stays far under Workers RPC's 32 MiB. */
 export const STORE_DELETES_CHARS = 8 * 1024 * 1024;
-/** New: what the host accepts as one script's printed output in UTF-8 bytes: today's 16 Mi characters at 3 bytes each. */
+/** New: what the host accepts as one script's printed output in UTF-8 bytes: 16 Mi characters at 3 bytes each. */
 export const OUTPUT_BYTES_MAX = 3 * MAX_OUTPUT_CHARS;
 /** New: how much of a failure's message and stack crosses; the rendering clips it to 30,000 characters. */
 export const ERROR_CHARS = 64 * 1024;
@@ -58,7 +57,7 @@ export const LATE_PENDING = 100;
 
 /** The guest's compatibility date: the Worker's own. */
 export const GUEST_COMPATIBILITY_DATE = "2026-10-06";
-/** The guest's modules; stack frames name the script's as today's QuickJS did (`codemode.js`). */
+/** The guest's modules; stack frames name the script's `codemode.js`. */
 export const PRELUDE_MODULE = "codemode-prelude.js";
 export const SCRIPT_MODULE = "codemode.js";
 
@@ -86,7 +85,7 @@ export const TIMED_OUT = (ms: number): string => `Execution timed out after ${ms
 export const ABORTED = "Execution aborted";
 /**
  * pi-codemode's prelude fails a script that waits on nothing that could resume it; the platform cancels
- * such a guest itself. New: timers exist, so the end of today's sentence changed.
+ * such a guest itself. New: timers exist, so the sentence names them.
  */
 export const STALLED = "The script is waiting on a promise that can never settle: no tool call or timer is pending.";
 /** New: what the platform's own stops become. */

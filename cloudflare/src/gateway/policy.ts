@@ -186,7 +186,7 @@ export class Policy {
 		return candidates.some((ids) => actions.every((item) => this.#permits(connectionId, kind, ids, item)));
 	}
 
-	/** The run snapshot's form: each layer's keys sorted (connectors 3.1). */
+	/** The run snapshot's form: each layer's keys sorted. */
 	toJson(): PolicySnapshot {
 		return this.layers.map((layer) => ({
 			name: layer.name,

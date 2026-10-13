@@ -5,7 +5,7 @@
 // can hold its answers to a path for a while, to keep a request in flight. Reached only through the test
 // build's network port (ports.ts), never from outside the Worker.
 //
-// Its authorization server (web-api 9): `authorize` stands for the user consenting on its page and returns
+// Its authorization server: `authorize` stands for the user consenting on its page and returns
 // the code it would redirect with, bound to the client, the redirect URI and the PKCE challenge it was
 // given; the token endpoint redeems a code once, for the client and redirect URI it was issued to, with
 // the verifier of its challenge, and the tokens it issues belong to the account that consented (`/me`).

@@ -1,14 +1,11 @@
-// The write ledger: today's RunWrite protocol (backend/connectors/executor.py `_dispatch`, `_settle`,
-// backend/runs/services.py `sweep_lost_writes`; runs 5.6, connectors 7.5), in the Conversation Durable
-// Object's SQLite (plan: Writes). A write is claimed by its key before anything is sent; one write is
+// The write ledger, in the Conversation Durable Object's SQLite (plan: Writes). A write is claimed by its key before anything is sent; one write is
 // dispatched at a time per run, with its deadline fixed at dispatch; a write the provider refused is
 // forgotten (deleted) so it can be tried again; an applied one is recorded and answers repeats; one whose
 // outcome is unknown is uncertain, which pauses every later write in the run for good.
 //
 // The pause is not a column of its own: a run is paused exactly when it has an uncertain write, since
-// uncertain rows are never deleted or changed (a late settle only touches `dispatched` rows). Today's
-// `Run.writes_uncertain` is set at the same moments, so the two cannot differ. `RunRecord.writesUncertain`
-// reads `paused()`.
+// uncertain rows are never deleted or changed (a late settle only touches `dispatched` rows).
+// `RunRecord.writesUncertain` reads `paused()`.
 //
 // Every method is synchronous and each is atomic: run it in the same synchronous stretch as the run-state
 // check it depends on (gateway/run-state.ts), with no await between.
@@ -22,9 +19,9 @@ import { parseJson } from "../lib/json.ts";
 import type { Sql } from "../lib/sql.ts";
 import type { Clock } from "./clock.ts";
 
-/** How long one write may take; the run's own deadline shortens it (executor.py WRITE_WINDOW). */
+/** How long one write may take; the run's own deadline shortens it. */
 export const WRITE_WINDOW_MS = 60_000;
-/** A dispatched write that has not settled this long after its deadline is assumed lost (services.py LOST_WRITE_GRACE). */
+/** A dispatched write that has not settled this long after its deadline is assumed lost. */
 export const LOST_WRITE_GRACE_MS = 30_000;
 
 export const RUN_ENDED_MESSAGE = "This run is no longer active.";
@@ -36,7 +33,7 @@ export const RUN_ENDED_MESSAGE = "This run is no longer active.";
 export const MAX_STORED_RESULT_BYTES = 1024 * 1024;
 const APPLIED_WITHOUT_RESULT = JSON.stringify({ items: [], count: 0, outcome: "applied_without_result" });
 
-/** The ledger's refusals, with today's words (runs 5.6; connectors risk 1: three distinct refusals). */
+/** The ledger's three distinct refusals. */
 export const WRITE_MESSAGES = {
 	/** The same write is already known and its outcome is unknown. */
 	identicalUncertain: "This write has an unknown outcome. Check the provider before retrying.",
@@ -56,7 +53,7 @@ export { LEDGER_SCHEMA } from "./schema.ts";
 /**
  * A write's identity within its run: SHA-256 over `minerva:write-key:` and the canonical JSON
  * (lib/canonical.ts) of the tool name and the validated, normalized arguments with their defaults, the page
- * token included (connectors 7.1 step 6, risk 2). Deduplication is by key, so it also catches a model that
+ * token included (risk 2). Deduplication is by key, so it also catches a model that
  * retries a write under a new call id.
  */
 export async function writeKey(tool: string, fields: { [key: string]: unknown }): Promise<string> {
@@ -86,7 +83,7 @@ function record(row: WriteRow): WriteRecord {
 	};
 }
 
-/** How a known write answers the same write again: its result, or one of the two refusals (executor.py `_known_write`). */
+/** How a known write answers the same write again: its result, or one of the two refusals. */
 export function knownAnswer(known: WriteRecord): Extract<DispatchResult, { kind: "cached" | "refused" }> {
 	if (known.status === "succeeded") return { kind: "cached", result: known.result as ToolResult };
 	if (known.status === "uncertain") return { kind: "refused", code: "WRITE_UNCERTAIN", message: WRITE_MESSAGES.identicalUncertain };
@@ -124,7 +121,7 @@ export class WriteLedger {
 	}
 
 	/**
-	 * Claims a write before anything is sent (executor.py `_dispatch`). The caller has checked, in the same
+	 * Claims a write before anything is sent. The caller has checked, in the same
 	 * synchronous stretch, that the fence is the run's current attempt (else RUN_ENDED). The same key
 	 * answers from its record; a paused run, or one with another write dispatched, is refused; otherwise
 	 * the write is dispatched with `deadline_at = min(now + 60 s, run deadline)`, returned as a monotonic
@@ -153,7 +150,7 @@ export class WriteLedger {
 	}
 
 	/**
-	 * Records how a dispatched write ended (executor.py `_settle`), whichever attempt dispatched it: not
+	 * Records how a dispatched write ended, whichever attempt dispatched it: not
 	 * applied deletes the row, so the same write may be tried again; applied stores the result that answers
 	 * repeats; unknown makes it uncertain, which pauses the run. Only a row still `dispatched` changes, so a
 	 * write the sweep or the restart gate already judged uncertain stays uncertain. Returns whether a
@@ -171,8 +168,8 @@ export class WriteLedger {
 	}
 
 	/**
-	 * Marks writes still dispatched 30 s past their deadline uncertain, pausing their runs (services.py
-	 * `sweep_lost_writes`): their settle was lost. The Conversation Durable Object runs it from an alarm at
+	 * Marks writes still dispatched 30 s past their deadline uncertain, pausing their runs: their
+	 * settle was lost. The Conversation Durable Object runs it from an alarm at
 	 * `nextSweepAt()` and when it starts.
 	 */
 	sweep(now: EpochMs = this.#clock.now()): LostWrite[] {
@@ -193,7 +190,7 @@ export class WriteLedger {
 	/**
 	 * For the restart gate, in the transaction of its decision (plan: Attempts and recovery, Writes): every
 	 * write of the run still dispatched becomes uncertain, since the instance that dispatched it died and can
-	 * never settle it. Today a restart waits while a write is dispatched; here nothing could settle it.
+	 * never settle it.
 	 */
 	markDispatchedUncertain(runId: RunId): LostWrite[] {
 		return this.#sql

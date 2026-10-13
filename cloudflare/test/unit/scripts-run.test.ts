@@ -238,7 +238,7 @@ describe("the reset after every script and the lane", () => {
 	});
 });
 
-describe("time helpers (harness 5.2, 7.4)", () => {
+describe("time helpers", () => {
 	test("remainingMs, the wall clock and the CPU limit", () => {
 		expect(remainingMs(null)).toBe(600_000);
 		expect(remainingMs(Number.NaN)).toBe(60_000);

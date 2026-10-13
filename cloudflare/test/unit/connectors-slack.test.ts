@@ -282,16 +282,14 @@ describe("connecting", () => {
 		expect(headers.get("authorization")).toBe(`Basic ${btoa("id:s")}`);
 		const fields = new URLSearchParams(request.body as string);
 		expect(fields.has("client_secret") || fields.has("client_id") || fields.has("code_verifier")).toBe(false);
-		const answer = tokenBody(
-			JSON.stringify({ ok: true, access_token: "xoxb-a", token_type: "bot", scope: "channels:read,chat:write", team: { id: "T0ACME", name: "Acme" } }),
-		);
+		const answer = tokenBody({ ok: true, access_token: "xoxb-a", token_type: "bot", scope: "channels:read,chat:write", team: { id: "T0ACME", name: "Acme" } });
 		expect(answer).not.toBeNull();
 		const tokens = tokenPayload(answer as JsonObject, Date.UTC(2026, 9, 11));
 		expect(tokens.access_token).toBe("xoxb-a");
 		expect(tokens.scopes).toEqual(["channels:read", "chat:write"]);
 		expect("expires_at" in tokens).toBe(false);
 		// Slack reports refusals with HTTP 200.
-		expect(tokenBody(JSON.stringify({ ok: false, error: "invalid_code" }))).toBeNull();
+		expect(tokenBody({ ok: false, error: "invalid_code" })).toBeNull();
 	});
 
 	test("Slack scopes follow the allowed actions", () => {

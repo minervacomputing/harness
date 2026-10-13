@@ -78,7 +78,7 @@ export function consentNeeded(connector: Connector, scopes: readonly string[] | 
 /**
  * `requested_scopes`: the connector's base scopes, then what the operations behind `actions` need (the first
  * option of each), sorted. Stored scopes are not trusted to be current: the user may have revoked access at
- * the provider since. For the reconnect flow (connectors 11.7).
+ * the provider since. For the reconnect flow.
  */
 export function requestedScopes(connector: Connector, actions: ReadonlySet<string>): string[] {
 	if (connector.auth.type !== "oauth2") throw new TypeError(`${connector.name} does not connect through OAuth.`);

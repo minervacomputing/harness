@@ -25,7 +25,7 @@ import { OperationError } from "../gateway/connector.ts";
 import { HttpError } from "../http/errors.ts";
 import type { App } from "../http/router.ts";
 import { timingSafeEqual } from "../lib/hash.ts";
-import { TOKEN_TIMEOUT_MS, boundedText, issuingClient, tokenBody, tokenPayload, tokenRequest } from "../workspace/credentials.ts";
+import { TOKEN_TIMEOUT_MS, answerJson, boundedBody, issuingClient, tokenBody, tokenPayload, tokenRequest } from "../workspace/credentials.ts";
 import { NOT_YOURS } from "../workspace/core.ts";
 import { isAdmin } from "../workspace/out.ts";
 import { type Member, member, param } from "./members.ts";
@@ -136,14 +136,14 @@ async function exchangeCode(env: Env, workspace: WorkspaceRef, connector: Connec
 		return new ConnectionFlowError(`${connector.name} did not accept the authorization. Please try again.`);
 	};
 	let response: Response;
-	let text: string | null;
+	let bytes: Uint8Array | null;
 	try {
 		response = await PROVIDER_NETWORK.fetch(env, workspace)(oauth.tokenUrl, { ...tokenRequest(oauth, creds, fields), signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS) });
-		text = await boundedText(response);
+		bytes = await boundedBody(response);
 	} catch (error) {
 		throw refused(error instanceof Error ? error.name : "no answer");
 	}
-	const body = response.status >= 400 || text === null ? null : tokenBody(text);
+	const body = response.status >= 400 || bytes === null ? null : tokenBody(answerJson(bytes));
 	if (body === null) throw refused(`HTTP ${response.status}`);
 	return { ...tokenPayload(body, Date.now()), client_id: creds.clientId, token_url: oauth.tokenUrl } as unknown as CredentialPayload;
 }

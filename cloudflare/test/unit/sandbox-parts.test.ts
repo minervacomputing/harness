@@ -402,7 +402,7 @@ describe("the image agrees with the Sandbox", () => {
 		expect(instructions).not.toMatch(/\bnode(js)?\b|\bnpm\b|corepack/);
 	});
 
-	test("its Python packages are today's, from hashed wheels only", () => {
+	test("its Python packages are worker/python's, from hashed wheels only", () => {
 		expect(read("../../container/python/requirements.txt")).toBe(read("../../../worker/python/requirements.txt"));
 		expect(read("../../container/python/requirements.in").replace(/^#.*\n/gm, "")).toBe(read("../../../worker/python/requirements.in").replace(/^#.*\n/gm, ""));
 		expect(dockerfile).toContain("--no-deps --only-binary :all: --require-hashes");

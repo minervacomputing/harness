@@ -1,5 +1,4 @@
-// The model wrapper on fake streams (runs 7; plan: The harness, Model), ported from test_gateway.py's relay
-// tests and test_attempts.py's model cases: refusals that count nothing, the call counted once, deltas per
+// The model wrapper on fake streams (plan: The harness, Model): refusals that count nothing, the call counted once, deltas per
 // call id, usage, provider error text, aborts, the output cap and the tool-call text. The relay's
 // reasoning-summary retry, metering of refused calls and read timeout go through createAI itself, over a
 // fake AI binding that answers as AI Gateway's universal endpoint and OpenAI's Responses API do.
@@ -186,7 +185,7 @@ describe("errors and aborts", () => {
 		const { host, models } = setup({ onDelta: async (_call, index) => {
 			if (index === 2) host.controller.abort(new Error("The run ended."));
 		} });
-		// No usage report had arrived when the run stopped (runs 7.6: `(input_tokens, unmetered) = (0, 1)`).
+		// No usage report had arrived when the run stopped: no input tokens, one unmetered call.
 		const message = await ask(models, prompt({ chunkChars: 1, delayMs: 1, turns: [{ text: "abcdefgh", usage: null }] }));
 		expect(message.stopReason).toBe("aborted");
 		expect(host.usage).toEqual([null]);
@@ -317,7 +316,7 @@ describe("over AI Gateway (createAI)", () => {
 		REASONING_SUMMARY.refused = false;
 	});
 
-	test("a refused reasoning summary is asked once more without it, and never again (test_gateway.py's relay retry)", async () => {
+	test("a refused reasoning summary is asked once more without it, and never again", async () => {
 		const gateway = new FakeGateway();
 		gateway.answers = [SUMMARY_REFUSAL, answered("Hello"), answered("Again")];
 		const { host, ask } = overGateway(gateway);
@@ -368,7 +367,7 @@ describe("over AI Gateway (createAI)", () => {
 		expect(gateway.reasoning).toEqual([{ effort: "low" }]);
 	});
 
-	test("a call the provider refused, or that never reached it, is counted but neither metered nor unmetered (runs 7.5, steps 6 and 8)", async () => {
+	test("a call the provider refused, or that never reached it, is counted but neither metered nor unmetered", async () => {
 		const gateway = new FakeGateway();
 		gateway.answers = [
 			refused(500, "The server had an error."),
@@ -382,7 +381,7 @@ describe("over AI Gateway (createAI)", () => {
 		expect([host.counts, host.usage]).toEqual([2, []]);
 	});
 
-	test("an accepted answer with no body is counted unmetered (runs 7.5, step 9)", async () => {
+	test("an accepted answer with no body is counted unmetered", async () => {
 		const gateway = new FakeGateway();
 		gateway.answers = [() => new Response(null, { status: 200 })];
 		const { host, ask } = overGateway(gateway, { reasoningEffort: "" });
@@ -402,7 +401,7 @@ describe("over AI Gateway (createAI)", () => {
 	});
 
 	test("an accepted answer that is not an event stream and never ends is timed too: an error, unmetered", async () => {
-		// createAI reads such an answer whole after `start`, with no idle deadline of its own (runs 2.5); its
+		// createAI reads such an answer whole after `start`, with no idle deadline of its own; its
 		// test of the headers is case-sensitive, and no header at all is no event stream. These bodies do not
 		// even end when their request is aborted: the wrapper stops waiting all the same.
 		for (const headers of [{ "content-type": "text/plain" }, {}, { "content-type": "Text/Event-Stream" }] as Record<string, string>[]) {

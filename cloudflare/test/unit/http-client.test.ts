@@ -1,5 +1,5 @@
-// gateway/http.ts: ProviderHTTP over an injected fetch (backend/connectors/http.py; connectors 7.6). The
-// write accounting cases of test_contract.py that need no executor, the effect table, error mapping,
+// gateway/http.ts: ProviderHTTP over an injected fetch. Write accounting that needs no executor, the
+// effect table, error mapping,
 // redirects, body caps and per-phase timeouts, and the call's binding (CallIo).
 
 import { describe, expect, test } from "vitest";
@@ -78,7 +78,7 @@ function slowBody(chunks: string[], gap: number): ReadableStream<Uint8Array> {
 }
 
 describe("requests", () => {
-	test("paths join the base URL as httpx merges them, and redirects are never followed", async () => {
+	test("paths join the base URL, and redirects are never followed", async () => {
 		const { sent, http } = setup();
 		await http.request({ method: "GET", path: "/tasks", query: { project_id: "work", limit: 30, done: false, empty: null, skipped: undefined } });
 		await http.request({ method: "get", path: "tasks/t1?x=1", query: { y: true } });
@@ -116,8 +116,8 @@ describe("requests", () => {
 		const redirected = await http.request({ method: "GET", path: "/repo", redirects: true });
 		expect([redirected.status, redirected.headers.get("location")]).toEqual([302, "https://elsewhere.example/"]);
 		await expect(http.request({ method: "POST", path: "/repo", redirects: true })).rejects.toThrow("A write is never redirected.");
-		// Every 3xx is returned when asked for, with a Location or not, as httpx 0.28's `is_redirect` counts
-		// them (a 304, a 300); without asking, each is an error.
+		// Every 3xx is returned when asked for, with a Location or not (a 304, a 300); without asking, each
+		// is an error.
 		for (const status of [301, 300, 304]) {
 			const bare = setup(() => new Response(null, { status }));
 			expect((await bare.http.request({ method: "GET", path: "/repo", redirects: true })).status).toBe(status);
@@ -154,7 +154,7 @@ describe("write accounting", () => {
 	});
 
 	test("a write cannot be sent after its attempt was judged", async () => {
-		// test_contract.py: a task the connector left running tries to write after outcome().
+		// A task the connector left running tries to write after outcome().
 		const { sent, http, io } = setup();
 		const gate = new Gate();
 		const attempt = io.openWrite(clock + 60_000);

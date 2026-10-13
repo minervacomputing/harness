@@ -1,5 +1,4 @@
-// Uploads from the browser (files 9.1; plan: Files, Uploads): the checks of the raw request in today's
-// order, and the body streamed into R2 while it is hashed, recorded in the Workspace as pending before the
+// Uploads from the browser (plan: Files, Uploads): the checks of the raw request in order, and the body streamed into R2 while it is hashed, recorded in the Workspace as pending before the
 // object is written and as complete after. The HTTP route around them (session, CSRF, membership, the demo
 // rule, between the name and the stream) is the web API's (step 5).
 //
@@ -7,15 +6,13 @@
 // (about 550 ms of CPU per 50 MiB), through a FixedLengthStream of the declared size, which gives R2 the
 // known length it requires and refuses a body longer or shorter than declared. A third branch is read only
 // for its first 8 KiB, the head the media type is sniffed from, and then cancelled. The edge buffers a
-// request body before the Worker runs, so today's 60-second idle limit between chunks cannot apply; the
-// 15-minute limit on the whole upload stays.
+// request body before the Worker runs, so there is no idle limit between chunks; the whole upload has 15
+// minutes.
 //
-// Changes from today (files 9.1), as the plan's records-before-writes rule has them: the Workspace's
-// refusals (3 arriving, 30 waiting, the workspace's quota) come before the body is received, where today's
-// last two came after it; the edge enforces a body's length, so its 400s cannot occur behind it anyway.
-// The per-process caps (32 uploads in all, 4 downloads per user) have no counterpart: nothing here holds a
-// temporary file, and downloads stream from R2 on their own origin. A query that was not ASCII is refused
-// today; the runtime's URL parser has already escaped it, so it is read as UTF-8.
+// Records come before writes: the Workspace's refusals (3 arriving, 30 waiting, the workspace's quota) come
+// before the body is received. The edge enforces a body's length. Nothing here holds a temporary file, so
+// there is no cap on uploads in progress beyond the Workspace's. The runtime's URL parser has already
+// escaped a query that was not ASCII, so it is read as UTF-8.
 
 import type { UploadOut } from "../contracts/api.ts";
 import type { Caller, Outcome, Refusal, Sha256, UploadId } from "../contracts/common.ts";
@@ -41,7 +38,7 @@ function refused(status: Refusal["status"], detail: string): { ok: false; refusa
 }
 
 /**
- * The checks made before anything else is read (files 9.1, checks 2 to 7): POST, one Content-Length of
+ * The checks made before anything else is read (checks 2 to 7): POST, one Content-Length of
  * digits, at most the upload limit, and exactly one non-blank `?name=`, cleaned.
  */
 export function checkUploadRequest(
@@ -110,11 +107,10 @@ export interface ReceiveOptions {
 }
 
 /**
- * Receives an upload whose request passed `checkUploadRequest` and the route's checks (files 9.1, checks 13
- * to 22): reserved in the Workspace (3 arriving and 30 waiting per user, the workspace's quota), streamed
+ * Receives an upload whose request passed `checkUploadRequest` and the route's checks: reserved in the Workspace (3 arriving and 30 waiting per user, the workspace's quota), streamed
  * into R2 while hashed, then completed with its hash, size and sniffed type. Anything that fails after the
  * reservation abandons it, so the Workspace deletes the object, written or not; an R2 failure is thrown
- * (500, as today) once it is abandoned. Past the deadline the write is stopped and given `settleMs` to end
+ * (a 500) once it is abandoned. Past the deadline the write is stopped and given `settleMs` to end
  * before the abandonment, so the delete follows the write and not the other way round; a write that ends
  * later still has its object deleted (`waitUntil`).
  */

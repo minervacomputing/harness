@@ -545,11 +545,14 @@ describe("rules", () => {
 		}
 		expect(Project.safeParse({ id: 11, slug: "web" }).success).toBe(false);
 		const sentry = new FakeSentry();
-		// A list sent as an object or a string, after a byte order mark, or not in UTF-8.
-		for (const body of ["{}", '""', utf8("\ufeff[]"), Uint8Array.from([0x5b, 0x22, 0xff, 0x22, 0x5d])]) {
+		// A list sent as an object or a string, or not in UTF-8.
+		for (const body of ["{}", '""', Uint8Array.from([0x5b, 0x22, 0xff, 0x22, 0x5d])]) {
 			sentry.hook = (request) => (request.url.pathname === "/api/0/organizations/" ? new Response(body) : null);
 			expect((await raised(clientOf(sentry).organisations())).code, String(body)).toBe("PROVIDER_FAILED");
 		}
+		// A byte order mark before the JSON is dropped.
+		sentry.hook = (request) => (request.url.pathname === "/api/0/organizations/" ? new Response(utf8("\ufeff[]")) : null);
+		expect(await clientOf(sentry).organisations()).toEqual([]);
 	});
 
 	test("answers naming another organisation, project or issue are refused", async () => {

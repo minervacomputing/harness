@@ -1,10 +1,10 @@
-// `run_script` in the `minerva` extension (harness 7.1, 7.4, 7.6): offered when the run has a connector
+// `run_script` in the `minerva` extension: offered when the run has a connector
 // tool, after the direct ones (gateway/tools.ts `modelTools`); scripts can call every connector tool of the
 // run, those past the direct cap included. Never replayed (a script may have written before it was
 // interrupted) and `sequential`, so a round with a script runs one call at a time; its result up to 1 MiB
 // with no line limit, as the direct tools'.
 //
-// What the model sees, in order (harness 7.4): the failure (clipped to 30,000 characters), the cancelled
+// What the model sees, in order: the failure (clipped to 30,000 characters), the cancelled
 // calls, the store's refusal, the printed output (images as "[image omitted]"), then the returned value, or
 // "The script printed and returned nothing."; `isError` when the script failed. A result past 1 MiB is cut
 // as pi cuts it, with pi's note (scripts/output.ts).
@@ -79,7 +79,7 @@ export async function loadStore(api: Pick<ToolExecutionApi, "snapshot" | "conver
 
 class TooLarge extends Error {}
 
-/** UTF-8 bytes of the values' JSON as one object, `{"key":value,…}`, which today's 1 MiB counts. */
+/** UTF-8 bytes of the values' JSON as one object, `{"key":value,…}`, which the 1 MiB limit counts. */
 function storeBytes(entries: ReadonlyMap<string, string>): number {
 	let bytes = 2 + Math.max(0, entries.size - 1);
 	for (const [key, json] of entries) bytes += sizeOf(JSON.stringify(key)).bytes + 1 + sizeOf(json).bytes;
@@ -119,7 +119,7 @@ export async function saveStore(
 	return undefined;
 }
 
-/** What the model sees of a result, with the store saved first when the script succeeded (harness 7.4). */
+/** What the model sees of a result, with the store saved first when the script succeeded. */
 export async function render(result: ScriptResult, save: (writes: ScriptResult["storeWrites"]) => Promise<string | undefined>): Promise<ToolExecutionResult> {
 	// Notes come first, where cutting a long result cannot drop them.
 	const notes: string[] = [];

@@ -46,7 +46,7 @@ export type ProviderOf = (connectionId: ConnectionId) => string | null;
 
 /**
  * Denies always apply. An allow counts only for a kind the connector still declares, and a wildcard allow
- * only where the kind supports one, so a hand-edited row cannot widen access (connectors 4.3).
+ * only where the kind supports one, so a hand-edited row cannot widen access.
  */
 export function enforceable(grant: GrantRow, registry: Registry, providerOf: ProviderOf): boolean {
 	if (grant.effect === "deny") return true;
@@ -91,7 +91,7 @@ function label(connector: Connector, actionId: string): string {
 	return actionOf(connector, actionId)?.label ?? actionId;
 }
 
-/** Rejects changes the connector cannot enforce, before anything asks the provider about them (connectors 4.5). */
+/** Rejects changes the connector cannot enforce, before anything asks the provider about them. */
 export function checkChanges(connector: Connector, connectionId: ConnectionId, changes: readonly GrantChange[]): void {
 	if (changes.length === 0) throw new InvalidGrants("Nothing to change.");
 	if (changes.length > MAX_CHANGES) throw new InvalidGrants(`Change at most ${MAX_CHANGES} resources at once.`);

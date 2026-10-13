@@ -1,5 +1,5 @@
-// Membership of the workspace in the URL (web-api 7), for every `/api/workspaces/{ws}/…` JSON route, in
-// Ninja's `WorkspaceMember` order: CSRF on unsafe methods (the router, before any route), then a session
+// Membership of the workspace in the URL, for every `/api/workspaces/{ws}/…` JSON route, in
+// this order: CSRF on unsafe methods (the router, before any route), then a session
 // (401), then a membership row in D1 for (workspace, user) (401 as well, never 403 or 404, so a workspace
 // that is not yours looks like one that does not exist), and only then the Workspace Durable Object. Its
 // name comes from D1's row, never from the client (addressing.ts), and it is given the verified user and
@@ -72,7 +72,7 @@ export async function member(env: Env, session: CurrentSession, workspaceId: str
 	return { caller: { userId: user.id, role: row.role }, workspace, object: workspaceObject(env, workspace), sessionId: session.sessionId };
 }
 
-/** A Durable Object's refusal as Ninja's `HttpError`: `{"detail": …}` with its status. */
+/** A Durable Object's refusal as a response: `{"detail": …}` with its status. */
 export function refused(refusal: Refusal): Response {
 	return detail(refusal.status, refusal.detail);
 }

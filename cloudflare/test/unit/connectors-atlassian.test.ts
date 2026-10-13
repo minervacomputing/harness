@@ -96,9 +96,12 @@ describe("addresses to Atlassian", () => {
 		for (const value of [...ATLASSIAN_SPELLINGS, "/browse/FIN-1", "//evil.example/x", " //evil.example/x", "#fragment", "?q=1", "example.com", ":x", "", " ", "1http://example.com"]) {
 			expect(adf.internal(value), JSON.stringify(value)).toBe(true);
 		}
-		// A scheme is ASCII; a lookalike letter makes the address relative.
-		for (const value of ["\u0131ttps://example.com", "\u0130ttps://example.com"]) expect(adf.internal(value), value).toBe(true);
-		for (const value of ["https://example.com/docs", "mailto:ada@example.com", "ftp+x.y-z://example.com", "https:", "\u3000https://example.com", "\ufeffhttps://example.com", "\u001chttps://example.com\u001f", "javascript:alert(1)"]) {
+		// A scheme is ASCII as a browser reads it; a lookalike letter, an escape or a space in it, or a leading
+		// character a browser does not strip, makes the address relative, even where NFKC would make it https.
+		for (const value of ["\u0131ttps://example.com", "\u0130ttps://example.com", "http\u017f://example.com", "\uff48\uff54\uff54\uff50\uff53://example.com", "%68ttps://example.com", "h ttps://example.com", "\u3000https://example.com", "\ufeffhttps://example.com"]) {
+			expect(adf.internal(value), JSON.stringify(value)).toBe(true);
+		}
+		for (const value of ["https://example.com/docs", "mailto:ada@example.com", "ftp+x.y-z://example.com", "https:", "\u001chttps://example.com\u001f", " https://example.com ", "ht\ttps://example.com", "javascript:alert(1)"]) {
 			expect(adf.internal(value), JSON.stringify(value)).toBe(false);
 		}
 		expect(adf.internal("https://acme.example.com/x", ["acme.example.com"])).toBe(true);

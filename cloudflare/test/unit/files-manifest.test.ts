@@ -1,6 +1,5 @@
 // Manifests: validation and its messages, the stored form and its digest, folder sizes, warnings and what a
-// turn changed, against the vectors Python wrote (files-vectors.py; changed.ts lists where they now differ),
-// and cases of their own.
+// turn changed.
 
 import { describe, expect, test } from "vitest";
 import type { StoredEntries } from "../../src/contracts/files.ts";
@@ -24,94 +23,14 @@ import {
 import { sha256HexSync } from "../../src/files/sha256.ts";
 import { hex, utf8 } from "../../src/lib/bytes.ts";
 import { canonicalJson } from "../../src/lib/canonical.ts";
-import { type Json, parseJson } from "../../src/lib/json.ts";
-import { changedOnPurpose, jsonQuoted } from "./changed.ts";
-import { filesVectors } from "./files-support.ts";
+import { parseJson } from "../../src/lib/json.ts";
 
-const vectors = filesVectors();
 const A = "a".repeat(64);
 const B = "b".repeat(64);
 
 function file(path: unknown, sha256: unknown = A, mode: unknown = 0o644, mtime: unknown = 0) {
 	return { path, sha256, mode, mtime };
 }
-
-/** `parse` as the vectors record it: the parsed form, or the refusal. */
-function outcome(call: () => Json): Json {
-	try {
-		return { ok: call() };
-	} catch (error) {
-		if (error instanceof InvalidManifest) return { invalid: error.message };
-		if (error instanceof QuotaExceeded) return { quota: error.limit };
-		throw error;
-	}
-}
-
-function parsed(data: unknown, maxEntries: number): Json {
-	const manifest = parseManifest(data, maxEntries);
-	const files: { [path: string]: Json } = {};
-	for (const [path, entry] of manifest.files) Object.defineProperty(files, path, { value: [entry.sha256, entry.mode, entry.mtime], enumerable: true });
-	return { files, dirs: manifest.dirs, entry_count: manifest.entryCount, hashes: [...new Set([...manifest.files.values()].map((entry) => entry.sha256))].sort() };
-}
-
-describe("Python's vectors", () => {
-	test("they come from the Unicode version the scan's names are checked against", () => {
-		// Python 3.14's tables; the runtime's ICU may differ for characters assigned since (files risk 23).
-		expect(vectors.unicode).toBe("16.0.0");
-	});
-
-	test("manifests: the parse, or the refusal with its message", () => {
-		const cases = vectors.manifest as { data: Json; max_entries: number; outcome: Json }[];
-		expect(cases.length).toBeGreaterThan(70);
-		for (const { data, max_entries, outcome: expected } of cases) {
-			const actual = outcome(() => parsed(data, max_entries));
-			const message = (expected as { invalid?: string }).invalid;
-			expect([data, actual]).toEqual([data, message === undefined ? expected : { invalid: jsonQuoted(message) }]);
-			// Python's dict keeps the order files were given in, and so does the parse.
-			if ("ok" in (expected as object)) {
-				expect(Object.keys((actual as { ok: { files: object } }).ok.files)).toEqual(Object.keys((expected as { ok: { files: object } }).ok.files));
-			}
-		}
-	});
-
-	test("digests and stored forms, whatever the input's order", () => {
-		for (const vector of vectors.digest as { data: Json; sizes: { [hash: string]: number }; entries: Json; folder_bytes: number }[]) {
-			const entries = storedEntries(parseManifest(vector.data, 100), new Map(Object.entries(vector.sizes)));
-			expect(entries).toEqual(vector.entries);
-			expect(filesOf(entries).map(([path]) => path)).toEqual(filesOf(vector.entries as unknown as StoredEntries).map(([path]) => path));
-			// Over the label and the canonical JSON (lib/canonical.ts) of the entries Python stored.
-			expect(digestOf(entries)).toBe(sha256HexSync(utf8(`minerva:folder-version:${canonicalJson(vector.entries)}`)));
-			expect(entriesBytes(entries)).toBe(vector.folder_bytes);
-		}
-	});
-
-	test("folder bytes round each file up to whole pages", () => {
-		for (const vector of vectors.folder_bytes as { sizes: number[]; bytes: number }[]) expect(folderBytes(vector.sizes)).toBe(vector.bytes);
-	});
-
-	test("what a turn changed", () => {
-		for (const vector of vectors.folder_changes as { before: Json; after: Json; changes: Json }[]) {
-			if (changedOnPurpose(vector)) continue;
-			expect(folderChanges(vector.before as never, vector.after as never)).toEqual(vector.changes);
-		}
-	});
-
-	test("warnings: the stored form, or the refusal", () => {
-		for (const { data, outcome: expected } of vectors.warnings as { data: Json; outcome: Json }[]) {
-			if (changedOnPurpose(data)) continue;
-			const actual = outcome(() => parseWarnings(data) as unknown as Json);
-			if (JSON.stringify(data) === '{"total":1,"items":[]}' && "invalid" in (expected as object)) {
-				// Python's `1.0`, a float it refuses as a total; a parsed or cloned JavaScript number cannot be
-				// told from 1 (files risk 4, a harmless widening: the count is right).
-				expect(actual).toEqual({ ok: { total: 1, items: [] } });
-				continue;
-			}
-			expect([data, actual]).toEqual([data, expected]);
-		}
-	});
-});
-
-// test_files_manifest.py
 
 describe("parsing a manifest", () => {
 	test("a manifest counts every directory, including implied ones", () => {
@@ -185,6 +104,43 @@ describe("parsing a manifest", () => {
 		}
 	});
 
+	test("refusals name the path, quoted as JSON", () => {
+		const refusal = (data: unknown) => {
+			try {
+				parseManifest(data, 10);
+			} catch (error) {
+				return (error as Error).message;
+			}
+			return null;
+		};
+		const one = (path: unknown, ...rest: unknown[]) => refusal({ files: [file(path, ...rest)], dirs: [] });
+		expect(refusal([])).toBe('A manifest is an object with exactly "files" and "dirs".');
+		expect(refusal({ files: {}, dirs: [] })).toBe('"files" and "dirs" are lists.');
+		expect(refusal({ files: [{ ...file("a"), size: 1 }], dirs: [] })).toBe("A file entry has exactly path, sha256, mode and mtime.");
+		expect(one(7)).toBe("A path is a string.");
+		expect(one("\udcff")).toBe("A path is valid UTF-8.");
+		expect(one("x/".repeat(600))).toBe("A path has at most 1024 bytes.");
+		expect(one("a/../b")).toBe('"a/../b" is not a relative path without empty, . or .. segments.');
+		expect(one("a\u0085b")).toBe('"a\u0085b" contains a control character.');
+		expect(one("a\nb")).toBe('"a\\nb" contains a control character.');
+		expect(one("e\u0301")).toBe('"e\u0301" is not in NFC.');
+		expect(one(Array(33).fill("d").join("/"))).toBe(`${JSON.stringify(Array(33).fill("d").join("/"))} is more than 32 levels deep.`);
+		expect(one("\u00e9".repeat(128))).toBe(`${JSON.stringify("\u00e9".repeat(128))} has a name longer than 255 bytes.`);
+		expect(one("a'\"b", "A".repeat(64))).toBe('"a\'\\"b": sha256 is 64 lowercase hex digits.');
+		expect(one("a", A, 0o777)).toBe('"a": mode is 0644 or 0755.');
+		expect(one("a", A, 0o644, -1)).toBe('"a": mtime is an integer number of milliseconds within range.');
+		expect(refusal({ files: [file("a"), file("a", B)], dirs: [] })).toBe('"a" is listed twice.');
+		expect(refusal({ files: [file("a"), file("a/b")], dirs: [] })).toBe('"a" is both a file and a directory.');
+		expect(refusal({ files: [file("a/b")], dirs: ["a"] })).toBe('"a" is listed as an empty directory but has entries.');
+	});
+
+	test("names with invisible or unusual characters are paths like any other", () => {
+		const paths = ["a\u202eb", "\ufeffbom", "a b", " ", "\u{e0001}", "a\\b", "a'\"b", "\u{1f600}/\u{1f600}"];
+		const manifest = parseManifest({ files: paths.map((path) => file(path)), dirs: [] }, 100);
+		expect([...manifest.files.keys()]).toEqual(paths);
+		expect(manifest.dirs).toEqual([]);
+	});
+
 	test("an oversized manifest is refused before its paths are checked", () => {
 		expect(() => parseManifest({ files: Array(11).fill({ path: null }), dirs: [] }, 10)).toThrow(QuotaExceeded);
 	});
@@ -199,6 +155,9 @@ describe("parsing a manifest", () => {
 		const entries = storedEntries(first, sizes);
 		expect(entries).toEqual(storedEntries(second, sizes));
 		expect(digestOf(entries)).toBe(digestOf(storedEntries(second, sizes)));
+		// Over the label and the canonical JSON of the stored entries.
+		expect(digestOf(entries)).toBe(sha256HexSync(utf8(`minerva:folder-version:${canonicalJson(entries)}`)));
+		expect(entriesBytes(entries)).toBe(4096 + 8192);
 		expect(entries.files.b).toEqual({ sha256: B, size: 4097, mode: 0o644, mtime: 0 });
 		expect(folderBytes([0, 1, 4096, 4097])).toBe(0 + 4096 + 4096 + 8192);
 	});
@@ -253,8 +212,46 @@ describe("the stored form", () => {
 	});
 });
 
+describe("warnings", () => {
+	const items = (n: number, reason = "symlink") => Array.from({ length: n }, () => ({ path: "a", reason }));
+
+	test("the stored form: a total and at most 100 items, each a path and a known reason", () => {
+		const all = ["invalid_name", "special", "symlink", "too_deep", "too_long", "unreadable"].map((reason, i) => ({ path: `p${i}`, reason }));
+		expect(parseWarnings({ total: 6, items: all })).toEqual({ total: 6, items: all });
+		expect(parseWarnings({ total: 0, items: [] })).toEqual({ total: 0, items: [] });
+		expect(parseWarnings({ total: 2 ** 31 - 1, items: items(100) })).toEqual({ total: 2 ** 31 - 1, items: items(100) });
+		// Invisible characters are kept as they are: the path is shown, never used.
+		expect(parseWarnings({ total: 1, items: [{ path: "a\u202eb\ufeff", reason: "invalid_name" }] }).items[0]?.path).toBe("a\u202eb\ufeff");
+		expect(parseWarnings({ total: 1, items: [{ path: "x".repeat(1024), reason: "too_long" }] }).items[0]?.path).toHaveLength(1024);
+	});
+
+	test.each([
+		[[], 'Warnings are {"total", "items"}.'],
+		[{ total: 0 }, 'Warnings are {"total", "items"}.'],
+		[{ total: 0, items: [], more: 1 }, 'Warnings are {"total", "items"}.'],
+		[{ total: 1, items: {} }, "Warnings list at most 100 items."],
+		[{ total: 101, items: items(101) }, "Warnings list at most 100 items."],
+		[{ total: true, items: [] }, "The warnings' total is not a count of their items."],
+		[{ total: 1.5, items: [] }, "The warnings' total is not a count of their items."],
+		[{ total: -1, items: [] }, "The warnings' total is not a count of their items."],
+		[{ total: 0, items: items(1) }, "The warnings' total is not a count of their items."],
+		[{ total: 2 ** 31, items: [] }, "The warnings' total is not a count of their items."],
+		[{ total: 1, items: ["a"] }, 'A warning is {"path", "reason"}, with a known reason.'],
+		[{ total: 1, items: items(1, "deleted") }, 'A warning is {"path", "reason"}, with a known reason.'],
+		[{ total: 1, items: [{ path: "a", reason: "constructor" }] }, 'A warning is {"path", "reason"}, with a known reason.'],
+		[{ total: 1, items: [{ path: "a", reason: "symlink", size: 1 }] }, 'A warning is {"path", "reason"}, with a known reason.'],
+		[{ total: 1, items: [{ path: "", reason: "symlink" }] }, "A warning's path is empty, too long, or has control characters."],
+		[{ total: 1, items: [{ path: 1, reason: "symlink" }] }, "A warning's path is empty, too long, or has control characters."],
+		[{ total: 1, items: [{ path: "a\nb", reason: "symlink" }] }, "A warning's path is empty, too long, or has control characters."],
+		[{ total: 1, items: [{ path: "a\u007fb", reason: "symlink" }] }, "A warning's path is empty, too long, or has control characters."],
+		[{ total: 1, items: [{ path: "a\ud800b", reason: "symlink" }] }, "A warning's path is empty, too long, or has control characters."],
+		[{ total: 1, items: [{ path: "x".repeat(1025), reason: "symlink" }] }, "A warning's path is empty, too long, or has control characters."],
+	])("refused: %j", (data, message) => {
+		expect(() => parseWarnings(data)).toThrow(new InvalidManifest(message));
+	});
+});
+
 describe("what a turn changed", () => {
-	// test_files_web.py: test_a_turns_changes_list_files_and_directories.
 	test("files added, modified (contents or mode) and deleted, and directories, listed or implied", () => {
 		const entries = (files: { [path: string]: [string, number] }, dirs: string[] = []) => ({
 			files: Object.fromEntries(Object.entries(files).map(([path, [sha256, mode]]) => [path, { sha256, mode, size: 1 }])),

@@ -332,8 +332,7 @@ async function inApp(): Promise<string> {
 }
 
 async function signOut(): Promise<void> {
-	// The app empties its cache before it leaves the workspace's pages, whose queries ask again, now signed out
-	// (as today's frontend does with Django).
+	// The app empties its cache before it leaves the workspace's pages, whose queries ask again, now signed out.
 	expected.push(/^GET \/api\/workspaces\/[0-9a-f-]{36}(\/[a-z]+|\/[a-z]+\/[0-9a-f-]{36})+ 401$/);
 	await button("Sign out").first().click();
 	await page.waitForURL(/\/login/);

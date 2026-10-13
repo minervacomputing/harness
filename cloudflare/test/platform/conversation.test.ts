@@ -1,8 +1,7 @@
 // The Conversation Durable Object in local workerd: the start protocol against a fake Workspace, runs and
 // their events, cancels and revocations, the deadline, paging, the stream's WebSocket, tools through a fake
-// executor, history replay, and restarts through the attempt gate with the fake model. Ported from
-// backend/tests/test_api.py (runs and messages), test_gateway.py and test_attempts.py (events, fencing,
-// tools, model calls), test_supervisor.py (restarts) and worker/test/resume.test.ts (recovery).
+// executor, history replay, fencing, model calls, and restarts and recovery through the attempt gate with
+// the fake model.
 
 import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
@@ -734,7 +733,7 @@ describe("the model", () => {
 		// pi adds the instructions as a positional system section; providers that take no mid-conversation
 		// system messages fold it into the leading one.
 		const system = context.messages.filter((message) => message.role === "system");
-		// With the local tools, the folder's paragraph follows the agent's instructions after a blank line (harness 3.3).
+		// With the local tools, the folder's paragraph follows the agent's instructions after a blank line.
 		expect(JSON.stringify(system)).toContain(JSON.stringify(`<instructions>\nYou are a test agent.\n\n${FOLDER_INSTRUCTIONS}\n</instructions>`).slice(1, -1));
 	});
 

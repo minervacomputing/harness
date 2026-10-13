@@ -202,7 +202,7 @@ export type CoreErrorCode =
 	| "PROVIDER_FAILED"
 	| "FILE_TOO_LARGE"
 	| "INVALID_ADDRESS"
-	/** Any error that is not an operation error; its message is the generic one (runs 5.3). */
+	/** Any error that is not an operation error; its message is the generic one. */
 	| "FAILED";
 
 /** Errors connectors raise. */
@@ -308,7 +308,7 @@ export interface ProviderRequest {
 }
 
 /**
- * A provider's HTTP client (http.py `ProviderHTTP`). Never follows redirects (`redirect: "manual"`).
+ * A provider's HTTP client. Never follows redirects (`redirect: "manual"`).
  * Allows one mutating request, only inside an open write attempt, only with at least 2 s left (else
  * TIMED_OUT, not sent), with a timeout of min(20 s, time left). Maps errors: `classify` first, then 401
  * CONNECTION_UNAUTHORIZED "The {provider} connection is no longer authorized.", 403 `forbidden` (default
@@ -343,8 +343,9 @@ export interface ProviderHttpOptions {
 	forbidden?(provider: string, response: Response): OperationErrorShape;
 	/**
 	 * Names the error for a failed response when its status does not; null keeps the status's meaning.
-	 * `body` is the text decoded with replacement characters; `bytes` what was received, for a connector
-	 * that reads it as Python's `response.json()` does, which refuses invalid UTF-8.
+	 * `body` is the text decoded leniently (U+FFFD for invalid bytes), on purpose: a provider's reason is
+	 * still found in an error body with stray bytes. `bytes` is what was received, for a connector that reads
+	 * it strictly with parseJsonBytes.
 	 */
 	classify?(provider: string, response: Response, body: string, bytes: Uint8Array): OperationErrorShape | null;
 	/**

@@ -1,4 +1,4 @@
-// Where model requests go (runs 7.1): routes from the settings, the fake for tests and a test deployment,
+// Where model requests go: routes from the settings, the fake for tests and a test deployment,
 // and never the account's default AI Gateway.
 
 import type { Message, TranscriptContext } from "@earendil-works/pi-ai";
@@ -41,7 +41,7 @@ describe("routes", () => {
 		expect(fakeUpstream().model.provider).toBe(FAKE_PROVIDER);
 	});
 
-	test("every route stops reading an answer that is quiet for 120 s between chunks (runs 2.5)", () => {
+	test("every route stops reading an answer that is quiet for 120 s between chunks", () => {
 		const options = (route: Partial<ModelRoute>) => {
 			const { model } = upstreamOf({ ...routeOf(parse(settingsEnv())), ...route }, BINDING);
 			return (model as unknown as { [key: symbol]: { streamIdleTimeoutMs?: number } })[Symbol.for("agents.models.pi-ai.options")];

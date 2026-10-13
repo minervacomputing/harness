@@ -13,8 +13,8 @@ import { z } from "zod";
 import type { ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP, segment } from "../../gateway/http.ts";
-import type { Json } from "../../lib/json.ts";
-import { API_URL, type Classify, Graph, MAX_RESPONSE_BYTES, classify, errorCode, jsonOf, pageParam } from "../microsoft/index.ts";
+import { type Json, parseJsonBytes } from "../../lib/json.ts";
+import { API_URL, type Classify, Graph, MAX_RESPONSE_BYTES, classify, errorCode, pageParam } from "../microsoft/index.ts";
 import { percentEncode } from "../../lib/text.ts";
 
 export const ITEM_FIELDS = "id,name,size,file,folder,root,package,remoteItem,parentReference,webUrl,lastModifiedDateTime";
@@ -196,7 +196,7 @@ export class DriveClient extends Graph {
 		);
 		let answer: unknown;
 		try {
-			answer = jsonOf(new Uint8Array(await response.arrayBuffer()));
+			answer = parseJsonBytes(await response.arrayBuffer());
 		} catch (error) {
 			throw this.unexpected(error);
 		}

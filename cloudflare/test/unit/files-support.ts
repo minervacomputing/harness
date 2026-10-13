@@ -1,5 +1,4 @@
-// Helpers for the files tests: the Python vectors (files-vectors.json, read with parseJson, since the
-// runtime's JSON.parse can misread escaped keys), an in-memory R2 bucket with fault hooks, a Workspace byte
+// Helpers for the files tests: an in-memory R2 bucket with fault hooks, a Workspace byte
 // counter, and a conversation's folder over node:sqlite with the Conversation's own schema, its runs and a
 // `finish` that publishes as conversation/store.ts does.
 
@@ -15,16 +14,6 @@ import { hex } from "../../src/lib/bytes.ts";
 import { type Json, parseJson } from "../../src/lib/json.ts";
 import { migrate, type Sql, sqliteSql } from "../../src/lib/sql.ts";
 import { openDatabase } from "./sqlite.ts";
-
-interface NodeFs {
-	getBuiltinModule(id: "node:fs"): { readFileSync(path: URL, encoding: "utf8"): string };
-}
-
-/** files-vectors.json, written by test/fixtures/files-vectors.py from today's Python. */
-export function filesVectors(): { [name: string]: Json } {
-	const fs = (globalThis as unknown as { process: NodeFs }).process.getBuiltinModule("node:fs");
-	return parseJson(fs.readFileSync(new URL("../fixtures/files-vectors.json", import.meta.url), "utf8")) as { [name: string]: Json };
-}
 
 export const WORKSPACE = "0199a000-0000-7000-8000-00000000f0a1";
 export const CONVERSATION = "0199a000-0000-7000-8000-00000000f0c1";

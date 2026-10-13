@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { ALPHANUMERIC, DIGITS, isUuid, randomString, tokenHex, tokenUrlsafe, uuid7 } from "../../src/lib/random.ts";
 
-test("tokens have Python's lengths and alphabets", () => {
+test("tokens are URL-safe base64 or hex, of the bytes' lengths", () => {
 	expect(tokenUrlsafe()).toMatch(/^[A-Za-z0-9_-]{43}$/);
 	expect(tokenUrlsafe(18)).toMatch(/^[A-Za-z0-9_-]{24}$/);
 	expect(tokenUrlsafe(64)).toHaveLength(86);

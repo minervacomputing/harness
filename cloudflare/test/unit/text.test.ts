@@ -2,8 +2,7 @@ import { describe, expect, test } from "vitest";
 import { OperationError } from "../../src/gateway/connector.ts";
 import { segment } from "../../src/gateway/http.ts";
 import { publicError } from "../../src/gateway/results.ts";
-import { PLAIN_TEXT, SINGLE_LINE, TextError, decoded, htmlUnescape, percentEncode, plainText, singleLine, sliceText, truncate, unquote } from "../../src/lib/text.ts";
-import vectors from "./vectors.ts";
+import { PLAIN_TEXT, SINGLE_LINE, TextError, browserAddress, decoded, htmlUnescape, percentEncode, plainText, singleLine, sliceText, truncate, unquote } from "../../src/lib/text.ts";
 
 test("free-text validators draw one line for control characters", () => {
 	for (let code = 0; code < 0x80; code++) {
@@ -30,13 +29,72 @@ test("validators' messages", () => {
 });
 
 describe("decoded", () => {
-	test.each(vectors.decoded)("$input", ({ input, output }) => {
+	test.each([
+		// Every encoding that could hide a dot in an address, undone.
+		["[x](https://linear%2eapp/acme/issue/OPS-1)", "[x](https://linear.app/acme/issue/OPS-1)"],
+		["[x](https://linear&#46;app/acme/issue/OPS-1)", "[x](https://linear.app/acme/issue/OPS-1)"],
+		["[x](https://linear\\.app/acme/issue/OPS-1)", "[x](https://linear.app/acme/issue/OPS-1)"],
+		["[x](https://linear\u3002app/acme/issue/OPS-1)", "[x](https://linear.app/acme/issue/OPS-1)"],
+		["[x](https://\uff4c\uff49\uff4e\uff45\uff41\uff52.app/acme/issue/OPS-1)", "[x](https://linear.app/acme/issue/OPS-1)"],
+		["[x](https://linear\u200b.app/acme/issue/OPS-1)", "[x](https://linear.app/acme/issue/OPS-1)"],
+		["https://linear.app/acme/issue/ENG-1/%2e%2e", "https://linear.app/acme/issue/ENG-1/.."],
+		["acme.slack&#46;com/archives", "acme.slack.com/archives"],
+		["acme.slack\u200b.com", "acme.slack.com"],
+		// Three rounds, so twice-encoded text is undone, and no more.
+		["linear%252eapp", "linear.app"],
+		["linear%25252eapp", "linear.app"],
+		["linear%2525252eapp", "linear%2eapp"],
+		["linear&amp;#46;app", "linear.app"],
+		["linear&amp;amp;#46;app", "linear.app"],
+		["%26%2346%3B", "."],
+		["\ufeffstart and \u00e9nd", "start and \u00e9nd"],
+		["\u2460 \ufb01 \u00bd", "1 fi 1\u20442"],
+		["plain text, nothing encoded", "plain text, nothing encoded"],
+		["100% sure & then some", "100% sure & then some"],
+		["&lt;img src=x&gt;", "<img src=x>"],
+		// NFKC reads lookalikes as ASCII, so a scheme is never tested on this (browserAddress).
+		["http\u017f://example.com", "https://example.com"],
+		["\uff48\uff54\uff54\uff50\uff53://example.com", "https://example.com"],
+	])("%j", (input, output) => {
 		expect(decoded(input)).toBe(output);
 	});
 });
 
+describe("browserAddress", () => {
+	test.each([
+		[" \u0000https://example.com/\u001f ", "https://example.com/"],
+		["ht\ttps://exa\nmple.com/\r", "https://example.com/"],
+		// Nothing else is undone: these schemes stay what a browser sees, which is no scheme at all.
+		["http\u017f://example.com", "http\u017f://example.com"],
+		["%68ttps://example.com", "%68ttps://example.com"],
+		["&#104;ttps://example.com", "&#104;ttps://example.com"],
+		["\u3000https://example.com", "\u3000https://example.com"],
+		["\u200bhttps://example.com", "\u200bhttps://example.com"],
+	])("%j", (input, output) => {
+		expect(browserAddress(input)).toBe(output);
+		// What the URL parser makes of it agrees: an absolute https address only when the form starts with one.
+		const parsed = new URL(input, "https://base.example/page");
+		expect(parsed.host === "example.com", input).toBe(output.startsWith("https://"));
+	});
+});
+
 describe("unquote", () => {
-	test.each(vectors.unquote)("$input", ({ input, output }) => {
+	test.each([
+		["a%20b", "a b"],
+		["%E2%82%AC", "\u20ac"],
+		["%e2%82", "\ufffd"],
+		["%zz", "%zz"],
+		["100%", "100%"],
+		["%", "%"],
+		["%%41", "%A"],
+		["caf%C3%A9 \u00e9 %C3", "caf\u00e9 \u00e9 \ufffd"],
+		["\u00e9%41", "\u00e9A"],
+		["%F0%9F%98%80", "\u{1f600}"],
+		["%ff%fe", "\ufffd\ufffd"],
+		["a+b", "a+b"],
+		["%2", "%2"],
+		["%41%", "A%"],
+	])("%j", (input, output) => {
 		expect(unquote(input)).toBe(output);
 	});
 });
@@ -77,12 +135,49 @@ function catchError(fn: () => unknown): unknown {
 }
 
 describe("htmlUnescape", () => {
-	test.each(vectors.unescape)("$input", ({ input, output }) => {
+	test.each([
+		["&amp;", "&"],
+		["&amp", "&"],
+		["&ampx", "&x"],
+		["&AMP", "&"],
+		["&Amp;", "&Amp;"],
+		["&lt;b&gt;", "<b>"],
+		["&lt=", "<="],
+		["a&amp;b&lt;c&gt;\n&quot;&apos;", "a&b<c>\n\"'"],
+		["&#46;&#x2e;&#X2E", "..."],
+		["&#00000065", "A"],
+		["&#X41g&#65a&#6g", "AgAa\u0006g"],
+		// A control is kept; `decoded` removes invisible characters itself.
+		["&#1;&#x7f;&#xFDD0;", "\u0001\u007f\ufdd0"],
+		["&#;&#x;&#xg;", "&#;&#x;&#xg;"],
+		["&#x41;;", "A;"],
+		// Without ";", the longest name that starts the reference, if it may end that way.
+		["&notit;", "\u00acit;"],
+		["&notin;", "\u2209"],
+		["&notinx", "\u00acinx"],
+		["&nbsp&nbsp;", "\u00a0\u00a0"],
+		["&copy2", "\u00a92"],
+		["&AElig&aeligx", "\u00c6\u00e6x"],
+		["&isin;&isinv;&isinvx", "\u2208\u2208&isinvx"],
+		["&Gt;&GT;&gt;&Gt", "\u226b>>&Gt"],
+		["&lsquo;&LSQUO&rsquo", "\u2018&LSQUO&rsquo"],
+		["&NotEqualTilde;", "\u2242\u0338"],
+		// Names that are not entities stay, the properties of Object.prototype included.
+		["&nosuchentity;", "&nosuchentity;"],
+		["&constructor;&__proto__;&toString", "&constructor;&__proto__;&toString"],
+		["&\u{1f600};&\u00e9;", "&\u{1f600};&\u00e9;"],
+		[`&${"a".repeat(40)};`, `&${"a".repeat(40)};`],
+		["a & b", "a & b"],
+		["&&amp;&amp&", "&&&&"],
+		// One round only.
+		["&amp;amp;&#38;#38;&amp;#38;", "&amp;&#38;&#38;"],
+		["&\t&amp;", "&\t&"],
+	])("%j", (input, output) => {
 		expect(htmlUnescape(input)).toBe(output);
 	});
 
 	test("every code point as a numeric reference, in every spelling", () => {
-		// The windows-1252 range, the noncharacters and the ends of Unicode, written out.
+		// The windows-1252 range, NUL, the surrogates and the ends of Unicode, written out; every other code point is itself.
 		const letters = [0x20ac, 0x81, 0x201a, 0x192, 0x201e, 0x2026, 0x2020, 0x2021, 0x2c6, 0x2030, 0x160, 0x2039, 0x152, 0x8d, 0x17d, 0x8f];
 		const more = [0x90, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014, 0x2dc, 0x2122, 0x161, 0x203a, 0x153, 0x9d, 0x17e, 0x178];
 		const expected = new Map<number, string>();
@@ -92,8 +187,6 @@ describe("htmlUnescape", () => {
 			else if (point === 0) text = "\ufffd";
 			else if (point >= 0x80 && point <= 0x8f) text = String.fromCodePoint(letters[point - 0x80] as number);
 			else if (point >= 0x90 && point <= 0x9f) text = String.fromCodePoint(more[point - 0x90] as number);
-			else if ((point >= 1 && point <= 8) || point === 0xb || (point >= 0xe && point <= 0x1f) || point === 0x7f) text = "";
-			else if ((point >= 0xfdd0 && point <= 0xfdef) || (point & 0xfffe) === 0xfffe) text = "";
 			expected.set(point, text);
 		}
 		const wrong: unknown[] = [];

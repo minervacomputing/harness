@@ -54,7 +54,7 @@ export function configuredClient(env: Env, app: string): { clientId: string; cli
 /**
  * MINERVA_<APP>_CLIENT_ID and _SECRET (both required; an empty id counts as unset), then the clients
  * registered dynamically, in D1's `oauth_clients`, whose secrets are encrypted as `{"secret": …}`
- * (connectors 11.1), bound to the row's provider, redirect URI and client id (lib/encryption.ts).
+ *, bound to the row's provider, redirect URI and client id (lib/encryption.ts).
  */
 export function oauthClients(env: Env, keys: EncryptionKeys): OAuthClients {
 	return {

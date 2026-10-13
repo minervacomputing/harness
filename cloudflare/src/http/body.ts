@@ -1,50 +1,32 @@
-// JSON request bodies, capped before parsing as Django caps them today (web-api spec 1): a declared or
-// streamed length over 2.5 MB is 413 `The request is too large.`, and a body that is not JSON is 400
-// `Cannot parse request body`. Uploads are raw bodies and do not come through here. Routes read bodies
-// only with `readJson`, never `c.req.json()`: it parses with lib/json.ts's `parseJson`, which the
-// runtime's JSON.parse cannot replace (see there), and test/unit/sources.test.ts checks it.
+// JSON request bodies, capped before parsing: a declared or streamed length over 2.5 MB is 413 `The request
+// is too large.`, and a body that is not UTF-8 JSON is 400 `Cannot parse request body`. Uploads are raw
+// bodies and do not come through here. Routes read bodies only with `readJson`, never `c.req.json()`: it
+// parses with lib/json.ts's `parseJsonBytes`, which the runtime's JSON.parse cannot replace (see there),
+// and test/unit/sources.test.ts checks it.
 
-import { type Json, parseJson } from "../lib/json.ts";
+import { concatAll } from "../lib/bytes.ts";
+import { type Json, parseJsonBytes } from "../lib/json.ts";
 import { HttpError, tooLarge, unparseableBody } from "./errors.ts";
 
-/** Django's DATA_UPLOAD_MAX_MEMORY_SIZE. */
+/** The largest JSON request body, in bytes. */
 export const MAX_JSON_BODY = 2_621_440;
 
 export async function readJson(request: Request, limit = MAX_JSON_BODY): Promise<Json> {
-	const declared = request.headers.get("Content-Length");
-	if (declared !== null && (!/^[0-9]+$/.test(declared.trim()) || Number(declared) > limit)) {
-		throw new HttpError(tooLarge());
-	}
-	const text = await readText(request, limit);
-	try {
-		return parseJson(text);
-	} catch {
-		throw new HttpError(unparseableBody());
-	}
+	return parse(await readBytes(request, limit));
 }
 
 /**
- * A body that may be absent: null when it is empty, as Ninja then validates the request as if no payload
+ * A body that may be absent: null when it is empty, so the route validates the request as if no payload
  * was sent (a required body is 422 `missing`, api/input.ts); otherwise as `readJson`.
  */
 export async function readOptionalJson(request: Request, limit = MAX_JSON_BODY): Promise<{ value: Json } | null> {
 	const bytes = await readBytes(request, limit);
-	if (bytes.byteLength === 0) return null;
-	try {
-		return { value: parseJson(decode(bytes)) };
-	} catch (error) {
-		if (error instanceof HttpError) throw error;
-		throw new HttpError(unparseableBody());
-	}
+	return bytes.byteLength === 0 ? null : { value: parse(bytes) };
 }
 
-async function readText(request: Request, limit: number): Promise<string> {
-	return decode(await readBytes(request, limit));
-}
-
-function decode(bytes: Uint8Array): string {
+function parse(bytes: Uint8Array): Json {
 	try {
-		return new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
+		return parseJsonBytes(bytes);
 	} catch {
 		throw new HttpError(unparseableBody());
 	}
@@ -70,11 +52,5 @@ export async function readBytes(request: Request, limit = MAX_JSON_BODY): Promis
 		}
 		chunks.push(value);
 	}
-	const bytes = new Uint8Array(size);
-	let offset = 0;
-	for (const chunk of chunks) {
-		bytes.set(chunk, offset);
-		offset += chunk.byteLength;
-	}
-	return bytes;
+	return concatAll(chunks);
 }

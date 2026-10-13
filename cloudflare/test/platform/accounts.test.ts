@@ -370,7 +370,7 @@ describe("CSRF: Better Auth's origins on its routes, our token on ours", () => {
 	});
 });
 
-describe("tenancy (test_tenancy)", () => {
+describe("tenancy", () => {
 	test("two users' workspaces see only their own agent", async () => {
 		const agents = [];
 		for (const name of ["ada", "grace"]) {
@@ -386,7 +386,7 @@ describe("tenancy (test_tenancy)", () => {
 	});
 });
 
-describe("seed (test_seed)", () => {
+describe("seed", () => {
 	test("with debug, seeding twice is idempotent, removes two-factor and signs the accounts out", async () => {
 		expect(await seed(env)).toEqual(["created  ada@example.com", "created  grace@example.com", "Password for all seed accounts: password"]);
 		const ada = await userId("ada@example.com");

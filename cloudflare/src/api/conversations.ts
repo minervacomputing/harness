@@ -152,7 +152,7 @@ async function download(c: Context<AppEnv>): Promise<Response> {
 		if (error instanceof HttpError) return missing();
 		throw error;
 	}
-	// Django's `request.GET.get`: the last value.
+	// A repeated parameter counts with its last value.
 	const query = new URL(c.req.url).searchParams;
 	const path = query.getAll("path").at(-1) ?? "";
 	const rawVersion = query.getAll("version").at(-1) ?? "";

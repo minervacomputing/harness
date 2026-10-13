@@ -1,7 +1,7 @@
 // The executor's run-state port over the Conversation Durable Object's own state: its runs (read through
 // `RunTable`, which the object implements over its runs table and memory), the write ledger and page
 // tokens. Every method is synchronous, so a check and the claim or answer that depends on it happen with
-// no await between them (plan: Strict revocation, Writes; runs 5.1).
+// no await between them (plan: Strict revocation, Writes).
 
 import type { AttemptFence, EpochMs, RunId } from "../contracts/common.ts";
 import type { DispatchResult, RunStatePort, Settlement, WriteRecord } from "../contracts/executor.ts";
@@ -29,7 +29,7 @@ export interface RunTable {
 
 const ACTING: ReadonlySet<RunStatus> = new Set<ActingStatus>(["provisioning", "running"]);
 
-/** An expired run counts as inactive for every check before it is marked timed_out (runs 2.5). */
+/** An expired run counts as inactive for every check before it is marked timed_out. */
 export function canAct(run: RunState | null, now: EpochMs): run is RunState {
 	return run !== null && ACTING.has(run.status) && !run.revoked && (run.deadline === null || run.deadline > now);
 }

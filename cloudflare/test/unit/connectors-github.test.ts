@@ -29,7 +29,7 @@ import { EncryptionKeys } from "../../src/lib/encryption.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
 import { unquote } from "../../src/lib/text.ts";
 import { WorkspaceCore } from "../../src/workspace/core.ts";
-import { EXPIRED, type OAuth2, tokenBody, tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
+import { EXPIRED, type OAuth2, answerJson, tokenBody, tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
 import { oauthClients } from "../../src/workspace/env.ts";
 import { connectionOut } from "../../src/workspace/out.ts";
 import { Scenario, jsonResponse, userGrants } from "./executor-fakes.ts";
@@ -524,11 +524,11 @@ describe("tokens", () => {
 		expect([headers.get("accept"), headers.get("content-type"), init.redirect]).toEqual(["application/json", "application/x-www-form-urlencoded", "manual"]);
 		expect([...new URLSearchParams(init.body as string).keys()]).toEqual(["client_id", "client_secret", "code", "redirect_uri", "grant_type", "code_verifier"]);
 		const now = Date.UTC(2026, 9, 11, 12, 0, 0);
-		const body = tokenBody(JSON.stringify({ access_token: "a", refresh_token: "r", expires_in: 28800, scope: "" }));
+		const body = tokenBody({ access_token: "a", refresh_token: "r", expires_in: 28800, scope: "" });
 		expect(body === null ? null : tokenPayload(body, now)).toEqual({ kind: "oauth2", access_token: "a", refresh_token: "r", scopes: [], expires_at: now / 1000 + 28800 });
 		// GitHub reports a refused code with HTTP 200.
 		for (const text of [JSON.stringify({ error: "bad_verification_code" }), JSON.stringify({ token_type: "bearer" }), "access_token=a&scope="]) {
-			expect(tokenBody(text)).toBeNull();
+			expect(tokenBody(answerJson(utf8(text)))).toBeNull();
 		}
 	});
 

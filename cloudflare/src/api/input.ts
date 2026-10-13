@@ -15,7 +15,7 @@ export async function readBody<S extends z.ZodType>(request: Request, schema: S)
 	return parsed.data;
 }
 
-/** The query string, validated. A parameter given more than once counts with its last value, as Django's `QueryDict[key]`. */
+/** The query string, validated. A parameter given more than once counts with its last value. */
 export function readQuery<S extends z.ZodType>(request: Request, schema: S): z.output<S> {
 	const params = new URL(request.url).searchParams;
 	// `fromEntries` defines own properties, so a parameter named `__proto__` stays an ordinary key.

@@ -12,14 +12,6 @@ export function isDict(value: unknown): value is JsonObject {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Whether a JSON value is non-empty: null, false, 0, "", [] and {} are not. */
-export function truthy(value: unknown): boolean {
-	if (value === null || value === undefined || value === false || value === 0 || value === "") return false;
-	if (Array.isArray(value)) return value.length > 0;
-	if (typeof value === "object") return Object.keys(value).length > 0;
-	return true;
-}
-
 // Reading. V8's JSON parser (Node 24's V8 13.6 and workerd 1.20261006.1 alike) can return the wrong name
 // for an object key written with an escape: it checks the key against the property name an earlier parse
 // left on the same object shape by comparing the *raw* characters, so once any JSON text in the isolate
@@ -50,6 +42,16 @@ export function parseJson(text: string): Json {
 	parser.space();
 	if (parser.at < text.length) parser.fail("Unexpected data after the JSON value");
 	return value;
+}
+
+const strictUtf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
+
+/**
+ * A JSON body from its bytes, as every provider answer and request body is read: strict UTF-8 (a leading
+ * byte order mark dropped, invalid sequences refused with TypeError), then `parseJson` (SyntaxError).
+ */
+export function parseJsonBytes(bytes: ArrayBuffer | Uint8Array): Json {
+	return parseJson(strictUtf8.decode(bytes));
 }
 
 /**

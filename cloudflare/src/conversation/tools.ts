@@ -36,7 +36,7 @@ export const TOOL_RESULT_LIMITS = GATEWAY_RESULT_LIMITS;
 /** A safe call may run again after a crash this many times; the next execution is refused. */
 export const REPLAYS_ALLOWED = 2;
 export const REPLAY_REFUSED = "This call was interrupted too often to run again. Ask again if it is still needed.";
-/** RUN_ENDED's message (runs 5.3). */
+/** RUN_ENDED's message. */
 export const RUN_ENDED_MESSAGE = "This run is no longer active.";
 
 /** What a tool needs from the run that makes the call. */
@@ -64,7 +64,7 @@ function refused(text: string): ToolExecutionResult {
 	return { content: [{ type: "text", text }], isError: true };
 }
 
-/** The tool's JSON Schema as pi validates it: an object, with `properties` (runs 4.5). */
+/** The tool's JSON Schema as pi validates it: an object, with `properties`. */
 export function parametersOf(declaration: ToolDeclaration): TSchema {
 	const schema = declaration.inputSchema;
 	return { ...schema, type: "object", properties: schema.properties ?? {} } as unknown as TSchema;
@@ -121,7 +121,7 @@ export function connectorTool(declaration: ToolDeclaration, host: ToolHost): Too
 
 const ENDED: ToolCallOutcome = { ok: false, error: { code: "RUN_ENDED", message: RUN_ENDED_MESSAGE }, event: null };
 
-/** A call still waiting when the run's deadline passes gives up with RUN_ENDED (runs 2.5); it never starts. */
+/** A call still waiting when the run's deadline passes gives up with RUN_ENDED; it never starts. */
 function withinDeadline(call: Promise<ToolCallOutcome>, deadline: EpochMs | null): Promise<ToolCallOutcome> {
 	if (deadline === null) return call;
 	return new Promise((resolve, reject) => {

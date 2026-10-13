@@ -170,7 +170,7 @@ describe("sign-up, verification and sign-in", () => {
 		expect((await failure(frontend.auth.verifyEmail({ key: "123456" }))).fields).toEqual({ code: "Incorrect code." });
 	});
 
-	test("signing in with the wrong password or an unknown address gives allauth's sentence on the password field", async () => {
+	test("signing in with the wrong password or an unknown address gives one sentence on the password field", async () => {
 		const email = await newAccount();
 		await load();
 		const expected = { message: "The email address and/or password you specified are not correct.", fields: { password: "The email address and/or password you specified are not correct." } };

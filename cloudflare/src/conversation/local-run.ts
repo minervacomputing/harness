@@ -1,4 +1,4 @@
-// One attempt's folder in its container (plan: Checkpoints, The sandbox lifecycle; harness 2, 10, 11): the
+// One attempt's folder in its container (plan: Checkpoints, The sandbox lifecycle): the
 // Sandbox prepared for the attempt (started, hardened, verified) and hydrated from the run's last
 // checkpoint, else its base version; the checkpoint barrier (local.ts `LocalCalls`) whose checkpoints run the
 // plan's steps 3 to 6 against it; and the ExecutionEnv each local call gets.
@@ -64,7 +64,7 @@ export class LocalRun {
 	readonly #deps: LocalRunDeps;
 	#preparing: Promise<SandboxFence> | null = null;
 	#prepared: SandboxFence | null = null;
-	/** The version the working copy was built on: the hydrated one, then each accepted checkpoint's (files 7.3). */
+	/** The version the working copy was built on: the hydrated one, then each accepted checkpoint's. */
 	#parent: VersionId | null = null;
 	#ended = false;
 	preparation: Preparation | null = null;
@@ -157,7 +157,7 @@ export class LocalRun {
 		});
 	}
 
-	/** The final checkpoint, rehashing every file, once the turn has its answer (harness 10.1 `finish`). */
+	/** The final checkpoint, rehashing every file, once the turn has its answer. */
 	finish(): Promise<void> {
 		return this.calls.finish();
 	}

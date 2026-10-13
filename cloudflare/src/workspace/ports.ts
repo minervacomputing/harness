@@ -44,7 +44,7 @@ export const realTimers: Timers = {
 	},
 };
 
-/** An OAuth client: the operator's, or one registered dynamically (connectors 11.1). */
+/** An OAuth client: the operator's, or one registered dynamically. */
 export interface ClientCredentials {
 	clientId: string;
 	clientSecret: string;

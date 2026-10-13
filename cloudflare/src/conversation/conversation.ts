@@ -91,7 +91,7 @@ const BG = Object.freeze({ abortSignal: undefined, value: () => undefined, toStr
 const NEVER_MS = 2_000_000_000;
 
 /**
- * pi's settings (harness 3.1): a failed model call ends the turn (any retry delay pi might use
+ * pi's settings: a failed model call ends the turn (any retry delay pi might use
  * stays at or under 60 s, so a long wait is never mistaken for a restart); no background compaction; no
  * partial commits, so an interrupted answer is asked again; and no context kept in memory after a turn,
  * which would keep every object active, and billed, for 10 minutes (spike: PiHarness, fact 17).
@@ -125,7 +125,7 @@ const LIVE_TASKS = ["pending", "running", "waiting", "completing"] as const;
 /** The reason an attempt's object is reset when its local calls cannot go on (plan: Checkpoints). */
 export const ATTEMPT_ENDED = "The attempt ended: ";
 
-/** Ninja's `get_object_or_404` (web-api 3): another user's conversation looks like none. */
+/** A conversation, or a 404: another user's conversation looks like none. */
 const NOT_FOUND = { status: 404, detail: "Not Found" } as const;
 
 type Job = { fn: string; payload?: unknown; job: { id: string; payload: unknown } };
@@ -746,7 +746,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		}
 		if (submission.status !== "done" || submission.type !== "input") return;
 		const entry = entries.get(submission.answer) ?? (await this.#entry(run, submission.answer));
-		// The folder as the turn left it, before the turn counts as complete (harness 2, step 12).
+		// The folder as the turn left it, before the turn counts as complete (step 12).
 		if (!(await this.#finishLocal(fence))) return;
 		await this.#complete(fence, answerText(entry));
 	}
@@ -767,7 +767,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * `complete` (runs 2.2): the assistant message, the `message` event and `completed`, in one transaction and
+	 * `complete`: the assistant message, the `message` event and `completed`, in one transaction and
 	 * in that order, only while the attempt is current. An empty answer, or one past what a WorkerEvent could
 	 * carry, fails the run instead. Outside pi's transactions (store.ts `outside`), as every end.
 	 */
@@ -885,7 +885,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			this.#log("the run's tools could not be built", error);
 			listed = [];
 		}
-		// read, write, edit and bash in the run's container, after the connector tools and `run_script` (harness 5.1).
+		// read, write, edit and bash in the run's container, after the connector tools and `run_script`.
 		const locals = localToolSpecs({ deadline: run.deadline }).map((local) => this.#localTool(local, host));
 		const tools = modelTools<ToolDeclaration, ToolRegistration>(
 			listed,
@@ -967,7 +967,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		this.#localOf({ runId: run.id, attempt: run.attempt })?.prepare();
 	}
 
-	/** A local call's environment; "Preparing files" shows while a call waits for the container (harness 12.2). */
+	/** A local call's environment; "Preparing files" shows while a call waits for the container. */
 	async #waitFor(fence: AttemptFence, local: LocalRun, signal: AbortSignal | undefined) {
 		const waits = local.preparing;
 		if (waits) {
@@ -1004,7 +1004,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		}
 	}
 
-	/** A local call's card, after its result was released (files 8.4); outside pi's transactions, for the attempt only. */
+	/** A local call's card, after its result was released; outside pi's transactions, for the attempt only. */
 	#reportLocal(fence: AttemptFence, event: LocalToolEvent): void {
 		this.#store
 			.outside(() => void this.#store.append(fence.runId, localToolEvent(event.tool, event.summary, event.ok, event.excerpt), fence))
@@ -1013,7 +1013,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 
 	/**
 	 * The attempt's local calls cannot go on (local.ts), and no held result is released before this settles:
-	 * a folder over its limits fails the turn with `folder_limit` and that limit's own message (runs 2.3),
+	 * a folder over its limits fails the turn with `folder_limit` and that limit's own message,
 	 * then the object is reset, so pi never commits a held result; a container that
 	 * failed its hardening or checks fails the turn as `worker_failed` (no local call ran in it); anything
 	 * else ends the attempt by resetting the object, and the next attempt starts from the last checkpoint.
@@ -1181,7 +1181,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	 * settles, whether or not its caller still waits (the executor's `settled`, so a write sent before pi
 	 * aborted the call is recorded with its real outcome), while the run is active (any attempt), never for
 	 * RUN_ENDED (the executor returns no event then). A scripted call passes `drop` instead of `signal`: the
-	 * script's end drops it while it waits for its slot, but never cuts it once sent (harness 7.5).
+	 * script's end drops it while it waits for its slot, but never cuts it once sent.
 	 */
 	#invoke(
 		fence: AttemptFence,
@@ -1299,7 +1299,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		};
 	}
 
-	// Phases (harness 12.2): emitted only when they change, fenced by the attempt.
+	// Phases: emitted only when they change, fenced by the attempt.
 
 	#phase(fence: AttemptFence, text: string): void {
 		if (this.#phases.get(fence.runId) === text) return;
@@ -1423,7 +1423,7 @@ async function piWork(storage: SqliteStorage, run: RunRow): Promise<PiWork> {
 	return classifyWork(submission?.status, live);
 }
 
-/** The history replay, in the commit that creates the run's session: one timestamp for every entry (harness 3.3). */
+/** The history replay, in the commit that creates the run's session: one timestamp for every entry. */
 async function replay(tx: Tx, id: PiConversationId, history: { role: "user" | "assistant"; content: string }[]): Promise<void> {
 	const timestamp = Date.now();
 	for (const message of history) {
@@ -1448,7 +1448,7 @@ async function replay(tx: Tx, id: PiConversationId, history: { role: "user" | "a
 	}
 }
 
-/** The answer: the text blocks of the assistant message joined and trimmed (harness 3.6). */
+/** The answer: the text blocks of the assistant message joined and trimmed. */
 function answerText(entry: EntryRecord | undefined): string {
 	const message = entry?.model?.[0];
 	if (message?.role !== "assistant") return "";

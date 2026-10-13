@@ -2,7 +2,7 @@
 // hostile and its answer arrives as structured data, so every field is checked here as pi-codemode's host
 // checked its bridge's JSON: an answer that does not decode fails the script as a sandbox error ("Sandbox
 // bridge broken: …"). The platform's own failures of the guest (its CPU and memory limits, a guest that
-// waits on nothing) become today's kinds, in words of their own where today had none.
+// waits on nothing) become sandbox or script errors, in words of their own.
 
 import type { GuestOutcome, ScriptError, ScriptStoreWrites, ScriptText, TextSize } from "../contracts/scripts.ts";
 import { parseJson } from "../lib/json.ts";
@@ -114,7 +114,7 @@ export function thrownOutcome(error: unknown, cpuMs: number): GuestOutcome {
 	const message = error instanceof Error ? error.message : String(error);
 	if (/exceeded CPU time limit/i.test(message)) return { ok: false, error: { kind: "sandbox", message: CPU_STOPPED(cpuMs) }, unsettled: 0 };
 	if (/exceeded memory limit/i.test(message)) return { ok: false, error: { kind: "sandbox", message: MEMORY_STOPPED }, unsettled: 0 };
-	// A guest that waits on a promise nothing can settle is cancelled by the platform as hung: today's script error.
+	// A guest that waits on a promise nothing can settle is cancelled by the platform as hung: a script error.
 	if (/had hung|would never generate a response/i.test(message)) return { ok: false, error: { kind: "script", message: STALLED }, unsettled: 0 };
 	return { ok: false, error: { kind: "sandbox", message: SANDBOX_FAILED(headUnits(message, ERROR_CHARS)) }, unsettled: 0 };
 }

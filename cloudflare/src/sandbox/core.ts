@@ -549,12 +549,12 @@ export class SandboxCore {
 	}
 
 	/**
-	 * `cgroup.kill` the agent cgroup, then wait until it is empty: commands that other calls run die too, as
-	 * today. No call is admitted meanwhile. Every reader and file server of the incarnation ends with it.
+	 * `cgroup.kill` the agent cgroup, then wait until it is empty: commands that other calls run die too.
+	 * No call is admitted meanwhile. Every reader and file server of the incarnation ends with it.
 	 */
 	killStrays(fence: SandboxFence): Promise<{ ok: true } | { ok: false; message: string } | Refused> {
 		return this.#admitted(fence, false, async (machine, generation) => {
-			// Killed again on every round, as today's stray killer repeats kill(-1): a process that joined the cgroup
+			// Killed again on every round: a process that joined the cgroup
 			// after a round (a helper that was starting) dies in the next.
 			const script = [
 				`for i in $(seq ${STRAYS_GONE_MS / 50}); do echo 1 > "$0/cgroup.kill"; grep -qx 'populated 0' "$0/cgroup.events" && exit 0; sleep 0.05; done`,

@@ -105,7 +105,7 @@ describe("connecting", () => {
 	test("Linear tokens carry their scopes", async () => {
 		const oauth = linear.auth as OAuth2;
 		const creds = { clientId: "id", clientSecret: "secret", redirectUri: "https://minerva.example/api/oauth/linear/callback" };
-		// The code exchange's request (oauth.py `exchange_code`): the client in the body first, with PKCE's verifier.
+		// The code exchange's request: the client in the body first, with PKCE's verifier.
 		const exchange = tokenRequest(oauth, creds, [
 			["code", "c"],
 			["redirect_uri", creds.redirectUri],
@@ -117,9 +117,9 @@ describe("connecting", () => {
 		expect([form.get("client_secret"), form.get("code_verifier")]).toEqual(["secret", "v"]);
 		expect((exchange.headers as { [name: string]: string })["Content-Type"]).toBe("application/x-www-form-urlencoded");
 		const now = Date.UTC(2026, 9, 12);
-		const listed = tokenPayload(tokenBody(JSON.stringify({ access_token: "a", token_type: "Bearer", scope: ["read", "write"] })) as JsonObject, now);
+		const listed = tokenPayload(tokenBody({ access_token: "a", token_type: "Bearer", scope: ["read", "write"] }) as JsonObject, now);
 		expect([listed.access_token, listed.scopes]).toEqual(["a", ["read", "write"]]);
-		const joined = tokenPayload(tokenBody(JSON.stringify({ access_token: "b", scope: "read,issues:create" })) as JsonObject, now);
+		const joined = tokenPayload(tokenBody({ access_token: "b", scope: "read,issues:create" }) as JsonObject, now);
 		expect(joined.scopes).toEqual(["issues:create", "read"]);
 
 		// A refresh goes to Linear's token endpoint as the operator's client, and reads comma-joined scopes.

@@ -346,7 +346,7 @@ export async function connectMixed(h: Harness, payload: JsonObject, extra: { cal
 	return saved.value.id;
 }
 
-/** Replaces a connection's credentials in place (as `set_credentials` and save do in the Python tests). */
+/** Replaces a connection's credentials in place. */
 export async function setCredentials(h: Harness, connectionId: string, payload: Json): Promise<void> {
 	const sealed = await h.keys.encrypt(binding(connectionId), payload);
 	const expiresAt = (payload as JsonObject).expires_at;

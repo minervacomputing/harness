@@ -76,7 +76,7 @@ function hasExactly(value: { [key: string]: unknown }, keys: readonly string[]):
 	return own.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 }
 
-/** `isinstance(value, int) and not isinstance(value, bool)`, for the numbers a structured clone can carry. */
+/** An integer (never a boolean). */
 function isInt(value: unknown): value is number {
 	return typeof value === "number" && Number.isInteger(value);
 }

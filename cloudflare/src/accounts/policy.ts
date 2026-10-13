@@ -5,8 +5,8 @@
 //   invitations, admin, impersonation, email changes, account deletion, the non-atomic code check)
 //   answers 404 (auth.ts).
 // - Credential stamps. Every session carries an HMAC of its user's id, email and password hash as they
-//   were when the session was made, checked whenever a request carries the session (`revokeStale`), as
-//   Django's session hash was. Changing a password or an email therefore ends every session made before
+//   were when the session was made, checked whenever a request carries the session (`revokeStale`).
+//   Changing a password or an email therefore ends every session made before
 //   it, in the same statement that changes it: nothing depends on a later delete. A session made from a
 //   sign-in, a second factor or a password check takes the stamp of the credential that was checked, so
 //   one that a reset overtook while it was being made is stale from the start.
@@ -18,8 +18,8 @@
 //   instance admins' setting) or admitted by the setup key before setup (instance.ts), our own server
 //   code, and sessions only from the routes above for a verified address. Better Auth's `disableSignUp`
 //   is off: the closure is this policy's, with Better Auth's answer, for the browser and our own calls.
-// - Limits per address and per user (rate-limits.ts) alongside Better Auth's per IP, and today's password
-//   validators (passwords.ts).
+// - Limits per address and per user (rate-limits.ts) alongside Better Auth's per IP, and the password
+//   rules (passwords.ts).
 // - A TOTP code works once (totp.ts).
 
 import { createHmac } from "node:crypto";
@@ -64,7 +64,7 @@ const SECOND_FACTOR = new Set(["/two-factor/verify-totp", "/two-factor/verify-ba
 /** Routes that replace the signed-in user's session with a new one (a new token, the same user). */
 const REPLACE_SESSION = new Set(["/change-password", "/two-factor/enable", "/two-factor/disable", ...SECOND_FACTOR]);
 
-/** Routes that check the signed-in user's password: today's `reauthenticate` limit. */
+/** Routes that check the signed-in user's password: the `reauthenticate` limit. */
 const PASSWORD_CHECKS = new Set(["/two-factor/enable", "/two-factor/disable", "/two-factor/get-totp-uri", "/two-factor/generate-backup-codes"]);
 
 /** The stamp of a placeholder session whose sign-in waits for its second factor; never a valid stamp. */
@@ -94,7 +94,7 @@ export interface PolicyDeps {
 	stampKey: string;
 	/** Whether a sign-up may create an account; `headers` are the request's, null for our own server code (instance.ts). */
 	signupAllowed(headers: Headers | null): Promise<boolean>;
-	/** Tells the owner of an address that someone tried to sign up with it (today's "Account Already Exists"). */
+	/** Tells the owner of an address that someone tried to sign up with it ("Account Already Exists"). */
 	sendAlreadyExists(email: string): Promise<void>;
 }
 
@@ -124,7 +124,7 @@ function challengeExpired(): APIError {
 	return APIError.from("UNAUTHORIZED", { code: "INVALID_TWO_FACTOR_COOKIE", message: "Invalid two factor cookie" });
 }
 
-/** Today's validators; the first failure names the error, all of them are listed. */
+/** The password rules; the first failure names the error, all of them are listed. */
 function checkPassword(password: unknown, email?: string): void {
 	if (typeof password !== "string") return;
 	const errors = validatePassword(password, email === undefined ? undefined : { email });
@@ -223,7 +223,7 @@ export class Policy implements AuthPolicy {
 				return undefined;
 			}
 			case "/sign-up/email":
-				// allauth's headless sign-up validates without a user, so similarity is not checked.
+				// Sign-up has no user yet, so the password is not compared with one.
 				checkPassword(body.password);
 				// After the password, as Better Auth checked `disableSignUp` in the endpoint, after this hook.
 				if (!(await this.#deps.signupAllowed(ctx.headers ?? null))) throw signUpDisabled();

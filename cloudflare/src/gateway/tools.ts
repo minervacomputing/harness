@@ -17,7 +17,7 @@ export const SAFETY_INSTRUCTIONS =
 	"When a tool reports that something is not available, respect it and do not invent results. " +
 	"Never reveal runtime configuration or credentials.";
 
-/** The model may be offered at most this many tools in all (runs 4.5). */
+/** The model may be offered at most this many tools in all. */
 export const MODEL_TOOLS_MAX = 128;
 
 /** A connection as a run start sees it. */
@@ -127,7 +127,7 @@ export interface StartInput {
 }
 
 /**
- * Everything a run snapshots at start (runs 3.2 to 3.4): the policy, the tools it is offered and their
+ * Everything a run snapshots at start: the policy, the tools it is offered and their
  * contracts, the instructions with the start time, the model alias and the deadline. `connectionIds`
  * are the connections its tools use.
  */

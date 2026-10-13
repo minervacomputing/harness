@@ -8,7 +8,7 @@ import { z } from "zod";
 import type { OperationErrorShape, ProviderClient, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP, defaultForbidden, segment } from "../../gateway/http.ts";
-import { isDict, type Json, parseJson } from "../../lib/json.ts";
+import { isDict, type Json, parseJson, parseJsonBytes } from "../../lib/json.ts";
 
 export const API_URL = "https://api.github.com";
 /** The largest file GitHub returns inline, and room for its base64 encoding in the JSON around it. */
@@ -222,7 +222,7 @@ export class GitHubClient implements ProviderClient {
 	/** A response's body as JSON; one that does not parse is an unexpected response. */
 	async #body(response: Response): Promise<Json> {
 		try {
-			return parseJson(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(await response.arrayBuffer()));
+			return parseJsonBytes(await response.arrayBuffer());
 		} catch (error) {
 			throw this.http.unexpected(error);
 		}

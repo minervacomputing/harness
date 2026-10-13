@@ -1,12 +1,9 @@
-// The upload (web-api 10.5; files 9.1): `POST /api/workspaces/{ws}/uploads?name=<file name>` with the
-// raw file as its body, in today's order of checks: the request itself (405 for another method, the
+// The upload: `POST /api/workspaces/{ws}/uploads?name=<file name>` with the
+// raw file as its body, with its checks in this order: the request itself (405 for another method, the
 // Content-Length, the upload limit, the name) before anything is read, then the session (401), CSRF
 // (403), membership (401), and the Workspace's reservation (3 arriving and 30 waiting per user, the
 // workspace's quota) before the body streams into the workspace's bucket while it is hashed
 // (files/uploads.ts `receiveUpload`). A refused or failed upload leaves no row and no object.
-//
-// Not carried over: today's 503 for 32 uploads in flight in one process (nothing here holds a temporary
-// file), and the host check (the Worker answers its own routes only).
 
 import type { Context } from "hono";
 import { currentSession, withSessionCookies } from "../accounts/auth.ts";

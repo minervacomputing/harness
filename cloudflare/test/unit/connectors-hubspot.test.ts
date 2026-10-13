@@ -373,7 +373,7 @@ describe("the client and connecting", () => {
 		expect(form.get("client_id")).toBe("id");
 		expect(form.get("client_secret")).toBe("secret");
 		const issued = { token_type: "bearer", access_token: "a", refresh_token: "r", expires_in: 1800, hub_id: 4242, scopes: [...SCOPES] };
-		const body = tokenBody(JSON.stringify(issued));
+		const body = tokenBody(issued);
 		expect(body).not.toBeNull();
 		const tokens = tokenPayload(body as JsonObject, Date.UTC(2026, 9, 11));
 		expect(tokens.scopes).toEqual([...SCOPES].sort());

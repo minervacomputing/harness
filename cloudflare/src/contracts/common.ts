@@ -1,7 +1,5 @@
 // Shared shapes of the contracts. Contracts are types and doc comments only: the interfaces that steps 2
-// to 6 build against (docs/plans/cloudflare.md, Steps). They cite the spec section each rule comes from:
-// "web-api" (web-api-accounts), "runs" (runs-gateway-models), "connectors" (connectors-permissions),
-// "files", "harness" (worker-harness) and "frontend" (frontend-runtime), and the plan's sections.
+// to 6 build against (docs/plans/cloudflare.md, Steps). They cite the plan's sections a rule comes from.
 //
 // RPC rule: a Durable Object method's argument and return types must be structured-cloneable and must not
 // contain `unknown` (Workers' RPC types turn an object with an `unknown` field into `never`). Use `Json`
@@ -9,7 +7,7 @@
 
 export type { Json } from "../lib/json.ts";
 
-/** Lowercase hyphenated UUIDv7, as every id in the API (web-api 6.1). */
+/** Lowercase hyphenated UUIDv7, as every id in the API. */
 export type Uuid = string;
 export type UserId = Uuid;
 export type WorkspaceId = Uuid;
@@ -36,7 +34,7 @@ export interface WorkspaceRef {
 export type Role = "owner" | "admin" | "member";
 
 /**
- * Who is asking, as the Worker verified it from the session and D1's memberships (web-api 7). A Durable
+ * Who is asking, as the Worker verified it from the session and D1's memberships. A Durable
  * Object never takes a user from the client; it takes this, and still checks ownership of what it holds
  * (another user's conversation, run or upload is "not found").
  */
@@ -55,7 +53,7 @@ export interface AttemptFence {
 	attempt: number;
 }
 
-/** A refusal an API endpoint answers with: Ninja's `{"detail": message}` and this status. */
+/** A refusal an API endpoint answers with: `{"detail": message}` and this status. */
 export interface Refusal {
 	status: 400 | 403 | 404 | 405 | 408 | 409 | 411 | 413 | 422 | 429 | 502 | 503;
 	detail: string;

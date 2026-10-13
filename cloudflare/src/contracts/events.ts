@@ -1,14 +1,14 @@
-// Run events: what the chat folds into messages (frontend 4.4 and 5, runs 6.2). They are appended to the
+// Run events: what the chat folds into messages. They are appended to the
 // Conversation Durable Object's `run_events` with dense per-run sequence numbers from 1; a refused
 // (fenced) append takes no number. The stream sends each as `id: <seq>\nevent: <type>\ndata: <compact
-// JSON on one line>\n\n` (frontend 8.2). Payloads are type aliases, not interfaces, so they stay
+// JSON on one line>\n\n`. Payloads are type aliases, not interfaces, so they stay
 // assignable to the generated `EventOut`.
 
 import type { Json } from "./common.ts";
 import type { RunStatus } from "./runs.ts";
 
 /**
- * `status`. The frontend relies on its order (frontend 4.4, ordering invariants):
+ * `status`. The frontend relies on its order (ordering invariants):
  * - `queued` is always seq 1, when the message is posted;
  * - the first `provisioning` has no `attempt`;
  * - a restart marker carries `attempt` (n ≥ 2) and makes the chat drop the text and reasoning streamed
@@ -27,12 +27,12 @@ export type StatusEventData =
 
 type TerminalStatus = Exclude<RunStatus, "queued" | "provisioning" | "running">;
 
-/** `phase`: what the agent is doing, ≤300 characters, emitted only when it changes (runs 4.5; harness 12.2). */
+/** `phase`: what the agent is doing, ≤300 characters, emitted only when it changes. */
 export type PhaseEventData = {
 	text: PhaseText | string;
 };
 
-/** The phases the loop reports, in the UI's order of precedence after start-up (harness 12.2). */
+/** The phases the loop reports, in the UI's order of precedence after start-up. */
 export type PhaseText =
 	| "Starting the agent"
 	| "Resuming the agent"
@@ -46,7 +46,7 @@ export type PhaseText =
 /**
  * `text_delta` and `reasoning_delta`: what streamed since the last flush (every 0.25 s per model call).
  * `call` is 8 lowercase hex characters, fixed per model call and shared by its reasoning and text; the chat
- * joins deltas only within one call (frontend 5.2). Never stored for a replaced attempt.
+ * joins deltas only within one call. Never stored for a replaced attempt.
  */
 export type DeltaEventData = {
 	text: string;
@@ -55,7 +55,7 @@ export type DeltaEventData = {
 
 /**
  * `tool_call`: a connector tool call that **finished** (there is no "started" event), appended only while
- * the run is active, also for a call started by a replaced attempt, and never for `RUN_ENDED` (runs 5.3).
+ * the run is active, also for a call started by a replaced attempt, and never for `RUN_ENDED`.
  * The chat uses `tool`, `label`, `arguments`, `decision`, `message`, `write` and `repeat`.
  */
 export type ToolCallEventData = ToolCallAllowed | ToolCallRefused;
@@ -88,7 +88,7 @@ export type ToolCallRefused = ToolCallBase & {
 
 /**
  * `local_tool`: a read, write, edit or bash call in the folder finished, reported after its result was
- * released by the checkpoint barrier; an aborted call is not reported (files 8.4). NUL removed, lone
+ * released by the checkpoint barrier; an aborted call is not reported. NUL removed, lone
  * surrogates replaced; `summary` is the command or path cut to 300 characters (299 plus `…`), `excerpt`
  * the end of the output or error cut to 2,000 (`…` plus the last 1,999), never splitting a surrogate pair.
  */
@@ -99,7 +99,7 @@ export type LocalToolEventData = {
 	excerpt: string;
 };
 
-/** `message`: the final answer, always immediately followed by `status: completed`, committed together (frontend 4.4). */
+/** `message`: the final answer, always immediately followed by `status: completed`, committed together. */
 export type MessageEventData = {
 	/** The assistant message's id. */
 	id: string;
@@ -122,7 +122,7 @@ export type NewRunEvent = RunEvent extends infer E ? (E extends { seq: number } 
 
 /**
  * The stream's control frames besides events: a keepalive comment every 15 s of silence, and `end` once
- * the run is inactive and every event was sent (no `id:`; frontend 8.2). The relay may also send `retry:`.
+ * the run is inactive and every event was sent (no `id:`). The relay may also send `retry:`.
  * Never an unnamed `data:` frame: the browser would dispatch it as `message` and settle the turn.
  */
 export type StreamKeepalive = ": keepalive\n\n";

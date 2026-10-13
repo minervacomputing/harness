@@ -8,7 +8,7 @@ import { z } from "zod";
 import type { OperationErrorShape, ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP, segment } from "../../gateway/http.ts";
-import { type Json, parseJson } from "../../lib/json.ts";
+import { type Json, parseJsonBytes } from "../../lib/json.ts";
 import { GoogleUser, USERINFO_URL, classify as googleClassify, reasons } from "../google/index.ts";
 
 export const API_URL = "https://gmail.googleapis.com/gmail/v1/users/me";
@@ -172,11 +172,9 @@ export class GmailClient implements ProviderClient {
 
 	private async bounded<T>(schema: z.ZodType<T>, path: string, limit: number): Promise<T> {
 		const response = await this.http.bounded({ method: "GET", path }, limit, new OperationError("RESPONSE_TOO_LARGE", "Gmail returned more than Minerva reads."));
-		const bytes = new Uint8Array(await response.arrayBuffer());
 		let data: Json;
 		try {
-			// Strict UTF-8; the decoder drops a byte order mark, as the other answers' reader does.
-			data = parseJson(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes));
+			data = parseJsonBytes(await response.arrayBuffer());
 		} catch (error) {
 			throw this.http.unexpected(error);
 		}

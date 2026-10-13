@@ -1,4 +1,4 @@
-// The stream tap's pure parts (runs 7.4), ported from backend/models_access/taps.py and the relay's tests.
+// The stream tap's pure parts: segments, flushes, provider text kept out, usage.
 
 import { type AssistantMessage, isContextOverflow } from "@earendil-works/pi-ai";
 import { describe, expect, test } from "vitest";
@@ -127,7 +127,7 @@ describe("errors and usage", () => {
 		expect(reportedUsage({ ...message({}).usage, input: -1 })).toBeNull();
 	});
 
-	test("the input counts cached tokens, as the provider's input_tokens does (runs 7.4)", () => {
+	test("the input counts cached tokens, as the provider's input_tokens does", () => {
 		// pi-ai reports OpenAI's input_tokens 10, of them 8 cached, as input 2 and cacheRead 8.
 		expect(reportedUsage({ ...message({}).usage, input: 2, cacheRead: 8, cacheWrite: 0, output: 2 })).toEqual({ input: 10, output: 2 });
 		expect(reportedUsage({ ...message({}).usage, input: 0, cacheRead: 0, cacheWrite: 3, output: 0 })).toEqual({ input: 3, output: 0 });

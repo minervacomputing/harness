@@ -14,7 +14,7 @@ import { z } from "zod";
 import type { OperationErrorShape, ProviderClient, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
-import { isDict, type Json, parseJson } from "../../lib/json.ts";
+import { isDict, type Json, parseJson, parseJsonBytes } from "../../lib/json.ts";
 
 export const API_URL = "https://api.stripe.com/v1";
 export const API_VERSION = "2025-08-27.basil";
@@ -244,7 +244,7 @@ export class StripeClient implements ProviderClient {
 		);
 		let data: Json;
 		try {
-			data = parseJson(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(await response.arrayBuffer()));
+			data = parseJsonBytes(await response.arrayBuffer());
 		} catch (error) {
 			throw this.unexpected(error);
 		}

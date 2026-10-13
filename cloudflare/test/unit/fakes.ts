@@ -1,5 +1,4 @@
-// Test-only connectors that exercise the contract beyond what one real connector needs, ported from
-// backend/tests/fakes.py. `mixed` has two kinds (one without wildcards), an operation that needs
+// Test-only connectors that exercise the contract beyond what one real connector needs. `mixed` has two kinds (one without wildcards), an operation that needs
 // different actions on two resources, and an operation gated by provider consent; `mode` switches it into
 // deliberately broken declarations of requirements, which the executor must reject. `keyed`
 // authenticates with an API key and acts on its account. The provider is an in-memory `FakeServer`; the
@@ -138,7 +137,7 @@ export interface Changes {
 	[operation: string]: Partial<Operation<never>>;
 }
 
-/** The mixed connector with some attributes or operations replaced, as test_contract.py's `variant`. */
+/** The mixed connector with some attributes or operations replaced. */
 export function variant(attrs: Partial<Connector<FakeClient>> & { changes?: Changes } = {}): Connector<FakeClient> {
 	const { changes = {}, ...rest } = attrs;
 	const connector = { ...mixedConnector(), ...rest };

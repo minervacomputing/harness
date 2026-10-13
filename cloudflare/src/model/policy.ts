@@ -1,4 +1,4 @@
-// What a model request may carry (runs 7.2, 7.3). The request is built by pi-ai from our own transcript, so
+// What a model request may carry. The request is built by pi-ai from our own transcript, so
 // these hold by construction; the wrapper still enforces them, as defence in depth now that the loop is
 // trusted code: the instance's model, an output cap, `store: false`, text input only and function tools only.
 
@@ -34,7 +34,7 @@ function textOnly(message: Message): boolean {
 
 /**
  * The compaction prompt pi-durable 1.1.0 sends (harness/compaction.js, not exported): its summary is not an
- * answer, so its text is not published as deltas (harness 17.6). test/unit/model-provider.test.ts checks that
+ * answer, so its text is not published as deltas. test/unit/model-provider.test.ts checks that
  * the installed pi-durable still sends it.
  */
 export const COMPACTION_PROMPT_START = "You are a context summarization assistant.";
@@ -48,14 +48,14 @@ export function isCompaction(context: TranscriptContext): boolean {
 
 type Payload = { [key: string]: unknown };
 
-/** The OpenAI Responses fields never sent (runs 7.2): stored state, server-side tools and identification. */
+/** The OpenAI Responses fields never sent: stored state, server-side tools and identification. */
 const RESPONSES_DROPPED = ["previous_response_id", "conversation", "background", "prompt", "service_tier", "user", "metadata"];
-/** The Chat Completions fields never sent (runs 7.3). */
+/** The Chat Completions fields never sent. */
 const CHAT_DROPPED = ["user", "logit_bias", "priority", "audio", "max_tokens"];
 
 /**
- * The payload as it leaves: the instance's model, the output cap and `store: false` forced, the fields
- * today's relay drops removed, and a payload with a tool that is not a function refused (it throws, so the
+ * The payload as it leaves: the instance's model, the output cap and `store: false` forced, the fields in
+ * CHAT_DROPPED removed, and a payload with a tool that is not a function refused (it throws, so the
  * call ends with an error). Workers AI's payload is the binding's chat body, which has no `model` or
  * `store`; Anthropic's has no `store`.
  */
@@ -85,7 +85,7 @@ export function forcePayload(route: ModelRoute, payload: unknown, cap: number): 
 				for (const key of RESPONSES_DROPPED) delete body[key];
 				body.max_output_tokens = outputCap(body.max_output_tokens, cap);
 				// Reasoning comes from configuration, never the client's, and with an effort its encrypted content
-				// is replayed between tool calls (runs 7.2). createAI writes `summary: "auto"` itself.
+				// is replayed between tool calls. createAI writes `summary: "auto"` itself.
 				delete body.reasoning;
 				delete body.include;
 				if (route.reasoningEffort) {

@@ -1,4 +1,4 @@
-// History replay (runs 4.2; harness 3.3): what the model sees of a conversation's earlier turns. Only final
+// History replay: what the model sees of a conversation's earlier turns. Only final
 // texts and file notes are replayed, from our own messages table, never pi's transcript, so pi's aborted
 // partial entries never reach the next turn (plan: Events and the stream). Each run is a fresh pi session
 // seeded with this history when it is created; a resumed attempt keeps what its session holds.
@@ -6,7 +6,7 @@
 import type { AttachmentOut, FolderChangesOut } from "../contracts/api.ts";
 import { sliceText } from "../lib/text.ts";
 
-/** Earlier messages the gateway hands the loop (runs 4.2). */
+/** Earlier messages the gateway hands the loop. */
 export const HISTORY_LIMIT = 20;
 /** Paths a file note names before "and N more". */
 export const NOTE_PATHS = 20;
@@ -17,7 +17,7 @@ export const HISTORY_BUDGET = 120_000;
 export const CLIPPED = "\n\n[The rest of this message was left out.]";
 
 /**
- * What the model is told about its folder and commands (harness 3.3), added after the run's instructions
+ * What the model is told about its folder and commands, added after the run's instructions
  * when the run has local tools (step 3). `10` is the command timeout in minutes.
  */
 export const FOLDER_INSTRUCTIONS =
@@ -85,7 +85,7 @@ export function withFiles(message: Pick<StoredMessage, "role" | "content" | "att
 	return message.content ? `${message.content}\n\n${note}` : note;
 }
 
-/** The run's prompt: its user message with its note, or "" when there is none (runs 4.2). */
+/** The run's prompt: its user message with its note, or "" when there is none. */
 export function promptOf(messages: readonly StoredMessage[], runId: string): string {
 	const own = messages.find((message) => message.runId === runId && message.role === "user");
 	return own ? withFiles(own) : "";

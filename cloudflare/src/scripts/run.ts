@@ -1,4 +1,4 @@
-// One `run_script` execution from the conversation's side (harness 7.4; plan: Code mode): the syntax
+// One `run_script` execution from the conversation's side (plan: Code mode): the syntax
 // check, the session and its RpcTargets, the Scripts object's run, and the wall clock, which the
 // conversation enforces itself (120 s cut to the deadline), never the loaded guest.
 //
@@ -73,7 +73,7 @@ export interface ExecuteOptions {
 	onSession?: (session: ScriptSession) => void;
 }
 
-/** harness 5.2 `remainingMs`: no deadline gives the 10-minute call timeout; otherwise what is left, at least 1 s. */
+/** A call's time: no deadline gives the 10-minute call timeout; otherwise what is left, at least 1 s. */
 export function remainingMs(deadline: number | null, now = Date.now()): number {
 	if (deadline === null) return CALL_TIMEOUT_MS;
 	if (!Number.isFinite(deadline)) return 60_000;
@@ -83,7 +83,7 @@ export function remainingMs(deadline: number | null, now = Date.now()): number {
 /** The wall clock's length: 120 s. The platform tests shorten it; nothing else changes it. */
 export const SCRIPT_CLOCK = { timeoutMs: SCRIPT_TIMEOUT_MS };
 
-/** The wall clock of a script: 120 s, or less when the run's deadline is nearer (harness 7.4). */
+/** The wall clock of a script: 120 s, or less when the run's deadline is nearer. */
 export function scriptTimeoutMs(deadline: number | null, now = Date.now()): number {
 	return Math.min(SCRIPT_CLOCK.timeoutMs, remainingMs(deadline, now));
 }
@@ -149,7 +149,7 @@ function cancelledOf(session: ScriptSession, unsettled: number): number {
 	return Math.min(SCRIPT_CALLS_OPEN, Math.max(unsettled, session.pending()));
 }
 
-/** Runs one script and gives today's result; never throws for what the script or the platform did. */
+/** Runs one script and gives its result; never throws for what the script or the platform did. */
 export async function executeScript(options: ExecuteOptions): Promise<ScriptResult> {
 	const invalid = syntaxError(options.code);
 	if (invalid) return failed({ kind: "script", message: invalid.message, stack: invalid.stack }, null);

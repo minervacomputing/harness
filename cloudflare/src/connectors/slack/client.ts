@@ -10,7 +10,7 @@ import { z } from "zod";
 import type { Effect, ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
-import { isDict, type Json, type JsonObject, parseJson } from "../../lib/json.ts";
+import { isDict, type Json, type JsonObject, parseJsonBytes } from "../../lib/json.ts";
 
 export const API_URL = "https://slack.com/api";
 export const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -104,7 +104,7 @@ export function errorFor(provider: string, error: Json | undefined): OperationEr
 export function bodyOf(bytes: Uint8Array): JsonObject | null {
 	let body: Json;
 	try {
-		body = parseJson(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes));
+		body = parseJsonBytes(bytes);
 	} catch {
 		return null;
 	}

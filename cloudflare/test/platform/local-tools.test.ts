@@ -1,5 +1,5 @@
 // The local tools in the real Conversation Durable Object, in local workerd (plan: Checkpoints, The local
-// tools; harness 8, 10, 12): PiHarness with the fake model calling pi's read, write, edit and bash, the
+// tools): PiHarness with the fake model calling pi's read, write, edit and bash, the
 // folder's store on the object's SQLite and the local bucket, the Workspace and the fake Notes connector of
 // the test build, and a conversation's container played by test/platform/sandbox-memory.ts (local workerd
 // has no containers). Covered: results held until a checkpoint saved them and their cards after, phases,
@@ -252,7 +252,7 @@ describe("fault rows: Checkpoints", () => {
 			const events = await eventsOf(w, runId);
 			expect(restarts(events), point).toEqual([2]);
 			// Attempt 2 hydrates the checkpoint attempt 1 recorded: the file is there. A card is appended when its
-			// call is released, so one released before the crash has its card although pi reports it interrupted (as today).
+			// call is released, so one released before the crash has its card although pi reports it interrupted.
 			const cat = { tool: "bash", summary: "cat a.txt", ok: true, excerpt: "a" };
 			expect(cards(events), point).toEqual(point === "local:released" ? [{ tool: "bash", summary: "put a.txt a", ok: true, excerpt: "" }, cat] : [cat]);
 			expect(w.sandbox.log.filter((line) => line.startsWith("start") || line.startsWith("hydrate")), point).toEqual(["start 1", "hydrate 0", "start 2", "hydrate 1"]);

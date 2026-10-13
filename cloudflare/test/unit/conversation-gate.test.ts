@@ -1,5 +1,5 @@
-// The attempt gate's decision (plan: Attempts and recovery; runs 2.4, 2.5), ported from
-// backend/tests/test_supervisor.py's restart rules and the gate proof's review.
+// The attempt gate's decision (plan: Attempts and recovery): the restart rules and the cases of the gate
+// proof's review.
 
 import { describe, expect, test } from "vitest";
 import { classifyWork, decideGate, type GateRun, MAX_ATTEMPTS, RESTART_MIN_REMAINING_MS } from "../../src/conversation/gate.ts";

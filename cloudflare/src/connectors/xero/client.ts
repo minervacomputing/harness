@@ -14,7 +14,7 @@ import { z } from "zod";
 import type { Effect, OperationErrorShape, ProviderClient, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
-import { isDict, type Json, parseJson } from "../../lib/json.ts";
+import { isDict, type Json, parseJson, parseJsonBytes } from "../../lib/json.ts";
 import { truncate } from "../../lib/text.ts";
 import { type Decimal, fromNumber } from "./decimal.ts";
 
@@ -242,7 +242,7 @@ export function classify(_provider: string, response: Response, _body: string, b
 	if (response.status === 400) {
 		let data: Json;
 		try {
-			data = jsonOf(bytes);
+			data = parseJsonBytes(bytes);
 		} catch {
 			return null;
 		}
@@ -325,11 +325,6 @@ export function invoiceDate(text: string | null, raw: string | null): string | n
 
 type Query = NonNullable<ProviderRequest["query"]>;
 
-/** A UTF-8 JSON body; anything else is not one. */
-function jsonOf(bytes: Uint8Array): Json {
-	return parseJson(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes));
-}
-
 export class XeroClient implements ProviderClient {
 	readonly #http: ProviderHTTP;
 	#organisations: Connection[] | null = null;
@@ -365,7 +360,7 @@ export class XeroClient implements ProviderClient {
 		const bytes = await this.#bounded(url, tenant, params);
 		let data: Json;
 		try {
-			data = jsonOf(bytes);
+			data = parseJsonBytes(bytes);
 		} catch (error) {
 			throw this.unexpected(error);
 		}
