@@ -24,7 +24,7 @@ function NewChat() {
   const agents = useQuery(orpc.agents.list.queryOptions({ input: { workspaceId } }))
   // An agent named in the link that no longer exists is not swapped for another one silently.
   const agent = wanted ? agents.data?.find(a => a.id === wanted) : agents.data?.[0]
-  const choose = (agentId: string) => navigate({ to: '/w/$workspaceId/chat', params: { workspaceId }, search: { agent: agentId }, replace: true })
+  const choose = (agentId: string) => void navigate({ to: '/w/$workspaceId/chat', params: { workspaceId }, search: { agent: agentId }, replace: true })
 
   // Not repeated after a failure, unlike the send: a lost answer could leave two conversations. Like the send,
   // tried at once even offline, so the composer gets the message back rather than waiting for the network.

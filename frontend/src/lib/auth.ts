@@ -7,6 +7,7 @@
 import { SETUP_KEY_HEADER } from '@minerva/contract'
 import { ORPCError } from '@orpc/client'
 import { mutationOptions, queryOptions } from '@tanstack/react-query'
+import { z } from 'zod'
 import { AuthError, client, failureOf, withAuthErrors } from '@/lib/auth-client'
 import { errorMessage } from '@/lib/http'
 import { orpc } from '@/lib/orpc'
@@ -30,13 +31,14 @@ const STEPS: Record<Step, { path: string; minutes: number }> = {
   'password-reset': { path: '/reset-password', minutes: 5 },
 }
 const PENDING_KEY = 'minerva.auth.step'
-type Pending = { step: Step; email: string; until: number }
+const Pending = z.object({ step: z.enum(['sign-in-code', 'second-factor', 'password-reset'] satisfies Step[]), email: z.string(), until: z.number() })
+type Pending = z.infer<typeof Pending>
 let unstored: Pending | null | undefined // the step while storage refuses it (full, or blocked), for as long as this page
 
 function readPending(): Pending | null {
   try {
-    const pending = unstored !== undefined ? unstored : (JSON.parse(sessionStorage.getItem(PENDING_KEY) ?? 'null') as Pending | null)
-    if (pending && pending.until > Date.now() && pending.step in STEPS) return pending
+    const pending = unstored !== undefined ? unstored : Pending.nullable().parse(JSON.parse(sessionStorage.getItem(PENDING_KEY) ?? 'null'))
+    if (pending && pending.until > Date.now()) return pending
   } catch {
     /* Malformed, or storage is blocked: no step. */
   }

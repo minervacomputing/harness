@@ -2,7 +2,7 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
-import ts from "typescript";
+import ts from "@typescript/typescript6";
 import { expect, test } from "vitest";
 import { REFUSALS } from "../../src/shared/rpc.ts";
 import { sourceCode } from "../fixtures/source.ts";

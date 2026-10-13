@@ -1,12 +1,12 @@
 # Plan: Minerva on Cloudflare
 
-Status: steps 1 to 7 done (2026-10-10 to 2026-10-12) on the `cloudflare` branch (pushed 2026-10-13, not merged into `main`), followed by the cleanups (the backend's, done, and [frontend-cleanup.md](frontend-cleanup.md)). Step 8 and what Minerva Cloud needs after it moved to [self-hosting-and-cloud.md](self-hosting-and-cloud.md) on 2026-10-13. This file is the design and the record of steps 1 to 7. `main` still runs the Django, worker and deploy code; the rewrite lives in `cloudflare/` and serves `frontend/`. Scope decided 2026-10-11 (see Instance and control plane): this becomes the self-hostable Minerva, and the Docker and VPS path retires when `cloudflare` merges into `main` (self-hosting-and-cloud.md, unit 10). At that merge the design sections move into ARCHITECTURE.md and this file retires.
+Status: steps 1 to 7 done (2026-10-10 to 2026-10-12) on the `cloudflare` branch (pushed 2026-10-13, not merged into `main`), followed by the cleanups of the backend and of the frontend and API (both done 2026-10-13). Step 8 and what Minerva Cloud needs after it moved to [self-hosting-and-cloud.md](self-hosting-and-cloud.md) on 2026-10-13. This file is the design and the record of steps 1 to 7. `main` still runs the Django, worker and deploy code; the rewrite lives in `cloudflare/` and serves `frontend/`. Scope decided 2026-10-11 (see Instance and control plane): this becomes the self-hostable Minerva, and the Docker and VPS path retires when `cloudflare` merges into `main` (self-hosting-and-cloud.md, unit 10). At that merge the design sections move into ARCHITECTURE.md and this file retires.
 
 ## Goal
 
 The same product on Cloudflare's platform, deployed with one command to one Cloudflare account:
 
-- the same React app and the same JSON API (`frontend/openapi.json`); sign-in moves from allauth's headless API to Better Auth's client (`frontend/src/lib/auth.ts` and the auth pages), and the rest of the frontend needs no changes beyond its dev proxy;
+- the same React app and the same JSON API (`frontend/openapi.json`); sign-in moves from allauth's headless API to Better Auth's client (`frontend/src/lib/auth.ts` and the auth pages), and the rest of the frontend needs no changes beyond its dev proxy (the frontend cleanup later replaced that API with the oRPC contract in `contract/`, in camelCase);
 - the same permission model and pipeline, and all 20 connectors;
 - the same agent: pi-durable with Minerva's tools, history, code mode and files, durable across crashes, with today's guarantees for writes (deduplicated, never replayed, uncertain ones pause the run);
 - a sandbox per turn with no network, now a Firecracker microVM;

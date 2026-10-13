@@ -1,4 +1,4 @@
-import { type AnyFieldApi, type AnyFormApi, createFormHook, createFormHookContexts, useStore } from '@tanstack/react-form'
+import { type AnyFormApi, createFormHook, createFormHookContexts, useStore } from '@tanstack/react-form'
 import type { ComponentProps, FormEvent, ReactNode } from 'react'
 import { z } from 'zod'
 import { Button } from '@/components/ui/button'
@@ -18,13 +18,18 @@ type FieldProps = {
   serverError?: string
 }
 
-function fieldError(field: AnyFieldApi, serverError?: string): string | undefined {
-  const own = field.state.meta.isTouched ? field.state.meta.errors.find(Boolean) : undefined
-  return (typeof own === 'string' ? own : own?.message) ?? serverError
+type StringField = ReturnType<typeof useFieldContext<string>>
+
+/** The field's first error once it was touched (a zod issue, or a string), else the server's. */
+function fieldError(field: StringField, serverError?: string): string | undefined {
+  const own: unknown = field.state.meta.isTouched ? field.state.meta.errors.find(Boolean) : undefined
+  if (typeof own === 'string') return own
+  if (typeof own === 'object' && own !== null && 'message' in own && typeof own.message === 'string') return own.message
+  return serverError
 }
 
 /** The label, the control and its error or hint, shared by the fields. */
-function FieldFrame({ field, label, hint, error, children }: { field: AnyFieldApi; label: string; hint?: string; error?: string; children: ReactNode }) {
+function FieldFrame({ field, label, hint, error, children }: { field: StringField; label: string; hint?: string; error?: string; children: ReactNode }) {
   return (
     <div className="grid gap-1.5">
       <Label htmlFor={field.name}>{label}</Label>

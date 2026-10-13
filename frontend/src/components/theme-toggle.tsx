@@ -1,6 +1,6 @@
 import { MonitorIcon, MoonIcon, SunIcon } from 'lucide-react'
 import { Segmented, SegmentedItem } from '@/components/ui/tabs'
-import { type ThemeChoice, useTheme } from '@/lib/theme'
+import { useTheme } from '@/lib/theme'
 
 const CHOICES = [
   { value: 'light', label: 'Light', icon: SunIcon },
@@ -11,7 +11,7 @@ const CHOICES = [
 export function ThemeToggle({ labelled = false, className }: { labelled?: boolean; className?: string }) {
   const { choice, setTheme } = useTheme()
   return (
-    <Segmented value={choice} onValueChange={value => setTheme(value as ThemeChoice)} aria-label="Theme" className={className}>
+    <Segmented values={CHOICES.map(c => c.value)} value={choice} onValueChange={setTheme} aria-label="Theme" className={className}>
       {CHOICES.map(c => (
         <SegmentedItem key={c.value} value={c.value} aria-label={labelled ? undefined : c.label} title={labelled ? undefined : c.label} className="flex-1 px-2">
           <c.icon />

@@ -143,10 +143,15 @@ make sandbox-check   # sandbox isolation probe; needs make dev running
 In `frontend/`:
 
 ```sh
-pnpm check    # oxlint, oxfmt --check, tsc, knip (unused files, exports, dependencies) and the unit tests; run before every commit
+pnpm check    # oxlint (with type-aware rules), oxfmt --check, tsc, knip (unused files, exports, dependencies) and the unit tests; run before every commit
 pnpm format   # oxfmt writes the formatting
 pnpm test     # the unit tests alone (vitest)
 ```
+
+Types and lint:
+
+- The workspace (`frontend/`, `contract/`, `cloudflare/`) typechecks with TypeScript 7 (`tsc` is the native compiler). It has no stable compiler API (7.0 ships only `typescript/unstable/*`): the one test that parses TypeScript (`cloudflare/test/unit/sources.test.ts`) imports TypeScript 6's API from `@typescript/typescript6`. Editors need TypeScript 7's language server (VS Code: the `TypeScriptTeam.native-preview` extension) or their own bundled TypeScript.
+- oxlint's type-aware rules run through `oxlint-tsgolint`, whose version follows TypeScript's (7.0.2003 is for 7.0.2): update the two together. The rules are in `frontend/.oxlintrc.json`: promises must be awaited, returned or marked `void` (and only where nothing can reject), no `any` flows on, and a type assertion that narrows needs a disable comment saying why it holds, as at the server's answers that nothing validates.
 
 The API's endpoints are declared once in `contract/` (oRPC: method, path, input, output and errors). The Worker implements them in `cloudflare/src/api/` and the frontend calls them through `lib/orpc.ts`, so a change to an endpoint changes the contract, its procedure and its callers in one commit.
 

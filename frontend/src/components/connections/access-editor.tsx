@@ -54,7 +54,7 @@ export function AccessEditor({ workspaceId, connectionId }: { workspaceId: strin
     onSuccess: (data, input) => {
       queryClient.setQueryData(orpc.connections.access.queryKey({ input: ids }), data)
       // Newly allowed actions can need access the provider has not given yet; the summary changes too.
-      invalidateConnections(queryClient, workspaceId)
+      void invalidateConnections(queryClient, workspaceId)
       // Keep what the user changed while the save was in flight.
       setEdits(previous => {
         const next = new Map(previous)
@@ -103,7 +103,7 @@ export function AccessEditor({ workspaceId, connectionId }: { workspaceId: strin
             size="sm"
             disabled={refreshing}
             title="Load the list again from the app"
-            onClick={() => refreshResources(queryClient, workspaceId, connectionId)}
+            onClick={() => void refreshResources(queryClient, workspaceId, connectionId)}
           >
             <RefreshCwIcon className={cn('size-3.5', refreshing && 'animate-spin')} />
             Refresh
@@ -248,7 +248,7 @@ function KindAccess({ workspaceId, connectionId, kind, actions, grants, pending,
   )
   useEffect(() => {
     // The connection may have stopped working; its row then offers to reconnect.
-    if (resources.error) invalidateConnections(queryClient, workspaceId)
+    if (resources.error) void invalidateConnections(queryClient, workspaceId)
   }, [resources.error, queryClient, workspaceId])
 
   const plural = `${kind.label.toLowerCase()}s`
@@ -281,7 +281,7 @@ function KindAccess({ workspaceId, connectionId, kind, actions, grants, pending,
         )}
         {resources.hasNextPage && (
           <NoteRow span={span}>
-            <Button variant="ghost" size="sm" disabled={resources.isFetchingNextPage} onClick={() => resources.fetchNextPage()}>
+            <Button variant="ghost" size="sm" disabled={resources.isFetchingNextPage} onClick={() => void resources.fetchNextPage()}>
               Show more
             </Button>
           </NoteRow>
@@ -442,7 +442,7 @@ function TreeLevel(props: TreeLevelProps) {
     }),
   )
   useEffect(() => {
-    if (level.error) invalidateConnections(queryClient, workspaceId)
+    if (level.error) void invalidateConnections(queryClient, workspaceId)
   }, [level.error, queryClient, workspaceId])
   const items = level.data?.pages.flatMap(page => page.items) ?? []
 
@@ -489,7 +489,7 @@ function TreeLevel(props: TreeLevelProps) {
       {level.error && (
         <NoteRow span={span} depth={depth} className="text-destructive">
           {errorMessage(level.error, 'Could not load this folder.')}{' '}
-          <Button variant="link" size="sm" className="h-auto px-0" onClick={() => level.refetch()}>
+          <Button variant="link" size="sm" className="h-auto px-0" onClick={() => void level.refetch()}>
             Try again
           </Button>
         </NoteRow>
@@ -501,7 +501,7 @@ function TreeLevel(props: TreeLevelProps) {
       )}
       {level.hasNextPage && (
         <NoteRow span={span} depth={depth}>
-          <Button variant="ghost" size="sm" disabled={level.isFetchingNextPage} onClick={() => level.fetchNextPage()}>
+          <Button variant="ghost" size="sm" disabled={level.isFetchingNextPage} onClick={() => void level.fetchNextPage()}>
             Show more
           </Button>
         </NoteRow>

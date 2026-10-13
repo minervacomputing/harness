@@ -23,7 +23,7 @@ import { tokenHex, uuid7 } from "../lib/random.ts";
 import { first, type Sql, type SqlValue } from "../lib/sql.ts";
 import { splitParts, VALUE_PART } from "../lib/text.ts";
 import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan } from "../sandbox/folder.ts";
-import type { Attachment, Folder } from "@minerva/contract";
+import type { Attachment, Folder, FolderChanges } from "@minerva/contract";
 import { type AttemptFence, type ConversationId, type EpochMs, type Outcome, type RunId, type Sha256, type VersionId, type WorkspaceId, refuse } from "../shared/rpc.ts";
 import { overFolder } from "../workspace/limits.ts";
 import {
@@ -41,7 +41,6 @@ import {
 	unreadableMessage,
 } from "./limits.ts";
 import {
-	type FolderChanges,
 	type FolderWarnings,
 	InvalidManifest,
 	type Manifest,
@@ -613,7 +612,7 @@ export class FolderStore {
 			const path = numbered(upload.name, taken);
 			taken.add(path);
 			files.push({ path, sha256: upload.sha256, mode: 0o644, mtime });
-			attachments.push({ path, size: upload.size, media_type: upload.mediaType });
+			attachments.push({ path, size: upload.size, mediaType: upload.mediaType });
 		}
 		const { folderBytes: limitBytes, folderEntries } = this.#deps.settings;
 		let manifest: Manifest;

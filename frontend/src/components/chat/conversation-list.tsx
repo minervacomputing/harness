@@ -59,7 +59,7 @@ export function ConversationList({ workspaceId }: { workspaceId: string }) {
     return (
       <div className="space-y-1 px-2 py-2 text-xs text-muted-foreground">
         <p>{errorMessage(conversations.error, 'Could not load your conversations.')}</p>
-        <Button variant="link" size="sm" className="h-auto px-0" onClick={() => conversations.refetch()}>
+        <Button variant="link" size="sm" className="h-auto px-0" onClick={() => void conversations.refetch()}>
           Try again
         </Button>
       </div>

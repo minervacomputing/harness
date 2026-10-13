@@ -40,7 +40,7 @@ const RETRY_DELAYS_MS = [400, 1200]
 
 export const sendMessage = orpc.conversations.send.mutationOptions({
   retry: (failures, error) => failures < RETRY_DELAYS_MS.length && transient(error),
-  retryDelay: failures => RETRY_DELAYS_MS[failures]!,
+  retryDelay: failures => RETRY_DELAYS_MS[failures],
   // Offline, a send fails at once rather than waiting for the network to come back. (A repeat still waits while
   // the tab is hidden, as all of TanStack Query's retries do.)
   networkMode: 'always',

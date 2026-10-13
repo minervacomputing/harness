@@ -34,7 +34,7 @@ function ComponentsPage() {
         <Logo height={24} />
         <span className="label">Components · dev only</span>
         <div className="ml-auto flex items-center gap-3">
-          <Segmented value={layout} onValueChange={value => setLayout(value as Layout)} aria-label="Layout">
+          <Segmented values={['single', 'both']} value={layout} onValueChange={setLayout} aria-label="Layout">
             <SegmentedItem value="single">Current theme</SegmentedItem>
             <SegmentedItem value="both">Light and dark</SegmentedItem>
           </Segmented>
@@ -90,8 +90,6 @@ const COLOURS = [
   ['destructive', 'bg-destructive'],
   ['logo', 'bg-logo'],
 ] as const
-
-const TOOL = ToolCall as unknown as (props: Partial<ComponentProps<typeof ToolCall>>) => ReactNode
 
 function Work({ defaultOpen = false, ...props }: Omit<ComponentProps<typeof WorkGroup>, 'open' | 'onOpenChange'> & { defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen)
@@ -271,7 +269,7 @@ function Catalogue() {
           </TabsContent>
         </Tabs>
         <Row>
-          <Segmented value="week" onValueChange={() => {}} aria-label="Range">
+          <Segmented values={['day', 'week', 'month']} value="week" onValueChange={() => {}} aria-label="Range">
             <SegmentedItem value="day">Day</SegmentedItem>
             <SegmentedItem value="week">Week</SegmentedItem>
             <SegmentedItem value="month">Month</SegmentedItem>
@@ -378,11 +376,15 @@ function Catalogue() {
             <div className={QUIET}>
               <p>The user wants this week's tasks. I will list them, then check open issues.</p>
             </div>
-            <TOOL toolName="todoist_list_tasks" args={{ filter: 'due before: next monday' }} result={{ decision: 'allowed', label: 'Todoist: list tasks' }} />
+            <ToolCall
+              toolName="todoist_list_tasks"
+              args={{ filter: 'due before: next monday' }}
+              result={{ decision: 'allowed', label: 'Todoist: list tasks' }}
+            />
             <div className="prose prose-sm max-w-none prose-minerva">
               <p>Three tasks are due. Adding the reminder now.</p>
             </div>
-            <TOOL toolName="todoist_create_task" args={{}} result={{ decision: 'error', label: 'Todoist: create task' }} />
+            <ToolCall toolName="todoist_create_task" args={{}} result={{ decision: 'error', label: 'Todoist: create task' }} />
           </Work>
           <Work tools={0} failed={0} apps={[]} live defaultOpen>
             <div className={QUIET}>
@@ -394,14 +396,14 @@ function Catalogue() {
           <Work tools={0} failed={0} apps={[]}>
             {null}
           </Work>
-          <TOOL toolName="todoist_list_tasks" args={{ filter: 'due before: next monday' }} result={{ decision: 'allowed', label: 'Todoist: list tasks' }} />
-          <TOOL
+          <ToolCall toolName="todoist_list_tasks" args={{ filter: 'due before: next monday' }} result={{ decision: 'allowed', label: 'Todoist: list tasks' }} />
+          <ToolCall
             toolName="todoist_delete_task"
             args={{ id: '8812' }}
             result={{ decision: 'denied', label: 'Todoist: delete task', message: 'This connection does not allow deleting tasks.' }}
           />
-          <TOOL toolName="todoist_create_task" args={{}} result={{ decision: 'error', label: 'Todoist: create task' }} />
-          <TOOL toolName="github_search_issues" args={{ q: 'is:open' }} />
+          <ToolCall toolName="todoist_create_task" args={{}} result={{ decision: 'error', label: 'Todoist: create task' }} />
+          <ToolCall toolName="github_search_issues" args={{ q: 'is:open' }} />
           <div className="prose prose-sm max-w-none prose-minerva">
             <p>
               You have <strong>three tasks</strong> due this week:

@@ -1,6 +1,6 @@
 # Design: a first message creates its conversation
 
-Unit A2b of [frontend-cleanup.md](frontend-cleanup.md), 2026-10-13. A design, not built. Goal: the new-chat page sends one request that creates the conversation and posts its first message under one `Idempotency-Key`, so it can repeat the whole send after a lost answer and never creates and then deletes a conversation.
+Unit A2b of the frontend cleanup, 2026-10-13. A design, not built. Goal: the new-chat page sends one request that creates the conversation and posts its first message under one `Idempotency-Key`, so it can repeat the whole send after a lost answer and never creates and then deletes a conversation.
 
 ## Today
 

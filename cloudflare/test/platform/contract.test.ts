@@ -446,7 +446,31 @@ describe("the streamed read", () => {
 	// The conversation as the Worker writes it, read with a schema of the test's own: the contract types the body with `type<>()`, and
 	// nothing else checks it. Strict, so a field the API does not declare (a head's `eventSeq`) fails it.
 	const Iso = z.iso.datetime();
-	const Event = z.strictObject({ seq: z.number().int().positive(), type: z.enum(RUN_EVENT_TYPES), data: z.record(z.string(), z.unknown()) });
+	const event = <T extends string, D extends z.ZodType>(type: T, data: D) => z.strictObject({ seq: z.number().int().positive(), type: z.literal(type), data });
+	const Delta = z.strictObject({ text: z.string(), call: z.string().regex(/^[0-9a-f]{8}$/) });
+	const Shown = { tool: z.string(), label: z.string(), arguments: z.record(z.string(), z.unknown()) };
+	const Event = z.discriminatedUnion("type", [
+		event(
+			"status",
+			z.union([
+				z.strictObject({ status: z.enum(["queued", "provisioning", "running", "completed"]) }),
+				z.strictObject({ status: z.enum(["provisioning", "running"]), attempt: z.number().int().min(2) }),
+				z.strictObject({ status: z.enum(["failed", "cancelled", "timed_out"]), message: z.string().optional() }),
+			]),
+		),
+		event("phase", z.strictObject({ text: z.string() })),
+		event("text_delta", Delta),
+		event("reasoning_delta", Delta),
+		event(
+			"tool_call",
+			z.union([
+				z.strictObject({ ...Shown, decision: z.literal("allowed"), title: z.string(), count: z.number().nullable(), write: z.string().optional(), repeat: z.literal(true).optional() }),
+				z.strictObject({ ...Shown, decision: z.enum(["denied", "error"]), code: z.string(), message: z.string() }),
+			]),
+		),
+		event("local_tool", z.strictObject({ tool: z.enum(["read", "write", "edit", "bash"]), summary: z.string(), ok: z.boolean(), excerpt: z.string() })),
+		event("message", z.strictObject({ id: z.uuid(), content: z.string(), call: z.string().optional() })),
+	]);
 	const Changed = z.array(z.strictObject({ path: z.string(), size: z.number() }));
 	const Run = z.strictObject({
 		id: z.uuid(),
@@ -457,7 +481,14 @@ describe("the streamed read", () => {
 		baseVersionId: z.uuid().nullable(),
 		resultVersionId: z.uuid().nullable(),
 		folderChanges: z
-			.strictObject({ added: Changed, modified: Changed, deleted: Changed, counts: z.record(z.string(), z.number()), dirs_added: z.array(z.string()), dirs_deleted: z.array(z.string()) })
+			.strictObject({
+				added: Changed,
+				modified: Changed,
+				deleted: Changed,
+				counts: z.strictObject({ added: z.number(), modified: z.number(), deleted: z.number(), dirsAdded: z.number(), dirsDeleted: z.number() }),
+				dirsAdded: z.array(z.string()),
+				dirsDeleted: z.array(z.string()),
+			})
 			.nullable(),
 		folderWarnings: z.strictObject({ items: z.array(z.strictObject({ path: z.string(), reason: z.string() })), total: z.number() }).nullable(),
 		events: z.array(Event),
@@ -466,7 +497,7 @@ describe("the streamed read", () => {
 		id: z.uuid(),
 		role: z.enum(["user", "assistant"]),
 		content: z.string(),
-		attachments: z.array(z.strictObject({ path: z.string(), size: z.number(), media_type: z.string() })),
+		attachments: z.array(z.strictObject({ path: z.string(), size: z.number(), mediaType: z.string() })),
 		runId: z.uuid().nullable(),
 		createdAt: Iso,
 	});
@@ -506,6 +537,10 @@ describe("the streamed read", () => {
 	}
 
 	const read = (a: Account, conversationId: string) => a.browser.fetch(`${ORIGIN}/api/workspaces/${a.ws}/conversations/${conversationId}`);
+
+	test("the schema reads every event type", () => {
+		expect(Event.options.map((option) => option.shape.type.value)).toEqual([...RUN_EVENT_TYPES]);
+	});
 
 	test("a large conversation, over many pages of events and of bytes, arrives whole as JSON through the typed client", async () => {
 		const ada = await account();

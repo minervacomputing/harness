@@ -52,7 +52,7 @@ import { ScriptRuns, scriptToolHost } from "../scripts/host.ts";
 import { isReset, type ScriptsClient } from "../scripts/run.ts";
 import type { ScriptsApi } from "../scripts/scripts.ts";
 import { scriptTool } from "../scripts/tool.ts";
-import type { Folder, Message, NewMessage } from "@minerva/contract";
+import type { Folder, Message, NewMessage, Run } from "@minerva/contract";
 import { type AttemptFence, type Caller, type Outcome, type Refusal, type RunId, type VersionId, refuse } from "../shared/rpc.ts";
 import { START_FAILED } from "../workspace/core.ts";
 import {
@@ -89,7 +89,6 @@ import {
 	type RunRow,
 	type RunSnapshot,
 	RunStore,
-	type RunView,
 	type StartRow,
 } from "./store.ts";
 import { RunStream } from "./stream.ts";
@@ -177,7 +176,7 @@ export interface ConversationApi {
 
 export interface PostedView {
 	message: Message;
-	run: RunView;
+	run: Run;
 }
 
 /** chord's background context: never cancelled, no values. */

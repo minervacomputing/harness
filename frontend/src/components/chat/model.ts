@@ -1,11 +1,40 @@
 import type { AppendMessage, ThreadMessageLike } from '@assistant-ui/react'
-import type { Attachment, Conversation, FolderChanges, FolderWarnings, Run, RunEvent, RunStatus, Upload } from '@minerva/contract'
+import type {
+  Attachment,
+  Conversation,
+  FolderChanges,
+  FolderWarnings,
+  JsonObject,
+  LocalToolEventData,
+  Run,
+  RunEvent,
+  RunStatus,
+  Upload,
+} from '@minerva/contract'
 import { ACTIVE_STATUSES } from '@/lib/run-stream'
 
-export type LocalTool = { tool: 'read' | 'write' | 'edit' | 'bash'; summary: string; excerpt: string }
+export type LocalTool = Omit<LocalToolEventData, 'ok'>
 
 /** `local` is set on a call the agent ran in the conversation's folder rather than on a connected app. */
 export type ToolCallResult = { decision: 'allowed' | 'denied' | 'error'; message?: string; label: string; local?: LocalTool }
+
+/** A tool call part's result, as `collect` made it; assistant-ui hands it back as `unknown`. */
+export function toolResult(result: unknown): ToolCallResult | undefined {
+  return isToolCallResult(result) ? result : undefined
+}
+
+const DECISIONS: readonly unknown[] = ['allowed', 'denied', 'error'] satisfies ToolCallResult['decision'][]
+
+function isToolCallResult(value: unknown): value is ToolCallResult {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'decision' in value &&
+    DECISIONS.includes(value.decision) &&
+    'label' in value &&
+    typeof value.label === 'string'
+  )
+}
 
 /** What a finished turn did to the folder; downloads come from `version`, the folder it left. */
 export type TurnFiles = { changes: FolderChanges | null; warnings: FolderWarnings | null; version: string | null }
@@ -19,7 +48,7 @@ export const NARRATION = 'narration'
 type Part =
   | { type: 'text'; text: string; parentId?: typeof NARRATION }
   | { type: 'reasoning'; text: string }
-  | { type: 'tool-call'; toolCallId: string; toolName: string; args: Record<string, never>; result: ToolCallResult; isError: boolean }
+  | { type: 'tool-call'; toolCallId: string; toolName: string; args: JsonObject | { truncated: string }; result: ToolCallResult; isError: boolean }
 
 export type ChatMessage =
   | { kind: 'user'; id: string; text: string; createdAt: string; files: MessageFiles }
@@ -34,7 +63,7 @@ const STARTING: Record<string, string> = {
 
 /** A status event that starts a new attempt: the run's worker died and another took over the turn. */
 function isRestart(event: RunEvent): boolean {
-  return event.type === 'status' && event.data.attempt != null
+  return event.type === 'status' && 'attempt' in event.data
 }
 
 /**
@@ -43,48 +72,41 @@ function isRestart(event: RunEvent): boolean {
  * repeat is not shown next to the card of the write. Streamed text continues the part before it only if it came from
  * the same model call (`call`), so calls that stream at once do not run together.
  */
-function collect(events: RunEvent[]): { parts: Part[]; callOf: WeakMap<Part, unknown> } {
+function collect(events: RunEvent[]): { parts: Part[]; callOf: WeakMap<Part, string> } {
   let parts: Part[] = []
-  const callOf = new WeakMap<Part, unknown>()
+  const callOf = new WeakMap<Part, string>()
   const writes = new Set<string>()
   for (const event of events) {
     if (isRestart(event)) {
       parts = parts.filter(part => part.type === 'tool-call')
     } else if (event.type === 'tool_call') {
-      const data = event.data as {
-        tool: string
-        label: string
-        decision: ToolCallResult['decision']
-        message?: string
-        arguments?: Record<string, never>
-        repeat?: boolean
-        write?: string
+      const { data } = event
+      if (data.decision === 'allowed' && data.write) {
+        // The write's own event may be missing, if its worker died before the gateway recorded it.
+        if (data.repeat && writes.has(data.write)) continue
+        writes.add(data.write)
       }
-      // The write's own event may be missing, if its worker died before the gateway recorded it.
-      if (data.repeat && data.write && writes.has(data.write)) continue
-      if (data.decision === 'allowed' && data.write) writes.add(data.write)
       parts.push({
         type: 'tool-call',
         toolCallId: `${event.seq}`,
         toolName: data.tool,
-        args: data.arguments ?? {},
-        result: { decision: data.decision, message: data.message, label: data.label },
+        args: data.arguments,
+        result: { decision: data.decision, message: data.decision === 'allowed' ? undefined : data.message, label: data.label },
         isError: data.decision !== 'allowed',
       })
     } else if (event.type === 'local_tool') {
-      const data = event.data as LocalTool & { ok: boolean }
-      const local = { tool: data.tool, summary: String(data.summary ?? ''), excerpt: String(data.excerpt ?? '') }
+      const { tool, summary, excerpt, ok } = event.data
       parts.push({
         type: 'tool-call',
         toolCallId: `${event.seq}`,
-        toolName: data.tool,
+        toolName: tool,
         args: {},
-        result: { decision: data.ok ? 'allowed' : 'error', label: 'Files', local },
-        isError: !data.ok,
+        result: { decision: ok ? 'allowed' : 'error', label: 'Files', local: { tool, summary, excerpt } },
+        isError: !ok,
       })
     } else if (event.type === 'text_delta' || event.type === 'reasoning_delta') {
       const type = event.type === 'text_delta' ? 'text' : 'reasoning'
-      const text = String(event.data.text ?? '')
+      const { text } = event.data
       const last = parts.at(-1)
       if (last?.type === type && callOf.get(last) === event.data.call) {
         last.text += text
@@ -110,20 +132,18 @@ function withNarration(parts: Part[]): Part[] {
 /**
  * A finished turn: the final message replaces the answer that streamed, which is the text after the last tool call and
  * all text from the model call that wrote it, as the `message` event names it (a tool call can finish while the answer
- * streams). Events stored before the event named its call take the last call to stream text, which wrote the answer
- * then: the Worker publishes the text of every call but a compaction's.
+ * streams).
  */
 function finishedParts(events: RunEvent[], answer: string): Part[] {
   const { parts, callOf } = collect(events)
   const lastTool = parts.findLastIndex(part => part.type === 'tool-call')
-  const lastText = parts.findLast(part => part.type === 'text')
-  const answerCall = events.findLast(e => e.type === 'message')?.data.call ?? (lastText && callOf.get(lastText))
+  const answerCall = events.findLast(e => e.type === 'message')?.data.call
   const kept = parts.filter((part, i) => part.type !== 'text' || (i < lastTool && callOf.get(part) !== answerCall))
   return [...withNarration(kept), { type: 'text', text: answer }]
 }
 
 function latestStatus(events: RunEvent[]): RunStatus | undefined {
-  return events.findLast(e => e.type === 'status')?.data.status as RunStatus | undefined
+  return events.findLast(e => e.type === 'status')?.data.status
 }
 
 function phaseOf(run: Run, events: RunEvent[]): string {
@@ -132,7 +152,7 @@ function phaseOf(run: Run, events: RunEvent[]): string {
   if (STARTING[run.status]) return STARTING[run.status]
   // An earlier attempt's phase no longer applies.
   const phase = events.slice(status + 1).findLast(e => e.type === 'phase')
-  return String(phase?.data.text ?? 'Thinking')
+  return phase?.data.text ?? 'Thinking'
 }
 
 export function buildMessages(conversation: Conversation | undefined, liveRun: Run | undefined, liveEvents: RunEvent[]): ChatMessage[] {
@@ -151,7 +171,7 @@ export function buildMessages(conversation: Conversation | undefined, liveRun: R
       const streamed = run.events.findLast(e => e.type === 'message')
       // One id for the run's answer, live or finished, so the message is not remounted when the run ends.
       if (streamed) {
-        const parts = finishedParts(run.events, String(streamed.data.content ?? ''))
+        const parts = finishedParts(run.events, streamed.data.content)
         out.push({ kind: 'assistant', id: `run-${run.id}`, parts, createdAt: message.createdAt, files: turnFiles(run) })
       } else if (ACTIVE_STATUSES.has(run.status)) {
         out.push({ kind: 'progress', id: `run-${run.id}`, parts: partsFrom(run.events), phase: phaseOf(run, run.events) })
@@ -174,7 +194,7 @@ function turnFiles(run: Run): TurnFiles | undefined {
 
 /** Shown while a message is on its way to the server, before the conversation refreshes. */
 export function pendingMessages(text: string, uploads: Upload[]): ChatMessage[] {
-  const attachments = uploads.map(upload => ({ path: upload.name, size: upload.size, media_type: upload.mediaType }))
+  const attachments = uploads.map(upload => ({ path: upload.name, size: upload.size, mediaType: upload.mediaType }))
   return [
     { kind: 'user', id: 'pending-user', text, createdAt: new Date().toISOString(), files: { attachments, version: null } },
     { kind: 'progress', id: 'pending-run', parts: [], phase: 'Sending' },
@@ -193,7 +213,7 @@ export function toThreadMessage(message: ChatMessage): ThreadMessageLike {
           id: file.path,
           type: 'file',
           name: file.path,
-          contentType: file.media_type,
+          contentType: file.mediaType,
           status: { type: 'complete' },
           content: [],
         })),

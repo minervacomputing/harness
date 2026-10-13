@@ -813,8 +813,8 @@ describe("attachments", () => {
 		if (!prepared.ok) throw new Error(prepared.refusal.detail);
 		const { baseVersionId, attachments } = w.sql.transaction(() => w.store.commitAttachments(run, prepared.value));
 		expect(attachments).toEqual([
-			{ path: "notes (2).txt", size: 9, media_type: "text/plain" },
-			{ path: "data.csv", size: 4, media_type: "text/csv" },
+			{ path: "notes (2).txt", size: 9, mediaType: "text/plain" },
+			{ path: "data.csv", size: 4, mediaType: "text/csv" },
 		]);
 		const base = w.versions().find((version) => version.id === baseVersionId);
 		expect(base).toMatchObject({ kind: "base", parent_id: first, run_id: run });

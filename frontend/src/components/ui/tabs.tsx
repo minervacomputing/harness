@@ -24,16 +24,18 @@ export function TabsContent({ className, ...props }: ComponentProps<typeof TabsP
   return <TabsPrimitive.Content className={cn('pt-4 outline-none', className)} {...props} />
 }
 
-/** A compact switch between two to four views, such as Light and Dark. */
-export function Segmented({
+/** A compact switch between two to four views, such as Light and Dark. `values` are its items' values. */
+export function Segmented<T extends string>({
+  values,
   value,
   onValueChange,
   className,
   children,
   ...props
 }: {
-  value: string
-  onValueChange: (value: string) => void
+  values: readonly T[]
+  value: T
+  onValueChange: (value: T) => void
   className?: string
   children: ReactNode
   'aria-label'?: string
@@ -43,7 +45,8 @@ export function Segmented({
       type="single"
       value={value}
       onValueChange={next => {
-        if (next) onValueChange(next)
+        const chosen = values.find(v => v === next)
+        if (chosen) onValueChange(chosen)
       }}
       className={cn('inline-flex gap-0.5 border bg-secondary p-0.5 shadow-(--inset-track)', className)}
       {...props}

@@ -657,8 +657,8 @@ describe("uploads", () => {
 		const answer = await post(a, conversation, "", ids.slice(0, 2));
 		expect(answer.status).toBe(201);
 		expect(answer.body.message.attachments).toEqual([
-			{ path: "f0.txt", size: 6, media_type: "text/plain" },
-			{ path: "f1.txt", size: 6, media_type: "text/plain" },
+			{ path: "f0.txt", size: 6, mediaType: "text/plain" },
+			{ path: "f1.txt", size: 6, mediaType: "text/plain" },
 		]);
 		expect(answer.body.run.baseVersionId).toEqual(expect.any(String));
 		await settled(a, answer.body.run.id);

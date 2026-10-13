@@ -148,8 +148,9 @@ export class UploadAdapter implements AttachmentAdapter {
           if (event.lengthComputable) onProgress(event.loaded / event.total)
         }
         request.onload = () => {
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the server's answer as the contract declares it, unvalidated like oRPC's outputs
           if (request.status === 201) resolve(request.response as Upload)
-          else reject(request.response ?? { message: uploadFailure(request.status) })
+          else reject(new Error(refusalMessage(request.response) ?? uploadFailure(request.status)))
         }
         request.onerror = () => reject(new TypeError('The upload failed.'))
         request.onabort = () => reject(new Error('The upload was cancelled.'))
@@ -179,6 +180,11 @@ export function useUploadAdapter(workspaceId: string): UploadAdapter {
     }
   }, [adapter])
   return adapter
+}
+
+/** The server's own sentence in a refusal (the contract's error shape, read as JSON by the XHR), if it has one. */
+function refusalMessage(body: unknown): string | undefined {
+  return typeof body === 'object' && body !== null && 'message' in body && typeof body.message === 'string' && body.message ? body.message : undefined
 }
 
 function uploadFailure(status: number): string {

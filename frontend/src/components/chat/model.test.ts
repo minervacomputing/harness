@@ -1,13 +1,21 @@
 import { describe, expect, test } from 'vitest'
-import type { Conversation, Run, RunEvent, RunStatus } from '@minerva/contract'
+import type { Conversation, Run, RunEvent, RunStatus, ToolCallAllowed } from '@minerva/contract'
 import { buildMessages, NARRATION } from './model'
 
 let seq = 0
-const event = (type: RunEvent['type'], data: Record<string, unknown>): RunEvent => ({ seq: ++seq, type, data })
-const text = (value: string, call = 'c1') => event('text_delta', { text: value, call })
-const reasoning = (value: string, call = 'c1') => event('reasoning_delta', { text: value, call })
-const tool = (name: string, data: Record<string, unknown> = {}) => event('tool_call', { tool: name, decision: 'allowed', ...data })
-const restart = () => event('status', { status: 'provisioning', attempt: 2 })
+const text = (value: string, call = 'c1'): RunEvent => ({ seq: ++seq, type: 'text_delta', data: { text: value, call } })
+const reasoning = (value: string, call = 'c1'): RunEvent => ({ seq: ++seq, type: 'reasoning_delta', data: { text: value, call } })
+const tool = (name: string, data: Partial<ToolCallAllowed> = {}): RunEvent => ({
+  seq: ++seq,
+  type: 'tool_call',
+  data: { tool: name, label: name, arguments: {}, decision: 'allowed', title: name, count: null, ...data },
+})
+const refused = (name: string): RunEvent => ({
+  seq: ++seq,
+  type: 'tool_call',
+  data: { tool: name, label: name, arguments: {}, decision: 'denied', code: 'denied', message: 'Not allowed.' },
+})
+const restart = (): RunEvent => ({ seq: ++seq, type: 'status', data: { status: 'provisioning', attempt: 2 } })
 
 function run(status: RunStatus, events: RunEvent[], errorMessage = ''): Run {
   return {
@@ -57,7 +65,7 @@ describe('restarts', () => {
   })
 
   test('show as restarting while the new worker starts, and forget the earlier phase', () => {
-    const phase = event('phase', { text: 'Reading files' })
+    const phase: RunEvent = { seq: ++seq, type: 'phase', data: { text: 'Reading files' } }
     expect(reply(run('provisioning', [restart()]))).toMatchObject({ kind: 'progress', phase: 'Restarting the agent' })
     expect(reply(run('running', [phase, restart()]))).toMatchObject({ kind: 'progress', phase: 'Thinking' })
   })
@@ -72,7 +80,7 @@ describe('repeated writes', () => {
   test('a repeat shows when the original is missing or was not carried out', () => {
     const missing = reply(run('running', [tool('create', { write: 'w1', repeat: true })]))
     expect(shape(missing)).toEqual(['tool:create'])
-    const denied = reply(run('running', [tool('create', { write: 'w2', decision: 'denied' }), tool('create', { write: 'w2', repeat: true })]))
+    const denied = reply(run('running', [refused('create'), tool('create', { write: 'w2', repeat: true })]))
     expect(shape(denied)).toEqual(['tool:create', 'tool:create'])
   })
 })
@@ -90,7 +98,7 @@ describe('narration', () => {
 })
 
 describe('the answer', () => {
-  const answered = (content: string, call?: string) => event('message', { id: 'm2', content, ...(call ? { call } : {}) })
+  const answered = (content: string, call: string): RunEvent => ({ seq: ++seq, type: 'message', data: { id: 'm2', content, call } })
 
   test('replaces what its model call streamed, including before a tool call finished', () => {
     const events = [text('Checking.'), tool('search'), text('The answer', 'c2'), tool('lookup'), text('\n\nis  42.', 'c2')]
@@ -104,10 +112,10 @@ describe('the answer', () => {
     expect(shape(m)).toEqual(['text(narration):Looking it up.', 'tool:search', 'text:I cannot share that.'])
   })
 
-  test('stored before the message event named its call came from the last call to stream text', () => {
-    const events = [text('Checking.'), tool('search'), text('The answer', 'c2'), tool('lookup'), text(' is 42.', 'c2')]
-    const m = reply(run('completed', [...events, answered('The answer is 42.')]), 'The answer is 42.')
-    expect(shape(m)).toEqual(['text(narration):Checking.', 'tool:search', 'tool:lookup', 'text:The answer is 42.'])
+  test('that names no call replaces the text after the last tool call and keeps the text before it as narration', () => {
+    const unnamed: RunEvent = { seq: ++seq, type: 'message', data: { id: 'm2', content: 'It is 42.' } }
+    const m = reply(run('completed', [text('Checking.'), tool('search'), text('It is', 'c2'), unnamed]), 'It is 42.')
+    expect(shape(m)).toEqual(['text(narration):Checking.', 'tool:search', 'text:It is 42.'])
   })
 
   test('comes from the message event until the conversation refreshes, under the same id', () => {

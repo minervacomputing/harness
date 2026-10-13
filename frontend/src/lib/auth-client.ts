@@ -36,7 +36,7 @@ export function fieldErrors(error: unknown): Partial<Record<Field, string>> {
 /** A failed request: `BetterFetchError`'s status and its body's `{code, message}`, or status 0 when the server was not reached. */
 export function failureOf(error: unknown): { status: number; code?: string; message?: string } {
   if (!(error instanceof Error && 'status' in error && typeof error.status === 'number')) return { status: 0 }
-  const body = 'error' in error && typeof error.error === 'object' ? (error.error as { code?: unknown; message?: unknown } | null) : null
+  const body: { code?: unknown; message?: unknown } | null = 'error' in error && typeof error.error === 'object' ? error.error : null
   return {
     status: error.status,
     code: typeof body?.code === 'string' ? body.code : undefined,

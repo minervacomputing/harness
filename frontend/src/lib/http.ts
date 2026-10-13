@@ -37,8 +37,8 @@ export class NetworkError extends Error {
 
 /**
  * Turns an error into one readable sentence: the contract's errors (a declared one carries the server's message; an undeclared one
- * comes from something in front of the app or from a crash, so its text is replaced by a sentence about the server), a refusal of the
- * upload (the same shape, read as JSON by its XHR), and network failures.
+ * comes from something in front of the app or from a crash, so its text is replaced by a sentence about the server), network failures,
+ * and other errors by their message.
  */
 export function errorMessage(error: unknown, fallback = 'Something went wrong. Try again.'): string {
   if (!error) return fallback
@@ -46,6 +46,5 @@ export function errorMessage(error: unknown, fallback = 'Something went wrong. T
   if (error instanceof ORPCError) return error.defined ? error.message || fallback : serverErrorMessage(error.status)
   if (error instanceof TypeError) return 'The server could not be reached.'
   if (error instanceof Error) return error.message || fallback
-  if (typeof error === 'object' && 'message' in error && typeof error.message === 'string' && error.message) return error.message
   return fallback
 }

@@ -24,17 +24,17 @@ function message(fields: Partial<StoredMessage> & Pick<StoredMessage, "role" | "
 }
 
 function attachment(path: string) {
-	return { path, size: 1, media_type: "text/plain" };
+	return { path, size: 1, mediaType: "text/plain" };
 }
 
 function changes(counts: Partial<FolderChanges["counts"]>, lists: Partial<Pick<FolderChanges, "added" | "modified" | "deleted">> = {}): FolderChanges {
 	return {
-		counts: { added: 0, modified: 0, deleted: 0, dirs_added: 0, dirs_deleted: 0, ...counts },
+		counts: { added: 0, modified: 0, deleted: 0, dirsAdded: 0, dirsDeleted: 0, ...counts },
 		added: lists.added ?? [],
 		modified: lists.modified ?? [],
 		deleted: lists.deleted ?? [],
-		dirs_added: [],
-		dirs_deleted: [],
+		dirsAdded: [],
+		dirsDeleted: [],
 	};
 }
 
@@ -61,7 +61,7 @@ describe("file notes", () => {
 	});
 
 	test("an answer whose turn changed only directories, or nothing, has no note", () => {
-		expect(withFiles(message({ role: "assistant", content: "Ok", changes: changes({ dirs_added: 3 }) }))).toBe("Ok");
+		expect(withFiles(message({ role: "assistant", content: "Ok", changes: changes({ dirsAdded: 3 }) }))).toBe("Ok");
 		expect(withFiles(message({ role: "assistant", content: "Ok" }))).toBe("Ok");
 		// A user message's run changes never count.
 		expect(withFiles(message({ role: "user", content: "Hi", changes: changes({ added: 1 }, { added: [{ path: "a", size: 1 }] }) }))).toBe("Hi");
