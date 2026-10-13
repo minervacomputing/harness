@@ -3,7 +3,7 @@
   "plugins": ["eslint", "oxc", "typescript", "react", "jsx-a11y", "promise", "import", "unicorn", "vitest"],
   "jsPlugins": ["./lint/plugin.js"],
   "categories": { "correctness": "error", "suspicious": "error" },
-  "ignorePatterns": ["dist/", "src/api/", "src/routeTree.gen.ts"],
+  "ignorePatterns": ["dist/", "src/routeTree.gen.ts"],
   "rules": {
     "react/rules-of-hooks": "error",
     "react/exhaustive-deps": "error",

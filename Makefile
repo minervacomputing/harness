@@ -1,4 +1,4 @@
-.PHONY: setup services migrate seed seed-demo screenshots worker-image sandbox-check dev fake-model test lint api-types
+.PHONY: setup services migrate seed seed-demo screenshots worker-image sandbox-check dev fake-model test lint
 
 setup: services
 	cd backend && uv sync
@@ -46,6 +46,3 @@ test:
 lint:
 	cd backend && uv run ruff check . && uv run ruff format --check .
 	cd frontend && pnpm check
-
-api-types:
-	cd frontend && pnpm gen:api

@@ -9,7 +9,6 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b",
-    "gen:api": "openapi-ts",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "lint": "oxlint --report-unused-disable-directives-severity=error",
@@ -45,7 +44,6 @@
     "zod": "4.3.6"
   },
   "devDependencies": {
-    "@hey-api/openapi-ts": "^0.99.0",
     "@tailwindcss/typography": "^0.5.20",
     "@tanstack/router-plugin": "^1.168.41",
     "@types/node": "^26.6.3",

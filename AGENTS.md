@@ -136,7 +136,6 @@ opencode run --agent plan --auto -f plan.md "Critique this plan: what is wrong, 
 make test            # backend pytest (needs Postgres), worker typecheck and tests, frontend check
 make lint            # ruff check and format check, frontend check
 make sandbox-check   # sandbox isolation probe; needs make dev running
-make api-types       # after editing frontend/openapi.json (by hand: the Worker serves the API, not Django)
 ```
 
 ## Frontend
@@ -148,6 +147,8 @@ pnpm check    # oxlint, oxfmt --check, tsc, knip (unused files, exports, depende
 pnpm format   # oxfmt writes the formatting
 pnpm test     # the unit tests alone (vitest)
 ```
+
+The API's endpoints are declared once in `contract/` (oRPC: method, path, input, output and errors). The Worker implements them in `cloudflare/src/api/` and the frontend calls them through `lib/orpc.ts`, so a change to an endpoint changes the contract, its procedure and its callers in one commit.
 
 Tests:
 

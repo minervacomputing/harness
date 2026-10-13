@@ -153,7 +153,6 @@ It starts the worker image with a probe and verifies 21 properties, including a 
 |---|---|
 | `make test` | Backend tests, then worker and frontend typechecks |
 | `make lint` | Ruff lint and format check |
-| `make api-types` | Regenerates the frontend API client from the backend's OpenAPI schema; run it after changing a backend API schema |
 
 ```text
 backend/     Django project (web, gateway and supervisor roles) and the connectors

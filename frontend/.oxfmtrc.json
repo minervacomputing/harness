@@ -7,5 +7,5 @@
   "sortPackageJson": false,
   "sortTailwindcss": { "stylesheet": "./src/index.css", "functions": ["cn", "cva"] },
   "overrides": [{ "files": ["*.css"], "options": { "singleQuote": false } }],
-  "ignorePatterns": ["openapi.json", "src/api/", "src/routeTree.gen.ts", "src/components/brand/logo-paths.ts", "src/components/connections/brand-paths.ts"]
+  "ignorePatterns": ["src/routeTree.gen.ts", "src/components/brand/logo-paths.ts", "src/components/connections/brand-paths.ts"]
 }

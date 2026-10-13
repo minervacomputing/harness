@@ -1,5 +1,3 @@
 {
-  "$schema": "https://unpkg.com/knip@6/schema.json",
-  "ignore": ["src/api/**"],
-  "ignoreBinaries": ["uv"]
+  "$schema": "https://unpkg.com/knip@6/schema.json"
 }
