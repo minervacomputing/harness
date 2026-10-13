@@ -21,8 +21,7 @@ import { type Binding, type EncryptionKeys, type Sealed, credentialBinding } fro
 import { type JsonObject, parseJson } from "../lib/json.ts";
 import { uuid7 } from "../lib/random.ts";
 import { VALUE_PART, sliceText, splitParts } from "../lib/text.ts";
-import type { Agent, ConversationSummary, NewAgent, Upload } from "@minerva/contract";
-import type { AccessOut, ConnectionOut } from "../shared/api.ts";
+import type { Access, Agent, Connection, ConversationSummary, NewAgent, Upload } from "@minerva/contract";
 import type {
 	AgentId,
 	Caller,
@@ -159,11 +158,11 @@ export interface WorkspaceApi {
 
 	// Connections and access. Provider calls (account, discover, children, describe)
 	// happen in the Worker before these are called, with a credential from `lease`.
-	listConnections(caller: Caller): Promise<ConnectionOut[]>;
+	listConnections(caller: Caller): Promise<Connection[]>;
 	/** Built-in services: one per user, idempotent; 422 "{Name} is connected through its own sign-in." */
-	enableBuiltin(caller: Caller, provider: string): Promise<Outcome<ConnectionOut>>;
+	enableBuiltin(caller: Caller, provider: string): Promise<Outcome<Connection>>;
 	/** After an OAuth callback or a key check; encrypts the credentials and bumps the generation. */
-	saveConnection(caller: Caller, input: SaveConnectionInput): Promise<Outcome<ConnectionOut>>;
+	saveConnection(caller: Caller, input: SaveConnectionInput): Promise<Outcome<Connection>>;
 	/** 403 for a shared connection and a non-admin; revokes the caller's runs (`connection_removed`). */
 	deleteConnection(caller: Caller, connectionId: ConnectionId): Promise<Outcome<{ revocation: Revocation }>>;
 	/**
@@ -171,7 +170,7 @@ export interface WorkspaceApi {
 	 * user's personal one. Never calls the provider. The Worker reads a connection's
 	 * provider, owner and the caller's grants from this before every settings request.
 	 */
-	getAccess(caller: Caller, connectionId: ConnectionId): Promise<Outcome<AccessOut>>;
+	getAccess(caller: Caller, connectionId: ConnectionId): Promise<Outcome<Access>>;
 	/**
 	 * All or nothing, after `checkChanges` and the provider's `describe` of new concrete grants (names
 	 * given, keyed by gateway/grants.ts `resourceKey(kind, id)`), then `planGrantChanges`. 422 with
@@ -183,7 +182,7 @@ export interface WorkspaceApi {
 		connectionId: ConnectionId,
 		changes: GrantChange[],
 		names: { [key: string]: string },
-	): Promise<Outcome<{ access: AccessOut; revocation: Revocation }>>;
+	): Promise<Outcome<{ access: Access; revocation: Revocation }>>;
 	/** The actions allowed on a connection: the caller's, or every member's for a shared one (reconnect scopes). */
 	allowedActions(caller: Caller, connectionId: ConnectionId): Promise<string[] | null>;
 	/**
@@ -641,19 +640,19 @@ export class WorkspaceCore implements WorkspaceApi {
 	}
 
 	/** The API's view of a connection for the caller; null for a provider no longer declared. */
-	#connectionOut(caller: Caller, row: ConnectionRow): ConnectionOut | null {
+	#connectionOut(caller: Caller, row: ConnectionRow): Connection | null {
 		const connector = this.#registry.find(row.provider);
 		return connector === null ? null : connectionOut(connector, this.#view(row), this.#userGrants(row.id, caller.userId));
 	}
 
-	async listConnections(caller: Caller): Promise<ConnectionOut[]> {
+	async listConnections(caller: Caller): Promise<Connection[]> {
 		const own = this.#sql.exec<ConnectionRow>("SELECT * FROM connections WHERE owner_id = ? ORDER BY created_at, id", caller.userId);
 		const shared = this.#sql.exec<ConnectionRow>("SELECT * FROM connections WHERE owner_id IS NULL ORDER BY created_at, id");
 		// A connection whose connector is gone is left out.
 		return [...own, ...shared].map((row) => this.#connectionOut(caller, row)).filter((out) => out !== null);
 	}
 
-	async getAccess(caller: Caller, connectionId: ConnectionId): Promise<Outcome<AccessOut>> {
+	async getAccess(caller: Caller, connectionId: ConnectionId): Promise<Outcome<Access>> {
 		const usable = this.#usable(caller, connectionId);
 		if (!usable.ok) return usable;
 		const connector = this.#registry.find(usable.value.provider);
@@ -716,13 +715,13 @@ export class WorkspaceCore implements WorkspaceApi {
 		return id;
 	}
 
-	async enableBuiltin(caller: Caller, provider: string): Promise<Outcome<ConnectionOut>> {
+	async enableBuiltin(caller: Caller, provider: string): Promise<Outcome<Connection>> {
 		const connector = this.#registry.find(provider);
 		if (connector === null) return refuse("UNKNOWN_PROVIDER", UNKNOWN_PROVIDER);
 		if (connector.auth.type !== "builtin") return refuse("WRONG_CONNECTION_METHOD", `${connector.name} is connected through its own sign-in.`);
 		// One per user, found again by its account id, the user's id.
 		const found = this.#connectionByAccount(provider, caller.userId);
-		if (found !== null) return ok(this.#connectionOut(caller, found) as ConnectionOut);
+		if (found !== null) return ok(this.#connectionOut(caller, found) as Connection);
 		const payload: JsonObject = { kind: "builtin" };
 		const id = uuid7(this.#now());
 		const sealed = await this.#deps.keys.encrypt(this.#binding(id), payload);
@@ -733,10 +732,10 @@ export class WorkspaceCore implements WorkspaceApi {
 			this.#insertConnection({ id, provider, ownerId: caller.userId, label: connector.name, accountId: caller.userId, sealed, payload }, now);
 			return this.#connection(id) as ConnectionRow;
 		});
-		return ok(this.#connectionOut(caller, row) as ConnectionOut);
+		return ok(this.#connectionOut(caller, row) as Connection);
 	}
 
-	async saveConnection(caller: Caller, input: SaveConnectionInput): Promise<Outcome<ConnectionOut>> {
+	async saveConnection(caller: Caller, input: SaveConnectionInput): Promise<Outcome<Connection>> {
 		const connector = this.#registry.find(input.provider);
 		if (connector === null) return refuse("UNKNOWN_PROVIDER", UNKNOWN_PROVIDER);
 		const tokens = input.credentials as unknown as JsonObject;
@@ -798,7 +797,7 @@ export class WorkspaceCore implements WorkspaceApi {
 				return target.id;
 			});
 			if (saved === null) continue;
-			return ok(this.#connectionOut(caller, this.#connection(saved) as ConnectionRow) as ConnectionOut);
+			return ok(this.#connectionOut(caller, this.#connection(saved) as ConnectionRow) as Connection);
 		}
 		throw new Error("The connection kept changing while it was saved.");
 	}
@@ -823,7 +822,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		connectionId: ConnectionId,
 		changes: GrantChange[],
 		names: { [key: string]: string },
-	): Promise<Outcome<{ access: AccessOut; revocation: Revocation }>> {
+	): Promise<Outcome<{ access: Access; revocation: Revocation }>> {
 		const usable = this.#usable(caller, connectionId);
 		if (!usable.ok) return usable;
 		const connection = usable.value;
@@ -843,7 +842,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		}
 		const now = this.#now();
 		const layerId = `user:${caller.userId}`;
-		let saved: { entries: number[]; access: AccessOut };
+		let saved: { entries: number[]; access: Access };
 		try {
 			saved = this.#commit(() => {
 				this.#ensureUserLayer(caller.userId, now);

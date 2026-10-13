@@ -13,7 +13,7 @@ import { ACCOUNT_KIND, type Connector, type Prepared, defineOperation } from "..
 import { Registry } from "../../src/gateway/registry.ts";
 import { type Binding, EncryptionKeys, credentialBinding } from "../../src/lib/encryption.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
-import type { AccessOut } from "../../src/shared/api.ts";
+import type { Access } from "@minerva/contract";
 import type { Caller, ConversationId, Outcome, RunId, UserId } from "../../src/shared/rpc.ts";
 import { WorkspaceCore, type WorkspaceDeps } from "../../src/workspace/core.ts";
 import type { ClientCredentials, ConversationClient, Delay, OAuthClients, ObjectStore, Timers, WorkspaceSettings } from "../../src/workspace/ports.ts";
@@ -318,7 +318,7 @@ export async function harness(options: { settings?: Partial<WorkspaceSettings>; 
 
 /** The connection's decrypted credentials, as stored. */
 /** The access of an answer that must have one. */
-export function accessOf(outcome: Outcome<AccessOut>): AccessOut {
+export function accessOf(outcome: Outcome<Access>): Access {
 	if (!outcome.ok) throw new Error(`No access: ${outcome.refusal.code} ${outcome.refusal.detail}`);
 	return outcome.value;
 }

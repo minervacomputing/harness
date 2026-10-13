@@ -1,4 +1,4 @@
-// The connectors this Worker serves, in one registry per isolate that the Workspace (ConnectionOut, grants,
+// The connectors this Worker serves, in one registry per isolate that the Workspace (the connections it answers, grants,
 // run snapshots and their fingerprints) and the Conversation's executor (declarations and calls) share, so
 // both read the same contracts. A test build (src/faults/)
 // and the platform tests add fake connectors through `CONNECTOR_SOURCE` before any object reads it.

@@ -8,7 +8,8 @@ import { afterEach, describe, expect, test } from "vitest";
 import { type WorkspaceRow, ensureInitialized, workspaceOwner } from "../../src/accounts/provision.ts";
 import { workspaceObject } from "../../src/addressing.ts";
 import { PROVIDER_NETWORK } from "../../src/api/providers.ts";
-import { STILL_STOPPING, afterRevocation } from "../../src/api/members.ts";
+import { STILL_STOPPING } from "../../src/api/members.ts";
+import { checkStopped } from "../../src/api/procedures.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { type Caller, REFUSALS, type RefusalCode, type Role } from "../../src/shared/rpc.ts";
 import { type Answer, Browser, contractError, installEmailLog, signedIn } from "./accounts-helpers.ts";
@@ -32,6 +33,11 @@ async function account(name = "ada"): Promise<Account> {
 	const me = await browser.call("GET", "/api/me");
 	expect(me.status).toBe(200);
 	return { browser, userId, ws: me.body.workspaces[0].id };
+}
+
+/** Where a workspace's connectors are listed, and connected by provider. */
+function connectorsOf(ws: string): string {
+	return `/api/workspaces/${ws}/connectors`;
 }
 
 function object(ws: string) {
@@ -84,6 +90,8 @@ class FakeTodoist {
 	];
 	readonly calls: string[] = [];
 	revoked = false;
+	/** Projects per page of `/projects`, whose cursor is the index of the next one; all at once when null. */
+	pageSize: number | null = null;
 
 	readonly fetch: typeof fetch = async (input, init) => {
 		const request = new Request(input as RequestInfo, init as RequestInit);
@@ -93,7 +101,12 @@ class FakeTodoist {
 		this.calls.push(`${request.method} ${path}`);
 		if (this.revoked) return Response.json({}, { status: 401 });
 		if (request.method === "GET" && path === "/user") return Response.json({ id: "u1", full_name: "Ada" });
-		if (request.method === "GET" && path === "/projects") return Response.json({ results: this.projects, next_cursor: null });
+		if (request.method === "GET" && path === "/projects") {
+			if (this.pageSize === null) return Response.json({ results: this.projects, next_cursor: null });
+			const start = Number(url.searchParams.get("cursor") ?? 0);
+			const end = start + this.pageSize;
+			return Response.json({ results: this.projects.slice(start, end), next_cursor: end < this.projects.length ? String(end) : null });
+		}
 		return Response.json({}, { status: 404 });
 	};
 
@@ -126,11 +139,7 @@ class FakeStripe {
 	}
 }
 
-function expectRefusal(answer: Answer, status: number, code: RefusalCode, detail: string): void {
-	expect([answer.status, answer.body], JSON.stringify(answer.body)).toEqual([status, { code, detail }]);
-}
-
-/** A refusal of the contract's routes (the agents), or of the router. */
+/** A refusal of the contract's routes, or of the router. */
 function expectDeclared(answer: Answer, code: RefusalCode, message: string): void {
 	expect([answer.status, answer.body], JSON.stringify(answer.body)).toEqual([REFUSALS[code], contractError(code, message)]);
 }
@@ -140,12 +149,12 @@ describe("membership", () => {
 		const ada = await account();
 		const grace = await account("grace");
 		for (const path of ["connections", "connectors"]) {
-			expectRefusal(await ada.browser.call("GET", `/api/workspaces/${grace.ws}/${path}`), 401, "UNAUTHORIZED", "Unauthorized");
+			expectDeclared(await ada.browser.call("GET", `/api/workspaces/${grace.ws}/${path}`), "UNAUTHORIZED", "Unauthorized");
 		}
 		expectDeclared(await ada.browser.call("GET", `/api/workspaces/${grace.ws}/agents`), "UNAUTHORIZED", "Unauthorized");
 		// The body would be refused, but the workspace is checked first.
 		expectDeclared(await ada.browser.call("POST", `/api/workspaces/${grace.ws}/agents`, { name: "" }), "UNAUTHORIZED", "Unauthorized");
-		expectRefusal(await ada.browser.call("POST", `/api/workspaces/${grace.ws}/connections/web/enable`), 401, "UNAUTHORIZED", "Unauthorized");
+		expectDeclared(await ada.browser.call("POST", `${connectorsOf(grace.ws)}/web/enable`), "UNAUTHORIZED", "Unauthorized");
 		// A workspace that does not exist answers the same; a non-UUID one matches no route.
 		expectDeclared(await ada.browser.call("GET", `/api/workspaces/${uuid7()}/agents`), "UNAUTHORIZED", "Unauthorized");
 		expect((await ada.browser.call("GET", "/api/workspaces/not-a-uuid/agents")).status).toBe(404);
@@ -317,9 +326,9 @@ describe("connectors and connections", () => {
 		// only its fake provider's (Notes).
 		expect(listed.map((connector: { slug: string }) => connector.slug)).toEqual(["todoist", "stripe", "web", "notes"]);
 		const [todoist, stripe, web] = listed;
-		expect(todoist).toMatchObject({ auth: "oauth2", key_label: null, key_hint: null });
+		expect(todoist).toMatchObject({ auth: "oauth2", keyLabel: null, keyHint: null });
 		expect(todoist.kinds).toEqual([{ id: "project", label: "Project", actions: ["read", "create"], wildcard: true, hierarchical: false, note: null, listed: true, browsable: false }]);
-		expect(stripe).toMatchObject({ auth: "api_key", key_label: "Restricted API key", key_hint: expect.stringContaining("rk_test_") });
+		expect(stripe).toMatchObject({ auth: "api_key", keyLabel: "Restricted API key", keyHint: expect.stringContaining("rk_test_") });
 		expect(web.auth).toBe("builtin");
 	});
 
@@ -327,22 +336,22 @@ describe("connectors and connections", () => {
 		const ada = await account();
 		const grace = await account("grace");
 		const base = `/api/workspaces/${ada.ws}/connections`;
-		const first = await ada.browser.call("POST", `${base}/web/enable`);
-		const again = await ada.browser.call("POST", `${base}/web/enable`);
+		const first = await ada.browser.call("POST", `${connectorsOf(ada.ws)}/web/enable`);
+		const again = await ada.browser.call("POST", `${connectorsOf(ada.ws)}/web/enable`);
 		expect([first.status, again.status]).toEqual([200, 200]);
 		expect(again.body.id).toBe(first.body.id);
-		expect(first.body).toMatchObject({ provider: "web", provider_name: "Web", auth: "builtin", status: "active", personal: true, allowed: [], consent_needed: [] });
-		expectRefusal(await ada.browser.call("POST", `${base}/todoist/enable`), 422, "WRONG_CONNECTION_METHOD", "Todoist is connected through its own sign-in.");
-		expectRefusal(await ada.browser.call("POST", `${base}/nope/enable`), 404, "UNKNOWN_PROVIDER", "Unknown provider.");
-		expectRefusal(await ada.browser.call("POST", `${base}/${first.body.id}/reconnect`, { actions: [] }), 422, "WRONG_CONNECTION_METHOD", "Web has no account to reconnect.");
-		const theirs = await grace.browser.call("POST", `/api/workspaces/${grace.ws}/connections/web/enable`);
+		expect(first.body).toMatchObject({ provider: "web", providerName: "Web", auth: "builtin", status: "active", personal: true, allowed: [], consentNeeded: [] });
+		expectDeclared(await ada.browser.call("POST", `${connectorsOf(ada.ws)}/todoist/enable`), "WRONG_CONNECTION_METHOD", "Todoist is connected through its own sign-in.");
+		expectDeclared(await ada.browser.call("POST", `${connectorsOf(ada.ws)}/nope/enable`), "UNKNOWN_PROVIDER", "Unknown provider.");
+		expectDeclared(await ada.browser.call("POST", `${base}/${first.body.id}/reconnect`, { actions: [] }), "WRONG_CONNECTION_METHOD", "Web has no account to reconnect.");
+		const theirs = await grace.browser.call("POST", `${connectorsOf(grace.ws)}/web/enable`);
 		expect(theirs.body.id).not.toBe(first.body.id);
 		expect((await ada.browser.call("GET", base)).body.map((c: { id: string }) => c.id)).toEqual([first.body.id]);
 	});
 
 	test("sites are found by address and allowed per domain", async () => {
 		const ada = await account();
-		const connection = (await ada.browser.call("POST", `/api/workspaces/${ada.ws}/connections/web/enable`)).body;
+		const connection = (await ada.browser.call("POST", `${connectorsOf(ada.ws)}/web/enable`)).body;
 		const url = `/api/workspaces/${ada.ws}/connections/${connection.id}/access`;
 		const kinds = Object.fromEntries((await ada.browser.call("GET", url)).body.kinds.map((kind: { id: string }) => [kind.id, kind]));
 		expect(kinds.site.listed).toBe(false);
@@ -370,7 +379,7 @@ describe("connectors and connections", () => {
 		// The account kind lists the connection itself, without the provider.
 		expect((await ada.browser.call("GET", `${url}/resources?kind=account`)).body).toEqual({
 			items: [{ id: connection.id, name: "Web", actions: ["search"], inherited: [], expandable: false }],
-			next_cursor: null,
+			nextCursor: null,
 		});
 	});
 
@@ -382,16 +391,21 @@ describe("connectors and connections", () => {
 		const access = (await ada.browser.call("GET", url)).body;
 		expect(access.grants).toEqual([]);
 		expect(access.kinds).toEqual([{ id: "project", label: "Project", actions: ["read", "create"], wildcard: true, hierarchical: false, note: null, listed: true, browsable: false }]);
-		expect(access.connection).toMatchObject({ id: connection, provider: "todoist", provider_name: "Todoist", label: "Ada", personal: true });
+		expect(access.connection).toMatchObject({ id: connection, provider: "todoist", providerName: "Todoist", label: "Ada", personal: true });
 		expect(todoist.calls).toEqual([]);
 		const resources = (await ada.browser.call("GET", `${url}/resources?kind=project`)).body;
 		expect(resources.items[0]).toEqual({ id: "work", name: "Work", actions: [], inherited: [], expandable: false });
-		expect(resources.next_cursor).toBeNull();
+		expect(resources.nextCursor).toBeNull();
 		// Projects do not nest, so there is nothing to browse into.
-		expectRefusal(await ada.browser.call("GET", `${url}/resources?kind=project&parent=work`), 422, "CANNOT_BROWSE", "Only resources that nest can be browsed, and not while searching.");
-		expectRefusal(await ada.browser.call("GET", `${url}/resources?kind=task`), 422, "UNKNOWN_RESOURCE_KIND", 'Todoist has no resources of type "task".');
-		expect((await ada.browser.call("GET", `${url}/resources`)).body.detail).toEqual([{ type: "invalid_type", loc: ["query", "kind"], msg: "Invalid input: expected string, received undefined" }]);
-		expect((await ada.browser.call("GET", `${url}/resources?kind=project&q=${"q".repeat(101)}`)).body.detail[0].type).toBe("too_big");
+		expectDeclared(await ada.browser.call("GET", `${url}/resources?kind=project&parent=work`), "CANNOT_BROWSE", "Only resources that nest can be browsed, and not while searching.");
+		expectDeclared(await ada.browser.call("GET", `${url}/resources?kind=task`), "UNKNOWN_RESOURCE_KIND", 'Todoist has no resources of type "task".');
+		const noKind = await ada.browser.call("GET", `${url}/resources`);
+		expect([noKind.status, noKind.body.message, noKind.body.data.issues]).toEqual([
+			422,
+			"kind: Invalid input: expected string, received undefined",
+			[{ path: ["kind"], message: "Invalid input: expected string, received undefined", code: "invalid_type" }],
+		]);
+		expect((await ada.browser.call("GET", `${url}/resources?kind=project&q=${"q".repeat(101)}`)).body.data.issues[0].code).toBe("too_big");
 		const bad = [
 			[{ kind: "project", id: "work", actions: ["create"] }],
 			[{ kind: "project", id: "elsewhere", actions: ["read"] }],
@@ -405,18 +419,29 @@ describe("connectors and connections", () => {
 		const answers = [];
 		for (const changes of bad) answers.push(await ada.browser.call("PATCH", url, { changes }));
 		expect(answers.map((answer) => answer.status)).toEqual([422, 422, 422, 422, 422]);
-		expect(answers.map((answer) => answer.body.detail)).toEqual([
+		expect(answers.map((answer) => answer.body.message)).toEqual([
 			"Create tasks on Work also requires Read tasks.",
 			"Choose a project that the connected account can see.",
 			'Todoist does not support "delete" on project.',
 			'Todoist has no resources of type "task".',
 			"Each resource can only be listed once.",
 		]);
-		expect((await ada.browser.call("PATCH", url, { changes: [] })).body.detail[0].type).toBe("too_small");
+		expect((await ada.browser.call("PATCH", url, { changes: [] })).body.data.issues[0].code).toBe("too_small");
 		const saved = await ada.browser.call("PATCH", url, { changes: [{ kind: "project", id: "work", actions: ["read", "create"] }] });
 		expect(saved.status).toBe(200);
 		expect(saved.body.grants).toEqual([{ kind: "project", id: "work", name: "Work", actions: ["create", "read"] }]);
 		expect((await ada.browser.call("GET", `${url}/resources?kind=project`)).body.items[0].actions).toEqual(["create", "read"]);
+	});
+
+	test("resources come a page at a time, each with the cursor of the next", async () => {
+		const ada = await account();
+		const todoist = new FakeTodoist().install();
+		todoist.pageSize = 1;
+		const url = `/api/workspaces/${ada.ws}/connections/${await todoistConnection(ada)}/access/resources?kind=project`;
+		const first = (await ada.browser.call("GET", url)).body;
+		expect([first.items.map((item: { id: string }) => item.id), first.nextCursor]).toEqual([["work"], "1"]);
+		const second = (await ada.browser.call("GET", `${url}&cursor=${first.nextCursor}`)).body;
+		expect([second.items.map((item: { id: string }) => item.id), second.nextCursor]).toEqual([["private"], null]);
 	});
 
 	test("connections summarize what the user allows", async () => {
@@ -431,8 +456,8 @@ describe("connectors and connections", () => {
 		];
 		expect((await ada.browser.call("PATCH", `${url}/${connection}/access`, { changes })).status).toBe(200);
 		expect((await ada.browser.call("GET", url)).body[0].allowed).toEqual([
-			{ kind: "project", kind_label: "Project", action: "read", action_label: "Read tasks", all: true, count: 1, names: ["Work"] },
-			{ kind: "project", kind_label: "Project", action: "create", action_label: "Create tasks", all: false, count: 1, names: ["Work"] },
+			{ kind: "project", kindLabel: "Project", action: "read", actionLabel: "Read tasks", all: true, count: 1, names: ["Work"] },
+			{ kind: "project", kindLabel: "Project", action: "create", actionLabel: "Create tasks", all: false, count: 1, names: ["Work"] },
 		]);
 		const resources = (await ada.browser.call("GET", `${url}/${connection}/access/resources?kind=project`)).body.items;
 		expect(resources.map((item: { id: string; actions: string[]; inherited: string[] }) => [item.id, item.actions, item.inherited])).toEqual([
@@ -460,7 +485,7 @@ describe("connectors and connections", () => {
 		expect((await ada.browser.call("GET", `/api/workspaces/${ada.ws}/connections`)).body[0].status).toBe("error");
 		// No credential is lent for a connection that needs reconnecting: 502 with the reason, no provider call.
 		const calls = todoist.calls.length;
-		expectRefusal(await ada.browser.call("GET", `${url}/resources?kind=project`), 502, "RECONNECT_NEEDED", "The connection expired. Reconnect it in Minerva.");
+		expectDeclared(await ada.browser.call("GET", `${url}/resources?kind=project`), "RECONNECT_NEEDED", "The connection expired. Reconnect it in Minerva.");
 		expect(todoist.calls).toHaveLength(calls);
 		// Removing a grant never needs the provider.
 		expect((await ada.browser.call("PATCH", url, { changes: [{ kind: "project", id: "*", actions: [] }] })).status).toBe(200);
@@ -475,25 +500,31 @@ describe("connectors and connections", () => {
 		stripe.accounts.set(key, { id: "acct_1", name: "Acme" });
 		stripe.accounts.set(other, { id: "acct_2", name: "Other" });
 		const base = `/api/workspaces/${ada.ws}/connections`;
-		const created = await ada.browser.call("POST", `${base}/stripe/key`, { key });
+		const created = await ada.browser.call("POST", `${connectorsOf(ada.ws)}/stripe/key`, { key });
 		expect(created.status, JSON.stringify(created.body)).toBe(200);
 		expect(created.body).toMatchObject({ provider: "stripe", auth: "api_key", label: "Acme (test mode)", status: "active", personal: true });
 		expect(JSON.stringify(created.body)).not.toContain(key);
 		// The same account again updates the connection in place.
-		expect((await ada.browser.call("POST", `${base}/stripe/key`, { key })).body.id).toBe(created.body.id);
-		expectRefusal(await ada.browser.call("PUT", `${base}/${created.body.id}/key`, { key: other }), 422, "DIFFERENT_ACCOUNT", "This key is for a different Stripe account. Use a key for Acme (test mode).");
-		expect((await ada.browser.call("PUT", `${base}/${created.body.id}/key`, { key })).status).toBe(200);
-		expectRefusal(await ada.browser.call("POST", `${base}/stripe/key`, { key: "sk_live_secret" }), 422, "KEY_REFUSED", "Use a restricted key from Stripe, which starts with rk_live_ or rk_test_. Secret keys are not accepted.");
-		expectRefusal(await ada.browser.call("POST", `${base}/stripe/key`, { key: `rk_test_${"c".repeat(24)}` }), 422, "KEY_REFUSED", "Stripe did not accept this key.");
-		expectRefusal(await ada.browser.call("POST", `${base}/todoist/key`, { key }), 422, "WRONG_CONNECTION_METHOD", "This provider does not connect with a key.");
-		expectRefusal(await ada.browser.call("POST", `${base}/nope/key`, { key }), 404, "UNKNOWN_PROVIDER", "Unknown provider.");
-		expect((await ada.browser.call("POST", `${base}/stripe/key`, { key: "" })).body.detail[0]).toMatchObject({ type: "too_small", loc: ["body", "key"] });
+		expect((await ada.browser.call("POST", `${connectorsOf(ada.ws)}/stripe/key`, { key })).body.id).toBe(created.body.id);
+		expectDeclared(await ada.browser.call("PUT", `${base}/${created.body.id}/key`, { key: other }), "DIFFERENT_ACCOUNT", "This key is for a different Stripe account. Use a key for Acme (test mode).");
+		const replaced = await ada.browser.call("PUT", `${base}/${created.body.id}/key`, { key });
+		expect(replaced.status).toBe(200);
+		// No answer about it carries the key: the connection as saved, listed, or with its access.
+		for (const answer of [replaced, await ada.browser.call("GET", base), await ada.browser.call("GET", `${base}/${created.body.id}/access`)]) {
+			expect(answer.status).toBe(200);
+			expect(JSON.stringify(answer.body)).not.toContain("rk_test_a");
+		}
+		expectDeclared(await ada.browser.call("POST", `${connectorsOf(ada.ws)}/stripe/key`, { key: "sk_live_secret" }), "KEY_REFUSED", "Use a restricted key from Stripe, which starts with rk_live_ or rk_test_. Secret keys are not accepted.");
+		expectDeclared(await ada.browser.call("POST", `${connectorsOf(ada.ws)}/stripe/key`, { key: `rk_test_${"c".repeat(24)}` }), "KEY_REFUSED", "Stripe did not accept this key.");
+		expectDeclared(await ada.browser.call("POST", `${connectorsOf(ada.ws)}/todoist/key`, { key }), "WRONG_CONNECTION_METHOD", "This provider does not connect with a key.");
+		expectDeclared(await ada.browser.call("POST", `${connectorsOf(ada.ws)}/nope/key`, { key }), "UNKNOWN_PROVIDER", "Unknown provider.");
+		expect((await ada.browser.call("POST", `${connectorsOf(ada.ws)}/stripe/key`, { key: "" })).body.data.issues).toEqual([{ path: ["key"], message: expect.any(String), code: "too_small" }]);
 		const todoist = await todoistConnection(ada);
-		expectRefusal(await ada.browser.call("PUT", `${base}/${todoist}/key`, { key }), 422, "WRONG_CONNECTION_METHOD", "This provider does not connect with a key.");
+		expectDeclared(await ada.browser.call("PUT", `${base}/${todoist}/key`, { key }), "WRONG_CONNECTION_METHOD", "This provider does not connect with a key.");
 		// Another user's connection is not found, the same as one that does not exist.
 		const theirs = await todoistConnection(grace, ada.ws, { id: "u2", label: "Grace" }, "member");
-		expectRefusal(await ada.browser.call("PUT", `${base}/${theirs}/key`, { key }), 404, "NOT_FOUND", "Not found.");
-		expectRefusal(await ada.browser.call("PUT", `${base}/${uuid7()}/key`, { key }), 404, "NOT_FOUND", "Not found.");
+		expectDeclared(await ada.browser.call("PUT", `${base}/${theirs}/key`, { key }), "NOT_FOUND", "Not found.");
+		expectDeclared(await ada.browser.call("PUT", `${base}/${uuid7()}/key`, { key }), "NOT_FOUND", "Not found.");
 	});
 
 	test("another user's personal connection is not found; shared ones are changed only by admins", async () => {
@@ -522,11 +553,11 @@ describe("connectors and connections", () => {
 			["POST", `${personal}/reconnect`],
 		] as const) {
 			const body = method === "PATCH" ? { changes: [{ kind: "project", id: "*", actions: ["read"] }] } : method === "POST" ? {} : undefined;
-			expectRefusal(await grace.browser.call(method, `${base}/${path}`, body), 404, "NOT_FOUND", "Not found.");
+			expectDeclared(await grace.browser.call(method, `${base}/${path}`, body), "NOT_FOUND", "Not found.");
 		}
-		expectRefusal(await grace.browser.call("DELETE", `${base}/${shared}`), 403, "WORKSPACE_ADMINS_ONLY", "Only workspace admins can remove shared connections.");
-		expectRefusal(await grace.browser.call("POST", `${base}/${shared}/reconnect`, {}), 403, "WORKSPACE_ADMINS_ONLY", "Only workspace admins can reconnect shared connections.");
-		expectRefusal(await grace.browser.call("PUT", `${base}/${shared}/key`, { key: "k" }), 403, "WORKSPACE_ADMINS_ONLY", "Only workspace admins can replace the key of shared connections.");
+		expectDeclared(await grace.browser.call("DELETE", `${base}/${shared}`), "WORKSPACE_ADMINS_ONLY", "Only workspace admins can remove shared connections.");
+		expectDeclared(await grace.browser.call("POST", `${base}/${shared}/reconnect`, {}), "WORKSPACE_ADMINS_ONLY", "Only workspace admins can reconnect shared connections.");
+		expectDeclared(await grace.browser.call("PUT", `${base}/${shared}/key`, { key: "k" }), "WORKSPACE_ADMINS_ONLY", "Only workspace admins can replace the key of shared connections.");
 		// Members choose their own access on a shared connection.
 		expect((await grace.browser.call("PATCH", `${base}/${shared}/access`, { changes: [{ kind: "project", id: "*", actions: ["read"] }] })).status).toBe(200);
 		expect((await ada.browser.call("GET", `${base}/${shared}/access`)).body.grants).toEqual([]);
@@ -535,29 +566,27 @@ describe("connectors and connections", () => {
 		expect((await ada.browser.call("PUT", `/api/workspaces/${team}/agents/${assistant.id}`, { name: "A", connectionIds: [shared] })).status).toBe(200);
 		expect((await alan.browser.call("DELETE", `${base}/${shared}`)).status).toBe(204);
 		expect((await ada.browser.call("GET", `/api/workspaces/${team}/agents/${assistant.id}`)).body.connectionIds).toEqual([]);
-		expectRefusal(await ada.browser.call("GET", `${base}/${shared}/access`), 404, "NOT_FOUND", "Not found.");
+		expectDeclared(await ada.browser.call("GET", `${base}/${shared}/access`), "NOT_FOUND", "Not found.");
 		expect((await ada.browser.call("DELETE", `${base}/${personal}`)).status).toBe(204);
 	});
 
 	test("starting an OAuth flow: unknown providers and actions first, then 503 when the provider cannot be reached", async () => {
 		const ada = await account();
 		const base = `/api/workspaces/${ada.ws}/connections`;
-		expectRefusal(await ada.browser.call("POST", `${base}/nope/authorize`), 404, "UNKNOWN_PROVIDER", "Unknown provider.");
-		expectRefusal(await ada.browser.call("POST", `${base}/stripe/authorize`), 422, "WRONG_CONNECTION_METHOD", "Stripe does not connect through OAuth.");
+		expectDeclared(await ada.browser.call("POST", `${connectorsOf(ada.ws)}/nope/authorize`), "UNKNOWN_PROVIDER", "Unknown provider.");
+		expectDeclared(await ada.browser.call("POST", `${connectorsOf(ada.ws)}/stripe/authorize`), "WRONG_CONNECTION_METHOD", "Stripe does not connect through OAuth.");
 		await env.DB.prepare("DELETE FROM oauth_clients WHERE provider = 'todoist'").run();
 		// The test build reaches only its fake provider, so Todoist's registration fails (test/platform/oauth.test.ts).
-		expectRefusal(await ada.browser.call("POST", `${base}/todoist/authorize`), 503, "CONNECT_UNAVAILABLE", "Could not register Minerva with Todoist. Try again later.");
+		expectDeclared(await ada.browser.call("POST", `${connectorsOf(ada.ws)}/todoist/authorize`), "CONNECT_UNAVAILABLE", "Could not register Minerva with Todoist. Try again later.");
 		const connection = await todoistConnection(ada);
-		expectRefusal(await ada.browser.call("POST", `${base}/${connection}/reconnect`, { actions: ["delete"] }), 422, "UNKNOWN_ACTION", 'Todoist has no action "delete".');
-		expect((await ada.browser.call("POST", `${base}/${connection}/reconnect`, { actions: Array(11).fill("read") })).body.detail[0].type).toBe("too_big");
-		expectRefusal(await ada.browser.call("POST", `${base}/${connection}/reconnect`, { actions: ["create"] }), 503, "CONNECT_UNAVAILABLE", "Could not register Minerva with Todoist. Try again later.");
-		expectRefusal(await ada.browser.call("POST", `${base}/${uuid7()}/reconnect`, {}), 404, "NOT_FOUND", "Not found.");
+		expectDeclared(await ada.browser.call("POST", `${base}/${connection}/reconnect`, { actions: ["delete"] }), "UNKNOWN_ACTION", 'Todoist has no action "delete".');
+		expect((await ada.browser.call("POST", `${base}/${connection}/reconnect`, { actions: Array(11).fill("read") })).body.data.issues[0].code).toBe("too_big");
+		expectDeclared(await ada.browser.call("POST", `${base}/${connection}/reconnect`, { actions: ["create"] }), "CONNECT_UNAVAILABLE", "Could not register Minerva with Todoist. Try again later.");
+		expectDeclared(await ada.browser.call("POST", `${base}/${uuid7()}/reconnect`, {}), "NOT_FOUND", "Not found.");
 	});
 });
 
-test("a revocation not acknowledged in time answers 503; an acknowledged one answers the change", async () => {
-	const pending = afterRevocation("pending", Response.json({ id: "a" }));
-	expect([pending.status, await pending.json()]).toEqual([503, { code: "RUNS_STILL_STOPPING", detail: STILL_STOPPING }]);
-	const acknowledged = afterRevocation("acknowledged", Response.json({ id: "a" }));
-	expect([acknowledged.status, await acknowledged.json()]).toEqual([200, { id: "a" }]);
+test("a revocation not acknowledged in time is RUNS_STILL_STOPPING; an acknowledged one lets the change answer", () => {
+	expect(() => checkStopped("pending")).toThrow(expect.objectContaining({ code: "RUNS_STILL_STOPPING", status: 503, message: STILL_STOPPING, defined: true }));
+	expect(() => checkStopped("acknowledged")).not.toThrow();
 });

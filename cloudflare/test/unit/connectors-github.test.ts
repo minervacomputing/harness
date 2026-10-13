@@ -274,7 +274,7 @@ describe("the connector and its settings page", () => {
 		// As the connection lists it, with the link where the user chooses repositories on GitHub.
 		slug = "minerva-dev";
 		const out = connectionOut(gh as unknown as Connector, { id: GITHUB, provider: "github", ownerId: USER, label: "ada", status: "active", createdAt: 0, scopes: [] }, []);
-		expect([out.manage_label, out.manage_url, out.consent_needed]).toEqual(["Choose repositories on GitHub", "https://github.com/apps/minerva-dev/installations/new", []]);
+		expect([out.manageLabel, out.manageUrl, out.consentNeeded]).toEqual(["Choose repositories on GitHub", "https://github.com/apps/minerva-dev/installations/new", []]);
 	});
 
 	test("without a slug given, the link reads MINERVA_GITHUB_APP_SLUG from the Worker's bindings", () => {

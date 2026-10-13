@@ -16,7 +16,7 @@ import { Registry, validate } from "../../src/gateway/registry.ts";
 import { fromUtf8 } from "../../src/lib/bytes.ts";
 import { EncryptionKeys } from "../../src/lib/encryption.ts";
 import type { Json } from "../../src/lib/json.ts";
-import type { ConnectionOut } from "../../src/shared/api.ts";
+import type { Connection } from "@minerva/contract";
 import type { Caller, ConnectionId, Outcome } from "../../src/shared/rpc.ts";
 import { WorkspaceCore } from "../../src/workspace/core.ts";
 import { ADA, EVE, FakeStripe, GONE, GRACE, KEY, LIVE_KEY, OTHER_KEY, SECRET } from "../fixtures/connectors/stripe/fake.ts";
@@ -650,7 +650,7 @@ async function workspace(): Promise<Pick<Harness, "core" | "sql" | "keys">> {
  * Saving a key as the key routes do: the account from the connector with the new key (its errors are the
  * 422's detail), then the Workspace's save.
  */
-async function saveKey(core: WorkspaceCore, stripe: FakeStripe, caller: Caller, key: string, connectionId: ConnectionId | null = null): Promise<Outcome<ConnectionOut>> {
+async function saveKey(core: WorkspaceCore, stripe: FakeStripe, caller: Caller, key: string, connectionId: ConnectionId | null = null): Promise<Outcome<Connection>> {
 	const connector = registry.get("stripe");
 	if (connector.auth.type !== "api_key") return { ok: false, refusal: { code: "WRONG_CONNECTION_METHOD", detail: "This provider does not connect with a key." } };
 	const client = connector.client(key, settingsIo(stripe.fetch));
@@ -708,7 +708,7 @@ describe("connecting with a key", () => {
 		expect(JSON.stringify(replaced)).not.toContain(renewed);
 		expect((await credentials(h, created.value.id)).key).toBe(renewed);
 		// The connection shows where its keys are managed.
-		expect([replaced.value.manage_label, replaced.value.manage_url]).toEqual(["Manage keys in Stripe", "https://dashboard.stripe.com/apikeys"]);
+		expect([replaced.value.manageLabel, replaced.value.manageUrl]).toEqual(["Manage keys in Stripe", "https://dashboard.stripe.com/apikeys"]);
 	});
 });
 

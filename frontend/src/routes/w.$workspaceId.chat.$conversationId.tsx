@@ -4,7 +4,6 @@ import { createFileRoute } from '@tanstack/react-router'
 import { BotIcon, FolderIcon } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import { downloadPath } from '@minerva/contract'
-import { listConnectionsOptions } from '@/api/@tanstack/react-query.gen'
 import { AppIcons, connectionsOf } from '@/components/agents/agent-apps'
 import { AgentIntro } from '@/components/chat/agent-intro'
 import { FilesPanel } from '@/components/chat/files-panel'
@@ -37,7 +36,7 @@ function ConversationPage() {
   const path = { workspaceId, conversationId }
   const conversation = useQuery(orpc.conversations.get.queryOptions({ input: path }))
   const agents = useQuery(orpc.agents.list.queryOptions({ input: { workspaceId } }))
-  const connections = useQuery(listConnectionsOptions({ path: { workspace_id: workspaceId } }))
+  const connections = useQuery(orpc.connections.list.queryOptions({ input: { workspaceId } }))
   const agent = agents.data?.find(a => a.id === conversation.data?.agentId)
   const title = conversation.data?.title || 'New conversation'
 

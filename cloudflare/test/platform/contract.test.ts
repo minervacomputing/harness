@@ -20,6 +20,7 @@ import { z } from "zod";
 import { conversationObject } from "../../src/addressing.ts";
 import { contractHandler } from "../../src/api/orpc.ts";
 import type { ApiContext } from "../../src/api/procedures.ts";
+import { PROVIDER_NETWORK } from "../../src/api/providers.ts";
 import { CONNECTORS, CONNECTOR_SOURCE } from "../../src/connectors/index.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
 import { notesConnector } from "../../src/faults/connector.ts";
@@ -304,6 +305,30 @@ describe("the typed client", () => {
 		expect(invalid).toMatchObject({ defined: true, code: "VALIDATION_FAILED", data: { issues: [{ path: ["name"] }] } });
 		const outsider = await client(new Browser()).agents.list({ workspaceId }).catch((error: unknown) => error);
 		expect(outsider).toMatchObject({ defined: true, code: "UNAUTHORIZED", status: 401 });
+	});
+
+	test("an API key in a body reaches the provider as the reader decoded it, and no answer carries it", async () => {
+		const ada = await account();
+		const authorizations: string[] = [];
+		const network = PROVIDER_NETWORK.fetch;
+		PROVIDER_NETWORK.fetch = () => async (input, init) => {
+			authorizations.push(new Request(input as RequestInfo, init as RequestInit).headers.get("Authorization") ?? "");
+			return Response.json({ id: "acct_1", email: null, default_currency: "usd", business_profile: { name: "Acme" }, settings: null });
+		};
+		try {
+			const path = `/api/workspaces/${ada.ws}/connectors/stripe/key`;
+			// Every letter after the prefix escaped, as a JSON writer may send it.
+			const created = await ada.browser.call("POST", path, `{"key":"rk_test_${"\\u0061".repeat(24)}"}`);
+			expect(created.status, JSON.stringify(created.body)).toBe(200);
+			expect(authorizations).toContain(`Bearer rk_test_${"a".repeat(24)}`);
+			const secretKey = await ada.browser.call("POST", path, { key: `sk_test_${"a".repeat(24)}` });
+			const tooLong = await ada.browser.call("POST", path, { key: `rk_test_${"a".repeat(600)}` });
+			const typed = await client(ada.browser).connections.connectKey({ workspaceId: ada.ws, provider: "stripe", key: `rk_test_${"a".repeat(24)}` });
+			expect([secretKey.body.code, tooLong.body.code, typed.id]).toEqual(["KEY_REFUSED", "VALIDATION_FAILED", created.body.id]);
+			for (const answer of [created.body, secretKey.body, tooLong.body, typed]) expect(JSON.stringify(answer)).not.toMatch(/[rs]k_test_a/);
+		} finally {
+			PROVIDER_NETWORK.fetch = network;
+		}
 	});
 
 	test("carries a header to a procedure that reads one", async () => {

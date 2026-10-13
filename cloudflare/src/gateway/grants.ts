@@ -2,6 +2,7 @@
 // starts with, built from the Workspace Durable Object's rows, and the checks and plan of a grant edit.
 // Storing the rows, bumping the layer's version and revoking runs are the Workspace's (workspace/core.ts).
 
+import { MAX_ACCESS_CHANGES } from "@minerva/contract";
 import type { ConnectionId, UserId } from "../shared/rpc.ts";
 import { ACCOUNT_KIND, type Connector, actionOf, kindOf, requiresOf } from "./connector.ts";
 import { ANY, Layer, type LayerName, Policy } from "./policy.ts";
@@ -38,7 +39,8 @@ export type Level = GrantRow["layer"];
  * an agent inherits whatever the layers above allow.
  */
 export const DEFAULT_RESTRICTED: { readonly [level in Level]: boolean } = { ceiling: false, user: true, agent: false };
-export const MAX_CHANGES = 100;
+/** The API's limit (contract `MAX_ACCESS_CHANGES`), checked again where grants are planned. */
+export const MAX_CHANGES = MAX_ACCESS_CHANGES;
 export const MAX_GRANTS_PER_CONNECTION = 500;
 
 /** A grant edit the connector cannot enforce; the API answers 422 with its message. */

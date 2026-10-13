@@ -24,11 +24,19 @@ import { UUID } from "../http/paths.ts";
 import type { App } from "../http/router.ts";
 import type { Json } from "../lib/json.ts";
 import { agentProcedures } from "./agents.ts";
+import { connectionProcedures, connectorProcedures } from "./connections.ts";
 import { conversationProcedures, runProcedures, uploadProcedures } from "./conversations.ts";
 import { type Member, member } from "./members.ts";
 import { type ApiContext, api, refusal } from "./procedures.ts";
 
-const router = api.router({ agents: agentProcedures, conversations: conversationProcedures, runs: runProcedures, uploads: uploadProcedures });
+const router = api.router({
+	agents: agentProcedures,
+	connectors: connectorProcedures,
+	connections: connectionProcedures,
+	conversations: conversationProcedures,
+	runs: runProcedures,
+	uploads: uploadProcedures,
+});
 
 /**
  * The request's JSON body, undefined without one; a body `readJson` refuses, or that breaks off, is thrown as a refusal.

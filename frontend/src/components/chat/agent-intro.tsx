@@ -3,13 +3,13 @@ import type { Agent } from '@minerva/contract'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { BotIcon } from 'lucide-react'
-import { listConnectionsOptions } from '@/api/@tanstack/react-query.gen'
 import { AppIcons, AttentionList, connectionsOf } from '@/components/agents/agent-apps'
 import { setupOf } from '@/components/connections/summary'
 import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/input'
 import { ErrorNote, Notice, Spinner } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
+import { orpc } from '@/lib/orpc'
 
 const HEADING = 'text-xl font-medium tracking-[-0.015em]'
 
@@ -29,7 +29,7 @@ export function AgentIntro({
   /** Set when the user may pick the agent, which is only before the first message. */
   onChoose?: (agentId: string) => void
 }) {
-  const connections = useQuery(listConnectionsOptions({ path: { workspace_id: workspaceId } }))
+  const connections = useQuery(orpc.connections.list.queryOptions({ input: { workspaceId } }))
   if (!agents)
     return (
       <div className="flex justify-center py-16">

@@ -1,9 +1,9 @@
 import { expect, test } from 'vitest'
-import type { ActionOut } from '@/api/types.gen'
+import type { ConnectorAction } from '@minerva/contract'
 import { toggle } from './access'
 
 // read <- create <- delete, and read <- share.
-const actions: ActionOut[] = [
+const actions: ConnectorAction[] = [
   { id: 'read', label: 'Read', requires: null },
   { id: 'create', label: 'Create', requires: 'read' },
   { id: 'delete', label: 'Delete', requires: 'create' },
