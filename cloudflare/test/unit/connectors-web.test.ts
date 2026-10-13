@@ -1159,6 +1159,26 @@ describe("what the fetcher may reach (adversarial)", () => {
 		expect(await acode(fetcher(web).get(parseUrl("https://example.com/br")))).toBe("UNSUPPORTED_CONTENT");
 		expect(await acode(fetcher(web).get(parseUrl("https://example.com/stacked")))).toBe("UNSUPPORTED_CONTENT");
 		expect(cancelled).toBe(2);
+		// Redirects and error pages leave their bodies unread: each is released, or it would hold one of the
+		// invocation's six connections and a later fetch would wait for it.
+		const left = (status: number, headers: Record<string, string> = {}): Served => ({
+			status,
+			headers: { "content-type": "text/html", ...headers },
+			body: new ReadableStream({ pull: () => {}, cancel: () => void cancelled++ }),
+		});
+		web.page("example.com", "/here", () => left(301, { location: "/br" }));
+		web.page("example.com", "/away", () => left(302, { location: "https://elsewhere.example.org/" }));
+		web.page("example.com", "/missing", () => left(404));
+		web.page("example.com", "/forbidden", () => left(403));
+		web.page("example.com", "/partial", () => left(206));
+		cancelled = 0;
+		expect(await acode(fetcher(web).get(parseUrl("https://example.com/here")))).toBe("UNSUPPORTED_CONTENT");
+		expect(await fetcher(web).get(parseUrl("https://example.com/away"))).toBeInstanceOf(Moved);
+		expect(await raised(fetcher(web).get(parseUrl("https://example.com/missing")))).toMatchObject({ code: "PAGE_ERROR", message: "The site answered with HTTP 404." });
+		expect(await raised(fetcher(web).get(parseUrl("https://example.com/forbidden")))).toMatchObject({ code: "PAGE_ERROR", message: "The site answered with HTTP 403." });
+		expect(await raised(fetcher(web).get(parseUrl("https://example.com/partial")))).toMatchObject({ code: "PAGE_ERROR", message: "The site answered with HTTP 206, which has no page." });
+		// The redirect's and the page it led to (br, unread), then one for each of the others.
+		expect(cancelled).toBe(6);
 		const body = new Body(null);
 		for (let i = 0; i < 200_000; i++) body.feed(new Uint8Array([0x61]));
 		expect(body.bytes()).toEqual(new Uint8Array(200_000).fill(0x61));

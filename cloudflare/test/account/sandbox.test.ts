@@ -127,7 +127,8 @@ describe("the sandbox on the account", { timeout: 600_000 }, () => {
 		expect(cancelled.result).toEqual({ ok: false, code: "aborted", message: "aborted" });
 		const spilled = await sh(main, "seq 1 30000", { spill: { afterBytes: 51200, afterLines: 2000 }, window: { maxBytes: 51200, maxLines: 2000, minIntervalMs: 250, bytesPerSecond: 102400 } });
 		expect(spilled.result.ok).toBe(true);
-		expect(spilled.result.spillPath).toMatch(/^\/tmp\/tmp-[A-Za-z0-9]{6}\/pi-output-[0-9a-f-]{36}\.log$/);
+		// The spill file mktemp makes in /tmp: created exclusively, with 10 random characters (commands.ts).
+		expect(spilled.result.spillPath).toMatch(/^\/tmp\/pi-output-[A-Za-z0-9]{10}\.log$/);
 		expect(spilled.stdout.endsWith("29999\n30000\n")).toBe(true);
 		const complete = await sh(main, `wc -l < ${spilled.result.spillPath}; tail -n 1 ${spilled.result.spillPath}`);
 		expect(complete.stdout).toBe("30000\n30000\n");
@@ -155,7 +156,7 @@ describe("the sandbox on the account", { timeout: 600_000 }, () => {
 		const small = `small-${Date.now()}`;
 		expect((await lab("prepare", { name: small, folderBytes: 8 * MiB, folderEntries: 100 })).prepared.ok).toBe(true);
 		const big = await lab("write", { name: small, path: "big.bin", bytes: 9 * MiB });
-		expect(big).toMatchObject({ ok: false, code: "unknown", message: expect.stringMatching(/^ENOSPC: no space left on device, write/) });
+		expect(big).toMatchObject({ ok: false, code: "unknown", message: "No space left on device: /workspace/big.bin" });
 		const fill = await sh(small, "rm -f big.bin; head -c 20000000 /dev/zero > fill 2>/dev/null; echo $?; stat -c %s fill; rm fill");
 		const [status, size] = fill.stdout.trim().split("\n");
 		expect(status).not.toBe("0");
