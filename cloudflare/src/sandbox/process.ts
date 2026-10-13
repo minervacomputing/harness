@@ -3,7 +3,7 @@
 // the command started.
 
 import { ByteReader, drain } from "./bytes.ts";
-import { COMMAND_PATH, HOME, MINERVA_FS, PYTHON, TMP } from "./constants.ts";
+import { COMMAND_PATH, HOME, TMP } from "./constants.ts";
 import type { ContainerPort } from "./ports.ts";
 import { type Admission, readAdmission, type WrappedCommand, wrapperArgv } from "./wrapper.ts";
 
@@ -139,14 +139,9 @@ export async function startWrapped(
 	}
 }
 
-/** The environment of file commands and the folder helper: what coreutils and Python need, nothing else. */
+/** The environment of the commands the Sandbox runs itself (file operations, the folder's tar and find): nothing else. */
 export function helperEnvironment(): { [name: string]: string } {
 	return { PATH: COMMAND_PATH, HOME, TMPDIR: TMP, LANG: "C.UTF-8" };
-}
-
-/** minerva-fs `op` with `args`, through the wrapper. */
-export function helper(op: string, args: readonly string[], timeoutSeconds: number): WrappedCommand {
-	return { command: [PYTHON, "-I", "-S", MINERVA_FS, op, ...args], cwd: "/", env: helperEnvironment(), timeoutSeconds };
 }
 
 /** Kills a process group, as root: the wrapped command's pid leads it, so every process it did not move out of it dies. */

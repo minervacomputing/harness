@@ -1,6 +1,6 @@
 // A local stand-in for `ctx.container`: the sandbox image (cloudflare/container/) in a Docker container,
-// driven through `docker exec`, so the Sandbox's logic, the wrapper, the hardening, the sandbox-shim,
-// minerva-fs and the ExecutionEnv run for real in Docker tests (test/docker/sandbox-local.test.ts). It
+// driven through `docker exec`, so the Sandbox's logic, the wrapper, the hardening, the sandbox-shim, the
+// folder's tar and find and the ExecutionEnv run for real in Docker tests (test/docker/). It
 // behaves as the platform's does where the Sandbox depends on it: exec'd processes are root unless given a
 // user, session leaders with no parent, have only the environment they are given, and an aborted exec kills
 // its process (exit 137).
@@ -12,7 +12,16 @@
 // Node's modules come through `process.getBuiltinModule`: the unit tests are type-checked with the Worker's
 // runtime types, which lack Node's.
 
-import { type BucketPort, CHECK_MISMATCH, type ContainerPort } from "../../src/sandbox/ports.ts";
+import { uuid7 } from "../../src/lib/random.ts";
+import { migrate, type Sql, sqliteSql } from "../../src/lib/sql.ts";
+import type { ExecRequest } from "../../src/sandbox/commands.ts";
+import { commandEnvironment, sandboxSpec, type SandboxSpec, WORKSPACE } from "../../src/sandbox/constants.ts";
+import { SandboxCore, type SandboxFence } from "../../src/sandbox/core.ts";
+import type { Delivered } from "../../src/sandbox/output.ts";
+import { type BucketPort, CHECK_MISMATCH, type ContainerPort, type SandboxPorts } from "../../src/sandbox/ports.ts";
+import { prepareSandbox } from "../../src/sandbox/session.ts";
+import { SANDBOX_MIGRATIONS } from "../../src/sandbox/store.ts";
+import { openDatabase } from "../unit/sqlite.ts";
 
 interface NodeStream {
 	on(event: string, listener: (...args: unknown[]) => void): void;
@@ -230,11 +239,11 @@ export class MemoryBucket implements BucketPort {
 	gets = 0;
 	puts = 0;
 
-	async get(key: string): Promise<{ size: number; body: ReadableStream<Uint8Array> } | null> {
+	async get(key: string, sha256: string): Promise<{ size: number; body: ReadableStream<Uint8Array> } | null> {
 		this.gets++;
 		const bytes = this.objects.get(key);
 		if (!bytes) return null;
-		return { size: bytes.length, body: new Blob([bytes as Uint8Array<ArrayBuffer>]).stream() };
+		return { size: bytes.length, body: verified(new Blob([bytes as Uint8Array<ArrayBuffer>]).stream(), sha256) };
 	}
 
 	async put(key: string, body: ReadableStream<Uint8Array>, options: { size: number; sha256: string }): Promise<void> {
@@ -255,8 +264,85 @@ export class MemoryBucket implements BucketPort {
 	}
 }
 
+/** `body`, erroring at its end as R2's checked read does when its bytes do not have the SHA-256 `sha256`. */
+export function verified(body: ReadableStream<Uint8Array>, sha256: string): ReadableStream<Uint8Array> {
+	const hash = node.getBuiltinModule("node:crypto").createHash("sha256");
+	return body.pipeThrough(
+		new TransformStream<Uint8Array, Uint8Array>({
+			transform(chunk, controller) {
+				hash.update(chunk);
+				controller.enqueue(chunk);
+			},
+			flush() {
+				if (hash.digest("hex") !== sha256) throw new Error(CHECK_MISMATCH);
+			},
+		}),
+	);
+}
+
 export function sha256Hex(bytes: Uint8Array): string {
 	const hash = node.getBuiltinModule("node:crypto").createHash("sha256");
 	hash.update(bytes);
 	return hash.digest("hex");
+}
+
+const WS = { id: "0190a000-0000-7000-8000-000000000001", jurisdiction: null } as const;
+const CONVERSATION = "0190a000-0000-7000-8000-000000000002";
+
+/** A Sandbox spec with a small folder (8 MiB, 100 entries) unless `limits` says otherwise. */
+export function spec(limits: { folderBytes: number; folderEntries: number } = { folderBytes: 8 * 1024 * 1024, folderEntries: 100 }): SandboxSpec {
+	return sandboxSpec(WS, CONVERSATION, limits, null);
+}
+
+/** A Sandbox over a local container, an in-memory bucket and its store in node:sqlite. */
+export interface Rig {
+	core: SandboxCore;
+	sql: Sql;
+	container: DockerContainer;
+	bucket: MemoryBucket;
+	logs: string[];
+	ports(container?: ContainerPort): SandboxPorts;
+}
+
+export function rig(): Rig {
+	const sql = sqliteSql(openDatabase());
+	migrate(sql, SANDBOX_MIGRATIONS, Date.now());
+	const container = new DockerContainer();
+	const bucket = new MemoryBucket();
+	const logs: string[] = [];
+	const ports = (port: ContainerPort = container): SandboxPorts => ({
+		container: port,
+		sql,
+		bucket: () => bucket,
+		now: () => Date.now(),
+		id: () => uuid7(),
+		alarm: async () => {},
+		background: () => {},
+		log: (message) => logs.push(message),
+		cgroup: container.cgroup,
+	});
+	return { core: new SandboxCore(ports()), sql, container, bucket, logs, ports };
+}
+
+/** Starts the rig's sandbox and returns its fence. */
+export async function ready(made: Rig, limits?: { folderBytes: number; folderEntries: number }): Promise<SandboxFence> {
+	const prepared = await prepareSandbox(made.core, { runId: uuid7(), attempt: 1 }, spec(limits));
+	if (!prepared.ok) throw new Error(`${prepared.stage}: ${prepared.message}`);
+	return prepared.fence;
+}
+
+/** A sink that only takes output. */
+export const plainSink = (output: (chunk: Delivered) => void) => ({ output });
+
+/** Runs a command and collects its output, as the bash tool would see it. */
+export async function run(core: SandboxCore, fence: SandboxFence, command: string | string[], options: Partial<ExecRequest> = {}) {
+	const chunks: Delivered[] = [];
+	const result = await core.exec(
+		fence,
+		{ execId: `c${Math.random()}`, command, cwd: WORKSPACE, env: commandEnvironment(), timeoutSeconds: 60, ...options },
+		plainSink((chunk) => chunks.push(chunk)),
+	);
+	const stdout = chunks.filter((chunk) => chunk.stream === "stdout").map((chunk) => chunk.text).join("");
+	const stderr = chunks.filter((chunk) => chunk.stream === "stderr").map((chunk) => chunk.text).join("");
+	return { result, stdout, stderr, chunks };
 }

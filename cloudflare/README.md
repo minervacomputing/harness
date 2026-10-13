@@ -17,8 +17,8 @@ The experiment of [docs/plans/cloudflare.md](../docs/plans/cloudflare.md): the s
 | `src/model/` | The model wrapper: the pi-ai provider `minerva/default`, request policy, stream tap, routes to Workers AI or AI Gateway, the deterministic fake |
 | `src/connectors/` | The 20 connectors and the registry the Workspace and the executor share |
 | `src/files/` | Folders and versions: manifests, `FolderStore` over the Conversation's SQLite, names and limits, attachments, uploads, signed download links and the download origin's handler |
-| `src/sandbox/` | The Sandbox Durable Object (`core.ts` behind ports): the container's lifecycle and hardening, the command wrapper, `minerva-fs` calls, blob transfer between R2 and the container, and the `ExecutionEnv` pi's tools run on (`env.ts`) |
-| `container/` | The sandbox image: `Dockerfile`, the Python requirements, `minerva-fs` and the probe (`minerva/`), their Python tests (`tests/`) |
+| `src/sandbox/` | The Sandbox Durable Object (`core.ts` behind ports): the container's lifecycle and hardening, the command wrapper, the folder's hydration, scan and checkpoints (`tar` and `find` in the container, streamed to and from R2), and the `ExecutionEnv` pi's tools run on (`env.ts`) |
+| `container/` | The sandbox image: `Dockerfile`, the Python requirements and the probe (`minerva/`) |
 | `src/scripts/` | Code mode: `run_script` in the `minerva` extension, the Scripts Durable Object that loads each script as a Dynamic Worker, the guest's prelude, the conversation's side of a script (wall clock, caps, the reset after every script) |
 | `src/faults/` | The test build only: a fake connector and its provider object, fault points, the account tests' driver, and the sandbox lab (`lab.ts`, `sandbox.ts`: production's Sandbox object with fault seams, behind the driver) (below) |
 | `src/addressing.ts` | The one map from a workspace (id, jurisdiction) to its objects and its bucket |

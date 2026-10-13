@@ -17,7 +17,8 @@ import type { ExecOutputSink, ExecRequest, ExecResult } from "../../src/sandbox/
 import type { SandboxSpec } from "../../src/sandbox/constants.ts";
 import type { Refused, SandboxFence, SandboxStatus } from "../../src/sandbox/core.ts";
 import type { FsRequest, FsResponse } from "../../src/sandbox/files.ts";
-import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan, HydrateResult, ScanResult } from "../../src/sandbox/folder.ts";
+import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan, HydrateResult } from "../../src/sandbox/folder.ts";
+import type { ScanResult } from "../../src/sandbox/scan.ts";
 import type { HardeningReport, VerificationReport } from "../../src/sandbox/hardening.ts";
 import type { AttemptFence } from "../../src/shared/rpc.ts";
 

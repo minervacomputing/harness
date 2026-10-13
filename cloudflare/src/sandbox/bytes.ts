@@ -1,5 +1,5 @@
-// Reading a process's stdout in pieces: a line, then an exact number of bytes, with bounds, so a hostile
-// process cannot make the Sandbox buffer more than it asked for.
+// Reading a process's stdout in pieces: a field up to a delimiter, an exact number of bytes, with bounds, so
+// a hostile process cannot make the Sandbox buffer more than it asked for.
 
 export class StreamEnded extends Error {}
 export class TooLong extends Error {}
@@ -51,11 +51,11 @@ export class ByteReader {
 		return out;
 	}
 
-	#newline(from: number): number {
+	#find(delimiter: number, from: number): number {
 		let base = 0;
 		for (const chunk of this.#chunks) {
 			if (base + chunk.length > from) {
-				const index = chunk.indexOf(0x0a, Math.max(0, from - base));
+				const index = chunk.indexOf(delimiter, Math.max(0, from - base));
 				if (index !== -1) return base + index;
 			}
 			base += chunk.length;
@@ -70,22 +70,25 @@ export class ByteReader {
 		this.#size += bytes.length;
 	}
 
-	/** Up to and without the next newline; at most `max` bytes before it. Null at the end of the stream with nothing buffered. */
-	async line(max: number): Promise<Uint8Array | null> {
+	/**
+	 * Up to and without the next `delimiter` byte, which is consumed; at most `max` bytes before it. Null at the
+	 * end of the stream with nothing buffered.
+	 */
+	async until(delimiter: number, max: number): Promise<Uint8Array | null> {
 		let searched = 0;
 		for (;;) {
-			const index = this.#newline(searched);
+			const index = this.#find(delimiter, searched);
 			if (index !== -1) {
-				if (index > max) throw new TooLong(`A line passed ${max} bytes.`);
-				const line = this.#take(index);
+				if (index > max) throw new TooLong(`A field passed ${max} bytes.`);
+				const field = this.#take(index);
 				this.#take(1);
-				return line;
+				return field;
 			}
 			searched = this.#size;
-			if (searched > max) throw new TooLong(`A line passed ${max} bytes.`);
+			if (searched > max) throw new TooLong(`A field passed ${max} bytes.`);
 			if (!(await this.#fill())) {
 				if (this.#size === 0) return null;
-				throw new StreamEnded("The stream ended inside a line.");
+				throw new StreamEnded("The stream ended inside a field.");
 			}
 		}
 	}
@@ -107,7 +110,8 @@ export class ByteReader {
 
 	/** Everything to the end, refused past `max` bytes. */
 	async rest(max: number): Promise<Uint8Array> {
-		while (await this.#fill()) if (this.#size > max) throw new TooLong(`The output passed ${max} bytes.`);
+		do if (this.#size > max) throw new TooLong(`The output passed ${max} bytes.`);
+		while (await this.#fill());
 		return this.#take(this.#size);
 	}
 

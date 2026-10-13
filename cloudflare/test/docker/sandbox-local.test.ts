@@ -1,28 +1,23 @@
 // The Sandbox's logic against the real image in a local Docker container (sandbox-docker.ts): the
 // lifecycle and its fences, the hardening and its verification, commands through the wrapper and file
 // operations through Files' sandbox-shim as the agent's user, pi's ExecutionEnv conformance suite (24 cases,
-// one skipped) over the adapter, the read tool's timings, hydration, scans and checkpoints, killing strays,
-// the fork and folder limits, and the Sandbox fault rows of the plan
-// (each hardening step failing, cgroup admission failing, a lost destroy, a restart with a container still
-// running). Skipped without Docker or the image: `pnpm sandbox:image` builds it.
+// one skipped) over the adapter, the read tool's timings, killing strays, the fork and folder limits, and the
+// Sandbox fault rows of the plan (each hardening step failing, cgroup admission failing, a lost destroy, a
+// restart with a container still running). Hydration, scans and checkpoints are folder.test.ts's. Skipped
+// without Docker or the image: `pnpm sandbox:image` builds it.
 
 import { getOrThrow, LineScanner } from "@earendil-works/pi-durable/env";
 import { createEnvConformance } from "@earendil-works/pi-durable/testing";
 import { createReadTool } from "@earendil-works/pi-durable/tools";
 import { afterAll, assert, beforeAll, describe, expect, test } from "vitest";
 import { uuid7 } from "../../src/lib/random.ts";
-import { migrate, type Sql, sqliteSql } from "../../src/lib/sql.ts";
-import type { ExecRequest } from "../../src/sandbox/commands.ts";
-import { commandEnvironment, sandboxSpec, type SandboxSpec, WORKSPACE } from "../../src/sandbox/constants.ts";
+import { commandEnvironment, WORKSPACE } from "../../src/sandbox/constants.ts";
 import { SandboxCore, type SandboxFence } from "../../src/sandbox/core.ts";
 import { SandboxExecutionEnv } from "../../src/sandbox/env.ts";
-import type { HydratePlan, ScanResult } from "../../src/sandbox/folder.ts";
 import type { Delivered } from "../../src/sandbox/output.ts";
-import type { ContainerPort, SandboxPorts } from "../../src/sandbox/ports.ts";
+import type { ContainerPort } from "../../src/sandbox/ports.ts";
 import { prepareSandbox } from "../../src/sandbox/session.ts";
-import { SANDBOX_MIGRATIONS } from "../../src/sandbox/store.ts";
-import { DockerContainer, dockerReady, MemoryBucket, sha256Hex } from "./sandbox-docker.ts";
-import { openDatabase } from "../unit/sqlite.ts";
+import { DockerContainer, dockerReady, plainSink, ready, type Rig, rig, run, spec } from "./sandbox-docker.ts";
 
 const READY = dockerReady();
 /** A context without cancellation: the adapter only reads its abort signal. */
@@ -30,49 +25,11 @@ const NONE = {} as Parameters<SandboxExecutionEnv["readTextFile"]>[1];
 const KiB = 1024;
 const MiB = 1024 * KiB;
 
-const WS = { id: "0190a000-0000-7000-8000-000000000001", jurisdiction: null } as const;
-const CONVERSATION = "0190a000-0000-7000-8000-000000000002";
-
 /** pi's conformance cases the adapter does not pass, each with its reason. */
 const SKIPPED: Record<string, string> = {
 	"binary reader keeps reading the file it opened after a rename":
 		"A binary reader reads its path again on each call instead of holding the file open, so a rename during reading gives an error or the new contents.",
 };
-
-function spec(overrides: Partial<SandboxSpec> = {}): SandboxSpec {
-	return { ...sandboxSpec(WS, CONVERSATION, { folderBytes: 8 * MiB, folderEntries: 100 }, null), ...overrides };
-}
-
-interface Rig {
-	core: SandboxCore;
-	sql: Sql;
-	container: DockerContainer;
-	bucket: MemoryBucket;
-	logs: string[];
-	ports(container?: ContainerPort): SandboxPorts;
-}
-
-function rig(): Rig {
-	const sql = sqliteSql(openDatabase());
-	migrate(sql, SANDBOX_MIGRATIONS, Date.now());
-	const container = new DockerContainer();
-	const bucket = new MemoryBucket();
-	const logs: string[] = [];
-	const ports = (port: ContainerPort = container): SandboxPorts => ({
-		container: port,
-		sql,
-		bucket: () => bucket,
-		now: () => Date.now(),
-		id: () => uuid7(),
-		alarm: async () => {},
-		background: () => {},
-		log: (message) => logs.push(message),
-		cgroup: container.cgroup,
-	});
-	return { core: new SandboxCore(ports()), sql, container, bucket, logs, ports };
-}
-
-const plainSink = (output: (chunk: Delivered) => void) => ({ output });
 
 const rigs: Rig[] = [];
 function track(made: Rig): Rig {
@@ -83,12 +40,6 @@ function track(made: Rig): Rig {
 afterAll(() => {
 	for (const made of rigs) made.container.remove();
 });
-
-async function ready(made: Rig, overrides: Partial<SandboxSpec> = {}): Promise<SandboxFence> {
-	const prepared = await prepareSandbox(made.core, { runId: uuid7(), attempt: 1 }, spec(overrides));
-	if (!prepared.ok) throw new Error(`${prepared.stage}: ${prepared.message}`);
-	return prepared.fence;
-}
 
 describe.skipIf(!READY)("a sandbox in a local container", () => {
 	let made: Rig;
@@ -175,21 +126,6 @@ describe.skipIf(!READY)("a sandbox in a local container", () => {
 		expect(failures).toEqual([]);
 	});
 });
-
-/** Runs a command and collects its output, as the bash tool would see it. */
-async function run(core: SandboxCore, fence: SandboxFence, command: string | string[], options: Partial<ExecRequest> = {}) {
-	const chunks: Delivered[] = [];
-	const result = await core.exec(
-		fence,
-		{ execId: `c${Math.random()}`, command, cwd: WORKSPACE, env: commandEnvironment(), timeoutSeconds: 60, ...options },
-		plainSink((chunk) => chunks.push(chunk)),
-	);
-	const stdout = chunks.filter((chunk) => chunk.stream === "stdout").map((chunk) => chunk.text).join("");
-	const stderr = chunks.filter((chunk) => chunk.stream === "stderr").map((chunk) => chunk.text).join("");
-	return { result, stdout, stderr, chunks };
-}
-
-const bytes = (text: string) => new TextEncoder().encode(text);
 
 describe.skipIf(!READY)("commands", () => {
 	let made: Rig;
@@ -421,103 +357,6 @@ describe.skipIf(!READY)("commands", () => {
 	});
 });
 
-describe.skipIf(!READY)("the folder", () => {
-	let made: Rig;
-	let fence: SandboxFence;
-	const blob = (text: string) => ({ bytes: bytes(text), sha256: sha256Hex(bytes(text)) });
-	const a = blob("alpha\n");
-	const b = blob("#!/bin/sh\necho beta\n");
-
-	beforeAll(async () => {
-		made = track(rig());
-		fence = await ready(made);
-		made.bucket.objects.set("k/a", a.bytes);
-		made.bucket.objects.set("k/b", b.bytes);
-	}, 120_000);
-
-	test("hydration writes each blob once, with modes, mtimes and empty directories, and a scan reads it back", { timeout: 60_000 }, async () => {
-		const plan: HydratePlan = {
-			versionId: null,
-			files: [
-				{ path: "docs/a.txt", sha256: a.sha256, size: a.bytes.length, mode: 0o644, mtime: 1_700_000_000_500, key: "k/a" },
-				{ path: "copy of a.txt", sha256: a.sha256, size: a.bytes.length, mode: 0o755, mtime: 1_600_000_000_000, key: "k/a" },
-				{ path: "bin/b.sh", sha256: b.sha256, size: b.bytes.length, mode: 0o755, mtime: 1_700_000_001_000, key: "k/b" },
-			],
-			dirs: ["empty", "deep/er"],
-		};
-		const gets = made.bucket.gets;
-		expect(await made.core.hydrate(fence, plan)).toEqual({ ok: true });
-		expect(made.bucket.gets - gets).toBe(2);
-		const scanned = await made.core.scan(fence, { rehashAll: false });
-		expect(scanned).toEqual({
-			ok: true,
-			manifest: {
-				files: [
-					{ path: "bin/b.sh", sha256: b.sha256, mode: 0o755, mtime: 1_700_000_001_000 },
-					{ path: "copy of a.txt", sha256: a.sha256, mode: 0o755, mtime: 1_600_000_000_000 },
-					{ path: "docs/a.txt", sha256: a.sha256, mode: 0o644, mtime: 1_700_000_000_500 },
-				],
-				dirs: ["deep/er", "empty"],
-			},
-			sizes: { "bin/b.sh": b.bytes.length, "copy of a.txt": a.bytes.length, "docs/a.txt": a.bytes.length },
-			warnings: { total: 0, items: [] },
-		});
-		// Workers RPC clones plain objects only: a map by path must keep Object's prototype.
-		expect(Object.getPrototypeOf((scanned as { sizes: object }).sizes)).toBe(Object.prototype);
-		// The files belong to the agent and run.
-		expect((await run(made.core, fence, "./bin/b.sh && stat -c '%u %a' docs/a.txt")).stdout).toBe("beta\n1000 644\n");
-		expect(await made.core.hydrate(fence, { versionId: null, files: [], dirs: [] })).toMatchObject({ ok: false, reason: "not_empty" });
-	});
-
-	test("a checkpoint streams changed files into the bucket under their keys, checked against their hashes", { timeout: 60_000 }, async () => {
-		await run(made.core, fence, "printf 'new contents' > docs/new.txt; mkfifo pipe; ln -s /etc/passwd link; mkdir real; echo inside > real/f; ln -s real linked");
-		const scanned = (await made.core.scan(fence, { rehashAll: false })) as ScanResult & { ok: true };
-		expect(scanned.ok).toBe(true);
-		expect(scanned.warnings).toEqual({ total: 3, items: [{ path: "link", reason: "symlink" }, { path: "linked", reason: "symlink" }, { path: "pipe", reason: "special" }] });
-		const file = scanned.manifest.files.find((entry) => entry.path === "docs/new.txt") as { sha256: string };
-		expect(file.sha256).toBe(sha256Hex(bytes("new contents")));
-		const stored = await made.core.checkpoint(fence, { files: [{ path: "docs/new.txt", sha256: file.sha256, size: 12, key: "blobs/new" }] });
-		expect(stored).toEqual({ ok: true, stored: [{ path: "docs/new.txt", sha256: file.sha256, size: 12, key: "blobs/new" }] });
-		expect(new TextDecoder().decode(made.bucket.objects.get("blobs/new"))).toBe("new contents");
-		// A wrong hash is refused by the bucket; a changed size, or a path through a symbolic link, by the container.
-		expect(await made.core.checkpoint(fence, { files: [{ path: "docs/new.txt", sha256: "0".repeat(64), size: 12, key: "blobs/bad" }] })).toMatchObject({ ok: false, reason: "mismatch" });
-		expect(await made.core.checkpoint(fence, { files: [{ path: "docs/new.txt", sha256: file.sha256, size: 13, key: "blobs/bad" }] })).toMatchObject({ ok: false, reason: "changed" });
-		expect(await made.core.checkpoint(fence, { files: [{ path: "linked/f", sha256: sha256Hex(bytes("inside\n")), size: 7, key: "blobs/bad" }] })).toMatchObject({ ok: false, reason: "changed" });
-		expect(made.bucket.objects.has("blobs/bad")).toBe(false);
-		// Without a key (contents the conversation stores already) the bytes are hashed and nothing is written.
-		const objects = made.bucket.objects.size;
-		expect(await made.core.checkpoint(fence, { files: [{ path: "docs/new.txt", sha256: file.sha256, size: 12, key: null }] })).toEqual({
-			ok: true,
-			stored: [{ path: "docs/new.txt", sha256: file.sha256, size: 12, key: null }],
-		});
-		expect(await made.core.checkpoint(fence, { files: [{ path: "docs/new.txt", sha256: "0".repeat(64), size: 12, key: null }] })).toMatchObject({ ok: false, reason: "mismatch" });
-		expect(made.bucket.objects.size).toBe(objects);
-		await run(made.core, fence, "rm -rf pipe link linked real");
-	});
-
-	test("the scan measures sizes before hashing and counts every entry", { timeout: 60_000 }, async () => {
-		await run(made.core, fence, "truncate -s 1G sparse");
-		expect(await made.core.scan(fence, { rehashAll: false })).toEqual({ ok: false, limit: "folder_bytes" });
-		// tmpfs runs out of inodes at the entry limit, so only hard links, which share one, can pass it.
-		const created = await run(made.core, fence, "rm sparse; mkdir many; for i in $(seq 1 120); do touch many/$i 2>/dev/null; done; ls many | wc -l");
-		expect(Number(created.stdout.trim())).toBeLessThan(100);
-		expect(await made.core.scan(fence, { rehashAll: false })).toMatchObject({ ok: true });
-		// tmpfs counts a hard link as an inode too, so the entry limit holds for links as well.
-		const linked = await run(made.core, fence, "rm -rf many; mkdir many; touch many/0; for i in $(seq 1 120); do ln many/0 many/$i 2>/dev/null; done; ls many | wc -l");
-		expect(Number(linked.stdout.trim())).toBeLessThan(100);
-		await run(made.core, fence, "rm -rf many");
-		expect(await made.core.scan(fence, { rehashAll: true })).toMatchObject({ ok: true });
-	});
-
-	test("folder steps need the folder to themselves", { timeout: 30_000 }, async () => {
-		const running = made.core.exec(fence, { execId: "busy-1", command: "sleep 2", cwd: WORKSPACE, env: commandEnvironment(), timeoutSeconds: 10 }, null);
-		await new Promise((resolve) => setTimeout(resolve, 200));
-		expect(await made.core.scan(fence, { rehashAll: false })).toMatchObject({ refused: "busy" });
-		await running;
-		expect(await made.core.scan(fence, { rehashAll: false })).toMatchObject({ ok: true });
-	});
-});
-
 describe.skipIf(!READY)("strays and limits", () => {
 	let made: Rig;
 	let fence: SandboxFence;
@@ -596,28 +435,6 @@ describe.skipIf(!READY)("the Sandbox's fault rows", () => {
 		expect(made.core.status()).toMatchObject({ state: "none", incarnation: null });
 		expect(made.container.running).toBe(false);
 		expect(await made.core.exec(fence, { execId: "late", command: "true", cwd: WORKSPACE, env: {}, timeoutSeconds: 1 }, null)).toMatchObject({ refused: "stale" });
-	});
-
-	test("hydration from a store that lacks a blob, holds the wrong one, or fails, fails", { timeout: 120_000 }, async () => {
-		const made = track(rig());
-		const fence = await ready(made);
-		const good = bytes("good");
-		made.bucket.objects.set("k/good", good);
-		made.bucket.objects.set("k/short", bytes("bad"));
-		const file = (path: string, key: string, size = good.length, sha256 = sha256Hex(good)) => ({ path, sha256, size, mode: 0o644 as const, mtime: 0, key });
-		const many = Array.from({ length: 40 }, (_, i) => file(`f${i}`, "k/good"));
-		expect(await made.core.hydrate(fence, { versionId: null, files: [...many, file("missing", "k/none", 4, "1".repeat(64))], dirs: [] })).toMatchObject({ ok: false, reason: "blob_missing" });
-		await run(made.core, fence, "rm -rf /workspace/*");
-		expect(await made.core.hydrate(fence, { versionId: null, files: [file("short", "k/short", 4, "2".repeat(64))], dirs: [] })).toMatchObject({ ok: false, reason: "mismatch" });
-		await run(made.core, fence, "rm -rf /workspace/*");
-		const failing = new SandboxCore({ ...made.ports(), bucket: () => ({ get: async () => Promise.reject(new Error("R2 is down")), put: async () => {}, check: async () => {} }) });
-		await failing.recover();
-		expect(await failing.hydrate(fence, { versionId: null, files: [file("a", "k/good")], dirs: [] })).toMatchObject({ ok: false, reason: "failed" });
-		await run(failing, fence, "rm -rf /workspace/*");
-		// A hash the bytes do not have is the container's refusal.
-		expect(await failing.hydrate(fence, { versionId: null, files: [], dirs: ["d"] })).toEqual({ ok: true });
-		await run(failing, fence, "rmdir /workspace/d");
-		expect(await made.core.hydrate(fence, { versionId: null, files: [file("x", "k/good", 4, "3".repeat(64))], dirs: [] })).toMatchObject({ ok: false, reason: "mismatch" });
 	});
 
 	test("a file command the cgroup does not admit destroys the container too", { timeout: 60_000 }, async () => {

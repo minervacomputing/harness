@@ -18,14 +18,15 @@ export interface ContainerPort {
 
 /** The parts of an R2 bucket a hydration reads and a checkpoint writes. */
 export interface BucketPort {
-	get(key: string): Promise<{ size: number; body: ReadableStream<Uint8Array> } | null>;
+	/** Reads `key`; its body errors at its end (CHECK_MISMATCH) unless its bytes have the SHA-256 `sha256`. */
+	get(key: string, sha256: string): Promise<{ size: number; body: ReadableStream<Uint8Array> } | null>;
 	/** Puts exactly `size` bytes; R2 refuses a body whose SHA-256 is not `sha256`. */
 	put(key: string, body: ReadableStream<Uint8Array>, options: { size: number; sha256: string }): Promise<void>;
 	/** Reads exactly `size` bytes and stores nothing; refuses them, as a put would, when their SHA-256 is not `sha256`. */
 	check(body: ReadableStream<Uint8Array>, options: { size: number; sha256: string }): Promise<void>;
 }
 
-/** What a check refuses: its message names the hash, as R2's refusal does (folder.ts `isMismatch`). */
+/** What a check or a read refuses: its message names the hash, as R2's refusal does (folder.ts `isMismatch`). */
 export const CHECK_MISMATCH = "The contents do not match their SHA-256.";
 
 /**
@@ -67,9 +68,26 @@ export interface SandboxPorts {
 /** R2 as a BucketPort: a put of a known length, its SHA-256 checked by R2. */
 export function r2Bucket(bucket: R2Bucket): BucketPort {
 	return {
-		async get(key) {
+		async get(key, sha256) {
 			const object = await bucket.get(key);
-			return object ? { size: object.size, body: object.body } : null;
+			if (!object) return null;
+			const digest = new crypto.DigestStream("SHA-256");
+			// Rejected with the stream when the body fails; read only at its end.
+			digest.digest.catch(() => {});
+			const writer = digest.getWriter();
+			const body = object.body.pipeThrough(
+				new TransformStream<Uint8Array, Uint8Array>({
+					async transform(chunk, controller) {
+						await writer.write(chunk.slice());
+						controller.enqueue(chunk);
+					},
+					async flush() {
+						await writer.close();
+						if (hex(new Uint8Array(await digest.digest)) !== sha256) throw new Error(CHECK_MISMATCH);
+					},
+				}),
+			);
+			return { size: object.size, body };
 		},
 		async put(key, body, options) {
 			const fixed = new FixedLengthStream(options.size);

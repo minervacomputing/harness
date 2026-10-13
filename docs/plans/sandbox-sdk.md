@@ -71,6 +71,7 @@ One fresh agent per unit, in sequence, on the `sandbox-sdk` branch (worktree `.c
 - **A small tar reader and writer**: `modern-tar` (MIT, Web Streams) if it runs in workerd and Node, otherwise our own. Either is bounded: header sizes, PAX records and names up to the manifest's 1,024 bytes.
 - **Deletions**: `container/minerva/minerva-fs`, `container/tests/`, `test/docker/sandbox-python.test.ts`, `MINERVA_FS`, `helper()` and the line-scan and display-path vectors.
 - **Docker tests that move to TypeScript** before they are deleted: symlinked parents and links in the folder, FIFOs, invalid UTF-8 and decomposed names, hard links, sparse files, millisecond mtimes and shared blobs with different modes.
+- **Measured** (S2, `test:docker` on an arm64 Mac, an in-memory bucket): hydration of 1,000 files of 1 KiB takes 150 to 170 ms and of two 16 MiB blobs at three paths each 230 ms; a scan of 10,001 entries takes 510 to 540 ms hashing every file and 75 to 90 ms from the index; a checkpoint of 500 files of 1,000 bytes takes 40 ms.
 
 ### Details the units must keep (second review, 2026-10-13)
 

@@ -46,9 +46,8 @@ export const AGENT_CGROUP = "/sys/fs/cgroup/agent";
 /** The image's PATH for commands (the Dockerfile's ENV PATH): the agent's Python environment first. */
 export const COMMAND_PATH = "/opt/python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
-/** The file helper on the read-only root, run in Python's isolated mode without site packages. */
+/** The system's Python, which the verification runs in isolated mode without site packages. */
 export const PYTHON = "/usr/bin/python3";
-export const MINERVA_FS = "/opt/minerva/minerva-fs";
 
 /** Bash's fixed environment: exactly these, never anything of the Worker's. */
 export function commandEnvironment(): { [name: string]: string } {

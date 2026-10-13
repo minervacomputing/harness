@@ -23,7 +23,7 @@ import { type BucketPort, CHECK_MISMATCH } from "../../src/sandbox/ports.ts";
 import { SANDBOX_MIGRATIONS } from "../../src/sandbox/store.ts";
 import type { RunId } from "../../src/shared/rpc.ts";
 import { CONVERSATION, sha, WORKSPACE, World } from "../unit/files-support.ts";
-import { DockerContainer, dockerReady } from "./sandbox-docker.ts";
+import { DockerContainer, dockerReady, verified } from "./sandbox-docker.ts";
 import { openDatabase } from "../unit/sqlite.ts";
 
 const READY = dockerReady();
@@ -39,9 +39,9 @@ afterAll(() => {
 /** The Sandbox's put as R2 does it, into the World's bucket (which checks the SHA-256). */
 function bucketOf(world: World): BucketPort {
 	return {
-		get: async (key) => {
+		get: async (key, sha256) => {
 			const object = await world.bucket.get(key);
-			return object ? { size: object.size, body: object.body } : null;
+			return object ? { size: object.size, body: verified(object.body, sha256) } : null;
 		},
 		put: async (key, body, options) => {
 			await world.bucket.put(key, body, { sha256: options.sha256 });

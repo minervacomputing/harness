@@ -184,7 +184,7 @@ export class LocalRun {
 		if (refused(scanned)) throw new FolderUnavailable(`The sandbox was lost: ${scanned.message}`);
 		if (!scanned.ok) {
 			if ("limit" in scanned) throw new FolderOverLimit(scanned.limit);
-			throw new FolderUnavailable(scanned.reason === "changed" ? "The folder kept changing while it was saved." : `The folder could not be scanned: ${scanned.message}`);
+			throw new FolderUnavailable(`The folder could not be scanned: ${scanned.message}`);
 		}
 		await this.#deps.point?.("checkpoint:scanned");
 		const upload = async (plan: CheckpointUploadPlan): Promise<CheckpointUploadResult> => {
