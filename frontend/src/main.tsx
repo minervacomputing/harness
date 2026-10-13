@@ -56,29 +56,15 @@ queryClient.getQueryCache().subscribe(event => {
   else if (user !== owner) window.location.reload()
 })
 
-// A page going into the back-forward cache is hidden, and what waits to be retried is held (TanStack Query retries only while focused).
-// Restored, it is shown and resumed only once the server names the same signed-in account; otherwise it loads again. The check is a
-// request of its own, outside the query cache, and only the latest restore's answer counts.
-let restores = 0
-const hold = (held: boolean) => {
-  document.documentElement.style.visibility = held ? 'hidden' : ''
-  focusManager.setFocused(held ? false : undefined)
-}
+// A page restored from the back-forward cache may hold an account that has since changed, so it loads again. Going into the cache it is
+// hidden, so the old account's page is not shown, and pending TanStack Query retries stay paused (they run only while focused).
 window.addEventListener('pagehide', event => {
   if (!event.persisted) return
-  restores++
-  hold(true)
+  document.documentElement.style.visibility = 'hidden'
+  focusManager.setFocused(false)
 })
 window.addEventListener('pageshow', event => {
-  if (!event.persisted) return
-  const restore = ++restores
-  hold(true)
-  fetch('/api/me', { credentials: 'same-origin', cache: 'no-store' })
-    .then(async response => (response.ok ? ((await response.json()) as MeOut).user.id : null))
-    .then(
-      user => restore === restores && (owner && user === owner ? hold(false) : window.location.reload()),
-      () => restore === restores && window.location.reload(),
-    )
+  if (event.persisted) window.location.reload()
 })
 
 createRoot(document.getElementById('root')!).render(
