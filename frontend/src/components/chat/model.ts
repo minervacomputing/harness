@@ -126,7 +126,7 @@ function finishedParts(events: EventOut[], answer: string): Part[] {
 }
 
 function squash(text: string): string {
-  return text.replace(/\s+/g, ' ').trim()
+  return text.replaceAll(/\s+/g, ' ').trim()
 }
 
 function latestStatus(events: EventOut[]): RunOut['status'] | undefined {

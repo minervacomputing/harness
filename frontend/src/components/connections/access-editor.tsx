@@ -16,9 +16,7 @@ import { Checkbox, ErrorNote, Spinner } from '@/components/ui/misc'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { errorMessage } from '@/lib/http'
 import { cn } from '@/lib/utils'
-
-// Kinds other than the connection itself are what users pick resources of.
-export const ACCOUNT = 'account'
+import { ACCOUNT, toggle } from './access'
 
 /** Refetches the workspace's connections, whose status and missing consent follow from access and errors. */
 export function invalidateConnections(queryClient: QueryClient, workspaceId: string) {
@@ -44,25 +42,6 @@ const keyOf = (kind: string, id: string) => `${kind}\u0000${id}`
 
 function sameActions(a: Set<string>, b: string[]) {
   return a.size === b.length && b.every(x => a.has(x))
-}
-
-/** Checking an action also checks what it requires; unchecking an action clears what depends on it. */
-function toggle(actions: ActionOut[], current: Set<string>, id: string, on: boolean): Set<string> {
-  const next = new Set(current)
-  if (on) {
-    let action: ActionOut | undefined = actions.find(a => a.id === id)
-    while (action) {
-      next.add(action.id)
-      action = action.requires ? actions.find(a => a.id === action!.requires) : undefined
-    }
-  } else {
-    const drop = (target: string) => {
-      next.delete(target)
-      for (const dependent of actions.filter(a => a.requires === target)) drop(dependent.id)
-    }
-    drop(id)
-  }
-  return next
 }
 
 type Edits = Map<string, Set<string>>

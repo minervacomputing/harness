@@ -41,10 +41,11 @@ fake-model:
 test:
 	cd backend && uv run pytest -q
 	cd worker && pnpm typecheck && pnpm test
-	cd frontend && pnpm typecheck
+	cd frontend && pnpm check
 
 lint:
 	cd backend && uv run ruff check . && uv run ruff format --check .
+	cd frontend && pnpm check
 
 api-types:
 	cd frontend && pnpm gen:api

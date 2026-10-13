@@ -14,7 +14,8 @@ import {
   replaceKeyMutation,
 } from '@/api/@tanstack/react-query.gen'
 import type { ActionOut, ConnectionOut, ConnectorOut, KindOut } from '@/api/types.gen'
-import { AccessEditor, ACCOUNT, invalidateConnections, refreshResources } from '@/components/connections/access-editor'
+import { ACCOUNT } from '@/components/connections/access'
+import { AccessEditor, invalidateConnections, refreshResources } from '@/components/connections/access-editor'
 import { AppIcon } from '@/components/connections/app-icon'
 import { type Setup, setupOf, summarize } from '@/components/connections/summary'
 import { Button } from '@/components/ui/button'
@@ -45,6 +46,7 @@ function useOpenConnections(workspaceId: string, initiallyOpen?: string) {
   const [open, setOpen] = useState<Set<string>>(() => {
     let stored: string[] = []
     try {
+      // oxlint-disable-next-line no-restricted-globals -- until F2, which moves the open connections into the URL
       stored = JSON.parse(sessionStorage.getItem(storageKey) ?? '[]')
     } catch {
       // Storage can be unavailable; every connection then starts closed.
@@ -53,6 +55,7 @@ function useOpenConnections(workspaceId: string, initiallyOpen?: string) {
   })
   useEffect(() => {
     try {
+      // oxlint-disable-next-line no-restricted-globals -- until F2
       sessionStorage.setItem(storageKey, JSON.stringify([...open]))
     } catch {
       // Not remembering is fine.
@@ -66,6 +69,7 @@ function useOpenConnections(workspaceId: string, initiallyOpen?: string) {
     })
   // A connection made with a key or added in place arrives without reloading the page.
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- until F2, which moves the open connections into the URL
     if (initiallyOpen) setOpen(previous => (previous.has(initiallyOpen) ? previous : new Set(previous).add(initiallyOpen)))
   }, [initiallyOpen])
   return [open, toggle] as const
@@ -101,6 +105,7 @@ function ConnectionsPage() {
     row.querySelector('button')?.focus({ preventScroll: true })
   }, [shown, connections.data])
 
+  // oxlint-disable-next-line react/refs -- until F2, which reworks the open connections
   const rows = (connections.data ?? []).map(connection => {
     const setup = setupOf(connection)
     if (!open.has(connection.id)) pinned.current.delete(connection.id)
@@ -210,7 +215,7 @@ function AddApps({
   const counts = new Map<string, number>()
   for (const c of connections) counts.set(c.provider, (counts.get(c.provider) ?? 0) + 1)
   // Apps not connected yet come first; the order is otherwise the server's.
-  const apps = [...(connectors ?? [])].sort((a, b) => Number(counts.has(a.slug)) - Number(counts.has(b.slug)))
+  const apps = (connectors ?? []).toSorted((a, b) => Number(counts.has(a.slug)) - Number(counts.has(b.slug)))
   const needle = query.trim().toLowerCase()
   const matches = needle ? apps.filter(c => c.name.toLowerCase().includes(needle)) : apps
   const shown = needle || showAll ? matches : matches.slice(0, SUGGESTED)
@@ -388,9 +393,7 @@ function ConnectionRow({
   const visitor = useDemoVisitor()
   // Once opened, the panel stays mounted while closed, so unsaved choices survive closing it.
   const [mounted, setMounted] = useState(open)
-  useEffect(() => {
-    if (open) setMounted(true)
-  }, [open])
+  if (open && !mounted) setMounted(true)
   const reconnectPath = { workspace_id: workspaceId, connection_id: connection.id }
   const prefetch = () => queryClient.prefetchQuery(getAccessOptions({ path: reconnectPath }))
   const summary = summarize(connection.allowed)

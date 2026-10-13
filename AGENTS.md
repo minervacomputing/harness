@@ -133,8 +133,25 @@ opencode run --agent plan --auto -f plan.md "Critique this plan: what is wrong, 
 ## Checks
 
 ```sh
-make test            # backend pytest (needs Postgres), worker and frontend typechecks
-make lint            # ruff check and format check
+make test            # backend pytest (needs Postgres), worker typecheck and tests, frontend check
+make lint            # ruff check and format check, frontend check
 make sandbox-check   # sandbox isolation probe; needs make dev running
 make api-types       # after any backend API schema change
 ```
+
+## Frontend
+
+In `frontend/`:
+
+```sh
+pnpm check    # oxlint, oxfmt --check, tsc and the unit tests; run before every commit
+pnpm format   # oxfmt writes the formatting
+pnpm test     # the unit tests alone (vitest)
+```
+
+Tests:
+
+- Unit tests are `src/**/*.test.ts` on pure modules: plain inputs and outputs, inline data, Node without a DOM.
+- No component tests (`*.test.tsx`, Testing Library, jsdom), no module mocks (`vi.mock`), and no parameters or injection that exist only for a test. The linter enforces the first two.
+- The client's integration tests run against the Worker in `cloudflare/test/platform/frontend-*.test.ts` (`pnpm test:platform` in `cloudflare/`).
+- What users see is checked by the browser walk, `cloudflare/test/account/browser.test.ts`, against the deployed test Worker.

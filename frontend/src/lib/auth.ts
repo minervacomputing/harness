@@ -401,7 +401,7 @@ export const auth = {
   /** An authenticator code (six digits) or a recovery code. */
   async mfaAuthenticate({ code }: { code: string }): Promise<AuthState> {
     const email = pendingEmail('mfa_authenticate')
-    const typed = code.replace(/\s+/g, '')
+    const typed = code.replaceAll(/\s+/g, '')
     const result = await call(
       /^\d{6}$/.test(typed) ? client.twoFactor.verifyTotp({ code: typed }) : client.twoFactor.verifyBackupCode({ code: backupCode(typed) }),
     )
@@ -460,7 +460,7 @@ export const auth = {
     },
 
     async confirmTwoFactor(code: string): Promise<void> {
-      const result = await call(client.twoFactor.verifyTotp({ code: code.replace(/\s+/g, '') }))
+      const result = await call(client.twoFactor.verifyTotp({ code: code.replaceAll(/\s+/g, '') }))
       if (!result.ok) throw failure(result.error)
     },
 

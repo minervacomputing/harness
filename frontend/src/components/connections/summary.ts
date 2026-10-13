@@ -1,7 +1,7 @@
 /** What a connection is ready for, in words: shared by the connections page, agents and the sidebar. */
 import type { AllowedOut, ConnectionOut } from '@/api/types.gen'
 import type { StatusTone } from '@/components/ui/misc'
-import { ACCOUNT } from './access-editor'
+import { ACCOUNT } from './access'
 
 export type Setup = { tone: StatusTone; label: string; attention: boolean }
 

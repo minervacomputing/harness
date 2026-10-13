@@ -62,7 +62,7 @@ export class UploadAdapter implements AttachmentAdapter {
   /** Stops uploads under way and deletes the uploads no message attached. */
   close(): void {
     this.closed = true
-    for (const id of [...this.entries.keys()]) void this.remove({ id })
+    for (const id of this.entries.keys()) void this.remove({ id })
   }
 
   async *add({ file }: { file: File }): AsyncGenerator<PendingAttachment, void> {
@@ -94,6 +94,7 @@ export class UploadAdapter implements AttachmentAdapter {
         wake()
       })
     try {
+      // oxlint-disable-next-line no-unmodified-loop-condition -- the upload's `finally` sets it
       while (!done) {
         await new Promise<void>(resolve => {
           wake = resolve

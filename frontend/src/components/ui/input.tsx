@@ -26,5 +26,6 @@ export function Select({ className, children, ...props }: ComponentProps<'select
 }
 
 export function Label({ className, ...props }: ComponentProps<'label'>) {
+  // oxlint-disable-next-line jsx-a11y/label-has-associated-control -- the caller passes htmlFor or the control
   return <label className={cn('text-[13px] leading-none font-medium select-none', className)} {...props} />
 }

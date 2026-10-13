@@ -34,16 +34,20 @@ function AppShell() {
   const { workspace, user } = Route.useRouteContext()
   const navigate = useNavigate()
   const { data: state } = useQuery(authQuery)
-  const [menuOpen, setMenuOpen] = useState(false)
   const pathname = useRouterState({ select: s => s.location.pathname })
+  // The drawer is for small screens: close it after navigating (back and forward included) and when the window widens.
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [menuPath, setMenuPath] = useState(pathname)
+  if (menuPath !== pathname) {
+    setMenuPath(pathname)
+    setMenuOpen(false)
+  }
 
   useEffect(() => {
     // Signing out goes to the sign-in page itself, without a way back to this one.
     if (state?.kind === 'anonymous' && !isSigningOut()) void navigate({ to: '/login', search: { next: window.location.pathname } })
   }, [state, navigate])
 
-  // The drawer is for small screens: close it after navigating (back and forward included) and when the window widens.
-  useEffect(() => setMenuOpen(false), [pathname])
   useEffect(() => {
     const desktop = window.matchMedia(DESKTOP)
     const close = () => {

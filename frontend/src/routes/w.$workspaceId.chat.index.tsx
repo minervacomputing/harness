@@ -119,7 +119,11 @@ function NewChat() {
                       )}
                       {suggestions.map(text => (
                         <li key={text}>
-                          <Suggestion text={text} disabled={start.isPending} onAsk={text => start.mutate({ content: text, uploads: [], key: newSendKey() })} />
+                          <Suggestion
+                            text={text}
+                            disabled={start.isPending}
+                            onAsk={question => start.mutate({ content: question, uploads: [], key: newSendKey() })}
+                          />
                         </li>
                       ))}
                     </ul>

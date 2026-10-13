@@ -13,6 +13,7 @@ export function FilesPanel({ id, workspaceId, conversationId, onClose }: { id: s
   // Folders that hold no file would not show otherwise.
   const empty = (folder.data?.dirs ?? []).filter(dir => !files.some(file => file.path.startsWith(`${dir}/`)))
   return (
+    // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape anywhere in the panel closes it
     <aside
       id={id}
       className="flex h-full w-full flex-col bg-background md:w-80 md:border-l"
