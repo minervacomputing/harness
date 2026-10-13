@@ -102,13 +102,14 @@ export function notPublic(): OperationError {
 	return new OperationError("SITE_NOT_PUBLIC", "This site's name points to a private network, which Minerva does not open.");
 }
 
-/** The whole fetch ran out of time (TOTAL_SECONDS). */
+/** The whole fetch ran out of time (LIMITS.totalMs). */
 class TotalTimeout extends Error {}
 
 // What a response says about its body.
 
-const CHARSET_PARAM = /charset\s*=\s*"?([A-Za-z0-9._:-]+)/iu;
-/** `rb"<meta[^>]+charset\s*=\s*[\"']?([A-Za-z0-9._:-]+)"` with IGNORECASE, over bytes read as Latin-1. */
+/** A charset parameter of Content-Type, its name in any ASCII case. */
+const CHARSET_PARAM = /charset\s*=\s*"?([A-Za-z0-9._:-]+)/i;
+/** A `<meta>` naming a charset, over the start of a page read as Latin-1. */
 const META_CHARSET = /<meta[^>]+charset[ \t\n\r\f\v]*=[ \t\n\r\f\v]*["']?([A-Za-z0-9._:-]+)/i;
 
 function latin1(bytes: Uint8Array): string {
@@ -126,7 +127,7 @@ function mediaType(value: string): [mime: string, charset: string | null] {
 	return [mime.trim().toLowerCase(), match ? (match[1] as string) : null];
 }
 
-/** `bytes.lstrip()`: ASCII whitespace. */
+/** The bytes after leading ASCII whitespace. */
 function lstripBytes(bytes: Uint8Array): Uint8Array {
 	let at = 0;
 	while (at < bytes.length && [0x20, 0x09, 0x0a, 0x0d, 0x0b, 0x0c].includes(bytes[at] as number)) at++;

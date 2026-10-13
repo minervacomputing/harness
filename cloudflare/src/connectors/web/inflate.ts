@@ -1,18 +1,22 @@
-// fetch.py's `_Inflater`: bounded decompression of a page sent with Content-Encoding gzip or deflate, as
-// Python's zlib does it, never producing more than it is given room for.
+// Bounded decompression of a page sent with Content-Encoding gzip or deflate: the inflater never produces
+// more than it is given room for, so memory stays near the 3 MB cap however the page was compressed.
 //
 // The Worker asks fetch for the body as sent (`encodeResponseBody: "manual"`), so a gzip body arrives
-// encoded and the cap applies before decompression as well as after it, as today. On the account the platform
+// encoded and the cap applies before decompression as well as after it. On the account the platform
 // decodes br and deflate itself (it asks the site for `gzip, br` whatever the request says; fetch.ts
 // REQUEST_HEADERS), so those arrive as is and only the cap after decompression applies; the deflate path
-// stays for a runtime that hands it on. The decoder is zlib's own
-// inflate as pako ports it (pako/lib/zlib, pinned in package.json), driven the way CPython's
-// `Decompress.decompress(data, max_length)` drives zlib: Z_SYNC_FLUSH, output in blocks up to the limit,
-// the input left over at the limit kept as `unconsumed_tail`, and after the end of the stream every further
-// byte ignored as `unused_data`. So the outcomes are Python's: a gzip stream ends after its first member,
-// its header flags, header CRC, CRC-32 and length are checked, a zlib stream's Adler-32 likewise, a stream
-// cut short yields what was decoded, and "deflate" is retried as raw DEFLATE when zlib fails on the first
-// chunk it was given. Memory stays near the 3 MB cap, however the page was compressed.
+// stays for a runtime that hands it on.
+//
+// The decoder is zlib's inflate as pako ports it (pako/lib/zlib, pinned in package.json), driven with
+// Z_SYNC_FLUSH into output blocks that never pass the room left. Input still unread when the room is full
+// means the page is too large; bytes after the end of the stream are ignored. So a gzip stream ends after
+// its first member; its header flags, header CRC, CRC-32 and length are checked, as a zlib stream's
+// Adler-32 is; a stream cut short yields what was decoded; and "deflate" is retried as raw DEFLATE when
+// zlib fails on the first chunk it was given (some servers send raw DEFLATE under that name).
+//
+// DecompressionStream is not used: as the Compression Streams standard defines it, each chunk written is
+// inflated whole and enqueued before a reader can stop it, so one small chunk of a bomb would expand in
+// memory past the cap.
 
 import { inflate, inflateInit2 } from "pako/lib/zlib/inflate.js";
 import ZStream from "pako/lib/zlib/zstream.js";
@@ -23,7 +27,7 @@ const Z_STREAM_END = 1;
 const Z_BUF_ERROR = -5;
 const Z_SYNC_FLUSH = 2;
 const MAX_WBITS = 15;
-/** The output is gathered in blocks of this size, never past the limit (CPython's output buffer grows the same way). */
+/** The output is gathered in blocks of this size, never past the limit. */
 const BLOCK = 64 * 1024;
 
 export function unsupportedEncoding(): OperationError {
@@ -34,22 +38,22 @@ function damaged(): OperationError {
 	return new OperationError("UNSUPPORTED_CONTENT", "This site sent a damaged page.");
 }
 
-/** `zlib.error`. */
+/** The stream is not valid gzip, zlib or DEFLATE. */
 class ZlibError extends Error {}
 
-/** `zlib.decompressobj(wbits)`, with the parts of `decompress` `_Inflater` relies on. */
+/** One inflate stream (zlib's windowBits: gzip, zlib or raw DEFLATE), fed chunk by chunk. */
 class Decompressor {
 	readonly #strm = new ZStream();
 	/** Where each block is decoded before it is copied out (zlib keeps its own window between calls). */
 	readonly #scratch = new Uint8Array(BLOCK);
-	/** Input left over when the output reached `max_length` (`unconsumed_tail` is not empty). */
+	/** Input was left unread when the output reached the limit. */
 	tail = false;
 
 	constructor(wbits: number) {
 		if (inflateInit2(this.#strm, wbits) !== Z_OK) throw new ZlibError(this.#strm.msg);
 	}
 
-	/** `decompress(data, max_length)` with `max_length` at least 1. */
+	/** The decoded bytes of `data`, at most `maxLength` (at least 1) of them. */
 	decompress(data: Uint8Array, maxLength: number): Uint8Array[] {
 		const strm = this.#strm;
 		strm.input = data;
@@ -70,11 +74,11 @@ class Decompressor {
 				out.push(this.#scratch.slice(0, strm.next_out));
 				produced += strm.next_out;
 			}
-			// Z_NEED_DICT included: Python gives no dictionary.
+			// Z_NEED_DICT included: no preset dictionary is given.
 			if (status !== Z_OK && status !== Z_BUF_ERROR && status !== Z_STREAM_END) throw new ZlibError(strm.msg);
 			if (strm.avail_out !== 0) break;
 		}
-		// After the end of the stream, what is left is `unused_data`, never decoded.
+		// After the end of the stream, what is left is ignored, never decoded.
 		this.tail = status !== Z_STREAM_END && strm.avail_in > 0;
 		strm.input = null;
 		return out;

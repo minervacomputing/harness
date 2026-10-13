@@ -13,7 +13,8 @@ import {
 	writeId,
 } from "../../src/gateway/results.ts";
 import vectors from "./vectors.ts";
-import { FakeClock, FakeTodoist, Gate, PROJECT, Scenario, TODOIST, todoistConnection, todoistConnector, userGrants } from "./executor-fakes.ts";
+import { todoistConnector } from "../../src/connectors/todoist/connector.ts";
+import { FakeClock, FakeTodoist, Gate, PROJECT, Scenario, TODOIST, todoistConnection, userGrants } from "./executor-fakes.ts";
 
 function start(todoist: FakeTodoist, projects: { [id: string]: string[] } = { work: ["read"] }, options: { concurrency?: number; deadline?: number | null } = {}) {
 	return Scenario.start({
@@ -239,7 +240,7 @@ describe("tools/call", () => {
 	});
 });
 
-describe("attempts (test_attempts.py)", () => {
+describe("attempts", () => {
 	test("a replaced attempt cannot call tools", async () => {
 		const todoist = new FakeTodoist();
 		const run = await start(todoist);

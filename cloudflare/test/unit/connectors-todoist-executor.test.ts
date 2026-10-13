@@ -1,8 +1,7 @@
-// backend/tests/test_executor.py, case by case, with the real Todoist connector (src/connectors/todoist/)
-// and conftest.py's FakeTodoist (executor-fakes.ts) behind the injected fetch; and the Todoist cases of
-// test_gateway.py and test_attempts.py that depend on the connector: the tools a run lists, their
-// read-only hints and labels, a write whose attempt is replaced while Todoist applies it, and a task
-// Todoist created in a project the run may not read.
+// Runs through the executor with the real Todoist connector and the in-memory Todoist (executor-fakes.ts):
+// authorization before any provider call, strict arguments, the write ledger (deduplication, uncertain
+// writes, revocation around a write), page tokens, the tools a run lists with their read-only hints, and a
+// task Todoist created in a project the run may not read.
 
 import { describe, expect, test } from "vitest";
 import type { ToolResult } from "../../src/contracts/executor.ts";
@@ -12,7 +11,7 @@ import { RESULT_SCHEMA, callToolResult } from "../../src/gateway/results.ts";
 import { parseJson } from "../../src/lib/json.ts";
 import { FakeTodoist, PROJECT, Scenario, TODOIST, jsonResponse, todoistConnection, userGrants } from "./executor-fakes.ts";
 
-/** Starts and claims a run with the grants in place at that moment (test_executor.py `start`). */
+/** Starts and claims a run with the grants in place at that moment. */
 function start(todoist: FakeTodoist, projects: { [id: string]: string[] }, ceiling: GrantRow[] = [], fetch: typeof globalThis.fetch = todoist.fetch): Promise<Scenario> {
 	return Scenario.start({
 		connectors: [todoistConnector()],
@@ -23,7 +22,7 @@ function start(todoist: FakeTodoist, projects: { [id: string]: string[] }, ceili
 	});
 }
 
-/** Python's RESULT_SCHEMA, checked by hand: required items and count, the optional keys' types, nothing else. */
+/** RESULT_SCHEMA, checked by hand: required items and count, the optional keys' types, nothing else. */
 function matchesResultSchema(value: unknown): boolean {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
 	const result = value as { [key: string]: unknown };
@@ -37,7 +36,7 @@ function matchesResultSchema(value: unknown): boolean {
 	return true;
 }
 
-describe("test_executor.py with the Todoist connector", () => {
+describe("the executor with the Todoist connector", () => {
 	test("the listing only returns allowed projects", async () => {
 		const todoist = new FakeTodoist();
 		const run = await start(todoist, { work: ["read"] });
@@ -184,7 +183,7 @@ describe("test_executor.py with the Todoist connector", () => {
 		expect(todoist.count("POST", "/tasks")).toBe(0);
 	});
 
-	test("a revoked run's calls end (test_permission_changes_revoke_active_runs, as the executor sees it)", async () => {
+	test("a revoked run's calls end", async () => {
 		// Which runs a grant change revokes is the Workspace's; the executor's part is that a revoked run
 		// starts nothing.
 		const todoist = new FakeTodoist();
@@ -196,7 +195,7 @@ describe("test_executor.py with the Todoist connector", () => {
 	});
 });
 
-describe("Todoist's tools in a run (test_gateway.py, test_attempts.py)", () => {
+describe("Todoist's tools in a run", () => {
 	test("tools are authorized and recorded, and only the usable ones are listed", async () => {
 		const todoist = new FakeTodoist();
 		const run = await start(todoist, { work: ["read"] });

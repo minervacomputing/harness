@@ -24,11 +24,8 @@ export const PROJECT = "project";
 export const MAX_PROJECT_PAGES = 20;
 export const TOO_MANY_PROJECTS = "This Todoist account has more projects than Minerva can list.";
 
-/**
- * Inputs carry titles, each field's ("project_id" is "Project Id") and the input's at the root, in the
- * input schema the model sees.
- */
-const ObjectId = (title: string) => z.string().trim().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/).meta({ title });
+/** A Todoist project or task id. */
+const objectId = () => z.string().trim().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/);
 /** Todoist's filter operators, which a search must not use: replaced with spaces. */
 const FILTER_OPERATORS = /[&|!()#@,\\]/g;
 
@@ -66,7 +63,7 @@ async function allProjects(client: TodoistClient): Promise<DiscoveryItem[]> {
 	throw new OperationError("PROVIDER_LIMIT", TOO_MANY_PROJECTS);
 }
 
-const ListProjects = z.strictObject({}).meta({ title: "ListProjects" });
+const ListProjects = z.strictObject({});
 
 const LIST_PROJECTS = defineOperation<z.output<typeof ListProjects>>({
 	name: "list_projects",
@@ -85,14 +82,12 @@ const LIST_PROJECTS = defineOperation<z.output<typeof ListProjects>>({
 	},
 });
 
-const ListTasks = z
-	.strictObject({
-		project_id: ObjectId("Project Id"),
-		search: z.string().trim().min(1).max(200).nullable().default(null).meta({ title: "Search" }),
-		limit: z.int().min(1).max(50).default(30).meta({ title: "Limit" }),
-		cursor: z.string().trim().max(300).nullable().default(null).meta({ title: "Cursor" }),
-	})
-	.meta({ title: "ListTasks" });
+const ListTasks = z.strictObject({
+	project_id: objectId(),
+	search: z.string().trim().min(1).max(200).nullable().default(null),
+	limit: z.int().min(1).max(50).default(30),
+	cursor: z.string().trim().max(300).nullable().default(null),
+});
 
 const LIST_TASKS = defineOperation<z.output<typeof ListTasks>>({
 	name: "list_tasks",
@@ -129,7 +124,7 @@ const LIST_TASKS = defineOperation<z.output<typeof ListTasks>>({
 	},
 });
 
-const GetTask = z.strictObject({ task_id: ObjectId("Task Id") }).meta({ title: "GetTask" });
+const GetTask = z.strictObject({ task_id: objectId() });
 
 const GET_TASK = defineOperation<z.output<typeof GetTask>>({
 	name: "get_task",
@@ -138,8 +133,8 @@ const GET_TASK = defineOperation<z.output<typeof GetTask>>({
 	input: GetTask,
 	needs: [[PROJECT, "read"]],
 	async prepare(binding, data): Promise<Prepared> {
-		// The task's project is only known after fetching it. The backend sees the task; the agent only
-		// receives it if that project is allowed. Failures look like denials so existence is not revealed.
+		// The task's project is only known after fetching it. Minerva sees the task; the agent only receives
+		// it if that project is allowed. Failures look like denials so existence is not revealed.
 		let task: TodoistTask;
 		try {
 			task = await clientOf(binding).task(data.task_id);
@@ -157,9 +152,7 @@ const GET_TASK = defineOperation<z.output<typeof GetTask>>({
 	},
 });
 
-const CreateTask = z
-	.strictObject({ project_id: ObjectId("Project Id"), title: z.string().trim().min(1).max(300).meta({ title: "Title" }) })
-	.meta({ title: "CreateTask" });
+const CreateTask = z.strictObject({ project_id: objectId(), title: z.string().trim().min(1).max(300) });
 
 const CREATE_TASK = defineOperation<z.output<typeof CreateTask>>({
 	name: "create_task",
@@ -220,8 +213,7 @@ export function todoistConnector(): Connector<TodoistClient> {
 
 		async describe(client, _kind, ids) {
 			const wanted = new Set(ids);
-			// A Map, then Object.fromEntries: an id such as "__proto__" stays a key, and a repeated id keeps its
-			// first place and its last name, as a dict does.
+			// A Map, then Object.fromEntries: an id such as "__proto__" stays an own key.
 			const names = new Map<string, string>();
 			for (const project of await allProjects(client)) if (wanted.has(project.id)) names.set(project.id, project.name);
 			return Object.fromEntries(names);

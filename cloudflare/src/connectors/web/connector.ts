@@ -47,20 +47,14 @@ function site(binding: Binding, host: string): Resource {
 	return binding.resource(SITE, host, ancestors(host));
 }
 
-const Search = z
-	.strictObject({
-		query: z.string().trim().min(1).max(400).refine(isSingleLine, SINGLE_LINE).meta({ title: "Query" }),
-		limit: z.int().min(1).max(20).default(10).meta({ title: "Limit" }),
-		// Where results should come from, as a two-letter country code (CH, DE, US).
-		country: z.string().trim()
-			.regex(/^[A-Z]{2}$/)
-			.nullable()
-			.default(null)
-			.meta({ title: "Country" }),
-		freshness: z.enum(["day", "week", "month", "year"]).nullable().default(null).meta({ title: "Freshness" }),
-		cursor: z.string().trim().max(300).nullable().default(null).meta({ title: "Cursor" }),
-	})
-	.meta({ title: "Search" });
+const Search = z.strictObject({
+	query: z.string().trim().min(1).max(400).refine(isSingleLine, SINGLE_LINE),
+	limit: z.int().min(1).max(20).default(10),
+	// Where results should come from, as a two-letter country code (CH, DE, US).
+	country: z.string().trim().regex(/^[A-Z]{2}$/).nullable().default(null),
+	freshness: z.enum(["day", "week", "month", "year"]).nullable().default(null),
+	cursor: z.string().trim().max(300).nullable().default(null),
+});
 
 const FRESHNESS: { readonly [name: string]: string } = { day: "pd", week: "pw", month: "pm", year: "py" };
 
@@ -120,14 +114,12 @@ export const SEARCH = defineOperation<z.output<typeof Search>>({
 	},
 });
 
-const ReadPage = z
-	.strictObject({
-		url: z.string().trim().min(1).max(MAX_URL).meta({ title: "Url" }),
-		max_chars: z.int().min(500).max(100_000).default(20_000).meta({ title: "Max Chars" }),
-		// Where to start in the page's text, to continue a long page.
-		offset: z.int().min(0).max(10_000_000).default(0).meta({ title: "Offset" }),
-	})
-	.meta({ title: "ReadPage" });
+const ReadPage = z.strictObject({
+	url: z.string().trim().min(1).max(MAX_URL),
+	max_chars: z.int().min(500).max(100_000).default(20_000),
+	// Where to start in the page's text, to continue a long page.
+	offset: z.int().min(0).max(10_000_000).default(0),
+});
 
 const MOVED_NOTE = "This page moved to another address. Open redirect_to to follow it; that site needs its own permission.";
 
