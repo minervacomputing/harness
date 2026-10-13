@@ -1,7 +1,7 @@
 // The Sandbox Durable Object in local workerd, which has no containers: its schema on the object's SQLite,
 // its RPC surface and refusals, its alarm, and the lifecycle (src/sandbox/core.ts) over the object's own
 // storage with a scripted container. The real container is tested locally in Docker
-// (test/unit/sandbox-local.test.ts) and on the account (test/account/sandbox.test.ts).
+// (test/docker/sandbox-local.test.ts) and on the account (test/account/sandbox.test.ts, sandbox-faults.test.ts).
 
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";

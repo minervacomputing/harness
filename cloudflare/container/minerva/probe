@@ -1,7 +1,9 @@
 # The sandbox probe: checks from inside the sandbox that an agent command runs unprivileged, with a fixed
 # environment, in the agent cgroup, with a writable and size-limited /workspace, a read-only root, a fork
 # limit and no route out. Ports 80 and 443 accept and then reset, so those network checks go over HTTP and
-# TLS rather than a bare TCP connect.
+# TLS rather than a bare TCP connect. The network checks run at once, one thread per target, so their
+# timeouts overlap; a target counts as blocked only when it times out, is refused or is reset, and a listener
+# of the probe's own is the positive control that an open route would be seen as open.
 # It runs as an agent command does, through the wrapper as uid 1000 in the agent cgroup, with bash's fixed
 # environment:
 #
@@ -10,16 +12,19 @@
 # where <cgroup> is the line /proc/self/cgroup must hold (`0::/agent` on the platform)
 #
 # and prints one JSON object: `checks` (every one must be true) and `details`. Started only by the account
-# tests (test/account/sandbox.test.ts), never by a user run. The checks that need the Sandbox Durable Object
+# tests (test/account/sandbox.test.ts) and the Docker tests, never by a user run. The checks that need the Sandbox Durable Object
 # (killing strays, a fork bomb, the hardening's postconditions) are made there.
 
 import errno
+import http.client
 import json
 import os
 import socket
+import ssl
 import subprocess
 import sys
 import threading
+import time
 
 WORKSPACE = "/workspace"
 MIB = 1024 * 1024
@@ -223,76 +228,210 @@ def writable_elsewhere():
     return not found, found or "none"
 
 
-def http_fails(host, port, tls):
-    """True when no HTTP answer comes back: the connection is refused, reset, or times out."""
-    import http.client
+# What a blocked route answers: nothing in time, a refusal, or a reset. Any other failure (no file descriptors
+# or threads left, an unexpected TLS error) is not evidence of a blocked route, so it fails the check.
+BLOCKED_ERRORS = (
+    TimeoutError,
+    ConnectionRefusedError,
+    ConnectionResetError,
+    ConnectionAbortedError,
+    BrokenPipeError,
+    http.client.RemoteDisconnected,
+    ssl.SSLEOFError,
+    ssl.SSLZeroReturnError,
+)
+BLOCKED_ERRNOS = {errno.ENETUNREACH, errno.EHOSTUNREACH}
+# getaddrinfo's answers when no resolver answers or the name does not resolve.
+UNRESOLVED = {socket.EAI_AGAIN, socket.EAI_NONAME, socket.EAI_FAIL, getattr(socket, "EAI_NODATA", socket.EAI_NONAME)}
+DNS_SECONDS = 30
+# How long the network pass may take: the resolver's limit, and an HTTPS exchange is three socket timeouts.
+NETWORK_SECONDS = DNS_SECONDS + 5
 
+
+def failure(error):
+    """("blocked", detail) for an outcome a blocked route gives, ("error", detail) for any other."""
+    detail = f"{type(error).__name__}: {error}"
+    if isinstance(error, BLOCKED_ERRORS) or (type(error) is OSError and error.errno in BLOCKED_ERRNOS):
+        return "blocked", detail
+    return "error", detail
+
+
+def http_reach(host, port, tls):
+    """("answered", status) when an HTTP answer comes back, else what failure() makes of the error."""
+    if tls:
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        connection = http.client.HTTPSConnection(host, port, timeout=TIMEOUT, context=context)
+    else:
+        connection = http.client.HTTPConnection(host, port, timeout=TIMEOUT)
     try:
-        if tls:
-            import ssl
-
-            context = ssl.create_default_context()
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
-            connection = http.client.HTTPSConnection(host, port, timeout=TIMEOUT, context=context)
-        else:
-            connection = http.client.HTTPConnection(host, port, timeout=TIMEOUT)
         connection.request("GET", "/", headers={"Host": "example.com"})
-        response = connection.getresponse()
-        return False, f"HTTP {response.status}"
+        return "answered", f"HTTP {connection.getresponse().status}"
     except Exception as error:
-        return True, f"{type(error).__name__}: {error}"
+        return failure(error)
+    finally:
+        connection.close()
 
 
-def unreachable(targets):
-    def run():
-        results = {}
-        ok = True
-        for host, port, tls in targets:
-            failed, detail = http_fails(host, port, tls)
-            ok = ok and failed
-            results[f"{'https' if tls else 'http'}://{host}:{port}"] = detail
-        return ok, results
-
-    return run
-
-
-def tcp_unreachable(targets):
-    def run():
-        results = {}
-        ok = True
-        for host, port in targets:
-            family = socket.AF_INET6 if ":" in host else socket.AF_INET
-            sock = socket.socket(family, socket.SOCK_STREAM)
-            sock.settimeout(3)
-            try:
-                sock.connect((host, port))
-                results[f"{host}:{port}"] = "connected"
-                ok = False
-            except OSError as error:
-                results[f"{host}:{port}"] = type(error).__name__
-            finally:
-                sock.close()
-        return ok, results
-
-    return run
+def tcp_reach(host, port):
+    """("connected", ...) when a TCP connection is accepted, else what failure() makes of the error."""
+    sock = socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(3)
+    try:
+        sock.connect((host, port))
+        return "connected", "connected"
+    except Exception as error:
+        return failure(error)
+    finally:
+        sock.close()
 
 
-def dns_unresolvable():
-    outcome = {}
+# Resolves in a child process, which a deadline can kill: getaddrinfo itself has no timeout.
+RESOLVE = """
+import socket
+try:
+    socket.getaddrinfo("example.com", 443)
+    print("resolved")
+except socket.gaierror as error:
+    print(error.errno, error.strerror)
+"""
 
-    def resolve():
+
+def dns_reach():
+    """("blocked", ...) when example.com does not resolve or no answer comes within DNS_SECONDS."""
+    try:
+        result = subprocess.run([sys.executable, "-I", "-S", "-c", RESOLVE], capture_output=True, text=True, timeout=DNS_SECONDS)
+    except subprocess.TimeoutExpired:
+        return "blocked", f"no answer within {DNS_SECONDS} s"
+    answer = result.stdout.strip()
+    if answer == "resolved":
+        return "answered", "resolved"
+    code, _, message = answer.partition(" ")
+    if result.returncode == 0 and code.lstrip("-").isdigit() and int(code) in UNRESOLVED:
+        return "blocked", f"gaierror {code}: {message}"
+    return "error", f"exit {result.returncode}: {answer or result.stderr.strip()[-200:]}"
+
+
+def reach_all(probes):
+    """Runs every probe at once, one thread each, and waits for all of them. Each is bounded by its own
+    timeouts (the sockets', the resolver child's); one that raised, could not start, or is still running at
+    the deadline is an error."""
+    results = {}
+
+    def run(key, function):
         try:
-            outcome["result"] = socket.getaddrinfo("example.com", 443)
-        except OSError as error:
-            outcome["error"] = f"{type(error).__name__}: {error}"
+            results[key] = function()
+        except Exception as error:
+            results[key] = ("error", f"{type(error).__name__}: {error}")
 
-    thread = threading.Thread(target=resolve, daemon=True)
-    thread.start()
-    thread.join(30)
-    if "result" in outcome:
-        return False, "resolved"
-    return True, outcome.get("error", "no answer within 30 s")
+    threads = []
+    for key, function in probes.items():
+        thread = threading.Thread(target=run, args=(key, function), daemon=True)
+        try:
+            thread.start()
+        except Exception as error:
+            results[key] = ("error", f"not started: {type(error).__name__}: {error}")
+            continue
+        threads.append((key, thread))
+    deadline = time.monotonic() + NETWORK_SECONDS
+    for _, thread in threads:
+        thread.join(max(0, deadline - time.monotonic()))
+    answered = dict(results)
+    for key, thread in threads:
+        if thread.is_alive() or key not in answered:
+            answered[key] = ("error", f"still running after {NETWORK_SECONDS} s")
+    return answered
+
+
+def local_addresses():
+    """The container's own IPv4 addresses other than loopback, from the kernel's routing table."""
+    addresses = set()
+    previous = None
+    with open("/proc/net/fib_trie") as file:
+        for line in file:
+            text = line.strip()
+            if text.startswith("|--"):
+                previous = text.split()[1]
+            elif text == "/32 host LOCAL" and previous and not previous.startswith("127."):
+                addresses.add(previous)
+    return sorted(addresses)
+
+
+class Listener:
+    """A TCP listener on every IPv4 address, on a free port, that answers each request with HTTP 200: the
+    positive control. It shows that the HTTP and TCP checks, run in the same concurrent pass, see an open IPv4
+    route as open, so their blocked outcomes are not produced by the pass itself. It does not cover TLS or IPv6:
+    there a reachable service would answer, or fail with an error that fails the check."""
+
+    def __init__(self):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.bind(("0.0.0.0", 0))
+        self.sock.listen(16)
+        self.sock.settimeout(0.5)
+        self.port = self.sock.getsockname()[1]
+        self.stopped = False
+        self.thread = threading.Thread(target=self.serve, daemon=True)
+        self.thread.start()
+
+    def serve(self):
+        while not self.stopped:
+            try:
+                connection, _ = self.sock.accept()
+            except OSError:
+                continue
+            with connection:
+                connection.settimeout(TIMEOUT)
+                try:
+                    if connection.recv(4096):
+                        connection.sendall(b"HTTP/1.0 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                except OSError:
+                    pass
+
+    def close(self):
+        self.stopped = True
+        self.thread.join(TIMEOUT)
+        self.sock.close()
+
+
+def network_checks(peers):
+    """Every network check in one concurrent pass, so their timeouts overlap, with the listener's controls
+    in the same pass. A check holds only when each of its targets is blocked."""
+    targets = {
+        "internetIPv4Blocked": [("http", "1.1.1.1", 80), ("https", "1.1.1.1", 443)],
+        "internetIPv6Blocked": [("http", "2606:4700:4700::1111", 80), ("https", "2606:4700:4700::1111", 443)],
+        "metadataServiceBlocked": [("http", "169.254.169.254", 80), ("http", "fd00:ec2::254", 80)],
+        "hostUnreachable": [("http", "10.0.0.254", 80), ("https", "10.0.0.254", 443)],
+        "otherPortsUnreachable": [("tcp", "1.1.1.1", 22), ("tcp", "10.0.0.254", 22), ("tcp", "1.1.1.1", 53), ("tcp", "10.0.0.254", 8080)],
+    }
+    if peers:
+        # Guesses: each container is a VM of its own that sees itself at 10.0.0.1, so no other container's
+        # address can be known from inside one. The listener's controls show a TCP connect would succeed.
+        targets["otherContainersUnreachable"] = [("tcp", peer.rsplit(":", 1)[0].strip("[]"), int(peer.rsplit(":", 1)[1])) for peer in peers]
+    listener = Listener()
+    try:
+        # On loopback, and on the container's own addresses where it has any (Docker's `--network none` has none).
+        addresses = ["127.0.0.1"] + local_addresses()
+        targets["networkChecksDetectListeners"] = [(kind, address, listener.port) for address in addresses for kind in ("http", "tcp")]
+
+        def probe(kind, host, port):
+            if kind == "tcp":
+                return lambda: tcp_reach(host, port)
+            return lambda: http_reach(host, port, kind == "https")
+
+        probes = {(name, f"{kind}://{host}:{port}"): probe(kind, host, port) for name, items in targets.items() for kind, host, port in items}
+        probes["publicDnsUnresolvable", "dns"] = dns_reach
+        results = reach_all(probes)
+    finally:
+        listener.close()
+    for name in targets:
+        found = {key[1]: results[key] for key in probes if key[0] == name}
+        expected = ("answered", "connected") if name == "networkChecksDetectListeners" else ("blocked",)
+        checks[name] = all(outcome in expected for outcome, _ in found.values())
+        details[name] = str({label: f"{outcome}: {detail}" for label, (outcome, detail) in found.items()})[:500]
+    outcome, detail = results["publicDnsUnresolvable", "dns"]
+    checks["publicDnsUnresolvable"] = outcome == "blocked"
+    details["publicDnsUnresolvable"] = f"{outcome}: {detail}"
 
 
 def fork_limit(limit):
@@ -331,14 +470,11 @@ def main(argv):
     check("workspaceEntryLimitHolds", lambda: folder_entry_limit(folder_entries))
     check("rootFilesystemReadOnly", root_read_only)
     check("otherWritableMountsNoexec", writable_elsewhere)
-    check("internetIPv4Blocked", unreachable([("1.1.1.1", 80, False), ("1.1.1.1", 443, True)]))
-    check("internetIPv6Blocked", unreachable([("2606:4700:4700::1111", 80, False), ("2606:4700:4700::1111", 443, True)]))
-    check("metadataServiceBlocked", unreachable([("169.254.169.254", 80, False), ("fd00:ec2::254", 80, False)]))
-    check("publicDnsUnresolvable", dns_unresolvable)
-    check("hostUnreachable", unreachable([("10.0.0.254", 80, False), ("10.0.0.254", 443, True)]))
-    check("otherPortsUnreachable", tcp_unreachable([("1.1.1.1", 22), ("10.0.0.254", 22), ("1.1.1.1", 53), ("10.0.0.254", 8080)]))
-    if peers:
-        check("otherContainersUnreachable", tcp_unreachable([(peer.rsplit(":", 1)[0].strip("[]"), int(peer.rsplit(":", 1)[1])) for peer in peers]))
+    try:
+        network_checks(peers)
+    except Exception as error:  # The pass that cannot run fails every network check.
+        checks["networkChecks"] = False
+        details["networkChecks"] = f"{type(error).__name__}: {error}"
     # Last, since it briefly leaves no room for other processes.
     check("forkLimitHolds", lambda: fork_limit(pids_max))
     sys.stdout.write(json.dumps({"checks": checks, "details": details}) + "\n")

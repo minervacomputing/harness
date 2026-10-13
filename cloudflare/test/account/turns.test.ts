@@ -6,17 +6,13 @@
 // which may not call the tools: it asserts the protocol (the version, the file, the events in order), never
 // the model's words, and is skipped with a message when the model does not call the tools after one retry.
 //
-// Run with `pnpm test:faults` after `pnpm run deploy:test`. Timings are written to MINERVA_TURN_TIMINGS when set.
+// The two turns run at once, through the driver of driver.ts. Run with `pnpm test:faults` after
+// `pnpm run deploy:test`. Timings are written to MINERVA_TURN_TIMINGS when set.
 
 import { writeFileSync } from "node:fs";
-import { describe, expect, test } from "vitest";
-import { FAULTS_HEADER, faultsToken } from "../../src/faults/token.ts";
-import { fetchDeployed, testWorker } from "./client.ts";
+import { afterAll, describe, expect, test } from "vitest";
+import { base, destroyed, driver, finish, type Head, LIST, type LocalCard, post, type RunEvent, type RunView, settled, type World, world } from "./driver.ts";
 
-const worker = testWorker();
-const token = await faultsToken(worker.secretKey);
-const USER = "0199a000-0000-7000-8000-0000000fa018";
-const LIST = "notes_list_notes";
 const timings: Record<string, unknown> = {};
 
 function record(name: string, value: unknown): void {
@@ -25,107 +21,10 @@ function record(name: string, value: unknown): void {
 	if (process.env.MINERVA_TURN_TIMINGS) writeFileSync(process.env.MINERVA_TURN_TIMINGS, `${JSON.stringify(timings, null, 2)}\n`);
 }
 
-interface RunEvent {
-	seq: number;
-	type: string;
-	data: { [key: string]: unknown };
-}
-
-interface Head {
-	id: string;
-	status: string;
-	errorMessage: string;
-	eventSeq: number;
-	createdAt: string;
-	finishedAt: string;
-	resultVersionId: string | null;
-	folderChanges: { added?: { path: string; size: number }[] } | null;
-	folderWarnings: { total: number; items: { path: string; reason: string }[] } | null;
-}
-
-interface RunView {
-	head: Head | null;
-	events: RunEvent[];
-	internals: { run: { [column: string]: unknown } | null };
-}
-
-/** A UUIDv7 for a workspace of its own. */
-function uuid7(): string {
-	const bytes = crypto.getRandomValues(new Uint8Array(16));
-	const now = BigInt(Date.now());
-	for (let i = 0; i < 6; i++) bytes[i] = Number((now >> BigInt(8 * (5 - i))) & 0xffn);
-	bytes[6] = 0x70 | ((bytes[6] as number) & 0x0f);
-	bytes[8] = 0x80 | ((bytes[8] as number) & 0x3f);
-	const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-async function driver<T>(op: string, body: { [key: string]: unknown }): Promise<T> {
-	const reply = await fetchDeployed(`${worker.origin}/api/faults/${op}`, {
-		method: "POST",
-		headers: { [FAULTS_HEADER]: token, "content-type": "application/json" },
-		body: JSON.stringify(body),
-		timeoutMs: 60_000,
-	});
-	if (reply.status !== 200) throw new Error(`${op}: ${reply.status} ${reply.text.slice(0, 300)}`);
-	return JSON.parse(reply.text) as T;
-}
-
-interface World {
-	workspace: { id: string; jurisdiction: null };
-	conversationId: string;
-}
-
-async function world(model: string | null): Promise<World> {
-	const workspace = { id: uuid7(), jurisdiction: null };
-	const base = { workspace, userId: USER };
-	const { agentId } = await driver<{ agentId: string }>("setup", { ...base, expired: false, delays: {} });
-	const { conversationId } = await driver<{ conversationId: string }>("conversation", { ...base, agentId, faults: [], model });
-	return { workspace, conversationId };
-}
-
-const base = (w: World) => ({ workspace: w.workspace, userId: USER, conversationId: w.conversationId });
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function post(w: World, content: string): Promise<string> {
-	const outcome = await driver<{ ok: boolean; value?: { run: { id: string } }; refusal?: { detail: string } }>("post", { ...base(w), content });
-	if (!outcome.ok || !outcome.value) throw new Error(`Refused: ${outcome.refusal?.detail}`);
-	return outcome.value.run.id;
-}
-
-/** Polls until the run has ended. A few failed polls in a row (a DNS or network blip) are tolerated; the last one is reported. */
-async function settled(w: World, runId: string, timeoutMs = 300_000): Promise<RunView & { seconds: number }> {
-	const started = Date.now();
-	let failures = 0;
-	let last: RunView | null = null;
-	for (;;) {
-		try {
-			last = await driver<RunView>("run", { ...base(w), runId });
-			failures = 0;
-			if (last.head && !["queued", "provisioning", "running"].includes(last.head.status)) return { ...last, seconds: (Date.now() - started) / 1000 };
-		} catch (error) {
-			if (++failures > 3) throw error;
-		}
-		if (Date.now() - started > timeoutMs) throw new Error(`The run did not end; last: ${JSON.stringify(last?.head)}`);
-		await sleep(1000);
-	}
-}
-
-/** Waits until the conversation's container is gone (the run's end destroys it). */
-async function destroyed(w: World, timeoutMs = 120_000): Promise<number> {
-	const started = Date.now();
-	for (;;) {
-		const answer = await driver<{ status: { state: string }; running: boolean }>("conversation-sandbox", base(w));
-		if (answer.status.state === "none" && !answer.running) return Date.now() - started;
-		if (Date.now() - started > timeoutMs) throw new Error(`The container was not destroyed: ${JSON.stringify(answer)}`);
-		await sleep(1000);
-	}
-}
+afterAll(finish, 300_000);
 
 /** The run's duration from its own timestamps, without the polling's. */
 const runMs = (head: Head) => Date.parse(head.finishedAt) - Date.parse(head.createdAt);
-
-type LocalCard = { tool: string; summary: string; ok: boolean; excerpt: string };
 
 /** What a turn must show, whoever produced it: the order of the run's events and the published folder. */
 async function expectPublished(w: World, view: RunView, file: string) {
@@ -161,9 +60,9 @@ async function expectPublished(w: World, view: RunView, file: string) {
 
 const TASK = "Do these two steps with your tools, in this order. Step 1: with the bash tool, run python3 to write a file named report.txt in the current directory that contains the line 'written by python'. Step 2: with the run_script tool, run JavaScript that calls tools.notes_list_notes({ folder: 'inbox' }) and returns how many notes it listed. Then tell me the count and the file name.";
 
-describe("an end-to-end turn: Python through bash, a script calling a connector tool, the published folder", () => {
+describe.concurrent("an end-to-end turn: Python through bash, a script calling a connector tool, the published folder", () => {
 	test("with the fake model", async () => {
-		const w = await world(null);
+		const w = await world();
 		const python = "python3 -c \"open('report.txt', 'w').write('written by python\\n')\" && cat report.txt";
 		const code = "const r = await tools.notes_list_notes({ folder: 'inbox' }); console.log('listed', JSON.stringify(r)); return r";
 		const posted = Date.now();
@@ -197,7 +96,7 @@ describe("an end-to-end turn: Python through bash, a script calling a connector 
 	test("with Workers AI (@cf/zai-org/glm-5.3-flash): the protocol, not the words", async (ctx) => {
 		const attempts: { seconds: number; status: string | undefined; error: string | undefined; tools: string[] }[] = [];
 		for (let attempt = 1; attempt <= 2; attempt++) {
-			const w = await world("workers-ai");
+			const w = await world({ model: "workers-ai" });
 			const runId = await post(w, TASK);
 			const view = await settled(w, runId, 150_000);
 			// The model called the tools when a command that is Python writing report.txt succeeded, a script ran and the

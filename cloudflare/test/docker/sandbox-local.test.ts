@@ -390,7 +390,7 @@ describe.skipIf(!READY)("strays and limits", () => {
 		const report = JSON.parse(probe.stdout) as { checks: Record<string, boolean>; details: Record<string, string> };
 		const failed = Object.entries(report.checks).filter(([, ok]) => !ok).map(([name]) => `${name}: ${report.details[name]}`);
 		expect(failed).toEqual([]);
-		expect(Object.keys(report.checks).length).toBeGreaterThanOrEqual(19);
+		expect(Object.keys(report.checks).length).toBeGreaterThanOrEqual(20);
 	});
 });
 
