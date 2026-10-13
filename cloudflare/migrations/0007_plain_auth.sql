@@ -1,4 +1,4 @@
--- Plain Better Auth (docs/plans/plain-better-auth.md): the policy of our own around Better Auth is gone,
+-- Plain Better Auth: the policy of our own around Better Auth is gone,
 -- and so is what it stored. Sessions lose their credential stamp (0004), the TOTP replay guard (0005) and
 -- the per-address and per-user limits (`rate_limits`, 0001) go; Better Auth's per-IP limiter keeps
 -- `rateLimit`.

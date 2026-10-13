@@ -1,4 +1,4 @@
-// The account flows on plain Better Auth (docs/plans/plain-better-auth.md), through the Worker as the browser
+// The account flows on plain Better Auth, through the Worker as the browser
 // uses them: sign-up by email code, open, closed or admitted by the setup key; the owner of an address taking
 // over an account someone else made for it; the second factor after either first factor; the first password;
 // resets and password changes ending sessions; email codes; and the routes the browser reaches.
@@ -350,7 +350,7 @@ describe("email codes", () => {
 	});
 
 	// A check consumes the newest code, then deletes the rest in a statement of its own. A request that came
-	// between the two could use a code a resend had replaced (docs/plans/auth-fixes.md, finding 3); with one
+	// between the two could use a code a resend had replaced; with one
 	// stored code per address there is none left to use.
 	test("a code a resend replaced is refused, even while another check is between its two statements", async () => {
 		const { email } = await signedIn();

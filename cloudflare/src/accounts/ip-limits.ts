@@ -14,8 +14,8 @@
 // - second factor: Better Auth's lockout of the user after 10 failed codes for 15 minutes, and 5 attempts
 //   per challenge.
 //
-// Passwords have no limit per account, and code emails none per address (docs/plans/plain-better-auth.md,
-// Accepted trade-offs).
+// Passwords have no limit per account, and code emails none per address (ARCHITECTURE.md,
+// section 12, Accepted trade-offs).
 //
 // Routes are tiered by what they cost and what they guard:
 //

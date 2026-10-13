@@ -4,7 +4,7 @@
 // Every change an admin makes requires the role again in its own statement, so a role removed a moment ago
 // counts, even for a request already past the mount's check.
 //
-// An admin can remove another user's two-factor (docs/plans/auth-fixes.md, C3): someone with a user's password and a session can
+// An admin can remove another user's two-factor: someone with a user's password and a session can
 // put their own authenticator on the account, and no password reset undoes that. The owner resets the password first (ending the
 // sessions and the password the attacker knew), then an admin removes the authenticator and any session left.
 

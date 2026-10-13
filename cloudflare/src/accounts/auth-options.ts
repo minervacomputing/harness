@@ -4,7 +4,7 @@
 // this module imports nothing that needs the runtime.
 //
 // Better Auth 1.7.7 (pinned; the handoff records why), used with its own defaults: its scrypt hasher, its
-// per-IP limiter, its email-code and two-factor plugins (docs/plans/plain-better-auth.md). Storage is D1
+// per-IP limiter, its email-code and two-factor plugins. Storage is D1
 // through the Kysely adapter's own D1 dialect, which has no interactive transactions: every multi-row
 // operation of Better Auth (a password reset updates the account, then deletes sessions) is a sequence of
 // single statements. Its single-row consume and increment are one statement each, so codes are used once.
@@ -89,7 +89,7 @@ export function authOptions(deps: AuthDeps) {
 			minPasswordLength: MIN_PASSWORD_LENGTH,
 			revokeSessionsOnPasswordReset: true,
 			// A challenge proven with the old password would otherwise still make a session for 10 minutes after
-			// the reset (docs/plans/auth-fixes.md, finding 1). Called before the sessions are revoked; an error is
+			// the reset. Called before the sessions are revoked; an error is
 			// the reset's, so it is retried rather than reported as done.
 			onPasswordReset: async ({ user }: { user: { id: string } }) => deps.passwordReplaced(user.id),
 		},

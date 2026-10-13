@@ -1,4 +1,4 @@
--- One stored value for each identifier (docs/plans/auth-fixes.md, finding 3). Better Auth's index on
+-- One stored value for each identifier. Better Auth's index on
 -- `verification.identifier` is not unique, so a resent email code was added next to the one it replaced,
 -- and a check of the newest code could leave the older one usable by a request in between. With the index
 -- unique, sending a code takes Better Auth's own fallback: the insert fails, the old row is deleted and the

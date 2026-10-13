@@ -67,7 +67,7 @@ function build(env: Env, allowSignUp: boolean) {
 			sessionCreated: (userId) => ensureProvisioned(env, userId),
 			passwordReplaced: async (userId) => {
 				// Two-factor's pending challenges: `2fa-<random>` rows holding the user's id. Their attempt counters
-				// (`2fa-attempts-…`) hold a number, and trusted devices (`trust-device-…`) stay (plain-better-auth.md).
+				// (`2fa-attempts-…`) hold a number, and trusted devices (`trust-device-…`) stay (ARCHITECTURE.md, section 12).
 				await env.DB.prepare(`DELETE FROM verification WHERE identifier LIKE '2fa-%' AND value = ?`).bind(userId).run();
 			},
 		}),
