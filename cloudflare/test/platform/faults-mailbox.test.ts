@@ -17,7 +17,7 @@ async function driver(op: string, body: unknown, token?: string): Promise<Respon
 	return exports.default.fetch(
 		new Request(`${ORIGIN}/api/faults/${op}`, {
 			method: "POST",
-			headers: { [FAULTS_HEADER]: token ?? (await faultsToken(env.MINERVA_SECRET_KEY)), "content-type": "application/json" },
+			headers: { [FAULTS_HEADER]: token ?? (await faultsToken(env.MINERVA_SECRET_KEY)), "content-type": "application/json", Origin: ORIGIN },
 			body: JSON.stringify(body),
 		}),
 	);
@@ -49,14 +49,15 @@ describe("the test build's mailbox", () => {
 		]);
 		expect(listed.emails[0]!.seq).toBeLessThan(listed.emails[1]!.seq);
 
-		// Without the driver's token the path is the Worker's, which has no such route. The token of before
+		// Without the driver's token the path is the Worker's, which has no such route (from the site's own
+		// origin; from anywhere else it is refused before that, as every unsafe request is). The token of before
 		// 2026-10-12, which the test Worker's logs kept whole under the header's old name, is refused too.
 		const refused = await driver("emails", { to }, "wrong");
 		expect(refused.status).toBe(404);
 		const retired = await saltedHmacHex("minerva.faults", "faults", env.MINERVA_SECRET_KEY, "SHA-256");
 		expect((await driver("emails", { to }, retired)).status).toBe(404);
 		const oldName = await exports.default.fetch(
-			new Request(`${ORIGIN}/api/faults/emails`, { method: "POST", headers: { "X-Minerva-Faults": retired, "content-type": "application/json" }, body: JSON.stringify({ to }) }),
+			new Request(`${ORIGIN}/api/faults/emails`, { method: "POST", headers: { "X-Minerva-Faults": retired, "content-type": "application/json", Origin: ORIGIN }, body: JSON.stringify({ to }) }),
 		);
 		expect(oldName.status).toBe(404);
 		expect(await refused.text()).not.toContain("123456");

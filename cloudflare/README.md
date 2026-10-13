@@ -9,7 +9,7 @@ The experiment of [docs/plans/cloudflare.md](../docs/plans/cloudflare.md): the s
 | `reset-worker/` | The quiesced instance `scripts/reset.ts` deploys while it resets an instance's data: 503 for every request, no binding, every Durable Object class retired (below) |
 | `scripts/` | Deploy (`deploy.ts`, with `resources.ts`, `schema-check.ts`, `bundle.ts`, `builds.ts`), reset (`reset.ts`), secrets (`secrets.ts`), the frontend's assets (`assets.ts`), offline development |
 | `migrations/` | D1 `minerva-cf`: accounts and the workspace directory |
-| `src/index.ts`, `src/http/` | The router, error shapes, cookies, CSRF, security headers, JSON bodies, `/assets/`, the probe |
+| `src/index.ts`, `src/http/` | The router, error shapes, CSRF by origin, security headers, the JSON body reader, `/assets/`, the probe |
 | `src/lib/` | JSON parsing (`parseJson`, which the runtime's key bug needs), canonical JSON (RFC 8785) for hashes, AES-GCM encryption at rest, zod records without prototype keys, text, dates, HTML, hosts and addresses, hashes, ids, the SQL interface every object's logic runs on (`sql.ts`) and its schema steps |
 | `src/workspace/` | The Workspace Durable Object: connections and credentials with refresh, layers, grants, agents, the run registry, the revocation outbox, uploads, deletion (`core.ts` over `lib/sql.ts`; `workspace.ts` is the object) |
 | `src/conversation/` | The Conversation Durable Object: messages, runs, attempts and the gate, events and the stream's WebSocket, history replay, the run's tools, PiHarness, the local tools and their checkpoint barrier (`local.ts`, `local-run.ts`); `ports.ts` wires the Workspace, the executor, the ledger and the model |

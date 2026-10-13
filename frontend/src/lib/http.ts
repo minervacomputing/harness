@@ -1,27 +1,6 @@
 import { client } from '@/api/client.gen'
 
-const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
-
-export function csrfToken(): string {
-  const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/)
-  return match ? decodeURIComponent(match[1]) : ''
-}
-
-/** Sets the CSRF cookie once per page load; the API requires its token on every unsafe request outside `/api/auth`. */
-let csrfReady: Promise<void> | null = null
-export function ensureCsrf(): Promise<void> {
-  csrfReady ??= fetch('/api/csrf', { credentials: 'same-origin' }).then(() => undefined)
-  return csrfReady
-}
-
 export function installClientInterceptors(onUnauthorized: () => void) {
-  client.interceptors.request.use(async request => {
-    if (UNSAFE.has(request.method)) {
-      await ensureCsrf()
-      request.headers.set('X-CSRFToken', csrfToken())
-    }
-    return request
-  })
   client.interceptors.response.use(response => {
     if (response.status === 401) onUnauthorized()
     return response

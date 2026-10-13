@@ -29,7 +29,6 @@ interface Account {
 
 async function account(name = "ada"): Promise<Account> {
 	const { browser, userId } = await signedIn(`${name}-${uuid7().slice(-12)}@example.com`);
-	await browser.start();
 	const me = await browser.call("GET", "/api/me");
 	expect(me.status).toBe(200);
 	return { browser, userId, ws: me.body.workspaces[0].id };
@@ -147,14 +146,14 @@ describe("membership", () => {
 		expect((await ada.browser.call("GET", `/api/workspaces/${grace.ws.toUpperCase()}/agents`)).status).toBe(404);
 	});
 
-	test("without a session it is 401, and an unsafe request without the CSRF token is 403 first", async () => {
+	test("without a session it is 401, and an unsafe request from another site is 403 first", async () => {
 		const ada = await account();
-		const anonymous = await new Browser().start();
+		const anonymous = new Browser();
 		expectDetail(await anonymous.call("GET", `/api/workspaces/${ada.ws}/agents`), 401, "Unauthorized");
 		expectDetail(await anonymous.call("POST", `/api/workspaces/${ada.ws}/agents`, { name: "A" }), 401, "Unauthorized");
-		expectDetail(await new Browser().call("POST", `/api/workspaces/${ada.ws}/agents`, { name: "A" }), 403, "CSRF check Failed");
-		expectDetail(await ada.browser.call("POST", `/api/workspaces/${ada.ws}/agents`, { name: "A" }, { "X-CSRFToken": "b".repeat(32) }), 403, "CSRF check Failed");
-		expectDetail(await ada.browser.call("DELETE", `/api/workspaces/${ada.ws}/agents/${uuid7()}`, undefined, { Origin: "https://evil.example" }), 403, "CSRF check Failed");
+		expectDetail(await anonymous.call("POST", `/api/workspaces/${ada.ws}/agents`, { name: "A" }, { Origin: "https://evil.example" }), 403, "Cross-site request refused.");
+		expectDetail(await ada.browser.call("POST", `/api/workspaces/${ada.ws}/agents`, { name: "A" }, { Origin: "null" }), 403, "Cross-site request refused.");
+		expectDetail(await ada.browser.call("DELETE", `/api/workspaces/${ada.ws}/agents/${uuid7()}`, undefined, { Origin: "https://evil.example" }), 403, "Cross-site request refused.");
 	});
 
 	test("sign-up provisions one agent and the layers; each user sees only their own workspace's agents", async () => {
@@ -235,7 +234,7 @@ describe("agents", () => {
 		const many = Array.from({ length: 21 }, () => uuid7());
 		expect((await ada.browser.call("POST", url, { name: "A", connection_ids: many })).body.detail[0].type).toBe("too_big");
 		// An empty body is refused as a whole; one that is not JSON is 400.
-		expect((await ada.browser.call("POST", url)).body).toEqual({ detail: [{ type: "invalid_type", loc: ["body"], msg: "Invalid input: expected a JSON body" }] });
+		expect((await ada.browser.call("POST", url, "")).body).toEqual({ detail: [{ type: "invalid_type", loc: ["body"], msg: "Invalid input: expected a JSON body" }] });
 		expectDetail(await ada.browser.call("POST", url, "{nope"), 400, "Cannot parse request body");
 	});
 
@@ -550,13 +549,13 @@ describe("connectors and connections", () => {
 
 describe("the demo is off", () => {
 	test("the config says so and its endpoints are 404 after CSRF and validation", async () => {
-		const browser = await new Browser().start();
+		const browser = new Browser();
 		const config = await browser.call("GET", "/api/demo/config");
 		expect([config.status, config.body]).toEqual([200, { enabled: false, turnstile_site_key: null, providers: [] }]);
 		expectDetail(await browser.call("POST", "/api/demo/gate", { token: "pass", newsletter: true }), 404, "Not found.");
 		expectDetail(await browser.call("POST", "/api/demo/email", { email: "new@example.com" }), 404, "Not found.");
 		expect((await browser.call("POST", "/api/demo/gate", { token: "pass" })).status).toBe(422);
-		expectDetail(await new Browser().call("POST", "/api/demo/gate", { token: "pass", newsletter: true }), 403, "CSRF check Failed");
+		expectDetail(await browser.call("POST", "/api/demo/gate", { token: "pass", newsletter: true }, { Origin: "https://evil.example" }), 403, "Cross-site request refused.");
 	});
 });
 

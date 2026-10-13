@@ -41,7 +41,6 @@ interface Account {
 
 async function account(name = "ada"): Promise<Account> {
 	const { browser, userId } = await signedIn(`${name}-${uuid7().slice(-12)}@example.com`);
-	await browser.start();
 	const me = await browser.call("GET", "/api/me");
 	const ws = me.body.workspaces[0].id as string;
 	const agents = await browser.call("GET", `/api/workspaces/${ws}/agents`);
@@ -488,7 +487,7 @@ describe("tenancy", () => {
 		const download = await ada.browser.call("GET", `${base}/conversations/${theirs}/files/download?path=x`);
 		expect([download.status, download.body]).toEqual([404, { detail: "Not Found" }]);
 		// Anonymous.
-		const anonymous = await new Browser().start();
+		const anonymous = new Browser();
 		for (const path of [`/api/workspaces/${ada.ws}/conversations`, `${base}/runs/${run}/stream`, `${base}/conversations/${theirs}/files/download?path=x`]) {
 			const answer = await anonymous.call("GET", path);
 			expect([path, answer.status, answer.body]).toEqual([path, 401, { detail: "Unauthorized" }]);
@@ -573,15 +572,19 @@ describe("uploads", () => {
 		const send = (browser: Browser, query: string, headers: Record<string, string>, method = "POST") =>
 			browser.fetcher(new Request(`${ORIGIN}${path}${query}`, { method, headers: { "CF-Connecting-IP": browser.ip, ...headers }, body: method === "GET" ? undefined : "hello" }));
 		const cookies = (browser: Browser) => [...browser.cookies].map(([name, value]) => `${name}=${value}`).join("; ");
-		const good = (browser: Browser) => ({ Cookie: cookies(browser), Origin: ORIGIN, "X-CSRFToken": browser.cookies.get("csrftoken") as string });
+		const good = (browser: Browser) => ({ Cookie: cookies(browser), Origin: ORIGIN });
+		const refused = "Cross-site request refused.";
 		const cases: [string, Response, number, string][] = [
+			["no origin", await send(a.browser, "", { Cookie: cookies(a.browser) }), 403, refused],
+			["foreign origin", await send(a.browser, "", { ...good(a.browser), Origin: "https://evil.example" }), 403, refused],
+			["same-site origin", await send(a.browser, "", { ...good(a.browser), Origin: "http://app.localhost", "Sec-Fetch-Site": "same-site" }), 403, refused],
+			["foreign PUT", await send(a.browser, "?name=a.txt", { ...good(a.browser), Origin: "https://evil.example" }, "PUT"), 403, refused],
 			["PUT", await send(a.browser, "?name=a.txt", good(a.browser), "PUT"), 405, "Use POST."],
 			["GET", await send(a.browser, "?name=a.txt", {}, "GET"), 405, "Use POST."],
 			["no name", await send(a.browser, "", good(a.browser)), 400, "Name the file with ?name=."],
 			["two names", await send(a.browser, "?name=a&name=b", good(a.browser)), 400, "Name the file with ?name=."],
-			["anonymous", await send(new Browser(), "?name=a.txt", {}), 401, "Unauthorized"],
-			["no token", await send(a.browser, "?name=a.txt", { Cookie: cookies(a.browser), Origin: ORIGIN }), 403, "CSRF check Failed"],
-			["foreign origin", await send(a.browser, "?name=a.txt", { ...good(a.browser), Origin: "https://evil.example" }), 403, "CSRF check Failed"],
+			["anonymous", await send(new Browser(), "?name=a.txt", { Origin: ORIGIN }), 401, "Unauthorized"],
+			["same origin by Sec-Fetch-Site", await send(new Browser(), "?name=a.txt", { "Sec-Fetch-Site": "same-origin" }), 401, "Unauthorized"],
 			["not a member", await send(grace.browser, "?name=a.txt", good(grace.browser)), 401, "Unauthorized"],
 		];
 		for (const [name, response, status, detail] of cases) expect([name, response.status, await response.json()]).toEqual([name, status, { detail }]);
@@ -605,7 +608,7 @@ describe("uploads", () => {
 		const slow = held.map((hold, index) =>
 			a.browser.fetch(`${path}?name=slow${index}.txt`, {
 				method: "POST",
-				headers: { "X-CSRFToken": a.browser.cookies.get("csrftoken") as string, "Content-Length": "4" },
+				headers: { "Content-Length": "4" },
 				body: new ReadableStream<Uint8Array>({
 					async start(controller) {
 						controller.enqueue(new TextEncoder().encode("sl"));

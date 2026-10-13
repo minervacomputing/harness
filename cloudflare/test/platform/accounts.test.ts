@@ -295,8 +295,8 @@ describe("passwords and rate limits", () => {
 	});
 });
 
-describe("CSRF: Better Auth's origins on its routes, our token on ours", () => {
-	test("Better Auth's routes need the site's Origin, not our token", async () => {
+describe("CSRF: Better Auth's origins on its routes, ours on ours", () => {
+	test("Better Auth's routes need the site's Origin", async () => {
 		const { email } = await signUp();
 		await new Browser().auth("/email-otp/verify-email", { email, otp: lastCode(email) });
 		const answer = await new Browser().auth("/sign-in/email", { email, password: PASSWORD });
@@ -324,16 +324,19 @@ describe("CSRF: Better Auth's origins on its routes, our token on ours", () => {
 			"Sec-Fetch-Site": "cross-site",
 			"Sec-Fetch-Mode": "navigate",
 		});
-		expect(form.status).toBe(403);
+		// Refused before Better Auth reads it: only application/json reaches it (accounts/auth.ts).
+		expect(form.status).toBe(415);
 		const callback = await stranger.auth("/sign-in/email", { email: uniqueEmail(), password: PASSWORD, callbackURL: `${evil}/next` });
 		expect(callback.status).toBe(403);
 	});
 
-	test("our routes still need the token, even signed in", async () => {
+	test("our routes refuse another origin, signed in or not: seeding, which needs no session, too", async () => {
 		const { browser } = await signedIn();
-		const answer = await browser.call("POST", "/api/dev/seed");
-		expect(answer.status).toBe(403);
-		expect(answer.body).toEqual({ detail: "CSRF check Failed" });
+		for (const caller of [browser, new Browser()]) {
+			const answer = await caller.call("POST", "/api/dev/seed", undefined, { Origin: "https://evil.example" });
+			expect(answer.status).toBe(403);
+			expect(answer.body).toEqual({ detail: "Cross-site request refused." });
+		}
 	});
 
 	test("Better Auth's JSON is read as parseJson reads it: escaped keys are read right, keys needing escapes are refused", async () => {
@@ -343,11 +346,12 @@ describe("CSRF: Better Auth's origins on its routes, our token on ours", () => {
 		const refused = await new Browser().auth("/sign-in/email", `{"\\\\": 1, "email": ${JSON.stringify(email)}, "password": ${JSON.stringify(PASSWORD)}}`);
 		expect(refused.status).toBe(400);
 		expect(refused.body).toEqual({ detail: "Cannot parse request body" });
-		// Better Auth parses every media type naming JSON, so each is read the same way.
-		for (const type of ["application/problem+json", "application/jsonx", "Application/JSON; charset=utf-8"]) {
+		const charset = await new Browser().auth("/sign-in/email", `{"\\\\": 1}`, { "Content-Type": "Application/JSON; charset=utf-8" });
+		expect([charset.status, charset.body]).toEqual([400, { detail: "Cannot parse request body" }]);
+		// Better Auth would parse any media type naming JSON, and forms: only application/json reaches it.
+		for (const type of ["application/problem+json", "application/jsonx", "text/plain", "application/x-www-form-urlencoded"]) {
 			const other = await new Browser().auth("/sign-in/email", `{"\\\\": 1}`, { "Content-Type": type });
-			expect(other.status, type).toBe(400);
-			expect(other.body, type).toEqual({ detail: "Cannot parse request body" });
+			expect([other.status, other.body], type).toEqual([415, { detail: "Send the body as application/json." }]);
 		}
 	});
 
@@ -416,7 +420,7 @@ describe("seed", () => {
 		expect(await db.prepare(`SELECT count(*) AS n FROM "user"`).first()).toEqual(before);
 		const app = createApp();
 		const deployed = { ...env, MINERVA_DEBUG: "false", EMAIL: { send: async () => ({ messageId: "m" }) } as unknown as SendEmail };
-		const browser = await new Browser((request) => Promise.resolve(app.fetch(request, deployed, createExecutionContext()))).start();
+		const browser = new Browser((request) => Promise.resolve(app.fetch(request, deployed, createExecutionContext())));
 		expect((await browser.call("POST", "/api/dev/seed")).status).toBe(404);
 	});
 });

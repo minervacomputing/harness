@@ -4,9 +4,9 @@
 import { createHmac } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { settings } from "../config.ts";
-import { readBytes } from "../http/body.ts";
-import { HttpError, notFound, unparseableBody } from "../http/errors.ts";
-import { type Json, parseJsonBytes } from "../lib/json.ts";
+import { UNPARSEABLE, readJson } from "../http/body.ts";
+import { HttpError, detail, notFound } from "../http/errors.ts";
+import type { Json } from "../lib/json.ts";
 import { AUTH_BASE_PATH, type OtpType, authOptions } from "./auth-options.ts";
 import { type EmailKind, render, sendEmail } from "./emails.ts";
 import { signupAllowed } from "./instance.ts";
@@ -95,12 +95,11 @@ export function getAuth(env: Env, policy: Policy = policyFor(env)): Auth {
  * cookies are dropped and sessions whose credentials changed are deleted before Better Auth reads them,
  * and the request runs in a scope of its own for the policy's hooks.
  *
- * The body is read under the API's cap before Better Auth sees it, and a JSON body is read with
- * `parseJson` and passed on re-serialized: Better Auth parses any `…json` media type with the runtime's
- * JSON parser, which a key written with escapes can put in a state that misreads later keys in the
- * isolate (plan: Spike results, JSON keys). Its bodies' keys are plain names, so a key that would need an
- * escape is refused, and the text Better Auth parses has none. Every content type naming JSON is treated
- * so and passed on as `application/json`; other bodies (forms) are not parsed as JSON.
+ * A body is read with the API's JSON reader (http/body.ts `readJson`: `application/json` only, so no
+ * form reaches Better Auth) before Better Auth sees it, and passed on re-serialized: Better Auth parses
+ * with the runtime's JSON parser, which a key written with escapes can put in a state that misreads later
+ * keys in the isolate (plan: Spike results, JSON keys). Its bodies' keys are plain names, so a key that
+ * would need an escape is refused, and the text Better Auth parses has none.
  */
 export async function handleAuth(env: Env, request: Request): Promise<Response> {
 	const path = new URL(request.url).pathname;
@@ -109,14 +108,12 @@ export async function handleAuth(env: Env, request: Request): Promise<Response> 
 	const cookies = withoutTrustedDevice(headers.get("Cookie"));
 	if (cookies) headers.set("Cookie", cookies);
 	else headers.delete("Cookie");
-	let body: Uint8Array | string | null = null;
+	let body: string | null = null;
 	if (request.body) {
-		const bytes = await readBytes(request);
-		if (bytes.byteLength > 0) body = bytes;
-		if (/json/i.test(headers.get("Content-Type") ?? "")) {
-			headers.set("Content-Type", "application/json");
-			if (body !== null) body = plainJson(bytes);
-		}
+		const read = await readJson(request);
+		if (!read.ok) return detail(read.refusal.status, read.refusal.detail);
+		headers.set("Content-Type", "application/json");
+		if (read.value !== undefined) body = plainJson(read.value);
 	}
 	const policy = policyFor(env);
 	await policy.revokeStale(headers.get("Cookie"));
@@ -127,18 +124,12 @@ export async function handleAuth(env: Env, request: Request): Promise<Response> 
 
 const PLAIN_KEY = /^[A-Za-z0-9_.:-]*$/;
 
-function plainJson(bytes: Uint8Array): string {
-	let value: Json;
-	try {
-		value = parseJsonBytes(bytes);
-	} catch {
-		throw new HttpError(unparseableBody());
-	}
+function plainJson(value: Json): string {
 	const check = (node: Json): void => {
 		if (Array.isArray(node)) node.forEach(check);
 		else if (node !== null && typeof node === "object") {
 			for (const [key, child] of Object.entries(node)) {
-				if (!PLAIN_KEY.test(key)) throw new HttpError(unparseableBody());
+				if (!PLAIN_KEY.test(key)) throw new HttpError(detail(UNPARSEABLE.status, UNPARSEABLE.detail));
 				check(child);
 			}
 		}

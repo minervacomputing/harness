@@ -6,17 +6,11 @@
 
 const base = new URL(process.argv[2] ?? "http://localhost:5173");
 
-const csrf = await fetch(new URL("/api/csrf", base));
-const cookie = csrf.headers.getSetCookie().find((value) => value.startsWith("csrftoken="));
-const token = cookie?.slice("csrftoken=".length).split(";")[0];
-if (!csrf.ok || !token) {
-	console.error(`No CSRF cookie from ${base.origin}/api/csrf (${csrf.status}). Is the Worker running?`);
+// The Worker refuses an unsafe request from any origin but MINERVA_SITE_URL's (http/csrf.ts), which is the
+// frontend's dev server by default.
+const response = await fetch(new URL("/api/dev/seed", base), { method: "POST", headers: { Origin: base.origin } }).catch(() => {
+	console.error(`Nothing answers at ${base.origin}. Is the Worker running?`);
 	process.exit(1);
-}
-
-const response = await fetch(new URL("/api/dev/seed", base), {
-	method: "POST",
-	headers: { Cookie: `csrftoken=${token}`, "X-CSRFToken": token, Origin: base.origin },
 });
 if (response.status === 404) {
 	console.error("Seed accounts have a known password; this only runs with MINERVA_DEBUG=true.");

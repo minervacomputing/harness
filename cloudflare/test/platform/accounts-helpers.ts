@@ -1,4 +1,4 @@
-// Shared by the accounts platform tests: a browser with cookies, CSRF and an IP of its own, and the emails
+// Shared by the accounts platform tests: a browser with cookies, an Origin and an IP of its own, and the emails
 // written to the log (debug is on), from which the tests read codes. Better Auth's routes are at /api/auth.
 
 import { env, exports } from "cloudflare:workers";
@@ -74,7 +74,7 @@ export interface Answer {
 	response: Response;
 }
 
-/** A browser: keeps its cookies, sends the CSRF header and Origin on unsafe requests, and has an IP of its own. */
+/** A browser: keeps its cookies, sends the site's Origin on unsafe requests, and has an IP of its own. */
 export class Browser {
 	readonly cookies = new Map<string, string>();
 	readonly setCookies: string[] = [];
@@ -88,11 +88,7 @@ export class Browser {
 	async call(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Answer> {
 		const all: Record<string, string> = { "CF-Connecting-IP": this.ip, ...headers };
 		if (this.cookies.size) all.Cookie = [...this.cookies].map(([name, value]) => `${name}=${value}`).join("; ");
-		if (method !== "GET") {
-			all.Origin ??= ORIGIN;
-			const token = this.cookies.get("csrftoken");
-			if (token && all["X-CSRFToken"] === undefined) all["X-CSRFToken"] = token;
-		}
+		if (method !== "GET") all.Origin ??= ORIGIN;
 		if (body !== undefined) all["Content-Type"] ??= "application/json";
 		const response = await this.fetcher(
 			new Request(`${ORIGIN}${path}`, { method, headers: all, body: body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body) }),
@@ -127,13 +123,7 @@ export class Browser {
 		return response;
 	};
 
-	/** Fetches the CSRF cookie, as the page does before its first unsafe request. */
-	async start(): Promise<this> {
-		await this.call("GET", "/api/csrf");
-		return this;
-	}
-
-	/** Better Auth's routes: no CSRF token, the Origin header only. */
+	/** Better Auth's routes. */
 	auth(path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Answer> {
 		return this.call(body === undefined ? "GET" : "POST", `/api/auth${path}`, body, headers);
 	}

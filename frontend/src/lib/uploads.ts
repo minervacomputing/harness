@@ -1,6 +1,6 @@
 import type { AttachmentAdapter, CompleteAttachment, PendingAttachment } from '@assistant-ui/react'
 import { useEffect, useMemo } from 'react'
-import { csrfToken, ensureCsrf, errorMessage } from '@/lib/http'
+import { errorMessage } from '@/lib/http'
 
 export type Uploaded = { id: string; name: string; size: number; media_type: string }
 
@@ -130,29 +130,22 @@ export class UploadAdapter implements AttachmentAdapter {
 
   private async delete(uploaded: Uploaded): Promise<void> {
     // An upload this fails to delete expires within a day.
-    await ensureCsrf()
-      .then(() =>
-        fetch(`/api/workspaces/${this.workspaceId}/uploads/${uploaded.id}`, {
-          method: 'DELETE',
-          credentials: 'same-origin',
-          headers: { 'X-CSRFToken': csrfToken() },
-          keepalive: true,
-        }),
-      )
-      .catch(() => {})
+    await fetch(`/api/workspaces/${this.workspaceId}/uploads/${uploaded.id}`, {
+      method: 'DELETE',
+      credentials: 'same-origin',
+      keepalive: true,
+    }).catch(() => {})
   }
 
   private async upload(entry: Entry, file: File, onProgress: (fraction: number) => void): Promise<Uploaded> {
     while (this.running >= CONCURRENT_UPLOADS) await new Promise<void>(resolve => this.waiting.push(resolve))
     this.running++
     try {
-      await ensureCsrf()
       if (entry.removed) throw new Error('The upload was cancelled.')
       return await new Promise((resolve, reject) => {
         const request = new XMLHttpRequest()
         entry.request = request
         request.open('POST', `/api/workspaces/${this.workspaceId}/uploads?name=${encodeURIComponent(file.name)}`)
-        request.setRequestHeader('X-CSRFToken', csrfToken())
         request.setRequestHeader('Content-Type', 'application/octet-stream')
         request.responseType = 'json'
         request.upload.onprogress = event => {

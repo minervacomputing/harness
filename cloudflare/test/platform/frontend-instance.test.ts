@@ -1,7 +1,7 @@
 // The frontend's calls to the instance routes (frontend/src/lib/instance.ts), its route guard
 // (lib/guards.ts requireInstanceAdmin) and the sign-up that carries the operator's setup key
 // (lib/auth.ts), run against the Worker through a Browser's cookie jar. They go through the generated API
-// client with the interceptors the app installs, so the CSRF header, the error shapes and the sentences
+// client with the interceptors the app installs, so the Origin check, the error shapes and the sentences
 // the pages show are the real ones. No page is rendered; the browser walk (test/account) drives those.
 
 import { env } from "cloudflare:workers";
@@ -45,15 +45,10 @@ class MemoryStorage {
 	removeItem = (key: string) => void this.#items.delete(key);
 }
 
-/** The page as it loads: fresh modules, this browser's cookies behind `fetch` and `document.cookie`, the interceptors main.tsx installs. */
+/** The page as it loads: fresh modules, this browser's cookies behind `fetch`, the interceptors main.tsx installs. */
 async function load(next = new Browser()): Promise<void> {
 	browser = next;
 	vi.stubGlobal("fetch", browser.fetch);
-	vi.stubGlobal("document", {
-		get cookie() {
-			return [...browser.cookies].map(([name, value]) => `${name}=${value}`).join("; ");
-		},
-	});
 	vi.resetModules();
 	await useCheapHashing();
 	const [authModule, authClient, instance, guards, http, generated] = await Promise.all([

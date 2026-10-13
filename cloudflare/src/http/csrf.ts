@@ -1,68 +1,25 @@
-// CSRF: unsafe methods must come from the site's origin and carry the `csrftoken` cookie's value in
-// `X-CSRFToken` (double submit). In this order:
+// CSRF: an unsafe request (any method but GET, HEAD and OPTIONS) must come from the site's own pages.
 //
-// 1. an `Origin` header, when present, must be the request's own origin or MINERVA_SITE_URL's;
-// 2. without `Origin`, an HTTPS request needs a `Referer` with one of those origins;
-// 3. the cookie must be set and well formed;
-// 4. the header must equal it (compared in constant time).
+// - With an `Origin` header, it must be MINERVA_SITE_URL's origin exactly: `null`, sibling subdomains and
+//   every other origin are refused, whatever `Sec-Fetch-Site` says.
+// - Without `Origin`, it must carry `Sec-Fetch-Site: same-origin` and be addressed to the site's origin
+//   (the header is relative to the request's own origin, which another hostname of the Worker is not).
+// - With neither, it is refused.
 //
-// The page sends the cookie's value as it is, so only that form is accepted; masked tokens are not.
-//
-// Where the check sits among the others depends on the route: JSON API routes check it before the session
-// (403 `CSRF check Failed`, so an anonymous unsafe request gets 403, not 401), and uploads check it after
-// the session. Better Auth's routes are exempt: they check their own origin rules (http/router.ts).
+// Browsers send `Origin` on every unsafe request, and a page cannot remove it or set `Sec-Fetch-Site`. The
+// router checks every unsafe request under /api/, with or without the session cookie, before any route
+// runs and whether or not one matches (http/router.ts); this also covers /api/dev/seed, which changes
+// accounts without a session. The one exemption is a POST under /api/auth/, which only Better Auth's route
+// answers: it checks the origin against its trusted origins itself. A request with a bearer token (a
+// desktop client, later) would be exempt only once its token is verified.
 
-import { timingSafeEqual } from "../lib/hash.ts";
-import { ALPHANUMERIC, randomString } from "../lib/random.ts";
-import { CSRF_COOKIE, readCookie } from "./cookies.ts";
+const SAFE = new Set(["GET", "HEAD", "OPTIONS"]);
 
-export const CSRF_HEADER = "X-CSRFToken";
-
-const SAFE = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
-const TOKEN = /^[A-Za-z0-9]{32}$/;
-
-export type CsrfFailure = "bad_origin" | "no_referer" | "bad_referer" | "no_cookie" | "no_token" | "bad_token";
-
-export function isSafeMethod(method: string): boolean {
-	return SAFE.has(method.toUpperCase());
-}
-
-/** A new secret for the cookie: 32 letters and digits. */
-export function newCsrfToken(): string {
-	return randomString(32, ALPHANUMERIC);
-}
-
-/** The request's CSRF cookie, if it holds a well-formed token. */
-export function csrfCookieToken(request: Request): string | null {
-	const value = readCookie(request, CSRF_COOKIE);
-	return value !== null && TOKEN.test(value) ? value : null;
-}
-
-/** Why an unsafe request fails the check, or null when it passes (or is safe). */
-export function checkCsrf(request: Request, siteUrl: string): CsrfFailure | null {
-	if (isSafeMethod(request.method)) return null;
-	const own = new URL(request.url);
-	const allowed = new Set([own.origin, new URL(siteUrl).origin]);
+/** Whether the request may pass: a safe method, or an unsafe one from the site's origin (above). */
+export function fromSite(request: Request, siteUrl: string): boolean {
+	if (SAFE.has(request.method)) return true;
 	const origin = request.headers.get("Origin");
-	if (origin !== null) {
-		if (!allowed.has(origin)) return "bad_origin";
-	} else if (own.protocol === "https:") {
-		const referer = request.headers.get("Referer");
-		if (!referer) return "no_referer";
-		// The URL parser repairs `https:host`, so the Referer must start with
-		// `https://`; one carrying credentials is refused too.
-		if (!referer.startsWith("https://")) return "bad_referer";
-		let from: URL;
-		try {
-			from = new URL(referer);
-		} catch {
-			return "bad_referer";
-		}
-		if (from.username || from.password || !allowed.has(from.origin)) return "bad_referer";
-	}
-	const secret = csrfCookieToken(request);
-	if (secret === null) return "no_cookie";
-	const token = request.headers.get(CSRF_HEADER);
-	if (!token) return "no_token";
-	return timingSafeEqual(token, secret) ? null : "bad_token";
+	const site = new URL(siteUrl).origin;
+	if (origin !== null) return origin === site;
+	return request.headers.get("Sec-Fetch-Site") === "same-origin" && new URL(request.url).origin === site;
 }

@@ -2,73 +2,41 @@ import { describe, expect, test } from "vitest";
 import { z } from "zod";
 import { serveAsset } from "../../src/http/assets.ts";
 import { MAX_JSON_BODY, readJson } from "../../src/http/body.ts";
-import { CSRF_COOKIE, csrfCookie, parseCookies } from "../../src/http/cookies.ts";
-import { checkCsrf, newCsrfToken } from "../../src/http/csrf.ts";
-import { HttpError, detail, notFound, validationItems } from "../../src/http/errors.ts";
+import { fromSite } from "../../src/http/csrf.ts";
+import { detail, notFound, validationItems } from "../../src/http/errors.ts";
 import { DEFAULT_CSP, withSecurityHeaders } from "../../src/http/headers.ts";
-import { CHECKED_LATER, UPLOAD_ROUTE, createApp } from "../../src/http/router.ts";
+import { OWN_SIZE_LIMIT, UPLOAD_ROUTE, createApp } from "../../src/http/router.ts";
 import { settingsEnv } from "./settings.ts";
 
 const SITE = "https://minerva.example";
-const TOKEN = "a".repeat(32);
 
-function post(headers: Record<string, string>, url = `${SITE}/api/x`): Request {
-	return new Request(url, { method: "POST", headers });
+function post(headers: Record<string, string>, url = `${SITE}/api/x`, method = "POST"): Request {
+	return new Request(url, { method, headers });
 }
 
-describe("CSRF, in order", () => {
-	const good = { Origin: SITE, Cookie: `${CSRF_COOKIE}=${TOKEN}`, "X-CSRFToken": TOKEN };
-
+describe("CSRF", () => {
 	test("safe methods pass", () => {
-		expect(checkCsrf(new Request(`${SITE}/api/x`), SITE)).toBeNull();
+		for (const method of ["GET", "HEAD", "OPTIONS"]) expect(fromSite(post({ Origin: "https://evil.example" }, undefined, method), SITE), method).toBe(true);
 	});
 
-	test("a matching header from the site's origin passes", () => {
-		expect(checkCsrf(post(good), SITE)).toBeNull();
-		expect(checkCsrf(post({ ...good, Origin: "https://other.example" }, "https://other.example/api/x"), SITE)).toBeNull();
+	test("an Origin must be the site's exactly, whatever Sec-Fetch-Site says", () => {
+		expect(fromSite(post({ Origin: SITE }), SITE)).toBe(true);
+		expect(fromSite(post({ Origin: SITE, "Sec-Fetch-Site": "cross-site" }), SITE)).toBe(true);
+		for (const origin of ["null", "https://evil.example", "https://app.minerva.example", "http://minerva.example", "https://minerva.example:8443", `${SITE}/`, "", "https://MINERVA.example"]) {
+			expect(fromSite(post({ Origin: origin, "Sec-Fetch-Site": "same-origin" }), SITE), origin).toBe(false);
+		}
+		// The request's own origin is not the site's: only MINERVA_SITE_URL counts.
+		expect(fromSite(post({ Origin: "https://other.example" }, "https://other.example/api/x"), SITE)).toBe(false);
 	});
 
-	test("a foreign Origin fails even with a valid token", () => {
-		expect(checkCsrf(post({ ...good, Origin: "https://evil.example" }), SITE)).toBe("bad_origin");
-		expect(checkCsrf(post({ ...good, Origin: "null" }), SITE)).toBe("bad_origin");
-	});
-
-	test("over HTTPS without Origin, the Referer must be the site's", () => {
-		const { Origin: _, ...noOrigin } = good;
-		expect(checkCsrf(post(noOrigin), SITE)).toBe("no_referer");
-		expect(checkCsrf(post({ ...noOrigin, Referer: "https://evil.example/page" }), SITE)).toBe("bad_referer");
-		expect(checkCsrf(post({ ...noOrigin, Referer: "http://minerva.example/page" }), SITE)).toBe("bad_referer");
-		expect(checkCsrf(post({ ...noOrigin, Referer: "https:minerva.example/page" }), SITE)).toBe("bad_referer");
-		expect(checkCsrf(post({ ...noOrigin, Referer: "https://user:pass@minerva.example/" }), SITE)).toBe("bad_referer");
-		expect(checkCsrf(post({ ...noOrigin, Referer: `${SITE}/w/x/chat` }), SITE)).toBeNull();
-		expect(checkCsrf(post(noOrigin, "http://localhost:5173/api/x"), "http://localhost:5173")).toBeNull();
-	});
-
-	test("the cookie must be set and well formed, and the header must equal it", () => {
-		expect(checkCsrf(post({ Origin: SITE, "X-CSRFToken": TOKEN }), SITE)).toBe("no_cookie");
-		expect(checkCsrf(post({ ...good, Cookie: `${CSRF_COOKIE}=short` }), SITE)).toBe("no_cookie");
-		expect(checkCsrf(post({ Origin: SITE, Cookie: `${CSRF_COOKIE}=${TOKEN}` }), SITE)).toBe("no_token");
-		expect(checkCsrf(post({ ...good, "X-CSRFToken": "b".repeat(32) }), SITE)).toBe("bad_token");
-	});
-
-	test("new tokens are 32 letters and digits", () => {
-		expect(newCsrfToken()).toMatch(/^[A-Za-z0-9]{32}$/);
-	});
-});
-
-describe("cookies", () => {
-	test("csrftoken's attributes", () => {
-		expect(csrfCookie(TOKEN, { debug: false })).toBe(`csrftoken=${TOKEN}; Max-Age=31449600; Path=/; SameSite=Lax; Secure`);
-		expect(csrfCookie(TOKEN, { debug: true })).toBe(`csrftoken=${TOKEN}; Max-Age=31449600; Path=/; SameSite=Lax`);
-	});
-
-	test("parsing takes the last of a repeated name and unquotes", () => {
-		const cookies = parseCookies('a=1; b="2"; a=3; junk; c=');
-		expect([...cookies]).toEqual([
-			["a", "3"],
-			["b", "2"],
-			["c", ""],
-		]);
+	test("without Origin, Sec-Fetch-Site must be same-origin; with neither, refused", () => {
+		expect(fromSite(post({ "Sec-Fetch-Site": "same-origin" }), SITE)).toBe(true);
+		for (const site of ["same-site", "cross-site", "none", "Same-Origin"]) expect(fromSite(post({ "Sec-Fetch-Site": site }), SITE), site).toBe(false);
+		expect(fromSite(post({}), SITE)).toBe(false);
+		expect(fromSite(post({ Referer: `${SITE}/w/x/chat` }), SITE)).toBe(false);
+		expect(fromSite(post({}, undefined, "PATCH"), SITE)).toBe(false);
+		// Same origin as another hostname of the Worker is not the site's.
+		expect(fromSite(post({ "Sec-Fetch-Site": "same-origin" }, "https://minerva.workers.example/api/x"), SITE)).toBe(false);
 	});
 });
 
@@ -117,30 +85,39 @@ describe("security headers", () => {
 });
 
 describe("JSON bodies", () => {
-	const request = (body: BodyInit, headers: Record<string, string> = {}) => new Request(`${SITE}/api/x`, { method: "POST", body, headers });
+	const request = (body: BodyInit, headers: Record<string, string> = { "Content-Type": "application/json" }) => new Request(`${SITE}/api/x`, { method: "POST", body, headers });
 
-	test("parses JSON", async () => {
-		expect(await readJson(request('{"a":1}'))).toEqual({ a: 1 });
+	test("parses JSON sent as application/json, with or without parameters; an empty body is undefined", async () => {
+		expect(await readJson(request('{"a":1}'))).toEqual({ ok: true, value: { a: 1 } });
+		expect(await readJson(request('{"a":1}', { "Content-Type": "Application/JSON ; charset=utf-8" }))).toEqual({ ok: true, value: { a: 1 } });
+		expect(await readJson(request(""))).toEqual({ ok: true, value: undefined });
 	});
 
-	test("refuses what does not parse with 400", async () => {
-		const error = await readJson(request("{nope")).catch((e: unknown) => e);
-		expect(error).toBeInstanceOf(HttpError);
-		expect((error as HttpError).response.status).toBe(400);
-		expect(await (error as HttpError).response.json()).toEqual({ detail: "Cannot parse request body" });
+	test("refuses every other type with 415", async () => {
+		for (const type of [null, "text/plain", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x", "application/problem+json", "application/jsonx", "application/json, text/plain"]) {
+			const read = await readJson(request('{"a":1}', type === null ? {} : { "Content-Type": type }));
+			expect(read, String(type)).toEqual({ ok: false, refusal: { status: 415, detail: "Send the body as application/json." } });
+		}
+	});
+
+	test("refuses what does not parse, or is not UTF-8, with 400", async () => {
+		for (const body of ["{nope", new Uint8Array([0x7b, 0x22, 0xff, 0x22, 0x3a, 0x31, 0x7d])]) {
+			expect(await readJson(request(body))).toEqual({ ok: false, refusal: { status: 400, detail: "Cannot parse request body" } });
+		}
 	});
 
 	test("refuses a declared or streamed body over 2.5 MB with 413", async () => {
-		const declared = await readJson(request("{}", { "Content-Length": String(MAX_JSON_BODY + 1) })).catch((e: unknown) => e);
-		expect((declared as HttpError).response.status).toBe(413);
-		const streamed = await readJson(request(`"${"x".repeat(100)}"`), 50).catch((e: unknown) => e);
-		expect(await (streamed as HttpError).response.json()).toEqual({ detail: "The request is too large." });
+		const tooLarge = { ok: false, refusal: { status: 413, detail: "The request is too large." } };
+		expect(await readJson(request("{}", { "Content-Type": "application/json", "Content-Length": String(MAX_JSON_BODY + 1) }))).toEqual(tooLarge);
+		expect(await readJson(request(`"${"x".repeat(MAX_JSON_BODY)}"`))).toEqual(tooLarge);
+		expect(await readJson(request(`"${"x".repeat(MAX_JSON_BODY - 2)}"`))).toMatchObject({ ok: true });
 	});
 });
 
 describe("router", () => {
 	// Debug is off here, so the accounts routes need a mailer (src/accounts/emails.ts: checkMailer).
 	const env = { ...settingsEnv(), EMAIL: { send: async () => ({ messageId: "m" }) } } as unknown as Env;
+	const site = { Origin: SITE };
 
 	test("health", async () => {
 		const response = await createApp().request("/api/health", {}, env);
@@ -149,55 +126,48 @@ describe("router", () => {
 		expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
 	});
 
-	test("csrf sets the cookie and renews a valid one", async () => {
-		const fresh = await createApp().request("/api/csrf", {}, env);
-		expect(fresh.status).toBe(204);
-		expect(fresh.headers.get("Set-Cookie")).toMatch(/^csrftoken=[A-Za-z0-9]{32}; Max-Age=31449600; Path=\/; SameSite=Lax; Secure$/);
-		const renewed = await createApp().request("/api/csrf", { headers: { Cookie: `csrftoken=${TOKEN}` } }, env);
-		expect(renewed.headers.get("Set-Cookie")).toContain(`csrftoken=${TOKEN};`);
-	});
-
 	test("a missing route is 404 Not Found, with the security headers", async () => {
-		for (const path of ["/api/nope", "/api/me/", "/api/workspaces/not-a-uuid/agents"]) {
-			const response = await createApp().request(path, { method: "POST" }, env);
+		for (const path of ["/api/nope", "/api/me/", "/api/workspaces/not-a-uuid/agents", "/api/csrf"]) {
+			const response = await createApp().request(path, { method: "POST", headers: site }, env);
 			expect(response.status).toBe(404);
 			expect(await response.json()).toEqual({ detail: "Not Found" });
 			expect(response.headers.get("Content-Security-Policy")).toBe(DEFAULT_CSP);
 		}
 	});
 
-	test("every unsafe route fails closed without a CSRF token, before the route runs", async () => {
+	test("every unsafe request fails closed from another site, before any route runs, matched or not", async () => {
 		const app = createApp();
 		const ran: string[] = [];
 		app.post("/api/route", () => (ran.push("route"), detail(401, "Unauthorized")));
-		// Only Better Auth's own route is exempt (test/platform/auth.test.ts), not every path under /api/auth/.
+		// Only POSTs under /api/auth/ are exempt (Better Auth's route answers them all), not every method there.
 		app.delete("/api/auth/session", () => (ran.push("auth"), detail(401, "Unauthorized")));
-		const route = await app.request("/api/route", { method: "POST" }, env);
-		expect(route.status).toBe(403);
-		expect(await route.json()).toEqual({ detail: "CSRF check Failed" });
-		const auth = await app.request("/api/auth/session", { method: "DELETE", headers: { Origin: "https://evil.example" } }, env);
-		expect(auth.status).toBe(403);
-		expect(await auth.json()).toEqual({ detail: "CSRF check Failed" });
+		app.use("/api/mounted/*", async () => (ran.push("mounted"), detail(401, "Unauthorized")));
+		const refused = { detail: "Cross-site request refused." };
+		for (const [method, path] of [["POST", "/api/route"], ["DELETE", "/api/auth/session"], ["POST", "/api/mounted/x"], ["POST", "/api/nope"], ["PUT", "/api/health"]]) {
+			const response = await app.request(path!, { method, headers: { Origin: "https://evil.example" } }, env);
+			expect([method, path, response.status, await response.json()]).toEqual([method, path, 403, refused]);
+			expect(response.headers.get("Content-Security-Policy")).toBe(DEFAULT_CSP);
+		}
 		expect(ran).toEqual([]);
-		const good = { Origin: SITE, Cookie: `csrftoken=${TOKEN}`, "X-CSRFToken": TOKEN };
-		expect((await app.request(`${SITE}/api/route`, { method: "POST", headers: good }, env)).status).toBe(401);
-		// The upload checks CSRF itself, after the request's own checks and the session (its route,
-		// api/uploads.ts): here the missing Content-Length; its other methods are 405 first.
+		expect((await app.request("/api/route", { method: "POST", headers: site }, env)).status).toBe(401);
+		expect((await app.request("/api/mounted/x", { method: "POST", headers: site }, env)).status).toBe(401);
+		// The upload is checked first too; then its own checks: here the missing Content-Length, and 405 for its other methods.
 		const uploads = `/api/workspaces/${"0".repeat(8)}-0000-7000-8000-${"0".repeat(12)}/uploads`;
-		const upload = await app.request(uploads, { method: "POST" }, env);
+		expect((await app.request(uploads, { method: "POST" }, env)).status).toBe(403);
+		const upload = await app.request(uploads, { method: "POST", headers: site }, env);
 		expect([upload.status, await upload.json()]).toEqual([411, { detail: "Send a Content-Length." }]);
 		for (const method of ["PUT", "PATCH", "DELETE"]) {
-			const other = await app.request(uploads, { method }, env);
+			const other = await app.request(uploads, { method, headers: site }, env);
 			expect([method, other.status, await other.json()]).toEqual([method, 405, { detail: "Use POST." }]);
 		}
-		expect(ran).toEqual(["route"]);
-		expect([...CHECKED_LATER]).toEqual(["POST", "PUT", "PATCH", "DELETE"].map((method) => `${method} ${UPLOAD_ROUTE}`));
+		expect(ran).toEqual(["route", "mounted"]);
+		expect([...OWN_SIZE_LIMIT]).toEqual(["POST", "PUT", "PATCH", "DELETE"].map((method) => `${method} ${UPLOAD_ROUTE}`));
 	});
 
 	test("a declared body over 2.5 MB is 413 everywhere but the upload", async () => {
 		const app = createApp();
 		app.post("/api/route", () => detail(401, "Unauthorized"));
-		const big = { "Content-Length": String(MAX_JSON_BODY + 1) };
+		const big = { ...site, "Content-Length": String(MAX_JSON_BODY + 1) };
 		for (const path of ["/api/route", "/api/nope"]) {
 			const response = await app.request(path, { method: "POST", headers: big }, env);
 			expect(response.status, path).toBe(413);

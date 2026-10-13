@@ -27,16 +27,9 @@ export function notFound(reason?: string, debug = false): Response {
 	return detail(404, debug && reason ? `Not Found: ${reason}` : "Not Found");
 }
 
-export function csrfFailed(): Response {
-	return detail(403, "CSRF check Failed");
-}
-
-export function unparseableBody(): Response {
-	return detail(400, "Cannot parse request body");
-}
-
-export function tooLarge(): Response {
-	return detail(413, "The request is too large.");
+/** An unsafe request that did not come from the site's pages (http/csrf.ts). */
+export function crossSite(): Response {
+	return detail(403, "Cross-site request refused.");
 }
 
 export function serverError(): Response {

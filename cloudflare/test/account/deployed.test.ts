@@ -35,16 +35,19 @@ describe("minerva-cf", () => {
 	});
 
 	test("a missing API route is 404 {detail}", async () => {
-		const reply = await fetchDeployed(`${site}/api/no-such-route`, { method: "POST" });
+		const reply = await fetchDeployed(`${site}/api/no-such-route`, { method: "POST", headers: { origin: site } });
 		expect(reply.status).toBe(404);
 		expect(JSON.parse(reply.text)).toEqual({ detail: "Not Found" });
 		expectSecurityHeaders(reply.headers);
 	});
 
-	test("/api/csrf sets a secure, readable csrftoken", async () => {
-		const reply = await fetchDeployed(`${site}/api/csrf`);
-		expect(reply.status).toBe(204);
-		expect(reply.headers.get("set-cookie")).toMatch(/^csrftoken=[A-Za-z0-9]{32}; Max-Age=31449600; Path=\/; SameSite=Lax; Secure$/);
+	test("an unsafe request from another site, or from nowhere, is refused before any route", async () => {
+		for (const headers of [{}, { origin: "https://evil.example" }] as Record<string, string>[]) {
+			const reply = await fetchDeployed(`${site}/api/no-such-route`, { method: "POST", headers });
+			expect(reply.status).toBe(403);
+			expect(JSON.parse(reply.text)).toEqual({ detail: "Cross-site request refused." });
+			expectSecurityHeaders(reply.headers);
+		}
 	});
 
 	test("/ and client routes serve the SPA shell with the asset headers", async () => {

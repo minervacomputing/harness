@@ -30,7 +30,6 @@ interface User {
 
 async function user(name = "ada"): Promise<User> {
 	const { browser, userId, email } = await signedIn(uniqueEmail(name));
-	await browser.start();
 	return { browser, userId, email };
 }
 
@@ -54,15 +53,16 @@ describe("first-run setup", () => {
 	test("the first signed-in user to present the setup key becomes the instance admin, once", async () => {
 		const ada = await user();
 		const grace = await user("grace");
-		const anonymous = await new Browser().start();
+		const anonymous = new Browser();
 		expect((await anonymous.call("GET", "/api/setup")).body).toEqual({ needed: true });
 		expect((await anonymous.call("POST", "/api/setup", { key: KEY })).status).toBe(401);
 		// The router's CSRF check comes first, as for every unsafe route.
-		expect((await ada.browser.call("POST", "/api/setup", { key: KEY }, { "X-CSRFToken": "" })).status).toBe(403);
+		expect((await ada.browser.call("POST", "/api/setup", { key: KEY }, { Origin: "https://evil.example" })).status).toBe(403);
 		expectDetail(await ada.browser.call("POST", "/api/setup", { key: "wrong" }), 403, INVALID_KEY);
 		expectDetail(await ada.browser.call("POST", "/api/setup", { key: KEY.slice(0, -1) }), 403, INVALID_KEY);
 		expectDetail(await ada.browser.call("POST", "/api/setup", { key: `${KEY} ` }), 403, INVALID_KEY);
-		expect((await ada.browser.call("POST", "/api/setup")).status).toBe(422);
+		expect((await ada.browser.call("POST", "/api/setup")).status).toBe(415);
+		expect((await ada.browser.call("POST", "/api/setup", "")).status).toBe(422);
 		expect(await admins()).toEqual([]);
 
 		await setUp(ada);
@@ -110,7 +110,6 @@ describe("first-run setup", () => {
 		expect((await browser.auth("/email-otp/verify-email", { email, otp: lastCode(email) })).status).toBe(200);
 		const signIn = await browser.auth("/sign-in/email", { email, password: PASSWORD });
 		expect(signIn.status).toBe(200);
-		await browser.start();
 		const operator = { browser, userId: signIn.body.user.id as string, email };
 		await setUp(operator);
 		expect(await isStaff(operator)).toBe(true);
@@ -192,7 +191,7 @@ describe("the instance admin", () => {
 				controller.close();
 			},
 		});
-		const headers = { "Content-Type": "application/json", "X-CSRFToken": ada.browser.cookies.get("csrftoken")! };
+		const headers = { "Content-Type": "application/json" };
 		const pending = ada.browser.fetch("/api/instance/admins", { method: "POST", body, headers, duplex: "half" } as RequestInit);
 		await new Promise((resolve) => setTimeout(resolve, 200));
 		expect((await grace.browser.call("DELETE", `/api/instance/admins/${ada.userId}`)).status).toBe(204);
@@ -205,7 +204,7 @@ describe("the instance admin", () => {
 	test("opens and closes sign-up at run time; null follows MINERVA_SIGNUP_OPEN", async () => {
 		const ada = await user();
 		const grace = await user("grace");
-		expect((await new Browser().start().then((b) => b.call("GET", "/api/instance/settings"))).status).toBe(401);
+		expect((await new Browser().call("GET", "/api/instance/settings")).status).toBe(401);
 		await setUp(ada);
 		expect((await ada.browser.call("GET", "/api/instance/settings")).body).toEqual({ signup_open: true, signup_open_override: null, signup_open_configured: true });
 		const closed = await ada.browser.call("PATCH", "/api/instance/settings", { signup_open: false });

@@ -42,7 +42,6 @@ interface Account {
 
 async function account(name = "ada"): Promise<Account> {
 	const { browser, userId } = await signedIn(`${name}-${uuid7().slice(-12)}@example.com`);
-	await browser.start();
 	const me = await browser.call("GET", "/api/me");
 	expect(me.status).toBe(200);
 	return { browser, userId, ws: me.body.workspaces[0].id };
@@ -249,7 +248,7 @@ describe("connecting an account", () => {
 	test("the callback answers GET only, after the CSRF check", async () => {
 		const ada = await account();
 		const path = "/api/oauth/notes/callback?state=s&code=c";
-		expect((await ada.browser.call("POST", path, undefined, { "X-CSRFToken": "" })).status).toBe(403);
+		expect((await ada.browser.call("POST", path, undefined, { Origin: "https://evil.example" })).status).toBe(403);
 		const answer = await ada.browser.call("POST", path);
 		expect([answer.status, answer.response.headers.get("Allow")]).toEqual([405, "GET"]);
 	});

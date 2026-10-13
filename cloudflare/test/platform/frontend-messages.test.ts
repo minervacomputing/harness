@@ -64,11 +64,6 @@ async function pageFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
 // would invalidate its Durable Objects. The generated client keeps the `fetch` it finds on load.
 beforeAll(async () => {
 	vi.stubGlobal("window", { location: { origin: ORIGIN } });
-	vi.stubGlobal("document", {
-		get cookie() {
-			return [...browser.cookies].map(([name, value]) => `${name}=${value}`).join("; ");
-		},
-	});
 	vi.stubGlobal("fetch", pageFetch);
 	const [send, generated, http, query] = await Promise.all([
 		// @ts-expect-error The frontend is outside this project's types; the vitest alias resolves it (vitest.platform.config.ts).
@@ -99,7 +94,6 @@ beforeEach(() => {
 async function conversation(): Promise<Path> {
 	const signed = await signedIn(`ada-${uuid7().slice(-12)}@example.com`);
 	browser = signed.browser;
-	await browser.start();
 	const ws = (await browser.call("GET", "/api/me")).body.workspaces[0].id as string;
 	const agent = (await browser.call("GET", `/api/workspaces/${ws}/agents`)).body[0].id as string;
 	const created = await browser.call("POST", `/api/workspaces/${ws}/conversations`, { agent_id: agent });

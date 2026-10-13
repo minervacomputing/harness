@@ -1,7 +1,7 @@
 // Accounts: Better Auth's routes at /api/auth/* (its wire format, plan: The web API), `GET /api/me`
 //, the instance's setup and administration (instance-routes.ts) and the development seed
-// (6.4). Better Auth's routes check their own origin rules, so the router exempts them, and only them,
-// from our CSRF token (http/router.ts).
+// (6.4). Better Auth's routes check their own origin rules, so the router exempts POSTs to them, and only
+// them, from our CSRF check (http/router.ts).
 
 import { settings } from "../config.ts";
 import { json, notFound, unauthorized } from "../http/errors.ts";

@@ -357,18 +357,14 @@ async function twoFactor(code: string): Promise<void> {
 	await button("Continue").click();
 }
 
-/** The app's own JSON API, from the page, with its CSRF token. */
+/** The app's own JSON API, from the page (the browser sends its Origin). */
 async function api<T>(method: string, path: string, body?: unknown): Promise<{ status: number; body: T }> {
 	return page.evaluate(
 		async ({ method, path, body }) => {
-			await fetch("/api/csrf", { credentials: "same-origin" });
-			// The page's document (this function runs in the browser; the test is type-checked without the DOM's types).
-			const cookie = (globalThis as unknown as { document: { cookie: string } }).document.cookie;
-			const csrf = /(?:^|;\s*)csrftoken=([^;]+)/.exec(cookie)?.[1] ?? "";
 			const response = await fetch(path, {
 				method,
 				credentials: "same-origin",
-				headers: { "X-CSRFToken": csrf, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+				headers: body === undefined ? {} : { "Content-Type": "application/json" },
 				body: body === undefined ? undefined : JSON.stringify(body),
 			});
 			const text = await response.text();

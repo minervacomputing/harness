@@ -7,7 +7,7 @@ import { SANDBOX_MIGRATIONS } from "../../src/sandbox/store.ts";
 import { MIGRATIONS as SCRIPTS_MIGRATIONS } from "../../src/scripts/schema.ts";
 import { PROBE_HEADER, probeToken } from "../../src/http/probe-token.ts";
 import { AUTH_ROUTE } from "../../src/accounts/routes.ts";
-import { CHECKED_LATER, createApp } from "../../src/http/router.ts";
+import { createApp } from "../../src/http/router.ts";
 import { saltedHmacHex } from "../../src/lib/hash.ts";
 import { DraftInvoice, body, jsonBody } from "../../src/connectors/xero/writes.ts";
 import { escapedKeyCheck, type JsonObject } from "../../src/lib/json.ts";
@@ -26,30 +26,24 @@ describe("the router in workerd", () => {
 	});
 
 	test("an unknown API path is 404 {detail}", async () => {
-		const response = await exports.default.fetch("http://localhost/api/workspaces", { method: "POST" });
+		const response = await exports.default.fetch("http://localhost/api/workspaces", { method: "POST", headers: { Origin: "http://localhost" } });
 		expect(response.status).toBe(404);
 		const body = (await response.json()) as { detail: string };
 		// Debug is on in these tests, so the reason is appended.
 		expect(body.detail).toMatch(/^Not Found/);
 	});
 
-	test("csrf sets a readable cookie, insecure in debug", async () => {
-		const response = await exports.default.fetch("http://localhost/api/csrf");
-		expect(response.status).toBe(204);
-		const cookie = response.headers.get("Set-Cookie") ?? "";
-		expect(cookie).toMatch(/^csrftoken=[A-Za-z0-9]{32}; Max-Age=31449600; Path=\/; SameSite=Lax$/);
-	});
-
-	test("every unsafe route refuses a request without a CSRF token", async () => {
+	test("every unsafe route refuses a request from another site, or from nowhere", async () => {
 		const unsafe = createApp().routes.filter((route) => ["POST", "PUT", "PATCH", "DELETE"].includes(route.method));
 		for (const route of unsafe) {
-			if (CHECKED_LATER.has(`${route.method} ${route.path}`)) continue;
 			// Better Auth's own route checks origins itself (test/platform/accounts.test.ts, CSRF).
 			if (route.path === AUTH_ROUTE) continue;
 			// Each parameter gets a valid id; regex parameters are all UUIDs (router.ts).
 			const path = route.path.replace(/:[a-z]+(\{(?:[^{}]|\{[^{}]*\})*\})?/gi, "0199a000-0000-7000-8000-000000000001");
-			const response = await exports.default.fetch(`http://localhost${path}`, { method: route.method });
-			expect(response.status, `${route.method} ${route.path}`).toBe(403);
+			for (const headers of [{}, { Origin: "https://evil.example" }] as Record<string, string>[]) {
+				const response = await exports.default.fetch(`http://localhost${path}`, { method: route.method, headers });
+				expect([response.status, await response.json()], `${route.method} ${route.path}`).toEqual([403, { detail: "Cross-site request refused." }]);
+			}
 		}
 	});
 
