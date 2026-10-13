@@ -4,7 +4,7 @@
 
 import type { AgentId, ConnectionId, ConversationId, EpochMs, UserId, WorkspaceId } from "../contracts/common.ts";
 import type { StartSnapshot, ToolRef } from "../contracts/runs.ts";
-import { runStartLabel } from "../lib/time.ts";
+import { runStartLabel } from "../lib/dates.ts";
 import { consentGiven, nests, offered, operationOf, requiresOf } from "./connector.ts";
 import { effectivePolicy, type ProviderOf, type RunLayers } from "./grants.ts";
 import type { Policy } from "./policy.ts";
@@ -91,7 +91,7 @@ export function toolLabel(registry: Registry, ref: ToolRef | null | undefined, n
 }
 
 /**
- * The model's tools in order (worker spec 5.1): the gateway tools that fit beside the local tools and
+ * The model's tools in order: the gateway tools that fit beside the local tools and
  * `run_script`, then `run_script` when the run has any gateway tool, then the local tools. When the
  * gateway tools do not fit, the first `room - 1` are offered directly and every one stays callable from
  * scripts.

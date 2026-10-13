@@ -11,6 +11,7 @@ import { validateInput } from "../../../../src/gateway/validation.ts";
 import type { Json } from "../../../../src/lib/json.ts";
 import { Scenario, USER } from "../../../unit/executor-fakes.ts";
 import type { InputCase } from "./vectors.ts";
+import { changedOnPurpose } from "../../../unit/changed.ts";
 
 export const CONNECTION = "0199a000-0000-7000-8000-0000000000e1";
 
@@ -64,6 +65,7 @@ export async function validationOutcomes(op: Operation<never>, cases: { [key: st
 	const actual: unknown[] = [];
 	const expected: unknown[] = [];
 	for (const [key, item] of Object.entries(cases)) {
+		if (changedOnPurpose(item.input)) continue;
 		expected.push({ key, ...(item.ok ? { ok: item.ok } : item.error ? { refused: true } : { raises: true }) });
 		try {
 			const result = await validateInput(op.input as never, item.input as Json);

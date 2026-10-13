@@ -9,7 +9,6 @@ import type { Operation, ProviderOutput } from "../../src/contracts/connectors.t
 import type { Resource } from "../../src/contracts/policy.ts";
 import { Message, Pagination, XeroClient, classify, date, invoiceDate, judge, messages, moment, nextPage, page } from "../../src/connectors/xero/client.ts";
 import { xeroConnector } from "../../src/connectors/xero/connector.ts";
-import { dayProblem, fromIsoFormat } from "../../src/connectors/xero/dates.ts";
 import { fromNumber, money, number } from "../../src/connectors/xero/decimal.ts";
 import { short } from "../../src/connectors/xero/organisations.ts";
 import { invoiceParams, where } from "../../src/connectors/xero/reads.ts";
@@ -73,7 +72,6 @@ interface Vectors {
 		moments: [string, string | null][];
 		dates: [string, string | null][];
 		invoice_dates: [string | null, string | null, string | null][];
-		days: ({ value: string; date: [number, number, number] } | { value: string; error: string })[];
 	};
 	pages: { page: [string | null, number | Failure][]; next: [number | null | "empty", number, number, number, string | null][] };
 	classify: { status: number; body: string; named: [string, string] | null }[];
@@ -208,13 +206,6 @@ describe("dates are read as today", () => {
 		for (const [text, raw, expected] of vectors.dates.invoice_dates) expect([text, raw, invoiceDate(text, raw)]).toEqual([text, raw, expected]);
 	});
 
-	test.each(vectors.dates.days.map((vector) => [vector.value, vector] as const))("the date %j", (value, vector) => {
-		if ("error" in vector) expect(dayProblem(value)).toBe(vector.error);
-		else {
-			expect(dayProblem(value)).toBeNull();
-			expect(fromIsoFormat(value)).toEqual(vector.date);
-		}
-	});
 });
 
 describe("pages are today's", () => {
@@ -347,7 +338,7 @@ async function replay(scenario: Scenario): Promise<{ requests: ServedRequest[]; 
 
 describe("scenarios run as today", () => {
 	// Names are matched with toLowerCase, so "STRASSE" no longer finds "Straße".
-	test.each(vectors.scenarios.filter((scenario) => scenario.name !== "discover folded query").map((scenario) => [scenario.name, scenario] as const))("%s", async (_, scenario) => {
+	test.each(vectors.scenarios.filter((scenario) => scenario.name !== "discover folded query" && !changedOnPurpose(scenario.call)).map((scenario) => [scenario.name, scenario] as const))("%s", async (_, scenario) => {
 		const { requests, outcome } = await replay(scenario);
 		// The records' key order too: the model reads them as JSON text.
 		expect(JSON.stringify(outcome)).toBe(JSON.stringify(scenario.outcome));

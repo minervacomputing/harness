@@ -24,8 +24,6 @@
 // in another zone across two days to people in the owner's zone. Graph accepts only some IANA zone names
 // (zones.ts). Not supported: changing, deleting or answering events, attendees, recurrence, and group
 // calendars.
-//
-// Times are Python's datetime (lib/isoformat.ts), which decides what is accepted, refused and sent.
 
 import { z } from "zod";
 import type { Binding, Connector, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
@@ -34,18 +32,7 @@ import { type Json, parseJson } from "../../lib/json.ts";
 import { sliceText, truncate, TextError } from "../../lib/text.ts";
 import { ID, accountLabel, consent, oauth } from "../microsoft/index.ts";
 import { after, modelValidator, plainTextOf, singleLineOf } from "../microsoft/inputs.ts";
-import {
-	MICROS_PER_DAY,
-	type PyDateTime,
-	dateFromIsoFormat,
-	dateOrdinal,
-	datetimeFromIsoFormat,
-	instant,
-	isoformat,
-	nowUtc,
-	plus,
-	toUtc,
-} from "../../lib/isoformat.ts";
+import { DAY_MICROS, formatUtc, isDate, parseDate, parseInstant, parseZonedDateTime } from "../../lib/dates.ts";
 import { type Calendar, CalendarClient, type Event, type Time } from "./client.ts";
 import { ZONES } from "./zones.ts";
 import { extend } from "../../lib/arrays.ts";
@@ -55,37 +42,32 @@ export const PRIMARY = "primary";
 export const MAX_CALENDAR_PAGES = 10;
 export const MAX_BODY = 4000;
 export const MAX_ATTENDEES = 50;
-const DEFAULT_WINDOW = 30n * MICROS_PER_DAY;
-const MAX_WINDOW = 366n * MICROS_PER_DAY;
+const DEFAULT_WINDOW = 30n * DAY_MICROS;
+const MAX_WINDOW = 366n * DAY_MICROS;
 
 export const READ_CONSENT = consent("Calendars.Read", "Calendars.ReadWrite");
 export const WRITE_CONSENT = consent("Calendars.ReadWrite");
 
-/** ASCII digits only. */
-export const DATE = /^\d{4}-\d{2}-\d{2}$/u;
-export const DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]([01]\d|2[0-3]):[0-5]\d)$/u;
-// Times are converted and windows widened here, so years stay well inside what Python's dates hold.
-const FIRST_YEAR = 1900;
-const LAST_YEAR = 2999;
+export const DATE_TIME_MESSAGE = "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00";
+export const DATE_OR_DATE_TIME_MESSAGE = "must be a date such as 2026-10-01, or an RFC 3339 date-time with an offset";
+const YEARS_MESSAGE = "must be between the years 1900 and 2999";
 
-function inYears(year: number): boolean {
-	return year >= FIRST_YEAR && year <= LAST_YEAR;
+function inYears(value: { year: number }): boolean {
+	return value.year >= 1900 && value.year <= 2999;
 }
 
-/** A date-time with an offset. The parser's own refusals (an invalid date, say) are reported as they are. */
 export function checkDateTime(value: string): string {
-	if (!DATE_TIME.test(value)) throw new TextError("must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00");
-	if (!inYears(datetimeFromIsoFormat(value).year)) throw new TextError("must be between the years 1900 and 2999");
+	const parsed = parseZonedDateTime(value);
+	if (parsed === null) throw new TextError(DATE_TIME_MESSAGE);
+	if (!inYears(parsed)) throw new TextError(YEARS_MESSAGE);
 	return value;
 }
 
-/** `_date_or_date_time`. */
 export function checkDateOrDateTime(value: string): string {
-	if (DATE.test(value)) {
-		if (!inYears(dateFromIsoFormat(value).year)) throw new TextError("must be between the years 1900 and 2999");
-		return value;
-	}
-	return checkDateTime(value);
+	const parsed = parseDate(value) ?? parseZonedDateTime(value);
+	if (parsed === null) throw new TextError(DATE_OR_DATE_TIME_MESSAGE);
+	if (!inYears(parsed)) throw new TextError(YEARS_MESSAGE);
+	return value;
 }
 
 function checkZone(value: string): string {
@@ -100,18 +82,17 @@ function checkCalendarRef(value: string): string {
 
 const CalendarRef = () =>
 	after(z.string().trim().min(1).max(512).describe('A calendar id from list_calendars, or "primary" for the default calendar.'), checkCalendarRef);
-const DateTime = () => after(z.string().trim().max(40), checkDateTime);
+const ZonedDateTime = () => after(z.string().trim().max(40), checkDateTime);
 const DateOrDateTime = () => after(z.string().trim().max(40), checkDateOrDateTime);
 
-/** The time in UTC without its offset, as `astimezone(UTC).replace(tzinfo=None)` gives it. */
-function naiveUtc(value: PyDateTime): PyDateTime {
-	return { ...toUtc(value), offset: null };
+/** The instant of a date or date-time the input's checks passed. */
+function instantOf(value: string): bigint {
+	return parseInstant(value) as bigint;
 }
 
-/** `_utc`: an aware time in UTC, with microseconds only when it has some. */
+/** A checked date-time in UTC, with microseconds only when it has some. */
 export function utc(value: string): string {
-	const moment = naiveUtc(datetimeFromIsoFormat(value));
-	return `${isoformat(moment, moment.microsecond ? "microseconds" : "seconds")}Z`;
+	return formatUtc(instantOf(value));
 }
 
 async function allCalendars(client: CalendarClient): Promise<Calendar[]> {
@@ -127,7 +108,7 @@ async function allCalendars(client: CalendarClient): Promise<Calendar[]> {
 }
 
 /**
- * `_calendar_id`: the id Graph gives the calendar. Grants and requests use it, never `primary` or another
+ * The id Graph gives the calendar. Grants and requests use it, never `primary` or another
  * spelling Graph also accepts; calendars Graph does not find or refuses are refused like calendars without
  * a grant.
  */
@@ -143,7 +124,7 @@ async function calendarId(client: CalendarClient, ref: string): Promise<string> 
 	return calendar.id;
 }
 
-/** `_time`: how an event's start or end is shown. */
+/** How an event's start or end is shown. */
 export function shownTime(value: Time | null, allDay: boolean): string | null {
 	if (value === null) return null;
 	const moment = sliceText(value.date_time, 0, 19);
@@ -221,15 +202,15 @@ const LIST_CALENDARS = defineOperation<z.output<typeof ListCalendars>>({
 export const ListEvents = z
 	.strictObject({
 		calendar_id: CalendarRef(),
-		time_min: DateTime().nullable().default(null).describe("Only events that end after this time."),
-		time_max: DateTime().nullable().default(null).describe("Only events that start before this time."),
+		time_min: ZonedDateTime().nullable().default(null).describe("Only events that end after this time."),
+		time_max: ZonedDateTime().nullable().default(null).describe("Only events that start before this time."),
 		limit: z.int().min(1).max(50).default(25),
 		cursor: z.string().trim().max(1000).nullable().default(null),
 	})
 	.check(
 		modelValidator((data: { time_min: string | null; time_max: string | null }) => {
 			if (data.time_min && data.time_max) {
-				const span = instant(datetimeFromIsoFormat(data.time_max)) - instant(datetimeFromIsoFormat(data.time_min));
+				const span = instantOf(data.time_max) - instantOf(data.time_min);
 				if (span <= 0n) throw new TextError("time_max must be after time_min");
 				if (span > MAX_WINDOW) throw new TextError("time_min and time_max may be at most 366 days apart");
 			}
@@ -237,24 +218,24 @@ export const ListEvents = z
 	)
 	.meta({ title: "ListEvents" });
 
-/** `ListEvents.window()`: in UTC, as given, or 30 days from or to the one bound given, or from now. */
+/** A listing's window in UTC: as given, or 30 days from or to the one bound given, or from now. */
 export function windowOf(data: { time_min: string | null; time_max: string | null }, nowMs: number): [string, string] {
 	if (data.time_min && data.time_max) return [utc(data.time_min), utc(data.time_max)];
 	if (data.time_min) {
-		const start = datetimeFromIsoFormat(data.time_min);
-		return [utc(data.time_min), utc(isoformat(plus(start, DEFAULT_WINDOW)))];
+		const start = instantOf(data.time_min);
+		return [formatUtc(start), formatUtc(start + DEFAULT_WINDOW)];
 	}
 	if (data.time_max) {
-		const end = datetimeFromIsoFormat(data.time_max);
-		return [utc(isoformat(plus(end, -DEFAULT_WINDOW))), utc(data.time_max)];
+		const end = instantOf(data.time_max);
+		return [formatUtc(end - DEFAULT_WINDOW), formatUtc(end)];
 	}
-	const now = nowUtc(nowMs);
-	return [utc(isoformat(now)), utc(isoformat(plus(now, DEFAULT_WINDOW)))];
+	const now = BigInt(nowMs) * 1000n;
+	return [formatUtc(now), formatUtc(now + DEFAULT_WINDOW)];
 }
 
 const PAGE_KEYS = ["calendar", "page", "start", "end"];
 
-/** `_page_state`: Minerva's cursor, Graph's page and the window the first page used, for the calendar it was for. */
+/** Minerva's cursor, Graph's page and the window the first page used, for the calendar it was for. */
 export function pageState(cursor: string, calendar: string): { calendar: string; page: string; start: string; end: string } {
 	let state: Json = null;
 	try {
@@ -342,24 +323,18 @@ export const CreateEvent = z
 	})
 	.check(
 		modelValidator((data: CreateEventData) => {
-			const allDay = DATE.test(data.start);
-			if (allDay !== DATE.test(data.end)) throw new TextError("start and end must both be dates or both be date-times");
-			let ordered: boolean;
-			if (allDay) {
-				ordered = dateOrdinal(dateFromIsoFormat(data.end)) > dateOrdinal(dateFromIsoFormat(data.start));
-				if (data.time_zone === null) throw new TextError("time_zone is required for all-day events");
-			} else {
-				ordered = instant(datetimeFromIsoFormat(data.end)) > instant(datetimeFromIsoFormat(data.start));
-				if (data.time_zone !== null) throw new TextError("time_zone is only for all-day events; give timed events an offset");
-			}
-			if (!ordered) throw new TextError("end must be after start");
+			const allDay = isDate(data.start);
+			if (allDay !== isDate(data.end)) throw new TextError("start and end must both be dates or both be date-times");
+			if (allDay && data.time_zone === null) throw new TextError("time_zone is required for all-day events");
+			if (!allDay && data.time_zone !== null) throw new TextError("time_zone is only for all-day events; give timed events an offset");
+			if (instantOf(data.end) <= instantOf(data.start)) throw new TextError("end must be after start");
 		}),
 	)
 	.meta({ title: "CreateEvent" });
 
-/** `CreateEvent.payload()`: the event Graph is sent. */
+/** The event Graph is sent. */
 export function eventPayload(data: CreateEventData): { [key: string]: Json } {
-	const allDay = DATE.test(data.start);
+	const allDay = isDate(data.start);
 	let zone: string | null;
 	let start: string;
 	let end: string;

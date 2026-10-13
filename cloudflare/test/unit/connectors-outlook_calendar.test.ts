@@ -6,13 +6,10 @@ import { describe, expect, test } from "vitest";
 import { Time } from "../../src/connectors/outlook_calendar/client.ts";
 import {
 	type CalendarOptions,
-	checkDateOrDateTime,
-	checkDateTime,
 	eventPayload,
 	outlookCalendarConnector,
 	pageState,
 	shownTime,
-	utc,
 	windowOf,
 } from "../../src/connectors/outlook_calendar/connector.ts";
 import { ZONES } from "../../src/connectors/outlook_calendar/zones.ts";
@@ -23,7 +20,7 @@ import { validateInput } from "../../src/gateway/validation.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
 import { ceilingRow, jsonResponse, operation, received, startRun, vectors, type Received } from "../fixtures/connectors/microsoft/runs.ts";
-import { changedOnPurpose, jsonQuoted } from "./changed.ts";
+import { changedOnPurpose } from "./changed.ts";
 
 type JsonObject = { [key: string]: Json };
 
@@ -196,12 +193,6 @@ function outcome(call: () => unknown): { [key: string]: unknown } {
 	}
 }
 
-/** An outcome the vectors recorded, its message in JSON's quotes. */
-function quotedOutcome(outcome: unknown): unknown {
-	const message = (outcome as { message?: unknown }).message;
-	return typeof message === "string" ? { ...(outcome as object), message: jsonQuoted(message) } : outcome;
-}
-
 describe("connecting and discovery", () => {
 	test("test_account_discovery_and_names", async () => {
 		const graph = new FakeGraph();
@@ -269,10 +260,6 @@ describe("time zones", () => {
 		for (const zone of ["UTC", "Europe/Berlin", "America/New_York", "Asia/Kolkata"]) expect(ZONES.has(zone)).toBe(true);
 		for (const zone of ["Europe/Zurich", "US/Eastern", "CET", "Local"]) expect(ZONES.has(zone)).toBe(false);
 	});
-
-	test("the zones are today's, which are the documented ones the system's IANA list knows", () => {
-		expect([...ZONES].sort()).toEqual(vectors("outlook_calendar").zones);
-	});
 });
 
 describe("page state", () => {
@@ -297,26 +284,6 @@ describe("page state", () => {
 });
 
 describe("times and tool inputs, as today's Python reads them", () => {
-	test("_date_time agrees with Python on 43 texts", () => {
-		const cases = vectors("outlook_calendar").date_time as { [raw: string]: unknown };
-		expect(Object.keys(cases)).toHaveLength(43);
-		const kept = Object.keys(cases).filter((raw) => !changedOnPurpose(raw));
-		expect(Object.fromEntries(kept.map((raw) => [raw, outcome(() => checkDateTime(raw))]))).toEqual(Object.fromEntries(kept.map((raw) => [raw, quotedOutcome(cases[raw])])));
-	});
-
-	test("_date_or_date_time agrees with Python on dates and times", () => {
-		const cases = vectors("outlook_calendar").date_or_date_time as { [raw: string]: unknown };
-		expect(Object.keys(cases)).toHaveLength(56);
-		const kept = Object.keys(cases).filter((raw) => !changedOnPurpose(raw));
-		expect(Object.fromEntries(kept.map((raw) => [raw, outcome(() => checkDateOrDateTime(raw))]))).toEqual(Object.fromEntries(kept.map((raw) => [raw, quotedOutcome(cases[raw])])));
-	});
-
-	test("_utc agrees with Python, fractions of a second kept", () => {
-		const cases = vectors("outlook_calendar").utc as { [raw: string]: unknown };
-		expect(Object.keys(cases)).toHaveLength(12);
-		expect(Object.fromEntries(Object.keys(cases).map((raw) => [raw, outcome(() => utc(raw))]))).toEqual(cases);
-	});
-
 	test("the event times Graph reports are shown as _time shows them", () => {
 		const cases = vectors("outlook_calendar").times as { time: JsonObject; all_day: boolean; shown: string | null }[];
 		expect(cases).toHaveLength(9);

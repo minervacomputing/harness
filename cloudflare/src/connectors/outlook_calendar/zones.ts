@@ -1,9 +1,5 @@
 // The IANA names Graph documents as accepted besides Windows names (dateTimeTimeZone, "Additional time
-// zones"), as backend/connectors/outlook_calendar/connector.py lists them, and UTC. Python keeps those its
-// system's tz database knows (`zoneinfo.available_timezones()`, which src/lib/zones.ts lists); the tests pin
-// the result against Python's (test/fixtures/connectors/outlook_calendar/vectors.json).
-
-import { ZONES as KNOWN } from "../../lib/zones.ts";
+// zones"), and UTC.
 
 export const DOCUMENTED_ZONES: readonly string[] = `
 Etc/GMT+12 Etc/GMT+11 Pacific/Honolulu America/Anchorage America/Santa_Isabel America/Los_Angeles
@@ -25,5 +21,4 @@ Etc/GMT-12 Pacific/Fiji Asia/Magadan Pacific/Tongatapu Pacific/Apia Pacific/Kiri
 	.split(/\s+/)
 	.filter(Boolean);
 
-/** `frozenset({"UTC", *(zone for zone in _DOCUMENTED_ZONES if zone in available_timezones())})`. */
-export const ZONES: ReadonlySet<string> = new Set(["UTC", ...DOCUMENTED_ZONES.filter((zone) => KNOWN.has(zone))]);
+export const ZONES: ReadonlySet<string> = new Set(["UTC", ...DOCUMENTED_ZONES]);

@@ -7,7 +7,7 @@ import type { Connector, Operation } from "../contracts/connectors.ts";
 import type { GrantRow } from "../contracts/policy.ts";
 import { actionOf, consentGiven, kindOf } from "../gateway/connector.ts";
 import { ANY } from "../gateway/policy.ts";
-import { isoTime } from "../lib/time.ts";
+import { isoTime } from "../lib/dates.ts";
 
 /** Names of resources shown per allowed action in a connection's summary. */
 export const SUMMARY_NAMES = 3;

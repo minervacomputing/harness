@@ -1,5 +1,5 @@
 // What the Microsoft connectors share (src/connectors/microsoft/): the declarations, Graph's paging, error
-// classification, consent spellings, Python's datetime.fromisoformat and the case folding discovery uses.
+// classification, consent spellings and the case folding discovery uses.
 // Cases come from today's Python (test/fixtures/connectors/microsoft/generate.py) and from
 // backend/tests/test_outlook.py's `test_cursors_come_only_from_checked_paging_parameters`,
 // `test_graph_errors_are_named_without_graphs_text` and `test_outlook_scopes_follow_the_allowed_actions`.
@@ -11,7 +11,6 @@ import { outlookCalendarConnector } from "../../src/connectors/outlook_calendar/
 import { nextCursor as teamsNextCursor, pageParams as teamsPageParams } from "../../src/connectors/teams/client.ts";
 import { teamsConnector } from "../../src/connectors/teams/connector.ts";
 import { consent, consentAll, classify, nextCursor, pageParam, segment } from "../../src/connectors/microsoft/index.ts";
-import { dateFromIsoFormat, datetimeFromIsoFormat } from "../../src/lib/isoformat.ts";
 import { outlookConnector } from "../../src/connectors/outlook/connector.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
 import { Registry } from "../../src/gateway/registry.ts";
@@ -35,12 +34,6 @@ function outcome(call: () => unknown): { [key: string]: unknown } {
 }
 
 /** The vector's outcome without the message of a TypeError, which Python words its own way. */
-/** An isoformat outcome with its message in JSON's quotes. */
-function quoted(outcome: unknown): unknown {
-	const message = (outcome as { e?: unknown }).e;
-	return typeof message === "string" ? { e: jsonQuoted(message) } : outcome;
-}
-
 function expectedOutcome(entry: { [key: string]: unknown }): { [key: string]: unknown } {
 	const { link: _link, cursor: _cursor, ...rest } = entry;
 	return typeof rest.message === "string" ? { ...rest, message: jsonQuoted(rest.message) } : rest;
@@ -218,33 +211,5 @@ describe("consent", () => {
 			scopes: ["offline_access", "User.Read", "Mail.Read"],
 			authorizeParams: [["prompt", "select_account"]],
 		});
-	});
-});
-
-describe("Python's datetime.fromisoformat and date.fromisoformat", () => {
-	test("agree on the generated texts, with their messages", () => {
-		const all = vectors("microsoft").isoformat as { t: string; dt: unknown; d: unknown }[];
-		expect(all.length).toBeGreaterThanOrEqual(1500);
-		const cases = all.filter(({ t }) => !changedOnPurpose(t)).map(({ t, dt, d }) => ({ t, dt: quoted(dt), d: quoted(d) }));
-		const actual = cases.map(({ t }) => {
-			let dt: unknown;
-			try {
-				const value = datetimeFromIsoFormat(t);
-				dt = { v: [value.year, value.month, value.day, value.hour, value.minute, value.second, value.microsecond], o: value.offset };
-			} catch (error) {
-				if (!(error instanceof TextError || error instanceof RangeError)) throw error;
-				dt = { e: error.message };
-			}
-			let d: unknown;
-			try {
-				const value = dateFromIsoFormat(t);
-				d = [value.year, value.month, value.day];
-			} catch (error) {
-				if (!(error instanceof TextError)) throw error;
-				d = { e: error.message };
-			}
-			return { t, dt, d };
-		});
-		expect(actual).toEqual(cases);
 	});
 });

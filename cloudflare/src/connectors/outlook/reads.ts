@@ -8,7 +8,7 @@ import type { Json } from "../../lib/json.ts";
 import { singleLine, sliceText, TextError } from "../../lib/text.ts";
 import { ID } from "../microsoft/index.ts";
 import { after, modelValidator } from "../microsoft/inputs.ts";
-import { asUtc, datetimeFromIsoFormat, toUtc, utcStamp } from "../../lib/isoformat.ts";
+import { formatUtc, parseInstant } from "../../lib/dates.ts";
 import { FULL_FIELDS, type Folder, type GraphClient, type Message, type Recipient, ordinary } from "./client.ts";
 import { FOLDER, READ_CONSENT, Tree, confirmMessage, folderRef, locate, messageId } from "./mailbox.ts";
 
@@ -31,18 +31,11 @@ function searchText(value: string | null): string | null {
 	return value;
 }
 
-/** `_moment`: an ISO 8601 time, in UTC, as Graph compares it. Times without a zone are UTC. */
+/** A date or date-time in UTC, as Graph compares it. Times without an offset are UTC. */
 export function moment(value: string): string {
-	let parsed: ReturnType<typeof datetimeFromIsoFormat>;
-	try {
-		parsed = datetimeFromIsoFormat(value);
-	} catch (error) {
-		if (error instanceof TextError) throw new TextError("must be an ISO 8601 time such as 2026-10-01T09:00:00Z");
-		throw error;
-	}
-	if (parsed.offset === null) parsed = asUtc(parsed);
-	// An OverflowError (a time that leaves the years 1 to 9999 in UTC) propagates, and the call fails generically.
-	return utcStamp(toUtc(parsed));
+	const instant = parseInstant(value);
+	if (instant === null) throw new TextError("must be an ISO 8601 time such as 2026-10-01T09:00:00Z");
+	return formatUtc(instant);
 }
 
 const Moment = () => after(z.string().trim().min(1).max(40).describe("An ISO 8601 time."), moment);

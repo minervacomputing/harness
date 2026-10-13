@@ -307,7 +307,7 @@ export function date(value: string | null): string | null {
 	return match === null ? null : (match[1] as string);
 }
 
-/** The first and last second `datetime.fromtimestamp(..., UTC)` takes: years 1 to 9999. */
+/** The first and last second of the years 1 to 9999, which ISO 8601 writes with four digits. */
 const MIN_SECONDS = -62135596800;
 const MAX_SECONDS = 253402300799;
 
@@ -315,8 +315,7 @@ const MAX_SECONDS = 253402300799;
 export function moment(value: string | null): string | null {
 	const match = JSON_DATE.exec(value ?? "");
 	if (match === null) return null;
-	// fromtimestamp(ms / 1000) shown to the second (isoformat's timespec drops the fraction): the second the
-	// instant falls in. At most 15 digits, so the milliseconds are a safe integer.
+	// Shown to the second the instant falls in. At most 15 digits, so the milliseconds are a safe integer.
 	const milliseconds = Number(match[1]);
 	const seconds = (milliseconds - (((milliseconds % 1000) + 1000) % 1000)) / 1000;
 	if (seconds < MIN_SECONDS || seconds > MAX_SECONDS) return null;

@@ -7,7 +7,6 @@ import { describe, expect, test } from "vitest";
 import { type GraphClient } from "../../src/connectors/outlook/client.ts";
 import { outlookConnector } from "../../src/connectors/outlook/connector.ts";
 import { LIMITS } from "../../src/connectors/outlook/mailbox.ts";
-import { TextError } from "../../src/lib/text.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
@@ -258,24 +257,6 @@ describe("addresses", () => {
 });
 
 describe("times and tool inputs, as today's Python reads them", () => {
-	test("_moment agrees with Python, Python's OverflowError included", () => {
-		const cases = vectors("outlook").moment as { [raw: string]: { value?: string; error?: string } };
-		expect(Object.keys(cases).length).toBeGreaterThan(100);
-		const actual: { [raw: string]: unknown } = {};
-		for (const raw of Object.keys(cases)) {
-			try {
-				actual[raw] = { value: moment(raw) };
-			} catch (error) {
-				if (error instanceof RangeError) actual[raw] = { error: "OverflowError" };
-				else if (error instanceof TextError) actual[raw] = { error: "ValueError", message: error.message };
-				else throw error;
-			}
-		}
-		const expected: { [raw: string]: unknown } = {};
-		for (const [raw, outcome] of Object.entries(cases)) expected[raw] = outcome;
-		expect(actual).toEqual(expected);
-	});
-
 	test("the message filter is Graph's $filter", () => {
 		const cases = vectors("outlook").filters as { args: JsonObject; filter: string | null }[];
 		expect(cases).toHaveLength(5);
@@ -304,9 +285,7 @@ describe("times and tool inputs, as today's Python reads them", () => {
 					const result = await validateInput(op.input as never, args);
 					actual.push(result.ok ? { args, data: result.data } : { args, refused: true });
 				} catch (error) {
-					// A time beyond the calendar's range fails the call rather than refusing the argument.
-					if (error instanceof RangeError) actual.push({ args, raises: "OverflowError" });
-					else if (error instanceof TypeError) actual.push({ args, raises: "TypeError" });
+					if (error instanceof TypeError) actual.push({ args, raises: "TypeError" });
 					else throw error;
 				}
 			}

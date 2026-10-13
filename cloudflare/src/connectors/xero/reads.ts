@@ -7,7 +7,7 @@ import { OperationError, defineOperation } from "../../gateway/connector.ts";
 import type { Json } from "../../lib/json.ts";
 import { SINGLE_LINE, isSingleLine, truncate } from "../../lib/text.ts";
 import { type Address, type Contact, type Invoice, type Invoices, type Outstanding, invoiceDate, moment, nextPage, page, uuid } from "./client.ts";
-import { dayProblem, fromIsoFormat } from "./dates.ts";
+import { DATE_MESSAGE, parseDate } from "../../lib/dates.ts";
 import { money, number } from "./decimal.ts";
 import { ORGANISATION, client, invoiceId, label, optionalContactId, organisationId, organisationResource, resolveOrganisation, short } from "./organisations.ts";
 
@@ -23,14 +23,17 @@ const cursor = () => z.string().trim().max(1000).nullable().default(null);
 const searchText = () => z.string().trim().min(1).max(100).refine(isSingleLine, SINGLE_LINE);
 const limit = () => z.int().min(1).max(50).default(20);
 
-/** `Day`: YYYY-MM-DD as Python's `date.fromisoformat` reads it (dates.ts), kept as it was sent. */
+export const OUT_OF_RANGE = "must be a date between the years 1900 and 2200";
+
+/** A day, YYYY-MM-DD, between the years 1900 and 2200. */
 export function day() {
-	return z.string().trim().min(10).max(10)
+	return z.string().trim().max(10)
 		.describe("YYYY-MM-DD.")
-		.check((payload) => {
-			const problem = dayProblem(payload.value);
-			if (problem !== null) payload.issues.push({ code: "custom", message: problem, input: payload.value });
-		});
+		.refine((value) => parseDate(value) !== null, DATE_MESSAGE)
+		.refine((value) => {
+			const found = parseDate(value);
+			return found === null || (found.year >= 1900 && found.year <= 2200);
+		}, OUT_OF_RANGE);
 }
 
 /** Xero's types for sales invoices and bills. */
@@ -212,10 +215,8 @@ export function where(data: Pick<SearchInvoicesInput, "type" | "date_from" | "da
 		[data.date_to, "<="],
 	] as const) {
 		if (field === null) continue;
-		const found = fromIsoFormat(field);
-		if (found === null) throw new TypeError("A date the input accepted no longer parses.");
-		const [year, month, dayOfMonth] = found;
-		terms.push(`Date${operator}DateTime(${year},${String(month).padStart(2, "0")},${String(dayOfMonth).padStart(2, "0")})`);
+		if (parseDate(field) === null) throw new TypeError("A date the input accepted no longer parses.");
+		terms.push(`Date${operator}DateTime(${field.replaceAll("-", ",")})`);
 	}
 	return terms.join(" AND ") || null;
 }

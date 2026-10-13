@@ -10,7 +10,7 @@ import { z } from "zod";
 import type { Binding, Prepared, ProviderOutput, Requirement } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
-import { isoDate } from "../../lib/isoformat.ts";
+import { DATE_MESSAGE, isDate } from "../../lib/dates.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
 import { PLAIN_TEXT, isPlainText } from "../../lib/text.ts";
 import { CONFLICT, type HubSpotClient, association } from "./client.ts";
@@ -54,11 +54,6 @@ function clientOf(binding: Binding): HubSpotClient {
 
 const text = (max: number, description: string) => Line(1, max).describe(description);
 
-/** `date.fromisoformat(value).isoformat() == value`: exactly YYYY-MM-DD, a day of the proleptic Gregorian calendar from year 1. */
-export function isIsoDate(value: string): boolean {
-	return isoDate(value) === value;
-}
-
 const Email = () => text(254, "An email address.");
 const Name = () => text(100, "A first or last name.");
 const Phone = () => text(50, "A phone number.");
@@ -70,7 +65,7 @@ const Amount = () =>
 		.refine((value) => AMOUNT.test(value), { message: "must be a number such as 1500 or 1500.50, without a currency or separators" })
 		.describe("The amount in the deal's currency (the account's currency for a new deal), such as 1500 or 1500.50.");
 const CloseDate = () =>
-	z.string().trim().max(10).refine(isIsoDate, { message: "must be a date such as 2026-12-31" }).describe("The expected close date, such as 2026-12-31.");
+	z.string().trim().max(10).refine(isDate, DATE_MESSAGE).describe("The expected close date, such as 2026-12-31.");
 
 function closeDate(value: string): string {
 	return `${value}T00:00:00Z`;
@@ -317,11 +312,6 @@ export function noteHtml(body: string): string {
 	return htmlEscape(body.replaceAll("\r\n", "\n")).replaceAll("\n", "<br>");
 }
 
-/** `datetime.now(UTC).isoformat(timespec="milliseconds")` with "Z" for UTC. */
-function timestamp(): string {
-	return new Date().toISOString();
-}
-
 export const ADD_NOTE = defineOperation<z.output<typeof AddNote>>({
 	name: "add_note",
 	title: "Log a note",
@@ -353,7 +343,7 @@ export const ADD_NOTE = defineOperation<z.output<typeof AddNote>>({
 				if (onDeal) await currentDeal(client, ...onDeal);
 				let created: Awaited<ReturnType<HubSpotClient["create"]>>;
 				try {
-					created = await client.create("notes", { hs_note_body: noteHtml(data.body), hs_timestamp: timestamp() }, [link]);
+					created = await client.create("notes", { hs_note_body: noteHtml(data.body), hs_timestamp: new Date().toISOString() }, [link]);
 				} catch (error) {
 					if (error instanceof OperationError && error.code === "NOT_FOUND") throw denied();
 					throw error;

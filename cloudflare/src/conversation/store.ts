@@ -23,7 +23,7 @@ import type { NewRunEvent, RunEvent, RunEventType } from "../contracts/events.ts
 import type { CancelReason, ConversationHead, RunEnd, RunHead, RunSnapshot, RunStatus } from "../contracts/runs.ts";
 import { type Json, parseJson } from "../lib/json.ts";
 import { VALUE_PART, sliceText, splitParts } from "../lib/text.ts";
-import { isoTime } from "../lib/time.ts";
+import { isoTime } from "../lib/dates.ts";
 import { ACTIVE, ERROR_MESSAGE_CHARS, statusEvent, terminalStatus } from "./events.ts";
 import type { StoredMessage } from "./history.ts";
 

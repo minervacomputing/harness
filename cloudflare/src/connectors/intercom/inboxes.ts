@@ -5,7 +5,7 @@ import type { Binding } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, denied } from "../../gateway/connector.ts";
 import { type Conversation, ID, type IntercomClient } from "./client.ts";
-import { isoOf } from "./dates.ts";
+import { formatUtc } from "../../lib/dates.ts";
 
 export const INBOX = "inbox";
 /** The inbox of conversations no team is assigned to: unassigned ones, and ones assigned to a teammate only. */
@@ -98,7 +98,11 @@ export async function confirmConversation(binding: Binding, resource: Resource, 
 	return conversation;
 }
 
-/** A time Intercom gives in seconds, as records show it. */
+/** The last second shown with a four-digit year: 9999-12-31T23:59:59Z. */
+const MAX_TIMESTAMP = 253_402_300_799;
+
+/** A time Intercom gives in Unix seconds, as records show it, or null for one that is not a positive whole second. */
 export function iso(timestamp: number | null): string | null {
-	return isoOf(timestamp);
+	if (timestamp === null || !Number.isInteger(timestamp) || timestamp <= 0 || timestamp > MAX_TIMESTAMP) return null;
+	return formatUtc(BigInt(timestamp) * 1_000_000n);
 }

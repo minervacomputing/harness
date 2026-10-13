@@ -8,7 +8,7 @@ import type { Json, JsonObject } from "../../lib/json.ts";
 import { SINGLE_LINE, isSingleLine } from "../../lib/text.ts";
 import { type LinearClient, MAX_ISSUE_DEPTH, type ParentIssue, type State, type Written } from "./client.ts";
 import { issueLinks, redact, writtenProblem } from "./markdown.ts";
-import { isoDate } from "../../lib/isoformat.ts";
+import { DATE_MESSAGE, isDate } from "../../lib/dates.ts";
 import {
 	CLOSED,
 	IssueName,
@@ -34,22 +34,11 @@ export const MAX_LABELS = 10;
 export const SUB_ISSUE_DEPTH = 3;
 
 export const NOT_AN_ID = "must be a Linear id";
-export const NOT_A_DATE = "must be a date such as 2026-10-01";
 
 const Title = () => z.string().trim().min(1).max(MAX_TITLE).refine(isSingleLine, SINGLE_LINE);
 const ShortName = () => z.string().trim().min(1).max(200).refine(isSingleLine, SINGLE_LINE);
 const Priority = () => z.int().min(0).max(4).describe("0 no priority, 1 urgent, 2 high, 3 medium, 4 low.");
-/**
- * `DueDate | None = None`. Optional and defaulted inside the transform, so that the JSON Schema still shows
- * the default: zod leaves out the default of a field whose transform comes first.
- */
-const DueDate = () =>
-	z.string().trim().max(10)
-		.describe("YYYY-MM-DD.")
-		.nullable()
-		.default(null)
-		.refine((value) => value === null || isoDate(value) !== null, NOT_A_DATE)
-		.transform((value) => (value === null ? null : (isoDate(value) as string)));
+const DueDate = () => z.string().trim().max(10).describe("YYYY-MM-DD.").refine(isDate, DATE_MESSAGE).nullable().default(null);
 
 /** Markdown an agent writes, refused if it would do more than add words to Linear (`check_written`). */
 const Markdown = (max: number, description: string) =>

@@ -89,12 +89,12 @@ describe("the declaration", () => {
 		expect(fingerprints).toEqual({
 			list_organisations: "b4c96fe279a2bd0a",
 			search_contacts: "b4db2753ffcc00ba",
-			search_invoices: "f649cb64a7366c20",
+			search_invoices: "05998643463a96a6",
 			get_invoice: "df6b2a206ef86366",
 			list_accounts: "749bfdc842d157fd",
 			list_tax_rates: "56d88ac884a3d185",
-			create_draft_invoice: "0ba17e694444584f",
-			create_draft_bill: "a203f7d82afa90ec",
+			create_draft_invoice: "30485ed08873f58f",
+			create_draft_bill: "86266d544fb68a9a",
 		});
 	});
 

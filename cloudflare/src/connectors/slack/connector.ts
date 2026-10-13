@@ -30,7 +30,7 @@ import type { JsonObject } from "../../lib/json.ts";
 import { PLAIN_TEXT, TextError, isPlainText, truncate } from "../../lib/text.ts";
 import { type Channel, type Message, NOT_IN_CHANNEL_MESSAGE, SlackClient, isConversationChannel, shownName } from "./client.ts";
 import { NO_SLACK_LINKS, escape, linksToSlack, redact } from "./mrkdwn.ts";
-import { IsoFormatError, isoTimestamp, utcIsoformat } from "./times.ts";
+import { formatUtc, parseInstant } from "../../lib/dates.ts";
 import { extend } from "../../lib/arrays.ts";
 
 export const CHANNEL = "channel";
@@ -41,7 +41,7 @@ export const MAX_PEOPLE = 30;
 export const MAX_RESOLVE_PAGES = 10;
 export const RESOLVE_PAGE = 200;
 export const MAX_DESCRIBE = 100;
-/** Requests to Slack at once when naming people or channels (asyncio.Semaphore(5)). */
+/** Requests to Slack at once when naming people or channels. */
 const CONCURRENCY = 5;
 const HIDDEN: ReadonlySet<string> = new Set(["NOT_FOUND", "PROVIDER_FORBIDDEN", "PROVIDER_REJECTED", "NOT_IN_CHANNEL", "CHANNEL_ARCHIVED"]);
 
@@ -64,7 +64,7 @@ export interface SlackLimits {
 	resolvePage: number;
 }
 
-/** `_channel_name`: a channel id, or `#name`. Throws with the validator's message. */
+/** A channel id, or `#name`. Throws with the field's message. */
 export function channelName(value: string): string {
 	if (CHANNEL_ID.test(value)) return value;
 	const name = (value.startsWith("#") ? value.slice(1) : value).toLowerCase();
@@ -76,17 +76,16 @@ export function isTs(value: string): boolean {
 	return TS.test(value);
 }
 
-/** `_moment`: an ISO 8601 time as a Slack timestamp. Times without a zone are UTC. */
+/** A date or date-time as a Slack timestamp, seconds with six digits of microseconds. Times without an offset are UTC. */
 export function moment(value: string): string {
-	try {
-		return isoTimestamp(value);
-	} catch (error) {
-		if (error instanceof IsoFormatError) throw new TextError(MOMENT_MESSAGE);
-		throw error;
-	}
+	const micros = parseInstant(value);
+	if (micros === null) throw new TextError(MOMENT_MESSAGE);
+	const sign = micros < 0n ? "-" : "";
+	const size = micros < 0n ? -micros : micros;
+	return `${sign}${size / 1_000_000n}.${String(size % 1_000_000n).padStart(6, "0")}`;
 }
 
-/** An AfterValidator that returns a new value, whose TextError is the field's message. */
+/** A transform that returns a new value, whose TextError is the field's message. */
 function after(convert: (value: string) => string) {
 	return (value: string, ctx: z.RefinementCtx): string => {
 		try {
@@ -120,7 +119,7 @@ function isMoment(value: string): boolean {
  */
 const Moment = () => z.string().trim().min(1).max(40).describe("An ISO 8601 time.").refine(isMoment, MOMENT_MESSAGE);
 
-/** `_moment` applied to the times of a validated input, as the AfterValidator applied it to each. */
+/** `moment` applied to the times of a validated input. */
 function withMoments<T extends { after: string | null; before: string | null }>(data: T): T {
 	return { ...data, after: data.after === null ? null : moment(data.after), before: data.before === null ? null : moment(data.before) };
 }
@@ -226,10 +225,10 @@ async function confirmForWriting(binding: Binding, resource: Resource): Promise<
 	}
 }
 
-/** `_time`: a message ts as an ISO time in UTC, or null. */
+/** A message ts as an ISO time in UTC, or null. The ts is an id: its digits are read exactly, never as a float. */
 export function isoTime(ts: string | null): string | null {
 	if (ts === null || !TS.test(ts)) return null;
-	return utcIsoformat(Number(ts)).replaceAll("+00:00", "Z");
+	return formatUtc(BigInt(ts.replace(".", "")));
 }
 
 function topicOf(channel: Channel, field: "topic" | "purpose"): string | null {

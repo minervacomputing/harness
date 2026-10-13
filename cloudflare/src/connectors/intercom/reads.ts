@@ -6,7 +6,7 @@ import { OperationError, defineOperation } from "../../gateway/connector.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
 import { SINGLE_LINE, isSingleLine, truncate } from "../../lib/text.ts";
 import { type Attachment, type Author, type Conversation, type IntercomClient, type Part, idNumber } from "./client.ts";
-import { fromIsoFormat, timestamp } from "./dates.ts";
+import { epochMicros, parseInstant } from "../../lib/dates.ts";
 import * as html from "./html.ts";
 import {
 	ConversationId,
@@ -113,26 +113,29 @@ export const LIST_INBOXES = defineOperation<z.output<typeof ListInboxes>>({
 
 // search_conversations
 
-/** `_words`: up to five words of the search text. */
+/** Up to five words of the search text. */
 export function words(text: string): string[] {
 	const found = (text.match(WORD) ?? []).slice(0, MAX_SEARCH_WORDS);
 	if (found.length === 0) throw new OperationError("INVALID_ARGUMENTS", "text must contain letters or digits.");
 	return found;
 }
 
-/** `_since`: why an `updated_after` is refused, or null. */
+const FIRST = epochMicros({ year: 2000, month: 1, day: 1 });
+const AFTER_LAST = epochMicros({ year: 2101, month: 1, day: 1 });
+
+/** Why an `updated_after` is refused, or null. */
 export function sinceProblem(value: string): string | null {
-	const moment = fromIsoFormat(value);
-	if (moment === null) return NOT_ISO;
-	if (moment.year < 2000 || moment.year > 2100) return NOT_IN_RANGE;
+	const micros = parseInstant(value);
+	if (micros === null) return NOT_ISO;
+	if (micros < FIRST || micros >= AFTER_LAST) return NOT_IN_RANGE;
 	return null;
 }
 
-/** `_timestamp`: the POSIX time of an `updated_after` that passed `_since`; a time without a zone is UTC. */
+/** The Unix time in seconds of an `updated_after` that passed `sinceProblem`; a time without an offset is UTC. */
 export function sinceTimestamp(value: string): number {
-	const moment = fromIsoFormat(value);
-	if (moment === null) throw new RangeError("Not an ISO 8601 time.");
-	return timestamp(moment);
+	const micros = parseInstant(value);
+	if (micros === null) throw new RangeError("Not an ISO 8601 time.");
+	return Number(micros / 1_000_000n);
 }
 
 const SearchText = () =>

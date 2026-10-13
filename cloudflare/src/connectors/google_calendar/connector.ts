@@ -5,13 +5,11 @@ import { z } from "zod";
 import type { Binding, Connector, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
-import { sliceText, TextError } from "../../lib/text.ts";
+import { sliceText } from "../../lib/text.ts";
 import { oauth } from "../google/index.ts";
 import { setOwn } from "../google/model.ts";
 import { type EventTime, type GoogleCalendar, GoogleCalendarClient, type GoogleEvent, calendarName } from "./client.ts";
-import { dateFromIsoFormat, datetimeFromIsoFormat, dateOrdinal, instant } from "../../lib/isoformat.ts";
-import { DATE, checkDateOrDateTime, checkDateTime, nowIso } from "./times.ts";
-import { ZONES } from "../../lib/zones.ts";
+import { epochMicros, isDate, isTimeZone, parseDate, parseZonedDateTime } from "../../lib/dates.ts";
 import { extend } from "../../lib/arrays.ts";
 
 export const CALENDAR = "calendar";
@@ -27,35 +25,10 @@ export const MAX_ATTENDEES = 50;
 export const READ_CONSENT = [[READ_SCOPE], [FULL_SCOPE]];
 export const WRITE_CONSENT = [[READ_SCOPE, EVENTS_SCOPE], [FULL_SCOPE]];
 
-/** A field check: `check` throws TextError with the message the model sees. */
-function after(check: (value: string) => unknown) {
-	return (value: string, ctx: z.RefinementCtx<string>) => {
-		try {
-			check(value);
-		} catch (error) {
-			if (!(error instanceof TextError)) throw error;
-			ctx.addIssue({ code: "custom", message: error.message, input: value });
-		}
-	};
-}
+export const DATE_TIME_MESSAGE = "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00";
+export const DATE_OR_DATE_TIME_MESSAGE = "must be a date such as 2026-10-01, or an RFC 3339 date-time with an offset";
 
-/**
- * Whether a field's value passed its own validator. zod runs an object's refinement even after a field
- * failed a check it may continue past; Pydantic runs a model validator only once every field passed, so
- * the model validators below look at valid values only (the executor drops their issue otherwise anyway).
- */
-function passes(check: (value: string) => unknown, value: unknown): value is string {
-	if (typeof value !== "string") return false;
-	try {
-		check(value);
-		return true;
-	} catch (error) {
-		if (error instanceof TextError) return false;
-		throw error;
-	}
-}
-
-/** `_not_dots`: an id is not only dots. */
+/** Whether an id is more than dots. */
 function notDots(value: string): boolean {
 	return !/^\.+$/.test(value);
 }
@@ -69,11 +42,11 @@ const EventId = () =>
 	z.string().trim().min(1).max(1024)
 		.regex(/^[A-Za-z0-9_@.-]+$/)
 		.refine(notDots, { message: "is not a valid id" });
-const DateTime = () => z.string().trim().max(40).superRefine(after(checkDateTime));
-const DateOrDateTime = () => z.string().trim().max(40).superRefine(after(checkDateOrDateTime));
+const ZonedDateTime = () => z.string().trim().max(40).refine((value) => parseZonedDateTime(value) !== null, DATE_TIME_MESSAGE);
+const DateOrDateTime = () => z.string().trim().max(40).refine((value) => isDate(value) || parseZonedDateTime(value) !== null, DATE_OR_DATE_TIME_MESSAGE);
 
 export interface CalendarOptions {
-	/** How many pages of the calendar list a call may read (Python's MAX_CALENDAR_PAGES). */
+	/** How many pages of the calendar list a call may read (MAX_CALENDAR_PAGES). */
 	maxCalendarPages?: number;
 	/** The API's base URL, for tests. */
 	baseUrl?: string;
@@ -147,17 +120,17 @@ const ListCalendars = z.strictObject({});
 const ListEvents = z
 	.strictObject({
 		calendar_id: CalendarId(),
-		time_min: DateTime().nullable().default(null).describe("Only events that end after this time."),
-		time_max: DateTime().nullable().default(null).describe("Only events that start before this time."),
+		time_min: ZonedDateTime().nullable().default(null).describe("Only events that end after this time."),
+		time_max: ZonedDateTime().nullable().default(null).describe("Only events that start before this time."),
 		search: z.string().trim().min(1).max(200).nullable().default(null),
 		limit: z.int().min(1).max(50).default(25),
 		cursor: z.string().trim().max(300).nullable().default(null),
 	})
 	.superRefine((data, ctx) => {
-		// `_ordered`, a model validator: only once every field passed.
-		if (!data.time_min || !data.time_max) return;
-		if (!passes(checkDateTime, data.time_min) || !passes(checkDateTime, data.time_max)) return;
-		if (instant(datetimeFromIsoFormat(data.time_max)) <= instant(datetimeFromIsoFormat(data.time_min))) {
+		// zod runs this after a field failed too; those values are left to the field's message.
+		const [min, max] = [parseZonedDateTime(data.time_min ?? ""), parseZonedDateTime(data.time_max ?? "")];
+		if (min === null || max === null) return;
+		if (epochMicros(max) <= epochMicros(min)) {
 			ctx.addIssue({ code: "custom", message: "time_max must be after time_min", input: data });
 		}
 	});
@@ -171,31 +144,27 @@ const CreateEvent = z
 		start: DateOrDateTime().describe("YYYY-MM-DD for an all-day event, or an RFC 3339 date-time with an offset."),
 		end: DateOrDateTime().describe("Same format as start. For all-day events, the day after the last day."),
 		time_zone: z.string().trim().max(64)
-			.refine((value) => ZONES.has(value), { message: "must be an IANA time zone, like Europe/Berlin" })
+			.refine(isTimeZone, "must be an IANA time zone, like Europe/Berlin")
 			.nullable()
 			.default(null),
 		description: z.string().trim().max(8000).nullable().default(null),
 		location: z.string().trim().max(500).nullable().default(null),
 	})
 	.superRefine((data, ctx) => {
-		// `_consistent`, a model validator.
-		if (!passes(checkDateOrDateTime, data.start) || !passes(checkDateOrDateTime, data.end)) return;
-		const allDay = DATE.test(data.start);
-		if (allDay !== DATE.test(data.end)) {
+		const [start, end] = [parseDate(data.start) ?? parseZonedDateTime(data.start), parseDate(data.end) ?? parseZonedDateTime(data.end)];
+		if (start === null || end === null) return;
+		if ("hour" in start !== "hour" in end) {
 			ctx.addIssue({ code: "custom", message: "start and end must both be dates or both be date-times", input: data });
 			return;
 		}
-		const ordered = allDay
-			? dateOrdinal(dateFromIsoFormat(data.end)) > dateOrdinal(dateFromIsoFormat(data.start))
-			: instant(datetimeFromIsoFormat(data.end)) > instant(datetimeFromIsoFormat(data.start));
-		if (!ordered) ctx.addIssue({ code: "custom", message: "end must be after start", input: data });
+		if (epochMicros(end) <= epochMicros(start)) ctx.addIssue({ code: "custom", message: "end must be after start", input: data });
 	});
 
 type CreateEventInput = z.output<typeof CreateEvent>;
 
-/** `CreateEvent.body()`: the event Google is sent. */
+/** The event Google is sent. */
 function eventBody(data: CreateEventInput): { [key: string]: Json } {
-	const key = DATE.test(data.start) ? "date" : "dateTime";
+	const key = isDate(data.start) ? "date" : "dateTime";
 	const start: { [key: string]: string } = { [key]: data.start };
 	const end: { [key: string]: string } = { [key]: data.end };
 	if (data.time_zone) {
@@ -208,7 +177,7 @@ function eventBody(data: CreateEventInput): { [key: string]: Json } {
 	return body;
 }
 
-/** `_page_state`: Minerva's own upstream cursor, Google's page token with the first page's time bound. */
+/** Minerva's own upstream cursor, Google's page token with the first page's time bound. */
 function pageState(cursor: string): { [key: string]: Json } {
 	let state: Json | null;
 	try {
@@ -222,7 +191,7 @@ function pageState(cursor: string): { [key: string]: Json } {
 	return state;
 }
 
-/** Google Calendar's connector (`GoogleCalendarConnector`). */
+/** Google Calendar's connector. */
 export function googleCalendarConnector(options: CalendarOptions = {}): Connector<GoogleCalendarClient> {
 	const maxPages = options.maxCalendarPages ?? MAX_CALENDAR_PAGES;
 	const now = options.now ?? (() => Date.now());
@@ -268,7 +237,7 @@ export function googleCalendarConnector(options: CalendarOptions = {}): Connecto
 				const state = data.cursor ? pageState(data.cursor) : null;
 				let timeMin: Json = data.time_min;
 				if (state !== null) timeMin = Object.hasOwn(state, "time_min") ? (state.time_min as Json) : null;
-				else if (timeMin === null && data.time_max === null) timeMin = nowIso(now());
+				else if (timeMin === null && data.time_max === null) timeMin = new Date(now()).toISOString();
 				return {
 					requirements: [{ need: binding.resource(CALENDAR, calendarId), action: "read" }],
 					async execute(): Promise<ProviderOutput> {

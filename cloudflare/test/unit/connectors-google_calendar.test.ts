@@ -1,20 +1,17 @@
-// backend/tests/test_google_calendar.py, case by case: the connector against an in-memory Calendar API
-// behind an injected `fetch`, and runs through the executor. Input validation and Python's date and time
-// messages are compared with vectors from today's Python (test/fixtures/connectors/google/generate.py).
+// The Google Calendar connector against an in-memory Calendar API behind an injected `fetch`, and runs
+// through the executor. Input validation is also compared with the generated vectors in
+// test/fixtures/connectors/google/vectors.json.
 
 import { describe, expect, test } from "vitest";
 import { consentGiven } from "../../src/gateway/connector.ts";
-import { googleCalendarConnector, EVENTS_SCOPE, FULL_SCOPE, READ_SCOPE } from "../../src/connectors/google_calendar/connector.ts";
+import { DATE_OR_DATE_TIME_MESSAGE, DATE_TIME_MESSAGE, googleCalendarConnector, EVENTS_SCOPE, FULL_SCOPE, READ_SCOPE } from "../../src/connectors/google_calendar/connector.ts";
 import type { GoogleCalendarClient } from "../../src/connectors/google_calendar/client.ts";
-import { checkDateOrDateTime, checkDateTime, nowIso } from "../../src/connectors/google_calendar/times.ts";
-import { ZONES } from "../../src/lib/zones.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { parseJson } from "../../src/lib/json.ts";
 import { CONNECTION, ceilingRow, jsonResponse, operation, requestOf, settingsClient, startRun, validationOutcomes } from "../fixtures/connectors/google/runs.ts";
 import { vectors } from "../fixtures/connectors/google/vectors.ts";
-import { changedOnPurpose, jsonQuoted } from "./changed.ts";
 
 const PRIMARY = "ada@example.com";
 const UNIVERSITY = "uni@group.calendar.google.com";
@@ -105,40 +102,20 @@ function calendars(grants: { [id: string]: string[] }): { [key: string]: string[
 	return Object.fromEntries(Object.entries(grants).map(([id, actions]) => [`calendar:${id}`, actions]));
 }
 
-describe("Python's dates and times", () => {
-	test("date-times are checked as datetime.fromisoformat checks them", () => {
-		const checks: [string, (value: string) => string][] = [
-			["date_time", checkDateTime],
-			["date_or_date_time", checkDateOrDateTime],
-		];
-		for (const [name, check] of checks) {
-			const cases = vectors().dates[name] as { [value: string]: { ok?: string; message?: string } };
-			const actual: { [value: string]: unknown } = {};
-			const expected: { [value: string]: unknown } = {};
-			for (const [value, outcome] of Object.entries(cases)) {
-				if (changedOnPurpose(value)) continue;
-				expected[value] = outcome.message === undefined ? "ok" : jsonQuoted(outcome.message);
-				try {
-					check(value);
-					actual[value] = "ok";
-				} catch (error) {
-					actual[value] = (error as Error).message;
-				}
-			}
-			expect(Object.keys(cases).length).toBeGreaterThan(200);
-			expect(actual).toEqual(expected);
-		}
-	});
-
-	test("the default lower bound is now, to the second, in UTC", () => {
-		expect(nowIso(Date.UTC(2026, 9, 11, 12, 34, 56, 789))).toBe("2026-10-11T12:34:56+00:00");
-	});
-
-	test("time zones are zoneinfo's, aliases included", () => {
-		expect(ZONES.has("US/Pacific")).toBe(true);
-		expect(ZONES.has("Europe/Berlin")).toBe(true);
-		expect(ZONES.has("Mars/Olympus")).toBe(false);
-		expect(ZONES.size).toBeGreaterThan(590);
+describe("dates and times", () => {
+	test("times need an offset, dates name real days, zones are IANA names; each with its own message", async () => {
+		const connector = googleCalendarConnector();
+		const { validateInput } = await import("../../src/gateway/validation.ts");
+		const message = async (name: string, input: Json) => {
+			const outcome = await validateInput(operation(connector, name).input as never, input);
+			return outcome.ok ? "ok" : outcome.message;
+		};
+		const event = { calendar_id: PRIMARY, summary: "Study group" };
+		expect(await message("list_events", { calendar_id: PRIMARY, time_min: "2026-10-01T09:00:00.123456+02:00" })).toBe("ok");
+		expect(await message("list_events", { calendar_id: PRIMARY, time_min: "2026-10-01T09:00:00" })).toContain(DATE_TIME_MESSAGE);
+		expect(await message("create_event", { ...event, start: "2026-02-28", end: "2026-03-01", time_zone: "US/Pacific" })).toBe("ok");
+		expect(await message("create_event", { ...event, start: "2026-02-30", end: "2026-03-02" })).toContain(DATE_OR_DATE_TIME_MESSAGE);
+		expect(await message("create_event", { ...event, start: "2026-10-01", end: "2026-10-02", time_zone: "+02:00" })).toContain("must be an IANA time zone");
 	});
 });
 
