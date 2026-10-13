@@ -2,7 +2,6 @@ import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { z } from 'zod'
-import { createConversationMutation } from '@/api/@tanstack/react-query.gen'
 import { AgentIntro } from '@/components/chat/agent-intro'
 import { useChatRuntime } from '@/components/chat/runtime'
 import { Thread } from '@/components/chat/thread'
@@ -29,13 +28,13 @@ function NewChat() {
 
   // Not repeated after a failure, unlike the send: a lost answer could leave two conversations. Like the send,
   // tried at once even offline, so the composer gets the message back rather than waiting for the network.
-  const create = useMutation({ ...createConversationMutation(), networkMode: 'always' })
+  const create = useMutation(orpc.conversations.create.mutationOptions({ networkMode: 'always' }))
   const { runtime, error } = useChatRuntime({
     workspaceId,
     isDisabled: !agent,
     conversation: async () => {
       if (!agent) throw new Error('Create an agent first.')
-      return (await create.mutateAsync({ path: { workspace_id: workspaceId }, body: { agent_id: agent.id } })).id
+      return (await create.mutateAsync({ workspaceId, agentId: agent.id })).id
     },
     onSent: conversationId => navigate({ to: '/w/$workspaceId/chat/$conversationId', params: { workspaceId, conversationId } }),
   })

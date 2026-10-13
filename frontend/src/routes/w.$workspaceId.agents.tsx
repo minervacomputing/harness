@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { PlusIcon } from 'lucide-react'
 import { useState } from 'react'
-import { listConnectionsOptions, listConversationsQueryKey } from '@/api/@tanstack/react-query.gen'
+import { listConnectionsOptions } from '@/api/@tanstack/react-query.gen'
 import type { ConnectionOut } from '@/api/types.gen'
 import { AppIcons, connectionsOf } from '@/components/agents/agent-apps'
 import { AppIcon } from '@/components/connections/app-icon'
@@ -131,8 +131,8 @@ function AgentForm({ workspaceId, agent, connections, onDone }: { workspaceId: s
   const remove = useMutation(
     orpc.agents.delete.mutationOptions({
       onSuccess: () => {
-        queryClient.removeQueries({ queryKey: [{ _id: 'getConversation' }] })
-        return Promise.all([invalidate(), queryClient.invalidateQueries({ queryKey: listConversationsQueryKey({ path: { workspace_id: workspaceId } }) })])
+        queryClient.removeQueries({ queryKey: orpc.conversations.get.key() })
+        return Promise.all([invalidate(), queryClient.invalidateQueries({ queryKey: orpc.conversations.list.key({ input: { workspaceId } }) })])
       },
     }),
   )

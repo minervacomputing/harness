@@ -1,4 +1,4 @@
-// The run event stream (plan: Events and the stream): `GET
+// The run event stream (plan: Events and the stream; contract `runEventsPath`): `GET
 // /api/workspaces/{ws}/runs/{run}/stream` as server-sent events, relayed from the Conversation Durable
 // Object's hibernatable WebSocket (conversation/stream.ts). Signed out is 401 `Unauthorized`; not a member,
 // or not the caller's run in this workspace, 404 `NOT_FOUND` (unlike the JSON API's 401). The cursor is Last-Event-ID, else `?after=`, else 0; a value that is not all
@@ -20,7 +20,7 @@ import { currentSession, withSessionCookies } from "../accounts/auth.ts";
 import { conversationObject } from "../addressing.ts";
 import type { Conversation } from "../conversation/conversation.ts";
 import { STREAM_PATH } from "../conversation/stream.ts";
-import { HttpError, notFound, unauthorized } from "../http/errors.ts";
+import { HttpError, errorAnswer } from "../http/errors.ts";
 import { UUID } from "../http/paths.ts";
 import type { App, AppEnv } from "../http/router.ts";
 import { parseJson } from "../lib/json.ts";
@@ -246,22 +246,22 @@ function close(socket: WebSocket, code: number): void {
 
 async function stream(c: Context<AppEnv>): Promise<Response> {
 	const session = await currentSession(c.env, c.req.raw);
-	if (!session.user || !session.sessionId) return withSessionCookies(unauthorized(), session);
+	if (!session.user || !session.sessionId) return withSessionCookies(errorAnswer("UNAUTHORIZED", "Unauthorized"), session);
 	let m: Member;
 	try {
 		m = await member(c.env, session, param(c, "workspace"));
 	} catch (error) {
-		if (error instanceof HttpError) return withSessionCookies(notFound(), session);
+		if (error instanceof HttpError) return withSessionCookies(errorAnswer("NOT_FOUND", "Not found."), session);
 		throw error;
 	}
 	const runId = param(c, "run");
 	const located = await m.object.locateRun(m.caller, runId);
-	if (located === null) return withSessionCookies(notFound(), session);
+	if (located === null) return withSessionCookies(errorAnswer("NOT_FOUND", "Not found."), session);
 	const stub = conversationObject(c.env, m.workspace, located.conversationId);
 	const userId = m.caller.userId;
 	const after = streamCursor(c.req.raw);
 	const socket = await openSocket(stub, runId, userId, after);
-	if (socket === null) return withSessionCookies(notFound(), session);
+	if (socket === null) return withSessionCookies(errorAnswer("NOT_FOUND", "Not found."), session);
 	const request = c.req.raw;
 	const workspaceId = param(c, "workspace");
 	const relay = new Relay(after, (cursor) => openSocket(stub, runId, userId, cursor), async () => {

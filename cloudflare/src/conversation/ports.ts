@@ -19,7 +19,7 @@ import type { RunStatePort } from "../gateway/run-state.ts";
 import { durableSql } from "../lib/sql.ts";
 import { type ModelRoute, type Upstream, upstreamOf } from "../model/route.ts";
 import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan } from "../sandbox/folder.ts";
-import type { AttachmentOut, FolderOut } from "../shared/api.ts";
+import type { Attachment, Folder } from "@minerva/contract";
 import { type AttemptFence, type ConversationId, type EpochMs, type Outcome, type RunId, type RunStatus, type VersionId, type WorkspaceRef, refuse } from "../shared/rpc.ts";
 import type { WorkspaceApi } from "../workspace/core.ts";
 import type { GateDecision } from "./gate.ts";
@@ -69,13 +69,13 @@ export interface FolderPort {
 	usage(): FolderUsage;
 	prepareAttachments(runId: RunId, uploads: ReservedUpload[]): Promise<Outcome<PreparedAttachments>>;
 	/** Synchronous, inside the start's transaction: the base version with the copies, claiming their loose keys. */
-	commitAttachments(runId: RunId, prepared: PreparedAttachments): { baseVersionId: VersionId | null; attachments: AttachmentOut[] };
+	commitAttachments(runId: RunId, prepared: PreparedAttachments): { baseVersionId: VersionId | null; attachments: Attachment[] };
 	/** Inside `finish`'s transaction: the last checkpoint, else the base, becomes the folder. */
 	publish(runId: RunId, run: { baseVersionId: VersionId | null; checkpointVersionId: VersionId | null; status: RunStatus }): {
 		resultVersionId: VersionId | null;
 		changes: { [key: string]: unknown } | null;
 	};
-	list(versionId: VersionId | null): FolderOut | null;
+	list(versionId: VersionId | null): Folder | null;
 	resolve(versionId: VersionId | null, path: string): DownloadTarget | null;
 	/** Deletes the conversation's objects in R2 (plan: Files, Deletion). */
 	deleteObjects(): Promise<void>;
@@ -149,7 +149,7 @@ export const emptyFolder = (context: PortsContext): FolderPort => ({
 			: { ok: true, value: { uploads: [], state: {} } },
 	commitAttachments: () => ({ baseVersionId: context.folderVersionId(), attachments: [] }),
 	publish: (_runId, run) => ({ resultVersionId: run.checkpointVersionId ?? run.baseVersionId, changes: null }),
-	list: (versionId) => (versionId === null || versionId === context.folderVersionId() ? { version_id: context.folderVersionId(), files: [], dirs: [] } : null),
+	list: (versionId) => (versionId === null || versionId === context.folderVersionId() ? { versionId: context.folderVersionId(), files: [], dirs: [] } : null),
 	resolve: () => null,
 	deleteObjects: async () => {},
 	hydratePlan: () => ({ versionId: context.folderVersionId(), files: [], dirs: [] }),

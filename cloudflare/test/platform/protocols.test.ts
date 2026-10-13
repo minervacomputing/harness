@@ -233,10 +233,10 @@ describe("start and revocation", () => {
 		const outcome = await posting;
 		if (!outcome.ok) throw new Error(outcome.refusal.detail);
 		// The start's own transaction stored it cancelled, from the tombstone: never queued for activation.
-		expect(outcome.value.run).toMatchObject({ status: "cancelled", error_message: STOPPED_PERMISSIONS });
+		expect(outcome.value.run).toMatchObject({ status: "cancelled", errorMessage: STOPPED_PERMISSIONS });
 		expect(statuses(outcome.value.run.events)).toEqual([{ status: "queued" }, { status: "cancelled", message: STOPPED_PERMISSIONS }]);
 		const run = await settled(w, outcome.value.run.id);
-		expect(run).toMatchObject({ status: "cancelled", error_message: STOPPED_PERMISSIONS });
+		expect(run).toMatchObject({ status: "cancelled", errorMessage: STOPPED_PERMISSIONS });
 		const internals = await w.conversation.faultRun(run.id);
 		expect(internals.run).toMatchObject({ error_code: "permissions_changed", revoked: 1, activated: 0 });
 		await sleep(200);
@@ -253,7 +253,7 @@ describe("start and revocation", () => {
 		expect(changed.ok && changed.value.revocation).toBe("acknowledged");
 		// The browser is told only after the run's local flag is set and the run is stopped.
 		const run = (await w.conversation.getRun(CALLER, runId)) as RunHead;
-		expect(run).toMatchObject({ status: "cancelled", error_message: STOPPED_PERMISSIONS });
+		expect(run).toMatchObject({ status: "cancelled", errorMessage: STOPPED_PERMISSIONS });
 		await sleep(2000);
 		const requests = (await provider(w)).requests;
 		expect(requests).toHaveLength(1);
@@ -328,7 +328,7 @@ describe("start and revocation", () => {
 			await runDurableObjectAlarm(w.ws).catch(() => false);
 			return (await w.conversation.getRun(CALLER, runId)) as RunHead;
 		}, (run) => run.status === "cancelled");
-		expect(((await w.conversation.getRun(CALLER, runId)) as RunHead).error_message).toBe(STOPPED_PERMISSIONS);
+		expect(((await w.conversation.getRun(CALLER, runId)) as RunHead).errorMessage).toBe(STOPPED_PERMISSIONS);
 	});
 
 	test("a lost cancel acknowledgement: delivered again within the barrier, and the change answers acknowledged", async () => {
@@ -338,7 +338,7 @@ describe("start and revocation", () => {
 		const changed = await w.ws.applyGrantChanges(CALLER, w.connectionId, READ_ONLY, {});
 		expect(changed.ok && changed.value.revocation).toBe("acknowledged");
 		expect((await w.ws.faultFired()).map((entry) => entry.point)).toEqual(["cancel:lost"]);
-		expect(((await w.conversation.getRun(CALLER, runId)) as RunHead)).toMatchObject({ status: "cancelled", error_message: STOPPED_PERMISSIONS });
+		expect(((await w.conversation.getRun(CALLER, runId)) as RunHead)).toMatchObject({ status: "cancelled", errorMessage: STOPPED_PERMISSIONS });
 	});
 
 });
@@ -582,7 +582,7 @@ describe("attempts", () => {
 		const w = await world({ faults: [{ point: "tool:after", mode: "abort", tool: LIST, times: 5 }] });
 		const runId = await post(w, [LIST_INBOX, { text: "Never." }]);
 		const run = await settled(w, runId, 20_000);
-		expect(run).toMatchObject({ status: "failed", error_message: "The worker stopped unexpectedly." });
+		expect(run).toMatchObject({ status: "failed", errorMessage: "The worker stopped unexpectedly." });
 		const events = await eventsOf(w, runId);
 		expect(restarts(events)).toEqual([2, 3]);
 		expect((await w.conversation.faultRun(runId)).run).toMatchObject({ attempt: 3, error_code: "worker_exited" });
@@ -600,7 +600,7 @@ describe("attempts", () => {
 		const w = await world({ faults: [{ point: "tool:after", mode: "abort", tool: LIST }, { point: "gate:committed", mode: "abort", unsynced: true, times: 6 }] });
 		const runId = await post(w, [LIST_INBOX, { text: "Never." }]);
 		const run = await settled(w, runId, 20_000);
-		expect(run).toMatchObject({ status: "failed", error_message: "The worker stopped unexpectedly." });
+		expect(run).toMatchObject({ status: "failed", errorMessage: "The worker stopped unexpectedly." });
 		expect(restarts(await eventsOf(w, runId))).toEqual([2, 3]);
 		expect((await w.conversation.faultRun(runId)).run).toMatchObject({ attempt: 3, error_code: "worker_exited" });
 		// Only attempt 1 reached the tool: attempts 2 and 3 died before pi resumed.
@@ -630,7 +630,7 @@ describe("attempts", () => {
 		await until(() => provider(w), (state) => state.requests.length > 0);
 		await sleep(Math.max(0, started + 4000 - Date.now()));
 		const run = await settled(w, runId);
-		expect(run).toMatchObject({ status: "timed_out", error_message: "The run took too long." });
+		expect(run).toMatchObject({ status: "timed_out", errorMessage: "The run took too long." });
 		expect(restarts(await eventsOf(w, runId))).toEqual([]);
 		const internals = await w.conversation.faultRun(runId);
 		expect(internals.run).toMatchObject({ attempt: 1, error_code: "timed_out" });
@@ -752,7 +752,7 @@ describe("writes", () => {
 		if (!outcome.ok) throw new Error(outcome.refusal.detail);
 		const runId = outcome.value.run.id;
 		const run = await settled(w, runId, 15_000);
-		expect(run).toMatchObject({ status: "timed_out", error_message: "The run took too long." });
+		expect(run).toMatchObject({ status: "timed_out", errorMessage: "The run took too long." });
 		expect(toolCalls(await eventsOf(w, runId))).toEqual([
 			expect.objectContaining({ decision: "error", code: "TIMED_OUT", message: "The write was not sent because its time ran out." }),
 		]);

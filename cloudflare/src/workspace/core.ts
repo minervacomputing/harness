@@ -21,8 +21,8 @@ import { type Binding, type EncryptionKeys, type Sealed, credentialBinding } fro
 import { type JsonObject, parseJson } from "../lib/json.ts";
 import { uuid7 } from "../lib/random.ts";
 import { VALUE_PART, sliceText, splitParts } from "../lib/text.ts";
-import type { Agent, NewAgent } from "@minerva/contract";
-import type { AccessOut, ConnectionOut, ConversationOut, UploadOut } from "../shared/api.ts";
+import type { Agent, ConversationSummary, NewAgent, Upload } from "@minerva/contract";
+import type { AccessOut, ConnectionOut } from "../shared/api.ts";
 import type {
 	AgentId,
 	Caller,
@@ -237,9 +237,9 @@ export interface WorkspaceApi {
 
 	// Conversations: an index only; each Conversation Durable Object is authoritative for itself.
 	/** 404 when the agent is not in the workspace; initializes the Conversation Durable Object idempotently. */
-	createConversation(caller: Caller, agentId: AgentId): Promise<Outcome<ConversationOut>>;
+	createConversation(caller: Caller, agentId: AgentId): Promise<Outcome<ConversationSummary>>;
 	/** The caller's, newest `updated_at` first, at most 100. */
-	listConversations(caller: Caller): Promise<ConversationOut[]>;
+	listConversations(caller: Caller): Promise<ConversationSummary[]>;
 	/**
 	 * Whether the conversation is in this workspace's index, ready, not deleted and the caller's: the Worker
 	 * asks before it addresses a Conversation Durable Object by an id from the URL (addressing.ts), so an id
@@ -266,7 +266,7 @@ export interface WorkspaceApi {
 	 */
 	reserveUpload(caller: Caller, upload: { name: string; size: number }): Promise<Outcome<{ id: UploadId; key: string }>>;
 	/** After the put and the hash: the upload is complete and attachable for a day. */
-	completeUpload(caller: Caller, id: UploadId, stored: { sha256: Sha256; size: number; mediaType: string }): Promise<Outcome<UploadOut>>;
+	completeUpload(caller: Caller, id: UploadId, stored: { sha256: Sha256; size: number; mediaType: string }): Promise<Outcome<Upload>>;
 	/** The body never arrived or failed its checks; the reservation is released and the object deleted if written. */
 	abandonUpload(caller: Caller, id: UploadId): Promise<void>;
 	/** Only the caller's own unattached upload; always succeeds (204). */
@@ -1147,7 +1147,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		this.#sql.exec("INSERT OR IGNORE INTO purges (conversation_id, requested_at, next_attempt_at) VALUES (?, ?, ?)", conversationId, now, now);
 	}
 
-	async createConversation(caller: Caller, agentId: AgentId): Promise<Outcome<ConversationOut>> {
+	async createConversation(caller: Caller, agentId: AgentId): Promise<Outcome<ConversationSummary>> {
 		if (this.#agentRow(agentId) === null) return refuse("NOT_FOUND", NOT_FOUND);
 		const now = this.#now();
 		const id = uuid7(now);
@@ -1170,7 +1170,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		return row === null ? refuse("NOT_FOUND", NOT_FOUND) : ok(conversationOut(row));
 	}
 
-	async listConversations(caller: Caller): Promise<ConversationOut[]> {
+	async listConversations(caller: Caller): Promise<ConversationSummary[]> {
 		return this.#sql
 			.exec<ConversationRow>(
 				"SELECT * FROM conversations WHERE user_id = ? AND ready = 1 AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC LIMIT 100",
@@ -1626,9 +1626,9 @@ export class WorkspaceCore implements WorkspaceApi {
 		});
 	}
 
-	async completeUpload(caller: Caller, id: UploadId, stored: { sha256: Sha256; size: number; mediaType: string }): Promise<Outcome<UploadOut>> {
+	async completeUpload(caller: Caller, id: UploadId, stored: { sha256: Sha256; size: number; mediaType: string }): Promise<Outcome<Upload>> {
 		const now = this.#now();
-		return this.#commit((): Outcome<UploadOut> => {
+		return this.#commit((): Outcome<Upload> => {
 			const row = first<UploadRow>(this.#sql, "SELECT * FROM uploads WHERE id = ? AND user_id = ?", id, caller.userId);
 			if (row === null) return refuse("NOT_FOUND", NOT_FOUND);
 			if (row.state === "pending") {
@@ -1643,7 +1643,7 @@ export class WorkspaceCore implements WorkspaceApi {
 				);
 			}
 			const current = first<UploadRow>(this.#sql, "SELECT * FROM uploads WHERE id = ?", id) as UploadRow;
-			return ok({ id: current.id, name: current.name, size: current.size, media_type: current.media_type as string });
+			return ok({ id: current.id, name: current.name, size: current.size, mediaType: current.media_type as string });
 		});
 	}
 

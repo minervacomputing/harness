@@ -6,7 +6,8 @@ import type { GrantRow } from "../gateway/grants.ts";
 import { ANY } from "../gateway/policy.ts";
 import { isoTime } from "../lib/dates.ts";
 import type { Agent } from "@minerva/contract";
-import type { AccessOut, ActionOut, AllowedOut, ConnectionOut, ConversationOut, GrantOut, KindOut } from "../shared/api.ts";
+import type { ConversationSummary } from "@minerva/contract";
+import type { AccessOut, ActionOut, AllowedOut, ConnectionOut, GrantOut, KindOut } from "../shared/api.ts";
 import type { Caller, UserId } from "../shared/rpc.ts";
 
 /** Names of resources shown per allowed action in a connection's summary. */
@@ -171,6 +172,6 @@ export function agentOut(caller: Caller, agent: AgentView): Agent {
 	};
 }
 
-export function conversationOut(row: { id: string; agent_id: string; title: string; updated_at: number }): ConversationOut {
-	return { id: row.id, agent_id: row.agent_id, title: row.title, updated_at: isoTime(row.updated_at) };
+export function conversationOut(row: { id: string; agent_id: string; title: string; updated_at: number }): ConversationSummary {
+	return { id: row.id, agentId: row.agent_id, title: row.title, updatedAt: isoTime(row.updated_at) };
 }

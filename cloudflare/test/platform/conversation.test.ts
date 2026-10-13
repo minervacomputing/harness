@@ -271,14 +271,14 @@ describe("starting a run", () => {
 		expect(outcome.ok).toBe(true);
 		if (!outcome.ok) return;
 		const { message, run } = outcome.value;
-		expect(message).toMatchObject({ role: "user", content: "Hello there", attachments: [], run_id: run.id });
+		expect(message).toMatchObject({ role: "user", content: "Hello there", attachments: [], runId: run.id });
 		expect(run.status).toBe("queued");
 		expect(run.events).toEqual([{ seq: 1, type: "status", data: { status: "queued" } }]);
 		expect(fakes.workspace.begun).toEqual([
 			{ runId: run.id, conversationId: expect.any(String), userId: USER, agentId: AGENT, uploadIds: [], folder: { bytes: 0, entries: 0 } },
 		]);
 		const ended = await settled(stub, run.id);
-		expect(ended).toMatchObject({ status: "completed", error_message: "", finished_at: expect.any(String) });
+		expect(ended).toMatchObject({ status: "completed", errorMessage: "", finishedAt: expect.any(String) });
 		const events = await eventsOf(stub, run.id);
 		expect(events.map((event) => event.seq)).toEqual(events.map((_, index) => index + 1));
 		expect(statuses(events)).toEqual([{ status: "queued" }, { status: "provisioning" }, { status: "running" }, { status: "completed" }]);
@@ -290,7 +290,7 @@ describe("starting a run", () => {
 		expect(events.filter((event) => event.type === "text_delta").map((event) => (event.data as { text: string }).text).join("")).toBe("Done.");
 		const head = await stub.getConversation(CALLER);
 		expect(head?.title).toBe("Hello there");
-		expect(head?.messages.map((item) => [item.role, item.content, item.run_id])).toEqual([
+		expect(head?.messages.map((item) => [item.role, item.content, item.runId])).toEqual([
 			["user", "Hello there", run.id],
 			["assistant", "Done.", run.id],
 		]);
@@ -435,7 +435,7 @@ describe("starting a run", () => {
 		const result = await outcome;
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
-		expect(result.value.run).toMatchObject({ status: "cancelled", error_message: "Stopped because permissions changed." });
+		expect(result.value.run).toMatchObject({ status: "cancelled", errorMessage: "Stopped because permissions changed." });
 		expect(statuses(result.value.run.events)).toEqual([{ status: "queued" }, { status: "cancelled", message: "Stopped because permissions changed." }]);
 		await until(async () => fakes.workspace.released, (released) => released.length > 0);
 		expect(fakes.workspace.released).toEqual([[runId, "cancelled"]]);
@@ -452,7 +452,7 @@ describe("starting a run", () => {
 		fakes.workspace.registration = () => registration;
 		const runId = await posted(stub, "Hi");
 		const run = await settled(stub, runId);
-		expect([run.status, run.error_message]).toEqual([status, message]);
+		expect([run.status, run.errorMessage]).toEqual([status, message]);
 		expect(fakes.contexts).toEqual([]);
 	});
 
@@ -486,7 +486,7 @@ describe("stopping a run", () => {
 		const runId = await posted(stub, scripted({ turns: [{ tools: [{ name: "fake_wait", arguments: {} }] }] }));
 		await until(async () => fakes.invocations.length, (n) => n === 1);
 		const cancelled = await stub.cancelRun(CALLER, runId);
-		expect(cancelled).toMatchObject({ status: "cancelled", error_message: "Stopped." });
+		expect(cancelled).toMatchObject({ status: "cancelled", errorMessage: "Stopped." });
 		expect(await stub.cancelRun(CALLER, runId)).toEqual(cancelled);
 		hold.resolve();
 		const events = await eventsOf(stub, runId);
@@ -536,7 +536,7 @@ describe("stopping a run", () => {
 		// Expired counts as inactive before it is marked: fenced events are refused.
 		await runDurableObjectAlarm(stub);
 		const run = await settled(stub, runId);
-		expect([run.status, run.error_message]).toEqual(["timed_out", "The run took too long."]);
+		expect([run.status, run.errorMessage]).toEqual(["timed_out", "The run took too long."]);
 		hold.resolve();
 	});
 });
@@ -741,7 +741,7 @@ describe("the model", () => {
 		const { stub, fakes } = await conversation({ model: { script: () => ({ turns: [{ error: { message: "secret org-1234 quota" } }] }) } });
 		const runId = await posted(stub, "Hi");
 		const run = await settled(stub, runId);
-		expect([run.status, run.error_message]).toEqual(["failed", "The agent could not finish this run. Try again."]);
+		expect([run.status, run.errorMessage]).toEqual(["failed", "The agent could not finish this run. Try again."]);
 		const stored = await runInDurableObject(stub, (_instance, state) => {
 			const tables = state.storage.sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\'").toArray();
 			return tables.map(({ name }) => JSON.stringify(state.storage.sql.exec(`SELECT * FROM "${name}"`).toArray())).join("\n");
@@ -780,7 +780,7 @@ describe("the model", () => {
 				const { stub } = await conversation({ upstream: upstreamOf(route(provider), binding) });
 				const runId = await posted(stub, "Hi");
 				const run = await settled(stub, runId);
-				expect([run.status, run.error_message]).toEqual(["failed", "The agent could not finish this run. Try again."]);
+				expect([run.status, run.errorMessage]).toEqual(["failed", "The agent could not finish this run. Try again."]);
 				const stored = await runInDurableObject(stub, (_instance, state) => {
 					const tables = state.storage.sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\'").toArray();
 					return tables.map(({ name }) => `${name}: ${JSON.stringify(state.storage.sql.exec(`SELECT * FROM "${name}"`).toArray())}`).join("\n");
@@ -843,7 +843,7 @@ describe("restarts through the attempt gate", () => {
 			await fresh(id).getRun(CALLER, runId);
 		}
 		const run = await settled(fresh(id), runId, 15_000);
-		expect([run.status, run.error_message]).toEqual(["failed", "The worker stopped unexpectedly."]);
+		expect([run.status, run.errorMessage]).toEqual(["failed", "The worker stopped unexpectedly."]);
 		const stored = await row(fresh(id), runId);
 		expect([stored.attempt, stored.error_code]).toEqual([3, "worker_exited"]);
 		await sleep(300);

@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { BotIcon, FolderIcon } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
-import { cancelRunMutation, getConversationOptions, listConnectionsOptions } from '@/api/@tanstack/react-query.gen'
+import { downloadPath } from '@minerva/contract'
+import { listConnectionsOptions } from '@/api/@tanstack/react-query.gen'
 import { AppIcons, connectionsOf } from '@/components/agents/agent-apps'
 import { AgentIntro } from '@/components/chat/agent-intro'
 import { FilesPanel } from '@/components/chat/files-panel'
@@ -18,11 +19,10 @@ import { orpc } from '@/lib/orpc'
 import { ACTIVE_STATUSES, useRunEvents } from '@/lib/run-stream'
 import { documentTitle } from '@/lib/title'
 import { cn } from '@/lib/utils'
-import { downloadUrl } from '@/lib/uploads'
 
 export const Route = createFileRoute('/w/$workspaceId/chat/$conversationId')({
-  loader: ({ context, params }) =>
-    context.queryClient.ensureQueryData(getConversationOptions({ path: { workspace_id: params.workspaceId, conversation_id: params.conversationId } })),
+  loader: ({ context, params: { workspaceId, conversationId } }) =>
+    context.queryClient.ensureQueryData(orpc.conversations.get.queryOptions({ input: { workspaceId, conversationId } })),
   pendingComponent: () => (
     <div className="p-8">
       <Spinner />
@@ -34,11 +34,11 @@ export const Route = createFileRoute('/w/$workspaceId/chat/$conversationId')({
 function ConversationPage() {
   const { workspaceId, conversationId } = Route.useParams()
   const queryClient = useQueryClient()
-  const path = { workspace_id: workspaceId, conversation_id: conversationId }
-  const conversation = useQuery(getConversationOptions({ path }))
+  const path = { workspaceId, conversationId }
+  const conversation = useQuery(orpc.conversations.get.queryOptions({ input: path }))
   const agents = useQuery(orpc.agents.list.queryOptions({ input: { workspaceId } }))
   const connections = useQuery(listConnectionsOptions({ path: { workspace_id: workspaceId } }))
-  const agent = agents.data?.find(a => a.id === conversation.data?.agent_id)
+  const agent = agents.data?.find(a => a.id === conversation.data?.agentId)
   const title = conversation.data?.title || 'New conversation'
 
   const refresh = () => refreshConversation(queryClient, path)
@@ -50,7 +50,7 @@ function ConversationPage() {
   })
   const settled = events.some(e => e.type === 'status' && !ACTIVE_STATUSES.has(e.data.status as never))
 
-  const cancel = useMutation({ ...cancelRunMutation(), onSuccess: refresh })
+  const cancel = useMutation(orpc.runs.cancel.mutationOptions({ onSuccess: refresh }))
   const [filesOpen, setFilesOpen] = useState(false)
   const filesButton = useRef<HTMLButtonElement>(null)
   const closeFiles = () => {
@@ -65,7 +65,7 @@ function ConversationPage() {
     conversation: conversationId,
     isRunning: !!liveRun && !settled,
     onCancel: async () => {
-      if (liveRun) await cancel.mutateAsync({ path: { workspace_id: workspaceId, run_id: liveRun.id } })
+      if (liveRun) await cancel.mutateAsync({ workspaceId, runId: liveRun.id })
     },
   })
 
@@ -106,7 +106,7 @@ function ConversationPage() {
           <div className={cn('min-w-0 flex-1', filesOpen && 'max-md:hidden')}>
             <Thread
               empty={<AgentIntro workspaceId={workspaceId} agents={agents.data} agent={agent} />}
-              fileHref={(file, version) => downloadUrl(workspaceId, conversationId, file, version)}
+              fileHref={(file, version) => downloadPath(workspaceId, conversationId, file, version)}
             />
           </div>
           {filesOpen && <FilesPanel id="conversation-files" workspaceId={workspaceId} conversationId={conversationId} onClose={closeFiles} />}

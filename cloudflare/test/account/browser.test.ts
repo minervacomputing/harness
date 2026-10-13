@@ -377,15 +377,15 @@ async function api<T>(method: string, path: string, body?: unknown): Promise<{ s
 interface Run {
 	id: string;
 	status: string;
-	error_message: string;
-	result_version_id: string | null;
+	errorMessage: string;
+	resultVersionId: string | null;
 }
 
 /** The conversation once it has `runs` runs and the newest has ended (a run the page has only asked for is not counted as one). */
-async function ended(runs: number, timeoutMs: number): Promise<{ runs: Run[]; messages: { role: string; content: string; run_id: string | null }[] }> {
+async function ended(runs: number, timeoutMs: number): Promise<{ runs: Run[]; messages: { role: string; content: string; runId: string | null }[] }> {
 	const started = Date.now();
 	for (;;) {
-		const detail = await api<{ runs: Run[]; messages: { role: string; content: string; run_id: string | null }[] }>("GET", `/api/workspaces/${workspaceId}/conversations/${conversationId}`);
+		const detail = await api<{ runs: Run[]; messages: { role: string; content: string; runId: string | null }[] }>("GET", `/api/workspaces/${workspaceId}/conversations/${conversationId}`);
 		expect(detail.status).toBe(200);
 		const run = detail.body.runs.at(-1);
 		if (run && detail.body.runs.length >= runs && !["queued", "provisioning", "running"].includes(run.status)) return detail.body;
@@ -698,7 +698,7 @@ describe("the browser walk on the test Worker", () => {
 		conversationId = /\/chat\/([0-9a-f-]{36})/.exec(page.url())?.[1] ?? "";
 		await page.getByText("Wrote report.txt.").waitFor({ timeout: 240_000 });
 		const detail = await ended(1, 60_000);
-		expect(detail.runs.at(-1)).toMatchObject({ status: "completed", error_message: "" });
+		expect(detail.runs.at(-1)).toMatchObject({ status: "completed", errorMessage: "" });
 		await screenshot("fake-turn");
 
 		await button("Files").click();
@@ -720,7 +720,7 @@ describe("the browser walk on the test Worker", () => {
 	step("one short turn with Workers AI", async () => {
 		// A conversation of its own, made through the API so that it has Workers AI before its first run: a
 		// Conversation object keeps the model it first called while it lives.
-		const created = await api<{ id: string }>("POST", `/api/workspaces/${workspaceId}/conversations`, { agent_id: agentId });
+		const created = await api<{ id: string }>("POST", `/api/workspaces/${workspaceId}/conversations`, { agentId });
 		expect(created.status).toBe(201);
 		conversationId = created.body.id;
 		await driver("conversation-model", { workspace: { id: workspaceId, jurisdiction: null }, userId: "", conversationId, model: "workers-ai" });
@@ -729,8 +729,8 @@ describe("the browser walk on the test Worker", () => {
 		await button("Send").click();
 		const detail = await ended(1, 180_000);
 		const run = detail.runs.at(-1) as Run;
-		expect(run, run.error_message).toMatchObject({ status: "completed" });
-		const answer = detail.messages.filter((message) => message.role === "assistant" && message.run_id === run.id).at(-1);
+		expect(run, run.errorMessage).toMatchObject({ status: "completed" });
+		const answer = detail.messages.filter((message) => message.role === "assistant" && message.runId === run.id).at(-1);
 		expect(answer?.content.trim()).toBeTruthy();
 		// The fake model's answer to a prompt that is not its script.
 		expect(answer?.content.trim()).not.toBe("Done.");

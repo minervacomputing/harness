@@ -11,6 +11,7 @@ import { type Member, STILL_STOPPING } from "./members.ts";
 export interface ApiContext {
 	/** The request as it arrived. Its body is read only by api/orpc.ts's reader. */
 	request: Request;
+	env: Env;
 	/** The caller as a member of the path's workspace, which the mount checked; null outside /api/workspaces/{ws}. */
 	member: Member | null;
 }
@@ -36,10 +37,13 @@ export function checkStopped(revocation: Revocation): void {
 /**
  * The procedures of a workspace: the input's workspace must be the path's, whose membership the mount checked
  * before the body was read. oRPC's input merges the body and query under the path's parameters, so they agree
- * unless a procedure takes its workspace from elsewhere; this makes sure. Runs before the input is validated.
+ * unless a procedure takes its workspace from elsewhere; this makes sure. Runs before the input is validated. A
+ * procedure whose input is detailed (`{params, headers, body}`, for a header) has the path's parameters apart.
  */
-export const inWorkspace = api.middleware(async ({ context, next }, input: unknown) => {
-	const workspaceId = (input as { workspaceId?: unknown } | undefined)?.workspaceId;
+export const inWorkspace = api.middleware(async ({ context, next, procedure }, input: unknown) => {
+	const detailed = procedure["~orpc"].route.inputStructure === "detailed";
+	const fields = (detailed ? (input as { params?: unknown } | undefined)?.params : input) as { workspaceId?: unknown } | undefined;
+	const workspaceId = fields?.workspaceId;
 	if (context.member === null || workspaceId !== context.member.workspace.id) throw refusal("UNAUTHORIZED", "Unauthorized");
 	return next({ context: { member: context.member } });
 });

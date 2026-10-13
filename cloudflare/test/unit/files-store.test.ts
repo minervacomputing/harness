@@ -732,7 +732,7 @@ describe("checkpoints", () => {
 		w.finish(run);
 		expect(w.runRow(run)?.result_version_id).toBeNull();
 		expect(w.folder()).toBeNull();
-		expect(w.store.list(null)).toEqual({ version_id: null, files: [], dirs: [] });
+		expect(w.store.list(null)).toEqual({ versionId: null, files: [], dirs: [] });
 	});
 
 	test("a checkpoint whose upload is in flight when the run ends is refused, and nothing is published from it", async () => {
@@ -981,7 +981,7 @@ describe("listing and resolving", () => {
 		expect(w.store.list(checkpoint)).toBeNull();
 		expect(w.store.resolve(checkpoint, "zażółć report.html")).toBeNull();
 		w.finish(run);
-		const listed = { version_id: checkpoint, files: [{ path: "zażółć report.html", size: 25, mtime: 0 }], dirs: [] };
+		const listed = { versionId: checkpoint, files: [{ path: "zażółć report.html", size: 25, mtime: 0 }], dirs: [] };
 		expect(w.store.list(null)).toEqual(listed);
 		expect(w.store.list(checkpoint)).toEqual(listed);
 		expect(w.store.list("0199a000-0000-7000-8000-00000000beef")).toBeNull();

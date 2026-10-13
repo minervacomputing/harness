@@ -1,7 +1,6 @@
 import type { AppendMessage, ThreadMessageLike } from '@assistant-ui/react'
-import type { AttachmentOut, ConversationDetail, EventOut, FolderChangesOut, FolderWarningsOut, RunOut } from '@/api/types.gen'
+import type { Attachment, Conversation, FolderChanges, FolderWarnings, Run, RunEvent, RunStatus, Upload } from '@minerva/contract'
 import { ACTIVE_STATUSES } from '@/lib/run-stream'
-import type { Uploaded } from '@/lib/uploads'
 
 export type LocalTool = { tool: 'read' | 'write' | 'edit' | 'bash'; summary: string; excerpt: string }
 
@@ -9,10 +8,10 @@ export type LocalTool = { tool: 'read' | 'write' | 'edit' | 'bash'; summary: str
 export type ToolCallResult = { decision: 'allowed' | 'denied' | 'error'; message?: string; label: string; local?: LocalTool }
 
 /** What a finished turn did to the folder; downloads come from `version`, the folder it left. */
-export type TurnFiles = { changes: FolderChangesOut | null; warnings: FolderWarningsOut | null; version: string | null }
+export type TurnFiles = { changes: FolderChanges | null; warnings: FolderWarnings | null; version: string | null }
 
 /** A user message's attachments, and the version (the run's start) that holds them. */
-export type MessageFiles = { attachments: AttachmentOut[]; version: string | null }
+export type MessageFiles = { attachments: Attachment[]; version: string | null }
 
 /** Marks text the agent wrote between steps of its work, before its last tool call, rather than its answer. */
 export const NARRATION = 'narration'
@@ -34,7 +33,7 @@ const STARTING: Record<string, string> = {
 }
 
 /** A status event that starts a new attempt: the run's worker died and another took over the turn. */
-function isRestart(event: EventOut): boolean {
+function isRestart(event: RunEvent): boolean {
   return event.type === 'status' && event.data.attempt != null
 }
 
@@ -44,7 +43,7 @@ function isRestart(event: EventOut): boolean {
  * repeat is not shown next to the card of the write. Streamed text continues the part before it only if it came from
  * the same model call (`call`), so calls that stream at once do not run together.
  */
-function collect(events: EventOut[]): { parts: Part[]; callOf: WeakMap<Part, unknown> } {
+function collect(events: RunEvent[]): { parts: Part[]; callOf: WeakMap<Part, unknown> } {
   let parts: Part[] = []
   const callOf = new WeakMap<Part, unknown>()
   const writes = new Set<string>()
@@ -99,7 +98,7 @@ function collect(events: EventOut[]): { parts: Part[]; callOf: WeakMap<Part, unk
   return { parts, callOf }
 }
 
-function partsFrom(events: EventOut[]): Part[] {
+function partsFrom(events: RunEvent[]): Part[] {
   return withNarration(collect(events).parts)
 }
 
@@ -114,7 +113,7 @@ function withNarration(parts: Part[]): Part[] {
  * streams). Events stored before the event named its call take the last call to stream text, which wrote the answer
  * then: the Worker publishes the text of every call but a compaction's.
  */
-function finishedParts(events: EventOut[], answer: string): Part[] {
+function finishedParts(events: RunEvent[], answer: string): Part[] {
   const { parts, callOf } = collect(events)
   const lastTool = parts.findLastIndex(part => part.type === 'tool-call')
   const lastText = parts.findLast(part => part.type === 'text')
@@ -123,11 +122,11 @@ function finishedParts(events: EventOut[], answer: string): Part[] {
   return [...withNarration(kept), { type: 'text', text: answer }]
 }
 
-function latestStatus(events: EventOut[]): RunOut['status'] | undefined {
-  return events.findLast(e => e.type === 'status')?.data.status as RunOut['status'] | undefined
+function latestStatus(events: RunEvent[]): RunStatus | undefined {
+  return events.findLast(e => e.type === 'status')?.data.status as RunStatus | undefined
 }
 
-function phaseOf(run: RunOut, events: EventOut[]): string {
+function phaseOf(run: Run, events: RunEvent[]): string {
   const status = events.findLastIndex(e => e.type === 'status')
   if (run.status === 'provisioning' && status >= 0 && isRestart(events[status])) return 'Restarting the agent'
   if (STARTING[run.status]) return STARTING[run.status]
@@ -136,46 +135,46 @@ function phaseOf(run: RunOut, events: EventOut[]): string {
   return String(phase?.data.text ?? 'Thinking')
 }
 
-export function buildMessages(conversation: ConversationDetail | undefined, liveRun: RunOut | undefined, liveEvents: EventOut[]): ChatMessage[] {
+export function buildMessages(conversation: Conversation | undefined, liveRun: Run | undefined, liveEvents: RunEvent[]): ChatMessage[] {
   if (!conversation) return []
   const runs = new Map(conversation.runs.map(run => [run.id, run]))
   if (liveRun) runs.set(liveRun.id, { ...liveRun, status: latestStatus(liveEvents) ?? liveRun.status, events: liveEvents })
-  const answered = new Set(conversation.messages.filter(m => m.role === 'assistant').map(m => m.run_id))
+  const answered = new Set(conversation.messages.filter(m => m.role === 'assistant').map(m => m.runId))
 
   const out: ChatMessage[] = []
   for (const message of conversation.messages) {
-    const run = message.run_id ? runs.get(message.run_id) : undefined
+    const run = message.runId ? runs.get(message.runId) : undefined
     if (message.role === 'user') {
-      const files = { attachments: message.attachments, version: run?.base_version_id ?? null }
-      out.push({ kind: 'user', id: message.id, text: message.content, createdAt: message.created_at, files })
+      const files = { attachments: message.attachments, version: run?.baseVersionId ?? null }
+      out.push({ kind: 'user', id: message.id, text: message.content, createdAt: message.createdAt, files })
       if (!run || answered.has(run.id)) continue
       const streamed = run.events.findLast(e => e.type === 'message')
       // One id for the run's answer, live or finished, so the message is not remounted when the run ends.
       if (streamed) {
         const parts = finishedParts(run.events, String(streamed.data.content ?? ''))
-        out.push({ kind: 'assistant', id: `run-${run.id}`, parts, createdAt: message.created_at, files: turnFiles(run) })
+        out.push({ kind: 'assistant', id: `run-${run.id}`, parts, createdAt: message.createdAt, files: turnFiles(run) })
       } else if (ACTIVE_STATUSES.has(run.status)) {
         out.push({ kind: 'progress', id: `run-${run.id}`, parts: partsFrom(run.events), phase: phaseOf(run, run.events) })
       } else if (run.status !== 'completed') {
-        const reason = run.status === 'cancelled' ? 'Stopped.' : run.error_message || 'The agent could not finish this answer.'
+        const reason = run.status === 'cancelled' ? 'Stopped.' : run.errorMessage || 'The agent could not finish this answer.'
         out.push({ kind: 'failure', id: `run-${run.id}`, parts: partsFrom(run.events), text: reason })
       }
     } else if (message.role === 'assistant') {
       const parts = run ? finishedParts(run.events, message.content) : [{ type: 'text' as const, text: message.content }]
-      out.push({ kind: 'assistant', id: run ? `run-${run.id}` : message.id, parts, createdAt: message.created_at, files: run && turnFiles(run) })
+      out.push({ kind: 'assistant', id: run ? `run-${run.id}` : message.id, parts, createdAt: message.createdAt, files: run && turnFiles(run) })
     }
   }
   return out
 }
 
-function turnFiles(run: RunOut): TurnFiles | undefined {
-  if (!run.folder_changes && !run.folder_warnings) return undefined
-  return { changes: run.folder_changes, warnings: run.folder_warnings, version: run.result_version_id }
+function turnFiles(run: Run): TurnFiles | undefined {
+  if (!run.folderChanges && !run.folderWarnings) return undefined
+  return { changes: run.folderChanges, warnings: run.folderWarnings, version: run.resultVersionId }
 }
 
 /** Shown while a message is on its way to the server, before the conversation refreshes. */
-export function pendingMessages(text: string, uploads: Uploaded[]): ChatMessage[] {
-  const attachments = uploads.map(upload => ({ path: upload.name, size: upload.size, media_type: upload.media_type }))
+export function pendingMessages(text: string, uploads: Upload[]): ChatMessage[] {
+  const attachments = uploads.map(upload => ({ path: upload.name, size: upload.size, media_type: upload.mediaType }))
   return [
     { kind: 'user', id: 'pending-user', text, createdAt: new Date().toISOString(), files: { attachments, version: null } },
     { kind: 'progress', id: 'pending-run', parts: [], phase: 'Sending' },

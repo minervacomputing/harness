@@ -1,11 +1,12 @@
 import { MessageNotSentError, useExternalStoreRuntime } from '@assistant-ui/react'
+import type { Upload } from '@minerva/contract'
 import { useMutation } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import { deleteConversation } from '@/api/sdk.gen'
 import { type ChatMessage, messageText, pendingMessages, toThreadMessage } from '@/components/chat/model'
-import { newSend, SendError, sendMessage } from '@/components/chat/send'
+import { newSend, refused, sendMessage } from '@/components/chat/send'
 import { errorMessage } from '@/lib/http'
-import { useUploadAdapter, type Uploaded } from '@/lib/uploads'
+import { orpc } from '@/lib/orpc'
+import { useUploadAdapter } from '@/lib/uploads'
 
 const NONE: ChatMessage[] = []
 
@@ -32,7 +33,7 @@ type Options = {
 export function useChatRuntime({ workspaceId, messages = NONE, conversation, onSent, isRunning = false, isDisabled, onCancel }: Options) {
   const adapter = useUploadAdapter(workspaceId)
   const send = useMutation(sendMessage)
-  const [sending, setSending] = useState<{ content: string; uploads: Uploaded[] }>()
+  const [sending, setSending] = useState<{ content: string; uploads: Upload[] }>()
   const shown = useMemo(() => (sending ? [...messages, ...pendingMessages(sending.content, sending.uploads)] : messages), [messages, sending])
 
   const runtime = useExternalStoreRuntime({
@@ -52,14 +53,14 @@ export function useChatRuntime({ workspaceId, messages = NONE, conversation, onS
       try {
         const started = typeof conversation === 'function'
         const conversationId = started ? await startConversation(conversation) : conversation
-        const path = { workspace_id: workspaceId, conversation_id: conversationId }
+        const path = { workspaceId, conversationId }
         try {
           await send.mutateAsync(newSend(path, { content, attachments: uploads.map(upload => upload.id) }))
         } catch (error) {
-          if (!(error instanceof SendError && error.refused)) throw error
+          if (!refused(error)) throw error
           // Do not leave an empty chat behind.
-          if (started) await deleteConversation({ path, throwOnError: false })
-          throw new MessageNotSentError(error.message)
+          if (started) await orpc.conversations.delete.call(path).catch(() => {})
+          throw new MessageNotSentError(errorMessage(error))
         }
         await onSent?.(conversationId)
       } catch (error) {

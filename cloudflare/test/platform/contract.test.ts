@@ -7,18 +7,25 @@
 // The rows that need a procedure of their own (an escaped key, a header) run a test-only contract through
 // the same `contractHandler`, in process; the others go through the Worker.
 
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { ERRORS, contract } from "@minerva/contract";
+import { ERRORS, RUN_EVENT_TYPES, contract } from "@minerva/contract";
 import { createORPCClient } from "@orpc/client";
 import { type ContractRouterClient, oc, type } from "@orpc/contract";
 import type { JsonifiedClient } from "@orpc/openapi-client";
 import { OpenAPILink } from "@orpc/openapi-client/fetch";
 import { ORPCError, implement } from "@orpc/server";
-import { describe, expect, test, vi } from "vitest";
+import { beforeAll, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
+import { conversationObject } from "../../src/addressing.ts";
 import { contractHandler } from "../../src/api/orpc.ts";
 import type { ApiContext } from "../../src/api/procedures.ts";
+import { CONNECTORS, CONNECTOR_SOURCE } from "../../src/connectors/index.ts";
+import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
+import { notesConnector } from "../../src/faults/connector.ts";
+import { faultConversationPorts, faultWorkspacePorts } from "../../src/faults/ports.ts";
 import { uuid7 } from "../../src/lib/random.ts";
+import { WORKSPACE_PORTS } from "../../src/workspace/workspace.ts";
 import { type Answer, Browser, ORIGIN, SESSION_COOKIE, contractError, installEmailLog, signedIn } from "./accounts-helpers.ts";
 
 installEmailLog();
@@ -103,7 +110,7 @@ const testClient: JsonifiedClient<ContractRouterClient<typeof testContract>> = c
 	new OpenAPILink(testContract, {
 		url: `${ORIGIN}/api`,
 		fetch: async (request) => {
-			const { matched, response } = await testHandler.handle(request, { prefix: "/api", context: { request, member: null } });
+			const { matched, response } = await testHandler.handle(request, { prefix: "/api", context: { request, env, member: null } });
 			return matched ? response : new Response(null, { status: 404 });
 		},
 	}),
@@ -116,7 +123,7 @@ describe("the body reader", () => {
 		JSON.parse(`{"${shape}":0,"\\\\":1}`);
 		expect(Object.keys(JSON.parse(`{"${shape}":0,"\\n":1}`))[1]).toBe("\\");
 		const request = new Request(`${ORIGIN}/api/test/keys`, { method: "POST", headers: JSON_TYPE, body: `{"${shape}":0,"\\n":1}` });
-		const raw = await testHandler.handle(request, { prefix: "/api", context: { request, member: null } });
+		const raw = await testHandler.handle(request, { prefix: "/api", context: { request, env, member: null } });
 		expect(await raw.response?.json()).toEqual([shape, "\n"]);
 		// Through the typed client, which writes the key with JSON.stringify.
 		expect(await testClient.keys({ [shape]: 0, "\n": 1 })).toEqual([shape, "\n"]);
@@ -130,7 +137,7 @@ describe("the body reader", () => {
 			},
 		});
 		const request = new Request(`${ORIGIN}/api/test/keys`, { method: "POST", headers: JSON_TYPE, body, duplex: "half" } as RequestInit);
-		const { response } = await testHandler.handle(request, { prefix: "/api", context: { request, member: null } });
+		const { response } = await testHandler.handle(request, { prefix: "/api", context: { request, env, member: null } });
 		expect([response?.status, await response?.json()]).toEqual([400, contractError("INVALID_JSON", "The body is not valid JSON.")]);
 	});
 
@@ -306,6 +313,151 @@ describe("the typed client", () => {
 	});
 });
 
-// Pending for A3b, when conversations move to the contract: a streamed conversation read through the
-// typed client (an event iterator that keeps its session cookies and ends on a refusal mid-stream).
-test.todo("a conversation's streamed read through the typed client");
+describe("the streamed read", () => {
+	// The conversation as the Worker writes it, read with a schema of the test's own: the contract types the body with `type<>()`, and
+	// nothing else checks it. Strict, so a field the API does not declare (a head's `eventSeq`) fails it.
+	const Iso = z.iso.datetime();
+	const Event = z.strictObject({ seq: z.number().int().positive(), type: z.enum(RUN_EVENT_TYPES), data: z.record(z.string(), z.unknown()) });
+	const Changed = z.array(z.strictObject({ path: z.string(), size: z.number() }));
+	const Run = z.strictObject({
+		id: z.uuid(),
+		status: z.enum(["queued", "provisioning", "running", "completed", "failed", "cancelled", "timed_out"]),
+		errorMessage: z.string(),
+		createdAt: Iso,
+		finishedAt: Iso.nullable(),
+		baseVersionId: z.uuid().nullable(),
+		resultVersionId: z.uuid().nullable(),
+		folderChanges: z
+			.strictObject({ added: Changed, modified: Changed, deleted: Changed, counts: z.record(z.string(), z.number()), dirs_added: z.array(z.string()), dirs_deleted: z.array(z.string()) })
+			.nullable(),
+		folderWarnings: z.strictObject({ items: z.array(z.strictObject({ path: z.string(), reason: z.string() })), total: z.number() }).nullable(),
+		events: z.array(Event),
+	});
+	const Message = z.strictObject({
+		id: z.uuid(),
+		role: z.enum(["user", "assistant"]),
+		content: z.string(),
+		attachments: z.array(z.strictObject({ path: z.string(), size: z.number(), media_type: z.string() })),
+		runId: z.uuid().nullable(),
+		createdAt: Iso,
+	});
+	const Conversation = z.strictObject({ id: z.uuid(), agentId: z.uuid(), title: z.string(), updatedAt: Iso, messages: z.array(Message), runs: z.array(Run) });
+
+	beforeAll(() => {
+		// The test build's wiring, as chat.test.ts sets it.
+		CONNECTOR_SOURCE.connectors = () => [...CONNECTORS, notesConnector()];
+		PORTS.factory = () => faultConversationPorts(defaultPorts);
+		WORKSPACE_PORTS.factory = (deps, ctx, workerEnv) => faultWorkspacePorts(deps, ctx, workerEnv);
+	});
+
+	/** A conversation with one finished run ("Hi", answered), its run, and the events it has. */
+	async function finished(a: Account): Promise<{ conversationId: string; runId: string; events: number }> {
+		const api = client(a.browser);
+		const agentId = (await api.agents.list({ workspaceId: a.ws }))[0]!.id;
+		const { id: conversationId } = await api.conversations.create({ workspaceId: a.ws, agentId });
+		const posted = await api.conversations.send({ params: { workspaceId: a.ws, conversationId }, headers: {}, body: { content: "Hi" } });
+		const runId = posted.run.id;
+		for (const started = Date.now(); ; ) {
+			const run = await api.runs.get({ workspaceId: a.ws, runId });
+			if (!["queued", "provisioning", "running"].includes(run.status)) return { conversationId, runId, events: run.events.length };
+			if (Date.now() - started > 15_000) throw new Error(`The run did not finish: ${run.status}`);
+			await new Promise((resolve) => setTimeout(resolve, 25));
+		}
+	}
+
+	/** Appends events to a finished run as a long answer would leave them: `count` text deltas of `size` characters, or `data` as stored. */
+	async function addEvents(a: Account, conversationId: string, runId: string, count: number, size: number, data?: string): Promise<void> {
+		const stored = data ?? JSON.stringify({ text: "x".repeat(size), call: "0badc0de" });
+		await runInDurableObject(conversationObject(env, { id: a.ws, jurisdiction: null }, conversationId), (_instance, state) => {
+			for (let i = 0; i < count; i++) {
+				const seq = state.storage.sql.exec<{ event_seq: number }>("UPDATE runs SET event_seq = event_seq + 1 WHERE id = ? RETURNING event_seq", runId).one().event_seq;
+				state.storage.sql.exec("INSERT INTO run_events (run_id, seq, type, data, created_at) VALUES (?, ?, 'text_delta', ?, ?)", runId, seq, stored, Date.now());
+			}
+		});
+	}
+
+	const read = (a: Account, conversationId: string) => a.browser.fetch(`${ORIGIN}/api/workspaces/${a.ws}/conversations/${conversationId}`);
+
+	test("a large conversation, over many pages of events and of bytes, arrives whole as JSON through the typed client", async () => {
+		const ada = await account();
+		const { conversationId, runId, events } = await finished(ada);
+		// Past the 1,000 events of a page, then past its 4 MiB.
+		await addEvents(ada, conversationId, runId, 2_500, 10);
+		await addEvents(ada, conversationId, runId, 6, 1024 * 1024);
+		const raw = await read(ada, conversationId);
+		expect([raw.status, raw.headers.get("Content-Type"), raw.headers.get("Content-Length"), raw.headers.get("Cache-Control")]).toEqual([
+			200,
+			"application/json; charset=utf-8",
+			null,
+			"no-store",
+		]);
+		const parsed = Conversation.parse(JSON.parse(await raw.text()));
+		const seqs = Array.from({ length: events + 2_506 }, (_v, i) => i + 1);
+		expect(parsed.runs[0]!.events.map((event) => event.seq)).toEqual(seqs);
+		const typed = await client(ada.browser).conversations.get({ workspaceId: ada.ws, conversationId });
+		expect(Conversation.parse(typed)).toEqual(parsed);
+		expect(Run.parse(await client(ada.browser).runs.get({ workspaceId: ada.ws, runId }))).toEqual(parsed.runs[0]);
+	}, 60_000);
+
+	test("a slow reader gets the whole body; one that cancels leaves the Worker answering", async () => {
+		const ada = await account();
+		const { conversationId, runId } = await finished(ada);
+		await addEvents(ada, conversationId, runId, 3, 1024 * 1024);
+		const reader = (await read(ada, conversationId)).body!.getReader();
+		const chunks: Uint8Array[] = [];
+		for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+			chunks.push(chunk.value);
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		const whole = Conversation.parse(JSON.parse(new TextDecoder().decode(await new Blob(chunks).arrayBuffer())));
+		expect(chunks.length).toBeGreaterThan(1);
+		// Cancelled after its first piece: the producer stops at its next write.
+		const error = vi.spyOn(console, "error").mockImplementation(() => {});
+		const cancelled = (await read(ada, conversationId)).body!.getReader();
+		await cancelled.read();
+		await cancelled.cancel();
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		error.mockRestore();
+		expect(await client(ada.browser).conversations.get({ workspaceId: ada.ws, conversationId })).toEqual(whole);
+	}, 30_000);
+
+	test("a body that fails after its first page is cut short: never a value, and the conversation reads again once it is fixed", async () => {
+		const ada = await account();
+		const { conversationId, runId } = await finished(ada);
+		await addEvents(ada, conversationId, runId, 1_200, 10);
+		// An event the object cannot read, on the second page: the first is written before it fails.
+		await addEvents(ada, conversationId, runId, 1, 0, "{");
+		const error = vi.spyOn(console, "error").mockImplementation(() => {});
+		const raw = await read(ada, conversationId);
+		expect(raw.status).toBe(200);
+		const text = await raw.text().catch(() => null);
+		expect(text === null || !isJson(text)).toBe(true);
+		await expect(client(ada.browser).conversations.get({ workspaceId: ada.ws, conversationId })).rejects.toThrow();
+		expect(error).toHaveBeenCalledWith("A streamed body failed", expect.anything());
+		error.mockRestore();
+	}, 30_000);
+
+	test("refused before the stream starts, in the contract's shape: another user's conversation or run, and a non-member", async () => {
+		const [ada, grace] = [await account(), await account("grace")];
+		const theirs = await finished(grace);
+		const api = client(ada.browser);
+		for (const call of [
+			() => api.conversations.get({ workspaceId: ada.ws, conversationId: theirs.conversationId }),
+			() => api.runs.get({ workspaceId: ada.ws, runId: theirs.runId }),
+			() => api.runs.cancel({ workspaceId: ada.ws, runId: theirs.runId }),
+		]) {
+			expect(await call().catch((error: unknown) => error)).toMatchObject({ defined: true, code: "NOT_FOUND", status: 404 });
+		}
+		const outsider = await api.conversations.get({ workspaceId: grace.ws, conversationId: theirs.conversationId }).catch((error: unknown) => error);
+		expect(outsider).toMatchObject({ defined: true, code: "UNAUTHORIZED", status: 401 });
+	}, 30_000);
+});
+
+function isJson(text: string): boolean {
+	try {
+		JSON.parse(text);
+		return true;
+	} catch {
+		return false;
+	}
+}

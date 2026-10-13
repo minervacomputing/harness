@@ -150,11 +150,11 @@ describe("the local tools in the conversation", () => {
 		expect(steps).toEqual(["kill", "scan", "checkpoint 1", "kill", "scan", "checkpoint 1", "kill", "scan", "kill", "scan rehash"]);
 		expect(w.sandbox.log[0]).toBe("start 1");
 		expect(w.sandbox.log[1]).toBe("hydrate 0");
-		expect(run.result_version_id).not.toBeNull();
-		expect(run.folder_changes).toMatchObject({ added: [{ path: "notes.txt", size: 9 }], counts: { added: 1 } });
-		expect(run.folder_warnings).toEqual({ total: 0, items: [] });
+		expect(run.resultVersionId).not.toBeNull();
+		expect(run.folderChanges).toMatchObject({ added: [{ path: "notes.txt", size: 9 }], counts: { added: 1 } });
+		expect(run.folderWarnings).toEqual({ total: 0, items: [] });
 		const folder = await w.conversation.listFiles(CALLER, null);
-		expect(folder).toMatchObject({ version_id: run.result_version_id, files: [{ path: "notes.txt", size: 9 }] });
+		expect(folder).toMatchObject({ versionId: run.resultVersionId, files: [{ path: "notes.txt", size: 9 }] });
 		// The run's container is destroyed when it ends.
 		await until(async () => w.sandbox.log, (log) => log.some((line) => line.startsWith("destroy")));
 
@@ -167,7 +167,7 @@ describe("the local tools in the conversation", () => {
 		const log = w.sandbox.log.slice(before);
 		expect(log.filter((line) => line.startsWith("scan") || line.startsWith("checkpoint"))).toEqual([]);
 		expect(log).toContain("hydrate 1");
-		expect([second.base_version_id, second.result_version_id, second.folder_changes]).toEqual([run.result_version_id, run.result_version_id, null]);
+		expect([second.baseVersionId, second.resultVersionId, second.folderChanges]).toEqual([run.resultVersionId, run.resultVersionId, null]);
 	});
 
 	test("the scan's warnings are published with the run", async () => {
@@ -176,7 +176,7 @@ describe("the local tools in the conversation", () => {
 		const runId = await post(w, [bash("put a.txt a"), DONE]);
 		const run = await settled(w, runId);
 		expect(run.status).toBe("completed");
-		expect(run.folder_warnings).toEqual({ total: 2, items: [{ path: "etc", reason: "symlink" }, { path: "pipe", reason: "special" }] });
+		expect(run.folderWarnings).toEqual({ total: 2, items: [{ path: "etc", reason: "symlink" }, { path: "pipe", reason: "special" }] });
 	});
 
 	test("a folder over its limits fails the turn with folder_limit and that limit's own message", async () => {
@@ -184,11 +184,11 @@ describe("the local tools in the conversation", () => {
 		w.sandbox.faults.limit = "folder_entries";
 		const runId = await post(w, [bash("put a.txt a"), DONE]);
 		const run = await settled(w, runId);
-		expect([run.status, run.error_message]).toEqual(["failed", "The agent made more than the 10000 files and folders a conversation can keep."]);
+		expect([run.status, run.errorMessage]).toEqual(["failed", "The agent made more than the 10000 files and folders a conversation can keep."]);
 		expect((await w.conversation.faultRun(runId)).run?.error_code).toBe("folder_limit");
 		// No card: the call's result was never released; the folder stays as it was.
 		expect(cards(await eventsOf(w, runId))).toEqual([]);
-		expect(run.result_version_id).toBeNull();
+		expect(run.resultVersionId).toBeNull();
 		// The reset that keeps the result from pi cuts the end's deferred clean-up: its retries were stored with
 		// the end, and the next start destroys the container.
 		expect((await w.conversation.faultJobs()).filter((job) => job.id === job.fn).map((job) => job.fn)).toEqual(expect.arrayContaining(["release", "sandbox"]));
@@ -197,14 +197,14 @@ describe("the local tools in the conversation", () => {
 		const bytes = await world();
 		bytes.sandbox.faults.limit = "folder_bytes";
 		const over = await settled(bytes, await post(bytes, [bash("put a.txt a"), DONE]));
-		expect(over.error_message).toBe("The agent's files grew past the 256 MiB a conversation can keep.");
+		expect(over.errorMessage).toBe("The agent's files grew past the 256 MiB a conversation can keep.");
 	});
 
 	test("a container that fails its hardening fails the turn", async () => {
 		const w = await world();
 		w.sandbox.faults.harden = "cgroup";
 		const run = await settled(w, await post(w, [bash("put a.txt a"), DONE]));
-		expect([run.status, run.error_message]).toEqual(["failed", "The agent could not finish this run. Try again."]);
+		expect([run.status, run.errorMessage]).toEqual(["failed", "The agent could not finish this run. Try again."]);
 	});
 
 	test("a container that never starts ends each attempt that needs it, until worker_exited", async () => {
@@ -212,7 +212,7 @@ describe("the local tools in the conversation", () => {
 		w.sandbox.faults.start = true;
 		const runId = await post(w, [bash("put a.txt a"), bash("put b.txt b"), bash("put c.txt c"), DONE]);
 		const run = await settled(w, runId, 30_000);
-		expect([run.status, run.error_message]).toEqual(["failed", "The worker stopped unexpectedly."]);
+		expect([run.status, run.errorMessage]).toEqual(["failed", "The worker stopped unexpectedly."]);
 		expect(restarts(await eventsOf(w, runId))).toEqual([2, 3]);
 	});
 
@@ -240,7 +240,7 @@ describe("fault rows: Checkpoints", () => {
 		// The first command's result was never released, so pi reports it as interrupted and it has no card.
 		expect(cards(events)).toEqual([{ tool: "bash", summary: "cat a.txt", ok: false, excerpt: "cat: a.txt: No such file or directory\n\n\nCommand exited with code 1" }]);
 		expect(w.sandbox.log.filter((line) => line.startsWith("start") || line.startsWith("hydrate"))).toEqual(["start 1", "hydrate 0", "start 2", "hydrate 0"]);
-		expect(run.result_version_id).toBeNull();
+		expect(run.resultVersionId).toBeNull();
 	});
 
 	test("a crash between the record and the release, and between the release and pi's commit, keep the checkpoint", async () => {
@@ -256,7 +256,7 @@ describe("fault rows: Checkpoints", () => {
 			const cat = { tool: "bash", summary: "cat a.txt", ok: true, excerpt: "a" };
 			expect(cards(events), point).toEqual(point === "local:released" ? [{ tool: "bash", summary: "put a.txt a", ok: true, excerpt: "" }, cat] : [cat]);
 			expect(w.sandbox.log.filter((line) => line.startsWith("start") || line.startsWith("hydrate")), point).toEqual(["start 1", "hydrate 0", "start 2", "hydrate 1"]);
-			expect(run.folder_changes, point).toMatchObject({ added: [{ path: "a.txt", size: 1 }] });
+			expect(run.folderChanges, point).toMatchObject({ added: [{ path: "a.txt", size: 1 }] });
 		}
 	});
 
@@ -266,7 +266,7 @@ describe("fault rows: Checkpoints", () => {
 		const runId = await post(w, [bash("put a.txt a"), DONE]);
 		// The attempt ends; the next one is told the command was interrupted, and the model answers.
 		const run = await settled(w, runId, 30_000);
-		expect([run.status, run.error_message]).toEqual(["completed", ""]);
+		expect([run.status, run.errorMessage]).toEqual(["completed", ""]);
 		expect(restarts(await eventsOf(w, runId))).toEqual([2]);
 		expect(cards(await eventsOf(w, runId))).toEqual([]);
 	});

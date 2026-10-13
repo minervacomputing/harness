@@ -34,13 +34,13 @@ interface RunEvent {
 interface Head {
 	id: string;
 	status: string;
-	error_message: string;
+	errorMessage: string;
 	eventSeq: number;
-	created_at: string;
-	finished_at: string;
-	result_version_id: string | null;
-	folder_changes: { added?: { path: string; size: number }[] } | null;
-	folder_warnings: { total: number; items: { path: string; reason: string }[] } | null;
+	createdAt: string;
+	finishedAt: string;
+	resultVersionId: string | null;
+	folderChanges: { added?: { path: string; size: number }[] } | null;
+	folderWarnings: { total: number; items: { path: string; reason: string }[] } | null;
 }
 
 interface RunView {
@@ -123,7 +123,7 @@ async function destroyed(w: World, timeoutMs = 120_000): Promise<number> {
 }
 
 /** The run's duration from its own timestamps, without the polling's. */
-const runMs = (head: Head) => Date.parse(head.finished_at) - Date.parse(head.created_at);
+const runMs = (head: Head) => Date.parse(head.finishedAt) - Date.parse(head.createdAt);
 
 type LocalCard = { tool: string; summary: string; ok: boolean; excerpt: string };
 
@@ -149,10 +149,10 @@ async function expectPublished(w: World, view: RunView, file: string) {
 	expect(Math.max(...scripted.map((event) => event.seq))).toBeGreaterThan((phase as RunEvent).seq);
 	expect(view.events.at(-1)).toMatchObject({ type: "status", data: { status: "completed" } });
 	// The version was published with the run, and holds the file.
-	expect(head.result_version_id).toBeTruthy();
-	expect(head.folder_changes?.added?.map((item) => item.path)).toContain(file);
-	const folder = await driver<{ version_id: string; files: { path: string; size: number }[] }>("files", base(w));
-	expect(folder.version_id).toBe(head.result_version_id);
+	expect(head.resultVersionId).toBeTruthy();
+	expect(head.folderChanges?.added?.map((item) => item.path)).toContain(file);
+	const folder = await driver<{ versionId: string; files: { path: string; size: number }[] }>("files", base(w));
+	expect(folder.versionId).toBe(head.resultVersionId);
 	expect(folder.files.map((item) => item.path)).toContain(file);
 	const read = await driver<{ text: string | null }>("file", { ...base(w), path: file });
 	expect(read.text).toMatch(/\S/);
@@ -208,7 +208,7 @@ describe("an end-to-end turn: Python through bash, a script calling a connector 
 			});
 			const listed = view.events.some((event) => event.type === "tool_call" && event.data.tool === LIST && event.data.decision === "allowed");
 			const scripted = view.events.some((event) => event.type === "phase" && event.data.text === "Running a script");
-			attempts.push({ seconds: view.seconds, status: view.head?.status, error: view.head?.error_message || undefined, tools: view.events.filter((event) => event.type === "local_tool" || event.type === "tool_call" || (event.type === "phase" && event.data.text === "Running a script")).map((event) => String(event.data.tool ?? event.data.text)) });
+			attempts.push({ seconds: view.seconds, status: view.head?.status, error: view.head?.errorMessage || undefined, tools: view.events.filter((event) => event.type === "local_tool" || event.type === "tool_call" || (event.type === "phase" && event.data.text === "Running a script")).map((event) => String(event.data.tool ?? event.data.text)) });
 			// The model must have run a command, a script and the connector's tool through it; what it said does not matter.
 			if (!bash.length || !listed || !scripted) continue;
 			await expectPublished(w, view, "report.txt");

@@ -1,79 +1,57 @@
 /**
- * Sending a message. The server takes an optional `Idempotency-Key` on `POST …/messages`: the same key with
- * the same message is the same run (a start in flight is joined, a finished one answered again), so a send
- * whose answer was lost can be repeated without starting a second run.
+ * Sending a message. The server takes an optional `Idempotency-Key` on the send: the same key with the same message is the same run (a
+ * start in flight is joined, a finished one answered again), so a send whose answer was lost can be repeated without starting a second run.
  */
-import { mutationOptions, type QueryClient } from '@tanstack/react-query'
-import { getConversationQueryKey, listConversationsQueryKey, listFilesQueryKey } from '@/api/@tanstack/react-query.gen'
-import { postMessage } from '@/api/sdk.gen'
-import type { MessageIn } from '@/api/types.gen'
-import { errorMessage } from '@/lib/http'
+import type { NewMessage } from '@minerva/contract'
+import { ORPCError } from '@orpc/client'
+import type { QueryClient } from '@tanstack/react-query'
+import { NetworkError } from '@/lib/http'
+import { orpc } from '@/lib/orpc'
 
-type ConversationPath = { workspace_id: string; conversation_id: string }
+type ConversationPath = { workspaceId: string; conversationId: string }
 
-/** One send of a message, the same for every attempt of it. */
-export type Send = {
-  path: ConversationPath
-  body: MessageIn
-  /** The `Idempotency-Key`: 32 hex characters. */
-  key: string
-}
+/** One send of a message, the same for every attempt of it: the key is 32 hex characters. */
+export type Send = { params: ConversationPath; headers: { 'idempotency-key': string }; body: NewMessage }
 
-export function newSend(path: ConversationPath, body: MessageIn): Send {
+export function newSend(params: ConversationPath, body: NewMessage): Send {
   const bytes = crypto.getRandomValues(new Uint8Array(16))
   const key = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
-  return { path, body, key }
+  return { params, headers: { 'idempotency-key': key }, body }
 }
 
-/** A send that failed. `status` is the server's answer, missing when the request did not reach it; `code` is
- * the refusal's, missing when the answer was not our server's. */
-export class SendError extends Error {
-  readonly code: string | undefined
-
-  constructor(
-    readonly status: number | undefined,
-    error: unknown,
-  ) {
-    super(errorMessage(error))
-    const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined
-    this.code = typeof code === 'string' ? code : undefined
-  }
-
-  /** The server refused the message before any run started (4xx, or a start that failed and left nothing
-   * behind), so the composer may have it back. Anything else may have started the run. */
-  get refused(): boolean {
-    const status = this.status ?? 0
-    return (status >= 400 && status < 500) || this.code === 'START_FAILED'
-  }
-
-  /** The answer of a server that is briefly not there (a proxy's, a restart's), or a start worth sending again. */
-  get transient(): boolean {
-    return this.status === undefined || this.status === 502 || this.status === 503 || this.status === 504
-  }
+/**
+ * The server refused the message before any run started (a 4xx, or a start that failed and left nothing behind), so the composer may have
+ * it back. Anything else may have started the run.
+ */
+export function refused(error: unknown): boolean {
+  return error instanceof ORPCError && ((error.status >= 400 && error.status < 500) || (error.defined && error.code === 'START_FAILED'))
 }
 
-/** The waits before the repeats of a send whose answer did not arrive, or came from a server that is restarting. */
+/**
+ * Worth sending again with the same key: the answer did not arrive, or came from something in front of a server that is restarting (a 502,
+ * 503 or 504 our server did not write). Our own refusals are final, `START_FAILED` included: the composer has the message back.
+ */
+function transient(error: unknown): boolean {
+  return error instanceof NetworkError || (error instanceof ORPCError && !error.defined && [502, 503, 504].includes(error.status))
+}
+
+/** The waits before the repeats of a send. */
 const RETRY_DELAYS_MS = [400, 1200]
 
-export const sendMessage = mutationOptions({
-  mutationFn: async ({ path, body, key }: Send) => {
-    const { data, error, response } = await postMessage({ path, body, headers: { 'Idempotency-Key': key }, throwOnError: false })
-    if (error) throw new SendError(response?.status, error)
-    return data
-  },
-  retry: (failures, error) => failures < RETRY_DELAYS_MS.length && error instanceof SendError && error.transient,
+export const sendMessage = orpc.conversations.send.mutationOptions({
+  retry: (failures, error) => failures < RETRY_DELAYS_MS.length && transient(error),
   retryDelay: failures => RETRY_DELAYS_MS[failures]!,
   // Offline, a send fails at once rather than waiting for the network to come back. (A repeat still waits while
   // the tab is hidden, as all of TanStack Query's retries do.)
   networkMode: 'always',
-  onSuccess: (_data, { path }, _result, { client }) => refreshConversation(client, path),
+  onSuccess: (_data, { params }, _result, { client }) => refreshConversation(client, params),
 })
 
-/** Refetches what a send or a run changes: the conversation, the list it is in, and its files. */
-export function refreshConversation(queryClient: QueryClient, path: ConversationPath) {
+/** Refetches what a send or a run changes: the conversation, the list it is in, and its files (every version). */
+export function refreshConversation(queryClient: QueryClient, { workspaceId, conversationId }: ConversationPath) {
   return Promise.all([
-    queryClient.invalidateQueries({ queryKey: getConversationQueryKey({ path }) }),
-    queryClient.invalidateQueries({ queryKey: listConversationsQueryKey({ path: { workspace_id: path.workspace_id } }) }),
-    queryClient.invalidateQueries({ queryKey: listFilesQueryKey({ path }) }),
+    queryClient.invalidateQueries({ queryKey: orpc.conversations.get.key({ input: { workspaceId, conversationId } }) }),
+    queryClient.invalidateQueries({ queryKey: orpc.conversations.list.key({ input: { workspaceId } }) }),
+    queryClient.invalidateQueries({ queryKey: orpc.conversations.files.key({ input: { workspaceId, conversationId } }) }),
   ])
 }

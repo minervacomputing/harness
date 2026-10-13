@@ -1,37 +1,37 @@
 import { describe, expect, test } from 'vitest'
-import type { ConversationDetail, EventOut, RunOut } from '@/api/types.gen'
+import type { Conversation, Run, RunEvent, RunStatus } from '@minerva/contract'
 import { buildMessages, NARRATION } from './model'
 
 let seq = 0
-const event = (type: EventOut['type'], data: Record<string, unknown>): EventOut => ({ seq: ++seq, type, data })
+const event = (type: RunEvent['type'], data: Record<string, unknown>): RunEvent => ({ seq: ++seq, type, data })
 const text = (value: string, call = 'c1') => event('text_delta', { text: value, call })
 const reasoning = (value: string, call = 'c1') => event('reasoning_delta', { text: value, call })
 const tool = (name: string, data: Record<string, unknown> = {}) => event('tool_call', { tool: name, decision: 'allowed', ...data })
 const restart = () => event('status', { status: 'provisioning', attempt: 2 })
 
-function run(status: RunOut['status'], events: EventOut[], error_message = ''): RunOut {
+function run(status: RunStatus, events: RunEvent[], errorMessage = ''): Run {
   return {
     id: 'r1',
     status,
     events,
-    error_message,
-    base_version_id: null,
-    created_at: '2026-10-13T10:00:00Z',
-    finished_at: null,
-    folder_changes: null,
-    folder_warnings: null,
-    result_version_id: null,
+    errorMessage,
+    baseVersionId: null,
+    createdAt: '2026-10-13T10:00:00Z',
+    finishedAt: null,
+    folderChanges: null,
+    folderWarnings: null,
+    resultVersionId: null,
   }
 }
 
 /** The message that follows the user's, for a conversation with one run and, if given, its saved answer. */
-function reply(r: RunOut, answer?: string) {
-  const message = { attachments: [], created_at: '2026-10-13T10:00:00Z', run_id: r.id }
-  const conversation: ConversationDetail = {
-    agent_id: 'a1',
+function reply(r: Run, answer?: string) {
+  const message = { attachments: [], createdAt: '2026-10-13T10:00:00Z', runId: r.id }
+  const conversation: Conversation = {
+    agentId: 'a1',
     id: 'c1',
     title: '',
-    updated_at: '',
+    updatedAt: '',
     runs: [r],
     messages: [
       { ...message, id: 'm1', role: 'user', content: 'Question' },

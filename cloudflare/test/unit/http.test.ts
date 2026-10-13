@@ -160,10 +160,10 @@ describe("router", () => {
 		const uploads = `/api/workspaces/${"0".repeat(8)}-0000-7000-8000-${"0".repeat(12)}/uploads`;
 		expect((await app.request(uploads, { method: "POST" }, env)).status).toBe(403);
 		const upload = await app.request(uploads, { method: "POST", headers: site }, env);
-		expect([upload.status, await upload.json()]).toEqual([411, { code: "LENGTH_REQUIRED", detail: "Send a Content-Length." }]);
+		expect([upload.status, await upload.json()]).toEqual([411, { defined: true, code: "LENGTH_REQUIRED", status: 411, message: "Send a Content-Length." }]);
 		for (const method of ["PUT", "PATCH", "DELETE"]) {
 			const other = await app.request(uploads, { method, headers: site }, env);
-			expect([method, other.status, await other.json()]).toEqual([method, 405, { code: "METHOD_NOT_ALLOWED", detail: "Use POST." }]);
+			expect([method, other.status, await other.json()]).toEqual([method, 405, { defined: true, code: "METHOD_NOT_ALLOWED", status: 405, message: "Use POST." }]);
 		}
 		expect(ran).toEqual(["route", "mounted"]);
 		expect([...OWN_SIZE_LIMIT]).toEqual(["POST", "PUT", "PATCH", "DELETE"].map((method) => `${method} ${UPLOAD_ROUTE}`));
@@ -180,7 +180,7 @@ describe("router", () => {
 		}
 		// The upload's own limit applies instead (50 MB): this one gets as far as its missing name.
 		const upload = await app.request(`/api/workspaces/${"0".repeat(8)}-0000-7000-8000-${"0".repeat(12)}/uploads`, { method: "POST", headers: big }, env);
-		expect([upload.status, await upload.json()]).toEqual([400, { code: "FILE_NAME_MISSING", detail: "Name the file with ?name=." }]);
+		expect([upload.status, await upload.json()]).toEqual([400, { defined: true, code: "FILE_NAME_MISSING", status: 400, message: "Name the file with ?name=." }]);
 	});
 });
 

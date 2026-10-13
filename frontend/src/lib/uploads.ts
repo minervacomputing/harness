@@ -1,13 +1,13 @@
 import type { AttachmentAdapter, CompleteAttachment, PendingAttachment } from '@assistant-ui/react'
+import { type Upload, uploadPath } from '@minerva/contract'
 import { useEffect, useMemo } from 'react'
 import { errorMessage } from '@/lib/http'
-
-export type Uploaded = { id: string; name: string; size: number; media_type: string }
+import { orpc } from '@/lib/orpc'
 
 // Uploads one page runs at once. The server takes three per user, and another tab may be uploading too.
 const CONCURRENT_UPLOADS = 2
 
-type Entry = { request?: XMLHttpRequest; uploaded?: Uploaded; removed: boolean }
+type Entry = { request?: XMLHttpRequest; uploaded?: Upload; removed: boolean }
 
 /**
  * Uploads each file as soon as it is added to the composer, reporting progress, so sending only names the uploads.
@@ -27,7 +27,7 @@ export class UploadAdapter implements AttachmentAdapter {
 
   constructor(private workspaceId: string) {}
 
-  uploaded(attachmentId: string): Uploaded | undefined {
+  uploaded(attachmentId: string): Upload | undefined {
     return this.entries.get(attachmentId)?.uploaded
   }
 
@@ -128,16 +128,12 @@ export class UploadAdapter implements AttachmentAdapter {
     return { ...attachment, status: { type: 'complete' }, content: [] }
   }
 
-  private async delete(uploaded: Uploaded): Promise<void> {
+  private async delete(uploaded: Upload): Promise<void> {
     // An upload this fails to delete expires within a day.
-    await fetch(`/api/workspaces/${this.workspaceId}/uploads/${uploaded.id}`, {
-      method: 'DELETE',
-      credentials: 'same-origin',
-      keepalive: true,
-    }).catch(() => {})
+    await orpc.uploads.delete.call({ workspaceId: this.workspaceId, uploadId: uploaded.id }, { context: { keepalive: true } }).catch(() => {})
   }
 
-  private async upload(entry: Entry, file: File, onProgress: (fraction: number) => void): Promise<Uploaded> {
+  private async upload(entry: Entry, file: File, onProgress: (fraction: number) => void): Promise<Upload> {
     while (this.running >= CONCURRENT_UPLOADS) await new Promise<void>(resolve => this.waiting.push(resolve))
     this.running++
     try {
@@ -145,15 +141,15 @@ export class UploadAdapter implements AttachmentAdapter {
       return await new Promise((resolve, reject) => {
         const request = new XMLHttpRequest()
         entry.request = request
-        request.open('POST', `/api/workspaces/${this.workspaceId}/uploads?name=${encodeURIComponent(file.name)}`)
+        request.open('POST', uploadPath(this.workspaceId, file.name))
         request.setRequestHeader('Content-Type', 'application/octet-stream')
         request.responseType = 'json'
         request.upload.onprogress = event => {
           if (event.lengthComputable) onProgress(event.loaded / event.total)
         }
         request.onload = () => {
-          if (request.status === 201) resolve(request.response as Uploaded)
-          else reject(request.response ?? { detail: uploadFailure(request.status) })
+          if (request.status === 201) resolve(request.response as Upload)
+          else reject(request.response ?? { message: uploadFailure(request.status) })
         }
         request.onerror = () => reject(new TypeError('The upload failed.'))
         request.onabort = () => reject(new Error('The upload was cancelled.'))
@@ -196,10 +192,4 @@ export function formatSize(bytes: number): string {
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`
   if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(bytes < 10 * 1024 ** 2 ? 1 : 0)} MB`
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`
-}
-
-export function downloadUrl(workspaceId: string, conversationId: string, path: string, version?: string | null): string {
-  const query = new URLSearchParams({ path })
-  if (version) query.set('version', version)
-  return `/api/workspaces/${workspaceId}/conversations/${conversationId}/files/download?${query}`
 }

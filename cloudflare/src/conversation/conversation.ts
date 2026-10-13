@@ -52,7 +52,7 @@ import { ScriptRuns, scriptToolHost } from "../scripts/host.ts";
 import { isReset, type ScriptsClient } from "../scripts/run.ts";
 import type { ScriptsApi } from "../scripts/scripts.ts";
 import { scriptTool } from "../scripts/tool.ts";
-import type { FolderOut, MessageIn, MessageOut } from "../shared/api.ts";
+import type { Folder, Message, NewMessage } from "@minerva/contract";
 import { type AttemptFence, type Caller, type Outcome, type Refusal, type RunId, type VersionId, refuse } from "../shared/rpc.ts";
 import { START_FAILED } from "../workspace/core.ts";
 import {
@@ -146,7 +146,7 @@ export interface ConversationApi {
 	 * retried request never starts a second run; another message with the key is 422 "This
 	 * Idempotency-Key was used for a different message." A refused start forgets its key.
 	 */
-	postMessage(caller: Caller, input: Required<MessageIn>, key?: string | null): Promise<Outcome<PostedView>>;
+	postMessage(caller: Caller, input: Required<NewMessage>, key?: string | null): Promise<Outcome<PostedView>>;
 
 	getRun(caller: Caller, runId: RunId): Promise<RunHead | null>;
 	/** The user's stop: idempotent, a finished run stays as it was; the refreshed run. */
@@ -160,9 +160,9 @@ export interface ConversationApi {
 
 	/**
 	 * The current folder (no version), or a non-checkpoint version of this conversation; null is 404.
-	 * `{version_id: null, files: [], dirs: []}` when there is no folder yet.
+	 * `{versionId: null, files: [], dirs: []}` when there is no folder yet.
 	 */
-	listFiles(caller: Caller, versionId: VersionId | null): Promise<FolderOut | null>;
+	listFiles(caller: Caller, versionId: VersionId | null): Promise<Folder | null>;
 	/** A file of a non-checkpoint version (or of the current folder), for a signed link; null is 404. */
 	resolveDownload(caller: Caller, versionId: VersionId | null, path: string): Promise<DownloadTarget | null>;
 
@@ -176,7 +176,7 @@ export interface ConversationApi {
 }
 
 export interface PostedView {
-	message: MessageOut;
+	message: Message;
 	run: RunView;
 }
 
@@ -318,10 +318,10 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	 * retried request never starts a second run; another message with it is 422. A refused start forgets its
 	 * key, so the message may be sent again with it.
 	 */
-	async postMessage(caller: Caller, input: Required<MessageIn>, key: string | null = null): Promise<Outcome<PostedView>> {
+	async postMessage(caller: Caller, input: Required<NewMessage>, key: string | null = null): Promise<Outcome<PostedView>> {
 		const conversation = this.#owned(caller);
 		if (!conversation) return NOT_FOUND;
-		// MessageIn is validated by the Worker (20,000 characters, at most 100 UUIDs, no lone
+		// NewMessage is validated by the Worker (20,000 characters, at most 100 UUIDs, no lone
 		// surrogate); anything else here is a bug, not a user's input.
 		if (
 			typeof input.content !== "string" ||
@@ -364,7 +364,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/** The answer to a posted message: the message and its run, with the run's first page of events. */
-	#posted(message: MessageOut, run: RunRow): PostedView {
+	#posted(message: Message, run: RunRow): PostedView {
 		const { eventSeq, ...view } = this.#store.runHead(run);
 		return { message, run: { ...view, events: this.#store.events(run.id, { after: 0, upTo: eventSeq, limit: 1000 }) } };
 	}
@@ -396,7 +396,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		});
 	}
 
-	async listFiles(caller: Caller, versionId: VersionId | null): Promise<FolderOut | null> {
+	async listFiles(caller: Caller, versionId: VersionId | null): Promise<Folder | null> {
 		if (!this.#owned(caller)) return null;
 		return this.#folder()?.list(versionId) ?? null;
 	}
@@ -539,7 +539,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		this.#touchIndex();
 		const run = this.#store.run(runId) as RunRow;
 		if (ACTIVE.has(run.status)) this.#defer(() => this.#activate(runId));
-		return { ok: true, value: this.#posted(this.#store.message(stored) as MessageOut, run) };
+		return { ok: true, value: this.#posted(this.#store.message(stored) as Message, run) };
 	}
 
 	/** A refused start: its marker deleted and its registration released in one write, the release retried until heard. */

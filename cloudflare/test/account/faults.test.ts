@@ -49,7 +49,7 @@ interface RunEvent {
 }
 
 interface RunView {
-	head: { id: string; status: string; error_message: string; eventSeq: number } | null;
+	head: { id: string; status: string; errorMessage: string; eventSeq: number } | null;
 	events: RunEvent[];
 	internals: {
 		run: { [column: string]: unknown } | null;
@@ -191,7 +191,7 @@ describe.concurrent("attempts on the platform", () => {
 		const w = await world({ faults: [{ point: "tool:after", mode: "abort", tool: LIST, times: 5 }] });
 		const runId = await post(w, script([LIST_INBOX, { text: "Never." }]));
 		const view = await settled(w, runId);
-		expect(view.head).toMatchObject({ status: "failed", error_message: "The worker stopped unexpectedly." });
+		expect(view.head).toMatchObject({ status: "failed", errorMessage: "The worker stopped unexpectedly." });
 		expect(restarts(view.events)).toEqual([2, 3]);
 		expect(view.internals.run).toMatchObject({ attempt: 3, error_code: "worker_exited" });
 		await sleep(45_000);
@@ -215,7 +215,7 @@ describe.concurrent("attempts on the platform", () => {
 		});
 		expect(changed).toMatchObject({ ok: true, revocation: "acknowledged" });
 		const view = await run(w, runId);
-		expect(view.head).toMatchObject({ status: "cancelled", error_message: "Stopped because permissions changed." });
+		expect(view.head).toMatchObject({ status: "cancelled", errorMessage: "Stopped because permissions changed." });
 		await sleep(8000);
 		const requests = (await provider(w)).requests;
 		expect(requests).toHaveLength(1);
@@ -252,7 +252,7 @@ describe.concurrent("attempts on the platform", () => {
 		const w = await world({ faults: [{ point: "tool:after", mode: "abort", tool: LIST }, { point: "gate:committed", mode: "abort", unsynced: true, times: 6 }] });
 		const runId = await post(w, script([LIST_INBOX, { text: "Never." }]));
 		const view = await settled(w, runId);
-		expect(view.head).toMatchObject({ status: "failed", error_message: "The worker stopped unexpectedly." });
+		expect(view.head).toMatchObject({ status: "failed", errorMessage: "The worker stopped unexpectedly." });
 		expect(restarts(view.events)).toEqual([2, 3]);
 		expect(view.internals.run).toMatchObject({ attempt: 3, error_code: "worker_exited" });
 		expect(reads(await provider(w))).toBe(1);
@@ -289,7 +289,7 @@ describe.concurrent("attempts on the platform", () => {
 });
 
 type LocalCard = { tool: string; summary: string; ok: boolean; excerpt: string };
-type Head = { status: string; result_version_id: string | null; folder_changes: { added?: { path: string; size: number }[] } | null; folder_warnings: { total: number; items: { path: string; reason: string }[] } | null };
+type Head = { status: string; resultVersionId: string | null; folderChanges: { added?: { path: string; size: number }[] } | null; folderWarnings: { total: number; items: { path: string; reason: string }[] } | null };
 
 const local = (name: string, args: { [key: string]: unknown }): Turn => ({ tools: [{ name, arguments: args }] });
 const sh = (command: string): Turn => local("bash", { command });
@@ -335,9 +335,9 @@ describe.concurrent("the local tools in the container", () => {
 			{ tool: "bash", summary: expect.stringContaining("python3"), ok: true, excerpt: "apples 4\nfrom python\n" },
 			{ tool: "read", summary: "py.txt", ok: true, excerpt: "from python\n" },
 		]);
-		expect(head.folder_changes?.added?.map((file) => file.path).sort()).toEqual(["notes.txt", "py.txt"]);
-		const folder = await driver<{ version_id: string; files: { path: string }[] }>("files", base(w));
-		expect(folder.version_id).toBe(head.result_version_id);
+		expect(head.folderChanges?.added?.map((file) => file.path).sort()).toEqual(["notes.txt", "py.txt"]);
+		const folder = await driver<{ versionId: string; files: { path: string }[] }>("files", base(w));
+		expect(folder.versionId).toBe(head.resultVersionId);
 		const file = await driver<{ text: string | null }>("file", { ...base(w), path: "py.txt" });
 		expect(file.text).toBe("from python\n");
 		const destroyMs = await destroyed(w);
@@ -366,8 +366,8 @@ describe.concurrent("the local tools in the container", () => {
 			[true, "started\n"],
 			[true, "still\n"],
 		]);
-		expect(head.folder_warnings).toEqual({ total: 2, items: [{ path: "etc", reason: "symlink" }, { path: "pipe", reason: "special" }] });
-		expect(head.folder_changes?.added?.map((file) => file.path)).toEqual(["log.txt"]);
+		expect(head.folderWarnings).toEqual({ total: 2, items: [{ path: "etc", reason: "symlink" }, { path: "pipe", reason: "special" }] });
+		expect(head.folderChanges?.added?.map((file) => file.path)).toEqual(["log.txt"]);
 	});
 
 	test("an attachment is in the folder for the agent's commands", async () => {
@@ -399,7 +399,7 @@ describe.concurrent("the local tools in the container", () => {
 		const view = await settled(w, posted.value.run.id);
 		expect(headOf(view).status).toBe("completed");
 		expect(cards(view.events)).toEqual([{ tool: "bash", summary: expect.stringContaining("wc -c"), ok: true, excerpt: "262144000 total\nd\n" }]);
-		const folder = await driver<{ version_id: string; files: { path: string }[] }>("files", base(w));
+		const folder = await driver<{ versionId: string; files: { path: string }[] }>("files", base(w));
 		expect(folder.files.map((file) => file.path).sort()).toEqual(["big0.bin", "big1.bin", "big2.bin", "big3.bin", "big4.bin"]);
 		console.info(`five attachments of 50 MiB: uploads ${uploadedMs} ms, post (the copies) ${postedMs} ms, the run ${view.seconds} s`);
 	});
@@ -446,7 +446,7 @@ describe("memory-limit resets", () => {
 		const w = await world({ faults: [{ point: "tool:after", mode: "oom", tool: LIST, times: 5 }] });
 		const runId = await post(w, script([LIST_INBOX, { text: "Never." }]));
 		const view = await settled(w, runId);
-		expect(view.head).toMatchObject({ status: "failed", error_message: "The worker stopped unexpectedly." });
+		expect(view.head).toMatchObject({ status: "failed", errorMessage: "The worker stopped unexpectedly." });
 		expect(restarts(view.events)).toEqual([2, 3]);
 		expect(view.internals.run).toMatchObject({ attempt: 3, error_code: "worker_exited" });
 		await sleep(45_000);
@@ -460,7 +460,7 @@ describe("memory-limit resets", () => {
 		const w = await world({ faults: [{ point: "tool:after", mode: "abort", tool: LIST }, { point: "gate:committed", mode: "oom", unsynced: true, times: 6 }] });
 		const runId = await post(w, script([LIST_INBOX, { text: "Never." }]));
 		const view = await settled(w, runId);
-		expect(view.head).toMatchObject({ status: "failed", error_message: "The worker stopped unexpectedly." });
+		expect(view.head).toMatchObject({ status: "failed", errorMessage: "The worker stopped unexpectedly." });
 		expect(restarts(view.events)).toEqual([2, 3]);
 		expect(view.internals.run).toMatchObject({ attempt: 3, error_code: "worker_exited" });
 		expect(reads(await provider(w))).toBe(1);

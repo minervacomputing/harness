@@ -137,6 +137,17 @@ describe("JSON bodies", () => {
 		}
 	});
 
+	test("a POST without a body, as a browser sends one (Content-Length: 0, no type), is no body; an empty body with a type is read", async () => {
+		const a = await account();
+		const missing = `/api/workspaces/${a.ws}/runs/${uuid7()}/cancel`;
+		// The procedure runs (404 for no such run), so the body was taken as none.
+		const browserLike = await raw(missing, { browser: a.browser, headers: { Origin: ORIGIN, "Content-Length": "0" }, body: new Uint8Array(0) });
+		expect(browserLike).toEqual({ status: 404, body: contractError("NOT_FOUND", "Not found.") });
+		expect((await raw(missing, { browser: a.browser, headers: { Origin: ORIGIN, ...JSON_TYPE }, body: new Uint8Array(0) })).status).toBe(404);
+		// Without a type, a body that is not empty is still refused.
+		expect((await raw(missing, { browser: a.browser, headers: { Origin: ORIGIN }, body: new TextEncoder().encode("{}") })).status).toBe(415);
+	});
+
 	test("at most 2.5 MB, declared or streamed; strict UTF-8; escaped keys read right", async () => {
 		const a = await account();
 		const agents = `/api/workspaces/${a.ws}/agents`;

@@ -154,7 +154,7 @@ describe("uploads", () => {
 		const w = await world();
 		const data = "%PDF-1.7 hello";
 		const outcome = await receiveUpload(w.recorder, w.bucket, CALLER, { name: "Q3 report.pdf", size: 14, body: body(data) });
-		expect(outcome).toEqual({ ok: true, value: { id: expect.any(String), name: "Q3 report.pdf", size: 14, media_type: "application/pdf" } });
+		expect(outcome).toEqual({ ok: true, value: { id: expect.any(String), name: "Q3 report.pdf", size: 14, mediaType: "application/pdf" } });
 		const id = outcome.ok ? outcome.value.id : "";
 		const [row] = await w.workspaceRows<{ state: string; sha256: string; key: string; user_id: string }>("SELECT state, sha256, key, user_id FROM uploads WHERE id = ?", id);
 		expect(row).toEqual({ state: "complete", sha256: await sha(data), key: `uploads/${w.ref.id}/${USER}/${id}`, user_id: USER });
@@ -167,14 +167,14 @@ describe("uploads", () => {
 		for (let i = 0; i < data.length; i += 65_536) crypto.getRandomValues(data.subarray(i, Math.min(i + 65_536, data.length)));
 		data.set(new TextEncoder().encode("PK\x03\x04"));
 		const outcome = await receiveUpload(w.recorder, w.bucket, CALLER, { name: "sheet.xlsx", size: data.length, body: body(data) });
-		expect(outcome).toMatchObject({ ok: true, value: { size: data.length, media_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" } });
+		expect(outcome).toMatchObject({ ok: true, value: { size: data.length, mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" } });
 		const [row] = await w.workspaceRows<{ sha256: string }>("SELECT sha256 FROM uploads");
 		expect(row?.sha256).toBe(await sha(data));
 	});
 
 	test("an empty upload is text", async () => {
 		const w = await world();
-		expect(await receiveUpload(w.recorder, w.bucket, CALLER, { name: "empty", size: 0, body: null })).toMatchObject({ ok: true, value: { size: 0, media_type: "text/plain" } });
+		expect(await receiveUpload(w.recorder, w.bucket, CALLER, { name: "empty", size: 0, body: null })).toMatchObject({ ok: true, value: { size: 0, mediaType: "text/plain" } });
 	});
 
 	test("a body longer or shorter than declared is refused and leaves nothing", async () => {
@@ -414,11 +414,11 @@ describe("attachments at a run's start", () => {
 			{ path: "notes.txt", size: 9, media_type: "text/plain" },
 			{ path: "data.csv", size: 4, media_type: "text/csv" },
 		]);
-		const baseVersionId = posted.value.run.base_version_id;
+		const baseVersionId = posted.value.run.baseVersionId;
 		expect(baseVersionId).toEqual(expect.any(String));
 		expect((await settled(w, posted.value.run.id)).status).toBe("completed");
 		expect(await w.conversation.listFiles(CALLER, null)).toEqual({
-			version_id: baseVersionId,
+			versionId: baseVersionId,
 			files: [
 				{ path: "data.csv", size: 4, mtime: expect.any(Number) },
 				{ path: "notes.txt", size: 9, mtime: expect.any(Number) },

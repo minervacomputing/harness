@@ -2,11 +2,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
 import { TrashIcon } from 'lucide-react'
-import { deleteConversationMutation, getConversationQueryKey, listConversationsOptions, listConversationsQueryKey } from '@/api/@tanstack/react-query.gen'
-import type { ConversationOut } from '@/api/types.gen'
+import type { ConversationSummary } from '@minerva/contract'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
+import { orpc } from '@/lib/orpc'
 
 const DAY = 24 * 60 * 60 * 1000
 
@@ -20,12 +20,12 @@ function groupOf(updated: Date, today: Date) {
   return new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(updated)
 }
 
-function grouped(conversations: ConversationOut[]) {
+function grouped(conversations: ConversationSummary[]) {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
-  const groups: { label: string; items: ConversationOut[] }[] = []
+  const groups: { label: string; items: ConversationSummary[] }[] = []
   for (const conversation of conversations) {
-    const label = groupOf(new Date(conversation.updated_at), today)
+    const label = groupOf(new Date(conversation.updatedAt), today)
     const last = groups.at(-1)
     if (last?.label === label) last.items.push(conversation)
     else groups.push({ label, items: [conversation] })
@@ -37,17 +37,17 @@ export function ConversationList({ workspaceId }: { workspaceId: string }) {
   const active = useParams({ strict: false, select: params => params.conversationId })
   const queryClient = useQueryClient()
   const navigate = useNavigate()
-  const path = { workspace_id: workspaceId }
-  const conversations = useQuery(listConversationsOptions({ path }))
-  const remove = useMutation({
-    ...deleteConversationMutation(),
-    onSuccess: async (_, variables) => {
-      await queryClient.invalidateQueries({ queryKey: listConversationsQueryKey({ path }) })
-      if (variables.path.conversation_id === active) await navigate({ to: '/w/$workspaceId/chat', params: { workspaceId } })
-      // Otherwise going back would show it from the cache.
-      queryClient.removeQueries({ queryKey: getConversationQueryKey({ path: variables.path }) })
-    },
-  })
+  const conversations = useQuery(orpc.conversations.list.queryOptions({ input: { workspaceId } }))
+  const remove = useMutation(
+    orpc.conversations.delete.mutationOptions({
+      onSuccess: async (_, deleted) => {
+        await queryClient.invalidateQueries({ queryKey: orpc.conversations.list.key({ input: { workspaceId } }) })
+        if (deleted.conversationId === active) await navigate({ to: '/w/$workspaceId/chat', params: { workspaceId } })
+        // Otherwise going back would show it from the cache.
+        queryClient.removeQueries({ queryKey: orpc.conversations.get.key({ input: deleted }) })
+      },
+    }),
+  )
 
   if (conversations.isPending)
     return (
@@ -77,7 +77,7 @@ export function ConversationList({ workspaceId }: { workspaceId: string }) {
           <ul className="space-y-px">
             {group.items.map(conversation => {
               const title = conversation.title || 'New conversation'
-              const deleting = remove.isPending && remove.variables?.path.conversation_id === conversation.id
+              const deleting = remove.isPending && remove.variables?.conversationId === conversation.id
               return (
                 <li key={conversation.id} className="group relative flex items-center hover:bg-secondary has-[[aria-current=page]]:bg-secondary">
                   <Link
@@ -97,7 +97,7 @@ export function ConversationList({ workspaceId }: { workspaceId: string }) {
                     disabled={deleting}
                     onClick={() => {
                       if (confirm('Delete this conversation? This cannot be undone.')) {
-                        remove.mutate({ path: { workspace_id: workspaceId, conversation_id: conversation.id } })
+                        remove.mutate({ workspaceId, conversationId: conversation.id })
                       }
                     }}
                   >

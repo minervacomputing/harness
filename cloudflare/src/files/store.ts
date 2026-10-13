@@ -23,7 +23,7 @@ import { tokenHex, uuid7 } from "../lib/random.ts";
 import { first, type Sql, type SqlValue } from "../lib/sql.ts";
 import { splitParts, VALUE_PART } from "../lib/text.ts";
 import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan } from "../sandbox/folder.ts";
-import type { AttachmentOut, FolderOut } from "../shared/api.ts";
+import type { Attachment, Folder } from "@minerva/contract";
 import { type AttemptFence, type ConversationId, type EpochMs, type Outcome, type RunId, type Sha256, type VersionId, type WorkspaceId, refuse } from "../shared/rpc.ts";
 import { overFolder } from "../workspace/limits.ts";
 import {
@@ -220,7 +220,7 @@ interface RunFolder {
 export interface AttachmentPlan {
 	parentId: VersionId | null;
 	entries: StoredEntries;
-	attachments: AttachmentOut[];
+	attachments: Attachment[];
 	/** Keys claimed when the start is stored: one copy per contents the conversation did not hold. */
 	copies: { sha256: Sha256; key: string }[];
 	/** Contents the conversation already held, which the base version names as they are. */
@@ -608,7 +608,7 @@ export class FolderStore {
 		// The first segment of every root entry, directories included, so a folder's name blocks a file's.
 		const taken = rootNames(parent);
 		const mtime = this.#deps.now();
-		const attachments: AttachmentOut[] = [];
+		const attachments: Attachment[] = [];
 		for (const upload of uploads) {
 			const path = numbered(upload.name, taken);
 			taken.add(path);
@@ -711,7 +711,7 @@ export class FolderStore {
 	 * claimed. A folder that moved since, or a copy the sweep took, throws: the start is refused (503) and
 	 * released rather than stored with a folder it did not check.
 	 */
-	commitAttachments(runId: RunId, plan: AttachmentPlan | null): { baseVersionId: VersionId | null; attachments: AttachmentOut[] } {
+	commitAttachments(runId: RunId, plan: AttachmentPlan | null): { baseVersionId: VersionId | null; attachments: Attachment[] } {
 		const current = this.#deps.conversation()?.folderVersionId ?? null;
 		if (plan === null) return { baseVersionId: current, attachments: [] };
 		if (current !== plan.parentId) throw new Error("The folder changed while its attachments were copied.");
@@ -981,13 +981,13 @@ export class FolderStore {
 		return row === null || row.kind === "checkpoint" ? undefined : row;
 	}
 
-	list(versionId: VersionId | null): FolderOut | null {
+	list(versionId: VersionId | null): Folder | null {
 		const row = this.#readable(versionId);
 		if (row === undefined) return null;
-		if (row === null) return { version_id: null, files: [], dirs: [] };
+		if (row === null) return { versionId: null, files: [], dirs: [] };
 		const entries = this.entries(row.id);
 		return {
-			version_id: row.id,
+			versionId: row.id,
 			files: filesOf(entries).map(([path, entry]) => ({ path, size: entry.size, mtime: entry.mtime })),
 			dirs: [...entries.dirs],
 		};

@@ -15,7 +15,7 @@
 // escaped a query that was not ASCII, so it is read as UTF-8.
 
 import { hex } from "../lib/bytes.ts";
-import type { UploadOut } from "../shared/api.ts";
+import type { Upload } from "@minerva/contract";
 import { type Caller, type Outcome, type Sha256, type UploadId, refuse } from "../shared/rpc.ts";
 import { BODY_LONGER, BODY_SHORTER, INVALID_LENGTH, NAME_THE_FILE, SEND_LENGTH, SNIFF_BYTES, TOO_SLOW, UPLOAD_DEADLINE_MS, UPLOAD_SETTLE_MS, USE_POST, uploadTooLarge } from "./limits.ts";
 import { cleanName, sniff, uploadName } from "./names.ts";
@@ -40,7 +40,7 @@ export interface ReservedUpload {
 /** The Workspace's side of an upload (workspace/core.ts `WorkspaceApi`). */
 export interface UploadRecorder {
 	reserveUpload(caller: Caller, upload: { name: string; size: number }): Promise<Outcome<{ id: UploadId; key: string }>>;
-	completeUpload(caller: Caller, id: UploadId, stored: { sha256: Sha256; size: number; mediaType: string }): Promise<Outcome<UploadOut>>;
+	completeUpload(caller: Caller, id: UploadId, stored: { sha256: Sha256; size: number; mediaType: string }): Promise<Outcome<Upload>>;
 	abandonUpload(caller: Caller, id: UploadId): Promise<void>;
 }
 
@@ -133,7 +133,7 @@ export async function receiveUpload(
 	caller: Caller,
 	upload: { name: string; size: number; body: ReadableStream<Uint8Array> | null },
 	options: ReceiveOptions = {},
-): Promise<Outcome<UploadOut>> {
+): Promise<Outcome<Upload>> {
 	const reserved = await recorder.reserveUpload(caller, { name: upload.name, size: upload.size });
 	if (!reserved.ok) return reserved;
 	const { id, key } = reserved.value;

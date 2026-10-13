@@ -1,14 +1,15 @@
 import { useQuery } from '@tanstack/react-query'
 import { FileIcon, FolderIcon, XIcon } from 'lucide-react'
-import { listFilesOptions } from '@/api/@tanstack/react-query.gen'
+import { downloadPath } from '@minerva/contract'
 import { Button } from '@/components/ui/button'
 import { ErrorNote, Spinner } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
-import { downloadUrl, formatSize } from '@/lib/uploads'
+import { orpc } from '@/lib/orpc'
+import { formatSize } from '@/lib/uploads'
 
 /** The conversation's folder as the last run left it: what was attached and what the agent wrote. */
 export function FilesPanel({ id, workspaceId, conversationId, onClose }: { id: string; workspaceId: string; conversationId: string; onClose: () => void }) {
-  const folder = useQuery(listFilesOptions({ path: { workspace_id: workspaceId, conversation_id: conversationId } }))
+  const folder = useQuery(orpc.conversations.files.queryOptions({ input: { workspaceId, conversationId } }))
   const files = folder.data?.files ?? []
   // Folders that hold no file would not show otherwise.
   const empty = (folder.data?.dirs ?? []).filter(dir => !files.some(file => file.path.startsWith(`${dir}/`)))
@@ -42,7 +43,7 @@ export function FilesPanel({ id, workspaceId, conversationId, onClose }: { id: s
           {files.map(file => (
             <li key={file.path}>
               <a
-                href={downloadUrl(workspaceId, conversationId, file.path, folder.data?.version_id)}
+                href={downloadPath(workspaceId, conversationId, file.path, folder.data?.versionId)}
                 download
                 className="flex items-center gap-2 px-2 py-1.5 hover:bg-secondary"
                 title={file.path}

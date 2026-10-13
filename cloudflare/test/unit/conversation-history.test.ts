@@ -15,7 +15,7 @@ import {
 	type StoredMessage,
 	withFiles,
 } from "../../src/conversation/history.ts";
-import type { FolderChangesOut } from "../../src/shared/api.ts";
+import type { FolderChanges } from "@minerva/contract";
 
 const RUN = "0199a000-0000-7000-8000-000000000001";
 
@@ -27,7 +27,7 @@ function attachment(path: string) {
 	return { path, size: 1, media_type: "text/plain" };
 }
 
-function changes(counts: Partial<FolderChangesOut["counts"]>, lists: Partial<Pick<FolderChangesOut, "added" | "modified" | "deleted">> = {}): FolderChangesOut {
+function changes(counts: Partial<FolderChanges["counts"]>, lists: Partial<Pick<FolderChanges, "added" | "modified" | "deleted">> = {}): FolderChanges {
 	return {
 		counts: { added: 0, modified: 0, deleted: 0, dirs_added: 0, dirs_deleted: 0, ...counts },
 		added: lists.added ?? [],
