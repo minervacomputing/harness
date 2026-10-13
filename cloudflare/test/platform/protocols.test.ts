@@ -572,6 +572,10 @@ describe("attempts", () => {
 		const events = await eventsOf(w, runId);
 		expect(restarts(events)).toEqual([2]);
 		expect(events.at(-2)).toMatchObject({ type: "message", data: { content: "A sentence long enough for several deltas." } });
+		// The message names the call that wrote it: the new attempt's, which streamed last.
+		const last = events.findLast((event) => event.type === "text_delta");
+		expect(last?.data).toMatchObject({ text: expect.any(String), call: expect.stringMatching(/^[0-9a-f]{8}$/) });
+		expect(events.at(-2)?.data).toMatchObject({ call: last?.data.call });
 	});
 
 	test("resets until the cap: the third attempt's death ends the run as worker_exited, and pi runs nothing after", async () => {

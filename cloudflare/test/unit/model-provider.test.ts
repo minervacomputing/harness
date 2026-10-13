@@ -7,7 +7,7 @@ import { type AssistantMessage, type AssistantMessageEvent, createModels, isCont
 import { beforeEach, describe, expect, test } from "vitest";
 import { type FakeOptions, type FakeScript, fakeUpstream } from "../../src/model/fake.ts";
 import { COMPACTION_PROMPT_START } from "../../src/model/policy.ts";
-import { minervaModel, minervaProvider, type ModelHost, REASONING_SUMMARY, RUN_ENDED_TEXT, SUMMARY_REFUSED_HINT } from "../../src/model/provider.ts";
+import { callOf, minervaModel, minervaProvider, type ModelHost, REASONING_SUMMARY, RUN_ENDED_TEXT, SUMMARY_REFUSED_HINT } from "../../src/model/provider.ts";
 import { type ModelRoute, upstreamOf } from "../../src/model/route.ts";
 import { CONTEXT_OVERFLOW, PROVIDER_ERROR, type Segment } from "../../src/model/tap.ts";
 import type { AttemptFence } from "../../src/shared/rpc.ts";
@@ -113,7 +113,7 @@ describe("refused calls count nothing", () => {
 });
 
 describe("a call", () => {
-	test("is counted once, streams its text and reasoning under one 8-hex call id, and records its usage", async () => {
+	test("is counted once, streams its text and reasoning under one 8-hex call id, names it in its message, and records its usage", async () => {
 		const { host, models } = setup();
 		const message = await ask(models, prompt({ turns: [{ thinking: "Hm", text: "Hello", usage: { input: 7, output: 3 } }] }));
 		expect(message.content.filter((block) => block.type === "text")).toEqual([{ type: "text", text: "Hello" }]);
@@ -124,6 +124,7 @@ describe("a call", () => {
 		const calls = new Set(host.published.map(([call]) => call));
 		expect(calls.size).toBe(1);
 		expect([...calls][0]).toMatch(/^[0-9a-f]{8}$/);
+		expect(callOf(message)).toBe([...calls][0]);
 		expect(host.usage).toEqual([{ input: 7, output: 3 }]);
 	});
 

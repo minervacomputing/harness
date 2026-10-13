@@ -44,7 +44,7 @@ import { type Json, parseJson } from "../lib/json.ts";
 import { isUuid, uuid7 } from "../lib/random.ts";
 import { appliedMigrations, migrate } from "../lib/sqlite.ts";
 import { sliceText } from "../lib/text.ts";
-import { MODEL_REF, MINERVA_API, MINERVA_PROVIDER, MODEL_ALIAS, minervaProvider, type ModelHost } from "../model/provider.ts";
+import { callOf, MODEL_REF, MINERVA_API, MINERVA_PROVIDER, MODEL_ALIAS, minervaProvider, type ModelHost } from "../model/provider.ts";
 import { routeOf } from "../model/route.ts";
 import { sandboxSpec } from "../sandbox/constants.ts";
 import { outputSink } from "../sandbox/sink.ts";
@@ -844,7 +844,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		const entry = entries.get(submission.answer) ?? (await this.#entry(run, submission.answer));
 		// The folder as the turn left it, before the turn counts as complete.
 		if (!(await this.#finishLocal(fence))) return;
-		await this.#complete(fence, answerText(entry));
+		await this.#complete(fence, answerOf(entry));
 	}
 
 	/** pi settled the run's submission while the object was away: reconcile from pi's record, stop what is left. */
@@ -867,7 +867,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	 * in that order, only while the attempt is current. An empty answer, or one past what a WorkerEvent could
 	 * carry, fails the run instead. Outside pi's transactions (store.ts `outside`), as every end.
 	 */
-	async #complete(fence: AttemptFence, text: string): Promise<void> {
+	async #complete(fence: AttemptFence, { text, call }: Answer): Promise<void> {
 		if (!text || text.length > ANSWER_CHARS) {
 			this.#log(text ? "the answer is too long" : "the model turn ended without a response");
 			await this.#fail(fence, WORKER_FAILED);
@@ -879,7 +879,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				const now = this.#store.now();
 				const id = uuid7(now);
 				this.#store.insertMessage({ id, role: "assistant", content: text, attachments: [], runId: fence.runId, createdAt: now });
-				this.#store.append(fence.runId, { type: "message", data: { id, content: text } });
+				this.#store.append(fence.runId, { type: "message", data: { id, content: text, ...(call === undefined ? {} : { call }) } });
 				this.#store.finish(fence.runId, COMPLETED, { attempt: fence.attempt });
 			}),
 		);
@@ -1544,14 +1544,17 @@ async function replay(tx: Tx, id: PiConversationId, history: { role: "user" | "a
 	}
 }
 
-/** The answer: the text blocks of the assistant message joined and trimmed. */
-function answerText(entry: EntryRecord | undefined): string {
+type Answer = { text: string; call: string | undefined };
+
+/** The answer: the text blocks of the assistant message joined and trimmed, and the model call that wrote it. */
+function answerOf(entry: EntryRecord | undefined): Answer {
 	const message = entry?.model?.[0];
-	if (message?.role !== "assistant") return "";
-	return message.content
+	if (message?.role !== "assistant") return { text: "", call: undefined };
+	const text = message.content
 		.flatMap((block) => (block.type === "text" ? [block.text] : []))
 		.join("")
 		.trim();
+	return { text, call: callOf(message) };
 }
 
 /** Settles like `promise`, or rejects after `ms`, leaving it to run on. */

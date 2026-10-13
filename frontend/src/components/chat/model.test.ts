@@ -90,20 +90,28 @@ describe('narration', () => {
 })
 
 describe('the answer', () => {
-  test('replaces what streamed, including what its model call wrote before a tool call finished', () => {
+  const answered = (content: string, call?: string) => event('message', { id: 'm2', content, ...(call ? { call } : {}) })
+
+  test('replaces what its model call streamed, including before a tool call finished', () => {
     const events = [text('Checking.'), tool('search'), text('The answer', 'c2'), tool('lookup'), text('\n\nis  42.', 'c2')]
-    const m = reply(run('completed', events), 'The answer is 42.')
+    const m = reply(run('completed', [...events, answered('The answer is 42.', 'c2')]), 'The answer is 42.')
     expect(m).toMatchObject({ kind: 'assistant', id: 'run-r1' })
     expect(shape(m)).toEqual(['text(narration):Checking.', 'tool:search', 'tool:lookup', 'text:The answer is 42.'])
   })
 
-  test('that did not stream leaves the streamed text as narration', () => {
-    const m = reply(run('completed', [text('Looking it up.'), tool('search')]), 'I cannot share that.')
+  test('from a call that streamed nothing leaves the streamed text as narration', () => {
+    const m = reply(run('completed', [text('Looking it up.'), tool('search'), answered('I cannot share that.', 'c9')]), 'I cannot share that.')
     expect(shape(m)).toEqual(['text(narration):Looking it up.', 'tool:search', 'text:I cannot share that.'])
   })
 
+  test('stored before the message event named its call came from the last call to stream text', () => {
+    const events = [text('Checking.'), tool('search'), text('The answer', 'c2'), tool('lookup'), text(' is 42.', 'c2')]
+    const m = reply(run('completed', [...events, answered('The answer is 42.')]), 'The answer is 42.')
+    expect(shape(m)).toEqual(['text(narration):Checking.', 'tool:search', 'tool:lookup', 'text:The answer is 42.'])
+  })
+
   test('comes from the message event until the conversation refreshes, under the same id', () => {
-    const events = [text('Hi'), event('message', { content: 'Hi there' })]
+    const events = [text('Hi'), answered('Hi there', 'c1')]
     const streamed = reply(run('running', events))
     expect(streamed).toMatchObject({ kind: 'assistant', id: 'run-r1' })
     expect(shape(streamed)).toEqual(['text:Hi there'])

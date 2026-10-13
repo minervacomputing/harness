@@ -72,6 +72,12 @@ export type MessageEventData = {
 	/** The assistant message's id. */
 	id: string;
 	content: string;
+	/**
+	 * The model call that wrote the answer, as its deltas name it: the chat replaces that call's streamed
+	 * text with `content`. A call can write it without streaming any. Absent in events stored before it was
+	 * added, and when pi's answer does not name its call.
+	 */
+	call?: string;
 };
 
 export type RunEvent =
