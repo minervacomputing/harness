@@ -1,5 +1,4 @@
-// History replay: the turns, their files and what they changed, and worker/src/main.ts's `clip` and
-// `recentHistory`.
+// History replay: the turns, their files and what they changed, `clip` and `recentHistory`.
 
 import { describe, expect, test } from "vitest";
 import type { FolderChangesOut } from "../../src/contracts/api.ts";

@@ -57,7 +57,7 @@ export async function signDownload(secret: string, origin: string, link: Omit<Do
 }
 
 /**
- * The link for a file `resolveDownload` found (the web API's download route, step 5): signed for the caller,
+ * The link for a file `resolveDownload` found (the web API's download route): signed for the caller,
  * on the download origin, in the workspace's jurisdiction.
  */
 export function downloadLinkFor(

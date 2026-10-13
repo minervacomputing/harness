@@ -2,7 +2,7 @@
 // different actions on two resources, and an operation gated by provider consent; `mode` switches it into
 // deliberately broken declarations of requirements, which the executor must reject. `keyed`
 // authenticates with an API key and acts on its account. The provider is an in-memory `FakeServer`; the
-// executor's tests (step 2b) put it behind ProviderHttp and an injected `fetch`.
+// executor's tests put it behind ProviderHttp and an injected `fetch`.
 
 import { z } from "zod";
 import type { Connector, DiscoveryPage, Operation, Prepared, ProviderClient, Requirement } from "../../src/contracts/connectors.ts";

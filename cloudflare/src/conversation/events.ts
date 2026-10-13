@@ -77,7 +77,7 @@ export function tail(text: string, limit: number): string {
 	return `…${points.slice(points.length - (limit - 1)).join("")}`;
 }
 
-/** A local tool card: for steps 3 and 4, which run read, write, edit and bash. */
+/** A local tool card, for read, write, edit and bash. */
 export function localToolEvent(tool: "read" | "write" | "edit" | "bash", summary: string, ok: boolean, excerpt: string): NewRunEvent {
 	return {
 		type: "local_tool",

@@ -1,5 +1,5 @@
-// What a run starts with: its tools, their labels and its instructions, with the worker's rule for how many tools the model sees
-// (worker/src/main.ts). Pure functions: the Workspace Durable Object's `beginRun` calls `startSnapshot` in
+// What a run starts with: its tools, their labels and its instructions, with the rule for how many tools the model sees.
+// Pure functions: the Workspace Durable Object's `beginRun` calls `startSnapshot` in
 // the same synchronous step that registers the run (plan: Starting a run).
 
 import type { AgentId, ConnectionId, ConversationId, EpochMs, UserId, WorkspaceId } from "../contracts/common.ts";

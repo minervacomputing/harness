@@ -1,4 +1,4 @@
-// The security policy on top of Better Auth (plan: The web API, step 5a3). Better Auth decides who a
+// The security policy on top of Better Auth (plan: The web API). Better Auth decides who a
 // request is; this decides what the browser may do with that, through Better Auth's hooks:
 //
 // - Routes. The browser reaches only BROWSER_ROUTES; every other endpoint (more organizations,

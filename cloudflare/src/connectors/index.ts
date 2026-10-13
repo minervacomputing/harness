@@ -1,6 +1,6 @@
 // The connectors this Worker serves, in one registry per isolate that the Workspace (ConnectionOut, grants,
 // run snapshots and their fingerprints) and the Conversation's executor (declarations and calls) share, so
-// both read the same contracts. Step 6 adds the 20 connectors to CONNECTORS. A test build (src/faults/)
+// both read the same contracts. A test build (src/faults/)
 // and the platform tests add fake connectors through `CONNECTOR_SOURCE` before any object reads it.
 
 import type { Connector } from "../contracts/connectors.ts";

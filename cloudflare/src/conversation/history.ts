@@ -18,7 +18,7 @@ export const CLIPPED = "\n\n[The rest of this message was left out.]";
 
 /**
  * What the model is told about its folder and commands, added after the run's instructions
- * when the run has local tools (step 3). `10` is the command timeout in minutes.
+ * when the run has local tools. `10` is the command timeout in minutes.
  */
 export const FOLDER_INSTRUCTIONS =
 	"You have a folder at /workspace, which is kept between the turns of this conversation. The user sees its files and can download them. " +

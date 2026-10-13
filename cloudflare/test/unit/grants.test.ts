@@ -1,6 +1,6 @@
 // Layers and grants, the pure parts (gateway/grants.ts): wildcards, connections that act on their account,
 // the limit on grants, wildcards on kinds without them, and the validation of access settings. The provider's `describe` step between the checks
-// and the plan belongs to the API (step 5).
+// and the plan belongs to the API.
 
 import { describe, expect, test } from "vitest";
 import type { GrantChange, GrantRow } from "../../src/contracts/policy.ts";

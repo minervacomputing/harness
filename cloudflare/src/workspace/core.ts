@@ -666,7 +666,7 @@ export class WorkspaceCore implements WorkspaceApi {
 				}
 				this.#sql.exec("UPDATE layers SET version = version + 1, updated_at = ? WHERE id = ?", now, layerId);
 				// Any change to a user's grants stops all of that user's active runs, queued ones included, not
-				// only those using this connection (step 7).
+				// only those using this connection.
 				const entries = this.#revoke({ userId: caller.userId }, "permissions_changed", now).entries;
 				// As saved: the connection may change again, or go, while the cancels are delivered.
 				return { entries, access: accessOut(connector, this.#view(connection), this.#userGrants(connectionId, caller.userId)) };
@@ -1043,7 +1043,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		return ok(answer);
 	}
 
-	/** `uploads.attach`'s checks, in its order (steps 3 to 5). */
+	/** The attachments' checks, in order: the user's own, unattached, complete uploads within the limits. */
 	#attachable(input: BeginRunInput): Outcome<UploadRow[]> {
 		const ids = input.uploadIds;
 		const { messageAttachments } = this.#deps.settings;
@@ -1086,7 +1086,7 @@ export class WorkspaceCore implements WorkspaceApi {
 			if (!attachable.ok) return attachable;
 			const uploads = attachable.value;
 			if (uploads.length) {
-				// Each attachment is a new file at the folder's root: one entry, and its pages (step 8).
+				// Each attachment is a new file at the folder's root: one entry, and its pages.
 				if (input.folder.entries + uploads.length > folderEntries) return refuse(413, overFolder("folder_entries", folderEntries, folderBytes));
 				const bytes = input.folder.bytes + uploads.reduce((sum, upload) => sum + pages(upload.size), 0);
 				if (bytes > folderBytes) return refuse(413, overFolder("folder_bytes", folderEntries, folderBytes));

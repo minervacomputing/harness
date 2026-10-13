@@ -1,7 +1,7 @@
 // Code mode's faults end to end in local workerd, as test/platform/protocols.test.ts runs the protocols:
 // the real Workspace and Conversation objects, the executor with its ledger, the fake Notes connector and
 // its provider, the fake model, the real Scripts object, and the test build's fault points. A script's
-// store survives a crash of the conversation (worker/test/resume.test.ts), a write a script was waiting for
+// store survives a crash of the conversation, a write a script was waiting for
 // when its wall clock ran out settles in the ledger and is recorded, and a crash during a script ends it
 // unreplayed.
 

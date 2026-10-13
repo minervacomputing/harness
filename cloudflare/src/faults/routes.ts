@@ -1,7 +1,7 @@
 // The test build's driver (src/faults/): POST /api/faults/<op> with a JSON body, for the account tests.
 // It answers only a request with `X-Minerva-Faults-Token: <faultsToken(MINERVA_SECRET_KEY)>`; any other request
 // is passed on to the Worker, which answers 404 as for a path with no route. It calls the objects through
-// addressing.ts as the API will (step 5), as a fixed test user, against the fake provider only. Operations
+// addressing.ts as the API does, as a fixed test user, against the fake provider only. Operations
 // under `sandbox/` drive a Sandbox object of their own (lab.ts). `emails` and `emails-clear` read and empty
 // the mailbox the build's emails go to (mailbox.ts); `download` serves a signed download link as the
 // download origin (files-worker/) would, from the test Worker's own buckets, for the platform tests (the

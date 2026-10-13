@@ -1,29 +1,29 @@
 # Minerva on Cloudflare
 
-The experiment of [docs/plans/cloudflare.md](../docs/plans/cloudflare.md): the same product as Workers, Durable Objects, D1 and R2. This directory holds steps 1 (the scaffold), 2 (the core protocols), 3 (the sandbox and files) and 4 (code mode). The frontend stays in `frontend/` and becomes the Worker's static assets.
+The experiment of [docs/plans/cloudflare.md](../docs/plans/cloudflare.md): the same product as Workers, Durable Objects, D1 and R2. This directory holds steps 1 to 7: the protocols, the sandbox and files, code mode, the web API, the 20 connectors and the deploy scripts. The frontend stays in `frontend/` and becomes the Worker's static assets.
 
 | Path | What |
 |---|---|
 | `cloudflare.config.ts` | Worker `minerva-cf` (and, in mode `faults`, the test Worker `minerva-cf-test`): assets, bindings, settings, secrets, the Durable Object classes |
-| `files-worker/` | Worker `minerva-cf-files` (mode `faults`: `minerva-cf-files-test`), the download origin: checks a signed link and streams the object from R2 (`src/files/download.ts`); the routes that issue links are step 5 |
+| `files-worker/` | Worker `minerva-cf-files` (mode `faults`: `minerva-cf-files-test`), the download origin: checks a signed link and streams the object from R2 (`src/files/download.ts`); the web API's routes issue the links |
 | `reset-worker/` | The quiesced instance `scripts/reset.ts` deploys while it resets an instance's data: 503 for every request, no binding, every Durable Object class retired (below) |
 | `scripts/` | Deploy (`deploy.ts`, with `resources.ts`, `schema-check.ts`, `bundle.ts`, `builds.ts`), reset (`reset.ts`), secrets (`secrets.ts`), the frontend's assets (`assets.ts`), offline development |
 | `migrations/` | D1 `minerva-cf`: accounts and the workspace directory |
 | `src/index.ts`, `src/http/` | The router, error shapes, cookies, CSRF, security headers, JSON bodies, `/assets/`, the probe |
-| `src/lib/` | JSON (parsing, and the format the model and providers read), canonical JSON (RFC 8785) for hashes, AES-GCM encryption at rest, Pydantic's strings for zod, code point order, text helpers, hashes, ids, the SQL interface every object's logic runs on (`sql.ts`) and its schema steps |
+| `src/lib/` | JSON parsing (`parseJson`, which the runtime's key bug needs), canonical JSON (RFC 8785) for hashes, AES-GCM encryption at rest, zod records without prototype keys, text, dates, HTML, hosts and addresses, hashes, ids, the SQL interface every object's logic runs on (`sql.ts`) and its schema steps |
 | `src/contracts/` | The interfaces steps 2 to 6 build against (types only) |
 | `src/workspace/` | The Workspace Durable Object: connections and credentials with refresh, layers, grants, agents, the run registry, the revocation outbox, uploads, deletion (`core.ts` over `lib/sql.ts`; `workspace.ts` is the object) |
 | `src/conversation/` | The Conversation Durable Object: messages, runs, attempts and the gate, events and the stream's WebSocket, history replay, the run's tools, PiHarness, the local tools and their checkpoint barrier (`local.ts`, `local-run.ts`); `ports.ts` wires the Workspace, the executor, the ledger and the model |
 | `src/gateway/` | The permission pipeline: policy, grants, the connector contract and registry, run-start tool lists, the executor, provider HTTP, the write ledger and page tokens, strict validation, results |
 | `src/model/` | The model wrapper: the pi-ai provider `minerva/default`, request policy, stream tap, routes to Workers AI or AI Gateway, the deterministic fake |
-| `src/connectors/` | The connector registry the Workspace and the executor share (the 20 connectors join in step 6) |
+| `src/connectors/` | The 20 connectors and the registry the Workspace and the executor share |
 | `src/files/` | Folders and versions: manifests, `FolderStore` over the Conversation's SQLite, names and limits, attachments, uploads, signed download links and the download origin's handler |
 | `src/sandbox/` | The Sandbox Durable Object (`core.ts` behind ports): the container's lifecycle and hardening, the command wrapper, `minerva-fs` calls, blob transfer between R2 and the container, and the `ExecutionEnv` pi's tools run on (`env.ts`) |
 | `container/` | The sandbox image: `Dockerfile`, the Python requirements, `minerva-fs` and the probe (`minerva/`), their Python tests (`tests/`) |
 | `src/scripts/` | Code mode: `run_script` in the `minerva` extension, the Scripts Durable Object that loads each script as a Dynamic Worker, the guest's prelude, the conversation's side of a script (wall clock, caps, the reset after every script) |
 | `src/faults/` | The test build only: a fake connector and its provider object, fault points, the account tests' driver, and the sandbox lab (`lab.ts`, `sandbox.ts`: production's Sandbox object with fault seams, behind the driver) (below) |
 | `src/addressing.ts` | The one map from a workspace (id, jurisdiction) to its objects and its bucket |
-| `test/` | `unit/`, `platform/` (with the end-to-end fault tests, `protocols.test.ts`, and `frontend-auth.test.ts`, which runs the frontend's auth client, `frontend/src/lib/auth.ts`, against the Worker), `account/` (`deployed.test.ts` for `minerva-cf`; `faults.test.ts`, `sandbox.test.ts`, `turns.test.ts` and `web-egress.test.ts` for the test Worker; `scripts.test.ts` for the code mode lab), and `fixtures/` with the Python vectors |
+| `test/` | `unit/`, `platform/` (with the end-to-end fault tests, `protocols.test.ts`, and `frontend-auth.test.ts`, which runs the frontend's auth client, `frontend/src/lib/auth.ts`, against the Worker), `account/` (`deployed.test.ts` for `minerva-cf`; `faults.test.ts`, `sandbox.test.ts`, `turns.test.ts` and `web-egress.test.ts` for the test Worker; `scripts.test.ts` for the code mode lab), `docker/` (the Sandbox against the real image), and `fixtures/` with shared test suites and provider fakes |
 
 ## Setup
 
@@ -74,7 +74,7 @@ Vite's dev server loads the Worker's sources itself, so the `workerSources()` pl
 
 ```sh
 pnpm typecheck       # generates cf's types, then tsc for the Worker, Node scripts and download Worker
-pnpm test:unit       # Vitest in Node: lib/, http/, settings, the contracts' types, rules on the sources
+pnpm test:unit       # Vitest in Node, no Docker: lib/, the executor, policy, connectors against scripted provider answers, the objects' logic over SQLite, rules on the sources
 pnpm test:docker     # the Sandbox against the real image in a local container (needs Docker and the image `pnpm sandbox:image` builds; skips without them)
 pnpm test:platform   # the Worker in local workerd: router, Durable Objects with SQLite, D1, the protocols' fault tests
 pnpm test:account    # the deployed Workers (needs the origins above, ../.env.cloudflare and cf signed in), and the browser walk on the test Worker (needs its settings and Chrome)
@@ -143,7 +143,7 @@ pnpm test:faults       # about 10 minutes, one file at a time (a memory-limit re
                        #                       Accept-Encoding passed through as sent, and more fetches than an invocation's six connections
 ```
 
-`MINERVA_SBX_TIMINGS=<file>` and `MINERVA_TURN_TIMINGS=<file>` make the sandbox and turn tests write their timings as JSON. `pnpm test:faults` does not run code mode's rows (`scripts.test.ts`); they need the lab Worker below.
+One file runs alone with `pnpm test:faults test/account/web-egress.test.ts` (the account config, `pnpm test:account`, excludes it with the other test-Worker suites). `MINERVA_SBX_TIMINGS=<file>` and `MINERVA_TURN_TIMINGS=<file>` make the sandbox and turn tests write their timings as JSON. `pnpm test:faults` does not run code mode's rows (`scripts.test.ts`); they need the lab Worker below.
 
 It sends no email: the test build has no Email Sending binding, and its emails go to a `FaultMailbox` object (`src/faults/mailbox.ts`, the newest 500) that the driver reads and empties (`emails`, `emails-clear`). `test/account/browser.test.ts`, run by `pnpm test:account test/account/browser.test.ts` after `deploy:test` (about 100 s; plain `pnpm test:account` also runs `deployed.test.ts`, which targets production), drives the frontend the test Worker serves in headless Google Chrome (`playwright-core`, `channel: "chrome"`): sign-up with the emailed code and the setup key, the first-run setup claimed on `/setup`, the instance admin page, sign-in by password, with TOTP and by emailed code, a password reset, an agent, the fake Notes connection, a chat turn with the fake model that writes a file, its download through the app's redirect to `minerva-cf-files-test` (which must then refuse the link unsigned, with its signature or a signed field changed, and expired), a Workers AI turn and sign-out, failing on console errors, uncaught exceptions, failed requests and unexpected statuses. The driver stands in for the fake provider's consent page (`provider-authorize`) and deletes an earlier walk's setup claim first (`setup-reopen`, keeping its admins), so every walk claims the setup through the page. Every account suite checks first that its origins are the test instance's own (`test/account/origins.ts`: an https origin `minerva-cf-test.<subdomain>.workers.dev`, or `minerva-cf-files-test.<subdomain>.workers.dev` for the download origin, on the same subdomain) and stops otherwise. The walk fails, rather than skip, without Chrome or the test Worker's settings; `MINERVA_BROWSER_SHOTS=<dir>` keeps a screenshot of every page with its fields masked, and of a failure with what the page showed and its last requests.
 

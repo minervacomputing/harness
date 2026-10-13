@@ -1,6 +1,6 @@
 // Uploads from the browser (plan: Files, Uploads): the checks of the raw request in order, and the body streamed into R2 while it is hashed, recorded in the Workspace as pending before the
 // object is written and as complete after. The HTTP route around them (session, CSRF, membership, the demo
-// rule, between the name and the stream) is the web API's (step 5).
+// rule, between the name and the stream) is the web API's (api/uploads.ts).
 //
 // The body is not read in JavaScript: it is teed natively into R2's `put` and a `crypto.DigestStream`
 // (about 550 ms of CPU per 50 MiB), through a FixedLengthStream of the declared size, which gives R2 the

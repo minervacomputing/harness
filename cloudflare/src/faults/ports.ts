@@ -50,7 +50,7 @@ export function providerOf(env: Env, scope: string): DurableObjectStub<FaultProv
 
 /**
  * The network of the test build's executor and refreshes: the fake provider, and nothing else, refused as a
- * blocked egress would be, so a real connector in its registry (step 6) cannot reach its provider from a
+ * blocked egress would be, so a real connector in its registry cannot reach its provider from a
  * Worker the token-gated driver controls. Models go through the AI binding, not here.
  */
 export function providerFetch(env: Env, scope: string): typeof fetch {

@@ -1,6 +1,6 @@
 // Layers and grants, the pure parts: the policy a run
 // starts with, built from the Workspace Durable Object's rows, and the checks and plan of a grant edit.
-// Storing the rows, bumping the layer's version and revoking runs are the Workspace's (step 2b).
+// Storing the rows, bumping the layer's version and revoking runs are the Workspace's (workspace/core.ts).
 
 import type { ConnectionId, UserId } from "../contracts/common.ts";
 import type { Connector } from "../contracts/connectors.ts";

@@ -460,7 +460,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * `activate` (step 5): until the Workspace answers, sent again by the watch job and whenever the object
+	 * `activate` (plan: Starting a run, step 5): until the Workspace answers, sent again by the watch job and whenever the object
 	 * starts. Active: the run is provisioned and its loop starts. Revoked: it stops with that reason. Expired:
 	 * it fails (`start_expired`). Ended: the Workspace no longer tracks it, so no revocation could reach it;
 	 * it stops ("Stopped.").
@@ -746,7 +746,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		}
 		if (submission.status !== "done" || submission.type !== "input") return;
 		const entry = entries.get(submission.answer) ?? (await this.#entry(run, submission.answer));
-		// The folder as the turn left it, before the turn counts as complete (step 12).
+		// The folder as the turn left it, before the turn counts as complete.
 		if (!(await this.#finishLocal(fence))) return;
 		await this.#complete(fence, answerText(entry));
 	}

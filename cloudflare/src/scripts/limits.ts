@@ -24,7 +24,7 @@ export const SCRIPT_CALLS_OPEN = 100;
 export const SCRIPT_ARGS_BYTES = 256 * 1024;
 /** Refusals of one script before it is stopped. */
 export const SCRIPT_REFUSALS = 100;
-/** `store()` values kept for the turn, as UTF-8 JSON (worker/src/script-store.ts). */
+/** `store()` values kept for the turn, as UTF-8 JSON. */
 export const STORE_BYTES = 1024 * 1024;
 
 /** pi-codemode's prelude: per stored value and in all, in characters of JSON (UTF-16 units, as JavaScript counts). */
@@ -69,7 +69,7 @@ export const ARGS_TOO_LARGE = `Tool arguments are limited to ${SCRIPT_ARGS_BYTES
 export const REFUSALS_STOP = "The script kept making tool calls that could not run.";
 /** pi-codemode's host, for a call to a tool it does not have (only a guest that bypassed the prelude's `tools`). */
 export const UNKNOWN_TOOL = (name: string): string => `Unknown tool "${name}"`;
-/** worker/src/main.ts `scriptTool`, for a failure without a message. */
+/** A scripted call's failure without a message. */
 export const CALL_FAILED = (name: string): string => `${name} failed.`;
 export const CANCELLED_NOTE = (n: number): string =>
 	`${n} tool call${n === 1 ? "" : "s"} had not finished when the script ended and ${n === 1 ? "was" : "were"} cancelled. A cancelled write may still have taken effect.`;

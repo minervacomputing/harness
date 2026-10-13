@@ -1,7 +1,7 @@
 // Accounts on Better Auth in local workerd over D1 (plan: The web API): sign-up and recoverable
 // provisioning, the session our routes read, /api/me, passwords, rate limits, the CSRF boundary between
 // Better Auth's routes and ours, tenancy and the seed. Security policy (two-factor across sign-in
-// methods, account-scoped limits, revocation) is step 5a3's and tested there.
+// methods, account-scoped limits, revocation) is tested in accounts-policy.test.ts.
 
 import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";

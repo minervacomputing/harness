@@ -33,7 +33,7 @@ import type { ScriptCallPort, ScriptCalls, ScriptSession } from "./session.ts";
 type Context = Parameters<ToolRegistration["execute"]>[2];
 
 
-/** The turn's `store()` values (worker/src/script-store.ts), in the run's pi conversation. */
+/** The turn's `store()` values, in the run's pi conversation. */
 export const SCRIPT_STORE = defineDoc<{ entries: [string, string][] }>({
 	kind: "minerva.script-store",
 	version: 1,

@@ -53,3 +53,61 @@ One unit per fresh agent, in sequence, each committed on `cloudflare` after `pnp
 - `test/fixtures/` holds no generated vectors.
 - `pnpm test:unit` runs without Docker in well under 20 s; `pnpm test:platform` is measured before and after.
 - Each unit's commit message states lines removed, tests removed and any behaviour the model or a user now sees differently.
+
+## Outcome (2026-10-13)
+
+Units 0 to 9 are committed on `cloudflare`; unit 10 (contracts) is pending.
+
+| Unit | Commit |
+|---|---|
+| 0 | Cloudflare cleanup 0: test hygiene |
+| 1 | Cloudflare cleanup 1: plain JSON and zod for tool inputs and results |
+| 2 | Cloudflare cleanup 2: native string handling |
+| 3 | Cloudflare cleanup 3: one dates module |
+| 4 | Cloudflare cleanup 4: URL and the runtime's IDNA for hosts |
+| 5a | Cloudflare cleanup 5a: refuse dot segments in provider paths |
+| 5 | Cloudflare cleanup 5: zod schemas for provider answers |
+| 6 | Cloudflare cleanup 6: htmlparser2 for provider HTML |
+| 7 | Cloudflare cleanup 7: Gmail without the email package port |
+| 8a | Cloudflare cleanup 8a: Google connectors without parity tests |
+| 8b | Cloudflare cleanup 8b: Microsoft connectors without parity tests |
+| 8c | Cloudflare cleanup 8c: Atlassian connectors without parity tests |
+| 8d | Cloudflare cleanup 8d: Linear and Notion without parity tests |
+| 8e | Cloudflare cleanup 8e: Slack, GitHub and Sentry without parity tests |
+| 8f | Cloudflare cleanup 8f: HubSpot, Intercom, Stripe and Xero without parity tests |
+| 8g | Cloudflare cleanup 8g: Todoist and Web without parity tests |
+| 8h | Cloudflare cleanup 8h: shared leftovers |
+| 9 | Cloudflare cleanup 9: docs |
+
+Numbers (from `193f5e3`, the plan, to unit 8h):
+
+- **Lines.** `cloudflare/src`: 251 files, +4,216 −12,495 (about 59,100 lines to 50,800). `cloudflare/test`: 189 files, +6,547 −70,896, of which fixtures +532 −63,583.
+- **Tests.** Unit 6,842 in 53 s wall to 2,684 in 6 s, without Docker; the Docker-backed suites (45 tests, about 50 s) run in `pnpm test:docker`. Platform 488 in 85 s to 420 in 82 s.
+- **Fixtures.** `test/fixtures` 6.5 MB to 164 KB: no generated vectors and no Python generators; `jcs-vectors.json` (RFC 8785's) stays.
+
+What users and the model see differently (each unit's commit lists the details):
+
+- Tool results and argument summaries are compact `JSON.stringify` with raw UTF-8; values in messages are quoted as JSON, not Python's `repr`.
+- Validation errors, for tool arguments and the API's 422 list, carry zod's codes and words. String limits count UTF-16 units and `trim()` strips JavaScript's whitespace. Tool input schemas lost their Pydantic titles, so most operation fingerprints changed.
+- Text: lowercasing instead of casefolding (`STRASSE` no longer meets `Straße`), JavaScript's whitespace, ASCII digits only in ids, cursors and dates, UTF-16 order and lengths (Gmail's slices, Teams' post length, names).
+- Dates are RFC 3339 only (no week dates, basic forms, hour 24 or comma decimals), checked against the calendar, offsetless times read as UTC; time zones are any IANA name `Intl` knows; refusals are plain messages.
+- Hosts and URLs: trailing dots, compatibility forms, default-ignorables and every IP spelling are refused, some letters IDNA 2008 refused (tatweel) are accepted, and the Bidi rule applies only in workerd; what is requested and shown is the URL parser's serialization. Ids of `.`, `..` or empty are refused before they reach a provider path.
+- Provider answers are read with zod schemas of the provider's wire names: numbers as strings, lax booleans, snake case for camel case and similar now fail as an unexpected response; JSON bodies are strict UTF-8 with a leading BOM accepted.
+- Provider HTML goes through htmlparser2's tokenizer: in the cases where browsers read malformed markup differently the text ends there, a Teams or Intercom quote, mention or link with misnested content hides the rest, Teams and Intercom hide raw-text elements, and numeric references to controls decode.
+- Look-alike letters (dotted capital I, dotless i, long s, fullwidth forms) count as the letters they imitate: links with such schemes are hidden as relative in Intercom and Atlassian text, Slack's and Linear's patterns match them as those letters, and Notion reads such titled tags under their canonical name.
+- Gmail sends base64 bodies, without an added trailing newline and with different header folding; a reply whose Reply-To or From uses group syntax or comments is refused.
+- Linear writes answered 400, 403, 404, 409, 412 or 422 with a body that is not UTF-8 JSON are uncertain (pausing the run's writes), not not-applied.
+- Office parts read as UTF-8 or UTF-16 only; GitHub file contents must be valid base64; Xero shows `-0` as `0.00`; file sizes in messages are written without exponents.
+
+Deviations from the plan:
+
+- **Unit 7** composes mail with a small hand-written builder, not `mimetext`: 3.0.28 requires a From header, invents Date and a `Math.random` Message-ID, writes the subject as one unbounded encoded word, writes custom headers unchecked and pulls `@babel/runtime-corejs3` and Node modules (its commit has the details).
+- **pako** stays in the Web connector: `DecompressionStream` inflates each written chunk whole before a reader can stop it. No workerd spike was run.
+- **decimal.js** was not adopted: Xero and Stripe keep their small exact decimal code; Xero writes amounts with `JSON.rawJSON`.
+
+Still open:
+
+- Comments that cite the old Node `worker/` remain where they name a real constraint: `container/` (its scan follows `worker/src/folder.ts`'s manifest policy) and the tests that read `../worker` (`sandbox-parts`, `test/docker/sandbox-python`). Bare plan-step references and provenance-only `worker/` citations in `src/` and `test/` were removed in unit 9; references to the plan's protocol steps ("plan: Checkpoints, steps 4 to 6") stay. `lib/encryption.ts`'s error message for a Fernet token still says "from before step 6b".
+- `quickRatio` in `accounts/passwords.ts`, the password-similarity rule, is still a port of difflib's quick ratio.
+- `frontend-auth` platform tests reload the Worker's modules for every test (about 49 s, the bulk of platform time).
+- Unit 10 (contracts): pending.

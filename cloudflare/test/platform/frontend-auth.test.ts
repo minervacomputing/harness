@@ -1,7 +1,7 @@
-// The frontend's auth client (frontend/src/lib/auth.ts, step 5a4) run against the Worker: the steps the
+// The frontend's auth client (frontend/src/lib/auth.ts) run against the Worker: the steps the
 // sign-in, sign-up, verification, code, two-factor, reset and account pages take, with the pending step they
-// keep, the state they report and the sentences they show. No page is rendered; 5f drives the pages in a
-// browser. The client reaches the Worker through a Browser's cookie jar in place of `fetch`.
+// keep, the state they report and the sentences they show. No page is rendered; test/account/browser.test.ts drives
+// the pages in a browser. The client reaches the Worker through a Browser's cookie jar in place of `fetch`.
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { useCheapHashing } from "./cheap-hashing.ts";

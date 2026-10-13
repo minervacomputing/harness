@@ -1,5 +1,5 @@
-// Shared shapes of the contracts. Contracts are types and doc comments only: the interfaces that steps 2
-// to 6 build against (docs/plans/cloudflare.md, Steps). They cite the plan's sections a rule comes from.
+// Shared shapes of the contracts. Contracts are types and doc comments only: the interfaces the objects,
+// the executor and the connectors build against. They cite docs/plans/cloudflare.md's sections a rule comes from.
 //
 // RPC rule: a Durable Object method's argument and return types must be structured-cloneable and must not
 // contain `unknown` (Workers' RPC types turn an object with an `unknown` field into `never`). Use `Json`

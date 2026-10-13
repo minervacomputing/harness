@@ -1,4 +1,4 @@
-// The security policy on Better Auth (src/accounts/policy.ts, step 5a3), through the Worker as the browser
+// The security policy on Better Auth (src/accounts/policy.ts), through the Worker as the browser
 // uses it: two factors for every sign-in, credential stamps ending sessions, email codes used once within
 // their budget, limits per address and per user, the routes the browser reaches, who may create accounts,
 // and the password rules.

@@ -1,5 +1,4 @@
-// The run's connector tools and their queue, ported from worker/src/main.ts
-// (`gatewayTool`, `gatewayCalls`) and the gateway's rendering of results, with the replay cap and the
+// The run's connector tools and their queue, and the rendering of results, with the replay cap and the
 // re-parse of argument text the runtime's JSON.parse would misread.
 
 import { describe, expect, test } from "vitest";

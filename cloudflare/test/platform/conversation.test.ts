@@ -319,7 +319,6 @@ describe("starting a run", () => {
 	test("an upload the folder cannot take refuses the start, and the Workspace releases it", async () => {
 		const { stub, fakes } = await conversation();
 		const upload = "0199a000-0000-7000-8000-0000000000ff";
-		// The default folder takes no attachments until step 3.
 		expect(await post(stub, "", [upload])).toEqual({
 			ok: false,
 			refusal: { status: 400, detail: "An attached file is no longer available. Remove it and attach it again." },

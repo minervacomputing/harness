@@ -3,8 +3,7 @@
 // class with fault seams) named by the test, through the same calls the Conversation makes: prepare a
 // container (start, harden, verify), commands and file operations through the ExecutionEnv with output
 // coming back through an RpcTarget, pi's ExecutionEnv conformance suite, the probe, hydration, scans and
-// checkpoints of a large folder, and the plan's Sandbox fault rows (test/account/sandbox.test.ts). Ported
-// from step 3's lab Worker minerva-cf-sbx, which ran the same with a Worker of its own. The test keeps the fence
+// checkpoints of a large folder, and the plan's Sandbox fault rows (test/account/sandbox.test.ts). The test keeps the fence
 // a prepare answered and sends it back with each later operation. Never part of the production Worker.
 
 import { getOrThrow } from "@earendil-works/pi-durable/env";

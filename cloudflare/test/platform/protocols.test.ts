@@ -449,7 +449,7 @@ describe("starts the store refuses", () => {
 		await runInDurableObject(w.conversation, (_instance, state) => {
 			state.storage.sql.exec("CREATE TRIGGER refuse_runs BEFORE INSERT ON runs BEGIN SELECT RAISE(ABORT, 'string or blob too big'); END");
 		});
-		// No folder takes attachments until step 3, so the refused start here is one without any.
+		// The refused start here is one without attachments.
 		const first = await w.conversation.postMessage(CALLER, { content: script([{ text: "Hi." }]), attachments: [] });
 		expect(first).toEqual({ ok: false, refusal: { status: 503, detail: START_FAILED } });
 		const inside = await runInDurableObject(w.conversation, (_instance, state) => ({

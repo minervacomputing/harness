@@ -1,5 +1,5 @@
 // The tools that work in the run's folder: pi-durable's own `read`, `write`, `edit` and `bash` (plan:
-// Checkpoints, The local tools), ported from worker/src/local-tools.ts. They run in the
+// Checkpoints, The local tools). They run in the
 // conversation's container through the ExecutionEnv the call is given (src/sandbox/env.ts); this module
 // holds what decides when their results reach pi.
 //
@@ -440,7 +440,7 @@ export interface LocalToolsOptions extends LocalToolOptions {
 	calls: LocalCalls;
 }
 
-/** The run's local tools, in a fixed order, each gated (worker/src/local-tools.ts `localTools`). */
+/** The run's local tools, in a fixed order, each gated. */
 export function localTools(options: LocalToolsOptions): ToolRegistration[] {
 	return localToolSpecs(options)
 		.filter((local) => options.names.includes(local.name))

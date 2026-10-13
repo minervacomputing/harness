@@ -1,6 +1,6 @@
 // The deploy-time schema check (scripts/schema.ts): the comparison of the schema the migrations build with the
 // answers of the deployed database, and the reading of `cf d1 query`'s output. The queries are the real ones,
-// run on real SQLite; D1 itself is never asked here (step 7 runs scripts/schema-check.ts against the account).
+// run on real SQLite; D1 itself is never asked here (deploys run scripts/schema-check.ts against the account).
 
 import { spawnSync } from "node:child_process";
 import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";

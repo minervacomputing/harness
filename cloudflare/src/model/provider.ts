@@ -86,7 +86,7 @@ export interface ModelHost {
 	/** A tool call's argument text, as the model sent it, when its call ends. */
 	toolCallText(fence: AttemptFence, callId: string, text: string): void;
 	/**
-	 * Not fenced: a call is metered whichever attempt made it (step 10); null counts it unmetered.
+	 * Not fenced: a call is metered whichever attempt made it; null counts it unmetered.
 	 * Not called for a call the provider refused or that never reached it.
 	 */
 	settled(fence: AttemptFence, usage: { input: number; output: number } | null): void;

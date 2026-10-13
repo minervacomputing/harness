@@ -1,6 +1,6 @@
 // `run_script` as the model sees it (src/scripts/tool.ts, description.ts): its registration, the
 // description with the platform's stated differences, the rendering of results and the
-// store's persistence (worker/src/script-store.ts).
+// store's persistence.
 
 import { describe, expect, test } from "vitest";
 import type { ToolDeclaration } from "../../src/contracts/executor.ts";

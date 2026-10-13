@@ -1,7 +1,6 @@
-// The run's queue of connector tool calls, ported from worker/src/main.ts
-// `gatewayCalls` and worker/src/concurrency.ts: at most 4 calls at once, the rest waiting in order, and
+// The run's queue of connector tool calls: at most 4 calls at once, the rest waiting in order, and
 // writes one at a time in the order they were asked for. Direct calls share it with scripted ones
-// (`run_script`, step 4). A call keeps its slot until the executor answers, even when its caller stopped
+// (`run_script`). A call keeps its slot until the executor answers, even when its caller stopped
 // waiting, because a started provider request cannot be called back.
 
 export const CALLS_AT_ONCE = 4;

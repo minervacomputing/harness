@@ -1,4 +1,4 @@
-// The contracts steps 2 to 6 build against. Types and doc comments only.
+// The contracts the objects, the executor and the connectors build against. Types and doc comments only.
 
 export type * from "./api.ts";
 export type * from "./common.ts";
