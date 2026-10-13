@@ -20,11 +20,3 @@ export interface InputCase {
 	error?: string;
 	raises?: string;
 }
-
-let cachedGmail: Vectors | null = null;
-
-/** gmail.json: what today's Python computes for Gmail's MIME, header, address, codec and HTML code. */
-export function gmailVectors(): Vectors {
-	cachedGmail ??= readVectors(new URL("./gmail.json", import.meta.url).pathname);
-	return cachedGmail;
-}

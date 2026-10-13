@@ -1,31 +1,29 @@
-// Reading and writing mail as Gmail carries it: MIME parts,
-// headers and raw RFC 5322 messages.
+// Mail as Gmail's API carries it: the MIME part tree of a message it returns, the address headers a reply is
+// sent by, and the raw RFC 5322 messages Minerva sends.
 //
-// Reading takes the text of a message from its MIME tree: plain text where a part offers it, otherwise HTML
+// Reading takes the text of a message from Gmail's part tree: plain text where a part offers it, otherwise HTML
 // converted to text with the Web connector's converter (which drops images and keeps only absolute http(s)
 // links, so text shown to the model cannot load anything). Attachments, and messages attached to this one
 // (`message/rfc822`, read as a whole subtree), are named, never read. Gmail can keep a large body part apart
-// from the message (`attachmentId`); such a body is reported as unavailable rather than empty.
+// from the message (`attachmentId`); such a body is reported as unavailable rather than empty. Header text is
+// decoded by postal-mime (`decodeWords`, RFC 2047) and shown on one line.
 //
-// Address headers are parsed strictly: a header that appears twice, or holds anything that is not a plain
-// address Minerva accepts (see lib/addresses.ts), is not guessed at.
+// Reply addresses decide who mail goes to, so they are read strictly (`mailboxes`), never repaired: a header is
+// a comma-separated list of `addr`, `<addr>`, `Name <addr>` or `"Quoted Name" <addr>`, and anything else
+// (groups, comments, a missing bracket, text after an address, a header that appears twice) is refused rather
+// than guessed at. Tolerant parsers such as postal-mime's `addressParser` read an address out of such headers.
 //
-// Python's email package is ported where mime.py uses it (email/): encoded words and charsets for header
-// text, Content-Type parameters, the address-list parser with its defects, and the SMTP policy's header
-// folding and quoted-printable bodies for the messages Minerva sends.
+// Messages are built from canonical addresses and validated Message-IDs only, so no header value can hold a
+// line break: the subject is written as RFC 2047 encoded words unless it is short printable ASCII, and the body
+// is UTF-8 in base64.
 
-import { OperationError } from "../../gateway/connector.ts";
-import { sliceText } from "../../lib/text.ts";
-import * as addresses from "../../lib/addresses.ts";
-import type { Part } from "./client.ts";
-import { b64decodeUrlsafeStrict } from "./email/base64.ts";
 import { decodeWords } from "postal-mime";
+import * as addresses from "../../lib/addresses.ts";
+import { base64, base64url, fromBase64, utf8 } from "../../lib/bytes.ts";
 import { decodeCharset } from "../../lib/charset.ts";
-import { BinasciiError, IndexError, PyTypeError, ValueError } from "./email/errors.ts";
-import { ContentHeaders } from "./email/legacy.ts";
-import { type RawMessage, rawMessage } from "./email/message.ts";
-import { DOT_ATOM_ENDS, type TokenList, encodedInAddrSpec, getAddressList, hasAny, quoteString } from "./email/parser.ts";
 import { htmlToText } from "../../lib/markdown.ts";
+import { sliceText } from "../../lib/text.ts";
+import type { Part } from "./client.ts";
 
 export const MAX_DEPTH = 10;
 export const MAX_PARTS = 200;
@@ -53,7 +51,7 @@ export class Content {
 	parts = 0;
 }
 
-/** What `str.isprintable()` refuses: categories Other and Separator, except the ASCII space. */
+/** Controls, format and private-use characters, unassigned code points and separators other than the space. */
 const UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Zs}]/u;
 const SPACES = /\s+/g;
 
@@ -70,34 +68,76 @@ function header(part: Part, name: string): string | null {
 	return part.headers.find((h) => h.name.toLowerCase() === folded)?.value ?? null;
 }
 
-/** The part's Content-Type and Content-Disposition, as the standard library's Message reads them. */
-export function contentType(part: Part): ContentHeaders {
-	const headers: [string, string][] = [];
-	for (const name of ["Content-Type", "Content-Disposition"]) {
-		const value = header(part, name);
-		if (value !== null) headers.push([name, value]);
+/**
+ * A Content-Type or Content-Disposition value: its type, lowercased, and its parameters by lowercased name (the
+ * first of each name), quoted values unquoted. Semicolons inside quoted strings do not split it. RFC 2231's
+ * sections (`name*0`, `name*1`) are joined, and an extended value (`name*`) loses its `charset'language'` prefix
+ * and is percent-decoded byte by byte: the parameters read here (charset, start) are ASCII.
+ */
+function parameters(value: string | null): { type: string; params: Map<string, string> } {
+	const text = value ?? "";
+	const pieces: string[] = [];
+	let piece = "";
+	let quoted = false;
+	for (let i = 0; i < text.length; i++) {
+		const char = text[i] as string;
+		if (quoted && char === "\\") {
+			piece += char + (text[++i] ?? "");
+			continue;
+		}
+		if (char === '"') quoted = !quoted;
+		if (char === ";" && !quoted) {
+			pieces.push(piece);
+			piece = "";
+		} else piece += char;
 	}
-	return new ContentHeaders(headers);
+	pieces.push(piece);
+	const params = new Map<string, string>();
+	const sections = new Map<string, string[]>();
+	for (const item of pieces.slice(1)) {
+		const equals = item.indexOf("=");
+		const key = equals < 0 ? null : /^([^*\s]+)(?:\*(\d{1,2}))?(\*?)$/.exec(item.slice(0, equals).trim().toLowerCase());
+		if (!key) continue;
+		const [, name, section, extended] = key as unknown as [string, string, string | undefined, string];
+		let param = item.slice(equals + 1).trim();
+		if (param.length >= 2 && param.startsWith('"') && param.endsWith('"')) param = param.slice(1, -1).replace(/\\(.)/gs, "$1");
+		if (extended) {
+			if (section === undefined || section === "0") param = param.replace(/^[^']*'[^']*'/, "");
+			param = param.replace(/%([0-9a-f]{2})/gi, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
+		}
+		if (section === undefined) {
+			if (!params.has(name)) params.set(name, param);
+		} else {
+			const list = sections.get(name) ?? [];
+			list[Number(section)] ??= param;
+			sections.set(name, list);
+		}
+	}
+	for (const [name, list] of sections) if (!params.has(name)) params.set(name, list.join(""));
+	return { type: (pieces[0] as string).trim().toLowerCase(), params };
 }
 
-/** The part's body as text, or null when Gmail keeps it apart or it cannot be decoded. */
+/** A body as Gmail sends it, base64url with or without padding; null for anything else. */
+function base64urlBytes(data: string): Uint8Array | null {
+	const bare = data.replace(/={1,2}$/, "");
+	if (!/^[A-Za-z0-9_-]*$/.test(bare) || bare.length % 4 === 1 || (bare !== data && data.length % 4 !== 0)) return null;
+	return fromBase64(bare);
+}
+
+/** The part's body as text, or null when Gmail keeps it apart or it is not base64url. */
 function decodeBody(part: Part): string | null {
 	const body = part.body;
 	if (body === null || body.attachmentId) return null;
 	if (body.data === null) return !body.size ? "" : null;
-	let data: Uint8Array;
-	try {
-		data = b64decodeUrlsafeStrict(body.data + "=".repeat((4 - (body.data.length % 4)) % 4));
-	} catch (error) {
-		if (error instanceof BinasciiError || error instanceof ValueError) return null;
-		throw error;
-	}
+	const data = base64urlBytes(body.data);
+	if (data === null) return null;
 	// The sender names the charset: one the runtime lacks is read as UTF-8.
-	return decodeCharset(data, contentType(part).getContentCharset() || "utf-8") ?? (decodeCharset(data, "utf-8") as string);
+	const charset = parameters(header(part, "Content-Type")).params.get("charset") || "utf-8";
+	return decodeCharset(data, charset) ?? (decodeCharset(data, "utf-8") as string);
 }
 
 function isAttachment(part: Part): boolean {
-	return Boolean(part.filename) || contentType(part).getContentDisposition() === "attachment";
+	return Boolean(part.filename) || parameters(header(part, "Content-Disposition")).type === "attachment";
 }
 
 function addAttachment(content: Content, part: Part): void {
@@ -132,8 +172,8 @@ function render(content: Content, part: Part, depth: number): string | null {
 	}
 	if (mimeType === "multipart/related" && part.parts.length) {
 		// The document is the root part (`start`, or else the first); the rest are resources it uses.
-		const start = contentType(part).getParam("start");
-		const root = part.parts.find((child) => start && header(child, "Content-ID") === start) ?? null;
+		const start = parameters(header(part, "Content-Type")).params.get("start");
+		const root = start ? part.parts.find((child) => header(child, "Content-ID")?.trim() === start.trim()) : undefined;
 		return render(content, root ?? (part.parts[0] as Part), depth + 1);
 	}
 	if (mimeType.startsWith("multipart/")) {
@@ -164,64 +204,59 @@ export function content(payload: Part | null): Content {
 	return found;
 }
 
-/** An address of email.headerregistry: its addr_spec, quoted where its local part needs it. */
-function addrSpec(username: string, domain: string): string {
-	const lp = hasAny(username, DOT_ATOM_ENDS) ? quoteString(username) : username;
-	if (domain) return `${lp}@${domain}`;
-	if (!lp) return "<>";
-	return lp;
-}
+/** Longer than any address header Minerva replies to (at most ten addresses). */
+const MAX_ADDRESS_HEADER = 4000;
+/** Controls (C0 but tab, DEL, C1) and line separators anywhere in an address header: it is refused. */
+const CONTROL = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u2028\u2029]/;
+/** A word of a display name: no white space, controls, quotes or RFC 5322's specials (but the dot). */
+const WORD = String.raw`[^\s\u0000-\u001f\u007f-\u009f()<>\[\]:;@\\,"]+`;
+/** An address as written: what addresses.parse then accepts or refuses. No white space, quotes, brackets or specials but "@" and ".". */
+const ADDRESS = String.raw`[^\s\u0000-\u001f\u007f-\u009f()<>\[\]:;\\,"]+`;
+const NAME = String.raw`(?:"(?:[^"\\]|\\.)*"|${WORD}(?:[ \t]+${WORD})*)`;
+/** `addr`, `<addr>`, `Name <addr>` or `"Quoted Name" <addr>`, with optional white space around it. */
+const MAILBOX = new RegExp(String.raw`^[ \t]*(?:(${ADDRESS})|(?:${NAME}[ \t]*)?<(${ADDRESS})>)[ \t]*$`);
 
-/**
- * `default.header_factory("reply-to", value)`: its defect count, its addresses' addr_specs, and their parts
- * (display name, user name, domain; the tests compare them with the standard library's), and whether an
- * encoded word stands inside an address (which Python decodes into it, and `mailboxes` refuses).
- */
-export function addressHeader(value: string): { defects: number; specs: string[]; parts: [string, string, string][]; encodedAddress: boolean } {
-	const list = getAddressList(value);
-	const specs: string[] = [];
-	const found: [string, string, string][] = [];
-	for (const address of list.addresses) {
-		void address.displayName;
-		for (const mailbox of address.allMailboxes as (TokenList & { displayName: string | null; localPart: string | null; domain: string | null })[]) {
-			const parts = [mailbox.displayName || "", mailbox.localPart || "", mailbox.domain || ""];
-			if (parts.some((part) => part.includes("\r") || part.includes("\n"))) throw new ValueError("invalid arguments; address parts cannot contain CR or LF");
-			specs.push(addrSpec(parts[1] as string, parts[2] as string));
-			found.push(parts as [string, string, string]);
+/** The members of an address list: split at commas outside quoted strings; null for an unclosed quote. */
+function members(value: string): string[] | null {
+	const found: string[] = [];
+	let start = 0;
+	let quoted = false;
+	for (let i = 0; i < value.length; i++) {
+		const char = value[i];
+		if (quoted && char === "\\") i++;
+		else if (char === '"') quoted = !quoted;
+		else if (char === "," && !quoted) {
+			found.push(value.slice(start, i));
+			start = i + 1;
 		}
 	}
-	return { defects: list.allDefects.length, specs, parts: found, encodedAddress: encodedInAddrSpec(list) };
+	if (quoted) return null;
+	found.push(value.slice(start));
+	return found;
 }
 
 /**
- * The canonical addresses in one address header, or null when it appears more than once, the standard
- * library's parser finds any defect in it, an encoded word stands inside an address, an address is not one
- * Minerva accepts, or it names no address.
+ * The canonical addresses in one address header (From, Sender, Reply-To), duplicates dropped, or null when the
+ * header is absent or appears more than once, holds a control character, or is not a list of plain mailboxes
+ * whose addresses Minerva accepts (lib/addresses.ts). Display names are never decoded: they cannot change an
+ * address. An encoded word inside an address is refused (addresses.parse does not accept "=" or "?" either).
  */
 export function mailboxes(values: readonly string[]): string[] | null {
 	if (values.length !== 1) return null;
-	let parsed: { defects: number; specs: string[]; encodedAddress: boolean };
-	try {
-		parsed = addressHeader(values[0] as string);
-	} catch (error) {
-		if (error instanceof ValueError || error instanceof IndexError || error instanceof PyTypeError) return null;
-		throw error;
-	}
-	// A header with a defect, or with an encoded word inside an address (RFC 2047 forbids it, and Python decoded
-	// it into the address, which a different decoder could spell differently), is not guessed at.
-	if (parsed.defects || parsed.encodedAddress) return null;
+	const value = values[0] as string;
+	if (value.length > MAX_ADDRESS_HEADER || CONTROL.test(value)) return null;
+	const list = members(value);
+	if (list === null) return null;
 	const found: string[] = [];
-	for (const spec of parsed.specs) {
-		let address: string;
-		try {
-			address = addresses.parse(spec);
-		} catch (error) {
-			if (error instanceof OperationError) return null;
-			throw error;
-		}
-		if (!found.includes(address)) found.push(address);
+	for (const member of list) {
+		const match = MAILBOX.exec(member);
+		const written = match ? (match[1] ?? match[2]) : undefined;
+		if (written === undefined || written.includes("=?")) return null;
+		const result = addresses.checked(written);
+		if (!result.ok) return null;
+		if (!found.includes(result.address)) found.push(result.address);
 	}
-	return found.length ? found : null;
+	return found;
 }
 
 export function messageId(value: string | null): string | null {
@@ -249,10 +284,65 @@ export function replySubject(subject: string | null): string {
 	return sliceText(`Re: ${text}`, 0, 900);
 }
 
+export interface Outgoing {
+	to: readonly string[];
+	cc?: readonly string[];
+	bcc?: readonly string[];
+	subject: string;
+	body: string;
+	/** In-Reply-To and References, as `threading` gives them. */
+	inReplyTo?: readonly [inReplyTo: string, references: string] | null;
+}
+
+const CRLF = "\r\n";
+/** Lines continue with CRLF and a space: a reader joins them back into one header. */
+const FOLD = `${CRLF} `;
+/** UTF-8 bytes per encoded word: "Subject: " and one word of 68 characters fit in 78. */
+const WORD_BYTES = 42;
+
+function addressList(name: string, list: readonly string[]): string {
+	for (const address of list) {
+		const result = addresses.checked(address);
+		if (!result.ok || result.address !== address) throw new TypeError("Mail is composed only for canonical addresses.");
+	}
+	return `${name}: ${list.join(`,${FOLD}`)}${CRLF}`;
+}
+
+/** The subject as it is when it is short printable ASCII, otherwise as UTF-8 encoded words, one per line. */
+function subjectHeader(subject: string): string {
+	if (/[\u0000-\u001f\u007f]/.test(subject)) throw new TypeError("A subject is one line without control characters.");
+	if (/^[ -~]{0,69}$/.test(subject) && !subject.includes("=?")) return `Subject: ${subject}${CRLF}`;
+	const words: string[] = [];
+	let run = "";
+	for (const char of subject) {
+		if (run && utf8(run + char).length > WORD_BYTES) {
+			words.push(run);
+			run = "";
+		}
+		run += char;
+	}
+	if (run) words.push(run);
+	return `Subject: ${words.map((word) => `=?UTF-8?B?${base64(utf8(word))}?=`).join(FOLD)}${CRLF}`;
+}
+
+function threadingHeaders([inReplyTo, references]: readonly [string, string]): string {
+	const chain = references.split(" ");
+	if (![inReplyTo, ...chain].every((id) => MESSAGE_ID.test(id))) throw new TypeError("Replies are threaded only by well-formed Message-IDs.");
+	return `In-Reply-To: ${inReplyTo}${CRLF}References: ${chain.join(FOLD)}${CRLF}`;
+}
+
 /**
  * A plain text message as Gmail takes it (base64url). It has no From: Gmail sends from the account's default
  * address. Bcc stays in the message Gmail is given; Gmail leaves it out of what it delivers.
  */
-export function raw(message: RawMessage): string {
-	return rawMessage(message);
+export function raw(message: Outgoing): string {
+	let text = addressList("To", message.to);
+	if (message.cc?.length) text += addressList("Cc", message.cc);
+	if (message.bcc?.length) text += addressList("Bcc", message.bcc);
+	text += subjectHeader(message.subject);
+	if (message.inReplyTo) text += threadingHeaders(message.inReplyTo);
+	text += `MIME-Version: 1.0${CRLF}Content-Type: text/plain; charset=utf-8${CRLF}Content-Transfer-Encoding: base64${CRLF}${CRLF}`;
+	const body = base64(utf8(message.body.replace(/\r\n|\r|\n/g, CRLF)));
+	for (let i = 0; i < body.length; i += 76) text += body.slice(i, i + 76) + CRLF;
+	return base64url(utf8(text));
 }

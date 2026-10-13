@@ -300,7 +300,8 @@ describe("times and tool inputs, as today's Python reads them", () => {
 			const op = operation(outlookConnector(), name);
 			const actual = [];
 			const wanted = [];
-			for (const { args, data, raises } of cases.filter((item) => !changedOnPurpose(item.args))) {
+			// Python raised a TypeError for a null query; it is no search now (tested below).
+			for (const { args, data, raises } of cases.filter((item) => !changedOnPurpose(item.args) && item.raises !== "TypeError")) {
 				wanted.push(raises !== undefined ? { args, raises } : data !== undefined ? { args, data } : { args, refused: true });
 				try {
 					const result = await validateInput(op.input as never, args);
@@ -313,6 +314,11 @@ describe("times and tool inputs, as today's Python reads them", () => {
 			expect(actual).toEqual(wanted);
 		});
 	}
+
+	test("a null query is no search", async () => {
+		const result = await validateInput(operation(outlookConnector(), "list_messages").input as never, { folder: INBOX, query: null });
+		expect(result.ok && (result.data as JsonObject).query).toBeNull();
+	});
 });
 
 describe("the connector outside a run", () => {

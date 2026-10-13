@@ -21,7 +21,7 @@ export function passesThrough(error: unknown): boolean {
 	return error instanceof OperationError && (CONNECTION_ERRORS.has(error.code) || error.code === "RUN_ENDED");
 }
 
-/** `_label_ref`: a system label in any case, else a label id. */
+/** A system label in any case, else a label id. */
 function labelRef(value: string, ctx: z.RefinementCtx): string {
 	const upper = value.toUpperCase();
 	if (SYSTEM_LABELS.has(upper)) return upper;
@@ -102,20 +102,15 @@ const ListMessages = z.strictObject({
 		.default(null)
 		.describe("Only mail with this label; leave out to search all mail."),
 	query: z.string().trim().min(1).max(200)
+		.refine(isSingleLine, SINGLE_LINE)
 		.nullable()
-		.superRefine((value, ctx) => {
-			// AfterValidator(single_line) on `str | None`: Python iterates None and raises TypeError, which no
-			// validation error words; the call fails as any other bug does.
-			if (value === null) throw new TypeError("'NoneType' object is not iterable");
-			if (!isSingleLine(value)) ctx.addIssue({ code: "custom", message: SINGLE_LINE, input: value });
-		})
 		.default(null)
 		.describe('Gmail search, as in its search box, such as "from:ada@example.com is:unread".'),
 	limit: z.int().min(1).max(25).default(10),
 	cursor: Cursor().nullable().default(null),
 });
 
-/** Up to `limit` of `tasks` at once, results in order (an asyncio.Semaphore with gather). */
+/** Up to `limit` of `tasks` at once, results in order. */
 async function gatherLimited<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
 	const results: T[] = new Array(tasks.length);
 	let next = 0;

@@ -23,9 +23,9 @@ function clientOf(binding: Binding): GraphClient {
 	return binding.client as GraphClient;
 }
 
-/** `_search_text`. Called with None too (the validator is on `str | None`), where Python raises a TypeError. */
+/** Search words for Graph's $search: one line, without the quotes and backslashes its syntax uses. Null is no search. */
 function searchText(value: string | null): string | null {
-	if (value === null) throw new TypeError("'NoneType' object is not iterable");
+	if (value === null) return null;
 	singleLine(value);
 	if (value.includes('"') || value.includes("\\")) throw new TextError("must not contain double quotes or backslashes");
 	return value;
