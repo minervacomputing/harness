@@ -1,5 +1,4 @@
-// A thin client for the Google Calendar API v3.
-// Responses are validated before use.
+// A thin client for the Google Calendar API v3. Responses are validated before use.
 
 import { z } from "zod";
 import type { ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
@@ -19,7 +18,7 @@ export const GoogleCalendar = z.object({
 });
 export type GoogleCalendar = z.output<typeof GoogleCalendar>;
 
-/** `GoogleCalendar.name`: the user's own name for it, else its summary, else its id. */
+/** A calendar's name: the user's own name for it, else its summary, else its id. */
 export function calendarName(calendar: GoogleCalendar): string {
 	return calendar.summaryOverride || calendar.summary || calendar.id;
 }

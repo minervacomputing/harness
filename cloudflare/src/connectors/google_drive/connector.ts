@@ -1,5 +1,4 @@
-// Google Drive. Resources are files and folders;
-// what is allowed on a folder covers everything inside it.
+// Google Drive. Resources are files and folders; what is allowed on a folder covers everything inside it.
 //
 // Each call resolves where the files it touches sit (their chain of parent folders) and hands that to the
 // policy with each resource. Ancestry that cannot be resolved completely (a parent the account cannot see,
@@ -13,9 +12,8 @@ import type { Binding, Connector, DiscoveryItem, DiscoveryPage, Prepared, Provid
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
 import { fromUtf8, utf8 } from "../../lib/bytes.ts";
-import { isDict, type Json, type JsonObject, parseJson } from "../../lib/json.ts";
+import { type JsonObject, parseJson } from "../../lib/json.ts";
 import { SINGLE_LINE, isSingleLine, sliceText } from "../../lib/text.ts";
-import { digitsOr, jsonInteger } from "../google/digits.ts";
 import { oauth } from "../google/index.ts";
 import { type DriveFile, FOLDER, GoogleDriveClient, SHORTCUT, isFolder, quoted } from "./client.ts";
 import { extend } from "../../lib/arrays.ts";
@@ -187,7 +185,6 @@ export class Tree {
 }
 
 function record(resource: Resource, file: DriveFile, extra: JsonObject = {}): ScopedRecord {
-	const size = digitsOr(file.size, null);
 	const shortcut = file.shortcutDetails;
 	return {
 		resource,
@@ -196,7 +193,7 @@ function record(resource: Resource, file: DriveFile, extra: JsonObject = {}): Sc
 			name: file.name,
 			type: TYPES.get(file.mimeType) ?? "file",
 			mime_type: file.mimeType,
-			size: size === null ? null : jsonInteger(size, "Google Drive"),
+			size: file.size,
 			modified_time: file.modifiedTime,
 			link: file.webViewLink,
 			parent_id: resource.within[0] ?? null,
@@ -220,7 +217,7 @@ function isText(mimeType: string): boolean {
 async function textOf(client: GoogleDriveClient, file: DriveFile, limits: DriveLimits): Promise<string> {
 	if (file.mimeType === SHORTCUT) {
 		const target = file.shortcutDetails ? file.shortcutDetails.targetId : null;
-		throw new OperationError("UNSUPPORTED_FILE", `This is a shortcut. Read its target instead: file id ${target ?? "None"}.`);
+		throw new OperationError("UNSUPPORTED_FILE", target ? `This is a shortcut. Read its target instead: file id ${target}.` : "This is a shortcut to a file Minerva cannot see.");
 	}
 	if (file.capabilities && file.capabilities.canDownload === false) throw new OperationError("PROVIDER_FORBIDDEN", "The owner of this file does not allow downloading it.");
 	const exported = EXPORTS.get(file.mimeType);
@@ -228,8 +225,7 @@ async function textOf(client: GoogleDriveClient, file: DriveFile, limits: DriveL
 	if (exported !== undefined) {
 		body = await client.export(file.id, exported, limits.maxExportBytes);
 	} else if (isText(file.mimeType)) {
-		const size = digitsOr(file.size, null);
-		if (size !== null && size > BigInt(limits.maxTextBytes)) throw new OperationError("FILE_TOO_LARGE", `Minerva reads text files up to ${limits.maxTextBytes} bytes.`);
+		if (file.size !== null && file.size > limits.maxTextBytes) throw new OperationError("FILE_TOO_LARGE", `Minerva reads text files up to ${limits.maxTextBytes} bytes.`);
 		body = await client.content(file.id, limits.maxTextBytes);
 	} else {
 		throw new OperationError("UNSUPPORTED_FILE", "Minerva can read Google Docs, Sheets, Slides, and text files, not this type of file.");
@@ -258,40 +254,24 @@ const CreateFile = z.strictObject({
 	as_document: z.boolean().default(false).describe("Convert the text into a Google Doc instead of a plain text file."),
 });
 
-function sameKeys(value: JsonObject, keys: string[]): boolean {
-	const own = Object.keys(value);
-	return own.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
-}
-
-function readCursor(cursor: string): Json | null {
-	try {
-		return parseJson(cursor);
-	} catch {
-		return null;
-	}
-}
-
-interface DiscoveryState {
-	phase: string;
-	page: string | null;
-}
-
 function badCursor(): OperationError {
 	return new OperationError("INVALID_CURSOR", "This page token is invalid.");
 }
 
-function discoveryState(cursor: string): DiscoveryState {
-	const state = readCursor(cursor);
-	if (
-		state === null ||
-		!isDict(state) ||
-		!sameKeys(state, ["phase", "page"]) ||
-		!["drives", "folders", "search"].includes(state.phase as string) ||
-		!(typeof state.page === "string" || state.page === null)
-	) {
+const DiscoveryCursor = z.strictObject({ phase: z.enum(["drives", "folders", "search"]), page: z.string().nullable() });
+/** A browsing cursor names the parent it was issued for: "drives" and "shared" at the top, "folders" inside one. */
+const BrowseCursor = z.strictObject({ phase: z.enum(["drives", "shared", "folders"]), page: z.string().nullable(), parent: z.string().nullable() });
+
+function readCursor<T>(schema: z.ZodType<T>, cursor: string): T {
+	let data: unknown;
+	try {
+		data = parseJson(cursor);
+	} catch {
 		throw badCursor();
 	}
-	return { phase: state.phase as string, page: state.page };
+	const parsed = schema.safeParse(data);
+	if (!parsed.success) throw badCursor();
+	return parsed.data;
 }
 
 function discoveryCursor(phase: string, page: string | null): string {
@@ -299,20 +279,10 @@ function discoveryCursor(phase: string, page: string | null): string {
 }
 
 /** A browsing cursor, valid only for the parent it was issued for. */
-function browseState(cursor: string, parent: string | null): DiscoveryState {
-	const state = readCursor(cursor);
-	const phases = parent === null ? ["drives", "shared"] : ["folders"];
-	if (
-		state === null ||
-		!isDict(state) ||
-		!sameKeys(state, ["phase", "page", "parent"]) ||
-		!phases.includes(state.phase as string) ||
-		state.parent !== parent ||
-		!(typeof state.page === "string" || state.page === null)
-	) {
-		throw badCursor();
-	}
-	return { phase: state.phase as string, page: state.page };
+function browseState(cursor: string, parent: string | null): { phase: string; page: string | null } {
+	const state = readCursor(BrowseCursor, cursor);
+	if (state.parent !== parent || (parent === null) === (state.phase === "folders")) throw badCursor();
+	return state;
 }
 
 function browseCursor(phase: string, page: string | null, parent: string | null): string {
@@ -323,10 +293,7 @@ function item(file: DriveFile): DiscoveryItem {
 	return { id: file.id, name: isFolder(file) ? `${file.name}/` : file.name };
 }
 
-/**
- * Up to `limit` of `tasks` at once, results in order (an asyncio.Semaphore with gather). After the first
- * failure no task is started: gather lets the others finish, but their requests would go unread.
- */
+/** Up to `limit` of `tasks` at once, results in order. After the first failure no further task is started. */
 async function gatherLimited<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
 	const results: T[] = new Array(tasks.length);
 	let next = 0;
@@ -346,7 +313,7 @@ async function gatherLimited<T>(tasks: (() => Promise<T>)[], limit: number): Pro
 	return results;
 }
 
-/** Google Drive's connector (`GoogleDriveConnector`). */
+/** Google Drive's connector. */
 export function googleDriveConnector(options: DriveOptions = {}): Connector<GoogleDriveClient> {
 	const limits: DriveLimits = {
 		maxDepth: MAX_DEPTH,
@@ -524,7 +491,7 @@ export function googleDriveConnector(options: DriveOptions = {}): Connector<Goog
 			return { id: user.sub, label: user.email || user.name || "Google" };
 		},
 		async discover(client, _kind, { query, cursor }): Promise<DiscoveryPage> {
-			let state = cursor ? discoveryState(cursor) : null;
+			let state: { phase: string; page: string | null } | null = cursor ? readCursor(DiscoveryCursor, cursor) : null;
 			if (query || (state && state.phase === "search")) {
 				if (!query) throw badCursor();
 				const page = await client.files(`name contains ${quoted(query)} and trashed = false`, {

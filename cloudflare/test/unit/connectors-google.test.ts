@@ -1,9 +1,8 @@
-// What the Google connectors share: how Google's 403s are read, the OAuth declaration, the userinfo, and the
-// numeric strings Drive and Gmail send; and that the registry accepts the Google connectors' declarations.
+// What the Google connectors share: how Google's 403s are read, the OAuth declaration and the userinfo; and
+// that the registry accepts the Calendar and Drive declarations.
 
 import { describe, expect, test } from "vitest";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
-import { digitsOr, jsonInteger } from "../../src/connectors/google/digits.ts";
 import { GoogleUser, NOT_CONFIGURED, RATE_LIMITED, TOO_LARGE, classify, oauth, reasons } from "../../src/connectors/google/index.ts";
 import { googleCalendarConnector } from "../../src/connectors/google_calendar/connector.ts";
 import { googleDriveConnector } from "../../src/connectors/google_drive/connector.ts";
@@ -72,28 +71,6 @@ describe("the OAuth app", () => {
 		expect(GoogleUser.safeParse({ email: "ada@example.com" }).success).toBe(false);
 		expect(GoogleUser.safeParse({ sub: 108 }).success).toBe(false);
 		expect(GoogleUser.safeParse({ sub: "108", email: 1 }).success).toBe(false);
-	});
-});
-
-describe("numeric strings", () => {
-	test("ASCII digits are read, anything else is the fallback", () => {
-		expect(digitsOr("0", null)).toBe(0n);
-		expect(digitsOr("1048576", null)).toBe(1048576n);
-		expect(digitsOr("", "x")).toBe("x");
-		expect(digitsOr(null, "x")).toBe("x");
-		expect(digitsOr("12a", "x")).toBe("x");
-		expect(digitsOr("-1", "x")).toBe("x");
-		expect(digitsOr(" 1", "x")).toBe("x");
-		expect(digitsOr("1.5", "x")).toBe("x");
-	});
-
-	test("other digits are no number", () => {
-		for (const text of ["²", "1³", "①", "١٢", "１２", "½"]) expect(digitsOr(text, null)).toBeNull();
-	});
-
-	test("an integer goes into JSON as a number, unless a number cannot hold it exactly", () => {
-		expect(jsonInteger(9007199254740991n, "Google Drive")).toBe(9007199254740991);
-		expect(() => jsonInteger(9007199254740992n, "Google Drive")).toThrow("Google Drive returned an unexpected response.");
 	});
 });
 

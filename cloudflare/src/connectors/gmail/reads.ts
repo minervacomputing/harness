@@ -1,5 +1,4 @@
-// Gmail's read operations: labels, message lists, messages
-// and threads.
+// Gmail's read operations: labels, message lists, messages and threads.
 
 import { z } from "zod";
 import type { Binding, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
@@ -7,7 +6,6 @@ import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation } from "../../gateway/connector.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
 import { SINGLE_LINE, htmlUnescape, isSingleLine, sliceText } from "../../lib/text.ts";
-import { digitsOr } from "../google/digits.ts";
 import { type GmailClient, ID, type Message, type MessageRef, headersOf } from "./client.ts";
 import { CONNECTION_ERRORS, LABEL, Labels, READ_CONSENT, SPAM_TRASH, SYSTEM_LABELS, confirm, locate, messageIdInput, moved, sameResource } from "./mailbox.ts";
 import * as mime from "./mime.ts";
@@ -178,34 +176,15 @@ const LIST_MESSAGES = defineOperation<z.output<typeof ListMessages>>({
 	},
 });
 
-/** Code point positions in a long text, found without copying it into an array. */
-function codePointIndex(text: string, count: number): number {
-	let index = 0;
-	for (let seen = 0; seen < count && index < text.length; seen++) {
-		const unit = text.charCodeAt(index);
-		index += unit >= 0xd800 && unit <= 0xdbff && index + 1 < text.length && text.charCodeAt(index + 1) >= 0xdc00 && text.charCodeAt(index + 1) <= 0xdfff ? 2 : 1;
-	}
-	return index;
-}
-
-function codePoints(text: string): number {
-	let count = 0;
-	for (let index = 0; index < text.length; count++) {
-		const unit = text.charCodeAt(index);
-		index += unit >= 0xd800 && unit <= 0xdbff && index + 1 < text.length && text.charCodeAt(index + 1) >= 0xdc00 && text.charCodeAt(index + 1) <= 0xdfff ? 2 : 1;
-	}
-	return count;
-}
-
 function full(message: Message, maxChars: number, offset = 0): JsonObject {
 	const found = mime.content(message.payload);
 	const end = offset + maxChars;
-	const total = codePoints(found.text);
+	const total = found.text.length;
 	return {
 		...summary(message),
 		bcc: first(message, "Bcc"),
 		reply_to: first(message, "Reply-To"),
-		body: found.text.slice(codePointIndex(found.text, offset), codePointIndex(found.text, end)),
+		body: sliceText(found.text, offset, end),
 		offset,
 		total_chars: total,
 		next_offset: end < total ? end : null,
@@ -269,20 +248,13 @@ const READ_THREAD = defineOperation<z.output<typeof ReadThread>>({
 				}
 				if (thread.id !== data.thread) throw client.unexpected();
 				const labels = await Labels.fetch(client);
-				const keyed = thread.messages
+				const messages = thread.messages
 					.filter((m) => m.threadId === thread.id && ID.test(m.id))
-					.map((m) => ({ message: m, key: digitsOr(m.internalDate ?? "", 0n) as bigint }));
-				keyed.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-				const messages = keyed.map((item) => item.message);
+					.sort((a, b) => (a.internalDate ?? 0) - (b.internalDate ?? 0));
 				const records: ScopedRecord[] = [];
 				for (const message of messages.slice(-MAX_THREAD_MESSAGES)) {
-					const data_ = full(message, data.max_chars_per_message);
-					const truncated = data_.next_offset !== null;
-					delete data_.next_offset;
-					delete data_.offset;
-					delete data_.total_chars;
-					data_.body_truncated = truncated;
-					const found = record(binding, labels, message, data_);
+					const { next_offset, offset: _, total_chars: __, ...item } = full(message, data.max_chars_per_message);
+					const found = record(binding, labels, message, { ...item, body_truncated: next_offset !== null });
 					if (found !== null) records.push(found);
 				}
 				return { records, incomplete: messages.length > MAX_THREAD_MESSAGES };

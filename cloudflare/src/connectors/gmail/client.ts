@@ -8,7 +8,6 @@ import { z } from "zod";
 import type { OperationErrorShape, ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP, segment } from "../../gateway/http.ts";
-import { fromUtf8Strict } from "../../lib/bytes.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
 import { GoogleUser, USERINFO_URL, classify as googleClassify, reasons } from "../google/index.ts";
 
@@ -62,7 +61,8 @@ export const Message = z.object({
 	threadId: z.string(),
 	labelIds: z.array(z.string()).default([]),
 	snippet: z.string().default(""),
-	internalDate: z.string().nullable().default(null),
+	/** When Gmail received it, in epoch milliseconds, written as a string of digits. */
+	internalDate: z.string().regex(/^\d{1,15}$/).transform(Number).nullable().default(null),
 	payload: Part.nullable().default(null),
 });
 export type Message = z.output<typeof Message>;
@@ -175,8 +175,8 @@ export class GmailClient implements ProviderClient {
 		const bytes = new Uint8Array(await response.arrayBuffer());
 		let data: Json;
 		try {
-			const start = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
-			data = parseJson(fromUtf8Strict(bytes.subarray(start)));
+			// Strict UTF-8; the decoder drops a byte order mark, as the other answers' reader does.
+			data = parseJson(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes));
 		} catch (error) {
 			throw this.http.unexpected(error);
 		}

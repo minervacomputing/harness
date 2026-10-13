@@ -13,7 +13,8 @@ import { OperationError, consentGiven } from "../../src/gateway/connector.ts";
 import { Registry, validate } from "../../src/gateway/registry.ts";
 import { type Json, parseJson } from "../../src/lib/json.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
-import { CONNECTION, ceilingRow, jsonResponse, operation, requestOf, settingsClient, startRun } from "../fixtures/connectors/google/runs.ts";
+import { ceilingRow, operation, requestOf, settingsClient, startRun } from "./connector-runs.ts";
+import { jsonResponse } from "./executor-fakes.ts";
 
 type JsonObject = { [key: string]: Json };
 
@@ -42,7 +43,7 @@ function textPart(text: string, mimeType = "text/plain", charset = "utf-8"): Jso
 	return {
 		mimeType,
 		headers: [{ name: "Content-Type", value: `${mimeType}; charset=${charset}` }],
-		body: { size: Array.from(text).length, data: b64(text) },
+		body: { size: Buffer.byteLength(text, "utf8"), data: b64(text) },
 	};
 }
 
@@ -410,6 +411,14 @@ describe("the client", () => {
 		expect(classify("Gmail", new Response(other, { status: 400 }), other)).toBeNull();
 		expect(classify("Gmail", new Response("<html>", { status: 400 }), "<html>")).toBeNull();
 	});
+
+	test("a full message is strict UTF-8, with or without a byte order mark", async () => {
+		const json = new TextEncoder().encode(JSON.stringify({ id: GRACE, threadId: THREAD }));
+		const read = (bytes: Uint8Array) => settingsClient(gmailConnector(), async () => new Response(bytes)).message(GRACE, "full");
+		expect((await read(new Uint8Array([0xef, 0xbb, 0xbf, ...json]))).id).toBe(GRACE);
+		// A byte that is not UTF-8 inside a string is refused, not replaced.
+		await expect(read(new Uint8Array([...json.subarray(0, -2), 0xff, 0x22, 0x7d]))).rejects.toMatchObject({ code: "PROVIDER_FAILED" });
+	});
 });
 
 describe("connecting", () => {
@@ -558,7 +567,7 @@ describe("reading", () => {
 		expect(read?.unread).toBe(true);
 		expect(read?.label_ids).toEqual(["INBOX", "UNREAD", "CATEGORY_PERSONAL"]);
 
-		run = await start(gmail, label_("INBOX"), { ceiling: [ceilingRow(CONNECTION, "label", PRIVATE, "deny")] });
+		run = await start(gmail, label_("INBOX"), { ceiling: [ceilingRow("label", PRIVATE, "deny")] });
 		// Hidden by the deny on Private; a message with a label Minerva does not know hides behind any deny.
 		expect(ids(await run.ok("gmail_list_messages", { label: "INBOX" }))).toEqual([GRACE, FROM_ALIAS]);
 		for (const hidden of [HIDDEN, UNKNOWN]) expect(await run.code("gmail_read_message", { message: hidden })).toBe("POLICY_DENIED");
@@ -675,6 +684,30 @@ describe("reading", () => {
 		expect(item?.id).toBe(GRACE);
 		expect(item?.body_truncated).toBe(true);
 		expect((item?.body as string).length).toBe(200);
+	});
+
+	test("slices count UTF-16 units and never split a character", async () => {
+		const gmail = new FakeGmail();
+		const body = `a${"😀".repeat(600)}`;
+		const grace = gmail.messages[GRACE] as JsonObject & { payload: { headers: Json[] } };
+		gmail.messages[GRACE] = { ...grace, payload: { ...textPart(body), headers: grace.payload.headers } };
+		const run = await start(gmail, label_("INBOX"));
+		const [first] = items(await run.ok("gmail_read_message", { message: GRACE, max_chars: 500 }));
+		expect([first?.total_chars, first?.next_offset, (first?.body as string).length]).toEqual([1201, 500, 499]);
+		const [second] = items(await run.ok("gmail_read_message", { message: GRACE, max_chars: 500, offset: 500 }));
+		expect((second?.body as string).isWellFormed()).toBe(true);
+		const [third] = items(await run.ok("gmail_read_message", { message: GRACE, max_chars: 500, offset: 1000 }));
+		expect(`${first?.body}${second?.body}${third?.body}`).toBe(body);
+	});
+
+	test("a thread is ordered by when Gmail received each message", async () => {
+		const gmail = new FakeGmail();
+		const run = await start(gmail, label_("*"));
+		(gmail.messages[GRACE] as JsonObject).internalDate = "1790000002000";
+		expect(items(await run.ok("gmail_read_thread", { thread: THREAD })).map((item) => item.id)).toEqual([HIDDEN, GRACE]);
+		// A time that is not digits is an answer Minerva does not read: the thread reads as one it cannot see.
+		(gmail.messages[GRACE] as JsonObject).internalDate = "soon";
+		expect(items(await run.ok("gmail_read_thread", { thread: THREAD }))).toEqual([]);
 	});
 
 	test("threads that do not exist read as empty", async () => {

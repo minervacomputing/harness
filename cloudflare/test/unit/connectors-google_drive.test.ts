@@ -1,6 +1,5 @@
-// backend/tests/test_google_drive.py, case by case: the connector against an in-memory Drive API behind an
-// injected `fetch`, and runs through the executor. Where Python patches a module constant or Tree.place,
-// the connector is built with that limit or a tree of its own.
+// The Google Drive connector against an in-memory Drive API behind an injected `fetch`, and runs through the
+// executor. Limits and placement are changed by building the connector with other limits or a tree of its own.
 
 import { describe, expect, test } from "vitest";
 import { FOLDER, type GoogleDriveClient, SHORTCUT, quoted } from "../../src/connectors/google_drive/client.ts";
@@ -9,8 +8,8 @@ import type { DriveFile } from "../../src/connectors/google_drive/client.ts";
 import { fromUtf8 } from "../../src/lib/bytes.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { parseJson } from "../../src/lib/json.ts";
-import { CONNECTION, ceilingRow, jsonResponse, operation, requestOf, settingsClient, startRun, validationOutcomes } from "../fixtures/connectors/google/runs.ts";
-import { type InputCase, vectors } from "../fixtures/connectors/google/vectors.ts";
+import { ceilingRow, requestOf, settingsClient, startRun, validated } from "./connector-runs.ts";
+import { jsonResponse } from "./executor-fakes.ts";
 
 const ROOT = "root0";
 const BASE_SCOPES = ["openid", "email", READ_SCOPE];
@@ -27,7 +26,7 @@ function file(id: string, name: string, mime: string, parents?: string[] | null,
 }
 
 /**
- * Google Drive API v3 and the OpenID userinfo endpoint (test_google_drive.py `FakeDrive`).
+ * Google Drive API v3 and the OpenID userinfo endpoint.
  *
  * My Drive: docs/ (drafts/ (essay), notes.txt, shortcut to essay, multi), photo.png, private/ (diary).
  * Shared with the account without its folder: shared, and the folder club/. In a folder it cannot see:
@@ -161,13 +160,15 @@ function ids(result: { items: { [key: string]: Json }[] }): Json[] {
 }
 
 describe("the connector outside a run", () => {
-	test("test_query_literals_are_escaped", () => {
+	test("query literals escape backslashes and quotes", () => {
+		expect(quoted("plain")).toBe("'plain'");
 		expect(quoted("it's")).toBe(String.raw`'it\'s'`);
+		expect(quoted("''")).toBe(String.raw`'\'\''`);
+		expect(quoted(String.raw`\\`)).toBe(String.raw`'\\\\'`);
 		expect(quoted("a\\' or name contains '")).toBe(String.raw`'a\\\' or name contains \''`);
-		for (const [text, expected] of Object.entries(vectors().drive.quoted as { [text: string]: string })) expect(quoted(text)).toBe(expected);
 	});
 
-	test("test_discovery_offers_my_drive_shared_drives_then_folders", async () => {
+	test("discovery offers My Drive, shared drives, then folders", async () => {
 		const google = new FakeDrive();
 		const connector = googleDriveConnector();
 		const client = google.client();
@@ -188,7 +189,7 @@ describe("the connector outside a run", () => {
 		expect(first.nextCursor).toBe('{"phase":"folders","page":null}');
 	});
 
-	test("test_browsing_lists_top_level_folders_then_what_is_inside", async () => {
+	test("browsing lists top-level folders, then what is inside", async () => {
 		const google = new FakeDrive();
 		const connector = googleDriveConnector();
 		const client = google.client();
@@ -219,7 +220,7 @@ describe("the connector outside a run", () => {
 		}
 	});
 
-	test("test_the_settings_page_browses_drive_folders (the connector's part)", async () => {
+	test("the settings page browses folders and searches flat", async () => {
 		const google = new FakeDrive();
 		const connector = googleDriveConnector();
 		expect(connector.browsable).toEqual(["file"]);
@@ -241,34 +242,52 @@ describe("the connector outside a run", () => {
 	});
 });
 
-describe("input validation, as Pydantic words it", () => {
+describe("arguments", () => {
 	const connector = googleDriveConnector();
-	const large: { [label: string]: string } = { "a*1048577": "a".repeat(1024 * 1024 + 1), "ż*524289": "ż".repeat(512 * 1024 + 1), "ż*524288": "ż".repeat(512 * 1024) };
-	test("create_file", async () => {
-		const cases = Object.fromEntries(
-			Object.entries(vectors().drive.create_file as { [key: string]: { input: JsonObject } }).map(([key, item]) => [
-				key,
-				{ ...item, input: { ...item.input, content: large[item.input.content as string] ?? item.input.content } },
-			]),
-		);
-		const { actual, expected } = await validationOutcomes(operation(connector, "create_file"), cases as { [key: string]: InputCase });
-		const shown = (actual as { ok?: JsonObject }[]).map((item) => {
-			if (!item.ok) return item;
-			const label = Object.entries(large).find(([, value]) => value === item.ok?.content)?.[0];
-			return label === undefined ? item : { ...item, ok: { ...item.ok, content: label } };
+	/** The field a refusal names, or "ok". */
+	const outcome = async (name: string, input: Json): Promise<string> => {
+		const found = await validated(connector, name, input);
+		return "ok" in found ? "ok" : (/^Invalid arguments\. ([\w.]+):/.exec(found.refused)?.[1] ?? found.refused);
+	};
+
+	test("a file's content is trimmed and at most a megabyte of UTF-8", async () => {
+		expect(await validated(connector, "create_file", { folder_id: "docs", name: "x", content: "  padded  " })).toEqual({
+			ok: { folder_id: "docs", name: "x", content: "padded", as_document: false },
 		});
-		expect(shown).toEqual(expected);
+		const cases: [Json, string][] = [
+			[{ folder_id: "docs", name: "x", content: "" }, "ok"],
+			[{ folder_id: "docs", name: "x", content: "ż".repeat(512 * 1024) }, "ok"],
+			[{ folder_id: "docs", name: "x", content: "ż".repeat(512 * 1024 + 1) }, "content"],
+			[{ folder_id: "docs", name: "x", content: "a".repeat(1024 * 1024 + 1) }, "content"],
+			[{ folder_id: "../docs", name: "x", content: "a" }, "folder_id"],
+			[{ folder_id: "docs", name: "", content: "a" }, "name"],
+			[{ folder_id: "docs", name: "bad\nname", content: "a" }, "name"],
+			[{ folder_id: "root", name: "x".repeat(201), content: "a" }, "name"],
+			[{ folder_id: "docs", name: "x", content: "a", as_document: "yes" }, "as_document"],
+		];
+		for (const [input, expected] of cases) expect(await outcome("create_file", input)).toBe(expected);
 	});
-	for (const name of ["list_folder", "search_files", "read_file"]) {
-		test(name, async () => {
-			const { actual, expected } = await validationOutcomes(operation(connector, name), vectors().drive[name]);
-			expect(actual).toEqual(expected);
-		});
-	}
+
+	test("listing, searching and reading have their defaults and limits", async () => {
+		expect(await validated(connector, "list_folder", { folder_id: "root" })).toEqual({ ok: { folder_id: "root", limit: 50, cursor: null } });
+		expect(await validated(connector, "search_files", { text: "it's" })).toEqual({ ok: { text: "it's", limit: 20, cursor: null } });
+		expect(await validated(connector, "read_file", { file_id: "a" })).toEqual({ ok: { file_id: "a", max_chars: 20_000 } });
+		const cases: [string, Json, string][] = [
+			["list_folder", { folder_id: "x", limit: 101 }, "limit"],
+			["list_folder", { folder_id: "x", cursor: "c".repeat(1001) }, "cursor"],
+			["search_files", { text: "" }, "text"],
+			["search_files", { text: "a\tb" }, "text"],
+			["search_files", { text: "x", limit: 51 }, "limit"],
+			["read_file", { file_id: "a", max_chars: 0 }, "max_chars"],
+			["read_file", { file_id: "a", max_chars: 100_001 }, "max_chars"],
+			["get_file", { file_id: "a/b" }, "file_id"],
+		];
+		for (const [name, input, expected] of cases) expect(await outcome(name, input)).toBe(expected);
+	});
 });
 
 describe("runs through the executor", () => {
-	test("test_a_grant_on_a_folder_covers_everything_inside_it", async () => {
+	test("a grant on a folder covers everything inside it", async () => {
 		const google = new FakeDrive();
 		const run = await start(google, BASE_SCOPES, { docs: ["read"] });
 		let outcome = await run.ok("google_drive_list_folder", { folder_id: "docs" });
@@ -285,9 +304,9 @@ describe("runs through the executor", () => {
 		expect(google.requests.filter((r) => (r.searchParams.get("q") ?? "").startsWith(quoted("private")))).toEqual([]);
 	});
 
-	test("test_root_names_my_drive_and_a_deny_on_a_subfolder_hides_it", async () => {
+	test("root names My Drive, and a deny on a subfolder hides it", async () => {
 		const google = new FakeDrive();
-		const run = await start(google, BASE_SCOPES, { "*": ["read"] }, [ceilingRow(CONNECTION, "file", "drafts", "deny")]);
+		const run = await start(google, BASE_SCOPES, { "*": ["read"] }, [ceilingRow("file", "drafts", "deny")]);
 		expect(ids((await run.ok("google_drive_list_folder", { folder_id: "root" })).result)).toEqual(["docs", "photo", "private"]);
 		expect(ids((await run.ok("google_drive_list_folder", { folder_id: "docs" })).result)).toEqual(["notes", "short"]);
 		expect(await run.code("google_drive_read_file", { file_id: "essay" })).toBe("POLICY_DENIED");
@@ -297,7 +316,7 @@ describe("runs through the executor", () => {
 		expect([params.get("corpora"), params.get("driveId"), params.get("supportsAllDrives")]).toEqual(["drive", "team", "true"]);
 	});
 
-	test("test_search_results_are_filtered_by_where_they_sit", async () => {
+	test("search results are filtered by where they sit", async () => {
 		const google = new FakeDrive();
 		let run = await start(google, BASE_SCOPES, { "*": ["read"] });
 		let outcome = await run.ok("google_drive_search_files", { text: "essay" });
@@ -306,7 +325,7 @@ describe("runs through the executor", () => {
 		expect(outcome.result.incomplete).toBe(true);
 		expect(google.requests.filter((r) => r.pathname.endsWith("/files")).map((r) => r.searchParams.get("corpora"))).toEqual(["allDrives"]);
 
-		run = await start(google, BASE_SCOPES, { "*": ["read"] }, [ceilingRow(CONNECTION, "file", "private", "deny")]);
+		run = await start(google, BASE_SCOPES, { "*": ["read"] }, [ceilingRow("file", "private", "deny")]);
 		outcome = await run.ok("google_drive_search_files", { text: "essay" });
 		// With an exact deny somewhere, files with unknown folders might be inside it, so they are left out.
 		expect(new Set(ids(outcome.result))).toEqual(new Set(["essay", "short", "plan"]));
@@ -317,7 +336,7 @@ describe("runs through the executor", () => {
 		expect(google.requests.at(-1)?.searchParams.get("q")).toBe(String.raw`(name contains 'it\'s' or fullText contains 'it\'s') and trashed = false`);
 	});
 
-	test("test_too_many_folder_lookups_leave_ancestry_partial", async () => {
+	test("too many folder lookups leave ancestry partial", async () => {
 		const google = new FakeDrive();
 		const run = await start(google, BASE_SCOPES, { docs: ["read"] }, [], { limits: { maxLookups: 0 } });
 		const outcome = await run.ok("google_drive_search_files", { text: "essay" });
@@ -325,15 +344,15 @@ describe("runs through the executor", () => {
 		expect(ids(outcome.result)).toEqual(["short"]);
 	});
 
-	test("test_nested_grants_on_two_layers_offer_the_tools", async () => {
+	test("nested grants on two layers offer the tools", async () => {
 		const google = new FakeDrive();
-		const run = await start(google, BASE_SCOPES, { drafts: ["read"] }, [ceilingRow(CONNECTION, "file", "docs", "allow")], {}, true);
+		const run = await start(google, BASE_SCOPES, { drafts: ["read"] }, [ceilingRow("file", "docs", "allow")], {}, true);
 		expect(run.tools).toContain("google_drive_search_files");
 		expect(ids((await run.ok("google_drive_list_folder", { folder_id: "drafts" })).result)).toEqual(["essay"]);
 		expect(await run.code("google_drive_list_folder", { folder_id: "docs" })).toBe("POLICY_DENIED");
 	});
 
-	test("test_reading_files", async () => {
+	test("reading files", async () => {
 		const google = new FakeDrive();
 		let run = await start(google, BASE_SCOPES, { "*": ["read"] });
 		const notes = await run.ok("google_drive_read_file", { file_id: "notes", max_chars: 5 });
@@ -358,7 +377,19 @@ describe("runs through the executor", () => {
 		expect(await run.code("google_drive_read_file", { file_id: "diary" })).toBe("FILE_TOO_LARGE");
 	});
 
-	test("test_creating_needs_the_grant_and_full_drive_consent", async () => {
+	test("sizes are numbers, a shortcut names its target, and a size that is not digits is unexpected", async () => {
+		const google = new FakeDrive();
+		const run = await start(google, BASE_SCOPES, { "*": ["read"] });
+		const [notes] = (await run.ok("google_drive_get_file", { file_id: "notes" })).result.items;
+		expect([notes?.size, notes?.type, notes?.parent_id]).toEqual([11, "file", "docs"]);
+		expect((await run.ok("google_drive_get_file", { file_id: "essay" })).result.items[0]?.size).toBeNull();
+		(google.files.short as JsonObject).shortcutDetails = {};
+		expect(await run.error("google_drive_read_file", { file_id: "short" })).toEqual({ code: "UNSUPPORTED_FILE", message: "This is a shortcut to a file Minerva cannot see." });
+		(google.files.notes as JsonObject).size = "11.0";
+		expect(await run.code("google_drive_get_file", { file_id: "notes" })).toBe("PROVIDER_FAILED");
+	});
+
+	test("creating needs the grant and full Drive consent", async () => {
 		const google = new FakeDrive();
 		let run = await start(google, BASE_SCOPES, { docs: ["read", "create"] });
 		expect(run.tools).not.toContain("google_drive_create_file");
@@ -390,7 +421,7 @@ describe("runs through the executor", () => {
 		{ folder_id: "docs", name: "", content: "a" },
 	];
 	invalid.forEach((args, index) => {
-		test(`test_create_arguments_are_validated[${index}]`, async () => {
+		test(`invalid create arguments send nothing [${index}]`, async () => {
 			const google = new FakeDrive();
 			const run = await start(google, WRITE_SCOPES, { docs: ["read", "create"] });
 			expect(await run.code("google_drive_create_file", args)).toBe("INVALID_ARGUMENTS");
@@ -398,14 +429,14 @@ describe("runs through the executor", () => {
 		});
 	});
 
-	test("test_a_disabled_drive_api_is_reported", async () => {
+	test("a disabled Drive API is reported", async () => {
 		const google = new FakeDrive();
 		const run = await start(google, BASE_SCOPES, { "*": ["read"] });
 		google.error = [403, { error: { code: 403, errors: [{ reason: "accessNotConfigured" }] } }];
 		expect(await run.code("google_drive_get_file", { file_id: "essay" })).toBe("PROVIDER_NOT_CONFIGURED");
 	});
 
-	test("test_malformed_ancestry_is_a_connector_error", async () => {
+	test("malformed ancestry is a connector error", async () => {
 		const google = new FakeDrive();
 		class WildcardAncestor extends Tree {
 			override async place(): Promise<[string[], boolean]> {
@@ -432,9 +463,9 @@ describe("runs through the executor", () => {
 		["google_drive_create_file", { folder_id: "drafts", name: "x", content: "a" }],
 	];
 	for (const [tool, args] of moves) {
-		test(`test_a_file_moved_while_the_call_runs_is_refused: ${tool}`, async () => {
+		test(`a file moved while the call runs is refused: ${tool}`, async () => {
 			const google = new FakeDrive();
-			const run = await start(google, WRITE_SCOPES, { "*": ["read", "create"] }, [ceilingRow(CONNECTION, "file", "private", "deny", ["read", "create"])]);
+			const run = await start(google, WRITE_SCOPES, { "*": ["read", "create"] }, [ceilingRow("file", "private", "deny", ["read", "create"])]);
 			const moved = (args.file_id ?? args.folder_id) as string;
 			// Moves the file into Private just before Drive answers the second request for it.
 			let fetches = 0;
@@ -450,7 +481,7 @@ describe("runs through the executor", () => {
 		});
 	}
 
-	test("test_cycles_and_deep_trees_are_partial", async () => {
+	test("cycles and deep trees are partial", async () => {
 		const google = new FakeDrive();
 		google.files.loop_a = file("loop_a", "A", FOLDER, ["loop_b"]);
 		google.files.loop_b = file("loop_b", "B", FOLDER, ["loop_a"]);
@@ -458,12 +489,12 @@ describe("runs through the executor", () => {
 		google.contents.looped = "essay";
 		let run = await start(google, BASE_SCOPES, { "*": ["read"] });
 		expect(ids((await run.ok("google_drive_search_files", { text: "looped" })).result)).toContain("looped");
-		run = await start(google, BASE_SCOPES, { "*": ["read"] }, [ceilingRow(CONNECTION, "file", "elsewhere", "deny")]);
+		run = await start(google, BASE_SCOPES, { "*": ["read"] }, [ceilingRow("file", "elsewhere", "deny")]);
 		// The loop never reaches My Drive, so any exact deny might be above it.
 		expect(ids((await run.ok("google_drive_search_files", { text: "looped" })).result)).toEqual([]);
 		expect(await run.code("google_drive_read_file", { file_id: "looped" })).toBe("POLICY_DENIED");
 
-		run = await start(google, BASE_SCOPES, { "*": ["read"] }, [ceilingRow(CONNECTION, "file", "elsewhere", "deny")], { limits: { maxDepth: 1 } });
+		run = await start(google, BASE_SCOPES, { "*": ["read"] }, [ceilingRow("file", "elsewhere", "deny")], { limits: { maxDepth: 1 } });
 		// essay sits two folders below My Drive.
 		expect(ids((await run.ok("google_drive_search_files", { text: "An essay about" })).result)).toEqual([]);
 	});
@@ -472,7 +503,7 @@ describe("runs through the executor", () => {
 		["application/vnd.google-apps.spreadsheet", "text/csv"],
 		["application/vnd.google-apps.presentation", "text/plain"],
 	]) {
-		test(`test_sheets_and_slides_are_exported_as_text: ${mime}`, async () => {
+		test(`Sheets and Slides are exported as text: ${mime}`, async () => {
 			const google = new FakeDrive();
 			(google.files.essay as JsonObject).mimeType = mime as string;
 			const run = await start(google, BASE_SCOPES, { "*": ["read"] });
@@ -482,7 +513,7 @@ describe("runs through the executor", () => {
 		});
 	}
 
-	test("test_a_failed_download_is_reported_without_reading_it_all", async () => {
+	test("a failed download is reported without reading it all", async () => {
 		const google = new FakeDrive();
 		const run = await start(google, BASE_SCOPES, { "*": ["read"] });
 		const original = google.handler;

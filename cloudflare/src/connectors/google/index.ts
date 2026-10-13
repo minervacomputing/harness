@@ -1,5 +1,4 @@
-// What Google connectors share: one OAuth app, the
-// OpenID account, and how Google reports errors.
+// What Google connectors share: one OAuth app, the OpenID account, and how Google reports errors.
 //
 // Google reports rate limits, an API that is not enabled and some size limits as 403, named by a `reason`
 // in the body. ProviderHTTP's `forbidden` hook has no body, so `classify` (which gets the body and runs
@@ -9,7 +8,6 @@ import { z } from "zod";
 import type { Auth, OperationErrorShape } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { parseJson } from "../../lib/json.ts";
-
 
 export const USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo";
 export const RATE_LIMITED: ReadonlySet<string> = new Set(["rateLimitExceeded", "userRateLimitExceeded"]);

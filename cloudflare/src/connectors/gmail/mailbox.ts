@@ -1,5 +1,4 @@
-// What Gmail's operations share: consent, ids, labels and
-// where messages sit.
+// What Gmail's operations share: consent, ids, labels and where messages sit.
 //
 // A message is not a resource users choose. It is authorized as `message:<id>` inside every grantable label
 // it carries, and inside those labels' parents, so a grant on any of them covers it and a deny on any of them
@@ -101,7 +100,7 @@ export class Labels {
 
 	private label(labelId: string): Label {
 		const label = this.grantable.get(labelId);
-		if (label === undefined) throw new Error(`KeyError: ${labelId}`);
+		if (label === undefined) throw new Error(`Label ${labelId} is not grantable.`);
 		return label;
 	}
 

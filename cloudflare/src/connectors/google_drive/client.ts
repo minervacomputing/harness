@@ -41,7 +41,8 @@ export const DriveFile = z.object({
 	mimeType: z.string().default(""),
 	parents: z.array(z.string()).nullable().default(null),
 	driveId: z.string().nullable().default(null),
-	size: z.string().nullable().default(null),
+	/** Bytes, which Drive writes as a string of digits; files it stores natively (Docs) have none. */
+	size: z.string().regex(/^\d{1,15}$/).transform(Number).nullable().default(null),
 	modifiedTime: z.string().nullable().default(null),
 	webViewLink: z.string().nullable().default(null),
 	trashed: z.boolean().default(false),
@@ -179,7 +180,7 @@ export class GoogleDriveClient implements ProviderClient {
 	}
 }
 
-/** `needle in haystack` for bytes. */
+/** Whether `needle` occurs in `haystack`. */
 function contains(haystack: Uint8Array, needle: Uint8Array): boolean {
 	outer: for (let i = 0; i + needle.length <= haystack.length; i++) {
 		for (let j = 0; j < needle.length; j++) if (haystack[i + j] !== needle[j]) continue outer;

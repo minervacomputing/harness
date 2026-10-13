@@ -1,5 +1,4 @@
-// Google Calendar. Resources are calendars;
-// what is allowed on a calendar covers its events.
+// Google Calendar. Resources are calendars; what is allowed on a calendar covers its events.
 
 import { z } from "zod";
 import type { Binding, Connector, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
@@ -176,18 +175,19 @@ function eventBody(data: CreateEventInput): { [key: string]: Json } {
 	return body;
 }
 
-/** Minerva's own upstream cursor, Google's page token with the first page's time bound. */
-function pageState(cursor: string): { [key: string]: Json } {
-	let state: Json | null;
+/** Minerva's own upstream cursor: Google's page token with the first page's lower time bound. */
+const PageState = z.object({ page: z.string(), time_min: z.string().nullable() });
+
+function pageState(cursor: string): z.output<typeof PageState> {
+	let data: unknown;
 	try {
-		state = parseJson(cursor);
+		data = parseJson(cursor);
 	} catch {
-		state = null;
+		data = null;
 	}
-	if (typeof state !== "object" || state === null || Array.isArray(state) || typeof (Object.hasOwn(state, "page") ? state.page : undefined) !== "string") {
-		throw new OperationError("INVALID_CURSOR", "This page token is invalid or belongs to another request.");
-	}
-	return state;
+	const parsed = PageState.safeParse(data);
+	if (!parsed.success) throw new OperationError("INVALID_CURSOR", "This page token is invalid or belongs to another request.");
+	return parsed.data;
 }
 
 /** Google Calendar's connector. */
@@ -234,18 +234,16 @@ export function googleCalendarConnector(options: CalendarOptions = {}): Connecto
 				// The upstream cursor is Minerva's own: Google's page token plus the time bound the first page used,
 				// so later pages repeat the query exactly, even when the default bound ("now") was applied.
 				const state = data.cursor ? pageState(data.cursor) : null;
-				let timeMin: Json = data.time_min;
-				if (state !== null) timeMin = Object.hasOwn(state, "time_min") ? (state.time_min as Json) : null;
-				else if (timeMin === null && data.time_max === null) timeMin = new Date(now()).toISOString();
+				const timeMin = state ? state.time_min : (data.time_min ?? (data.time_max === null ? new Date(now()).toISOString() : null));
 				return {
 					requirements: [{ need: binding.resource(CALENDAR, calendarId), action: "read" }],
 					async execute(): Promise<ProviderOutput> {
 						const page = await client.events(calendarId, {
-							timeMin: typeof timeMin === "string" ? timeMin : null,
+							timeMin,
 							timeMax: data.time_max,
 							query: data.search,
 							limit: data.limit,
-							pageToken: state ? (state.page as string) : null,
+							pageToken: state ? state.page : null,
 						});
 						let nextCursor: string | null = null;
 						if (page.nextPageToken) {

@@ -1,5 +1,4 @@
-// Gmail, through the Gmail API. Mail is read per label,
-// sent per recipient, and drafted per account.
+// Gmail, through the Gmail API. Mail is read per label, sent per recipient, and drafted per account.
 //
 // Minerva connects through the operator's Google app, shared with Google Calendar and Drive (see
 // ../google/index.ts). The base scope is `gmail.readonly`; sending asks for `gmail.send`, and drafts for
@@ -55,7 +54,7 @@ export interface GmailOptions {
 	baseUrl?: string;
 }
 
-/** Gmail's connector (`GmailConnector`). */
+/** Gmail's connector. */
 export function gmailConnector(options: GmailOptions = {}): Connector<GmailClient> {
 	return {
 		slug: "gmail",

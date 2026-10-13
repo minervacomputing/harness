@@ -1,5 +1,4 @@
-// Gmail's write operations: sending mail, replying, and saving
-// drafts.
+// Gmail's write operations: sending mail, replying, and saving drafts.
 
 import { z } from "zod";
 import type { Binding, Prepared, ProviderOutput, Requirement } from "../../contracts/connectors.ts";
@@ -28,7 +27,7 @@ export const MAX_BODY = 20_000;
 /** Enough of the original to reply to it: its labels and the headers that address and thread a reply. */
 const REPLY_FETCH: Fetch = { format: "metadata", headers: REPLY_HEADERS };
 
-/** The canonical address (`addresses.checked` as an AfterValidator). */
+/** An address, made canonical by `addresses.checked`; one it refuses fails with its message. */
 const Address = () =>
 	z.string().trim().min(3).max(addresses.MAX_ADDRESS).transform((value, ctx) => {
 		const result = addresses.checked(value);
@@ -51,7 +50,7 @@ function recipient(binding: Binding, address: string): Resource {
 	return binding.resource(RECIPIENT, address, addresses.ancestors(address));
 }
 
-/** `Recipients`' model validator, once every field passed (zod runs it after a failed one; the executor then drops its issue). */
+/** Every recipient at most once, and at most MAX_RECIPIENTS in all. */
 function distinct(data: { to: string[]; cc: string[]; bcc: string[] }, ctx: z.RefinementCtx): void {
 	const everyone = [...data.to, ...data.cc, ...data.bcc];
 	if (new Set(everyone).size !== everyone.length) {
@@ -61,7 +60,8 @@ function distinct(data: { to: string[]; cc: string[]; bcc: string[] }, ctx: z.Re
 	if (everyone.length > MAX_RECIPIENTS) ctx.addIssue({ code: "custom", message: `a message may go to at most ${MAX_RECIPIENTS} addresses`, input: data });
 }
 
-const SendMessage = z
+/** A new message, sent or saved as a draft. */
+const NewMessage = z
 	.strictObject({
 		to: z.array(Address()).min(1).max(MAX_RECIPIENTS),
 		cc: z.array(Address()).max(MAX_RECIPIENTS).default([]),
@@ -71,13 +71,13 @@ const SendMessage = z
 	})
 	.superRefine(distinct);
 
-type SendMessageInput = z.output<typeof SendMessage>;
+type NewMessageInput = z.output<typeof NewMessage>;
 
-const SEND_MESSAGE = defineOperation<SendMessageInput>({
+const SEND_MESSAGE = defineOperation<NewMessageInput>({
 	name: "send_message",
 	title: "Send mail",
 	description: `Send a new message. Every address in to, cc and bcc needs send permission. ${SEND_NOTE}`,
-	input: SendMessage,
+	input: NewMessage,
 	needs: [[RECIPIENT, "send"]],
 	outputAction: "send",
 	consent: SEND_CONSENT,
@@ -195,23 +195,11 @@ const REPLY = defineOperation<ReplyInput>({
 	},
 });
 
-const CreateDraft = z
-	.strictObject({
-		to: z.array(Address()).min(1).max(MAX_RECIPIENTS),
-		cc: z.array(Address()).max(MAX_RECIPIENTS).default([]),
-		bcc: z.array(Address()).max(MAX_RECIPIENTS).default([]),
-		subject: Subject(),
-		body: Body(),
-	})
-	.superRefine(distinct);
-
-type CreateDraftInput = z.output<typeof CreateDraft>;
-
-const CREATE_DRAFT = defineOperation<CreateDraftInput>({
+const CREATE_DRAFT = defineOperation<NewMessageInput>({
 	name: "create_draft",
 	title: "Draft a message",
 	description: `Save a new message as a draft. Its recipients need no send permission, since the user sends drafts themselves. ${DRAFT_NOTE}`,
-	input: CreateDraft,
+	input: NewMessage,
 	needs: [[ACCOUNT_KIND, "draft"]],
 	outputAction: "draft",
 	consent: DRAFT_CONSENT,
