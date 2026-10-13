@@ -36,7 +36,7 @@ export const ACCEPT = "text/html, application/xhtml+xml, text/plain, text/markdo
 /**
  * Every hop's request headers, asking for the encodings inflate.ts decodes. On the account the platform sends
  * its own `Accept-Encoding: gzip, br` in place of this one, hands a gzip body on as sent (`encodeResponseBody:
- * "manual"`), and decodes br and deflate itself (measured 2026-10-12, test/account/web-egress.test.ts), so a
+ * "manual"`), and decodes br and deflate itself (measured on the account 2026-10-12), so a
  * body arrives gzip or as is, never in an encoding this reader refuses.
  */
 export const REQUEST_HEADERS: Readonly<Record<string, string>> = {
