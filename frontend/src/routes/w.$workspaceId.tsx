@@ -54,7 +54,7 @@ function AppShell() {
 
   // A click on any link closes the drawer, even one to the page already open.
   const closeOnLink = (event: MouseEvent) => {
-    if ((event.target as HTMLElement).closest('a')) setMenuOpen(false)
+    if (event.target instanceof Element && event.target.closest('a')) setMenuOpen(false)
   }
 
   return (

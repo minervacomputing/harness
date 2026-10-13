@@ -1,13 +1,4 @@
-import {
-  type Attachment,
-  AttachmentPrimitive,
-  AuiIf,
-  ComposerPrimitive,
-  MessagePrimitive,
-  ThreadPrimitive,
-  type ToolCallMessagePartComponent,
-  useAuiState,
-} from '@assistant-ui/react'
+import { type Attachment, AttachmentPrimitive, AuiIf, ComposerPrimitive, MessagePrimitive, ThreadPrimitive, useAuiState } from '@assistant-ui/react'
 import { MarkdownTextPrimitive } from '@assistant-ui/react-markdown'
 import {
   ArrowUpIcon,
@@ -24,7 +15,7 @@ import {
 } from 'lucide-react'
 import { type ComponentProps, createContext, type ReactNode, useContext, useId, useState } from 'react'
 import remarkGfm from 'remark-gfm'
-import { type LocalTool, type MessageFiles, NARRATION, type ToolCallResult, type TurnFiles } from '@/components/chat/model'
+import { type LocalTool, type MessageFiles, NARRATION, type ToolCallResult, toolResult, type TurnFiles } from '@/components/chat/model'
 import { Button } from '@/components/ui/button'
 import { ErrorNote, Spinner, Status, type StatusTone } from '@/components/ui/misc'
 import { formatSize } from '@/lib/uploads'
@@ -116,7 +107,7 @@ const WORK = ['group-work'] as const
  */
 const groupWork: GroupBy = part => {
   if (part.type === 'reasoning') return WORK
-  if (part.type === 'tool-call') return (part.result as ToolCallResult | undefined)?.decision === 'denied' ? null : WORK
+  if (part.type === 'tool-call') return toolResult(part.result)?.decision === 'denied' ? null : WORK
   if (part.type === 'text' && part.parentId === NARRATION) return WORK
   return null
 }
@@ -163,10 +154,10 @@ function Work({ indices, children }: { indices: readonly number[]; children: Rea
   const live = useAuiState(s => s.message.status?.type === 'running' && s.message.parts.slice((indices.at(-1) ?? 0) + 1).every(part => part.type === 'text'))
   const [chosen, setChosen] = useState<boolean | null>(null)
   const items = indices.map(i => parts[i])
-  const tools = items.flatMap(part => (part?.type === 'tool-call' ? [part.result as ToolCallResult | undefined] : []))
+  const tools = items.flatMap(part => (part?.type === 'tool-call' ? [toolResult(part.result)] : []))
   // A lone tool call needs no summary.
   if (items.length === 1 && tools.length === 1) return children
-  const apps = [...new Set(items.flatMap(part => (part?.type === 'tool-call' ? [appOf(part.toolName, part.result as ToolCallResult | undefined)] : [])))]
+  const apps = [...new Set(items.flatMap(part => (part?.type === 'tool-call' ? [appOf(part.toolName, toolResult(part.result))] : [])))]
   return (
     <WorkGroup
       tools={tools.length}
@@ -270,8 +261,8 @@ const DECISION_ICON: Record<ToolCallResult['decision'], string> = {
 }
 
 /** Tool cards show state in the icon colour and a status word, never a side stripe. */
-export const ToolCall: ToolCallMessagePartComponent = ({ toolName, args, result }) => {
-  const outcome = result as ToolCallResult | undefined
+export function ToolCall({ toolName, args, result }: { toolName: string; args?: Readonly<Record<string, unknown>>; result?: unknown }) {
+  const outcome = toolResult(result)
   if (outcome?.local) return <LocalToolCall local={outcome.local} decision={outcome.decision} />
   const hasArgs = args && Object.keys(args).length > 0
   return (

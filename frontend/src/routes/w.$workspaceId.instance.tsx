@@ -61,9 +61,10 @@ function SignupSetting() {
       action={
         current ? (
           <Segmented
+            values={['open', 'closed', 'default']}
             aria-label="Sign-up"
             value={save.isPending && save.variables ? save.variables : choiceOf(current)}
-            onValueChange={choice => save.mutate(choice as SignupChoice)}
+            onValueChange={choice => save.mutate(choice)}
           >
             <SegmentedItem value="open" disabled={save.isPending}>
               Open

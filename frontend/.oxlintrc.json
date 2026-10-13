@@ -3,6 +3,8 @@
   "plugins": ["eslint", "oxc", "typescript", "react", "jsx-a11y", "promise", "import", "unicorn", "vitest"],
   "jsPlugins": ["./lint/plugin.js"],
   "categories": { "correctness": "error", "suspicious": "error" },
+  // Type-aware rules (oxlint-tsgolint, on TypeScript 7). Their correctness and suspicious ones come with the categories.
+  "options": { "typeAware": true },
   "ignorePatterns": ["dist/", "src/routeTree.gen.ts"],
   "rules": {
     "react/rules-of-hooks": "error",
@@ -38,6 +40,19 @@
     "unicorn/prefer-string-slice": "error",
     "unicorn/prefer-structured-clone": "error",
     "unicorn/throw-new-error": "error",
+
+    // Type-aware rules beyond the categories: promises, throws and exhaustive switches.
+    "typescript/no-misused-promises": "error",
+    "typescript/prefer-promise-reject-errors": "error",
+    "typescript/return-await": "error",
+    "typescript/switch-exhaustiveness-check": ["error", { "considerDefaultExhaustiveForUnions": true }],
+    "typescript/no-unsafe-argument": "error",
+    "typescript/no-unsafe-assignment": "error",
+    "typescript/no-unsafe-call": "error",
+    "typescript/no-unsafe-member-access": "error",
+    "typescript/no-unsafe-return": "error",
+    // TanStack Router's redirect() and notFound() are thrown on purpose.
+    "typescript/only-throw-error": ["error", { "allow": [{ "from": "package", "package": "@tanstack/router-core", "name": ["Redirect", "NotFoundError"] }] }],
 
     "vitest/no-identical-title": "error",
     "vitest/no-import-node-test": "error",
@@ -83,7 +98,21 @@
     // Off: an XHR's handlers are set where the request is made.
     "unicorn/prefer-add-event-listener": "off",
     // Off: a then() whose value nobody reads need not return one.
-    "promise/always-return": "off"
+    "promise/always-return": "off",
+    // Off: it reports an exhaustive switch over a union and an effect that returns a cleanup only when it starts something; the types say what each returns.
+    "typescript/consistent-return": "off"
   },
-  "overrides": [{ "files": ["src/lib/**"], "rules": { "no-restricted-globals": "off", "no-restricted-properties": "off" } }]
+  "overrides": [
+    { "files": ["src/lib/**"], "rules": { "no-restricted-globals": "off", "no-restricted-properties": "off" } },
+    // ESLint's rule API has no types here: the local plugin's `context` is `any`.
+    {
+      "files": ["lint/**"],
+      "rules": {
+        "typescript/no-unsafe-assignment": "off",
+        "typescript/no-unsafe-call": "off",
+        "typescript/no-unsafe-member-access": "off",
+        "typescript/no-unsafe-return": "off"
+      }
+    }
+  ]
 }

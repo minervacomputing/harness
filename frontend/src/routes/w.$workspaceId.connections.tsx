@@ -138,7 +138,7 @@ function ConnectionsPage() {
                 connection={connection}
                 setup={setup}
                 open={open.has(connection.id)}
-                onToggle={() => toggle(connection.id)}
+                onToggle={() => void toggle(connection.id)}
                 first={heading !== null}
                 last={last}
               />,
@@ -182,7 +182,7 @@ function AddApps({
   const authorize = useMutation(orpc.connections.authorize.mutationOptions({ onSuccess: signIn }))
   const onConnected = (connection: Connection) => {
     void navigate({ search: previous => ({ connected: connection.id, open: [...openIds(previous)] }) })
-    invalidateConnections(queryClient, workspaceId)
+    void invalidateConnections(queryClient, workspaceId)
   }
   const enable = useMutation(orpc.connections.enable.mutationOptions({ onSuccess: onConnected }))
   const connectKey = useMutation(orpc.connections.connectKey.mutationOptions({ onSuccess: onConnected }))
@@ -371,7 +371,7 @@ function ConnectionRow({
   // Once opened, the panel stays mounted while closed, so unsaved choices survive closing it.
   const [mounted, setMounted] = useState(open)
   if (open && !mounted) setMounted(true)
-  const prefetch = () => queryClient.prefetchQuery(orpc.connections.access.queryOptions({ input: { workspaceId, connectionId: connection.id } }))
+  const prefetch = () => void queryClient.prefetchQuery(orpc.connections.access.queryOptions({ input: { workspaceId, connectionId: connection.id } }))
   const summary = summarize(connection.allowed)
   const panelId = `connection-panel-${connection.id}`
 
@@ -421,8 +421,8 @@ function ConnectionPanel({ workspaceId, connection }: { workspaceId: string; con
   const replaceKey = useMutation(
     orpc.connections.replaceKey.mutationOptions({
       onSuccess: () => {
-        invalidateConnections(queryClient, workspaceId)
-        refreshResources(queryClient, workspaceId, connection.id)
+        void invalidateConnections(queryClient, workspaceId)
+        void refreshResources(queryClient, workspaceId, connection.id)
       },
     }),
   )

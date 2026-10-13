@@ -21,13 +21,14 @@ export function useRunEvents(workspaceId: string, run: Run | undefined, onSettle
     if (!runId || !active) return
     const source = new EventSource(runEventsPath(workspaceId, runId, startAfter()))
     const onEvent = (type: RunEvent['type']) => (message: MessageEvent<string>) => {
-      const event: RunEvent = { seq: Number(message.lastEventId), type, data: JSON.parse(message.data) }
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the server's event as the contract declares it, unvalidated like oRPC's outputs
+      const event = { seq: Number(message.lastEventId), type, data: JSON.parse(message.data) as unknown } as RunEvent
       setLive(current => {
         const events = current.runId === runId ? current.events : []
         if (events.some(e => e.seq === event.seq)) return current
         return { runId, events: [...events, event] }
       })
-      if (type === 'message' || (type === 'status' && !ACTIVE_STATUSES.has(event.data.status as RunStatus))) {
+      if (event.type === 'message' || (event.type === 'status' && !ACTIVE_STATUSES.has(event.data.status))) {
         settled()
       }
     }

@@ -1,11 +1,40 @@
 import type { AppendMessage, ThreadMessageLike } from '@assistant-ui/react'
-import type { Attachment, Conversation, FolderChanges, FolderWarnings, Run, RunEvent, RunStatus, Upload } from '@minerva/contract'
+import type {
+  Attachment,
+  Conversation,
+  FolderChanges,
+  FolderWarnings,
+  JsonObject,
+  LocalToolEventData,
+  Run,
+  RunEvent,
+  RunStatus,
+  Upload,
+} from '@minerva/contract'
 import { ACTIVE_STATUSES } from '@/lib/run-stream'
 
-export type LocalTool = { tool: 'read' | 'write' | 'edit' | 'bash'; summary: string; excerpt: string }
+export type LocalTool = Omit<LocalToolEventData, 'ok'>
 
 /** `local` is set on a call the agent ran in the conversation's folder rather than on a connected app. */
 export type ToolCallResult = { decision: 'allowed' | 'denied' | 'error'; message?: string; label: string; local?: LocalTool }
+
+/** A tool call part's result, as `collect` made it; assistant-ui hands it back as `unknown`. */
+export function toolResult(result: unknown): ToolCallResult | undefined {
+  return isToolCallResult(result) ? result : undefined
+}
+
+const DECISIONS: readonly unknown[] = ['allowed', 'denied', 'error'] satisfies ToolCallResult['decision'][]
+
+function isToolCallResult(value: unknown): value is ToolCallResult {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'decision' in value &&
+    DECISIONS.includes(value.decision) &&
+    'label' in value &&
+    typeof value.label === 'string'
+  )
+}
 
 /** What a finished turn did to the folder; downloads come from `version`, the folder it left. */
 export type TurnFiles = { changes: FolderChanges | null; warnings: FolderWarnings | null; version: string | null }
@@ -19,7 +48,7 @@ export const NARRATION = 'narration'
 type Part =
   | { type: 'text'; text: string; parentId?: typeof NARRATION }
   | { type: 'reasoning'; text: string }
-  | { type: 'tool-call'; toolCallId: string; toolName: string; args: Record<string, never>; result: ToolCallResult; isError: boolean }
+  | { type: 'tool-call'; toolCallId: string; toolName: string; args: JsonObject | { truncated: string }; result: ToolCallResult; isError: boolean }
 
 export type ChatMessage =
   | { kind: 'user'; id: string; text: string; createdAt: string; files: MessageFiles }
@@ -34,7 +63,7 @@ const STARTING: Record<string, string> = {
 
 /** A status event that starts a new attempt: the run's worker died and another took over the turn. */
 function isRestart(event: RunEvent): boolean {
-  return event.type === 'status' && event.data.attempt != null
+  return event.type === 'status' && 'attempt' in event.data
 }
 
 /**
@@ -51,40 +80,33 @@ function collect(events: RunEvent[]): { parts: Part[]; callOf: WeakMap<Part, unk
     if (isRestart(event)) {
       parts = parts.filter(part => part.type === 'tool-call')
     } else if (event.type === 'tool_call') {
-      const data = event.data as {
-        tool: string
-        label: string
-        decision: ToolCallResult['decision']
-        message?: string
-        arguments?: Record<string, never>
-        repeat?: boolean
-        write?: string
+      const { data } = event
+      if (data.decision === 'allowed' && data.write) {
+        // The write's own event may be missing, if its worker died before the gateway recorded it.
+        if (data.repeat && writes.has(data.write)) continue
+        writes.add(data.write)
       }
-      // The write's own event may be missing, if its worker died before the gateway recorded it.
-      if (data.repeat && data.write && writes.has(data.write)) continue
-      if (data.decision === 'allowed' && data.write) writes.add(data.write)
       parts.push({
         type: 'tool-call',
         toolCallId: `${event.seq}`,
         toolName: data.tool,
-        args: data.arguments ?? {},
-        result: { decision: data.decision, message: data.message, label: data.label },
+        args: data.arguments,
+        result: { decision: data.decision, message: data.decision === 'allowed' ? undefined : data.message, label: data.label },
         isError: data.decision !== 'allowed',
       })
     } else if (event.type === 'local_tool') {
-      const data = event.data as LocalTool & { ok: boolean }
-      const local = { tool: data.tool, summary: String(data.summary ?? ''), excerpt: String(data.excerpt ?? '') }
+      const { tool, summary, excerpt, ok } = event.data
       parts.push({
         type: 'tool-call',
         toolCallId: `${event.seq}`,
-        toolName: data.tool,
+        toolName: tool,
         args: {},
-        result: { decision: data.ok ? 'allowed' : 'error', label: 'Files', local },
-        isError: !data.ok,
+        result: { decision: ok ? 'allowed' : 'error', label: 'Files', local: { tool, summary, excerpt } },
+        isError: !ok,
       })
     } else if (event.type === 'text_delta' || event.type === 'reasoning_delta') {
       const type = event.type === 'text_delta' ? 'text' : 'reasoning'
-      const text = String(event.data.text ?? '')
+      const { text } = event.data
       const last = parts.at(-1)
       if (last?.type === type && callOf.get(last) === event.data.call) {
         last.text += text
@@ -123,7 +145,7 @@ function finishedParts(events: RunEvent[], answer: string): Part[] {
 }
 
 function latestStatus(events: RunEvent[]): RunStatus | undefined {
-  return events.findLast(e => e.type === 'status')?.data.status as RunStatus | undefined
+  return events.findLast(e => e.type === 'status')?.data.status
 }
 
 function phaseOf(run: Run, events: RunEvent[]): string {
@@ -132,7 +154,7 @@ function phaseOf(run: Run, events: RunEvent[]): string {
   if (STARTING[run.status]) return STARTING[run.status]
   // An earlier attempt's phase no longer applies.
   const phase = events.slice(status + 1).findLast(e => e.type === 'phase')
-  return String(phase?.data.text ?? 'Thinking')
+  return phase?.data.text ?? 'Thinking'
 }
 
 export function buildMessages(conversation: Conversation | undefined, liveRun: Run | undefined, liveEvents: RunEvent[]): ChatMessage[] {
@@ -151,7 +173,7 @@ export function buildMessages(conversation: Conversation | undefined, liveRun: R
       const streamed = run.events.findLast(e => e.type === 'message')
       // One id for the run's answer, live or finished, so the message is not remounted when the run ends.
       if (streamed) {
-        const parts = finishedParts(run.events, String(streamed.data.content ?? ''))
+        const parts = finishedParts(run.events, streamed.data.content)
         out.push({ kind: 'assistant', id: `run-${run.id}`, parts, createdAt: message.createdAt, files: turnFiles(run) })
       } else if (ACTIVE_STATUSES.has(run.status)) {
         out.push({ kind: 'progress', id: `run-${run.id}`, parts: partsFrom(run.events), phase: phaseOf(run, run.events) })

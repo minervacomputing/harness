@@ -2,7 +2,6 @@ import { focusManager, hashKey, QueryClient, QueryClientProvider } from '@tansta
 import { createRouter, RouterProvider } from '@tanstack/react-router'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import type { Me } from '@minerva/contract'
 import { type AuthState, authQuery } from '@/lib/auth'
 import { onUnauthorized, retryQuery } from '@/lib/http'
 import { orpc } from '@/lib/orpc'
@@ -49,9 +48,10 @@ const authHash = hashKey(authQuery.queryKey)
 const meHash = hashKey(orpc.me.queryKey())
 queryClient.getQueryCache().subscribe(event => {
   if (event.type !== 'updated' || event.action.type !== 'success') return
-  const { queryHash, state } = event.query
+  const { queryHash } = event.query
   if (queryHash !== authHash && queryHash !== meHash) return
-  const user = queryHash === authHash ? userOf(state.data as AuthState | undefined) : (state.data as Me).user.id
+  // The query's data, read back through its key so that it has its type.
+  const user = queryHash === authHash ? userOf(queryClient.getQueryData(authQuery.queryKey)) : (queryClient.getQueryData(orpc.me.queryKey())?.user.id ?? null)
   if (owner === undefined) owner = user
   else if (user !== owner) window.location.reload()
 })

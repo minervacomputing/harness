@@ -47,7 +47,7 @@ function ConversationPage() {
   const events = useRunEvents(workspaceId, liveRun, () => {
     void refresh()
   })
-  const settled = events.some(e => e.type === 'status' && !ACTIVE_STATUSES.has(e.data.status as never))
+  const settled = events.some(e => e.type === 'status' && !ACTIVE_STATUSES.has(e.data.status))
 
   const cancel = useMutation(orpc.runs.cancel.mutationOptions({ onSuccess: refresh }))
   const [filesOpen, setFilesOpen] = useState(false)

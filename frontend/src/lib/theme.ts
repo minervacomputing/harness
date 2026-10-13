@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 
-export type ThemeChoice = 'light' | 'dark' | 'system'
+type ThemeChoice = 'light' | 'dark' | 'system'
 
 // index.html applies the same key before first paint, so keep the two in step.
 const KEY = 'minerva-theme'

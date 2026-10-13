@@ -22,7 +22,8 @@ function AgentsPage() {
   const { workspaceId } = Route.useParams()
   const agents = useQuery(orpc.agents.list.queryOptions({ input: { workspaceId } }))
   const connections = useQuery(orpc.connections.list.queryOptions({ input: { workspaceId } }))
-  const [editing, setEditing] = useState<string | 'new' | null>(null)
+  // The agent whose form is open, by id, or 'new'.
+  const [editing, setEditing] = useState<string | null>(null)
   const form = (agent?: Agent) => <AgentForm workspaceId={workspaceId} agent={agent} connections={connections.data ?? []} onDone={() => setEditing(null)} />
 
   return (
