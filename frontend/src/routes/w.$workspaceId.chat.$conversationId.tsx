@@ -1,30 +1,23 @@
-import { AssistantRuntimeProvider, MessageNotSentError, useExternalStoreRuntime } from '@assistant-ui/react'
+import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { BotIcon, FolderIcon } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
-import {
-  cancelRunMutation,
-  getConversationOptions,
-  getConversationQueryKey,
-  listAgentsOptions,
-  listConnectionsOptions,
-  listConversationsQueryKey,
-  listFilesQueryKey,
-} from '@/api/@tanstack/react-query.gen'
+import { cancelRunMutation, getConversationOptions, listAgentsOptions, listConnectionsOptions } from '@/api/@tanstack/react-query.gen'
 import { AppIcons, connectionsOf } from '@/components/agents/agent-apps'
 import { AgentIntro } from '@/components/chat/agent-intro'
 import { FilesPanel } from '@/components/chat/files-panel'
-import { buildMessages, messageText, pendingMessages, refusedMessage, sendingAttachments, toThreadMessage } from '@/components/chat/model'
+import { buildMessages } from '@/components/chat/model'
+import { useChatRuntime } from '@/components/chat/runtime'
+import { refreshConversation } from '@/components/chat/send'
 import { Thread } from '@/components/chat/thread'
 import { Button } from '@/components/ui/button'
 import { ErrorNote, Spinner } from '@/components/ui/misc'
 import { errorMessage } from '@/lib/http'
-import { newSendKey, sendMessage } from '@/lib/messages'
 import { ACTIVE_STATUSES, useRunEvents } from '@/lib/run-stream'
 import { useDocumentTitle } from '@/lib/title'
 import { cn } from '@/lib/utils'
-import { downloadUrl, useUploadAdapter, type Uploaded } from '@/lib/uploads'
+import { downloadUrl } from '@/lib/uploads'
 
 export const Route = createFileRoute('/w/$workspaceId/chat/$conversationId')({
   loader: ({ context, params }) =>
@@ -48,11 +41,7 @@ function ConversationPage() {
   const title = conversation.data?.title || 'New conversation'
   useDocumentTitle(title)
 
-  const refresh = async () => {
-    await queryClient.invalidateQueries({ queryKey: getConversationQueryKey({ path }) })
-    await queryClient.invalidateQueries({ queryKey: listConversationsQueryKey({ path: { workspace_id: workspaceId } }) })
-    await queryClient.invalidateQueries({ queryKey: listFilesQueryKey({ path }) })
-  }
+  const refresh = () => refreshConversation(queryClient, path)
 
   const latest = conversation.data?.runs.at(-1)
   const liveRun = latest && ACTIVE_STATUSES.has(latest.status) ? latest : undefined
@@ -61,20 +50,7 @@ function ConversationPage() {
   })
   const settled = events.some(e => e.type === 'status' && !ACTIVE_STATUSES.has(e.data.status as never))
 
-  const post = useMutation({
-    mutationFn: async ({ content, uploads, key }: { content: string; uploads: Uploaded[]; key: string }) => {
-      const posted = await sendMessage({ path, body: { content, attachments: uploads.map(upload => upload.id) }, key })
-      if (posted.error) {
-        // Refused: the composer gets the text and files back. Anything else may have started the run.
-        if (refusedMessage(posted.response)) throw new MessageNotSentError(errorMessage(posted.error))
-        throw posted.error
-      }
-      return posted.data
-    },
-    onSuccess: refresh,
-  })
   const cancel = useMutation({ ...cancelRunMutation(), onSuccess: refresh })
-  const adapter = useUploadAdapter(workspaceId)
   const [filesOpen, setFilesOpen] = useState(false)
   const filesButton = useRef<HTMLButtonElement>(null)
   const closeFiles = () => {
@@ -82,37 +58,20 @@ function ConversationPage() {
     filesButton.current?.focus()
   }
 
-  const messages = useMemo(() => {
-    const built = buildMessages(conversation.data, liveRun, events)
-    return post.isPending && post.variables ? [...built, ...pendingMessages(post.variables.content, sendingAttachments(post.variables.uploads))] : built
-  }, [conversation.data, liveRun, events, post.isPending, post.variables])
-
-  const runtime = useExternalStoreRuntime({
+  const messages = useMemo(() => buildMessages(conversation.data, liveRun, events), [conversation.data, liveRun, events])
+  const chat = useChatRuntime({
+    workspaceId,
     messages,
-    convertMessage: toThreadMessage,
-    isRunning: post.isPending || (!!liveRun && !settled),
-    adapters: { attachments: adapter },
-    onNew: async message => {
-      const content = messageText(message)
-      const ids = (message.attachments ?? []).map(attachment => attachment.id)
-      const uploads = ids.map(id => adapter.uploaded(id)).filter(upload => upload !== undefined)
-      if (!content && uploads.length === 0) return
-      const taken = adapter.take(ids)
-      try {
-        await post.mutateAsync({ content, uploads, key: newSendKey() })
-      } catch (error) {
-        if (error instanceof MessageNotSentError) adapter.restore(taken)
-        throw error
-      }
-    },
+    conversation: conversationId,
+    isRunning: !!liveRun && !settled,
     onCancel: async () => {
       if (liveRun) await cancel.mutateAsync({ path: { workspace_id: workspaceId, run_id: liveRun.id } })
     },
   })
 
-  const error = post.error ?? cancel.error ?? conversation.error
+  const error = chat.error ?? cancel.error ?? conversation.error
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
+    <AssistantRuntimeProvider runtime={chat.runtime}>
       <div className="flex h-full flex-col">
         <header className="flex min-h-12 shrink-0 items-center gap-4 border-b px-4 py-2 md:px-6">
           <h1 className="min-w-0 flex-1 truncate text-sm font-medium" title={title}>

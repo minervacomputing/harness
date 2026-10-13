@@ -180,19 +180,8 @@ function turnFiles(run: RunOut): TurnFiles | undefined {
 }
 
 /** Shown while a message is on its way to the server, before the conversation refreshes. */
-/** Whether posting a message was refused before any run started (4xx, or 503 while the app is busy), so the
- * composer may have it back. Anything else may have started the run. */
-export function refusedMessage(response: Response | undefined): boolean {
-  const status = response?.status ?? 0
-  return (status >= 400 && status < 500) || status === 503
-}
-
-/** The files a message being sent attaches, as the message will list them. */
-export function sendingAttachments(uploads: Uploaded[]): AttachmentOut[] {
-  return uploads.map(upload => ({ path: upload.name, size: upload.size, media_type: upload.media_type }))
-}
-
-export function pendingMessages(text: string, attachments: AttachmentOut[]): ChatMessage[] {
+export function pendingMessages(text: string, uploads: Uploaded[]): ChatMessage[] {
+  const attachments = uploads.map(upload => ({ path: upload.name, size: upload.size, media_type: upload.media_type }))
   return [
     { kind: 'user', id: 'pending-user', text, createdAt: new Date().toISOString(), files: { attachments, version: null } },
     { kind: 'progress', id: 'pending-run', parts: [], phase: 'Sending' },
