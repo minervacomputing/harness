@@ -78,7 +78,7 @@ export function withFiles(message: Pick<StoredMessage, "role" | "content" | "att
 			] as const
 		)
 			.filter(([key]) => counts[key])
-			.map(([key, verb]) => `${verb} ${notePaths(changes[key], counts[key] ?? 0)}`);
+			.map(([key, verb]) => `${verb} ${notePaths(changes[key], counts[key])}`);
 		if (!parts.length) return message.content;
 		note = `[In this turn, files in your folder were ${parts.join("; ")}.]`;
 	}

@@ -72,9 +72,9 @@ function isRestart(event: RunEvent): boolean {
  * repeat is not shown next to the card of the write. Streamed text continues the part before it only if it came from
  * the same model call (`call`), so calls that stream at once do not run together.
  */
-function collect(events: RunEvent[]): { parts: Part[]; callOf: WeakMap<Part, unknown> } {
+function collect(events: RunEvent[]): { parts: Part[]; callOf: WeakMap<Part, string> } {
   let parts: Part[] = []
-  const callOf = new WeakMap<Part, unknown>()
+  const callOf = new WeakMap<Part, string>()
   const writes = new Set<string>()
   for (const event of events) {
     if (isRestart(event)) {
@@ -132,14 +132,12 @@ function withNarration(parts: Part[]): Part[] {
 /**
  * A finished turn: the final message replaces the answer that streamed, which is the text after the last tool call and
  * all text from the model call that wrote it, as the `message` event names it (a tool call can finish while the answer
- * streams). Events stored before the event named its call take the last call to stream text, which wrote the answer
- * then: the Worker publishes the text of every call but a compaction's.
+ * streams).
  */
 function finishedParts(events: RunEvent[], answer: string): Part[] {
   const { parts, callOf } = collect(events)
   const lastTool = parts.findLastIndex(part => part.type === 'tool-call')
-  const lastText = parts.findLast(part => part.type === 'text')
-  const answerCall = events.findLast(e => e.type === 'message')?.data.call ?? (lastText && callOf.get(lastText))
+  const answerCall = events.findLast(e => e.type === 'message')?.data.call
   const kept = parts.filter((part, i) => part.type !== 'text' || (i < lastTool && callOf.get(part) !== answerCall))
   return [...withNarration(kept), { type: 'text', text: answer }]
 }
@@ -196,7 +194,7 @@ function turnFiles(run: Run): TurnFiles | undefined {
 
 /** Shown while a message is on its way to the server, before the conversation refreshes. */
 export function pendingMessages(text: string, uploads: Upload[]): ChatMessage[] {
-  const attachments = uploads.map(upload => ({ path: upload.name, size: upload.size, media_type: upload.mediaType }))
+  const attachments = uploads.map(upload => ({ path: upload.name, size: upload.size, mediaType: upload.mediaType }))
   return [
     { kind: 'user', id: 'pending-user', text, createdAt: new Date().toISOString(), files: { attachments, version: null } },
     { kind: 'progress', id: 'pending-run', parts: [], phase: 'Sending' },
@@ -215,7 +213,7 @@ export function toThreadMessage(message: ChatMessage): ThreadMessageLike {
           id: file.path,
           type: 'file',
           name: file.path,
-          contentType: file.media_type,
+          contentType: file.mediaType,
           status: { type: 'complete' },
           content: [],
         })),

@@ -260,12 +260,12 @@ describe("what a turn changed", () => {
 		const before = entries({ "a.txt": ["1", 0o644], "b.txt": ["2", 0o644], "sub/c.txt": ["3", 0o644] }, ["empty/inner"]);
 		const after = entries({ "a.txt": ["1", 0o755], "b.txt": ["2", 0o644], "new/deep/d.txt": ["4", 0o644] }, ["x/y"]);
 		expect(folderChanges(before, after)).toEqual({
-			counts: { added: 1, modified: 1, deleted: 1, dirs_added: 4, dirs_deleted: 3 },
+			counts: { added: 1, modified: 1, deleted: 1, dirsAdded: 4, dirsDeleted: 3 },
 			added: [{ path: "new/deep/d.txt", size: 1 }],
 			modified: [{ path: "a.txt", size: 1 }],
 			deleted: [{ path: "sub/c.txt", size: 1 }],
-			dirs_added: ["new", "new/deep", "x", "x/y"],
-			dirs_deleted: ["empty", "empty/inner", "sub"],
+			dirsAdded: ["new", "new/deep", "x", "x/y"],
+			dirsDeleted: ["empty", "empty/inner", "sub"],
 		});
 		expect(folderChanges(after, after)).toBeNull();
 	});

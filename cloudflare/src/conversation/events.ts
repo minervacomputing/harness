@@ -32,7 +32,7 @@ export type PhaseText =
 export type NewRunEvent = RunEvent extends infer E ? (E extends { seq: number } ? Omit<E, "seq"> : never) : never;
 
 /**
- * Why a run ended: the internal code, its status and the message users see (`RunOut.error_message`,
+ * Why a run ended: the internal code, its status and the message users see (a run's `errorMessage`,
  * ≤500 characters). The worker's own failure text and provider diagnostics are only logged.
  */
 export type RunEnd =
@@ -66,7 +66,7 @@ export type RevocationReason = "permissions_changed" | "connection_removed" | "a
  */
 export type CancelReason = RevocationReason | "cancelled" | "emergency_stop";
 
-/** `error_message` and a terminal status's `message` are cut to this many characters. */
+/** A run's `errorMessage` and a terminal status's `message` are cut to this many characters. */
 export const ERROR_MESSAGE_CHARS = 500;
 /** A phase's text is cut to this many characters. */
 export const PHASE_CHARS = 300;

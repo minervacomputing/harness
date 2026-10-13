@@ -13,21 +13,17 @@ export const ConversationSummary = z.object({
 })
 export type ConversationSummary = z.infer<typeof ConversationSummary>
 
-// Stored as written (in the Conversation object's rows and replayed), so their fields keep their names until
-// the run events move with them (frontend-cleanup.md, A4): a message's attachments, what a turn did to the
-// folder, and the run's events.
-
 /** A file a message attached, as added to the folder: its final name at the root. */
-export type Attachment = { path: string; size: number; media_type: string }
+export type Attachment = { path: string; size: number; mediaType: string }
 
-/** What a turn changed in the folder: the first files of each kind, and how many there were. */
+/** What a turn changed in the folder: the first 100 of each kind, and how many there were. */
 export type FolderChanges = {
   added: { path: string; size: number }[]
   modified: { path: string; size: number }[]
   deleted: { path: string; size: number }[]
-  counts: { [kind: string]: number }
-  dirs_added: string[]
-  dirs_deleted: string[]
+  counts: { added: number; modified: number; deleted: number; dirsAdded: number; dirsDeleted: number }
+  dirsAdded: string[]
+  dirsDeleted: string[]
 }
 
 /** What a turn left out of the folder (a link, a special file), the first few and how many. */
@@ -131,8 +127,8 @@ export type MessageEventData = {
   content: string
   /**
    * The model call that wrote the answer, as its deltas name it: the chat replaces that call's streamed text with
-   * `content`. A call can write it without streaming any. Absent in events stored before it was added, and when the
-   * answer does not name its call.
+   * `content`. A call can write it without streaming any. Absent only when the answer does not name its call, which
+   * every answer the model wrapper finishes does (cloudflare/src/model/provider.ts `callOf`).
    */
   call?: string
 }

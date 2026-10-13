@@ -62,13 +62,7 @@ export interface RunSnapshot extends StartSnapshot {
 }
 
 /**
- * The contract's `Run` with its events typed. The API answers this shape; the type exists because RPC types
- * cannot carry the contract's `unknown` event data.
- */
-export type RunView = Omit<Run, "events"> & { events: RunEvent[] };
-
-/**
- * A run as a Durable Object returns it: `RunView` without its events. A run's events have no size bound
+ * A run as a Durable Object returns it: the contract's `Run` without its events. A run's events have no size bound
  * and Workers RPC refuses a result over 32 MiB, so the Worker pages through them
  * with `getRunEvents` up to `eventSeq` while it streams the response. `eventSeq` is read with the status in
  * one synchronous step, and events are append-only, so the body it assembles is consistent.

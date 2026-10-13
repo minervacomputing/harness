@@ -98,7 +98,7 @@ describe('narration', () => {
 })
 
 describe('the answer', () => {
-  const answered = (content: string, call?: string): RunEvent => ({ seq: ++seq, type: 'message', data: { id: 'm2', content, ...(call ? { call } : {}) } })
+  const answered = (content: string, call: string): RunEvent => ({ seq: ++seq, type: 'message', data: { id: 'm2', content, call } })
 
   test('replaces what its model call streamed, including before a tool call finished', () => {
     const events = [text('Checking.'), tool('search'), text('The answer', 'c2'), tool('lookup'), text('\n\nis  42.', 'c2')]
@@ -112,10 +112,10 @@ describe('the answer', () => {
     expect(shape(m)).toEqual(['text(narration):Looking it up.', 'tool:search', 'text:I cannot share that.'])
   })
 
-  test('stored before the message event named its call came from the last call to stream text', () => {
-    const events = [text('Checking.'), tool('search'), text('The answer', 'c2'), tool('lookup'), text(' is 42.', 'c2')]
-    const m = reply(run('completed', [...events, answered('The answer is 42.')]), 'The answer is 42.')
-    expect(shape(m)).toEqual(['text(narration):Checking.', 'tool:search', 'tool:lookup', 'text:The answer is 42.'])
+  test('that names no call replaces the text after the last tool call and keeps the text before it as narration', () => {
+    const unnamed: RunEvent = { seq: ++seq, type: 'message', data: { id: 'm2', content: 'It is 42.' } }
+    const m = reply(run('completed', [text('Checking.'), tool('search'), text('It is', 'c2'), unnamed]), 'It is 42.')
+    expect(shape(m)).toEqual(['text(narration):Checking.', 'tool:search', 'text:It is 42.'])
   })
 
   test('comes from the message event until the conversation refreshes, under the same id', () => {

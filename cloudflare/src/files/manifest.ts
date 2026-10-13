@@ -7,6 +7,7 @@
 //
 // NFC and the Cc category come from the runtime's Unicode tables. Paths are sorted by UTF-16 code unit.
 
+import type { FolderChanges } from "@minerva/contract";
 import { utf8Strict } from "../lib/bytes.ts";
 import { hashInput } from "../lib/canonical.ts";
 import type { EpochMs, Sha256 } from "../shared/rpc.ts";
@@ -317,18 +318,6 @@ export function directories(entries: StoredEntries | null): Set<string> {
 	return implied;
 }
 
-type ChangeKind = "added" | "modified" | "deleted" | "dirs_added" | "dirs_deleted";
-
-/** What a turn changed, in the shape `RunOut.folder_changes` has. */
-export type FolderChanges = {
-	counts: { [kind in ChangeKind]: number };
-	added: { path: string; size: number }[];
-	modified: { path: string; size: number }[];
-	deleted: { path: string; size: number }[];
-	dirs_added: string[];
-	dirs_deleted: string[];
-};
-
 type ChangeEntries = { files: { [path: string]: { sha256: string; mode: number; size: number } }; dirs: string[] };
 
 /**
@@ -357,11 +346,11 @@ export function folderChanges(before: ChangeEntries | null, after: ChangeEntries
 	const withSizes = (paths: string[], from: ChangeEntries["files"]) =>
 		paths.slice(0, CHANGES_KEPT).map((path) => ({ path, size: (from[path] as { size: number }).size }));
 	return {
-		counts: { added: added.length, modified: modified.length, deleted: deleted.length, dirs_added: dirsAdded.length, dirs_deleted: dirsDeleted.length },
+		counts: { added: added.length, modified: modified.length, deleted: deleted.length, dirsAdded: dirsAdded.length, dirsDeleted: dirsDeleted.length },
 		added: withSizes(added, now),
 		modified: withSizes(modified, now),
 		deleted: withSizes(deleted, old),
-		dirs_added: dirsAdded.slice(0, CHANGES_KEPT),
-		dirs_deleted: dirsDeleted.slice(0, CHANGES_KEPT),
+		dirsAdded: dirsAdded.slice(0, CHANGES_KEPT),
+		dirsDeleted: dirsDeleted.slice(0, CHANGES_KEPT),
 	};
 }

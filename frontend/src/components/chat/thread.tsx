@@ -335,7 +335,7 @@ function TurnFilesCard({ files }: { files: TurnFiles }) {
   const changes = files.changes
   const rows = changes ? (['added', 'modified', 'deleted'] as const).flatMap(kind => changes[kind].map(file => ({ kind, ...file }))) : []
   const listed = changes ? rows.length : 0
-  const total = changes ? (changes.counts.added ?? 0) + (changes.counts.modified ?? 0) + (changes.counts.deleted ?? 0) : 0
+  const total = changes ? changes.counts.added + changes.counts.modified + changes.counts.deleted : 0
   const warnings = files.warnings
   if (!rows.length && !warnings?.total) return null
   return (

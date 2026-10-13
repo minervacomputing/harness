@@ -390,7 +390,7 @@ describe("the folder's store on a Durable Object's SQLite", () => {
 			const versionId = outcome.ok ? outcome.versionId : null;
 			const published = store.publish(runId, { baseVersionId: null, checkpointVersionId: versionId });
 			expect(published.resultVersionId).toBe(versionId);
-			expect(published.changes).toMatchObject({ counts: { added: 3, dirs_added: 2 } });
+			expect(published.changes).toMatchObject({ counts: { added: 3, dirsAdded: 2 } });
 			sql.exec("UPDATE conversation SET folder_version_id = ?", versionId);
 			expect(store.list(null)?.files.map((file) => file.path)).toEqual(["a.txt", "dir/b.txt", "dir/c.txt"]);
 			expect(store.resolve(null, "dir/c.txt")?.key).toBe(store.resolve(null, "a.txt")?.key);
@@ -412,8 +412,8 @@ describe("attachments at a run's start", () => {
 		const posted = await w.conversation.postMessage(CALLER, { content: DONE, attachments: [notes.id, data.id] });
 		if (!posted.ok) throw new Error(posted.refusal.detail);
 		expect(posted.value.message.attachments).toEqual([
-			{ path: "notes.txt", size: 9, media_type: "text/plain" },
-			{ path: "data.csv", size: 4, media_type: "text/csv" },
+			{ path: "notes.txt", size: 9, mediaType: "text/plain" },
+			{ path: "data.csv", size: 4, mediaType: "text/csv" },
 		]);
 		const baseVersionId = posted.value.run.baseVersionId;
 		expect(baseVersionId).toEqual(expect.any(String));
@@ -471,7 +471,7 @@ describe("attachments at a run's start", () => {
 		const second = await w.upload("a.txt", "same");
 		const again = await w.conversation.postMessage(CALLER, { content: DONE, attachments: [second.id] });
 		if (!again.ok) throw new Error(again.refusal.detail);
-		expect(again.value.message.attachments).toEqual([{ path: "a (2).txt", size: 4, media_type: "text/plain" }]);
+		expect(again.value.message.attachments).toEqual([{ path: "a (2).txt", size: 4, mediaType: "text/plain" }]);
 		expect(await w.blobs()).toHaveLength(1);
 	});
 });
@@ -503,7 +503,7 @@ describe("fault rows: Files", () => {
 		const run = await settled(w, runId);
 		expect(run.status).toBe("completed");
 		const head = await w.conversation.getConversation(CALLER);
-		expect(head?.messages[0]?.attachments).toEqual([{ path: "notes.txt", size: 5, media_type: "text/plain" }]);
+		expect(head?.messages[0]?.attachments).toEqual([{ path: "notes.txt", size: 5, mediaType: "text/plain" }]);
 		// The start sent again copied into the key it recorded the first time: one object, counted once.
 		const target = await w.conversation.resolveDownload(CALLER, null, "notes.txt");
 		expect(await w.blobs()).toEqual([target?.key]);
