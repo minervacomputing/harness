@@ -63,6 +63,7 @@ const KNOWN: Record<string, { message: string; field?: Field; ends?: boolean }> 
   ACCOUNT_TEMPORARILY_LOCKED: { message: LOCKED, ends: true },
   INVALID_TWO_FACTOR_COOKIE: { message: 'Your sign-in timed out. Sign in again.', ends: true },
   EMAIL_PASSWORD_SIGN_UP_DISABLED: { message: 'Sign-up is not open on this server.' },
+  EMAIL_ALREADY_VERIFIED: { message: 'This email address is already verified. Sign in instead.', field: 'code' },
 }
 
 /** A failed request as the pages show it. The password rules' sentences are the server's own. */

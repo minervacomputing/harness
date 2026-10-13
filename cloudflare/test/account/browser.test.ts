@@ -542,8 +542,7 @@ describe("the browser walk on the test Worker", () => {
 		await field("Verification code").waitFor();
 		await screenshot("verify-email");
 		await field("Verification code").fill(await emailedCode(EMAIL, /Please Confirm Your Email Address/));
-		// Verified, the page signs in with the password it still holds.
-		await paced("/sign-in/email");
+		// Verifying signs in.
 		await button("Verify email").click();
 
 		// The first-run setup, claimed with the key on its page.

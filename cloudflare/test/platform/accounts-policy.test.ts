@@ -241,6 +241,174 @@ describe("two factors for every sign-in", () => {
 	});
 });
 
+describe("verification signs in", () => {
+	const ATTACKER_PASSWORD = "the attacker's own passphrase";
+	const credentials = async (userId: string) => (await db.prepare(`SELECT count(*) AS n FROM account WHERE "userId" = ?`).bind(userId).first<{ n: number }>())!.n;
+
+	test("in the browser that signed up, with the password it set; the session's stamp holds", async () => {
+		const { browser, email } = await signUp();
+		expect(browser.cookies.has("minerva.email_binding")).toBe(true);
+		const verified = await browser.auth("/email-otp/verify-email", { email, otp: lastCode(email) });
+		expect(verified.status, JSON.stringify(verified.body)).toBe(200);
+		expect(browser.cookies.has(SESSION_COOKIE)).toBe(true);
+		expect(browser.cookies.has("minerva.email_binding")).toBe(false);
+		expect((await browser.call("GET", "/api/me")).body.user.email).toBe(email);
+		// The password stays, and a code works once.
+		expect((await new Browser().auth("/sign-in/email", { email, password: PASSWORD })).status).toBe(200);
+		expect((await new Browser().auth("/email-otp/verify-email", { email, otp: lastCode(email) })).status).toBe(400);
+		// A reset ends the session verifying made, as any other.
+		await resetPassword(email);
+		expect((await browser.call("GET", "/api/me")).status).toBe(401);
+	});
+
+	test("a user with two-factor gets the second step, not a session", async () => {
+		const { browser: first, email, userId } = await signedIn();
+		const { uri } = await enableTwoFactor(first);
+		await db.prepare(`UPDATE "user" SET "emailVerified" = 0 WHERE id = ?`).bind(userId).run();
+		const browser = new Browser();
+		expect((await browser.auth("/sign-in/email", { email, password: PASSWORD })).body.code).toBe("EMAIL_NOT_VERIFIED");
+		const step = await browser.auth("/email-otp/verify-email", { email, otp: lastCode(email) });
+		expect(step.body).toEqual({ twoFactorRedirect: true, twoFactorMethods: ["totp"] });
+		expect(browser.cookies.has(SESSION_COOKIE)).toBe(false);
+		expect((await browser.call("GET", "/api/me")).status).toBe(401);
+		const done = await browser.auth("/two-factor/verify-totp", { code: await nextTotp(uri) });
+		expect(done.status, JSON.stringify(done.body)).toBe(200);
+		expect((await browser.call("GET", "/api/me")).status).toBe(200);
+	});
+
+	test("someone who signed up with another's address keeps no way in once its owner verifies it", async () => {
+		const email = uniqueEmail("owner");
+		const { browser: attacker } = await signUp(email, ATTACKER_PASSWORD);
+		const code = lastCode(email); // in the owner's mailbox
+		// The owner signs up too and is answered as for a new address; the email says the account exists.
+		const owner = new Browser();
+		expect((await owner.auth("/sign-up/email", { email, password: PASSWORD, name: "" })).status).toBe(200);
+		expect(emailsTo(email).at(-1)?.subject).toBe("[Minerva] Account Already Exists");
+		expect(owner.cookies.has("minerva.email_binding")).toBe(false);
+		const verified = await owner.auth("/email-otp/verify-email", { email, otp: code });
+		expect(verified.status, JSON.stringify(verified.body)).toBe(200);
+		const userId: string = verified.body.user.id;
+		// The owner is signed in to an account without the password someone else chose.
+		expect((await owner.call("GET", "/api/me")).body.user.email).toBe(email);
+		expect(await credentials(userId)).toBe(0);
+		expect((await new Browser().auth("/sign-in/email", { email, password: ATTACKER_PASSWORD })).status).toBe(401);
+		expect((await attacker.auth("/sign-in/email", { email, password: ATTACKER_PASSWORD })).status).toBe(401);
+		expect((await attacker.call("GET", "/api/me")).status).toBe(401);
+		// The owner chooses a password with a reset, and the session verifying made ends with it as usual.
+		await resetPassword(email);
+		expect((await owner.call("GET", "/api/me")).status).toBe(401);
+		expect((await new Browser().auth("/sign-in/email", { email, password: NEW_PASSWORD })).status).toBe(200);
+	});
+
+	test("a binding for another password, or a forged one, does not keep the password", async () => {
+		const email = uniqueEmail("owner");
+		const { browser: attacker } = await signUp(email, ATTACKER_PASSWORD);
+		// The attacker's own binding with its signature replaced: Better Auth's secret signs the cookie.
+		const forged = new Browser();
+		forged.cookies.set("minerva.email_binding", attacker.cookies.get("minerva.email_binding")!.replace(/\.[^.]*$/, ".AAAA"));
+		const verified = await forged.auth("/email-otp/verify-email", { email, otp: lastCode(email) });
+		expect(verified.status).toBe(200);
+		expect(await credentials(verified.body.user.id)).toBe(0);
+
+		// A real binding, but for a password the account no longer has.
+		const other = uniqueEmail("other");
+		const { browser } = await signUp(other);
+		const userId = (await db.prepare(`SELECT id FROM "user" WHERE email = ?`).bind(other).first<{ id: string }>())!.id;
+		await db.prepare(`UPDATE account SET password = ? WHERE "userId" = ?`).bind(await hashPassword(NEW_PASSWORD), userId).run();
+		expect((await browser.auth("/email-otp/verify-email", { email: other, otp: lastCode(other) })).status).toBe(200);
+		expect(await credentials(userId)).toBe(0);
+	});
+
+	test("an unverified sign-in gets its code from the server, once while it is usable", async () => {
+		const email = uniqueEmail();
+		await signUp(email);
+		const first = lastCode(email);
+		const sent = emailsTo(email).length;
+		// Signing in again while the sign-up's code is usable sends nothing, and that code still works.
+		const browser = new Browser();
+		for (let i = 0; i < 2; i++) expect((await browser.auth("/sign-in/email", { email, password: PASSWORD })).body.code).toBe("EMAIL_NOT_VERIFIED");
+		expect(emailsTo(email).length).toBe(sent);
+		// Once it has expired, a sign-in sends a new one.
+		await db.prepare(`UPDATE verification SET "expiresAt" = ? WHERE identifier = ?`).bind(new Date(Date.now() - 1000).toISOString(), `email-verification-otp-${email}`).run();
+		expect((await browser.auth("/sign-in/email", { email, password: PASSWORD })).body.code).toBe("EMAIL_NOT_VERIFIED");
+		expect(emailsTo(email).length).toBe(sent + 1);
+		const second = lastCode(email);
+		expect((await browser.auth("/email-otp/verify-email", { email, otp: first })).status).toBe(400);
+		expect((await browser.auth("/email-otp/verify-email", { email, otp: second })).status).toBe(200);
+		expect((await browser.call("GET", "/api/me")).status).toBe(200);
+		// A wrong password learns nothing and gets no code.
+		const stranger = uniqueEmail();
+		await signUp(stranger);
+		const before = emailsTo(stranger).length;
+		await db.prepare(`DELETE FROM verification WHERE identifier = ?`).bind(`email-verification-otp-${stranger}`).run();
+		const wrong = new Browser();
+		expect((await wrong.auth("/sign-in/email", { email: stranger, password: "not the passphrase" })).status).toBe(401);
+		expect(emailsTo(stranger).length).toBe(before);
+		expect(wrong.cookies.has("minerva.email_binding")).toBe(false);
+	});
+
+	test("races: a reset that overtakes a verification wins, and a sign-up's password never lands on an address verified meanwhile", async () => {
+		const { email } = await signUp();
+		const userId = (await db.prepare(`SELECT id FROM "user" WHERE email = ?`).bind(email).first<{ id: string }>())!.id;
+		const policy = new Policy({ db, limits: new RateLimits(db, "k"), stampKey: "stamp-key", signupAllowed: async () => true, sendAlreadyExists: async () => {} });
+		const endpoint = { path: "/email-otp/verify-email" } as GenericEndpointContext;
+		const kept = await storedPassword(userId);
+		const scope = { holder: null, claimedEmail: email, binding: policy.stamp(userId, email, kept) };
+		await runInScope(scope, () => policy.emailVerifying({ id: userId, emailVerified: false }));
+		// The reset lands, then Better Auth marks the address verified and makes the session.
+		await db.prepare(`UPDATE account SET password = ? WHERE "userId" = ?`).bind(await hashPassword(NEW_PASSWORD), userId).run();
+		await db.prepare(`UPDATE "user" SET "emailVerified" = 1 WHERE id = ?`).bind(userId).run();
+		const made = await runInScope(scope, () => policy.sessionCreating({ userId }, endpoint));
+		expect(made).toEqual({ data: { credentialStamp: policy.stamp(userId, email, kept) } });
+		expect(policy.stamp(userId, email, kept)).not.toBe(policy.stamp(userId, email, await storedPassword(userId)));
+		// Verified already (the reset verified it): the code verifies nothing and drops nothing.
+		await expect(runInScope({ holder: null }, () => policy.emailVerifying({ id: userId, emailVerified: false }))).rejects.toMatchObject({ body: { code: "EMAIL_ALREADY_VERIFIED" } });
+		expect(await credentials(userId)).toBe(1);
+		// A sign-up whose user was written before the owner verified the address gets no password after it.
+		const owner = uniqueEmail("owner");
+		await signUp(owner, "the attacker's own passphrase");
+		const ownerId = (await db.prepare(`SELECT id FROM "user" WHERE email = ?`).bind(owner).first<{ id: string }>())!.id;
+		await db.prepare(`DELETE FROM account WHERE "userId" = ?`).bind(ownerId).run(); // its password not written yet
+		const verified = await new Browser().auth("/email-otp/verify-email", { email: owner, otp: lastCode(owner) });
+		expect(verified.status).toBe(200);
+		const signUpEndpoint = { path: "/sign-up/email" } as GenericEndpointContext;
+		const late = { holder: null } as { holder: null; writtenHash?: string };
+		const hash = await hashPassword("the attacker's own passphrase");
+		expect(await runInScope(late, () => policy.accountCreating({ userId: ownerId, password: hash }, signUpEndpoint))).toBe(false);
+		expect(await credentials(ownerId)).toBe(0);
+		expect(late.writtenHash).toBeUndefined();
+	});
+
+	test("codes a sign-in sends count against the address's emails", async () => {
+		freezeClockInWindow();
+		const email = uniqueEmail();
+		await signUp(email);
+		const expire = () => db.prepare(`DELETE FROM verification WHERE identifier = ?`).bind(`email-verification-otp-${email}`).run();
+		const sent = emailsTo(email).length;
+		await expire();
+		expect((await new Browser().auth("/sign-in/email", { email, password: PASSWORD })).body.code).toBe("EMAIL_NOT_VERIFIED");
+		await expire(); // its attempts used up, say
+		expect((await new Browser().auth("/sign-in/email", { email, password: PASSWORD })).body.code).toBe("EMAIL_NOT_VERIFIED");
+		expect(emailsTo(email).length).toBe(sent + 1);
+	});
+
+	test("a verification code signs nobody in to an address already verified", async () => {
+		const { email } = await signedIn();
+		const browser = new Browser();
+		expect((await browser.auth("/email-otp/send-verification-otp", { email, type: "email-verification" })).status).toBe(200);
+		const answer = await browser.auth("/email-otp/verify-email", { email, otp: lastCode(email) });
+		expect([answer.status, answer.body.code]).toEqual([400, "EMAIL_ALREADY_VERIFIED"]);
+		expect(browser.cookies.has(SESSION_COOKIE)).toBe(false);
+	});
+
+	test("verifying needs the site's Origin", async () => {
+		const { browser, email } = await signUp();
+		expect((await browser.auth("/email-otp/verify-email", { email, otp: lastCode(email) }, { Origin: "https://evil.example" })).status).toBe(403);
+		expect(browser.cookies.has(SESSION_COOKIE)).toBe(false);
+		expect((await browser.auth("/email-otp/verify-email", { email, otp: lastCode(email) })).status).toBe(200);
+	});
+});
+
 describe("credential stamps", () => {
 	test("a password change ends every other session at once and replaces this one", async () => {
 		const { browser, email, userId } = await signedIn();

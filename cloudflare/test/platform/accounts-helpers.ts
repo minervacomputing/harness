@@ -137,14 +137,13 @@ export async function signUp(email = uniqueEmail(), password = PASSWORD): Promis
 	return { browser, email };
 }
 
-/** A verified, signed-in account. */
+/** A verified, signed-in account: verifying in the browser that signed up signs in. */
 export async function signedIn(email = uniqueEmail()): Promise<{ browser: Browser; email: string; userId: string }> {
 	const { browser } = await signUp(email);
 	const verified = await browser.auth("/email-otp/verify-email", { email, otp: lastCode(email) });
 	expect(verified.status, JSON.stringify(verified.body)).toBe(200);
-	const answer = await browser.auth("/sign-in/email", { email, password: PASSWORD });
-	expect(answer.status, JSON.stringify(answer.body)).toBe(200);
-	return { browser, email, userId: answer.body.user.id };
+	expect(verified.body.token).toEqual(expect.any(String));
+	return { browser, email, userId: verified.body.user.id };
 }
 
 /** The session cookie's value in a browser (debug is on, so the name has no `__Secure-` prefix). */

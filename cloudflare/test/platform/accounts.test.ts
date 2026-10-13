@@ -85,11 +85,11 @@ describe("sign-up and provisioning", () => {
 		const early = await browser.auth("/sign-in/email", { email, password: PASSWORD });
 		expect(early.status).toBe(403);
 		expect(early.body.code).toBe("EMAIL_NOT_VERIFIED");
-		expect(early.response.headers.getSetCookie()).toEqual([]);
+		// No session: only the cookie that binds the password to this browser until the address is verified.
+		expect(early.response.headers.getSetCookie().map((cookie) => cookie.split("=")[0])).toEqual(["minerva.email_binding"]);
 
+		// Verifying signs in.
 		expect((await browser.auth("/email-otp/verify-email", { email, otp: lastCode(email) })).status).toBe(200);
-		const signed = await browser.auth("/sign-in/email", { email, password: PASSWORD });
-		expect(signed.status).toBe(200);
 		const me = await browser.call("GET", "/api/me");
 		expect(me.status).toBe(200);
 		expect(me.body).toEqual({
@@ -193,8 +193,8 @@ describe("sessions and /api/me", () => {
 
 	test("the session cookie is host-only, HttpOnly and Lax; a cookie the client chose is never a session", async () => {
 		const forged = "attacker-chosen-token";
-		const { email } = await signUp();
-		await new Browser().auth("/email-otp/verify-email", { email, otp: lastCode(email) });
+		const { browser: first, email } = await signUp();
+		await first.auth("/email-otp/verify-email", { email, otp: lastCode(email) });
 		const browser = new Browser();
 		browser.cookies.set("minerva.session_token", forged);
 		expect((await browser.call("GET", "/api/me")).status).toBe(401);
@@ -296,8 +296,7 @@ describe("passwords and rate limits", () => {
 
 describe("CSRF: Better Auth's origins on its routes, ours on ours", () => {
 	test("Better Auth's routes need the site's Origin", async () => {
-		const { email } = await signUp();
-		await new Browser().auth("/email-otp/verify-email", { email, otp: lastCode(email) });
+		const { email } = await signedIn();
 		const answer = await new Browser().auth("/sign-in/email", { email, password: PASSWORD });
 		expect(answer.status).toBe(200);
 	});
