@@ -18,7 +18,7 @@ export const MAX_LISTED = 30;
 const WRITE_CONSENT: Consent = [["write:jira-work"]];
 
 const shortName = () => z.string().trim().min(1).max(200).refine(isSingleLine, SINGLE_LINE);
-/** Text that only adds words (adf.check_written): plain text, without an address to Atlassian. */
+/** Text that only adds words: plain text, without an address to Atlassian. */
 const written = (schema: z.ZodString) => schema.refine(isPlainText, PLAIN_TEXT).refine(adf.namesNoAtlassian, adf.ATLASSIAN_ADDRESS);
 export const TEXT_DESCRIPTION = "Plain text, shown literally: no formatting, mentions or links to Atlassian.";
 const summary = () => written(z.string().trim().min(1).max(MAX_SUMMARY).refine(isSingleLine, SINGLE_LINE));

@@ -15,26 +15,24 @@
 // Written text is plain: it becomes paragraphs of text, without marks, mentions or cards, so it cannot
 // notify anyone or format anything. It may not contain an address to Atlassian in any encoding, since
 // Atlassian may show it as a smart link previewing something the agent may not read.
-//
-// A node whose `type` is a list or an object raises a TypeError, which the model sees as the generic
-// failure.
 
 import type { Json } from "../../lib/json.ts";
-import { decoded, isPlainText, PLAIN_TEXT, TextError, WORDS } from "../../lib/text.ts";
+import { decoded, WORDS } from "../../lib/text.ts";
 import { OperationError } from "../../gateway/connector.ts";
-import { IGNORECASE_I } from "./python.ts";
 
 export const LINK = "[Atlassian link]";
 export const UNSUPPORTED = "[unsupported content]";
 export const MAX_DEPTH = 40;
 export const MAX_NODES = 20_000;
 
-// `re.IGNORECASE`, where "i" also matches "İ" and "ı" (python.ts).
+// Atlassian's domains, in any case. Unicode case folding also matches "ſ" for "s" and the Kelvin sign for
+// "k"; "i" also matches its lookalikes, the dotted capital and the dotless i.
 const ATLASSIAN = new RegExp(
-	String.raw`atlassian\.(?:net|com)|jira\.com|atlassian\.design|atl\.so|trello\.com|bitbucket\.org`.replaceAll("i", IGNORECASE_I),
+	String.raw`atlassian\.(?:net|com)|jira\.com|atlassian\.design|atl\.so|trello\.com|bitbucket\.org`.replaceAll("i", "[i\u0130\u0131]"),
 	"iu",
 );
-const SCHEME = /^[a-z\u0130\u0131][a-z0-9+.\-\u0130\u0131]*:/iu;
+/** A URL scheme, in ASCII as browsers read one; anything else makes the address relative. */
+const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 
 export const ATLASSIAN_ADDRESS =
 	"must not contain Atlassian addresses: Atlassian may show them as previews of issues or pages you may not read";
@@ -102,16 +100,15 @@ export function redact(text: string, hosts: readonly string[] = []): string {
 	});
 }
 
-/** The earliest and latest instants shown, in milliseconds: years 1 to 9999. */
+/** The earliest and latest instants shown, in milliseconds: four-digit years, 0001 to 9999. */
 const MIN_MS = -62_135_596_800_000;
 const MAX_MS = 253_402_300_799_999;
 
-/** A date node's day from its timestamp in milliseconds (an integer, or one written as digits), or "[date]". */
+/** A date node's day from its timestamp in milliseconds (a number, or digits as ADF writes it), or "[date]". */
 export function date(timestamp: Json | undefined): string {
-	const text = typeof timestamp === "string" ? timestamp.trim() : null;
-	const ms = typeof timestamp === "number" ? Math.trunc(timestamp) : text !== null && /^[+-]?\d{1,16}$/.test(text) ? Number(text) : null;
-	if (ms === null || !(ms >= MIN_MS && ms <= MAX_MS)) return "[date]";
-	return new Date(ms).toISOString().slice(0, 10);
+	const ms = typeof timestamp === "number" ? timestamp : typeof timestamp === "string" && /^-?\d{1,16}$/.test(timestamp) ? Number(timestamp) : Number.NaN;
+	if (!(ms >= MIN_MS && ms <= MAX_MS)) return "[date]";
+	return new Date(Math.trunc(ms)).toISOString().slice(0, 10);
 }
 
 class Reader {
@@ -207,10 +204,7 @@ class Reader {
 		} else if (kind === "emoji") this.out.push(this.text(get(attrs, "text")) || this.text(get(attrs, "shortName")));
 		else if (kind === "date") this.out.push(date(get(attrs, "timestamp")));
 		else if (kind === "status") this.out.push(`[${this.text(get(attrs, "text"))}]`);
-		else if (typeof kind === "object" && kind !== null) {
-			// `kind in _CARDS` hashes it.
-			throw new TypeError("unhashable type");
-		} else if (typeof kind === "string" && CARDS.has(kind)) {
+		else if (typeof kind === "string" && CARDS.has(kind)) {
 			const url = this.text(get(attrs, "url"));
 			this.out.push(!url || internal(url, this.hosts) ? LINK : url);
 		} else if (typeof kind === "string" && MEDIA.has(kind)) this.out.push("[attachment]");
@@ -264,26 +258,16 @@ export function read(document: Json | undefined, hosts: readonly string[] = []):
 
 /**
  * Refuses written text naming one of the connection's sites, in any encoding (sites on their own domains
- * are not covered by `checkWritten`).
+ * are not covered by `namesNoAtlassian`).
  */
 export function checkHosts(text: string, hosts: readonly string[]): void {
 	const flat = flattened(text).toLowerCase();
 	if (hosts.some((host) => host !== "" && flat.includes(host.toLowerCase()))) throw new OperationError("INVALID_ARGUMENTS", SITE_ADDRESS);
 }
 
-/** Whether written text names no Atlassian address (`check_written` after `plain_text`). */
+/** Whether written text names no Atlassian address, in any encoding. */
 export function namesNoAtlassian(text: string): boolean {
 	return !ATLASSIAN.test(flattened(text));
-}
-
-/**
- * `check_written`: refuses text that would do more than add words, with the field validator's message
- * (TextError). Inputs declare it as two refinements, `isPlainText` then `namesNoAtlassian`.
- */
-export function checkWritten(text: string): string {
-	if (!isPlainText(text)) throw new TextError(PLAIN_TEXT);
-	if (!namesNoAtlassian(text)) throw new TextError(ATLASSIAN_ADDRESS);
-	return text;
 }
 
 /** An ADF document showing `text` literally: paragraphs at blank lines, line breaks within them. */

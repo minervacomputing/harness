@@ -15,7 +15,6 @@ import { z } from "zod";
 import type { Auth, ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError, denied } from "../../gateway/connector.ts";
 import { ProviderHTTP, segment } from "../../gateway/http.ts";
-import { fromUtf8Strict } from "../../lib/bytes.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
 
 export const API_URL = "https://api.atlassian.com";
@@ -84,12 +83,6 @@ export class Site {
 	}
 }
 
-/** JSON's text from bytes as `json.loads` reads them: UTF-8, a byte order mark skipped, invalid UTF-8 refused. */
-function jsonText(bytes: Uint8Array): string {
-	const start = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
-	return fromUtf8Strict(bytes.subarray(start));
-}
-
 /** Base of the Atlassian clients: authenticated, bounded reads, validated responses. */
 export class AtlassianClient implements ProviderClient {
 	readonly provider: string;
@@ -129,10 +122,11 @@ export class AtlassianClient implements ProviderClient {
 		return new OperationError("RESPONSE_TOO_LARGE", `${this.provider} returned more than Minerva reads.`);
 	}
 
+	/** The answer as JSON: UTF-8 (a byte order mark dropped), invalid UTF-8 refused. */
 	async #json(response: Response): Promise<Json> {
-		const bytes = new Uint8Array(await response.arrayBuffer());
+		const bytes = await response.arrayBuffer();
 		try {
-			return parseJson(jsonText(bytes));
+			return parseJson(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes));
 		} catch (error) {
 			throw this.unexpected(error);
 		}

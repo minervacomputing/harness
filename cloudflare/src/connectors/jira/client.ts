@@ -174,10 +174,10 @@ export class JiraClient extends AtlassianClient {
 	async issueTypes(cloudId: string, projectId: string): Promise<IssueType[]> {
 		const found: IssueType[] = [];
 		for (let page = 0; page < MAX_PAGES; page++) {
-			const page = await this.#read(IssueTypePage, cloudId, `/issue/createmeta/${segment(projectId)}/issuetypes`, { startAt: String(found.length), maxResults: "50" });
-			const types = page.issueTypes;
+			const answer = await this.#read(IssueTypePage, cloudId, `/issue/createmeta/${segment(projectId)}/issuetypes`, { startAt: String(found.length), maxResults: "50" });
+			const types = answer.issueTypes;
 			extend(found, types);
-			if (types.length === 0 || page.total === null || found.length >= page.total) return found;
+			if (types.length === 0 || answer.total === null || found.length >= answer.total) return found;
 		}
 		throw new OperationError("PROVIDER_LIMIT", "This Jira project has more issue types than Minerva reads.");
 	}

@@ -158,7 +158,7 @@ export class ConfluenceClient extends AtlassianClient {
 		}
 		const order = new Map<string, number>();
 		ids.forEach((id, index) => order.set(id, index));
-		// A dict by id: a page listed twice keeps its first place and its last value.
+		// A page listed twice keeps its first place and its last value.
 		const unique = new Map<string, Page>();
 		for (const page of found) if (order.has(page.id)) unique.set(page.id, page);
 		return [...unique.values()].sort((a, b) => (order.get(a.id) as number) - (order.get(b.id) as number));

@@ -1,20 +1,16 @@
-// backend/tests/test_confluence.py, case by case: the Confluence connector against an in-memory Atlassian
-// API behind an injected `fetch`, and runs through the executor. The pure helpers (page tokens, the next
-// links' cursors, discovery cursors, search words, bodies) are also checked against vectors from today's
-// Python (test/fixtures/connectors/atlassian/generate.py).
+// The Confluence connector against an in-memory Atlassian API behind an injected `fetch`, and runs through
+// the executor.
 
-import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, test } from "vitest";
 import type { GrantRow } from "../../src/contracts/policy.ts";
 import { BodyModel, ConfluenceClient, ListingModel, document, nextCursor, pageParams } from "../../src/connectors/confluence/client.ts";
 import { confluenceConnector, discoveryCursor } from "../../src/connectors/confluence/connector.ts";
 import { MAX_SPACE_PAGES, searchWords } from "../../src/connectors/confluence/reads.ts";
-import { OperationError } from "../../src/gateway/connector.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
-import { changedOnPurpose } from "./changed.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
-import { Scenario, USER, jsonResponse } from "./executor-fakes.ts";
+import { ceilingRow, startRun } from "./connector-runs.ts";
+import { type Scenario, jsonResponse } from "./executor-fakes.ts";
 
 const SECRET = "SECRET merger";
 const ACCOUNT_ID = "5b10ac8d82e05b22cc7d4ef5";
@@ -28,27 +24,6 @@ const READ_SCOPES = ["read:space:confluence", "read:page:confluence", "read:comm
 const SCOPES = ["offline_access", "read:me", ...READ_SCOPES, "write:comment:confluence", "write:page:confluence"];
 /** Confluence's cursors are opaque; some are not URL-safe. */
 const TOKEN = "eyJ+a/b=";
-const CONNECTION = "0199a000-0000-7000-8000-0000000000b1";
-
-type Outcome = { value?: Json; error?: string; message?: string };
-const VECTORS = parseJson(readFileSync(new URL("../fixtures/connectors/atlassian/vectors.json", import.meta.url).pathname, "utf8")) as unknown as {
-	confluence: {
-		page_params: ({ cursor: string | null } & Outcome)[];
-		discover_cursor: ({ cursor: string | null } & Outcome)[];
-		search_words: ({ text: string } & Outcome)[];
-		documents: { value: Json; document: Json }[];
-	};
-};
-
-/** What a helper does, in the vectors' words: its value, or an owned error's code and message. */
-function outcome(run: () => Json): Outcome {
-	try {
-		return { value: run() };
-	} catch (error) {
-		if (error instanceof OperationError) return { error: error.code, message: error.message };
-		throw error;
-	}
-}
 
 function doc(...content: Json[]): JsonObject {
 	return { type: "doc", version: 1, content };
@@ -86,20 +61,6 @@ function page(id: string, spaceId: string, title: string, fields: JsonObject = {
 	};
 }
 
-/** Python's `urllib.parse.quote_plus`: everything but ASCII letters, digits and `_.-~` percent-encoded, spaces as "+". */
-function quotePlus(value: string): string {
-	return encodeURIComponent(value)
-		.replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)
-		.replaceAll("%20", "+");
-}
-
-/** Python's `urlencode(query)`. */
-function urlencode(query: { [name: string]: string }): string {
-	return Object.entries(query)
-		.map(([name, value]) => `${quotePlus(name)}=${quotePlus(value)}`)
-		.join("&");
-}
-
 function without(object: JsonObject, key: string): JsonObject {
 	return Object.fromEntries(Object.entries(object).filter(([name]) => name !== key));
 }
@@ -121,7 +82,7 @@ interface FakeSite {
 const fakes: FakeConfluence[] = [];
 
 /**
- * Atlassian's API for Confluence (test_confluence.py `FakeConfluence`). Acme (acme.atlassian.net) has spaces
+ * Atlassian's API for Confluence. Acme (acme.atlassian.net) has spaces
  * ENG (100) and FIN (101); Beta (beta.atlassian.net) has OPS, whose id repeats ENG's. Page 500 in ENG links
  * to page 501 in FIN and has a child 502; page 504 in ENG names 501 as its parent, and 505 is a draft.
  */
@@ -188,7 +149,7 @@ class FakeConfluence {
 		}
 		const end = start + size;
 		const links: JsonObject = {};
-		if (end < items.length) links.next = `${path}?${urlencode({ ...without(params, "cursor"), cursor: `${TOKEN}${end}` } as { [name: string]: string })}`;
+		if (end < items.length) links.next = `${path}?${new URLSearchParams({ ...without(params, "cursor"), cursor: `${TOKEN}${end}` } as { [name: string]: string })}`;
 		return { results: items.slice(start, end), _links: links };
 	}
 
@@ -302,27 +263,13 @@ afterEach(() => {
 
 /** Starts and claims a run with the user's Confluence connection, holding `grants` ({site or space: actions}). */
 function start(confluence: FakeConfluence, grants: { [id: string]: string[] }, options: { scopes?: string[]; ceiling?: GrantRow[] } = {}): Promise<Scenario> {
-	return Scenario.start({
-		connectors: [confluenceConnector()],
-		connections: [{ id: CONNECTION, provider: "confluence", payload: { kind: "oauth2", access_token: "t", refresh_token: null, scopes: options.scopes ?? SCOPES } }],
-		user: Object.entries(grants).map(([resourceId, actions]) => ({
-			layer: "user",
-			subject: USER,
-			connectionId: CONNECTION,
-			kind: "space",
-			resourceId,
-			resourceName: "",
-			actions: [...actions].sort(),
-			effect: "allow",
-		})),
-		ceiling: options.ceiling ?? [],
-		fetch: confluence.fetch,
-	});
+	const rows = Object.fromEntries(Object.entries(grants).map(([id, actions]) => [`space:${id}`, actions]));
+	return startRun(confluenceConnector(), confluence.fetch, { scopes: options.scopes ?? SCOPES, grants: rows, ceiling: options.ceiling ?? [] });
 }
 
-/** A deny in the workspace ceiling (connector_runs.py `ceiling`). */
+/** A deny in the workspace ceiling. */
 function ceilingDeny(resourceId: string, actions: string[] = ["read"]): GrantRow {
-	return { layer: "ceiling", subject: null, connectionId: CONNECTION, kind: "space", resourceId, resourceName: "", actions, effect: "deny" };
+	return ceilingRow("space", resourceId, "deny", actions);
 }
 
 async function items(run: Scenario, tool: string, args: Json): Promise<JsonObject[]> {
@@ -402,17 +349,25 @@ describe("connecting and discovery", () => {
 		}
 	});
 
-	test("the pure helpers answer as Python's", () => {
-		const vectors = VECTORS.confluence;
-		for (const { cursor, ...expected } of vectors.page_params) if (!changedOnPurpose(cursor)) expect(outcome(() => pageParams(cursor)), String(cursor)).toEqual(expected);
-		for (const { cursor, ...expected } of vectors.discover_cursor) if (!changedOnPurpose(cursor)) expect(outcome(() => discoveryCursor(cursor, [null, null])), String(cursor)).toEqual(expected);
-		for (const { text: value, ...expected } of vectors.search_words) expect(outcome(() => searchWords(value)), value).toEqual(expected);
-		for (const { value, document: expected } of vectors.documents) {
-			const parsed = BodyModel.safeParse({ atlas_doc_format: { value } });
-			// A body value that is not a string does not fit.
-			if (value !== null && value !== undefined && typeof value !== "string") expect(parsed.success, JSON.stringify(value)).toBe(false);
-			else expect(document(parsed.data ?? null), JSON.stringify(value)).toEqual(expected);
+	test("discovery cursors are a site index and Confluence's cursor", () => {
+		const sites = [null, null];
+		expect([null, "0:", "1:abc", "01:x", "0:~"].map((cursor) => discoveryCursor(cursor, sites))).toEqual([[0, null], [0, null], [1, "abc"], [1, "x"], [0, "~"]]);
+		for (const cursor of ["2:", "x", "0:a b", `0:${"a".repeat(991)}`, ":x", "١:x"]) {
+			expect(() => discoveryCursor(cursor, sites), cursor).toThrow(expect.objectContaining({ code: "INVALID_CURSOR" }));
 		}
+	});
+
+	test("search words keep CQL out of the query", () => {
+		expect(searchWords('run "OR space = FIN')).toBe("run OR space FIN");
+		expect(() => searchWords("?!")).toThrow(expect.objectContaining({ code: "INVALID_ARGUMENTS", message: "text must contain letters or digits." }));
+	});
+
+	test("a body is ADF sent as a JSON string; one that does not parse is none", () => {
+		const read = (value: Json) => document(BodyModel.parse({ atlas_doc_format: { value } }));
+		expect(read('{"type": "doc"}')).toEqual({ type: "doc" });
+		expect(read('"text"')).toBe("text");
+		for (const value of ["{broken", "", "null", "nan", '{"a": 1', null]) expect(read(value), JSON.stringify(value)).toBeNull();
+		expect(BodyModel.safeParse({ atlas_doc_format: { value: 5 } }).success).toBe(false);
 	});
 
 	test("scopes follow the allowed actions", () => {
@@ -512,7 +467,7 @@ describe("reading", () => {
 		expect([found.more_comments, found.parent, found.version]).toEqual([false, null, 3]);
 		expect(found.link).toBe("https://acme.atlassian.net/wiki/pages/viewpage.action?pageId=500");
 		expect(confluence.reads("/footer-comments")[0]?.params.limit).toBe("30");
-		// The whole record, as Python returns it.
+		// The whole record.
 		expect(found).toEqual({
 			id: "500",
 			site_id: ACME,
@@ -624,7 +579,7 @@ describe("reading", () => {
 
 	test("space listings stop at a cap", async () => {
 		const confluence = new FakeConfluence();
-		// Python lowers MAX_SPACE_PAGES to 1; here Acme has more spaces than that many pages of one.
+		// Acme has more spaces than MAX_SPACE_PAGES pages of one.
 		const acme = confluence.acme();
 		for (let n = 0; n < MAX_SPACE_PAGES; n++) acme.spaces.push(space(String(110 + n), `P${n}`, `Space ${n}`));
 		confluence.pageSize = 1;

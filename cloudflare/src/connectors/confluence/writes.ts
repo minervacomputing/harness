@@ -19,7 +19,7 @@ export const MAX_BODY = 50_000;
 export const MAX_COMMENT = 20_000;
 
 export const TEXT_DESCRIPTION = "Plain text, shown literally: no formatting, mentions or links to Atlassian.";
-/** Text that only adds words (adf.check_written): plain text, without an address to Atlassian. */
+/** Text that only adds words: plain text, without an address to Atlassian. */
 const written = (schema: z.ZodString) => schema.refine(isPlainText, PLAIN_TEXT).refine(adf.namesNoAtlassian, adf.ATLASSIAN_ADDRESS);
 const title = () => written(z.string().trim().min(1).max(MAX_TITLE).describe("The page's title, unique in its space.").refine(isSingleLine, SINGLE_LINE));
 const bodyText = () => written(z.string().trim().min(1).max(MAX_BODY).describe(TEXT_DESCRIPTION));
