@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { useAppForm } from '@/components/form'
 import { ErrorNote } from '@/components/ui/misc'
-import { fieldErrors } from '@/lib/auth'
+import { fieldErrors } from '@/lib/auth-client'
 
 /** One code input with submit, shared by email verification, sign-in codes, and two-factor codes. */
 export function CodeForm({
@@ -39,11 +39,11 @@ export function CodeForm({
               autoFocus
               spellCheck={false}
               className="font-mono tracking-widest"
-              serverError={fields.code ?? fields.key}
+              serverError={fields.code}
             />
           )}
         </form.AppField>
-        <ErrorNote>{error && !fields.code && !fields.key ? error.message : null}</ErrorNote>
+        <ErrorNote>{error && !fields.code ? error.message : null}</ErrorNote>
         <form.SubmitButton>{submitLabel}</form.SubmitButton>
         {extra}
       </form.Form>

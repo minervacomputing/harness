@@ -7,7 +7,9 @@ import { newPassword, useAppForm } from '@/components/form'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { Button } from '@/components/ui/button'
 import { Alert, ErrorNote, PageHeader } from '@/components/ui/misc'
-import { auth, authQuery, fieldErrors, useSignOut } from '@/lib/auth'
+import { account } from '@/lib/account'
+import { authQuery, signOut } from '@/lib/auth'
+import { fieldErrors } from '@/lib/auth-client'
 import { setupQuery } from '@/lib/instance'
 import { pageHead } from '@/lib/title'
 
@@ -20,7 +22,6 @@ function AccountPage() {
   const context = Route.useRouteContext()
   const { data: state } = useQuery(authQuery)
   const user = state?.kind === 'authenticated' ? state.user : context.user
-  const signOut = useSignOut()
   // Until someone claims it, any signed-in user can find the setup here; it works only with the setup key.
   const setupNeeded = useQuery(setupQuery).data?.needed === true
   return (
@@ -64,8 +65,8 @@ function PasswordSetting() {
   const [done, setDone] = useState<string>()
   const button = useRef<HTMLButtonElement>(null)
   const change = useMutation({
-    mutationFn: (value: { current_password: string; new_password: string }) =>
-      auth.account.changePassword({ current: value.current_password, next: value.new_password }),
+    mutationFn: (value: { currentPassword: string; newPassword: string }) =>
+      account.changePassword({ current: value.currentPassword, next: value.newPassword }),
     onSuccess: async () => {
       setDone('Your password was changed.')
       setOpen(false)
@@ -75,7 +76,7 @@ function PasswordSetting() {
   })
   const fields = fieldErrors(change.error)
   const form = useAppForm({
-    defaultValues: { current_password: '', new_password: '' },
+    defaultValues: { currentPassword: '', newPassword: '' },
     onSubmit: async ({ value, formApi }) => {
       await change.mutateAsync(value)
       formApi.reset()
@@ -105,16 +106,16 @@ function PasswordSetting() {
       {open && (
         <form.AppForm>
           <form.Form className="grid max-w-md gap-4">
-            <form.AppField name="current_password">
+            <form.AppField name="currentPassword">
               {field => (
-                <field.TextField label="Current password" type="password" autoComplete="current-password" autoFocus serverError={fields.current_password} />
+                <field.TextField label="Current password" type="password" autoComplete="current-password" autoFocus serverError={fields.currentPassword} />
               )}
             </form.AppField>
             <form.AppField
-              name="new_password"
+              name="newPassword"
               validators={{ onBlur: ({ value, fieldApi }) => (value ? fieldApi.parseValueWithSchema(newPassword) : undefined) }}
             >
-              {field => <field.TextField label="New password" type="password" autoComplete="new-password" serverError={fields.new_password} />}
+              {field => <field.TextField label="New password" type="password" autoComplete="new-password" serverError={fields.password} />}
             </form.AppField>
             {change.error && !Object.keys(fields).length && <ErrorNote>{change.error.message}</ErrorNote>}
             <div>

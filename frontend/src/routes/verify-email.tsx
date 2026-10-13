@@ -1,9 +1,10 @@
+import { useMutation } from '@tanstack/react-query'
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useState } from 'react'
 import { AuthLayout, useContinueAuth } from '@/components/auth-layout'
 import { CodeForm } from '@/components/code-form'
 import { ErrorNote } from '@/components/ui/misc'
-import { auth, useAuthStep } from '@/lib/auth'
+import { auth, authStep } from '@/lib/auth'
 import { nextSearch, redirectIfSignedIn } from '@/lib/guards'
 import { errorMessage } from '@/lib/http'
 import { pageHead } from '@/lib/title'
@@ -13,7 +14,7 @@ export const Route = createFileRoute('/verify-email')({
   validateSearch: nextSearch,
   beforeLoad: async ({ context }) => {
     const state = await redirectIfSignedIn(context.queryClient)
-    if (state.pending !== 'verify_email') throw redirect({ to: '/login' })
+    if (state.pending !== 'verify-email') throw redirect({ to: '/login' })
   },
   component: VerifyEmailPage,
 })
@@ -21,7 +22,7 @@ export const Route = createFileRoute('/verify-email')({
 function VerifyEmailPage() {
   const { next } = Route.useSearch()
   const continueAuth = useContinueAuth()
-  const verify = useAuthStep(auth.verifyEmail)
+  const verify = useMutation(authStep(auth.verifyEmail))
   const [resent, setResent] = useState(false)
   const [resendError, setResendError] = useState<string | null>(null)
 
@@ -32,7 +33,7 @@ function VerifyEmailPage() {
         label="Verification code"
         submitLabel="Verify email"
         error={verify.error}
-        onSubmit={async code => continueAuth(await verify.mutateAsync({ key: code }), next)}
+        onSubmit={async code => continueAuth(await verify.mutateAsync({ code }), next)}
         extra={
           <>
             <ErrorNote>{resendError}</ErrorNote>

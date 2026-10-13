@@ -1,7 +1,8 @@
+import { useMutation } from '@tanstack/react-query'
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { AuthLayout, useContinueAuth } from '@/components/auth-layout'
 import { CodeForm } from '@/components/code-form'
-import { auth, useAuthStep } from '@/lib/auth'
+import { auth, authStep } from '@/lib/auth'
 import { nextSearch, redirectIfSignedIn } from '@/lib/guards'
 import { pageHead } from '@/lib/title'
 
@@ -10,7 +11,7 @@ export const Route = createFileRoute('/login_/code')({
   validateSearch: nextSearch,
   beforeLoad: async ({ context }) => {
     const state = await redirectIfSignedIn(context.queryClient)
-    if (state.pending !== 'login_by_code') throw redirect({ to: '/login' })
+    if (state.pending !== 'sign-in-code') throw redirect({ to: '/login' })
   },
   component: LoginCodePage,
 })
@@ -18,7 +19,7 @@ export const Route = createFileRoute('/login_/code')({
 function LoginCodePage() {
   const { next } = Route.useSearch()
   const continueAuth = useContinueAuth()
-  const confirm = useAuthStep(auth.confirmLoginCode)
+  const confirm = useMutation(authStep(auth.confirmLoginCode))
   return (
     <AuthLayout title="Enter your sign-in code" description="If an account exists for that address, we emailed it a one-time code." back>
       <CodeForm

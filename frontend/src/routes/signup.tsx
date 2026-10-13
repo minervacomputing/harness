@@ -1,9 +1,10 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { AuthLayout, useContinueAuth } from '@/components/auth-layout'
 import { emailAddress, newPassword, useAppForm } from '@/components/form'
 import { ErrorNote } from '@/components/ui/misc'
-import { auth, fieldErrors, useAuthStep } from '@/lib/auth'
+import { auth, authStep } from '@/lib/auth'
+import { fieldErrors } from '@/lib/auth-client'
 import { nextSearch, redirectIfSignedIn } from '@/lib/guards'
 import { setupQuery } from '@/lib/instance'
 import { pageHead } from '@/lib/title'
@@ -20,7 +21,7 @@ export const Route = createFileRoute('/signup')({
 function SignupPage() {
   const { next } = Route.useSearch()
   const continueAuth = useContinueAuth()
-  const signup = useAuthStep(auth.signup)
+  const signup = useMutation(authStep(auth.signup))
   const fields = fieldErrors(signup.error)
   // A server nobody administers yet takes the operator's setup key here, for when its sign-up is closed.
   const setupNeeded = useQuery(setupQuery).data?.needed === true
@@ -64,7 +65,7 @@ function SignupPage() {
                   autoComplete="off"
                   spellCheck={false}
                   hint="Only for the person who runs this server: it lets you create the first account while sign-up is closed."
-                  serverError={fields.setup_key}
+                  serverError={fields.setupKey}
                 />
               )}
             </form.AppField>

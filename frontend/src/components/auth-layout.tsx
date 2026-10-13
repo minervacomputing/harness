@@ -2,7 +2,7 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import { Logo } from '@/components/brand/logo'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { type AuthState, pendingPath } from '@/lib/auth'
+import { pendingPath, type StepResult } from '@/lib/auth'
 import { isLocalPath } from '@/lib/guards'
 
 export function AuthLayout({
@@ -48,11 +48,16 @@ export function AuthLayout({
   )
 }
 
-/** Sends the user to the next authentication step, into the app once signed in, or to sign in when no step is left. */
+/**
+ * Sends the visitor on after a step: to the next step's page, to sign in when no step is left, or, once signed
+ * in, to `next` with a full page load, so nothing cached before signing in carries over. The form stays
+ * submitting while that page loads.
+ */
 export function useContinueAuth() {
   const navigate = useNavigate()
-  return (state: AuthState, next?: string) => {
-    if (state.kind === 'authenticated') return navigate({ to: next && isLocalPath(next) ? next : '/' })
-    return navigate({ to: pendingPath(state.pending) ?? '/login', search: next ? { next } : {} })
+  return async (result: StepResult, next?: string) => {
+    if (result.kind === 'anonymous') return navigate({ to: pendingPath(result.pending) ?? '/login', search: next ? { next } : {} })
+    window.location.assign(next && isLocalPath(next) ? next : '/')
+    return new Promise<never>(() => {})
   }
 }

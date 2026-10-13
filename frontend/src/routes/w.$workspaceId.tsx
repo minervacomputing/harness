@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { createFileRoute, Link, notFound, Outlet, useNavigate, useRouterState } from '@tanstack/react-router'
+import { createFileRoute, Link, notFound, Outlet, useRouterState } from '@tanstack/react-router'
 import { BotIcon, LogOutIcon, MenuIcon, PlugIcon, ShieldCheckIcon, SquarePenIcon, UserIcon, XIcon } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { type MouseEvent, useEffect, useState } from 'react'
@@ -10,7 +10,7 @@ import { ConversationList } from '@/components/chat/conversation-list'
 import { setupOf } from '@/components/connections/summary'
 import { Button } from '@/components/ui/button'
 import { Status } from '@/components/ui/misc'
-import { authQuery, type AuthUser, isSigningOut, useSignOut } from '@/lib/auth'
+import { authQuery, type AuthUser, signOut } from '@/lib/auth'
 import { requireSignedIn } from '@/lib/guards'
 
 export const Route = createFileRoute('/w/$workspaceId')({
@@ -31,8 +31,9 @@ const DESKTOP = '(min-width: 48rem)'
 
 function AppShell() {
   const { workspace, user } = Route.useRouteContext()
-  const navigate = useNavigate()
-  const { data: state } = useQuery(authQuery)
+  // Watched, so a session that ends elsewhere (expired, revoked, another account in another tab) is noticed: main.tsx then loads the
+  // page again, and the guard sends a visitor to sign in.
+  useQuery(authQuery)
   const pathname = useRouterState({ select: s => s.location.pathname })
   // The drawer is for small screens: close it after navigating (back and forward included) and when the window widens.
   const [menuOpen, setMenuOpen] = useState(false)
@@ -41,11 +42,6 @@ function AppShell() {
     setMenuPath(pathname)
     setMenuOpen(false)
   }
-
-  useEffect(() => {
-    // Signing out goes to the sign-in page itself, without a way back to this one.
-    if (state?.kind === 'anonymous' && !isSigningOut()) void navigate({ to: '/login', search: { next: window.location.pathname } })
-  }, [state, navigate])
 
   useEffect(() => {
     const desktop = window.matchMedia(DESKTOP)
@@ -109,7 +105,6 @@ function AppShell() {
 }
 
 function Sidebar({ workspace, user }: { workspace: WorkspaceOut; user: AuthUser }) {
-  const signOut = useSignOut()
   const params = { workspaceId: workspace.id }
   // Only what to show: the server checks the role again on every instance request.
   const isAdmin = useQuery(meOptions()).data?.user.is_staff === true

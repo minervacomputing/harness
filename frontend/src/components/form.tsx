@@ -97,10 +97,17 @@ function SubmitButton(props: Omit<ComponentProps<typeof Button>, 'type' | 'disab
   return <Button type="submit" disabled={submitting} {...props} />
 }
 
-/** Forms with the fields above: `form.AppField` renders `field.TextField`, and `form.Form` and `form.SubmitButton` sit inside `form.AppForm`. */
-export const { useAppForm } = createFormHook({
+const { useAppForm: useForm } = createFormHook({
   fieldContext,
   formContext,
   fieldComponents: { TextField, TextAreaField },
   formComponents: { Form, SubmitButton },
 })
+
+/**
+ * Forms with the fields above: `form.AppField` renders `field.TextField`, and `form.Form` and `form.SubmitButton`
+ * sit inside `form.AppForm`. A form with an error from leaving a field still submits: submitting validates every
+ * field again, so a value corrected without leaving its field (Enter in it) goes through, and one still wrong
+ * shows its error.
+ */
+export const useAppForm: typeof useForm = options => useForm({ canSubmitWhenInvalid: true, ...options })

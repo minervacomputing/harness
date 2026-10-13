@@ -28,15 +28,14 @@ export function installClientInterceptors(onUnauthorized: () => void) {
   })
   // A body that is not JSON comes from something in front of the app (a proxy's error page) or from a
   // crash; the client throws it as raw text, so it is replaced by a sentence.
-  client.interceptors.error.use((error, response) => {
-    if (typeof error !== 'string' || !response) return error
-    return {
-      detail:
-        response.status >= 502 && response.status <= 504
-          ? 'Minerva is briefly unavailable, probably restarting. Try again in a moment.'
-          : 'Something went wrong on the server. Try again.',
-    }
-  })
+  client.interceptors.error.use((error, response) => (typeof error === 'string' && response ? { detail: serverErrorMessage(response.status) } : error))
+}
+
+/** What to say when the server, or something in front of it, answered with an error and no explanation. */
+export function serverErrorMessage(status: number): string {
+  return status >= 502 && status <= 504
+    ? 'Minerva is briefly unavailable, probably restarting. Try again in a moment.'
+    : 'Something went wrong on the server. Try again.'
 }
 
 /** Turns API errors (`{detail}`, validation lists, network failures) into one readable sentence. */

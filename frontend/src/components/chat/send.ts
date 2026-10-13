@@ -8,7 +8,6 @@ import { getConversationQueryKey, listConversationsQueryKey, listFilesQueryKey }
 import { postMessage } from '@/api/sdk.gen'
 import type { MessageIn } from '@/api/types.gen'
 import { errorMessage } from '@/lib/http'
-import { sessionsEnded } from '@/lib/session'
 
 type ConversationPath = { workspace_id: string; conversation_id: string }
 
@@ -18,14 +17,12 @@ export type Send = {
   body: MessageIn
   /** The `Idempotency-Key`: 32 hex characters. */
   key: string
-  /** How many sessions the page had ended when the user sent it (`lib/session.ts`). */
-  session: number
 }
 
 export function newSend(path: ConversationPath, body: MessageIn): Send {
   const bytes = crypto.getRandomValues(new Uint8Array(16))
   const key = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
-  return { path, body, key, session: sessionsEnded() }
+  return { path, body, key }
 }
 
 /** A send that failed. `status` is the server's answer, missing when the request did not reach it. */
@@ -54,9 +51,7 @@ export class SendError extends Error {
 const RETRY_DELAYS_MS = [400, 1200]
 
 export const sendMessage = mutationOptions({
-  mutationFn: async ({ path, body, key, session }: Send) => {
-    // The user signed out while a repeat waited: it would go out under no session, or the next user's.
-    if (sessionsEnded() !== session) throw new Error('Signed out before the message was sent.')
+  mutationFn: async ({ path, body, key }: Send) => {
     const { data, error, response } = await postMessage({ path, body, headers: { 'Idempotency-Key': key }, throwOnError: false })
     if (error) throw new SendError(response?.status, error)
     return data

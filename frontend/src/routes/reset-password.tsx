@@ -1,9 +1,10 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { AuthLayout, useContinueAuth } from '@/components/auth-layout'
 import { newPassword, useAppForm } from '@/components/form'
 import { ErrorNote } from '@/components/ui/misc'
-import { auth, authQuery, fieldErrors, useAuthStep } from '@/lib/auth'
+import { auth, authQuery, authStep } from '@/lib/auth'
+import { fieldErrors } from '@/lib/auth-client'
 import { redirectIfSignedIn } from '@/lib/guards'
 import { pageHead } from '@/lib/title'
 
@@ -17,7 +18,7 @@ export const Route = createFileRoute('/reset-password')({
 
 function ResetPasswordPage() {
   const { data: state } = useQuery(authQuery)
-  const awaitingCode = state?.kind === 'anonymous' && state.pending === 'password_reset_by_code'
+  const awaitingCode = state?.kind === 'anonymous' && state.pending === 'password-reset'
   return (
     <AuthLayout
       title="Reset your password"
@@ -30,7 +31,7 @@ function ResetPasswordPage() {
 }
 
 function RequestReset() {
-  const request = useAuthStep(auth.requestPasswordReset)
+  const request = useMutation(authStep(auth.requestPasswordReset))
   const fields = fieldErrors(request.error)
   const form = useAppForm({
     defaultValues: { email: '' },
@@ -53,19 +54,19 @@ function RequestReset() {
 
 function ChooseNewPassword() {
   const continueAuth = useContinueAuth()
-  const reset = useAuthStep(auth.resetPassword)
+  const reset = useMutation(authStep(auth.resetPassword))
   const fields = fieldErrors(reset.error)
   const form = useAppForm({
-    defaultValues: { key: '', password: '' },
+    defaultValues: { code: '', password: '' },
     onSubmit: async ({ value }) => {
       // Resetting ends every session, so the way on is signing in.
-      await continueAuth(await reset.mutateAsync({ key: value.key.trim(), password: value.password }))
+      await continueAuth(await reset.mutateAsync({ code: value.code.trim(), password: value.password }))
     },
   })
   return (
     <form.AppForm>
       <form.Form className="grid gap-4">
-        <form.AppField name="key">
+        <form.AppField name="code">
           {field => (
             <field.TextField
               label="Reset code"
@@ -73,14 +74,14 @@ function ChooseNewPassword() {
               inputMode="numeric"
               autoFocus
               className="font-mono tracking-widest"
-              serverError={fields.key}
+              serverError={fields.code}
             />
           )}
         </form.AppField>
         <form.AppField name="password" validators={{ onBlur: newPassword }}>
           {field => <field.TextField label="New password" type="password" autoComplete="new-password" serverError={fields.password} />}
         </form.AppField>
-        <ErrorNote>{reset.error && !fields.key && !fields.password ? reset.error.message : null}</ErrorNote>
+        <ErrorNote>{reset.error && !fields.code && !fields.password ? reset.error.message : null}</ErrorNote>
         <form.SubmitButton>Set new password</form.SubmitButton>
       </form.Form>
     </form.AppForm>

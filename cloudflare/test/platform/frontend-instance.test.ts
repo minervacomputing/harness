@@ -16,7 +16,7 @@ const KEY = env.MINERVA_SETUP_KEY;
 interface Frontend {
 	auth: {
 		signup(v: { email: string; password: string; setupKey?: string }): Promise<{ kind: string; pending?: string | null }>;
-		verifyEmail(v: { key: string }): Promise<{ kind: string; user?: { id: string; email: string } }>;
+		verifyEmail(v: { code: string }): Promise<{ kind: string }>;
 	};
 	AuthError: new (...args: never[]) => Error & { fields: Record<string, string> };
 	fieldErrors(error: unknown): Record<string, string>;
@@ -56,15 +56,27 @@ async function load(next = new Browser()): Promise<void> {
 	});
 	vi.resetModules();
 	await useCheapHashing();
-	// @ts-expect-error The frontend is outside this project's types; the vitest alias resolves it (vitest.platform.config.ts).
-	const [authModule, instance, guards, http, generated] = await Promise.all([import("@/lib/auth.ts"), import("@/lib/instance.ts"), import("@/lib/guards.ts"), import("@/lib/http.ts"), import("@/api/client.gen.ts")]);
+	const [authModule, authClient, instance, guards, http, generated] = await Promise.all([
+		// @ts-expect-error The frontend is outside this project's types; the vitest alias resolves it (vitest.platform.config.ts).
+		import("@/lib/auth.ts"),
+		// @ts-expect-error As above.
+		import("@/lib/auth-client.ts"),
+		// @ts-expect-error As above.
+		import("@/lib/instance.ts"),
+		// @ts-expect-error As above.
+		import("@/lib/guards.ts"),
+		// @ts-expect-error As above.
+		import("@/lib/http.ts"),
+		// @ts-expect-error As above.
+		import("@/api/client.gen.ts"),
+	]);
 	// The app's client has an empty base URL (the page's origin); workerd needs an absolute one.
 	generated.client.setConfig({ baseUrl: ORIGIN });
 	http.installClientInterceptors(() => {});
 	frontend = {
 		auth: authModule.auth,
-		AuthError: authModule.AuthError,
-		fieldErrors: authModule.fieldErrors,
+		AuthError: authClient.AuthError,
+		fieldErrors: authClient.fieldErrors,
 		setupQuery: instance.setupQuery,
 		instance,
 		errorMessage: http.errorMessage,
@@ -116,8 +128,7 @@ async function failure(step: Promise<unknown>): Promise<unknown> {
 async function signedInUser(name = "ada"): Promise<string> {
 	const email = uniqueEmail(name);
 	await frontend.auth.signup({ email, password: PASSWORD });
-	const signed = await frontend.auth.verifyEmail({ key: lastCode(email) });
-	expect(signed).toMatchObject({ kind: "authenticated", user: { email } });
+	expect(await frontend.auth.verifyEmail({ code: lastCode(email) })).toEqual({ kind: "signed-in" });
 	return email;
 }
 
@@ -137,19 +148,19 @@ describe("sign-up with the setup key", () => {
 
 		// A key that does not open it is said to be the problem, on the key's own field.
 		const wrong = await failure(frontend.auth.signup({ email, password: PASSWORD, setupKey: "wrong" }));
-		expect(frontend.fieldErrors(wrong)).toEqual({ setup_key: expect.stringContaining("setup key does not open it") });
+		expect(frontend.fieldErrors(wrong)).toEqual({ setupKey: expect.stringContaining("setup key does not open it") });
 		expect(await env.DB.prepare(`SELECT 1 FROM "user" WHERE email = ?`).bind(email).first()).toBeNull();
 
 		// Only spaces around the key are the page's doing; the key itself is the server's.
 		const admitted = await frontend.auth.signup({ email, password: PASSWORD, setupKey: ` ${KEY} ` });
-		expect(admitted).toMatchObject({ kind: "anonymous", pending: "verify_email" });
-		expect(await frontend.auth.verifyEmail({ key: lastCode(email) })).toMatchObject({ kind: "authenticated", user: { email } });
+		expect(admitted).toEqual({ kind: "anonymous", pending: "verify-email" });
+		expect(await frontend.auth.verifyEmail({ code: lastCode(email) })).toEqual({ kind: "signed-in" });
 	});
 
 	test("the key is kept nowhere: not in the stored step and not in any cookie", async () => {
 		const email = uniqueEmail("operator");
 		await frontend.auth.signup({ email, password: PASSWORD, setupKey: KEY });
-		const stored = JSON.stringify(sessionStorage.getItem("minerva.auth.pending"));
+		const stored = JSON.stringify(sessionStorage.getItem("minerva.auth.step"));
 		expect(stored).not.toContain(KEY);
 		expect(JSON.stringify([...browser.cookies])).not.toContain(KEY);
 		expect(browser.setCookies.join("\n")).not.toContain(KEY);
@@ -158,7 +169,7 @@ describe("sign-up with the setup key", () => {
 	test("claiming the setup after the sign-up makes the account the administrator, once", async () => {
 		const email = uniqueEmail("operator");
 		await frontend.auth.signup({ email, password: PASSWORD, setupKey: KEY });
-		await frontend.auth.verifyEmail({ key: lastCode(email) });
+		await frontend.auth.verifyEmail({ code: lastCode(email) });
 
 		const wrong = await failure(frontend.instance.claimSetup("not the key"));
 		expect(frontend.errorMessage(wrong)).toBe("This setup key is not valid.");
@@ -172,7 +183,7 @@ describe("sign-up with the setup key", () => {
 		// The key admits nobody once the setup is claimed.
 		await load();
 		const late = await failure(frontend.auth.signup({ email: uniqueEmail("late"), password: PASSWORD, setupKey: KEY }));
-		expect(frontend.fieldErrors(late)).toHaveProperty("setup_key");
+		expect(frontend.fieldErrors(late)).toHaveProperty("setupKey");
 	});
 
 	test("a visitor without a session cannot claim, and the page is told to sign in", async () => {
@@ -211,7 +222,7 @@ describe("the instance page's calls", () => {
 		const colleague = uniqueEmail("grace");
 		await load();
 		await frontend.auth.signup({ email: colleague, password: PASSWORD });
-		await frontend.auth.verifyEmail({ key: lastCode(colleague) });
+		await frontend.auth.verifyEmail({ code: lastCode(colleague) });
 		await load(administrator);
 
 		expect(frontend.errorMessage(await failure(frontend.instance.addAdmin("nobody@example.com")))).toBe("No user has this email address.");

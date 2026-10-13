@@ -1,9 +1,11 @@
+import { useMutation } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { AuthLayout, useContinueAuth } from '@/components/auth-layout'
 import { emailAddress, useAppForm } from '@/components/form'
 import { ErrorNote } from '@/components/ui/misc'
-import { auth, fieldErrors, useAuthStep } from '@/lib/auth'
+import { auth, authStep } from '@/lib/auth'
+import { fieldErrors } from '@/lib/auth-client'
 import { nextSearch, redirectIfSignedIn } from '@/lib/guards'
 import { pageHead } from '@/lib/title'
 
@@ -20,8 +22,8 @@ function LoginPage() {
   const { next } = Route.useSearch()
   const [mode, setMode] = useState<'password' | 'code'>('password')
   const continueAuth = useContinueAuth()
-  const login = useAuthStep(auth.login)
-  const requestCode = useAuthStep(auth.requestLoginCode)
+  const login = useMutation(authStep(auth.login))
+  const requestCode = useMutation(authStep(auth.requestLoginCode))
   const step = mode === 'password' ? login : requestCode
   const fields = fieldErrors(step.error)
 

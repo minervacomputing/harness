@@ -6,13 +6,14 @@ import { Setting } from '@/components/account/setting'
 import { useAppForm } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { ErrorNote, Spinner, Status } from '@/components/ui/misc'
-import { auth, fieldErrors } from '@/lib/auth'
+import { account } from '@/lib/account'
+import { fieldErrors } from '@/lib/auth-client'
 
 type Started = { uri: string; secret: string; recoveryCodes: string[] }
 
 export function TwoFactorSetting() {
   const queryClient = useQueryClient()
-  const status = useQuery({ queryKey: ['auth', 'two-factor'], queryFn: auth.account.twoFactorEnabled })
+  const status = useQuery({ queryKey: ['auth', 'two-factor'], queryFn: account.twoFactorEnabled })
   const [setup, setSetup] = useState(false)
   const [turningOff, setTurningOff] = useState(false)
   // The recovery codes made when two-factor was turned on, shown once.
@@ -64,7 +65,7 @@ export function TwoFactorSetting() {
         <PasswordPrompt
           submitLabel="Turn off"
           onSubmit={async password => {
-            await auth.account.disableTwoFactor(password)
+            await account.disableTwoFactor(password)
             setTurningOff(false)
             await refresh()
           }}
@@ -89,7 +90,7 @@ export function TwoFactorSetting() {
 function TotpSetup({ onDone }: { onDone: (recoveryCodes: string[]) => Promise<void> }) {
   const [started, setStarted] = useState<Started | null>(null)
   if (!started) {
-    return <PasswordPrompt submitLabel="Continue" onSubmit={async password => setStarted(await auth.account.startTwoFactor(password))} />
+    return <PasswordPrompt submitLabel="Continue" onSubmit={async password => setStarted(await account.startTwoFactor(password))} />
   }
   return <TotpConfirm started={started} onDone={() => onDone(started.recoveryCodes)} />
 }
@@ -97,7 +98,7 @@ function TotpSetup({ onDone }: { onDone: (recoveryCodes: string[]) => Promise<vo
 function TotpConfirm({ started, onDone }: { started: Started; onDone: () => Promise<void> }) {
   const activate = useMutation({
     mutationFn: async (code: string) => {
-      await auth.account.confirmTwoFactor(code)
+      await account.confirmTwoFactor(code)
       await onDone()
     },
   })
@@ -154,7 +155,7 @@ function RecoveryCodes() {
       </Button>
     )
   }
-  return <PasswordPrompt submitLabel="Make new codes" onSubmit={async password => setCodes(await auth.account.newRecoveryCodes(password))} />
+  return <PasswordPrompt submitLabel="Make new codes" onSubmit={async password => setCodes(await account.newRecoveryCodes(password))} />
 }
 
 function RecoveryCodeList({ codes, onDone, replaced }: { codes: string[]; onDone: () => void; replaced?: boolean }) {
