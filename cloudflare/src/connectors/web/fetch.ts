@@ -17,14 +17,12 @@
 // (inflate.ts), and the whole fetch has 25 seconds.
 //
 // The request goes out through the call's io (the executor's fetch), so it is refused once the run ended.
-// Differences from today: a name with both public and private addresses was refused, where the platform
-// decides by the address it connects to (a private one is never reached); the Host header and TLS name are
-// the URL's own (there is no checked address to connect to); the runtime adds `Cf-Worker`; what is requested
-// is the runtime URL parser's serialization of the checked address (`WebURL.href`, on every hop, checked to
-// name the authorized scheme and host on the default port), which differs from the address shown where
-// WHATWG spells a path or query differently (`'` in a query, dot segments in a path); a header value that
-// is not UTF-8 is read with replacement characters; an invalid certificate is not told apart from any other failure; and an
-// origin that answers 403 from `server: cloudflare` with the platform's exact refusal text is reported as a
+// The platform decides by the address it connects to, so a name with both public and private addresses
+// reaches only a public one; the Host header and TLS name are the URL's own; the runtime adds `Cf-Worker`.
+// What is requested on every hop is `WebURL.href`, the runtime URL parser's serialization of the checked
+// address, which is also the address the agent is shown. A header value that is not UTF-8 is read with
+// replacement characters; an invalid certificate is not told apart from any other failure; and an origin
+// that answers 403 from `server: cloudflare` with the platform's exact refusal text is reported as a
 // private site rather than as HTTP 403.
 
 import type { ProviderIo } from "../../contracts/connectors.ts";
@@ -32,7 +30,6 @@ import { OperationError } from "../../gateway/connector.ts";
 import { NotSent, PhaseTimeout, ProgrammingError, platformRefusal } from "../../gateway/http.ts";
 import { charsetKnown, decodeCharset } from "../../lib/charset.ts";
 import { type WebURL, parseUrl } from "../../lib/sites.ts";
-import { UrlError } from "../../lib/urlsplit.ts";
 import { Inflater, unsupportedEncoding } from "./inflate.ts";
 
 export const USER_AGENT = "Minerva/0.1 (governed AI agent; reads a page when a user's agent asks)";
@@ -51,7 +48,7 @@ export const REQUEST_HEADERS: Readonly<Record<string, string>> = {
 };
 export const MAX_BODY = 3 * 1024 * 1024;
 export const MAX_REDIRECTS = 5;
-/** The whole fetch, and each wait for the response's headers or the next piece of its body (httpx's 10 s). Tests lower them. */
+/** The whole fetch, and each wait for the response's headers or the next piece of its body (10 s). Tests lower them. */
 export const LIMITS = { totalMs: 25_000, phaseMs: 10_000 };
 const REDIRECT_STATUSES: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
 /** The platform's codes for a destination it does not open: 1003 an IP literal, 1002 a name for a private address, 1102 a loopback name. */
@@ -120,7 +117,7 @@ function latin1(bytes: Uint8Array): string {
 	return text;
 }
 
-/** `_media_type`: the media type, lowercased, and the charset it declares. */
+/** The media type, lowercased, and the charset it declares. */
 function mediaType(value: string): [mime: string, charset: string | null] {
 	const semicolon = value.indexOf(";");
 	const mime = semicolon < 0 ? value : value.slice(0, semicolon);
@@ -136,7 +133,7 @@ function lstripBytes(bytes: Uint8Array): Uint8Array {
 	return bytes.subarray(at);
 }
 
-/** `_form`: "html" or "text", or UNSUPPORTED_CONTENT. */
+/** "html" or "text", or UNSUPPORTED_CONTENT. */
 function formOf(mime: string, body: Uint8Array): "html" | "text" {
 	if (HTML_TYPES.has(mime)) return "html";
 	if (TEXT_TYPES.has(mime) || mime.endsWith("+json") || mime.endsWith("+xml")) return "text";
@@ -185,7 +182,7 @@ function race<T>(promise: Promise<T>, aborted: Promise<never>): Promise<T> {
 	return Promise.race([promise, aborted]);
 }
 
-/** `_body` over the pieces of a body as they arrive: decompressed, capped before and after (MAX_BODY). */
+/** The pieces of a body as they arrive: decompressed, capped before and after (MAX_BODY). */
 export class Body {
 	readonly #inflater: Inflater;
 	/** The page so far, in one buffer that grows by doubling: a page in many small pieces costs no more than one. */
@@ -204,7 +201,7 @@ export class Body {
 	}
 
 	feed(chunk: Uint8Array): void {
-		// httpx yields no empty chunks.
+		// An empty chunk adds nothing.
 		if (!chunk.length) return;
 		this.#received += chunk.length;
 		if (this.#received > MAX_BODY) throw tooLarge();
@@ -322,7 +319,7 @@ export class Fetcher {
 		}
 	}
 
-	/** `_body`: the body, decompressed, capped before and after. */
+	/** The body, decompressed, capped before and after. */
 	async #body(response: Response, deadline: Deadline): Promise<Uint8Array> {
 		const body = new Body(response.headers.get("content-encoding"));
 		await this.#chunks(response, deadline, (chunk) => {
@@ -332,7 +329,7 @@ export class Fetcher {
 		return body.bytes();
 	}
 
-	/** `_hop`: the page at this address, or the Location it redirects to. */
+	/** One request: the page at this address, or the Location it redirects to. */
 	async #hop(url: WebURL, deadline: Deadline): Promise<Page | string> {
 		const headers = { ...REQUEST_HEADERS };
 		let response: Response | null = null;
@@ -378,14 +375,13 @@ export class Fetcher {
 			if (error instanceof TotalTimeout) throw error;
 			// The run no longer admits requests, or a programming error: as they are.
 			if (error instanceof NotSent || error instanceof ProgrammingError) throw error;
-			// Owned errors, and an address that cannot be split: as they are.
-			if (error instanceof OperationError || error instanceof UrlError) throw error;
-			// The network failed, or a wait outlasted its phase (httpx's HTTPError).
+			if (error instanceof OperationError) throw error;
+			// The network failed, or a wait outlasted its phase.
 			throw unreachable();
 		}
 	}
 
-	/** `get`: the page, or where it moved to another host; redirects on the same host are followed. */
+	/** The page, or where it moved to another host; redirects on the same host are followed. */
 	async get(url: WebURL): Promise<Page | Moved> {
 		const deadline = new Deadline();
 		try {

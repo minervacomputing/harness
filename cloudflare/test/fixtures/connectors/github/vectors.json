@@ -847,44 +847,6 @@
    "next": null
   }
  ],
- "segments": [
-  {
-   "value": "acme",
-   "segment": "acme"
-  },
-  {
-   "value": "zażółć.py",
-   "segment": "za%C5%BC%C3%B3%C5%82%C4%87.py"
-  },
-  {
-   "value": "a b",
-   "segment": "a%20b"
-  },
-  {
-   "value": "~-_.!*'()",
-   "segment": "~-_.%21%2A%27%28%29"
-  },
-  {
-   "value": "a/b",
-   "segment": "a%2Fb"
-  },
-  {
-   "value": "%2e",
-   "segment": "%252e"
-  },
-  {
-   "value": "😀",
-   "segment": "%F0%9F%98%80"
-  },
-  {
-   "value": "a+b&c=d#e?f",
-   "segment": "a%2Bb%26c%3Dd%23e%3Ff"
-  },
-  {
-   "value": "...",
-   "segment": "..."
-  }
- ],
  "page_cursors": [
   {
    "cursor": "{}",

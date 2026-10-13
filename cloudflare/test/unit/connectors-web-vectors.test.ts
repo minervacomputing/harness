@@ -1,9 +1,9 @@
-// The Web connector (src/connectors/web/, lib/sites.ts, lib/urlsplit.ts, lib/markdown.ts) against today's
-// Python one: the vectors in test/fixtures/connectors/web/ were written by running backend/connectors/web/
-// itself (its declaration with and without a Brave key, its input models with the query hash page tokens
-// bind to, the search cursors it accepts, canonical_host, the site ids and patterns, parse_url with and
-// without a base, urljoin, html_to_text, plain, decode, and `_body` over httpx responses split into chunks
-// at every byte, damaged, cut short, with second members, trailing data and bombs).
+// The Web connector (src/connectors/web/, lib/sites.ts, lib/markdown.ts) against the vectors in
+// test/fixtures/connectors/web/, written from the Python backend: its declaration with and without a Brave
+// key, its input models with the query hash page tokens bind to, the search cursors it accepts, the site ids
+// and patterns, html_to_text, plain, decode, and `_body` over responses split into chunks at every byte,
+// damaged, cut short, with second members, trailing data and bombs. Host names and addresses are tested in
+// test/fixtures/hosts-tests.ts.
 
 import { createHash } from "node:crypto";
 import { describe, expect, test } from "vitest";
@@ -18,8 +18,7 @@ import { validateInput } from "../../src/gateway/validation.ts";
 import { type Json } from "../../src/lib/json.ts";
 import { readVectors } from "../fixtures/connectors/read-vectors.ts";
 import { htmlToText } from "../../src/lib/markdown.ts";
-import { UrlError, urljoin } from "../../src/lib/urlsplit.ts";
-import { ancestors, canonicalHost, choices, name, parseUrl, registrable, validId } from "../../src/lib/sites.ts";
+import { ancestors, choices, name, registrable, validId } from "../../src/lib/sites.ts";
 import { kindsOut } from "../../src/workspace/out.ts";
 import { changedOnPurpose } from "./changed.ts";
 
@@ -38,13 +37,10 @@ interface Vectors {
 	};
 	inputs: { [operation: string]: ({ raw: Json; ok: true; fields: Fields; query_hash: string } | { raw: Json; ok: false; message: string })[] };
 	cursors: ({ cursor: string } & Outcome)[];
-	hosts: { raw: string; plain: Outcome & { host?: string }; reserved: Outcome & { host?: string } }[];
 	sites: {
 		ids: { id: string; valid: boolean; name: string }[];
 		hosts: { host: string; ancestors: string[]; choices: string[]; registrable: string | null }[];
 	};
-	urls: { raw: string; base: string | null; result: Outcome & { scheme?: string; host?: string; target?: string } }[];
-	urljoin: { base: string; url: string; ok: boolean; joined?: string }[];
 	html: { html: string; base: string; text: string; title: string | null }[];
 	plain: { text: string; plain: string }[];
 	decode: { body: string; content_type: string; result: Outcome & { mime?: string; form?: string; text?: string } }[];
@@ -57,7 +53,6 @@ const CONNECTION = "0199a000-0000-7000-8000-0000000000f1";
 /** What the generator's `raised` records for an error. */
 function raised(error: unknown): Outcome {
 	if (error instanceof OperationError) return { ok: false, code: error.code, message: error.message };
-	if (error instanceof UrlError) return { ok: false, raises: "ValueError" };
 	throw error;
 }
 
@@ -147,20 +142,7 @@ describe("inputs as Python normalizes them", () => {
 	});
 });
 
-describe("host names, sites and addresses as lib/sites.ts reads them", () => {
-	test(`canonical_host: ${VECTORS.hosts.length} names, hostile spellings and seeded random ones, with and without reserved names`, () => {
-		for (const expected of VECTORS.hosts) {
-			expect(
-				attempt(() => ({ host: canonicalHost(expected.raw) })),
-				JSON.stringify(expected.raw),
-			).toEqual(expected.plain);
-			expect(
-				attempt(() => ({ host: canonicalHost(expected.raw, true) })),
-				JSON.stringify(expected.raw),
-			).toEqual(expected.reserved);
-		}
-	});
-
+describe("sites as lib/sites.ts reads them", () => {
 	test("site ids, names, ancestors, choices and registrable domains", () => {
 		for (const expected of VECTORS.sites.ids) expect({ id: expected.id, valid: validId(expected.id), name: name(expected.id) }).toEqual(expected);
 		for (const expected of VECTORS.sites.hosts) {
@@ -168,35 +150,15 @@ describe("host names, sites and addresses as lib/sites.ts reads them", () => {
 		}
 	});
 
-	test(`parse_url: ${VECTORS.urls.length} addresses, alone and against a base`, () => {
-		for (const expected of VECTORS.urls) {
-			const result = attempt(() => {
-				const url = parseUrl(expected.raw, expected.base === null ? null : parseUrl(expected.base));
-				return { scheme: url.scheme, host: url.host, target: url.target };
-			});
-			expect(result, `${JSON.stringify(expected.raw)} against ${expected.base}`).toEqual(expected.result);
-		}
-	});
-
-	test(`urljoin: ${VECTORS.urljoin.length} seeded random pairs`, () => {
-		for (const expected of VECTORS.urljoin) {
-			let actual: { ok: boolean; joined?: string };
-			try {
-				actual = { ok: true, joined: urljoin(expected.base, expected.url) };
-			} catch (error) {
-				if (!(error instanceof UrlError)) throw error;
-				actual = { ok: false };
-			}
-			expect({ base: expected.base, url: expected.url, ...actual }).toEqual(expected);
-		}
-	});
 });
 
 describe("pages as text", () => {
 	test(`html_to_text: ${VECTORS.html.length} pages with base addresses, links resolved, hidden parts dropped`, () => {
+		// Links are the URL parser's serialization now (Python kept the href's own spelling).
+		const serialized = (text: string) => text.replace(/\]\((https?:[^)]*)\)/g, (_, href: string) => `](${new URL(href).href.replaceAll("(", "%28").replaceAll(")", "%29")})`);
 		for (const expected of VECTORS.html) {
 			const [text, title] = htmlToText(expected.html, expected.base);
-			expect({ html: expected.html, base: expected.base, text, title }).toEqual(expected);
+			expect({ html: expected.html, base: expected.base, text, title }).toEqual({ ...expected, text: serialized(expected.text) });
 		}
 	});
 

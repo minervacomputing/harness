@@ -10,8 +10,8 @@
 // - Response models are zod's objects with defaults; unknown fields are dropped, as with Pydantic's
 //   `extra="ignore"`. Pydantic's lax coercions (a number sent as a string, 1 for true) are not made: such a
 //   response is an unexpected one.
-// - Pagination's Link header and the base64 of file contents are read with Python's own rules (`re`'s `\s`,
-//   `urlsplit`, `parse_qs`, non-validating `b64decode`), so a cursor and a file read as they did in Python. A
+// - The next page's address in the Link header is read with the runtime's URL parser. The base64 of file
+//   contents is read with Python's non-validating `b64decode` rules, so a file reads as it did in Python. A
 //   redirect's Location is decoded as httpx decodes headers. (A Link header that is not ASCII failed every
 //   listing in Python, whose `bounded` re-encodes kept headers as ASCII; here it is read as Latin-1.)
 
@@ -21,7 +21,7 @@ import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP, defaultForbidden } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
 import { isDict, type Json, parseJson } from "../../lib/json.ts";
-import { parseQs, quoteSegment, urlsplitStrict } from "../../lib/urlsplit.ts";
+import { segment } from "../../lib/text.ts";
 
 export const API_URL = "https://api.github.com";
 /** The largest file GitHub returns inline, and room for its base64 encoding in the JSON around it. */
@@ -31,9 +31,6 @@ export const MAX_CONTENTS_RESPONSE = 2 * 1024 * 1024;
 export const MAX_PAGE_RESPONSE = 10 * 1024 * 1024;
 
 const PROVIDER = "GitHub";
-
-/** `quote(value, safe="")` (lib/urlsplit.ts). */
-export const segment = quoteSegment;
 
 /** A JSON value as text: a string as it is, anything else as JSON. */
 function textOf(value: Json): string {
@@ -58,7 +55,7 @@ function messageOf(body: string): string {
 	return Object.hasOwn(data, "message") ? textOf(data.message as Json) : "";
 }
 
-/** GitHub reports rate limits, and what the App may not do, as 403 (client.py `forbidden`). */
+/** GitHub reports rate limits, and what the App may not do, as 403. */
 export function forbidden(provider: string, response: Response, body: string): OperationErrorShape {
 	const message = messageOf(body).toLowerCase();
 	if (response.headers.get("x-ratelimit-remaining") === "0" || response.headers.has("retry-after") || message.includes("rate limit")) {
@@ -78,7 +75,7 @@ function classify(provider: string, response: Response, body: string): Operation
 	return response.status === 403 ? forbidden(provider, response, body) : null;
 }
 
-// Models (client.py): what GitHub returns, with Pydantic's defaults. A dict is a JSON object.
+// Models: what GitHub returns, with defaults. A dict is a JSON object.
 
 const dict = z.custom<{ [key: string]: Json }>((value) => isDict(value));
 
@@ -192,15 +189,16 @@ export interface Page<T> {
 const ID = /^\d{1,20}$/u;
 const NEXT_LINK = /<([^>]+)>;\s*rel="next"/u;
 
-/** client.py `_next`: the `page` and `after` of the Link header's next page, or null. */
+/** The `page` and `after` of the Link header's next page, or null. */
 export function nextPage(response: Response): { [key: string]: string } | null {
 	const match = NEXT_LINK.exec(response.headers.get("link") ?? "");
 	if (match === null) return null;
-	const query = parseQs(urlsplitStrict(match[1] as string).query);
+	const query = URL.parse(match[1] as string, API_URL)?.searchParams;
+	if (query === undefined) return null;
 	const next: { [key: string]: string } = {};
 	for (const key of ["page", "after"]) {
-		const values = query.get(key);
-		if (values !== undefined && values.length > 0) next[key] = values[0] as string;
+		const value = query.get(key);
+		if (value) next[key] = value;
 	}
 	return Object.keys(next).length > 0 ? next : null;
 }

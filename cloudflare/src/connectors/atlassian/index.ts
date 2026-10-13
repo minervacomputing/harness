@@ -18,7 +18,7 @@ import { ProviderHTTP } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
 import { model, optionalStr } from "./model.ts";
-import { quoteSegment } from "../../lib/urlsplit.ts";
+import { segment } from "../../lib/text.ts";
 
 export const API_URL = "https://api.atlassian.com";
 export const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -43,9 +43,6 @@ export function oauth(app: string, ...scopes: string[]): Extract<Auth, { type: "
 		pkce: false,
 	};
 }
-
-/** One path segment: everything but ASCII letters, digits and `_.-~` percent-encoded (lib/urlsplit.ts). */
-export const segment = quoteSegment;
 
 export const MeModel = model({ account_id: z.string(), name: optionalStr, email: optionalStr });
 export type Me = z.output<typeof MeModel>;

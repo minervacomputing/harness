@@ -106,7 +106,7 @@ export const SEARCH = defineOperation<z.output<typeof Search>>({
 						resource: account,
 						data: {
 							title: plain(result.title),
-							url: url.text,
+							url: url.href,
 							site: url.host,
 							snippet: sliceText(plain(result.description), 0, MAX_SNIPPET),
 							age: result.age,
@@ -146,11 +146,11 @@ export const READ_PAGE = defineOperation<z.output<typeof ReadPage>>({
 			async execute(): Promise<ProviderOutput> {
 				const outcome = await clientOf(binding).fetcher.get(target);
 				if (outcome instanceof Moved) {
-					return { records: [{ resource: site(binding, target.host), data: { url: target.text, redirect_to: outcome.target.text, note: MOVED_NOTE } }] };
+					return { records: [{ resource: site(binding, target.host), data: { url: target.href, redirect_to: outcome.target.href, note: MOVED_NOTE } }] };
 				}
 				let title: string | null = null;
 				let text = outcome.text;
-				if (outcome.form === "html") [text, title] = htmlToText(outcome.text, outcome.url.text);
+				if (outcome.form === "html") [text, title] = htmlToText(outcome.text, outcome.url.href);
 				const end = data.offset + data.max_chars;
 				const total = text.length;
 				return {
@@ -158,7 +158,7 @@ export const READ_PAGE = defineOperation<z.output<typeof ReadPage>>({
 						{
 							resource: site(binding, outcome.url.host),
 							data: {
-								url: outcome.url.text,
+								url: outcome.url.href,
 								title,
 								content_type: outcome.contentType,
 								text: sliceText(text, data.offset, end),

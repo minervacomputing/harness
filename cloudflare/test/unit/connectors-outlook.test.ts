@@ -3,6 +3,7 @@
 // compared with vectors from today's Python (test/fixtures/connectors/outlook/generate.py). Graph's paging,
 // error classification and consent are tested with the shared base in connectors-microsoft.test.ts.
 
+import { isDeepStrictEqual } from "node:util";
 import { describe, expect, test } from "vitest";
 import { type GraphClient } from "../../src/connectors/outlook/client.ts";
 import { outlookConnector } from "../../src/connectors/outlook/connector.ts";
@@ -217,6 +218,12 @@ describe("addresses", () => {
 		"Ada <ada@example.com>",
 		"ädä@example.com",
 		"ada@exa\nmple.com",
+		"ada@example.com.",
+		"ada@a\u00b7b.com",
+		"ada@\u{1f600}.com",
+		"ada@\u212aelvin.com",
+		"\u212ada@example.com",
+		"ada@\uff25xample.com",
 		`${"a".repeat(65)}@example.com`,
 	];
 	for (const raw of odd) {
@@ -239,7 +246,7 @@ describe("addresses", () => {
 		for (const query of ["co.uk", "ada@co.uk", "*.example.com"]) expect(() => addresses.choices(query)).toThrow(OperationError);
 	});
 
-	test("parse, valid_id and choices agree with Python on 200 cases", () => {
+	test("parse, valid_id and choices: the vectors' answers, or refused where the runtime would repair the domain", () => {
 		const outcome = (call: () => unknown) => {
 			try {
 				return { value: call() };
@@ -248,11 +255,25 @@ describe("addresses", () => {
 				throw error;
 			}
 		};
-		const { parse, valid_id, choices } = vectors("outlook") as { [name: string]: { [raw: string]: unknown } };
-		expect(Object.keys(parse as object).length).toBeGreaterThan(80);
-		expect(Object.fromEntries(Object.keys(parse as object).map((raw) => [raw, outcome(() => addresses.parse(raw))]))).toEqual(parse);
-		expect(Object.fromEntries(Object.keys(valid_id as object).map((raw) => [raw, addresses.validId(raw)]))).toEqual(valid_id);
-		expect(Object.fromEntries(Object.keys(choices as object).map((raw) => [raw, outcome(() => addresses.choices(raw))]))).toEqual(choices);
+		// A case with a Unicode domain or a trailing dot has the same answer or is refused (test/fixtures/hosts.ts).
+		// Refused in workerd by the Bidi rule, which Node's encoder does not apply (test/platform/hosts.test.ts).
+		const bidi = ["ada@1\u05d0.com"];
+		const repairable = (raw: string) => !/^[\x00-\x7f]*$/.test(raw) || /\.\s*$/.test(raw);
+		const refused = (found: unknown) => isDeepStrictEqual(found, { error: "INVALID_ADDRESS" }) || found === false;
+		const all = vectors("outlook") as { [name: string]: { [raw: string]: unknown } };
+		const runs: [string, (raw: string) => unknown][] = [
+			["parse", (raw) => outcome(() => addresses.parse(raw))],
+			["valid_id", (raw) => addresses.validId(raw)],
+			["choices", (raw) => outcome(() => addresses.choices(raw))],
+		];
+		for (const [name, run] of runs) {
+			const cases = Object.entries(all[name] ?? {}).filter(([raw]) => !bidi.includes(raw));
+			const exact = Object.fromEntries(cases.filter(([raw]) => !repairable(raw)));
+			expect(Object.keys(exact).length, name).toBeGreaterThan(10);
+			expect(Object.fromEntries(Object.keys(exact).map((raw) => [raw, run(raw)])), name).toEqual(exact);
+			const accepted = cases.filter(([raw, expected]) => repairable(raw) && !isDeepStrictEqual(run(raw), expected) && !refused(run(raw)));
+			expect(accepted, name).toEqual([]);
+		}
 	});
 });
 

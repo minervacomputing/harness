@@ -9,7 +9,6 @@ import { confluenceConnector } from "../../src/connectors/confluence/connector.t
 import { jiraConnector } from "../../src/connectors/jira/connector.ts";
 import * as adf from "../../src/connectors/atlassian/adf.ts";
 import { Site, oauth } from "../../src/connectors/atlassian/index.ts";
-import { UrlError, parseQs, urlsplitStrict } from "../../src/lib/urlsplit.ts";
 import { ListingModel, PageModel } from "../../src/connectors/confluence/client.ts";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
 import { CommentModel, IssueModel, ProjectModel } from "../../src/connectors/jira/client.ts";
@@ -34,7 +33,6 @@ interface Vectors {
 		written: ({ text: string } & Outcome)[];
 	};
 	sites: { site: { id: string; name: string | null; url: string | null }; host: string | null; label: string }[];
-	confluence: { next_token: ({ next: string | null } & Outcome)[] };
 	models: { [model: string]: ({ input: Json } & Outcome)[] };
 }
 
@@ -47,7 +45,7 @@ function outcome(run: () => Json | undefined | void): Outcome {
 		return { value: value === undefined ? null : value };
 	} catch (error) {
 		if (error instanceof OperationError) return { error: error.code, message: error.message };
-		if (error instanceof TextError || error instanceof UrlError) return { error: "ValueError", message: error.message };
+		if (error instanceof TextError) return { error: "ValueError", message: error.message };
 		if (error instanceof TypeError) return { error: "TypeError" };
 		throw error;
 	}
@@ -83,15 +81,6 @@ describe("patterns and parsing", () => {
 		for (const timestamp of ["١٢", "1_000", "1e3", "", null, true, 1e20]) expect(adf.date(timestamp), JSON.stringify(timestamp)).toBe("[date]");
 	});
 
-	test("urlsplit's query and parse_qs, through Confluence's next links (exact outcomes in connectors-confluence)", () => {
-		for (const vector of VECTORS.confluence.next_token) {
-			if (!vector.next) continue;
-			const found = outcome(() => parseQs(urlsplitStrict(vector.next as string).query).get("cursor") ?? []);
-			expect(found.error === "ValueError", vector.next).toBe(vector.error === "ValueError");
-		}
-		expect(parseQs(urlsplitStrict("/x?cursor=a+b%2B&cursor=&x").query).get("cursor")).toEqual(["a b+"]);
-		expect(urlsplitStrict("https://[v1.x]/p?q=1#f?g").query).toBe("q=1");
-	});
 });
 
 describe("ADF, against Python's adf.py", () => {

@@ -30,7 +30,8 @@ export const MAX_LOCAL = 64;
  * address; only allowing every recipient covers it, and then the reply is refused anyway.
  */
 export const UNSUPPORTED = "unsupported";
-const LOCAL = /^[a-z0-9_%+'-]+(\.[a-z0-9_%+'-]+)*$/;
+/** A local part as written: ASCII only, so lowercasing it never maps a look-alike (the Kelvin sign) to a letter. */
+const LOCAL = /^[A-Za-z0-9_%+'-]+(\.[A-Za-z0-9_%+'-]+)*$/;
 export const CHECKED_MESSAGE = "must be a mail address such as ada@example.com";
 
 function invalid(): OperationError {
@@ -49,13 +50,13 @@ function domainOf(raw: string): string {
 	return host;
 }
 
-/** The canonical address, or INVALID_ADDRESS. */
+/** The canonical address, or INVALID_ADDRESS. The domain is checked as written; canonicalHost lowercases it. */
 export function parse(raw: string): string {
-	const text = raw.trim().toLowerCase();
+	const text = raw.trim();
 	if (text.length > MAX_ADDRESS || text.split("@").length !== 2) throw invalid();
 	const [local, domain] = text.split("@") as [string, string];
 	if (local.length > MAX_LOCAL || !LOCAL.test(local)) throw invalid();
-	const address = `${local}@${domainOf(domain)}`;
+	const address = `${local.toLowerCase()}@${domainOf(domain)}`;
 	if (address.length > MAX_ADDRESS) throw invalid();
 	return address;
 }
@@ -107,7 +108,7 @@ export function name(resourceId: string): string {
 
 /** What a user can allow for a pasted address (the address, then its domain) or a domain. */
 export function choices(query: string): string[] {
-	const text = query.trim().toLowerCase();
+	const text = query.trim();
 	if (text.includes("@") && !text.startsWith("@") && !isPattern(text)) {
 		const address = parse(text);
 		return [address, ...ancestors(address)];

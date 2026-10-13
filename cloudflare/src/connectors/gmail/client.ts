@@ -1,5 +1,4 @@
-// A thin client for the Gmail API v1, for the connected account (`users/me`), ported from
-// backend/connectors/gmail/client.py.
+// A thin client for the Gmail API v1, for the connected account (`users/me`).
 //
 // Responses are validated before use. Full messages and threads are read with a byte limit, since their
 // bodies come inline. Gmail reports an account without Gmail as a failed precondition (`UNSUPPORTED_ACCOUNT`);
@@ -11,8 +10,9 @@ import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
 import { isDict, type Json, parseJson } from "../../lib/json.ts";
-import { GoogleUser, USERINFO_URL, classify as googleClassify, segment } from "../google/index.ts";
+import { GoogleUser, USERINFO_URL, classify as googleClassify } from "../google/index.ts";
 import { laxInt, model } from "../google/model.ts";
+import { segment } from "../../lib/text.ts";
 
 export const API_URL = "https://gmail.googleapis.com/gmail/v1/users/me";
 /** Message, thread and label ids. Gmail's message and thread ids are hex; user label ids are `Label_<n>`. */
@@ -92,7 +92,7 @@ const SendAsList = model({ send_as: z.array(model({ send_as_email: z.string() })
 const Profile = model({ email_address: z.string() });
 
 /**
- * The `reason`s of `error.errors[]`, as client.py `_reasons` reads them: items that are not objects are
+ * The `reason`s of `error.errors[]`: items that are not objects are
  * skipped, and any shape `.get` or a set would fail on (a body that is not JSON, an `error` that is not an
  * object, a reason that is a list or an object) yields none.
  */

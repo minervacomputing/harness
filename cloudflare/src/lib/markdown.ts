@@ -5,7 +5,6 @@
 // carry data out when shown. Moved here from connectors/gmail/html.ts.
 
 import { type Attribute, HTMLParser } from "./htmlparser.ts";
-import { urljoin, urlsplit } from "./urlsplit.ts";
 
 const SPACES = /\s+/g;
 
@@ -72,20 +71,13 @@ function squash(text: string): string {
 	return text.replace(SPACES, " ").trim();
 }
 
-/** `_link(base_url, href)`: an absolute http(s) address, made safe for a Markdown link, or null. */
+/** `href` resolved against the page's address, if it is an http(s) address, made safe for a Markdown link; else null. */
 function link(baseUrl: string, href: string | null | undefined): string | null {
 	if (!href) return null;
-	let absolute: string;
-	try {
-		absolute = urljoin(baseUrl, href.trim());
-	} catch {
-		// urljoin's ValueError: a malformed address.
-		return null;
-	}
-	const parts = urlsplit(absolute);
-	if (parts === null || (parts.scheme !== "http" && parts.scheme !== "https") || absolute.length > MAX_LINK) return null;
-	// Brackets and spaces would break the Markdown link.
-	return absolute.replaceAll(" ", "%20").replaceAll("(", "%28").replaceAll(")", "%29");
+	const url = URL.parse(href.trim(), baseUrl || undefined);
+	if (url === null || (url.protocol !== "http:" && url.protocol !== "https:") || url.href.length > MAX_LINK) return null;
+	// Parentheses would end the Markdown link; the parser has encoded spaces already.
+	return url.href.replaceAll("(", "%28").replaceAll(")", "%29");
 }
 
 class Converter extends HTMLParser {
@@ -203,7 +195,8 @@ class Converter extends HTMLParser {
 		const [start, href] = this.links.pop() as [number, string | null];
 		const text = squash(this.out.slice(start).join(""));
 		this.out.splice(start);
-		if (href && text && text !== href) this.out.push(`[${text}](${href})`);
+		// A link whose text is its own address is shown once.
+		if (href && text && link("", text) !== href) this.out.push(`[${text}](${href})`);
 		else this.out.push(text);
 	}
 

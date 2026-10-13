@@ -90,6 +90,14 @@ export function decoded(text: string): string {
 }
 
 /**
+ * One URL path segment: everything but ASCII letters, digits and `-._~` (RFC 3986's unreserved characters)
+ * percent-encoded as UTF-8, so an id holding `/`, `?`, `#` or a quote stays one segment of the path.
+ */
+export function segment(value: string): string {
+	return encodeURIComponent(value).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+/**
  * Percent escapes undone: runs of ASCII have their `%XX` escapes turned into bytes and decoded as UTF-8 with
  * U+FFFD for invalid sequences; other characters pass through, and a `%` without two hex digits stays as it
  * is. Unlike `decodeURIComponent`, it never throws.

@@ -1,11 +1,11 @@
-// What the Google connectors share (backend/connectors/google/__init__.py): how Google's 403s are read, path
-// segments, the OAuth declaration, and the numeric strings Drive and Gmail send; and that the registry accepts
+// What the Google connectors share (backend/connectors/google/__init__.py): how Google's 403s are read, the OAuth
+// declaration, and the numeric strings Drive and Gmail send; and that the registry accepts
 // the Google connectors' declarations. Cases come from today's Python (test/fixtures/connectors/google/generate.py).
 
 import { describe, expect, test } from "vitest";
 import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
 import { digitsOr, jsonInteger } from "../../src/connectors/google/digits.ts";
-import { GoogleUser, NOT_CONFIGURED, RATE_LIMITED, TOO_LARGE, classify, oauth, reasons, segment } from "../../src/connectors/google/index.ts";
+import { GoogleUser, NOT_CONFIGURED, RATE_LIMITED, TOO_LARGE, classify, oauth, reasons } from "../../src/connectors/google/index.ts";
 import { googleCalendarConnector } from "../../src/connectors/google_calendar/connector.ts";
 import { googleDriveConnector } from "../../src/connectors/google_drive/connector.ts";
 import { Registry, validate } from "../../src/gateway/registry.ts";
@@ -55,14 +55,6 @@ describe("Google's 403s", () => {
 		expect([...RATE_LIMITED].sort()).toEqual(["rateLimitExceeded", "userRateLimitExceeded"]);
 		expect([...NOT_CONFIGURED].sort()).toEqual(["SERVICE_DISABLED", "accessNotConfigured"]);
 		expect([...TOO_LARGE]).toEqual(["exportSizeLimitExceeded"]);
-	});
-});
-
-describe("path segments", () => {
-	test("segment is quote(value, safe='')", () => {
-		const cases = vectors().base.segments as { [text: string]: string };
-		expect(Object.keys(cases).length).toBeGreaterThan(8);
-		expect(Object.fromEntries(Object.keys(cases).map((text) => [text, segment(text)]))).toEqual(cases);
 	});
 });
 

@@ -6,7 +6,6 @@ import { CSRF_COOKIE, csrfCookie, parseCookies } from "../../src/http/cookies.ts
 import { checkCsrf, newCsrfToken } from "../../src/http/csrf.ts";
 import { HttpError, detail, notFound, validationItems } from "../../src/http/errors.ts";
 import { DEFAULT_CSP, withSecurityHeaders } from "../../src/http/headers.ts";
-import { quotePlus, urlencode } from "../../src/lib/urlsplit.ts";
 import { CHECKED_LATER, UPLOAD_ROUTE, createApp } from "../../src/http/router.ts";
 import { settingsEnv } from "./settings.ts";
 
@@ -236,11 +235,4 @@ describe("/assets/", () => {
 		expect(response.headers.get("Cache-Control")).toBe("no-store");
 		expect(response.headers.get("Content-Security-Policy")).toBe(DEFAULT_CSP);
 	});
-});
-
-test("urlencode and quote_plus encode as Python's (the OAuth redirects and authorization URLs)", () => {
-	// urllib.parse.urlencode([("error", "Notes was not connected."), ("a&b", "c=d/é~+*")])
-	expect(urlencode([["error", "Notes was not connected."], ["a&b", "c=d/é~+*"]])).toBe("error=Notes+was+not+connected.&a%26b=c%3Dd%2F%C3%A9~%2B%2A");
-	expect(quotePlus("data:read_write openid")).toBe("data%3Aread_write+openid");
-	expect(urlencode([])).toBe("");
 });

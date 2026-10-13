@@ -13,10 +13,11 @@ import type { ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP } from "../../gateway/http.ts";
 import type { Json } from "../../lib/json.ts";
-import { API_URL, type Classify, Graph, MAX_RESPONSE_BYTES, classify, errorCode, jsonOf, nextCursor, pageParam, segment } from "../microsoft/index.ts";
+import { API_URL, type Classify, Graph, MAX_RESPONSE_BYTES, classify, errorCode, jsonOf, nextCursor, pageParam } from "../microsoft/index.ts";
 import { Invalid, dict, int, model, nullable, optional, required, str } from "../microsoft/model.ts";
 import { isDict, truthy } from "../../lib/json.ts";
 import { extend } from "../../lib/arrays.ts";
+import { segment } from "../../lib/text.ts";
 
 export const ITEM_FIELDS = "id,name,size,file,folder,root,package,remoteItem,parentReference,webUrl,lastModifiedDateTime";
 export const DOWNLOAD_FIELDS = `${ITEM_FIELDS},@microsoft.graph.downloadUrl`;

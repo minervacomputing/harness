@@ -8,8 +8,9 @@ import { ProviderHTTP } from "../../gateway/http.ts";
 import { concat, utf8 } from "../../lib/bytes.ts";
 import { type JsonObject } from "../../lib/json.ts";
 import { tokenHex } from "../../lib/random.ts";
-import { GoogleUser, USERINFO_URL, classify, segment } from "../google/index.ts";
+import { GoogleUser, USERINFO_URL, classify } from "../google/index.ts";
 import { laxBool, model } from "../google/model.ts";
+import { segment } from "../../lib/text.ts";
 
 export const API_URL = "https://www.googleapis.com/drive/v3";
 export const UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files";

@@ -93,7 +93,6 @@ interface Vectors {
 	lax: { json: string; int: { ok: boolean; value?: number }; str: { ok: boolean; value?: string }; id: { ok: boolean; value?: string } }[];
 	scenarios: { name: string; call: Call; routes: { [path: string]: ScriptedResponse[] }; requests: RecordedRequest[]; outcome: Outcome }[];
 	links: ({ link: string; cursor: string | null } | { link: string; error: string })[];
-	addresses: { value: Json; address: string | null }[];
 	numbers: ({ value: Json; number: number | null } | { value: Json; raises: true } | { value: Json; beyond: true })[];
 	short: { value: Json; short: string | null; short20: string | null }[];
 	issues: ({ issue: Fields; record: Fields; detail: Fields } | { issue: Fields; invalid: true })[];
@@ -320,13 +319,12 @@ describe("the client's pure parts", () => {
 });
 
 describe("reads.py's pure parts", () => {
-	test("_address on fixed and random values", () => {
-		const wrong = VECTORS.addresses.filter((vector) => !changedOnPurpose(vector)).filter((vector) => {
-			const found = requestAddress(vector.value);
-			return (found === null ? null : short(found)) !== vector.address;
-		});
-		expect(wrong).toEqual([]);
-		expect(VECTORS.addresses.length).toBeGreaterThan(200);
+	test("a request's address keeps no credentials, query or fragment", () => {
+		expect(requestAddress("https://user:secret@Shop.Example.com:8443/cart/../pay?token=t#x")).toBe("https://shop.example.com:8443/pay");
+		expect(requestAddress("http://[::1]:80/a b")).toBe("http://[::1]/a%20b");
+		for (const value of ["ftp://example.com/", "/relative", "https://exa mple.com/", "https://example.com:99999/", 42, null]) {
+			expect(requestAddress(value), JSON.stringify(value)).toBeNull();
+		}
 	});
 
 	test("_number", () => {

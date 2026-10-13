@@ -74,8 +74,26 @@ describe("ids and links", () => {
 		expect(canonical(value)).toBe(expected);
 	});
 
-	test.each(cases<[string, Outcome]>("object_id"))("object id of %j", (value, expected) => {
+	// Links are read by the runtime's URL parser, which repairs what Python's urlsplit split differently
+	// (backslashes, missing slashes, full-width letters) and refuses brackets and percent signs in a host.
+	const repaired = /[[\]\\%\uff00-\uffef]|^https:\/?[^/]/;
+	test.each(cases<[string, Outcome]>("object_id").filter(([value]) => !repaired.test(value)))("object id of %j", (value, expected) => {
 		expect(objectId(value)).toBe("ok" in expected ? expected.ok : null);
+	});
+
+	test("an id is read only from an https link to a Notion host", () => {
+		const id = "0000000000000000000000000000000a";
+		const canonicalId = "00000000-0000-0000-0000-00000000000a";
+		expect(objectId(`https://www.notion.so/Plan-${id}`)).toBe(canonicalId);
+		expect(objectId(`https://Acme.Notion.Site/x/${id}/`)).toBe(canonicalId);
+		for (const link of [`http://www.notion.so/${id}`, `https://notion.so.evil.example/${id}`, `https://evil.example/www.notion.so/${id}`, `https://[::1]/${id}`]) {
+			expect(objectId(link), link).toBeNull();
+		}
+		// A link the URL parser repairs names the page it repairs to: the id only names a page, and grants are
+		// checked on the id.
+		for (const link of [`https:www.notion.so/${id}`, `https://www.notion.so\\${id}`, `https://www%2enotion.so/${id}`]) {
+			expect(objectId(link), link).toBe(canonicalId);
+		}
 	});
 });
 

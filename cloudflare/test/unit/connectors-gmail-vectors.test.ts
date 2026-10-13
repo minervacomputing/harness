@@ -1,11 +1,12 @@
-// The parts of the Gmail connector that Python's standard library and the idna package decide, against the
+// The parts of the Gmail connector that Python's standard library decided, against the
 // vectors generate.py wrote from today's Python (test/fixtures/connectors/google/gmail.json): input
 // validation, base64, which charset labels Python's codecs had, RFC 2047 header decoding, Content-Type
 // parameters, MIME bodies and attachments, address headers (the email package's parser and its defects),
 // threading, raw RFC 5322 messages built under the SMTP policy (encoded words and line folding), the HTML
-// converter, mail addresses, IDNA and snippets. Every vector is compared exactly, except where a section
-// lists the cases whose answer is now different and says why (header text, one body, CJK words).
+// converter, mail addresses and snippets. Every vector is compared exactly, except where a section lists
+// the cases whose answer is now different and says why (header text, one body, CJK words, links, domains).
 
+import { isDeepStrictEqual } from "node:util";
 import { describe, expect, test } from "vitest";
 import * as addresses from "../../src/lib/addresses.ts";
 import { Part } from "../../src/connectors/gmail/client.ts";
@@ -15,9 +16,8 @@ import { charsetKnown, decodeCharset, decodeCharsetStrictly } from "../../src/li
 import { BinasciiError, IndexError, LookupError, PyTypeError, UnicodeDecodeError, UnicodeEncodeError, UnicodeError, ValueError } from "../../src/connectors/gmail/email/errors.ts";
 import { messageText, rawMessage } from "../../src/connectors/gmail/email/message.ts";
 import { htmlToText } from "../../src/lib/markdown.ts";
-import { IdnaError, idnaEncode } from "../../src/lib/idna.ts";
 import * as mime from "../../src/connectors/gmail/mime.ts";
-import { canonicalHost, registrable } from "../../src/lib/sites.ts";
+import { registrable } from "../../src/lib/sites.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { htmlUnescape, sliceText } from "../../src/lib/text.ts";
@@ -323,11 +323,17 @@ describe("HTML to text", () => {
 	test("the converter, with its title, on hand-written and random markup", () => {
 		const cases = vectors.html as { html: string; text: string; title: string | null }[];
 		expect(cases.length).toBeGreaterThanOrEqual(202);
+		// Links are the URL parser's serialization; one it cannot read (an IPvFuture host) is its text alone.
+		const serialized = (text: string) =>
+			text
+				.replace(/\[([^[\]]*)\]\(http:\/\/\[v1\.x\]\/\)/g, "$1")
+				.replace(/\]\((https?:[^)]*)\)/gi, (_, href: string) => `](${new URL(href).href.replaceAll("(", "%28").replaceAll(")", "%29")})`);
+		expect(htmlToText('<a href="http://[v1.x]/">vfuture</a>')[0]).toBe("vfuture");
 		const actual = cases.map((item) => {
 			const [text, title] = htmlToText(item.html);
 			return { html: item.html, text, title };
 		});
-		expect(actual).toEqual(cases);
+		expect(actual).toEqual(cases.map((item) => ({ ...item, text: serialized(item.text) })));
 	});
 });
 
@@ -342,10 +348,24 @@ describe("mail addresses", () => {
 		}
 	}
 
+	// Domains are encoded by the runtime's IDNA, and refused where it would repair them (test/fixtures/hosts.ts).
+	// So a case with a Unicode domain or a trailing dot has the same answer or is refused; the rest, the same answer.
+	// Refused in workerd by the Bidi rule, which Node's encoder does not apply (test/platform/hosts.test.ts).
+	const bidi = ["ada@a\u05d0.com", "ada@\u0661.com"];
+	const repairable = (value: string) => !/^[\x00-\x7f]*$/.test(value) || /\.\s*$/.test(value);
+	function check(cases: { [value: string]: Outcome }, run: (value: string) => unknown): void {
+		const exact = Object.fromEntries(Object.entries(cases).filter(([value]) => !repairable(value)));
+		expect(Object.keys(exact).length).toBeGreaterThan(20);
+		expect(Object.fromEntries(Object.keys(exact).map((value) => [value, py(() => run(value))]))).toEqual(exact);
+		const accepted = Object.entries(cases)
+			.filter(([value]) => repairable(value) && !bidi.includes(value))
+			.map(([value, outcome]) => [value, outcome, py(() => run(value))] as const)
+			.filter(([, outcome, found]) => !isDeepStrictEqual(found, outcome) && !("code" in found && found.code === "INVALID_ADDRESS"));
+		expect(accepted).toEqual([]);
+	}
+
 	test("parse", () => {
-		const cases = vectors.addresses.parse as { [value: string]: Outcome };
-		expect(Object.keys(cases).length).toBeGreaterThan(80);
-		expect(Object.fromEntries(Object.keys(cases).map((value) => [value, py(() => addresses.parse(value))]))).toEqual(cases);
+		check(vectors.addresses.parse as { [value: string]: Outcome }, addresses.parse);
 	});
 
 	test("valid_id and name", () => {
@@ -356,42 +376,12 @@ describe("mail addresses", () => {
 	});
 
 	test("choices", () => {
-		const cases = vectors.addresses.choices as { [value: string]: Outcome };
-		expect(Object.fromEntries(Object.keys(cases).map((value) => [value, py(() => addresses.choices(value))]))).toEqual(cases);
+		check(vectors.addresses.choices as { [value: string]: Outcome }, addresses.choices);
 	});
 
-	test("canonical hosts and registrable domains", () => {
-		const hosts = vectors.addresses.canonical_host as { [host: string]: { plain: Outcome; reserved: Outcome } };
-		const actual = Object.fromEntries(Object.keys(hosts).map((host) => [host, { plain: py(() => canonicalHost(host)), reserved: py(() => canonicalHost(host, true)) }]));
-		expect(actual).toEqual(hosts);
+	test("registrable domains", () => {
 		const registrables = vectors.addresses.registrable as { [host: string]: string | null };
 		expect(Object.fromEntries(Object.keys(registrables).map((host) => [host, registrable(host)]))).toEqual(registrables);
-	});
-});
-
-describe("IDNA", () => {
-	test("encoding with UTS #46 mapping, for the domains of the address vectors and more", () => {
-		const cases = vectors.idna as ({ value: string } & ({ ok: string } | Error))[];
-		expect(cases.length).toBe(110);
-		// A last label that is a number is an IPv4 address to the runtime, so lib/idna.ts refuses the name, which
-		// canonicalHost refuses for its numeric last label anyway.
-		const numeric = new Set(["127.0.0.1", "123", "example.123"]);
-		for (const item of cases) {
-			if (numeric.has(item.value)) {
-				expect(() => idnaEncode(item.value), item.value).toThrow(IdnaError);
-				expect(() => canonicalHost(item.value, true), item.value).toThrow(OperationError);
-				continue;
-			}
-			let found: { ok: string } | Error;
-			try {
-				found = { ok: idnaEncode(item.value) };
-			} catch (error) {
-				// Python names the kind of IDNAError (InvalidCodepoint, IDNABidiError, ...); all are IDNAError subclasses.
-				if (!(error instanceof globalThis.Error) || error.name !== "IDNAError") throw error;
-				found = { error: "error" };
-			}
-			expect(found, item.value).toEqual("ok" in item ? { ok: item.ok } : { error: "error" });
-		}
 	});
 });
 

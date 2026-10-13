@@ -1,5 +1,4 @@
-// Jira Cloud's REST API (v3), reached per site through api.atlassian.com, ported from
-// backend/connectors/jira/client.py.
+// Jira Cloud's REST API (v3), reached per site through api.atlassian.com.
 //
 // Search pages with an opaque `nextPageToken`; this client keeps it as the page cursor, checked to be
 // printable and short enough to store, and sends it back as a query parameter. Other lists page by offset.
@@ -8,9 +7,10 @@ import { z } from "zod";
 import type { ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
-import { AtlassianClient, segment } from "../atlassian/index.ts";
+import { AtlassianClient } from "../atlassian/index.ts";
 import { laxBool, model, optionalStr } from "../atlassian/model.ts";
 import { extend } from "../../lib/arrays.ts";
+import { segment } from "../../lib/text.ts";
 
 export const MAX_PAGES = 10;
 export const BULK_LIMIT = 100;

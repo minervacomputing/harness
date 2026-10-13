@@ -6,7 +6,6 @@ import type { Binding, ScopedRecord } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, denied } from "../../gateway/connector.ts";
 import { type JsonObject } from "../../lib/json.ts";
-import { hostnameOf, urlsplit } from "../../lib/urlsplit.ts";
 import { type Block, type Comment, type DataSource, type Database, type NotionClient, type Page, type Parent, pageTitle, sourceDatabaseId, textOf } from "./client.ts";
 
 export const PAGE = "page";
@@ -29,22 +28,15 @@ function notionHost(host: string): boolean {
 	return host === "notion.so" || host === "www.notion.so" || host === "notion.site" || host.endsWith(".notion.site");
 }
 
-/**
- * The path of `value` read as an https link to a Notion host, or null: Python's `urlsplit(value)` and its
- * `hostname`, for what `_object_id` asks of them (lib/urlsplit.ts). Every outcome that is not such a link
- * (another scheme, no host, another host, or a ValueError) is null, as each is refused alike.
- */
+/** The path of `value` read as an https link to a Notion host, or null. */
 function notionLinkPath(value: string): string | null {
-	const parts = urlsplit(value);
-	if (parts === null || parts.scheme !== "https") return null;
-	// `hostname` lowercases all but an IPv6 zone, and `_object_id` lowercases the rest.
-	const host = hostnameOf(parts.netloc);
-	return host !== null && notionHost(host.toLowerCase()) ? parts.path : null;
+	const url = URL.parse(value);
+	return url !== null && url.protocol === "https:" && notionHost(url.hostname) ? url.pathname : null;
 }
 
 export const OBJECT_ID_ERROR = "must be a Notion id, or a link to a Notion page or database";
 
-/** `_object_id`: a Notion id, or the id at the end of a link to a Notion page or database; null otherwise. */
+/** A Notion id, or the id at the end of a link to a Notion page or database; null otherwise. */
 export function objectId(value: string): string | null {
 	const found = canonical(value);
 	if (found !== null) return found;
@@ -65,7 +57,7 @@ export const JSON_SIZE_ERROR = `must be at most ${MAX_FILTER} characters as JSON
 
 const idString = () => z.string().trim().min(32).max(300).describe("A Notion id, or a link to the page or database.");
 
-/** `_object_id` as the AfterValidator of a validated string. */
+/** `objectId` as the transform of a validated string. */
 function toObjectId<T>(value: string, ctx: z.core.$RefinementCtx<T>): string {
 	const id = objectId(value);
 	if (id !== null) return id;

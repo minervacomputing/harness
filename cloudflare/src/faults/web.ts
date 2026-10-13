@@ -15,8 +15,8 @@ export async function webGet(url: string): Promise<unknown> {
 	try {
 		const parsed = parseUrl(url);
 		const got = await new Fetcher(io).get(parsed);
-		if (got instanceof Moved) return { moved: { text: got.target.text, href: got.target.href, host: got.target.host } };
-		return { page: { text: got.url.text, href: got.url.href, status: got.status, form: got.form, start: got.text.slice(0, 500) } };
+		if (got instanceof Moved) return { moved: { href: got.target.href, host: got.target.host } };
+		return { page: { href: got.url.href, status: got.status, form: got.form, start: got.text.slice(0, 500) } };
 	} catch (error) {
 		if (error instanceof OperationError) return { error: { code: error.code, message: error.message } };
 		throw error;

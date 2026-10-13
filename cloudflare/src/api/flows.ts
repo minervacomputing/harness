@@ -1,4 +1,4 @@
-// The OAuth connection flow (web-api 9), from backend/connections/oauth.py and views.py: `authorize` for a
+// The OAuth connection flow: `authorize` for a
 // new connection and `reconnect` for an existing one start it (`CONNECTION_FLOWS.start`, answered as
 // `{url}`), and the provider sends the browser back to `GET /api/oauth/{provider}/callback`, which redeems
 // the code with the client that started the flow and saves the connection through the Workspace object.
@@ -8,9 +8,8 @@
 // workspace, the connection a reconnect renews and the client it was sent to. The callback compares the
 // state in constant time, then deletes the row on that state with `DELETE … RETURNING` before anything
 // else, so it is used once even if a later step fails, and of concurrent callbacks exactly one gets it.
-// A callback with another state, or for another provider, leaves the flow alone (Python popped it
-// whatever came back, so a forged or stale callback cancelled the user's attempt); an expired one is
-// removed. A callback from another session (another user, another browser) finds no flow or another
+// A callback with another state, or for another provider, leaves the flow alone (so a forged or stale
+// callback cannot cancel the user's attempt); an expired one is removed. A callback from another session (another user, another browser) finds no flow or another
 // flow, whose state does not match. State and
 // verifier come from oauth4webapi (32 random bytes each, S256 challenge); the token request and the
 // reading of its answer are the ones the Workspace's refresh uses (workspace/credentials.ts), which keep
@@ -26,7 +25,6 @@ import { OperationError } from "../gateway/connector.ts";
 import { HttpError } from "../http/errors.ts";
 import type { App } from "../http/router.ts";
 import { timingSafeEqual } from "../lib/hash.ts";
-import { urlencode } from "../lib/urlsplit.ts";
 import { TOKEN_TIMEOUT_MS, boundedText, issuingClient, tokenBody, tokenPayload, tokenRequest } from "../workspace/credentials.ts";
 import { NOT_YOURS } from "../workspace/core.ts";
 import { isAdmin } from "../workspace/out.ts";
@@ -57,7 +55,7 @@ export const FLOW_MS = 600_000;
 
 export const EXPIRED_FLOW = "This connection attempt expired or did not start here. Please try again.";
 
-/** Where the provider sends the browser back; `provider` is a slug, as Django's `<slug:provider>`. */
+/** Where the provider sends the browser back; `provider` is a slug. */
 export const CALLBACK_ROUTE = "/api/oauth/:provider{[-a-zA-Z0-9_]+}/callback";
 
 export const CONNECTION_FLOWS: { start(flow: FlowStart): Promise<string> } = {
@@ -91,7 +89,7 @@ export const CONNECTION_FLOWS: { start(flow: FlowStart): Promise<string> } = {
 		if (scope) params.push(["scope", scope]);
 		if (oauth.pkce ?? true) params.push(["code_challenge", challenge], ["code_challenge_method", "S256"]);
 		if (hint !== null) params.push(["login_hint", hint]);
-		return `${oauth.authorizeUrl}?${urlencode(params)}`;
+		return `${oauth.authorizeUrl}?${new URLSearchParams(params)}`;
 	},
 };
 
@@ -150,18 +148,18 @@ async function exchangeCode(env: Env, workspace: WorkspaceRef, connector: Connec
 	return { ...tokenPayload(body, Date.now()), client_id: creds.clientId, token_url: oauth.tokenUrl } as unknown as CredentialPayload;
 }
 
-/** A 302 to `{SITE_URL}{path}`, with the parameters encoded as Python's `urlencode` does (spaces as `+`). */
+/** A 302 to `{SITE_URL}{path}`, with the parameters form-encoded (spaces as `+`). */
 function redirect(siteUrl: string, path: string, params: [string, string][] = []): Response {
-	const query = params.length ? `?${urlencode(params)}` : "";
+	const query = params.length ? `?${new URLSearchParams(params)}` : "";
 	return new Response(null, { status: 302, headers: { Location: `${siteUrl}${path}${query}`, "Cache-Control": "no-store" } });
 }
 
-/** The value of a query parameter given more than once is its last, as Django's `QueryDict.get`. */
+/** The value of a query parameter given more than once is its last. */
 function lastParam(query: URLSearchParams, name: string): string | null {
 	return query.getAll(name).at(-1) ?? null;
 }
 
-/** `oauth_callback`, in its order; every exit is a redirect into the app. */
+/** The OAuth callback; every exit is a redirect into the app. */
 async function callback(env: Env, request: Request, provider: string, session: CurrentSession): Promise<Response> {
 	const site = settings(env).siteUrl;
 	if (!session.user || !session.sessionId) return redirect(site, "/login");
@@ -208,6 +206,6 @@ export function flowRoutes(app: App): void {
 		const session = await currentSession(c.env, c.req.raw);
 		return withSessionCookies(await callback(c.env, c.req.raw, param(c, "provider"), session), session);
 	});
-	// Django's `require_GET`, after the CSRF check the router makes on unsafe methods.
+	// GET only, after the CSRF check the router makes on unsafe methods.
 	app.on(["POST", "PUT", "PATCH", "DELETE", "OPTIONS"], CALLBACK_ROUTE, () => new Response(null, { status: 405, headers: { Allow: "GET" } }));
 }

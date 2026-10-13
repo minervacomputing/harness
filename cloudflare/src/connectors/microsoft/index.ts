@@ -14,7 +14,6 @@ import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP, defaultForbidden } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
-import { parseQs, quoteSegment, urlsplitStrict } from "../../lib/urlsplit.ts";
 import { type Reader, Invalid, isDict, list, model, nullable, optional, required, str } from "./model.ts";
 
 export const GRAPH = "https://graph.microsoft.com";
@@ -59,9 +58,6 @@ export function consentAll(...scopes: string[]): Consent {
 	}
 	return options;
 }
-
-/** Every character but letters, digits and `_.-~` percent-encoded (lib/urlsplit.ts). */
-export const segment = quoteSegment;
 
 /** JSON's text from bytes as `json.loads` reads UTF-8: a byte order mark skipped, invalid UTF-8 refused. */
 export function jsonOf(bytes: Uint8Array): Json {
@@ -123,13 +119,9 @@ export function pageParam(cursor: string): { [name: string]: string } {
 	throw new OperationError("INVALID_CURSOR", "This page token is invalid.");
 }
 
-/**
- * `parse_qs(urlsplit(url).query)`: the URL split as `urlsplit` splits it (refused with UrlError where it
- * throws), then the query split on `&`, pairs without `=` or with an empty value left out,
- * `+` read as a space and `%XX` unquoted (lib/urlsplit.ts).
- */
-export function queryOf(url: string): Map<string, string[]> {
-	return parseQs(urlsplitStrict(url).query);
+/** The query parameters of a page link Graph sent; none when it is no URL. */
+export function queryOf(link: string): URLSearchParams {
+	return URL.parse(link, GRAPH)?.searchParams ?? new URLSearchParams();
 }
 
 /** The cursor for Graph's next page, taken out of its nextLink; the link itself is never requested. */
@@ -138,10 +130,10 @@ export function nextCursor(nextLink: unknown): string | null {
 	const unusable = new OperationError("PROVIDER_LIMIT", "Microsoft Graph returned a page link Minerva cannot use.");
 	if (typeof nextLink !== "string" || nextLink.length > 4000) throw unusable;
 	const query = queryOf(nextLink);
-	const token = query.get("$skiptoken");
-	const skip = query.get("$skip");
-	if (token !== undefined && token.length === 1 && skip === undefined && SKIPTOKEN.test(token[0] as string)) return `token:${token[0]}`;
-	if (skip !== undefined && skip.length === 1 && token === undefined && SKIP.test(skip[0] as string)) return `skip:${skip[0]}`;
+	const token = query.getAll("$skiptoken");
+	const skip = query.getAll("$skip");
+	if (token.length === 1 && skip.length === 0 && SKIPTOKEN.test(token[0] as string)) return `token:${token[0]}`;
+	if (skip.length === 1 && token.length === 0 && SKIP.test(skip[0] as string)) return `skip:${skip[0]}`;
 	throw unusable;
 }
 

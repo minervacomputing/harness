@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { unescapeAttributeValue } from "../../src/lib/htmlparser.ts";
-import { PLAIN_TEXT, SINGLE_LINE, TextError, decoded, htmlUnescape, plainText, singleLine, sliceText, truncate, unquote } from "../../src/lib/text.ts";
+import { PLAIN_TEXT, SINGLE_LINE, TextError, decoded, htmlUnescape, plainText, segment, singleLine, sliceText, truncate, unquote } from "../../src/lib/text.ts";
 import vectors from "./vectors.ts";
 
 test("free-text validators draw one line for control characters", () => {
@@ -36,6 +36,17 @@ describe("decoded", () => {
 describe("unquote", () => {
 	test.each(vectors.unquote)("$input", ({ input, output }) => {
 		expect(unquote(input)).toBe(output);
+	});
+});
+
+describe("segment", () => {
+	test("encodes everything but unreserved characters, so an id stays one path segment", () => {
+		expect(segment("a/b?#")).toBe("a%2Fb%3F%23");
+		expect(segment("%41")).toBe("%2541");
+		expect(segment("a b")).toBe("a%20b");
+		expect(segment("ü")).toBe("%C3%BC");
+		expect(segment("!'()*")).toBe("%21%27%28%29%2A");
+		expect(segment("A-z_0.9~")).toBe("A-z_0.9~");
 	});
 });
 

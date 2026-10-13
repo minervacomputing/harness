@@ -7,7 +7,7 @@ import { describe, expect, test } from "vitest";
 import type { Connector, ProviderClient } from "../../src/contracts/connectors.ts";
 import type { GrantRow } from "../../src/contracts/policy.ts";
 import { CONNECTORS } from "../../src/connectors/index.ts";
-import { API_URL, Comment, Entry, Issue, Pull, Repository, forbidden, httpxHeader, nextPage, segment } from "../../src/connectors/github/client.ts";
+import { API_URL, Comment, Entry, Issue, Pull, Repository, forbidden, httpxHeader, nextPage } from "../../src/connectors/github/client.ts";
 import {
 	type GitHubOptions,
 	REPOSITORY,
@@ -613,7 +613,6 @@ interface Vectors {
 	};
 	inputs: { operation: string; json: string; message?: string; fields?: Data }[];
 	links: { link: string; next: { [key: string]: string } | null }[];
-	segments: { value: string; segment: string }[];
 	page_cursors: { cursor: string | null; params?: { [key: string]: string }; error?: [string, string] }[];
 	rendered_cursors: { params: { [key: string]: string } | null; cursor: string | null }[];
 	repository_cursors: { cursor: string; state?: [number, number]; error?: [string, string] }[];
@@ -716,10 +715,6 @@ describe("vectors from today's Python", () => {
 		// Decided over every header: one that is not UTF-8 makes them all Latin-1.
 		expect(read([["location", "/\u00d9\u00a3"], ["x-other", "\u00ff"]])).toBe("/\u00d9\u00a3");
 		expect(read([["location", "/\u00d9\u00a3"], ["x-other", "\u00c3\u00a9"]])).toBe("/\u0663");
-	});
-
-	test("path segments", () => {
-		for (const vector of vectors.segments) expect(segment(vector.value)).toBe(vector.segment);
 	});
 
 	test("listing cursors", () => {

@@ -28,8 +28,8 @@ const worker = testWorker();
 const token = await faultsToken(worker.secretKey);
 
 interface Got {
-	page?: { text: string; href: string; status: number; form: string; start: string };
-	moved?: { text: string; href: string; host: string };
+	page?: { href: string; status: number; form: string; start: string };
+	moved?: { href: string; host: string };
 	error?: { code: string; message: string };
 }
 
@@ -110,7 +110,7 @@ describe("the Web connector's egress", () => {
 	test("a redirect to a private name comes back as moved, and the new address is refused", async () => {
 		for (const target of ["https://127.0.0.1.nip.io/", "http://169.254.169.254.nip.io/latest/meta-data/", "https://0--ffff-7f00-1.sslip.io/"]) {
 			const got = await get(redirect(target));
-			expect(got.moved, JSON.stringify(got)).toEqual({ text: target, href: target, host: new URL(target).hostname });
+			expect(got.moved, JSON.stringify(got)).toEqual({ href: target, host: new URL(target).hostname });
 			expect((await get(target)).error, target).toEqual(NOT_PUBLIC);
 		}
 	});

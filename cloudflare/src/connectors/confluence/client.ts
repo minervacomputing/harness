@@ -9,10 +9,10 @@ import { z } from "zod";
 import type { ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { type Json, type JsonObject, parseJson } from "../../lib/json.ts";
-import { parseQs, urlsplitStrict } from "../../lib/urlsplit.ts";
-import { AtlassianClient, segment } from "../atlassian/index.ts";
+import { AtlassianClient } from "../atlassian/index.ts";
 import { laxInt, model, optionalStr } from "../atlassian/model.ts";
 import { extend } from "../../lib/arrays.ts";
+import { segment } from "../../lib/text.ts";
 
 export const MAX_PAGES = 10;
 export const BATCH_LIMIT = 250;
@@ -67,7 +67,8 @@ export function pageParams(cursor: string | null): { [name: string]: string } {
 /** The cursor of the next page, from the `_links.next` address; null on the last page. */
 export function nextToken(listing: Listing): string | null {
 	if (!listing.links.next) return null;
-	const tokens = parseQs(urlsplitStrict(listing.links.next).query).get("cursor") ?? [];
+	// The link is relative to the site; only its query is read.
+	const tokens = URL.parse(listing.links.next, "https://confluence.invalid")?.searchParams.getAll("cursor") ?? [];
 	if (tokens.length !== 1 || !TOKEN.test(tokens[0] as string)) throw new OperationError("PROVIDER_LIMIT", "Confluence returned a page token Minerva cannot use.");
 	return tokens[0] as string;
 }

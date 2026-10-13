@@ -6,8 +6,9 @@
 
 import type { ProviderIo } from "../../contracts/connectors.ts";
 import type { Json } from "../../lib/json.ts";
-import { API_URL, Graph, IMMUTABLE_IDS, pageParam, segment } from "../microsoft/index.ts";
+import { API_URL, Graph, IMMUTABLE_IDS, pageParam } from "../microsoft/index.ts";
 import { Invalid, bool, list, model, nullable, optional, required, str } from "../microsoft/model.ts";
+import { segment } from "../../lib/text.ts";
 
 export const EVENT_READ = `${IMMUTABLE_IDS}, outlook.timezone="UTC", outlook.body-content-type="text"`;
 export const CALENDAR_FIELDS = "id,name,isDefaultCalendar,canEdit,owner";

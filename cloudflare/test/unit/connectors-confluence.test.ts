@@ -6,14 +6,13 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, test } from "vitest";
 import type { GrantRow } from "../../src/contracts/policy.ts";
-import { BodyModel, ConfluenceClient, ListingModel, document, nextCursor, nextToken, pageParams } from "../../src/connectors/confluence/client.ts";
+import { BodyModel, ConfluenceClient, ListingModel, document, nextCursor, pageParams } from "../../src/connectors/confluence/client.ts";
 import { confluenceConnector, discoveryCursor } from "../../src/connectors/confluence/connector.ts";
 import { MAX_SPACE_PAGES, searchWords } from "../../src/connectors/confluence/reads.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { changedOnPurpose } from "./changed.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
-import { UrlError } from "../../src/lib/urlsplit.ts";
 import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
 import { Scenario, USER, jsonResponse } from "./executor-fakes.ts";
 
@@ -35,20 +34,18 @@ type Outcome = { value?: Json; error?: string; message?: string };
 const VECTORS = parseJson(readFileSync(new URL("../fixtures/connectors/atlassian/vectors.json", import.meta.url).pathname, "utf8")) as unknown as {
 	confluence: {
 		page_params: ({ cursor: string | null } & Outcome)[];
-		next_token: ({ next: string | null } & Outcome)[];
 		discover_cursor: ({ cursor: string | null } & Outcome)[];
 		search_words: ({ text: string } & Outcome)[];
 		documents: { value: Json; document: Json }[];
 	};
 };
 
-/** What a helper does, in the vectors' words: an owned error's code and message, or Python's ValueError. */
+/** What a helper does, in the vectors' words: its value, or an owned error's code and message. */
 function outcome(run: () => Json): Outcome {
 	try {
 		return { value: run() };
 	} catch (error) {
 		if (error instanceof OperationError) return { error: error.code, message: error.message };
-		if (error instanceof UrlError) return { error: "ValueError", message: error.message };
 		throw error;
 	}
 }
@@ -400,7 +397,7 @@ describe("connecting and discovery", () => {
 		expect(nextCursor(listing("/wiki/api/v2/pages?cursor=abc%2B&limit=5"))).toBe("c:abc+");
 		// Only the cursor is kept: where the link points is never used.
 		expect(nextCursor(listing("https://evil.example/x?cursor=abc"))).toBe("c:abc");
-		for (const link of ["/x?limit=5", "/x?cursor=a%20b", "/x?cursor=a&cursor=b", `/x?cursor=${"a".repeat(991)}`]) {
+		for (const link of ["/x?limit=5", "/x?cursor=a%20b", "/x?cursor=a&cursor=b", "/x?cursor=&cursor=b", "/x?cursor=", "/x?cursor=a+b", "/x?cursor=%C3%A9", "/x#cursor=a", "https://[v1.x]/?cursor=a", `/x?cursor=${"a".repeat(991)}`]) {
 			expect(() => nextCursor(listing(link)), link).toThrow(expect.objectContaining({ code: "PROVIDER_LIMIT" }));
 		}
 	});
@@ -408,13 +405,6 @@ describe("connecting and discovery", () => {
 	test("the pure helpers answer as Python's", () => {
 		const vectors = VECTORS.confluence;
 		for (const { cursor, ...expected } of vectors.page_params) if (!changedOnPurpose(cursor)) expect(outcome(() => pageParams(cursor)), String(cursor)).toEqual(expected);
-		for (const { next, ...expected } of vectors.next_token) {
-			const found = outcome(() => nextToken(ListingModel.parse({ results: [], _links: next !== null ? { next } : {} })));
-			// A malformed address is Python's ValueError, which the model sees as the generic failure: its
-			// message is only logged, so only the class is compared.
-			if (expected.error === "ValueError") expect(found.error, String(next)).toBe("ValueError");
-			else expect(found, String(next)).toEqual(expected);
-		}
 		for (const { cursor, ...expected } of vectors.discover_cursor) if (!changedOnPurpose(cursor)) expect(outcome(() => discoveryCursor(cursor, [null, null])), String(cursor)).toEqual(expected);
 		for (const { text: value, ...expected } of vectors.search_words) expect(outcome(() => searchWords(value)), value).toEqual(expected);
 		for (const { value, document: expected } of vectors.documents) {

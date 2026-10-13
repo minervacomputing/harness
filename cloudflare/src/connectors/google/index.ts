@@ -1,4 +1,4 @@
-// What Google connectors share, ported from backend/connectors/google/__init__.py: one OAuth app, the
+// What Google connectors share: one OAuth app, the
 // OpenID account, and how Google reports errors.
 //
 // Google reports rate limits, an API that is not enabled and some size limits as 403. Python reads them in
@@ -107,19 +107,6 @@ export function forbidden(provider: string, body: string): OperationErrorShape |
 /** ProviderHTTP's `classify` for Google: the 403 reasons above. */
 export function classify(provider: string, response: Response, body: string): OperationErrorShape | null {
 	return response.status === 403 ? forbidden(provider, body) : null;
-}
-
-/**
- * One URL path segment, as `quote(value, safe="")`: every byte but ASCII letters, digits and `_.-~` is
- * percent-encoded from UTF-8. Calendar ids contain `@` and `#`; `/` never passes input validation.
- */
-export function segment(value: string): string {
-	let out = "";
-	for (const byte of new TextEncoder().encode(value)) {
-		const char = String.fromCharCode(byte);
-		out += /[A-Za-z0-9_.~-]/.test(char) ? char : `%${byte.toString(16).toUpperCase().padStart(2, "0")}`;
-	}
-	return out;
 }
 
 /** The OpenID userinfo: `sub` is stable, the email address can change. */

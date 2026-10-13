@@ -68,7 +68,7 @@ function html(body: string | Uint8Array, headers: { [name: string]: string } = {
 
 async function page(web: FakeWeb, url: string): Promise<Page> {
 	const outcome = await fetcher(web).get(parseUrl(url));
-	if (!(outcome instanceof Page)) throw new Error(`${url} moved to ${outcome.target.text}`);
+	if (!(outcome instanceof Page)) throw new Error(`${url} moved to ${outcome.target.href}`);
 	return outcome;
 }
 
@@ -113,7 +113,7 @@ describe("the declaration", () => {
 
 describe("site names", () => {
 	test("hosts are canonical public names", () => {
-		expect(canonicalHost("Docs.Python.ORG.")).toBe("docs.python.org");
+		expect(canonicalHost("Docs.Python.ORG")).toBe("docs.python.org");
 		expect(canonicalHost("bücher.ch")).toBe("xn--bcher-kva.ch");
 		for (const refused of [
 			"localhost",
@@ -130,6 +130,7 @@ describe("site names", () => {
 			"2130706433",
 			"-bad-.com",
 			"a..com",
+			"docs.python.org.",
 			`${"x".repeat(64)}.com`,
 			"",
 		]) {
@@ -152,11 +153,11 @@ describe("site names", () => {
 
 	test("addresses are parsed into what is requested", () => {
 		const url = parseUrl("HTTPS://Docs.Python.org/3/library/os.html?q=a%20b#frag");
-		expect([url.scheme, url.host, url.target]).toEqual(["https", "docs.python.org", "/3/library/os.html?q=a%20b"]);
-		expect(parseUrl("http://example.com").text).toBe("http://example.com/");
-		expect(parseUrl("https://example.com:443/x").text).toBe("https://example.com/x");
-		expect(parseUrl("/next", url).text).toBe("https://docs.python.org/next");
-		expect(parseUrl("//other.org/y", url).text).toBe("https://other.org/y");
+		expect([url.scheme, url.host, url.href]).toEqual(["https", "docs.python.org", "https://docs.python.org/3/library/os.html?q=a%20b"]);
+		expect(parseUrl("http://example.com").href).toBe("http://example.com/");
+		expect(parseUrl("https://example.com:443/x").href).toBe("https://example.com/x");
+		expect(parseUrl("/next", url).href).toBe("https://docs.python.org/next");
+		expect(parseUrl("//other.org/y", url).href).toBe("https://other.org/y");
 		for (const refused of [
 			"ftp://example.com/",
 			"file:///etc/passwd",
@@ -172,6 +173,8 @@ describe("site names", () => {
 			"https://exa mple.com/",
 			"https://example.com/\n",
 			"https:///path",
+			"https:example.com/",
+			"https://example.com./",
 			`https://${"a".repeat(2000)}.com/`,
 		]) {
 			expect(code(() => parseUrl(refused)), refused).toBe("INVALID_URL");
@@ -225,7 +228,7 @@ describe("the fetcher", () => {
 		web.site("example.com", PUBLIC);
 		web.page("example.com", "/a?b=1", html("<p>Hello</p>"));
 		const got = await page(web, "https://example.com/a?b=1");
-		expect([got.form, got.text, got.url.text]).toEqual(["html", "<p>Hello</p>", "https://example.com/a?b=1"]);
+		expect([got.form, got.text, got.url.href]).toEqual(["html", "<p>Hello</p>", "https://example.com/a?b=1"]);
 		const [request] = web.requests;
 		expect(request?.url).toBe("https://example.com/a?b=1");
 		expect(request?.method).toBe("GET");
@@ -263,9 +266,9 @@ describe("the fetcher", () => {
 		web.page("example.com", "/inside", { status: 302, headers: { location: "http://10.0.0.1/" } });
 		web.page("example.com", "/loop", { status: 302, headers: { location: "/loop" } });
 		const got = await page(web, "https://example.com/old");
-		expect([got.url.text, got.text]).toEqual(["https://example.com/new", "moved"]);
+		expect([got.url.href, got.text]).toEqual(["https://example.com/new", "moved"]);
 		const away = await fetcher(web).get(parseUrl("https://example.com/away"));
-		expect(away instanceof Moved && away.target.text).toBe("https://evil.example.org/x");
+		expect(away instanceof Moved && away.target.href).toBe("https://evil.example.org/x");
 		expect(web.resolved).not.toContain("evil.example.org");
 		const down = await fetcher(web).get(parseUrl("https://example.com/down"));
 		expect(down instanceof Moved && down.target.scheme).toBe("http");
@@ -278,13 +281,13 @@ describe("the fetcher", () => {
 		expect(web.sent.map((request) => request.host)).not.toContain("10.0.0.1");
 	});
 
-	test("each hop requests the serialization whose host was authorized, also after a redirect", async () => {
+	test("each hop requests the serialization whose host was authorized, and shows it, also after a redirect", async () => {
 		const web = new FakeWeb();
 		web.site("example.com");
 		web.page("example.com", "/b?q=%27x%27", { status: 302, headers: { location: "/c/%2e%2e/d?r='y'" } });
 		web.page("example.com", "/d?r=%27y%27", { status: 200, headers: { "content-type": "text/plain" }, body: "here" });
 		const got = await page(web, "https://example.com/a/../b?q='x'");
-		expect([got.url.text, got.url.href, got.text]).toEqual(["https://example.com/c/%2e%2e/d?r='y'", "https://example.com/d?r=%27y%27", "here"]);
+		expect([got.url.href, got.text]).toEqual(["https://example.com/d?r=%27y%27", "here"]);
 		expect(web.requests.map((request) => request.url)).toEqual(["https://example.com/b?q=%27x%27", "https://example.com/d?r=%27y%27"]);
 	});
 
