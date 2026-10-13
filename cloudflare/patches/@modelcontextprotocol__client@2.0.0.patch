@@ -1,0 +1,28 @@
+diff --git a/dist/shimsWorkerd.cjs b/dist/shimsWorkerd.cjs
+index 29ef3a5b9872dbc934ec094d7419f6c965808e86..cfbd6fba2bcc20d98bd8b7633149e7b7b04ad027 100644
+--- a/dist/shimsWorkerd.cjs
++++ b/dist/shimsWorkerd.cjs
+@@ -7,7 +7,8 @@ const require_cfWorkerProvider = require('./cfWorkerProvider-B3dvjU3F.cjs');
+ *
+ * This file is selected via package.json export conditions when running in workerd.
+ */
+-require_src.preloadSchemas();
++// Minerva: no preloadSchemas() here. The Worker never uses MCP, and building every wire schema at module
++// scope costs its startup CPU limit (cloudflare/README.md, Startup); they are built lazily on first use instead.
+ /**
+ * Whether `fetch()` may throw `TypeError` due to CORS. CORS is a browser-only concept —
+ * in Cloudflare Workers, a `TypeError` from `fetch` is always a real network/configuration
+diff --git a/dist/shimsWorkerd.mjs b/dist/shimsWorkerd.mjs
+index 02d2730aca540adf88d52487ec3f3a9b3f8e80ee..9f879ffce8fd53862cdff0ca60db5d2745c1cdd0 100644
+--- a/dist/shimsWorkerd.mjs
++++ b/dist/shimsWorkerd.mjs
+@@ -7,7 +7,8 @@ import { t as CfWorkerJsonSchemaValidator } from "./cfWorkerProvider-BylNJ1R5.mj
+ *
+ * This file is selected via package.json export conditions when running in workerd.
+ */
+-preloadSchemas();
++// Minerva: no preloadSchemas() here. The Worker never uses MCP, and building every wire schema at module
++// scope costs its startup CPU limit (cloudflare/README.md, Startup); they are built lazily on first use instead.
+ /**
+ * Whether `fetch()` may throw `TypeError` due to CORS. CORS is a browser-only concept —
+ * in Cloudflare Workers, a `TypeError` from `fetch` is always a real network/configuration

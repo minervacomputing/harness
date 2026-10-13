@@ -5,7 +5,8 @@
 // model of the test build, wired as in chat.test.ts.
 
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
-import { CONNECTORS, CONNECTOR_SOURCE } from "../../src/connectors/index.ts";
+import { CONNECTORS } from "../../src/connectors/catalog.ts";
+import { CONNECTOR_SOURCE } from "../../src/connectors/index.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
 import { notesConnector } from "../../src/faults/connector.ts";
 import { faultConversationPorts, faultWorkspacePorts } from "../../src/faults/ports.ts";

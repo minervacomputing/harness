@@ -20,6 +20,7 @@
     "sandbox:image": "docker build -t minerva-cf-sandbox:local container",
     "test:cm": "vitest run --config vitest.cm.config.ts",
     "seed": "node scripts/seed.ts",
+    "startup": "node scripts/startup.ts --build",
     "auth:schema": "auth generate --config scripts/auth-schema.ts --output .cloudflare/auth-schema.sql --yes && cat .cloudflare/auth-schema.sql",
     "secrets": "node scripts/secrets.ts generate",
     "secrets:test": "node scripts/secrets.ts generate --test",

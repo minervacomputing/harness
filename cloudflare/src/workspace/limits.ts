@@ -23,11 +23,13 @@ export function pages(size: number): number {
 	return Math.ceil(size / PAGE_BYTES) * PAGE_BYTES;
 }
 
-const SIZE = new Intl.NumberFormat("en-US", { maximumSignificantDigits: 6, useGrouping: false });
+// Made on first use: a number format built at module load costs the Worker's startup (cloudflare/README.md, Startup).
+let size: Intl.NumberFormat | undefined;
 
 /** A size for a message: in GB from a GiB, else in MB, binary units either way ("256 MB", "1.5 GB"). */
 export function sizeText(bytes: number): string {
-	return bytes >= 2 ** 30 ? `${SIZE.format(bytes / 2 ** 30)} GB` : `${SIZE.format(bytes / 2 ** 20)} MB`;
+	size ??= new Intl.NumberFormat("en-US", { maximumSignificantDigits: 6, useGrouping: false });
+	return bytes >= 2 ** 30 ? `${size.format(bytes / 2 ** 30)} GB` : `${size.format(bytes / 2 ** 20)} MB`;
 }
 
 /** A count with thousands separators ("10,000"). */

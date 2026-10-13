@@ -4,7 +4,8 @@
 // registry takes it.
 
 import { afterEach, describe, expect, test } from "vitest";
-import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
+import { CONNECTORS } from "../../src/connectors/catalog.ts";
+import { connectorRegistry } from "../../src/connectors/index.ts";
 import { MAX_MARKDOWN_BYTES, NOTION_VERSION, Page, SearchPage, textOf } from "../../src/connectors/notion/client.ts";
 import { notionConnector } from "../../src/connectors/notion/connector.ts";
 import { SYNCED_HIDDEN, planEdits, redact, writtenRefusal } from "../../src/connectors/notion/markdown.ts";

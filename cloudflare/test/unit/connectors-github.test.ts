@@ -3,7 +3,7 @@
 // files, 403s, records), and the registry with its fingerprints.
 
 import { describe, expect, test } from "vitest";
-import { CONNECTORS } from "../../src/connectors/index.ts";
+import { CONNECTORS } from "../../src/connectors/catalog.ts";
 import { API_URL, Entry, Issue, Pull, Repository, forbidden, nextPage } from "../../src/connectors/github/client.ts";
 import {
 	type GitHubOptions,

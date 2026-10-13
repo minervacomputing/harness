@@ -116,6 +116,50 @@ test("only the test build imports src/faults/ and the fake model", () => {
 	expect(offenders).toEqual([]);
 });
 
+/** What a module evaluates before it runs: its imports and re-exports, without `import type` and without `import()`. */
+function staticImportsOf(path: string): string[] {
+	const file = ts.createSourceFile(path, readFileSync(join(ROOT, path), "utf8"), ts.ScriptTarget.Latest);
+	const found: string[] = [];
+	for (const statement of file.statements) {
+		if (ts.isImportDeclaration(statement) && !statement.importClause?.isTypeOnly) found.push((statement.moduleSpecifier as ts.StringLiteral).text);
+		if (ts.isExportDeclaration(statement) && statement.moduleSpecifier && !statement.isTypeOnly) found.push((statement.moduleSpecifier as ts.StringLiteral).text);
+	}
+	return found;
+}
+
+/** The sources a module evaluates, itself included, following static imports only. */
+function evaluatedWith(entry: string): Set<string> {
+	const reached = new Set<string>();
+	const pending = [entry];
+	while (pending.length) {
+		const path = pending.pop() as string;
+		if (reached.has(path)) continue;
+		reached.add(path);
+		for (const specifier of staticImportsOf(path)) {
+			if (!specifier.startsWith(".")) continue;
+			const target = normalize(join(dirname(path), specifier));
+			if (existsSync(join(ROOT, target))) pending.push(target);
+		}
+	}
+	return reached;
+}
+
+test("the connectors and the API router are loaded on first use, not at startup", () => {
+	// Cloudflare refuses a Worker whose startup takes too much CPU (cloudflare/README.md, Startup): the connectors'
+	// modules and the router (with Better Auth and the contract's procedures) are imported dynamically.
+	const catalog = join("src", "connectors", "catalog.ts");
+	const router = join("src", "http", "router.ts");
+	const production = evaluatedWith(join("src", "index.ts"));
+	expect(production.size).toBeGreaterThan(20);
+	// No connector's module either: src/connectors/index.ts is the registry, which imports them on first use.
+	const connectors = [...production].filter((path) => path.startsWith(join("src", "connectors") + "/") && path !== join("src", "connectors", "index.ts"));
+	expect([...connectors, ...[router].filter((path) => production.has(path))]).toEqual([]);
+	expect(evaluatedWith(join("src", "faults", "index.ts")).has(catalog)).toBe(false);
+	// The dynamic imports are there: the walk above would not see them.
+	expect(importsOf(readFileSync(join(ROOT, "src", "index.ts"), "utf8"))).toContain("./http/router.ts");
+	expect(importsOf(readFileSync(join(ROOT, "src", "connectors", "index.ts"), "utf8"))).toContain("./catalog.ts");
+});
+
 test("mode offline (the dev server without an account) is never built or deployed", () => {
 	// Mode offline has the test build's entry, the fake model and debug on (cloudflare.config.ts). It exists
 	// only under `vite --mode offline`, whose config marks the process with MINERVA_DEV_OFFLINE for a serve and

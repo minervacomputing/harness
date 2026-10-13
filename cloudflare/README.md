@@ -80,9 +80,23 @@ pnpm test:platform   # the Worker in local workerd: router, Durable Objects with
 pnpm test:account    # the deployed Workers (needs the origins above, ../.env.cloudflare and cf signed in), and the browser walk on the test Worker (needs its settings and Chrome)
 pnpm test:faults     # the account's fault tests, sandbox lab and end-to-end turns, against the test Worker (below)
 pnpm test:cm         # code mode's fault rows on the account, against its lab Worker; not part of test:faults (below)
+pnpm startup         # builds src/index.ts and measures its startup CPU locally, in a few seconds (Startup, below)
 ```
 
 The platform tests use `@cloudflare/vitest-plugin`, which loads `cloudflare.config.ts` itself (`experimental.newConfig`) in mode `test`, which builds the test Worker's entry (`src/faults/index.ts`) under local names of its own (`minerva-cf-local`, never production's, and only under vitest): the same Worker with the fake Notes connector, its provider object and the fault points. Remote bindings are off, so they never reach the account. `test/platform/protocols.test.ts` runs the real Workspace and Conversation objects, the executor with its ledger in the Conversation's SQLite, leases and refreshes against the fake provider, and the fake model, and injects the faults of the plan's Start and revocation, Attempts, Writes and Refresh rows (`ctx.abort()` at named points, with or without syncing first, lost answers, held steps). The account tests call the token-gated `/api/probe` (`src/http/probe.ts`), with the token derived from `MINERVA_SECRET_KEY`, and read the Workers' settings with `cf`.
+
+### Startup
+
+Cloudflare refuses to deploy a version whose global scope (everything a module does when it is loaded, before any request) takes more than its startup limit, 1 second on Cloudflare's machines (`10021 Script startup exceeded CPU time limit`); nothing checks it before the upload. Locally, `cf workers check --prebuilt` imports the built Worker's entry in a local workerd (no request reaches the Worker) and reports the CPU of that startup (`activeTimeMs`) without reaching the account, and writes a CPU profile to open in Chrome's DevTools. Its numbers are not Cloudflare's: builds that measured about 160 ms on a recent Mac were refused, one of 158 ms passed. `scripts/startup.ts` takes the best of three such measures and fails above 110 ms; `pnpm startup` builds production's entry first, and `pnpm run deploy` runs it on the build it is about to upload (the test build too). Production measured about 55 ms and the test build about 72 ms when this was written.
+
+What keeps startup small is that nothing heavy runs at module scope:
+
+- the connectors (`src/connectors/catalog.ts`: their operations, zod schemas and clients) are imported on first use by `connectorRegistry()`, in a chunk of their own; nothing the entries import statically may import them, which a unit test checks;
+- the API router (`src/http/router.ts`, with Better Auth and the contract's procedures) is imported by `src/index.ts` on the first request that needs it;
+- formatters and other objects that are costly to build (`Intl.NumberFormat`) are made on first use;
+- `@modelcontextprotocol/client`, which the `agents` package's `Agent` class brings in, would build every MCP wire schema at startup in workerd; a patch (`patches/`) leaves that to first use, which never comes, since the Worker does not use MCP.
+
+To see where startup goes, open the profile, or attribute it by module: the bundle in `.cloudflare/output/v0/workers/default/bundle/` marks each source module with `//#region <path>`.
 
 ## First deploy
 
@@ -108,7 +122,7 @@ pnpm run deploy   # builds the frontend, then scripts/deploy.ts: minerva-cf, the
 `scripts/deploy.ts` runs alone (a lock in `.cloudflare/`, shared with `scripts/reset.ts`, since both build into the same `.cloudflare/output/` directories; a lock left by a run killed outright is never taken over, and the message says which file to remove) and sends every `cf` command to one account: the one in `CLOUDFLARE_ACCOUNT_ID`, or else the only account `cf` reaches, put in the environment of every command (a `.env` file setting a `CLOUDFLARE_` variable where `cf` runs stops it instead, since `cf` would read it there). It does everything that can fail locally before anything on the account changes:
 
 1. checks the secrets (`scripts/secrets.ts check`: present, the encryption keys in a format the Worker reads, a setup key long enough to claim setup);
-2. builds the app (`cf build`) and checks that the bundle has none of the test build's code (`scripts/bundle.ts`);
+2. builds the app (`cf build`), checks that the bundle has none of the test build's code (`scripts/bundle.ts`), and measures its startup CPU locally, stopping above the threshold in `scripts/startup.ts` (Startup, below);
 3. builds the download origin (`files-worker/`) and checks it against the app's build (`scripts/builds.ts`): its name, exactly the app's buckets, every bucket the instance's own, the app's `MINERVA_DOWNLOAD_ORIGIN`, and `MINERVA_DOWNLOAD_KEY` as its only secret. A test build that would reach production's Workers or buckets, or the other way round, stops here;
 4. checks the resources and applies the migrations in `migrations/` that D1 has not applied yet (`scripts/resources.ts`, which finds the database by name): the first change on the account. Migrations are additive, so the running version keeps working;
 5. reads the deployed database's schema with `cf d1 query` (SELECT statements only) and compares it with what `migrations/` builds on an empty SQLite database (`scripts/schema-check.ts`, `scripts/schema.ts`): tables, columns (type, NOT NULL, default, primary key), UNIQUE and FOREIGN KEY constraints, indexes, views, triggers, and the list of applied migrations. A table, column, constraint or index that is missing, one no migration made, or a column of another shape stops the deploy (exit 1) with the list of differences; a database it cannot read exits 2. CHECK clauses and collations inside a `CREATE TABLE` are not listed by SQLite and are not compared;

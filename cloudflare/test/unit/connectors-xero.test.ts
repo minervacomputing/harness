@@ -3,7 +3,8 @@
 // the workspace ceiling and the connection's scopes (executor-fakes.ts `Scenario`).
 
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
+import { CONNECTORS } from "../../src/connectors/catalog.ts";
+import { connectorRegistry } from "../../src/connectors/index.ts";
 import { MAX_PAGE, Message, Pagination, ZERO_UUID, classify, date, invoiceDate, judge, messages, moment, nextPage, page } from "../../src/connectors/xero/client.ts";
 import { fromNumber, money, number } from "../../src/connectors/xero/decimal.ts";
 import { short } from "../../src/connectors/xero/organisations.ts";

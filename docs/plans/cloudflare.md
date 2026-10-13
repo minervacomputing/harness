@@ -490,7 +490,7 @@ Open:
 
 ### Step 6
 
-All 20 connectors are ported to `src/connectors/` and registered in `src/connectors/index.ts`: todoist, stripe, jira, confluence (shared Atlassian base), linear, slack, github, notion, hubspot, intercom, xero, sentry, google_calendar, google_drive, gmail (shared Google base), outlook, outlook_calendar, onedrive, teams (shared Microsoft base) and web. Each had its Python tests ported case by case over an injected fetch and pinned declaration fingerprints. The vectors generated from the Python backend, and the emulation of Python's string, number, URL, date and HTML rules in `src/lib/` that they checked, were removed by the cleanup ([cleanup.md](cleanup.md)), which rewrote the connectors' tests as behaviour tests on the same fakes.
+All 20 connectors are ported to `src/connectors/` and listed in `src/connectors/catalog.ts` (loaded on first use by `src/connectors/index.ts`): todoist, stripe, jira, confluence (shared Atlassian base), linear, slack, github, notion, hubspot, intercom, xero, sentry, google_calendar, google_drive, gmail (shared Google base), outlook, outlook_calendar, onedrive, teams (shared Microsoft base) and web. Each had its Python tests ported case by case over an injected fetch and pinned declaration fingerprints. The vectors generated from the Python backend, and the emulation of Python's string, number, URL, date and HTML rules in `src/lib/` that they checked, were removed by the cleanup ([cleanup.md](cleanup.md)), which rewrote the connectors' tests as behaviour tests on the same fakes.
 
 Deviations, all in code comments:
 

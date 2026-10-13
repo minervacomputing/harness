@@ -4,7 +4,8 @@
 // most eight projects at a time; the rules for inputs, Link headers and what an event shows.
 
 import { describe, expect, test } from "vitest";
-import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
+import { CONNECTORS } from "../../src/connectors/catalog.ts";
+import { connectorRegistry } from "../../src/connectors/index.ts";
 import { Issue, Project, type SentryClient, linkCursor, nextCursor } from "../../src/connectors/sentry/client.ts";
 import { requestAddress } from "../../src/connectors/sentry/address.ts";
 import { CONCURRENCY, sentryConnector } from "../../src/connectors/sentry/connector.ts";

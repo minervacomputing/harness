@@ -7,7 +7,7 @@
 // One deploy or reset runs at a time from a checkout, and every cf command goes to one account (`lock` and
 // `pinAccount` in scripts/run.ts). Everything that can fail locally runs before anything on the account
 // changes: the secrets are checked, both Workers are built, the app's bundle is checked for the test build's
-// code (scripts/bundle.ts), and the download origin's build is checked against the app's (its name, its
+// code (scripts/bundle.ts) and its startup CPU measured locally (scripts/startup.ts), and the download origin's build is checked against the app's (its name, its
 // buckets, its origin); with --files-only, against the app actually deployed as well, and against this
 // checkout's record of that deploy (its version and link key, in .cloudflare/deployed.json). Only then are the
 // resources checked and D1's migrations applied (scripts/resources.ts), the deployed schema compared with the
@@ -104,6 +104,7 @@ try {
 	run("cf", ["build", "--mode", MODE], { print: false });
 	const built = { app: buildDigest(ROOT), files: "" };
 	run("node", ["scripts/bundle.ts", ...FLAG], { print: true });
+	run("node", ["scripts/startup.ts"], { print: true });
 	run("cf", ["build", "--mode", MODE], { cwd: FILES_DIR, print: false });
 	built.files = buildDigest(FILES_DIR);
 	/** Stops when a build changed since it was built (another `cf build` in the same directory). */

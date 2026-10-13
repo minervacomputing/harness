@@ -8,7 +8,8 @@
 
 import { crc32, gzipSync, deflateRawSync, deflateSync } from "node:zlib";
 import { afterEach, describe, expect, test } from "vitest";
-import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
+import { CONNECTORS } from "../../src/connectors/catalog.ts";
+import { connectorRegistry } from "../../src/connectors/index.ts";
 import { SEARCH, webConnector } from "../../src/connectors/web/connector.ts";
 import { ACCEPT, Body, Fetcher, LIMITS, MAX_BODY, Moved, Page, USER_AGENT, decode } from "../../src/connectors/web/fetch.ts";
 import { Inflater } from "../../src/connectors/web/inflate.ts";

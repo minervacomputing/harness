@@ -2,7 +2,8 @@
 // that the registry accepts the Calendar and Drive declarations.
 
 import { describe, expect, test } from "vitest";
-import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
+import { CONNECTORS } from "../../src/connectors/catalog.ts";
+import { connectorRegistry } from "../../src/connectors/index.ts";
 import { GoogleUser, NOT_CONFIGURED, RATE_LIMITED, TOO_LARGE, classify, oauth, reasons } from "../../src/connectors/google/index.ts";
 import { googleCalendarConnector } from "../../src/connectors/google_calendar/connector.ts";
 import { googleDriveConnector } from "../../src/connectors/google_drive/connector.ts";

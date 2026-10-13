@@ -7,7 +7,8 @@ import { type LinearClient, MAX_TEAM_DEPTH, type TeamRef, judge } from "../../sr
 import { DESCRIBE_BATCH, MAX_DISCOVERY_PAGES, linear } from "../../src/connectors/linear/connector.ts";
 import { issueLinks, redact, writtenProblem } from "../../src/connectors/linear/markdown.ts";
 import { TEAM, ancestry } from "../../src/connectors/linear/teams.ts";
-import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
+import { CONNECTORS } from "../../src/connectors/catalog.ts";
+import { connectorRegistry } from "../../src/connectors/index.ts";
 import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry } from "../../src/gateway/registry.ts";

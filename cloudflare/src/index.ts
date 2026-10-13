@@ -2,14 +2,29 @@
 // frontend's build) answer every other path before this runs.
 
 import { ASSETS_PREFIX, serveAsset } from "./http/assets.ts";
-import { createApp } from "./http/router.ts";
+import type { App } from "./http/router.ts";
 
-const app = createApp();
+// The API router, and what only it uses, is loaded on the first request that needs it rather than at the
+// Worker's startup, which has a CPU limit (cloudflare/README.md, Startup).
+let app: Promise<App> | null = null;
+
+function api(): Promise<App> {
+	if (app === null) {
+		const loading = import("./http/router.ts").then(({ createApp }) => createApp());
+		app = loading;
+		// A failed load is not kept, so the next request tries again (a module that failed to load stays failed in this
+		// isolate: the import rejects again).
+		loading.catch(() => {
+			if (app === loading) app = null;
+		});
+	}
+	return app;
+}
 
 export default {
-	fetch(request, env, ctx) {
+	async fetch(request, env, ctx) {
 		if (new URL(request.url).pathname.startsWith(ASSETS_PREFIX)) return serveAsset(request, env.ASSETS, { bucket: env.FILES, waitUntil: (promise) => ctx.waitUntil(promise) });
-		return app.fetch(request, env, ctx);
+		return (await api()).fetch(request, env, ctx);
 	},
 } satisfies ExportedHandler<Env>;
 

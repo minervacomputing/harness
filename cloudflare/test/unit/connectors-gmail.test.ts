@@ -8,7 +8,8 @@ import { Part, classify, pageToken } from "../../src/connectors/gmail/client.ts"
 import { gmailConnector } from "../../src/connectors/gmail/connector.ts";
 import { COMPOSE_SCOPE, FULL_SCOPE, MODIFY_SCOPE, READONLY_SCOPE, SEND_SCOPE } from "../../src/connectors/gmail/mailbox.ts";
 import * as mime from "../../src/connectors/gmail/mime.ts";
-import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
+import { CONNECTORS } from "../../src/connectors/catalog.ts";
+import { connectorRegistry } from "../../src/connectors/index.ts";
 import { OperationError, consentGiven } from "../../src/gateway/connector.ts";
 import { Registry, validate } from "../../src/gateway/registry.ts";
 import { type Json, parseJson } from "../../src/lib/json.ts";

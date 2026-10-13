@@ -4,7 +4,8 @@
 
 import { describe, expect, test } from "vitest";
 import type { z } from "zod";
-import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
+import { CONNECTORS } from "../../src/connectors/catalog.ts";
+import { connectorRegistry } from "../../src/connectors/index.ts";
 import { SlackClient, judge } from "../../src/connectors/slack/client.ts";
 import { CHANNEL, slackConnector } from "../../src/connectors/slack/connector.ts";
 import { escape, redact, writtenProblem } from "../../src/connectors/slack/mrkdwn.ts";

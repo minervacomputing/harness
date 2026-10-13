@@ -3,7 +3,8 @@
 // limits; its tokens; and the inputs each operation accepts.
 
 import { describe, expect, test } from "vitest";
-import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
+import { CONNECTORS } from "../../src/connectors/catalog.ts";
+import { connectorRegistry } from "../../src/connectors/index.ts";
 import { classify } from "../../src/connectors/hubspot/client.ts";
 import { SCOPES, hubspotConnector } from "../../src/connectors/hubspot/connector.ts";
 import { HubRecord, SearchPage } from "../../src/connectors/hubspot/models.ts";

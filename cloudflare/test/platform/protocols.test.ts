@@ -8,7 +8,8 @@ import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } fro
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, test } from "vitest";
 import { conversationObject, workspaceObject } from "../../src/addressing.ts";
-import { CONNECTORS, CONNECTOR_SOURCE } from "../../src/connectors/index.ts";
+import { CONNECTORS } from "../../src/connectors/catalog.ts";
+import { CONNECTOR_SOURCE } from "../../src/connectors/index.ts";
 import type { RunEvent } from "../../src/conversation/events.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
 import type { RunHead } from "../../src/conversation/store.ts";

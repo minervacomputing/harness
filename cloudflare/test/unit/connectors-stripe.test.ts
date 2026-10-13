@@ -3,7 +3,8 @@
 // Connecting with a key goes through the Workspace's saveConnection after the connector's account().
 
 import { describe, expect, test } from "vitest";
-import { CONNECTORS, connectorRegistry } from "../../src/connectors/index.ts";
+import { CONNECTORS } from "../../src/connectors/catalog.ts";
+import { connectorRegistry } from "../../src/connectors/index.ts";
 import { Charge, Customer, Invoice, StripeClient, Subscription, classify } from "../../src/connectors/stripe/client.ts";
 import { stripeConnector } from "../../src/connectors/stripe/connector.ts";
 import * as money from "../../src/connectors/stripe/money.ts";

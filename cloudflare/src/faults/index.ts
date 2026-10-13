@@ -6,7 +6,7 @@
 // is in minerva-cf.
 
 import worker from "../index.ts";
-import { CONNECTORS, CONNECTOR_SOURCE } from "../connectors/index.ts";
+import { CONNECTOR_SOURCE, servedConnectors } from "../connectors/index.ts";
 import { Conversation as BaseConversation } from "../conversation/conversation.ts";
 import { defaultPorts, PORTS } from "../conversation/ports.ts";
 import { RunStore } from "../conversation/store.ts";
@@ -23,7 +23,7 @@ import { type Fault, type Fired, planOf } from "./plan.ts";
 import { executorContextOf, faultConversationPorts, faultFlowClients, faultWorkspacePorts, providerFetch } from "./ports.ts";
 import { faultRoutes } from "./routes.ts";
 
-CONNECTOR_SOURCE.connectors = () => [...CONNECTORS, notesConnector()];
+CONNECTOR_SOURCE.connectors = async () => [...(await servedConnectors()), notesConnector()];
 PORTS.factory = () => faultConversationPorts(defaultPorts);
 WORKSPACE_PORTS.factory = (deps, ctx, env) => faultWorkspacePorts(deps, ctx, env);
 // The settings pages' provider calls (src/api/providers.ts) reach the fake provider too, and nothing else.
