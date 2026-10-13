@@ -79,7 +79,7 @@ async function world(options: { faults?: Fault[] } = {}): Promise<World> {
 
 async function post(w: World, turns: FakeTurn[]): Promise<RunId> {
 	const outcome = await w.conversation.postMessage(CALLER, { content: JSON.stringify({ fake: { turns } }), attachments: [] });
-	if (!outcome.ok) throw new Error(`Refused: ${outcome.refusal.status} ${outcome.refusal.detail}`);
+	if (!outcome.ok) throw new Error(`Refused: ${outcome.refusal.code} ${outcome.refusal.detail}`);
 	return outcome.value.run.id;
 }
 

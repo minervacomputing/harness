@@ -24,7 +24,7 @@ import { first, type Sql, type SqlValue } from "../lib/sql.ts";
 import { splitParts, VALUE_PART } from "../lib/text.ts";
 import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan } from "../sandbox/folder.ts";
 import type { AttachmentOut, FolderOut } from "../shared/api.ts";
-import type { AttemptFence, ConversationId, EpochMs, Outcome, Refusal, RunId, Sha256, VersionId, WorkspaceId } from "../shared/rpc.ts";
+import { type AttemptFence, type ConversationId, type EpochMs, type Outcome, type RunId, type Sha256, type VersionId, type WorkspaceId, refuse } from "../shared/rpc.ts";
 import { overFolder } from "../workspace/limits.ts";
 import {
 	BLOB_GONE,
@@ -236,10 +236,6 @@ const RETRY_MS = 30_000;
 const CACHED_CHARS = 8_000_000;
 /** Reports in a row while the total keeps moving under them; the sweep reports whatever is left. */
 const REPORTS = 4;
-
-function refusal(status: Refusal["status"], detail: string): { ok: false; refusal: Refusal } {
-	return { ok: false, refusal: { status, detail } };
-}
 
 /** Thrown inside a transaction to roll it back with an answer. */
 class Refused<T> extends Error {
@@ -604,7 +600,7 @@ export class FolderStore {
 	async prepareAttachments(runId: RunId, uploads: ReservedUpload[]): Promise<Outcome<AttachmentPlan | null>> {
 		if (uploads.length === 0) return { ok: true, value: null };
 		const conversation = this.#deps.conversation();
-		if (conversation === null || conversation.deleted) return refusal(404, "Not Found");
+		if (conversation === null || conversation.deleted) return refuse("NOT_FOUND", "Not found.");
 		const parentId = conversation.folderVersionId;
 		const parent = parentId === null ? null : this.entries(parentId);
 		const files: { path: string; sha256: Sha256; mode: number; mtime: number }[] = [];
@@ -624,15 +620,15 @@ export class FolderStore {
 		try {
 			manifest = parseManifest({ files, dirs: parent ? [...parent.dirs] : [] }, folderEntries);
 		} catch (error) {
-			if (error instanceof QuotaExceeded) return refusal(413, overFolder("folder_entries", folderEntries, limitBytes));
-			if (error instanceof InvalidManifest) return refusal(400, `The files could not be attached: ${error.message}`);
+			if (error instanceof QuotaExceeded) return refuse("FOLDER_FULL", overFolder("folder_entries", folderEntries, limitBytes));
+			if (error instanceof InvalidManifest) return refuse("INVALID_ATTACHMENTS", `The files could not be attached: ${error.message}`);
 			throw error;
 		}
 		const sizes = new Map<Sha256, number>();
 		if (parent) for (const entry of Object.values(parent.files)) sizes.set(entry.sha256, entry.size);
 		for (const upload of uploads) if (!sizes.has(upload.sha256)) sizes.set(upload.sha256, upload.size);
 		if (folderBytes([...manifest.files.values()].map((entry) => sizes.get(entry.sha256) as number)) > limitBytes) {
-			return refusal(413, overFolder("folder_bytes", folderEntries, limitBytes));
+			return refuse("FOLDER_FULL", overFolder("folder_bytes", folderEntries, limitBytes));
 		}
 		const entries = storedEntries(manifest, sizes);
 
@@ -665,7 +661,7 @@ export class FolderStore {
 			if (planned.copies.length && !(await this.#report())) {
 				// Refused before any copy was made by this try.
 				await this.#deps.outside(() => this.#sql.transaction(() => this.#discard(planned.fresh)));
-				return refusal(413, NO_ROOM);
+				return refuse("WORKSPACE_FULL", NO_ROOM);
 			}
 			let gone = false;
 			await eachLimited(planned.copies, TRANSFERS, async (copy) => {
@@ -674,7 +670,7 @@ export class FolderStore {
 			});
 			if (gone) {
 				await abandon();
-				return refusal(400, NO_LONGER_AVAILABLE);
+				return refuse("ATTACHMENT_UNAVAILABLE", NO_LONGER_AVAILABLE);
 			}
 		} catch (error) {
 			// A copy that failed may still have been written (its answer lost): none is claimed, so all go.

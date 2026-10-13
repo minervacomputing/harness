@@ -4,6 +4,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
 import ts from "typescript";
 import { expect, test } from "vitest";
+import { REFUSALS } from "../../src/shared/rpc.ts";
 import { sourceCode } from "../fixtures/source.ts";
 
 const ROOT = new URL("../../", import.meta.url).pathname;
@@ -156,4 +157,15 @@ test("the account suites never skip a whole suite", () => {
 		for (const [line, number] of code(path)) if (/\b(describe|test|it)\.(skip|skipIf|runIf|todo)\b/.test(line)) offenders.push(`${path}:${number}`);
 	}
 	expect(offenders).toEqual([]);
+});
+
+test("every refusal code is sent somewhere", () => {
+	// The list is the API's error map (shared/rpc.ts): a code nothing sends would be declared for nothing.
+	// The connectors and the gateway have codes of their own, some with the same names, so they do not count.
+	const used = new Set<string>();
+	for (const path of sources("src")) {
+		if (path === join("src", "shared", "rpc.ts") || path.startsWith(join("src", "connectors")) || path.startsWith(join("src", "gateway"))) continue;
+		for (const [line] of code(path)) for (const match of line.matchAll(/"([A-Z][A-Z_]+)"/g)) used.add(match[1]!);
+	}
+	expect(Object.keys(REFUSALS).filter((code) => !used.has(code))).toEqual([]);
 });

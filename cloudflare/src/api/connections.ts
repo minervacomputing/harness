@@ -1,5 +1,5 @@
 // Connectors, connections and access. The Workspace
-// Durable Object holds connections and grants and their rules (`_usable`, who may change a shared
+// Durable Object holds connections and grants and their rules (`#usable`, who may change a shared
 // connection, saving credentials, grant plans and the revocation they cause); the routes here check
 // the request, make the provider calls (providers.ts) and answer. OAuth flows are flows.ts's, their
 // clients oauth-clients.ts's.
@@ -9,7 +9,7 @@ import { connectorRegistry } from "../connectors/index.ts";
 import { ACCOUNT_KIND, type Connector, type DiscoveryPage, kindOf } from "../gateway/connector.ts";
 import { type GrantChange, InvalidGrants, MAX_CHANGES, checkChanges, resourceKey } from "../gateway/grants.ts";
 import { ANY } from "../gateway/policy.ts";
-import { HttpError, detail, json } from "../http/errors.ts";
+import { HttpError, json, refused } from "../http/errors.ts";
 import { UUID } from "../http/paths.ts";
 import type { App } from "../http/router.ts";
 import type { AccessOut, ConnectorOut, ResourceOut } from "../shared/api.ts";
@@ -21,6 +21,8 @@ import { type Member, afterRevocation, memberRoute, param, valueOf } from "./mem
 import { keyAccount, withConnection } from "./providers.ts";
 
 export const UNKNOWN_PROVIDER = "Unknown provider.";
+const NO_KEY = "This provider does not connect with a key.";
+const noOAuth = (connector: Connector) => `${connector.name} does not connect through OAuth.`;
 
 const KeyIn = z.object({ key: z.string().min(1).max(500) });
 /** An action id: any string (an unknown one is refused with the connector's words). */
@@ -39,10 +41,10 @@ const BASE = `/api/workspaces/:workspace${UUID}`;
 const CONNECTION = `${BASE}/connections/:connection${UUID}`;
 const PROVIDER = `${BASE}/connections/:provider`;
 
-/** `_connector_or_404`. */
+/** The provider's connector, or 404 `UNKNOWN_PROVIDER`. */
 async function connectorOr404(provider: string): Promise<Connector> {
 	const connector = (await connectorRegistry()).find(provider);
-	if (connector === null) throw new HttpError(detail(404, UNKNOWN_PROVIDER));
+	if (connector === null) throw new HttpError(refused("UNKNOWN_PROVIDER", UNKNOWN_PROVIDER));
 	return connector;
 }
 
@@ -59,7 +61,7 @@ function connectorOut(connector: Connector): ConnectorOut {
 	};
 }
 
-/** `_usable`, with what the routes need: the caller's access to the connection and its connector. */
+/** The caller's access to the connection and its connector. */
 async function usable(member: Member, connectionId: string): Promise<{ access: AccessOut; connector: Connector }> {
 	const access = valueOf(await member.object.getAccess(member.caller, connectionId));
 	return { access, connector: await connectorOr404(access.connection.provider) };
@@ -67,14 +69,14 @@ async function usable(member: Member, connectionId: string): Promise<{ access: A
 
 /** A shared connection (no owner) is changed only by workspace owners and admins. */
 function adminsOnly(member: Member, access: AccessOut, message: string): void {
-	if (!access.connection.personal && !isAdmin(member.caller)) throw new HttpError(detail(403, message));
+	if (!access.connection.personal && !isAdmin(member.caller)) throw new HttpError(refused("WORKSPACE_ADMINS_ONLY", message));
 }
 
 async function startFlow(flow: FlowStart): Promise<Response> {
 	try {
 		return json(200, { url: await CONNECTION_FLOWS.start(flow) });
 	} catch (error) {
-		if (error instanceof ConnectionFlowError) return detail(503, error.message);
+		if (error instanceof ConnectionFlowError) return refused("CONNECT_UNAVAILABLE", error.message);
 		throw error;
 	}
 }
@@ -97,7 +99,7 @@ export function connectionRoutes(app: App): void {
 			const { key } = await readBody(c.req.raw, KeyIn);
 			const { access, connector } = await usable(m, param(c, "connection"));
 			adminsOnly(m, access, "Only workspace admins can replace the key of shared connections.");
-			if (connector.auth.type !== "api_key") return detail(422, "This provider does not connect with a key.");
+			if (connector.auth.type !== "api_key") return refused("WRONG_CONNECTION_METHOD", NO_KEY);
 			const account = await keyAccount(c.env, m.workspace, connector, key);
 			const saved = await m.object.saveConnection(m.caller, { provider: connector.slug, account, credentials: { kind: "api_key", key }, connectionId: access.connection.id });
 			return json(200, valueOf(saved));
@@ -110,10 +112,10 @@ export function connectionRoutes(app: App): void {
 			const { actions } = await readBody(c.req.raw, ConsentIn);
 			const { access, connector } = await usable(m, param(c, "connection"));
 			adminsOnly(m, access, "Only workspace admins can reconnect shared connections.");
-			if (connector.auth.type === "builtin") return detail(422, `${connector.name} has no account to reconnect.`);
+			if (connector.auth.type === "builtin") return refused("WRONG_CONNECTION_METHOD", `${connector.name} has no account to reconnect.`);
+			if (connector.auth.type !== "oauth2") return refused("WRONG_CONNECTION_METHOD", noOAuth(connector));
 			const unknown = actions.find((action) => !connector.actions.some((declared) => declared.id === action));
-			if (unknown !== undefined) return detail(422, `${connector.name} has no action ${JSON.stringify(unknown)}.`);
-			if (connector.auth.type !== "oauth2") return detail(503, `${connector.name} does not connect through OAuth.`);
+			if (unknown !== undefined) return refused("UNKNOWN_ACTION", `${connector.name} has no action ${JSON.stringify(unknown)}.`);
 			// A shared connection serves every member who allows something on it.
 			const allowed = (await m.object.allowedActions(m.caller, access.connection.id)) ?? [];
 			const scopes = requestedScopes(connector, new Set([...allowed, ...actions]));
@@ -139,9 +141,9 @@ export function connectionRoutes(app: App): void {
 		memberRoute(async (c, m) => {
 			const query = readQuery(c.req.raw, ResourceQuery);
 			const { access, connector } = await usable(m, param(c, "connection"));
-			if (kindOf(connector, query.kind) === null) return detail(422, `${connector.name} has no resources of type ${JSON.stringify(query.kind)}.`);
+			if (kindOf(connector, query.kind) === null) return refused("UNKNOWN_RESOURCE_KIND", `${connector.name} has no resources of type ${JSON.stringify(query.kind)}.`);
 			const browse = (connector.browsable ?? []).includes(query.kind) && !query.q;
-			if (query.parent !== undefined && !browse) return detail(422, "Only resources that nest can be browsed, and not while searching.");
+			if (query.parent !== undefined && !browse) return refused("CANNOT_BROWSE", "Only resources that nest can be browsed, and not while searching.");
 			let page: DiscoveryPage;
 			if (query.kind === ACCOUNT_KIND) {
 				page = { items: [{ id: access.connection.id, name: access.connection.label }], nextCursor: null };
@@ -172,7 +174,7 @@ export function connectionRoutes(app: App): void {
 			try {
 				checkChanges(connector, connectionId, changes);
 			} catch (error) {
-				if (error instanceof InvalidGrants) return detail(422, error.message);
+				if (error instanceof InvalidGrants) return refused("INVALID_ACCESS_CHANGE", error.message);
 				throw error;
 			}
 			// Only resources the account can see may be allowed; removing a grant never needs the provider.
@@ -193,7 +195,7 @@ export function connectionRoutes(app: App): void {
 						const name = Object.hasOwn(found, id) ? found[id] : undefined;
 						if (typeof name !== "string") {
 							const label = (kindOf(connector, kind)?.label ?? kind).toLowerCase();
-							return detail(422, `Choose a ${label} that the connected account can see.`);
+							return refused("RESOURCE_NOT_VISIBLE", `Choose a ${label} that the connected account can see.`);
 						}
 						names[resourceKey(kind, id)] = name;
 					}
@@ -208,6 +210,7 @@ export function connectionRoutes(app: App): void {
 		`${PROVIDER}/authorize`,
 		memberRoute(async (c, m) => {
 			const connector = await connectorOr404(param(c, "provider"));
+			if (connector.auth.type !== "oauth2") return refused("WRONG_CONNECTION_METHOD", noOAuth(connector));
 			return startFlow({ env: c.env, member: m, connector, connectionId: null, scopes: null });
 		}),
 	);
@@ -222,7 +225,7 @@ export function connectionRoutes(app: App): void {
 		memberRoute(async (c, m) => {
 			const { key } = await readBody(c.req.raw, KeyIn);
 			const connector = await connectorOr404(param(c, "provider"));
-			if (connector.auth.type !== "api_key") return detail(422, "This provider does not connect with a key.");
+			if (connector.auth.type !== "api_key") return refused("WRONG_CONNECTION_METHOD", NO_KEY);
 			const account = await keyAccount(c.env, m.workspace, connector, key);
 			const saved = await m.object.saveConnection(m.caller, { provider: connector.slug, account, credentials: { kind: "api_key", key }, connectionId: null });
 			return json(200, valueOf(saved));

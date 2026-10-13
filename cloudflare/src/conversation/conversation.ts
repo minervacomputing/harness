@@ -53,7 +53,7 @@ import { isReset, type ScriptsClient } from "../scripts/run.ts";
 import type { ScriptsApi } from "../scripts/scripts.ts";
 import { scriptTool } from "../scripts/tool.ts";
 import type { FolderOut, MessageIn, MessageOut } from "../shared/api.ts";
-import type { AttemptFence, Caller, Outcome, Refusal, RunId, VersionId } from "../shared/rpc.ts";
+import { type AttemptFence, type Caller, type Outcome, type Refusal, type RunId, type VersionId, refuse } from "../shared/rpc.ts";
 import { START_FAILED } from "../workspace/core.ts";
 import {
 	ACTING,
@@ -222,7 +222,7 @@ const LIVE_TASKS = ["pending", "running", "waiting", "completing"] as const;
 export const ATTEMPT_ENDED = "The attempt ended: ";
 
 /** A conversation, or a 404: another user's conversation looks like none. */
-const NOT_FOUND = { status: 404, detail: "Not Found" } as const;
+const NOT_FOUND = refuse("NOT_FOUND", "Not found.");
 
 type Job = { fn: string; payload?: unknown; job: { id: string; payload: unknown } };
 
@@ -320,7 +320,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	 */
 	async postMessage(caller: Caller, input: Required<MessageIn>, key: string | null = null): Promise<Outcome<PostedView>> {
 		const conversation = this.#owned(caller);
-		if (!conversation) return { ok: false, refusal: NOT_FOUND };
+		if (!conversation) return NOT_FOUND;
 		// MessageIn is validated by the Worker (20,000 characters, at most 100 UUIDs, no lone
 		// surrogate); anything else here is a bug, not a user's input.
 		if (
@@ -332,7 +332,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		) {
 			throw new TypeError("The Worker validates a message before it reaches the conversation.");
 		}
-		if (input.content.trim() === "" && input.attachments.length === 0) return { ok: false, refusal: { status: 400, detail: EMPTY_MESSAGE } };
+		if (input.content.trim() === "" && input.attachments.length === 0) return refuse("EMPTY_MESSAGE", EMPTY_MESSAGE);
 		const digest = key === null ? null : await messageDigest(input);
 		const runId = uuid7();
 		const decision = await this.#store.outside(() =>
@@ -348,8 +348,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				return "start";
 			}),
 		);
-		if (decision === "busy") return { ok: false, refusal: { status: 409, detail: BUSY_MESSAGE } };
-		if (decision === "reused") return { ok: false, refusal: { status: 422, detail: KEY_REUSED } };
+		if (decision === "busy") return refuse("CONVERSATION_BUSY", BUSY_MESSAGE);
+		if (decision === "reused") return refuse("IDEMPOTENCY_KEY_REUSED", KEY_REUSED);
 		if (decision !== "start") return this.#replay(decision.replay);
 		return this.#begin(runId);
 	}
@@ -359,7 +359,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		if (this.#store.start(runId)) return this.#begin(runId);
 		const run = this.#store.run(runId);
 		const message = run ? this.#store.runMessage(runId) : null;
-		if (!run || !message) return { ok: false, refusal: NOT_FOUND };
+		if (!run || !message) return NOT_FOUND;
 		return { ok: true, value: this.#posted(message, run) };
 	}
 
@@ -460,7 +460,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	async #beginOnce(runId: RunId): Promise<Outcome<PostedView>> {
 		const start = this.#store.start(runId);
 		const conversation = this.#store.conversation();
-		if (!start || !conversation) return { ok: false, refusal: NOT_FOUND };
+		if (!start || !conversation) return NOT_FOUND;
 		const folder = this.#folder() as FolderPort;
 		const usage = folder.usage();
 		const uploadIds = idsOf(start);
@@ -529,12 +529,12 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			// again every time the watch sent it, holding the conversation busy: it is refused now instead, and
 			// its registration released (plan: Starting a run: a refusal leaves nothing behind).
 			this.#log("a start could not be stored", error);
-			return this.#refuseStart(runId, { ok: false, refusal: { status: 503, detail: START_FAILED } });
+			return this.#refuseStart(runId, refuse("START_FAILED", START_FAILED));
 		}
 		if (stored === null) {
 			// Deleted meanwhile: the registration is released. A run another flow stored is left alone.
 			if (this.#store.releases().includes(runId)) this.#defer(() => this.#releaseRefused(runId));
-			return { ok: false, refusal: NOT_FOUND };
+			return NOT_FOUND;
 		}
 		this.#touchIndex();
 		const run = this.#store.run(runId) as RunRow;

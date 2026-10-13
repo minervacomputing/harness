@@ -81,7 +81,7 @@ function script(turns: FakeTurn[]): string {
 
 async function post(w: World, turns: FakeTurn[]): Promise<RunId> {
 	const outcome = await w.conversation.postMessage(CALLER, { content: script(turns), attachments: [] });
-	if (!outcome.ok) throw new Error(`Refused: ${outcome.refusal.status} ${outcome.refusal.detail}`);
+	if (!outcome.ok) throw new Error(`Refused: ${outcome.refusal.code} ${outcome.refusal.detail}`);
 	return outcome.value.run.id;
 }
 
@@ -451,7 +451,7 @@ describe("starts the store refuses", () => {
 		});
 		// The refused start here is one without attachments.
 		const first = await w.conversation.postMessage(CALLER, { content: script([{ text: "Hi." }]), attachments: [] });
-		expect(first).toEqual({ ok: false, refusal: { status: 503, detail: START_FAILED } });
+		expect(first).toEqual({ ok: false, refusal: { code: "START_FAILED", detail: START_FAILED } });
 		const inside = await runInDurableObject(w.conversation, (_instance, state) => ({
 			starts: state.storage.sql.exec("SELECT run_id FROM starts").toArray().length,
 			runs: state.storage.sql.exec("SELECT id FROM runs").toArray().length,

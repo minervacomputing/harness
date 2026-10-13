@@ -28,13 +28,13 @@ describe("recording uploads", () => {
 		expect(h.sql.exec("SELECT state, size FROM uploads")).toEqual([{ state: "pending", size: 9 }]);
 		expect(await complete(h, id, 9)).toEqual({ id, name: "notes.txt", size: 9, media_type: "text/plain" });
 		expect(await complete(h, id, 9)).toEqual({ id, name: "notes.txt", size: 9, media_type: "text/plain" });
-		expect(await h.core.completeUpload(GRACE, id, { sha256: "c".repeat(64), size: 9, mediaType: "text/plain" })).toEqual({ ok: false, refusal: { status: 404, detail: NOT_FOUND } });
+		expect(await h.core.completeUpload(GRACE, id, { sha256: "c".repeat(64), size: 9, mediaType: "text/plain" })).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: NOT_FOUND } });
 	});
 
 	test("at most three arriving at once per user; one past the body's deadline is not arriving", async () => {
 		const h = await harness();
 		for (let i = 0; i < 3; i++) await reserve(h, 1);
-		expect(await h.core.reserveUpload(ADA, { name: "x", size: 1 })).toEqual({ ok: false, refusal: { status: 429, detail: UPLOADING_TOO_MANY } });
+		expect(await h.core.reserveUpload(ADA, { name: "x", size: 1 })).toEqual({ ok: false, refusal: { code: "TOO_MANY_UPLOADS_AT_ONCE", detail: UPLOADING_TOO_MANY } });
 		expect((await h.core.reserveUpload(GRACE, { name: "x", size: 1 })).ok).toBe(true);
 		await h.timers.advance(15 * 60 * 1000);
 		expect((await h.core.reserveUpload(ADA, { name: "x", size: 1 })).ok).toBe(true);
@@ -43,7 +43,7 @@ describe("recording uploads", () => {
 	test("at most 30 waiting to be sent per user", async () => {
 		const h = await harness();
 		for (let i = 0; i < 30; i++) await complete(h, (await reserve(h, 1)).id, 1);
-		expect(await h.core.reserveUpload(ADA, { name: "x", size: 1 })).toEqual({ ok: false, refusal: { status: 429, detail: TOO_MANY_UPLOADS } });
+		expect(await h.core.reserveUpload(ADA, { name: "x", size: 1 })).toEqual({ ok: false, refusal: { code: "TOO_MANY_UPLOADS_WAITING", detail: TOO_MANY_UPLOADS } });
 		expect((await h.core.reserveUpload(GRACE, { name: "x", size: 1 })).ok).toBe(true);
 		const [first] = h.sql.exec<{ id: string }>("SELECT id FROM uploads WHERE user_id = ? ORDER BY id LIMIT 1", USER);
 		await h.core.deleteUpload(ADA, first?.id as string);
@@ -60,20 +60,20 @@ describe("recording uploads", () => {
 describe("the workspace's quota", () => {
 	test("reserved when recorded: 11 bytes of 10 are refused, 6 and 4 fit, 1 more does not", async () => {
 		const h = await harness({ settings: { workspaceBytes: 10 } });
-		expect(await h.core.reserveUpload(ADA, { name: "x", size: 11 })).toEqual({ ok: false, refusal: { status: 413, detail: NO_ROOM } });
+		expect(await h.core.reserveUpload(ADA, { name: "x", size: 11 })).toEqual({ ok: false, refusal: { code: "WORKSPACE_FULL", detail: NO_ROOM } });
 		expect(h.sql.exec("SELECT count(*) AS n FROM uploads")).toEqual([{ n: 0 }]);
 		await complete(h, (await reserve(h, 6)).id, 6);
 		await reserve(h, 4);
 		expect(h.core.usedBytes()).toBe(10);
-		expect(await h.core.reserveUpload(ADA, { name: "x", size: 1 })).toEqual({ ok: false, refusal: { status: 413, detail: NO_ROOM } });
+		expect(await h.core.reserveUpload(ADA, { name: "x", size: 1 })).toEqual({ ok: false, refusal: { code: "WORKSPACE_FULL", detail: NO_ROOM } });
 		// Every upload counts, even one with the same 6 bytes as another.
-		expect(await h.core.reserveUpload(ADA, { name: "x", size: 6 })).toMatchObject({ ok: false, refusal: { status: 413 } });
+		expect(await h.core.reserveUpload(ADA, { name: "x", size: 6 })).toMatchObject({ ok: false, refusal: { code: "WORKSPACE_FULL" } });
 	});
 
 	test("a body larger than reserved is checked again when it completes", async () => {
 		const h = await harness({ settings: { workspaceBytes: 10 } });
 		const { id } = await reserve(h, 5);
-		expect(await h.core.completeUpload(ADA, id, { sha256: "c".repeat(64), size: 11, mediaType: "text/plain" })).toEqual({ ok: false, refusal: { status: 413, detail: NO_ROOM } });
+		expect(await h.core.completeUpload(ADA, id, { sha256: "c".repeat(64), size: 11, mediaType: "text/plain" })).toEqual({ ok: false, refusal: { code: "WORKSPACE_FULL", detail: NO_ROOM } });
 		expect(await complete(h, id, 8)).toMatchObject({ size: 8 });
 		expect(h.core.usedBytes()).toBe(8);
 	});

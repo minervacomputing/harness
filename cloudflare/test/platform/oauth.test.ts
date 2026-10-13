@@ -13,7 +13,7 @@ import { PROVIDER_NETWORK } from "../../src/api/providers.ts";
 import { providerOf } from "../../src/faults/ports.ts";
 import { NOTES_ACCOUNT } from "../../src/faults/provider.ts";
 import { uuid7 } from "../../src/lib/random.ts";
-import type { Role } from "../../src/shared/rpc.ts";
+import type { RefusalCode, Role } from "../../src/shared/rpc.ts";
 import { type Answer, Browser, installEmailLog, signedIn } from "./accounts-helpers.ts";
 
 installEmailLog();
@@ -66,8 +66,8 @@ async function teamWorkspace(members: [Account, Role][]): Promise<string> {
 	return ws;
 }
 
-function expectDetail(answer: Answer, status: number, detail: string): void {
-	expect([answer.status, answer.body], JSON.stringify(answer.body)).toEqual([status, { detail }]);
+function expectRefusal(answer: Answer, status: number, code: RefusalCode, detail: string): void {
+	expect([answer.status, answer.body], JSON.stringify(answer.body)).toEqual([status, { code, detail }]);
 }
 
 /** The authorization URL the API answers for a new connection (`path` "notes/authorize") or a reconnect. */
@@ -431,10 +431,10 @@ describe("Todoist registers Minerva dynamically", () => {
 		const base = `/api/workspaces/${ada.ws}/connections`;
 		for (const failure of [() => Response.json({ error: "nope" }, { status: 500 }), () => Response.json({ client_id: "x" }), () => new Response("not json"), () => Promise.reject(new TypeError("Network connection lost."))]) {
 			todoist.answer = failure;
-			expectDetail(await ada.browser.call("POST", `${base}/todoist/authorize`), 503, "Could not register Minerva with Todoist. Try again later.");
+			expectRefusal(await ada.browser.call("POST", `${base}/todoist/authorize`), 503, "CONNECT_UNAVAILABLE", "Could not register Minerva with Todoist. Try again later.");
 		}
 		expect(await storedTodoistClients()).toEqual([]);
-		expectDetail(await ada.browser.call("POST", `${base}/github/authorize`), 503, "GitHub is not configured on this instance.");
+		expectRefusal(await ada.browser.call("POST", `${base}/github/authorize`), 503, "CONNECT_UNAVAILABLE", "GitHub is not configured on this instance.");
 		const listed = (await ada.browser.call("GET", `/api/workspaces/${ada.ws}/connectors`)).body.map((connector: { slug: string }) => connector.slug);
 		expect(listed).not.toContain("github");
 		FLOW_CLIENTS.of = (e) => {

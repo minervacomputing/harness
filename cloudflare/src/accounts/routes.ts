@@ -33,7 +33,6 @@ export function accountRoutes(app: App): void {
 		const body = {
 			user: { id: user.id, email: user.email, name: user.name, is_staff: user.role === "admin" },
 			workspaces: await listWorkspaces(c.env, user.id),
-			demo: null,
 		};
 		return withSessionCookies(json(200, body), session);
 	});
@@ -42,7 +41,7 @@ export function accountRoutes(app: App): void {
 
 	// `make seed` for the local Worker, run by scripts/seed.ts; absent outside debug.
 	app.post("/api/dev/seed", async (c) => {
-		if (!settings(c.env).debug) return notFound("Seeding only runs with MINERVA_DEBUG=true.", false);
+		if (!settings(c.env).debug) return notFound();
 		return json(200, { lines: await seed(c.env) });
 	});
 }

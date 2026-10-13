@@ -1,9 +1,8 @@
 // Agents, over the Workspace Durable Object, which holds
-// the rules: who may edit (`_editable`), which connections may be added (`_connections`), the full
+// the rules: who may edit (`#editable`), which connections may be added (`#chosenConnections`), the full
 // replace, the revocation of the agent's runs when its connection set changes, and the last agent kept.
 
 import { z } from "zod";
-import { settings } from "../config.ts";
 import { json, notFound } from "../http/errors.ts";
 import { UUID } from "../http/paths.ts";
 import type { App } from "../http/router.ts";
@@ -38,7 +37,7 @@ export function agentRoutes(app: App): void {
 		AGENT,
 		memberRoute(async (c, m) => {
 			const agent = await m.object.getAgent(m.caller, param(c, "agent"));
-			return agent === null ? notFound("No Agent matches the given query.", settings(c.env).debug) : json(200, agent);
+			return agent === null ? notFound() : json(200, agent);
 		}),
 	);
 

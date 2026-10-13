@@ -8,7 +8,7 @@
 import { type Account, type Connector, type CredentialPayload, OperationError, type ProviderClient } from "../gateway/connector.ts";
 import { secretOf, unauthorized } from "../gateway/executor.ts";
 import { CallIo } from "../gateway/http.ts";
-import { HttpError, detail } from "../http/errors.ts";
+import { HttpError, refused } from "../http/errors.ts";
 import { EncryptionKeys, credentialBinding } from "../lib/encryption.ts";
 import type { WorkspaceRef } from "../shared/rpc.ts";
 import type { Member } from "./members.ts";
@@ -53,12 +53,18 @@ export function providerAccount(env: Env, workspace: WorkspaceRef, connector: Co
 	return call(env, workspace, connector, secret, (client) => connector.account(client));
 }
 
-/** The account a key belongs to; a provider's refusal is 422 with its message. */
+/** Failures of what the member sent (an id that cannot name anything, a page token that is not ours), not of the provider. */
+const CALLER_MISTAKES: Partial<Record<string, "INVALID_RESOURCE_ID" | "INVALID_CURSOR">> = { INVALID_ARGUMENTS: "INVALID_RESOURCE_ID", INVALID_CURSOR: "INVALID_CURSOR" };
+
+/** A provider that could not answer, rather than one that answered no. */
+const PROVIDER_DOWN: ReadonlySet<string> = new Set(["PROVIDER_UNAVAILABLE", "PROVIDER_FAILED", "PROVIDER_RATE_LIMITED", "TIMED_OUT"]);
+
+/** The account a key belongs to; a provider's refusal of the key is 422, its failure 502, with its message. */
 export async function keyAccount(env: Env, workspace: WorkspaceRef, connector: Connector, key: string): Promise<Account> {
 	try {
 		return await providerAccount(env, workspace, connector, key);
 	} catch (error) {
-		if (error instanceof OperationError) throw new HttpError(detail(422, error.message));
+		if (error instanceof OperationError) throw new HttpError(refused(PROVIDER_DOWN.has(error.code) ? "PROVIDER_FAILED" : "KEY_REFUSED", error.message));
 		throw error;
 	}
 }
@@ -66,11 +72,12 @@ export async function keyAccount(env: Env, workspace: WorkspaceRef, connector: C
 /**
  * Runs `run` against the provider with the connection's credentials, for the member. A credential the
  * Workspace will not lend (the connection needs reconnecting, a refresh failed) and a provider's failure are
- * 502 with their message; an id refused before anything is sent is 422.
+ * 502 with their message, a refused credential 502 `RECONNECT_NEEDED`; an id or page token refused before anything is
+ * sent is 422.
  */
 export async function withConnection<T>(env: Env, member: Member, connector: Connector, connectionId: string, run: (client: ProviderClient) => Promise<T>): Promise<T> {
 	const lease = await member.object.lease(connectionId, { settings: member.caller });
-	if ("refused" in lease) throw new HttpError(detail(502, lease.message));
+	if ("refused" in lease) throw new HttpError(refused(lease.refused === "CONNECTION_UNAUTHORIZED" ? "RECONNECT_NEEDED" : "PROVIDER_FAILED", lease.message));
 	const binding = credentialBinding(member.workspace.id, connectionId);
 	const payload = (await (await encryptionKeys(env)).decrypt(binding, lease.sealed)) as unknown as CredentialPayload;
 	try {
@@ -83,8 +90,10 @@ export async function withConnection<T>(env: Env, member: Member, connector: Con
 				console.error("Could not mark the connection as needing reconnecting", connectionId, marking);
 			}
 		}
-		// An id the member gave that cannot name anything (segment refuses "..") is their mistake, not the provider's.
-		if (error instanceof OperationError) throw new HttpError(detail(error.code === "INVALID_ARGUMENTS" ? 422 : 502, error.message));
+		if (error instanceof OperationError) {
+			const code = unauthorized(error) ? "RECONNECT_NEEDED" : (CALLER_MISTAKES[error.code] ?? "PROVIDER_FAILED");
+			throw new HttpError(refused(code, error.message));
+		}
 		throw error;
 	}
 }

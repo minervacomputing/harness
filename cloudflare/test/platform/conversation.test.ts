@@ -218,7 +218,7 @@ async function post(stub: Stub, content: string, attachments: string[] = []) {
 
 async function posted(stub: Stub, content: string): Promise<RunId> {
 	const outcome = await post(stub, content);
-	if (!outcome.ok) throw new Error(`Refused: ${outcome.refusal.status} ${outcome.refusal.detail}`);
+	if (!outcome.ok) throw new Error(`Refused: ${outcome.refusal.code} ${outcome.refusal.detail}`);
 	return outcome.value.run.id;
 }
 
@@ -306,9 +306,9 @@ describe("starting a run", () => {
 
 	test("refusals leave nothing behind", async () => {
 		const { stub, fakes } = await conversation();
-		expect(await post(stub, "  \n\t ")).toEqual({ ok: false, refusal: { status: 400, detail: "Write a message or attach a file." } });
-		fakes.workspace.answer = () => ({ ok: false, refusal: { status: 404, detail: "Not Found" } });
-		expect(await post(stub, "Hi")).toEqual({ ok: false, refusal: { status: 404, detail: "Not Found" } });
+		expect(await post(stub, "  \n\t ")).toEqual({ ok: false, refusal: { code: "EMPTY_MESSAGE", detail: "Write a message or attach a file." } });
+		fakes.workspace.answer = () => ({ ok: false, refusal: { code: "NOT_FOUND", detail: "Not found." } });
+		expect(await post(stub, "Hi")).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: "Not found." } });
 		const head = await stub.getConversation(CALLER);
 		expect(head).toMatchObject({ title: "", messages: [], runs: [] });
 		// The marker is gone, so the next message may start.
@@ -322,7 +322,7 @@ describe("starting a run", () => {
 		const upload = "0199a000-0000-7000-8000-0000000000ff";
 		expect(await post(stub, "", [upload])).toEqual({
 			ok: false,
-			refusal: { status: 400, detail: "An attached file is no longer available. Remove it and attach it again." },
+			refusal: { code: "ATTACHMENT_UNAVAILABLE", detail: "An attached file is no longer available. Remove it and attach it again." },
 		});
 		await until(async () => fakes.workspace.released, (released) => released.length === 1);
 		expect(fakes.workspace.released[0]?.[1]).toBe("refused");
@@ -342,7 +342,7 @@ describe("starting a run", () => {
 		fakes.workspace.hold = new Promise<void>((resolve) => (release = resolve));
 		const first = post(stub, scripted({ turns: [{ tools: [{ name: "fake_wait", arguments: {} }] }] }));
 		await until(async () => fakes.workspace.begun.length, (n) => n === 1);
-		const busy = { ok: false, refusal: { status: 409, detail: "Wait for the current answer to finish, or stop it." } };
+		const busy = { ok: false, refusal: { code: "CONVERSATION_BUSY", detail: "Wait for the current answer to finish, or stop it." } };
 		expect(await post(stub, "Second")).toEqual(busy);
 		release();
 		const outcome = await first;
@@ -368,7 +368,7 @@ describe("starting a run", () => {
 		const second = stub.postMessage(CALLER, { content, attachments: [] }, "retry-1");
 		expect(await stub.postMessage(CALLER, { content: "Something else", attachments: [] }, "retry-1")).toEqual({
 			ok: false,
-			refusal: { status: 422, detail: "This Idempotency-Key was used for a different message." },
+			refusal: { code: "IDEMPOTENCY_KEY_REUSED", detail: "This Idempotency-Key was used for a different message." },
 		});
 		release();
 		const [a, b] = await Promise.all([first, second]);
@@ -389,8 +389,8 @@ describe("starting a run", () => {
 
 	test("a refused start forgets its key, so the message may be sent again with it", async () => {
 		const { stub, fakes } = await conversation();
-		fakes.workspace.answer = () => ({ ok: false, refusal: { status: 404, detail: "Not Found" } });
-		expect(await stub.postMessage(CALLER, { content: "Hi", attachments: [] }, "k")).toEqual({ ok: false, refusal: { status: 404, detail: "Not Found" } });
+		fakes.workspace.answer = () => ({ ok: false, refusal: { code: "NOT_FOUND", detail: "Not found." } });
+		expect(await stub.postMessage(CALLER, { content: "Hi", attachments: [] }, "k")).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: "Not found." } });
 		fakes.workspace.answer = (input) => ({ ok: true, value: { snapshot: fakes.workspace.snapshot(input), uploads: [] } });
 		const again = await stub.postMessage(CALLER, { content: "Hi", attachments: [] }, "k");
 		expect(again.ok).toBe(true);
@@ -405,7 +405,7 @@ describe("starting a run", () => {
 		expect(await stub.getRun(other, runId)).toBeNull();
 		expect(await stub.cancelRun(other, runId)).toBeNull();
 		expect(await stub.getRunEvents(other, runId, { after: 0, upTo: 10, limit: 10 })).toBeNull();
-		expect(await stub.postMessage(other, { content: "x", attachments: [] })).toEqual({ ok: false, refusal: { status: 404, detail: "Not Found" } });
+		expect(await stub.postMessage(other, { content: "x", attachments: [] })).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: "Not found." } });
 		await settled(stub, runId);
 	});
 

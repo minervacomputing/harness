@@ -161,7 +161,7 @@ const script = (code: string): FakeTurn => ({ tools: [{ name: "run_script", argu
 
 async function posted(stub: Stub, turns: FakeTurn[], pace: { delayMs?: number; chunkChars?: number } = {}): Promise<RunId> {
 	const outcome = await stub.postMessage(CALLER, { content: JSON.stringify({ fake: { turns, ...pace } }), attachments: [] });
-	if (!outcome.ok) throw new Error(`Refused: ${outcome.refusal.status} ${outcome.refusal.detail}`);
+	if (!outcome.ok) throw new Error(`Refused: ${outcome.refusal.code} ${outcome.refusal.detail}`);
 	return outcome.value.run.id;
 }
 

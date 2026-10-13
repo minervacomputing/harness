@@ -1,6 +1,6 @@
 // The API router. Only /api/* reaches it (static assets answer everything else, http/assets.ts), and every
 // API response gets the security headers. Paths have no trailing slash; a path that matches no route, or a
-// workspace id that is not a UUID, is 404 `{"detail": "Not Found"}`.
+// workspace id that is not a UUID, is 404 `NOT_FOUND`.
 //
 // Two rules hold for every request without a route asking for them, so a route added later cannot forget
 // them, in this order:
@@ -22,7 +22,7 @@ import { apiRoutes } from "../api/routes.ts";
 import { settings } from "../config.ts";
 import { MAX_JSON_BODY, TOO_LARGE, declaredOver } from "./body.ts";
 import { fromSite } from "./csrf.ts";
-import { HttpError, crossSite, detail, json, notFound, serverError } from "./errors.ts";
+import { HttpError, crossSite, json, notFound, refused, serverError } from "./errors.ts";
 import { withSecurityHeaders } from "./headers.ts";
 import { UPLOAD_ROUTE } from "./paths.ts";
 import { probe } from "./probe.ts";
@@ -50,7 +50,7 @@ export function createApp(): App {
 	accountRoutes(app);
 	apiRoutes(app);
 
-	app.notFound((c) => notFound(`No route for ${c.req.method} ${c.req.path}`, settings(c.env).debug));
+	app.notFound(() => notFound());
 	app.onError((error, c) => {
 		if (error instanceof HttpError) return error.response;
 		console.error("Unhandled error", c.req.method, c.req.path, error);
@@ -79,6 +79,6 @@ const bodyCap: MiddlewareHandler<AppEnv> = async (c, next) => {
 	// Hono marks middleware with the method ALL; any other match is an endpoint.
 	const endpoint = matchedRoutes(c).find((route) => route.method !== "ALL");
 	const own = endpoint !== undefined && OWN_SIZE_LIMIT.has(`${endpoint.method} ${endpoint.path}`);
-	if (!own && declaredOver(c.req.raw, MAX_JSON_BODY)) return detail(TOO_LARGE.status, TOO_LARGE.detail);
+	if (!own && declaredOver(c.req.raw, MAX_JSON_BODY)) return refused(TOO_LARGE.code, TOO_LARGE.detail);
 	await next();
 };

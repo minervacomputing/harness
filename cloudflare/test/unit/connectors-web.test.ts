@@ -718,7 +718,7 @@ describe("settings", () => {
 		expect(first.value).toMatchObject({ provider: "web", auth: "builtin", label: "Web" });
 		const theirs = await h.core.enableBuiltin(GRACE, "web");
 		expect(theirs.ok && theirs.value.id !== first.value.id).toBe(true);
-		expect(await h.core.enableBuiltin(ADA, "nope")).toMatchObject({ ok: false, refusal: { status: 404 } });
+		expect(await h.core.enableBuiltin(ADA, "nope")).toMatchObject({ ok: false, refusal: { code: "UNKNOWN_PROVIDER" } });
 	});
 
 	test("sites are found by address and allowed per domain", async () => {
@@ -753,7 +753,7 @@ describe("settings", () => {
 		const change = (resourceId: string, kind = "site", actions = ["read"]) =>
 			h.core.applyGrantChanges(ADA, id, [{ kind, id: resourceId, actions }], kind === "site" ? { [resourceKey(kind, resourceId)]: name(resourceId) } : {});
 		expect((await change("*.python.org")).ok).toBe(true);
-		expect(await change("*.python.org", "site", ["search"])).toMatchObject({ ok: false, refusal: { status: 422 } });
+		expect(await change("*.python.org", "site", ["search"])).toMatchObject({ ok: false, refusal: { code: "INVALID_ACCESS_CHANGE" } });
 		expect((await change(id, "account", ["search"])).ok).toBe(true);
 		const grants = accessOf(await h.core.getAccess(ADA, id)).grants.map((grant) => [grant.kind, grant.id, grant.actions]);
 		expect(grants).toEqual(

@@ -10,9 +10,9 @@ import type { Context } from "hono";
 import { type CurrentSession, currentSession, withSessionCookies } from "../accounts/auth.ts";
 import { type WorkspaceRow, ensureInitialized, workspaceOwner } from "../accounts/provision.ts";
 import { workspaceObject } from "../addressing.ts";
-import { HttpError, detail, unauthorized } from "../http/errors.ts";
+import { HttpError, refused, unauthorized } from "../http/errors.ts";
 import type { AppEnv } from "../http/router.ts";
-import type { Caller, Outcome, Refusal, Role, WorkspaceRef } from "../shared/rpc.ts";
+import type { Caller, Outcome, Role, WorkspaceRef } from "../shared/rpc.ts";
 import type { Revocation } from "../workspace/core.ts";
 import type { Workspace } from "../workspace/workspace.ts";
 
@@ -73,24 +73,19 @@ export async function member(env: Env, session: CurrentSession, workspaceId: str
 	return { caller: { userId: user.id, role: row.role }, workspace, object: workspaceObject(env, workspace), sessionId: session.sessionId };
 }
 
-/** A Durable Object's refusal as a response: `{"detail": …}` with its status. */
-export function refused(refusal: Refusal): Response {
-	return detail(refusal.status, refusal.detail);
-}
-
 /** The value of an outcome, or its refusal thrown as the answer. */
 export function valueOf<T>(outcome: Outcome<T>): T {
-	if (!outcome.ok) throw new HttpError(refused(outcome.refusal));
+	if (!outcome.ok) throw new HttpError(refused(outcome.refusal.code, outcome.refusal.detail));
 	return outcome.value;
 }
 
 /**
  * A change that stopped runs is answered only once every stop is acknowledged (plan: Strict revocation).
  * When that takes more than 10 seconds the change stays saved, the runs stop shortly after, and the
- * request answers 503 with this.
+ * request answers 503 `RUNS_STILL_STOPPING` with this.
  */
 export const STILL_STOPPING = "Your change was saved, but some running chats have not stopped yet. They will stop shortly.";
 
 export function afterRevocation(revocation: Revocation, response: Response): Response {
-	return revocation === "pending" ? detail(503, STILL_STOPPING) : response;
+	return revocation === "pending" ? refused("RUNS_STILL_STOPPING", STILL_STOPPING) : response;
 }

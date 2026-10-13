@@ -652,13 +652,13 @@ async function workspace(): Promise<Pick<Harness, "core" | "sql" | "keys">> {
  */
 async function saveKey(core: WorkspaceCore, stripe: FakeStripe, caller: Caller, key: string, connectionId: ConnectionId | null = null): Promise<Outcome<ConnectionOut>> {
 	const connector = registry.get("stripe");
-	if (connector.auth.type !== "api_key") return { ok: false, refusal: { status: 422, detail: "This provider does not connect with a key." } };
+	if (connector.auth.type !== "api_key") return { ok: false, refusal: { code: "WRONG_CONNECTION_METHOD", detail: "This provider does not connect with a key." } };
 	const client = connector.client(key, settingsIo(stripe.fetch));
 	let account: { id: string; label: string };
 	try {
 		account = await connector.account(client);
 	} catch (error) {
-		if (error instanceof OperationError) return { ok: false, refusal: { status: 422, detail: error.message } };
+		if (error instanceof OperationError) return { ok: false, refusal: { code: "KEY_REFUSED", detail: error.message } };
 		throw error;
 	} finally {
 		await client.close();
@@ -697,7 +697,7 @@ describe("connecting with a key", () => {
 
 		const other = await saveKey(core, stripe, OWNER, OTHER_KEY, created.value.id);
 		expect(other.ok).toBe(false);
-		if (!other.ok) expect(other.refusal).toEqual({ status: 422, detail: "This key is for a different Stripe account. Use a key for Acme (test mode)." });
+		if (!other.ok) expect(other.refusal).toEqual({ code: "DIFFERENT_ACCOUNT", detail: "This key is for a different Stripe account. Use a key for Acme (test mode)." });
 		expect((await saveKey(core, stripe, OWNER, LIVE_KEY, created.value.id)).ok).toBe(false);
 		const renewed = `rk_test_${"d".repeat(24)}`;
 		stripe.accounts.set(renewed, "acct_1");

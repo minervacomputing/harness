@@ -7,6 +7,7 @@ import { describe, expect, test } from "vitest";
 import { SAFETY_INSTRUCTIONS } from "../../src/gateway/tools.ts";
 import { splitParts } from "../../src/lib/text.ts";
 import { NOT_FOUND, START_FAILED, START_TTL_MS } from "../../src/workspace/core.ts";
+import type { RefusalCode } from "../../src/shared/rpc.ts";
 import {
 	ADA,
 	GRACE,
@@ -115,21 +116,21 @@ describe("beginRun", () => {
 		// One after the other: at most three may be arriving at once.
 		const ids: string[] = [];
 		for (let i = 0; i < 11; i++) ids.push(await uploaded(h, `f${i}.txt`, 1));
-		const cases: [Parameters<typeof begin>[1], number, string][] = [
-			[{ conversationId: theirs }, 404, NOT_FOUND],
-			[{ uploadIds: ids }, 400, "Attach at most 10 files to a message."],
-			[{ uploadIds: [...ids.slice(0, 9), ids[0] as string, ids[0] as string] }, 400, "Attach at most 10 files to a message."],
-			[{ uploadIds: [ids[0] as string, ids[0] as string] }, 400, "A file is attached twice."],
-			[{ uploadIds: [foreign] }, 400, "An attached file is no longer available. Remove it and attach it again."],
-			[{ uploadIds: [pending.ok ? pending.value.id : ""] }, 400, "An attached file is no longer available. Remove it and attach it again."],
-			[{ uploadIds: ["0199a000-0000-7000-8000-0000000000ff"] }, 400, "An attached file is no longer available. Remove it and attach it again."],
-			[{ uploadIds: [ids[0] as string], folder: { bytes: 0, entries: 10_000 } }, 413, "These files would put more than 10,000 files and folders in this conversation's folder."],
-			[{ uploadIds: [ids[0] as string], folder: { bytes: 268_435_456, entries: 10_000 } }, 413, "These files would put more than 10,000 files and folders in this conversation's folder."],
-			[{ uploadIds: [ids[0] as string], folder: { bytes: 268_435_456 - 4095, entries: 0 } }, 413, "These files would make this conversation's folder larger than 256 MB."],
+		const cases: [Parameters<typeof begin>[1], RefusalCode, string][] = [
+			[{ conversationId: theirs }, "NOT_FOUND", NOT_FOUND],
+			[{ uploadIds: ids }, "TOO_MANY_ATTACHMENTS", "Attach at most 10 files to a message."],
+			[{ uploadIds: [...ids.slice(0, 9), ids[0] as string, ids[0] as string] }, "TOO_MANY_ATTACHMENTS", "Attach at most 10 files to a message."],
+			[{ uploadIds: [ids[0] as string, ids[0] as string] }, "ATTACHED_TWICE", "A file is attached twice."],
+			[{ uploadIds: [foreign] }, "ATTACHMENT_UNAVAILABLE", "An attached file is no longer available. Remove it and attach it again."],
+			[{ uploadIds: [pending.ok ? pending.value.id : ""] }, "ATTACHMENT_UNAVAILABLE", "An attached file is no longer available. Remove it and attach it again."],
+			[{ uploadIds: ["0199a000-0000-7000-8000-0000000000ff"] }, "ATTACHMENT_UNAVAILABLE", "An attached file is no longer available. Remove it and attach it again."],
+			[{ uploadIds: [ids[0] as string], folder: { bytes: 0, entries: 10_000 } }, "FOLDER_FULL", "These files would put more than 10,000 files and folders in this conversation's folder."],
+			[{ uploadIds: [ids[0] as string], folder: { bytes: 268_435_456, entries: 10_000 } }, "FOLDER_FULL", "These files would put more than 10,000 files and folders in this conversation's folder."],
+			[{ uploadIds: [ids[0] as string], folder: { bytes: 268_435_456 - 4095, entries: 0 } }, "FOLDER_FULL", "These files would make this conversation's folder larger than 256 MB."],
 		];
-		for (const [options, status, detail] of cases) {
+		for (const [options, code, detail] of cases) {
 			const { input, answer } = await begin(h, { conversationId: mine, ...options });
-			expect(answer, detail).toEqual({ ok: false, refusal: { status, detail } });
+			expect(answer, detail).toEqual({ ok: false, refusal: { code, detail } });
 			expect(registered(h, input.runId)).toBeNull();
 		}
 		expect(h.sql.exec("SELECT count(*) AS n FROM uploads WHERE run_id IS NOT NULL")).toEqual([{ n: 0 }]);
@@ -148,7 +149,7 @@ describe("beginRun", () => {
 			const h = await harness({ settings: { folderBytes: bytes } });
 			const upload = await uploaded(h, "big.bin", 1);
 			const { answer } = await begin(h, { uploadIds: [upload], folder: { bytes, entries: 0 } });
-			expect(answer).toEqual({ ok: false, refusal: { status: 413, detail: `These files would make this conversation's folder larger than ${text}.` } });
+			expect(answer).toEqual({ ok: false, refusal: { code: "FOLDER_FULL", detail: `These files would make this conversation's folder larger than ${text}.` } });
 		}
 	});
 
@@ -163,7 +164,7 @@ describe("beginRun", () => {
 		]);
 		// Another start cannot attach what this one reserved, until this one lets go.
 		const other = await begin(h, { uploadIds: [first] });
-		expect(other.answer).toMatchObject({ ok: false, refusal: { status: 400 } });
+		expect(other.answer).toMatchObject({ ok: false, refusal: { code: "ATTACHMENT_UNAVAILABLE" } });
 		await h.core.release(input.runId, "refused");
 		expect((await begin(h, { uploadIds: [first] })).answer.ok).toBe(true);
 	});
@@ -172,10 +173,10 @@ describe("beginRun", () => {
 		const h = await harness();
 		const chat = await conversation(h);
 		await h.core.deleteConversation(ADA, chat);
-		expect((await begin(h, { conversationId: chat })).answer).toEqual({ ok: false, refusal: { status: 404, detail: NOT_FOUND } });
+		expect((await begin(h, { conversationId: chat })).answer).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: NOT_FOUND } });
 		const live = await conversation(h);
 		const { input } = await begin(h, { conversationId: live });
-		expect(await h.core.beginRun({ ...input, runId: "0199a000-0000-7000-9000-00000000ffff", agentId: "0199a000-0000-7000-8000-0000000000ff" })).toMatchObject({ ok: false, refusal: { status: 404 } });
+		expect(await h.core.beginRun({ ...input, runId: "0199a000-0000-7000-9000-00000000ffff", agentId: "0199a000-0000-7000-8000-0000000000ff" })).toMatchObject({ ok: false, refusal: { code: "NOT_FOUND" } });
 	});
 
 	test("a crash inside beginRun leaves nothing behind", async () => {
@@ -248,7 +249,7 @@ describe("activation", () => {
 		await h.core.alarm();
 		expect(registered(h, input.runId)?.state).toBe("expired");
 		expect(await h.core.activate(input.runId)).toEqual({ state: "expired" });
-		expect(await h.core.beginRun(input)).toEqual({ ok: false, refusal: { status: 503, detail: START_FAILED } });
+		expect(await h.core.beginRun(input)).toEqual({ ok: false, refusal: { code: "START_FAILED", detail: START_FAILED } });
 		expect((await begin(h, { uploadIds: [upload] })).answer.ok).toBe(true);
 	});
 
@@ -260,7 +261,7 @@ describe("activation", () => {
 		await h.timers.advance(START_TTL_MS);
 		expect(await h.core.activate(late.input.runId)).toEqual({ state: "expired" });
 		expect(h.sql.exec("SELECT run_id FROM uploads")).toEqual([{ run_id: null }]);
-		expect(await h.core.beginRun(repeated.input)).toEqual({ ok: false, refusal: { status: 503, detail: START_FAILED } });
+		expect(await h.core.beginRun(repeated.input)).toEqual({ ok: false, refusal: { code: "START_FAILED", detail: START_FAILED } });
 		expect(registered(h, repeated.input.runId)?.state).toBe("expired");
 	});
 
@@ -284,7 +285,7 @@ describe("release and the run index", () => {
 		expect(registered(h, input.runId)?.state).toBe("ended");
 		expect(h.sql.exec("SELECT run_id FROM uploads")).toEqual([{ run_id: null }]);
 		expect(await h.core.locateRun(ADA, input.runId)).toEqual({ conversationId: input.conversationId });
-		expect(await h.core.beginRun(input)).toEqual({ ok: false, refusal: { status: 503, detail: START_FAILED } });
+		expect(await h.core.beginRun(input)).toEqual({ ok: false, refusal: { code: "START_FAILED", detail: START_FAILED } });
 		// Releasing again, or an unknown run, changes nothing.
 		await h.core.release(input.runId, "completed");
 		await h.core.release("0199a000-0000-7000-9000-0000000fffff", "completed");
@@ -319,7 +320,7 @@ describe("revocation racing a start", () => {
 		expect(h.conversations.cancels).toEqual([{ conversationId: input.conversationId, runId: input.runId, reason: "permissions_changed", entryId: 1 }]);
 		expect(outbox(h)).toMatchObject([{ run_id: input.runId, ack_state: "tombstoned" }]);
 		// A Conversation that retries its start learns it was revoked; one that stored it learns on activation.
-		expect(await h.core.beginRun(input)).toEqual({ ok: false, refusal: { status: 409, detail: "Stopped because permissions changed." } });
+		expect(await h.core.beginRun(input)).toEqual({ ok: false, refusal: { code: "RUN_STOPPED", detail: "Stopped because permissions changed." } });
 		expect(await h.core.activate(input.runId)).toEqual({ state: "revoked", reason: "permissions_changed" });
 	});
 });

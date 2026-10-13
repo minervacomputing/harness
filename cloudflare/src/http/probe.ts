@@ -10,7 +10,6 @@
 
 import type { Context } from "hono";
 import { conversationObject, sandboxObject, scriptsObject, workspaceObject } from "../addressing.ts";
-import { settings } from "../config.ts";
 import { timingSafeEqual } from "../lib/hash.ts";
 import { escapedKeyCheck } from "../lib/json.ts";
 import type { WorkspaceRef } from "../shared/rpc.ts";
@@ -23,7 +22,7 @@ const NIL = "00000000-0000-0000-0000-000000000000";
 export async function probe(c: Context<AppEnv>): Promise<Response> {
 	const given = c.req.header(PROBE_HEADER) ?? "";
 	if (!timingSafeEqual(given, await probeToken(c.env.MINERVA_SECRET_KEY))) {
-		return notFound(`No route for ${c.req.method} ${c.req.path}`, settings(c.env).debug);
+		return notFound();
 	}
 	// Hono types its ExecutionContext without `exports`; the runtime's has it.
 	const { exports } = c.executionCtx as unknown as ExecutionContext;

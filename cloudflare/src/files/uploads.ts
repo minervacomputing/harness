@@ -1,6 +1,6 @@
 // Uploads from the browser (plan: Files, Uploads): the checks of the raw request in order, and the body streamed into R2 while it is hashed, recorded in the Workspace as pending before the
-// object is written and as complete after. The HTTP route around them (CSRF, session, membership, the demo
-// rule, between the name and the stream) is the web API's (api/uploads.ts).
+// object is written and as complete after. The HTTP route around them (CSRF, session, membership, between
+// the name and the stream) is the web API's (api/uploads.ts).
 //
 // The body is not read in JavaScript: it is teed natively into R2's `put` and a `crypto.DigestStream`
 // (about 550 ms of CPU per 50 MiB), through a FixedLengthStream of the declared size, which gives R2 the
@@ -16,7 +16,7 @@
 
 import { hex } from "../lib/bytes.ts";
 import type { UploadOut } from "../shared/api.ts";
-import type { Caller, Outcome, Refusal, Sha256, UploadId } from "../shared/rpc.ts";
+import { type Caller, type Outcome, type Sha256, type UploadId, refuse } from "../shared/rpc.ts";
 import { BODY_LONGER, BODY_SHORTER, INVALID_LENGTH, NAME_THE_FILE, SEND_LENGTH, SNIFF_BYTES, TOO_SLOW, UPLOAD_DEADLINE_MS, UPLOAD_SETTLE_MS, USE_POST, uploadTooLarge } from "./limits.ts";
 import { cleanName, sniff, uploadName } from "./names.ts";
 
@@ -50,10 +50,6 @@ export interface UploadBucket {
 	delete(key: string): Promise<void>;
 }
 
-function refused(status: Refusal["status"], detail: string): { ok: false; refusal: Refusal } {
-	return { ok: false, refusal: { status, detail } };
-}
-
 /**
  * The checks made before anything else is read (checks 2 to 7): POST, one Content-Length of
  * digits, at most the upload limit, and exactly one non-blank `?name=`, cleaned.
@@ -62,15 +58,15 @@ export function checkUploadRequest(
 	request: { method: string; headers: Headers; url: string },
 	uploadBytes: number,
 ): Outcome<{ size: number; name: string }> {
-	if (request.method !== "POST") return refused(405, USE_POST);
+	if (request.method !== "POST") return refuse("METHOD_NOT_ALLOWED", USE_POST);
 	// Several Content-Length headers arrive joined with ", ", which is not digits either.
 	const length = request.headers.get("content-length");
-	if (length === null) return refused(411, SEND_LENGTH);
-	if (!/^[0-9]+$/.test(length)) return refused(400, INVALID_LENGTH);
+	if (length === null) return refuse("LENGTH_REQUIRED", SEND_LENGTH);
+	if (!/^[0-9]+$/.test(length)) return refuse("INVALID_CONTENT_LENGTH", INVALID_LENGTH);
 	const size = Number(length);
-	if (size > uploadBytes) return refused(413, uploadTooLarge(uploadBytes));
+	if (size > uploadBytes) return refuse("FILE_TOO_LARGE", uploadTooLarge(uploadBytes));
 	const raw = uploadName(new URL(request.url).search.replace(/^\?/, ""));
-	if (raw === null) return refused(400, NAME_THE_FILE);
+	if (raw === null) return refuse("FILE_NAME_MISSING", NAME_THE_FILE);
 	return { ok: true, value: { size, name: cleanName(raw) } };
 }
 
@@ -188,15 +184,15 @@ export async function receiveUpload(
 					.catch(() => {});
 				options.waitUntil?.(cleanup);
 			}
-			return refused(408, TOO_SLOW);
+			return refuse("UPLOAD_TIMEOUT", TOO_SLOW);
 		}
 		const [piped, hashed, stored, head] = outcome;
 		const failure = [piped, stored, hashed].find((result) => result.status === "rejected") as PromiseRejectedResult | undefined;
 		if (failure) {
 			await abandon();
 			const missed = lengthError(failure.reason);
-			if (missed === "longer") return refused(400, BODY_LONGER);
-			if (missed === "shorter") return refused(400, BODY_SHORTER);
+			if (missed === "longer") return refuse("CONTENT_LENGTH_MISMATCH", BODY_LONGER);
+			if (missed === "shorter") return refuse("CONTENT_LENGTH_MISMATCH", BODY_SHORTER);
 			throw failure.reason;
 		}
 		const object = (stored as PromiseFulfilledResult<{ size: number } | null>).value;

@@ -60,13 +60,13 @@ describe("agents", () => {
 		]);
 		expect(await h.core.updateAgent({ userId: USER, role: "member" }, created.value.id, { name: "Mine now" })).toEqual({
 			ok: false,
-			refusal: { status: 403, detail: "You cannot change this agent." },
+			refusal: { code: "CANNOT_CHANGE_AGENT", detail: "You cannot change this agent." },
 		});
-		expect(await h.core.deleteAgent({ userId: USER, role: "member" }, created.value.id)).toMatchObject({ ok: false, refusal: { status: 403 } });
+		expect(await h.core.deleteAgent({ userId: USER, role: "member" }, created.value.id)).toMatchObject({ ok: false, refusal: { code: "CANNOT_CHANGE_AGENT" } });
 		// An owner or admin may.
 		expect(await h.core.updateAgent({ userId: USER, role: "admin" }, created.value.id, { name: "Renamed" })).toMatchObject({ ok: true });
 		expect(await h.core.getAgent(ADA, "0199a000-0000-7000-8000-0000000000ff")).toBeNull();
-		expect(await h.core.updateAgent(ADA, "0199a000-0000-7000-8000-0000000000ff", { name: "x" })).toEqual({ ok: false, refusal: { status: 404, detail: NOT_FOUND } });
+		expect(await h.core.updateAgent(ADA, "0199a000-0000-7000-8000-0000000000ff", { name: "x" })).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: NOT_FOUND } });
 	});
 
 	test("unknown body fields from an older client never reach the answer", async () => {
@@ -93,7 +93,7 @@ describe("agents", () => {
 		const graces = await connectMixed(h, {}, { caller: GRACE, account: "acct-grace" });
 		const foreign = "0199a000-0000-7000-8000-0000000000ee";
 		for (const ids of [[graces], [foreign]]) {
-			expect(await h.core.createAgent(ADA, { name: "Sneaky", connection_ids: ids })).toEqual({ ok: false, refusal: { status: 422, detail: CHOOSE_CONNECTIONS } });
+			expect(await h.core.createAgent(ADA, { name: "Sneaky", connection_ids: ids })).toEqual({ ok: false, refusal: { code: "CHOOSE_CONNECTIONS", detail: CHOOSE_CONNECTIONS } });
 		}
 		// The same id twice is one connection.
 		const mine = await connectMixed(h, {});
@@ -110,7 +110,7 @@ describe("agents", () => {
 		expect(await h.core.updateAgent(ADA, agent, { name: "Renamed", connection_ids: [connection] })).toMatchObject({ ok: true });
 		expect(await h.core.updateAgent(ADA, agent, { name: "Renamed", connection_ids: [] })).toMatchObject({ ok: true });
 		// Adding it back is adding a connection, which must be usable.
-		expect(await h.core.updateAgent(ADA, agent, { name: "Renamed", connection_ids: [connection] })).toEqual({ ok: false, refusal: { status: 422, detail: CHOOSE_CONNECTIONS } });
+		expect(await h.core.updateAgent(ADA, agent, { name: "Renamed", connection_ids: [connection] })).toEqual({ ok: false, refusal: { code: "CHOOSE_CONNECTIONS", detail: CHOOSE_CONNECTIONS } });
 	});
 
 	test("an agent keeps someone else's connection it already has", async () => {
@@ -123,7 +123,7 @@ describe("agents", () => {
 		const admin = { userId: USER, role: "admin" } as const;
 		expect(await h.core.updateAgent(admin, agent.value.id, { name: "Renamed", connection_ids: [graces] })).toMatchObject({ ok: true });
 		const another = await connectMixed(h, {}, { caller: GRACE, account: "acct-grace-2" });
-		expect(await h.core.updateAgent(admin, agent.value.id, { name: "Renamed", connection_ids: [graces, another] })).toMatchObject({ ok: false, refusal: { status: 422 } });
+		expect(await h.core.updateAgent(admin, agent.value.id, { name: "Renamed", connection_ids: [graces, another] })).toMatchObject({ ok: false, refusal: { code: "CHOOSE_CONNECTIONS" } });
 	});
 
 	test("deleting a connection removes it from every agent", async () => {
@@ -138,7 +138,7 @@ describe("agents", () => {
 	test("the last agent cannot be deleted; deleting one removes its conversations", async () => {
 		const h = await harness();
 		const first = await defaultAgent(h);
-		expect(await h.core.deleteAgent(ADA, first)).toEqual({ ok: false, refusal: { status: 422, detail: KEEP_ONE_AGENT } });
+		expect(await h.core.deleteAgent(ADA, first)).toEqual({ ok: false, refusal: { code: "KEEP_ONE_AGENT", detail: KEEP_ONE_AGENT } });
 		const second = await h.core.createAgent(ADA, { name: "Second" });
 		if (!second.ok) throw new Error("not created");
 		const chat = await conversation(h, ADA, second.value.id);
@@ -147,7 +147,7 @@ describe("agents", () => {
 		expect((await h.core.listAgents(ADA)).map((agent) => agent.id)).toEqual([first]);
 		expect((await h.core.listConversations(ADA)).map((row) => row.id)).toEqual([kept]);
 		expect(h.conversations.destroyed).toEqual([chat]);
-		expect(await h.core.createConversation(ADA, second.value.id)).toEqual({ ok: false, refusal: { status: 404, detail: NOT_FOUND } });
+		expect(await h.core.createConversation(ADA, second.value.id)).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: NOT_FOUND } });
 		expect(h.sql.exec("SELECT id FROM layers WHERE level = 'agent'")).toEqual([]);
 	});
 });
@@ -155,7 +155,7 @@ describe("agents", () => {
 describe("the conversation index", () => {
 	test("a conversation needs an agent of the workspace and initializes its object", async () => {
 		const h = await harness();
-		expect(await h.core.createConversation(ADA, "0199a000-0000-7000-8000-0000000000ff")).toEqual({ ok: false, refusal: { status: 404, detail: NOT_FOUND } });
+		expect(await h.core.createConversation(ADA, "0199a000-0000-7000-8000-0000000000ff")).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: NOT_FOUND } });
 		const agent = await defaultAgent(h);
 		const created = await h.core.createConversation(ADA, agent);
 		expect(created).toEqual({ ok: true, value: { id: expect.any(String), agent_id: agent, title: "", updated_at: new Date(h.timers.now()).toISOString() } });
@@ -186,7 +186,7 @@ describe("the conversation index", () => {
 	test("another user's conversation is not found", async () => {
 		const h = await harness();
 		const theirs = await conversation(h, GRACE);
-		expect(await h.core.deleteConversation(ADA, theirs)).toEqual({ ok: false, refusal: { status: 404, detail: NOT_FOUND } });
+		expect(await h.core.deleteConversation(ADA, theirs)).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: NOT_FOUND } });
 		expect(await h.core.listConversations(ADA)).toEqual([]);
 	});
 

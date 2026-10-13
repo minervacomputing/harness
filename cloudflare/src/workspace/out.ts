@@ -46,7 +46,7 @@ function hasConsent(op: Operation<never>): boolean {
 }
 
 /**
- * `_lacking`: operations the allowed actions make usable (every action they need is allowed, any kind) but
+ * Operations the allowed actions make usable (every action they need is allowed, any kind) but
  * the scopes do not cover, each with the actions to blame: those no covered operation already performs,
  * or all of its actions when there are none.
  */
@@ -88,7 +88,7 @@ export function requestedScopes(connector: Connector, actions: ReadonlySet<strin
 	return [...requested, ...[...extra].filter((scope) => !base.has(scope)).sort()];
 }
 
-/** `_allowed`: the user's grants by action, in the connector's order of kinds and actions. `grants` are in (kind, id) order. */
+/** The user's grants by action, in the connector's order of kinds and actions. `grants` are in (kind, id) order. */
 export function allowedOut(connector: Connector, grants: readonly GrantRow[]): AllowedOut[] {
 	const allowed: AllowedOut[] = [];
 	for (const kind of connector.kinds) {
@@ -121,7 +121,7 @@ export interface ConnectionView {
 	scopes: string[] | null;
 }
 
-/** `_connection_out`. `grants` are the caller's allow grants on the connection, in (kind, id) order. */
+/** A connection as the API shows it. `grants` are the caller's allow grants on the connection, in (kind, id) order. */
 export function connectionOut(connector: Connector, connection: ConnectionView, grants: readonly GrantRow[]): ConnectionOut {
 	const actions = new Set(grants.flatMap((grant) => grant.actions));
 	const manage = connector.manageLink ? connector.manageLink() : null;
