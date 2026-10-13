@@ -144,7 +144,7 @@ make api-types       # after any backend API schema change
 In `frontend/`:
 
 ```sh
-pnpm check    # oxlint, oxfmt --check, tsc and the unit tests; run before every commit
+pnpm check    # oxlint, oxfmt --check, tsc, knip (unused files, exports, dependencies) and the unit tests; run before every commit
 pnpm format   # oxfmt writes the formatting
 pnpm test     # the unit tests alone (vitest)
 ```
@@ -154,4 +154,5 @@ Tests:
 - Unit tests are `src/**/*.test.ts` on pure modules: plain inputs and outputs, inline data, Node without a DOM.
 - No component tests (`*.test.tsx`, Testing Library, jsdom), no module mocks (`vi.mock`), and no parameters or injection that exist only for a test. The linter enforces the first two.
 - The client's integration tests run against the Worker in `cloudflare/test/platform/frontend-*.test.ts` (`pnpm test:platform` in `cloudflare/`).
+- An export that only those integration tests use says so with `@public` in its doc comment, so knip leaves it.
 - What users see is checked by the browser walk, `cloudflare/test/account/browser.test.ts`, against the deployed test Worker.

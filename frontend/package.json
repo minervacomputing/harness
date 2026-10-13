@@ -14,7 +14,8 @@
     "format:check": "oxfmt --check",
     "lint": "oxlint --report-unused-disable-directives-severity=error",
     "test": "vitest run",
-    "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test"
+    "knip": "knip --no-progress",
+    "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm knip && pnpm test"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.15.22",
@@ -45,6 +46,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
+    "knip": "6.39.0",
     "oxfmt": "0.71.0",
     "oxlint": "1.86.0",
     "typescript": "^5.9.3",

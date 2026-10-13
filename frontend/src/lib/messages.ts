@@ -13,7 +13,10 @@ export function newSendKey(): string {
   return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
-/** Waits before each repeat of a send whose answer did not arrive (or came from a server that is restarting). */
+/**
+ * Waits before each repeat of a send whose answer did not arrive (or came from a server that is restarting).
+ * @public The Worker's integration tests shorten it (cloudflare/test/platform/frontend-messages.test.ts).
+ */
 export const SEND_RETRY = { delaysMs: [400, 1200] }
 
 /** The answers of a server that is briefly not there: a proxy's, a restart's, a revocation still stopping. */

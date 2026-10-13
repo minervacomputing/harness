@@ -260,7 +260,10 @@ export function useAuthStep<Vars>(step: (vars: Vars) => Promise<AuthState>) {
   return useMutation({ mutationFn: (vars: Vars) => runAuthStep(queryClient, step, vars) })
 }
 
-/** What `useAuthStep` does with a step, apart from the hook. */
+/**
+ * What `useAuthStep` does with a step, apart from the hook.
+ * @public The Worker's integration tests call it (cloudflare/test/platform/frontend-auth.test.ts).
+ */
 export async function runAuthStep<Vars>(
   queryClient: Pick<QueryClient, 'removeQueries' | 'setQueryData'>,
   step: (vars: Vars) => Promise<AuthState>,
@@ -491,6 +494,7 @@ type SignOutClient = Pick<QueryClient, 'cancelQueries' | 'clear' | 'invalidateQu
  * cancelled; then the session ends; then the cache says "signed out" and the sign-in page opens, which
  * unmounts the signed-in app; and only then is the account's data dropped. If the server cannot end the
  * session, the user is still signed in and what was cancelled is fetched again.
+ * @public The Worker's integration tests call it (cloudflare/test/platform/frontend-auth.test.ts).
  */
 export async function signOut(queryClient: SignOutClient, goToLogin: () => Promise<unknown>): Promise<void> {
   signingOut = true

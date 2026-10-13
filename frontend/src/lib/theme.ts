@@ -26,7 +26,7 @@ function apply() {
 
 media.addEventListener('change', apply)
 
-export function setTheme(choice: ThemeChoice) {
+function setTheme(choice: ThemeChoice) {
   try {
     if (choice === 'system') localStorage.removeItem(KEY)
     else localStorage.setItem(KEY, choice)
