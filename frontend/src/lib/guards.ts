@@ -43,5 +43,5 @@ export async function requireSignedIn(queryClient: QueryClient, next: string) {
  */
 export async function requireInstanceAdmin(queryClient: QueryClient) {
   const me = await queryClient.fetchQuery({ ...meOptions(), staleTime: 0 })
-  if (!me.user.is_staff) throw notFound()
+  if (me.user.role !== 'admin') throw notFound()
 }

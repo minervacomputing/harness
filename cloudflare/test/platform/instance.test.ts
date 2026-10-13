@@ -39,7 +39,7 @@ function expectRefusal(answer: Answer, status: number, code: RefusalCode, detail
 }
 
 async function isStaff(u: User): Promise<boolean> {
-	return (await u.browser.call("GET", "/api/me")).body.user.is_staff;
+	return (await u.browser.call("GET", "/api/me")).body.user.role === "admin";
 }
 
 async function admins(): Promise<string[]> {

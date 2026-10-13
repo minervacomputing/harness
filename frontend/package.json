@@ -9,7 +9,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b",
-    "gen:api": "uv run --project ../backend python ../backend/devtools/export_openapi.py > openapi.json && openapi-ts",
+    "gen:api": "openapi-ts",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "lint": "oxlint --report-unused-disable-directives-severity=error",

@@ -31,7 +31,7 @@ export function accountRoutes(app: App): void {
 		// A user whose provisioning a crash left pending gets it finished here (provision.ts).
 		await ensureProvisioned(c.env, user.id);
 		const body = {
-			user: { id: user.id, email: user.email, name: user.name, is_staff: user.role === "admin" },
+			user: { id: user.id, email: user.email, name: user.name, role: user.role === "admin" ? "admin" : "user" },
 			workspaces: await listWorkspaces(c.env, user.id),
 		};
 		return withSessionCookies(json(200, body), session);

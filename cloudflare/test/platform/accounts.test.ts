@@ -93,7 +93,7 @@ describe("sign-up and provisioning", () => {
 		const me = await browser.call("GET", "/api/me");
 		expect(me.status).toBe(200);
 		expect(me.body).toEqual({
-			user: { id, email, name: "", is_staff: false },
+			user: { id, email, name: "", role: "user" },
 			workspaces: [{ id: made.workspaceId, name: "Personal", kind: "personal", role: "owner" }],
 		});
 	});

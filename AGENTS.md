@@ -136,7 +136,7 @@ opencode run --agent plan --auto -f plan.md "Critique this plan: what is wrong, 
 make test            # backend pytest (needs Postgres), worker typecheck and tests, frontend check
 make lint            # ruff check and format check, frontend check
 make sandbox-check   # sandbox isolation probe; needs make dev running
-make api-types       # after any backend API schema change
+make api-types       # after editing frontend/openapi.json (by hand: the Worker serves the API, not Django)
 ```
 
 ## Frontend

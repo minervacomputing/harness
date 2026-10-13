@@ -107,7 +107,7 @@ function AppShell() {
 function Sidebar({ workspace, user }: { workspace: WorkspaceOut; user: AuthUser }) {
   const params = { workspaceId: workspace.id }
   // Only what to show: the server checks the role again on every instance request.
-  const isAdmin = useQuery(meOptions()).data?.user.is_staff === true
+  const isAdmin = useQuery(meOptions()).data?.user.role === 'admin'
 
   return (
     <>
