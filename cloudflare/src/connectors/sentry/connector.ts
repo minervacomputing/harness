@@ -1,5 +1,5 @@
-// Sentry, read-only, ported from backend/connectors/sentry/connector.py. Resources are projects; agents list
-// projects, search issues and read issues and their events.
+// Sentry, read-only. Resources are projects; agents list projects, search issues and read issues and their
+// events.
 //
 // A connection is one user in one Sentry organisation: Sentry's consent screen asks which organisation, and
 // the token reaches only that one (see client.ts). The account is the organisation and the user together, so
@@ -26,7 +26,7 @@ function projectName(project: Project): string {
 	return name && name !== project.slug ? `${name} (${project.slug})` : project.slug;
 }
 
-/** `asyncio.gather` of `run` over `items`, at most `limit` at a time; the first failure fails it, and no item starts after. */
+/** `run` over `items`, at most `limit` at a time, in order; the first failure fails it, and no item starts after. */
 async function gathered<T, R>(items: readonly T[], limit: number, run: (item: T) => Promise<R>): Promise<R[]> {
 	const results: R[] = new Array(items.length);
 	let next = 0;
@@ -79,11 +79,9 @@ export function sentryConnector(): Connector<SentryClient> {
 			const organisations = await client.organisations();
 			if (organisations.length !== 1) throw new OperationError("UNSUPPORTED_ACCOUNT", ONE_ORGANISATION);
 			const organisation = organisations[0] as (typeof organisations)[number];
-			// Python's `or`: an empty name falls back to the email.
-			const person = user.name && user.email ? `${user.name} (${user.email})` : user.name || user.email;
+			const person = short(user.name && user.email ? `${user.name} (${user.email})` : user.name || user.email);
 			const org = short(organisation.name) || organisation.slug;
-			// A name of only spaces shortens to None, which Python's f-string writes as "None".
-			return { id: `${organisation.id}:${user.id}`, label: person ? `${short(person) ?? "None"} \u00b7 ${org}` : org };
+			return { id: `${organisation.id}:${user.id}`, label: person ? `${person} \u00b7 ${org}` : org };
 		},
 
 		manageLink() {
@@ -96,7 +94,7 @@ export function sentryConnector(): Connector<SentryClient> {
 		},
 
 		async describe(client, _kind, ids) {
-			// `dict.fromkeys(ids)`: each id once, in its first place.
+			// Each id once, in its first place.
 			const wanted = [...new Set(ids)].filter((id) => ID.test(id)).slice(0, MAX_DESCRIBE);
 			const names = await gathered(wanted, CONCURRENCY, async (projectId) => {
 				try {

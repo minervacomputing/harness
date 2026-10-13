@@ -26,9 +26,8 @@ import { z } from "zod";
 import type { Binding, Connector, DiscoveryItem, DiscoveryPage, Prepared, ProviderOutput, ScopedRecord } from "../../contracts/connectors.ts";
 import type { Resource } from "../../contracts/policy.ts";
 import { OperationError, defineOperation, denied } from "../../gateway/connector.ts";
-import { isDict, type Json, type JsonObject, parseJson } from "../../lib/json.ts";
+import { type Json, type JsonObject, parseJson } from "../../lib/json.ts";
 import { PLAIN_TEXT, SINGLE_LINE, isPlainText, isSingleLine, truncate } from "../../lib/text.ts";
-import { fromUtf8 } from "../../lib/bytes.ts";
 import { type Comment, type Entry, GitHubClient, type Issue, MAX_INLINE_FILE, type Pull, type Repository } from "./client.ts";
 import { extend } from "../../lib/arrays.ts";
 
@@ -46,11 +45,10 @@ export const MAX_DESCRIBE_CONCURRENCY = 8;
 
 const INVALID_CURSOR = "This page token is invalid.";
 
-// Inputs. Each `AfterValidator` is a refinement, which runs once the field's own checks passed. Each input
-// has its Python model's name as its title, which Pydantic shows when the arguments are not an object.
+// Inputs.
 
-/** `value.partition("/")`. */
-function partition(value: string): [before: string, after: string] {
+/** "owner/name" as its two parts; the name is "" without a slash. */
+function partition(value: string): [owner: string, name: string] {
 	const at = value.indexOf("/");
 	return at < 0 ? [value, ""] : [value.slice(0, at), value.slice(at + 1)];
 }
@@ -68,12 +66,12 @@ const state = () => z.string().trim().regex(/^(open|closed|all)$/).default("open
 
 const PATH_MESSAGE = 'must be a path inside the repository, like "docs/intro.md", or "" for the top';
 
-/** `_path`: "" is the top; anything else is a single line whose parts are neither empty, "." nor "..". */
+/** "" is the top; any other path's parts are neither empty, "." nor "..". */
 function pathParts(value: string): boolean {
 	return value === "" || !value.split("/").some((part) => part === "" || part === "." || part === "..");
 }
 
-/** `_ref`. */
+/** A ref git could name: no "..", "//", leading "/" or "-", trailing "/" or ".lock". */
 function validRef(value: string): boolean {
 	return !(value.includes("..") || value.startsWith("/") || value.startsWith("-") || value.endsWith("/") || value.endsWith(".lock") || value.includes("//"));
 }
@@ -81,35 +79,35 @@ function validRef(value: string): boolean {
 const ListRepositories = z.strictObject({
 	limit: z.int().min(1).max(100).default(30),
 	cursor: cursor(),
-}).meta({ title: "ListRepositories" });
+});
 
 const GetRepository = z.strictObject({
 	repository: repositoryName(),
-}).meta({ title: "GetRepository" });
+});
 
 const ListIssues = z.strictObject({
 	repository: repositoryName(),
 	state: state(),
 	limit: z.int().min(1).max(50).default(20),
 	cursor: cursor(),
-}).meta({ title: "ListIssues" });
+});
 
 const GetIssue = z.strictObject({
 	repository: repositoryName(),
 	number: number(),
-}).meta({ title: "GetIssue" });
+});
 
 const ListPullRequests = z.strictObject({
 	repository: repositoryName(),
 	state: state(),
 	limit: z.int().min(1).max(50).default(20),
 	cursor: cursor(),
-}).meta({ title: "ListPullRequests" });
+});
 
 const GetPullRequest = z.strictObject({
 	repository: repositoryName(),
 	number: number(),
-}).meta({ title: "GetPullRequest" });
+});
 
 const ReadFile = z.strictObject({
 	repository: repositoryName(),
@@ -125,19 +123,19 @@ const ReadFile = z.strictObject({
 		.nullable()
 		.default(null),
 	max_chars: z.int().min(1).max(100_000).default(20_000),
-}).meta({ title: "ReadFile" });
+});
 
 const CreateIssue = z.strictObject({
 	repository: repositoryName(),
 	title: z.string().trim().min(1).max(256).refine(isSingleLine, SINGLE_LINE),
 	body: z.string().trim().max(MAX_BODY).refine(isPlainText, PLAIN_TEXT).nullable().default(null),
-}).meta({ title: "CreateIssue" });
+});
 
 const AddComment = z.strictObject({
 	repository: repositoryName(),
 	number: number().describe("The issue or pull request number."),
 	body: z.string().trim().min(1).max(MAX_BODY).refine(isPlainText, PLAIN_TEXT),
-}).meta({ title: "AddComment" });
+});
 
 // Records.
 
@@ -225,33 +223,23 @@ export function pullRecord(pull: Pull, options: { body?: boolean } = {}): JsonOb
 	return data;
 }
 
-// What `str.isprintable()` refuses: categories Other and Separator, except the ASCII space.
-const UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Zs}]/u;
+/** Control, format, unassigned, private-use and separator characters other than the space. */
+const UNPRINTABLE = /(?! )[\p{C}\p{Z}]/u;
+const pageValue = z.string().min(1).max(500).refine((value) => !UNPRINTABLE.test(value));
+const PageState = z.strictObject({ page: pageValue.regex(/^\d{1,6}$/).optional(), after: pageValue.optional() });
 
-function isPrintable(text: string): boolean {
-	for (const char of text) if (char !== " " && UNPRINTABLE.test(char)) return false;
-	return true;
-}
-
-/**
- * `_page_params`: GitHub's next page, from a cursor this connector returned: a page number or an opaque
- * `after`.
- */
+/** GitHub's next page, from a cursor this connector returned: a page number or an opaque `after`. */
 export function pageParams(cursor: string | null): { [key: string]: string } {
 	if (cursor === null) return {};
-	let state: Json | null;
+	let state: Json;
 	try {
 		state = parseJson(cursor);
 	} catch {
-		state = null;
+		throw new OperationError("INVALID_CURSOR", INVALID_CURSOR);
 	}
-	const valid =
-		isDict(state) &&
-		Object.keys(state).every((key) => key === "page" || key === "after") &&
-		Object.values(state).every((value) => typeof value === "string" && value.length > 0 && value.length <= 500 && isPrintable(value)) &&
-		(!Object.hasOwn(state, "page") || /^\d{1,6}$/.test(state.page as string));
-	if (!valid) throw new OperationError("INVALID_CURSOR", INVALID_CURSOR);
-	return state as { [key: string]: string };
+	const parsed = PageState.safeParse(state);
+	if (!parsed.success) throw new OperationError("INVALID_CURSOR", INVALID_CURSOR);
+	return Object.fromEntries(Object.entries(parsed.data).filter((entry): entry is [string, string] => entry[1] !== undefined));
 }
 
 /** The cursor of the next page: its query parameters as JSON, or null for the last page. */
@@ -259,32 +247,23 @@ export function pageCursor(params: { [key: string]: string } | null): string | n
 	return params !== null && Object.keys(params).length > 0 ? JSON.stringify(params) : null;
 }
 
-function integer(value: Json | undefined): number | null {
-	return typeof value === "number" && Number.isInteger(value) ? value : null;
-}
+const RepositoriesState = z.strictObject({ installation: z.int().min(1).max(10 ** 15 - 1), page: z.int().min(1).max(9_999) });
 
 /**
- * `_repositories_cursor`: (installation id, page) from a cursor this connector returned; (0, 1) to start.
- * The settings page holds it, so it is checked as strictly as tool input. One difference: a number written
- * as a float with no fraction (`10.0`), which Python refuses, parses as the integer here (lib/json.ts).
+ * (installation id, page) from a cursor this connector returned; (0, 1) to start. The settings page holds
+ * it, so it is checked as strictly as tool input.
  */
 export function repositoriesCursor(cursor: string | null): [installation: number, page: number] {
 	if (cursor === null) return [0, 1];
-	let installation: number | null = null;
-	let page: number | null = null;
+	let state: Json;
 	try {
-		const state = parseJson(cursor);
-		if (isDict(state) && Object.hasOwn(state, "installation") && Object.hasOwn(state, "page")) {
-			installation = integer(state.installation);
-			page = integer(state.page);
-		}
+		state = parseJson(cursor);
 	} catch {
-		// Not JSON: invalid, as below.
-	}
-	if (installation === null || page === null || !(installation > 0 && installation < 10 ** 15 && page > 0 && page < 10_000)) {
 		throw new OperationError("INVALID_CURSOR", INVALID_CURSOR);
 	}
-	return [installation, page];
+	const parsed = RepositoriesState.safeParse(state);
+	if (!parsed.success) throw new OperationError("INVALID_CURSOR", INVALID_CURSOR);
+	return [parsed.data.installation, parsed.data.page];
 }
 
 async function installationIds(client: GitHubClient): Promise<number[]> {
@@ -316,7 +295,7 @@ async function repositoriesPage(client: GitHubClient, cursor: string | null, lim
 	return [found, following !== null ? JSON.stringify(following) : null];
 }
 
-/** `_item`: a repository as the settings page lists it. */
+/** A repository as the settings page lists it. */
 export function item(repository: Repository): DiscoveryItem {
 	return { id: String(repository.id), name: `${repository.full_name}${repository.private ? " (private)" : ""}` };
 }
@@ -482,51 +461,7 @@ function unsupported(message: string): OperationError {
 	return new OperationError("UNSUPPORTED_FILE", message);
 }
 
-const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-/**
- * Python 3.14's `base64.b64decode(text)` (binascii's non-strict mode): characters outside the alphabet, such
- * as the newlines GitHub puts every 60 characters, are skipped, and so is padding, which only counts
- * towards completing the last group: a last group of two or three characters needs the pads that make it
- * four, one of one character is an error, and so is text that is not ASCII. Checked against Python on
- * every string of up to seven characters over a mixed alphabet.
- */
-export function b64decode(text: string): Uint8Array {
-	if (!/^[\u0000-\u007f]*$/.test(text)) throw new TypeError("string argument should contain only ASCII characters");
-	const out: number[] = [];
-	let quad = 0;
-	let left = 0;
-	let pads = 0;
-	for (const char of text) {
-		if (char === "=") {
-			if (quad >= 2) pads++;
-			continue;
-		}
-		const value = BASE64.indexOf(char);
-		if (value < 0) continue;
-		pads = 0;
-		if (quad === 0) {
-			quad = 1;
-			left = value;
-		} else if (quad === 1) {
-			quad = 2;
-			out.push(((left << 2) | (value >> 4)) & 0xff);
-			left = value & 0x0f;
-		} else if (quad === 2) {
-			quad = 3;
-			out.push(((left << 4) | (value >> 2)) & 0xff);
-			left = value & 0x03;
-		} else {
-			quad = 0;
-			out.push(((left << 6) | value) & 0xff);
-			left = 0;
-		}
-	}
-	if (quad !== 0 && quad + pads < 4) throw new TypeError(quad === 1 ? "Invalid base64-encoded string" : "Incorrect padding");
-	return Uint8Array.from(out);
-}
-
-/** `_file`: a text file's record; anything else GitHub returns for a path is refused. */
+/** A text file's record; anything else GitHub returns for a path is refused. */
 export function fileRecord(entry: Entry, maxChars: number): JsonObject {
 	if (entry.type === "submodule" || entry.submodule_git_url) throw unsupported("This is a submodule, another repository. Minerva does not follow it.");
 	if (entry.type === "symlink") throw unsupported("This is a link to a path outside the repository or to a directory.");
@@ -536,12 +471,14 @@ export function fileRecord(entry: Entry, maxChars: number): JsonObject {
 	}
 	let raw: Uint8Array;
 	try {
-		raw = b64decode(entry.content);
+		// GitHub wraps the base64 in lines, which atob skips as whitespace.
+		raw = Uint8Array.from(atob(entry.content), (char) => char.charCodeAt(0));
 	} catch {
 		throw new OperationError("PROVIDER_FAILED", "GitHub returned an unexpected response.");
 	}
 	if (raw.includes(0)) throw unsupported("This looks like a binary file. Minerva reads text files.");
-	const [text, truncated] = truncate(fromUtf8(raw), maxChars);
+	// Invalid UTF-8 reads as U+FFFD; a byte order mark is dropped.
+	const [text, truncated] = truncate(new TextDecoder().decode(raw), maxChars);
 	return { path: entry.path, type: "file", size: entry.size, text, truncated, url: entry.html_url };
 }
 
@@ -623,12 +560,11 @@ export interface GitHubOptions {
 	/** The GitHub App's URL name (github.com/apps/<slug>), for the link that installs it; read each time the link is shown. */
 	appSlug?: () => string | null | undefined;
 	baseUrl?: string;
-	/** client.py MAX_PAGE_RESPONSE and connector.py MAX_PATCH_CHARS, which tests lower as Python's monkeypatch did. */
+	/** MAX_PAGE_RESPONSE and MAX_PATCH_CHARS, which tests lower. */
 	maxPageResponse?: number;
 	maxPatchChars?: number;
 }
 
-/** connectors/github/connector.py `GitHubConnector`. */
 export function githubConnector(options: GitHubOptions = {}): Connector<GitHubClient> {
 	const appSlug = options.appSlug ?? configuredAppSlug;
 	return {
@@ -691,8 +627,8 @@ export function githubConnector(options: GitHubOptions = {}): Connector<GitHubCl
 			throw new OperationError("PROVIDER_LIMIT", "There are more repositories than Minerva can search.");
 		},
 		async describe(client, _kind, ids) {
-			// At most MAX_DESCRIBE_CONCURRENCY requests at once, as asyncio.gather under a semaphore; the first
-			// failure that is not "unseen" fails it all. Ids that are not digits are never sent.
+			// At most MAX_DESCRIBE_CONCURRENCY requests at once; the first failure other than a repository the
+			// account cannot see fails it all. Ids that are not digits are never sent.
 			const found: (Repository | null)[] = new Array(ids.length).fill(null);
 			let next = 0;
 			const worker = async (): Promise<void> => {

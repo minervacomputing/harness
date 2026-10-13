@@ -1,18 +1,15 @@
-// backend/tests/test_github.py, case by case: the GitHub connector against an in-memory GitHub API behind an
-// injected fetch, runs through the executor, and the token endpoint through the Workspace's refresh. Then
-// the connector's own rules against vectors from today's Python (test/fixtures/connectors/github/, written
-// by its generate.py from backend/connectors/github/), and the registry with its fingerprints.
+// The GitHub connector against an in-memory GitHub API behind an injected fetch, runs through the executor,
+// and the token endpoint through the Workspace's refresh. Then the connector's own rules (inputs, cursors,
+// files, 403s, records), and the registry with its fingerprints.
 
 import { describe, expect, test } from "vitest";
 import type { Connector, ProviderClient } from "../../src/contracts/connectors.ts";
 import type { GrantRow } from "../../src/contracts/policy.ts";
 import { CONNECTORS } from "../../src/connectors/index.ts";
-import { API_URL, Comment, Entry, Issue, Pull, Repository, forbidden, httpxHeader, nextPage } from "../../src/connectors/github/client.ts";
+import { API_URL, Entry, Issue, Pull, Repository, forbidden, nextPage } from "../../src/connectors/github/client.ts";
 import {
 	type GitHubOptions,
 	REPOSITORY,
-	b64decode,
-	commentRecord,
 	fileRecord,
 	githubConnector,
 	issueRecord,
@@ -23,11 +20,11 @@ import {
 	repositoriesCursor,
 	repositoryRecord,
 } from "../../src/connectors/github/connector.ts";
-import { OperationError, termsOf } from "../../src/gateway/connector.ts";
+import { OperationError } from "../../src/gateway/connector.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
-import { base64, hex, utf8 } from "../../src/lib/bytes.ts";
+import { base64, utf8 } from "../../src/lib/bytes.ts";
 import { EncryptionKeys } from "../../src/lib/encryption.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
 import { unquote } from "../../src/lib/text.ts";
@@ -35,8 +32,6 @@ import { WorkspaceCore } from "../../src/workspace/core.ts";
 import { EXPIRED, type OAuth2, tokenBody, tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
 import { oauthClients } from "../../src/workspace/env.ts";
 import { connectionOut } from "../../src/workspace/out.ts";
-import raw from "../fixtures/connectors/github/vectors.json" with { type: "json" };
-import { changedOnPurpose } from "./changed.ts";
 import { Scenario, jsonResponse, userGrants } from "./executor-fakes.ts";
 import {
 	ADA,
@@ -78,7 +73,7 @@ interface Sent {
 }
 
 /**
- * test_github.py `FakeGitHub`: the GitHub REST API behind an injected fetch. The App is installed on acme
+ * The GitHub REST API behind an injected fetch. The App is installed on acme
  * (acme/app, private acme/secret) and on ada (ada/notes, formerly ada/old-notes). acme/app has issues 1 and
  * 3, pull request 2, and some files.
  */
@@ -205,7 +200,7 @@ class FakeGitHub {
 	}
 }
 
-/** Today's connector with no install link configured, and the test seams `options` sets. */
+/** The connector with no install link configured, and the test seams `options` sets. */
 function connector(options: GitHubOptions = {}): Connector<ProviderClient> {
 	return githubConnector({ appSlug: () => null, ...options }) as unknown as Connector<ProviderClient>;
 }
@@ -214,7 +209,7 @@ function denyOnCeiling(resourceId: string, actions: string[]): GrantRow {
 	return { layer: "ceiling", subject: null, connectionId: GITHUB, kind: REPOSITORY, resourceId, resourceName: "", actions, effect: "deny" };
 }
 
-/** Starts a run for an agent with the user's GitHub connection and `grants` (repository id to actions; test_github.py `start`). */
+/** Starts a run for an agent with the user's GitHub connection and `grants` (repository id to actions). */
 function start(github: FakeGitHub, grants: { [id: string]: string[] }, options: { ceiling?: GrantRow[]; connector?: GitHubOptions } = {}): Promise<Scenario> {
 	return Scenario.start({
 		connectors: [connector(options.connector)],
@@ -299,9 +294,8 @@ describe("the connector and its settings page", () => {
 	});
 
 	test("GitHub is offered only when configured", async () => {
-		// test_github_is_offered_only_when_configured and test_apps_without_an_oauth_client_are_not_offered:
 		// GitHub registers no client of its own, so it is offered once MINERVA_GITHUB_CLIENT_ID and _SECRET are
-		// set (the API's connector list is ported with the API; this is the part it reads).
+		// set (the part of the configuration the API's connector list reads).
 		const auth = githubConnector().auth as OAuth2;
 		expect(auth.app).toBe("github");
 		expect(auth.registrationUrl ?? null).toBeNull();
@@ -354,8 +348,8 @@ describe("runs", () => {
 			expect(await run.code("github_get_repository", { repository: "ada/old-notes" })).toBe("PROVIDER_FAILED");
 		}
 		expect(github.requests.slice(sent).map((request) => request.url.pathname)).toEqual(Array(3).fill("/repos/ada/old-notes"));
-		// Any 3xx is judged as a redirect, as httpx counts them: one without a Location is unexpected, and a 304
-		// to /repositories/<id> is followed there too.
+		// Any 3xx is judged as a redirect: one without a Location is unexpected, and a 304 to /repositories/<id>
+		// is followed there too.
 		github.renamed.set("ada/old-notes", null);
 		expect(await run.error("github_get_repository", { repository: "ada/old-notes" })).toEqual({
 			code: "PROVIDER_FAILED",
@@ -559,7 +553,7 @@ describe("tokens", () => {
 			log: (message, fields) => logs.push({ message, fields }),
 		});
 		await core.init({ workspace: { id: WORKSPACE, jurisdiction: null }, kind: "personal", ownerId: USER, createdAt: timers.now() });
-		// test_github.py `github_connection`: tokens that expire now, with no scopes (the App has none).
+		// Tokens that expire now, with no scopes (the App has none).
 		const saved = await core.saveConnection(ADA, {
 			provider: "github",
 			account: { id: "42", label: "ada" },
@@ -602,38 +596,6 @@ describe("tokens", () => {
 	});
 });
 
-// The vectors.
-
-interface Vectors {
-	declaration: {
-		operations: { name: string; title: string; description: string; needs: [string, string][]; mutates: boolean; paginated: boolean; output_action: string; consent: null; revision: number }[];
-		kinds: { id: string; label: string; actions: string[]; wildcard: boolean; hierarchical: boolean }[];
-		actions: { id: string; label: string; requires: string | null }[];
-		auth: Data;
-	};
-	inputs: { operation: string; json: string; message?: string; fields?: Data }[];
-	links: { link: string; next: { [key: string]: string } | null }[];
-	page_cursors: { cursor: string | null; params?: { [key: string]: string }; error?: [string, string] }[];
-	rendered_cursors: { params: { [key: string]: string } | null; cursor: string | null }[];
-	repository_cursors: { cursor: string; state?: [number, number]; error?: [string, string] }[];
-	base64: { text: string; hex?: string; error?: string }[];
-	files: { entry: Data; max_chars: number; record?: Data; error?: [string, string] }[];
-	forbidden: { headers: { [name: string]: string }; body: string; error: [string, string] }[];
-	records: {
-		repositories: { data: Data; record: Data; item: string }[];
-		issues: { data: Data; record: Data; with_body: Data }[];
-		comments: { data: Data; record: Data }[];
-		pulls: { data: Data; record: Data; with_body: Data }[];
-	};
-}
-
-const vectors = raw as unknown as Vectors;
-
-/** The same value written as JSON, keys in order: what the model reads. */
-function sameJson(actual: unknown, expected: unknown): void {
-	expect(JSON.stringify(actual)).toBe(JSON.stringify(expected));
-}
-
 function failure(run: () => unknown): [string, string] | null {
 	try {
 		run();
@@ -644,153 +606,179 @@ function failure(run: () => unknown): [string, string] | null {
 	}
 }
 
-describe("vectors from today's Python", () => {
+const INVALID: [string, string] = ["INVALID_CURSOR", "This page token is invalid."];
+
+describe("the connector's rules", () => {
 	const gh = githubConnector({ appSlug: () => null });
 
-	test("the declaration", () => {
-		expect(
-			gh.operations.map((op) => {
-				const terms = termsOf(op);
-				return {
-					name: op.name,
-					title: op.title,
-					description: op.description,
-					needs: op.needs,
-					mutates: terms.mutates,
-					paginated: terms.paginated,
-					output_action: terms.outputAction,
-					consent: terms.consent,
-					revision: terms.revision,
-				};
-			}),
-		).toEqual(vectors.declaration.operations);
-		expect(gh.kinds.map((kind) => ({ ...kind, wildcard: kind.wildcard ?? false, hierarchical: kind.hierarchical ?? false }))).toEqual(vectors.declaration.kinds);
-		expect(gh.actions.map((action) => ({ ...action, requires: action.requires ?? null }))).toEqual(vectors.declaration.actions);
-		const auth = gh.auth as OAuth2;
-		expect({
-			app: auth.app,
-			authorize_url: auth.authorizeUrl,
-			token_url: auth.tokenUrl,
-			scopes: auth.scopes,
-			scope_separator: auth.scopeSeparator ?? " ",
-			registration_url: auth.registrationUrl ?? null,
-			authorize_params: auth.authorizeParams ?? [],
-			login_hint: auth.loginHint ?? false,
-			client_auth: auth.clientAuth ?? "post",
-			json_body: auth.jsonBody ?? false,
-			pkce: auth.pkce ?? true,
-		}).toEqual(vectors.declaration.auth);
+	test.each([
+		["list_repositories", null, { limit: 30, cursor: null }],
+		["list_repositories", { limit: 100, cursor: "  abc  " }, { limit: 100, cursor: "abc" }],
+		["get_repository", { repository: "  acme/app\n" }, { repository: "acme/app" }],
+		["get_repository", { repository: "acme/..." }, { repository: "acme/..." }],
+		["list_issues", { repository: "acme/app", state: " closed " }, { repository: "acme/app", state: "closed", limit: 20, cursor: null }],
+		["read_file", { repository: "acme/app" }, { repository: "acme/app", path: "", ref: null, max_chars: 20_000 }],
+		["read_file", { repository: "acme/app", path: " src/a.py ", ref: "feature/x" }, { repository: "acme/app", path: "src/a.py", ref: "feature/x", max_chars: 20_000 }],
+		["create_issue", { repository: "acme/app", title: "  Idea  " }, { repository: "acme/app", title: "Idea", body: null }],
+		["create_issue", { repository: "acme/app", title: "x", body: "a\tb\r\nc" }, { repository: "acme/app", title: "x", body: "a\tb\r\nc" }],
+	])("%s normalizes %j, which write keys and query hashes hash", async (name, input, expected) => {
+		const op = gh.operations.find((candidate) => candidate.name === name);
+		expect(await validateInput(op?.input as never, input)).toEqual({ ok: true, data: expected });
 	});
 
-	test.each(vectors.inputs.map((input) => [input.operation, input.json.length > 120 ? `${input.json.slice(0, 120)}...` : input.json, input] as const))(
-		"input %s %s",
-		async (name, _, input) => {
-			const op = gh.operations.find((candidate) => candidate.name === name);
-			const outcome = await validateInput(op?.input as never, parseJson(input.json));
-			if (input.message !== undefined) expect(outcome).toMatchObject({ ok: false });
-			else {
-				expect(outcome.ok).toBe(true);
-				// Defaults included: the write key and the query hash are hashed from it.
-				if (outcome.ok) sameJson(outcome.data, input.fields);
-			}
-		},
-	);
+	test.each([
+		["list_repositories", { limit: true }],
+		["list_repositories", { connection_id: "other" }],
+		["list_repositories", "acme/app"],
+		["get_repository", { repository: "acme/." }],
+		["get_repository", { repository: "ac.me/app" }],
+		["get_repository", { repository: "acme/\u00e1pp" }],
+		["list_issues", { repository: "acme/app", state: "OPEN" }],
+		["get_issue", { repository: "acme/app", number: 1_000_000_001 }],
+		["get_issue", { repository: "acme/app", number: 9007199254740993 }],
+		["read_file", { repository: "acme/app", path: "a/" }],
+		["read_file", { repository: "acme/app", path: "README.md", ref: "main.lock" }],
+		["read_file", { repository: "acme/app", path: "README.md", ref: "a b" }],
+		["create_issue", { repository: "acme/app", title: "tab\there" }],
+		["create_issue", { repository: "acme/app", title: "x", body: "a\u0000b" }],
+		["add_comment", { repository: "acme/app", number: 3, body: "a\u007fb" }],
+	])("%s refuses %j", async (name, input) => {
+		const op = gh.operations.find((candidate) => candidate.name === name);
+		expect(await validateInput(op?.input as never, input)).toMatchObject({ ok: false });
+	});
 
-	test("the Link header's next page", () => {
-		for (const vector of vectors.links) {
-			if (changedOnPurpose(vector.link)) continue;
-			const response = new Response(null, vector.link ? { headers: { link: vector.link } } : {});
-			expect(nextPage(response), vector.link).toEqual(vector.next);
+	test("the Link header's next page: only its page and after", () => {
+		const next = (link: string) => nextPage(new Response(null, { headers: { link } }));
+		expect(next(`<${API_URL}/repositories/1/issues?per_page=2&after=Y3Vy%3D&page=2>; rel="next", <${API_URL}/x?page=9>; rel="last"`)).toEqual({
+			page: "2",
+			after: "Y3Vy=",
+		});
+		expect(next(`<${API_URL}/x?page=9>; rel="last", <https://elsewhere.example/x?page=4>;rel="next"`)).toEqual({ page: "4" });
+		expect(next(`<${API_URL}/x?page=&after=a+b%2Bc>; rel="next"`)).toEqual({ after: "a b+c" });
+		expect(next(`<${API_URL}/x?page=4&page=5>; rel="next"`)).toEqual({ page: "4" });
+		for (const link of [`<${API_URL}/x?page=3>; rel="last"`, `<${API_URL}/x?per_page=2>; rel="next"`, `<${API_URL}/x#page=2?page=3>; rel="next"`, ""]) {
+			expect(next(link), link).toBeNull();
 		}
 	});
 
-	test("headers, as httpx decodes them", () => {
-		const read = (headers: [string, string][]) => httpxHeader(new Headers(headers), "location");
-		expect(read([])).toBeNull();
-		expect(read([["location", "https://a.example/x"]])).toBe("https://a.example/x");
-		// UTF-8 bytes, one character each, as fetch gives them.
-		expect(read([["location", "/\u00d9\u00a3"]])).toBe("/\u0663");
-		// Not UTF-8: Latin-1, as it is.
-		expect(read([["location", "/\u00b2"]])).toBe("/\u00b2");
-		// Decided over every header: one that is not UTF-8 makes them all Latin-1.
-		expect(read([["location", "/\u00d9\u00a3"], ["x-other", "\u00ff"]])).toBe("/\u00d9\u00a3");
-		expect(read([["location", "/\u00d9\u00a3"], ["x-other", "\u00c3\u00a9"]])).toBe("/\u0663");
-	});
-
-	test("listing cursors", () => {
-		for (const vector of vectors.page_cursors) {
-			// A page is ASCII digits; Python's isdigit() also took "²" and "①".
-			const page = vector.params?.page;
-			if (page !== undefined && !/^\d+$/.test(page)) {
-				expect(failure(() => pageParams(vector.cursor)), vector.cursor ?? "null").toEqual(["INVALID_CURSOR", "This page token is invalid."]);
-				continue;
-			}
-			if (changedOnPurpose(vector.cursor)) continue;
-			const error = failure(() => pageParams(vector.cursor));
-			if (vector.error !== undefined) expect(error, vector.cursor ?? "null").toEqual(vector.error);
-			else {
-				expect(error, vector.cursor ?? "null").toBeNull();
-				sameJson(pageParams(vector.cursor), vector.params);
-			}
+	test("listing cursors hold a page number or GitHub's after, nothing else", () => {
+		expect(pageParams(null)).toEqual({});
+		expect(pageParams("{}")).toEqual({});
+		expect(pageParams('{"after": "Y3Vy=", "page": "2"}')).toEqual({ after: "Y3Vy=", page: "2" });
+		expect(pageParams('{"after": "a b"}')).toEqual({ after: "a b" });
+		expect(pageParams(pageCursor({ page: "123456" }))).toEqual({ page: "123456" });
+		for (const cursor of [
+			'{"page": 2}',
+			'{"page": ""}',
+			'{"page": "1234567"}',
+			'{"page": "\\u0663"}',
+			'{"page": "1a"}',
+			'{"after": "a\\u0000b"}',
+			'{"after": "a\\u00a0b"}',
+			'{"after": "a\\u200bb"}',
+			'{"after": "\\ud800"}',
+			`{"after": "${"x".repeat(501)}"}`,
+			'{"x": "1"}',
+			'{"__proto__": {"page": "1"}}',
+			'{"\\u005f_proto__": {"page": "1"}}',
+			'{"constructor": "1"}',
+			'{"page": "1", "page": "x"}',
+			"[1]",
+			"null",
+			"nope",
+		]) {
+			expect(failure(() => pageParams(cursor)), cursor).toEqual(INVALID);
 		}
-		const read = (cursor: string | null) => (cursor === null ? null : parseJson(cursor));
-		for (const vector of vectors.rendered_cursors) expect(read(pageCursor(vector.params))).toEqual(read(vector.cursor));
+		expect([pageCursor(null), pageCursor({})]).toEqual([null, null]);
 	});
 
-	test("repository cursors", () => {
-		for (const vector of vectors.repository_cursors) {
-			// Booleans are no integers here.
-			if (/true|false/.test(vector.cursor ?? "")) {
-				expect(failure(() => repositoriesCursor(vector.cursor)), vector.cursor).toEqual(["INVALID_CURSOR", "This page token is invalid."]);
-				continue;
-			}
-			const error = failure(() => repositoriesCursor(vector.cursor));
-			if (vector.error !== undefined) expect(error, vector.cursor).toEqual(vector.error);
-			else expect(repositoriesCursor(vector.cursor), vector.cursor).toEqual(vector.state);
-		}
-	});
-
-	test("base64, as b64decode reads it", () => {
-		for (const vector of vectors.base64) {
-			if (vector.error !== undefined) expect(() => b64decode(vector.text), JSON.stringify(vector.text)).toThrow();
-			else expect(hex(b64decode(vector.text)), JSON.stringify(vector.text)).toBe(vector.hex);
-		}
-	});
-
-	test("files", () => {
-		for (const vector of vectors.files) {
-			if (changedOnPurpose(vector)) continue;
-			const entry = Entry.parse(vector.entry);
-			const error = failure(() => fileRecord(entry, vector.max_chars));
-			if (vector.error !== undefined) expect(error, vector.entry.path as string).toEqual(vector.error);
-			else sameJson(fileRecord(entry, vector.max_chars), vector.record);
+	test("repository cursors name an installation and a page", () => {
+		expect(repositoriesCursor(null)).toEqual([0, 1]);
+		expect(repositoriesCursor('{"installation": 999999999999999, "page": 9999}')).toEqual([999999999999999, 9999]);
+		for (const cursor of [
+			'{"installation": 10}',
+			'{"installation": 0, "page": 1}',
+			'{"installation": 1000000000000000, "page": 1}',
+			'{"installation": 5, "page": 10000}',
+			'{"installation": 11, "page": "1"}',
+			'{"installation": true, "page": 1}',
+			'{"installation": 1.5, "page": 1}',
+			'{"installation": 11, "page": 1, "extra": "x"}',
+			'{"installation": 11, "page": 1, "__proto__": {"x": 1}}',
+			'{"installation": 11, "page": 1, "\\u005f_proto__": {"x": 1}}',
+			"[1]",
+			"not json",
+		]) {
+			expect(failure(() => repositoriesCursor(cursor)), cursor).toEqual(INVALID);
 		}
 	});
 
-	test("403s", () => {
-		for (const vector of vectors.forbidden) {
-			const response = new Response(vector.body, { status: 403, headers: vector.headers });
-			const error = forbidden("GitHub", response, vector.body);
-			expect([error.code, error.message], vector.body).toEqual(vector.error);
+	test("files: base64 text, and what is refused", () => {
+		const file = (content: string | null, extra: Data = {}) => Entry.parse({ type: "file", path: "a.txt", size: 5, encoding: "base64", content, ...extra });
+		expect(fileRecord(file("aGVs\nbG8=\n", { html_url: "u" }), 20)).toEqual({ path: "a.txt", type: "file", size: 5, text: "hello", truncated: false, url: "u" });
+		expect(fileRecord(file("aGVsbG8="), 3)).toMatchObject({ text: "hel", truncated: true });
+		// Unpadded base64 reads; a byte order mark is dropped; invalid UTF-8 reads as U+FFFD.
+		expect(fileRecord(file("aGVsbG8"), 20).text).toBe("hello");
+		expect(fileRecord(file("77u/aGk="), 20).text).toBe("hi");
+		expect(fileRecord(file("//5hYg=="), 20).text).toBe("\ufffd\ufffdab");
+		expect(fileRecord(file("8J+YgPCfmIDwn5iA"), 2)).toMatchObject({ text: "\u{1f600}", truncated: true });
+		expect(failure(() => fileRecord(file("YQBi"), 20))).toEqual(["UNSUPPORTED_FILE", "This looks like a binary file. Minerva reads text files."]);
+		for (const content of ["Y", "YQ\u00e9==", "YQ=a", "Y*Q="]) {
+			expect(failure(() => fileRecord(file(content), 20)), content).toEqual(["PROVIDER_FAILED", "GitHub returned an unexpected response."]);
 		}
+		const tooLarge: [string, string] = ["FILE_TOO_LARGE", "Minerva reads files up to 1048576 bytes."];
+		expect(failure(() => fileRecord(file("eA==", { size: 1_048_577 }), 20))).toEqual(tooLarge);
+		expect(failure(() => fileRecord(file("", { encoding: "none" }), 20))).toEqual(tooLarge);
+		expect(failure(() => fileRecord(file(null), 20))).toEqual(tooLarge);
+		expect(failure(() => fileRecord(Entry.parse({ type: "dir", path: "src" }), 20))?.[0]).toBe("UNSUPPORTED_FILE");
+	});
+
+	test("bodies are strict UTF-8 JSON", async () => {
+		const github = new FakeGitHub();
+		const run = await start(github, { "1": ["read"] });
+		const repository = utf8(JSON.stringify(repo(1, "acme/app")));
+		github.error = () => new Response(Uint8Array.from([0xef, 0xbb, 0xbf, ...repository]), { status: 200 });
+		expect(items(await run.ok("github_get_repository", { repository: "acme/app" }))[0]?.full_name).toBe("acme/app");
+		github.error = () => new Response(Uint8Array.from([...repository.subarray(0, -2), 0xff, 0x7d]), { status: 200 });
+		expect(await run.code("github_get_repository", { repository: "acme/app" })).toBe("PROVIDER_FAILED");
+	});
+
+	test("403s are worded from GitHub's message and headers", () => {
+		const worded = (body: string, headers: { [name: string]: string } = {}) => {
+			const error = forbidden("GitHub", new Response(body, { status: 403, headers }), body);
+			return error.code === "PROVIDER_FORBIDDEN" && error.message.startsWith("The Minerva GitHub App") ? "APP" : error.code;
+		};
+		expect(worded('{"message": "API rate limit exceeded"}', { "x-ratelimit-remaining": "0" })).toBe("PROVIDER_RATE_LIMITED");
+		expect(worded('{"message": "You have exceeded a secondary rate limit."}')).toBe("PROVIDER_RATE_LIMITED");
+		expect(worded("{}", { "retry-after": "30" })).toBe("PROVIDER_RATE_LIMITED");
+		expect(worded('{"message": "Resource not accessible by integration"}')).toBe("APP");
+		for (const body of ['{"message": "Must have admin rights to Repository."}', "not json", '[{"message": "rate limit"}]', '{"message": {"detail": "rate limit"}}', ""]) {
+			expect(worded(body), body).toBe("PROVIDER_FORBIDDEN");
+		}
+		expect(worded("{}", { "x-ratelimit-remaining": "1" })).toBe("PROVIDER_FORBIDDEN");
 	});
 
 	test("records", () => {
-		for (const vector of vectors.records.repositories) {
-			sameJson(repositoryRecord(Repository.parse(vector.data)), vector.record);
-			expect(item(Repository.parse(vector.data)).name).toBe(vector.item);
-		}
-		for (const vector of vectors.records.issues) {
-			if (changedOnPurpose(vector)) continue;
-			sameJson(issueRecord(Issue.parse(vector.data)), vector.record);
-			sameJson(issueRecord(Issue.parse(vector.data), { body: true }), vector.with_body);
-		}
-		for (const vector of vectors.records.comments) if (!changedOnPurpose(vector)) sameJson(commentRecord(Comment.parse(vector.data)), vector.record);
-		for (const vector of vectors.records.pulls) {
-			if (changedOnPurpose(vector)) continue;
-			sameJson(pullRecord(Pull.parse(vector.data)), vector.record);
-			sameJson(pullRecord(Pull.parse(vector.data), { body: true }), vector.with_body);
-		}
+		const repository = Repository.parse({ id: 2, full_name: "acme/secret", private: true, open_issues_count: 4, extra: "dropped" });
+		expect(repositoryRecord(repository)).toEqual({
+			id: 2,
+			full_name: "acme/secret",
+			private: true,
+			description: null,
+			default_branch: null,
+			open_issues_and_pull_requests: 4,
+			archived: false,
+			fork: false,
+			pushed_at: null,
+			url: null,
+		});
+		expect(item(repository)).toEqual({ id: "2", name: "acme/secret (private)" });
+		const issue = Issue.parse({ number: 2, title: "Fix", state: "open", pull_request: { url: "u" }, labels: [{ name: "bug" }], user: { login: "ada" } });
+		expect(issueRecord(issue)).toMatchObject({ number: 2, type: "pull_request", author: "ada", labels: ["bug"] });
+		expect(issueRecord(issue, { body: true })).toMatchObject({ body: null, body_truncated: false });
+		const pull = Pull.parse({ number: 2, state: "closed", merged_at: "2026-10-01T00:00:00Z", head: { ref: "fix" }, base: null });
+		expect(pullRecord(pull)).toMatchObject({ state: "merged", head: "fix", base: null, author: null });
+		expect(Issue.safeParse({ number: "2" }).success).toBe(false);
 	});
 });
 
@@ -798,15 +786,15 @@ describe("the registry", () => {
 	// What each tool means, as runs snapshot it. A change here stops the tool in running runs
 	// (OPERATION_CHANGED), so it is made on purpose: update these when a declaration or zod changes.
 	const FINGERPRINTS = {
-		list_repositories: "b359c3e6cb40a008",
-		get_repository: "973309a795d2dcad",
-		list_issues: "cefce5c20112eb5e",
-		get_issue: "4b977afbc88a4855",
-		list_pull_requests: "410a70ffcfe8018d",
-		get_pull_request: "e05d17a1a943823b",
-		read_file: "c02c32d585a9a671",
-		create_issue: "583aa05f47f05f14",
-		add_comment: "420b10a3fe40a425",
+		list_repositories: "15126dda5c25df94",
+		get_repository: "2819e5401dcbfe65",
+		list_issues: "1772913a9c711556",
+		get_issue: "53512dd25c3b9b5e",
+		list_pull_requests: "1772913a9c711556",
+		get_pull_request: "53512dd25c3b9b5e",
+		read_file: "f7a743fcde5c31e9",
+		create_issue: "c600aaad2ee965f1",
+		add_comment: "5352384c953c11af",
 	};
 
 	test("accepts GitHub's declarations, and prints their fingerprints", async () => {
