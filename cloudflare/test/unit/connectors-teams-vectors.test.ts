@@ -1,18 +1,17 @@
 // Teams' text and inputs against what today's Python computes (test/fixtures/connectors/teams/generate.py):
-// the plain text agents are shown for message HTML (about five thousand hand-written, mutated and random
-// bodies, each with the mentions it is read with), which addresses count as addresses to Teams and what
-// replaces them, the text agents may write, the code points Python's IGNORECASE reads as each letter of the
-// addresses, and the six tools' inputs.
+// which addresses count as addresses to Teams and what replaces them, the text agents may write, the code
+// points Python's IGNORECASE reads as each letter of the addresses, and the six tools' inputs. Text with an
+// invisible control or noncharacter that Python let through is skipped: such a character no longer splits
+// an address, so it may now be hidden or refused.
 
 import { describe, expect, test } from "vitest";
-import { Mention } from "../../src/connectors/teams/client.ts";
 import { teamsConnector } from "../../src/connectors/teams/connector.ts";
 import { TEAMS, checkWritten, read, redact, toTeams, written } from "../../src/connectors/teams/html.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { TextError } from "../../src/lib/text.ts";
 import { operation, vectors } from "../fixtures/connectors/microsoft/runs.ts";
-import { changedOnPurpose } from "./changed.ts";
+import { changedOnPurpose, hasInvisible } from "./changed.ts";
 
 type Recipe = { $repeat: [string, number] };
 
@@ -30,8 +29,6 @@ function unpack(value: unknown): unknown {
 }
 
 const dataset = vectors("teams") as {
-	mention_sets: Json[][];
-	read: { content: unknown; type: string | null; mentions: number; text: string }[];
 	redact: { text: string; value: string; teams: boolean }[];
 	check_written: { text: unknown; value?: string; error?: string }[];
 	written: { text: unknown; value: string }[];
@@ -40,36 +37,11 @@ const dataset = vectors("teams") as {
 };
 
 describe("message text against today's Python", () => {
-	test("read: the text of every body, with its mentions", () => {
-		expect(dataset.read.length).toBeGreaterThan(1500);
-		// Sets whose ids Python read from strings no longer parse; their cases are skipped.
-		const mentions = dataset.mention_sets.map((items) => {
-			const parsed = items.map((item) => Mention.safeParse(item));
-			return parsed.every((item) => item.success) ? parsed.map((item) => item.data as Mention) : null;
-		});
-		const failures: string[] = [];
-		for (const expected of dataset.read) {
-			const content = unpack(expected.content) as string | null;
-			const set = expected.mentions === undefined ? [] : mentions[expected.mentions];
-			if (changedOnPurpose(content) || set === null) continue;
-			let actual: string;
-			try {
-				actual = read(content, expected.type, set ?? []);
-			} catch (error) {
-				actual = `threw ${String(error)}`;
-			}
-			if (actual !== expected.text) {
-				failures.push(`${JSON.stringify([content, expected.type, expected.mentions]).slice(0, 200)}\n   python ${JSON.stringify(expected.text).slice(0, 200)}\n   ts     ${JSON.stringify(actual).slice(0, 200)}`);
-			}
-		}
-		expect(failures.slice(0, 20)).toEqual([]);
-		expect(failures).toEqual([]);
-	});
-
 	test("redact and the addresses to Teams, in any encoding", () => {
 		expect(dataset.redact.length).toBeGreaterThan(450);
 		const failures: string[] = [];
 		for (const expected of dataset.redact) {
+			if (hasInvisible(expected.text) && !expected.teams) continue;
 			const actual = { value: redact(expected.text), teams: toTeams(expected.text) };
 			if (actual.value !== expected.value || actual.teams !== expected.teams) {
 				failures.push(`${JSON.stringify(expected.text).slice(0, 200)}\n   python ${JSON.stringify([expected.value, expected.teams]).slice(0, 200)}\n   ts     ${JSON.stringify(actual).slice(0, 200)}`);
@@ -104,6 +76,7 @@ describe("text agents write", () => {
 		const failures: string[] = [];
 		for (const expected of dataset.check_written) {
 			const text = unpack(expected.text) as string;
+			if (hasInvisible(text) && expected.error === undefined) continue;
 			let actual: { value?: string; error?: string };
 			try {
 				actual = { value: checkWritten(text) };

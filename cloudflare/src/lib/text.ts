@@ -79,11 +79,17 @@ export function truncate(value: string | null | undefined, limit: number): [stri
 	return [sliceText(value, 0, limit), true];
 }
 
-/** The text with the encodings a browser or renderer undoes in an address, undone, three times over. */
+/** Invisible characters: format characters, controls other than tabs and line breaks, and noncharacters. */
+const INVISIBLE = /[\p{Cf}\p{Noncharacter_Code_Point}\0-\x08\v\f\x0e-\x1f\x7f-\x9f]/gu;
+
+/**
+ * The text with the encodings a browser or renderer undoes in an address undone, three times over, and
+ * without invisible characters, so that none of them splits an address into harmless parts.
+ */
 export function decoded(text: string): string {
 	for (let round = 0; round < 3; round++) {
 		text = htmlUnescape(unquote(text)).normalize("NFKC");
-		text = text.replace(/\p{Cf}/gu, "");
+		text = text.replace(INVISIBLE, "");
 		text = text.replace(/[\u3002\uff0e\uff61]/g, ".").replaceAll("\\", "");
 	}
 	return text;

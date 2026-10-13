@@ -370,6 +370,30 @@ describe("page text", () => {
 		// Links do not nest.
 		expect(htmlToText('<a href="/a">one <a href="/b">two</a></a>', "https://example.com/")[0]).toBe("[one](https://example.com/a)[two](https://example.com/b)");
 	});
+
+	test("active and embedded content stays out however the markup is written", () => {
+		const base = "https://example.com/";
+		for (const page of [
+			"<SCRIPT>steal()</script>ok",
+			"<script/>steal()</script>ok",
+			"<style>p{}</style >ok",
+			"<noembed><b>steal()</b></noembed>ok",
+			"<svg><text>steal()</text></svg>ok",
+			"<svg/>ok",
+			"<!-- steal() -->ok<![CDATA[steal()]]>",
+			"<template><p>steal()</p></template>ok",
+		]) {
+			expect(htmlToText(page, base)[0], page).toBe("ok");
+		}
+		expect(htmlToText("ok<script>steal()</script", base)[0]).toBe("ok");
+		expect(htmlToText("ok<script>steal()</script steal()", base)[0]).toBe("ok");
+		for (const href of ["&#x6a;avascript:steal()", "java&#9;script:steal()", " data:text/html,x", "//evil.example.org:99999/"]) {
+			expect(htmlToText(`<a href="${href}">label</a>`, base)[0], href).toBe("label");
+		}
+		expect(htmlToText('<img src="https://evil.example.org/x.png"><image src="https://evil.example.org/y.png">', base)[0]).toBe("");
+		// Without a base address (Gmail), only absolute links are kept.
+		expect(htmlToText('<a href="/rel">a</a> <a href="https://example.com/x">b</a>')[0]).toBe("a [b](https://example.com/x)");
+	});
 });
 
 describe("runs through the executor", () => {

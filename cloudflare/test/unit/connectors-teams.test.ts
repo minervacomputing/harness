@@ -481,6 +481,52 @@ describe("reading", () => {
 			expect(read(`see ${address}`, "text", [])).toBe("see [Teams link]");
 		}
 	});
+
+	test("malformed markup hides more, never less (adversarial)", () => {
+		const shown = mentions([0, { user: { id: "u", displayName: "Ada" } }], [9, { conversation: { id: "19:x@thread.tacv2" } }]);
+		const hidden = (html: string) => expect(read(html, "html", shown), html).not.toContain("SECRET");
+		// Unclosed, self-closing, nested and uppercase elements.
+		for (const html of [
+			`<at id="9">${SECRET}`,
+			`<at id="9"/>${SECRET}`,
+			`<AT ID="9">${SECRET}</AT>`,
+			`<At id="0" ID="9">${SECRET}</at>`,
+			`<at id="9"><at id="0">x</at>${SECRET}</at>`,
+			`<a href="https://teams.microsoft.com/l/x"/>${SECRET}`,
+			`<A HREF="https://TEAMS.microsoft.com/l/x">${SECRET}</A>`,
+			`<a href="https://example.com/"><a href="https://teams.microsoft.com/l/x">${SECRET}</a></a>`,
+			`<a href="https://example.com/" HREF="https://teams.microsoft.com/l/${SECRET}">x</a>`,
+			`<blockquote/>${SECRET}`,
+			`<blockquote><p>${SECRET}</blockquote`,
+			`<script>${SECRET}</script`,
+			`<script/>${SECRET}</script>`,
+			`<at id="9">${SECRET}</at ${SECRET}`,
+			`<blockquote>${SECRET}</blockquote ${SECRET}`,
+		])
+			hidden(html);
+		// References in addresses, which browsers decode, and invisible characters inside them.
+		for (const href of ["https://&#x74;eams.microsoft.com/l/x", "https&#58;//teams.microsoft.com/l/x", "https://teams.micro&#1;soft.com/x", "https://teams.micro&#xFDD0;soft.com/x"]) {
+			expect(read(`<a href="${href}">${SECRET}</a>`, "html", [])).toBe("[Teams link]");
+		}
+		expect(read("see teams.micro&#1;soft.com/l/x", "html", [])).toBe("see [Teams link]");
+		// Comments, CDATA and raw text hold no markup; what browsers might read as markup in raw text is hidden.
+		expect(read(`a<!-- <at id="0"> -->b<![CDATA[x]]>c`, "html", shown)).toBe("abc");
+		hidden(`<![CDATA[><blockquote>]]>${SECRET}</blockquote>`);
+		hidden(`<script><!--<script></script>${SECRET}</script>`);
+		// End tags browsers ignore: a blockquote's inside a table, a mention's inside a div.
+		expect(read(`<blockquote><table></blockquote>${SECRET}</table></blockquote>after`, "html", shown)).toBe("[quoted message]\nafter");
+		hidden(`<at id="9"><div>${SECRET}</at>${SECRET}</div>`);
+		hidden(`<blockquote><noscript></blockquote>${SECRET}</noscript>`);
+		for (const element of ["textarea", "xmp", "iframe", "noembed", "noframes", "plaintext", "title"]) {
+			hidden(`<${element}><at id="9">${SECRET}</at></${element}>`);
+		}
+		// An end tag with a quote ends the text: browsers read a quoted ">" inside it as part of the tag.
+		expect(read(`a</p x="><xmp>"><at id="9">${SECRET}</at>`, "html", shown)).toBe("a");
+		expect(read(`a</p x="><a href='"><at id="9">${SECRET}</at>'>x</a>`, "html", shown)).toBe("a");
+		// Escaped markup is text, and a tag may span lines.
+		expect(read('&lt;at id="9"&gt;x&lt;/at&gt;', "html", shown)).toBe('<at id="9">x</at>');
+		expect(read('<at\nid="9"\n>x</at\n>y', "html", shown)).toBe("@[channel]y");
+	});
 });
 
 describe("writing", () => {

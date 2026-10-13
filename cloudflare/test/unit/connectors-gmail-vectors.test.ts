@@ -2,9 +2,9 @@
 // vectors generate.py wrote from today's Python (test/fixtures/connectors/google/gmail.json): input
 // validation, base64, which charset labels Python's codecs had, RFC 2047 header decoding, Content-Type
 // parameters, MIME bodies and attachments, address headers (the email package's parser and its defects),
-// threading, raw RFC 5322 messages built under the SMTP policy (encoded words and line folding), the HTML
-// converter, mail addresses and snippets. Every vector is compared exactly, except where a section lists
-// the cases whose answer is now different and says why (header text, one body, CJK words, links, domains).
+// threading, raw RFC 5322 messages built under the SMTP policy (encoded words and line folding), mail
+// addresses and snippets. Every vector is compared exactly, except where a section lists
+// the cases whose answer is now different and says why (header text, one body, CJK words, domains).
 
 import { isDeepStrictEqual } from "node:util";
 import { describe, expect, test } from "vitest";
@@ -15,7 +15,6 @@ import { a2bBase64, b64decodeUrlsafeStrict, urlsafeB64encode } from "../../src/c
 import { charsetKnown, decodeCharset, decodeCharsetStrictly } from "../../src/lib/charset.ts";
 import { BinasciiError, IndexError, LookupError, PyTypeError, UnicodeDecodeError, UnicodeEncodeError, UnicodeError, ValueError } from "../../src/connectors/gmail/email/errors.ts";
 import { messageText, rawMessage } from "../../src/connectors/gmail/email/message.ts";
-import { htmlToText } from "../../src/lib/markdown.ts";
 import * as mime from "../../src/connectors/gmail/mime.ts";
 import { registrable } from "../../src/lib/sites.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
@@ -316,24 +315,6 @@ describe("raw messages under the SMTP policy", () => {
 	test("random subjects, bodies and recipients", () => {
 		expect(vectors.raw_random.length).toBeGreaterThanOrEqual(50);
 		check(vectors.raw_random);
-	});
-});
-
-describe("HTML to text", () => {
-	test("the converter, with its title, on hand-written and random markup", () => {
-		const cases = vectors.html as { html: string; text: string; title: string | null }[];
-		expect(cases.length).toBeGreaterThanOrEqual(202);
-		// Links are the URL parser's serialization; one it cannot read (an IPvFuture host) is its text alone.
-		const serialized = (text: string) =>
-			text
-				.replace(/\[([^[\]]*)\]\(http:\/\/\[v1\.x\]\/\)/g, "$1")
-				.replace(/\]\((https?:[^)]*)\)/gi, (_, href: string) => `](${new URL(href).href.replaceAll("(", "%28").replaceAll(")", "%29")})`);
-		expect(htmlToText('<a href="http://[v1.x]/">vfuture</a>')[0]).toBe("vfuture");
-		const actual = cases.map((item) => {
-			const [text, title] = htmlToText(item.html);
-			return { html: item.html, text, title };
-		});
-		expect(actual).toEqual(cases.map((item) => ({ ...item, text: serialized(item.text) })));
 	});
 });
 

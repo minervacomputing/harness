@@ -1,5 +1,4 @@
 import { describe, expect, test } from "vitest";
-import { unescapeAttributeValue } from "../../src/lib/htmlparser.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
 import { segment } from "../../src/gateway/http.ts";
 import { publicError } from "../../src/gateway/results.ts";
@@ -120,12 +119,6 @@ describe("htmlUnescape", () => {
 		const started = performance.now();
 		for (const [input, output] of cases) expect(htmlUnescape(input) === output).toBe(true);
 		expect(performance.now() - started).toBeLessThan(5000);
-	});
-});
-
-describe("an attribute value's references", () => {
-	test.each(vectors.unescape_attribute)("$input", ({ input, output }) => {
-		expect(unescapeAttributeValue(input)).toBe(output);
 	});
 });
 

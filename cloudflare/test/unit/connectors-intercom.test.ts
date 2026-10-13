@@ -645,6 +645,36 @@ describe("text agents read", () => {
 		expect(read("<svg/>after")).toBe("");
 	});
 
+	test("malformed markup hides more, never less (adversarial)", () => {
+		const SECRET = "SECRET merger";
+		const INTERNAL = "https://app.intercom.com/a/inbox/x";
+		const hidden = (html: string) => expect(read(html), html).not.toContain("SECRET");
+		for (const html of [
+			`<a href="${INTERNAL}">${SECRET}`,
+			`<a href="${INTERNAL}"/>${SECRET}`,
+			`<A HREF="${INTERNAL}">${SECRET}</A>`,
+			`<a href="https://example.com/"><a href="${INTERNAL}">${SECRET}</a></a>`,
+			`<a href="https://example.com/" HREF="/x">${SECRET}</a>`,
+			`<a href="https://example.com/" href="https://example.org/">${SECRET}</a>`,
+			`<a href="/a/inbox/x"/>${SECRET}`,
+			`<SCRIPT>${SECRET}</script`,
+			`<style/>${SECRET}`,
+			`<a href="/x">${SECRET}</a ${SECRET}`,
+		])
+			hidden(html);
+		// References in addresses are decoded before they are judged.
+		for (const href of ["&#x6a;avascript:alert(1)", "&#x2f;a/inbox/x", "https://app&#46;intercom&#46;com/x", "https://app.inter&#1;com.com/x"]) {
+			expect(read(`<a href="${href}">${SECRET}</a>`), href).toBe("[Intercom link]");
+		}
+		expect(read("see app.inter&#1;com.com/x")).toBe("see [Intercom link]");
+		expect(read(`a<!-- <a href="${INTERNAL}"> -->b<![CDATA[x]]>c`)).toBe("abc");
+		hidden(`<![CDATA[><a href="${INTERNAL}">]]>${SECRET}</a>`);
+		hidden(`<a href="${INTERNAL}"><div>${SECRET}</a>${SECRET}</div>`);
+		for (const element of ["textarea", "xmp", "noembed", "noframes", "plaintext"]) hidden(`<${element}><a href="${INTERNAL}">${SECRET}</a></${element}>`);
+		expect(read(`a</p x="><a href='"><a href="${INTERNAL}">${SECRET}</a>'>x</a>`)).toBe("a");
+		expect(read(`&lt;a href="${INTERNAL}"&gt;x`)).toBe("<a [Intercom link]");
+	});
+
 	test("a large document is read in time", () => {
 		// A 4 MB body of unclosed attributes must not backtrack for long.
 		const started = performance.now();

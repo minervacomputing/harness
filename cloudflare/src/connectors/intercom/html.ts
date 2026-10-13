@@ -4,18 +4,19 @@
 // - a link to Intercom (the app, the API, its file hosts or help centers), or a relative one, which Intercom
 //   shows on its own host, shows as "[Intercom link]", label included, since a label can name another
 //   conversation; so does an address to Intercom in the text itself;
-// - images show as "[image]"; scripts, styles and other elements that are not text are left out, with what is
-//   inside them;
+// - images show as "[image]"; scripts, styles, elements whose content is raw text (textarea, xmp, ...) and
+//   other elements that are not text are left out, with what is inside them;
 // - other links show as "label (address)".
-// An element left out that is never closed hides the rest of the message rather than letting it through.
+// An element left out that is never closed, or has a misnested or unclosed element inside (lib/html.ts's
+// `Hidden`), hides the rest of the message rather than letting it through.
 //
 // Written text is escaped and sent as HTML paragraphs, so it is shown literally: it cannot format anything or
 // mention a teammate. It may not address Intercom in any encoding.
 //
-// The HTML is read with lib/htmlparser.ts.
+// The HTML is tokenized by lib/html.ts.
 
 import { decoded, plainText, TextError, WORDS } from "../../lib/text.ts";
-import { type Attribute, HTMLParser } from "../../lib/htmlparser.ts";
+import { type Attribute, Hidden, type Tokens, tokenize } from "../../lib/html.ts";
 import { endsWithNewline, linkText, type Piece, written as writtenOut } from "../../lib/linktext.ts";
 import { RE_I, RE_LETTERS_EXTRA } from "./python.ts";
 
@@ -26,7 +27,24 @@ const INTERCOM = new RegExp(`${RE_I}ntercom[a-z0-9${RE_LETTERS_EXTRA}-]*\\.[a-z$
 // Links shown with their address. Others, relative ones included (Intercom shows them on its own host), are hidden.
 const SHOWN_LINK = new RegExp(`^(?:https?://|ma${RE_I}lto:|tel:)`, "iu");
 const BLOCKS: ReadonlySet<string> = new Set(["p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "pre", "ul", "ol", "table", "li", "blockquote"]);
-const DROPPED: ReadonlySet<string> = new Set(["script", "style", "head", "title", "template", "iframe", "object", "embed", "svg", "math", "noscript"]);
+const DROPPED: ReadonlySet<string> = new Set([
+	"script",
+	"style",
+	"head",
+	"title",
+	"template",
+	"iframe",
+	"object",
+	"embed",
+	"svg",
+	"math",
+	"noscript",
+	"textarea",
+	"xmp",
+	"noembed",
+	"noframes",
+	"plaintext",
+]);
 export const LINK = "[Intercom link]";
 export const NOT_INTERCOM = "must not link to Intercom";
 const PARAGRAPHS = /\n\s*\n/u;
@@ -44,12 +62,12 @@ export function redact(text: string): string {
 type Link = [href: string, label: Piece[]];
 
 /** Reads a body's HTML into text and links, leaving out hidden elements. */
-class Reader extends HTMLParser {
+class Reader implements Tokens {
 	readonly out: Piece[] = [];
 	/** A link being read: its address and the text of its label. */
 	readonly links: Link[] = [];
-	/** The element whose content is dropped, and how deep the same element nests inside it. */
-	hidden: [tag: string, depth: number] | null = null;
+	/** The element whose content is dropped. */
+	hidden: Hidden | null = null;
 
 	#target(): Piece[] {
 		const link = this.links[this.links.length - 1];
@@ -62,7 +80,7 @@ class Reader extends HTMLParser {
 
 	#hide(tag: string, replacement: string): void {
 		this.#emit(replacement);
-		this.hidden = [tag, 1];
+		this.hidden = new Hidden(tag);
 	}
 
 	#newline(): void {
@@ -71,14 +89,13 @@ class Reader extends HTMLParser {
 		if (last !== undefined && !endsWithNewline(last)) target.push("\n");
 	}
 
-	override handleStartTag(tag: string, attrs: Attribute[]): void {
+	/** Browsers ignore the slash on elements that are not void, so `<script/>` stays open. */
+	start(tag: string, attrs: Attribute[]): void {
 		if (this.hidden !== null) {
-			const [name, depth] = this.hidden;
-			if (tag === name) this.hidden = [name, depth + 1];
+			this.hidden.start(tag);
 			return;
 		}
-		// A dict of the attributes: the last of repeated ones wins.
-		const values = new Map<string, string>(attrs.map(([name, value]) => [name, value || ""]));
+		const values = new Map<string, string>(attrs);
 		if (DROPPED.has(tag)) this.#hide(tag, "");
 		else if (tag === "a") {
 			const href = values.get("href") || "";
@@ -95,15 +112,9 @@ class Reader extends HTMLParser {
 		} else if (BLOCKS.has(tag)) this.#newline();
 	}
 
-	override handleStartEndTag(tag: string, attrs: Attribute[]): void {
-		// Browsers ignore the slash on elements that are not void, so `<script/>` stays open.
-		this.handleStartTag(tag, attrs);
-	}
-
-	override handleEndTag(tag: string): void {
+	end(tag: string): void {
 		if (this.hidden !== null) {
-			const [name, depth] = this.hidden;
-			if (tag === name) this.hidden = depth > 1 ? [name, depth - 1] : null;
+			if (this.hidden.end(tag)) this.hidden = null;
 			return;
 		}
 		const link = tag === "a" ? this.links.pop() : undefined;
@@ -115,11 +126,11 @@ class Reader extends HTMLParser {
 		else if (BLOCKS.has(tag)) this.#newline();
 	}
 
-	override handleData(data: string): void {
+	text(data: string): void {
 		if (this.hidden === null) this.#emit(data);
 	}
 
-	text(): string {
+	result(): string {
 		// A link never closed is shown as text, without its address.
 		for (let at = this.links.length - 1; at >= 0; at--) for (const text of (this.links[at] as Link)[1]) this.out.push(text);
 		const lines = writtenOut(this.out).replaceAll(" ", " ").split("\n");
@@ -132,8 +143,8 @@ class Reader extends HTMLParser {
 export function read(content: string | null | undefined): string {
 	if (!content) return "";
 	const reader = new Reader();
-	reader.run(content);
-	return reader.text();
+	tokenize(content, reader);
+	return reader.result();
 }
 
 /** Refuses text that would do more than add words to a conversation; null when it is allowed. */

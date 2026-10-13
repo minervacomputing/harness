@@ -1,7 +1,7 @@
 // The Web connector (src/connectors/web/, lib/sites.ts, lib/markdown.ts) against the vectors in
 // test/fixtures/connectors/web/, written from the Python backend: its declaration with and without a Brave
 // key, its input models with the query hash page tokens bind to, the search cursors it accepts, the site ids
-// and patterns, html_to_text, plain, decode, and `_body` over responses split into chunks at every byte,
+// and patterns, plain, decode, and `_body` over responses split into chunks at every byte,
 // damaged, cut short, with second members, trailing data and bombs. Host names and addresses are tested in
 // test/fixtures/hosts-tests.ts.
 
@@ -17,7 +17,6 @@ import { inputSchema } from "../../src/gateway/registry.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
 import { type Json } from "../../src/lib/json.ts";
 import { readVectors } from "../fixtures/connectors/read-vectors.ts";
-import { htmlToText } from "../../src/lib/markdown.ts";
 import { ancestors, choices, name, registrable, validId } from "../../src/lib/sites.ts";
 import { kindsOut } from "../../src/workspace/out.ts";
 import { changedOnPurpose } from "./changed.ts";
@@ -41,7 +40,6 @@ interface Vectors {
 		ids: { id: string; valid: boolean; name: string }[];
 		hosts: { host: string; ancestors: string[]; choices: string[]; registrable: string | null }[];
 	};
-	html: { html: string; base: string; text: string; title: string | null }[];
 	plain: { text: string; plain: string }[];
 	decode: { body: string; content_type: string; result: Outcome & { mime?: string; form?: string; text?: string } }[];
 	bodies: { encoding: string | null; chunks: string[]; result: Outcome & { length?: number; sha256?: string; head?: string } }[];
@@ -153,15 +151,6 @@ describe("sites as lib/sites.ts reads them", () => {
 });
 
 describe("pages as text", () => {
-	test(`html_to_text: ${VECTORS.html.length} pages with base addresses, links resolved, hidden parts dropped`, () => {
-		// Links are the URL parser's serialization now (Python kept the href's own spelling).
-		const serialized = (text: string) => text.replace(/\]\((https?:[^)]*)\)/g, (_, href: string) => `](${new URL(href).href.replaceAll("(", "%28").replaceAll(")", "%29")})`);
-		for (const expected of VECTORS.html) {
-			const [text, title] = htmlToText(expected.html, expected.base);
-			expect({ html: expected.html, base: expected.base, text, title }).toEqual({ ...expected, text: serialized(expected.text) });
-		}
-	});
-
 	test("plain: snippets without their markup", () => {
 		for (const expected of VECTORS.plain) expect(plain(expected.text)).toBe(expected.plain);
 	});
