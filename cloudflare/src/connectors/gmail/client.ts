@@ -7,12 +7,11 @@
 import { z } from "zod";
 import type { OperationErrorShape, ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
-import { ProviderHTTP } from "../../gateway/http.ts";
+import { ProviderHTTP, segment } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
 import { isDict, type Json, parseJson } from "../../lib/json.ts";
 import { GoogleUser, USERINFO_URL, classify as googleClassify } from "../google/index.ts";
 import { laxInt, model } from "../google/model.ts";
-import { segment } from "../../lib/text.ts";
 
 export const API_URL = "https://gmail.googleapis.com/gmail/v1/users/me";
 /** Message, thread and label ids. Gmail's message and thread ids are hex; user label ids are `Label_<n>`. */

@@ -3,11 +3,10 @@
 
 import { z } from "zod";
 import type { ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
-import { ProviderHTTP } from "../../gateway/http.ts";
+import { ProviderHTTP, segment } from "../../gateway/http.ts";
 import type { Json } from "../../lib/json.ts";
 import { GoogleUser, USERINFO_URL, classify } from "../google/index.ts";
 import { laxBool, model } from "../google/model.ts";
-import { segment } from "../../lib/text.ts";
 
 export const API_URL = "https://www.googleapis.com/calendar/v3";
 

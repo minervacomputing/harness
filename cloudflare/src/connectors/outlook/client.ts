@@ -11,7 +11,7 @@ import { type Json } from "../../lib/json.ts";
 import { OperationError } from "../../gateway/connector.ts";
 import { API_URL, Graph, IMMUTABLE_IDS, User, pageParam } from "../microsoft/index.ts";
 import { bool, int, list, model, nullable, optional, required, str } from "../microsoft/model.ts";
-import { segment } from "../../lib/text.ts";
+import { segment } from "../../gateway/http.ts";
 
 export const TEXT_BODY = `${IMMUTABLE_IDS}, outlook.body-content-type="text"`;
 

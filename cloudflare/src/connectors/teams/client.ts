@@ -11,7 +11,7 @@ import type { Json } from "../../lib/json.ts";
 import { API_URL, Graph, queryOf } from "../microsoft/index.ts";
 import { type Reader, bool, dict, int, list, model, nullable, optional, required, str } from "../microsoft/model.ts";
 import { extend } from "../../lib/arrays.ts";
-import { segment } from "../../lib/text.ts";
+import { segment } from "../../gateway/http.ts";
 
 export const CHANNEL_FIELDS = "id,displayName,description,membershipType,webUrl";
 /** Mutable so that tests can lower it. */

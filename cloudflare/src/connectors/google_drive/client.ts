@@ -4,13 +4,12 @@
 import { z } from "zod";
 import type { ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
-import { ProviderHTTP } from "../../gateway/http.ts";
+import { ProviderHTTP, segment } from "../../gateway/http.ts";
 import { concat, utf8 } from "../../lib/bytes.ts";
 import { type JsonObject } from "../../lib/json.ts";
 import { tokenHex } from "../../lib/random.ts";
 import { GoogleUser, USERINFO_URL, classify } from "../google/index.ts";
 import { laxBool, model } from "../google/model.ts";
-import { segment } from "../../lib/text.ts";
 
 export const API_URL = "https://www.googleapis.com/drive/v3";
 export const UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files";

@@ -18,10 +18,9 @@
 import { z } from "zod";
 import type { OperationErrorShape, ProviderClient, ProviderIo, ProviderRequest } from "../../contracts/connectors.ts";
 import { OperationError } from "../../gateway/connector.ts";
-import { ProviderHTTP, defaultForbidden } from "../../gateway/http.ts";
+import { ProviderHTTP, defaultForbidden, segment } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
 import { isDict, type Json, parseJson } from "../../lib/json.ts";
-import { segment } from "../../lib/text.ts";
 
 export const API_URL = "https://api.github.com";
 /** The largest file GitHub returns inline, and room for its base64 encoding in the JSON around it. */

@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 import { unescapeAttributeValue } from "../../src/lib/htmlparser.ts";
-import { PLAIN_TEXT, SINGLE_LINE, TextError, decoded, htmlUnescape, plainText, segment, singleLine, sliceText, truncate, unquote } from "../../src/lib/text.ts";
+import { OperationError } from "../../src/gateway/connector.ts";
+import { segment } from "../../src/gateway/http.ts";
+import { publicError } from "../../src/gateway/results.ts";
+import { PLAIN_TEXT, SINGLE_LINE, TextError, decoded, htmlUnescape, percentEncode, plainText, singleLine, sliceText, truncate, unquote } from "../../src/lib/text.ts";
 import vectors from "./vectors.ts";
 
 test("free-text validators draw one line for control characters", () => {
@@ -47,8 +50,32 @@ describe("segment", () => {
 		expect(segment("ü")).toBe("%C3%BC");
 		expect(segment("!'()*")).toBe("%21%27%28%29%2A");
 		expect(segment("A-z_0.9~")).toBe("A-z_0.9~");
+		expect(segment("...")).toBe("...");
+		expect(segment("%2e%2e")).toBe("%252e%252e");
+	});
+
+	test("refuses an empty id, \".\" and \"..\", which the URL parser would drop or step up with, as invalid arguments", () => {
+		for (const value of ["", ".", ".."]) {
+			expect(() => segment(value), JSON.stringify(value)).toThrow(OperationError);
+			expect(publicError(catchError(() => segment(value)))).toEqual({ code: "INVALID_ARGUMENTS", message: `${JSON.stringify(value)} is not a valid id or name.` });
+		}
+		expect(new URL(`https://api.example.com/repos/acme/${percentEncode("..")}`).pathname).toBe("/repos/");
+	});
+
+	test("percentEncode leaves dots alone, for text inside a segment", () => {
+		expect(percentEncode("..")).toBe("..");
+		expect(percentEncode("it's")).toBe("it%27s");
 	});
 });
+
+function catchError(fn: () => unknown): unknown {
+	try {
+		fn();
+	} catch (error) {
+		return error;
+	}
+	throw new Error("did not throw");
+}
 
 describe("htmlUnescape", () => {
 	test.each(vectors.unescape)("$input", ({ input, output }) => {

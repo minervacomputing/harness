@@ -14,11 +14,10 @@
 import { z } from "zod";
 import type { Auth, ProviderClient, ProviderIo } from "../../contracts/connectors.ts";
 import { OperationError, denied } from "../../gateway/connector.ts";
-import { ProviderHTTP } from "../../gateway/http.ts";
+import { ProviderHTTP, segment } from "../../gateway/http.ts";
 import { fromUtf8Strict } from "../../lib/bytes.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
 import { model, optionalStr } from "./model.ts";
-import { segment } from "../../lib/text.ts";
 
 export const API_URL = "https://api.atlassian.com";
 export const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;

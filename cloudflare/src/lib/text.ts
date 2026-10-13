@@ -90,10 +90,10 @@ export function decoded(text: string): string {
 }
 
 /**
- * One URL path segment: everything but ASCII letters, digits and `-._~` (RFC 3986's unreserved characters)
- * percent-encoded as UTF-8, so an id holding `/`, `?`, `#` or a quote stays one segment of the path.
+ * Everything but ASCII letters, digits and `-._~` (RFC 3986's unreserved characters) percent-encoded as
+ * UTF-8, so text holding `/`, `?`, `#` or a quote stays inside one segment of a path.
  */
-export function segment(value: string): string {
+export function percentEncode(value: string): string {
 	return encodeURIComponent(value).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 

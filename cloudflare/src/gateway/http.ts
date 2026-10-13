@@ -33,8 +33,21 @@ import type {
 } from "../contracts/connectors.ts";
 import { concatAll, fromUtf8, fromUtf8Strict, utf8 } from "../lib/bytes.ts";
 import { type Json, parseJson } from "../lib/json.ts";
+import { percentEncode } from "../lib/text.ts";
 import { OperationError } from "./connector.ts";
 import { RUN_ENDED_MESSAGE } from "./ledger.ts";
+
+/**
+ * One segment of a provider API path, `percentEncode`d. "", "." and ".." are refused with an ordinary
+ * INVALID_ARGUMENTS error: the URL parser drops them or steps up a level, so an id such as ".." would
+ * address another endpoint of the provider.
+ */
+export function segment(value: string): string {
+	if (value === "" || value === "." || value === "..") {
+		throw new OperationError("INVALID_ARGUMENTS", `${JSON.stringify(value)} is not a valid id or name.`);
+	}
+	return percentEncode(value);
+}
 
 export const MUTATING_METHODS: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 /** The provider refused these requests, so the write they carried was not applied. */

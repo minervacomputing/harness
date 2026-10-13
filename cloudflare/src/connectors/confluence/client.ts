@@ -12,7 +12,7 @@ import { type Json, type JsonObject, parseJson } from "../../lib/json.ts";
 import { AtlassianClient } from "../atlassian/index.ts";
 import { laxInt, model, optionalStr } from "../atlassian/model.ts";
 import { extend } from "../../lib/arrays.ts";
-import { segment } from "../../lib/text.ts";
+import { segment } from "../../gateway/http.ts";
 
 export const MAX_PAGES = 10;
 export const BATCH_LIMIT = 250;

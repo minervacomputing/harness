@@ -67,7 +67,7 @@ export async function keyAccount(env: Env, workspace: WorkspaceRef, connector: C
 /**
  * Runs `run` against the provider with the connection's credentials, for the member. A credential the
  * Workspace will not lend (the connection needs reconnecting, a refresh failed) and a provider's failure are
- * 502 with their message (connections/api.py `_provider_call`).
+ * 502 with their message; an id refused before anything is sent is 422.
  */
 export async function withConnection<T>(env: Env, member: Member, connector: Connector, connectionId: string, run: (client: ProviderClient) => Promise<T>): Promise<T> {
 	const lease = await member.object.lease(connectionId, { settings: member.caller });
@@ -84,7 +84,8 @@ export async function withConnection<T>(env: Env, member: Member, connector: Con
 				console.error("Could not mark the connection as needing reconnecting", connectionId, marking);
 			}
 		}
-		if (error instanceof OperationError) throw new HttpError(detail(502, error.message));
+		// An id the member gave that cannot name anything (segment refuses "..") is their mistake, not the provider's.
+		if (error instanceof OperationError) throw new HttpError(detail(error.code === "INVALID_ARGUMENTS" ? 422 : 502, error.message));
 		throw error;
 	}
 }
