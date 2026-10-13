@@ -86,7 +86,7 @@ function deferred<T = void>(): Deferred<T> {
 export interface LocalCallsOptions {
 	/** Saves the folder. Runs only while no local call is running. */
 	checkpoint: (options: { rehashAll?: boolean }) => Promise<void>;
-	/** Kills every process of the agent: `cgroup.kill` (plan: Checkpoints, step 3). Rejects when they would not die. */
+	/** Kills every process of the agent: `cgroup.kill` (plan: Checkpoints). Rejects when they would not die. */
 	killStrays: () => Promise<void>;
 	/**
 	 * Ends the attempt so that nothing later is recorded. Called once; no held result is released, and no call
@@ -180,7 +180,7 @@ export class LocalCalls {
 
 	async #finish(): Promise<void> {
 		// Calls still running (an aborted one's command may outlive pi's wait) end first, and so does any
-		// checkpoint they ask for, so the final scan never meets a command (plan: Checkpoints, steps 1 and 2).
+		// checkpoint they ask for, so the final scan never meets a command (plan: Checkpoints).
 		for (;;) {
 			if (this.#failure) return this.#rejected();
 			if (this.#active) await this.#open.promise;

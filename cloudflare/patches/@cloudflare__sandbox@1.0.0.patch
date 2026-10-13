@@ -1,0 +1,59 @@
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 46870d57d252eaed8fa6db4dfcc51a1db4488261..22a198cc4ca8f03ca11cac2d2a2c38226e3b55ac 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -286,6 +286,10 @@ const ERROR_PREFIX_LENGTH = 4;
+ const FRAME_SUCCESS = 0;
+ const FRAME_FILE_ERROR = 1;
+ const FRAME_DATA = 2;
++/** The largest data frame accepted: a longer declared length is refused before anything is allocated. */
++const MAX_DATA_FRAME_LENGTH = 16 * 1024 * 1024;
++/** The most entries a directory listing may hold: more are refused before any is decoded. */
++const MAX_DIRECTORY_ENTRIES = 100000;
+ const jsonSchema = z.json();
+ const jsonDecoder = new TextDecoder("utf-8", { fatal: true });
+ var AbortMonitor = class {
+@@ -404,7 +408,7 @@ var ShimControl = class {
+ 		this.#reader = reader;
+ 		this.#session = session;
+ 	}
+-	async readFrame() {
++	async readFrame(maxDataLength = MAX_DATA_FRAME_LENGTH) {
+ 		const header = await this.#readExactly(HEADER_LENGTH);
+ 		validateHeader(header);
+ 		const frameKind = header[5];
+@@ -413,6 +417,7 @@ var ShimControl = class {
+ 			if (payloadLength !== 0) throw protocolError("sandbox-shim returned invalid control data");
+ 			return { kind: "success" };
+ 		}
++		if (frameKind === FRAME_DATA && payloadLength > maxDataLength) throw protocolError("sandbox-shim data frame exceeded its size limit");
+ 		if (frameKind === FRAME_DATA) return {
+ 			kind: "data",
+ 			payload: await this.#readExactly(payloadLength)
+@@ -865,7 +870,7 @@ async function runFileCommand(container, request) {
+ 	let control;
+ 	try {
+ 		control = session.openStdoutControl();
+-		const frame = await control.readFrame();
++		const frame = await control.readFrame(request.maxDataLength);
+ 		await control.expectEnd();
+ 		if (frame.kind === "fileError") {
+ 			await session.settle();
+@@ -933,6 +938,7 @@ function decodeEntries(payload) {
+ 	let offset = 0;
+ 	const count = readUint32(view, offset);
+ 	offset += 4;
++	if (count > MAX_DIRECTORY_ENTRIES) throw protocolError("sandbox-shim returned too many directory entries");
+ 	const entries = [];
+ 	for (let index = 0; index < count; index += 1) {
+ 		const type = decodeFileType(readByte(payload, offset));
+@@ -1059,7 +1065,8 @@ async function statFile(container, path, options, operation) {
+ 			operation,
+ 			path
+ 		},
+-		expected: "data"
++		expected: "data",
++		maxDataLength: STAT_PAYLOAD_LENGTH
+ 	});
+ 	if (payload.length !== STAT_PAYLOAD_LENGTH) throw protocolError(`sandbox-shim returned invalid ${operation} data`);
+ 	const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);

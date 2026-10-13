@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 
 const OUTPUT = fileURLToPath(new URL("../.cloudflare/output/v0/workers/default/", import.meta.url));
 // Strings only the test build has: src/faults/'s objects (the fake provider and the mailbox that captures
-// emails), its tables, its fake provider's host, its driver's token salt (`minerva.faults-token`) and header
+// emails), its tables, its fake provider's host, its driver's token label (`minerva.faults-token`) and header
 // (`X-Minerva-Faults-Token`), and the fake model's API name.
 const MARKERS = ["FaultProvider", "FaultMailbox", "fault_plan", "notes.fake.invalid", "minerva.faults", "X-Minerva-Faults", "minerva-fake"];
 

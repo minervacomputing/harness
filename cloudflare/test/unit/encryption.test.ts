@@ -87,8 +87,8 @@ describe("the m2 envelope", () => {
 		const sealed = await keys.encrypt(ROW, PAYLOAD);
 		const [, , body] = sealed.ciphertext.split(".") as [string, string, string];
 		// The format version.
-		await refused(keys, ROW, { ...sealed, ciphertext: `m3.k1.${body}` }, "Stored data is not in format m2, the only one this version reads.");
-		await refused(keys, ROW, { ...sealed, ciphertext: `M2.k1.${body}` }, "Stored data is not in format m2, the only one this version reads.");
+		await refused(keys, ROW, { ...sealed, ciphertext: `m3.k1.${body}` }, "Stored data is not an m2 envelope.");
+		await refused(keys, ROW, { ...sealed, ciphertext: `M2.k1.${body}` }, "Stored data is not an m2 envelope.");
 		// The key id: another configured key, an unknown one, a malformed one, or the column beside it.
 		await refused(keys, ROW, { ciphertext: `m2.k2.${body}`, version: "k2" });
 		await refused(keys, ROW, { ciphertext: `m2.k9.${body}`, version: "k9" }, "No decryption key configured for version 'k9'.");
@@ -111,7 +111,7 @@ describe("the m2 envelope", () => {
 		await refused(keys, ROW, { ...sealed, ciphertext: `${sealed.ciphertext}.` });
 		await refused(keys, ROW, { ...sealed, ciphertext: "m2.k1." });
 		await refused(keys, ROW, { ...sealed, ciphertext: "m2" }, "Stored data could not be decrypted.");
-		await refused(keys, ROW, { ...sealed, ciphertext: "" }, "Stored data is not in format m2, the only one this version reads.");
+		await refused(keys, ROW, { ...sealed, ciphertext: "" }, "Stored data is not an m2 envelope.");
 		// A base64 spelling with other unused bits decodes to the same bytes, but only the canonical one is ours.
 		if ((body.length * 6) % 8 > 0) {
 			expect(fromBase64(respell(body))).toEqual(bytes);
@@ -119,17 +119,6 @@ describe("the m2 envelope", () => {
 		}
 		// Untouched, it still decrypts.
 		expect(await keys.decrypt(ROW, sealed)).toEqual(PAYLOAD);
-	});
-
-	test("a Fernet token, as instances stored before step 6b, is refused for its format", async () => {
-		const keys = await EncryptionKeys.parse(K1);
-		const fernet = "gAAAAABo2XoAAAECAwQFBgcICQoLDA0ODwF6U2W0JxkNDb3mT8hCJdm9UJ2vh9b4lYqf3P2oV5cVfV3uYc1j8Aq6Yj1jM3T0rJxvzvR0=";
-		await refused(
-			keys,
-			ROW,
-			{ ciphertext: fernet, version: "k1" },
-			"Stored data is not in format m2, the only one this version reads. It is a Fernet token from before step 6b, which no version reads any more: reset the instance's data.",
-		);
 	});
 
 	test("invalid UTF-8 or JSON inside throws", async () => {
@@ -201,7 +190,7 @@ describe("MINERVA_ENCRYPTION_KEYS", () => {
 		await expect(EncryptionKeys.parse(`${K1},${K1}`)).rejects.toBeInstanceOf(EncryptionError);
 	});
 
-	test("a key generated for Fernet before step 6b (32 bytes, padded) is still a valid secret", async () => {
+	test("a 32-byte secret in padded base64 is valid", async () => {
 		const keys = await EncryptionKeys.parse("v1:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=");
 		expect(keys.current).toBe("v1");
 		expect(await keys.decrypt(ROW, await keys.encrypt(ROW, PAYLOAD))).toEqual(PAYLOAD);
@@ -224,6 +213,7 @@ describe("MINERVA_ENCRYPTION_KEYS", () => {
 			// The same bytes in a non-canonical spelling (an unused bit set).
 			`k1:${respell(secret(1))}`,
 			`${K1},k2`,
+			`["k1:${secret(1)}"]`,
 		];
 		for (const value of malformed) {
 			const error = await EncryptionKeys.parse(value).then(
@@ -234,10 +224,6 @@ describe("MINERVA_ENCRYPTION_KEYS", () => {
 			expect((error as Error).message, value).toMatch(/^(Entry \d of MINERVA_ENCRYPTION_KEYS is not 'id:secret'|MINERVA_ENCRYPTION_KEYS has)/);
 			expect((error as Error).message).not.toContain(secret(1));
 		}
-		// The JSON list Fernet's key ring also read says how to write it instead.
-		await expect(EncryptionKeys.parse(` ["k1:${secret(1)}"]`)).rejects.toThrow(
-			"MINERVA_ENCRYPTION_KEYS is a JSON list, which this version does not read: write its entries comma separated, as id:secret,id:secret.",
-		);
 		// Padded or not, and longer, is fine.
 		expect((await EncryptionKeys.parse(`k1:${secret(1)}=`)).current).toBe("k1");
 		expect((await EncryptionKeys.parse(`k_1-x:${base64url(new Uint8Array(64).fill(9), { pad: false })}`)).current).toBe("k_1-x");

@@ -1,103 +1,84 @@
-// File operations (`FsRequest`), each answered by minerva-fs as the agent's user through
-// the wrapper, by a long-lived server process (`serve`) that runs them one at a time: one JSON line,
-// sometimes followed by bytes whose length it gives. Its answers are the container's and so untrusted: each is checked for its shape before it goes
-// back. A binary reader is a minerva-fs process that holds its file open and answers requests on stdin, so
-// reads keep seeing the file that was opened even after a rename (pi's BinaryReader).
+// pi's file operations (`FsRequest`), run as the agent's user. Most go through @cloudflare/sandbox's Files,
+// whose sandbox-shim runs each one in its own exec; what Files lacks (canonical paths, temporary files,
+// truncate, sync, append, the watch's snapshot) is one coreutils command through the wrapper, with paths as
+// arguments. Every operation ends within the file-operation limit: a shim waiting on a FIFO is killed then.
+// What comes back from the container is untrusted: reads are bounded and every answer is checked.
 
-import type { FileErrorCode, FileInfo, LineScan, WatchTarget } from "@earendil-works/pi-durable/env";
-import { type Json, parseJson } from "../lib/json.ts";
-import { ByteReader } from "./bytes.ts";
-import { FILE_OPERATION_SECONDS, MAX_READ_BYTES, MAX_TEXT_BYTES } from "./constants.ts";
-import { resolvePath } from "./paths.ts";
-import { ContainerGone, helper, type Machine, startWrapped, type Wrapped } from "./process.ts";
+import { Files, SandboxFileError, type SandboxFileStat } from "@cloudflare/sandbox";
+import { type FileErrorCode, type FileInfo, type LineScan, LineScanner, type WatchTarget } from "@earendil-works/pi-durable/env";
+import { TooLong } from "./bytes.ts";
+import { AGENT_GID, AGENT_UID, MAX_BINARY_BYTES, TMP } from "./constants.ts";
+import { join } from "./paths.ts";
+import { ContainerGone, helperEnvironment, type Machine, spawn, startWrapped } from "./process.ts";
 
-/**
- * A file opened for positional reads by a reader process that holds it open, so reads keep seeing the file
- * that was opened even after a rename (pi's BinaryReader); `close` ends the process, and so does killing
- * strays. A handle whose reader is gone answers `invalid`.
- */
-export interface FileHandle {
-	/** The reader's id within the incarnation. */
-	id: string;
-	path: string;
-	dev: number;
-	ino: number;
+/** What a binary reader saw when it opened its file; every later call checks the path still shows it. */
+export interface Opened {
 	size: number;
 	mtimeMs: number;
+	noFollow: boolean;
 }
 
-/**
- * File operations, all as the dropped user through `minerva-fs`: paths are arguments, reads are bounded,
- * files open with O_NONBLOCK and are accepted only when `fstat` says regular file, so a FIFO never hangs a
- * call. pi's own tools keep pi's semantics for the paths the agent names (plan: The sandbox lifecycle).
- */
 export type FsRequest =
-	| { op: "absolute"; path: string; cwd: string }
-	| { op: "canonical"; path: string }
-	| { op: "exists"; path: string }
-	| { op: "info"; path: string }
+	| { op: "readFile"; path: string; maxBytes: number }
+	| { op: "writeFile"; path: string; content: Uint8Array }
+	| { op: "appendFile"; path: string; content: Uint8Array }
+	| { op: "lstat"; path: string }
 	| { op: "open"; path: string; noFollow: boolean }
-	| { op: "read"; handle: FileHandle; offset: number; length: number }
-	| { op: "scanLines"; handle: FileHandle; startLine: number; endLine?: number }
-	| { op: "stat"; handle: FileHandle }
-	| { op: "close"; handle: FileHandle }
-	| { op: "opendir"; path: string }
-	| { op: "snapshot"; targets: WatchTarget[]; maxEntries: number }
-	| { op: "readText"; path: string; maxBytes: number }
-	| { op: "write"; path: string; content: Uint8Array; append: boolean }
-	| { op: "truncate"; path: string; size: number }
-	| { op: "flush"; path: string }
-	| { op: "rename"; from: string; to: string }
-	| { op: "list"; path: string; after: string | null; max: number }
+	| { op: "read"; path: string; opened: Opened; offset: number; length: number }
+	| { op: "scanLines"; path: string; opened: Opened; startLine: number; endLine?: number }
+	| { op: "stat"; path: string; opened: Opened }
+	| { op: "readDirectory"; path: string }
+	| { op: "entries"; paths: string[] }
 	| { op: "mkdir"; path: string; recursive: boolean }
 	| { op: "remove"; path: string; recursive: boolean; force: boolean }
-	| { op: "mktemp"; kind: "file" | "dir"; prefix?: string; suffix?: string };
+	| { op: "rename"; from: string; to: string }
+	| { op: "truncate"; path: string; size: number }
+	| { op: "flush"; path: string }
+	| { op: "canonical"; path: string }
+	| { op: "mktemp"; kind: "file" | "dir"; prefix: string; suffix: string }
+	| { op: "snapshot"; targets: WatchTarget[]; maxEntries: number };
 
-/** Each request's answer, by `op`. A read returns at most 4 MiB; RPC payloads are limited to 32 MiB. */
+/** Each request's answer, by `op`. RPC payloads are limited to 32 MiB; no answer comes near it. */
 export interface FsAnswers {
-	absolute: string;
-	canonical: string;
-	exists: boolean;
-	info: FileInfo;
-	open: FileHandle;
+	readFile: Uint8Array;
+	writeFile: null;
+	appendFile: null;
+	lstat: FileInfo;
+	open: FileInfo;
 	read: Uint8Array;
 	scanLines: LineScan;
 	stat: FileInfo;
-	close: null;
-	opendir: null;
-	snapshot: WatchSnapshot;
-	readText: string;
-	write: null;
-	truncate: null;
-	flush: null;
-	rename: null;
-	list: { entries: FileInfo[]; next: string | null };
+	/** The names of the entries that are files, directories or symbolic links. */
+	readDirectory: string[];
+	/** Each path's information, or null where it is gone or of a kind pi does not list. */
+	entries: (FileInfo | null)[];
 	mkdir: null;
 	remove: null;
+	rename: null;
+	truncate: null;
+	flush: null;
+	canonical: string;
 	mktemp: string;
+	snapshot: WatchSnapshot;
 }
 
 /**
  * What a watch's poll compares (the ExecutionEnv's `watch` polls): a signature per path under the targets
- * (kind, size, mtime, ctime, inode; a symbolic link also by what it points to), excluded entries left out.
- * `overflow` when the targets hold more than `maxEntries` entries.
+ * (kind, size, mtime, ctime, inode; a dangling symbolic link by what it points to), excluded entries left
+ * out. `overflow` when the targets hold more than `maxEntries` entries.
  */
 export type WatchSnapshot = { entries: { [path: string]: string } } | { overflow: true };
 
 /** The answer to a request: its value (`FsAnswers[op]`), or pi's error code. */
 export type FsResponse = { ok: true; value: FsAnswers[keyof FsAnswers] } | { ok: false; code: FileErrorCode; message: string };
 
-const CODES: readonly FileErrorCode[] = ["aborted", "not_found", "permission_denied", "not_directory", "is_directory", "invalid", "not_supported", "unknown"];
-const KINDS = ["file", "directory", "symlink"];
-const LINE_BYTES = 4 * 1024 * 1024;
-/** A reader may stay open this long; killing strays ends it sooner. */
-const READER_SECONDS = 600;
-/** Readers open at once in an incarnation. */
-const READERS = 64;
-
-type Answer = { ok: true; value: Json } | { ok: false; code: FileErrorCode; message: string };
-
-export class Malformed extends Error {}
+/** The processes one operation runs at once: a listing page's `lstat`s, a snapshot's `find`s. */
+const AT_ONCE = 16;
+export const MAX_ENTRIES = 1000;
+/** The output of one snapshot's `find`s together, shared equally among them; beyond its share the watch overflows. */
+const SNAPSHOT_BYTES = 8 * 1024 * 1024;
+/** What a wrapped command may print, its output being a path. */
+const PATH_OUTPUT = 64 * 1024;
 
 /**
  * Sets an own property of a plain object, a path named `__proto__` included. Workers RPC cannot clone an
@@ -107,451 +88,412 @@ export function setOwn<T>(target: { [key: string]: T }, key: string, value: T): 
 	Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
 }
 
+/** Linux error names as pi's codes, with our messages. Anything not here is `unknown`. */
+const ERRORS: { readonly [errno: string]: readonly [FileErrorCode, string] } = {
+	ENOENT: ["not_found", "No such file or directory"],
+	EACCES: ["permission_denied", "Permission denied"],
+	EPERM: ["permission_denied", "Operation not permitted"],
+	ENOTDIR: ["not_directory", "Not a directory"],
+	EISDIR: ["is_directory", "Is a directory"],
+	EINVAL: ["invalid", "Invalid argument"],
+	ENXIO: ["invalid", "No such device or address"],
+	EEXIST: ["unknown", "File exists"],
+	ENOTEMPTY: ["unknown", "Directory not empty"],
+	ENOSPC: ["unknown", "No space left on device"],
+	EDQUOT: ["unknown", "Disk quota exceeded"],
+	EROFS: ["unknown", "Read-only file system"],
+	ENAMETOOLONG: ["unknown", "File name too long"],
+	ELOOP: ["unknown", "Too many levels of symbolic links"],
+	EXDEV: ["unknown", "Cannot move across file systems"],
+	EBUSY: ["unknown", "Device or resource busy"],
+	EFBIG: ["unknown", "File too large"],
+	ETXTBSY: ["unknown", "Text file busy"],
+	EMLINK: ["unknown", "Too many links"],
+	EIO: ["unknown", "Input/output error"],
+};
+
 function failure(code: FileErrorCode, message: string): FsResponse {
 	return { ok: false, code, message };
 }
 
-const UNAVAILABLE = (): FsResponse => failure("unknown", "The file operation failed in the sandbox.");
+/** A Linux error name as pi's code, and its message about `path`. */
+export function errnoFailure(errno: string, path: string): FsResponse {
+	const known = Object.hasOwn(ERRORS, errno) ? ERRORS[errno] : undefined;
+	const [code, text] = known ?? ["unknown", `Failed with ${/^E[A-Z0-9]{1,15}$/.test(errno) ? errno : "an unknown error"}`];
+	return failure(code, `${text}: ${path}`);
+}
 
-function decode(line: Uint8Array): Answer {
-	const parsed = parseJson(new TextDecoder().decode(line));
-	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Malformed("not an object");
-	if (parsed.ok === true) return { ok: true, value: parsed.value ?? null };
-	if (parsed.ok === false && typeof parsed.code === "string" && (CODES as readonly string[]).includes(parsed.code) && typeof parsed.message === "string") {
-		return { ok: false, code: parsed.code as FileErrorCode, message: parsed.message };
+const FAILED = (): FsResponse => failure("unknown", "The file operation failed in the sandbox.");
+
+/** A failure as pi's error: the shim's errno through the table, a refused argument `invalid`, anything else `unknown`. */
+function failed(error: unknown, path: string, timeout: AbortSignal): FsResponse {
+	if (error instanceof ContainerGone) throw error;
+	if (SandboxFileError.is(error)) return errnoFailure(error.code, error.path || path);
+	if (timeout.aborted) return failure("unknown", `The file operation timed out: ${path}`);
+	if (error instanceof TypeError) return failure("invalid", `Invalid path: ${path}`);
+	return FAILED();
+}
+
+class Failed extends Error {
+	readonly response: FsResponse;
+	constructor(response: FsResponse) {
+		super("The file operation failed.");
+		this.response = response;
 	}
-	throw new Malformed("not an answer");
 }
 
-function isObject(value: Json): value is { [key: string]: Json } {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
+function kindOf(type: string): FileInfo["kind"] | null {
+	return type === "file" || type === "directory" || type === "symlink" ? type : null;
 }
 
-function finite(value: Json): value is number {
-	return typeof value === "number" && Number.isFinite(value);
+function basename(path: string): string {
+	return path.slice(path.lastIndexOf("/") + 1);
 }
 
-function info(value: Json): FileInfo {
-	if (!isObject(value) || typeof value.name !== "string" || typeof value.path !== "string" || typeof value.kind !== "string" || !KINDS.includes(value.kind)) {
-		throw new Malformed("not a file's information");
-	}
-	if (!finite(value.size ?? null) || (value.size as number) < 0 || !finite(value.mtimeMs ?? null)) throw new Malformed("not a file's information");
-	return { name: value.name, path: value.path, kind: value.kind as FileInfo["kind"], size: value.size as number, mtimeMs: value.mtimeMs as number };
-}
-
-function scan(value: Json): LineScan {
-	const names = ["newlines", "start", "end", "firstLineEnd", "lastLineStart", "selectedBytes", "firstLineBytes"] as const;
-	if (!isObject(value)) throw new Malformed("not a line scan");
-	const out = {} as Record<(typeof names)[number], number>;
-	for (const name of names) {
-		const field = value[name];
-		if (typeof field !== "number" || !Number.isSafeInteger(field) || field < 0) throw new Malformed("not a line scan");
-		out[name] = field;
-	}
-	return out;
-}
-
-function lengthOf(value: Json, max: number): number {
-	if (!isObject(value) || typeof value.length !== "number" || !Number.isSafeInteger(value.length) || value.length < 0 || value.length > max) {
-		throw new Malformed("not a length");
-	}
-	return value.length;
-}
-
-function snapshot(value: Json): WatchSnapshot {
-	if (!isObject(value)) throw new Malformed("not a snapshot");
-	if (value.overflow === true) return { overflow: true };
-	const entries = value.entries ?? null;
-	if (!isObject(entries)) throw new Malformed("not a snapshot");
-	const out: { [path: string]: string } = {};
-	for (const [path, signature] of Object.entries(entries)) {
-		if (typeof signature !== "string") throw new Malformed("not a snapshot");
-		setOwn(out, path, signature);
-	}
-	return { entries: out };
-}
-
-/** Operations whose repetition changes nothing: a failed server may run them again on a new one. */
-const IDEMPOTENT = new Set(["snapshot", "exists", "info", "canonical", "read-text", "opendir", "list", "truncate", "flush"]);
-
-/** Whether running the operation twice leaves what running it once would: a whole write does, an append does not. */
-function idempotent(op: string, args: readonly string[]): boolean {
-	if (IDEMPOTENT.has(op)) return true;
-	if (op === "write") return args[1] === "write";
-	if (op === "mkdir") return args[1] === "1";
-	return false;
-}
-/** Servers of one incarnation; calls queue for a free one. */
-const SERVERS = 2;
-
-class ServerGone extends Error {}
-
-interface Server {
-	wrapped: Wrapped;
-	writer: WritableStreamDefaultWriter<Uint8Array>;
-	busy: boolean;
-	dead: boolean;
+/** A stat as pi's FileInfo; another kind than file, directory and symbolic link is `invalid`, as in pi. */
+function infoOf(path: string, stat: SandboxFileStat): FileInfo {
+	const kind = kindOf(stat.type);
+	if (!kind) throw new Failed(failure("invalid", `Unsupported file type: ${path}`));
+	return { name: basename(path), path, kind, size: Number(stat.size), mtimeMs: stat.modifiedAt.getTime() };
 }
 
 /**
- * Long-lived minerva-fs processes (`serve`) that answer the file operations, so a call costs no interpreter
- * start (about 40 ms in the VM). Each runs as the agent's user in its cgroup like any helper, so killing
- * strays ends them and the next call starts another. An answer is the bytes the operation alone would have
- * written. A call that outlives FILE_OPERATION_SECONDS kills its server.
+ * Bytes `[skip, skip + take)` of a file's stream: the rest is not read, and the shim is stopped. Returns
+ * fewer at the end of the file.
  */
-export class Servers {
-	readonly #servers: Server[] = [];
-	readonly #waiting: (() => void)[] = [];
-	/** Bumped by `forget`: a server that finishes starting after it is stopped instead of kept. */
-	#epoch = 0;
+async function slice(files: Files, path: string, options: { user: string; signal: AbortSignal }, skip: number, take: number): Promise<Uint8Array> {
+	const response = await files.readFile(path, options);
+	const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+	const parts: Uint8Array[] = [];
+	let skipped = 0;
+	let taken = 0;
+	try {
+		while (taken < take) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			let chunk = value;
+			if (skipped < skip) {
+				const drop = Math.min(skip - skipped, chunk.length);
+				skipped += drop;
+				chunk = chunk.subarray(drop);
+			}
+			if (chunk.length === 0) continue;
+			const part = chunk.subarray(0, take - taken);
+			parts.push(part);
+			taken += part.length;
+		}
+	} finally {
+		await reader.cancel().catch(() => undefined);
+	}
+	if (parts.length === 1) return parts[0] as Uint8Array;
+	const bytes = new Uint8Array(taken);
+	let at = 0;
+	for (const part of parts) {
+		bytes.set(part, at);
+		at += part.length;
+	}
+	return bytes;
+}
 
-	async #take(machine: Machine): Promise<Server> {
+/** The file's whole stream through pi's line scanner. */
+async function scanned(files: Files, path: string, options: { user: string; signal: AbortSignal }, scanner: LineScanner): Promise<LineScan> {
+	const response = await files.readFile(path, options);
+	const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+	try {
 		for (;;) {
-			const idle = this.#servers.find((server) => !server.busy && !server.dead);
-			if (idle) {
-				idle.busy = true;
-				return idle;
-			}
-			this.#prune();
-			if (this.#servers.length < SERVERS) {
-				const placeholder: Server = { wrapped: null as unknown as Wrapped, writer: null as unknown as WritableStreamDefaultWriter<Uint8Array>, busy: true, dead: false };
-				this.#servers.push(placeholder);
-				const epoch = this.#epoch;
-				try {
-					const wrapped = await startWrapped(machine, helper("serve", [], 0), { stdin: "pipe", stderr: "ignore" });
-					if (epoch !== this.#epoch) {
-						wrapped.stop();
-						throw new Malformed("the file servers were stopped while this one started");
-					}
-					if (!wrapped.admission.started) throw new Malformed(`the file server did not start (${wrapped.admission.reason})`);
-					placeholder.wrapped = wrapped;
-					placeholder.writer = (wrapped.proc.stdin as WritableStream<Uint8Array>).getWriter();
-					void wrapped.proc.exitCode.then(
-						() => this.#kill(placeholder),
-						() => this.#kill(placeholder),
-					);
-					return placeholder;
-				} catch (error) {
-					placeholder.dead = true;
-					this.#prune();
-					this.#waiting.shift()?.();
-					// A container gone is the incarnation's end; anything else is this server's.
-					if (error instanceof ContainerGone || error instanceof Malformed) throw error;
-					throw new Malformed(error instanceof Error ? error.message : String(error));
-				}
-			}
-			await new Promise<void>((resolve) => this.#waiting.push(resolve));
+			const { done, value } = await reader.read();
+			if (done) return scanner.finish();
+			scanner.push(value);
 		}
-	}
-
-	#prune(): void {
-		for (let i = this.#servers.length - 1; i >= 0; i--) if (this.#servers[i]?.dead) this.#servers.splice(i, 1);
-	}
-
-	#give(server: Server): void {
-		server.busy = false;
-		// A server forgotten while it answered is not kept.
-		if (!this.#servers.includes(server)) {
-			server.dead = true;
-			server.wrapped?.stop();
-		}
-		this.#waiting.shift()?.();
-	}
-
-	#kill(server: Server): void {
-		if (!server.dead) {
-			server.dead = true;
-			server.wrapped?.stop();
-		}
-		this.#prune();
-		this.#waiting.shift()?.();
-	}
-
-	/** One operation's output, as running it alone would have written it. */
-	async call(machine: Machine, op: string, args: string[], stdin?: Uint8Array): Promise<Uint8Array> {
-		for (let tries = 0; ; tries++) {
-			const server = await this.#take(machine);
-			let timer: ReturnType<typeof setTimeout> | undefined;
-			let sent = false;
-			try {
-				const request = new TextEncoder().encode(`${JSON.stringify({ op, args, stdin: stdin?.length ?? 0 })}\n`);
-				const answer = (async () => {
-					await server.writer.write(request);
-					sent = true;
-					if (stdin?.length) await server.writer.write(stdin);
-					const line = await server.wrapped.stdout.line(64 * 1024);
-					if (line === null) throw new ServerGone("the file server ended");
-					const header = parseJson(new TextDecoder().decode(line));
-					const length = (header as { length?: unknown }).length;
-					if (typeof length !== "number" || !Number.isSafeInteger(length) || length < 0 || length > MAX_TEXT_BYTES + LINE_BYTES) {
-						throw new ServerGone("the file server's answer is unreadable");
-					}
-					return await server.wrapped.stdout.exactly(length);
-				})();
-				const timeout = new Promise<never>((_, reject) => {
-					timer = setTimeout(() => reject(new ServerGone("a file operation took too long")), FILE_OPERATION_SECONDS * 1000);
-				});
-				const bytes = await Promise.race([answer, timeout]);
-				this.#give(server);
-				return bytes;
-			} catch (error) {
-				this.#kill(server);
-				// A server that took the request and broke before answering may or may not have done it; one that
-				// never took it (it had died, say with killed strays) did nothing.
-				if (tries === 0 && (!sent || idempotent(op, args)) && !(error instanceof Malformed)) continue;
-				throw new Malformed(error instanceof Error ? error.message : String(error));
-			} finally {
-				clearTimeout(timer);
-			}
-		}
-	}
-
-	/** Forgets every server: their processes are gone (killed strays, a destroyed container). */
-	forget(): void {
-		this.#epoch++;
-		for (const server of this.#servers) {
-			server.dead = true;
-			server.wrapped?.stop();
-		}
-		this.#servers.length = 0;
-		for (const wake of this.#waiting.splice(0)) wake();
+	} finally {
+		await reader.cancel().catch(() => undefined);
 	}
 }
 
-/** Runs one helper operation on a server and reads its answer, and the bytes after it when `bytes` says how many may follow. */
-async function run(machine: Machine, servers: Servers, op: string, args: string[], options: { stdin?: Uint8Array; bytes?: number } = {}): Promise<{ answer: Answer; data: Uint8Array | null }> {
-	const output = await servers.call(machine, op, args, options.stdin);
-	const reader = new ByteReader(new Blob([output as Uint8Array<ArrayBuffer>]).stream());
-	const line = await reader.line(LINE_BYTES);
-	if (line === null) throw new Malformed("no answer");
-	const answer = decode(line);
-	let data: Uint8Array | null = null;
-	if (answer.ok && options.bytes !== undefined) data = await reader.exactly(lengthOf(answer.value, options.bytes));
-	return { answer, data };
-}
-
-interface Reader {
-	handle: FileHandle;
-	wrapped: Wrapped;
-	out: ByteReader;
-	writer: WritableStreamDefaultWriter<Uint8Array>;
-	queue: Promise<unknown>;
-	closed: boolean;
-}
-
-/** The binary readers of one incarnation, by id. */
-/** `promise`, or a Malformed failure after `ms`. */
-function within<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	return Promise.race([
-		promise,
-		new Promise<never>((_, reject) => {
-			timer = setTimeout(() => reject(new Malformed(`${what} took too long`)), ms);
-		}),
-	]).finally(() => clearTimeout(timer));
-}
-
-export class Readers {
-	readonly #readers = new Map<string, Reader>();
-	/** Opens under way: they count against the cap before they are readers. */
-	#opening = 0;
-	#next = 0;
-
-	get size(): number {
-		return this.#readers.size;
+/**
+ * A reader's file as its path shows it now, refused when it is not the file that was opened: shorter, or as
+ * long with another mtime (a rewrite). A longer file is taken as the same file appended to, as pi's read
+ * tool takes it.
+ */
+async function reopened(files: Files, path: string, opened: Opened, options: { user: string; signal: AbortSignal }): Promise<FileInfo> {
+	const stat = opened.noFollow ? await files.lstat(path, options) : await files.stat(path, options);
+	const info = stat.type === "file" ? infoOf(path, stat) : null;
+	if (!info || info.size < opened.size || (info.size === opened.size && info.mtimeMs !== opened.mtimeMs)) {
+		throw new Failed(failure("unknown", `The file changed since it was opened: ${path}`));
 	}
+	return info;
+}
 
-	async open(machine: Machine, path: string, noFollow: boolean): Promise<FsResponse> {
-		if (this.#readers.size + this.#opening >= READERS) return failure("unknown", `More than ${READERS} files are open for reading.`);
-		this.#opening++;
+/**
+ * A coreutils command through the wrapper as the agent's user: its exit code and its stdout, up to `maxOutput`
+ * bytes. It is killed and the call fails after `seconds` or when `signal` aborts, even if the command's own
+ * `timeout` was stopped.
+ */
+async function wrapped(
+	machine: Machine,
+	command: string[],
+	seconds: number,
+	options: { stdin?: Uint8Array; maxOutput?: number; signal?: AbortSignal } = {},
+): Promise<{ exitCode: number; stdout: Uint8Array }> {
+	const signal = AbortSignal.any([AbortSignal.timeout(seconds * 1000), ...(options.signal ? [options.signal] : [])]);
+	const work = (async () => {
+		const child = await startWrapped(
+			machine,
+			{ command, cwd: "/", env: helperEnvironment(), timeoutSeconds: seconds },
+			{ stderr: "ignore", signal, ...(options.stdin ? { stdin: new Blob([options.stdin as Uint8Array<ArrayBuffer>]).stream() } : {}) },
+		);
+		if (!child.admission.started) {
+			await child.stdout.cancel();
+			throw new Failed(FAILED());
+		}
 		try {
-			return await this.#open(machine, path, noFollow);
-		} finally {
-			this.#opening--;
-		}
-	}
-
-	async #open(machine: Machine, path: string, noFollow: boolean): Promise<FsResponse> {
-		const wrapped = await startWrapped(machine, helper("reader", [path, noFollow ? "1" : "0"], READER_SECONDS), { stdin: "pipe", stderr: "ignore" });
-		const writer = (wrapped.proc.stdin as WritableStream<Uint8Array>).getWriter();
-		try {
-			if (!wrapped.admission.started) throw new Malformed("the reader did not start");
-			const out = wrapped.stdout;
-			// A reader the agent stopped before it answered must not hold the call either.
-			const line = await within(out.line(LINE_BYTES), FILE_OPERATION_SECONDS * 1000, "opening a file");
-			if (line === null) throw new Malformed("no answer");
-			const answer = decode(line);
-			if (!answer.ok) {
-				await writer.close().catch(() => undefined);
-				await within(wrapped.proc.exitCode, 2000, "a reader's exit").catch(() => wrapped.stop());
-				return answer;
-			}
-			const opened = info(answer.value);
-			const extra = answer.value as { dev?: Json; ino?: Json };
-			const id = `r${++this.#next}`;
-			const handle: FileHandle = {
-				id,
-				path: opened.path,
-				dev: finite(extra.dev ?? null) ? (extra.dev as number) : 0,
-				ino: finite(extra.ino ?? null) ? (extra.ino as number) : 0,
-				size: opened.size,
-				mtimeMs: opened.mtimeMs,
-			};
-			this.#readers.set(id, { handle, wrapped, out, writer, queue: Promise.resolve(), closed: false });
-			void wrapped.proc.exitCode.then(
-				() => this.#gone(id),
-				() => this.#gone(id),
-			);
-			return { ok: true, value: handle };
+			const stdout = await child.stdout.rest(options.maxOutput ?? PATH_OUTPUT);
+			return { exitCode: await child.proc.exitCode.catch(() => 137), stdout };
 		} catch (error) {
-			wrapped.stop();
-			if (error instanceof Malformed) return UNAVAILABLE();
+			child.stop();
 			throw error;
 		}
-	}
+	})();
+	const ended = new Promise<never>((_, reject) => {
+		if (signal.aborted) reject(signal.reason);
+		else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+	});
+	// After an abort the command is being killed; how its call ends no longer matters.
+	work.catch(() => undefined);
+	ended.catch(() => undefined);
+	return await Promise.race([work, ended]);
+}
 
-	#gone(id: string): void {
-		const reader = this.#readers.get(id);
-		if (!reader) return;
-		reader.closed = true;
-		this.#readers.delete(id);
-	}
+/** The command that appends its stdin to `path`, creating the file if it is missing. */
+export function appendCommand(path: string): string[] {
+	return ["dd", `of=${path}`, "bs=65536", "oflag=append", "conv=notrunc", "status=none"];
+}
 
-	/** One request to an open reader, answered in order. */
-	request(handle: FileHandle, body: { op: "read"; offset: number; length: number } | { op: "scan"; start: number; end?: number } | { op: "stat" }): Promise<FsResponse> {
-		const reader = this.#readers.get(handle.id);
-		if (!reader || reader.closed) return Promise.resolve(failure("invalid", "Binary reader is closed"));
-		const next = reader.queue.then(async (): Promise<FsResponse> => {
-			if (reader.closed) return failure("invalid", "Binary reader is closed");
-			let timer: ReturnType<typeof setTimeout> | undefined;
-			try {
-				const answered = (async (): Promise<FsResponse> => {
-					await reader.writer.write(new TextEncoder().encode(`${JSON.stringify(body)}\n`));
-					const line = await reader.out.line(LINE_BYTES);
-					if (line === null) throw new Malformed("the reader ended");
-					const answer = decode(line);
-					if (!answer.ok) return answer;
-					if (body.op === "read") return { ok: true, value: await reader.out.exactly(lengthOf(answer.value, MAX_READ_BYTES)) };
-					if (body.op === "scan") return { ok: true, value: scan(answer.value) };
-					return { ok: true, value: info(answer.value) };
-				})();
-				// A reader the agent stopped (SIGSTOP) must not hold the call: it is closed after the limit.
-				const late = new Promise<never>((_, reject) => {
-					timer = setTimeout(() => reject(new Malformed("the reader took too long")), FILE_OPERATION_SECONDS * 1000);
-				});
-				return await Promise.race([answered, late]);
-			} catch {
-				reader.closed = true;
-				reader.wrapped.stop();
-				this.#readers.delete(handle.id);
-				return failure("invalid", "Binary reader is closed");
-			} finally {
-				clearTimeout(timer);
-			}
-		});
-		reader.queue = next.catch(() => undefined);
-		return next;
-	}
+/** A path printed by a command and ended by `end`, or null when the output is not one absolute path. */
+function printedPath(stdout: Uint8Array, end: number): string | null {
+	if (stdout.length < 2 || stdout[stdout.length - 1] !== end || stdout.indexOf(end) !== stdout.length - 1 || stdout.includes(0) !== (end === 0)) return null;
+	const path = new TextDecoder().decode(stdout.subarray(0, -1));
+	return path.startsWith("/") ? path : null;
+}
 
-	async close(handle: FileHandle): Promise<void> {
-		const reader = this.#readers.get(handle.id);
-		if (!reader) return;
-		this.#readers.delete(handle.id);
-		reader.closed = true;
-		await reader.queue;
-		await reader.writer.close().catch(() => undefined);
-		const exited = await Promise.race([reader.wrapped.proc.exitCode.then(() => true, () => true), new Promise<false>((resolve) => setTimeout(() => resolve(false), 2000))]);
-		if (!exited) reader.wrapped.stop();
-	}
+/**
+ * A temporary file or directory under /tmp, made by the agent's user (pi's createTempFile and
+ * createTempDir): the prefix, random characters, then the suffix.
+ */
+export async function makeTemp(machine: Machine, kind: "file" | "dir", prefix: string, suffix: string, seconds: number, signal?: AbortSignal): Promise<string> {
+	const command =
+		kind === "dir" ? ["mktemp", "-d", `--tmpdir=${TMP}`, "--", `${prefix}XXXXXX`] : ["mktemp", `--tmpdir=${TMP}`, `--suffix=${suffix}`, "--", `${prefix}XXXXXXXXXX`];
+	const { exitCode, stdout } = await wrapped(machine, command, seconds, signal ? { signal } : {});
+	const path = exitCode === 0 ? printedPath(stdout, 0x0a) : null;
+	if (!path?.startsWith(`${TMP}/`)) throw new Failed(failure("unknown", "A temporary file could not be made."));
+	return path;
+}
 
-	/** Forgets every reader: their processes are gone (killed strays, a destroyed container). */
-	forget(): void {
-		for (const reader of this.#readers.values()) {
-			reader.closed = true;
-			reader.wrapped.stop();
+/** `find`'s escapes for a glob that matches exactly `text`. */
+function literalGlob(text: string): string {
+	return text.replace(/[\\*?[]/g, "\\$&");
+}
+
+/**
+ * The `find` that lists one watch target: the target itself (followed when it is a symbolic link), a
+ * directory's entries, and a recursive one's whole tree without following links below it, excluded names
+ * pruned. Each entry prints as type, size, mtime, ctime, inode and link text, then its path, each record
+ * ending in NUL.
+ */
+export function snapshotCommand(target: WatchTarget): string[] {
+	const command = ["find", "-H", target.path];
+	if (!target.recursive) command.push("-maxdepth", "1");
+	const names = [...(target.exclude?.hidden ? [".*"] : []), ...(target.exclude?.names ?? []).map(literalGlob)];
+	if (names.length > 0) {
+		const below = `${literalGlob(target.path === "/" ? "" : target.path)}/*`;
+		command.push("(", "-path", below, "(", ...names.flatMap((name, index) => (index === 0 ? ["-name", name] : ["-o", "-name", name])), ")", "-prune", ")", "-o");
+	}
+	command.push("-printf", "%y\\t%s\\t%T@\\t%C@\\t%i\\t%l\\0%p\\0");
+	return command;
+}
+
+/**
+ * Signatures from a snapshot `find`'s output: null when it is not that output, "overflow" past `maxEntries`
+ * paths (counted as they are read).
+ */
+export function snapshotEntries(output: Uint8Array, maxEntries: number): Map<string, string> | null | "overflow" {
+	const fields = new TextDecoder().decode(output).split("\0");
+	if (fields.pop() !== "" || fields.length % 2 !== 0) return null;
+	const entries = new Map<string, string>();
+	for (let i = 0; i < fields.length; i += 2) {
+		if (entries.size >= maxEntries) return "overflow";
+		const meta = fields[i] as string;
+		const path = fields[i + 1] as string;
+		const parts = meta.split("\t");
+		if (parts.length < 6 || !path.startsWith("/")) return null;
+		const [type, size, mtime, ctime, inode] = parts as [string, string, string, string, string];
+		const link = parts.slice(5).join("\t");
+		entries.set(path, type === "d" ? `d:${inode}` : `${type}:${size}:${mtime}:${ctime}:${inode}:${link}`);
+	}
+	return entries;
+}
+
+/** Every target's entries, AT_ONCE `find`s at a time, each with an equal share of SNAPSHOT_BYTES. */
+async function snapshot(machine: Machine, targets: WatchTarget[], maxEntries: number, seconds: number, signal: AbortSignal): Promise<WatchSnapshot> {
+	const distinct = [...new Map(targets.map((target) => [JSON.stringify(snapshotCommand(target)), target])).values()];
+	const share = Math.floor(SNAPSHOT_BYTES / Math.max(1, distinct.length));
+	const outputs = await each(distinct, AT_ONCE, async (target) => {
+		try {
+			return await wrapped(machine, snapshotCommand(target), seconds, { maxOutput: share, signal });
+		} catch (error) {
+			if (error instanceof TooLong) return null;
+			throw error;
 		}
-		this.#readers.clear();
+	});
+	const entries: { [path: string]: string } = {};
+	let count = 0;
+	for (const output of outputs) {
+		if (output === null) return { overflow: true };
+		// 1: something below could not be read, or went away while find ran.
+		if (output.exitCode !== 0 && output.exitCode !== 1) throw new Failed(failure("unknown", "The watched files could not be listed."));
+		const found = snapshotEntries(output.stdout, maxEntries);
+		if (found === "overflow") return { overflow: true };
+		if (!found) throw new Failed(FAILED());
+		for (const [path, signature] of found) {
+			if (Object.hasOwn(entries, path)) continue;
+			if (++count > maxEntries) return { overflow: true };
+			setOwn(entries, path, signature);
+		}
 	}
+	return { entries };
 }
 
-function answerOf<Op extends keyof FsAnswers>(answer: Answer, read: (value: Json) => FsAnswers[Op]): FsResponse {
-	if (!answer.ok) return answer;
-	return { ok: true, value: read(answer.value) };
+/** Runs `work` on at most `limit` items at once. */
+async function each<T, R>(items: readonly T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
+	const results: R[] = new Array(items.length);
+	let next = 0;
+	const worker = async () => {
+		while (next < items.length) {
+			const index = next++;
+			results[index] = await work(items[index] as T);
+		}
+	};
+	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+	return results;
 }
 
-const nothing = (value: Json): null => {
-	if (value !== null) throw new Malformed("not empty");
-	return null;
-};
-
-/** One file operation. Expected failures come back as pi's codes; a helper that answers nonsense is `unknown`. */
-export async function fileOperation(machine: Machine, helpers: { readers: Readers; servers: Servers }, request: FsRequest): Promise<FsResponse> {
-	const { readers, servers } = helpers;
+/**
+ * One file operation, ended after `seconds`. Expected failures come back as pi's codes; a shim or command
+ * that answers nonsense is `unknown`. A container that is gone throws ContainerGone.
+ */
+export async function fileOperation(machine: Machine, request: FsRequest, seconds: number): Promise<FsResponse> {
+	const files = new Files({ exec: (argv, options) => spawn(machine, argv, options ?? {}) });
+	const timeout = AbortSignal.timeout(seconds * 1000);
+	// Ends the shims still running when one of the operation's calls fails.
+	const done = new AbortController();
+	const options = { user: `${AGENT_UID}:${AGENT_GID}`, signal: AbortSignal.any([timeout, done.signal]) };
+	const path = request.op === "rename" ? request.from : request.op === "entries" || request.op === "mktemp" || request.op === "snapshot" ? "" : request.path;
+	const ok = (value: FsAnswers[keyof FsAnswers]): FsResponse => ({ ok: true, value });
 	try {
 		switch (request.op) {
-			case "absolute":
-				return { ok: true, value: resolvePath(request.cwd, request.path) };
-			case "canonical":
-				return answerOf((await run(machine, servers, "canonical", [request.path])).answer, (value) => {
-					if (typeof value !== "string") throw new Malformed("not a path");
-					return value;
-				});
-			case "exists":
-				return answerOf((await run(machine, servers, "exists", [request.path])).answer, (value) => {
-					if (typeof value !== "boolean") throw new Malformed("not a boolean");
-					return value;
-				});
-			case "info":
-				return answerOf((await run(machine, servers, "info", [request.path])).answer, info);
-			case "open":
-				return await readers.open(machine, request.path, request.noFollow);
-			case "read":
-				return await readers.request(request.handle, { op: "read", offset: request.offset, length: Math.min(request.length, MAX_READ_BYTES) });
-			case "scanLines":
-				return await readers.request(request.handle, { op: "scan", start: request.startLine, ...(request.endLine === undefined ? {} : { end: request.endLine }) });
+			case "readFile": {
+				const max = Math.min(request.maxBytes, MAX_BINARY_BYTES);
+				const bytes = await slice(files, path, options, 0, max + 1);
+				if (bytes.length > max) return failure("unknown", `The file is larger than ${max} bytes: ${path}`);
+				return ok(bytes);
+			}
+			case "writeFile":
+				try {
+					await files.writeFile(path, request.content, options);
+				} catch (error) {
+					if (!SandboxFileError.is(error) || error.code !== "ENOENT") throw error;
+					// Its directory is missing: made, as pi's writeFile makes it.
+					await files.mkdir(join(path, ".."), { ...options, recursive: true });
+					await files.writeFile(path, request.content, options);
+				}
+				return ok(null);
+			case "appendFile": {
+				await files.mkdir(join(path, ".."), { ...options, recursive: true });
+				const { exitCode } = await wrapped(machine, appendCommand(path), seconds, { stdin: request.content, signal: options.signal });
+				if (exitCode === 0) return ok(null);
+				const stat = await files.stat(path, options);
+				return stat.type === "directory" ? errnoFailure("EISDIR", path) : failure("unknown", `The file could not be appended to: ${path}`);
+			}
+			case "lstat":
+				return ok(infoOf(path, await files.lstat(path, options)));
+			case "open": {
+				const stat = request.noFollow ? await files.lstat(path, options) : await files.stat(path, options);
+				if (stat.type === "symlink") return failure("invalid", `Refusing to follow a symbolic link: ${path}`);
+				if (stat.type === "directory") return errnoFailure("EISDIR", path);
+				if (stat.type !== "file") return failure("invalid", `Not a regular file: ${path}`);
+				return ok(infoOf(path, stat));
+			}
+			case "read": {
+				const length = Math.min(request.length, MAX_BINARY_BYTES);
+				const [, bytes] = await Promise.all([reopened(files, path, request.opened, options), slice(files, path, options, request.offset, length)]);
+				return ok(bytes);
+			}
+			case "scanLines": {
+				const scanner = new LineScanner(request.startLine, request.endLine);
+				const [, scan] = await Promise.all([reopened(files, path, request.opened, options), scanned(files, path, options, scanner)]);
+				return ok(scan);
+			}
 			case "stat":
-				return await readers.request(request.handle, { op: "stat" });
-			case "close":
-				await readers.close(request.handle);
-				return { ok: true, value: null };
-			case "readText": {
-				const limit = Math.min(request.maxBytes, MAX_TEXT_BYTES);
-				const { answer, data } = await run(machine, servers, "read-text", [request.path, String(limit)], { bytes: limit });
-				if (!answer.ok) return answer;
-				// Node's readFile as UTF-8: a byte order mark is kept and invalid sequences become U+FFFD.
-				return { ok: true, value: new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(data ?? new Uint8Array(0)) };
+				return ok(await reopened(files, path, request.opened, options));
+			case "readDirectory": {
+				const entries = await files.readDirectory(path, options);
+				return ok(entries.filter((entry) => kindOf(entry.type) !== null).map((entry) => entry.name));
 			}
-			case "write":
-				return answerOf((await run(machine, servers, "write", [request.path, request.append ? "append" : "write"], { stdin: request.content })).answer, nothing);
-			case "truncate":
-				return answerOf((await run(machine, servers, "truncate", [request.path, String(request.size)])).answer, nothing);
-			case "flush":
-				return answerOf((await run(machine, servers, "flush", [request.path])).answer, nothing);
-			case "rename":
-				return answerOf((await run(machine, servers, "rename", [request.from, request.to])).answer, nothing);
-			case "opendir":
-				return answerOf((await run(machine, servers, "opendir", [request.path])).answer, nothing);
-			case "list":
-				return answerOf((await run(machine, servers, "list", [request.path, request.after ?? "", String(request.max)])).answer, (value) => {
-					if (!isObject(value) || !Array.isArray(value.entries) || !(value.next === null || typeof value.next === "string")) throw new Malformed("not a page");
-					return { entries: value.entries.map(info), next: value.next };
-				});
+			case "entries":
+				if (request.paths.length > MAX_ENTRIES) return failure("invalid", `At most ${MAX_ENTRIES} entries are read at once.`);
+				return ok(
+					await each(request.paths, AT_ONCE, async (entry) => {
+						try {
+							const stat = await files.lstat(entry, options);
+							const kind = kindOf(stat.type);
+							return kind ? infoOf(entry, stat) : null;
+						} catch (error) {
+							// Removed since it was listed: not part of the listing any more.
+							if (SandboxFileError.is(error) && error.code === "ENOENT") return null;
+							throw error;
+						}
+					}),
+				);
 			case "mkdir":
-				return answerOf((await run(machine, servers, "mkdir", [request.path, request.recursive ? "1" : "0"])).answer, nothing);
+				await files.mkdir(path, { ...options, recursive: request.recursive });
+				return ok(null);
 			case "remove":
-				return answerOf((await run(machine, servers, "remove", [request.path, request.recursive ? "1" : "0", request.force ? "1" : "0"])).answer, nothing);
-			case "mktemp":
-				return answerOf((await run(machine, servers, "mktemp", [request.kind, request.prefix ?? (request.kind === "dir" ? "tmp-" : ""), request.suffix ?? ""])).answer, (value) => {
-					if (typeof value !== "string") throw new Malformed("not a path");
-					return value;
-				});
-			case "snapshot": {
-				const body = new TextEncoder().encode(JSON.stringify({ targets: request.targets, maxEntries: request.maxEntries }));
-				return answerOf((await run(machine, servers, "snapshot", [], { stdin: body })).answer, snapshot);
+				await files.remove(path, { ...options, recursive: request.recursive, force: request.force });
+				return ok(null);
+			case "rename":
+				await files.rename(request.from, request.to, options);
+				return ok(null);
+			case "truncate": {
+				const stat = await files.stat(path, options);
+				if (stat.type === "directory") return errnoFailure("EISDIR", path);
+				if (stat.type !== "file") return failure("invalid", `Not a regular file: ${path}`);
+				const { exitCode } = await wrapped(machine, ["truncate", "-c", "-s", String(request.size), "--", path], seconds, { signal: options.signal });
+				return exitCode === 0 ? ok(null) : failure("unknown", `The file could not be truncated: ${path}`);
 			}
+			case "flush": {
+				const stat = await files.stat(path, options);
+				if (stat.type === "directory") return errnoFailure("EISDIR", path);
+				const { exitCode } = await wrapped(machine, ["sync", "--", path], seconds, { signal: options.signal });
+				return exitCode === 0 ? ok(null) : failure("unknown", `The file could not be flushed: ${path}`);
+			}
+			case "canonical": {
+				const { exitCode, stdout } = await wrapped(machine, ["realpath", "-e", "-z", "--", path], seconds, { signal: options.signal });
+				const canonical = exitCode === 0 ? printedPath(stdout, 0) : null;
+				if (canonical !== null) return ok(canonical);
+				// Why it failed is what following the path says: a missing file or directory is `not_found`.
+				await files.stat(path, options);
+				return failure("unknown", `The path could not be resolved: ${path}`);
+			}
+			case "mktemp":
+				if (/[/\n\0]/.test(request.prefix + request.suffix)) return failure("invalid", "A temporary file's prefix and suffix cannot hold a slash or a line break.");
+				return ok(await makeTemp(machine, request.kind, request.prefix, request.suffix, seconds, options.signal));
+			case "snapshot":
+				return ok(await snapshot(machine, request.targets, request.maxEntries, seconds, options.signal));
 		}
 	} catch (error) {
-		if (error instanceof Malformed || error instanceof SyntaxError) return UNAVAILABLE();
-		throw error;
+		if (error instanceof Failed) return error.response;
+		return failed(error, path, timeout);
+	} finally {
+		done.abort();
 	}
 }

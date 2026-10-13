@@ -22,7 +22,7 @@ import { cleanName, sniff, uploadName } from "./names.ts";
 
 /**
  * An unattached upload a run start reserved. The Conversation Durable Object copies its object into a blob
- * of its own before the start's transaction (plan: Starting a run, step 3) and adds that to the folder:
+ * of its own before the start's transaction (plan: Starting a run) and adds that to the folder:
  * `uploads/` objects are deleted by the bucket's lifecycle rule a day after they were written, attached or
  * not, so nothing may keep naming one.
  */

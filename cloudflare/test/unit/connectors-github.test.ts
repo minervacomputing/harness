@@ -26,7 +26,7 @@ import { validateInput } from "../../src/gateway/validation.ts";
 import { base64, utf8 } from "../../src/lib/bytes.ts";
 import { EncryptionKeys } from "../../src/lib/encryption.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
-import { unquote } from "../../src/lib/text.ts";
+import { percentDecode } from "../../src/lib/text.ts";
 import { WorkspaceCore } from "../../src/workspace/core.ts";
 import { EXPIRED, type OAuth2, answerJson, tokenBody, tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
 import { oauthClients } from "../../src/workspace/env.ts";
@@ -188,7 +188,7 @@ class FakeGitHub {
 		if (third === "pulls" && fourth === "2" && parts.length === 4) return jsonResponse(200, this.pull);
 		if (third === "pulls" && fourth === "2" && fifth === "files" && parts.length === 5) return jsonResponse(200, this.pullFiles);
 		if (third === "contents") {
-			const key = parts.slice(3).map(unquote).join("/");
+			const key = parts.slice(3).map(percentDecode).join("/");
 			return Object.hasOwn(this.contents, key) ? jsonResponse(200, this.contents[key]) : null;
 		}
 		return null;

@@ -46,9 +46,9 @@ test("compatibility normalization decides who or what something is nowhere", () 
 	const compatibility = sourceCode().filter(({ code }) => /["'`]NFK[CD]["'`]/.test(code));
 	expect(compatibility.map(({ path }) => path).sort()).toEqual(["lib/text.ts"]);
 	// Whatever its argument: a form held in a variable normalizes as well, and the default is NFC. NFC is for
-	// file names and manifest paths, NFKC above; nothing else normalizes.
+	// file names and manifest paths (the scan's names among them), NFKC above; nothing else normalizes.
 	const normalizing = sourceCode().filter(({ code }) => /\.normalize\s*\(/.test(code));
-	expect(normalizing.map(({ path }) => path).sort()).toEqual(["files/manifest.ts", "files/names.ts", "lib/text.ts"]);
+	expect(normalizing.map(({ path }) => path).sort()).toEqual(["files/manifest.ts", "files/names.ts", "lib/text.ts", "sandbox/scan.ts"]);
 });
 
 test("nothing in src lowers the cost of password hashes", () => {

@@ -2,7 +2,7 @@
 // cards, and how a result becomes the model's content. The text the model reads is the result's JSON, or
 // the error's message.
 
-import { saltedHmacHex } from "../lib/hash.ts";
+import { hmacSha256Hex } from "../lib/hash.ts";
 import { isDict, type Json, type JsonObject } from "../lib/json.ts";
 import { sliceText } from "../lib/text.ts";
 import type { RunId } from "../shared/rpc.ts";
@@ -130,12 +130,12 @@ export function argumentsSummary(args: Json | undefined): { [key: string]: Json 
 }
 
 /**
- * Lets the chat match a repeated write to its own card, whose arguments may be shown cut short: the salted
- * HMAC of `{run}:{key}` under MINERVA_SECRET_KEY (lib/hash.ts), 32 hex. Keyed, so it
- * tells nothing about the arguments, and it differs between runs.
+ * Lets the chat match a repeated write to its own card, whose arguments may be shown cut short: the first 32
+ * hex digits of HMAC-SHA256 under MINERVA_SECRET_KEY of the purpose label, a NUL and `{run}:{key}`. Keyed,
+ * so it tells nothing about the arguments, and it differs between runs.
  */
 export async function writeId(secretKey: string, runId: RunId, writeKey: string): Promise<string> {
-	return (await saltedHmacHex("minerva.gateway.write", `${runId}:${writeKey}`, secretKey)).slice(0, 32);
+	return (await hmacSha256Hex(secretKey, `minerva.gateway.write\u0000${runId}:${writeKey}`)).slice(0, 32);
 }
 
 /** The part of a `tool_call` event fixed before the call runs. */

@@ -46,9 +46,8 @@ export const AGENT_CGROUP = "/sys/fs/cgroup/agent";
 /** The image's PATH for commands (the Dockerfile's ENV PATH): the agent's Python environment first. */
 export const COMMAND_PATH = "/opt/python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
-/** The file helper on the read-only root, run in Python's isolated mode without site packages. */
+/** The system's Python, which the verification runs in isolated mode without site packages. */
 export const PYTHON = "/usr/bin/python3";
-export const MINERVA_FS = "/opt/minerva/minerva-fs";
 
 /** Bash's fixed environment: exactly these, never anything of the Worker's. */
 export function commandEnvironment(): { [name: string]: string } {
@@ -66,16 +65,14 @@ export const PIDS_MAX = 256;
 /** The instance every sandbox runs on: `lite` takes about 100 ms per exec (plan: The sandbox lifecycle). */
 export const INSTANCE = "standard-1" as const;
 
-/** A positional read answers at most this much; a caller asking for more reads again. */
-export const MAX_READ_BYTES = 4 * 1024 * 1024;
 /**
  * The largest file `readTextFile` reads whole (the edit tool's read):
  * the text crosses an RPC and lives in the Conversation Durable Object's 128 MB isolate.
  */
 export const MAX_TEXT_BYTES = 8 * 1024 * 1024;
-/** A whole binary read, in pieces of MAX_READ_BYTES. */
+/** The largest whole binary read, and the most one positional read returns. */
 export const MAX_BINARY_BYTES = 16 * 1024 * 1024;
-/** A file operation's own limit, after which its processes are killed ("file tools: 120 s"). */
+/** A file operation's own limit, after which its processes are killed. */
 export const FILE_OPERATION_SECONDS = 120;
 /** A command's processes get this long after `timeout`'s TERM before its KILL (`timeout -k 5`). */
 export const KILL_AFTER_SECONDS = 5;

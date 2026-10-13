@@ -8,13 +8,19 @@ import { MIGRATIONS as SCRIPTS_MIGRATIONS } from "../../src/scripts/schema.ts";
 import { PROBE_HEADER, probeToken } from "../../src/http/probe-token.ts";
 import { AUTH_ROUTE } from "../../src/accounts/routes.ts";
 import { createApp } from "../../src/http/router.ts";
-import { saltedHmacHex } from "../../src/lib/hash.ts";
 import { DraftInvoice, body, jsonBody } from "../../src/connectors/xero/writes.ts";
+import { hex } from "../../src/lib/bytes.ts";
+import { digest, hmac } from "../../src/lib/hash.ts";
 import { escapedKeyCheck, type JsonObject } from "../../src/lib/json.ts";
 import { appliedMigrations, migrate } from "../../src/lib/sqlite.ts";
 
 const WS = "0199a000-0000-7000-8000-0000000000aa";
 const USER = "0199a000-0000-7000-8000-0000000000bb";
+
+/** How the token was derived before 2026-10-13: HMAC-SHA256 of `value` keyed by SHA-256 of `salt + secret`. */
+async function retiredToken(salt: string, value: string, secretKey: string): Promise<string> {
+	return hex(await hmac("SHA-256", await digest("SHA-256", salt + secretKey), value));
+}
 
 describe("the router in workerd", () => {
 	test("health answers with the security headers", async () => {
@@ -45,9 +51,12 @@ describe("the router in workerd", () => {
 	});
 
 	test("the probe is a plain 404 without its token", async () => {
-		// Including the token of before 2026-10-12, which Workers Logs kept whole under the header's old name.
-		const retired = await saltedHmacHex("minerva.probe", "probe", env.MINERVA_SECRET_KEY, "SHA-256");
-		for (const headers of [{}, { [PROBE_HEADER]: "0".repeat(64) }, { [PROBE_HEADER]: retired }, { "X-Minerva-Probe": retired }] as Record<string, string>[]) {
+		// Including the tokens of earlier derivations (before 2026-10-12, Workers Logs kept them whole under the
+		// header's old name) and the right token under that old name.
+		const earlier = await Promise.all(["minerva.probe", "minerva.probe-token"].map((salt) => retiredToken(salt, "probe", env.MINERVA_SECRET_KEY)));
+		const token = await probeToken(env.MINERVA_SECRET_KEY);
+		const refused = [{}, { [PROBE_HEADER]: "0".repeat(64) }, { [PROBE_HEADER]: token.toUpperCase() }, { "X-Minerva-Probe": token }, ...earlier.map((old) => ({ [PROBE_HEADER]: old }))];
+		for (const headers of refused as Record<string, string>[]) {
 			const response = await exports.default.fetch("http://localhost/api/probe", { headers });
 			expect([response.status, await response.json()]).toEqual([404, { defined: true, code: "NOT_FOUND", status: 404, message: "Not found." }]);
 		}

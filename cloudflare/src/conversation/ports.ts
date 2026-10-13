@@ -82,7 +82,7 @@ export interface FolderPort {
 	/** What a new attempt of the run hydrates: its last checkpoint, else its base version, with each file's R2 key. */
 	hydratePlan(runId: RunId): HydratePlan;
 	/**
-	 * A checkpoint of the run's folder from the container's scan (plan: Checkpoints, steps 4 to 6): validated, the files whose contents the run may not read uploaded by `upload` (the Sandbox's
+	 * A checkpoint of the run's folder from the container's scan (plan: Checkpoints): validated, the files whose contents the run may not read uploaded by `upload` (the Sandbox's
 	 * `checkpoint`, under keys recorded here first), then recorded for the fence's attempt on top of its
 	 * last checkpoint. Outside pi's transactions; the caller releases held results only after `ok`.
 	 */

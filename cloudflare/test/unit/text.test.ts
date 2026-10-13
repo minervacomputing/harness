@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { OperationError } from "../../src/gateway/connector.ts";
 import { segment } from "../../src/gateway/http.ts";
 import { publicError } from "../../src/gateway/results.ts";
-import { PLAIN_TEXT, SINGLE_LINE, TextError, browserAddress, decoded, htmlUnescape, percentEncode, plainText, singleLine, sliceText, truncate, unquote } from "../../src/lib/text.ts";
+import { PLAIN_TEXT, SINGLE_LINE, TextError, browserAddress, decodeCharacterReferences, decoded, percentDecode, percentEncode, plainText, singleLine, sliceText, truncate } from "../../src/lib/text.ts";
 
 test("free-text validators draw one line for control characters", () => {
 	for (let code = 0; code < 0x80; code++) {
@@ -78,7 +78,7 @@ describe("browserAddress", () => {
 	});
 });
 
-describe("unquote", () => {
+describe("percentDecode", () => {
 	test.each([
 		["a%20b", "a b"],
 		["%E2%82%AC", "\u20ac"],
@@ -95,7 +95,7 @@ describe("unquote", () => {
 		["%2", "%2"],
 		["%41%", "A%"],
 	])("%j", (input, output) => {
-		expect(unquote(input)).toBe(output);
+		expect(percentDecode(input)).toBe(output);
 	});
 });
 
@@ -134,7 +134,7 @@ function catchError(fn: () => unknown): unknown {
 	throw new Error("did not throw");
 }
 
-describe("htmlUnescape", () => {
+describe("decodeCharacterReferences", () => {
 	test.each([
 		["&amp;", "&"],
 		["&amp", "&"],
@@ -173,7 +173,7 @@ describe("htmlUnescape", () => {
 		["&amp;amp;&#38;#38;&amp;#38;", "&amp;&#38;&#38;"],
 		["&\t&amp;", "&\t&"],
 	])("%j", (input, output) => {
-		expect(htmlUnescape(input)).toBe(output);
+		expect(decodeCharacterReferences(input)).toBe(output);
 	});
 
 	test("every code point as a numeric reference, in every spelling", () => {
@@ -192,12 +192,12 @@ describe("htmlUnescape", () => {
 		const wrong: unknown[] = [];
 		for (const [point, text] of expected) {
 			for (const input of [`&#${point};`, `&#x${point.toString(16)};`, `&#X${point.toString(16).toUpperCase()}`, `&#${point}z`]) {
-				const output = htmlUnescape(input);
+				const output = decodeCharacterReferences(input);
 				if (output !== (input.endsWith("z") ? `${text}z` : text)) wrong.push([input, output]);
 			}
 		}
 		expect(wrong.slice(0, 5)).toEqual([]);
-		expect(htmlUnescape("&#1114112;&#99999999999999999999;")).toBe("\ufffd\ufffd");
+		expect(decodeCharacterReferences("&#1114112;&#99999999999999999999;")).toBe("\ufffd\ufffd");
 	});
 
 	test("hostile references are decoded in about linear time", () => {
@@ -210,7 +210,7 @@ describe("htmlUnescape", () => {
 			[`&#x${"f".repeat(1_000_000)};`, "\ufffd"],
 		];
 		const started = performance.now();
-		for (const [input, output] of cases) expect(htmlUnescape(input) === output).toBe(true);
+		for (const [input, output] of cases) expect(decodeCharacterReferences(input) === output).toBe(true);
 		expect(performance.now() - started).toBeLessThan(5000);
 	});
 });

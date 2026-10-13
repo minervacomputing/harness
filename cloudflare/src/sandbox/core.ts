@@ -18,24 +18,15 @@ import {
 	AGENT_CGROUP,
 	CLEANUP_RETRY_MS,
 	DEADLINE_GRACE_MS,
+	FILE_OPERATION_SECONDS,
 	IDLE_MS,
 	INSTANCE,
 	MAX_INACTIVITY_MS,
 	type SandboxSpec,
 	workspaceBytes,
 } from "./constants.ts";
-import { fileOperation, type FsRequest, type FsResponse, Readers, Servers } from "./files.ts";
-import {
-	type CheckpointUploadPlan,
-	type CheckpointUploadResult,
-	hydrate,
-	type HydratePlan,
-	type HydrateResult,
-	type IndexEntry,
-	scan,
-	type ScanResult,
-	upload,
-} from "./folder.ts";
+import { fileOperation, type FsRequest, type FsResponse } from "./files.ts";
+import { type CheckpointUploadPlan, type CheckpointUploadResult, hydrate, type HydratePlan, type HydrateResult, upload } from "./folder.ts";
 import {
 	DROPPED_PROBE,
 	type HardeningReport,
@@ -47,6 +38,7 @@ import {
 } from "./hardening.ts";
 import type { SandboxPorts } from "./ports.ts";
 import { ContainerGone, helperEnvironment, type Machine, runRoot, sleep } from "./process.ts";
+import { type FolderIndex, scan, type ScanResult } from "./scan.ts";
 import { olderThan, readState, type SandboxState, type StateRow, writeState } from "./store.ts";
 import { wrapperArgv } from "./wrapper.ts";
 
@@ -126,9 +118,9 @@ interface PendingCommand {
 }
 
 /**
- * What belongs to one incarnation's container and dies with it: its commands, file readers and servers,
- * and the scan's index. Work admitted for an incarnation holds its generation, and nothing it does after
- * the generation ended reaches the next one.
+ * What belongs to one incarnation's container and dies with it: its commands, the scan's index and the files
+ * of the last scan. Work admitted for an incarnation holds its generation, and nothing it does after the
+ * generation ended reaches the next one.
  */
 class Generation {
 	live = true;
@@ -146,9 +138,13 @@ class Generation {
 	#starting = 0;
 	#settled: (() => void)[] = [];
 	readonly commands = new Map<string, PendingCommand>();
-	readonly readers = new Readers();
-	readonly servers = new Servers();
-	index: IndexEntry[] = [];
+	/** The files the scan last hashed, so unchanged ones are not hashed again. */
+	index: FolderIndex = new Map();
+	/**
+	 * The regular files of the last scan and their sizes: what a checkpoint may read. Forgotten once anything
+	 * else is admitted, which might change the folder.
+	 */
+	scanned: Map<string, number> | null = null;
 
 	readonly incarnation: string;
 
@@ -187,8 +183,6 @@ class Generation {
 			pending.running?.cancel();
 		}
 		this.commands.clear();
-		this.readers.forget();
-		this.servers.forget();
 	}
 }
 
@@ -259,7 +253,7 @@ export class SandboxCore {
 		else await this.#ports.alarm(null);
 	}
 
-	/** Ends the incarnation's generation: its commands are cancelled, its readers and servers forgotten. */
+	/** Ends the incarnation's generation: its commands are cancelled. */
 	#forget(): void {
 		this.#generation?.end();
 		this.#generation = null;
@@ -479,7 +473,10 @@ export class SandboxCore {
 			if (generation.exclusive || (exclusive && generation.inflight > 0)) return BUSY;
 			// Counted before any await, so a folder step and a command can never both be admitted.
 			if (exclusive) generation.exclusive = true;
-			else generation.inflight++;
+			else {
+				generation.inflight++;
+				generation.scanned = null;
+			}
 			const now = this.#ports.now();
 			let next = state;
 			if (state.state === "verified") next = { ...next, state: "in_use" };
@@ -567,12 +564,13 @@ export class SandboxCore {
 	}
 
 	fs(fence: SandboxFence, request: FsRequest): Promise<FsResponse | Refused> {
-		return this.#admitted(fence, false, (machine, generation) => fileOperation(machine, generation, request));
+		return this.#admitted(fence, false, (machine) => fileOperation(machine, request, this.#ports.fileSeconds ?? FILE_OPERATION_SECONDS));
 	}
 
 	hydrate(fence: SandboxFence, plan: HydratePlan): Promise<HydrateResult | Refused> {
 		return this.#admitted(fence, true, async (machine, generation) => {
 			const spec = this.#state.spec as SandboxSpec;
+			generation.scanned = null;
 			const { result, index } = await hydrate(machine, this.#ports.bucket(spec.workspace), plan, spec.folderEntries);
 			if (index && generation.live) generation.index = index;
 			return result;
@@ -583,22 +581,24 @@ export class SandboxCore {
 		return this.#admitted(fence, true, async (machine, generation) => {
 			const spec = this.#state.spec as SandboxSpec;
 			const limits = { bytes: spec.folderBytes, entries: spec.folderEntries };
+			generation.scanned = null;
 			const { result, index } = await scan(machine, generation.index, limits, options.rehashAll === true);
 			if (index && generation.live) generation.index = index;
+			if (result.ok && generation.live) generation.scanned = new Map(Object.entries(result.sizes));
 			return result;
 		});
 	}
 
 	checkpoint(fence: SandboxFence, plan: CheckpointUploadPlan): Promise<CheckpointUploadResult | Refused> {
-		return this.#admitted(fence, true, async (machine) => {
+		return this.#admitted(fence, true, async (machine, generation) => {
 			const spec = this.#state.spec as SandboxSpec;
-			return await upload(machine, this.#ports.bucket(spec.workspace), plan);
+			return await upload(machine, this.#ports.bucket(spec.workspace), plan, generation.scanned);
 		});
 	}
 
 	/**
 	 * `cgroup.kill` the agent cgroup, then wait until it is empty: commands that other calls run die too.
-	 * No call is admitted meanwhile. Every reader and file server of the incarnation ends with it.
+	 * No call is admitted meanwhile. File operations already running through Files are outside the cgroup and go on.
 	 */
 	killStrays(fence: SandboxFence): Promise<{ ok: true } | { ok: false; message: string } | Refused> {
 		return this.#admitted(fence, false, async (machine, generation) => {
@@ -620,8 +620,6 @@ export class SandboxCore {
 			generation.killing = killing;
 			try {
 				const result = await killing;
-				generation.readers.forget();
-				generation.servers.forget();
 				if (result?.exitCode === 0) return { ok: true as const };
 				return { ok: false as const, message: "Processes left by commands could not be stopped." };
 			} finally {

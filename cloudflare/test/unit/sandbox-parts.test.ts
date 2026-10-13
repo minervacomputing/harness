@@ -401,9 +401,16 @@ describe("the image agrees with the Sandbox", () => {
 		expect(instructions).not.toMatch(/\bnode(js)?\b|\bnpm\b|corepack/);
 	});
 
-	test("its Python packages are worker/python's, from hashed wheels only", () => {
-		expect(read("../../container/python/requirements.txt")).toBe(read("../../../worker/python/requirements.txt"));
-		expect(read("../../container/python/requirements.in").replace(/^#.*\n/gm, "")).toBe(read("../../../worker/python/requirements.in").replace(/^#.*\n/gm, ""));
+	test("its sandbox-shim comes from the image of the package's version, pinned by digest", () => {
+		const version = (JSON.parse(read("../../node_modules/@cloudflare/sandbox/package.json")) as { version: string }).version;
+		const shim = new RegExp(
+			`^COPY --from=docker\\.io/cloudflare/sandbox:${version.replaceAll(".", "\\.")}@sha256:[0-9a-f]{64} /usr/local/bin/sandbox-shim /usr/local/bin/sandbox-shim$`,
+			"m",
+		);
+		expect(dockerfile).toMatch(shim);
+	});
+
+	test("its Python packages come from hashed wheels only and are compiled at build time", () => {
 		expect(dockerfile).toContain("--no-deps --only-binary :all: --require-hashes");
 		expect(dockerfile).toContain("python3 -m compileall -q /opt/python");
 	});

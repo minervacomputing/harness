@@ -1,8 +1,9 @@
-# The sandbox probe: today's 21 sandbox checks (worker/src/probe.ts), reworked for a Firecracker VM with no
-# route out (plan: Spike results, Consequences): no loopback-only check, since the VM always has its own
-# interface; network checks over HTTP and TLS rather than a TCP connect, since ports 80 and 443 accept and
-# then reset; no gateway, run token or socket directory, which no longer exist. It runs as an agent command
-# does, through the wrapper as uid 1000 in the agent cgroup, with bash's fixed environment:
+# The sandbox probe: checks from inside the sandbox that an agent command runs unprivileged, with a fixed
+# environment, in the agent cgroup, with a writable and size-limited /workspace, a read-only root, a fork
+# limit and no route out. Ports 80 and 443 accept and then reset, so those network checks go over HTTP and
+# TLS rather than a bare TCP connect.
+# It runs as an agent command does, through the wrapper as uid 1000 in the agent cgroup, with bash's fixed
+# environment:
 #
 #     /usr/bin/python3 -I -S /opt/minerva/probe <folder bytes> <folder entries> <pids max> <cgroup> [<peer>...]
 #

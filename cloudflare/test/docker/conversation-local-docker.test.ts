@@ -3,8 +3,8 @@
 // (test/docker/sandbox-docker.ts), and the folder's store over node:sqlite (test/unit/files-support.ts). pi's
 // own read, write, edit and bash run through the container's ExecutionEnv; checkpoints kill strays, scan as
 // the agent's user, stream changed files into the bucket and record versions. Covered: results held until
-// saved and released in order, read-only rounds without a checkpoint, the final rehash, FIFOs refused by
-// the file tools, a detached writer killed before the scan, warnings for links and special files, a failed
+// saved and released in order, read-only rounds without a checkpoint, the final rehash, the file tools
+// failing on a FIFO within the file operations' limit, a detached writer killed before the scan, warnings for links and special files, a failed
 // upload ending the attempt before any result is released, the run's upload budget failing the turn with
 // its limit, and a second attempt hydrated from the first one's last checkpoint. Skipped without Docker or
 // the image (`pnpm sandbox:image`).
@@ -23,7 +23,7 @@ import { type BucketPort, CHECK_MISMATCH } from "../../src/sandbox/ports.ts";
 import { SANDBOX_MIGRATIONS } from "../../src/sandbox/store.ts";
 import type { RunId } from "../../src/shared/rpc.ts";
 import { CONVERSATION, sha, WORKSPACE, World } from "../unit/files-support.ts";
-import { DockerContainer, dockerReady } from "./sandbox-docker.ts";
+import { DockerContainer, dockerReady, verified } from "./sandbox-docker.ts";
 import { openDatabase } from "../unit/sqlite.ts";
 
 const READY = dockerReady();
@@ -39,9 +39,9 @@ afterAll(() => {
 /** The Sandbox's put as R2 does it, into the World's bucket (which checks the SHA-256). */
 function bucketOf(world: World): BucketPort {
 	return {
-		get: async (key) => {
+		get: async (key, sha256) => {
 			const object = await world.bucket.get(key);
-			return object ? { size: object.size, body: object.body } : null;
+			return object ? { size: object.size, body: verified(object.body, sha256) } : null;
 		},
 		put: async (key, body, options) => {
 			await world.bucket.put(key, body, { sha256: options.sha256 });
@@ -81,6 +81,8 @@ function rig(settings: Partial<World["settings"]> = {}): Rig {
 		background: () => {},
 		log: () => {},
 		cgroup: container.cgroup,
+		// Short, so a FIFO's read and write end soon; the files here take milliseconds.
+		fileSeconds: 5,
 	});
 	const made: Rig = {
 		world,
@@ -158,7 +160,7 @@ describe.skipIf(!READY)("the checkpoint barrier with the container", { timeout: 
 		expect(made.container.running).toBe(false);
 	});
 
-	test("the file tools refuse a FIFO promptly, and each is reported as failed", async () => {
+	test("the file tools fail on a FIFO within the file operations' limit, and each is reported as failed", { timeout: 30_000 }, async () => {
 		const made = rig();
 		const local = made.local(made.world.run());
 		await made.tool(local, "bash")({ command: "mkfifo pipe" });

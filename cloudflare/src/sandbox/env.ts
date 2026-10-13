@@ -28,9 +28,9 @@ import {
 	type WatchTarget,
 } from "@earendil-works/pi-durable/env";
 import type { ExecOutputSink, ExecRequest, ExecResult } from "./commands.ts";
-import { commandEnvironment, MAX_BINARY_BYTES, MAX_READ_BYTES, MAX_TEXT_BYTES, WORKSPACE } from "./constants.ts";
+import { commandEnvironment, MAX_BINARY_BYTES, MAX_TEXT_BYTES, WORKSPACE } from "./constants.ts";
 import type { Refused, SandboxFence } from "./core.ts";
-import type { FileHandle, FsRequest, FsResponse, WatchSnapshot } from "./files.ts";
+import { type FsRequest, type FsResponse, MAX_ENTRIES, type Opened, type WatchSnapshot } from "./files.ts";
 import type { Delivered } from "./output.ts";
 import { join, resolvePath } from "./paths.ts";
 
@@ -42,9 +42,7 @@ const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000;
 const POLL_MS = 250;
 /** Entries a watch may cover; beyond it the watcher stops with an error. */
 const WATCH_ENTRIES = 10_000;
-/** Directory entries asked for per call. */
-const LIST_PAGE = 1000;
-/** A whole listing's entries and their names' and paths' units, which come into this isolate. */
+/** A listing's entries and their full paths' units, which come into this isolate. */
 const LIST_ENTRIES = 100_000;
 const LIST_UNITS = 16 * 1024 * 1024;
 
@@ -149,7 +147,10 @@ export class SandboxExecutionEnv implements ExecutionEnv {
 
 	async readTextFile(path: string, context: Context): Promise<Result<string, FileError>> {
 		const resolved = this.#resolve(path);
-		return this.#value<string>({ op: "readText", path: resolved, maxBytes: MAX_TEXT_BYTES }, resolved, context);
+		const bytes = await this.#value<Uint8Array>({ op: "readFile", path: resolved, maxBytes: MAX_TEXT_BYTES }, resolved, context);
+		if (!bytes.ok) return bytes;
+		// Node's readFile as UTF-8: a byte order mark is kept and invalid sequences become U+FFFD.
+		return ok(new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(bytes.value));
 	}
 
 	async openTextLineReader(path: string, context: Context): Promise<Result<TextLineReader, FileError>> {
@@ -201,103 +202,53 @@ export class SandboxExecutionEnv implements ExecutionEnv {
 	}
 
 	async readBinaryFile(path: string, context: Context): Promise<Result<Uint8Array, FileError>> {
-		const opened = await this.openBinaryReader(path, undefined, context);
-		if (!opened.ok) return opened;
-		const reader = opened.value;
-		try {
-			const parts: Uint8Array[] = [];
-			let total = 0;
-			for (;;) {
-				const piece = await reader.read(total, MAX_READ_BYTES, context);
-				if (!piece.ok) return piece;
-				if (piece.value.length === 0) break;
-				parts.push(piece.value);
-				total += piece.value.length;
-				if (total > MAX_BINARY_BYTES) {
-					return err(new FileError("unknown", `File size (${total}) is greater than ${MAX_BINARY_BYTES} bytes`, this.#resolve(path)));
-				}
-			}
-			const bytes = new Uint8Array(total);
-			let at = 0;
-			for (const part of parts) {
-				bytes.set(part, at);
-				at += part.length;
-			}
-			return ok(bytes);
-		} finally {
-			await reader.close(context);
-		}
+		const resolved = this.#resolve(path);
+		return this.#value<Uint8Array>({ op: "readFile", path: resolved, maxBytes: MAX_BINARY_BYTES }, resolved, context);
 	}
 
 	async openBinaryReader(path: string, options: { noFollow?: boolean } | undefined, context: Context): Promise<Result<BinaryReader, FileError>> {
 		const resolved = this.#resolve(path);
-		const opened = await this.#value<FileHandle>({ op: "open", path: resolved, noFollow: options?.noFollow === true }, resolved, context);
+		const noFollow = options?.noFollow === true;
+		const opened = await this.#value<FileInfo>({ op: "open", path: resolved, noFollow }, resolved, context);
 		if (!opened.ok) return opened;
-		const handle = opened.value;
-		if (context.abortSignal?.aborted) {
-			await this.#fs({ op: "close", handle }, resolved);
-			return err(new FileError("aborted", "aborted", resolved));
-		}
-		return ok(this.#reader(handle, resolved));
+		return aborted(context, resolved) ?? ok(this.#reader(resolved, { size: opened.value.size, mtimeMs: opened.value.mtimeMs, noFollow }));
 	}
 
-	#reader(handle: FileHandle, path: string): BinaryReader {
+	/**
+	 * A reader that reads its path again on every call and refuses a file that is no longer the one it
+	 * opened (shorter, or rewritten at the same size); a file appended to is still the same file.
+	 */
+	#reader(path: string, opened: Opened): BinaryReader {
 		let closed = false;
-		const closedResult = () => err<never, FileError>(new FileError("invalid", "Binary reader is closed", path));
+		const refused = (context: Context) => aborted(context, path) ?? (closed ? err<never, FileError>(new FileError("invalid", "Binary reader is closed", path)) : undefined);
 		return {
 			info: async (context: Context): Promise<Result<FileInfo, FileError>> => {
-				const stopped = aborted(context, path);
-				if (stopped) return stopped;
-				if (closed) return closedResult();
-				return this.#value<FileInfo>({ op: "stat", handle }, path, context);
+				return refused(context) ?? this.#value<FileInfo>({ op: "stat", path, opened }, path, context);
 			},
 			read: async (offset: number, length: number, context: Context): Promise<Result<Uint8Array, FileError>> => {
-				const stopped = aborted(context, path);
+				const stopped = refused(context);
 				if (stopped) return stopped;
-				if (closed) return closedResult();
 				if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length) || length < 0) {
 					return err(new FileError("invalid", "Offset and length must be non-negative safe integers", path));
 				}
 				// The bytes come into this isolate: a read is bounded, as a whole binary read is.
 				if (length > MAX_BINARY_BYTES) return err(new FileError("invalid", `A read takes at most ${MAX_BINARY_BYTES} bytes`, path));
-				const parts: Uint8Array[] = [];
-				let total = 0;
-				while (total < length) {
-					const piece = await this.#value<Uint8Array>({ op: "read", handle, offset: offset + total, length: Math.min(length - total, MAX_READ_BYTES) }, path, context);
-					if (!piece.ok) return piece;
-					const after = aborted(context, path);
-					if (after) return after;
-					if (piece.value.length === 0) break;
-					parts.push(piece.value);
-					total += piece.value.length;
-				}
-				if (parts.length === 1) return ok(parts[0] as Uint8Array);
-				const bytes = new Uint8Array(total);
-				let at = 0;
-				for (const part of parts) {
-					bytes.set(part, at);
-					at += part.length;
-				}
-				return ok(bytes);
+				if (length === 0) return ok(new Uint8Array(0));
+				const bytes = await this.#value<Uint8Array>({ op: "read", path, opened, offset, length }, path, context);
+				if (!bytes.ok) return bytes;
+				return aborted(context, path) ?? bytes;
 			},
 			scanLines: async (options: { startLine: number; endLine?: number }, context: Context): Promise<Result<LineScan, FileError>> => {
-				const stopped = aborted(context, path);
+				const stopped = refused(context);
 				if (stopped) return stopped;
-				if (closed) return closedResult();
 				const end = options.endLine ?? Number.POSITIVE_INFINITY;
 				if (!Number.isSafeInteger(options.startLine) || options.startLine < 0 || !(end > options.startLine) || (end !== Number.POSITIVE_INFINITY && !Number.isSafeInteger(end))) {
 					return err(new FileError("invalid", "Invalid line range", path));
 				}
-				return this.#value<LineScan>(
-					{ op: "scanLines", handle, startLine: options.startLine, ...(options.endLine === undefined ? {} : { endLine: options.endLine }) },
-					path,
-					context,
-				);
+				return this.#value<LineScan>({ op: "scanLines", path, opened, startLine: options.startLine, ...(options.endLine === undefined ? {} : { endLine: options.endLine }) }, path, context);
 			},
 			close: async (): Promise<void> => {
-				if (closed) return;
 				closed = true;
-				await this.#fs({ op: "close", handle }, path);
 			},
 		};
 	}
@@ -305,13 +256,13 @@ export class SandboxExecutionEnv implements ExecutionEnv {
 	async writeFile(path: string, content: string | Uint8Array, context: Context): Promise<Result<void, FileError>> {
 		const resolved = this.#resolve(path);
 		const bytes = typeof content === "string" ? new TextEncoder().encode(content) : content;
-		return this.#done({ op: "write", path: resolved, content: bytes, append: false }, resolved, context);
+		return this.#done({ op: "writeFile", path: resolved, content: bytes }, resolved, context);
 	}
 
 	async appendFile(path: string, content: string | Uint8Array, context: Context): Promise<Result<void, FileError>> {
 		const resolved = this.#resolve(path);
 		const bytes = typeof content === "string" ? new TextEncoder().encode(content) : content;
-		return this.#done({ op: "write", path: resolved, content: bytes, append: true }, resolved, context);
+		return this.#done({ op: "appendFile", path: resolved, content: bytes }, resolved, context);
 	}
 
 	async truncateFile(path: string, size: number, context: Context): Promise<Result<void, FileError>> {
@@ -338,21 +289,18 @@ export class SandboxExecutionEnv implements ExecutionEnv {
 
 	async fileInfo(path: string, context: Context): Promise<Result<FileInfo, FileError>> {
 		const resolved = this.#resolve(path);
-		return this.#value<FileInfo>({ op: "info", path: resolved }, resolved, context);
+		return this.#value<FileInfo>({ op: "lstat", path: resolved }, resolved, context);
 	}
 
 	async listDir(path: string, context: Context): Promise<Result<FileInfo[], FileError>> {
 		const opened = await this.openDirReader(path, context);
 		if (!opened.ok) return opened;
 		const entries: FileInfo[] = [];
-		let units = 0;
 		try {
 			for (;;) {
-				const page = await opened.value.next(LIST_PAGE, context);
+				const page = await opened.value.next(MAX_ENTRIES, context);
 				if (!page.ok) return page;
 				entries.push(...page.value.entries);
-				for (const entry of page.value.entries) units += entry.name.length + entry.path.length;
-				if (entries.length > LIST_ENTRIES || units > LIST_UNITS) return err(new FileError("unknown", `The directory holds more than ${LIST_ENTRIES} entries`, this.#resolve(path)));
 				if (page.value.done) return ok(entries);
 			}
 		} finally {
@@ -360,27 +308,32 @@ export class SandboxExecutionEnv implements ExecutionEnv {
 		}
 	}
 
+	/** The directory's names are read at once; each page's entries are `lstat`ed as it is asked for. */
 	async openDirReader(path: string, context: Context): Promise<Result<DirReader, FileError>> {
 		const resolved = this.#resolve(path);
-		const opened = await this.#value<null>({ op: "opendir", path: resolved }, resolved, context);
-		if (!opened.ok) return opened;
+		const listed = await this.#value<string[]>({ op: "readDirectory", path: resolved }, resolved, context);
+		if (!listed.ok) return listed;
 		const stopped = aborted(context, resolved);
 		if (stopped) return stopped;
+		const names = listed.value;
+		let units = 0;
+		// Each name is kept, then becomes a full path.
+		for (const name of names) units += name.length + resolved.length + 1;
+		if (names.length > LIST_ENTRIES || units > LIST_UNITS) return err(new FileError("unknown", `The directory holds more than ${LIST_ENTRIES} entries`, resolved));
 		let closed = false;
-		let done = false;
-		let after: string | null = null;
+		let next = 0;
 		return ok({
 			next: async (maxEntries: number, nextContext: Context): Promise<Result<{ entries: FileInfo[]; done: boolean }, FileError>> => {
 				const nextStopped = aborted(nextContext, resolved);
 				if (nextStopped) return nextStopped;
 				if (closed) return err(new FileError("invalid", "Directory reader is closed", resolved));
 				if (!Number.isSafeInteger(maxEntries) || maxEntries <= 0) return err(new FileError("invalid", "maxEntries must be a positive safe integer", resolved));
-				if (done) return ok({ entries: [], done: true });
-				const page = await this.#value<{ entries: FileInfo[]; next: string | null }>({ op: "list", path: resolved, after, max: maxEntries }, resolved, nextContext);
+				if (next >= names.length) return ok({ entries: [], done: true });
+				const paths = names.slice(next, next + Math.min(maxEntries, MAX_ENTRIES)).map((name) => join(resolved, name));
+				const page = await this.#value<(FileInfo | null)[]>({ op: "entries", paths }, resolved, nextContext);
 				if (!page.ok) return page;
-				after = page.value.next;
-				done = page.value.next === null;
-				return ok({ entries: page.value.entries, done });
+				next += paths.length;
+				return ok({ entries: page.value.filter((entry) => entry !== null), done: next >= names.length });
 			},
 			close: async (): Promise<void> => {
 				closed = true;
@@ -443,8 +396,9 @@ export class SandboxExecutionEnv implements ExecutionEnv {
 	}
 
 	async exists(path: string, context: Context): Promise<Result<boolean, FileError>> {
-		const resolved = this.#resolve(path);
-		return this.#value<boolean>({ op: "exists", path: resolved }, resolved, context);
+		const info = await this.fileInfo(path, context);
+		if (info.ok) return ok(true);
+		return info.error.code === "not_found" ? ok(false) : err(info.error);
 	}
 
 	async createDir(path: string, options: { recursive?: boolean } | undefined, context: Context): Promise<Result<void, FileError>> {
@@ -460,7 +414,7 @@ export class SandboxExecutionEnv implements ExecutionEnv {
 	}
 
 	async createTempDir(prefix: string | undefined, context: Context): Promise<Result<string, FileError>> {
-		return this.#value<string>({ op: "mktemp", kind: "dir", prefix: prefix ?? "tmp-" }, undefined, context);
+		return this.#value<string>({ op: "mktemp", kind: "dir", prefix: prefix ?? "tmp-", suffix: "" }, undefined, context);
 	}
 
 	async createTempFile(options: { prefix?: string; suffix?: string } | undefined, context: Context): Promise<Result<string, FileError>> {

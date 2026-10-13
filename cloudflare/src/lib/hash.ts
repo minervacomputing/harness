@@ -29,15 +29,6 @@ export async function hmacSha256Hex(key: Data, message: Data): Promise<string> {
 }
 
 /**
- * The HMAC of `value` keyed by `hash(salt + secret)`, in hex: one secret gives each purpose (the salt) its
- * own key. Write ids are the first 32 hex digits of the SHA-1 form over `{run}:{key}`.
- */
-export async function saltedHmacHex(salt: string, value: Data, secret: string, name: HashName = "SHA-1"): Promise<string> {
-	const key = await digest(name, salt + secret);
-	return hex(await hmac(name, key, value));
-}
-
-/**
  * Whether two values are equal, in time that depends only on their lengths: two strings by UTF-16 code
  * unit, two byte arrays by byte. A length difference returns at once: lengths are not secret here (tokens
  * have fixed sizes).

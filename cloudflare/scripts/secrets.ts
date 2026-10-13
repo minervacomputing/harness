@@ -103,7 +103,7 @@ async function check(): Promise<void> {
 		console.error(`MINERVA_SETUP_KEY in ${NAME} is shorter than ${MIN_SETUP_KEY_LENGTH} characters, so it could never claim setup: delete the line and run \`pnpm secrets${OFFLINE ? ":offline" : TEST ? ":test" : ""}\`.`);
 		process.exit(1);
 	}
-	// A key list the Worker would refuse (a JSON list, a duplicate id, a short secret) stops a deploy here,
+	// A key list the Worker would refuse (a malformed entry, a duplicate id, a short secret) stops a deploy here,
 	// with the Worker's own message, which never holds a secret.
 	const keys = values.get("MINERVA_ENCRYPTION_KEYS");
 	if (keys) {

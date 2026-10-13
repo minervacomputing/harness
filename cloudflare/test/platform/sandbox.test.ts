@@ -39,7 +39,7 @@ describe("the Sandbox object", () => {
 		expect(await stub.harden(fence)).toMatchObject({ refused: "stale" });
 		expect(await stub.verify(fence)).toMatchObject({ refused: "stale" });
 		expect(await stub.exec(fence, { execId: "x", command: "true", cwd: WORKSPACE, env: {}, timeoutSeconds: 1 }, null)).toMatchObject({ refused: "stale" });
-		expect(await stub.fs(fence, { op: "exists", path: "/workspace" })).toMatchObject({ refused: "stale" });
+		expect(await stub.fs(fence, { op: "lstat", path: "/workspace" })).toMatchObject({ refused: "stale" });
 		expect(await stub.scan(fence, { rehashAll: false })).toMatchObject({ refused: "stale" });
 		expect(await stub.killStrays(fence)).toMatchObject({ refused: "stale" });
 		expect(await stub.destroy(fence, "late")).toMatchObject({ refused: "stale" });
@@ -131,5 +131,20 @@ describe("R2 as the checkpoint's bucket", () => {
 		await expect(bucket.check(new Blob([data]).stream(), { size: 5, sha256: "0".repeat(64) })).rejects.toThrow(CHECK_MISMATCH);
 		await expect(bucket.check(new Blob([data]).stream(), { size: 6, sha256 })).rejects.toThrow();
 		expect(puts).toEqual([]);
+	});
+
+	test("a read gives the object's bytes, and its body fails at its end unless they have the SHA-256 asked for", async () => {
+		const bucket = r2Bucket(env.FILES);
+		const data = new Uint8Array(300_000).map((_, i) => i % 251);
+		const sha256 = [...new Uint8Array(await crypto.subtle.digest("SHA-256", data))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+		const key = `sandbox-read/${uuid7()}`;
+		await env.FILES.put(key, data);
+		const right = await bucket.get(key, sha256);
+		expect(right?.size).toBe(data.length);
+		expect(new Uint8Array(await new Response(right?.body).arrayBuffer())).toEqual(data);
+		const wrong = await bucket.get(key, "0".repeat(64));
+		await expect(new Response(wrong?.body).arrayBuffer()).rejects.toThrow(CHECK_MISMATCH);
+		expect(await bucket.get(`${key}/missing`, sha256)).toBeNull();
+		await env.FILES.delete(key);
 	});
 });

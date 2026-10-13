@@ -13,7 +13,7 @@ import {
 	writeId,
 } from "../../src/gateway/results.ts";
 import { todoistConnector } from "../../src/connectors/todoist/connector.ts";
-import { saltedHmacHex } from "../../src/lib/hash.ts";
+import { hmacSha256Hex } from "../../src/lib/hash.ts";
 import { z } from "zod";
 import { FOLDER, FakeClock, FakeServer, FakeTodoist, Gate, MIXED, PROJECT, Scenario, TODOIST, mixedConnection, mixedConnector, todoistConnection, userGrants } from "./executor-fakes.ts";
 
@@ -384,10 +384,10 @@ describe("what the chat and the model read", () => {
 		expect(argumentsSummary(null)).toEqual({});
 	});
 
-	test("the write id is the run's salted HMAC of the key, cut to 32 hex", async () => {
+	test("the write id is the run's keyed HMAC of the key, cut to 32 hex", async () => {
 		const run = "0199a000-0000-7000-8000-000000000000";
 		const id = await writeId("test-secret-not-a-real-key", run, "e".repeat(64));
-		expect(id).toBe((await saltedHmacHex("minerva.gateway.write", `${run}:${"e".repeat(64)}`, "test-secret-not-a-real-key")).slice(0, 32));
+		expect(id).toBe((await hmacSha256Hex("test-secret-not-a-real-key", `minerva.gateway.write\u0000${run}:${"e".repeat(64)}`)).slice(0, 32));
 		expect(id).toMatch(/^[0-9a-f]{32}$/);
 		expect(await writeId("another-secret", run, "e".repeat(64))).not.toBe(id);
 		expect(await writeId("test-secret-not-a-real-key", run, "f".repeat(64))).not.toBe(id);
