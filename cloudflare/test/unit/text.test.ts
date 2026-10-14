@@ -198,7 +198,7 @@ describe("decodeCharacterReferences", () => {
 		}
 		expect(wrong.slice(0, 5)).toEqual([]);
 		expect(decodeCharacterReferences("&#1114112;&#99999999999999999999;")).toBe("\ufffd\ufffd");
-	});
+	}, 30_000); // Every code point, in each spelling: over 5 s on CI's two cores.
 
 	test("hostile references are decoded in about linear time", () => {
 		const cases: [string, string][] = [
