@@ -1,6 +1,6 @@
 # Chunk 1b: the account suites from CI
 
-Status: design, 2026-10-14. Part of [product-and-engine.md](product-and-engine.md), chunk 1b. opencode reviewed the first draft; its findings are folded in below, and the ones not taken are under Accepted.
+Status: built and live, 2026-10-14 (first green run: all four account steps). Part of [product-and-engine.md](product-and-engine.md), chunk 1b. opencode reviewed the first draft; its findings are folded in below, and the ones not taken are under Accepted.
 
 ## Decisions (the owner's, 2026-10-14)
 
