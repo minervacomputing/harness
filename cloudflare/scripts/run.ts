@@ -119,17 +119,20 @@ export function readEnv(file: string): Record<string, string> {
 }
 
 /**
- * Hides the values of an env file of secrets, so that no command's output can show one: as dotenv reads them
- * (cf) and as each line's raw remainder (scripts/secrets.ts reads `KEY=value` lines).
+ * The values of an env file's text, both as dotenv reads them (cf) and as each line's raw remainder
+ * (scripts/secrets.ts reads `KEY=value` lines), empty ones left out.
  */
+export function envValues(text: string): string[] {
+	const raw = text.split("\n").map((line) => /^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*(.*?)\s*$/.exec(line)?.[1]?.replace(/^(["'])(.*)\1$/, "$2"));
+	return [...Object.values(parseEnv(text) as Record<string, string>), ...raw].filter((value): value is string => !!value);
+}
+
+/** Hides the values of an env file of secrets (`envValues`), so that no command's output can show one. */
 export function hideSecrets(file: string): void {
 	if (!existsSync(file)) return;
-	const raw = readFileSync(file, "utf8")
-		.split("\n")
-		.map((line) => /^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*(.*?)\s*$/.exec(line)?.[1]?.replace(/^(["'])(.*)\1$/, "$2"));
-	for (const value of [...Object.values(readEnv(file)), ...raw]) {
+	for (const value of envValues(readFileSync(file, "utf8"))) {
 		// Short values (flags, numbers) would only blank out unrelated output; secrets are long.
-		if (value && value.length >= 16) hide(value);
+		if (value.length >= 16) hide(value);
 	}
 }
 

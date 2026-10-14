@@ -1,6 +1,6 @@
 # Plan: Laravel is the product, Cloudflare is the engine
 
-Status: design, 2026-10-14; chunks 0 and 1 are done (1b, the engine on Cloudflare from CI, is next on the engine side). It replaces self-hosting-and-cloud.md and the "Instance and control plane" section of cloudflare.md (both removed; see git history; cloudflare.md's design is now [ARCHITECTURE.md](../../ARCHITECTURE.md)), whose instance model (everything a company needs in one Cloudflare deployment) and whose later revision (Laravel for identity, the runtime keeping connections and conversations) are both given up. What still holds from them is written out here. opencode reviewed the first draft in a fresh session; its findings are folded in, except that production, which holds only the operator's test data, is still reset.
+Status: design, 2026-10-14; chunks 0 and 1 are done; 1b is built and goes live once the owner has made its instance, token and secrets (ci-account-suites.md), without the staging engine, which moves to chunk 3. It replaces self-hosting-and-cloud.md and the "Instance and control plane" section of cloudflare.md (both removed; see git history; cloudflare.md's design is now [ARCHITECTURE.md](../../ARCHITECTURE.md)), whose instance model (everything a company needs in one Cloudflare deployment) and whose later revision (Laravel for identity, the runtime keeping connections and conversations) are both given up. What still holds from them is written out here. opencode reviewed the first draft in a fresh session; its findings are folded in, except that production, which holds only the operator's test data, is still reset.
 
 ## Why
 
@@ -79,6 +79,8 @@ The plan is built in chunks of about one session each, in order. A chunk starts 
    The `demo` branch is untouched. Done when `main` is the engine and its workflow is green.
 
    **1b. The engine on Cloudflare from CI.** A staging instance of the engine, deployed by the workflow after the checks pass, and the account suites (`test:deployed`, `test:faults`, `test:browser`) against the test Worker. Left out of chunk 1 because each needs decisions and changes on the Cloudflare account that the owner makes: a new instance and its resources (D1, buckets with their jurisdiction and lifecycle rules, the AI Gateway, the container application), a scoped API token, and the instance's `secrets.env` and `vars.env` as repository secrets the workflow writes into a temporary instance directory (`MINERVA_INSTANCES_DIR`). The scripts already pin the account and check the instance's identity, so the workflow only provides them. The test Worker's suites take about five minutes and mutate the shared test instance, so they need a concurrency group and a decision on whether every push runs them or only changes to the paths cloudflare/README.md lists.
+
+   Built 2026-10-14 as [ci-account-suites.md](ci-account-suites.md), live once the owner has done its setup: the account suites (`test:deployed`, `test:faults`, `test:browser`) run in CI against a CI-only test instance, `minerva-cf-ci`, on pushes that change the engine or the app. The staging engine is left for the chunk in which Laravel's staging first calls the engine (3), since nothing calls one before that.
 
 **The Laravel foundation** (a new private repository; the owner creates it and the Laravel Cloud organization)
 

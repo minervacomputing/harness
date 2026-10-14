@@ -125,7 +125,7 @@ pnpm test:platform   # the Worker in local workerd: router, Durable Objects with
 pnpm test:deployed --instance <name>   # an instance's deployed Workers (needs its vars.env and secrets.env, its account recorded and cf signed in)
 pnpm test:browser    # the browser walk on the test Worker (needs Chrome; below)
 pnpm test:faults     # the account's fault tests, memory-limit resets, sandbox lab and end-to-end turns, against the test Worker (below)
-pnpm test:cm         # code mode's fault rows on the account, against its lab Worker; not part of test:faults (below)
+pnpm test:cm         # code mode's fault rows on the account, against its lab Worker; not part of test:faults, nor of CI (below)
 pnpm startup         # builds src/index.ts and measures its startup CPU locally, in a few seconds (Startup, below)
 ```
 
@@ -238,6 +238,29 @@ It sends no email: the test build has no Email Sending binding, and its emails g
 Its download origin is `minerva-cf-test-files`, the same `files-worker/` built in mode `faults` (`files-worker/cloudflare.config.ts`): its own name, the test Worker's two buckets, `MINERVA_DOWNLOAD_ORIGIN` from the test instance's `vars.env` (the same file as the test app's, so the app signs links for it) and only `MINERVA_DOWNLOAD_KEY` of its `secrets.env`. The config builds that mode only for a test instance, and `scripts/deploy.ts` checks the built output against the test app's build before either is uploaded (Deploy, above).
 
 Keep it deployed. Never deploy the test build as `minerva-cf`, and never write its origin into tracked files.
+
+### CI's test instance
+
+GitHub Actions runs the account suites on every push to `main` that changes `cloudflare/`, `contract/`, `frontend/`, the workflows or the workspace's package files, and on every manual run (job `account` in `.github/workflows/main.yml`, after `check` and `platform`): `deploy:test`, `test:deployed`, `test:faults` and the browser walk, against a test instance of its own, `minerva-cf-ci`, so that a CI run never overwrites a build someone is testing on `minerva-cf-test`. Runs queue one at a time, and a push that `main` has already moved past is skipped. The design, the token's permissions and the setup are in [docs/plans/ci-account-suites.md](../docs/plans/ci-account-suites.md).
+
+The instance's directory exists only in the secrets of the repository's `ci-instance` environment, which only `main` can read: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `MINERVA_CI_SECRETS_ENV` (its `secrets.env`) and `MINERVA_CI_VARS_ENV` (its `vars.env`). Each run makes the directory afresh with `scripts/ci-instance.ts`, which first registers every value a log could show with GitHub's `::add-mask::` (`scripts/masks.ts`): the account id, the secrets, the fault driver's token, the origins and the workers.dev subdomain. The repository is public, and so are its Actions logs; nothing is uploaded as an artifact. Keeping no copy of the directory on a machine leaves `minerva-cf-test` the only test instance there, so the manual commands still choose it by default.
+
+The suites keep what they made (workspaces, conversations, published files, the browser walk's accounts). Reset the instance when it grows, or to replace its secrets, from a temporary directory, while no run is queued or running:
+
+```sh
+dir=$(mktemp -d)
+export MINERVA_INSTANCES_DIR=$dir CLOUDFLARE_ACCOUNT_ID=<account id>
+pnpm instances create minerva-cf-ci --test
+pnpm secrets --instance minerva-cf-ci          # fresh secrets
+# write $dir/minerva-cf-ci/vars.env: as the test instance's, with minerva-cf-ci's two origins
+pnpm assets
+node scripts/reset.ts --instance minerva-cf-ci --test --yes
+gh secret set MINERVA_CI_SECRETS_ENV --env ci-instance < "$dir/minerva-cf-ci/secrets.env"
+rm -rf "$dir"; unset MINERVA_INSTANCES_DIR CLOUDFLARE_ACCOUNT_ID
+gh workflow run main.yml --ref main            # deploys it from empty
+```
+
+The token expires a year after it was made; the job then stops at `cf auth whoami`. Code mode's lab (`test:cm`) is not run by CI.
 
 ## Resetting an instance
 

@@ -54,7 +54,7 @@ Open <http://localhost:5173>. Seeding creates or resets the two accounts (passwo
 
 This project does not use pull requests. Commit directly to `main` (or merge a short-lived branch into it) and push `main`.
 
-`main` is the engine. Every push to `main` runs `.github/workflows/main.yml`: the frontend's check, the contract's and the engine's types, the engine's unit tests (job `check`) and its platform tests (job `platform`). Nothing in it reaches Cloudflare; production and the test instance are deployed by hand (cloudflare/README.md). When the workflow fails, read which job and step failed.
+`main` is the engine. Every push to `main` runs `.github/workflows/main.yml`: the frontend's check, the contract's and the engine's types, the engine's unit tests (job `check`) and its platform tests (job `platform`); then, when the push changed `cloudflare/`, `contract/`, `frontend/`, the workflows or the package files, the account suites against the CI-only test instance `minerva-cf-ci` (job `account`; cloudflare/README.md, CI's test instance). Production and `minerva-cf-test` are deployed by hand. When the workflow fails, read which job and step failed. Its logs are public: never add a step that prints a secret, an account identifier or an origin.
 
 The public demo runs from the `demo` branch, which keeps its own copy of the Django stack, frozen until the hosted product replaces it. Never merge `main` into `demo`, and do not copy changes from `main` to `demo`. A fix the demo itself needs is committed on `demo` only, and the demo is deployed only from `demo`.
 
@@ -101,7 +101,7 @@ pnpm test:docker     # the Sandbox against the real image (needs Docker and `pnp
 pnpm startup         # the Worker's startup CPU, which Cloudflare limits
 ```
 
-`pnpm check` in `frontend/` and `pnpm typecheck` in `contract/` complete what the workflow runs. The suites on the account (`test:deployed`, `test:faults`, `test:browser`, `test:cm`) and which ones a change needs are in cloudflare/README.md.
+`pnpm check` in `frontend/` and `pnpm typecheck` in `contract/` complete what the workflow runs. The suites on the account (`test:deployed`, `test:faults`, `test:browser`, `test:cm`) and which ones a change needs are in cloudflare/README.md; CI runs all but `test:cm` on its own instance after a push, so run them by hand on `minerva-cf-test` when a change needs them before it is pushed.
 
 ## Frontend
 
