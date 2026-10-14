@@ -17,10 +17,12 @@
 // was never announced either.
 
 import type { StartSnapshot } from "../gateway/tools.ts";
+import type { Preparation } from "../internal/start.ts";
 import { type Json, parseJson } from "../lib/json.ts";
 import { VALUE_PART, sliceText, splitParts } from "../lib/text.ts";
 import { isoTime } from "../lib/dates.ts";
 import type { Attachment, Conversation, FolderChanges, FolderWarnings, Message, Run } from "@minerva/contract";
+import type { StartRunResult } from "@minerva/contract/internal";
 import type { AgentId, AttemptFence, ConversationId, EpochMs, RunId, RunStatus, UserId, VersionId, WorkspaceRef } from "../shared/rpc.ts";
 import {
 	ACTIVE,
@@ -33,7 +35,7 @@ import {
 	statusEvent,
 	terminalStatus,
 } from "./events.ts";
-import type { StoredMessage } from "./history.ts";
+import type { Replayed, StoredMessage } from "./history.ts";
 
 export interface ConversationInit {
 	conversationId: ConversationId;
@@ -59,6 +61,11 @@ export interface RunSnapshot extends StartSnapshot {
 	/** As added to the folder: final, possibly numbered names at the root, in upload order. */
 	attachments: Attachment[];
 	limits: { folderBytes: number; folderEntries: number; runUploadBytes: number };
+	/**
+	 * A Laravel run's turn as its start sent it (docs/plans/start-and-cancel.md): the history its pi session is seeded
+	 * with, selected and clipped, and its prompt. A Workspace run reads both from the object's messages instead.
+	 */
+	turn?: { history: Replayed[]; prompt: string };
 }
 
 /**
@@ -86,7 +93,17 @@ export interface ConversationRow {
 	created_at: number;
 	updated_at: number;
 	deleted_at: number | null;
+	/** The organization of a conversation Laravel's commands made; null for the Workspace's. */
+	organization_id: string | null;
 	[key: string]: SqlStorageValue;
+}
+
+/** What binds a Laravel conversation: the scope of the first command that named it, and where its objects live. */
+export interface ConversationBinding {
+	conversationId: ConversationId;
+	organization: string;
+	workspace: WorkspaceRef;
+	createdAt: EpochMs;
 }
 
 export interface RunRow {
@@ -354,6 +371,34 @@ export class RunStore {
 				input.agentId,
 				input.createdAt,
 				input.createdAt,
+			);
+			return true;
+		});
+	}
+
+	/**
+	 * Binds a Laravel conversation on first use; false when the row is bound to another organization, workspace or
+	 * jurisdiction, or is a Workspace conversation. Its user and agent stay empty: each run's snapshot names its own.
+	 */
+	bind(binding: ConversationBinding): boolean {
+		return this.write(() => {
+			const existing = this.conversation();
+			if (existing) {
+				return (
+					existing.id === binding.conversationId &&
+					existing.organization_id === binding.organization &&
+					existing.workspace_id === binding.workspace.id &&
+					existing.jurisdiction === binding.workspace.jurisdiction
+				);
+			}
+			this.#sql.exec(
+				"INSERT INTO conversation (singleton, id, workspace_id, jurisdiction, user_id, agent_id, organization_id, created_at, updated_at) VALUES (1, ?, ?, ?, '', '', ?, ?, ?)",
+				binding.conversationId,
+				binding.workspace.id,
+				binding.workspace.jurisdiction,
+				binding.organization,
+				binding.createdAt,
+				binding.createdAt,
 			);
 			return true;
 		});
@@ -764,6 +809,41 @@ export class RunStore {
 
 	deleteRelease(runId: RunId): void {
 		this.#sql.exec("DELETE FROM releases WHERE run_id = ?", runId);
+	}
+
+	// A Laravel start's preparation and answer (docs/plans/start-and-cancel.md, startRun).
+
+	/** The start's preparation, kept from its first try until it is answered; in parts, like a run's snapshot. */
+	preparation(runId: RunId): Preparation | null {
+		const parts = this.#sql.exec<{ text: string }>("SELECT text FROM internal_starts WHERE run_id = ? ORDER BY part", runId).toArray();
+		return parts.length ? (parseJson(parts.map((part) => part.text).join("")) as unknown as Preparation) : null;
+	}
+
+	addPreparation(runId: RunId, preparation: Preparation): void {
+		splitParts(JSON.stringify(preparation), VALUE_PART).forEach((text, part) => {
+			this.#sql.exec("INSERT INTO internal_starts (run_id, part, text) VALUES (?, ?, ?)", runId, part, text);
+		});
+	}
+
+	deletePreparation(runId: RunId): void {
+		this.#sql.exec("DELETE FROM internal_starts WHERE run_id = ?", runId);
+	}
+
+	/** Whether another run's start is prepared and not yet answered: the conversation is busy for any other. */
+	preparedOther(runId: RunId): boolean {
+		return this.#sql.exec("SELECT 1 FROM internal_starts WHERE run_id != ? LIMIT 1", runId).toArray().length > 0;
+	}
+
+	/** The start's answer, as it was first given. */
+	answer(runId: RunId): StartRunResult | null {
+		const row = this.#sql.exec<{ answer: string }>("SELECT answer FROM internal_answers WHERE run_id = ?", runId).toArray()[0];
+		return row ? (parseJson(row.answer) as unknown as StartRunResult) : null;
+	}
+
+	/** Stores the start's answer once; its preparation is no longer needed. */
+	addAnswer(runId: RunId, answer: StartRunResult): void {
+		this.#sql.exec("INSERT INTO internal_answers (run_id, answer, created_at) VALUES (?, ?, ?)", runId, JSON.stringify(answer), this.now());
+		this.deletePreparation(runId);
 	}
 
 	tombstone(runId: RunId): TombstoneRow | null {

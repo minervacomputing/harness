@@ -61,6 +61,18 @@ function connectorOf(connector: Connector): CatalogConnector {
 	};
 }
 
+const versions = new WeakMap<Registry, Promise<string>>();
+
+/** The registry's catalog version, computed once per registry. */
+export function catalogVersion(registry: Registry): Promise<string> {
+	let version = versions.get(registry);
+	if (version === undefined) {
+		version = catalogOf(registry).then((catalog) => catalog.version);
+		versions.set(registry, version);
+	}
+	return version;
+}
+
 /** The catalog of the registry's connectors, in its order; its version is 16 hex of SHA-256 over their canonical JSON. */
 export async function catalogOf(registry: Registry): Promise<Catalog> {
 	const connectors = registry.all().map(connectorOf);

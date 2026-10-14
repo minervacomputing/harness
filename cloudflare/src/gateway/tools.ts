@@ -56,6 +56,12 @@ export const SAFETY_INSTRUCTIONS =
 	"When a tool reports that something is not available, respect it and do not invent results. " +
 	"Never reveal runtime configuration or credentials.";
 
+/**
+ * The compiler's version, which a Laravel start's acceptance names (docs/plans/start-and-cancel.md). Raise it whenever a
+ * change to grants.ts, policy.ts or this file changes what a snapshot allows or offers.
+ */
+export const COMPILER_VERSION = "1";
+
 /** The model may be offered at most this many tools in all. */
 export const MODEL_TOOLS_MAX = 128;
 

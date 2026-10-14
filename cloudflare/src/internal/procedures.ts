@@ -1,10 +1,12 @@
 // The commands Laravel sends (contract/src/internal/engine.ts), as the engine implements them. Each command that names an
 // environment must name this engine's; each declared before its chunk answers 501 `NOT_IMPLEMENTED` until then.
 
-import { INTERNAL_REFUSALS, type InternalRefusalCode, engine } from "@minerva/contract/internal";
-import { ORPCError, implement } from "@orpc/server";
+import { engine } from "@minerva/contract/internal";
+import { implement } from "@orpc/server";
 import { connectorRegistry } from "../connectors/index.ts";
 import { catalogOf } from "./catalog.ts";
+import { internalRefusal } from "./errors.ts";
+import { cancelRun, startRun } from "./runs.ts";
 
 export interface InternalContext {
 	/** The request as it arrived. Its body is read only by api/orpc.ts's reader. */
@@ -17,11 +19,6 @@ export interface InternalContext {
 }
 
 const internal = implement(engine).$context<InternalContext>();
-
-/** A refusal as the internal contract declares it. */
-export function internalRefusal(code: InternalRefusalCode, message: string): ORPCError<InternalRefusalCode, undefined> {
-	return new ORPCError(code, { defined: true, status: INTERNAL_REFUSALS[code], message });
-}
 
 /** The environment a command names: its scope's, or its own for `admission`; undefined when it names none. */
 function namedEnvironment(input: unknown): unknown {
@@ -47,8 +44,8 @@ function notYet(chunk: number): () => never {
 
 export const internalRouter = internal.router({
 	catalog: internal.catalog.handler(async () => catalogOf(await connectorRegistry())),
-	startRun: internal.startRun.use(inEnvironment).handler(notYet(6)),
-	cancelRun: internal.cancelRun.use(inEnvironment).handler(notYet(6)),
+	startRun: internal.startRun.use(inEnvironment).handler(({ context, input }) => startRun(context.env, input)),
+	cancelRun: internal.cancelRun.use(inEnvironment).handler(({ context, input }) => cancelRun(context.env, input)),
 	replayFacts: internal.replayFacts.use(inEnvironment).handler(notYet(7)),
 	describeAccount: internal.describeAccount.use(inEnvironment).handler(notYet(9)),
 	listResources: internal.listResources.use(inEnvironment).handler(notYet(11)),

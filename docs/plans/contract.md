@@ -38,7 +38,7 @@ Readers on both sides ignore fields they do not know (zod's objects strip them, 
 
 **Scope.** Every command except the catalog carries `scope: {environment, organization, workspace}`, and a command about a conversation also carries `conversation`.
 - **Environment.** The engine is configured with its environment (`MINERVA_ENVIRONMENT`, for example `staging`). It refuses a command that names another environment with `WRONG_ENVIRONMENT` (409), so a Laravel configured with the wrong engine fails loudly rather than writing into it.
-- **Organization and workspace.** An execution object (a Conversation, and the recovery index's rows) stores the organization and workspace it was created for, and refuses a command that names others with `SCOPE_MISMATCH` (409). This is built with the objects' binding in chunk 6.
+- **Organization and workspace.** An execution object (a Conversation, and the recovery index's rows) stores the organization and workspace it was created for, and refuses a command that names others with `SCOPE_MISMATCH` (409). Built in chunk 6 ([start-and-cancel.md](start-and-cancel.md)).
 
 **Answers.**
 - **An outcome is a 200.** A command's definite outcome is answered 200, including a refusal: for example `startRun`'s `{outcome: "refused", code, message}`, which Laravel records as the run's end.

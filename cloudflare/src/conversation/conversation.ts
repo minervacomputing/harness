@@ -53,7 +53,9 @@ import { isReset, type ScriptsClient } from "../scripts/run.ts";
 import type { ScriptsApi } from "../scripts/scripts.ts";
 import { scriptTool } from "../scripts/tool.ts";
 import type { Folder, Message, NewMessage, Run } from "@minerva/contract";
-import { type AttemptFence, type Caller, type Outcome, type Refusal, type RunId, type VersionId, refuse } from "../shared/rpc.ts";
+import type { CancelRun, CancelRunResult, StartRun, StartRunResult } from "@minerva/contract/internal";
+import { type Preparation, type StartRefusal, UNAVAILABLE, messageRefusal, prepareStart, promptOf as internalPrompt, startRefusal } from "../internal/start.ts";
+import { type AttemptFence, type Caller, type Outcome, type Refusal, type RunId, type VersionId, type WorkspaceRef, refuse } from "../shared/rpc.ts";
 import { START_FAILED } from "../workspace/core.ts";
 import {
 	ACTING,
@@ -76,6 +78,7 @@ import {
 import { decideGate, type PiWork, classifyWork } from "./gate.ts";
 import { HISTORY_LIMIT, historyOf, promptOf, recentHistory, sessionInstructions } from "./history.ts";
 import { FolderOverLimit, LOCAL_TOOLS, type LocalTool, type LocalToolEvent, localToolSpecs, runGated, SandboxRefused } from "./local.ts";
+import { laravelRuns } from "./laravel-runs.ts";
 import { destroyRunSandbox, LocalRun } from "./local-run.ts";
 import { type ConversationPorts, type FolderPort, PORTS, type PortsContext, runStatePort, type WorkspaceClient, type WriteLedger } from "./ports.ts";
 import { ToolQueue, untilAborted } from "./queue.ts";
@@ -172,7 +175,23 @@ export interface ConversationApi {
 	 * deletion is done: a broken call after a resolved one, or a second call that finds nothing, is done.
 	 */
 	destroy(): Promise<void>;
+
+	/**
+	 * Laravel's `startRun` (docs/plans/start-and-cancel.md), once the Worker has bound the conversation and the run in the
+	 * recovery index; `workspace` is where the index addresses it. Binds the conversation on first use, and answers a
+	 * stored answer again; otherwise prepares the start once (its snapshot compiled), copies the attachments from
+	 * staging and stores the run with its acceptance, or stores a refusal. An error stores no answer.
+	 */
+	startInternal(command: StartRun, workspace: WorkspaceRef): Promise<InternalAnswer<StartRunResult>>;
+	/**
+	 * Laravel's `cancelRun`: an active run revoked and ended, or a tombstone for a run not stored, which refuses its start.
+	 * Answers once the change is committed, outside pi's transactions.
+	 */
+	cancelInternal(command: CancelRun, workspace: WorkspaceRef): Promise<InternalAnswer<CancelRunResult>>;
 }
+
+/** What a Laravel command answers: its outcome, or that the conversation is bound to another scope. */
+export type InternalAnswer<T> = { ok: true; value: T } | { ok: false; code: "SCOPE_MISMATCH" };
 
 export interface PostedView {
 	message: Message;
@@ -222,6 +241,7 @@ export const ATTEMPT_ENDED = "The attempt ended: ";
 
 /** A conversation, or a 404: another user's conversation looks like none. */
 const NOT_FOUND = refuse("NOT_FOUND", "Not found.");
+const SCOPE_MISMATCH = { ok: false, code: "SCOPE_MISMATCH" } as const;
 
 type Job = { fn: string; payload?: unknown; job: { id: string; payload: unknown } };
 
@@ -247,6 +267,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	readonly #loops = new Map<RunId, Promise<void>>();
 	readonly #activations = new Map<RunId, Promise<void>>();
 	readonly #begins = new Map<RunId, Promise<Outcome<PostedView>>>();
+	/** Laravel's starts in flight in this instance, by run: a repeat joins the one running. */
+	readonly #internalStarts = new Map<RunId, Promise<StartRunResult>>();
 	/** Code mode: each run's scripted calls, and the lane that runs scripts after the reset of the one before. */
 	readonly #scriptRuns = new ScriptRuns();
 	/** Each run's folder in its container for the attempt this instance runs (local-run.ts). */
@@ -444,6 +466,145 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		}
 	}
 
+	// Laravel's commands (docs/plans/start-and-cancel.md).
+
+	async startInternal(command: StartRun, workspace: WorkspaceRef): Promise<InternalAnswer<StartRunResult>> {
+		if (!(await this.#bindInternal(command, workspace))) return SCOPE_MISMATCH;
+		const stored = this.#store.answer(command.run);
+		if (stored) return { ok: true, value: stored };
+		let start = this.#internalStarts.get(command.run);
+		if (!start) {
+			start = this.#startOnce(command).finally(() => this.#internalStarts.delete(command.run));
+			this.#internalStarts.set(command.run, start);
+		}
+		return { ok: true, value: await start };
+	}
+
+	async cancelInternal(command: CancelRun, workspace: WorkspaceRef): Promise<InternalAnswer<CancelRunResult>> {
+		if (!(await this.#bindInternal(command, workspace))) return SCOPE_MISMATCH;
+		const state = await this.#store.outside(() =>
+			this.#store.write((): CancelRunResult["state"] => {
+				const run = this.#store.run(command.run);
+				if (run) {
+					// Ended: by a cancel if its revoked flag is set, so a repeat answers as the first did.
+					if (!ACTIVE.has(run.status)) return run.revoked ? "cancelled" : "ended";
+					this.#store.revoke(run.id);
+					this.#store.finish(run.id, endFor(command.reason));
+					return "cancelled";
+				}
+				this.#store.addTombstone(command.run, command.reason, 0);
+				this.#store.deletePreparation(command.run);
+				return "tombstoned";
+			}),
+		);
+		return { ok: true, value: { state } };
+	}
+
+	/** The conversation bound to the command's organization and the index's workspace, on first use; false for others. */
+	#bindInternal(command: StartRun | CancelRun, workspace: WorkspaceRef): Promise<boolean> {
+		const binding = { conversationId: command.conversation, organization: command.scope.organization, workspace, createdAt: this.#store.now() };
+		return this.#store.outside(() => this.#store.bind(binding));
+	}
+
+	/**
+	 * A start: refused, or prepared once (the preparation of an earlier try is used as it is); then its attachments
+	 * measured and copied; then stored, unless a cancel, a deletion or another run came first. Each step that decides
+	 * commits outside pi's transactions.
+	 */
+	async #startOnce(command: StartRun): Promise<StartRunResult> {
+		const runId = command.run;
+		const config = settings(this.env);
+		const refusal = messageRefusal(command, config.files);
+		this.#connectors ??= await connectorRegistry();
+		const compiled =
+			refusal === null && this.#store.preparation(runId) === null
+				? await prepareStart(this.#connectors, command, { now: this.#store.now(), runTimeoutMs: config.runTimeoutMs })
+				: null;
+		const first = await this.#store.outside(() =>
+			this.#store.write((): StartRunResult | Preparation => {
+				const answered = this.#store.answer(runId);
+				if (answered) return answered;
+				const refused = this.#startState(runId) ?? refusal;
+				if (refused) return this.#answerRefused(runId, refused);
+				const prepared = this.#store.preparation(runId);
+				if (prepared) return prepared;
+				if (compiled === null) throw new Error("A start's preparation went away while it was read.");
+				this.#store.addPreparation(runId, compiled);
+				return compiled;
+			}),
+		);
+		if ("outcome" in first) return first;
+		const preparation = first;
+		const folder = this.#folder() as FolderPort;
+		const uploads = await folder.measureStaged(command.message.attachments, config.files.uploadBytes);
+		if (uploads === null) return this.#refuseInternal(runId, startRefusal("ATTACHMENT_UNAVAILABLE", UNAVAILABLE));
+		const copied = await folder.prepareAttachments(runId, uploads);
+		if (!copied.ok) {
+			const { code, detail } = copied.refusal;
+			return this.#refuseInternal(runId, code === "NOT_FOUND" ? deletedRefusal() : startRefusal(code, detail));
+		}
+		const answer = await this.#store.outside(() =>
+			this.#store.write((): StartRunResult => {
+				const answered = this.#store.answer(runId);
+				if (answered) return answered;
+				const refused = this.#startState(runId);
+				if (refused) return this.#answerRefused(runId, refused);
+				const now = this.#store.now();
+				const { baseVersionId, attachments } = folder.commitAttachments(runId, copied.value);
+				const snapshot: RunSnapshot = {
+					...preparation.snapshot,
+					runId,
+					baseVersionId,
+					attachments,
+					limits: { folderBytes: config.files.folderBytes, folderEntries: config.files.folderEntries, runUploadBytes: config.files.runUploadBytes },
+					turn: { history: preparation.history, prompt: internalPrompt(command.message.content, attachments) },
+				};
+				this.#store.insertRun({ id: runId, snapshot, deadline: snapshot.deadline, baseVersionId, createdAt: now });
+				this.#store.append(runId, statusEvent({ status: "queued" }));
+				// Pushed in this transaction (Lifecycle's queue is SQL), so a stored run always has its wake-up.
+				this.#push({ id: `watch:${runId}`, fn: "watch", time: now + WATCH_MS, payload: { runId } });
+				if (snapshot.deadline !== null) this.#push({ id: `deadline:${runId}`, fn: "deadline", time: snapshot.deadline, payload: { runId } });
+				const accepted: StartRunResult = {
+					outcome: "accepted",
+					catalog: preparation.catalog,
+					compiler: preparation.compiler,
+					digest: preparation.digest,
+					authorized: snapshot.connectionIds,
+					attachments,
+				};
+				this.#store.addAnswer(runId, accepted);
+				return accepted;
+			}),
+		);
+		if (answer.outcome === "accepted") {
+			this.#defer(() => this.#activate(runId));
+			this.#defer(() => folder.deleteStaged(command.message.attachments.map((attachment) => attachment.upload)));
+		}
+		return answer;
+	}
+
+	/** What the conversation's state refuses a start for, in order: a tombstone, a deletion, another run. */
+	#startState(runId: RunId): StartRefusal | null {
+		if (this.#store.tombstone(runId)) return startRefusal("CANCELLED", "This run was cancelled before it started.");
+		if (this.#store.conversation()?.deleted_at != null) return deletedRefusal();
+		if (this.#store.activeRun() || this.#store.preparedOther(runId) || this.#store.starts().length) return startRefusal("CONVERSATION_BUSY", BUSY_MESSAGE);
+		return null;
+	}
+
+	/** Inside a write: the refusal stored as the start's answer, its preparation deleted. */
+	#answerRefused(runId: RunId, refusal: StartRefusal): StartRunResult {
+		this.#store.addAnswer(runId, refusal);
+		return refusal;
+	}
+
+	/**
+	 * A refusal found after the preparation: stored, unless an answer already was. A cancel or a deletion that committed
+	 * meanwhile comes first, as it does for a start that would have been stored.
+	 */
+	#refuseInternal(runId: RunId, refusal: StartRefusal): Promise<StartRunResult> {
+		return this.#store.outside(() => this.#store.write(() => this.#store.answer(runId) ?? this.#answerRefused(runId, this.#startState(runId) ?? refusal)));
+	}
+
 	// The start protocol (ARCHITECTURE.md: Starting a run).
 
 	/** One start at a time per run: a resumed start and the message's own share the same `beginRun`. */
@@ -600,10 +761,11 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			this.#phase(fence, this.#restarted.has(runId) ? "Resuming the agent" : "Starting the agent");
 			this.#installTools(run);
 			let session = run.session;
+			// A Laravel run's turn came with its start; a Workspace run's is read from the object's messages.
+			const snapshot = this.#store.snapshot(run);
 			if (session === null) {
 				const pi = await this.harness.pi();
-				const snapshot = this.#store.snapshot(run);
-				const history = recentHistory(historyOf(this.#store.storedMessages(runId, HISTORY_LIMIT), runId));
+				const history = snapshot.turn?.history ?? recentHistory(historyOf(this.#store.storedMessages(runId, HISTORY_LIMIT), runId));
 				let providerSession: string | null = null;
 				const created = await pi.createConversation(
 					{
@@ -621,7 +783,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			if (session === null || !this.#store.isCurrent(fence)) return;
 			this.#prepareLocal(run);
 			this.#showPhase(fence);
-			await this.harness.submit(promptOf(this.#store.storedMessages(runId, HISTORY_LIMIT), runId), { session, operationId: `run:${runId}` });
+			const prompt = snapshot.turn?.prompt ?? promptOf(this.#store.storedMessages(runId, HISTORY_LIMIT), runId);
+			await this.harness.submit(prompt, { session, operationId: `run:${runId}` });
 		})().finally(() => this.#loops.delete(runId));
 		this.#loops.set(runId, work);
 		return work;
@@ -1413,8 +1576,10 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		if (this.#ports.entered) this.#ports.entered(this.#portsContext() as PortsContext, kind, runId);
 	}
 
+	/** The registry the conversation's runs answer to: its Workspace object, or for a Laravel conversation, none (laravel-runs.ts). */
 	#workspace(): WorkspaceClient {
-		return this.#ports.workspace(this.#portsContext() as PortsContext);
+		const context = this.#portsContext() as PortsContext;
+		return context.organization === null ? this.#ports.workspace(context) : laravelRuns;
 	}
 
 	#folderInstance: FolderPort | null = null;
@@ -1449,6 +1614,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			ctx: this.ctx,
 			workspace: this.#store.workspaceRef(conversation),
 			conversationId: conversation.id,
+			organization: conversation.organization_id,
 			folderVersionId: () => this.#store.conversation()?.folder_version_id ?? null,
 			connectors: () => {
 				if (this.#connectors === null) throw new Error("The connector registry is loaded when pi opens.");
@@ -1568,6 +1734,10 @@ function within<T>(promise: Promise<T>, ms: number): Promise<T> {
 function idsOf(start: StartRow): string[] {
 	const parsed = parseJson(start.upload_ids);
 	return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+}
+
+function deletedRefusal(): StartRefusal {
+	return startRefusal("CONVERSATION_DELETED", "This conversation was deleted.");
 }
 
 function runOfPayload(payload: unknown): RunId | null {

@@ -38,6 +38,8 @@ export type NewRunEvent = RunEvent extends infer E ? (E extends { seq: number } 
 export type RunEnd =
 	| { status: "completed"; code: ""; message: "" }
 	| { status: "cancelled"; code: "cancelled"; message: "Stopped." }
+	/** Laravel deleted the run's conversation (docs/plans/start-and-cancel.md). */
+	| { status: "cancelled"; code: "conversation_deleted"; message: "Stopped." }
 	| { status: "cancelled"; code: RevocationReason; message: "Stopped because permissions changed." }
 	/** An operator's emergency stop (ARCHITECTURE.md: Strict revocation, Emergency stop). */
 	| { status: "cancelled"; code: "emergency_stop"; message: "Stopped." }
@@ -46,7 +48,10 @@ export type RunEnd =
 	| { status: "failed"; code: "worker_silent"; message: "The worker did not start." }
 	| { status: "failed"; code: "worker_exited"; message: "The worker stopped unexpectedly." }
 	| { status: "failed"; code: "worker_failed"; message: "The agent could not finish this run. Try again." }
-	/** The run was stored, but the Workspace expired its start before `activate` reached it (ARCHITECTURE.md: Starting a run). */
+	/**
+	 * The run was stored, but the Workspace expired its start before `activate` reached it (ARCHITECTURE.md: Starting a
+	 * run), or Laravel gave up waiting for its start's answer and cancelled it.
+	 */
 	| { status: "failed"; code: "start_expired"; message: "The agent could not finish this run. Try again." }
 	| { status: "failed"; code: "folder_limit"; message: string }
 	| { status: "failed"; code: "state_too_large"; message: "This run's saved state grew too large." }
@@ -55,16 +60,18 @@ export type RunEnd =
 /**
  * Strict revocation's reasons: a user's grant change cancels all of that user's
  * active runs, queued included; deleting a connection, the deleting user's; changing an agent's connection
- * set, that agent's. Deleting an agent or a conversation is a plain cancel ("Stopped.").
+ * set, that agent's; removing a member (Laravel's only), theirs. Deleting an agent or a conversation is a plain cancel
+ * ("Stopped.").
  */
-export type RevocationReason = "permissions_changed" | "connection_removed" | "agent_connections_changed";
+export type RevocationReason = "permissions_changed" | "connection_removed" | "agent_connections_changed" | "member_removed";
 
 /**
  * Why a Conversation Durable Object is asked to stop a run from outside it, and so how the run ends:
- * `cancelled` (deleting an agent or a conversation) and `emergency_stop` with "Stopped.", a revocation
- * reason with "Stopped because permissions changed.", each with its own code (RunEnd).
+ * `cancelled` (deleting an agent or a conversation), `conversation_deleted` and `emergency_stop` with "Stopped.", a
+ * revocation reason with "Stopped because permissions changed.", each with its own code (RunEnd), and `start_expired`
+ * as an expired start. The Workspace sends the first five; Laravel's `cancelRun` any of them (contract `CancelReason`).
  */
-export type CancelReason = RevocationReason | "cancelled" | "emergency_stop";
+export type CancelReason = RevocationReason | "cancelled" | "conversation_deleted" | "emergency_stop" | "start_expired";
 
 /** A run's `errorMessage` and a terminal status's `message` are cut to this many characters. */
 export const ERROR_MESSAGE_CHARS = 500;
@@ -89,7 +96,9 @@ export const START_EXPIRED: RunEnd = { status: "failed", code: "start_expired", 
 /** How a cancel from outside the object ends its run (ARCHITECTURE.md: Strict revocation). */
 export function endFor(reason: CancelReason): RunEnd {
 	if (reason === "cancelled") return CANCELLED;
+	if (reason === "conversation_deleted") return { status: "cancelled", code: "conversation_deleted", message: "Stopped." };
 	if (reason === "emergency_stop") return EMERGENCY_STOP;
+	if (reason === "start_expired") return START_EXPIRED;
 	return { status: "cancelled", code: reason, message: "Stopped because permissions changed." };
 }
 

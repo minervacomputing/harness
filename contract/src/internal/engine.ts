@@ -74,7 +74,11 @@ export const StartRun = InConversation.extend({
   history: z.array(HistoryMessage).max(MAX_HISTORY),
   /** The raw inputs of the run's authority, with their revisions; Laravel never interprets them. */
   authority: z.object({
-    connections: z.array(AuthorityConnection).max(MAX_CONNECTIONS),
+    /** Each connection once: a repeat would be counted twice by the compile. */
+    connections: z
+      .array(AuthorityConnection)
+      .max(MAX_CONNECTIONS)
+      .refine((connections) => new Set(connections.map((connection) => connection.id)).size === connections.length, 'Each connection may be named once.'),
     layers: z.object({ ceiling: LayerInput.nullable(), user: LayerInput.nullable(), agent: LayerInput.nullable() }),
   }),
 })
@@ -94,6 +98,7 @@ export const StartRunResult = z.discriminatedUnion('outcome', [
   }),
   Refused,
 ])
+export type StartRunResult = z.infer<typeof StartRunResult>
 
 /** Why a run is stopped. */
 export const CancelReason = z.enum([
@@ -106,6 +111,13 @@ export const CancelReason = z.enum([
   'emergency_stop',
   'start_expired',
 ])
+export type CancelReason = z.infer<typeof CancelReason>
+
+export const CancelRun = InConversation.extend({ run: Id, reason: CancelReason })
+export type CancelRun = z.infer<typeof CancelRun>
+
+export const CancelRunResult = z.object({ state: z.enum(['cancelled', 'tombstoned', 'ended']) })
+export type CancelRunResult = z.infer<typeof CancelRunResult>
 
 /** A credential for one settings call, never stored by the engine; Laravel refreshed it first. */
 const Credential = z.object({ kind: z.enum(['oauth2', 'api_key', 'builtin']), secret: z.string().max(16_384), generation: z.int().min(1) })
@@ -136,8 +148,8 @@ export const engine = {
   /** Answers once the cancellation, or the tombstone of a run the engine has not received, is durable [6]. */
   cancelRun: internal
     .route({ method: 'POST', path: at('/runs/cancel') })
-    .input(InConversation.extend({ run: Id, reason: CancelReason }))
-    .output(z.object({ state: z.enum(['cancelled', 'tombstoned', 'ended']) })),
+    .input(CancelRun)
+    .output(CancelRunResult),
   /** The conversation's retained facts after `after`, in order, for recovery [7]. */
   replayFacts: internal
     .route({ method: 'POST', path: at('/conversations/facts') })

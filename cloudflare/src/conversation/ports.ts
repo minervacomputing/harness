@@ -9,6 +9,7 @@ import { sandboxObject, workspaceObject } from "../addressing.ts";
 
 import { conversationFolder } from "../files/folder.ts";
 import type { CheckpointOutcome, CheckpointScan, DownloadTarget, FolderUsage } from "../files/store.ts";
+import type { StagedUpload } from "../files/staging.ts";
 import type { ReservedUpload } from "../files/uploads.ts";
 import { systemClock } from "../gateway/clock.ts";
 import { type Executor, type ExecutorContext, createExecutor } from "../gateway/executor.ts";
@@ -67,6 +68,13 @@ export interface LedgerRuns {
 export interface FolderPort {
 	/** The folder a new run would start from, for `beginRun`'s limit checks. */
 	usage(): FolderUsage;
+	/**
+	 * Laravel's staged uploads, measured into uploads `prepareAttachments` copies (files/staging.ts); null when any is
+	 * missing or not as declared.
+	 */
+	measureStaged(staged: readonly StagedUpload[], uploadBytes: number): Promise<ReservedUpload[] | null>;
+	/** Deletes staged uploads a stored run copied; R2's lifecycle rule deletes any left after a day. */
+	deleteStaged(keys: readonly string[]): Promise<void>;
 	prepareAttachments(runId: RunId, uploads: ReservedUpload[]): Promise<Outcome<PreparedAttachments>>;
 	/** Synchronous, inside the start's transaction: the base version with the copies, claiming their loose keys. */
 	commitAttachments(runId: RunId, prepared: PreparedAttachments): { baseVersionId: VersionId | null; attachments: Attachment[] };
@@ -102,6 +110,8 @@ export interface PortsContext {
 	ctx: DurableObjectState;
 	workspace: WorkspaceRef;
 	conversationId: ConversationId;
+	/** The organization of a conversation Laravel's commands made; null for the Workspace's (docs/plans/start-and-cancel.md). */
+	organization: string | null;
 	/** The folder version the conversation holds now. */
 	folderVersionId: () => VersionId | null;
 	/** The connector registry, loaded in the harness factory before any run's tools are built. */
@@ -143,6 +153,8 @@ export interface ConversationPorts {
 /** No files: the folder stays as it is, and a message with attachments is refused (for tests of the rest). */
 export const emptyFolder = (context: PortsContext): FolderPort => ({
 	usage: () => ({ versionId: context.folderVersionId(), bytes: 0, entries: 0, rootNames: [] }),
+	measureStaged: async (staged) => (staged.length ? null : []),
+	deleteStaged: async () => {},
 	prepareAttachments: async (_runId, uploads) =>
 		uploads.length
 			? refuse("ATTACHMENT_UNAVAILABLE", "An attached file is no longer available. Remove it and attach it again.")

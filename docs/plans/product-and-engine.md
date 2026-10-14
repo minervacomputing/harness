@@ -1,6 +1,6 @@
 # Plan: Laravel is the product, Cloudflare is the engine
 
-Status: design, 2026-10-14; chunks 0, 1, 1b, 2 and 3 are done (1b without the staging engine, which moves to chunk 8; 3 with its staging checks waiting on mail and the providers' clients). It replaces self-hosting-and-cloud.md and the "Instance and control plane" section of cloudflare.md (both removed; see git history; cloudflare.md's design is now [ARCHITECTURE.md](../../ARCHITECTURE.md)), whose instance model (everything a company needs in one Cloudflare deployment) and whose later revision (Laravel for identity, the runtime keeping connections and conversations) are both given up. What still holds from them is written out here. opencode reviewed the first draft in a fresh session; its findings are folded in, except that production, which holds only the operator's test data, is still reset.
+Status: design, 2026-10-14; chunks 0 to 6 are done (1b without the staging engine, which moves to chunk 8; 3 with its staging checks waiting on mail and the providers' clients). It replaces self-hosting-and-cloud.md and the "Instance and control plane" section of cloudflare.md (both removed; see git history; cloudflare.md's design is now [ARCHITECTURE.md](../../ARCHITECTURE.md)), whose instance model (everything a company needs in one Cloudflare deployment) and whose later revision (Laravel for identity, the runtime keeping connections and conversations) are both given up. What still holds from them is written out here. opencode reviewed the first draft in a fresh session; its findings are folded in, except that production, which holds only the operator's test data, is still reset.
 
 ## Why
 
@@ -112,6 +112,8 @@ The plan is built in chunks of about one session each, in order. A chunk starts 
 6. **The engine's start and cancel** (engine), next to the current paths.
    - `startRun`: the recovery index row first, the organization and workspace bound to the objects, the history through `history.ts`, compiling once, attachments, and refusals.
    - `cancelRun`: the durable fence, and the tombstone for a run not yet received.
+
+   Done 2026-10-14 ([start-and-cancel.md](start-and-cancel.md)). `startRun` and `cancelRun` answer under `/internal/v1/`. The Worker binds each run to its conversation and each conversation to its organization and workspace in D1's recovery index, in one batch of conditional writes, before it reaches an object; a mismatch is `SCOPE_MISMATCH`, another input for the same run `IDEMPOTENCY_CONFLICT`. Laravel's conversations live in the EU jurisdiction and bind themselves on the first command. A start compiles the command's raw authority once into a preparation the object keeps across resets, measures and copies the staged attachments into the folder, and stores its answer, acceptance or refusal, so a repeat gets it again; an error stores nothing. A cancel fences an active run, answers `ended` for a finished one, and tombstones a run not yet received, which its start then refuses as `CANCELLED`. Until chunk 7 a run Laravel starts has no credentials: every connector lease is refused.
 7. **The engine's credentials and facts** (engine).
    - The credential port asking `leaseToken`, and `reportUnauthorized`.
    - The outbox of facts written with the execution facts, delivered in order and acknowledged, with the backlog bound and `replayFacts`.

@@ -162,4 +162,26 @@ CREATE TABLE start_keys (
 CREATE INDEX start_keys_age ON start_keys (created_at);
 `,
 	},
+	// Laravel's conversations (docs/plans/start-and-cancel.md): the organization a conversation is bound to (null for
+	// the Workspace's); each start's preparation, its compiled snapshot kept from the first try until the start is
+	// answered (in parts, like run_snapshots); and each start's answer, kept so a repeat gets it again.
+	{
+		id: 7,
+		sql: `
+ALTER TABLE conversation ADD COLUMN organization_id TEXT;
+
+CREATE TABLE internal_starts (
+	run_id TEXT NOT NULL,
+	part INTEGER NOT NULL,
+	text TEXT NOT NULL,
+	PRIMARY KEY (run_id, part)
+) STRICT;
+
+CREATE TABLE internal_answers (
+	run_id TEXT PRIMARY KEY,
+	answer TEXT NOT NULL,
+	created_at INTEGER NOT NULL
+) STRICT;
+`,
+	},
 ];
