@@ -1,6 +1,6 @@
 # Plan: Laravel is the product, Cloudflare is the engine
 
-Status: design, 2026-10-14; chunk 0 is done, nothing else is built. It replaces self-hosting-and-cloud.md and the "Instance and control plane" section of cloudflare.md (both removed; see git history; cloudflare.md's design is now [ARCHITECTURE.md](../../ARCHITECTURE.md)), whose instance model (everything a company needs in one Cloudflare deployment) and whose later revision (Laravel for identity, the runtime keeping connections and conversations) are both given up. What still holds from them is written out here. opencode reviewed the first draft in a fresh session; its findings are folded in, except that production, which holds only the operator's test data, is still reset.
+Status: design, 2026-10-14; chunks 0 and 1 are done (1b, the engine on Cloudflare from CI, is next on the engine side). It replaces self-hosting-and-cloud.md and the "Instance and control plane" section of cloudflare.md (both removed; see git history; cloudflare.md's design is now [ARCHITECTURE.md](../../ARCHITECTURE.md)), whose instance model (everything a company needs in one Cloudflare deployment) and whose later revision (Laravel for identity, the runtime keeping connections and conversations) are both given up. What still holds from them is written out here. opencode reviewed the first draft in a fresh session; its findings are folded in, except that production, which holds only the operator's test data, is still reset.
 
 ## Why
 
@@ -69,12 +69,12 @@ The plan is built in chunks of about one session each, in order. A chunk starts 
 **Ground**
 
 0. **A clean slate.** Done 2026-10-14. The stopped session's email-zone work was discarded, the superseded and finished plans were removed, and this plan is committed.
-1. **Into `main`, with CI for the engine.** `main` has no commits that `cloudflare` lacks (2026-10-14), so `main` fast-forwards. In order:
+1. **Into `main`, with CI for the engine.** Done 2026-10-14. `main` has no commits that `cloudflare` lacks (2026-10-14), so `main` fast-forwards. In order:
    1. On `cloudflare`, in one commit, delete what only the Django stack uses: `backend/`, `worker/`, `deploy/` (the VPS), `compose.yaml`, `Procfile`, the Makefile's targets for them, and the old workflow `.github/workflows/main.yml`. The old workflow runs the Django tests and image builds and deploys the VPS staging on every push to `main`, so it must be gone before `main` moves.
    2. Add the engine's workflow on pushes to `main`: lint, types, the unit tests and the frontend's check. Platform tests against the test Worker and a deploy of a staging engine follow in the same chunk if they fit, else as chunk 1b. Production is deployed by hand. Built: the workflow also runs the platform tests in local workerd, which need no account; the account suites and a staging deploy are chunk 1b.
    3. Rewrite the README, `AGENTS.md` (no `cherry-pick -x` from `main` to `demo`: the demo stays frozen on its own Django copy until the hosted product replaces it; the engine's commands, checks and environment) and `ARCHITECTURE.md` for the engine, with `cloudflare.md`'s design sections moved into `ARCHITECTURE.md` and that file removed.
    4. Fast-forward `main` to `cloudflare`, push, watch the first run go green, and delete the `cloudflare` branch.
-   5. Ask the owner before retiring the VPS staging (`staging.minervacomputing.com`: the server, its tunnel, its Access application and its DNS record). It shows stale Django once `main` stops deploying it.
+   5. Ask the owner before retiring the VPS staging (`staging.minervacomputing.com`: the server, its tunnel, its Access application and its DNS record). It shows stale Django once `main` stops deploying it. Done 2026-10-14: all four removed, and the GitHub `staging` environment with them.
 
    The `demo` branch is untouched. Done when `main` is the engine and its workflow is green.
 
