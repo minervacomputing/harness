@@ -73,7 +73,7 @@ Use Cloudflare's [`cf` CLI](https://developers.cloudflare.com/cf/) (npm package 
 
 - The engine's own scripts (`pnpm run deploy`, `deploy:test`, `scripts/reset.ts`, the account suites) pin the instance's account and check its identity before they change anything; use them rather than `cf` by hand.
 - The test instance (`pnpm run deploy:test`, `pnpm test:faults`, `pnpm test:browser`) is for the account suites a change needs (cloudflare/README.md, The test Worker).
-- **Ask first** before deploying or resetting production, creating or deleting resources on the account, and any change to tunnels, Access policies or DNS. The demo sits behind a tunnel; the old VPS staging (behind a tunnel and Access) still serves the last Django build of `main` until the owner retires it (product-and-engine.md, chunk 1): do not operate it.
+- **Ask first** before deploying or resetting production, creating or deleting resources on the account, and any change to tunnels, Access policies or DNS. The demo sits behind a tunnel.
 
 ## Second opinions with opencode
 
