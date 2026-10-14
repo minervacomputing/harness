@@ -1,6 +1,6 @@
 # Plan: Laravel is the product, Cloudflare is the engine
 
-Status: design, 2026-10-14; chunk 0 is done, nothing else is built. It replaces [self-hosting-and-cloud.md](self-hosting-and-cloud.md) and the "Instance and control plane" section of [cloudflare.md](cloudflare.md), whose instance model (everything a company needs in one Cloudflare deployment) and whose later revision (Laravel for identity, the runtime keeping connections and conversations) are both given up. What still holds from them is named where it is used. opencode reviewed the first draft in a fresh session; its findings are folded in, except that production, which holds only the operator's test data, is still reset.
+Status: design, 2026-10-14; chunk 0 is done, nothing else is built. It replaces self-hosting-and-cloud.md and the "Instance and control plane" section of [cloudflare.md](cloudflare.md) (both removed; see git history), whose instance model (everything a company needs in one Cloudflare deployment) and whose later revision (Laravel for identity, the runtime keeping connections and conversations) are both given up. What still holds from them is written out here. opencode reviewed the first draft in a fresh session; its findings are folded in, except that production, which holds only the operator's test data, is still reset.
 
 ## Why
 
@@ -59,17 +59,17 @@ Decided 2026-10-14.
 | The Conversation object's runs, attempts, run events, write ledger, page tokens, checkpoints, folder; the Sandbox and Scripts objects | Stay in the engine, with the outbox added |
 | The SPA's routes, `lib/orpc.ts` and the public API (`api/*`) | Laravel's Inertia pages; the engine keeps its internal API and the stream |
 | The files Worker's uploads and download links | Staging uploads and download links Laravel signs to R2, resolved by the engine |
-| Email Sending, the zone requirement ([email-zone.md](email-zone.md), unit 3 of the old plan) | Laravel's mail; dropped from the engine |
-| `instances`, `setup`, export, self-hosting guide (the old plan's Part 1) | Dropped; unit 2's derived names stay as they are |
+| Email Sending from the engine | Laravel's mail; dropped from the engine |
+| Self-hosting: `setup`, export, a guide, the management API | Dropped; the named instances (production, test) stay as they are |
 
 ## Chunks
 
-The plan is built in chunks of about one session each, in order. A chunk starts with a fresh agent that reads this plan and its chunk. Where the chunk leaves choices open, the agent writes a short design for it first (in `docs/plans/` here, or in the Laravel repository for its chunks) and has opencode review it. It then implements, runs the checks, has opencode review the diff and commits. A chunk that turns out bigger splits into parts (a, b, …), as unit 2 of the old plan did. Laravel's chunks are committed in its own repository; the engine's on `cloudflare`, and on `main` after chunk 14.
+The plan is built in chunks of about one session each, in order. A chunk starts with a fresh agent that reads this plan and its chunk. Where the chunk leaves choices open, the agent writes a short design for it first (in `docs/plans/` here, or in the Laravel repository for its chunks) and has opencode review it. It then implements, runs the checks, has opencode review the diff and commits. A chunk that turns out bigger splits into parts (a, b, …). Laravel's chunks are committed in its own repository; the engine's on `cloudflare`, and on `main` after chunk 14.
 
 **Ground**
 
-0. **A clean slate.** Done 2026-10-14. The stopped session's email-zone work was discarded; a patch was kept outside the repository. The dropped designs are marked, and this plan is committed.
-1. **CI and staging for the engine** (the old plan's unit 9). GitHub Actions on `cloudflare`: lint, types, unit tests, platform tests against the test Worker, and a deploy of a staging engine. Production is deployed by hand. Done when a push runs green.
+0. **A clean slate.** Done 2026-10-14. The stopped session's email-zone work was discarded, the superseded and finished plans were removed, and this plan is committed.
+1. **CI and staging for the engine.** GitHub Actions on `cloudflare`: lint, types, unit tests, platform tests against the test Worker, and a deploy of a staging engine. Production is deployed by hand. Done when a push runs green.
 
 **The Laravel foundation** (a new private repository; the owner creates it and the Laravel Cloud organization)
 
@@ -149,7 +149,7 @@ The plan is built in chunks of about one session each, in order. A chunk starts 
     - Until this chunk, Minerva makes no promise about tenants.
 19. **Search.** Scout on Postgres over the transcripts.
 
-**Gates before any customer's data** (from the old plan): chunks 15 and 16 done, and tests that one organization cannot reach another's conversations, connections or files. Before open sign-up, on top: rate limits and a measured cost per turn.
+**Gates before any customer's data:** chunks 15 and 16 done, and tests that one organization cannot reach another's conversations, connections or files. Before open sign-up, on top: rate limits and a measured cost per turn.
 
 ## Deletion, retention and recovery
 

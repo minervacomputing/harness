@@ -1,6 +1,6 @@
 # Plan: Minerva on Cloudflare
 
-Status: steps 1 to 7 done (2026-10-10 to 2026-10-12) on the `cloudflare` branch (pushed 2026-10-13, not merged into `main`), followed by the cleanups of the backend and of the frontend and API (both done 2026-10-13). Step 8 and what Minerva Cloud needs after it moved to [self-hosting-and-cloud.md](self-hosting-and-cloud.md) on 2026-10-13. Since 2026-10-14 the direction is [product-and-engine.md](product-and-engine.md). This file is the design and the record of steps 1 to 7. `main` still runs the Django, worker and deploy code; the rewrite lives in `cloudflare/` and serves `frontend/`. Scope decided 2026-10-11 (see Instance and control plane): this becomes the self-hostable Minerva, and the Docker and VPS path retires when `cloudflare` merges into `main` (self-hosting-and-cloud.md, unit 10). At that merge the design sections move into ARCHITECTURE.md and this file retires.
+Status: steps 1 to 7 done (2026-10-10 to 2026-10-12) on the `cloudflare` branch, followed by the cleanups of the backend and of the frontend and API (both done 2026-10-13). What comes next is [product-and-engine.md](product-and-engine.md) (2026-10-14): this code becomes the engine that runs turns behind a private Laravel application, which takes over accounts, connections, grants, agents and conversations; self-hosting is dropped. This file is the engine's design and the record of steps 1 to 7. `main` still runs the Django, worker and deploy code; the rewrite lives in `cloudflare/` and serves `frontend/`. When `cloudflare` merges into `main` (product-and-engine.md, chunk 14), the design sections move into ARCHITECTURE.md and this file retires.
 
 ## Goal
 
@@ -14,32 +14,9 @@ The same product on Cloudflare's platform, deployed with one command to one Clou
 
 What it should show: which of Minerva's hard problems the platform removes (sandbox runtime, the Docker socket, approvals that hold compute, downloads, deploys, logs), and what it costs (laptop and VPS self-hosting, compliance scope, beta dependencies, a larger trusted code base).
 
-Not in scope: Minerva Cloud's control plane (a separate, private repository, below), self-hosting on a laptop or VPS (retired), the demo's features (`backend/demo/`), WebAuthn, social login, data migration from an existing Postgres, team workspaces (as today).
+Not in scope: the Laravel product (product-and-engine.md), self-hosting (dropped 2026-10-14), the demo's features (`backend/demo/`), WebAuthn, social login, data migration from an existing Postgres, team workspaces (as today).
 
 **Parity** (decided 2026-10-12; narrowed by the cleanup the same week). Users see the same product: the React app, the JSON API's paths and shapes (`{detail}`, the 422 list), error codes and permission rules; sign-in's wire format is Better Auth's. Wording and edge cases follow the runtime and its libraries (`JSON.stringify`, zod's messages, `URL`, `Intl`, htmlparser2, postal-mime), not Python; the cleanup's commits list each difference the model or a user sees. **Instances start fresh**: they do not read data from today's Django deployments (encrypted credentials, fingerprints, folder digests, password hashes); moving a real customer would be a one-off export and import.
-
-## Instance and control plane
-
-Superseded 2026-10-14 by [product-and-engine.md](product-and-engine.md): this code becomes the engine that runs a turn, and a Laravel application holds accounts, connections, grants, agents and conversations. The section below is the earlier line.
-
-Decided 2026-10-11. Everything a company needs to run Minerva for its own people is an **instance**: one deployment of `cloudflare/` into one Cloudflare account, holding its own users, data and secrets, and needing nothing outside that account. Self-hosting means deploying an instance into your own account. Everything needed only to sell Minerva to many customers is Minerva Cloud's **control plane**, which is a Laravel application on Laravel Cloud (decided 2026-10-13, [self-hosting-and-cloud.md](self-hosting-and-cloud.md); earlier Python and Django), lives in a separate private repository, and is used only by the operator. The test for a feature: would a company running Minerva for itself need it? Then it belongs in the instance.
-
-| In the instance (this repository) | In the control plane (private) |
-|---|---|
-| Users, sign-in, two-factor, sessions; SSO and directory sync for organizations | Customers, billing contacts, the signup site |
-| Organizations, workspaces, teams, roles, ceilings, connections, agents, permissions | Plans and the entitlements an instance enforces |
-| Runs, sandbox, files, code mode, connectors | Creating, upgrading, suspending and deleting instances (Cloudflare's API) |
-| The audit log, retention, quotas enforced locally | Billing (Stripe) from the usage instances report |
-| Model settings: an instance key and a key per workspace | Minerva's platform model key and shared OAuth apps, configured into cloud instances like any instance's |
-| An instance admin, emergency stop, a support-access switch the organization controls | Support workflows that use that switch, abuse handling |
-
-The two meet through Cloudflare's API and a small, signed **management API** in the instance (create or suspend organizations, set entitlements, read usage, version and health, emergency stop). An instance keeps working without the control plane: it caches its entitlements and decides everything else itself, and the control plane never holds an organization's content or credentials.
-
-**Databases.** An instance has no Postgres, self-hosted or in the cloud: D1 holds accounts and the directory, each Workspace and Conversation object its own SQLite, R2 the files. Laravel MySQL on Laravel Cloud is the control plane's own database, for customers, billing, entitlements, the list of instances and usage totals; the two never share a database.
-
-- **Organizations** sit above workspaces: an organization owns its members, SSO settings, ceilings, audit log, entitlements and data region (jurisdiction). A self-hosted instance usually has one; a shared cloud instance has many.
-- **Cloud hosting** starts with shared instances, each holding many organizations. A dedicated instance for one customer is the same deployment with one organization, so it needs nothing beyond what self-hosting needs (any instance name, any account, the setup script); only the control plane's automation for running many of them waits until a customer asks.
-- **Licence.** The instance is meant to be released as MIT or Apache 2.0; the control plane stays private.
 
 ## Shape
 
@@ -332,7 +309,7 @@ The risky protocols come first, proven with fault injection before the API and t
 6. **Connectors.** All 20, one at a time with their ported tests, on the contract from step 2. Done 2026-10-12 on `cf-6-integration` (Step 6 below).
 6b. **Libraries.** Done 2026-10-12 on `cf-6b` (Step 6b below). After step 5: changed the stored formats (AES-GCM for Fernet, RFC 8785 canonical JSON through `canonicalize`) and replaced hand-written ports of Python internals with maintained libraries where what users and the model see stayed exact; the ports it kept for Python's sake were removed by the cleanup. Canonical JSON (write keys, fingerprints, page tokens, folder digests) and credential encryption are stored formats: they changed before step 7, while no instance held data worth keeping, and the instances `minerva-cf` and `minerva-cf-test` had their data reset before step 7 (approved). AES-GCM uses a random 96-bit nonce per encryption, a key version prefix, keys derived per purpose from `MINERVA_ENCRYPTION_KEYS`, and the workspace and connection ids as associated data; rotation and tampering are tested.
 7. **Deploy and verify.** A browser walkthrough of every page, the sandbox probe, timings, and an update of this file and of ARCHITECTURE.md with the comparison. Done 2026-10-12 on `cf-7` (Step 7 below): both instances reset and deployed, the test instance verified on the account, production smoke-tested with no account, and the comparison is section 12 of ARCHITECTURE.md.
-8. **Self-hosting.** Moved to [self-hosting-and-cloud.md](self-hosting-and-cloud.md), Part 1 (2026-10-13), which also covers the signed management API (Part 2).
+8. **Self-hosting.** Dropped 2026-10-14 ([product-and-engine.md](product-and-engine.md)).
 
 Steps 3, 4 and 5 depend only on step 2 and can proceed in parallel; step 6 needs only the contract and executor from step 2.
 
@@ -576,12 +553,8 @@ Done 2026-10-12 in units 7a1 to 7d, each unit's code reviewed by opencode. The t
 - **`deployed.test.ts`** expected no Sandbox schema steps, stale since step 3 (they moved to `src/sandbox/schema.ts`), and its first probe on fresh namespaces twice exceeded Node's 5 s timeout; it now waits 25 s for a cold probe (warm 0.3 s).
 - **The deploy and reset scripts** gained their checks above through two opencode rounds (a lock, digests, account pinning, exact container names, lifecycle rules compared field by field, a record gating `--files-only`). Also: `secrets.ts check` refuses a setup key under 32 characters (production's file predated the key, and `pnpm secrets` added it, leaving the other values untouched), production's vars file gained `MINERVA_SIGNUP_OPEN=false`, and the DNS fallback of the account tests is 8.8.8.8 first, since 1.1.1.1 sometimes answered SERVFAIL for the platform's default hostnames. `cf deploy --no-provision` breaks D1 bindings, so only the reset Worker uses it.
 
-**Left for step 8 (self-hosting)**, as listed under Steps, with what step 7 showed (step 8 is now [self-hosting-and-cloud.md](self-hosting-and-cloud.md)):
+**Left after step 7:**
 
-- An **instance-name parameter**: `minerva-cf`, `minerva-cf-files` and the `-test` and `-eu` names are written into `cloudflare.config.ts`, the scripts, the tests and the README, and the reset and deploy scripts check against them.
-- **`pnpm run setup`**: it creates what the First deploy commands create by hand (D1, both buckets with their jurisdiction and lifecycle rules, the AI Gateway), generates the secrets, applies the migrations, and creates the first admin; the setup key already does the last.
-- An **export command** for an organization's data, walked from the indexes, since a reset deletes everything and Durable Objects have no bulk export.
-- The signed **management API** and a **self-hosting guide** (the deploy and reset sections of the README are its first drafts). The new plan keeps the guide in self-hosting and moves the management API to Minerva Cloud's part, after the merge into `main`.
 - **The origin guard cannot tell the configured subdomain from another account's:** it checks the hostname's shape and that both origins share a subdomain, not whose subdomain it is, so a settings file naming another account's test Worker would pass.
 - Not verified on production, because each needs an account: a sign-up and sign-in, email delivery from the real sender (the test build captures its email), and a turn with the production model. The container's placement for EU workspaces is still unmeasured (Open questions, 8).
 

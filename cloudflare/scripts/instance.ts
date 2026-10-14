@@ -1,4 +1,4 @@
-// Instances (docs/plans/instance-names.md): an instance is a name plus a directory that belongs to its operator.
+// Instances: an instance is a name plus a directory that belongs to its operator.
 // Every resource it owns is named from the name by `namesOf`, and the directory (`instancesDir`) holds what the
 // operator keeps for it: whether it is a test instance, its account, its secrets and settings, its last deploy.
 // The Worker configs, the scripts and the account suites choose an instance here (`chooseInstance`,
