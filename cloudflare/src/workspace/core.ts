@@ -13,7 +13,7 @@ import type { CancelReason } from "../conversation/events.ts";
 import type { FolderLimit } from "../files/limits.ts";
 import type { ReservedUpload } from "../files/uploads.ts";
 import { ACCOUNT_KIND, type CredentialPayload } from "../gateway/connector.ts";
-import type { CredentialLease } from "../gateway/executor.ts";
+import type { SealedLease } from "../gateway/executor.ts";
 import { type GrantChange, type GrantRow, InvalidGrants, type LayerRows, checkChanges, planGrantChanges, resourceKey } from "../gateway/grants.ts";
 import type { Registry } from "../gateway/registry.ts";
 import { type ConnectionInfo, type StartSnapshot, startSnapshot } from "../gateway/tools.ts";
@@ -202,7 +202,7 @@ export interface WorkspaceApi {
 	lease(
 		connectionId: ConnectionId,
 		purpose: { run: RunId; userId: UserId } | { settings: Caller },
-	): Promise<CredentialLease | { refused: "RUN_ENDED" | "CONNECTION_UNAUTHORIZED" | "PROVIDER_UNAVAILABLE"; message: string }>;
+	): Promise<SealedLease | { refused: "RUN_ENDED" | "CONNECTION_UNAUTHORIZED" | "PROVIDER_UNAVAILABLE"; message: string }>;
 	/** Compare-and-set: `error` only if still `active` at this generation. */
 	markUnauthorized(connectionId: ConnectionId, generation: number): Promise<void>;
 
@@ -457,7 +457,7 @@ type RefreshOutcome =
 	| { kind: "moved" };
 
 export type LeaseAnswer = Awaited<ReturnType<WorkspaceApi["lease"]>>;
-type LeaseRefusal = Exclude<LeaseAnswer, CredentialLease>;
+type LeaseRefusal = Exclude<LeaseAnswer, SealedLease>;
 
 export interface WorkspaceDeps {
 	sql: Sql;
@@ -913,7 +913,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		return { row };
 	}
 
-	#leaseOf(row: ConnectionRow): CredentialLease {
+	#leaseOf(row: ConnectionRow): SealedLease {
 		return {
 			connectionId: row.id,
 			provider: row.provider,

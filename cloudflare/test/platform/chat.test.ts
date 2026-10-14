@@ -5,7 +5,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import { conversationObject } from "../../src/addressing.ts";
-import { STREAM_TIMING } from "../../src/api/stream.ts";
+import { STREAM_TIMING } from "../../src/stream/relay.ts";
 import { CONNECTORS } from "../../src/connectors/catalog.ts";
 import { CONNECTOR_SOURCE } from "../../src/connectors/index.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";

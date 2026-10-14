@@ -133,13 +133,14 @@ function connectorSecrets(target: Target) {
 }
 
 /**
- * MINERVA_LARAVEL_TOKEN, the Sanctum token the engine calls Laravel with (src/laravel/client.ts), declared only where it
- * is set, as the connector clients are: an engine that does not call Laravel yet needs none.
+ * Laravel's secrets, each declared only where it is set, as the connector clients are: an engine that does not work with
+ * Laravel yet needs none. MINERVA_LARAVEL_TOKEN is the Sanctum token the engine calls Laravel with (src/laravel/client.ts);
+ * MINERVA_STREAM_KEYS, the keys of the stream tokens Laravel signs (src/stream/token.ts).
  */
-function laravelSecret(target: Target) {
+function laravelSecrets(target: Target) {
 	const source: Record<string, string | undefined> = target.instance ? (readInstanceEnv(target.instance, "secrets") ?? {}) : build.env;
-	// One shape whether it is set or not, as `connectorSecrets` has: a union would break the inferred Env.
-	const names = source.MINERVA_LARAVEL_TOKEN?.trim() ? ["MINERVA_LARAVEL_TOKEN"] : [];
+	// One shape whether they are set or not, as `connectorSecrets` has: a union would break the inferred Env.
+	const names = ["MINERVA_LARAVEL_TOKEN", "MINERVA_STREAM_KEYS"].filter((name) => source[name]?.trim());
 	return Object.fromEntries(names.map((name) => [name, bindings.secret()]));
 }
 
@@ -203,7 +204,7 @@ export default defineConfig(({ mode }) => {
 			previewUrls: false,
 			// The frontend is served as static assets; the Worker runs first for the API and for /assets/,
 			// where a missing file must be a 404 rather than the app shell (src/http/assets.ts).
-			assets: { notFoundHandling: "single-page-application", runWorkerFirst: ["/api/*", "/assets/*", "/internal/*"] },
+			assets: { notFoundHandling: "single-page-application", runWorkerFirst: ["/api/*", "/assets/*", "/internal/*", "/stream/*"] },
 			// Upload names and download links travel in query strings; keep them out of the logs.
 			observability: { enabled: true, redactQueryString: true },
 			env: {
@@ -273,7 +274,7 @@ export default defineConfig(({ mode }) => {
 				// Connector clients (MINERVA_<APP>_CLIENT_ID and _SECRET), only those the operator set: an unset
 				// one hides its connectors, as today.
 				...connectorSecrets(target),
-				...laravelSecret(target),
+				...laravelSecrets(target),
 			},
 			exports: {
 				Workspace: exports.durableObject({ storage: "sqlite" }),

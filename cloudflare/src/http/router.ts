@@ -1,6 +1,7 @@
-// The API router. Only /api/* and /internal/* reach it (static assets answer everything else, http/assets.ts), and
-// every response gets the security headers. /internal/* is the internal API Laravel calls (internal/mount.ts), with
-// its own authentication and body cap; the rest of this comment is about /api/*. Paths have no trailing slash; a path that matches no route, or a
+// The API router. Only /api/*, /internal/* and /stream/* reach it (static assets answer everything else, http/assets.ts),
+// and every response gets the security headers. /internal/* is the internal API Laravel calls (internal/mount.ts), with
+// its own authentication and body cap; /stream/* is Laravel's run stream (stream/route.ts), read by browsers with a stream
+// token and no cookie; the rest of this comment is about /api/*. Paths have no trailing slash; a path that matches no route, or a
 // workspace id that is not a UUID, is 404 `NOT_FOUND`.
 //
 // Two rules hold for every request without a route asking for them, so a route added later cannot forget
@@ -23,6 +24,7 @@ import { matchedRoutes } from "hono/route";
 import { AUTH_ROUTE, accountRoutes } from "../accounts/routes.ts";
 import { contractRoutes } from "../api/orpc.ts";
 import { internalRoutes } from "../internal/mount.ts";
+import { laravelStreamRoutes } from "../stream/route.ts";
 import { apiRoutes } from "../api/routes.ts";
 import { settings } from "../config.ts";
 import { MAX_JSON_BODY, TOO_LARGE, declaredOver } from "./body.ts";
@@ -47,6 +49,7 @@ export function createApp(): App {
 	const app = new Hono<AppEnv>();
 	app.use("/api/*", securityHeaders);
 	app.use("/internal/*", securityHeaders);
+	app.use("/stream/*", securityHeaders);
 	app.use("/api/*", sameOrigin);
 	app.use("/api/*", bodyCap);
 
@@ -54,6 +57,7 @@ export function createApp(): App {
 	app.get("/api/probe", probe);
 
 	internalRoutes(app);
+	laravelStreamRoutes(app);
 	accountRoutes(app);
 	apiRoutes(app);
 	// After every Hono route: the contract's routes answer what none of them did.

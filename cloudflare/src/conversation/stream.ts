@@ -46,6 +46,19 @@ function notFound(): Response {
 	return new Response(JSON.stringify({ detail: "Not found" }), { status: 404, headers: { "Content-Type": "application/json" } });
 }
 
+/**
+ * The reader the Worker names, in one of two modes that never mix: `user`, the public stream's signed-in owner of a
+ * Workspace conversation, or `organization`, a stream token's for a Laravel conversation. A Laravel conversation has no
+ * user, and a Workspace conversation no organization, so neither reads the other's.
+ */
+function readerAllowed(params: URLSearchParams, conversation: { user_id: string; organization_id: string | null }): boolean {
+	const user = params.get("user");
+	const organization = params.get("organization");
+	if (user !== null && organization === null) return conversation.organization_id === null && user !== "" && conversation.user_id === user;
+	if (organization !== null && user === null) return conversation.organization_id !== null && organization !== "" && conversation.organization_id === organization;
+	return false;
+}
+
 /** Sends a frame unless the socket is over its limit, in which case it is dropped. */
 function send(ws: WebSocket, frame: string): boolean {
 	const buffered = (ws as { bufferedAmount?: unknown }).bufferedAmount;
@@ -90,12 +103,11 @@ export class RunStream implements Pick<LifecycleCapability, "claims"> {
 		const url = new URL(request.url);
 		if (url.pathname !== STREAM_PATH) return notFound();
 		const runId = url.searchParams.get("run") ?? "";
-		const user = url.searchParams.get("user") ?? "";
 		const after = cursorOf(url.searchParams.get("after"));
 		const store = this.#store();
 		const conversation = store.conversation();
 		const run = isUuid(runId) ? store.run(runId) : null;
-		if (!conversation || conversation.deleted_at !== null || conversation.user_id !== user || !run) return notFound();
+		if (!conversation || conversation.deleted_at !== null || !readerAllowed(url.searchParams, conversation) || !run) return notFound();
 		const pair = new WebSocketPair();
 		const server = pair[1];
 		// From here to the end of the backlog nothing awaits, so no event is appended in between.

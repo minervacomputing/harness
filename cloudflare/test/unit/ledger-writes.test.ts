@@ -112,7 +112,7 @@ describe("dispatch and settle", () => {
 		const { clock, ledger } = setup();
 		const dispatched = ledger.dispatch({ runId: RUN, attempt: 1 }, K1, null);
 		expect(dispatched).toEqual({ kind: "dispatched", deadline: clock.mono + WRITE_WINDOW_MS });
-		expect(ledger.known(RUN, K1)).toEqual({ runId: RUN, key: K1, status: "dispatched", result: null, attempt: 1, dispatchedAt: clock.epoch, deadlineAt: clock.epoch + WRITE_WINDOW_MS });
+		expect(ledger.known(RUN, K1)).toEqual({ runId: RUN, key: K1, status: "dispatched", result: null, attempt: 1, dispatchedAt: clock.epoch, deadlineAt: clock.epoch + WRITE_WINDOW_MS, write: null });
 		const cut = setup();
 		expect(cut.ledger.dispatch({ runId: RUN, attempt: 2 }, K1, cut.clock.now() + 10_000)).toEqual({ kind: "dispatched", deadline: cut.clock.mono + 10_000 });
 		expect(cut.ledger.known(RUN, K1)?.attempt).toBe(2);
@@ -125,7 +125,7 @@ describe("dispatch and settle", () => {
 		expect(ledger.dispatch({ runId: RUN, attempt: 1 }, K2, null)).toEqual({ kind: "refused", code: "WRITE_IN_PROGRESS", message: WRITE_MESSAGES.otherInProgress });
 		// Another run is not held up.
 		expect(ledger.dispatch({ runId: OTHER, attempt: 1 }, K2, null).kind).toBe("dispatched");
-		expect(ledger.settle(RUN, K1, { effect: "unknown" })).toBe(true);
+		expect(ledger.settle(RUN, K1, { effect: "unknown" })).toEqual({ runId: RUN, tool: "", connection: "", write: "" });
 		expect(ledger.paused(RUN)).toBe(true);
 		expect(ledger.paused(OTHER)).toBe(false);
 		expect(ledger.dispatch({ runId: RUN, attempt: 1 }, K1, null)).toEqual({ kind: "refused", code: "WRITE_UNCERTAIN", message: WRITE_MESSAGES.identicalUncertain });
@@ -149,11 +149,11 @@ describe("dispatch and settle", () => {
 		expect(ledger.dispatch({ runId: RUN, attempt: 1 }, K1, null)).toEqual({ kind: "cached", result: RESULT });
 		expect(ledger.known(RUN, K1)?.status).toBe("succeeded");
 		// Only a dispatched row is settled: a second settle changes nothing.
-		expect(ledger.settle(RUN, K1, { effect: "unknown" })).toBe(false);
+		expect(ledger.settle(RUN, K1, { effect: "unknown" })).toBeNull();
 		expect(ledger.paused(RUN)).toBe(false);
 		ledger.dispatch({ runId: RUN, attempt: 1 }, K2, null);
 		ledger.settle(RUN, K2, { effect: "unknown" });
-		expect(ledger.settle(RUN, K2, { effect: "applied", result: RESULT })).toBe(false);
+		expect(ledger.settle(RUN, K2, { effect: "applied", result: RESULT })).toBeNull();
 		expect(ledger.known(RUN, K2)?.status).toBe("uncertain");
 		expect(ledger.paused(RUN)).toBe(true);
 	});
@@ -223,7 +223,7 @@ describe("lost writes", () => {
 		expect(ledger.sweep(now)).toEqual([]);
 		expect(ledger.nextSweepAt()).toBe(now - 10_000 + LOST_WRITE_GRACE_MS);
 		dispatchedWith(now - 40_000);
-		expect(ledger.sweep(now)).toEqual([{ runId: RUN, key: "k" }]);
+		expect(ledger.sweep(now)).toEqual([{ runId: RUN, key: "k", tool: "", connection: "", write: "" }]);
 		expect(ledger.paused(RUN)).toBe(true);
 		expect(ledger.writes(RUN).map((write) => write.status)).toEqual(["uncertain"]);
 		expect(ledger.nextSweepAt()).toBeNull();
@@ -234,7 +234,7 @@ describe("lost writes", () => {
 		ledger.dispatch({ runId: RUN, attempt: 1 }, K1, null);
 		ledger.dispatch({ runId: OTHER, attempt: 1 }, K1, null);
 		const marked = sql.transaction(() => ledger.markDispatchedUncertain(RUN));
-		expect(marked).toEqual([{ runId: RUN, key: K1 }]);
+		expect(marked).toEqual([{ runId: RUN, key: K1, tool: "", connection: "", write: "" }]);
 		expect([ledger.paused(RUN), ledger.paused(OTHER)]).toEqual([true, false]);
 		expect(ledger.markDispatchedUncertain(RUN)).toEqual([]);
 		// A gate that throws after marking rolls the marking back with its decision.

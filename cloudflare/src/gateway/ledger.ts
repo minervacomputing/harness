@@ -34,6 +34,20 @@ export interface WriteRecord {
 	dispatchedAt: EpochMs;
 	/** min(dispatch + 60 s, run deadline). An alarm marks writes still dispatched 30 s past it uncertain. */
 	deadlineAt: EpochMs;
+	/** The keyed hash its `tool_call` event shows (`writeId`), stored at dispatch; null for a row written before it was. */
+	write: string | null;
+}
+
+/** What a write's settlement reports (a Laravel run's `run.write` fact): its tool, connection and keyed hash, fixed at dispatch. */
+export interface WriteNote {
+	tool: string;
+	connection: string;
+	write: string;
+}
+
+/** A write that settled, with what its dispatch noted. */
+export interface SettledWrite extends WriteNote {
+	runId: RunId;
 }
 
 export type DispatchResult =
@@ -80,7 +94,7 @@ export const WRITE_MESSAGES = {
 } as const;
 
 /** The run_writes table, a step of the Conversation Durable Object's migrations (conversation/schema.ts). */
-export { LEDGER_SCHEMA } from "./schema.ts";
+export { LEDGER_NOTES_SCHEMA, LEDGER_SCHEMA } from "./schema.ts";
 
 /**
  * A write's identity within its run: SHA-256 over `minerva:write-key:` and the canonical JSON
@@ -101,6 +115,9 @@ interface WriteRow {
 	attempt: number;
 	dispatched_at: number;
 	deadline_at: number;
+	tool: string;
+	connection_id: string;
+	write_id: string;
 }
 
 function record(row: WriteRow): WriteRecord {
@@ -112,8 +129,15 @@ function record(row: WriteRow): WriteRecord {
 		attempt: row.attempt,
 		dispatchedAt: row.dispatched_at,
 		deadlineAt: row.deadline_at,
+		write: row.write_id === "" ? null : row.write_id,
 	};
 }
+
+function settledOf(row: Pick<WriteRow, "run_id" | "tool" | "connection_id" | "write_id">): SettledWrite {
+	return { runId: row.run_id, tool: row.tool, connection: row.connection_id, write: row.write_id };
+}
+
+const SETTLED = "RETURNING run_id, key, tool, connection_id, write_id";
 
 /** How a known write answers the same write again: its result, or one of the two refusals. */
 export function knownAnswer(known: WriteRecord): Extract<DispatchResult, { kind: "cached" | "refused" }> {
@@ -123,8 +147,7 @@ export function knownAnswer(known: WriteRecord): Extract<DispatchResult, { kind:
 }
 
 /** A write the sweep or the restart gate made uncertain. */
-export interface LostWrite {
-	runId: RunId;
+export interface LostWrite extends SettledWrite {
 	key: string;
 }
 
@@ -157,9 +180,9 @@ export class WriteLedger {
 	 * synchronous stretch, that the fence is the run's current attempt (else RUN_ENDED). The same key
 	 * answers from its record; a paused run, or one with another write dispatched, is refused; otherwise
 	 * the write is dispatched with `deadline_at = min(now + 60 s, run deadline)`, returned as a monotonic
-	 * instant so that every later wait counts against it.
+	 * instant so that every later wait counts against it. `note` is kept for the settlement's report.
 	 */
-	dispatch(fence: AttemptFence, key: string, runDeadline: EpochMs | null): DispatchResult {
+	dispatch(fence: AttemptFence, key: string, runDeadline: EpochMs | null, note: WriteNote | null = null): DispatchResult {
 		return this.#sql.transaction((): DispatchResult => {
 			const now = this.#clock.now();
 			const clock = this.#clock.monotonic();
@@ -170,12 +193,15 @@ export class WriteLedger {
 			if (inFlight.length > 0) return { kind: "refused", code: "WRITE_IN_PROGRESS", message: WRITE_MESSAGES.otherInProgress };
 			const deadlineAt = runDeadline === null ? now + WRITE_WINDOW_MS : Math.min(now + WRITE_WINDOW_MS, runDeadline);
 			this.#sql.exec(
-				"INSERT INTO run_writes (run_id, key, status, result, attempt, dispatched_at, deadline_at) VALUES (?, ?, 'dispatched', NULL, ?, ?, ?)",
+				"INSERT INTO run_writes (run_id, key, status, result, attempt, dispatched_at, deadline_at, tool, connection_id, write_id) VALUES (?, ?, 'dispatched', NULL, ?, ?, ?, ?, ?, ?)",
 				fence.runId,
 				key,
 				fence.attempt,
 				now,
 				deadlineAt,
+				note?.tool ?? "",
+				note?.connection ?? "",
+				note?.write ?? "",
 			);
 			return { kind: "dispatched", deadline: clock + (deadlineAt - now) };
 		});
@@ -185,18 +211,20 @@ export class WriteLedger {
 	 * Records how a dispatched write ended, whichever attempt dispatched it: not
 	 * applied deletes the row, so the same write may be tried again; applied stores the result that answers
 	 * repeats; unknown makes it uncertain, which pauses the run. Only a row still `dispatched` changes, so a
-	 * write the sweep or the restart gate already judged uncertain stays uncertain. Returns whether a
-	 * dispatched write was settled.
+	 * write the sweep or the restart gate already judged uncertain stays uncertain. Returns the write that was
+	 * settled, or null when none was dispatched.
 	 */
-	settle(runId: RunId, key: string, settlement: Settlement): boolean {
-		const where = "WHERE run_id = ? AND key = ? AND status = 'dispatched' RETURNING key";
-		if (settlement.effect === "not_applied") return this.#sql.exec(`DELETE FROM run_writes ${where}`, runId, key).length > 0;
-		if (settlement.effect === "applied") {
+	settle(runId: RunId, key: string, settlement: Settlement): SettledWrite | null {
+		const where = `WHERE run_id = ? AND key = ? AND status = 'dispatched' ${SETTLED}`;
+		let rows: WriteRow[];
+		if (settlement.effect === "not_applied") rows = this.#sql.exec<WriteRow>(`DELETE FROM run_writes ${where}`, runId, key);
+		else if (settlement.effect === "applied") {
 			const text = JSON.stringify(settlement.result);
 			const stored = utf8(text).byteLength > MAX_STORED_RESULT_BYTES ? APPLIED_WITHOUT_RESULT : text;
-			return this.#sql.exec(`UPDATE run_writes SET status = 'succeeded', result = ? ${where}`, stored, runId, key).length > 0;
-		}
-		return this.#sql.exec(`UPDATE run_writes SET status = 'uncertain' ${where}`, runId, key).length > 0;
+			rows = this.#sql.exec<WriteRow>(`UPDATE run_writes SET status = 'succeeded', result = ? ${where}`, stored, runId, key);
+		} else rows = this.#sql.exec<WriteRow>(`UPDATE run_writes SET status = 'uncertain' ${where}`, runId, key);
+		const [row] = rows;
+		return row === undefined ? null : settledOf(row);
 	}
 
 	/**
@@ -206,11 +234,8 @@ export class WriteLedger {
 	 */
 	sweep(now: EpochMs = this.#clock.now()): LostWrite[] {
 		return this.#sql
-			.exec<{ run_id: string; key: string }>(
-				"UPDATE run_writes SET status = 'uncertain' WHERE status = 'dispatched' AND deadline_at < ? RETURNING run_id, key",
-				now - LOST_WRITE_GRACE_MS,
-			)
-			.map((row) => ({ runId: row.run_id, key: row.key }));
+			.exec<WriteRow>(`UPDATE run_writes SET status = 'uncertain' WHERE status = 'dispatched' AND deadline_at < ? ${SETTLED}`, now - LOST_WRITE_GRACE_MS)
+			.map((row) => ({ ...settledOf(row), key: row.key }));
 	}
 
 	/** When the sweep next has something to do: the earliest dispatched write's deadline plus the grace, or null. */
@@ -226,8 +251,8 @@ export class WriteLedger {
 	 */
 	markDispatchedUncertain(runId: RunId): LostWrite[] {
 		return this.#sql
-			.exec<{ run_id: string; key: string }>("UPDATE run_writes SET status = 'uncertain' WHERE run_id = ? AND status = 'dispatched' RETURNING run_id, key", runId)
-			.map((row) => ({ runId: row.run_id, key: row.key }));
+			.exec<WriteRow>(`UPDATE run_writes SET status = 'uncertain' WHERE run_id = ? AND status = 'dispatched' ${SETTLED}`, runId)
+			.map((row) => ({ ...settledOf(row), key: row.key }));
 	}
 
 	/** Drops a run's writes, for retention once the run has ended. */

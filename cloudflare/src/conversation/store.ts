@@ -21,8 +21,12 @@ import type { Preparation } from "../internal/start.ts";
 import { type Json, parseJson } from "../lib/json.ts";
 import { VALUE_PART, sliceText, splitParts } from "../lib/text.ts";
 import { isoTime } from "../lib/dates.ts";
-import type { Attachment, Conversation, FolderChanges, FolderWarnings, Message, Run } from "@minerva/contract";
-import type { StartRunResult } from "@minerva/contract/internal";
+import type { Attachment, Conversation, FolderChanges, FolderWarnings, Message, Run, ToolCallEventData } from "@minerva/contract";
+import type { Fact, StartRunResult } from "@minerva/contract/internal";
+import type { SettledWrite } from "../gateway/ledger.ts";
+import type { ModelUsage } from "../model/provider.ts";
+import { utf8 } from "../lib/bytes.ts";
+import { FACT_PAGE_BYTES, type NewFact, toolCallFact } from "./facts.ts";
 import type { AgentId, AttemptFence, ConversationId, EpochMs, RunId, RunStatus, UserId, VersionId, WorkspaceRef } from "../shared/rpc.ts";
 import {
 	ACTIVE,
@@ -173,7 +177,39 @@ export interface StoreListeners {
 	appended(runId: RunId, event: RunEvent): void;
 	/** After commit, for each run that reached a terminal state. */
 	ended(runId: RunId): void;
+	/**
+	 * Inside the transaction that wrote a fact, so what it schedules commits with it: the delivery is due at `at` (now, or
+	 * later while it backs off).
+	 */
+	factWritten(at: EpochMs): void;
 }
+
+/** The delivery of a Laravel conversation's facts (docs/plans/credentials-and-facts.md, Delivered in order). */
+export interface DeliveryRow {
+	/** The last sequence written. */
+	written: number;
+	/** The highest Laravel holds, as it last said. */
+	acknowledged: number;
+	/** The highest raised in the recovery index. */
+	indexed: number;
+	/** Deliveries failed in a row, for the backoff. */
+	failures: number;
+	/** No delivery before this. */
+	next_at: number;
+	/** Why delivery waits for the operator, or null. */
+	stopped: string | null;
+	[key: string]: SqlStorageValue;
+}
+
+/** A page of facts as stored: each one's JSON, as delivered. */
+export interface FactPage {
+	facts: { seq: number; json: string }[];
+	/** Whether facts follow the page. */
+	more: boolean;
+}
+
+/** How a write settled, as its fact says (conversation/ports.ts `WriteOutcome`). */
+type WriteOutcome = "done" | "failed" | "uncertain";
 
 export interface FinishOptions {
 	/** Only if this attempt is still the run's. */
@@ -648,6 +684,7 @@ export class RunStore {
 			this.#sql.exec("UPDATE attempts SET ended_at = ?, ended = ? WHERE run_id = ? AND attempt = ? AND ended_at IS NULL", now, ended, runId, row.attempt);
 			this.touch({ folderVersionId: published.resultVersionId });
 			this.append(runId, statusEvent(terminalStatus(end)));
+			this.#finishedFact(row, end, published.resultVersionId);
 			this.#ended.push(runId);
 			return true;
 		});
@@ -666,10 +703,20 @@ export class RunStore {
 		this.#sql.exec("UPDATE runs SET model_calls = model_calls + 1 WHERE id = ?", runId);
 	}
 
-	/** Not fenced: the last usage report of a settled call, or one unmetered call. */
-	settleModelCall(runId: RunId, usage: { input: number; output: number } | null): void {
-		if (usage) this.#sql.exec("UPDATE runs SET input_tokens = input_tokens + ?, output_tokens = output_tokens + ? WHERE id = ?", usage.input, usage.output, runId);
-		else this.#sql.exec("UPDATE runs SET unmetered_model_calls = unmetered_model_calls + 1 WHERE id = ?", runId);
+	/**
+	 * Not fenced: the last usage report of a settled call, with its `run.usage` fact, or one unmetered call (which has no fact
+	 * until chunk 14). Made outside pi's transactions: a provider call's cost does not roll back.
+	 */
+	settleModelCall(runId: RunId, usage: ModelUsage | null): void {
+		this.write(() => {
+			if (usage === null) {
+				this.#sql.exec("UPDATE runs SET unmetered_model_calls = unmetered_model_calls + 1 WHERE id = ?", runId);
+				return;
+			}
+			this.#sql.exec("UPDATE runs SET input_tokens = input_tokens + ?, output_tokens = output_tokens + ? WHERE id = ?", usage.input, usage.output, runId);
+			const data = { call: usage.call, model: usage.model, inputTokens: usage.input, outputTokens: usage.output, cachedTokens: usage.cached, reasoningTokens: usage.reasoning };
+			this.#fact(runId, { type: "run.usage", data });
+		});
 	}
 
 	/** How often pi has executed this call, this execution included (the replay cap, ARCHITECTURE.md: Attempts and recovery). */
@@ -715,7 +762,22 @@ export class RunStore {
 			const stored = { seq: row.event_seq, ...event } as RunEvent;
 			this.#sql.exec("INSERT INTO run_events (run_id, seq, type, data, created_at) VALUES (?, ?, ?, ?, ?)", runId, stored.seq, stored.type, JSON.stringify(stored.data), this.now());
 			this.#appended.push([runId, stored]);
+			// The events that are also facts, but for `tool_call` (appendToolCall) and the terminal status (`finish`).
+			if (stored.type === "local_tool") this.#fact(runId, { type: "run.local_tool", data: stored.data });
+			else if (stored.type === "status" && (stored.data.status === "provisioning" || stored.data.status === "running")) {
+				const attempt = this.#sql.exec<{ attempt: number }>("SELECT attempt FROM runs WHERE id = ?", runId).one().attempt;
+				this.#fact(runId, { type: "run.status", data: { status: stored.data.status, attempt } });
+			}
 			return stored;
+		});
+	}
+
+	/** A `tool_call` event while the run is active, with its fact made from the call's own arguments (facts.ts `toolCallFact`). */
+	appendToolCall(runId: RunId, data: ToolCallEventData, args: Json | undefined): RunEvent | null {
+		return this.write(() => {
+			const appended = this.append(runId, { type: "tool_call", data }, "active");
+			if (appended) this.#fact(runId, toolCallFact(data, args));
+			return appended;
 		});
 	}
 
@@ -852,6 +914,99 @@ export class RunStore {
 
 	addTombstone(runId: RunId, reason: CancelReason, entryId: number): void {
 		this.#sql.exec("INSERT INTO tombstones (run_id, reason, entry_id, created_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING", runId, reason, entryId, this.now());
+	}
+
+	// Facts (docs/plans/credentials-and-facts.md, The outbox of facts): a Laravel conversation's only.
+
+	/** Whether this conversation's runs write facts: Laravel's do, the Workspace's do not. Fixed once the row is made. */
+	#factsOn: boolean | null = null;
+
+	#writesFacts(): boolean {
+		if (this.#factsOn === null) {
+			const conversation = this.conversation();
+			if (conversation === null) return false;
+			this.#factsOn = conversation.organization_id !== null;
+		}
+		return this.#factsOn;
+	}
+
+	/** The delivery's row, made on first use. */
+	delivery(): DeliveryRow {
+		this.#sql.exec("INSERT INTO fact_delivery (singleton) VALUES (1) ON CONFLICT DO NOTHING");
+		return this.#sql.exec<DeliveryRow>("SELECT * FROM fact_delivery WHERE singleton = 1").one();
+	}
+
+	/** Changes the delivery's state (each change its own transaction, made outside pi's by the caller). */
+	updateDelivery(fields: Partial<Pick<DeliveryRow, "acknowledged" | "indexed" | "failures" | "next_at" | "stopped">>): void {
+		const entries = Object.entries(fields).filter(([, value]) => value !== undefined);
+		if (!entries.length) return;
+		this.write(() => {
+			this.delivery();
+			this.#sql.exec(`UPDATE fact_delivery SET ${entries.map(([key]) => `${key} = ?`).join(", ")} WHERE singleton = 1`, ...entries.map(([, value]) => value as SqlStorageValue));
+		});
+	}
+
+	/** The fact with the next sequence, in the caller's transaction; the delivery is scheduled in it too. */
+	#fact(runId: RunId, fact: NewFact): void {
+		if (!this.#writesFacts()) return;
+		this.write(() => {
+			const delivery = this.delivery();
+			const seq = delivery.written + 1;
+			const now = this.now();
+			const whole = { seq, run: runId, at: isoTime(now), ...fact } as Fact;
+			this.#sql.exec("UPDATE fact_delivery SET written = ? WHERE singleton = 1", seq);
+			this.#sql.exec("INSERT INTO facts (seq, run_id, fact, created_at) VALUES (?, ?, ?, ?)", seq, runId, JSON.stringify(whole), now);
+			this.#listeners?.factWritten(Math.max(now, delivery.next_at));
+		});
+	}
+
+	/** The run's terminal fact, in `finish`'s transaction: its status, error, final message and folder. */
+	#finishedFact(row: RunRow, end: RunEnd, resultVersionId: VersionId | null): void {
+		if (!this.#writesFacts()) return;
+		const answer = this.#sql.exec<{ id: string; content: string }>("SELECT id, content FROM messages WHERE run_id = ? AND role = 'assistant' ORDER BY created_at DESC, id DESC LIMIT 1", row.id).toArray()[0];
+		const current = this.#sql.exec<Pick<RunRow, "folder_changes" | "folder_warnings">>("SELECT folder_changes, folder_warnings FROM runs WHERE id = ?", row.id).one();
+		const folder =
+			row.base_version_id === null && resultVersionId === null
+				? null
+				: {
+						base: row.base_version_id,
+						result: resultVersionId,
+						changes: current.folder_changes === null ? null : (parseJson(current.folder_changes) as unknown as FolderChanges),
+						warnings: current.folder_warnings === null ? null : (parseJson(current.folder_warnings) as unknown as FolderWarnings),
+					};
+		const data = {
+			status: end.status,
+			error: end.status === "completed" ? "" : sliceText(end.message, 0, ERROR_MESSAGE_CHARS),
+			message: answer === undefined ? null : { id: answer.id, content: answer.content },
+			folder,
+		};
+		this.#fact(row.id, { type: "run.finished", data });
+	}
+
+	/** A write's settlement (the ledger's `LedgerRuns.writeSettled`), in its transaction; `afterCancel` when the run had ended or was revoked. */
+	writeSettled(write: SettledWrite, outcome: WriteOutcome): void {
+		const run = this.#checked(write.runId);
+		const afterCancel = run === null || run.revoked === 1 || !ACTIVE.has(run.status);
+		this.#fact(write.runId, { type: "run.write", data: { write: write.write, tool: write.tool, connection: write.connection, outcome, afterCancel } });
+	}
+
+	/** Facts after `after`, in order: at most `limit` and FACT_PAGE_BYTES of JSON, at least one. Read outside pi's transactions. */
+	factPage(after: number, limit: number): FactPage {
+		const rows = this.#sql.exec<{ seq: number; fact: string }>("SELECT seq, fact FROM facts WHERE seq > ? ORDER BY seq LIMIT ?", after, limit + 1).toArray();
+		const facts: FactPage["facts"] = [];
+		let bytes = 0;
+		for (const row of rows.slice(0, limit)) {
+			bytes += utf8(row.fact).byteLength;
+			if (facts.length && bytes > FACT_PAGE_BYTES) return { facts, more: true };
+			facts.push({ seq: row.seq, json: row.fact });
+		}
+		return { facts, more: rows.length > limit };
+	}
+
+	/** Facts written and not acknowledged. */
+	backlog(): number {
+		const delivery = this.delivery();
+		return delivery.written - delivery.acknowledged;
 	}
 
 	// The API's shapes.

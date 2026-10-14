@@ -2,7 +2,7 @@
 // Workspace's core. The module is loaded with `process.getBuiltinModule`, since the unit tests are
 // type-checked with the Worker's runtime types, which lack Node's.
 
-import { LEDGER_SCHEMA } from "../../src/gateway/ledger.ts";
+import { LEDGER_NOTES_SCHEMA, LEDGER_SCHEMA } from "../../src/gateway/ledger.ts";
 import { PAGE_TOKEN_SCHEMA } from "../../src/gateway/page-tokens.ts";
 import { type Sql, type SyncDatabase, applySchema, sqliteSql } from "../../src/lib/sql.ts";
 
@@ -22,10 +22,12 @@ export function openDatabase(path = ":memory:"): Database {
 	return new (node.getBuiltinModule("node:sqlite").DatabaseSync)(path);
 }
 
-/** The ledger's and page tokens' tables in a fresh database. */
+/** The ledger's and page tokens' tables, made if missing: a database reopened after a crash keeps its own. */
 export function ledgerSql(db: Database = openDatabase()): Sql {
 	const sql = sqliteSql(db);
 	applySchema(sql, [...LEDGER_SCHEMA, ...PAGE_TOKEN_SCHEMA]);
+	// The ledger's later columns, which (as ALTERs) cannot be made "if not exists".
+	if (!sql.exec<{ name: string }>("SELECT name FROM pragma_table_info('run_writes')").some((column) => column.name === "tool")) applySchema(sql, LEDGER_NOTES_SCHEMA);
 	return sql;
 }
 

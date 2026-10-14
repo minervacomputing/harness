@@ -91,9 +91,22 @@ export interface ModelHost {
 	 * Not fenced: a call is metered whichever attempt made it; null counts it unmetered.
 	 * Not called for a call the provider refused or that never reached it.
 	 */
-	settled(fence: AttemptFence, usage: { input: number; output: number } | null): void;
+	settled(fence: AttemptFence, usage: ModelUsage | null): void;
 	/** For operators' logs only. */
 	log(message: string): void;
+}
+
+/** A metered call's usage: its id (as its deltas name it), the upstream model, and its tokens (tap.ts `reportedUsage`). */
+export interface ModelUsage {
+	call: string;
+	model: string;
+	/** Input with cache reads and writes. */
+	input: number;
+	output: number;
+	/** Cache reads. */
+	cached: number;
+	/** The part of `output` spent reasoning; 0 when the provider does not say. */
+	reasoning: number;
 }
 
 /** The model pi sees: `minerva/default`, text only, with CONTEXT_WINDOW and the route's cap. */
@@ -350,7 +363,10 @@ function wrapped(context: TranscriptContext, streamOptions: SimpleStreamOptions 
 		// unmetered), or when the run or pi stopped the call before any answer came; a call the provider
 		// refused, or that never reached it, is counted but neither metered nor unmetered.
 		const accepted = streamed || status === 200;
-		if (accepted) options.host.settled(fence, reportedUsage(final.usage));
+		if (accepted) {
+			const usage = reportedUsage(final.usage);
+			options.host.settled(fence, usage === null ? null : { call, model: upstream.model.id, ...usage });
+		}
 		else if (!runEnded && status === undefined && stops.some((signal) => signal.aborted)) options.host.settled(fence, null);
 		// "This run has ended." is ours, as for a call refused before it was counted.
 		out.end(runEnded ? final : screened(final));

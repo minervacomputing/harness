@@ -5,7 +5,7 @@
 
 import type { AttemptFence, EpochMs, RunId, RunStatus } from "../shared/rpc.ts";
 import type { Clock } from "./clock.ts";
-import { type DispatchResult, RUN_ENDED_MESSAGE, type Settlement, type WriteLedger, type WriteRecord } from "./ledger.ts";
+import { type DispatchResult, RUN_ENDED_MESSAGE, type Settlement, type WriteLedger, type WriteNote, type WriteRecord } from "./ledger.ts";
 import type { PageTokens } from "./page-tokens.ts";
 
 /**
@@ -26,8 +26,11 @@ export interface RunStatePort {
 	/** Counts the call if the fence is current; false means RUN_ENDED, not counted. Calls are never limited. */
 	countToolCall(fence: AttemptFence): boolean;
 	knownWrite(runId: RunId, key: string): WriteRecord | null;
-	/** One write dispatched at a time per run; refused when paused, in progress or not current. */
-	dispatchWrite(fence: AttemptFence, key: string): DispatchResult | Promise<DispatchResult>;
+	/**
+	 * One write dispatched at a time per run; refused when paused, in progress or not current. `note` is what its settlement
+	 * reports: the tool, the connection and the keyed hash its `tool_call` event shows.
+	 */
+	dispatchWrite(fence: AttemptFence, key: string, note?: WriteNote): DispatchResult | Promise<DispatchResult>;
 	/** Always recorded, even for an older attempt and even when the call that asked for it was cancelled (under waitUntil). */
 	settleWrite(runId: RunId, key: string, settlement: Settlement): void | Promise<void>;
 	/** The upstream cursor for a token issued to this run for the same tool and query hash, else null. */
@@ -99,10 +102,10 @@ export class LedgerRunState implements RunStatePort {
 		return this.#ledger.known(runId, key);
 	}
 
-	dispatchWrite(fence: AttemptFence, key: string): DispatchResult {
+	dispatchWrite(fence: AttemptFence, key: string, note?: WriteNote): DispatchResult {
 		const run = this.#runs.get(fence.runId);
 		if (!this.isCurrent(fence) || run === null) return { kind: "refused", code: "RUN_ENDED", message: RUN_ENDED_MESSAGE };
-		return this.#ledger.dispatch(fence, key, run.deadline);
+		return this.#ledger.dispatch(fence, key, run.deadline, note);
 	}
 
 	settleWrite(runId: RunId, key: string, settlement: Settlement): void {

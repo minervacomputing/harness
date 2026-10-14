@@ -6,7 +6,7 @@ import { implement } from "@orpc/server";
 import { connectorRegistry } from "../connectors/index.ts";
 import { catalogOf } from "./catalog.ts";
 import { internalRefusal } from "./errors.ts";
-import { cancelRun, startRun } from "./runs.ts";
+import { cancelRun, replayFacts, startRun } from "./runs.ts";
 
 export interface InternalContext {
 	/** The request as it arrived. Its body is read only by api/orpc.ts's reader. */
@@ -46,7 +46,7 @@ export const internalRouter = internal.router({
 	catalog: internal.catalog.handler(async () => catalogOf(await connectorRegistry())),
 	startRun: internal.startRun.use(inEnvironment).handler(({ context, input }) => startRun(context.env, input)),
 	cancelRun: internal.cancelRun.use(inEnvironment).handler(({ context, input }) => cancelRun(context.env, input)),
-	replayFacts: internal.replayFacts.use(inEnvironment).handler(notYet(7)),
+	replayFacts: internal.replayFacts.use(inEnvironment).handler(({ context, input }) => replayFacts(context.env, input)),
 	describeAccount: internal.describeAccount.use(inEnvironment).handler(notYet(9)),
 	listResources: internal.listResources.use(inEnvironment).handler(notYet(11)),
 	checkGrantEdit: internal.checkGrantEdit.use(inEnvironment).handler(notYet(11)),

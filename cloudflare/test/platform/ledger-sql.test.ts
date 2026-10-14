@@ -7,7 +7,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, test } from "vitest";
 import { scriptsObject } from "../../src/addressing.ts";
-import { LEDGER_SCHEMA, LOST_WRITE_GRACE_MS, WRITE_MESSAGES, WriteLedger } from "../../src/gateway/ledger.ts";
+import { LEDGER_NOTES_SCHEMA, LEDGER_SCHEMA, LOST_WRITE_GRACE_MS, WRITE_MESSAGES, WriteLedger } from "../../src/gateway/ledger.ts";
 import { PAGE_TOKEN_SCHEMA, PageTokens } from "../../src/gateway/page-tokens.ts";
 import { durableSql } from "../../src/lib/sql.ts";
 import { migrate } from "../../src/lib/sqlite.ts";
@@ -61,16 +61,16 @@ describe("the ledger on a Durable Object's SQLite", () => {
 	test("its schema is one migration step, and the protocol runs as on node:sqlite", async () => {
 		await runInDurableObject(object(), (_, state) => {
 			// A step id of its own: the Scripts object these tests borrow applies its own step 1 when it is built.
-			expect(migrate(state.storage, [{ id: 100, sql: [...LEDGER_SCHEMA, ...PAGE_TOKEN_SCHEMA].join(";\n") }])).toEqual([100]);
+			expect(migrate(state.storage, [{ id: 100, sql: [...LEDGER_SCHEMA, ...LEDGER_NOTES_SCHEMA, ...PAGE_TOKEN_SCHEMA].join(";\n") }])).toEqual([100]);
 			const sql = durableSql(state.storage);
 			const ledger = new WriteLedger(sql, clock);
 			expect(ledger.dispatch({ runId: RUN, attempt: 1 }, K1, null)).toEqual({ kind: "dispatched", deadline: 1_060_000 });
 			expect(ledger.dispatch({ runId: RUN, attempt: 1 }, K2, null)).toEqual({ kind: "refused", code: "WRITE_IN_PROGRESS", message: WRITE_MESSAGES.otherInProgress });
-			expect(ledger.settle(RUN, K1, { effect: "applied", result: { items: [{ id: "x" }], count: 1 } })).toBe(true);
+			expect(ledger.settle(RUN, K1, { effect: "applied", result: { items: [{ id: "x" }], count: 1 } })).not.toBeNull();
 			expect(ledger.dispatch({ runId: RUN, attempt: 2 }, K1, null)).toEqual({ kind: "cached", result: { items: [{ id: "x" }], count: 1 } });
 			ledger.dispatch({ runId: RUN, attempt: 1 }, K2, null);
 			// The restart gate marks in the transaction of its decision.
-			expect(state.storage.transactionSync(() => ledger.markDispatchedUncertain(RUN))).toEqual([{ runId: RUN, key: K2 }]);
+			expect(state.storage.transactionSync(() => ledger.markDispatchedUncertain(RUN))).toEqual([{ runId: RUN, key: K2, tool: "", connection: "", write: "" }]);
 			expect(ledger.paused(RUN)).toBe(true);
 			expect(ledger.sweep(clock.now() + 120_000)).toEqual([]);
 			expect(ledger.nextSweepAt()).toBeNull();
@@ -78,7 +78,7 @@ describe("the ledger on a Durable Object's SQLite", () => {
 			sql.exec("INSERT INTO run_writes (run_id, key, status, attempt, dispatched_at, deadline_at) VALUES ('r2', 'k1', 'dispatched', 1, 0, 0)");
 			expect(() => sql.exec("INSERT INTO run_writes (run_id, key, status, attempt, dispatched_at, deadline_at) VALUES ('r2', 'k2', 'dispatched', 1, 0, 0)")).toThrow(/UNIQUE/);
 			// Dispatched with a deadline at 0: lost once the grace after it has passed.
-			expect(ledger.sweep(LOST_WRITE_GRACE_MS + 1)).toEqual([{ runId: "r2", key: "k1" }]);
+			expect(ledger.sweep(LOST_WRITE_GRACE_MS + 1)).toEqual([{ runId: "r2", key: "k1", tool: "", connection: "", write: "" }]);
 
 			const tokens = new PageTokens(sql, clock.now);
 			const token = tokens.issue(RUN, "todoist_list_tasks", "h", "2") as string;

@@ -3,7 +3,7 @@
 // they land (additive only, lib/sqlite.ts).
 
 import { FOLDER_REPORT_SCHEMA, FOLDER_SCHEMA } from "../files/schema.ts";
-import { LEDGER_SCHEMA, PAGE_TOKEN_SCHEMA } from "../gateway/schema.ts";
+import { LEDGER_NOTES_SCHEMA, LEDGER_SCHEMA, PAGE_TOKEN_SCHEMA } from "../gateway/schema.ts";
 
 /** lib/sqlite.ts `Migration`, written out so the account tests (Node) can read the ids without the Worker's types. */
 interface Migration {
@@ -183,5 +183,29 @@ CREATE TABLE internal_answers (
 	created_at INTEGER NOT NULL
 ) STRICT;
 `,
+	},
+	// A Laravel conversation's facts and their delivery (docs/plans/credentials-and-facts.md): each fact's JSON as it is
+	// delivered, by its sequence; the delivery's state (`written` is never lowered, so a sequence is never used twice); and
+	// what a write's settlement reports, fixed at dispatch.
+	{
+		id: 8,
+		sql: [
+			`CREATE TABLE facts (
+	seq INTEGER PRIMARY KEY,
+	run_id TEXT NOT NULL,
+	fact TEXT NOT NULL,
+	created_at INTEGER NOT NULL
+) STRICT`,
+			`CREATE TABLE fact_delivery (
+	singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+	written INTEGER NOT NULL DEFAULT 0,
+	acknowledged INTEGER NOT NULL DEFAULT 0,
+	indexed INTEGER NOT NULL DEFAULT 0,
+	failures INTEGER NOT NULL DEFAULT 0,
+	next_at INTEGER NOT NULL DEFAULT 0,
+	stopped TEXT
+) STRICT`,
+			...LEDGER_NOTES_SCHEMA,
+		].join(";\n"),
 	},
 ];

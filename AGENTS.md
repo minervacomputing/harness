@@ -16,7 +16,7 @@ Settings are text bindings, parsed by `cloudflare/src/config.ts` when the Worker
 
 An instance's files live outside the checkout, in `~/.config/minerva/instances/<name>/` (cloudflare/README.md, The instance directory). Ours are `minerva-cf` (production) and `minerva-cf-test` (the test instance, built with fault points). `.dev.vars`, `secrets.env` and every `.env*` file hold secrets: never print, commit or copy their values. To check a value, report only whether it is set.
 
-**Secrets:** `MINERVA_SECRET_KEY`, `MINERVA_ENCRYPTION_KEYS` (`id:secret` entries, comma separated; the first encrypts), `MINERVA_DOWNLOAD_KEY`, `MINERVA_SETUP_KEY` (claims an instance's first admin, once), `MINERVA_LARAVEL_TOKEN` (optional: the Sanctum token Laravel issues for this engine, declared once set), and connector clients, `MINERVA_<APP>_CLIENT_ID` and `_SECRET` (an unset pair hides that app's connectors; Todoist registers its own client; setup per app in [docs/connectors.md](docs/connectors.md)). `pnpm secrets --instance <name>` writes fresh ones and never prints them.
+**Secrets:** `MINERVA_SECRET_KEY`, `MINERVA_ENCRYPTION_KEYS` (`id:secret` entries, comma separated; the first encrypts), `MINERVA_DOWNLOAD_KEY`, `MINERVA_SETUP_KEY` (claims an instance's first admin, once), `MINERVA_LARAVEL_TOKEN` (optional: the Sanctum token Laravel issues for this engine, declared once set), `MINERVA_STREAM_KEYS` (optional: the keys of the stream tokens Laravel signs, `id:secret` entries with secrets of 32 bytes or more in URL-safe base64, shared with Laravel; declared once set, and Laravel's run stream `/stream/v1` is off without them), and connector clients, `MINERVA_<APP>_CLIENT_ID` and `_SECRET` (an unset pair hides that app's connectors; Todoist registers its own client; setup per app in [docs/connectors.md](docs/connectors.md)). `pnpm secrets --instance <name>` writes fresh ones and never prints them.
 
 **Settings** (defaults in `cloudflare.config.ts`):
 
@@ -34,7 +34,7 @@ An instance's files live outside the checkout, in `~/.config/minerva/instances/<
 | `MINERVA_RUN_TIMEOUT_SECONDS` | empty (none) | A deadline per turn |
 | `MINERVA_FILES_*` | 256 MB and 10,000 entries per folder, 50 MB per file, 10 per message | A conversation's folder, also the size of the sandbox's `/workspace` |
 | `MINERVA_ENVIRONMENT`, `MINERVA_ACCESS_ISSUER`, `MINERVA_ACCESS_AUDIENCE`, `MINERVA_ACCESS_CLIENTS` | empty (the internal API is off) | All four or none: the environment Laravel's commands must name, and the Access application (`https://<team>.cloudflareaccess.com`, its audience tag, the service tokens' client ids, comma separated) whose assertion `/internal/` checks. Account identifiers: only in an instance's `vars.env` |
-| `MINERVA_LARAVEL_URL` | empty | Laravel's origin, https when deployed, for the engine's requests and facts |
+| `MINERVA_LARAVEL_URL` | empty | Laravel's origin, https when deployed, for the engine's requests and facts, and the only origin CORS lets read `/stream/v1` |
 
 `MINERVA_MODEL_GATEWAY` is not a setting: every build sets it to the instance's name.
 

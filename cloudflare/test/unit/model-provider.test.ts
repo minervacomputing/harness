@@ -7,7 +7,7 @@ import { type AssistantMessage, type AssistantMessageEvent, createModels, isCont
 import { beforeEach, describe, expect, test } from "vitest";
 import { type FakeOptions, type FakeScript, fakeUpstream } from "../../src/model/fake.ts";
 import { COMPACTION_PROMPT_START } from "../../src/model/policy.ts";
-import { callOf, minervaModel, minervaProvider, type ModelHost, REASONING_SUMMARY, RUN_ENDED_TEXT, SUMMARY_REFUSED_HINT } from "../../src/model/provider.ts";
+import { callOf, minervaModel, minervaProvider, type ModelHost, type ModelUsage, REASONING_SUMMARY, RUN_ENDED_TEXT, SUMMARY_REFUSED_HINT } from "../../src/model/provider.ts";
 import { type ModelRoute, upstreamOf } from "../../src/model/route.ts";
 import { CONTEXT_OVERFLOW, PROVIDER_ERROR, type Segment } from "../../src/model/tap.ts";
 import type { AttemptFence } from "../../src/shared/rpc.ts";
@@ -22,6 +22,8 @@ class Host implements ModelHost {
 	published: [string, Segment[]][] = [];
 	texts: [string, string][] = [];
 	usage: ({ input: number; output: number } | null)[] = [];
+	/** Each metered call's id and model. */
+	calls: [string, string][] = [];
 	logs: string[] = [];
 	sessions: (string | undefined)[] = [];
 	begin(sessionId: string | undefined) {
@@ -42,8 +44,9 @@ class Host implements ModelHost {
 	toolCallText(_fence: AttemptFence, callId: string, text: string) {
 		this.texts.push([callId, text]);
 	}
-	settled(_fence: AttemptFence, usage: { input: number; output: number } | null) {
-		this.usage.push(usage);
+	settled(_fence: AttemptFence, usage: ModelUsage | null) {
+		if (usage !== null) this.calls.push([usage.call, usage.model]);
+		this.usage.push(usage === null ? null : { input: usage.input, output: usage.output });
 	}
 	log(message: string) {
 		this.logs.push(message);
@@ -126,6 +129,8 @@ describe("a call", () => {
 		expect([...calls][0]).toMatch(/^[0-9a-f]{8}$/);
 		expect(callOf(message)).toBe([...calls][0]);
 		expect(host.usage).toEqual([{ input: 7, output: 3 }]);
+		// The usage names the call its deltas did, and the upstream's model.
+		expect(host.calls).toEqual([[[...calls][0], expect.any(String)]]);
 	});
 
 	test("each call gets its own id; there is no limit on calls", async () => {

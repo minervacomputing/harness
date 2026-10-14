@@ -80,3 +80,28 @@ export async function bindRun(db: D1Database, binding: RunBinding): Promise<Boun
 	}
 	return { ok: true, workspace: { id: scope.workspace, jurisdiction: bound.jurisdiction === "eu" ? "eu" : null } };
 }
+
+/** A Laravel conversation as the index binds it, or null for one no command has named. */
+export interface IndexedConversation {
+	organization: string;
+	workspace: WorkspaceRef;
+}
+
+/** The conversation's binding, read without writing (`replayFacts`, the stream). */
+export async function conversationOf(db: D1Database, conversation: string): Promise<IndexedConversation | null> {
+	const row = await db.prepare("SELECT organization_id, workspace_id, jurisdiction FROM recovery_conversations WHERE id = ?1").bind(conversation).first<ConversationRow>();
+	if (row === null) return null;
+	return { organization: row.organization_id, workspace: { id: row.workspace_id, jurisdiction: row.jurisdiction === "eu" ? "eu" : null } };
+}
+
+/**
+ * Raises the conversation's highest fact sequence to at least `seq`, before facts up to it are sent to Laravel. Only through
+ * the row bound to that organization and workspace; false when there is none.
+ */
+export async function raiseFactSeq(db: D1Database, raise: { conversation: string; organization: string; workspace: string; seq: number }): Promise<boolean> {
+	const result = await db
+		.prepare("UPDATE recovery_conversations SET fact_seq = max(fact_seq, ?1) WHERE id = ?2 AND organization_id = ?3 AND workspace_id = ?4 RETURNING id")
+		.bind(raise.seq, raise.conversation, raise.organization, raise.workspace)
+		.all();
+	return result.results.length > 0;
+}

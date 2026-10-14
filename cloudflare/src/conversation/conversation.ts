@@ -42,6 +42,7 @@ import { type About, identity } from "../lib/about.ts";
 import { EncryptionKeys, credentialBinding } from "../lib/encryption.ts";
 import { type Json, parseJson } from "../lib/json.ts";
 import { isUuid, uuid7 } from "../lib/random.ts";
+import { raiseFactSeq } from "../internal/recovery.ts";
 import { appliedMigrations, migrate } from "../lib/sqlite.ts";
 import { sliceText } from "../lib/text.ts";
 import { callOf, MODEL_REF, MINERVA_API, MINERVA_PROVIDER, MODEL_ALIAS, minervaProvider, type ModelHost } from "../model/provider.ts";
@@ -53,7 +54,7 @@ import { isReset, type ScriptsClient } from "../scripts/run.ts";
 import type { ScriptsApi } from "../scripts/scripts.ts";
 import { scriptTool } from "../scripts/tool.ts";
 import type { Folder, Message, NewMessage, Run } from "@minerva/contract";
-import type { CancelRun, CancelRunResult, StartRun, StartRunResult } from "@minerva/contract/internal";
+import type { CancelRun, CancelRunResult, Fact, ReplayFacts, StartRun, StartRunResult } from "@minerva/contract/internal";
 import { type Preparation, type StartRefusal, UNAVAILABLE, messageRefusal, prepareStart, promptOf as internalPrompt, startRefusal } from "../internal/start.ts";
 import { type AttemptFence, type Caller, type Outcome, type Refusal, type RunId, type VersionId, type WorkspaceRef, refuse } from "../shared/rpc.ts";
 import { START_FAILED } from "../workspace/core.ts";
@@ -78,7 +79,9 @@ import {
 import { decideGate, type PiWork, classifyWork } from "./gate.ts";
 import { HISTORY_LIMIT, historyOf, promptOf, recentHistory, sessionInstructions } from "./history.ts";
 import { FolderOverLimit, LOCAL_TOOLS, type LocalTool, type LocalToolEvent, localToolSpecs, runGated, SandboxRefused } from "./local.ts";
-import { laravelRuns } from "./laravel-runs.ts";
+import { FactDelivery } from "./delivery.ts";
+import { BACKLOG_MESSAGE, FACT_DELIVERY } from "./facts.ts";
+import { laravelCredentials, laravelRuns } from "./laravel-runs.ts";
 import { destroyRunSandbox, LocalRun } from "./local-run.ts";
 import { type ConversationPorts, type FolderPort, PORTS, type PortsContext, runStatePort, type WorkspaceClient, type WriteLedger } from "./ports.ts";
 import { ToolQueue, untilAborted } from "./queue.ts";
@@ -188,6 +191,11 @@ export interface ConversationApi {
 	 * Answers once the change is committed, outside pi's transactions.
 	 */
 	cancelInternal(command: CancelRun, workspace: WorkspaceRef): Promise<InternalAnswer<CancelRunResult>>;
+	/**
+	 * Laravel's `replayFacts` (docs/plans/credentials-and-facts.md): the facts after `after`, in order, read outside pi's
+	 * transactions; the recovery index is raised to the page's last before it answers. Never binds the conversation.
+	 */
+	replayInternal(command: ReplayFacts, workspace: WorkspaceRef): Promise<InternalAnswer<{ facts: Fact[]; more: boolean }>>;
 }
 
 /** What a Laravel command answers: its outcome, or that the conversation is bound to another scope. */
@@ -239,6 +247,9 @@ const LIVE_TASKS = ["pending", "running", "waiting", "completing"] as const;
 /** The reason an attempt's object is reset when its local calls cannot go on (ARCHITECTURE.md: Checkpoints). */
 export const ATTEMPT_ENDED = "The attempt ended: ";
 
+/** The Lifecycle job that delivers a Laravel conversation's facts. */
+const FACTS_JOB = "facts";
+
 /** A conversation, or a 404: another user's conversation looks like none. */
 const NOT_FOUND = refuse("NOT_FOUND", "Not found.");
 const SCOPE_MISMATCH = { ok: false, code: "SCOPE_MISMATCH" } as const;
@@ -267,6 +278,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	readonly #loops = new Map<RunId, Promise<void>>();
 	readonly #activations = new Map<RunId, Promise<void>>();
 	readonly #begins = new Map<RunId, Promise<Outcome<PostedView>>>();
+	/** A Laravel conversation's facts on their way to Laravel (delivery.ts). */
+	readonly #delivery: FactDelivery;
 	/** Laravel's starts in flight in this instance, by run: a repeat joins the one running. */
 	readonly #internalStarts = new Map<RunId, Promise<StartRunResult>>();
 	/** Code mode: each run's scripted calls, and the lane that runs scripts after the reset of the one before. */
@@ -294,6 +307,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			{
 				appended: (runId, event) => this.#stream.broadcast(runId, event),
 				ended: (runId) => this.#afterFinish(runId),
+				// In the fact's transaction: the delivery's job commits with it (Lifecycle's queue is SQL).
+				factWritten: (at) => this.#push({ id: FACTS_JOB, fn: FACTS_JOB, time: at }),
 			},
 			(run) => this.#folder()?.publish(run.id, { baseVersionId: run.base_version_id, checkpointVersionId: run.checkpoint_version_id, status: run.status }) ?? {
 				resultVersionId: run.checkpoint_version_id ?? run.base_version_id,
@@ -301,6 +316,14 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			},
 		);
 		this.lifecycle.use(this.#stream as never).use(this.harness);
+		this.#delivery = new FactDelivery(this.#store, {
+			env,
+			schedule: (time) => {
+				if (time === null) this.lifecycle.jobs.cancel(FACTS_JOB).catch((error: unknown) => this.#log("the facts job was not removed", error));
+				else this.#push({ id: FACTS_JOB, fn: FACTS_JOB, time });
+			},
+			log: (message, error) => this.#log(message, error, error !== undefined),
+		});
 	}
 
 	/** Not async, so it answers without opening pi (the probe and the platform tests call it). */
@@ -500,6 +523,26 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		return { ok: true, value: { state } };
 	}
 
+	async replayInternal(command: ReplayFacts, workspace: WorkspaceRef): Promise<InternalAnswer<{ facts: Fact[]; more: boolean }>> {
+		const page = await this.#store.outside(() => {
+			const conversation = this.#store.conversation();
+			if (
+				conversation === null ||
+				conversation.id !== command.conversation ||
+				conversation.organization_id !== command.scope.organization ||
+				conversation.workspace_id !== workspace.id
+			) {
+				return null;
+			}
+			return this.#store.factPage(command.after, command.limit);
+		});
+		if (page === null) return SCOPE_MISMATCH;
+		const last = page.facts.at(-1)?.seq;
+		// Every fact sent to Laravel is at or below the index's, a replay's as a delivery's.
+		if (last !== undefined) await raiseFactSeq(this.env.DB, { conversation: command.conversation, organization: command.scope.organization, workspace: workspace.id, seq: last });
+		return { ok: true, value: { facts: page.facts.map((fact) => parseJson(fact.json) as unknown as Fact), more: page.more } };
+	}
+
 	/** The conversation bound to the command's organization and the index's workspace, on first use; false for others. */
 	#bindInternal(command: StartRun | CancelRun, workspace: WorkspaceRef): Promise<boolean> {
 		const binding = { conversationId: command.conversation, organization: command.scope.organization, workspace, createdAt: this.#store.now() };
@@ -588,6 +631,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		if (this.#store.tombstone(runId)) return startRefusal("CANCELLED", "This run was cancelled before it started.");
 		if (this.#store.conversation()?.deleted_at != null) return deletedRefusal();
 		if (this.#store.activeRun() || this.#store.preparedOther(runId) || this.#store.starts().length) return startRefusal("CONVERSATION_BUSY", BUSY_MESSAGE);
+		// Facts are never dropped: past the bound, a conversation Laravel has not caught up with starts nothing new.
+		if (this.#store.backlog() > FACT_DELIVERY.backlog) return startRefusal("FACTS_BACKLOG", BACKLOG_MESSAGE);
 		return null;
 	}
 
@@ -757,7 +802,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			if (!run || !ACTING.has(run.status) || !run.activated) return;
 			const fence = { runId, attempt: run.attempt };
 			if (!this.#store.isCurrent(fence)) return;
-			this.#store.startAttempt(fence);
+			// Outside pi's transactions (store.ts `outside`): its `run.status` fact must not roll back.
+			await this.#store.outside(() => this.#store.startAttempt(fence));
 			this.#phase(fence, this.#restarted.has(runId) ? "Resuming the agent" : "Starting the agent");
 			this.#installTools(run);
 			let session = run.session;
@@ -799,6 +845,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		if (run && !run.activated) await this.#activate(run.id).catch((error: unknown) => this.#log("activation failed", error));
 		for (const ended of this.#store.unreleased()) await this.#release(ended);
 		for (const runId of this.#store.releases()) await this.#releaseRefused(runId);
+		await this.#delivery.deliver();
 	}
 
 	// The harness factory and the attempt gate (ARCHITECTURE.md: Attempts and recovery).
@@ -892,7 +939,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			else if (this.#restarted.has(run.id)) {
 				// The gate's new attempt: running again (`{status: "running"}`, no attempt key), then its phases.
 				const fence = { runId: run.id, attempt: run.attempt };
-				this.#store.startAttempt(fence);
+				await this.#store.outside(() => this.#store.startAttempt(fence));
 				this.#phase(fence, "Resuming the agent");
 				this.#prepareLocal(run);
 				this.#showPhase(fence);
@@ -912,6 +959,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		if (fn === "release") return this.#retryReleases();
 		if (fn === "files") return this.#folder()?.sweep() ?? Promise.resolve(undefined);
 		if (fn === "sandbox") return this.#cleanSandbox();
+		if (fn === FACTS_JOB) return this.#factsJob();
 		return super._onHostJob(fn, context);
 	}
 
@@ -942,6 +990,16 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		else await this.#startLoop(runId).catch((error: unknown) => this.#log("the loop could not start", error));
 		const after = await work();
 		return after === "settled" || after === "not_submitted" ? again : undefined;
+	}
+
+	/**
+	 * The facts' delivery, waited for at most RPC_WAIT_MS as any job waits on another side; it goes on, and once it ends it
+	 * makes the job due for what is left, or removes it, which wins over this outcome. The outcome is only the net under it:
+	 * a delivery cut by a reset is tried again.
+	 */
+	async #factsJob(): Promise<{ rescheduleAt: number }> {
+		await within(this.#delivery.deliver(), RPC_WAIT_MS).catch((error: unknown) => this.#log("the facts' delivery is still running", error));
+		return { rescheduleAt: Date.now() + WATCH_MS };
 	}
 
 	#deadline(runId: RunId): Promise<{ rescheduleAt: number } | undefined> {
@@ -1391,8 +1449,22 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		return runStatePort(this.#store, () => this.#ledger(), (runId) => this.#scheduleSweep(runId));
 	}
 
-	/** A lease is for the call's attempt: checked before the Workspace is asked and again after (it knows runs, not attempts). */
+	/**
+	 * A lease is for the call's attempt: checked before the Workspace, or Laravel, is asked and again after. A Laravel run's
+	 * credentials come from `leaseToken` and are held in memory for the one call (laravel-runs.ts).
+	 */
 	#credentials(snapshot: RunSnapshot): CredentialPort {
+		const context = this.#portsContext() as PortsContext;
+		if (context.organization !== null) {
+			return laravelCredentials({
+				env: this.env,
+				scope: { organization: context.organization, workspace: context.workspace.id },
+				conversation: context.conversationId,
+				snapshot,
+				isCurrent: (fence) => this.#store.isCurrent(fence),
+				log: (message, error) => this.#log(message, error, true),
+			});
+		}
 		const ended = { refused: "RUN_ENDED" as const, message: RUN_ENDED_MESSAGE };
 		return {
 			lease: async (fence, connectionId) => {
@@ -1403,7 +1475,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			},
 			markUnauthorized: (connectionId, generation) => this.#workspace().markUnauthorized(connectionId, generation),
 			// Bound to the run's workspace and the leased connection: a lease of another row does not decrypt.
-			open: async (lease) => (await (await this.#keys()).decrypt(credentialBinding(snapshot.workspaceId, lease.connectionId), lease.sealed)) as unknown as CredentialPayload,
+			open: async (lease) =>
+				"payload" in lease ? lease.payload : ((await (await this.#keys()).decrypt(credentialBinding(snapshot.workspaceId, lease.connectionId), lease.sealed)) as unknown as CredentialPayload),
 		};
 	}
 
@@ -1461,7 +1534,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		let recording: Promise<void> | null = null;
 		const record = (outcome: ToolCallOutcome): Promise<void> => {
 			const event = outcome.event;
-			recording ??= (event ? this.#store.outside(() => void this.#store.append(fence.runId, { type: "tool_call", data: event }, "active")) : Promise.resolve()).catch(
+			recording ??= (event ? this.#store.outside(() => void this.#store.appendToolCall(fence.runId, event, args)) : Promise.resolve()).catch(
 				(error: unknown) => {
 					recording = null;
 					throw error;
@@ -1552,7 +1625,10 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				// A key without an escape parses right with JSON.parse; only text with a backslash is kept.
 				if (text.includes("\\")) store.saveArgumentText(fence.runId, callId, text);
 			},
-			settled: (fence, usage) => store.settleModelCall(fence.runId, usage),
+			// Outside pi's transactions (store.ts `outside`): a call's cost does not roll back, so neither may its record.
+			settled: (fence, usage) => {
+				this.ctx.waitUntil(store.outside(() => store.settleModelCall(fence.runId, usage)).catch((error: unknown) => this.#log("a model call's usage could not be recorded", error)));
+			},
 			log: (message) => this.#log(message),
 		};
 	}
@@ -1600,6 +1676,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				deadline: (runId) => this.#store.run(runId)?.deadline ?? null,
 				writesUncertain: (runId) => this.#store.run(runId)?.writes_uncertain === 1,
 				markWritesUncertain: (runId) => this.#store.setWritesUncertain(runId),
+				writeSettled: (write, outcome) => this.#store.writeSettled(write, outcome),
 			},
 			this.#portsContext() as PortsContext,
 		);
@@ -1668,9 +1745,10 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		);
 	}
 
-	#log(message: string, error?: unknown): void {
+	/** `severe` for what an operator must look at (a bug, a misconfiguration, a delivery stopped), logged as an error. */
+	#log(message: string, error?: unknown, severe = false): void {
 		const detail = error === undefined ? "" : `: ${error instanceof Error ? error.message : String(error)}`;
-		console.warn(`conversation ${this.ctx.id.name ?? ""}: ${message}${detail}`.slice(0, 2000));
+		(severe ? console.error : console.warn)(`conversation ${this.ctx.id.name ?? ""}: ${message}${detail}`.slice(0, 2000));
 	}
 }
 

@@ -133,6 +133,10 @@ const ResourcePage = z.object({
   next: z.string().nullable(),
 })
 
+/** `replayFacts`: the conversation's facts after `after`, at most `limit`. */
+export const ReplayFacts = InConversation.extend({ after: z.int().min(0), limit: z.int().min(1).max(MAX_FACTS) })
+export type ReplayFacts = z.infer<typeof ReplayFacts>
+
 const internal = oc.errors(INTERNAL_ERRORS)
 const at = (path: string) => `${INTERNAL_PREFIX}${path}` as const
 
@@ -142,7 +146,8 @@ export const engine = {
   /**
    * Compiles the run's snapshot once, copies its attachments and admits it, or refuses [6]. Refusals: today's start refusals
    * (`TOO_MANY_ATTACHMENTS`, `ATTACHED_TWICE`, `ATTACHMENT_UNAVAILABLE`, `FOLDER_FULL`), `CONVERSATION_BUSY`, `CANCELLED` (the run
-   * was tombstoned), `CONVERSATION_DELETED` and `ADMISSION_CLOSED`.
+   * was tombstoned), `CONVERSATION_DELETED`, `FACTS_BACKLOG` (Laravel has not acknowledged the conversation's facts for too long)
+   * and `ADMISSION_CLOSED`.
    */
   startRun: internal.route({ method: 'POST', path: at('/runs/start') }).input(StartRun).output(StartRunResult),
   /** Answers once the cancellation, or the tombstone of a run the engine has not received, is durable [6]. */
@@ -153,7 +158,7 @@ export const engine = {
   /** The conversation's retained facts after `after`, in order, for recovery [7]. */
   replayFacts: internal
     .route({ method: 'POST', path: at('/conversations/facts') })
-    .input(InConversation.extend({ after: z.int().min(0), limit: z.int().min(1).max(MAX_FACTS) }))
+    .input(ReplayFacts)
     .output(z.object({ conversation: Id, facts: z.array(Fact).max(MAX_FACTS), more: z.boolean() })),
   /** The account behind a credential: its id, label and tenant where the connector knows one [9]. */
   describeAccount: internal

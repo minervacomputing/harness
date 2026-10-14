@@ -60,6 +60,8 @@ export class FakeLaravel {
 	/** Conversations Laravel holds, by id, with their scope. */
 	readonly conversations = new Map<string, Scope>();
 	readonly calls: Call[] = [];
+	/** Deliveries to answer 503, as a Laravel that is down would, before the next is applied. */
+	failDeliveries = 0;
 	readonly #delivered = new Map<string, Delivered>();
 	readonly #handler: OpenAPIHandler<Record<never, never>>;
 
@@ -94,6 +96,10 @@ export class FakeLaravel {
 				}),
 				deliverFacts: os.deliverFacts.handler(({ input }) => {
 					this.calls.push({ operation: "deliverFacts", conversation: input.conversation });
+					if (this.failDeliveries > 0) {
+						this.failDeliveries--;
+						throw refusal("UNAVAILABLE", "Laravel is down.");
+					}
 					const scope = this.conversations.get(input.conversation);
 					if (input.scope.environment !== this.environment || scope === undefined || !sameScope(scope, input.scope)) {
 						throw refusal("NOT_FOUND", "No such conversation.");
@@ -143,6 +149,21 @@ export class FakeLaravel {
 		return held;
 	}
 
+	/** The facts applied in the conversation, in order. */
+	facts(conversation: string): Fact[] {
+		const state = this.#delivered.get(conversation);
+		if (state === undefined) return [];
+		return [...state.applied.entries()].sort(([a], [b]) => a - b).map(([, text]) => JSON.parse(text) as Fact);
+	}
+
+	/** Laravel restored from a backup: it holds the conversation's facts up to `held` and no further. */
+	restore(conversation: string, held: number): void {
+		const state = this.#delivered.get(conversation);
+		if (state === undefined) return;
+		for (const seq of state.applied.keys()) if (seq > held) state.applied.delete(seq);
+		state.held = held;
+	}
+
 	/** Laravel's answer to one request, after Sanctum's bearer check. */
 	readonly fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
 		const request = new Request(input, init);
@@ -153,12 +174,16 @@ export class FakeLaravel {
 		return matched ? response : Response.json({ defined: true, code: "NOT_FOUND", status: 404, message: "Not found." }, { status: 404 });
 	};
 
-	/** Routes the engine's client of Laravel here until the returned function is called. */
-	install(): () => void {
-		const previous = LARAVEL_NETWORK.fetch;
+	/**
+	 * Routes the engine's client of Laravel here until the returned function is called. `withToken` also has the client send
+	 * this Laravel's token, for the objects, whose MINERVA_LARAVEL_TOKEN binding a test cannot set.
+	 */
+	install(options: { withToken?: boolean } = {}): () => void {
+		const previous = { ...LARAVEL_NETWORK };
 		LARAVEL_NETWORK.fetch = () => this.fetch;
+		if (options.withToken) LARAVEL_NETWORK.token = () => this.token;
 		return () => {
-			LARAVEL_NETWORK.fetch = previous;
+			Object.assign(LARAVEL_NETWORK, previous);
 		};
 	}
 }

@@ -26,6 +26,16 @@ export const LEDGER_SCHEMA: readonly string[] = [
 	"CREATE INDEX IF NOT EXISTS run_writes_deadline ON run_writes (deadline_at) WHERE status = 'dispatched'",
 ];
 
+/**
+ * What a write's settlement reports, fixed at dispatch (ledger.ts `WriteNote`): its tool, connection and keyed hash. A
+ * step after LEDGER_SCHEMA, so a row written before it has them empty.
+ */
+export const LEDGER_NOTES_SCHEMA: readonly string[] = [
+	"ALTER TABLE run_writes ADD COLUMN tool TEXT NOT NULL DEFAULT ''",
+	"ALTER TABLE run_writes ADD COLUMN connection_id TEXT NOT NULL DEFAULT ''",
+	"ALTER TABLE run_writes ADD COLUMN write_id TEXT NOT NULL DEFAULT ''",
+];
+
 /** The page_tokens table. */
 export const PAGE_TOKEN_SCHEMA: readonly string[] = [
 	`CREATE TABLE IF NOT EXISTS page_tokens (

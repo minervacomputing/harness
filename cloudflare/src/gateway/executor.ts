@@ -39,7 +39,7 @@ import {
 	termsOf,
 } from "./connector.ts";
 import { CallIo } from "./http.ts";
-import { RUN_ENDED_MESSAGE, WRITE_MESSAGES, knownAnswer, writeKey } from "./ledger.ts";
+import { RUN_ENDED_MESSAGE, WRITE_MESSAGES, type WriteNote, knownAnswer, writeKey } from "./ledger.ts";
 import { INVALID_CURSOR_MESSAGE, LIMIT_REACHED_MESSAGE, queryHash } from "./page-tokens.ts";
 import { ANY, Policy, type PolicySnapshot, type Resource } from "./policy.ts";
 import { type Registry, inputSchema } from "./registry.ts";
@@ -145,17 +145,31 @@ export interface ExecutorContext {
 	deadline?: EpochMs | null;
 }
 
-/** What the Workspace Durable Object lends for one provider call (ARCHITECTURE.md: Credentials and refresh). */
-export interface CredentialLease {
+interface LeaseBase {
 	connectionId: ConnectionId;
 	provider: string;
 	/** The credential generation; `markUnauthorized` compares it. */
 	generation: number;
-	/** Decrypted only by the caller, for this one call; never stored in pi's state, events or logs. */
-	sealed: { ciphertext: string; version: string };
 	/** The scopes of the current credentials, for consent checks; null when unknown. */
 	scopes: string[] | null;
 }
+
+/** What the Workspace Durable Object lends for one provider call (ARCHITECTURE.md: Credentials and refresh). */
+export interface SealedLease extends LeaseBase {
+	/** Decrypted only by the caller, for this one call; never stored in pi's state, events or logs. */
+	sealed: { ciphertext: string; version: string };
+}
+
+/**
+ * What Laravel lends for one provider call of its run (`leaseToken`, docs/plans/credentials-and-facts.md): the credential
+ * itself, held in memory for this one call and never stored, logged or put in an event.
+ */
+export interface HeldLease extends LeaseBase {
+	payload: CredentialPayload;
+}
+
+/** A lease for one provider call; the executor reads neither its `sealed` nor its `payload`, only `open` does. */
+export type CredentialLease = SealedLease | HeldLease;
 
 export interface CredentialPort {
 	/**
@@ -167,9 +181,12 @@ export interface CredentialPort {
 		fence: AttemptFence,
 		connectionId: ConnectionId,
 	): Promise<CredentialLease | { refused: "RUN_ENDED" | "CONNECTION_UNAUTHORIZED" | "PROVIDER_UNAVAILABLE"; message: string }>;
-	/** The provider rejected the token: mark the connection "Needs reconnecting" only if still active at this generation. */
-	markUnauthorized(connectionId: ConnectionId, generation: number): Promise<void>;
-	/** Decrypts a lease's payload with MINERVA_ENCRYPTION_KEYS. */
+	/**
+	 * The provider rejected the token: mark the connection "Needs reconnecting" only if still active at this generation.
+	 * `fence` is the attempt the lease was taken for, whether or not it is still current.
+	 */
+	markUnauthorized(connectionId: ConnectionId, generation: number, fence: AttemptFence): Promise<void>;
+	/** The lease's credential: a sealed one decrypted with MINERVA_ENCRYPTION_KEYS, a held one as it is. */
 	open(lease: CredentialLease): Promise<CredentialPayload>;
 }
 
@@ -353,6 +370,8 @@ interface Done {
 	title: string;
 	repeat: boolean;
 	writeKey: string | null;
+	/** For a write: the keyed hash its event shows, as stored with it when it is known. */
+	write: string | null;
 }
 
 /** The executor of one run: `invoke` for each tool call, `declarations` for the model's tool list. */
@@ -437,7 +456,7 @@ export class ToolExecutor implements Executor {
 	}
 
 	async #allowed(shown: ShownCall, done: Done): Promise<ToolCallOutcome> {
-		const write = done.writeKey === null ? null : await writeId(this.#host.secretKey, this.#runId, done.writeKey);
+		const write = done.write;
 		// Checked again right before the result is returned (ARCHITECTURE.md: Strict revocation), as the client's close
 		// was awaited since the last check; a write already settled stays recorded.
 		if (!this.#run.isActive(this.#runId)) return { ok: false, error: { code: "RUN_ENDED", message: RUN_ENDED_MESSAGE }, event: null };
@@ -508,6 +527,8 @@ export class ToolExecutor implements Executor {
 		}
 		// The full fields, so for a paginated write the page token too.
 		const key = terms.mutates ? await writeKey(request.name, fields) : null;
+		// Before dispatch, so the settlement can report it in the transaction that records it (an HMAC is asynchronous).
+		const write = key === null ? null : await writeId(this.#host.secretKey, this.#runId, key);
 		this.#step(request);
 		if (key !== null) {
 			// Before anything else is done: a repeat skips consent, prepare, policy and the provider (risk 1).
@@ -515,11 +536,13 @@ export class ToolExecutor implements Executor {
 			if (known !== null) {
 				const answer = knownAnswer(known);
 				if (answer.kind === "refused") throw new OperationError(answer.code, answer.message);
-				return { result: answer.result, title: op.title, repeat: true, writeKey: key };
+				// The hash stored with the write, so a repeat matches it even if MINERVA_SECRET_KEY was rotated since.
+				return { result: answer.result, title: op.title, repeat: true, writeKey: key, write: known.write ?? write };
 			}
 		}
-		const [result, repeat] = await this.#perform(request, ref, op, terms, data, hash, key);
-		return { result, title: op.title, repeat, writeKey: key };
+		const writing = key === null || write === null ? null : { key, note: { tool: request.name, connection: ref.connection_id, write } };
+		const [result, repeat] = await this.#perform(request, ref, op, terms, data, hash, writing);
+		return { result, title: op.title, repeat, writeKey: key, write };
 	}
 
 	/** A lease for the call's attempt, checked before it is asked for and after it is given (ARCHITECTURE.md: Attempts and recovery, Fencing). */
@@ -539,7 +562,7 @@ export class ToolExecutor implements Executor {
 		terms: OperationTerms,
 		data: { [key: string]: unknown },
 		hash: string,
-		key: string | null,
+		writing: { key: string; note: WriteNote } | null,
 	): Promise<[ToolResult, boolean]> {
 		const connector = this.#registry.get(ref.provider);
 		const lease = await this.#lease(request, ref.connection_id);
@@ -569,15 +592,15 @@ export class ToolExecutor implements Executor {
 			if (!Array.isArray(prepared?.requirements) || prepared.requirements.length === 0) throw this.#bug(`${ref.provider}.${op.name}`, "no requirements");
 			this.#authorize(connector, op, terms, ref, prepared.requirements);
 			this.#ensureCurrent(request);
-			if (key === null) {
+			if (writing === null) {
 				output = await unlessAborted(prepared.execute(), request.signal);
 				result = this.#result(connector, op, terms, ref, output);
 			} else {
-				[result, repeat] = await this.#write(request, connector, op, terms, ref, key, prepared, io);
+				[result, repeat] = await this.#write(request, connector, op, terms, ref, writing.key, writing.note, prepared, io);
 			}
 			this.#ensureActive();
 		} catch (error) {
-			if (unauthorized(error)) await this.#markUnauthorized(ref.connection_id, lease.generation);
+			if (unauthorized(error)) await this.#markUnauthorized(ref.connection_id, lease.generation, request.fence);
 			throw error;
 		} finally {
 			request.signal?.removeEventListener("abort", cancel);
@@ -595,9 +618,9 @@ export class ToolExecutor implements Executor {
 	}
 
 	/** A token the provider rejected marks the connection Needs reconnecting, unless it got new credentials meanwhile. */
-	async #markUnauthorized(connectionId: string, generation: number): Promise<void> {
+	async #markUnauthorized(connectionId: string, generation: number, fence: AttemptFence): Promise<void> {
 		try {
-			await this.#credentials.markUnauthorized(connectionId, generation);
+			await this.#credentials.markUnauthorized(connectionId, generation, fence);
 		} catch (error) {
 			this.#log.error(`Could not mark connection ${connectionId} as needing reconnecting`, error);
 		}
@@ -665,11 +688,12 @@ export class ToolExecutor implements Executor {
 		terms: OperationTerms,
 		ref: ToolRef,
 		key: string,
+		note: WriteNote,
 		prepared: Prepared,
 		io: CallIo,
 	): Promise<[ToolResult, boolean]> {
 		// The port may wait before it claims (run-state.ts RunStatePort); nothing is sent before it answers.
-		const dispatch = await this.#run.dispatchWrite(request.fence, key);
+		const dispatch = await this.#run.dispatchWrite(request.fence, key, note);
 		if (dispatch.kind === "cached") return [dispatch.result, true];
 		if (dispatch.kind === "refused") throw new OperationError(dispatch.code, dispatch.message);
 		if (request.signal?.aborted || !this.#run.isCurrent(request.fence)) {

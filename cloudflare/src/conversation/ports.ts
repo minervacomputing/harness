@@ -13,7 +13,7 @@ import type { StagedUpload } from "../files/staging.ts";
 import type { ReservedUpload } from "../files/uploads.ts";
 import { systemClock } from "../gateway/clock.ts";
 import { type Executor, type ExecutorContext, createExecutor } from "../gateway/executor.ts";
-import { type DispatchResult, RUN_ENDED_MESSAGE, type Settlement, WriteLedger as GatewayLedger } from "../gateway/ledger.ts";
+import { type DispatchResult, RUN_ENDED_MESSAGE, type SettledWrite, type Settlement, type WriteNote, WriteLedger as GatewayLedger } from "../gateway/ledger.ts";
 import { PageTokens } from "../gateway/page-tokens.ts";
 import type { Registry } from "../gateway/registry.ts";
 import type { RunStatePort } from "../gateway/run-state.ts";
@@ -36,7 +36,7 @@ export type WorkspaceClient = Pick<WorkspaceApi, "beginRun" | "activate" | "rele
  */
 export interface WriteLedger extends Pick<RunStatePort, "knownWrite" | "resolvePageToken" | "issuePageToken"> {
 	/** Synchronous: the run check and the claim in one stretch (RunStatePort's waits before calling it). */
-	dispatchWrite(fence: AttemptFence, key: string): DispatchResult;
+	dispatchWrite(fence: AttemptFence, key: string, note?: WriteNote): DispatchResult;
 	settleWrite(runId: RunId, key: string, settlement: Settlement): void;
 	/**
 	 * In the attempt gate's transaction: every write of the run still `dispatched` becomes `uncertain` (the
@@ -57,7 +57,14 @@ export interface LedgerRuns {
 	deadline(runId: RunId): EpochMs | null;
 	writesUncertain(runId: RunId): boolean;
 	markWritesUncertain(runId: RunId): void;
+	/** In the transaction that settled it: a write's outcome, for the run's `run.write` fact. */
+	writeSettled(write: SettledWrite, outcome: WriteOutcome): void;
 }
+
+/** How a write settled, as a `run.write` fact says it. */
+export type WriteOutcome = "done" | "failed" | "uncertain";
+
+const OUTCOMES: Record<Settlement["effect"], WriteOutcome> = { applied: "done", not_applied: "failed", unknown: "uncertain" };
 
 /**
  * The run's folder (ARCHITECTURE.md: Starting a run, Checkpoints, Files; src/files/). The start protocol
@@ -192,11 +199,14 @@ export function gatewayLedger(storage: DurableObjectStorage, runs: LedgerRuns): 
 	const tokens = new PageTokens(sql);
 	return {
 		knownWrite: (runId, key) => ledger.known(runId, key),
-		dispatchWrite: (fence, key) =>
-			runs.isCurrent(fence) ? ledger.dispatch(fence, key, runs.deadline(fence.runId)) : { kind: "refused", code: "RUN_ENDED", message: RUN_ENDED_MESSAGE },
+		dispatchWrite: (fence, key, note) =>
+			runs.isCurrent(fence) ? ledger.dispatch(fence, key, runs.deadline(fence.runId), note) : { kind: "refused", code: "RUN_ENDED", message: RUN_ENDED_MESSAGE },
 		settleWrite: (runId, key, settlement) =>
 			sql.transaction(() => {
-				if (ledger.settle(runId, key, settlement) && settlement.effect === "unknown") runs.markWritesUncertain(runId);
+				const settled = ledger.settle(runId, key, settlement);
+				if (settled === null) return;
+				if (settlement.effect === "unknown") runs.markWritesUncertain(runId);
+				runs.writeSettled(settled, OUTCOMES[settlement.effect]);
 			}),
 		resolvePageToken: (runId, token, tool, queryHash) => tokens.resolve(runId, token, tool, queryHash),
 		issuePageToken: (runId, tool, queryHash, cursor) => tokens.issue(runId, tool, queryHash, cursor),
@@ -204,12 +214,15 @@ export function gatewayLedger(storage: DurableObjectStorage, runs: LedgerRuns): 
 			sql.transaction(() => {
 				const lost = ledger.markDispatchedUncertain(runId);
 				if (lost.length) runs.markWritesUncertain(runId);
+				for (const write of lost) runs.writeSettled(write, "uncertain");
 				return lost.length;
 			}),
 		sweepLostWrites: (now) =>
 			sql.transaction(() => {
-				const uncertain = [...new Set(ledger.sweep(now).map((write) => write.runId))];
+				const lost = ledger.sweep(now);
+				const uncertain = [...new Set(lost.map((write) => write.runId))];
 				for (const runId of uncertain) runs.markWritesUncertain(runId);
+				for (const write of lost) runs.writeSettled(write, "uncertain");
 				return { uncertain, nextAt: ledger.nextSweepAt() };
 			}),
 	};
@@ -228,9 +241,9 @@ export function runStatePort(store: RunStore, ledger: () => WriteLedger, dispatc
 		isActive: (runId) => store.isActive(runId),
 		countToolCall: (fence) => store.countToolCall(fence),
 		knownWrite: (runId, key) => ledger().knownWrite(runId, key),
-		dispatchWrite: (fence, key) =>
+		dispatchWrite: (fence, key, note) =>
 			store.outside(() => {
-				const result = ledger().dispatchWrite(fence, key);
+				const result = ledger().dispatchWrite(fence, key, note);
 				if (result.kind === "dispatched") dispatched(fence.runId);
 				return result;
 			}),

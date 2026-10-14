@@ -929,7 +929,7 @@ describe("the run's records", () => {
 			const store = new RunStore(state.storage);
 			store.watchTransactions();
 			const heard: string[] = [];
-			store.listen({ appended: (_runId, event) => heard.push(event.type), ended: () => heard.push("ended") }, () => ({ resultVersionId: null, changes: null }));
+			store.listen({ appended: (_runId, event) => heard.push(event.type), ended: () => heard.push("ended"), factWritten: () => {} }, () => ({ resultVersionId: null, changes: null }));
 			state.storage.sql.exec("UPDATE runs SET status = 'running' WHERE id = ?", runId);
 			const seq = () => state.storage.sql.exec("SELECT event_seq FROM runs WHERE id = ?", runId).one().event_seq;
 			const before = seq();
@@ -956,6 +956,17 @@ describe("the run's records", () => {
 		});
 	});
 
+	test("a Workspace conversation's runs write no facts: only Laravel's are delivered", async () => {
+		const { stub } = await conversation();
+		const runId = await posted(stub, "Hi");
+		await settled(stub, runId);
+		const counts = await runInDurableObject(stub, (_instance, state) => ({
+			facts: state.storage.sql.exec("SELECT count(*) AS n FROM facts").one().n,
+			delivery: state.storage.sql.exec("SELECT count(*) AS n FROM fact_delivery").one().n,
+		}));
+		expect(counts).toEqual({ facts: 0, delivery: 0 });
+	});
+
 	test("a write claimed while pi's transaction is open is not taken back by its rollback, nor is its settlement", async () => {
 		const { stub } = await conversation();
 		const runId = await posted(stub, "Hi");
@@ -970,6 +981,7 @@ describe("the run's records", () => {
 				deadline: () => null,
 				writesUncertain: () => false,
 				markWritesUncertain: (id) => store.setWritesUncertain(id),
+				writeSettled: (write, outcome) => store.writeSettled(write, outcome),
 			});
 			const port = runStatePort(store, () => ledger, () => {});
 			const fence = { runId, attempt: 1 };

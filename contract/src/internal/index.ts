@@ -4,6 +4,6 @@
 
 export * from './catalog.ts'
 export * from './common.ts'
-export { CancelReason, CancelRun, CancelRunResult, GrantInput, LayerInput, MAX_HISTORY, StartRun, StartRunResult, engine } from './engine.ts'
+export { CancelReason, CancelRun, CancelRunResult, GrantInput, LayerInput, MAX_HISTORY, ReplayFacts, StartRun, StartRunResult, engine } from './engine.ts'
 export { Fact, FactBatch, MAX_ARGUMENTS, MAX_FACTS } from './facts.ts'
 export { laravel } from './laravel.ts'

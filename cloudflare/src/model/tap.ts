@@ -139,11 +139,14 @@ export function failureSummary(message: AssistantMessage, status: number | undef
  * `prompt_tokens`: pi-ai reports cache reads and writes apart from `input`. pi's message always has a
  * usage, so a report of none in and none out cannot be told from no report, and counts as none.
  */
-export function reportedUsage(usage: Usage | undefined): { input: number; output: number } | null {
+export function reportedUsage(usage: Usage | undefined): { input: number; output: number; cached: number; reasoning: number } | null {
 	if (!usage) return null;
 	const counts = [usage.input, usage.output, usage.cacheRead ?? 0, usage.cacheWrite ?? 0];
 	if (!counts.every((count) => Number.isSafeInteger(count) && count >= 0)) return null;
 	const input = usage.input + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
 	if (input === 0 && usage.output === 0) return null;
-	return { input, output: usage.output };
+	const cached = usage.cacheRead ?? 0;
+	// A subset of `output`, when the provider reports it; 0 when it does not.
+	const reasoning = Number.isSafeInteger(usage.reasoning) && (usage.reasoning as number) >= 0 && (usage.reasoning as number) <= usage.output ? (usage.reasoning as number) : 0;
+	return { input, output: usage.output, cached, reasoning };
 }

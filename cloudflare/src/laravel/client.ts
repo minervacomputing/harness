@@ -16,9 +16,13 @@ export type LaravelClient = JsonifiedClient<ContractRouterClient<typeof laravel>
 /** A request to Laravel is given up after this long. */
 export const LARAVEL_TIMEOUT_MS = 20_000;
 
-/** The network requests to Laravel go out on: the Worker's `fetch`. Platform tests route it to the fake Laravel. */
-export const LARAVEL_NETWORK: { fetch: (env: Env) => typeof fetch } = {
+/**
+ * The network requests to Laravel go out on, the Worker's `fetch`, and the token they carry, MINERVA_LARAVEL_TOKEN. Platform
+ * tests route both to the fake Laravel, since the objects' bindings are fixed for the run.
+ */
+export const LARAVEL_NETWORK: { fetch: (env: Env) => typeof fetch; token: (env: Env) => string | null } = {
 	fetch: () => (input, init) => fetch(input, init),
+	token: (env) => token(env),
 };
 
 /** Laravel did not answer, or answered with something other than the contract: a redirect, a proxy's page, a malformed answer. */
@@ -41,6 +45,15 @@ export function retryable(error: unknown): boolean {
 	if (error instanceof LaravelUnreachable) return error.retryable;
 	if (error instanceof ORPCError) return error.status >= 500;
 	return false;
+}
+
+/**
+ * A failed request to Laravel as the engine may log it: an error in the contract's shape by its code and status alone, since
+ * its message is Laravel's text and could echo what a log must not hold; any other failure by the engine's own message.
+ */
+export function failureOf(error: unknown): string {
+	if (error instanceof ORPCError) return `${error.code} (HTTP ${error.status})`;
+	return error instanceof Error ? error.message : "no answer";
 }
 
 /** The token MINERVA_LARAVEL_TOKEN, a secret declared only where it is set (cloudflare.config.ts). */
@@ -89,7 +102,7 @@ async function answered(response: Response): Promise<Response> {
  */
 export function laravelClient(env: Env): LaravelClient {
 	const url = settings(env).laravelUrl;
-	const bearer = token(env);
+	const bearer = LARAVEL_NETWORK.token(env);
 	if (url === null || bearer === null) throw new Error("MINERVA_LARAVEL_URL and MINERVA_LARAVEL_TOKEN must be set for the engine to reach Laravel.");
 	const network = LARAVEL_NETWORK.fetch(env);
 	const client: LaravelClient = createORPCClient(
