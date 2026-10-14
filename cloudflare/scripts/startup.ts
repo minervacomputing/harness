@@ -17,8 +17,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "./run.ts";
 
-/** Active CPU in milliseconds, as `cf workers check` reports it, above which the build is refused. */
-const STARTUP_LIMIT_MS = 110;
+/**
+ * Active CPU in milliseconds, as `cf workers check` reports it, above which the build is refused. GitHub's runners
+ * differ in speed (one build measured 85 ms on one and 143 ms on another, 2026-10-14), so CI, which deploys only
+ * its test instance, allows more; a build Cloudflare would refuse still fails there, at the upload (10021).
+ */
+const STARTUP_LIMIT_MS = process.env.GITHUB_ACTIONS === "true" ? 200 : 110;
 const RUNS = 3;
 
 interface Check {
