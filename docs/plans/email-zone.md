@@ -1,5 +1,7 @@
 # Plan: email through the operator's zone
 
+Dropped 2026-10-14, never built: [product-and-engine.md](product-and-engine.md) gives up self-hosting, and Laravel sends Minerva's mail. Kept as the record of the design.
+
 Status: design, 2026-10-14; nothing is built. This is unit 3 of [self-hosting-and-cloud.md](self-hosting-and-cloud.md), Part 1. It follows unit 2 ([instance-names.md](instance-names.md)) and keeps its conventions: the checkout's lock before the instance's, atomic owner-only writes, symbolic links refused, `--instance` to choose, and every failed `cf` call stops the command. opencode reviewed a first draft, and its findings are folded in. Setup (unit 4) creates the sending subdomain and reuses the check below.
 
 ## Why

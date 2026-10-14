@@ -1,5 +1,7 @@
 # Design: a first message creates its conversation
 
+Dropped 2026-10-14, never built: under [product-and-engine.md](product-and-engine.md) Laravel creates a conversation and its first message in one transaction, and the Worker's conversation API goes. Kept as the record of the design.
+
 Unit A2b of the frontend cleanup, 2026-10-13. A design, not built. Goal: the new-chat page sends one request that creates the conversation and posts its first message under one `Idempotency-Key`, so it can repeat the whole send after a lost answer and never creates and then deletes a conversation.
 
 ## Today
