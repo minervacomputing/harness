@@ -367,7 +367,8 @@ describe("writing to an instance's directory", () => {
 		expect(existsSync(join(moved, "vars.env"))).toBe(false);
 	});
 
-	test("a write that fails leaves the file as it was and nothing beside it", () => {
+	// Root ignores the directory's permissions, so the write this test makes fail would succeed (as in cloud sessions).
+	test.skipIf(process.getuid?.() === 0)("a write that fails leaves the file as it was and nothing beside it", () => {
 		const instance = make("acme");
 		holdAs("acme");
 		put("acme", "vars.env", "A=0\n");
