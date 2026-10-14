@@ -15,7 +15,7 @@ export interface Bucket {
 	list(options: { prefix: string; cursor?: string; limit?: number }): Promise<{ objects: { key: string }[]; truncated: boolean; cursor?: string }>;
 }
 
-/** Where a conversation's blobs live: `blobs/<ws>/<conv>/` (plan: Data placement). */
+/** Where a conversation's blobs live: `blobs/<ws>/<conv>/` (ARCHITECTURE.md: Data placement). */
 export function conversationPrefix(workspaceId: string, conversationId: string): string {
 	return `blobs/${workspaceId}/${conversationId}/`;
 }

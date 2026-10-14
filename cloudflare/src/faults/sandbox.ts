@@ -1,5 +1,5 @@
 // The test build's Sandbox (src/faults/): production's class (src/sandbox/sandbox.ts) with the seams the
-// account tests need for the plan's Sandbox row, reachable only through the test build's token-gated driver
+// account tests need for the Sandbox row of ARCHITECTURE.md's Testing table, reachable only through the test build's token-gated driver
 // (lab.ts): faults in its container port (a hardening step that fails, destroys that fail), a shorter limit
 // for file operations, a reset of the
 // object that leaves its container running, a root shell for the tests' checks, and whether the container

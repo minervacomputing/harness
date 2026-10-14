@@ -1,6 +1,6 @@
 // What a caller (the Conversation Durable Object, the account tests' lab) does to get a container it may
 // use: start it for its attempt, harden it, verify it, and give up on any failure, which the Sandbox has
-// already answered by destroying the container (plan: The sandbox lifecycle). The result's fence is what
+// already answered by destroying the container (ARCHITECTURE.md: The sandbox lifecycle). The result's fence is what
 // every later call names, and what the ExecutionEnv (env.ts) is made with.
 
 import type { AttemptFence } from "../shared/rpc.ts";

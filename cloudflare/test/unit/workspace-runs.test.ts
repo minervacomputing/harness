@@ -1,4 +1,4 @@
-// Starting a run in the Workspace (plan: Starting a run), over node:sqlite: beginRun's
+// Starting a run in the Workspace (ARCHITECTURE.md: Starting a run), over node:sqlite: beginRun's
 // checks in order with their messages, the snapshot, idempotency, reservations, activation and
 // its answers, release, expiry, the run index, and the fault cases: a crash inside beginRun, a lost
 // activate answer, a revoke before the run exists and one between beginRun and activation.

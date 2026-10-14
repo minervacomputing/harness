@@ -1,4 +1,4 @@
-// The Workspace Durable Object: one per workspace (plan: Data placement), a thin wrapper around
+// The Workspace Durable Object: one per workspace (ARCHITECTURE.md: Data placement), a thin wrapper around
 // WorkspaceCore (core.ts), which holds the logic over the object's SQLite storage. It builds the core once
 // per instance, before any event is delivered, passes every RPC through, and keeps the object's one alarm
 // at the earliest time the core has work due (deliveries, expiries, sweeps, deletions).

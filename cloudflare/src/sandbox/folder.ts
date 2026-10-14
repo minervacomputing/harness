@@ -1,4 +1,4 @@
-// The folder in the container (plan: Checkpoints). Hydration writes the version's files as one tar archive
+// The folder in the container (ARCHITECTURE.md: Checkpoints). Hydration writes the version's files as one tar archive
 // into `tar -x` in the empty /workspace, reading each blob from R2 with its SHA-256 checked as it streams.
 // A checkpoint reads the files it is asked for as one archive from `tar -c` and streams each into R2 under
 // the key the Conversation recorded, with its known length and the SHA-256 R2 checks. Both tars run through
@@ -25,7 +25,7 @@ export type HydrateResult = { ok: true } | { ok: false; reason: "not_empty" | "i
 
 /**
  * Files to save, each already recorded by the Conversation Durable Object under its R2 key before it is
- * written (plan: Files), and each a regular file of the size the last scan reported. The Sandbox streams
+ * written (ARCHITECTURE.md: Files), and each a regular file of the size the last scan reported. The Sandbox streams
  * each from the container into R2 with its claimed SHA-256, which R2 checks, and reports what it stored. A
  * file without a key has contents the conversation already stores: its bytes are only hashed, as the proof
  * that the run has them, and nothing is written.
@@ -279,7 +279,7 @@ export async function hydrate(machine: Machine, bucket: BucketPort, plan: Hydrat
 type PlannedFile = CheckpointUploadPlan["files"][number];
 
 /**
- * Streams the plan's files from the container into R2 (plan: Checkpoints): one `tar -c` reads them in order,
+ * Streams the plan's files from the container into R2 (ARCHITECTURE.md: Checkpoints): one `tar -c` reads them in order,
  * as the agent's user, without recursing and with hard links stored as files. Each entry must be a regular
  * file with the planned name and size, in the planned order, and the archive must end right after the last;
  * anything else is a mismatch. A small file is read whole and put while the next ones arrive, a large one is

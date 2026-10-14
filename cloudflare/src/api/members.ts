@@ -41,7 +41,7 @@ export async function member(env: Env, session: CurrentSession, workspaceId: str
 		.bind(workspaceId, user.id)
 		.first<WorkspaceRow & { role: Role }>();
 	if (!row) throw new HttpError(unauthorized());
-	// A workspace whose object a failure left uninitialized is initialized on first use (plan: The web API).
+	// A workspace whose object a failure left uninitialized is initialized on first use (ARCHITECTURE.md: The web API).
 	if (row.initialized_at === null) {
 		const owner = await workspaceOwner(env.DB, row.id);
 		if (owner === null) throw new Error(`Workspace ${row.id} has no owner to initialize it for`);
@@ -52,7 +52,7 @@ export async function member(env: Env, session: CurrentSession, workspaceId: str
 }
 
 /**
- * A change that stopped runs is answered only once every stop is acknowledged (plan: Strict revocation).
+ * A change that stopped runs is answered only once every stop is acknowledged (ARCHITECTURE.md: Strict revocation).
  * When that takes more than 10 seconds the change stays saved, the runs stop shortly after, and the
  * request answers 503 `RUNS_STILL_STOPPING` with this (procedures.ts `checkStopped`).
  */

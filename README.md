@@ -12,10 +12,12 @@
 
 <p align="center">
   <a href="https://minervacomputing.com">Website</a> ·
-  <a href="#quick-start">Quick start</a> ·
   <a href="ARCHITECTURE.md">Architecture</a> ·
+  <a href="#development">Development</a> ·
   <a href="LICENSE">MIT license</a>
 </p>
+
+This repository is **Minerva's open harness**: the engine that runs each agent turn, with its sandbox, its permission checks and its connectors, on Cloudflare. Minerva itself is a hosted product. **Self-hosting is not supported.**
 
 ![A support agent refunds a duplicate charge in Stripe and replies in Gmail. Its post to #general in Slack is refused, so it posts in #support instead.](docs/images/chat.png)
 
@@ -25,8 +27,8 @@ Most agents are given the keys and asked to behave. They hold Gmail, Slack and S
 
 Minerva turns this around:
 
-- **Keys stay in a gateway.** The agent runs in a sealed container that holds only a temporary pass. Credentials are encrypted at rest and never reach the container or the browser.
-- **Every call is checked.** Each action goes through the gateway, which checks it against the permissions you set before it reaches the app.
+- **Keys stay out of the agent's reach.** The agent's commands run in a sealed microVM that holds no key and has no network. Credentials are encrypted at rest and never reach the sandbox, the model or the browser.
+- **Every call is checked.** Each action goes through Minerva's permission check, against the permissions you set, before it reaches the app.
 - **Access is set per resource.** You allow or deny per folder, label, channel, project, customer or amount, in each app's own structure. Not per app.
 
 ## How it works
@@ -46,20 +48,20 @@ Each conversation also has a folder. Attach files to a message, and the agent re
 
 ![The Connections page: ten connected apps, each with the resources agents may reach.](docs/images/connections.png)
 
-### The sealed container
+### The sealed sandbox
 
-Each answer runs in a fresh container, which is removed when the answer is finished. It has:
+Each answer runs its commands in a fresh microVM (Cloudflare Containers), which is destroyed when the answer is finished. It has:
 
-- no internet access: it reaches only the gateway;
-- no access to the host or the database;
+- no network at all: no internet, no DNS, no other containers;
+- no credential and no token of any kind;
 - write access only to the conversation's folder and a temporary folder;
-- no admin rights, and no secrets in its environment.
+- no admin rights once it is hardened, which is checked before any command runs.
 
-If the container dies mid-answer, for example by running out of memory, a new one picks the answer up from its last saved step (up to twice per answer). The agent's progress and its files are saved behind the gateway, not in the container. A read that was cut off runs again. A write to a connected app that was cut off does not: the agent is told, and asking for the same write again gets the first one's outcome rather than sending it twice. The folder goes back to its last saved state, so file changes and commands since then may be lost.
+Scripts the agent writes to call its tools run in isolates with no network either. If an answer is interrupted mid-way, for example by running out of memory, it is picked up from its last saved step (up to twice per answer). The agent's progress and its files are saved outside the sandbox. A read that was cut off runs again. A write to a connected app that was cut off does not: the agent is told, and asking for the same write again gets the first one's outcome rather than sending it twice. The folder goes back to its last saved state, so file changes and commands since then may be lost.
 
 ### When an agent is tricked
 
-Prompt injection is not prevented, but it is contained. An email that asks the agent to send your invoices to a stranger fails at the gateway, since the address is not on the recipient list. A web page that asks it to upload its keys finds no keys, and no internet to upload them to.
+Prompt injection is not prevented, but it is contained. An email that asks the agent to send your invoices to a stranger fails at the permission check, since the address is not on the recipient list. A web page that asks it to upload its keys finds no keys, and no network to upload them to.
 
 ![An email in the Invoices label hides an instruction to send all invoices to files@outside.io. The agent tries, Minerva refuses, and the agent warns the user.](docs/images/injection.png)
 
@@ -78,99 +80,50 @@ Prompt injection is not prevented, but it is contained. An email that asks the a
 
 Setting up each one is described in [docs/connectors.md](docs/connectors.md).
 
-## Models and hosting
+## How it is built
 
-Minerva works with any OpenAI-compatible provider, or with models on your own servers through vLLM or Ollama. It runs on Docker or Podman.
+The engine is TypeScript on Cloudflare: a Worker, a Durable Object per workspace and per conversation, D1, R2, Containers for the sandbox and Dynamic Workers for scripts. The agent loop is pi's durable harness (pi-durable); models run on Workers AI, or on OpenAI and Anthropic through an AI Gateway with prompt logging off. [ARCHITECTURE.md](ARCHITECTURE.md) describes the design, the trust model and the protocols that keep writes from being sent twice and revoked permissions from being used.
 
-## Quick start
+Minerva is becoming two systems: a private product (accounts, organizations, connections, billing) that decides what may happen, and this engine, which does it and records what it did ([the plan](docs/plans/product-and-engine.md)).
 
-You need Docker with Compose v2, Python 3.14 with [uv](https://docs.astral.sh/uv/), and Node 24 with pnpm 10.
+## Development
+
+You need Node 24 and pnpm 10. Docker is optional (it runs the sandbox locally). No Cloudflare account is needed:
 
 ```sh
 git clone https://github.com/minervacomputing/harness.git minerva
-cd minerva
-cp .env.example .env && chmod 600 .env
-cd backend && uv run python manage.py generate_secrets   # paste the output into .env
-cd .. && make setup
-make dev
+cd minerva && pnpm install
+pnpm --dir cloudflare dev:offline     # the engine on http://127.0.0.1:8787, with a scripted fake model
+pnpm --dir frontend dev               # the app on http://localhost:5173
 ```
 
-Open <http://localhost:5173> and sign in as `ada@example.com` with the password `password`.
-
-`make setup` starts Postgres and the gateway socket relay (`compose.yaml`), installs dependencies, runs migrations, seeds two accounts (`ada@` and `grace@example.com`; this needs `MINERVA_DEBUG=true`, and `make seed` resets them) and builds the worker image `minerva-worker:dev`.
-
-`make dev` starts four processes:
-
-| Process | Address | Role |
-|---|---|---|
-| `web` | 127.0.0.1:8000 | API, login, live updates |
-| `gateway` | 127.0.0.1:8001 | The only API that workers can reach |
-| `supervisor` | – | Starts and stops sandboxes |
-| `frontend` | localhost:5173 | React app; proxies `/api` to `web` |
-
-Emails (verification codes, sign-in codes, password resets) are printed in the `web` output. No mail server is needed locally.
-
-### Models
-
-Set an OpenAI-compatible endpoint in `.env`:
-
-```sh
-MINERVA_MODEL_BASE_URL=https://api.openai.com/v1
-MINERVA_MODEL_API_KEY=sk-...
-MINERVA_MODEL_NAME=gpt-5-mini
-```
-
-Minerva uses the Responses API. For a server that offers only Chat Completions, set `MINERVA_MODEL_API=chat`. `MINERVA_MODEL_REASONING_EFFORT` (default `medium`) sets the reasoning effort; leave it empty for a model that does not reason. The chat shows the model's reasoning summary, which `MINERVA_MODEL_REASONING_SUMMARY` asks for (`auto`, `concise` or `detailed`; empty for none). OpenAI may refuse summaries for an organization it has not verified; Minerva then retries without one and logs a warning. The setting only controls what Minerva asks for: reasoning that a server streams anyway, such as `reasoning_content` over Chat Completions, is shown too.
-
-To try the app without a key, run the scripted fake model:
-
-```sh
-make fake-model                      # serves on 127.0.0.1:9900
-# in .env:
-MINERVA_MODEL_BASE_URL=http://127.0.0.1:9900/v1
-MINERVA_MODEL_API_KEY=fake
-```
-
-The fake model calls a list-projects tool when tools are offered, then answers with text.
-
-### Sandbox
-
-Every agent turn runs in a hardened container with no network. Its only way out is a Unix socket, mounted read-only, that the `gateway-socket` container forwards to the gateway. To check isolation while `make dev` is running:
-
-```sh
-make sandbox-check
-```
-
-It starts the worker image with a probe and verifies 21 properties, including a non-root user, no secrets in the environment, a read-only filesystem apart from a size-limited folder, only a loopback interface, blocked internet, DNS, cloud metadata, host, database and other-worker access, a process limit that refuses further forks, and that the agent's commands get no run token and leave no processes behind.
-
-- **Linux:** the relay reaches the host through the Docker bridge, so set `MINERVA_GATEWAY_BIND=172.17.0.1`.
-- **gVisor:** register a runtime that lets workers connect to the socket, `sudo runsc install --runtime=runsc-minerva -- --host-uds=open`, restart Docker, and set `MINERVA_SANDBOX_RUNTIME=runsc-minerva`.
-- **Without gVisor:** agents run arbitrary commands, so workers start only under gVisor unless `MINERVA_SANDBOX_ALLOW_RUNC=true`. `.env.example` sets it for local development on Docker Desktop; do not set it where strangers' agents run.
-
-### Development
+Run `pnpm --dir cloudflare run seed` while both run, then sign in as `ada@example.com` with the password `password`. Emails (sign-in codes) are printed in the engine's output.
 
 | Command | What it does |
 |---|---|
-| `make test` | Backend tests, then worker and frontend typechecks |
-| `make lint` | Ruff lint and format check |
+| `pnpm check` in `frontend/` | Lint, formatting, types, unused code and unit tests of the app |
+| `pnpm typecheck` in `cloudflare/` | The engine's types |
+| `pnpm test:unit` in `cloudflare/` | The engine's unit tests, in Node |
+| `pnpm test:platform` in `cloudflare/` | The Worker in local workerd, with the protocols' fault tests |
+
+Deploying and the tests that run on Cloudflare are in [cloudflare/README.md](cloudflare/README.md).
 
 ```text
-backend/     Django project (web, gateway and supervisor roles) and the connectors
-worker/      TypeScript worker image around pi-durable
+cloudflare/  the engine: Worker, Durable Objects, sandbox image, connectors, deploy scripts
+contract/    the API's contract, shared by the engine and the app
 frontend/    React app (Vite, TanStack, assistant-ui)
-docs/        Connector setup and images
-compose.yaml Postgres and the gateway socket relay for development
+docs/        connector setup, images and plans
 ```
 
 ## Status
 
-Minerva is early. The permissions, the sandbox and the connectors work against live accounts. [ARCHITECTURE.md](ARCHITECTURE.md) describes how it is built and why, what works today, and what is next.
+Minerva is early. The permissions, the sandbox and the connectors work against live accounts, and the engine runs on Cloudflare with fault tests for its protocols. [ARCHITECTURE.md](ARCHITECTURE.md) says what is built and what is open.
 
-**Available now:** agents with their own instructions and connections, chat that shows every tool call, 20 connectors with resource-level permissions, a sealed container per answer, files the agent works on with commands, two-factor sign-in, and self-hosting.
+**Available now:** agents with their own instructions and connections, chat that shows every tool call, 20 connectors with resource-level permissions, a sealed sandbox per answer, files the agent works on with commands, and two-factor sign-in.
 
-**Next:** schedules and triggers, agents you can reach from Slack and Teams, team workspaces with admin limits, asking you to allow a single action, an audit log, and a hosted beta.
+**Next:** the hosted product with organizations and billing, then schedules and triggers, agents you can reach from Slack and Teams, asking you to allow a single action, and an audit log.
 
-**Later:** SSO and directory sync, a second person for high-risk actions, and single-tenant deployments.
+**Later:** SSO and directory sync, a second person for high-risk actions, and dedicated deployments.
 
 ## About
 

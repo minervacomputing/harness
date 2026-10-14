@@ -1,6 +1,6 @@
-# Minerva on Cloudflare
+# The engine
 
-The experiment of [docs/plans/cloudflare.md](../docs/plans/cloudflare.md): the same product as Workers, Durable Objects, D1 and R2. This directory holds steps 1 to 7: the protocols, the sandbox and files, code mode, the web API, the 20 connectors and the deploy scripts. The frontend stays in `frontend/` and becomes the Worker's static assets.
+Minerva's engine on Workers, Durable Objects, D1, R2 and Containers: the protocols, the sandbox and files, code mode, the web API, the 20 connectors and the deploy scripts. Its design is in [ARCHITECTURE.md](../ARCHITECTURE.md); this file is how to develop, test and deploy it. The frontend stays in `frontend/` and becomes the Worker's static assets.
 
 | Path | What |
 |---|---|
@@ -131,7 +131,7 @@ pnpm startup         # builds src/index.ts and measures its startup CPU locally,
 
 The account suites run through `scripts/suite.ts`, which chooses the instance (`--instance <name>`, or the only test instance for the test instance's suites), pins its account, and passes both to vitest (`MINERVA_INSTANCE`, `CLOUDFLARE_ACCOUNT_ID`); other arguments go to vitest. Each suite reads that instance's `vars.env` and `secrets.env` itself, never the shell's settings.
 
-The platform tests use `@cloudflare/vitest-plugin`, which loads `cloudflare.config.ts` itself (`experimental.newConfig`) in mode `test`, which builds the test Worker's entry (`src/faults/index.ts`) under a local name of its own (`minerva-local`, never an instance's, and only under vitest): the same Worker with the fake Notes connector, its provider object and the fault points. Remote bindings are off, so they never reach the account. `test/platform/protocols.test.ts` runs the real Workspace and Conversation objects, the executor with its ledger in the Conversation's SQLite, leases and refreshes against the fake provider, and the fake model, and injects the faults of the plan's Start and revocation, Attempts, Writes and Refresh rows (`ctx.abort()` at named points, with or without syncing first, lost answers, held steps). The account tests call the token-gated `/api/probe` (`src/http/probe.ts`), with the token derived from `MINERVA_SECRET_KEY`, and read the Workers' settings with `cf`.
+The platform tests use `@cloudflare/vitest-plugin`, which loads `cloudflare.config.ts` itself (`experimental.newConfig`) in mode `test`, which builds the test Worker's entry (`src/faults/index.ts`) under a local name of its own (`minerva-local`, never an instance's, and only under vitest): the same Worker with the fake Notes connector, its provider object and the fault points. Remote bindings are off, so they never reach the account. `test/platform/protocols.test.ts` runs the real Workspace and Conversation objects, the executor with its ledger in the Conversation's SQLite, leases and refreshes against the fake provider, and the fake model, and injects the faults of the Start and revocation, Attempts, Writes and Refresh rows of ARCHITECTURE.md's Testing table (`ctx.abort()` at named points, with or without syncing first, lost answers, held steps). The account tests call the token-gated `/api/probe` (`src/http/probe.ts`), with the token derived from `MINERVA_SECRET_KEY`, and read the Workers' settings with `cf`.
 
 ### Startup
 
@@ -237,7 +237,7 @@ It sends no email: the test build has no Email Sending binding, and its emails g
 
 Its download origin is `minerva-cf-test-files`, the same `files-worker/` built in mode `faults` (`files-worker/cloudflare.config.ts`): its own name, the test Worker's two buckets, `MINERVA_DOWNLOAD_ORIGIN` from the test instance's `vars.env` (the same file as the test app's, so the app signs links for it) and only `MINERVA_DOWNLOAD_KEY` of its `secrets.env`. The config builds that mode only for a test instance, and `scripts/deploy.ts` checks the built output against the test app's build before either is uploaded (Deploy, above).
 
-Keep it deployed for later steps. Never deploy the test build as `minerva-cf`, and never write its origin into tracked files.
+Keep it deployed. Never deploy the test build as `minerva-cf`, and never write its origin into tracked files.
 
 ## Resetting an instance
 

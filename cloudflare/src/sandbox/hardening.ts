@@ -1,4 +1,4 @@
-// Hardening and its verification (plan: The sandbox lifecycle). One root exec with `set -eu` makes the
+// Hardening and its verification (ARCHITECTURE.md: The sandbox lifecycle). One root exec with `set -eu` makes the
 // container fit for the agent: a tmpfs `/workspace` of the folder's limits owned by uid 1000, a tmpfs
 // `/tmp` mounted noexec with the commands' HOME and MPLCONFIGDIR in it, the agent cgroup with its process
 // and memory limits, and `/` remounted read-only. It prints the step it starts before each, so a failure

@@ -1,4 +1,4 @@
-// The model wrapper (plan: The harness, Model): the one pi-ai provider pi is opened with. pi stores a
+// The model wrapper (ARCHITECTURE.md: The harness, Model): the one pi-ai provider pi is opened with. pi stores a
 // session's model as `minerva/default` (the alias is always `default`) and resolves it at each
 // request, so every call, compaction's included, comes through here. For each request the wrapper:
 //

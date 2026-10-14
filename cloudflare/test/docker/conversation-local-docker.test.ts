@@ -1,4 +1,4 @@
-// The checkpoint barrier with the real container (plan: Checkpoints): an attempt's LocalRun
+// The checkpoint barrier with the real container (ARCHITECTURE.md: Checkpoints): an attempt's LocalRun
 // (src/conversation/local-run.ts) over the Sandbox's logic and the sandbox image in a local Docker container
 // (test/docker/sandbox-docker.ts), and the folder's store over node:sqlite (test/unit/files-support.ts). pi's
 // own read, write, edit and bash run through the container's ExecutionEnv; checkpoints kill strays, scan as

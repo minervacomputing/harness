@@ -1,4 +1,4 @@
-// Fault tests on the account, for what only the platform shows (plan: Testing): the test
+// Fault tests on the account, for what only the platform shows (ARCHITECTURE.md: Testing): the test
 // instance, built from the same code with the fake Notes connector, its provider object, fault points and a
 // token-gated driver (src/faults/, driver.ts). Each test makes its own workspace and
 // conversation, and they all run at once. One row per mechanism the platform could change; the cases of the
@@ -13,7 +13,7 @@
 // - a crash while a write is dispatched, after the provider applied it;
 // - a crash of the Workspace during a rotating refresh;
 // - one smoke run with Workers AI and the fake connector's tool;
-// - the local tools in the conversation's real container (plan: Checkpoints; the Checkpoints and Files
+// - the local tools in the conversation's real container (ARCHITECTURE.md: Checkpoints; the Checkpoints and Files
 //   rows): write, edit, Python through bash and read, published with the run and hydrated into the next
 //   turn's container; a detached writer, a FIFO and a symlink at the checkpoint; five attachments of 50 MiB
 //   (the folder's limit) copied, hydrated and kept in the version; crashes between a checkpoint's upload,

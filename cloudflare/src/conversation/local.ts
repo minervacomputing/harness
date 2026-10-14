@@ -1,5 +1,5 @@
-// The tools that work in the run's folder: pi-durable's own `read`, `write`, `edit` and `bash` (plan:
-// Checkpoints, The local tools). They run in the
+// The tools that work in the run's folder: pi-durable's own `read`, `write`, `edit` and `bash` (ARCHITECTURE.md:
+// Checkpoints; The sandbox lifecycle, The local tools). They run in the
 // conversation's container through the ExecutionEnv the call is given (src/sandbox/env.ts); this module
 // holds what decides when their results reach pi.
 //
@@ -66,7 +66,7 @@ export class FolderUnavailable extends Error {
 	override readonly name = "FolderUnavailable";
 }
 
-/** The container failed its hardening or its verification: the turn fails (plan: The sandbox lifecycle). */
+/** The container failed its hardening or its verification: the turn fails (ARCHITECTURE.md: The sandbox lifecycle). */
 export class SandboxRefused extends Error {
 	override readonly name = "SandboxRefused";
 }
@@ -86,7 +86,7 @@ function deferred<T = void>(): Deferred<T> {
 export interface LocalCallsOptions {
 	/** Saves the folder. Runs only while no local call is running. */
 	checkpoint: (options: { rehashAll?: boolean }) => Promise<void>;
-	/** Kills every process of the agent: `cgroup.kill` (plan: Checkpoints). Rejects when they would not die. */
+	/** Kills every process of the agent: `cgroup.kill` (ARCHITECTURE.md: Checkpoints). Rejects when they would not die. */
 	killStrays: () => Promise<void>;
 	/**
 	 * Ends the attempt so that nothing later is recorded. Called once; no held result is released, and no call
@@ -180,7 +180,7 @@ export class LocalCalls {
 
 	async #finish(): Promise<void> {
 		// Calls still running (an aborted one's command may outlive pi's wait) end first, and so does any
-		// checkpoint they ask for, so the final scan never meets a command (plan: Checkpoints).
+		// checkpoint they ask for, so the final scan never meets a command (ARCHITECTURE.md: Checkpoints).
 		for (;;) {
 			if (this.#failure) return this.#rejected();
 			if (this.#active) await this.#open.promise;

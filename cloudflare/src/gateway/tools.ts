@@ -1,6 +1,6 @@
 // What a run starts with: its tools, their labels and its instructions, with the rule for how many tools the model sees.
 // Pure functions: the Workspace Durable Object's `beginRun` calls `startSnapshot` in
-// the same synchronous step that registers the run (plan: Starting a run).
+// the same synchronous step that registers the run (ARCHITECTURE.md: Starting a run).
 
 import { runStartLabel } from "../lib/dates.ts";
 import type { AgentId, ConnectionId, ConversationId, EpochMs, UserId, WorkspaceId } from "../shared/rpc.ts";
@@ -26,7 +26,7 @@ export interface ToolRef {
 
 /**
  * What the Workspace Durable Object's `beginRun` computes, in one synchronous step with registering the
- * run as active, so a grant change processed afterwards revokes it (plan: Starting a run).
+ * run as active, so a grant change processed afterwards revokes it (ARCHITECTURE.md: Starting a run).
  */
 export interface StartSnapshot {
 	workspaceId: WorkspaceId;
@@ -161,7 +161,7 @@ export interface StartInput {
 	/** Every connection of the workspace: allows on providers no longer declared are dropped. */
 	providerOf: ProviderOf;
 	createdAt: EpochMs;
-	/** Settings' `runTimeoutMs`: the deadline is fixed at start (plan: Starting a run); null for none. */
+	/** Settings' `runTimeoutMs`: the deadline is fixed at start (ARCHITECTURE.md: Starting a run); null for none. */
 	runTimeoutMs: number | null;
 }
 

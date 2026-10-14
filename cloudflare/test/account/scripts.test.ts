@@ -1,4 +1,4 @@
-// Code mode on the account (plan: Code mode, Testing; table row Scripts), against the test
+// Code mode on the account (ARCHITECTURE.md: Code mode, Testing; table row Scripts), against the test
 // instance's lab Worker (test/account/scripts-worker/): production's Scripts object and conversation-side runner
 // behind a stand-in conversation. It settles the teardown the spikes disagreed on (an awaited loopback
 // entrypoint against resetting the Scripts object after each script) and runs the faults that need the real
@@ -191,7 +191,7 @@ describe("teardown: what ends a guest that ignores its stop", () => {
 	}, 60_000);
 });
 
-describe("the faults of the plan's Scripts row", () => {
+describe("the faults of the Scripts row", () => {
 	test("a CPU-bound guest is stopped by its CPU limit while the conversation goes on answering, and the next script runs", async () => {
 		const labName = `lab-${unique()}`;
 		const name = `s-${unique()}`;

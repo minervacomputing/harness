@@ -58,7 +58,7 @@ function passwordRefused(code: "PASSWORD_TOO_SHORT" | "PASSWORD_TOO_LONG", messa
 	return new ORPCError("VALIDATION_FAILED", { defined: true, status: REFUSALS.VALIDATION_FAILED, message: `password: ${message}`, data: { issues } });
 }
 
-// The first password of a user an email code signed up (plan: plain Better Auth). A password already set is changed with the
+// The first password of a user an email code signed up (migrations/0007_plain_auth.sql). A password already set is changed with the
 // current one or reset by email code, so this refuses it, before Better Auth spends a hash on it (its limiter does not count
 // `auth.api` calls). The mount's CSRF check and JSON reader apply, as to every procedure.
 export const passwordProcedures = api.password.router({

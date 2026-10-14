@@ -8,7 +8,7 @@
 // 403 from `server: cloudflare` whose body is "error code: 1003" (1002 for a name that resolves to such an
 // address, 1102 for loopback names such as `localhost` and `localtest.me`), or, since this request has an
 // Accept header, Cloudflare's error page headed "Error 1002" (gateway/http.ts `platformRefusal`). That is measured, not
-// documented (plan: Spike results), so it is recognised here and reported with the SITE_NOT_PUBLIC
+// documented (ARCHITECTURE.md: Spike results), so it is recognised here and reported with the SITE_NOT_PUBLIC
 // message. Everything else is still decided here, before anything is sent: the address is parsed and its
 // host checked (lib/sites.ts: no IP literal in any spelling, no special-use name, only names under a known
 // public suffix), redirects are followed only within the same host and never from https to http (anything

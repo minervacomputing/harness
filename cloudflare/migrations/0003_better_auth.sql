@@ -1,4 +1,4 @@
--- Accounts move to Better Auth (plan: The web API, decided 2026-10-12). This replaces 5a's account tables
+-- Accounts move to Better Auth (ARCHITECTURE.md: The web API, decided 2026-10-12). This replaces 5a's account tables
 -- (users, emails, passwords, two-factor, sessions, auth_flows, organizations) with Better Auth's, and
 -- rebuilds ours that referenced them (workspaces, memberships, oauth_flows) against the new ones.
 --
@@ -51,7 +51,7 @@ CREATE UNIQUE INDEX member_organization_user ON "member" ("organizationId", "use
 CREATE TABLE workspaces_v2 (
 	id TEXT NOT NULL PRIMARY KEY CHECK (length(id) = 36),
 	-- The organization that owns the workspace. Deleting it, or the personal owner, is refused while the
-	-- workspace exists: its Durable Object and files need deleting first (plan: Files, Deletion).
+	-- workspace exists: its Durable Object and files need deleting first (ARCHITECTURE.md: Files, Deletion).
 	organization_id TEXT NOT NULL REFERENCES "organization" (id) ON DELETE RESTRICT,
 	kind TEXT NOT NULL CHECK (kind IN ('personal', 'team')),
 	name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 120),

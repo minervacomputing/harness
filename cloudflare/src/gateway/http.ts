@@ -154,7 +154,7 @@ export class ProgrammingError extends Error {
 
 /**
  * A request the call's binding refused before anything was sent: the run may no longer start a provider
- * request (revoked, stopped, expired or replaced; plan: Strict revocation), or the call was cancelled.
+ * request (revoked, stopped, expired or replaced; ARCHITECTURE.md: Strict revocation), or the call was cancelled.
  */
 export class NotSent extends OperationError {
 	constructor() {

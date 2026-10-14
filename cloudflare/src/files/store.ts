@@ -1,4 +1,4 @@
-// A conversation's folder in its Durable Object (plan: Starting a run, Checkpoints, Files): versions with their lineage, the blobs they name by hash, what each run may read,
+// A conversation's folder in its Durable Object (ARCHITECTURE.md: Starting a run, Checkpoints, Files): versions with their lineage, the blobs they name by hash, what each run may read,
 // the attachments a message adds at the start of its run, checkpoints, publishing at a run's end, the
 // listing and downloads, and the sweep that deletes objects nothing names. The logic is over lib/sql.ts, so
 // it runs on a Durable Object's SQLite and, in the unit tests, on node:sqlite; R2 and the Workspace are
@@ -63,7 +63,7 @@ import { type Bucket, blobKey, conversationPrefix, deletePrefix } from "./object
 import { sha256HexSync } from "./sha256.ts";
 import type { ReservedUpload } from "./uploads.ts";
 
-/** A file a signed download link may name (plan: Files, Downloads). */
+/** A file a signed download link may name (ARCHITECTURE.md: Files, Downloads). */
 export interface DownloadTarget {
 	versionId: VersionId;
 	path: string;
@@ -91,7 +91,7 @@ export interface FolderUsage {
 }
 
 /**
- * What a checkpoint takes (plan: Checkpoints): the scan's report as the container
+ * What a checkpoint takes (ARCHITECTURE.md: Checkpoints): the scan's report as the container
  * made it, untrusted (ScanResult's `manifest`, `sizes` and `warnings`), and the version the working copy
  * was built on, which must still be the run's (its last checkpoint, else its base version).
  */
@@ -586,7 +586,7 @@ export class FolderStore {
 		return first<RunFolder>(this.#sql, "SELECT status, attempt, base_version_id, checkpoint_version_id, uploaded_bytes FROM runs WHERE id = ?", runId);
 	}
 
-	// Attachments (plan: Starting a run).
+	// Attachments (ARCHITECTURE.md: Starting a run).
 
 	/**
 	 * Before the start's transaction: the base version the message's uploads make, at the folder's root with
@@ -723,7 +723,7 @@ export class FolderStore {
 		});
 	}
 
-	// Checkpoints (plan: Checkpoints).
+	// Checkpoints (ARCHITECTURE.md: Checkpoints).
 
 	/**
 	 * Records the run's folder as the scan reports it, on top of its last checkpoint (or its base version):
@@ -1074,7 +1074,7 @@ export class FolderStore {
 		return at === null ? undefined : { rescheduleAt: at };
 	}
 
-	// Deletion (plan: Files, Deletion).
+	// Deletion (ARCHITECTURE.md: Files, Deletion).
 
 	/** Deletes every object under the conversation's prefix, recorded or not; returns how many it found. */
 	deleteObjects(): Promise<number> {

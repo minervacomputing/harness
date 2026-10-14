@@ -1,4 +1,4 @@
-// The local tools in the real Conversation Durable Object, in local workerd (plan: Checkpoints, The local
+// The local tools in the real Conversation Durable Object, in local workerd (ARCHITECTURE.md: Checkpoints, The local
 // tools): PiHarness with the fake model calling pi's read, write, edit and bash, the
 // folder's store on the object's SQLite and the local bucket, the Workspace and the fake Notes connector of
 // the test build, and a conversation's container played by test/platform/sandbox-memory.ts (local workerd
@@ -7,7 +7,7 @@
 // reads, the run's container destroyed at its end, a folder over its limits (folder_limit and its message),
 // a container that fails its hardening (worker_failed) or never starts (attempts until worker_exited), and
 // crashes between a checkpoint's upload and its record, its record and the release, and the release and
-// pi's commit (the plan's Checkpoints row), each resumed from the last checkpoint.
+// pi's commit (the Checkpoints row of ARCHITECTURE.md's Testing table), each resumed from the last checkpoint.
 
 import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";

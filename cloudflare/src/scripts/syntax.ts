@@ -1,4 +1,4 @@
-// The script's syntax, checked in the conversation before anything is loaded (plan: Code mode; spikes:
+// The script's syntax, checked in the conversation before anything is loaded (ARCHITECTURE.md: Code mode; spikes:
 // code mode). The platform's loader reports a syntax error without a position ("Unexpected end of
 // input"), and code such as `return 1 }\n…` would end the wrapper's function early and run the rest as
 // module code, so acorn (8.19.0, MIT) parses the module the guest gets (scripts/prelude.ts) and requires its

@@ -1,4 +1,4 @@
-// The attempt gate's decision (plan: Attempts and recovery): the restart rules and the cases of the gate
+// The attempt gate's decision (ARCHITECTURE.md: Attempts and recovery): the restart rules and the cases of the gate
 // proof's review.
 
 import { describe, expect, test } from "vitest";

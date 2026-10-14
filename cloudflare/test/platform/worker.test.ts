@@ -188,7 +188,7 @@ describe("D1 enforces the accounts schema's rules", () => {
 				.bind(ORG, USER)
 				.run(),
 		).rejects.toThrow(/UNIQUE/);
-		// Its Durable Object and files need deleting first (plan: Files, Deletion); a cascade would lose them.
+		// Its Durable Object and files need deleting first (ARCHITECTURE.md: Files, Deletion); a cascade would lose them.
 		await expect(env.DB.prepare(`DELETE FROM "user" WHERE id = ?`).bind(USER).run()).rejects.toThrow(/FOREIGN KEY/);
 		await expect(env.DB.prepare("DELETE FROM organization WHERE id = ?").bind(ORG).run()).rejects.toThrow(/FOREIGN KEY/);
 		await env.DB.prepare("DELETE FROM workspaces WHERE id = ?").bind(WS).run();

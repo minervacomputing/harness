@@ -1,4 +1,4 @@
-// The folder's tables in the Conversation Durable Object's SQLite (plan: Data placement): a
+// The folder's tables in the Conversation Durable Object's SQLite (ARCHITECTURE.md: Data placement): a
 // schema step of conversation/schema.ts, additive only (lib/sqlite.ts). Times are epoch milliseconds.
 
 /**
@@ -7,7 +7,7 @@
  * - `folder_version_parts`: a version's stored entries as canonical JSON, in parts under the 2 MB a value or
  *   a row may have (a manifest at the limits is about 11 MB).
  * - `folder_blobs`: the conversation's objects in R2, `blobs/<ws>/<conv>/<sha256>/<random>`, each recorded
- *   before it is written (plan: Files). `loose`: written ahead, not yet claimed, deleted once due an
+ *   before it is written (ARCHITECTURE.md: Files). `loose`: written ahead, not yet claimed, deleted once due an
  *   hour later; `stored`: named by a version or uploaded by a run, one per contents; `doomed`: to delete,
  *   then deleted once more a day after the first deletion (`deletions`), for a write still in flight.
  * - `folder_grants`: contents a run uploaded, which it may read and name until it ends (RunBlob).

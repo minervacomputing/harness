@@ -1,4 +1,4 @@
-// Strict revocation (plan: Strict revocation), over node:sqlite with fake
+// Strict revocation (ARCHITECTURE.md: Strict revocation), over node:sqlite with fake
 // Conversation objects: which runs each change stops and with which reason, the outbox written in the
 // change's own transaction, the acknowledgement barrier and its 10 s limit, the alarm's retries, the
 // emergency stop, and the fault cases: a crash after the grant commit, a lost acknowledgement, a

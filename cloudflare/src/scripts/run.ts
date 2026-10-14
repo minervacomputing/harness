@@ -1,4 +1,4 @@
-// One `run_script` execution from the conversation's side (plan: Code mode): the syntax
+// One `run_script` execution from the conversation's side (ARCHITECTURE.md: Code mode): the syntax
 // check, the session and its RpcTargets, the Scripts object's run, and the wall clock, which the
 // conversation enforces itself (120 s cut to the deadline), never the loaded guest.
 //

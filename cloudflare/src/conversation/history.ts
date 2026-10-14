@@ -1,6 +1,6 @@
 // History replay: what the model sees of a conversation's earlier turns. Only final
 // texts and file notes are replayed, from our own messages table, never pi's transcript, so pi's aborted
-// partial entries never reach the next turn (plan: Events and the stream). Each run is a fresh pi session
+// partial entries never reach the next turn (ARCHITECTURE.md: Events and the stream). Each run is a fresh pi session
 // seeded with this history when it is created; a resumed attempt keeps what its session holds.
 
 import { sliceText } from "../lib/text.ts";

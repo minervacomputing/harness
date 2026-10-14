@@ -1,6 +1,6 @@
-// Before a deploy: checks that the account's resources exist with the settings the plan relies on, then
+// Before a deploy: checks that the account's resources exist with the settings the engine relies on, then
 // applies D1's migrations (migrations/) before `cf deploy` uploads code that may need them. Migrations are
-// additive, so the running version keeps working (plan: Versions). cf would otherwise create a missing D1
+// additive, so the running version keeps working (ARCHITECTURE.md: Spike results, Versions). cf would otherwise create a missing D1
 // database or bucket with default settings on deploy (no lifecycle rule, no schema, no jurisdiction), so a
 // missing one stops the deploy here. Resource ids are never printed. scripts/deploy.ts runs it for the instance it
 // deploys (MINERVA_INSTANCE; by hand, `--instance <name>`, or `--test` for the only test instance, as

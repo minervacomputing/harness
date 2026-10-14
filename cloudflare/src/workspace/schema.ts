@@ -1,4 +1,4 @@
-// The Workspace Durable Object's tables (plan: Data placement). Steps are additive only and never edited
+// The Workspace Durable Object's tables (ARCHITECTURE.md: Data placement). Steps are additive only and never edited
 // once deployed (lib/sqlite.ts). There are no foreign keys: deletes that cascade (a connection's
 // grants, an agent's layer) are done by the code in the same transaction, the same way in workerd and in
 // node:sqlite. Times are epoch milliseconds, except `connections.expires_at` (epoch seconds, as the
@@ -25,7 +25,7 @@ CREATE TABLE workspace (
 
 -- Credentials are an AES-GCM envelope of the JSON payload (lib/encryption.ts) and
 -- key_version its key id. The scopes and expiry are kept beside it in the clear (neither is secret), so a
--- lease decides about consent and refresh without decrypting. refresh_state: plan, Credentials and refresh.
+-- lease decides about consent and refresh without decrypting. refresh_state: ARCHITECTURE.md, Credentials and refresh.
 CREATE TABLE connections (
 	id TEXT PRIMARY KEY,
 	provider TEXT NOT NULL CHECK (length(provider) <= 64),
@@ -101,7 +101,7 @@ CREATE TABLE conversations (
 CREATE INDEX conversations_user ON conversations (user_id, updated_at);
 CREATE INDEX conversations_agent ON conversations (agent_id);
 
--- The run registry and index (plan: Starting a run, Strict revocation). starting: registered by beginRun,
+-- The run registry and index (ARCHITECTURE.md: Starting a run, Strict revocation). starting: registered by beginRun,
 -- not yet activated; active: activated; ended: released; expired: not activated within ten minutes.
 CREATE TABLE runs (
 	id TEXT PRIMARY KEY,
@@ -128,7 +128,7 @@ CREATE TABLE run_answers (
 	PRIMARY KEY (run_id, part)
 ) STRICT;
 
--- Unattached uploads, recorded before their object is written (plan: Files). size is the bytes reserved
+-- Unattached uploads, recorded before their object is written (ARCHITECTURE.md: Files). size is the bytes reserved
 -- against the workspace's quota while pending, the stored size once complete. run_id: reserved by that run.
 CREATE TABLE uploads (
 	id TEXT PRIMARY KEY,
@@ -153,7 +153,7 @@ CREATE TABLE doomed_objects (
 	attempts INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 
--- The revocation outbox: one cancel per run, written with the change that causes it (plan: Strict revocation).
+-- The revocation outbox: one cancel per run, written with the change that causes it (ARCHITECTURE.md: Strict revocation).
 CREATE TABLE outbox (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	run_id TEXT NOT NULL,
@@ -168,7 +168,7 @@ CREATE TABLE outbox (
 CREATE INDEX outbox_pending ON outbox (acknowledged_at, next_attempt_at);
 CREATE INDEX outbox_run ON outbox (run_id);
 
--- Conversations to destroy (plan: Files, Deletion): once their runs acknowledged the cancel, then again an
+-- Conversations to destroy (ARCHITECTURE.md: Files, Deletion): once their runs acknowledged the cancel, then again an
 -- hour after the first deletion finished, for a write that was already in flight.
 CREATE TABLE purges (
 	conversation_id TEXT PRIMARY KEY,

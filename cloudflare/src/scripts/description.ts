@@ -1,5 +1,5 @@
 // `run_script`'s description (pi-codemode's, kept verbatim, since the model's use of it depends on it), with
-// the differences this platform has, which it states (plan: Code mode): eval is not available and timers
+// the differences this platform has, which it states (ARCHITECTURE.md: Code mode): eval is not available and timers
 // exist, computation is cut after 30 seconds, a guest may hold about 256 MB, and what a script printed
 // since it last waited on a call or a timer is lost when it is stopped for either. The declarations are
 // pi-codemode's rendering of the tools' schemas.

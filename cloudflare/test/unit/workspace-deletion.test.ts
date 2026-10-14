@@ -1,4 +1,4 @@
-// Deleting a conversation or an agent (plan: Files, Deletion), over node:sqlite:
+// Deleting a conversation or an agent (ARCHITECTURE.md: Files, Deletion), over node:sqlite:
 // tombstone first, cancel through the outbox and wait for the acknowledgement, then the Conversation
 // object destroys itself, and again an hour later; an alarm finishes a deletion that was interrupted.
 

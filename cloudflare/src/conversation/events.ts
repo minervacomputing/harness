@@ -39,14 +39,14 @@ export type RunEnd =
 	| { status: "completed"; code: ""; message: "" }
 	| { status: "cancelled"; code: "cancelled"; message: "Stopped." }
 	| { status: "cancelled"; code: RevocationReason; message: "Stopped because permissions changed." }
-	/** An operator's emergency stop (plan: Strict revocation, Emergency stop). */
+	/** An operator's emergency stop (ARCHITECTURE.md: Strict revocation, Emergency stop). */
 	| { status: "cancelled"; code: "emergency_stop"; message: "Stopped." }
 	| { status: "timed_out"; code: "timed_out"; message: "The run took too long." }
 	| { status: "failed"; code: "sandbox_failed"; message: "The isolated worker could not start." }
 	| { status: "failed"; code: "worker_silent"; message: "The worker did not start." }
 	| { status: "failed"; code: "worker_exited"; message: "The worker stopped unexpectedly." }
 	| { status: "failed"; code: "worker_failed"; message: "The agent could not finish this run. Try again." }
-	/** The run was stored, but the Workspace expired its start before `activate` reached it (plan: Starting a run). */
+	/** The run was stored, but the Workspace expired its start before `activate` reached it (ARCHITECTURE.md: Starting a run). */
 	| { status: "failed"; code: "start_expired"; message: "The agent could not finish this run. Try again." }
 	| { status: "failed"; code: "folder_limit"; message: string }
 	| { status: "failed"; code: "state_too_large"; message: "This run's saved state grew too large." }
@@ -86,7 +86,7 @@ export const WORKER_EXITED: RunEnd = { status: "failed", code: "worker_exited", 
 export const WORKER_FAILED: RunEnd = { status: "failed", code: "worker_failed", message: "The agent could not finish this run. Try again." };
 export const START_EXPIRED: RunEnd = { status: "failed", code: "start_expired", message: "The agent could not finish this run. Try again." };
 
-/** How a cancel from outside the object ends its run (plan: Strict revocation). */
+/** How a cancel from outside the object ends its run (ARCHITECTURE.md: Strict revocation). */
 export function endFor(reason: CancelReason): RunEnd {
 	if (reason === "cancelled") return CANCELLED;
 	if (reason === "emergency_stop") return EMERGENCY_STOP;

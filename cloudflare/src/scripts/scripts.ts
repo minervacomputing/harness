@@ -1,4 +1,4 @@
-// The Scripts Durable Object (`ScriptsApi`; plan: Code mode), one per conversation.
+// The Scripts Durable Object (`ScriptsApi`; ARCHITECTURE.md: Code mode), one per conversation.
 // It loads each script as a Dynamic Worker with no network (`globalOutbound: null`), no `env` and a CPU
 // limit, and runs it. A guest runs on the thread of the object that loaded it, so a CPU-bound script blocks
 // this object, never the conversation, which keeps the wall clock and answers its other requests meanwhile.
@@ -75,7 +75,7 @@ export interface ScriptsApi {
 	 */
 	reset(fence: ScriptFence, answered?: boolean): Promise<{ reset: true } | { refused: "stale" }>;
 	/**
-	 * For the conversation's deletion (plan: Files, Deletion), once it refuses new runs: deletes the fence and
+	 * For the conversation's deletion (ARCHITECTURE.md: Files, Deletion), once it refuses new runs: deletes the fence and
 	 * resets the object, which breaks the call once done.
 	 */
 	destroy(): Promise<void>;

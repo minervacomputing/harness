@@ -1,4 +1,4 @@
-// The Sandbox's logic (`SandboxApi`; plan: The sandbox lifecycle), over its ports so
+// The Sandbox's logic (`SandboxApi`; ARCHITECTURE.md: The sandbox lifecycle), over its ports so
 // it runs the same in the Durable Object, in unit tests and against a local container.
 //
 // The container's lifecycle is `starting → hardening → verified → in_use → destroying`, each state written

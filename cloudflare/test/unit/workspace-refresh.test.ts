@@ -1,4 +1,4 @@
-// Credential leases and refresh (plan: Credentials and refresh), over node:sqlite with a fake token
+// Credential leases and refresh (ARCHITECTURE.md: Credentials and refresh), over node:sqlite with a fake token
 // endpoint: leases and refreshes, the refusal codes, the single flight, and the fault cases: a crash during a rotating
 // refresh (restart while `refreshing`) and a reconnect or delete during one.
 

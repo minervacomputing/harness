@@ -53,7 +53,7 @@ const REQUIRED: Record<string, () => string> = {
 	MINERVA_ENCRYPTION_KEYS: () => `v1:${urlsafe(32)}`,
 	// Signs download links; the download Worker holds it too.
 	MINERVA_DOWNLOAD_KEY: () => urlsafe(32),
-	// Makes its holder the instance's first admin, once (plan: Configuration; POST /api/setup). The operator
+	// Makes its holder the instance's first admin, once (ARCHITECTURE.md: Configuration; POST /api/setup). The operator
 	// reads it from this file; once claimed it opens nothing.
 	MINERVA_SETUP_KEY: () => urlsafe(32),
 };

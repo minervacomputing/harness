@@ -1,4 +1,4 @@
-// Accounts: Better Auth's routes at /api/auth/* (its wire format, plan: The web API) and the development
+// Accounts: Better Auth's routes at /api/auth/* (its wire format, ARCHITECTURE.md: The web API) and the development
 // seed (6.4). Who is signed in, their first password, the first-run setup and the instance's administration
 // are the contract's (api/accounts.ts). Better Auth's routes check their own origin rules, so the router exempts POSTs to them,
 // and only them, from our CSRF check (http/router.ts).

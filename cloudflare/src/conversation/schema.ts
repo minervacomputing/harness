@@ -1,4 +1,4 @@
-// The Conversation Durable Object's own tables (plan: Data placement). pi keeps its tables under `pi_` and
+// The Conversation Durable Object's own tables (ARCHITECTURE.md: Data placement). pi keeps its tables under `pi_` and
 // the Agents SDK under `cf_agents_`; the folder's versions and the script store add their own steps here as
 // they land (additive only, lib/sqlite.ts).
 
@@ -129,7 +129,7 @@ CREATE TABLE tool_arguments (
 ) STRICT, WITHOUT ROWID;
 `,
 	},
-	// The write ledger and page tokens (gateway/ledger.ts, gateway/page-tokens.ts; plan: Writes).
+	// The write ledger and page tokens (gateway/ledger.ts, gateway/page-tokens.ts; ARCHITECTURE.md: Writes).
 	{ id: 2, sql: [...LEDGER_SCHEMA, ...PAGE_TOKEN_SCHEMA].join(";\n") },
 	// A run's snapshot too long for one value (every grant of the user is in it): in parts under the 2 MB a
 	// string or a row may have, with runs.snapshot left empty. One that fits stays in runs.snapshot.

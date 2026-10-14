@@ -119,9 +119,9 @@ export function quotaRefusal(limit: FolderLimit): string {
 	return `The folder is over its ${limit} limit.`;
 }
 
-/** Loose objects not claimed within this are deleted (plan: Files). */
+/** Loose objects not claimed within this are deleted (ARCHITECTURE.md: Files). */
 export const LOOSE_GRACE_MS = 60 * 60 * 1000;
 /** An object is deleted once more this long after its first deletion, for a write that was still in flight. */
 export const SECOND_DELETION_MS = 24 * 60 * 60 * 1000;
-/** A download link is good for this long (plan: Files, Downloads). */
+/** A download link is good for this long (ARCHITECTURE.md: Files, Downloads). */
 export const LINK_LIFETIME_MS = 5 * 60 * 1000;

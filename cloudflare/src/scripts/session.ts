@@ -1,4 +1,4 @@
-// The host's side of one script (plan: Code mode), in the Conversation Durable Object: what the guest's
+// The host's side of one script (ARCHITECTURE.md: Code mode), in the Conversation Durable Object: what the guest's
 // RpcTarget does with its calls and prints. The guest is hostile: every bound is applied here, whatever the
 // prelude did.
 //

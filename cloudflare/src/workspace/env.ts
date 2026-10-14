@@ -23,7 +23,7 @@ export function conversationClient(env: Env, workspace: () => WorkspaceRef): Con
 		// The Conversation deletes its storage and then resets itself, so a call may break after it resolved;
 		// one that throws is tried again, and a second call on the emptied object resolves too. Its objects in
 		// R2 are deleted here too, after it: the second deletion an hour later finds an emptied object, which
-		// no longer knows its prefix, and a write still in flight may have landed since (plan: Files, Deletion).
+		// no longer knows its prefix, and a write still in flight may have landed since (ARCHITECTURE.md: Files, Deletion).
 		destroy: async (conversationId) => {
 			await object(conversationId).destroy();
 			const ref = workspace();

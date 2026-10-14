@@ -3,7 +3,7 @@
 // class with fault seams) named by the test, through the same calls the Conversation makes: prepare a
 // container (start, harden, verify), commands and file operations through the ExecutionEnv with output
 // coming back through an RpcTarget, pi's ExecutionEnv conformance suite, the probe, hydration, scans and
-// checkpoints of a folder, and the plan's Sandbox fault rows (test/account/sandbox.test.ts,
+// checkpoints of a folder, and the Sandbox fault rows of ARCHITECTURE.md's Testing table (test/account/sandbox.test.ts,
 // sandbox-faults.test.ts). The tests' client (test/account/lab.ts) keeps the fence a prepare answered and
 // sends it back with each later operation. Never part of the production Worker.
 

@@ -1,4 +1,4 @@
-// The sandbox on the account (plan: Testing, Account tests; The sandbox lifecycle), through the test instance's
+// The sandbox on the account (ARCHITECTURE.md: Testing, Account tests; The sandbox lifecycle), through the test instance's
 // sandbox lab (lab.ts), which runs production's Sandbox object with its container: one
 // container, prepared once and used by each test in turn: the hardening's postconditions, pi's ExecutionEnv
 // conformance suite (24 cases, one skipped) over the adapter with output through an RpcTarget, the probe

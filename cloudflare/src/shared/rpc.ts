@@ -25,7 +25,7 @@ export type EpochMs = number;
 /** A lowercase SHA-256 in hex: 64 characters. */
 export type Sha256 = string;
 
-/** Where a workspace's objects live (plan: Data placement, Addressing). The same name with and without a jurisdiction is a different, empty object. */
+/** Where a workspace's objects live (ARCHITECTURE.md: Data placement, Addressing). The same name with and without a jurisdiction is a different, empty object. */
 export interface WorkspaceRef {
 	id: WorkspaceId;
 	jurisdiction: "eu" | null;
@@ -46,7 +46,7 @@ export interface Caller {
 /**
  * The run and attempt an asynchronous operation started under. Every operation carries it and is refused
  * when either is no longer current; the one exception is settling a write an older attempt already
- * dispatched, which is always recorded (plan: Attempts and recovery, Fencing).
+ * dispatched, which is always recorded (ARCHITECTURE.md: Attempts and recovery, Fencing).
  */
 export interface AttemptFence {
 	runId: RunId;

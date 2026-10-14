@@ -1,4 +1,4 @@
-// Download links (plan: Files, Downloads): the app signs one for a file the caller may download, and the
+// Download links (ARCHITECTURE.md: Files, Downloads): the app signs one for a file the caller may download, and the
 // download Worker (files-worker/) checks it and streams the object. A link is an HMAC
 // with MINERVA_DOWNLOAD_KEY over the download origin, the workspace and its jurisdiction, the conversation,
 // the version, the path, the user, the object's key and an expiry five minutes ahead. The key and the

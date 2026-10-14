@@ -3,7 +3,7 @@
 // adapters: a Durable Object's `ctx.storage.sql` with `transactionSync`, and node:sqlite's `DatabaseSync`
 // for unit tests, so the same code is tested on real SQLite. Everything is synchronous on purpose: in a
 // Durable Object, no other event runs between two statements without an await between them, which is what
-// makes the checks and the claims they decide atomic (plan: Starting a run, Writes).
+// makes the checks and the claims they decide atomic (ARCHITECTURE.md: Starting a run, Writes).
 //
 // A statement that changes rows says which with RETURNING, rather than through a count: a Durable
 // Object's `rowsWritten` counts index writes too.

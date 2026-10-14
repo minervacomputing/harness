@@ -1,11 +1,11 @@
-// The Conversation Durable Object (`ConversationApi`; plan: Data placement, Protocols): one per chat.
+// The Conversation Durable Object (`ConversationApi`; ARCHITECTURE.md: Data placement, Protocols): one per chat.
 // It extends the Agents SDK's Agent and runs pi-durable through PiHarness, one pi session per run, with the
 // `minerva` extension's tools and the model wrapper of src/model/. It owns its messages, runs, attempts and
 // run events, and the start protocol's side of the Workspace's registry. Nothing routes to it but our own
 // typed RPC and the stream's WebSocket (no `routeAgentRequest`).
 //
 // Every event that opens pi (an RPC, a request, an alarm) goes through PiHarness's harness factory, where
-// the attempt gate runs first, before `Harness.open` (plan: Attempts and recovery). The constructor holds
+// the attempt gate runs first, before `Harness.open` (ARCHITECTURE.md: Attempts and recovery). The constructor holds
 // nothing of PiHarness: the platform sometimes builds an instance it never delivers an event to.
 
 import { createModels } from "@earendil-works/pi-ai";
@@ -99,7 +99,7 @@ export interface CancelAck {
 	runId: RunId;
 	/**
 	 * `stopping`: the run's local revoked flag is set and the run is being stopped. `tombstoned`: the run is
-	 * not stored yet, so a start that is still in flight stores it as cancelled (plan: Strict
+	 * not stored yet, so a start that is still in flight stores it as cancelled (ARCHITECTURE.md: Strict
 	 * revocation). `ended`: it had already ended.
 	 */
 	state: "stopping" | "tombstoned" | "ended";
@@ -128,7 +128,7 @@ export interface ConversationApi {
 	getRunEvents(caller: Caller, runId: RunId, page: EventPage): Promise<RunEvent[] | null>;
 
 	/**
-	 * Starts a turn (plan: Starting a run): 404, 400 "Write a message or attach a file.", 409 "Wait
+	 * Starts a turn (ARCHITECTURE.md: Starting a run): 404, 400 "Write a message or attach a file.", 409 "Wait
 	 * for the current answer to finish, or stop it.", or the attachment refusals of `beginRun`. Every
 	 * refusal leaves nothing behind (no message, no run, uploads untouched), which the composer relies on.
 	 * Before its transaction it copies each reserved upload whose contents the conversation does not hold
@@ -166,7 +166,7 @@ export interface ConversationApi {
 	resolveDownload(caller: Caller, versionId: VersionId | null, path: string): Promise<DownloadTarget | null>;
 
 	/**
-	 * Tombstone, cancel and wait, then delete storage and the R2 prefix (plan: Files, Deletion). Driven by the
+	 * Tombstone, cancel and wait, then delete storage and the R2 prefix (ARCHITECTURE.md: Files, Deletion). Driven by the
 	 * Workspace, which calls it again until it resolves. It overrides the Agents SDK's own `destroy()`, which
 	 * resets the object after it deletes the storage, so the caller may see the connection break once the
 	 * deletion is done: a broken call after a resolved one, or a second call that finds nothing, is done.
@@ -203,7 +203,7 @@ const PI_SETTINGS: HarnessSettings = {
 export const BUSY_MESSAGE = "Wait for the current answer to finish, or stop it.";
 export const EMPTY_MESSAGE = "Write a message or attach a file.";
 
-/** A watch job wakes the object this long after a run is stored, until pi has its input (plan: Attempts and recovery). */
+/** A watch job wakes the object this long after a run is stored, until pi has its input (ARCHITECTURE.md: Attempts and recovery). */
 export const WATCH_MS = 20_000;
 /** An answer is a WorkerEvent text of at most this many characters; a longer one fails its run. */
 export const ANSWER_CHARS = 100_000;
@@ -217,7 +217,7 @@ const LOST_WRITE_GRACE_MS = 30_000;
 const RPC_WAIT_MS = 10_000;
 const RELEASE_RETRY_MS = 30_000;
 const LIVE_TASKS = ["pending", "running", "waiting", "completing"] as const;
-/** The reason an attempt's object is reset when its local calls cannot go on (plan: Checkpoints). */
+/** The reason an attempt's object is reset when its local calls cannot go on (ARCHITECTURE.md: Checkpoints). */
 export const ATTEMPT_ENDED = "The attempt ended: ";
 
 /** A conversation, or a 404: another user's conversation looks like none. */
@@ -378,7 +378,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		});
 	}
 
-	/** The revocation's cancel (plan: Strict revocation): acknowledged only once the flag is committed on its own. */
+	/** The revocation's cancel (ARCHITECTURE.md: Strict revocation): acknowledged only once the flag is committed on its own. */
 	async cancel(runId: RunId, reason: CancelReason, entryId: number): Promise<CancelAck> {
 		return this.#store.outside((): CancelAck => {
 			const run = this.#store.run(runId);
@@ -406,7 +406,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * Deletes the conversation (plan: Files, Deletion): tombstoned first, so it refuses new runs; its active
+	 * Deletes the conversation (ARCHITECTURE.md: Files, Deletion): tombstoned first, so it refuses new runs; its active
 	 * run cancelled ("Stopped.") and pi stopped; its objects in R2 deleted; then the Agent's own teardown
 	 * deletes all storage and resets the object, so the caller may see the connection break after this
 	 * resolves. The Workspace drives it, and calls it again until it returns.
@@ -444,7 +444,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		}
 	}
 
-	// The start protocol (plan: Starting a run).
+	// The start protocol (ARCHITECTURE.md: Starting a run).
 
 	/** One start at a time per run: a resumed start and the message's own share the same `beginRun`. */
 	#begin(runId: RunId): Promise<Outcome<PostedView>> {
@@ -526,7 +526,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		} catch (error) {
 			// The store refused the start (a value or a row past the platform's limits, say). That would happen
 			// again every time the watch sent it, holding the conversation busy: it is refused now instead, and
-			// its registration released (plan: Starting a run: a refusal leaves nothing behind).
+			// its registration released (ARCHITECTURE.md: Starting a run: a refusal leaves nothing behind).
 			this.#log("a start could not be stored", error);
 			return this.#refuseStart(runId, refuse("START_FAILED", START_FAILED));
 		}
@@ -555,7 +555,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * `activate` (plan: Starting a run): until the Workspace answers, sent again by the watch job and whenever the object
+	 * `activate` (ARCHITECTURE.md: Starting a run): until the Workspace answers, sent again by the watch job and whenever the object
 	 * starts. Active: the run is provisioned and its loop starts. Revoked: it stops with that reason. Expired:
 	 * it fails (`start_expired`). Ended: the Workspace no longer tracks it, so no revocation could reach it;
 	 * it stops ("Stopped.").
@@ -638,7 +638,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		for (const runId of this.#store.releases()) await this.#releaseRefused(runId);
 	}
 
-	// The harness factory and the attempt gate (plan: Attempts and recovery).
+	// The harness factory and the attempt gate (ARCHITECTURE.md: Attempts and recovery).
 
 	async #openPi(storage: SqliteStorage, context: Parameters<typeof Harness.open>[2]): Promise<Harness> {
 		this.#piStorage = storage;

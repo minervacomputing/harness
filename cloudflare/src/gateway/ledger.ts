@@ -1,4 +1,4 @@
-// The write ledger, in the Conversation Durable Object's SQLite (plan: Writes). A write is claimed by its key before anything is sent; one write is
+// The write ledger, in the Conversation Durable Object's SQLite (ARCHITECTURE.md: Writes). A write is claimed by its key before anything is sent; one write is
 // dispatched at a time per run, with its deadline fixed at dispatch; a write the provider refused is
 // forgotten (deleted) so it can be tried again; an applied one is recorded and answers repeats; one whose
 // outcome is unknown is uncertain, which pauses every later write in the run for good.
@@ -220,7 +220,7 @@ export class WriteLedger {
 	}
 
 	/**
-	 * For the restart gate, in the transaction of its decision (plan: Attempts and recovery, Writes): every
+	 * For the restart gate, in the transaction of its decision (ARCHITECTURE.md: Attempts and recovery, Writes): every
 	 * write of the run still dispatched becomes uncertain, since the instance that dispatched it died and can
 	 * never settle it.
 	 */

@@ -1,4 +1,4 @@
-// Better Auth's configuration (plan: The web API), shared by the Worker (auth.ts) and by the CLI that
+// Better Auth's configuration (ARCHITECTURE.md: The web API), shared by the Worker (auth.ts) and by the CLI that
 // generates the D1 schema (scripts/auth-schema.ts), so the migrations are made from the same plugins and
 // fields the Worker runs with. Everything that touches the Worker's bindings comes in through `AuthDeps`;
 // this module imports nothing that needs the runtime.
@@ -149,7 +149,7 @@ export function authOptions(deps: AuthDeps) {
 			}),
 			everyFirstFactor(twoFactor({ issuer: "Minerva" })),
 			organization({
-				// Organizations are made by provisioning only; the UI does not show them yet (plan: The web API).
+				// Organizations are made by provisioning only; the UI does not show them yet (ARCHITECTURE.md: The web API).
 				allowUserToCreateOrganization: false,
 				disableOrganizationDeletion: true,
 				schema: {

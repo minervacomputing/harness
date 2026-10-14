@@ -1,4 +1,4 @@
-// Uploads and bytes in the Workspace (plan: Files), over node:sqlite: an upload is
+// Uploads and bytes in the Workspace (ARCHITECTURE.md: Files), over node:sqlite: an upload is
 // recorded pending with a byte reservation before its object is written and complete after; a run start
 // reserves it and activation consumes it; alarms delete what was left behind. The workspace's bytes are
 // checked after every crash point: they are derived from the rows, so a crash can never leave them wrong.

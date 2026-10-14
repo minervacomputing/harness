@@ -6,7 +6,7 @@ export const PENDING_UPLOADS = 30;
 export const UPLOADS_IN_FLIGHT = 3;
 /** A body still arriving 15 minutes after its start is refused. */
 export const UPLOAD_DEADLINE_MS = 15 * 60 * 1000;
-/** Pending uploads whose object never completed are deleted after this (plan: Files). */
+/** Pending uploads whose object never completed are deleted after this (ARCHITECTURE.md: Files). */
 export const PENDING_UPLOAD_LIFETIME_MS = 60 * 60 * 1000;
 /** Unattached uploads are deleted a day after they were recorded, as the bucket's lifecycle rule does. */
 export const UPLOAD_LIFETIME_MS = 24 * 60 * 60 * 1000;

@@ -1,4 +1,4 @@
-// Strict revocation inside one call (plan: Strict revocation): the executor checks the run right before every
+// Strict revocation inside one call (ARCHITECTURE.md: Strict revocation): the executor checks the run right before every
 // provider request a call makes, not only before the call starts, so a revocation that lands while one of the
 // call's requests is in flight, while its client opens, or while prepare() reads, lets no later request of
 // that call out, and the run is checked again once the policy allowed the call, so a replaced attempt's call
@@ -171,7 +171,7 @@ describe("a revocation during a call", () => {
 
 	test("an attempt replaced while prepare() reads: the call ends RUN_ENDED, though execute() would send nothing", async () => {
 		// The check after the policy: no request of execute() would be refused, and the run is still active
-		// under its new attempt, so only that check stops the replaced attempt's call (plan: Fencing).
+		// under its new attempt, so only that check stops the replaced attempt's call (ARCHITECTURE.md: Attempts and recovery, Fencing).
 		const provider = new Provider();
 		const run = await start(provider);
 		provider.during = () => run.replace();

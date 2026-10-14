@@ -2,7 +2,7 @@ import { bindings, defineConfig } from "cf/config";
 import * as entrypoint from "./src/index.ts" with { type: "cf-worker" };
 import { type Instance, LOCAL_INSTANCES, type Names, instanceForMode, instanceVars, namesOf } from "../scripts/instance.ts";
 
-// The download origin (plan: Files, Downloads): serves agent files from R2 behind links the app signs
+// The download origin (ARCHITECTURE.md: Files, Downloads): serves agent files from R2 behind links the app signs
 // with MINERVA_DOWNLOAD_KEY, on an origin of its own, as sandboxed attachments. It holds no other secret.
 //
 // MINERVA_DOWNLOAD_ORIGIN is the origin links are signed for, and the only host it answers: as the app's

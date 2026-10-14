@@ -1,4 +1,4 @@
-// One attempt's folder in its container (plan: Checkpoints, The sandbox lifecycle): the
+// One attempt's folder in its container (ARCHITECTURE.md: Checkpoints, The sandbox lifecycle): the
 // Sandbox prepared for the attempt (started, hardened, verified) and hydrated from the run's last
 // checkpoint, else its base version; the checkpoint barrier (local.ts `LocalCalls`) whose checkpoints run
 // against it; and the ExecutionEnv each local call gets.
@@ -91,7 +91,7 @@ export class LocalRun {
 
 	/**
 	 * Starts, hardens and verifies the attempt's container and hydrates the folder; once per attempt. A
-	 * container that failed its hardening or its checks fails the turn at once (plan: The sandbox lifecycle);
+	 * container that failed its hardening or its checks fails the turn at once (ARCHITECTURE.md: The sandbox lifecycle);
 	 * any other failure surfaces when a local call needs the container.
 	 */
 	prepare(): Promise<SandboxFence> {

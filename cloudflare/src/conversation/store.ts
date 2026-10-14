@@ -2,7 +2,7 @@
 // and the start protocol's markers and tombstones, over the object's SQLite. Every method is synchronous:
 // the checks the executor and the model wrapper make (`isCurrent`, `isActive`) and the appends they ask for
 // read and write SQLite with no await in between, which is what makes the revocation, dispatch and fencing
-// checks atomic (plan: Strict revocation, Attempts and recovery).
+// checks atomic (ARCHITECTURE.md: Strict revocation, Attempts and recovery).
 //
 // `write` runs a change in one transaction; the events it appended and the runs it ended are handed to the
 // listeners only after it commits, so a stream never sees an event that was rolled back.
@@ -525,7 +525,7 @@ export class RunStore {
 		return this.run(runId)?.session ?? null;
 	}
 
-	/** The revoked flag the executor checks before every provider request (plan: Strict revocation). */
+	/** The revoked flag the executor checks before every provider request (ARCHITECTURE.md: Strict revocation). */
 	revoke(runId: RunId): void {
 		this.#sql.exec("UPDATE runs SET revoked = 1 WHERE id = ?", runId);
 	}
@@ -627,7 +627,7 @@ export class RunStore {
 		else this.#sql.exec("UPDATE runs SET unmetered_model_calls = unmetered_model_calls + 1 WHERE id = ?", runId);
 	}
 
-	/** How often pi has executed this call, this execution included (the replay cap, plan: Attempts and recovery). */
+	/** How often pi has executed this call, this execution included (the replay cap, ARCHITECTURE.md: Attempts and recovery). */
 	countExecution(runId: RunId, callId: string): number {
 		return this.#sql
 			.exec<{ executions: number }>(
@@ -710,7 +710,7 @@ export class RunStore {
 		}
 	}
 
-	// The start protocol (plan: Starting a run).
+	// The start protocol (ARCHITECTURE.md: Starting a run).
 
 	addStart(start: { runId: RunId; userId: UserId; content: string; uploadIds: string[]; createdAt: EpochMs }): void {
 		this.#sql.exec(

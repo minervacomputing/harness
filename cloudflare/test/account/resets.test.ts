@@ -1,4 +1,4 @@
-// Memory-limit resets on the account (plan: Testing): faults that allocate until the isolate passes its memory
+// Memory-limit resets on the account (ARCHITECTURE.md: Testing): faults that allocate until the isolate passes its memory
 // limit and is reset, which local workerd cannot do, through the test instance's driver
 // (driver.ts). A reset takes every object of its isolate with it, so these run one at a time, and only after
 // every other file of `pnpm test:faults` has finished (vitest.faults.config.ts):

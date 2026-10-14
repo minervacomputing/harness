@@ -8,11 +8,11 @@
 //
 // It runs in the Conversation Durable Object, so every run-state check is a synchronous read
 // (RunStatePort): the revocation check before each provider request happens in the same tick as the
-// request starts (the call's CallIo checks it right before each fetch; plan: Strict revocation).
+// request starts (the call's CallIo checks it right before each fetch; ARCHITECTURE.md: Strict revocation).
 //
 // Cancelling a call (its signal, from pi's abort) answers the caller at once and starts nothing more: no
 // later step, and no new provider request. A write already dispatched still settles with its real
-// outcome, under the host's `waitUntil` (plan: Writes), bounded by its request's timeout and the
+// outcome, under the host's `waitUntil` (ARCHITECTURE.md: Writes), bounded by its request's timeout and the
 // backstop.
 
 import type { z } from "zod";
@@ -123,7 +123,7 @@ export type ToolCallOutcome =
  *
  * Revocation: the executor checks the run's local `revoked` flag and its state synchronously, with no
  * await in between, immediately before it dispatches any provider request, and again before it returns
- * a result (plan: Strict revocation).
+ * a result (ARCHITECTURE.md: Strict revocation).
  */
 export interface Executor {
 	invoke(request: ToolCallRequest): Promise<ToolCallOutcome>;
@@ -145,7 +145,7 @@ export interface ExecutorContext {
 	deadline?: EpochMs | null;
 }
 
-/** What the Workspace Durable Object lends for one provider call (plan: Credentials and refresh). */
+/** What the Workspace Durable Object lends for one provider call (ARCHITECTURE.md: Credentials and refresh). */
 export interface CredentialLease {
 	connectionId: ConnectionId;
 	provider: string;
@@ -438,7 +438,7 @@ export class ToolExecutor implements Executor {
 
 	async #allowed(shown: ShownCall, done: Done): Promise<ToolCallOutcome> {
 		const write = done.writeKey === null ? null : await writeId(this.#host.secretKey, this.#runId, done.writeKey);
-		// Checked again right before the result is returned (plan: Strict revocation), as the client's close
+		// Checked again right before the result is returned (ARCHITECTURE.md: Strict revocation), as the client's close
 		// was awaited since the last check; a write already settled stays recorded.
 		if (!this.#run.isActive(this.#runId)) return { ok: false, error: { code: "RUN_ENDED", message: RUN_ENDED_MESSAGE }, event: null };
 		// Recorded for a call a replaced attempt started too: what it did is still part of the run.
@@ -522,7 +522,7 @@ export class ToolExecutor implements Executor {
 		return { result, title: op.title, repeat, writeKey: key };
 	}
 
-	/** A lease for the call's attempt, checked before it is asked for and after it is given (plan: Fencing). */
+	/** A lease for the call's attempt, checked before it is asked for and after it is given (ARCHITECTURE.md: Attempts and recovery, Fencing). */
 	async #lease(request: ToolCallRequest, connectionId: string): Promise<CredentialLease> {
 		this.#ensureCurrent(request);
 		const lease = await this.#credentials.lease(request.fence, connectionId);
@@ -684,7 +684,7 @@ export class ToolExecutor implements Executor {
 	/**
 	 * Executes a dispatched write and settles it by what the client recorded, not by what the connector
 	 * returned: a normal return proves nothing (the connector may have swallowed a failure, or left the
-	 * request running). Always settled, whichever attempt is current by then (plan: Fencing).
+	 * request running). Always settled, whichever attempt is current by then (ARCHITECTURE.md: Attempts and recovery, Fencing).
 	 */
 	async #carryOut(
 		connector: Connector,

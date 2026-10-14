@@ -1,4 +1,4 @@
-// The browser walk (plan: Step 5, unit 5f; Step 7): the real frontend, served by the test instance's Worker
+// The browser walk (ARCHITECTURE.md: Testing, Account tests): the real frontend, served by the test instance's Worker
 // as its assets, driven in headless Chrome through its pages. Sign-up with the emailed code and the setup key,
 // the first-run setup claimed on its page, the instance admin page, sign-out and sign-in with a password,
 // two-factor turned on and used (TOTP computed here, a recovery code), sign-in by emailed code, a password

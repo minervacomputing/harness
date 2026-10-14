@@ -1,4 +1,4 @@
--- Accounts and the workspace directory (plan: Data placement; web-api spec 3, 5, 6, 9). Tenant data lives
+-- Accounts and the workspace directory (ARCHITECTURE.md: Data placement; web-api spec 3, 5, 6, 9). Tenant data lives
 -- in each workspace's Durable Object; D1 holds what spans workspaces. Times are milliseconds since the
 -- epoch, booleans 0 or 1, ids lowercase UUIDv7. Tables are STRICT, so a counter or a time stored as text
 -- is refused instead of comparing as text. D1 has no interactive transactions, so every single-use
@@ -27,8 +27,8 @@ CREATE TABLE emails (
 CREATE INDEX emails_user ON emails (user_id);
 CREATE UNIQUE INDEX emails_one_primary ON emails (user_id) WHERE is_primary = 1;
 
--- No row means no usable password (`has_usable_password: false`). `hash` is versioned (`scrypt$…`, plan:
--- The web API). `fingerprint` is an HMAC of the hash that sessions copy: a password change or reset
+-- No row means no usable password (`has_usable_password: false`). `hash` is versioned (`scrypt$…`, the
+-- removed docs/plans/cloudflare.md, The web API; 0007 drops this format). `fingerprint` is an HMAC of the hash that sessions copy: a password change or reset
 -- changes it, which ends every other session on its next request (web-api 3.1).
 CREATE TABLE passwords (
 	user_id TEXT NOT NULL PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,

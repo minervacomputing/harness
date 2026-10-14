@@ -1,4 +1,4 @@
-// The model wrapper on fake streams (plan: The harness, Model): refusals that count nothing, the call counted once, deltas per
+// The model wrapper on fake streams (ARCHITECTURE.md: The harness, Model): refusals that count nothing, the call counted once, deltas per
 // call id, usage, provider error text, aborts, the output cap and the tool-call text. The relay's
 // reasoning-summary retry, metering of refused calls and read timeout go through createAI itself, over a
 // fake AI binding that answers as AI Gateway's universal endpoint and OpenAI's Responses API do.

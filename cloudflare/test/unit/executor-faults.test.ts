@@ -1,9 +1,9 @@
-// The plan's fault cases for writes (docs/plans/cloudflare.md, Testing: "applied then response lost;
+// The fault cases for writes (ARCHITECTURE.md, Testing: "applied then response lost;
 // claimed then never sent; crash while dispatched; the same write under a new pi call id; deadline
 // passed"), through the executor and the real ledger. A crash is a Conversation Durable Object that loses
 // everything in memory: its executor and promises are gone and the ledger is reopened over the same
 // database file, where the restart gate marks the dead instance's dispatched writes uncertain in the
-// transaction of its decision (plan: Attempts and recovery, Writes).
+// transaction of its decision (ARCHITECTURE.md: Attempts and recovery, Writes).
 
 import { afterAll, afterEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
@@ -169,7 +169,7 @@ describe("writes under faults", () => {
 	});
 
 	test("the same write under a new pi call id is answered from the record, whatever spelling the model uses", async () => {
-		// After an interrupted write, the model retried it under a new call id (plan: Spike results); the
+		// After an interrupted write, the model retried it under a new call id (ARCHITECTURE.md: Spike results); the
 		// key is over the normalized fields, so stripped strings are the same write. (A strict object is
 		// rebuilt in its schema's order, so the order of its fields never reaches the key; see below.)
 		const server = new FakeServer();

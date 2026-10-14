@@ -1,4 +1,4 @@
-// The instance's administration (plan: Instance and control plane). An instance admin is a user whose
+// The instance's administration (ARCHITECTURE.md: Configuration, First-run setup). An instance admin is a user whose
 // Better Auth role is 'admin' (the admin plugin's; `/api/me` reports it), apart from the
 // organization and workspace roles: it grants no access to anyone's workspaces, only these routes. The
 // admin plugin's own endpoints (impersonation, bans, deletion, roles) stay closed to the browser

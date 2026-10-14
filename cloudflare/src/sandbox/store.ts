@@ -1,4 +1,4 @@
-// The Sandbox's durable state: one row, written before every step it describes (plan: The sandbox
+// The Sandbox's durable state: one row, written before every step it describes (ARCHITECTURE.md: The sandbox
 // lifecycle). It names the container's incarnation, the run and attempt that own it (the newest the object
 // has seen, so an older attempt's call is refused), the hardening state, and a destroy still owed.
 

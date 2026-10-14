@@ -1,4 +1,4 @@
-// The run event stream (plan: Events and the stream; contract `runEventsPath`): `GET
+// The run event stream (ARCHITECTURE.md: Events and the stream; contract `runEventsPath`): `GET
 // /api/workspaces/{ws}/runs/{run}/stream` as server-sent events, relayed from the Conversation Durable
 // Object's hibernatable WebSocket (conversation/stream.ts). Signed out is 401 `Unauthorized`; not a member,
 // or not the caller's run in this workspace, 404 `NOT_FOUND` (unlike the JSON API's 401). The cursor is Last-Event-ID, else `?after=`, else 0; a value that is not all

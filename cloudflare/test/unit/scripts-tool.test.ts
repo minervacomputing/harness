@@ -39,7 +39,7 @@ const PI_CODEMODE = [
 	"```ts",
 ];
 
-/** The two lines that state this platform's differences (plan: Code mode). */
+/** The two lines that state this platform's differences (ARCHITECTURE.md: Code mode). */
 const CHANGED = new Map([
 	[
 		2,

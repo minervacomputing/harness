@@ -1,4 +1,4 @@
-// The one way anything the agent can influence runs in the sandbox (plan: The sandbox lifecycle): a root
+// The one way anything the agent can influence runs in the sandbox (ARCHITECTURE.md: The sandbox lifecycle): a root
 // shell that puts itself in the agent cgroup or exits 125, then drops to uid 1000 with no capabilities and
 // no_new_privs and execs `timeout -k 5 <s>` and the command. The command, its working directory and its
 // environment are arguments, never interpolated into the script. Privileges are dropped before the command's

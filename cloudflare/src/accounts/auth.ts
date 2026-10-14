@@ -1,4 +1,4 @@
-// Better Auth in the Worker (plan: The web API): an instance for each request, its handler at /api/auth/*
+// Better Auth in the Worker (ARCHITECTURE.md: The web API): an instance for each request, its handler at /api/auth/*
 // behind our list of the routes the browser may use, and the session helpers our own routes use.
 
 import { createHmac } from "node:crypto";
@@ -67,7 +67,7 @@ function build(env: Env, allowSignUp: boolean) {
 			sessionCreated: (userId) => ensureProvisioned(env, userId),
 			passwordReplaced: async (userId) => {
 				// Two-factor's pending challenges: `2fa-<random>` rows holding the user's id. Their attempt counters
-				// (`2fa-attempts-…`) hold a number, and trusted devices (`trust-device-…`) stay (ARCHITECTURE.md, section 12).
+				// (`2fa-attempts-…`) hold a number, and trusted devices (`trust-device-…`) stay (ARCHITECTURE.md: The web API, Accepted trade-offs).
 				await env.DB.prepare(`DELETE FROM verification WHERE identifier LIKE '2fa-%' AND value = ?`).bind(userId).run();
 			},
 		}),
@@ -96,7 +96,7 @@ export function getAuth(env: Env, { allowSignUp = false }: { allowSignUp?: boole
  * A body is read with the API's JSON reader (http/body.ts `readJson`: `application/json` only, so no
  * form reaches Better Auth) before Better Auth sees it, and passed on re-serialized: Better Auth parses
  * with the runtime's JSON parser, which a key written with escapes can put in a state that misreads later
- * keys in the isolate (plan: Spike results, JSON keys). Its bodies' keys are plain names, so a key that
+ * keys in the isolate (ARCHITECTURE.md: Spike results, JSON keys). Its bodies' keys are plain names, so a key that
  * would need an escape is refused, and the text Better Auth parses has none.
  */
 export async function handleAuth(env: Env, request: Request): Promise<Response> {

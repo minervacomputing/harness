@@ -1,4 +1,4 @@
-// Where model requests go, from the MINERVA_MODEL_* settings (plan: The harness, Model). Read at
+// Where model requests go, from the MINERVA_MODEL_* settings (ARCHITECTURE.md: The harness, Model). Read at
 // each call, so a deploy that changes them applies to the next request.
 //
 // Every upstream but the fake goes through the Worker's own AI Gateway (`MINERVA_MODEL_GATEWAY`, named for the

@@ -1,5 +1,5 @@
 // Provisioning: every user gets a personal organization they own and our row for its personal workspace,
-// with both memberships, and the workspace's Durable Object is initialized (plan: The
+// with both memberships, and the workspace's Durable Object is initialized (ARCHITECTURE.md: The
 // web API). Better Auth creates the user; this runs after, from its hooks (auth-options.ts), for every way
 // a user is created (sign-up, an email code, the admin plugin, seed).
 //

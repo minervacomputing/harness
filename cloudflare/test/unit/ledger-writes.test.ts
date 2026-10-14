@@ -1,5 +1,5 @@
 // gateway/ledger.ts and gateway/run-state.ts on real SQLite: the write ledger's protocol, the lost-write
-// sweep, the restart gate's marking (plan: Writes), claims fenced by attempt, and a ledger reopened over the
+// sweep, the restart gate's marking (ARCHITECTURE.md: Writes), claims fenced by attempt, and a ledger reopened over the
 // same database file, as after a crash.
 
 import { afterAll, describe, expect, test } from "vitest";

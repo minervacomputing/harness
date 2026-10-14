@@ -1,4 +1,4 @@
-// What the sandbox is made of, in one place (plan: The sandbox lifecycle): the agent's user,
+// What the sandbox is made of, in one place (ARCHITECTURE.md: The sandbox lifecycle): the agent's user,
 // the folder and temporary mounts, the agent cgroup, the commands' environment and the limits the Sandbox
 // Durable Object applies. The image (cloudflare/container/Dockerfile) must agree with the paths and with
 // COMMAND_PATH; a unit test reads the Dockerfile to check it.
@@ -62,7 +62,7 @@ export const TMP_BYTES = 256 * 1024 * 1024;
 /** The agent cgroup's `pids.max`. */
 export const PIDS_MAX = 256;
 
-/** The instance every sandbox runs on: `lite` takes about 100 ms per exec (plan: The sandbox lifecycle). */
+/** The instance every sandbox runs on: `lite` takes about 100 ms per exec (ARCHITECTURE.md: The sandbox lifecycle). */
 export const INSTANCE = "standard-1" as const;
 
 /**

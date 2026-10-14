@@ -1,4 +1,4 @@
-// The one place that maps a workspace to its Durable Objects and its bucket (plan: Data placement,
+// The one place that maps a workspace to its Durable Objects and its bucket (ARCHITECTURE.md: Data placement,
 // Addressing). The workspace's id and jurisdiction come from D1, never from the client: the same name with
 // and without a jurisdiction is a different, empty object. Objects are named by the workspace's or
 // conversation's id and reached only by typed RPC from our own code; there are no generic routes to them.
@@ -55,7 +55,7 @@ export function sandboxObject(
 /**
  * The bucket that keeps the workspace's files: an EU workspace's blobs and uploads stay in the instance's EU
  * bucket (`FILES_EU`, created in R2's EU jurisdiction), and every other workspace's in its default one (`FILES`).
- * Keys are the same in both (plan: Data placement).
+ * Keys are the same in both (ARCHITECTURE.md: Data placement).
  */
 export function filesBucket(env: Env, workspace: WorkspaceRef): R2Bucket {
 	return workspace.jurisdiction === "eu" ? env.FILES_EU : env.FILES;

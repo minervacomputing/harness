@@ -148,6 +148,6 @@ export default {
 
 export { FaultProvider } from "./provider.ts";
 export { FaultMailbox } from "./mailbox.ts";
-// The Sandbox with the fault seams of the plan's Sandbox row (sandbox.ts), under production's export name.
+// The Sandbox with the fault seams of the Sandbox row of ARCHITECTURE.md's Testing table (sandbox.ts), under production's export name.
 export { FaultSandbox as Sandbox } from "./sandbox.ts";
 export { Scripts } from "../scripts/scripts.ts";

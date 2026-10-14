@@ -1,4 +1,4 @@
-// The event stream's Durable Object side (plan: Events and the stream). The Worker checks the session and
+// The event stream's Durable Object side (ARCHITECTURE.md: Events and the stream). The Worker checks the session and
 // the run's owner, then opens a hibernatable WebSocket here with `after`; the Worker's SSE relay writes each
 // frame as `id`, `event`, `data`.
 //

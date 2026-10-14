@@ -1,7 +1,7 @@
 // The executor's run-state port over the Conversation Durable Object's own state: its runs (read through
 // `RunTable`, which the object implements over its runs table and memory), the write ledger and page
 // tokens. Every method is synchronous, so a check and the claim or answer that depends on it happen with
-// no await between them (plan: Strict revocation, Writes).
+// no await between them (ARCHITECTURE.md: Strict revocation, Writes).
 
 import type { AttemptFence, EpochMs, RunId, RunStatus } from "../shared/rpc.ts";
 import type { Clock } from "./clock.ts";
@@ -11,7 +11,7 @@ import type { PageTokens } from "./page-tokens.ts";
 /**
  * Run state the executor needs. Synchronous methods are synchronous on purpose: the Conversation Durable
  * Object answers them from SQLite and memory with no await, which is what makes the revocation and
- * dispatch checks atomic (plan: Strict revocation, Writes).
+ * dispatch checks atomic (ARCHITECTURE.md: Strict revocation, Writes).
  *
  * `dispatchWrite` and `settleWrite` may answer later: the Conversation Durable Object first waits until no
  * asynchronous transaction of pi's is open on its storage, since a claim or a settlement made inside one
@@ -49,7 +49,7 @@ export interface RunState {
 	attempt: number;
 	/** Fixed at start; null for none. */
 	deadline: EpochMs | null;
-	/** Set synchronously by a revocation or an emergency stop (plan: Strict revocation). */
+	/** Set synchronously by a revocation or an emergency stop (ARCHITECTURE.md: Strict revocation). */
 	revoked: boolean;
 }
 

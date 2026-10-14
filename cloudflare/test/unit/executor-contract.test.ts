@@ -252,7 +252,7 @@ describe("write accounting", () => {
 
 	test("a cancelled call answers at once, and its write still settles with its real outcome", async () => {
 		// The call
-		// stops (plan: Writes, "even if the tool call that asked for it was cancelled") and the request goes on.
+		// stops (ARCHITECTURE.md: Writes, "even if the tool call that asked for it was cancelled") and the request goes on.
 		const server = new FakeServer();
 		server.gate = new Gate();
 		const run = await start(server, WRITER);

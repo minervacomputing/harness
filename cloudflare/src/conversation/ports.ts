@@ -30,7 +30,7 @@ import type { RunStore } from "./store.ts";
 export type WorkspaceClient = Pick<WorkspaceApi, "beginRun" | "activate" | "release" | "conversationTouched" | "lease" | "markUnauthorized">;
 
 /**
- * The write ledger and page tokens (plan: Writes), in this object's SQLite, built with the executor (gateway/). The object composes the executor's `RunStatePort`
+ * The write ledger and page tokens (ARCHITECTURE.md: Writes), in this object's SQLite, built with the executor (gateway/). The object composes the executor's `RunStatePort`
  * from its own run checks and these, and calls the two maintenance methods itself.
  */
 export interface WriteLedger extends Pick<RunStatePort, "knownWrite" | "resolvePageToken" | "issuePageToken"> {
@@ -59,7 +59,7 @@ export interface LedgerRuns {
 }
 
 /**
- * The run's folder (plan: Starting a run, Checkpoints, Files; src/files/). The start protocol
+ * The run's folder (ARCHITECTURE.md: Starting a run, Checkpoints, Files; src/files/). The start protocol
  * calls `prepareAttachments` before its transaction (the copies into the conversation's blobs, recorded as
  * loose first) and `commitAttachments` inside it; `publish` runs in `finish`'s transaction. The sandbox
  * hydrates from `hydratePlan` and saves with `checkpoint`; `sweep` is the `files` Lifecycle job.
@@ -77,12 +77,12 @@ export interface FolderPort {
 	};
 	list(versionId: VersionId | null): Folder | null;
 	resolve(versionId: VersionId | null, path: string): DownloadTarget | null;
-	/** Deletes the conversation's objects in R2 (plan: Files, Deletion). */
+	/** Deletes the conversation's objects in R2 (ARCHITECTURE.md: Files, Deletion). */
 	deleteObjects(): Promise<void>;
 	/** What a new attempt of the run hydrates: its last checkpoint, else its base version, with each file's R2 key. */
 	hydratePlan(runId: RunId): HydratePlan;
 	/**
-	 * A checkpoint of the run's folder from the container's scan (plan: Checkpoints): validated, the files whose contents the run may not read uploaded by `upload` (the Sandbox's
+	 * A checkpoint of the run's folder from the container's scan (ARCHITECTURE.md: Checkpoints): validated, the files whose contents the run may not read uploaded by `upload` (the Sandbox's
 	 * `checkpoint`, under keys recorded here first), then recorded for the fence's attempt on top of its
 	 * last checkpoint. Outside pi's transactions; the caller releases held results only after `ok`.
 	 */
@@ -170,7 +170,7 @@ export function gatewayExecutor(run: ExecutorContext, context: PortsContext): Ex
 }
 
 /**
- * gateway/'s write ledger and page tokens over this object's SQLite (plan: Writes). The run checks are the
+ * gateway/'s write ledger and page tokens over this object's SQLite (ARCHITECTURE.md: Writes). The run checks are the
  * object's own, made in the same synchronous stretch as the claim; `writes_uncertain` mirrors the ledger's
  * uncertain rows, set in the same transaction whenever one appears.
  */

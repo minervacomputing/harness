@@ -1,4 +1,4 @@
-// The protocols end to end in local workerd (plan: Testing, fault injection): the real Workspace and
+// The protocols end to end in local workerd (ARCHITECTURE.md: Testing, fault injection): the real Workspace and
 // Conversation objects over RPC, the executor with its ledger and page tokens in the Conversation's SQLite,
 // credentials leased from the Workspace and refreshed against the fake provider, the fake Notes connector
 // (src/faults/), and the deterministic fake model. Faults come from the test build's points (src/faults/
@@ -345,7 +345,7 @@ describe("start and revocation", () => {
 });
 
 /**
- * A start concurrent with a revocation (plan: Testing), each interleaving forced with a held point: the
+ * A start concurrent with a revocation (ARCHITECTURE.md: Testing), each interleaving forced with a held point: the
  * change lands before beginRun (in the snapshot), between beginRun and the start's transaction (a
  * tombstone, above), between the transaction and activation (the cancel finds the stored run), or while the
  * Workspace's cancel is still on its way (activation answers revoked). None writes under the old grants.

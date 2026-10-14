@@ -1,7 +1,7 @@
 // Schema steps for a Durable Object's SQLite storage. Two versions of the code run side by side after a
 // deploy (a busy object keeps its old code; new objects may start on the previous version), so steps are
 // additive only, never edited once deployed, and code accepts rows the previous and the next version write
-// (plan: Spike results, Versions). A step this code does not know, applied by a newer version, is left as is.
+// (ARCHITECTURE.md: Spike results, Versions). A step this code does not know, applied by a newer version, is left as is.
 
 import { durableSql, migrate as migrateSql } from "./sql.ts";
 

@@ -1,6 +1,6 @@
 // The configuration Better Auth's CLI reads to generate the D1 schema (`pnpm run auth:schema`): the
 // Worker's own options (src/accounts/auth-options.ts) with stand-ins for what needs the runtime, which
-// does not change the schema. The output is reviewed and copied into a migration by hand (plan: The web
+// does not change the schema. The output is reviewed and copied into a migration by hand (ARCHITECTURE.md: The web
 // API); test/platform/accounts-schema.test.ts checks that D1's tables match what this configuration expects.
 
 import { DatabaseSync } from "node:sqlite";

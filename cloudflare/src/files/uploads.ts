@@ -1,4 +1,4 @@
-// Uploads from the browser (plan: Files, Uploads): the checks of the raw request in order, and the body streamed into R2 while it is hashed, recorded in the Workspace as pending before the
+// Uploads from the browser (ARCHITECTURE.md: Files, Uploads): the checks of the raw request in order, and the body streamed into R2 while it is hashed, recorded in the Workspace as pending before the
 // object is written and as complete after. The HTTP route around them (CSRF, session, membership, between
 // the name and the stream) is the web API's (api/uploads.ts).
 //
@@ -22,7 +22,7 @@ import { cleanName, sniff, uploadName } from "./names.ts";
 
 /**
  * An unattached upload a run start reserved. The Conversation Durable Object copies its object into a blob
- * of its own before the start's transaction (plan: Starting a run) and adds that to the folder:
+ * of its own before the start's transaction (ARCHITECTURE.md: Starting a run) and adds that to the folder:
  * `uploads/` objects are deleted by the bucket's lifecycle rule a day after they were written, attached or
  * not, so nothing may keep naming one.
  */

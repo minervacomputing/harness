@@ -1,4 +1,4 @@
-// Encryption at rest (plan: Credentials and refresh): AES-256-GCM through WebCrypto, under keys derived per
+// Encryption at rest (ARCHITECTURE.md: Credentials and refresh): AES-256-GCM through WebCrypto, under keys derived per
 // purpose from MINERVA_ENCRYPTION_KEYS. A value is stored as one envelope,
 //
 //   m2.<key id>.<base64url(nonce ‖ ciphertext ‖ tag)>
@@ -19,7 +19,7 @@
 // connection; an OAuth client's provider, redirect URI and client id). An envelope copied to another row,
 // workspace or purpose does not decrypt there. AEAD does not stop an older envelope of the same row from
 // being written back. Minerva's own writes never do that, since each write of credentials is a
-// compare-and-set on the credential generation it read (plan: Credentials and refresh); someone who can
+// compare-and-set on the credential generation it read (ARCHITECTURE.md: Credentials and refresh); someone who can
 // write the storage directly can roll a row back, which no key held beside that storage can detect.
 //
 // Limits. With random 96-bit nonces a derived key is good for at most 2^32 encryptions (NIST SP 800-38D);

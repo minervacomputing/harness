@@ -6,7 +6,7 @@
 //
 // A conversation's or a run's events have no size bound, and Workers RPC refuses a result over 32 MiB, so
 // the objects answer heads and the body is streamed here, each run's events paged up to the seq its head
-// was read with (plan: Events and the stream, Reading runs).
+// was read with (ARCHITECTURE.md: Events and the stream, Reading runs).
 //
 // Downloads stay a Hono route: they are checked here, then redirected to a link signed for the download
 // Worker (files-worker/, files/links.ts), which serves the object from its own origin as a sandboxed

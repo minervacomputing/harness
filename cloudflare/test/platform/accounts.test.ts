@@ -1,4 +1,4 @@
-// Accounts on Better Auth in local workerd over D1 (plan: The web API): sign-up and recoverable
+// Accounts on Better Auth in local workerd over D1 (ARCHITECTURE.md: The web API): sign-up and recoverable
 // provisioning, the session our routes read, /api/me, passwords, rate limits, the CSRF boundary between
 // Better Auth's routes and ours, tenancy and the seed. The sign-in, sign-up, two-factor and password flows
 // are in accounts-flows.test.ts.

@@ -1,4 +1,4 @@
-// Code mode's bounds and the words scripts and the model see (plan: Code mode), many of them from
+// Code mode's bounds and the words scripts and the model see (ARCHITECTURE.md: Code mode), many of them from
 // pi-codemode 1.0.4's prelude and host. Those this platform adds or changes are marked "New".
 
 export const SCRIPT_TOOL = "run_script";

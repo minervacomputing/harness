@@ -1,4 +1,4 @@
-// The ExecutionEnv pi's local tools get (plan: The local tools):
+// The ExecutionEnv pi's local tools get (ARCHITECTURE.md: The sandbox lifecycle, The local tools):
 // pi's `FileSystem & Shell`, each call forwarded to the Sandbox Durable Object of the run's incarnation. It
 // is a thin client, made per tool call: paths are resolved here as pi's NodeExecutionEnv resolves them
 // (with the container's HOME), arguments are checked here as pi checks them, and everything else happens
@@ -6,7 +6,7 @@
 //
 // When the Sandbox refuses a call for its fence (stale, not verified) or the call itself fails, the
 // container is gone or in doubt: the call fails, and `lost` tells the Conversation, which ends the attempt
-// and replaces the container from the last checkpoint (plan: The local tools).
+// and replaces the container from the last checkpoint (ARCHITECTURE.md: The sandbox lifecycle, The local tools).
 
 import {
 	type BinaryReader,

@@ -1,4 +1,4 @@
--- Organizations (plan: Instance and control plane, Data placement), additive. An organization sits above
+-- Organizations (ARCHITECTURE.md: Data placement), additive. An organization sits above
 -- workspaces and owns its members, settings, entitlements and data region. For now every personal
 -- sign-up gets one organization of its own, which owns the personal workspace; the UI does not show them
 -- yet. Existing workspaces keep a null organization until a later step assigns one.

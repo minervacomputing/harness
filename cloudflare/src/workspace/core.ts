@@ -1,10 +1,10 @@
 // The Workspace's logic (`WorkspaceApi`), over the small SQL surface of sql.ts so it
 // runs, and is unit-tested, on node:sqlite as on a Durable Object's storage; workspace.ts is the object
 // around it. One instance is one incarnation of the object: building it converts refreshes a dead
-// instance left `refreshing` into `refresh_uncertain` (plan: Credentials and refresh).
+// instance left `refreshing` into `refresh_uncertain` (ARCHITECTURE.md: Credentials and refresh).
 //
 // Every check and the writes it decides happen in one synchronous transaction, with no await in between
-// (plan: Starting a run; Strict revocation). Awaits come only before (decrypting, encrypting, asking the
+// (ARCHITECTURE.md: Starting a run; Strict revocation). Awaits come only before (decrypting, encrypting, asking the
 // provider) or after (delivering cancels), and a write that depends on what an await saw re-checks it
 // first (compare-and-set on the credential generation).
 
@@ -60,7 +60,7 @@ import { type SqlRow as Row, type Sql, type SqlValue, first, migrate } from "../
 import { compareText } from "../lib/arrays.ts";
 
 /**
- * How a change that revokes runs was delivered (plan: Strict revocation). `acknowledged`: every affected
+ * How a change that revokes runs was delivered (ARCHITECTURE.md: Strict revocation). `acknowledged`: every affected
  * run's Conversation Durable Object has acknowledged the cancel, so the API may answer. `pending`: the
  * change is saved, but some acknowledgement did not arrive within 10 seconds; the API answers 503 and the
  * Workspace's alarm keeps delivering.
@@ -101,7 +101,7 @@ export type BeginRunResult = Outcome<{ snapshot: StartSnapshot; uploads: Reserve
 export type Registration = { state: "active" } | { state: "revoked"; reason: CancelReason } | { state: "expired" } | { state: "ended" };
 
 /**
- * Where a connection's credentials stand (plan: Credentials and refresh). `refreshing` is recorded at
+ * Where a connection's credentials stand (ARCHITECTURE.md: Credentials and refresh). `refreshing` is recorded at
  * generation g before the token endpoint is called; found after a restart it becomes `refresh_uncertain`,
  * and the next use makes exactly one refresh with the stored token, while no other request uses the
  * connection. A reconnect or delete during a refresh wins: a result for a generation that moved is dropped.
@@ -127,7 +127,7 @@ export interface ConnectionAccount {
 
 /**
  * The Workspace Durable Object's RPC surface. One object per workspace, named by its id, in its
- * jurisdiction (plan: Data placement). Authoritative for connections (encrypted credentials, status,
+ * jurisdiction (ARCHITECTURE.md: Data placement). Authoritative for connections (encrypted credentials, status,
  * generation, scopes, refresh state), permission layers and grants, agents, unattached uploads with their
  * reservations, the registry of runs, the revocation outbox and byte counters; an index of conversations.
  * Reached only by typed RPC from our own code, after the Worker checked membership in D1. `Caller` is the
@@ -206,7 +206,7 @@ export interface WorkspaceApi {
 	/** Compare-and-set: `error` only if still `active` at this generation. */
 	markUnauthorized(connectionId: ConnectionId, generation: number): Promise<void>;
 
-	// Runs (plan: Starting a run).
+	// Runs (ARCHITECTURE.md: Starting a run).
 	/**
 	 * Idempotent by run id and synchronous inside (no awaits): checks the agent, the uploads (the user's
 	 * own, unattached, complete) and the folder limits with the attachments, reserves the uploads, computes
@@ -231,7 +231,7 @@ export interface WorkspaceApi {
 	locateRun(caller: Caller, runId: RunId): Promise<{ conversationId: ConversationId } | null>;
 	/** A Conversation Durable Object's acknowledgement of an outbox entry delivered earlier without one. */
 	acknowledgeCancel(entryId: number, runId: RunId): Promise<void>;
-	/** An operator's command: cancels every active run of the workspace through the outbox (plan: Emergency stop). */
+	/** An operator's command: cancels every active run of the workspace through the outbox (ARCHITECTURE.md: Strict revocation, Emergency stop). */
 	emergencyStop(reason: string): Promise<{ runs: number; revocation: Revocation }>;
 
 	// Conversations: an index only; each Conversation Durable Object is authoritative for itself.
@@ -251,11 +251,11 @@ export interface WorkspaceApi {
 	 * Tombstones the conversation (both objects then refuse new runs, uploads and writes), cancels its active
 	 * run through the outbox and waits for the acknowledgement (`revocation` as for a grant change), then has
 	 * the Conversation Durable Object destroy itself (`destroy()`: its run ended, its storage and R2 prefix
-	 * deleted), again an hour later; an alarm finishes an interrupted deletion (plan: Files, Deletion).
+	 * deleted), again an hour later; an alarm finishes an interrupted deletion (ARCHITECTURE.md: Files, Deletion).
 	 */
 	deleteConversation(caller: Caller, conversationId: ConversationId): Promise<Outcome<{ revocation: Revocation }>>;
 
-	// Uploads (plan: Files). Every object is recorded before it is written.
+	// Uploads (ARCHITECTURE.md: Files). Every object is recorded before it is written.
 	/**
 	 * Records the upload as pending, with its key and a byte reservation against the workspace's quota,
 	 * before the Worker streams the body into R2. In this order: 429 "You are uploading too many files
@@ -281,15 +281,15 @@ export interface WorkspaceApi {
 	setConversationBytes(conversationId: ConversationId, total: number, revision?: number): Promise<{ ok: true } | { ok: false; limit: Extract<FolderLimit, "workspace"> }>;
 }
 
-/** A start not activated within this is expired and its reservations released (plan: Starting a run). */
+/** A start not activated within this is expired and its reservations released (ARCHITECTURE.md: Starting a run). */
 export const START_TTL_MS = 10 * 60 * 1000;
-/** How long a change waits for the cancels' acknowledgements before it answers 503 (plan: Strict revocation). */
+/** How long a change waits for the cancels' acknowledgements before it answers 503 (ARCHITECTURE.md: Strict revocation). */
 export const BARRIER_MS = 10_000;
 /** One delivery attempt, a destroy, or a deletion's wait in the request. */
 export const CALL_TIMEOUT_MS = 10_000;
 /** Between delivery attempts while a request waits. */
 export const RETRY_PAUSE_MS = 500;
-/** A deleted conversation's prefix is deleted again this long after the first deletion (plan: Files, Deletion). */
+/** A deleted conversation's prefix is deleted again this long after the first deletion (ARCHITECTURE.md: Files, Deletion). */
 export const PURGE_AGAIN_MS = 60 * 60 * 1000;
 /** A conversation whose object was not initialized within this is deleted. */
 export const CREATE_TTL_MS = 10 * 60 * 1000;
@@ -477,7 +477,7 @@ export interface WorkspaceDeps {
 export class WorkspaceCore implements WorkspaceApi {
 	readonly #deps: WorkspaceDeps;
 	readonly #sql: Sql;
-	/** Refreshes in flight, one per connection (plan: Credentials and refresh). */
+	/** Refreshes in flight, one per connection (ARCHITECTURE.md: Credentials and refresh). */
 	readonly #refreshes = new Map<ConnectionId, Promise<RefreshOutcome>>();
 	/** Cancels being delivered, one per outbox entry. */
 	readonly #deliveries = new Map<number, Promise<void>>();
@@ -791,7 +791,7 @@ export class WorkspaceCore implements WorkspaceApi {
 				// wait for it and read again.
 				if (current.refresh_state === "refreshing") return null;
 				// New credentials are the next generation, so a failure or a refresh seen with the old ones cannot
-				// touch them; a refresh in flight is dropped (plan: Credentials and refresh).
+				// touch them; a refresh in flight is dropped (ARCHITECTURE.md: Credentials and refresh).
 				this.#writeCredentials(target.id, sealed, payload, target.generation + 1, now);
 				this.#sql.exec("UPDATE connections SET label = ?, status = 'active' WHERE id = ?", account.label, target.id);
 				return target.id;
@@ -892,7 +892,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		this.#sql.exec("UPDATE connections SET status = 'error', updated_at = ? WHERE id = ? AND status = 'active' AND generation = ?", this.#now(), connectionId, generation);
 	}
 
-	// Credential leases (plan: Credentials and refresh).
+	// Credential leases (ARCHITECTURE.md: Credentials and refresh).
 
 	/** The purpose's checks, then the connection's: a refusal, or the row to lend. Synchronous. */
 	#leaseCheck(connectionId: ConnectionId, purpose: { run: RunId; userId: UserId } | { settings: Caller }): { refusal: LeaseRefusal } | { row: ConnectionRow } {
@@ -1205,7 +1205,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		return ok({ revocation });
 	}
 
-	// Runs (plan: Starting a run).
+	// Runs (ARCHITECTURE.md: Starting a run).
 
 	#run(id: RunId): RunRow | null {
 		return first<RunRow>(this.#sql, "SELECT * FROM runs WHERE id = ?", id);
@@ -1378,7 +1378,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		return conversation === null || conversation.deleted_at !== null ? null : { conversationId: run.conversation_id };
 	}
 
-	// Strict revocation (plan: Strict revocation).
+	// Strict revocation (ARCHITECTURE.md: Strict revocation).
 
 	/**
 	 * In the change's own transaction: marks every matching registered run revoked and writes one outbox
@@ -1510,7 +1510,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		}
 	}
 
-	// Deletion (plan: Files, Deletion): once every cancel of the conversation is acknowledged, its object
+	// Deletion (ARCHITECTURE.md: Files, Deletion): once every cancel of the conversation is acknowledged, its object
 	// destroys itself (its run ended, storage and R2 prefix deleted); then again an hour later.
 
 	async #purgeNow(conversationIds: readonly ConversationId[]): Promise<void> {
@@ -1573,7 +1573,7 @@ export class WorkspaceCore implements WorkspaceApi {
 		);
 	}
 
-	// Uploads and bytes (plan: Files).
+	// Uploads and bytes (ARCHITECTURE.md: Files).
 
 	#doom(key: string, now: number): void {
 		this.#sql.exec("INSERT INTO doomed_objects (key, due_at) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET due_at = min(due_at, excluded.due_at)", key, now);

@@ -144,7 +144,7 @@ function settingsFor(target: Target): SettingsEnv {
 }
 
 /**
- * The sandbox's Container application (plan: The sandbox lifecycle): the image in container/, started by the
+ * The sandbox's Container application (ARCHITECTURE.md: The sandbox lifecycle): the image in container/, started by the
  * Sandbox Durable Object (`durable_object` scheduling), which picks the instance, starts it with no route out
  * and passes it nothing secret. Its name follows the instance's (scripts/instance.ts), so every instance has an
  * application of its own. The platform tests run in local workerd, which has no containers: there the class has
