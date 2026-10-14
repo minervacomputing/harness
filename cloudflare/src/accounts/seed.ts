@@ -1,4 +1,4 @@
-// `make seed` for the Worker: ada@example.com and grace@example.com with the password
+// `pnpm run seed` for the Worker: ada@example.com and grace@example.com with the password
 // `password`, verified, without two-factor, each with a personal workspace. Re-running resets them and
 // signs out their sessions. Known credentials, so it refuses to run unless MINERVA_DEBUG is on, creating
 // nothing; a deployed build never has debug on (cloudflare.config.ts).
@@ -23,7 +23,7 @@ export class SeedRefused extends Error {
 	}
 }
 
-/** Creates or resets the seed accounts; returns the lines `make seed` prints. */
+/** Creates or resets the seed accounts; returns the lines `pnpm run seed` prints. */
 export async function seed(env: Env): Promise<string[]> {
 	if (!settings(env).debug) throw new SeedRefused();
 	const auth = getAuth(env);

@@ -22,7 +22,7 @@ export function accountRoutes(app: App): void {
 
 	app.on(["GET", "POST"], AUTH_ROUTE, (c) => handleAuth(c.env, c.req.raw));
 
-	// `make seed` for the local Worker, run by scripts/seed.ts; absent outside debug.
+	// `pnpm run seed` for the local Worker, run by scripts/seed.ts; absent outside debug.
 	app.post("/api/dev/seed", async (c) => {
 		if (!settings(c.env).debug) return noRoute();
 		return json(200, { lines: await seed(c.env) });

@@ -10,7 +10,7 @@ import { instanceOrigins } from "./scripts/origins.ts";
 // parser, so a malformed value fails the build. Development and tests read the environment, with the
 // defaults below. A deployed build (mode production or faults) reads its instance's vars.env alone
 // (scripts/instance.ts, The instance directory, outside the checkout): the shell's MINERVA_* are ignored there
-// (the Django app uses the same names), the file must exist, and MINERVA_DEBUG must be off. Both origins must be the
+// (a shell may hold another deployment's), the file must exist, and MINERVA_DEBUG must be off. Both origins must be the
 // instance's own Workers on workers.dev, `https://<name>.<subdomain>.workers.dev` and
 // `https://<name>-files.<subdomain>.workers.dev`, on one subdomain (scripts/origins.ts), which scripts/deploy.ts
 // then compares with the account's. No build but the test build's accepts the fake model, which only its entry

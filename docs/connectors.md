@@ -2,7 +2,7 @@
 
 This page describes each connector: how to set it up, what agents can do with it, what stays hidden from them, and its known limits.
 
-Each connector needs an app registered with its provider, except Todoist (which registers its own), Stripe (each user pastes a restricted key) and the Web. Set the client id and secret in `.env`; a connector without them is not offered. Every variable is listed in [`.env.example`](../.env.example).
+Each connector needs an app registered with its provider, except Todoist (which registers its own), Stripe (each user pastes a restricted key) and the Web. Set the client id and secret (`MINERVA_<APP>_CLIENT_ID` and `MINERVA_<APP>_CLIENT_SECRET`) in the instance's `secrets.env`, where `pnpm secrets` leaves a commented placeholder for each ([cloudflare/README.md](../cloudflare/README.md), The instance directory), and deploy; a connector without them is not offered.
 
 Callback URLs have the form `{site_url}/api/oauth/<connector>/callback`. Locally, `{site_url}` is `http://localhost:5173`.
 
@@ -116,7 +116,7 @@ Click **Connections → Connect Linear**, then choose per team what agents may d
 
 Create an app at <https://api.slack.com/apps> (**From scratch**) in your own workspace and set `MINERVA_SLACK_CLIENT_ID` and `MINERVA_SLACK_CLIENT_SECRET` from **Basic Information**. Under **OAuth & Permissions**, add the redirect URL `{site_url}/api/oauth/slack/callback` and the bot token scopes `channels:read`, `groups:read`, `channels:history`, `groups:history`, `users:read` and `chat:write`. Leave PKCE off (Slack treats an app that uses it as a public client). Token rotation is optional. Without the client, Slack is not offered.
 
-Slack accepts only HTTPS redirect URLs, so locally the dev server needs an HTTPS tunnel (for example `cloudflared tunnel --url http://localhost:5173`). Set `MINERVA_SITE_URL` and `MINERVA_CSRF_TRUSTED_ORIGINS` to the tunnel's address, add its host to `MINERVA_ALLOWED_HOSTS`, start Vite with `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=<host>`, and open Minerva through the tunnel. Keep the app unlisted and installed only in your own workspace: Slack rate limits apps distributed outside its Marketplace much more strictly.
+Slack accepts only HTTPS redirect URLs, so locally the dev server needs an HTTPS tunnel (for example `cloudflared tunnel --url http://localhost:5173`). Set `MINERVA_SITE_URL` to the tunnel's address, start Vite with `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=<host>`, and open Minerva through the tunnel. Keep the app unlisted and installed only in your own workspace: Slack rate limits apps distributed outside its Marketplace much more strictly.
 
 Click **Connections → Connect Slack**, then choose per channel what agents may do: read messages, reply in threads, and post to the channel. In Slack, add the app to each channel it should reach (`/invite @<app name>`); Minerva sees no other channels. Minerva asks Slack for `chat:write` only once the user allows replying or posting.
 
@@ -256,10 +256,10 @@ Click **Connections → Connect Sentry** and pick the organisation on Sentry's c
 
 Click **Connections → Add Web**, then choose which sites agents may read and whether they may search. A site is an exact host (`docs.python.org`) or a domain with its subdomains (`*.python.org`). Patterns stop at the registrable domain (per the Public Suffix List), so `*.org`, `*.co.uk` and `*.github.io` cannot be granted; only `*` allows every site. A block on a domain wins over access to a wider one. Opening an address sends whatever is in it to that site, so the sites an agent may read are also where it could carry data.
 
-Searching uses Brave Search. Set `MINERVA_BRAVE_SEARCH_API_KEY` to a key from <https://brave.com/search/api/>. Without it, agents can only read pages.
+Searching uses Brave Search, with `MINERVA_BRAVE_SEARCH_API_KEY` set to a key from <https://brave.com/search/api/>. Without it, agents can only read pages. The engine's build does not declare that key yet (`cloudflare.config.ts`), so a deployed engine withholds search until it does; the same holds for GitHub's `MINERVA_GITHUB_APP_SLUG`, without which GitHub's link to install the App is not shown.
 
 **Agents can:** search the web through Brave Search (titles, addresses and snippets only) and read pages as text.
 
-**Fetching:** Minerva fetches pages itself. It checks the site before resolving it, refuses IP addresses and special-use names (`localhost`, `.internal`, `.local`, `.onion`), requires every resolved address to be public, and connects to the checked address with the site's name for TLS, so DNS rebinding cannot redirect the request. Redirects are followed only on the same host and never from https to http; others go back to the agent, which needs permission for the new site. Pages are capped at 3 MB (also after decompression) and 25 seconds, no cookies or credentials are sent, and HTML is reduced to text without scripts, frames or images (images keep their alt text). Page text is still untrusted: reducing HTML does not neutralize prompt injection.
+**Fetching:** Minerva fetches pages itself. It checks the site before resolving it and refuses IP addresses and special-use names (`localhost`, `.internal`, `.local`, `.onion`). Cloudflare's network refuses requests from a Worker to private, loopback and link-local addresses, also for names that resolve to them, and the connector reports that refusal as a blocked site. Redirects are followed only on the same host and never from https to http; others go back to the agent, which needs permission for the new site. Pages are capped at 3 MB (also after decompression) and 25 seconds, no cookies or credentials are sent, and HTML is reduced to text without scripts, frames or images (images keep their alt text). Page text is still untrusted: reducing HTML does not neutralize prompt injection.
 
-**Limits:** there is no cap on searches per run or workspace, and each search costs the operator money. Deployments have no egress rules for the gateway yet; only the fetcher's own checks refuse private addresses. Continuing a long page fetches it again.
+**Limits:** there is no cap on searches per run or workspace, and each search costs the operator money. That refusal of private addresses is Cloudflare's measured behaviour, not a documented guarantee (ARCHITECTURE.md, Spike results). Continuing a long page fetches it again.

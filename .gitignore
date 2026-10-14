@@ -1,7 +1,6 @@
 # Local configuration and secrets
 .env
 .env.*
-!.env.example
 
 # Cloudflare CLI caches (they hold the account id) and local state, wherever cf runs
 .cloudflare/
@@ -10,24 +9,9 @@
 # Upstream reference checkout (has its own repository)
 /deepseek-harness/
 
-# Agent files kept on local disk (MINERVA_FILES_DIR)
-/data/
-
-# Python
-__pycache__/
-*.py[cod]
-.venv/
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-.coverage
-htmlcov/
-/backend/staticfiles/
-
 # Node
 node_modules/
 .pnpm-store/
-/worker/.local-home/
 dist/
 *.tsbuildinfo
 .vite/
@@ -41,5 +25,13 @@ dist/
 # Local research notes
 .agents/research/
 
-# Local operator notes (account names, project IDs); never committed
+# Left in a checkout by the Django stack, which only the demo branch keeps: its local files and caches, and
+# the operator's private notes (real identifiers), so none is committed from main by accident
+/data/
+/backend/
+/worker/
 /deploy/demo/private/
+__pycache__/
+.venv/
+.ruff_cache/
+.pytest_cache/

@@ -1,4 +1,4 @@
-// `make seed` for the local Worker (web-api spec 6.4): creates or resets ada@example.com and
+// `pnpm run seed` for the local Worker (web-api spec 6.4): creates or resets ada@example.com and
 // grace@example.com with the password `password`, verified, without two-factor, and signs out their
 // sessions. It asks the running Worker (`POST /api/dev/seed`), which refuses unless MINERVA_DEBUG is on.
 //

@@ -151,7 +151,7 @@ python3 design/logo/export.py ../branding
 
 ## The components page
 
-`frontend/src/routes/dev.components.tsx` serves `/dev/components` while running `pnpm dev` or `make dev`. Production builds return "not found" for it (`import.meta.env.DEV`). It shows every primitive in the current theme, or light and dark side by side.
+`frontend/src/routes/dev.components.tsx` serves `/dev/components` while running `pnpm dev` in `frontend/`. Production builds return "not found" for it (`import.meta.env.DEV`). It shows every primitive in the current theme, or light and dark side by side.
 
 **Keep it up to date:** when you add or change a component, variant or token, add or update its example on this page in the same change. Then open the page in both themes and check it.
 
