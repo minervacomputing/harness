@@ -23,6 +23,7 @@ import {
 	running,
 	setCredentials,
 	settle,
+	until,
 	tokens,
 	type Harness,
 } from "./workspace-support.ts";
@@ -236,7 +237,7 @@ describe("single flight", () => {
 		provider.hold = true;
 		h.endpoint.answer = (sent) => provider.answer(sent);
 		const leases = [h.core.lease(id, SETTINGS), h.core.lease(id, SETTINGS), h.core.lease(id, SETTINGS)];
-		await settle();
+		await until(() => provider.held.length > 0, "the held refresh");
 		expect(h.endpoint.sent).toHaveLength(1);
 		for (const release of provider.held) release();
 		const answers = await Promise.all(leases);
@@ -254,7 +255,7 @@ describe("faults", () => {
 		provider.hold = true;
 		h.endpoint.answer = (sent) => provider.answer(sent);
 		const dying = h.core.lease(id, SETTINGS);
-		await settle();
+		await until(() => provider.held.length > 0, "the held refresh");
 		// The provider rotated r1 into r2, but its answer never reaches the instance, which dies.
 		expect(provider.spent).toEqual(["r1"]);
 		expect(column(h, id, "refresh_state")).toBe("refreshing");
@@ -307,7 +308,7 @@ describe("faults", () => {
 		provider.hold = true;
 		h.endpoint.answer = (sent) => provider.answer(sent);
 		const lease = h.core.lease(id, SETTINGS);
-		await settle();
+		await until(() => provider.held.length > 0, "the held refresh");
 		expect(column(h, id, "refresh_state")).toBe("refreshing");
 		// A reconnect that committed while the refresh's request was out (one that started before the refresh
 		// did): the next generation, fresh.
@@ -327,7 +328,7 @@ describe("faults", () => {
 		provider.hold = true;
 		h.endpoint.answer = (sent) => provider.answer(sent);
 		const lease = h.core.lease(id, SETTINGS);
-		await settle();
+		await until(() => provider.held.length > 0, "the held refresh");
 		// The provider omits the refresh token on reconnect; the same client issued both.
 		const reconnect = connectMixed(h, { access_token: "reconnected", refresh_token: null, client_id: "id" }, { connectionId: id });
 		await settle();
@@ -351,13 +352,13 @@ describe("faults", () => {
 		const reconnect = connectMixed(h, { access_token: "reconnected", refresh_token: null, client_id: "id" }, { connectionId: id });
 		const lease = h.core.lease(id, SETTINGS);
 		let done = false;
-		void Promise.all([reconnect, lease]).finally(() => {
+		void Promise.allSettled([reconnect, lease]).then(() => {
 			done = true;
 		});
-		for (let i = 0; i < 50 && !done; i++) {
-			await settle();
+		await until(() => {
 			for (const release of provider.held.splice(0)) release();
-		}
+			return done;
+		}, "the reconnect and the lease");
 		expect(done).toBe(true);
 		const stored = await credentials(h, id);
 		expect(stored.access_token).toBe("reconnected");
@@ -372,7 +373,7 @@ describe("faults", () => {
 		provider.hold = true;
 		h.endpoint.answer = (sent) => provider.answer(sent);
 		const lease = h.core.lease(id, SETTINGS);
-		await settle();
+		await until(() => provider.held.length > 0, "the held refresh");
 		// An earlier call, made with generation 2, was rejected by the provider while the refresh is out.
 		const marked = h.core.markUnauthorized(id, 2);
 		await settle();
@@ -390,7 +391,7 @@ describe("faults", () => {
 		provider.hold = true;
 		h.endpoint.answer = (sent) => provider.answer(sent);
 		const lease = h.core.lease(id, SETTINGS);
-		await settle();
+		await until(() => provider.held.length > 0, "the held refresh");
 		await h.core.deleteConnection(ADA, id);
 		for (const release of provider.held) release();
 		expect(await lease).toEqual({ refused: "CONNECTION_UNAUTHORIZED", message: EXPIRED });
@@ -407,7 +408,7 @@ describe("faults", () => {
 		provider.hold = true;
 		h.endpoint.answer = (sent) => provider.answer(sent);
 		const lease = h.core.lease(id, { run: input.runId, userId: input.userId });
-		await settle();
+		await until(() => provider.held.length > 0, "the held refresh");
 		await h.core.applyGrantChanges(ADA, id, [{ kind: "folder", id: "archive", actions: ["read"] }], {});
 		for (const release of provider.held) release();
 		expect(await lease).toEqual({ refused: "RUN_ENDED", message: RUN_ENDED });

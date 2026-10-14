@@ -40,6 +40,9 @@ export default defineConfig(async () => {
 		],
 		test: {
 			include: ["test/platform/**/*.test.ts"],
+			// The Worker hashes passwords and runs whole turns in these tests: a test that takes 2 s on a laptop takes
+			// over 5 s on CI's two cores, so the default timeout is too short.
+			testTimeout: 30_000,
 			setupFiles: ["test/platform/setup.ts"],
 			// A fault's `ctx.abort()` inside a DurableObject's RPC leaves the reset's own rejection unhandled in
 			// the isolate the tests share with the objects (src/faults/plan.ts); only those are ignored.

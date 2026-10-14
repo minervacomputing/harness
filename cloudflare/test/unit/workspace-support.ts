@@ -40,6 +40,18 @@ export async function settle(rounds = 20): Promise<void> {
 	for (let i = 0; i < rounds; i++) await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
+/**
+ * Lets pending work run until `condition` holds. A fixed number of rounds is not enough where the work waits on
+ * WebCrypto, which runs on Node's thread pool and can take longer than any number of rounds on a busy machine.
+ */
+export async function until(condition: () => boolean, what = "the condition"): Promise<void> {
+	const deadline = Date.now() + 4000;
+	while (!condition()) {
+		if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}.`);
+		await settle(1);
+	}
+}
+
 /** A clock that moves only on `advance`, which fires the delays that came due. */
 export class FakeTimers implements Timers {
 	current = Date.UTC(2026, 9, 12, 14, 3, 59);

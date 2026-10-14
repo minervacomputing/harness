@@ -687,8 +687,6 @@ describe("reading files", () => {
 		"https://x.sharepoint.com:\u0663/x",
 		"https://x.sharepoint.com:443:443/x",
 		"https://x.sharepoint.com:abc/x",
-		"https://xn--.sharepoint.com/x",
-		"https://xn--a.sharepoint.com/x",
 		"https://x.sharepoint.com/\\x",
 		"https://x y.sharepoint.com/x",
 		"https://x<y.sharepoint.com/x",
@@ -700,6 +698,14 @@ describe("reading files", () => {
 		];
 		expect(allowed.filter((url) => !downloadAllowed(url))).toEqual([]);
 		expect(refused.filter((url) => downloadAllowed(url))).toEqual([]);
+		// Malformed punycode labels follow the runtime's parser, whose verdict changed (Node 24.19 refuses them,
+		// 24.21 reads them as written); either way the host is the one written, under a Microsoft suffix.
+		for (const [url, written] of [
+			["https://xn--.sharepoint.com/x", "xn--.sharepoint.com"],
+			["https://xn--a.sharepoint.com/x", "xn--a.sharepoint.com"],
+		] as const) {
+			expect(downloadAllowed(url)).toBe(URL.parse(url)?.hostname === written);
+		}
 	});
 });
 describe("creating files", () => {
