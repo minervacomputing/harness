@@ -623,13 +623,22 @@ describe("attempts", () => {
 	});
 
 	test("a run whose deadline passed while the object was away ends timed_out at the gate, with no new attempt", async () => {
-		const w = await world({ faults: [{ point: "tool:after", mode: "abort", tool: LIST }] });
+		const w = await world({ faults: [{ point: "tool:before", mode: "hold", tool: LIST }, { point: "tool:after", mode: "abort", tool: LIST }] });
 		await w.ws.faultPlan([], { runTimeoutMs: 3000 });
 		const runId = await post(w, [LIST_INBOX, { text: "Never." }]);
-		const started = Date.now();
-		// Only the provider is watched: a call to the conversation would wake it before its deadline.
-		await until(() => provider(w), (state) => state.requests.length > 0);
-		await sleep(Math.max(0, started + 4000 - Date.now()));
+		await reached(() => w.conversation.faultFired(), "tool:before");
+		// pi's wake job runs in an alarm, and the platform retries an alarm whose invocation a reset cut before it re-armed,
+		// about 2 s later: that would wake the object before its deadline, and its gate would end the run as worker_exited.
+		// The reset comes once the alarm waits for the deadline, the first job due, so nothing wakes the object before it.
+		const alarm = () =>
+			runInDurableObject(w.conversation, async (_instance, state) => ({
+				deadline: state.storage.sql.exec<{ deadline: number }>("SELECT deadline FROM runs WHERE id = ?", runId).one().deadline,
+				alarm: await state.storage.getAlarm(),
+			}));
+		const { deadline } = await until(alarm, (now) => now.alarm === now.deadline);
+		await w.conversation.faultRelease("tool:before");
+		// No call to the conversation until then: it would wake it before its deadline.
+		await sleep(Math.max(0, deadline + 1000 - Date.now()));
 		const run = await settled(w, runId);
 		expect(run).toMatchObject({ status: "timed_out", errorMessage: "The run took too long." });
 		expect(restarts(await eventsOf(w, runId))).toEqual([]);
