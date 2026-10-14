@@ -19,7 +19,9 @@ export function isDict(value: unknown): value is JsonObject {
 // "\\", and "ab\\" captures "ab\n". The state is per isolate, so one tenant's input (tool arguments,
 // say) can change how another's keys parse, and hashes over the result (write keys, query hashes) are not
 // trustworthy. `JSON.parse`, `Response.json()` and `c.req.json()` are all affected; values are not, and
-// neither are keys without escapes. test/platform/worker.test.ts keeps the bug visible.
+// neither are keys without escapes. test/platform/worker.test.ts keeps the bug visible in the local workerd.
+// On Cloudflare's edge it no longer shows (the deployed probe, test/account/deployed.test.ts, since
+// 2026-10-14); `parseJson` stays while the runtimes the tests run in still have it.
 //
 // So every JSON text Minerva reads goes through `parseJson`: text with no backslash cannot hold an
 // escaped key and goes to `JSON.parse`; other text is parsed here, with the structure walked in
@@ -188,8 +190,8 @@ class Parser {
 
 /**
  * The key the runtime's JSON.parse and `parseJson` give `"\n"` after `"\\"` was parsed in the same place,
- * as char codes: `native` is [92] while the bug lasts, `parseJson` is always [10]. For the platform test and
- * the deployed probe.
+ * as char codes: `native` is [92] while the bug lasts (the local workerd), [10] where it is fixed (the edge),
+ * and `parseJson` is always [10]. For the platform test and the deployed probe.
  */
 export function escapedKeyCheck(): { native: number[]; parseJson: number[] } {
 	// A first key of its own gives the shape exactly one transition, whatever the isolate parsed before.

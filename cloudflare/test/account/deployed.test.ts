@@ -5,18 +5,16 @@ import { MIGRATIONS as SCRIPTS_MIGRATIONS } from "../../src/scripts/schema.ts";
 import { MIGRATIONS as WORKSPACE_MIGRATIONS } from "../../src/workspace/schema.ts";
 import { PROBE_HEADER, probeToken } from "../../src/http/probe-token.ts";
 import { SANDBOX_MIGRATIONS } from "../../src/sandbox/schema.ts";
-import { cf, fetchDeployed, instanceSecret, pinSuite, suiteInstance } from "./client.ts";
-import { originsOf } from "./origins.ts";
+import { cf, fetchDeployed, instanceSecret, ownOrigins, suiteInstance } from "./client.ts";
 
 /**
  * The instance this suite probes, of either kind, which must be named (`pnpm test:deployed --instance <name>`, or
- * MINERVA_INSTANCE): its origins from its vars.env, checked to be its own Workers before any request, and cf's
- * commands on its account.
+ * MINERVA_INSTANCE): its origins from its vars.env, checked to be its own Workers on its account's workers.dev
+ * subdomain before any request, and cf's commands on its account.
  */
 const INSTANCE = suiteInstance(false);
 const NAMES = INSTANCE.names;
-const { origin: SITE, downloadOrigin: DOWNLOAD } = originsOf(INSTANCE);
-pinSuite(INSTANCE);
+const { origin: SITE, downloadOrigin: DOWNLOAD } = ownOrigins(INSTANCE);
 
 const NIL = "00000000-0000-0000-0000-000000000000";
 
@@ -124,8 +122,9 @@ describe(`inside ${NAMES.app} (/api/probe)`, () => {
 		}
 		const local = readdirSync(new URL("../../migrations/", import.meta.url)).filter((name) => name.endsWith(".sql")).sort();
 		expect(body.d1Migrations).toEqual(local);
-		// The runtime's escaped-key bug, on the edge too (lib/json.ts). When `native` is [10], it is fixed.
-		expect(body.json).toEqual({ native: [92], parseJson: [10] });
+		// The runtime's escaped-key bug (lib/json.ts) is fixed on the edge (since 2026-10-14), though not in the
+		// local workerd (test/platform/worker.test.ts); parseJson reads the key right either way.
+		expect(body.json).toEqual({ native: [10], parseJson: [10] });
 	});
 });
 

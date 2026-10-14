@@ -1,13 +1,16 @@
-// The checks scripts/deploy.ts and scripts/resources.ts make before anything on the account changes: the
-// lifecycle rules a files bucket needs (scripts/lifecycle.ts) and the download origin's build against the
-// app's (scripts/builds.ts), which fails closed when a test build would reach production or the other way
-// round. The account itself is never asked here.
+// The checks scripts/deploy.ts, scripts/reset.ts and scripts/resources.ts make before anything on the account
+// changes: the lifecycle rules a files bucket needs (scripts/lifecycle.ts), the download origin's build against the
+// app's (scripts/builds.ts), which fails closed when a test build would reach production or the other way round,
+// which build a live app's bindings are (scripts/account.ts, for the identity check), and the order in which a
+// deploy and a reset check and change things. The account itself is never asked here (schema-check.test.ts runs
+// the identity check against a stand-in for cf).
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { type BuiltWorker, buildAccount, buildDigest, filesBuildProblems, liveAppProblems, ownContainer } from "../../scripts/builds.ts";
+import { bindingsKind } from "../../scripts/account.ts";
+import { type BuiltWorker, type LiveBinding, buildAccount, buildDigest, filesBuildProblems, liveAppProblems, ownContainer } from "../../scripts/builds.ts";
 import { namesOf } from "../../scripts/instance.ts";
 import { ARCHIVE_MAX_AGE, type LifecycleRule, lifecycleExtras, lifecycleMatches, lifecycleProblems } from "../../scripts/lifecycle.ts";
 import { hideSecrets, redact } from "../../scripts/run.ts";
@@ -162,6 +165,73 @@ describe("what a reset accepts as the instance's own", () => {
 		expect(ownContainer("acme", "acme-sandbox-2")).toBe(false);
 		expect(ownContainer("acme", "acme-sandboxes")).toBe(false);
 		expect(ownContainer("acme", "acme")).toBe(false);
+	});
+});
+
+describe("which build a live app is, from its bindings (the identity check without a row)", () => {
+	const object = (className: string): LiveBinding => ({ type: "durable_object_namespace", class_name: className });
+	const APP: Record<string, LiveBinding> = { DB: { type: "d1" }, WORKSPACE: object("Workspace"), FILES: { type: "r2_bucket", bucket_name: "acme-files" }, MINERVA_SITE_URL: { type: "plain_text", text: ORIGIN } };
+	const PRODUCTION = { ...APP, EMAIL: { type: "send_email" } };
+	const TEST = { ...APP, FAULT_PROVIDER: object("FaultProvider"), FAULT_MAILBOX: object("FaultMailbox") };
+
+	test("the test build binds both fault objects and has no EMAIL; the production build has EMAIL and neither", () => {
+		expect(bindingsKind(TEST)).toBe("test");
+		expect(bindingsKind(PRODUCTION)).toBe("production");
+	});
+
+	test("the quiesced instance of a reset has the app's secrets alone, which its versions inherit, or nothing", () => {
+		const secret: LiveBinding = { type: "secret_text" };
+		expect(bindingsKind({ MINERVA_SECRET_KEY: secret, MINERVA_ENCRYPTION_KEYS: secret, MINERVA_DOWNLOAD_KEY: secret, MINERVA_SETUP_KEY: secret })).toBe("quiesced");
+		expect(bindingsKind({})).toBe("quiesced");
+		expect(bindingsKind(undefined)).toBe("quiesced");
+		expect(bindingsKind({ MINERVA_SECRET_KEY: secret, MINERVA_SITE_URL: { type: "plain_text", text: ORIGIN } })).toBe("unknown");
+		expect(bindingsKind({ MINERVA_SECRET_KEY: secret, DB: { type: "d1" } })).toBe("unknown");
+	});
+
+	test("any other shape is unknown: a mix of both, one fault object, a binding of another type, neither", () => {
+		const { FAULT_MAILBOX: _mailbox, ...oneFault } = TEST;
+		for (const env of [
+			{ ...TEST, EMAIL: { type: "send_email" } },
+			{ ...PRODUCTION, FAULT_PROVIDER: object("FaultProvider") },
+			{ ...PRODUCTION, FAULT_MAILBOX: { type: "plain_text", text: "x" } },
+			oneFault,
+			{ ...TEST, FAULT_PROVIDER: { type: "service" } },
+			{ ...APP, EMAIL: { type: "plain_text", text: "noreply@example.com" } },
+			APP,
+			{ ASSETS: { type: "assets" } },
+		]) {
+			expect(bindingsKind(env), JSON.stringify(Object.keys(env))).toBe("unknown");
+		}
+	});
+});
+
+describe("the order of a reset's checks and changes (scripts/reset.ts)", () => {
+	const reset = readFileSync(new URL("../../scripts/reset.ts", import.meta.url), "utf8");
+	const positions = (markers: string[]) => markers.map((marker) => [marker, reset.indexOf(marker)] as const);
+
+	test("the identity is checked before the dry run's listing, with the flag's kind; it is recorded with --yes only", () => {
+		expect(reset).toContain('run(process.execPath, ["scripts/identity.ts", "--instance", INSTANCE.name, TEST ? "--test" : "--production", ...(YES ? ["--record"] : [])], { print: true });');
+		const order = positions(['const account = pinAccount(', '"scripts/identity.ts", "--instance"', "workerExists(NAME)", '"scripts/schema-check.ts"', 'step("What the reset deletes")', "if (!YES) {"]);
+		for (const [marker, index] of order) expect(index, marker).toBeGreaterThan(0);
+		expect(order.map(([, index]) => index)).toEqual(order.map(([, index]) => index).sort((a, b) => a - b));
+	});
+
+	test("the quiescing comes after the identity's record, and D1, which holds the row, is deleted last", () => {
+		const order = positions(['"scripts/identity.ts", "--instance"', "if (!YES) {", 'run("cf", ["deploy", "--prebuilt", "--no-provision"]', '"containers", "applications", "delete"', '"r2", "objects", "bulk-delete"', '"r2", "buckets", "delete"', 'run("cf", ["d1", "delete"']);
+		for (const [marker, index] of order) expect(index, marker).toBeGreaterThan(0);
+		expect(order.map(([, index]) => index)).toEqual(order.map(([, index]) => index).sort((a, b) => a - b));
+		// Nothing is deleted after it.
+		expect(reset.slice(0, reset.lastIndexOf('"delete"')).endsWith('run("cf", ["d1", ')).toBe(true);
+	});
+});
+
+describe("the order of the lab's deploy (scripts/deploy.ts --lab)", () => {
+	test("its origin and the instance's identity are checked before it is built and deployed", () => {
+		const deploy = readFileSync(new URL("../../scripts/deploy.ts", import.meta.url), "utf8");
+		const lab = deploy.slice(deploy.indexOf("function deployLab("));
+		const order = ["const origin = labOrigin(INSTANCE);", "checkOnAccount([{ origin, setting:", "checkIdentity(false);", 'run("cf", ["build"], { cwd: LAB_DIR', 'run("cf", ["deploy", "--prebuilt", "--secrets-file", INSTANCE.files.cm]'].map((marker) => lab.indexOf(marker));
+		expect(order.every((index) => index >= 0)).toBe(true);
+		expect(order).toEqual([...order].sort((a, b) => a - b));
 	});
 });
 

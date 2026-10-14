@@ -1,13 +1,15 @@
 // The deploy-time schema check (scripts/schema.ts): the comparison of the schema the migrations build with the
 // answers of the deployed database, and the reading of `cf d1 query`'s output. The queries are the real ones,
 // run on real SQLite; D1 itself is never asked here (deploys run scripts/schema-check.ts against the account).
+// Also the identity check (scripts/identity.ts), which every deploy and reset runs on the same database before
+// they change anything, against a stand-in for cf.
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { namesOf } from "../../scripts/instance.ts";
 import { APPLIED_SQL, COLUMNS_SQL, FOREIGN_KEYS_SQL, OBJECTS_SQL, TABLES_SQL, UNIQUES_SQL, compareMigrations, compareSchemas, expectedSchema, normalized, readOnly, rowsFrom, schemaOf } from "../../scripts/schema.ts";
 
@@ -277,7 +279,7 @@ if (args[0] === "auth" && args[1] === "whoami") {
 		const result = run(() => {});
 		expect(result.err.replace(/\(node:\d+\)[^\n]*\n/g, "").replace(/\(Use `node --trace[^\n]*\n/g, "")).toBe("");
 		expect(result.status).toBe(0);
-		expect(result.out).toMatch(new RegExp(`^The schema of ${PRODUCTION} matches the migrations \\(\\d+ tables, \\d+ columns, \\d+ indexes and other objects, 8 migrations\\)\\.\\n$`));
+		expect(result.out).toMatch(new RegExp(`^The schema of ${PRODUCTION} matches the migrations \\(\\d+ tables, \\d+ columns, \\d+ indexes and other objects, ${FILES.length} migrations\\)\\.\\n$`));
 		expect(result.calls.map((call) => call.slice(0, 2).join(" "))).toEqual(["auth whoami", "d1 list", ...Array(6).fill("d1 query")]);
 		for (const call of result.calls.slice(2)) expect(call[4], call[4]).toMatch(/^SELECT /);
 		expect(result.out + result.err).not.toContain(DATABASE_ID);
@@ -358,13 +360,15 @@ if (args[0] === "auth" && args[1] === "whoami") {
 		expect(garbage.err).toContain("The schema check stopped:");
 	});
 
-	test("both deploys run it after the builds and the resources check, before uploading anything", () => {
+	test("both deploys run it after the builds, the identity check and the resources check, before uploading anything", () => {
 		const scripts = (JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { scripts: Record<string, string> }).scripts;
 		expect(scripts.deploy).toBe("pnpm assets && node scripts/deploy.ts");
 		expect(scripts["deploy:test"]).toBe("pnpm assets && node scripts/deploy.ts --test");
-		// scripts/deploy.ts: the locks (the checkout's, then the instance's) and the account, everything local, then
-		// the first change on the account (the migrations).
+		// scripts/deploy.ts: the locks (the checkout's, then the instance's) and the account, everything local, the
+		// origins and the identity (read-only), then the first change on the account (the identity row, written by
+		// the identity check once it has passed), the migrations and the uploads.
 		const deploy = readFileSync(new URL("../../scripts/deploy.ts", import.meta.url), "utf8");
+		expect(deploy).toContain('run(process.execPath, ["scripts/identity.ts", ...(record ? ["--record"] : [])], { print: true });');
 		const order = [
 			"lockOperation(INSTANCE);",
 			"const account = pinAccount(",
@@ -373,6 +377,9 @@ if (args[0] === "auth" && args[1] === "whoami") {
 			'"scripts/bundle.ts"',
 			'run("cf", ["build", "--mode", MODE], { cwd: FILES_DIR',
 			"filesBuildProblems(",
+			"const origins = instanceOrigins(",
+			"checkOnAccount([\n\t\t{ origin: origins.origin",
+			"checkIdentity(!FILES_ONLY);",
 			'run(process.execPath, ["scripts/resources.ts"]',
 			'"scripts/schema-check.ts"',
 			'run("cf", ["deploy", "--prebuilt", "--secrets-file", SECRETS]',
@@ -380,5 +387,342 @@ if (args[0] === "auth" && args[1] === "whoami") {
 		].map((call) => deploy.indexOf(call));
 		expect(order.every((index) => index > 0)).toBe(true);
 		expect(order).toEqual([...order].sort((a, b) => a - b));
+	});
+});
+
+describe("scripts/identity.ts, with a stand-in for cf: D1 in a local SQLite file, and the app's Worker", () => {
+	// The scripts run from a copy of the checkout, so that the locks --record takes are the copy's, never this
+	// checkout's (where a deploy may be running).
+	const SOURCES = { scripts: new URL("../../scripts/", import.meta.url).pathname, migrations: new URL("../../migrations/", import.meta.url).pathname };
+	const DATABASE_ID = "11111111-2222-4333-8444-555555555555";
+	const ACCOUNT = "0123456789abcdef0123456789abcdef";
+	// `cf auth whoami`, `cf d1 list`, `cf d1 query` (a write when it holds more than one statement), `cf workers
+	// scripts search`, `cf workers deployments list` and `cf workers versions get`, answered from the FAKE_ variables
+	// and the file in FAKE_D1. Every call is logged; a call starting with FAKE_FAIL fails.
+	const FAKE_CF = `#!/usr/bin/env node
+const { appendFileSync } = require("node:fs");
+const { DatabaseSync } = require("node:sqlite");
+const args = process.argv.slice(2);
+appendFileSync(process.env.FAKE_LOG, JSON.stringify(args) + "\\n");
+if (process.env.FAKE_FAIL && args.join(" ").startsWith(process.env.FAKE_FAIL)) { console.error("cf failed" + (args.includes("${DATABASE_ID}") ? " for ${DATABASE_ID}" : "")); process.exit(1); }
+const command = args.slice(0, 2).join(" ");
+if (command === "auth whoami") {
+	console.log(JSON.stringify({ authenticated: true, accounts: [{ id: "${ACCOUNT}" }] }));
+} else if (command === "d1 list") {
+	console.log(JSON.stringify(process.env.FAKE_NO_DATABASE ? [] : [{ uuid: "${DATABASE_ID}", name: args[3] }]));
+} else if (command === "d1 query" && args[2] === "${DATABASE_ID}" && args[3] === "--sql") {
+	const db = new DatabaseSync(process.env.FAKE_D1);
+	const sql = args[4];
+	if (sql.replace(/'(?:[^']|'')*'/g, "").includes(";")) {
+		if (!process.env.FAKE_WRITE_FAILS) db.exec(sql);
+		console.log(JSON.stringify(sql.split(";").map(() => ({ results: [], success: !process.env.FAKE_WRITE_FAILS }))));
+	} else console.log(JSON.stringify([{ results: db.prepare(sql).all(), success: true, meta: {} }]));
+} else if (command === "workers scripts" && args[2] === "search" && args[3] === "--name") {
+	const workers = process.env.FAKE_WORKERS.split(",").filter((name) => name && name.includes(args[4]));
+	console.log(JSON.stringify(workers.map((name, index) => ({ id: "w" + index, script_name: name }))));
+} else if (command === "workers deployments" && args[2] === "list") {
+	console.log(process.env.FAKE_DEPLOYMENTS || JSON.stringify({ deployments: [{ versions: [{ version_id: "v1", percentage: 100 }] }] }));
+} else if (command === "workers versions" && args[2] === "get") {
+	console.log(JSON.stringify({ id: args[3], env: JSON.parse(process.env.FAKE_ENV) }));
+} else {
+	console.error("unexpected: " + args.join(" "));
+	process.exit(2);
+}
+`;
+
+	/** The live version's bindings, as `cf workers versions get` answers them, of each build. */
+	const object = (className: string) => ({ type: "durable_object_namespace", class_name: className, namespace_id: "n" });
+	const APP = { DB: { type: "d1" }, WORKSPACE: object("Workspace"), CONVERSATION: object("Conversation"), MINERVA_SITE_URL: { type: "plain_text", text: "https://site.example" } };
+	const PRODUCTION_BUILD = { ...APP, EMAIL: { type: "send_email" } };
+	const TEST_BUILD = { ...APP, FAULT_PROVIDER: object("FaultProvider"), FAULT_MAILBOX: object("FaultMailbox") };
+	// What the account shows of the quiesced Worker: it binds nothing of its own, and keeps the app's secrets.
+	const QUIESCED = { MINERVA_SECRET_KEY: { type: "secret_text" }, MINERVA_SETUP_KEY: { type: "secret_text" } };
+
+	let dir: string;
+	let checkout: string;
+	let d1: string;
+	let log: string;
+	/** What the account holds besides D1: its Workers (by name) and the app's live version. */
+	let account: { workers: string[]; env: object; deployments?: object; fail?: string; noDatabase?: boolean; writeFails?: boolean };
+
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "identity-"));
+		checkout = join(dir, "checkout", "cloudflare");
+		for (const [name, from] of Object.entries(SOURCES)) {
+			mkdirSync(join(checkout, name), { recursive: true });
+			for (const file of readdirSync(from)) if (/\.(ts|sql)$/.test(file)) copyFileSync(join(from, file), join(checkout, name, file));
+		}
+		writeFileSync(join(checkout, "package.json"), JSON.stringify({ type: "module" }));
+		const instances = join(dir, "instances");
+		mkdirSync(instances, { mode: 0o700 });
+		for (const [name, test] of [
+			["acme", false],
+			["acme-test", true],
+		] as const) {
+			mkdirSync(join(instances, name), { mode: 0o700 });
+			writeFileSync(join(instances, name, "instance.json"), JSON.stringify({ name, test, account: ACCOUNT }), { mode: 0o600 });
+		}
+		mkdirSync(join(dir, "bin"));
+		writeFileSync(join(dir, "bin", "cf"), FAKE_CF);
+		chmodSync(join(dir, "bin", "cf"), 0o755);
+		d1 = join(dir, "d1.sqlite");
+		new DatabaseSync(d1).close();
+		log = join(dir, "calls.log");
+		account = { workers: [], env: QUIESCED };
+	});
+	afterEach(() => {
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	function identity(flags: string[]) {
+		writeFileSync(log, "");
+		const env: Record<string, string | undefined> = {
+			...process.env,
+			MINERVA_INSTANCE: undefined,
+			CLOUDFLARE_ACCOUNT_ID: undefined,
+			MINERVA_INSTANCES_DIR: join(dir, "instances"),
+			PATH: `${join(dir, "bin")}:${process.env.PATH}`,
+			FAKE_LOG: log,
+			FAKE_D1: d1,
+			FAKE_WORKERS: account.workers.join(","),
+			FAKE_ENV: JSON.stringify(account.env),
+			FAKE_DEPLOYMENTS: account.deployments ? JSON.stringify(account.deployments) : "",
+			FAKE_FAIL: account.fail ?? "",
+			FAKE_NO_DATABASE: account.noDatabase ? "1" : "",
+			FAKE_WRITE_FAILS: account.writeFails ? "1" : "",
+		};
+		const result = spawnSync(process.execPath, [join(checkout, "scripts", "identity.ts"), ...flags], { encoding: "utf8", env: env as NodeJS.ProcessEnv });
+		const calls = readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[]);
+		const text = result.stdout + result.stderr;
+		expect(text).not.toContain(DATABASE_ID);
+		expect(text).not.toContain(ACCOUNT);
+		return { status: result.status, out: result.stdout, err: result.stderr, calls };
+	}
+
+	/** The statements of `calls` that are not a single SELECT: the writes. */
+	const writes = (calls: string[][]) => calls.filter((call) => call[1] === "query" && !/^SELECT [^;]*$/.test(call[4] ?? ""));
+
+	function exec(sql: string): void {
+		const db = new DatabaseSync(d1);
+		db.exec(sql);
+		db.close();
+	}
+
+	/** D1 as the migrations leave it: all of them, or (as before this check existed) all but the identity table's. */
+	function migrate(withIdentity = true): void {
+		const files = MIGRATIONS.filter((migration) => withIdentity || !migration.name.endsWith("_instance_identity.sql"));
+		exec(`${files.map((migration) => migration.sql).join("\n")}\nCREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);`);
+	}
+
+	function identityRows(): unknown[] {
+		const db = new DatabaseSync(d1, { readOnly: true });
+		try {
+			const table = db.prepare("SELECT name FROM sqlite_master WHERE name = 'instance_identity'").all();
+			return table.length ? db.prepare("SELECT id, name, test FROM instance_identity").all().map((row) => ({ ...row })) : [];
+		} finally {
+			db.close();
+		}
+	}
+
+	function record(name: string, test: 0 | 1): void {
+		exec(`CREATE TABLE IF NOT EXISTS instance_identity (id INTEGER NOT NULL PRIMARY KEY CHECK (id = 1), name TEXT NOT NULL, test INTEGER NOT NULL CHECK (test IN (0, 1))) STRICT; INSERT INTO instance_identity VALUES (1, '${name}', ${test});`);
+	}
+
+	test("a row that agrees passes, reading D1 alone with SELECTs", () => {
+		migrate();
+		record("acme", 0);
+		account = { workers: ["acme"], env: TEST_BUILD };
+		const result = identity(["--instance", "acme"]);
+		expect(result.err).toBe("");
+		expect(result.status).toBe(0);
+		expect(result.out).toBe("acme is a production instance, as its identity row in D1 says.\n");
+		expect(result.calls.map((call) => call.slice(0, 2).join(" "))).toEqual(["auth whoami", "d1 list", "d1 query", "d1 query"]);
+		expect(writes(result.calls)).toEqual([]);
+		exec("DELETE FROM instance_identity; INSERT INTO instance_identity VALUES (1, 'acme-test', 1);");
+		expect(identity(["--test"]).out).toBe("acme-test is a test instance, as its identity row in D1 says.\n");
+	});
+
+	test("a row that disagrees in name or kind stops, whatever the live app is, and --record writes nothing", () => {
+		migrate();
+		account = { workers: ["acme"], env: PRODUCTION_BUILD };
+		for (const [name, test, message] of [
+			["acme", 1, "D1 acme records the instance acme, a test instance, but"],
+			["acme-other", 0, "D1 acme records the instance acme-other, a production instance, but"],
+		] as const) {
+			exec(`DELETE FROM instance_identity; INSERT INTO instance_identity VALUES (1, '${name}', ${test});`);
+			const result = identity(["--instance", "acme", "--record"]);
+			expect(result.status).toBe(1);
+			expect(result.err).toContain(message);
+			expect(result.err).toContain("they are not the same instance. Nothing was changed.");
+			expect(writes(result.calls)).toEqual([]);
+		}
+	});
+
+	test("without a table, the live app's bindings tell the kind, which must be the instance's", () => {
+		migrate(false);
+		for (const [flags, env, status, text] of [
+			[["--instance", "acme"], PRODUCTION_BUILD, 0, "acme is a production instance, as its live app's bindings say (the production build); D1 has no identity row yet."],
+			[["--test"], TEST_BUILD, 0, "acme-test is a test instance, as its live app's bindings say (the test build); D1 has no identity row yet."],
+			[["--instance", "acme"], TEST_BUILD, 1, "acme serves the test build, but"],
+			[["--instance", "acme-test"], PRODUCTION_BUILD, 1, "acme-test serves the production build, but"],
+		] as const) {
+			account = { workers: ["acme", "acme-files", "acme-test", "acme-test-files"], env };
+			const result = identity([...flags]);
+			expect(result.status, text).toBe(status);
+			expect(result.out + result.err, text).toContain(text);
+			expect(result.calls.map((call) => call.slice(0, 3).join(" ")).slice(-3), text).toEqual(["workers scripts search", "workers deployments list", "workers versions get"]);
+			expect(writes(result.calls)).toEqual([]);
+		}
+	});
+
+	test("an empty identity table is no row", () => {
+		migrate();
+		account = { workers: ["acme"], env: PRODUCTION_BUILD };
+		expect(identity(["--instance", "acme"]).out).toContain("as its live app's bindings say");
+	});
+
+	test("bindings of neither build, or an app not served by one version, stop", () => {
+		migrate(false);
+		for (const env of [{ ...PRODUCTION_BUILD, FAULT_PROVIDER: object("FaultProvider") }, { ...TEST_BUILD, EMAIL: { type: "send_email" } }, APP, { ...TEST_BUILD, FAULT_MAILBOX: { type: "d1" } }]) {
+			account = { workers: ["acme"], env };
+			const result = identity(["--instance", "acme"]);
+			expect(result.status).toBe(1);
+			expect(result.err).toContain("acme's live version has the bindings of neither the test build nor the production build");
+		}
+		account = { workers: ["acme"], env: PRODUCTION_BUILD, deployments: { deployments: [{ versions: [{ version_id: "v1", percentage: 50 }, { version_id: "v2", percentage: 50 }] }] } };
+		const split = identity(["--instance", "acme"]);
+		expect(split.status).toBe(2);
+		expect(split.err).toContain("acme is not deployed as one version serving all traffic.");
+	});
+
+	test("with no row and no app (no Worker, or only the quiesced Worker of a reset), it passes only when D1 has no tables", () => {
+		// Workers whose names contain the app's are not the app.
+		for (const [workers, env, what] of [
+			[["acme-files", "acme-test"], PRODUCTION_BUILD, "no Worker"],
+			[["acme", "acme-files"], QUIESCED, "only the quiesced Worker of a reset"],
+		] as const) {
+			account = { workers: [...workers], env };
+			const fresh = identity(["--instance", "acme"]);
+			expect(fresh.status).toBe(0);
+			expect(fresh.out).toBe(`acme has no identity row, ${what}, and D1 has no tables: a fresh instance, or one whose reset has finished.\n`);
+		}
+		migrate(false);
+		for (const [workers, what] of [
+			[[], "no Worker"],
+			[["acme"], "only the quiesced Worker of a reset"],
+		] as const) {
+			account = { workers: [...workers], env: QUIESCED };
+			const held = identity(["--instance", "acme", "--record"]);
+			expect(held.status).toBe(1);
+			expect(held.err).toMatch(new RegExp(`^D1 acme has \\d+ tables, but no identity row, and acme is ${what}: which instance they belong to cannot be told\\. Nothing was changed\\.`));
+			expect(writes(held.calls)).toEqual([]);
+		}
+	});
+
+	test("every failed cf call stops the check (exit 2), and none reads as absent", () => {
+		migrate(false);
+		account = { workers: ["acme"], env: PRODUCTION_BUILD };
+		for (const fail of ["auth whoami", "d1 list", "d1 query", "workers scripts search", "workers deployments list", "workers versions get"]) {
+			account.fail = fail;
+			const result = identity(["--instance", "acme", "--record"]);
+			expect(result.status, fail).toBe(2);
+			expect(result.out, fail).toBe("");
+			expect(writes(result.calls), fail).toEqual([]);
+			expect(identityRows(), fail).toEqual([]);
+		}
+		account = { workers: ["acme"], env: PRODUCTION_BUILD, noDatabase: true };
+		const missing = identity(["--instance", "acme"]);
+		expect(missing.status).toBe(1);
+		expect(missing.err).toContain("No D1 database named acme: create it with cloudflare/README.md's First deploy commands");
+	});
+
+	test("a first deploy that stops after writing the row finds the row on its next run", () => {
+		// A fresh instance: no Worker, no tables. The check passes, then --record writes the row, after every read
+		// of the check and before nothing else, and reads it back.
+		const first = identity(["--instance", "acme", "--record"]);
+		expect(first.status).toBe(0);
+		expect(first.out).toBe("acme has no identity row, no Worker, and D1 has no tables: a fresh instance, or one whose reset has finished.\nRecorded acme's identity in D1: a production instance.\n");
+		const queries = first.calls.filter((call) => call[1] === "query");
+		expect(writes(queries)).toHaveLength(1);
+		expect(queries.findIndex((call) => writes([call]).length > 0)).toBe(queries.length - 3);
+		expect(writes(queries)[0]?.[4]).toMatch(/^CREATE TABLE IF NOT EXISTS instance_identity \(.*\) STRICT; INSERT INTO instance_identity \(id, name, test\) VALUES \(1, 'acme', 0\) ON CONFLICT \(id\) DO NOTHING$/s);
+		expect(identityRows()).toEqual([{ id: 1, name: "acme", test: 0 }]);
+		// Its migrations then stopped halfway, before any Worker was uploaded: tables, and still no Worker.
+		exec(MIGRATIONS[0]?.sql ?? "");
+		const again = identity(["--instance", "acme", "--record"]);
+		expect(again.status).toBe(0);
+		expect(again.out).toBe("acme is a production instance, as its identity row in D1 says.\n");
+		expect(writes(again.calls)).toEqual([]);
+		// The migrations the next run applies do not touch the row (the table is the migration's own).
+		exec(MIGRATIONS.slice(1).map((migration) => migration.sql).join("\n"));
+		expect(identityRows()).toEqual([{ id: 1, name: "acme", test: 0 }]);
+		// Without the row, the same account could not be told from another instance's.
+		exec("DELETE FROM instance_identity");
+		expect(identity(["--instance", "acme"]).status).toBe(1);
+	});
+
+	test("a reset that stops after quiescing finds the row on its next run, and a finished one passes as fresh", () => {
+		// An instance deployed before the row existed: tables, and the production build serving.
+		migrate(false);
+		account = { workers: ["acme", "acme-files"], env: PRODUCTION_BUILD };
+		const reset = identity(["--instance", "acme", "--production", "--record"]);
+		expect(reset.status).toBe(0);
+		expect(reset.out).toContain("as its live app's bindings say");
+		expect(reset.out).toContain("Recorded acme's identity in D1: a production instance.");
+		// Quiesced: the bindings are gone, the tables are still there.
+		account.env = QUIESCED;
+		const rerun = identity(["--instance", "acme", "--production", "--record"]);
+		expect(rerun.status).toBe(0);
+		expect(rerun.out).toBe("acme is a production instance, as its identity row in D1 says.\n");
+		expect(writes(rerun.calls)).toEqual([]);
+		exec("DELETE FROM instance_identity");
+		expect(identity(["--instance", "acme", "--production"]).status).toBe(1);
+		// The reset deleted D1 last and recreated it empty: nothing is left to tell, and nothing to lose.
+		rmSync(d1);
+		new DatabaseSync(d1).close();
+		const finished = identity(["--instance", "acme", "--production"]);
+		expect(finished.status).toBe(0);
+		expect(finished.out).toContain("only the quiesced Worker of a reset, and D1 has no tables");
+	});
+
+	test("a write that fails leaves no row, and the next run writes it; a table left empty is no row and no table", () => {
+		account.fail = `d1 query ${DATABASE_ID} --sql CREATE`;
+		const failed = identity(["--instance", "acme", "--record"]);
+		expect(failed.status).toBe(2);
+		expect(failed.err).toMatch(/^The identity check could not run: /);
+		expect(identityRows()).toEqual([]);
+		// cf exits 0, but D1 reports the statements as failed.
+		account.fail = undefined;
+		account.writeFails = true;
+		const reported = identity(["--instance", "acme", "--record"]);
+		expect(reported.status).toBe(2);
+		expect(reported.err).toBe("The identity check could not run: D1 acme did not report the identity write's 2 statements as done.\n");
+		expect(identityRows()).toEqual([]);
+		account.writeFails = false;
+		exec("CREATE TABLE instance_identity (id INTEGER NOT NULL PRIMARY KEY CHECK (id = 1), name TEXT NOT NULL, test INTEGER NOT NULL CHECK (test IN (0, 1))) STRICT");
+		account.fail = undefined;
+		const next = identity(["--instance", "acme", "--record"]);
+		expect(next.status).toBe(0);
+		expect(identityRows()).toEqual([{ id: 1, name: "acme", test: 0 }]);
+	});
+
+	test("the kind a reset's flag names must be the instance's; --record takes the locks, a read takes none", () => {
+		const production = identity(["--instance", "acme-test", "--production"]);
+		expect(production.status).toBe(2);
+		expect(production.err).toBe("acme-test is a test instance, not a production one.\n");
+		const test = identity(["--instance", "acme", "--test"]);
+		expect(test.status).toBe(2);
+		expect(test.err).toBe("acme is a production instance, and this runs only against a test instance.\n");
+		expect(identity(["--instance", "acme", "--test", "--production"]).status).toBe(2);
+		for (const result of [production, test]) expect(result.calls).toEqual([]);
+		// A lock left by a run that died: a read goes ahead, a write stops before it reaches cf.
+		const dead = spawnSync(process.execPath, ["-e", ""]).pid;
+		writeFileSync(join(dir, "instances", "acme", "lock"), String(dead), { mode: 0o600 });
+		expect(identity(["--instance", "acme"]).status).toBe(0);
+		const locked = identity(["--instance", "acme", "--record"]);
+		expect(locked.status).toBe(2);
+		expect(locked.err).toContain("stopped without removing its lock");
+		expect(locked.calls).toEqual([]);
+		expect(identityRows()).toEqual([]);
 	});
 });

@@ -14,8 +14,8 @@
 // (`setup-reopen`; the admins it made stay admins).
 //
 // Run after `pnpm run deploy:test`: `pnpm test:browser`, against the test instance (MINERVA_INSTANCE, or the only
-// test instance; never a production one). Both origins must be the test instance's own (origins.ts), or it fails
-// before sending anything. It fails too, rather than skip, without the test instance's settings and secrets (its
+// test instance; never a production one). Both origins must be the test instance's own Workers on its account's
+// workers.dev subdomain (client.ts, `ownOrigins`), or it fails before sending anything. It fails too, rather than skip, without the test instance's settings and secrets (its
 // vars.env and secrets.env) or when Google Chrome does not start. MINERVA_BROWSER_SHOTS=<dir> saves a screenshot of every page there, with every field
 // masked.
 
@@ -30,16 +30,16 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { FAULTS_HEADER, faultsToken } from "../../src/faults/token.ts";
 import { LINK_LIFETIME_MS } from "../../src/files/limits.ts";
 import { signDownload } from "../../src/files/links.ts";
+import { chromeFailure } from "./chrome.ts";
 import { FALLBACK_RESOLVERS, fetchDeployed, instanceSecret, testWorker } from "./client.ts";
-import { chromeFailure, originsOf } from "./origins.ts";
 
 /**
  * The test Worker's origin, keys and download origin. Missing files, and origins that are not the test instance's
- * own (origins.ts), throw: the walk fails rather than skip.
+ * own Workers on its account's workers.dev subdomain (client.ts, `ownOrigins`), throw: the walk fails rather than
+ * skip.
  */
 function setting(): { origin: string; secretKey: string; setupKey: string; downloadOrigin: string; downloadKey: string } {
-	const { instance, origin, secretKey } = testWorker();
-	const { downloadOrigin } = originsOf(instance);
+	const { instance, origin, downloadOrigin, secretKey } = testWorker();
 	return { origin, secretKey, setupKey: instanceSecret(instance, "MINERVA_SETUP_KEY"), downloadOrigin, downloadKey: instanceSecret(instance, "MINERVA_DOWNLOAD_KEY") };
 }
 

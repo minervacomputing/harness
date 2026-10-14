@@ -120,6 +120,8 @@ export interface LiveBinding {
 	bucket_name?: string;
 	jurisdiction?: string;
 	text?: string;
+	/** A Durable Object binding's class. */
+	class_name?: string;
 }
 
 /**

@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { LOCAL_INSTANCES, chooseInstance, instanceForMode, instanceVars, instancesDir, leftoverProblem, listInstances, parseInstanceArgs, readInstance } from "../../scripts/instance.ts";
 import { createInstance, readDeployed, recordAccount, writeDeployed, writeInstanceFile } from "../../scripts/instance-files.ts";
-import { originsOf } from "../account/origins.ts";
+import { labOrigin, originsOf } from "../../scripts/origins.ts";
 
 const SCRIPTS = new URL("../../scripts/", import.meta.url).pathname;
 const ACCOUNT = "0123456789abcdef0123456789abcdef";
@@ -284,6 +284,19 @@ describe("an instance's settings", () => {
 			vars(site, download);
 			const message = refusal(() => originsOf(instance));
 			expect(message).toMatch(new RegExp(`^${setting} in acme's vars.env is not acme`));
+			expect(message).not.toContain(SUB);
+		}
+	});
+
+	test("the lab's origin is the test instance's own lab, from its cm.vars.env", () => {
+		const instance = make("acme-test", true);
+		expect(refusal(() => labOrigin(instance))).toBe(`The lab's origin is in ${instance.files.cmVars}, which is missing (cloudflare/README.md, Code mode's lab).`);
+		put("acme-test", "cm.vars.env", `CM_ORIGIN=https://acme-test-cm.${SUB}.workers.dev\n`);
+		expect(labOrigin(instance)).toBe(`https://acme-test-cm.${SUB}.workers.dev`);
+		for (const other of [`https://acme-cm.${SUB}.workers.dev`, `https://acme-test.${SUB}.workers.dev`, `https://acme-test-cm.${SUB}.example`]) {
+			put("acme-test", "cm.vars.env", `CM_ORIGIN=${other}\n`);
+			const message = refusal(() => labOrigin(instance));
+			expect(message).toMatch(/^CM_ORIGIN in acme-test's cm.vars.env is not acme-test-cm on workers.dev/);
 			expect(message).not.toContain(SUB);
 		}
 	});

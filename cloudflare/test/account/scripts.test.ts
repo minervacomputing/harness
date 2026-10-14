@@ -9,19 +9,18 @@
 
 import { beforeAll, describe, expect, test } from "vitest";
 import { readInstanceEnv } from "../../scripts/instance.ts";
-import { fetchDeployed, suiteInstance } from "./client.ts";
-import { instanceOrigin } from "./origins.ts";
+import { fetchDeployed, ownLabOrigin, suiteInstance } from "./client.ts";
 
 /**
  * The lab's token and origin, in the test instance's cm.env and cm.vars.env (MINERVA_INSTANCE, or the only test
- * instance). The origin must be the instance's own lab, `<name>-cm`, before the token is sent anywhere.
+ * instance). The origin must be the instance's own lab, `<name>-cm`, on its account's workers.dev subdomain, before
+ * the token is sent anywhere.
  */
 function lab(): { origin: string; token: string } {
 	const instance = suiteInstance(true);
 	const token = readInstanceEnv(instance, "cm")?.CM_TOKEN;
-	const vars = readInstanceEnv(instance, "cmVars");
-	if (!token || !vars) throw new Error(`The lab's token and origin are in ${instance.files.cm} and ${instance.files.cmVars} (cloudflare/README.md, Code mode's lab).`);
-	return { origin: instanceOrigin(vars.CM_ORIGIN, instance.names.lab, `CM_ORIGIN in ${instance.name}'s cm.vars.env`), token };
+	if (!token || !readInstanceEnv(instance, "cmVars")) throw new Error(`The lab's token and origin are in ${instance.files.cm} and ${instance.files.cmVars} (cloudflare/README.md, Code mode's lab).`);
+	return { origin: ownLabOrigin(instance), token };
 }
 
 const { origin, token } = lab();

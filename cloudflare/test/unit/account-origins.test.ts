@@ -1,9 +1,12 @@
-// The account suites' check of where they send requests (test/account/origins.ts): only the chosen instance's
-// own Workers on workers.dev, both on one subdomain, and never a message that repeats the configured value.
+// The check of an instance's origins (scripts/origins.ts), which the build, the deploy and the account suites make
+// before anything is sent there: only the chosen instance's own Workers on workers.dev, both on one subdomain, and
+// never a message that repeats the configured value. Also the browser walk's report of Chrome failing to start
+// (test/account/chrome.ts).
 
 import { describe, expect, test } from "vitest";
 import { namesOf } from "../../scripts/instance.ts";
-import { chromeFailure, instanceOrigin, instanceOrigins } from "../account/origins.ts";
+import { instanceOrigin, instanceOrigins, subdomainOf } from "../../scripts/origins.ts";
+import { chromeFailure } from "../account/chrome.ts";
 
 /** A subdomain no message may contain. */
 const SUB = "acct7q";
@@ -57,9 +60,11 @@ describe("the test instance's origins", () => {
 		expect(message).not.toContain("acme-test.");
 	});
 
-	test("the two origins must be on one subdomain", () => {
+	test("the two origins must be on one subdomain, the one the account's is compared with", () => {
 		const names = { site: "SITE", download: "DOWNLOAD" };
 		expect(instanceOrigins(APP, FILES, names, TEST)).toEqual({ origin: APP, downloadOrigin: FILES });
+		expect(subdomainOf(APP)).toBe(SUB);
+		expect(subdomainOf(FILES)).toBe(SUB);
 		const message = refusal(() => instanceOrigins(APP, "https://acme-test-files.other7q.workers.dev", names, TEST));
 		expect(message).toMatch(/^SITE and DOWNLOAD /);
 		expect(message).not.toContain(SUB);

@@ -8,15 +8,18 @@
 //   node scripts/reset.ts --instance <name> --production [--yes]  the same for a production instance, which needs both
 //                                                               its name and --production; then `pnpm run deploy --instance <name>`
 //
-// The instance comes from scripts/instance.ts (`chooseInstance`), and its kind (instance.json) must be the flag's:
-// --test for a test instance, --production for any other, which is never chosen by default. `pnpm assets` first.
-// In order:
+// The instance comes from scripts/instance.ts (`chooseInstance`), and its kind must be the flag's, both in
+// instance.json and on the account (scripts/identity.ts): --test for a test instance, --production for any other,
+// which is never chosen by default. `pnpm assets` first. In order:
 // 1. Takes the checkout's lock and the instance's, and pins every cf command to the instance's account
 //    (scripts/run.ts, lockOperation and pinAccount; a first run records the account), then builds the app and the quiesced
 //    instance (reset-worker/), locally. Every name below comes from the app's build, and each must be the
 //    instance's own (scripts/instance.ts: its database, its two buckets, its container), or nothing happens.
-// 2. Checks that the Worker, the database and the buckets the build binds exist on that account, that the
-//    Worker has no Durable Object namespace of a class the build does not export, and that the container
+// 2. Checks the instance's identity on the account (scripts/identity.ts: D1's identity row, else the live app's
+//    bindings, else an empty D1), which must be the flag's kind; with --yes it then writes the identity row when it
+//    is missing, the reset's first change, so that a reset that stops after quiescing still finds it when run
+//    again. Then checks that the Worker, the database and the buckets the build binds exist on that account, that
+//    the Worker has no Durable Object namespace of a class the build does not export, and that the container
 //    applications linked to its namespaces are the build's own, by exact name. Nothing identifying is
 //    printed: ids and the workers.dev subdomain are replaced in all output. Only the checked quiesced build is
 //    uploaded.
@@ -34,12 +37,16 @@
 //    the recreation would lose (CORS, domains, notifications, locks, lifecycle rules not exactly as in
 //    r2-lifecycle.json) stops the reset at step 2.
 // 6. Deletes the D1 database and recreates it empty, with its location (or jurisdiction) and replication mode.
-// The instance answers 503 until the next deploy, which applies the migrations to the empty database and
-// provisions every class afresh; the schema check must pass then. A reset that stops leaves what it did
-// done: rerun it (a missing bucket or database is created first with README's First deploy commands).
+//    This comes last: the database holds the identity row, and once it is deleted the instance holds nothing,
+//    which is what the identity check then finds (no row, the quiesced Worker, no tables).
+// The instance answers 503 until the next deploy, which writes the identity row again, applies the migrations
+// to the empty database and provisions every class afresh; the schema check must pass then. A reset that stops
+// leaves what it did done: rerun it (a missing bucket or database is created first with README's First deploy
+// commands).
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { workerExists } from "./account.ts";
 import { buildAccount, buildDigest, ownContainer, readBuild } from "./builds.ts";
 import { type Instance, chooseInstance, parseInstanceArgs } from "./instance.ts";
 import { type LifecycleRule, lifecycleExtras, lifecycleMatches, lifecycleProblems } from "./lifecycle.ts";
@@ -237,12 +244,14 @@ try {
 	if (buildDigest(RESET_DIR) !== quietDigest) stop("The quiesced instance's build changed while it was checked: run this again.");
 	console.log(`${NAME}: D1 ${d1Name}; R2 ${buckets.map((bucket) => `${bucket.name}${bucket.jurisdiction ? ` (${bucket.jurisdiction})` : ""}`).join(", ")}; Durable Object classes ${classes.join(", ")}${containers.size ? `; containers ${[...containers].join(", ")}` : ""}.`);
 
-	// 2. The account.
+	// 2. The account: the identity first, then the names.
+	current = "checking the instance's identity";
+	step(`The identity of ${NAME} on the account${YES ? " (recorded in D1 if it is not yet, the reset's first change)" : ""}`);
+	run(process.execPath, ["scripts/identity.ts", "--instance", INSTANCE.name, TEST ? "--test" : "--production", ...(YES ? ["--record"] : [])], { print: true });
+
 	current = "checking the account";
 	step("Checking that each name is the instance's own on the account");
-	const workers = cfJson<{ id?: string; name: string }[]>(["workers", "list"]);
-	for (const worker of workers) hide(worker.id);
-	if (!workers.some((worker) => worker.name === NAME)) stop(`No Worker named ${NAME} on the account.`);
+	if (!workerExists(NAME)) stop(`No Worker named ${NAME} on the account.`);
 
 	const database = cfJson<{ uuid: string; name: string }[]>(["d1", "list", "--name", d1Name]).find((candidate) => candidate.name === d1Name);
 	if (!database) stop(`No D1 database named ${d1Name}: create it with README's First deploy commands, then run this again.`);

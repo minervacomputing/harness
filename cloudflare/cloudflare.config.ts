@@ -4,14 +4,17 @@ import * as entrypoint from "./src/index.ts" with { type: "cf-worker" };
 import { parseFrom } from "./src/accounts/emails.ts";
 import { checkBuild, connectorClientSecrets, parse, type SettingsEnv } from "./src/config.ts";
 import { type Instance, LOCAL_INSTANCES, type Names, chooseInstance, instanceForMode, instanceVars, namesOf, readInstanceEnv } from "./scripts/instance.ts";
+import { instanceOrigins } from "./scripts/origins.ts";
 
 // Plain settings are text bindings, read when the Worker is built and checked then with src/config.ts's
 // parser, so a malformed value fails the build. Development and tests read the environment, with the
 // defaults below. A deployed build (mode production or faults) reads its instance's vars.env alone
 // (scripts/instance.ts, The instance directory, outside the checkout): the shell's MINERVA_* are ignored there
-// (the Django app uses the same names), the file must exist, both origins must be https, and MINERVA_DEBUG must
-// be off. No build but the test build's accepts the fake model, which only its entry contains. Secrets never go
-// here: they are in the instance's secrets.env.
+// (the Django app uses the same names), the file must exist, and MINERVA_DEBUG must be off. Both origins must be the
+// instance's own Workers on workers.dev, `https://<name>.<subdomain>.workers.dev` and
+// `https://<name>-files.<subdomain>.workers.dev`, on one subdomain (scripts/origins.ts), which scripts/deploy.ts
+// then compares with the account's. No build but the test build's accepts the fake model, which only its entry
+// contains. Secrets never go here: they are in the instance's secrets.env.
 
 // Every name comes from scripts/instance.ts: the instance a build is for (`instanceForMode`: MINERVA_INSTANCE,
 // which the deploy scripts set, or for mode faults the only test instance), and through it the Worker, the
@@ -133,6 +136,10 @@ function settingsFor(target: Target): SettingsEnv {
 	const values = { ...settings, MINERVA_MODEL_GATEWAY: target.names.gateway } as unknown as SettingsEnv;
 	const parsed = parse(values);
 	checkBuild(parsed, { deployed: target.instance !== null, testBuild: target.faults });
+	if (target.instance) {
+		const where = `in ${target.instance.files.vars}`;
+		instanceOrigins(values.MINERVA_SITE_URL, values.MINERVA_DOWNLOAD_ORIGIN, { site: `MINERVA_SITE_URL ${where}`, download: `MINERVA_DOWNLOAD_ORIGIN ${where}` }, target.names);
+	}
 	return values;
 }
 

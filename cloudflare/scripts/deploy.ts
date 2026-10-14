@@ -15,22 +15,27 @@
 // fail locally runs before anything on the account changes: the secrets are checked, both Workers are built, the
 // app's bundle is checked for the test build's code (scripts/bundle.ts) and its startup CPU measured locally
 // (scripts/startup.ts), and the download origin's build is checked against the app's (its name, its buckets, its
-// origin); with --files-only, against the app actually deployed as well, and against the instance's record of
-// that deploy (its version and link key, in its deployed.json). Only then are the resources checked and D1's
-// migrations applied (scripts/resources.ts), the deployed schema compared with the migrations
-// (scripts/schema-check.ts) and the two checked builds uploaded, the app first (a build that changed since its
-// check stops the deploy). The download origin gets only MINERVA_DOWNLOAD_KEY, through an owner-only file in a
-// fresh temporary directory that is removed whatever happens. `pnpm assets` (the frontend) runs before this
-// script.
+// origin). Then, still reading only: the origins must be on the account's own workers.dev subdomain
+// (scripts/account.ts), and the instance on the account must be the one its directory describes
+// (scripts/identity.ts: D1's identity row, else the live app's bindings, else an empty D1); with --files-only, the
+// app actually deployed is checked against the local build and the instance's record of that deploy (its version
+// and link key, in its deployed.json). Only then does the account change: the identity row is written when it is
+// missing, the resources are checked and D1's migrations applied (scripts/resources.ts), the deployed schema is
+// compared with the migrations (scripts/schema-check.ts), and the two checked builds are uploaded, the app first (a
+// build that changed since its check stops the deploy). The download origin gets only MINERVA_DOWNLOAD_KEY, through
+// an owner-only file in a fresh temporary directory that is removed whatever happens. The lab's deploy checks the
+// identity and its own origin the same way. `pnpm assets` (the frontend) runs before this script.
 
 import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type LiveBinding, buildAccount, buildDigest, fileDigest, filesBuildProblems, liveAppProblems, readBuild } from "./builds.ts";
+import { checkOnAccount, liveVersion } from "./account.ts";
+import { buildAccount, buildDigest, fileDigest, filesBuildProblems, liveAppProblems, readBuild } from "./builds.ts";
 import { type Instance, checkFile, chooseInstance, parseInstanceArgs, readInstanceEnv } from "./instance.ts";
 import { readDeployed, writeDeployed } from "./instance-files.ts";
-import { CommandFailed, ROOT, cfJson, hide, hideOrigin, hideSecrets, lockOperation, pinAccount, run } from "./run.ts";
+import { instanceOrigins, labOrigin } from "./origins.ts";
+import { CommandFailed, ROOT, hideOrigin, hideSecrets, lockOperation, pinAccount, run } from "./run.ts";
 
 const USAGE = "Usage: deploy.ts [--instance <name>] [--test] [--files-only | --lab]";
 let INSTANCE: Instance;
@@ -66,13 +71,20 @@ function step(message: string): void {
 }
 
 /** The app's version serving all of its traffic: its id and its bindings. */
-function liveApp(): { version: string; env: Record<string, LiveBinding> | undefined } {
-	const { deployments = [] } = cfJson<{ deployments?: { versions?: { version_id: string; percentage: number }[] }[] }>(["workers", "deployments", "list", "--worker", APP]);
-	const versions = deployments[0]?.versions ?? [];
-	const version = versions[0];
-	if (versions.length !== 1 || !version || version.percentage !== 100) throw new CommandFailed(`${APP} is not deployed as one version serving all traffic: deploy both.`);
-	hide(version.version_id);
-	return { version: version.version_id, env: cfJson<{ env?: Record<string, LiveBinding> }>(["workers", "versions", "get", version.version_id, "--worker-id", APP]).env };
+function liveApp(): ReturnType<typeof liveVersion> {
+	try {
+		return liveVersion(APP);
+	} catch (error) {
+		throw new CommandFailed(`${error instanceof Error ? error.message : String(error)} Deploy both.`);
+	}
+}
+
+/**
+ * Checks the instance on the account before anything there changes: its identity (scripts/identity.ts, which with
+ * `record` then writes the identity row when it is missing, the first change on the account).
+ */
+function checkIdentity(record: boolean): void {
+	run(process.execPath, ["scripts/identity.ts", ...(record ? ["--record"] : [])], { print: true });
 }
 
 /** A digest of the link key the app is deployed with, which cannot be read back from the account. */
@@ -88,6 +100,11 @@ function deployLab(account: string): void {
 	if (!readInstanceEnv(INSTANCE, "cm")?.CM_TOKEN) throw new CommandFailed(`${INSTANCE.files.cm} must set CM_TOKEN, the lab's driver token (cloudflare/README.md, Code mode's lab).`);
 	hideSecrets(INSTANCE.files.cm);
 	const token = fileDigest(INSTANCE.files.cm);
+	step(`Checking ${INSTANCE.name} on the account: the lab's origin and the instance's identity`);
+	const origin = labOrigin(INSTANCE);
+	hideOrigin(origin);
+	checkOnAccount([{ origin, setting: `CM_ORIGIN in ${INSTANCE.files.cmVars}` }]);
+	checkIdentity(false);
 	step(`Building ${LAB_NAME}`);
 	run("cf", ["build"], { cwd: LAB_DIR, print: false });
 	const digest = buildDigest(LAB_DIR);
@@ -159,8 +176,26 @@ try {
 	unchanged(FILES_DIR, built.files);
 	console.log(`Both builds are ${INSTANCE.name}'s (${TEST ? "the test build" : "the production build"}), with the same buckets and download origin.`);
 
-	// cf deploy would create a missing database or bucket with default settings (it resolves the bindings'
-	// names to ids that way, so it cannot be turned off), hence the check of the resources right before.
+	step(`Checking ${INSTANCE.name} on the account: its origins and its identity${FILES_ONLY ? "" : " (then recording it, the first change on the account)"}`);
+	// The build checked that both origins are the instance's Workers on one workers.dev subdomain (cloudflare.config.ts);
+	// that subdomain must be the account's own.
+	const text = (name: string) => {
+		const value = app.env?.[name]?.value;
+		return typeof value === "string" ? value : undefined;
+	};
+	const settings = { site: `MINERVA_SITE_URL in ${INSTANCE.files.vars}`, download: `MINERVA_DOWNLOAD_ORIGIN in ${INSTANCE.files.vars}` };
+	const origins = instanceOrigins(text("MINERVA_SITE_URL"), text("MINERVA_DOWNLOAD_ORIGIN"), settings, INSTANCE.names);
+	checkOnAccount([
+		{ origin: origins.origin, setting: settings.site },
+		{ origin: origins.downloadOrigin, setting: settings.download },
+	]);
+	console.log("Both origins are the instance's Workers on the account's workers.dev subdomain.");
+	checkIdentity(!FILES_ONLY);
+
+	// cf deploy would create a missing database or bucket with default settings when it resolves the bindings'
+	// names to ids. `--no-provision` turns that off, but it also skips the resolution of D1's name to its id that
+	// cloudflare.config.ts relies on (it names the database, not its id), so the resources are checked right before
+	// instead.
 	if (FILES_ONLY) {
 		step("Checking the resources");
 		run(process.execPath, ["scripts/resources.ts", "--check"], { print: true });
@@ -172,7 +207,7 @@ try {
 		if (differences.length) throw new CommandFailed(`${differences.join("\n")}\nDeploy both (\`${AGAIN}\`) rather than the download origin alone.`);
 		console.log(`It shares its buckets, download origin and link key with ${FILES}'s build.`);
 	} else {
-		step("Checking the resources and applying D1's migrations (the first change on the account)");
+		step("Checking the resources and applying D1's migrations");
 		run(process.execPath, ["scripts/resources.ts"], { print: true });
 		run(process.execPath, ["scripts/schema-check.ts"], { print: true });
 		step(`Deploying ${APP}`);
