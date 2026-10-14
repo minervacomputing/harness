@@ -31,9 +31,15 @@ importers:
       '@minerva/contract':
         specifier: workspace:*
         version: link:../contract
+      '@orpc/client':
+        specifier: 1.15.6
+        version: 1.15.6
       '@orpc/openapi':
         specifier: 1.15.6
         version: 1.15.6(ws@8.22.0)
+      '@orpc/openapi-client':
+        specifier: 1.15.6
+        version: 1.15.6
       '@orpc/server':
         specifier: 1.15.6
         version: 1.15.6(ws@8.22.0)
@@ -64,6 +70,9 @@ importers:
       ipaddr.js:
         specifier: 2.5.0
         version: 2.5.0
+      jose:
+        specifier: 6.2.12
+        version: 6.2.12
       oauth4webapi:
         specifier: 3.8.8
         version: 3.8.8
@@ -89,13 +98,7 @@ importers:
       '@cloudflare/vitest-plugin':
         specifier: 1.4.0
         version: 1.4.0(@types/node@24.19.0)(vitest@4.1.11(@types/node@24.19.0)(vite@8.3.4(@types/node@24.19.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1)))
-      '@orpc/client':
-        specifier: 1.15.6
-        version: 1.15.6
       '@orpc/contract':
-        specifier: 1.15.6
-        version: 1.15.6
-      '@orpc/openapi-client':
         specifier: 1.15.6
         version: 1.15.6
       '@types/node':
@@ -135,6 +138,18 @@ importers:
         specifier: 4.3.6
         version: 4.3.6
     devDependencies:
+      '@orpc/openapi':
+        specifier: 1.15.6
+        version: 1.15.6(ws@8.22.0)
+      '@orpc/server':
+        specifier: 1.15.6
+        version: 1.15.6(ws@8.22.0)
+      '@orpc/zod':
+        specifier: 1.15.6
+        version: 1.15.6(@orpc/contract@1.15.6)(@orpc/server@1.15.6(ws@8.22.0))(ws@8.22.0)(zod@4.3.6)
+      '@types/node':
+        specifier: 24.19.0
+        version: 24.19.0
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -1465,6 +1480,9 @@ packages:
   '@orpc/interop@1.15.6':
     resolution: {integrity: sha512-PKZiXgvYR/O3dFeW8BwgeBZhNHgtC3oGFleNiHb5EGWIi4WlhFsruGCMvjhvmoXBiMTpozLeByKiuJrGbzTRbw==}
 
+  '@orpc/json-schema@1.15.6':
+    resolution: {integrity: sha512-cmcVl93g0d4QptDUzSJRfyshb5+zCycWASobrMGEY+H3xD8I1e4mLAhhrLw0p7/WP0f8zuEfRig9GwMO1BqmpA==}
+
   '@orpc/openapi-client@1.15.6':
     resolution: {integrity: sha512-4iw8TB6ze6f8TjZcMOn/5uR9AX/PEKhMc6zMYE/4+wH+6+oDm+HVt1tnPG3OoYPr/5Q7/QrLkR+NsR94tXM9kg==}
 
@@ -1518,6 +1536,13 @@ packages:
     peerDependencies:
       '@orpc/client': 1.15.6
       '@tanstack/query-core': '>=5.80.2'
+
+  '@orpc/zod@1.15.6':
+    resolution: {integrity: sha512-EldSBzhfTodcvP3Ah7PqR7bkX554EiY4G/wvCliRXiEkD0sZ9vv3pTkk7yGQWiB+IsaLWSnKmIgytjWyAP8Z6Q==}
+    peerDependencies:
+      '@orpc/contract': 1.15.6
+      '@orpc/server': 1.15.6
+      zod: '>=3.25.0'
 
   '@oxc-parser/binding-android-arm-eabi@0.150.0':
     resolution: {integrity: sha512-oQef2Zu4Prz1KLKznz3HqZzU9uVoA5PMoDZuuLmqms7hKmKSAPzlaMnLllJq3t+rgKmfJJ2siPrpZfFrW06btw==}
@@ -5515,6 +5540,9 @@ packages:
     engines: {node: '>=8'}
     hasBin: true
 
+  wildcard-match@5.1.6:
+    resolution: {integrity: sha512-Dh5N543my42ynFsbT0v6iPpaqJt95MOK1n/lhojVTe/hS3gpP6e938bbzsfaS0goLlJbhEOCIJPe/Tc3hckoaQ==}
+
   workerd@1.20261006.1:
     resolution: {integrity: sha512-8MadBuffZ5NdpLwZjUmsqT5QlaKXq4gjgT6wzcKeynZTICNXyePhc+5QVoKiK7+MMhFTLNrRO2KXLlpk8Q6BkA==}
     engines: {node: '>=16'}
@@ -7002,6 +7030,20 @@ snapshots:
 
   '@orpc/interop@1.15.6': {}
 
+  '@orpc/json-schema@1.15.6(ws@8.22.0)':
+    dependencies:
+      '@orpc/contract': 1.15.6
+      '@orpc/interop': 1.15.6
+      '@orpc/openapi': 1.15.6(ws@8.22.0)
+      '@orpc/server': 1.15.6(ws@8.22.0)
+      '@orpc/shared': 1.15.6
+      json-schema-typed: 8.0.2
+    transitivePeerDependencies:
+      - '@opentelemetry/api'
+      - crossws
+      - fastify
+      - ws
+
   '@orpc/openapi-client@1.15.6':
     dependencies:
       '@orpc/client': 1.15.6
@@ -7104,6 +7146,22 @@ snapshots:
       '@tanstack/query-core': 5.104.0
     transitivePeerDependencies:
       - '@opentelemetry/api'
+
+  '@orpc/zod@1.15.6(@orpc/contract@1.15.6)(@orpc/server@1.15.6(ws@8.22.0))(ws@8.22.0)(zod@4.3.6)':
+    dependencies:
+      '@orpc/contract': 1.15.6
+      '@orpc/json-schema': 1.15.6(ws@8.22.0)
+      '@orpc/openapi': 1.15.6(ws@8.22.0)
+      '@orpc/server': 1.15.6(ws@8.22.0)
+      '@orpc/shared': 1.15.6
+      escape-string-regexp: 5.0.0
+      wildcard-match: 5.1.6
+      zod: 4.3.6
+    transitivePeerDependencies:
+      - '@opentelemetry/api'
+      - crossws
+      - fastify
+      - ws
 
   '@oxc-parser/binding-android-arm-eabi@0.150.0':
     optional: true
@@ -10319,7 +10377,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.2
-      '@types/node': 24.19.0
+      '@types/node': 26.6.3
       long: 5.3.2
 
   proxy-addr@2.0.8:
@@ -11066,6 +11124,8 @@ snapshots:
     dependencies:
       siginfo: 2.0.0
       stackback: 0.0.2
+
+  wildcard-match@5.1.6: {}
 
   workerd@1.20261006.1:
     optionalDependencies:

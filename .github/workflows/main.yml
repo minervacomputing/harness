@@ -38,9 +38,9 @@ jobs:
       - name: Frontend (oxlint, oxfmt, tsc, knip, unit tests)
         working-directory: frontend
         run: pnpm check
-      - name: Contract types
+      - name: Contract types, and its OpenAPI documents up to date
         working-directory: contract
-        run: pnpm typecheck
+        run: pnpm typecheck && pnpm openapi:check
       - name: Engine types
         working-directory: cloudflare
         run: pnpm typecheck

@@ -62,3 +62,31 @@ test("connector clients are declared in pairs, for the OAuth apps of the registr
 	const apps = new Set((await connectorRegistry()).all().flatMap((connector) => (connector.auth.type === "oauth2" ? [connector.auth.app] : [])));
 	expect([...apps].filter((app) => !(OAUTH_APPS as readonly string[]).includes(app))).toEqual([]);
 });
+
+test("the internal API's settings are all set or none", () => {
+	const internal = {
+		MINERVA_ENVIRONMENT: "staging",
+		MINERVA_ACCESS_ISSUER: "https://team.cloudflareaccess.example",
+		MINERVA_ACCESS_AUDIENCE: "aud-tag",
+		MINERVA_ACCESS_CLIENTS: " old.access , laravel.access,,old.access ",
+	};
+	expect(parse(settingsEnv()).internal).toBeNull();
+	expect(parse(settingsEnv(internal)).internal).toEqual({
+		environment: "staging",
+		access: { issuer: "https://team.cloudflareaccess.example", audience: "aud-tag", clients: ["old.access", "laravel.access"] },
+	});
+	expect(() => parse(settingsEnv({ MINERVA_ENVIRONMENT: "staging" }))).toThrow("are set together or not at all; MINERVA_ENVIRONMENT is set.");
+	expect(() => parse(settingsEnv({ ...internal, MINERVA_ACCESS_ISSUER: "http://team.cloudflareaccess.example" }))).toThrow("MINERVA_ACCESS_ISSUER must be an https origin");
+	expect(() => parse(settingsEnv({ ...internal, MINERVA_ACCESS_ISSUER: "https://team.cloudflareaccess.example/path" }))).toThrow("MINERVA_ACCESS_ISSUER");
+	expect(() => parse(settingsEnv({ ...internal, MINERVA_ACCESS_CLIENTS: " , " }))).toThrow("MINERVA_ACCESS_CLIENTS must be one or more client ids");
+	expect(() => parse(settingsEnv({ ...internal, MINERVA_ENVIRONMENT: "Staging" }))).toThrow("MINERVA_ENVIRONMENT must be lowercase");
+});
+
+test("Laravel's origin is optional, and https in a deployed build", () => {
+	expect(parse(settingsEnv()).laravelUrl).toBeNull();
+	expect(parse(settingsEnv({ MINERVA_LARAVEL_URL: "https://app.minerva.example/" })).laravelUrl).toBe("https://app.minerva.example");
+	expect(() => parse(settingsEnv({ MINERVA_LARAVEL_URL: "https://app.minerva.example/internal" }))).toThrow("MINERVA_LARAVEL_URL");
+	const plain = parse(settingsEnv({ MINERVA_LARAVEL_URL: "http://localhost:8000" }));
+	expect(() => checkBuild(plain, { deployed: false, testBuild: false })).not.toThrow();
+	expect(() => checkBuild(plain, { deployed: true, testBuild: false })).toThrow("MINERVA_LARAVEL_URL must be an https origin in a deployed build's vars file.");
+});

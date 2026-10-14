@@ -22,6 +22,11 @@ export interface SettingsEnv {
 	MINERVA_FILES_WORKSPACE_BYTES: string;
 	MINERVA_FILES_UPLOAD_BYTES: string;
 	MINERVA_FILES_MESSAGE_ATTACHMENTS: string;
+	MINERVA_ENVIRONMENT: string;
+	MINERVA_ACCESS_ISSUER: string;
+	MINERVA_ACCESS_AUDIENCE: string;
+	MINERVA_ACCESS_CLIENTS: string;
+	MINERVA_LARAVEL_URL: string;
 }
 
 /** `fake` is the deterministic model of src/model/fake.ts, for tests and a test deployment. */
@@ -59,6 +64,23 @@ export interface Settings {
 		uploadBytes: number;
 		messageAttachments: number;
 	};
+	/**
+	 * The internal API Laravel calls (api/internal/, docs/plans/contract.md): the environment its commands must name, and the
+	 * Cloudflare Access application whose service tokens may call it. Null when unset: every /internal/ path is then 404.
+	 */
+	internal: { environment: string; access: AccessSettings } | null;
+	/** Laravel's origin, which the engine's requests and deliveries go to (laravel/client.ts); null when unset. */
+	laravelUrl: string | null;
+}
+
+/** What the Worker checks an Access assertion against (api/internal/access.ts). */
+export interface AccessSettings {
+	/** `https://<team>.cloudflareaccess.com`: the assertion's `iss`, and where its keys are published. */
+	issuer: string;
+	/** The Access application's audience tag. */
+	audience: string;
+	/** The client ids of the service tokens that may call; more than one while a token is rotated. */
+	clients: string[];
 }
 
 const cache = new WeakMap<object, Settings>();
@@ -99,7 +121,25 @@ export function parse(env: SettingsEnv): Settings {
 			uploadBytes: count(env, "MINERVA_FILES_UPLOAD_BYTES"),
 			messageAttachments: count(env, "MINERVA_FILES_MESSAGE_ATTACHMENTS"),
 		},
+		internal: internal(env),
+		laravelUrl: env.MINERVA_LARAVEL_URL.trim() ? origin(env, "MINERVA_LARAVEL_URL") : null,
 	};
+}
+
+const INTERNAL_NAMES = ["MINERVA_ENVIRONMENT", "MINERVA_ACCESS_ISSUER", "MINERVA_ACCESS_AUDIENCE", "MINERVA_ACCESS_CLIENTS"] as const;
+
+/** The internal API's settings: all four, or none. */
+function internal(env: SettingsEnv): Settings["internal"] {
+	const set = INTERNAL_NAMES.filter((name) => env[name].trim());
+	if (set.length === 0) return null;
+	if (set.length < INTERNAL_NAMES.length) throw new Error(`${INTERNAL_NAMES.join(", ")} are set together or not at all; ${set.join(", ")} ${set.length === 1 ? "is" : "are"} set.`);
+	const environment = required(env, "MINERVA_ENVIRONMENT");
+	if (!/^[a-z][a-z0-9-]{0,31}$/.test(environment)) throw invalid("MINERVA_ENVIRONMENT", "lowercase letters, digits and hyphens, starting with a letter");
+	const issuer = origin(env, "MINERVA_ACCESS_ISSUER");
+	if (!issuer.startsWith("https://")) throw invalid("MINERVA_ACCESS_ISSUER", "an https origin such as https://team.cloudflareaccess.com");
+	const clients = [...new Set(env.MINERVA_ACCESS_CLIENTS.split(",").map((client) => client.trim()).filter(Boolean))];
+	if (clients.length === 0) throw invalid("MINERVA_ACCESS_CLIENTS", "one or more client ids, comma separated");
+	return { environment, access: { issuer, audience: required(env, "MINERVA_ACCESS_AUDIENCE"), clients } };
 }
 
 /**
@@ -114,6 +154,7 @@ export function checkBuild(parsed: Settings, build: { deployed: boolean; testBui
 		throw new Error("MINERVA_SITE_URL and MINERVA_DOWNLOAD_ORIGIN must be https origins in a deployed build's vars file.");
 	}
 	if (parsed.debug) throw new Error("MINERVA_DEBUG must be off in a deployed build.");
+	if (parsed.laravelUrl !== null && !parsed.laravelUrl.startsWith("https://")) throw new Error("MINERVA_LARAVEL_URL must be an https origin in a deployed build's vars file.");
 }
 
 /** The shortest MINERVA_SETUP_KEY that can claim setup (src/accounts/instance.ts); `pnpm secrets` generates 43 characters, and `secrets.ts check` refuses a shorter one. */

@@ -200,7 +200,7 @@ describe("the domain: parsed JSON and plain objects, nothing coerced", () => {
 describe("hash inputs", () => {
 	test("start with their purpose's label, then the canonical JSON", () => {
 		expect(hashInput("write-key", { b: 1, a: [2] })).toBe('minerva:write-key:{"a":[2],"b":1}');
-		const purposes: HashPurpose[] = ["write-key", "query", "operation", "folder-version"];
+		const purposes: HashPurpose[] = ["write-key", "query", "operation", "folder-version", "catalog"];
 		const labels = purposes.map(hashLabel);
 		expect(new Set(labels).size).toBe(purposes.length);
 		// No label is a prefix of another, so equal JSON under two purposes never gives the same input.

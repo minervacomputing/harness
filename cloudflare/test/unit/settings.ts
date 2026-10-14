@@ -22,6 +22,11 @@ export function settingsEnv(overrides: Partial<SettingsEnv> = {}): SettingsEnv {
 		MINERVA_FILES_WORKSPACE_BYTES: "",
 		MINERVA_FILES_UPLOAD_BYTES: "52428800",
 		MINERVA_FILES_MESSAGE_ATTACHMENTS: "10",
+		MINERVA_ENVIRONMENT: "",
+		MINERVA_ACCESS_ISSUER: "",
+		MINERVA_ACCESS_AUDIENCE: "",
+		MINERVA_ACCESS_CLIENTS: "",
+		MINERVA_LARAVEL_URL: "",
 		...overrides,
 	};
 }

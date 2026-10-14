@@ -1,6 +1,6 @@
 // Canonical JSON for the values Minerva hashes or encrypts, which are stored formats: RFC 8785, the JSON
 // Canonicalization Scheme (JCS), written by `canonicalize`. Write keys, query hashes, operation
-// fingerprints and folder-version digests hash it (`hashInput`); encrypted values (lib/encryption.ts) are
+// fingerprints, folder-version digests and the catalog's version hash it (`hashInput`); encrypted values (lib/encryption.ts) are
 // it, and so is their associated data. What the model or a provider reads is not this: it is
 // `JSON.stringify`'s.
 //
@@ -36,7 +36,7 @@ export function canonicalJson(value: unknown, options: CanonicalOptions = {}): s
 }
 
 /** What each hash is for; the label is part of what it covers. */
-export type HashPurpose = "write-key" | "query" | "operation" | "folder-version";
+export type HashPurpose = "write-key" | "query" | "operation" | "folder-version" | "catalog";
 
 /** The label a hash for `purpose` starts with. */
 export function hashLabel(purpose: HashPurpose): string {

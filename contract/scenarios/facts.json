@@ -1,0 +1,947 @@
+{
+  "description": "How Laravel answers deliveries of facts (docs/plans/contract.md, Requests and facts). Each scenario starts with no facts held, and with the conversations and their runs below; each step delivers a batch and expects an answer: `acknowledged`, or `error` with its code and data. A refused batch applies none of its facts. The engine's fake Laravel and Laravel's route must both pass every one.",
+  "scope": {
+    "environment": "test",
+    "organization": "0199e000-0000-7000-8000-000000000001",
+    "workspace": "0199e000-0000-7000-8000-000000000002"
+  },
+  "conversations": [
+    {
+      "id": "0199e000-0000-7000-8000-00000000000a",
+      "runs": [
+        "0199e000-0000-7000-8000-0000000000a1",
+        "0199e000-0000-7000-8000-0000000000a2"
+      ]
+    },
+    {
+      "id": "0199e000-0000-7000-8000-00000000000b",
+      "runs": [
+        "0199e000-0000-7000-8000-0000000000b1"
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "facts in order are applied and acknowledged",
+      "steps": [
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:02.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 2
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 3,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:03.000Z",
+                "type": "run.tool_call",
+                "data": {
+                  "tool": "todoist_list_tasks",
+                  "label": "Todoist: List tasks",
+                  "arguments": "{\"filter\":\"today\"}",
+                  "truncated": false,
+                  "decision": "allowed",
+                  "title": "Tasks",
+                  "count": 3
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 3
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 4,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:04.000Z",
+                "type": "run.finished",
+                "data": {
+                  "status": "completed",
+                  "error": "",
+                  "message": {
+                    "id": "0199e000-0000-7000-8000-0000000000c1",
+                    "content": "Three tasks are due today."
+                  },
+                  "folder": null
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 4
+          }
+        }
+      ]
+    },
+    {
+      "name": "a repeated batch is applied once",
+      "steps": [
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:02.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 2
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:02.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "a batch that repeats some facts applies the new ones",
+      "steps": [
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:02.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 2
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:02.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 3,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:03.000Z",
+                "type": "run.tool_call",
+                "data": {
+                  "tool": "todoist_list_tasks",
+                  "label": "Todoist: List tasks",
+                  "arguments": "{\"filter\":\"today\"}",
+                  "truncated": false,
+                  "decision": "allowed",
+                  "title": "Tasks",
+                  "count": 3
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 3
+          }
+        }
+      ]
+    },
+    {
+      "name": "a repeat that differs is a conflict, and stops the conversation",
+      "steps": [
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:02.000Z",
+                "type": "run.finished",
+                "data": {
+                  "status": "completed",
+                  "error": "",
+                  "message": {
+                    "id": "0199e000-0000-7000-8000-0000000000c1",
+                    "content": "Three tasks are due today."
+                  },
+                  "folder": null
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 2
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:02.000Z",
+                "type": "run.finished",
+                "data": {
+                  "status": "failed",
+                  "error": "",
+                  "message": {
+                    "id": "0199e000-0000-7000-8000-0000000000c1",
+                    "content": "Three tasks are due today."
+                  },
+                  "folder": null
+                }
+              }
+            ]
+          },
+          "answer": {
+            "error": "FACT_CONFLICT"
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 3,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:03.000Z",
+                "type": "run.tool_call",
+                "data": {
+                  "tool": "todoist_list_tasks",
+                  "label": "Todoist: List tasks",
+                  "arguments": "{\"filter\":\"today\"}",
+                  "truncated": false,
+                  "decision": "allowed",
+                  "title": "Tasks",
+                  "count": 3
+                }
+              }
+            ]
+          },
+          "answer": {
+            "error": "FACT_CONFLICT"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a batch that skips facts is a gap, with what is held",
+      "steps": [
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 1
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 3,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:03.000Z",
+                "type": "run.tool_call",
+                "data": {
+                  "tool": "todoist_list_tasks",
+                  "label": "Todoist: List tasks",
+                  "arguments": "{\"filter\":\"today\"}",
+                  "truncated": false,
+                  "decision": "allowed",
+                  "title": "Tasks",
+                  "count": 3
+                }
+              }
+            ]
+          },
+          "answer": {
+            "error": "FACT_GAP",
+            "data": {
+              "acknowledged": 1
+            }
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:02.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 3,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:03.000Z",
+                "type": "run.tool_call",
+                "data": {
+                  "tool": "todoist_list_tasks",
+                  "label": "Todoist: List tasks",
+                  "arguments": "{\"filter\":\"today\"}",
+                  "truncated": false,
+                  "decision": "allowed",
+                  "title": "Tasks",
+                  "count": 3
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 3
+          }
+        }
+      ]
+    },
+    {
+      "name": "the first delivery must start at 1",
+      "steps": [
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:02.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              }
+            ]
+          },
+          "answer": {
+            "error": "FACT_GAP",
+            "data": {
+              "acknowledged": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a batch out of order is a gap",
+      "steps": [
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:02.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              }
+            ]
+          },
+          "answer": {
+            "error": "FACT_GAP",
+            "data": {
+              "acknowledged": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a batch with a gap after new facts applies none of them: another fact 1 is then accepted",
+      "steps": [
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:02.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 4,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:04.000Z",
+                "type": "run.tool_call",
+                "data": {
+                  "tool": "todoist_list_tasks",
+                  "label": "Todoist: List tasks",
+                  "arguments": "{\"filter\":\"today\"}",
+                  "truncated": false,
+                  "decision": "allowed",
+                  "title": "Tasks",
+                  "count": 3
+                }
+              }
+            ]
+          },
+          "answer": {
+            "error": "FACT_GAP",
+            "data": {
+              "acknowledged": 0
+            }
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "one conversation's runs share its sequence",
+      "steps": [
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:02.000Z",
+                "type": "run.finished",
+                "data": {
+                  "status": "completed",
+                  "error": "",
+                  "message": {
+                    "id": "0199e000-0000-7000-8000-0000000000c1",
+                    "content": "Three tasks are due today."
+                  },
+                  "folder": null
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 2
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 3,
+                "run": "0199e000-0000-7000-8000-0000000000a2",
+                "at": "2026-10-14T12:00:03.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 4,
+                "run": "0199e000-0000-7000-8000-0000000000a2",
+                "at": "2026-10-14T12:00:04.000Z",
+                "type": "run.finished",
+                "data": {
+                  "status": "completed",
+                  "error": "",
+                  "message": {
+                    "id": "0199e000-0000-7000-8000-0000000000c1",
+                    "content": "Three tasks are due today."
+                  },
+                  "folder": null
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 4
+          }
+        }
+      ]
+    },
+    {
+      "name": "conversations are sequenced apart",
+      "steps": [
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:02.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 2
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000b",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000b1",
+                "at": "2026-10-14T12:00:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 1
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 3,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:03.000Z",
+                "type": "run.tool_call",
+                "data": {
+                  "tool": "todoist_list_tasks",
+                  "label": "Todoist: List tasks",
+                  "arguments": "{\"filter\":\"today\"}",
+                  "truncated": false,
+                  "decision": "allowed",
+                  "title": "Tasks",
+                  "count": 3
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 3
+          }
+        }
+      ]
+    },
+    {
+      "name": "a fact of a run the conversation does not hold is not found, and its batch applies nothing: another fact 1 is then accepted",
+      "steps": [
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000f1",
+                "at": "2026-10-14T12:00:02.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              }
+            ]
+          },
+          "answer": {
+            "error": "NOT_FOUND"
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "another conversation's run is not found",
+      "steps": [
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000b1",
+                "at": "2026-10-14T12:00:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              }
+            ]
+          },
+          "answer": {
+            "error": "NOT_FOUND"
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000b",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000b1",
+                "at": "2026-10-14T12:00:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 1
+          }
+        }
+      ]
+    }
+  ]
+}

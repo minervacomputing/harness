@@ -104,6 +104,11 @@ const DEFAULTS: Omit<SettingsEnv, "MINERVA_MODEL_GATEWAY"> = {
 	MINERVA_FILES_WORKSPACE_BYTES: "",
 	MINERVA_FILES_UPLOAD_BYTES: "52428800",
 	MINERVA_FILES_MESSAGE_ATTACHMENTS: "10",
+	MINERVA_ENVIRONMENT: "",
+	MINERVA_ACCESS_ISSUER: "",
+	MINERVA_ACCESS_AUDIENCE: "",
+	MINERVA_ACCESS_CLIENTS: "",
+	MINERVA_LARAVEL_URL: "",
 };
 
 /**
@@ -125,6 +130,17 @@ const OFFLINE_DEFAULTS: Partial<Omit<SettingsEnv, "MINERVA_MODEL_GATEWAY">> = {
 function connectorSecrets(target: Target) {
 	const source: Record<string, string | undefined> = target.instance ? (readInstanceEnv(target.instance, "secrets") ?? {}) : build.env;
 	return Object.fromEntries(connectorClientSecrets(source).map((name) => [name, bindings.secret()]));
+}
+
+/**
+ * MINERVA_LARAVEL_TOKEN, the Sanctum token the engine calls Laravel with (src/laravel/client.ts), declared only where it
+ * is set, as the connector clients are: an engine that does not call Laravel yet needs none.
+ */
+function laravelSecret(target: Target) {
+	const source: Record<string, string | undefined> = target.instance ? (readInstanceEnv(target.instance, "secrets") ?? {}) : build.env;
+	// One shape whether it is set or not, as `connectorSecrets` has: a union would break the inferred Env.
+	const names = source.MINERVA_LARAVEL_TOKEN?.trim() ? ["MINERVA_LARAVEL_TOKEN"] : [];
+	return Object.fromEntries(names.map((name) => [name, bindings.secret()]));
 }
 
 function settingsFor(target: Target): SettingsEnv {
@@ -187,7 +203,7 @@ export default defineConfig(({ mode }) => {
 			previewUrls: false,
 			// The frontend is served as static assets; the Worker runs first for the API and for /assets/,
 			// where a missing file must be a 404 rather than the app shell (src/http/assets.ts).
-			assets: { notFoundHandling: "single-page-application", runWorkerFirst: ["/api/*", "/assets/*"] },
+			assets: { notFoundHandling: "single-page-application", runWorkerFirst: ["/api/*", "/assets/*", "/internal/*"] },
 			// Upload names and download links travel in query strings; keep them out of the logs.
 			observability: { enabled: true, redactQueryString: true },
 			env: {
@@ -239,6 +255,13 @@ export default defineConfig(({ mode }) => {
 				MINERVA_FILES_UPLOAD_BYTES: setting("MINERVA_FILES_UPLOAD_BYTES"),
 				MINERVA_FILES_MESSAGE_ATTACHMENTS: setting("MINERVA_FILES_MESSAGE_ATTACHMENTS"),
 
+				// The internal API (docs/plans/contract.md): off until all four Access settings are set.
+				MINERVA_ENVIRONMENT: setting("MINERVA_ENVIRONMENT"),
+				MINERVA_ACCESS_ISSUER: setting("MINERVA_ACCESS_ISSUER"),
+				MINERVA_ACCESS_AUDIENCE: setting("MINERVA_ACCESS_AUDIENCE"),
+				MINERVA_ACCESS_CLIENTS: setting("MINERVA_ACCESS_CLIENTS"),
+				MINERVA_LARAVEL_URL: setting("MINERVA_LARAVEL_URL"),
+
 				// Uploaded from the instance's secrets.env by `pnpm run deploy`. A declared secret is required, so model
 				// keys (MINERVA_MODEL_API_KEY, MINERVA_BRAVE_SEARCH_API_KEY) join this list in the steps that use
 				// them; until then they are commented-out placeholders in that file. MINERVA_SETUP_KEY claims the
@@ -250,6 +273,7 @@ export default defineConfig(({ mode }) => {
 				// Connector clients (MINERVA_<APP>_CLIENT_ID and _SECRET), only those the operator set: an unset
 				// one hides its connectors, as today.
 				...connectorSecrets(target),
+				...laravelSecret(target),
 			},
 			exports: {
 				Workspace: exports.durableObject({ storage: "sqlite" }),

@@ -247,7 +247,7 @@ The chat folds the agent's work into one row per stretch ("Used 3 tools"); a cal
 
 ## The web API
 
-The JSON API is one oRPC contract (`contract/`: method, path, input, output and typed errors, camelCase fields), which the Worker implements in `src/api/` and the frontend's client derives from (`frontend/src/lib/orpc.ts`). Errors keep the `{detail}` shape and the 422 list carries zod's messages; the Worker checks CSRF (double submit plus `Origin`) on its own routes. A message may carry an `Idempotency-Key`. Accounts and sign-in use **Better Auth** (MIT, version pinned); the frontend uses its client. The product plan moves all of this to Laravel and keeps only an internal API and the stream in the engine.
+The JSON API is one oRPC contract (`contract/`: method, path, input, output and typed errors, camelCase fields), which the Worker implements in `src/api/` and the frontend's client derives from (`frontend/src/lib/orpc.ts`). Errors keep the `{detail}` shape and the 422 list carries zod's messages; the Worker checks CSRF (double submit plus `Origin`) on its own routes. A message may carry an `Idempotency-Key`. Accounts and sign-in use **Better Auth** (MIT, version pinned); the frontend uses its client. The product plan moves all of this to Laravel and keeps only an internal API and the stream in the engine. The internal API is in `contract/src/internal/` and served under `/internal/v1/` to Laravel alone, with a Cloudflare Access service token the Worker checks again; its design is [docs/plans/contract.md](docs/plans/contract.md).
 
 - **Library and storage.** Better Auth 1.7.7 (exact) runs in the Worker at `/api/auth/*` on D1 through its Kysely adapter. Its tables (and its plugins') are created by our D1 migrations from the schema its CLI generates (`pnpm auth:schema`). Plugins: email and password, email OTP (verification, sign-in and reset codes), two-factor (TOTP with backup codes), organization (organizations and members, read-only through the API for now) and admin (the instance admin's role only; its endpoints are not exposed). Only the routes in an allowlist (`BROWSER_ROUTES`) reach it, and its own routes check its trusted origin.
 - **Passwords** use Better Auth's scrypt (N 2^14, r 16, p 1; about 30 ms locally). A login with an unknown address takes as long as a wrong password.
@@ -305,6 +305,8 @@ cloudflare/                the engine (cloudflare/README.md)
     http/                  router, errors, cookies, CSRF, headers, SSE relay
     accounts/              Better Auth's configuration and policy, provisioning, TOTP steps, instance admin, email sender, seed
     api/                   workspaces, agents, conversations, connections, access, OAuth, uploads
+    internal/              the internal API Laravel calls: Access, the commands, the catalog
+    laravel/               the engine's client of Laravel
     workspace/             Workspace DO: registry, revocation outbox, credentials
     conversation/          Conversation DO: runs, attempts, events, history, loop, tools
     gateway/               executor, policy, write ledger, page tokens, OAuth
@@ -320,7 +322,7 @@ cloudflare/                the engine (cloudflare/README.md)
   container/               Dockerfile, Python requirements, minerva-fs, probe
   scripts/                 instances, deploy, reset, secrets, the account suites' runner, offline development
   test/                    vitest: unit, platform, docker, account
-contract/                  the API's oRPC contract, shared by the Worker and the frontend
+contract/                  the API's oRPC contract, shared by the Worker and the frontend; the internal API's, with its OpenAPI documents
 frontend/                  the React app (Vite, TanStack, assistant-ui) the Worker serves as static assets
 design/                    the logo's sources
 docs/                      connectors, images, plans

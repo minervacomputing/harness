@@ -27,7 +27,7 @@ import { StandardOpenAPIMatcher } from "@orpc/openapi/standard";
 import { type AnyRouter, ORPCError, ValidationError } from "@orpc/server";
 import { type CurrentSession, currentSession, withSessionCookies } from "../accounts/auth.ts";
 import { ADMINS_ONLY, isInstanceAdmin } from "../accounts/instance.ts";
-import { UNPARSEABLE, readJson } from "../http/body.ts";
+import { MAX_JSON_BODY, UNPARSEABLE, readJson } from "../http/body.ts";
 import { HttpError, SERVER_ERROR, errorAnswer, noRoute, serverError, unauthorized } from "../http/errors.ts";
 import { UUID } from "../http/paths.ts";
 import type { App } from "../http/router.ts";
@@ -57,11 +57,11 @@ const router = api.router({
  * A browser sends a POST without a body (the link's, for a procedure whose input is all in the path) with
  * `Content-Length: 0` and no type, which arrives with an empty body: that is no body too.
  */
-async function jsonBody(request: Request): Promise<Json | undefined> {
+async function jsonBody(request: Request, limit: number): Promise<Json | undefined> {
 	if (request.body === null || (!request.headers.has("Content-Type") && request.headers.get("Content-Length")?.trim() === "0")) return undefined;
 	let read: Awaited<ReturnType<typeof readJson>>;
 	try {
-		read = await readJson(request);
+		read = await readJson(request, limit);
 	} catch {
 		read = { ok: false, refusal: UNPARSEABLE };
 	}
@@ -70,11 +70,11 @@ async function jsonBody(request: Request): Promise<Json | undefined> {
 }
 
 /**
- * A refusal our code made (procedures.ts `refusal`, `invalidInput` below): declared, with one of our codes. oRPC
+ * A refusal our code made (procedures.ts `refusal`, `invalidInput` below): declared, with one of the API's codes. oRPC
  * would mark any error whose code and status match the error map as declared, so this is checked before it does.
  */
-function ours(error: unknown): boolean {
-	return error instanceof ORPCError && error.defined && Object.hasOwn(REFUSALS, error.code) && !(error.cause instanceof ValidationError);
+function ours(error: unknown, codes: Codes): boolean {
+	return error instanceof ORPCError && error.defined && Object.hasOwn(codes, error.code) && !(error.cause instanceof ValidationError);
 }
 
 /** Anything not ours (a crash, an output that failed its schema, a failure of oRPC's own) is logged and answers 500. */
@@ -100,8 +100,18 @@ function invalidInput(error: ValidationError): ORPCError<"VALIDATION_FAILED", un
 	return new ORPCError("VALIDATION_FAILED", { defined: true, status: REFUSALS.VALIDATION_FAILED, message, data: { issues } });
 }
 
-/** oRPC's handler for the contract's router, with our body reader and our errors. */
-export function contractHandler(procedures: AnyRouter): OpenAPIHandler<ApiContext> {
+/** An API's refusal codes with their statuses: the public contract's `REFUSALS`, or the internal API's. */
+type Codes = Readonly<Record<string, number>>;
+
+/**
+ * oRPC's handler for a contract's router, with our body reader and our errors: the public API's by default, or another API's
+ * codes and body cap (the internal API, internal/mount.ts). Both have the codes this module answers with itself, with the
+ * same statuses: the body reader's, `VALIDATION_FAILED` and `INTERNAL_SERVER_ERROR`.
+ */
+export function contractHandler<Context extends { request: Request } = ApiContext>(
+	procedures: AnyRouter,
+	{ codes = REFUSALS, maxBody = MAX_JSON_BODY }: { codes?: Codes; maxBody?: number } = {},
+): OpenAPIHandler<Context> {
 	return new OpenAPIHandler(procedures, {
 		interceptors: [
 			// Around matching, decoding and the call. oRPC calls `request.body()` to decode the input; ours answers
@@ -109,9 +119,9 @@ export function contractHandler(procedures: AnyRouter): OpenAPIHandler<ApiContex
 			async (options) => {
 				let body: Promise<Json | undefined> | null = null;
 				try {
-					return await options.next({ ...options, request: { ...options.request, body: () => (body ??= jsonBody(options.context.request)) } });
+					return await options.next({ ...options, request: { ...options.request, body: () => (body ??= jsonBody(options.context.request, maxBody)) } });
 				} catch (error) {
-					throw ours(error) ? error : crashed(error);
+					throw ours(error, codes) ? error : crashed(error);
 				}
 			},
 		],
@@ -122,7 +132,7 @@ export function contractHandler(procedures: AnyRouter): OpenAPIHandler<ApiContex
 					return await next();
 				} catch (error) {
 					if (error instanceof ORPCError && error.code === "BAD_REQUEST" && error.cause instanceof ValidationError) throw invalidInput(error.cause);
-					throw ours(error) ? error : crashed(error);
+					throw ours(error, codes) ? error : crashed(error);
 				}
 			},
 		],

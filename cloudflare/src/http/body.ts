@@ -15,11 +15,11 @@ export const NOT_JSON: Refusal = { code: "UNSUPPORTED_MEDIA_TYPE", detail: "Send
 export const TOO_LARGE: Refusal = { code: "PAYLOAD_TOO_LARGE", detail: "The request is too large." };
 export const UNPARSEABLE: Refusal = { code: "INVALID_JSON", detail: "The body is not valid JSON." };
 
-/** The body's JSON value, undefined for an empty body, or why it is refused (above). */
-export async function readJson(request: Request): Promise<Outcome<Json | undefined>> {
+/** The body's JSON value, undefined for an empty body, or why it is refused (above). The internal API reads up to its own cap. */
+export async function readJson(request: Request, limit = MAX_JSON_BODY): Promise<Outcome<Json | undefined>> {
 	const type = request.headers.get("Content-Type");
 	if (type === null || type.split(";")[0]!.trim().toLowerCase() !== "application/json") return { ok: false, refusal: NOT_JSON };
-	const bytes = await readBytes(request, MAX_JSON_BODY);
+	const bytes = await readBytes(request, limit);
 	if (bytes === null) return { ok: false, refusal: TOO_LARGE };
 	if (bytes.byteLength === 0) return { ok: true, value: undefined };
 	try {
@@ -30,16 +30,16 @@ export async function readJson(request: Request): Promise<Outcome<Json | undefin
 }
 
 /** Whether the declared Content-Length is over `limit`, or not a number. */
-export function declaredOver(request: Request, limit: number): boolean {
-	const declared = request.headers.get("Content-Length");
+export function declaredOver(message: Request | Response, limit: number): boolean {
+	const declared = message.headers.get("Content-Length");
 	return declared !== null && (!/^[0-9]+$/.test(declared.trim()) || Number(declared) > limit);
 }
 
-/** The body's bytes, or null once a declared or streamed length passes `limit`. */
-async function readBytes(request: Request, limit: number): Promise<Uint8Array | null> {
-	if (declaredOver(request, limit)) return null;
-	if (!request.body) return new Uint8Array(0);
-	const reader = request.body.getReader();
+/** A request's or a response's body, or null once a declared or streamed length passes `limit`. */
+export async function readBytes(message: Request | Response, limit: number): Promise<Uint8Array | null> {
+	if (declaredOver(message, limit)) return null;
+	if (!message.body) return new Uint8Array(0);
+	const reader = message.body.getReader();
 	const chunks: Uint8Array[] = [];
 	let size = 0;
 	for (;;) {

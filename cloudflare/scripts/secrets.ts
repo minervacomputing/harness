@@ -60,9 +60,12 @@ const REQUIRED: Record<string, () => string> = {
 
 // Model keys are uploaded once the steps that use them declare them in cloudflare.config.ts. A connector
 // client (both names set) is declared and uploaded as soon as it is set; unset, its connectors are hidden.
+// MINERVA_LARAVEL_TOKEN, the Sanctum token Laravel issues for this engine (`php artisan minerva:engine-token`), is
+// declared and uploaded once set.
 const PLACEHOLDERS = [
 	"MINERVA_MODEL_API_KEY",
 	"MINERVA_BRAVE_SEARCH_API_KEY",
+	"MINERVA_LARAVEL_TOKEN",
 	...OAUTH_APPS.flatMap((app) => clientSecretNames(app)),
 ];
 
@@ -105,7 +108,7 @@ function generate(): void {
 		`# Secrets of ${INSTANCE ? `the instance ${INSTANCE.name}` : "the local dev server (pnpm dev:offline)"} (cloudflare/). Never commit or print them.`,
 		...[...values].map(([name, value]) => line(name, value)),
 		"",
-		"# Optional: model keys (uploaded once declared) and connector clients (set both names of an app):",
+		"# Optional: model keys (uploaded once declared), Laravel's token and connector clients (set both names of an app):",
 		...PLACEHOLDERS.filter((name) => !values.has(name)).map((name) => `# ${name}=`),
 	];
 	if (INSTANCE) writeInstanceFile(INSTANCE, "secrets", `${lines.join("\n")}\n`);

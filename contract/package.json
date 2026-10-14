@@ -5,16 +5,23 @@
   "type": "module",
   "sideEffects": false,
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./internal": "./src/internal/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json && tsc -p openapi/tsconfig.json",
+    "openapi": "node openapi/generate.ts",
+    "openapi:check": "node openapi/generate.ts --check"
   },
   "dependencies": {
     "@orpc/contract": "1.15.6",
     "zod": "4.3.6"
   },
   "devDependencies": {
+    "@orpc/openapi": "1.15.6",
+    "@orpc/server": "1.15.6",
+    "@orpc/zod": "1.15.6",
+    "@types/node": "24.19.0",
     "typescript": "7.0.2"
   }
 }

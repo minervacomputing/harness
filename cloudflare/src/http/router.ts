@@ -1,5 +1,6 @@
-// The API router. Only /api/* reaches it (static assets answer everything else, http/assets.ts), and every
-// API response gets the security headers. Paths have no trailing slash; a path that matches no route, or a
+// The API router. Only /api/* and /internal/* reach it (static assets answer everything else, http/assets.ts), and
+// every response gets the security headers. /internal/* is the internal API Laravel calls (internal/mount.ts), with
+// its own authentication and body cap; the rest of this comment is about /api/*. Paths have no trailing slash; a path that matches no route, or a
 // workspace id that is not a UUID, is 404 `NOT_FOUND`.
 //
 // Two rules hold for every request without a route asking for them, so a route added later cannot forget
@@ -21,6 +22,7 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { matchedRoutes } from "hono/route";
 import { AUTH_ROUTE, accountRoutes } from "../accounts/routes.ts";
 import { contractRoutes } from "../api/orpc.ts";
+import { internalRoutes } from "../internal/mount.ts";
 import { apiRoutes } from "../api/routes.ts";
 import { settings } from "../config.ts";
 import { MAX_JSON_BODY, TOO_LARGE, declaredOver } from "./body.ts";
@@ -44,12 +46,14 @@ export const OWN_SIZE_LIMIT: ReadonlySet<string> = new Set(["POST", "PUT", "PATC
 export function createApp(): App {
 	const app = new Hono<AppEnv>();
 	app.use("/api/*", securityHeaders);
+	app.use("/internal/*", securityHeaders);
 	app.use("/api/*", sameOrigin);
 	app.use("/api/*", bodyCap);
 
 	app.get("/api/health", () => json(200, { ok: true }));
 	app.get("/api/probe", probe);
 
+	internalRoutes(app);
 	accountRoutes(app);
 	apiRoutes(app);
 	// After every Hono route: the contract's routes answer what none of them did.

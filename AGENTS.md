@@ -16,7 +16,7 @@ Settings are text bindings, parsed by `cloudflare/src/config.ts` when the Worker
 
 An instance's files live outside the checkout, in `~/.config/minerva/instances/<name>/` (cloudflare/README.md, The instance directory). Ours are `minerva-cf` (production) and `minerva-cf-test` (the test instance, built with fault points). `.dev.vars`, `secrets.env` and every `.env*` file hold secrets: never print, commit or copy their values. To check a value, report only whether it is set.
 
-**Secrets:** `MINERVA_SECRET_KEY`, `MINERVA_ENCRYPTION_KEYS` (`id:secret` entries, comma separated; the first encrypts), `MINERVA_DOWNLOAD_KEY`, `MINERVA_SETUP_KEY` (claims an instance's first admin, once), and connector clients, `MINERVA_<APP>_CLIENT_ID` and `_SECRET` (an unset pair hides that app's connectors; Todoist registers its own client; setup per app in [docs/connectors.md](docs/connectors.md)). `pnpm secrets --instance <name>` writes fresh ones and never prints them.
+**Secrets:** `MINERVA_SECRET_KEY`, `MINERVA_ENCRYPTION_KEYS` (`id:secret` entries, comma separated; the first encrypts), `MINERVA_DOWNLOAD_KEY`, `MINERVA_SETUP_KEY` (claims an instance's first admin, once), `MINERVA_LARAVEL_TOKEN` (optional: the Sanctum token Laravel issues for this engine, declared once set), and connector clients, `MINERVA_<APP>_CLIENT_ID` and `_SECRET` (an unset pair hides that app's connectors; Todoist registers its own client; setup per app in [docs/connectors.md](docs/connectors.md)). `pnpm secrets --instance <name>` writes fresh ones and never prints them.
 
 **Settings** (defaults in `cloudflare.config.ts`):
 
@@ -33,6 +33,8 @@ An instance's files live outside the checkout, in `~/.config/minerva/instances/<
 | `MINERVA_EMAIL_FROM` | `Minerva <noreply@localhost>` | The sender the `EMAIL` binding accepts |
 | `MINERVA_RUN_TIMEOUT_SECONDS` | empty (none) | A deadline per turn |
 | `MINERVA_FILES_*` | 256 MB and 10,000 entries per folder, 50 MB per file, 10 per message | A conversation's folder, also the size of the sandbox's `/workspace` |
+| `MINERVA_ENVIRONMENT`, `MINERVA_ACCESS_ISSUER`, `MINERVA_ACCESS_AUDIENCE`, `MINERVA_ACCESS_CLIENTS` | empty (the internal API is off) | All four or none: the environment Laravel's commands must name, and the Access application (`https://<team>.cloudflareaccess.com`, its audience tag, the service tokens' client ids, comma separated) whose assertion `/internal/` checks. Account identifiers: only in an instance's `vars.env` |
+| `MINERVA_LARAVEL_URL` | empty | Laravel's origin, https when deployed, for the engine's requests and facts |
 
 `MINERVA_MODEL_GATEWAY` is not a setting: every build sets it to the instance's name.
 
@@ -101,7 +103,7 @@ pnpm test:docker     # the Sandbox against the real image (needs Docker and `pnp
 pnpm startup         # the Worker's startup CPU, which Cloudflare limits
 ```
 
-`pnpm check` in `frontend/` and `pnpm typecheck` in `contract/` complete what the workflow runs. The suites on the account (`test:deployed`, `test:faults`, `test:browser`, `test:cm`) and which ones a change needs are in cloudflare/README.md; CI runs all but `test:cm` on its own instance after a push, so run them by hand on `minerva-cf-test` when a change needs them before it is pushed.
+`pnpm check` in `frontend/`, and `pnpm typecheck` and `pnpm openapi:check` in `contract/`, complete what the workflow runs. The suites on the account (`test:deployed`, `test:faults`, `test:browser`, `test:cm`) and which ones a change needs are in cloudflare/README.md; CI runs all but `test:cm` on its own instance after a push, so run them by hand on `minerva-cf-test` when a change needs them before it is pushed.
 
 ## Frontend
 
@@ -119,6 +121,8 @@ Types and lint:
 - oxlint's type-aware rules run through `oxlint-tsgolint`, whose version follows TypeScript's (7.0.2003 is for 7.0.2): update the two together. The rules are in `frontend/.oxlintrc.json`: promises must be awaited, returned or marked `void` (and only where nothing can reject), no `any` flows on, and a type assertion that narrows needs a disable comment saying why it holds, as at the server's answers that nothing validates.
 
 The API's endpoints are declared once in `contract/` (oRPC: method, path, input, output and errors). The Worker implements them in `cloudflare/src/api/` and the frontend calls them through `lib/orpc.ts`, so a change to an endpoint changes the contract, its procedure and its callers in one commit.
+
+The internal API between Laravel and the engine is `contract/src/internal/` ([docs/plans/contract.md](docs/plans/contract.md)). A change to it also regenerates its OpenAPI documents (`pnpm --dir contract openapi`, committed; CI fails when they are stale), which Laravel keeps copies of. Until chunk 8 of the product plan runs a turn between deployed sides, `v1` changes freely; after that, only additively, and a new kind of fact or a newly required input is deployed to the receiving side first.
 
 Tests:
 
