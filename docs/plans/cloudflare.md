@@ -1,6 +1,6 @@
 # Plan: Minerva on Cloudflare
 
-Status: steps 1 to 7 done (2026-10-10 to 2026-10-12) on the `cloudflare` branch, followed by the cleanups of the backend and of the frontend and API (both done 2026-10-13). What comes next is [product-and-engine.md](product-and-engine.md) (2026-10-14): this code becomes the engine that runs turns behind a private Laravel application, which takes over accounts, connections, grants, agents and conversations; self-hosting is dropped. This file is the engine's design and the record of steps 1 to 7. `main` still runs the Django, worker and deploy code; the rewrite lives in `cloudflare/` and serves `frontend/`. When `cloudflare` merges into `main` (product-and-engine.md, chunk 14), the design sections move into ARCHITECTURE.md and this file retires.
+Status: steps 1 to 7 done (2026-10-10 to 2026-10-12) on the `cloudflare` branch, followed by the cleanups of the backend and of the frontend and API (both done 2026-10-13). What comes next is [product-and-engine.md](product-and-engine.md) (2026-10-14): this code becomes the engine that runs turns behind a private Laravel application, which takes over accounts, connections, grants, agents and conversations; self-hosting is dropped. This file is the engine's design and the record of steps 1 to 7. `main` still runs the Django, worker and deploy code; the rewrite lives in `cloudflare/` and serves `frontend/`. When `cloudflare` merges into `main` (product-and-engine.md, chunk 1), the design sections move into ARCHITECTURE.md and this file retires.
 
 ## Goal
 

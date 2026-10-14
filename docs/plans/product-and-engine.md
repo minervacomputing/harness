@@ -64,12 +64,19 @@ Decided 2026-10-14.
 
 ## Chunks
 
-The plan is built in chunks of about one session each, in order. A chunk starts with a fresh agent that reads this plan and its chunk. Where the chunk leaves choices open, the agent writes a short design for it first (in `docs/plans/` here, or in the Laravel repository for its chunks) and has opencode review it. It then implements, runs the checks, has opencode review the diff and commits. A chunk that turns out bigger splits into parts (a, b, …). Laravel's chunks are committed in its own repository; the engine's on `cloudflare`, and on `main` after chunk 14.
+The plan is built in chunks of about one session each, in order. A chunk starts with a fresh agent that reads this plan and its chunk. Where the chunk leaves choices open, the agent writes a short design for it first (in `docs/plans/` here, or in the Laravel repository for its chunks) and has opencode review it. It then implements, runs the checks, has opencode review the diff and commits. A chunk that turns out bigger splits into parts (a, b, …). Laravel's chunks are committed in its own repository; the engine's on `main` from chunk 1 on.
 
 **Ground**
 
 0. **A clean slate.** Done 2026-10-14. The stopped session's email-zone work was discarded, the superseded and finished plans were removed, and this plan is committed.
-1. **CI and staging for the engine.** GitHub Actions on `cloudflare`: lint, types, unit tests, platform tests against the test Worker, and a deploy of a staging engine. Production is deployed by hand. Done when a push runs green.
+1. **Into `main`, with CI for the engine.** `main` has no commits that `cloudflare` lacks (2026-10-14), so `main` fast-forwards. In order:
+   1. On `cloudflare`, in one commit, delete what only the Django stack uses: `backend/`, `worker/`, `deploy/` (the VPS), `compose.yaml`, `Procfile`, the Makefile's targets for them, and the old workflow `.github/workflows/main.yml`. The old workflow runs the Django tests and image builds and deploys the VPS staging on every push to `main`, so it must be gone before `main` moves.
+   2. Add the engine's workflow on pushes to `main`: lint, types, the unit tests and the frontend's check. Platform tests against the test Worker and a deploy of a staging engine follow in the same chunk if they fit, else as chunk 1b. Production is deployed by hand.
+   3. Rewrite the README, `AGENTS.md` (no `cherry-pick -x` from `main` to `demo`: the demo stays frozen on its own Django copy until the hosted product replaces it; the engine's commands, checks and environment) and `ARCHITECTURE.md` for the engine, with `cloudflare.md`'s design sections moved into `ARCHITECTURE.md` and that file removed.
+   4. Fast-forward `main` to `cloudflare`, push, watch the first run go green, and delete the `cloudflare` branch.
+   5. Ask the owner before retiring the VPS staging (`staging.minervacomputing.com`: the server, its tunnel, its Access application and its DNS record). It shows stale Django once `main` stops deploying it.
+
+   The `demo` branch is untouched. Done when `main` is the engine and its workflow is green.
 
 **The Laravel foundation** (a new private repository; the owner creates it and the Laravel Cloud organization)
 
@@ -119,27 +126,26 @@ The plan is built in chunks of about one session each, in order. A chunk starts 
     - Cancel, and strict revocation for every change of authority, with Decisions 6's matching rules and the test with two users.
     - Uploads, downloads, and conversation deletion with tombstones.
 13. **The engine's old paths go.** Better Auth, D1's accounts, the Workspace object, the public API and `frontend/` leave this repository (what stays public follows open question 3). Production is reset.
-14. **Into `main`.** The engine's branch merges into `main`. `backend/`, `worker/` and the VPS deployment go, and the README describes the engine. The `demo` branch keeps its Django copy until the hosted product replaces the demo.
 
 **Before any customer's data**
 
-15. **Usage, budgets and the emergency stop.**
+14. **Usage, budgets and the emergency stop.**
     - **Budgets.** Laravel reserves an allowance per run against the organization's budget at the start, so concurrent runs cannot overshoot together.
     - **Model calls.** The engine admits each one against that allowance before sending it. It reserves the call's worst case (its maximum input and output), and counts a call whose usage is unknown at that worst case. Containers and scripts are counted by time.
     - **Settling.** A run stops at its allowance. Its usage settles in Laravel from the facts, and what was not used is released once every call it made has settled, not at its terminal status.
     - **Emergency stop.** It refuses new starts (`admission`) and cancels every active run.
     - **Storage** works the same way. Each run gets a byte allowance for everything it can store: checkpoints and attachments, today's per-run upload limit, four times the folder's. The allowance is reserved against the organization's storage at the start, and the engine enforces it before each write.
     - **Storage settling.** After each checkpoint and clean-up, the engine reports the conversation's retained bytes as an absolute number with a revision, and Laravel settles the reservation from it.
-16. **Deletion, retention and recovery** (below), rehearsed on staging, and the processing locations documented (open question 6).
+15. **Deletion, retention and recovery** (below), rehearsed on staging, and the processing locations documented (open question 6).
 
 **Paid launch and after**
 
-17. **Billing.**
+16. **Billing.**
     - Cashier with Checkout, the Customer Portal and Stripe's webhooks.
     - Pennant for features; quotas as numbers.
     - Usage into Stripe's meters, with each usage record's id as the event's identifier.
     - Payment failure, grace, cancellation, plan changes and late usage, all defined.
-18. **Connection policies.**
+17. **Connection policies.**
     - The connectors an organization offers, and the tenants it allows.
     - Each connector declares how tenancy works for it, one of:
       - one tenant per account (Google's `hd`, Microsoft's `tid`, Slack's team);
@@ -147,9 +153,9 @@ The plan is built in chunks of about one session each, in order. A chunk starts 
       - unknown.
     - The tenant is checked at the callback where there is one, in resource discovery, before each call, and on the call's results.
     - Until this chunk, Minerva makes no promise about tenants.
-19. **Search.** Scout on Postgres over the transcripts.
+18. **Search.** Scout on Postgres over the transcripts.
 
-**Gates before any customer's data:** chunks 15 and 16 done, and tests that one organization cannot reach another's conversations, connections or files. Before open sign-up, on top: rate limits and a measured cost per turn.
+**Gates before any customer's data:** chunks 14 and 15 done, and tests that one organization cannot reach another's conversations, connections or files. Before open sign-up, on top: rate limits and a measured cost per turn.
 
 ## Deletion, retention and recovery
 
