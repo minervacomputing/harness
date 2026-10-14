@@ -1,6 +1,6 @@
 # Plan: Laravel is the product, Cloudflare is the engine
 
-Status: design, 2026-10-14; chunks 0, 1 and 1b are done (1b without the staging engine, which moves to chunk 3). It replaces self-hosting-and-cloud.md and the "Instance and control plane" section of cloudflare.md (both removed; see git history; cloudflare.md's design is now [ARCHITECTURE.md](../../ARCHITECTURE.md)), whose instance model (everything a company needs in one Cloudflare deployment) and whose later revision (Laravel for identity, the runtime keeping connections and conversations) are both given up. What still holds from them is written out here. opencode reviewed the first draft in a fresh session; its findings are folded in, except that production, which holds only the operator's test data, is still reset.
+Status: design, 2026-10-14; chunks 0, 1, 1b and 2 are done (1b without the staging engine, which moves to chunk 3). It replaces self-hosting-and-cloud.md and the "Instance and control plane" section of cloudflare.md (both removed; see git history; cloudflare.md's design is now [ARCHITECTURE.md](../../ARCHITECTURE.md)), whose instance model (everything a company needs in one Cloudflare deployment) and whose later revision (Laravel for identity, the runtime keeping connections and conversations) are both given up. What still holds from them is written out here. opencode reviewed the first draft in a fresh session; its findings are folded in, except that production, which holds only the operator's test data, is still reset.
 
 ## Why
 
@@ -85,6 +85,8 @@ The plan is built in chunks of about one session each, in order. A chunk starts 
 **The Laravel foundation** (a new private repository; the owner creates it and the Laravel Cloud organization)
 
 2. **The application.** The React starter kit, Postgres (open question 2 answered here), Laravel Cloud's staging and production environments, CI, Nightwatch. Done when staging serves sign-in.
+
+   Done 2026-10-14 in the private repository `minervacomputing/app` (its `docs/plans/foundation.md`): the starter kit (Laravel 13, Inertia with React, Fortify with two-factor and passkeys, Pest, Larastan, Vite+), Postgres 18 with pgvector in development, the tests and CI, and Laravel Cloud's application in Frankfurt with `staging` (deployed by CI after the checks) and `production` (by hand, sign-up closed), each with its own Serverless Postgres cluster. Nightwatch is installed and waits for a token.
 3. **Accounts and organizations.**
    - Sign-in: Fortify's features (verification, reset, two-factor, passkeys) and Socialite (Google, GitHub, Microsoft).
    - Organizations: their workspaces, members, invitations and roles.
@@ -180,7 +182,7 @@ The plan is built in chunks of about one session each, in order. A chunk starts 
 ## Open questions
 
 1. The stream token's format: a JWT (`firebase/php-jwt`, maintained by Google; `jose` in the engine), or an HMAC over a fixed payload with PHP's `hash_hmac` and WebCrypto. Laravel Reverb was considered; it would need its own way to close subscriptions that are already open when a member is removed.
-2. Laravel Cloud's Postgres: pgvector and the full-text features Scout needs, connection limits for queue workers, and its region.
+2. ~~Laravel Cloud's Postgres~~ Answered 2026-10-14 (chunk 2): Serverless Postgres is Neon, Postgres 18 in `eu-central-1`; pgvector 0.8 is available and Postgres's own full-text search needs no extension; a cluster at 0.25 compute units reports `max_connections` 112 (measured; Neon reserves a few for itself), and its PgBouncer pooler (transaction mode) takes up to 10,000 clients, to be used once queue workers run. TLS is verified against Neon's own host name, since its certificate does not name the alias Laravel Cloud injects.
 3. Open source. The frontend moves into the private Laravel repository, so this public repository would hold the engine alone. Keep it public as Minerva's open harness (a trust signal for a product that holds people's accounts), or make it private. The licence follows from that.
 4. The credentials key: Laravel's encrypter with a dedicated key, or an envelope with a key service.
 5. The operator admin: Filament or Nova.
