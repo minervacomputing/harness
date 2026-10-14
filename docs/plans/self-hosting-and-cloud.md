@@ -20,7 +20,7 @@ The line between the two is cloudflare.md's (Instance and control plane): what a
 
 One unit per fresh agent, in order. Each ends like the earlier steps: its tests pass, opencode reviews the diff, and it is committed on `cloudflare`.
 
-1. **Freeze the stored formats.** Before an instance outside ours holds data: an inventory of everything stored:
+1. **Freeze the stored formats.** Before an instance outside ours holds data (done after unit 4, before unit 5; see Order): an inventory of everything stored:
    - D1's tables, Better Auth's included;
    - each Durable Object's tables, including pi's `pi_*` and the Agents SDK's `cf_agents_*` in the Conversation object, which their packages own;
    - stored hashes and tokens: write keys, fingerprints, page tokens, folder digests;
@@ -129,8 +129,8 @@ Considered and not chosen: TypeScript on Workers with PlanetScale Postgres throu
 ## Order
 
 1. Part 1, unit 2 (instances by name), which adds one table to D1 and changes no stored format: done 2026-10-14. The frontend cleanup (A3 and A4) and the sandbox on the Sandbox SDK, which came before it, are done.
-2. The first message (first-message.md), then unit 1: the compatibility baseline. Then unit 3, email through the operator's zone.
-3. Units 4 to 8: setup, export and restore, releases, tooling, the guide and its rehearsal.
+2. Unit 3, email through the operator's zone, then unit 4, setup. Reordered 2026-10-14: until an instance outside ours holds data, breaking changes and resets are fine, so unit 1 waits until export and releases need it, and the first message (first-message.md) is parked as a later backend change; with resets allowed it costs the same whenever it is built.
+3. Unit 1, the stored formats; then units 5 to 8: export and restore, releases, tooling, the guide and its rehearsal.
 4. Unit 9, CI and staging on Workers, verified; then unit 10, the merge into `main`.
 5. Part 2: organizations and teams, usage records, quotas, deletion, audit and support access, retention, email; then the management API and the executor's own Worker; then the gates before open sign-up.
 6. Part 3.
