@@ -13,7 +13,7 @@ The line between the two is cloudflare.md's (Instance and control plane): what a
 
 - On the `cloudflare` branch, steps 1 to 7 are done, and so are the backend cleanup, the sandbox's move to the Sandbox SDK, plain Better Auth and its fixes, and the frontend cleanup: the API is one oRPC contract (`contract/`) with camelCase fields, the frontend is on TypeScript 7 with type-aware lint rules, and the run events are camelCase (production was reset for it). The first message's design is in [first-message.md](first-message.md). Left from the frontend cleanup: `cloudflare/` and `contract/` have no linter (one oxlint setup for the workspace), `no-deprecated` stays off until the frontend leaves TanStack Query's and assistant-ui's deprecated APIs, and `@typescript/typescript6` stays until `cloudflare/test/unit/sources.test.ts` has another parser. Production `minerva-cf` is deployed and its first admin has claimed it.
 - The branch is pushed (2026-10-13) but not merged. `main` is still Django, and `.github/workflows/main.yml` tests Django, builds its images and deploys staging to the VPS.
-- Unit 2 (instances by name) is done, 2026-10-14, apart from production's next deploy, which writes its identity row and waits for the owner. A self-hoster today names an instance (`pnpm instances create`, `pnpm secrets`), runs six `cf` commands by hand (`cloudflare/README.md`, First deploy), writes its `vars.env`, and needs a zone on Cloudflare for email: the operator's own sign-up must verify its address by an emailed code before it can claim the instance (`src/accounts/instance.ts`). The zone stays a requirement (unit 3).
+- Unit 2 (instances by name) is done, 2026-10-14, and production's deploy has recorded its identity row. A self-hoster today names an instance (`pnpm instances create`, `pnpm secrets`), runs six `cf` commands by hand (`cloudflare/README.md`, First deploy), writes its `vars.env`, and needs a zone on Cloudflare for email: the operator's own sign-up must verify its address by an emailed code before it can claim the instance (`src/accounts/instance.ts`). The zone stays a requirement (unit 3).
 - Operator state is per instance, in `~/.config/minerva/instances/<name>/`; its `deployed.json` is a local record for `deploy:files`, not a release history.
 
 ## Part 1: self-hosting
@@ -128,7 +128,7 @@ Considered and not chosen: TypeScript on Workers with PlanetScale Postgres throu
 
 ## Order
 
-1. Part 1, unit 2 (instances by name), which adds one table to D1 and changes no stored format: done 2026-10-14, apart from production's identity deploy. The frontend cleanup (A3 and A4) and the sandbox on the Sandbox SDK, which came before it, are done.
+1. Part 1, unit 2 (instances by name), which adds one table to D1 and changes no stored format: done 2026-10-14. The frontend cleanup (A3 and A4) and the sandbox on the Sandbox SDK, which came before it, are done.
 2. The first message (first-message.md), then unit 1: the compatibility baseline. Then unit 3, email through the operator's zone.
 3. Units 4 to 8: setup, export and restore, releases, tooling, the guide and its rehearsal.
 4. Unit 9, CI and staging on Workers, verified; then unit 10, the merge into `main`.
