@@ -108,18 +108,23 @@ export interface Reply {
 }
 
 /**
- * One request. A request sent on a kept-alive socket the other end had just closed fails with ECONNRESET
- * before the Worker sees it (an account run's `post` did, 2026-10-15), so that one is sent again on a new
- * socket, as Node's documentation advises (`request.reusedSocket`); any other failure is the caller's.
+ * One request, sent again (twice at most, a second apart) when it never reached the Worker: a new socket
+ * whose TLS handshake did not complete, or a kept-alive one the other end had just closed, which fails with
+ * ECONNRESET before an answer (an account run's `post` did, 2026-10-15), as Node's documentation advises
+ * (`request.reusedSocket`). Any other failure is the caller's: a request that may have arrived is never sent twice.
  */
-export function fetchDeployed(url: string, init: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number } = {}): Promise<Reply> {
-	return send(url, init).catch((error: unknown) => {
-		if (error instanceof StaleSocket) return send(url, init);
-		throw error;
-	});
+export async function fetchDeployed(url: string, init: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number } = {}): Promise<Reply> {
+	for (let attempt = 1; ; attempt++) {
+		try {
+			return await send(url, init);
+		} catch (error) {
+			if (!(error instanceof Undelivered) || attempt > 2) throw error;
+			await new Promise((resolve) => setTimeout(resolve, 1000));
+		}
+	}
 }
 
-class StaleSocket extends Error {}
+class Undelivered extends Error {}
 
 function send(url: string, init: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number }): Promise<Reply> {
 	return new Promise((resolve, reject) => {
@@ -135,7 +140,14 @@ function send(url: string, init: { method?: string; headers?: Record<string, str
 			});
 		});
 		req.on("timeout", () => req.destroy(Object.assign(new Error(`No answer from ${url}`), { code: "ETIMEDOUT" })));
-		req.on("error", (error: NodeJS.ErrnoException) => reject(req.reusedSocket && error.code === "ECONNRESET" ? new StaleSocket(error.message, { cause: error }) : error));
+		let secured = false;
+		req.on("socket", (socket) => {
+			if (!req.reusedSocket) socket.once("secureConnect", () => (secured = true));
+		});
+		req.on("error", (error: NodeJS.ErrnoException) => {
+			const undelivered = req.reusedSocket ? error.code === "ECONNRESET" : !secured;
+			reject(undelivered ? new Undelivered(error.message, { cause: error }) : error);
+		});
 		req.end(init.body);
 	});
 }
