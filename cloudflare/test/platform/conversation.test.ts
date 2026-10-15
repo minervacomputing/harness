@@ -1,98 +1,36 @@
-// The Conversation Durable Object in local workerd: the start protocol against a fake Workspace, runs and
-// their events, cancels and revocations, the deadline, paging, the stream's WebSocket, tools through a fake
-// executor, history replay, fencing, model calls, and restarts and recovery through the attempt gate with
-// the fake model.
+// The Conversation Durable Object in local workerd, as Laravel's commands reach it (startRun, cancelRun, deleteConversation
+// through the internal mount) with the fake Laravel: the start, runs and their events, cancels, the deadline, the stream's
+// WebSocket, tools through a fake executor, the history replay, fencing, model calls, and restarts and recovery through the
+// attempt gate with the fake model.
 
 import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { env } from "cloudflare:workers";
-import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import type { TranscriptContext } from "@earendil-works/pi-ai";
-import { conversationObject } from "../../src/addressing.ts";
-import type { CancelAck, Conversation } from "../../src/conversation/conversation.ts";
-import { CANCELLED, type CancelReason, type RunEvent, WORKER_FAILED } from "../../src/conversation/events.ts";
+import type { RunEvent } from "@minerva/contract";
+import type { CancelReason, Fact, StartRun, StartRunResult } from "@minerva/contract/internal";
+import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
+import { BUSY_MESSAGE } from "../../src/conversation/conversation.ts";
+import { CANCELLED, WORKER_FAILED } from "../../src/conversation/events.ts";
+import { FACT_DELIVERY } from "../../src/conversation/facts.ts";
 import { FOLDER_INSTRUCTIONS } from "../../src/conversation/history.ts";
 import { type RunHead, RunStore } from "../../src/conversation/store.ts";
 import { RunStream } from "../../src/conversation/stream.ts";
-import { type ConversationPorts, defaultPorts, emptyFolder, gatewayLedger, PORTS, runStatePort, type WorkspaceClient, type WriteLedger } from "../../src/conversation/ports.ts";
+import { type ConversationPorts, defaultPorts, emptyFolder, type FolderPort, gatewayLedger, PORTS, type PortsContext, runStatePort, type WriteLedger } from "../../src/conversation/ports.ts";
+import type { Conversation } from "../../src/faults/index.ts";
+import { FakeLaravel } from "../../src/faults/laravel.ts";
+import { faultConversationPorts } from "../../src/faults/ports.ts";
+import { notesConnection, notesLayers, notesLease } from "../../src/faults/world.ts";
 import type { ExecutorContext, ToolCallOutcome, ToolCallRequest, ToolDeclaration } from "../../src/gateway/executor.ts";
 import type { DispatchResult } from "../../src/gateway/ledger.ts";
 import type { ToolResult } from "../../src/gateway/results.ts";
-import type { StartSnapshot } from "../../src/gateway/tools.ts";
 import type { Json } from "../../src/lib/json.ts";
-import { PROVIDER_ERROR } from "../../src/model/tap.ts";
+import { uuid7 } from "../../src/lib/random.ts";
 import { type FakeOptions, type FakeScript, fakeUpstream } from "../../src/model/fake.ts";
 import { type ModelRoute, type Upstream, upstreamOf } from "../../src/model/route.ts";
-import { uuid7 } from "../../src/lib/random.ts";
-import type { Caller, RunId } from "../../src/shared/rpc.ts";
-import type { BeginRunInput, BeginRunResult, Registration } from "../../src/workspace/core.ts";
+import { PROVIDER_ERROR } from "../../src/model/tap.ts";
+import type { RunId } from "../../src/shared/rpc.ts";
+import { commands, held, objectOf, refusalOf, scope, signedAssertions, startOf, viewOf } from "./internal-support.ts";
 
-const WS = "0199a000-0000-7000-8000-00000000c0aa";
-const USER = "0199a000-0000-7000-8000-00000000c0bb";
-const OTHER = "0199a000-0000-7000-8000-00000000c0cc";
-const AGENT = "0199a000-0000-7000-8000-00000000c0dd";
-const CALLER: Caller = { userId: USER, role: "owner" };
-const WORKSPACE = { id: WS, jurisdiction: null };
-
-/** The Workspace Durable Object as a conversation sees it, recording what it was asked. */
-class FakeWorkspace implements WorkspaceClient {
-	begun: BeginRunInput[] = [];
-	activated: RunId[] = [];
-	released: [RunId, string][] = [];
-	touched = 0;
-	deadline: number | null = null;
-	/** Holds `beginRun` until released, to let a cancel arrive in between. */
-	hold: Promise<void> | null = null;
-	answer: (input: BeginRunInput) => BeginRunResult = (input) => ({
-		ok: true,
-		value: {
-			snapshot: this.snapshot(input),
-			uploads: input.uploadIds.map((id) => ({ id, name: "notes.txt", size: 5, mediaType: "text/plain", sha256: "0".repeat(64), key: `uploads/${WS}/${USER}/${id}` })),
-		},
-	});
-	registration: (runId: RunId) => Registration | Promise<Registration> = () => ({ state: "active" });
-
-	snapshot(input: BeginRunInput): StartSnapshot {
-		const now = Date.now();
-		return {
-			workspaceId: WS,
-			conversationId: input.conversationId,
-			userId: input.userId,
-			agentId: input.agentId,
-			permissions: [{ name: "ceiling", restricted: false, allows: [], denies: [] }],
-			tools: [],
-			instructions: "You are a test agent.",
-			modelAlias: "default",
-			deadline: this.deadline,
-			createdAt: now,
-			connectionIds: [],
-		};
-	}
-
-	async beginRun(input: BeginRunInput): Promise<BeginRunResult> {
-		this.begun.push(input);
-		await this.hold;
-		return this.answer(input);
-	}
-
-	async activate(runId: RunId): Promise<Registration> {
-		this.activated.push(runId);
-		return this.registration(runId);
-	}
-
-	async release(runId: RunId, status: string): Promise<void> {
-		this.released.push([runId, status]);
-	}
-
-	async conversationTouched(): Promise<void> {
-		this.touched++;
-	}
-
-	async lease(): Promise<{ refused: "CONNECTION_UNAUTHORIZED"; message: string }> {
-		return { refused: "CONNECTION_UNAUTHORIZED", message: "The connection expired. Reconnect it in Minerva." };
-	}
-
-	async markUnauthorized(): Promise<void> {}
-}
+signedAssertions();
 
 /** A ledger that only records what the gate and the sweep asked of it. */
 class FakeLedger implements WriteLedger {
@@ -112,10 +50,11 @@ class FakeLedger implements WriteLedger {
 }
 
 interface Fakes {
-	workspace: FakeWorkspace;
 	ledger: FakeLedger;
 	declarations: ToolDeclaration[];
 	invoke: (request: ToolCallRequest, run: ExecutorContext) => Promise<ToolCallOutcome>;
+	/** What replaces the empty folder's methods (emptyFolder), for this conversation. */
+	folder: (context: PortsContext) => Partial<FolderPort>;
 	model: FakeOptions;
 	/** Instead of the fake model: a real route's upstream (createAI) over a fake binding. */
 	upstream?: Upstream;
@@ -156,10 +95,14 @@ function allowed(request: ToolCallRequest, result: ToolResult): ToolCallOutcome 
 	};
 }
 
+const DELIVERY = { ...FACT_DELIVERY };
+let fake: FakeLaravel;
+let uninstall: () => void;
+
 beforeAll(() => {
+	const faults = faultConversationPorts(defaultPorts);
 	PORTS.factory = (): ConversationPorts => ({
 		...defaultPorts,
-		workspace: ({ conversationId }) => fakesOf(conversationId).workspace,
 		executor: (run, { conversationId }) => ({
 			declarations: () => fakesOf(conversationId).declarations,
 			invoke: (request) => {
@@ -169,7 +112,7 @@ beforeAll(() => {
 			},
 		}),
 		ledger: (_storage, _runs, { conversationId }) => fakesOf(conversationId).ledger,
-		folder: emptyFolder,
+		folder: (context) => ({ ...emptyFolder(context), ...fakesOf(context.conversationId).folder(context) }),
 		upstream: (_route, { conversationId }) => {
 			const fakes = fakesOf(conversationId);
 			if (fakes.upstream) return fakes.upstream;
@@ -181,50 +124,84 @@ beforeAll(() => {
 				},
 			});
 		},
+		// The deadline a test sets in the object's fault plan (`faultPlan`), else the setting's.
+		runTimeoutMs: faults.runTimeoutMs,
+		// The model calls and tool executions pi starts, counted before any check (`faultView`'s internals).
+		entered: faults.entered,
 	});
+});
+
+beforeEach(() => {
+	fake = new FakeLaravel("test-laravel-token");
+	uninstall = fake.install({ withToken: true });
+	// A failed delivery is tried again within a test's time.
+	Object.assign(FACT_DELIVERY, { backoffMs: 20, maxBackoffMs: 200 });
 });
 
 afterEach(() => {
 	FAKES.clear();
+	uninstall();
+	Object.assign(FACT_DELIVERY, DELIVERY);
 });
 
-async function conversation(fakes: Partial<Fakes> = {}) {
-	const id = uuid7();
-	FAKES.set(id, {
-		workspace: new FakeWorkspace(),
-		ledger: new FakeLedger(),
-		declarations: [],
-		invoke: async (request) => allowed(request, { items: [{ id: "1" }], count: 1 }),
-		model: {},
-		contexts: [],
-		invocations: [],
-		...fakes,
-	});
-	const stub = conversationObject(env, WORKSPACE, id);
-	await stub.init({ conversationId: id, workspace: WORKSPACE, userId: USER, agentId: AGENT, createdAt: Date.now() });
-	return { id, stub, fakes: fakesOf(id) };
+type Stub = DurableObjectStub<Conversation>;
+
+interface Started {
+	start: StartRun;
+	stub: Stub;
+	fakes: Fakes;
 }
 
-type Stub = DurableObjectStub<Conversation>;
+/** A message with this content and no attachments. */
+const message = (content: string): StartRun["message"] => ({ id: uuid7(), content, attachments: [] });
 
 /** A message the fake model answers with this script. */
 function scripted(script: FakeScript): string {
 	return JSON.stringify({ fake: script });
 }
 
-async function post(stub: Stub, content: string, attachments: string[] = []) {
-	return stub.postMessage(CALLER, { content, attachments });
+/** A new conversation's first start, which Laravel holds, with the conversation's fakes; not sent. */
+function conversation(fakes: Partial<Fakes> = {}, change: Partial<StartRun> = {}): Started {
+	const start = held(fake, startOf(scope(), change));
+	FAKES.set(start.conversation, {
+		ledger: new FakeLedger(),
+		declarations: [],
+		invoke: async (request) => allowed(request, { items: [{ id: "1" }], count: 1 }),
+		folder: () => ({}),
+		model: {},
+		contexts: [],
+		invocations: [],
+		...fakes,
+	});
+	return { start, stub: objectOf(start), fakes: fakesOf(start.conversation) };
 }
 
-async function posted(stub: Stub, content: string): Promise<RunId> {
-	const outcome = await post(stub, content);
-	if (!outcome.ok) throw new Error(`Refused: ${outcome.refusal.code} ${outcome.refusal.detail}`);
-	return outcome.value.run.id;
+/** Another run in the start's conversation, which Laravel holds; not sent. */
+function next(start: StartRun, change: Partial<StartRun> = {}): StartRun {
+	return held(fake, startOf(start.scope, { conversation: start.conversation, ...change }));
 }
+
+async function accepted(start: StartRun): Promise<StartRunResult> {
+	const answer = await commands.startRun(start);
+	if (answer.outcome !== "accepted") throw new Error(`Refused: ${answer.code} ${answer.message}`);
+	return answer;
+}
+
+/** A new conversation whose first message, `content`, started a run. */
+async function started(content: string, fakes: Partial<Fakes> = {}): Promise<Started> {
+	const begun = conversation(fakes, { message: message(content) });
+	await accepted(begun.start);
+	return begun;
+}
+
+const cancelOf = (start: StartRun, reason: CancelReason) => commands.cancelRun({ scope: start.scope, conversation: start.conversation, run: start.run, reason });
+
+/** One of Laravel's commands, so the object, reset by a test, starts again and runs its gate and recovery. */
+const wake = (start: StartRun) => commands.replayFacts({ scope: start.scope, conversation: start.conversation, after: 0, limit: 1 });
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function until<T>(read: () => Promise<T>, done: (value: T) => boolean, timeout = 8000): Promise<T> {
+async function until<T>(read: () => Promise<T> | T, done: (value: T) => boolean, timeout = 8000): Promise<T> {
 	const started = Date.now();
 	for (;;) {
 		const value = await read();
@@ -234,20 +211,28 @@ async function until<T>(read: () => Promise<T>, done: (value: T) => boolean, tim
 	}
 }
 
-async function runOf(stub: Stub, runId: RunId): Promise<RunHead> {
-	return (await stub.getRun(CALLER, runId)) as RunHead;
+async function runOf(stub: Stub, runId: RunId): Promise<RunHead | null> {
+	return (await stub.faultView(runId, 0, 0)).head;
 }
 
 async function settled(stub: Stub, runId: RunId, timeout?: number): Promise<RunHead> {
-	return until(() => runOf(stub, runId), (run) => !["queued", "provisioning", "running"].includes(run.status), timeout);
+	return (await until(() => runOf(stub, runId), (run) => run !== null && !["queued", "provisioning", "running"].includes(run.status), timeout)) as RunHead;
 }
 
 async function eventsOf(stub: Stub, runId: RunId): Promise<RunEvent[]> {
-	return (await stub.getRunEvents(CALLER, runId, { after: 0, upTo: 1_000_000, limit: 1000 })) ?? [];
+	return (await viewOf(stub, runId)).events;
 }
 
 function statuses(events: RunEvent[]) {
 	return events.filter((event) => event.type === "status").map((event) => event.data);
+}
+
+/** The fake Laravel's facts of the conversation once it holds the run's `run.finished`. */
+function delivered(start: StartRun): Promise<Fact[]> {
+	return until(
+		() => fake.facts(start.conversation),
+		(facts) => facts.some((fact) => fact.type === "run.finished" && fact.run === start.run),
+	);
 }
 
 /** Makes a Lifecycle job due now and runs the object's alarm. */
@@ -259,27 +244,44 @@ async function due(stub: Stub, job: string): Promise<void> {
 	await runDurableObjectAlarm(stub);
 }
 
-/** Usage and flags straight from the row, for what the API does not show. */
+/** Usage and flags straight from the row, for what the run's head does not show. */
 async function row(stub: Stub, runId: RunId) {
 	return runInDurableObject(stub, (_instance, state) => state.storage.sql.exec("SELECT * FROM runs WHERE id = ?", runId).one());
 }
 
+const runCount = (stub: Stub) => runInDurableObject(stub, (_instance, state) => state.storage.sql.exec("SELECT count(*) AS n FROM runs").one().n);
+
+/** Every stored table's rows, by table, besides the platform's own. */
+function storedText(stub: Stub): Promise<string> {
+	return runInDurableObject(stub, (_instance, state) => {
+		const tables = state.storage.sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\'").toArray();
+		return tables.map(({ name }) => `${name}: ${JSON.stringify(state.storage.sql.exec(`SELECT * FROM "${name}"`).toArray())}`).join("\n");
+	});
+}
+
+/** A tool that waits for `hold` before it answers, so its run stays running until the test lets it go. */
+function waiting(hold: Promise<void>): Partial<Fakes> {
+	return {
+		declarations: [declaration("fake_wait", true)],
+		invoke: async (request) => {
+			await hold;
+			return allowed(request, { items: [], count: 0 });
+		},
+	};
+}
+
+const WAIT = scripted({ turns: [{ tools: [{ name: "fake_wait", arguments: {} }] }] });
+
+const BUSY = { outcome: "refused", code: "CONVERSATION_BUSY", message: BUSY_MESSAGE };
+
 describe("starting a run", () => {
-	test("a message starts one run, which answers and ends completed", async () => {
-		const { stub, fakes } = await conversation();
-		const outcome = await post(stub, "Hello there");
-		expect(outcome.ok).toBe(true);
-		if (!outcome.ok) return;
-		const { message, run } = outcome.value;
-		expect(message).toMatchObject({ role: "user", content: "Hello there", attachments: [], runId: run.id });
-		expect(run.status).toBe("queued");
-		expect(run.events).toEqual([{ seq: 1, type: "status", data: { status: "queued" } }]);
-		expect(fakes.workspace.begun).toEqual([
-			{ runId: run.id, conversationId: expect.any(String), userId: USER, agentId: AGENT, uploadIds: [], folder: { bytes: 0, entries: 0 } },
-		]);
-		const ended = await settled(stub, run.id);
+	test("a start runs one turn, which answers and ends completed, and its end reaches Laravel with the answer", async () => {
+		const { start, stub } = conversation({}, { message: message("Hello there") });
+		expect(await commands.startRun(start)).toMatchObject({ outcome: "accepted", authorized: [], attachments: [] });
+		const ended = await settled(stub, start.run);
 		expect(ended).toMatchObject({ status: "completed", errorMessage: "", finishedAt: expect.any(String) });
-		const events = await eventsOf(stub, run.id);
+		const events = await eventsOf(stub, start.run);
+		expect(events[0]).toEqual({ seq: 1, type: "status", data: { status: "queued" } });
 		expect(events.map((event) => event.seq)).toEqual(events.map((_, index) => index + 1));
 		expect(statuses(events)).toEqual([{ status: "queued" }, { status: "provisioning" }, { status: "running" }, { status: "completed" }]);
 		expect(events.filter((event) => event.type === "phase").map((event) => event.data)).toEqual([{ text: "Starting the agent" }, { text: "Thinking" }]);
@@ -288,213 +290,135 @@ describe("starting a run", () => {
 		expect(answer).toMatchObject({ type: "message", data: { content: "Done." } });
 		expect(last).toMatchObject({ type: "status", data: { status: "completed" } });
 		expect(events.filter((event) => event.type === "text_delta").map((event) => (event.data as { text: string }).text).join("")).toBe("Done.");
-		const head = await stub.getConversation(CALLER);
-		expect(head?.title).toBe("Hello there");
-		expect(head?.messages.map((item) => [item.role, item.content, item.runId])).toEqual([
-			["user", "Hello there", run.id],
-			["assistant", "Done.", run.id],
-		]);
-		expect(head?.messages[1]?.id).toBe((answer?.data as { id: string }).id);
-		expect(head?.runs.map((item) => [item.id, item.status, item.eventSeq])).toEqual([[run.id, "completed", events.length]]);
-		await until(async () => fakes.workspace.released, (released) => released.length > 0);
-		expect(fakes.workspace.activated).toEqual([run.id]);
-		expect(fakes.workspace.released).toEqual([[run.id, "completed"]]);
-		const stored = await row(stub, run.id);
+		expect(ended.eventSeq).toBe(events.length);
+		const facts = await delivered(start);
+		expect(facts.at(-1)?.data).toMatchObject({ status: "completed", error: "", message: { id: (answer?.data as { id: string }).id, content: "Done." } });
+		const stored = await row(stub, start.run);
 		expect([stored.model_calls, stored.unmetered_model_calls]).toEqual([1, 0]);
 		expect(stored.input_tokens).toBeGreaterThan(0);
 	});
 
-	test("refusals leave nothing behind", async () => {
-		const { stub, fakes } = await conversation();
-		expect(await post(stub, "  \n\t ")).toEqual({ ok: false, refusal: { code: "EMPTY_MESSAGE", detail: "Write a message or attach a file." } });
-		fakes.workspace.answer = () => ({ ok: false, refusal: { code: "NOT_FOUND", detail: "Not found." } });
-		expect(await post(stub, "Hi")).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: "Not found." } });
-		const head = await stub.getConversation(CALLER);
-		expect(head).toMatchObject({ title: "", messages: [], runs: [] });
-		// The marker is gone, so the next message may start.
-		fakes.workspace.answer = (input) => ({ ok: true, value: { snapshot: fakes.workspace.snapshot(input), uploads: [] } });
-		const runId = await posted(stub, "Hi");
-		await settled(stub, runId);
-	});
-
-	test("an upload the folder cannot take refuses the start, and the Workspace releases it", async () => {
-		const { stub, fakes } = await conversation();
-		const upload = "0199a000-0000-7000-8000-0000000000ff";
-		expect(await post(stub, "", [upload])).toEqual({
-			ok: false,
-			refusal: { code: "ATTACHMENT_UNAVAILABLE", detail: "An attached file is no longer available. Remove it and attach it again." },
-		});
-		await until(async () => fakes.workspace.released, (released) => released.length === 1);
-		expect(fakes.workspace.released[0]?.[1]).toBe("refused");
-		expect(await stub.getConversation(CALLER)).toMatchObject({ messages: [], runs: [] });
-	});
-
-	test("one run at a time: a second message is 409, also while the first start is in flight", async () => {
-		const hold = Promise.withResolvers<void>();
-		const { stub, fakes } = await conversation({
-			declarations: [declaration("fake_wait", true)],
-			invoke: async (request) => {
-				await hold.promise;
-				return allowed(request, { items: [], count: 0 });
+	test("refusals store no run, and the conversation takes the next start", async () => {
+		// Staged uploads measure as declared; the folder then cannot take them (emptyFolder's `prepareAttachments`).
+		const { start, stub } = conversation(
+			{
+				folder: () => ({
+					measureStaged: async (staged) => staged.map((item) => ({ id: uuid7(), name: item.name, size: item.size, mediaType: "text/plain", sha256: "0".repeat(64), key: item.upload })),
+				}),
 			},
-		});
-		let release = () => {};
-		fakes.workspace.hold = new Promise<void>((resolve) => (release = resolve));
-		const first = post(stub, scripted({ turns: [{ tools: [{ name: "fake_wait", arguments: {} }] }] }));
-		await until(async () => fakes.workspace.begun.length, (n) => n === 1);
-		const busy = { ok: false, refusal: { code: "CONVERSATION_BUSY", detail: "Wait for the current answer to finish, or stop it." } };
-		expect(await post(stub, "Second")).toEqual(busy);
-		release();
-		const outcome = await first;
-		expect(outcome.ok).toBe(true);
-		if (!outcome.ok) return;
-		await until(async () => fakes.invocations.length, (n) => n === 1);
-		expect(await post(stub, "Third")).toEqual(busy);
-		expect(fakes.workspace.begun.length).toBe(1);
+			{ message: message("  \n\t ") },
+		);
+		expect(await commands.startRun(start)).toEqual({ outcome: "refused", code: "EMPTY_MESSAGE", message: "Write a message or attach a file." });
+		const upload = { upload: `uploads/${start.scope.workspace}/${uuid7()}`, name: "notes.txt", size: 5, mediaType: "text/plain" };
+		const attached = next(start, { message: { id: uuid7(), content: "", attachments: [upload] } });
+		const unavailable = { outcome: "refused", code: "ATTACHMENT_UNAVAILABLE", message: "An attached file is no longer available. Remove it and attach it again." };
+		expect(await commands.startRun(attached)).toEqual(unavailable);
+		expect(await commands.startRun(attached)).toEqual(unavailable);
+		expect(await runCount(stub)).toBe(0);
+		const after = next(start, { message: message("Hi") });
+		await accepted(after);
+		expect((await settled(stub, after.run)).status).toBe("completed");
+	});
+
+	test("one run at a time: another start is refused as busy, also while the first is still being prepared", async () => {
+		const hold = Promise.withResolvers<void>();
+		const prepared = Promise.withResolvers<void>();
+		let measuring = false;
+		const { start, stub, fakes } = conversation(
+			{
+				...waiting(hold.promise),
+				// The first start waits after its preparation is stored, while its attachments would be measured.
+				folder: () => ({
+					measureStaged: async () => {
+						measuring = true;
+						await prepared.promise;
+						return [];
+					},
+				}),
+			},
+			{ message: message(WAIT) },
+		);
+		const first = commands.startRun(start);
+		// Polled, not awaited: a promise the object settles would carry the test on in the object's context.
+		await until(() => measuring, (yes) => yes);
+		const second = next(start, { message: message("Second") });
+		expect(await commands.startRun(second)).toEqual(BUSY);
+		prepared.resolve();
+		expect(await first).toMatchObject({ outcome: "accepted" });
+		await until(() => fakes.invocations.length, (n) => n === 1);
+		const third = next(start, { message: message("Third") });
+		expect(await commands.startRun(third)).toEqual(BUSY);
 		hold.resolve();
-		await settled(stub, outcome.value.run.id);
-		const head = await stub.getConversation(CALLER);
-		expect(head?.messages.filter((item) => item.role === "user").length).toBe(1);
+		await settled(stub, start.run);
+		expect(await runCount(stub)).toBe(1);
 	});
+});
 
-	test("a message sent again with its key answers for the same run: joined in flight, stored, never a second run", async () => {
-		const { stub, fakes } = await conversation();
-		let release = () => {};
-		fakes.workspace.hold = new Promise<void>((resolve) => (release = resolve));
-		const content = scripted({ turns: [{ text: "Once." }] });
-		const first = stub.postMessage(CALLER, { content, attachments: [] }, "retry-1");
-		await until(async () => fakes.workspace.begun.length, (n) => n === 1);
-		// While the first start is in flight: the same start's answer, not a 409.
-		const second = stub.postMessage(CALLER, { content, attachments: [] }, "retry-1");
-		expect(await stub.postMessage(CALLER, { content: "Something else", attachments: [] }, "retry-1")).toEqual({
-			ok: false,
-			refusal: { code: "IDEMPOTENCY_KEY_REUSED", detail: "This Idempotency-Key was used for a different message." },
-		});
-		release();
+describe("one start per run", () => {
+	test("the same start sent again while it is prepared joins it: one preparation, one run, one turn", async () => {
+		const prepared = Promise.withResolvers<void>();
+		let measured = 0;
+		const { start, stub, fakes } = conversation(
+			{
+				folder: () => ({
+					measureStaged: async () => {
+						measured++;
+						await prepared.promise;
+						return [];
+					},
+				}),
+			},
+			{ message: message("Once") },
+		);
+		const first = commands.startRun(start);
+		await until(() => measured, (n) => n === 1);
+		const second = commands.startRun(start);
+		expect(await refusalOf(commands.startRun({ ...start, message: { ...start.message, content: "Something else" } }))).toMatchObject({ code: "IDEMPOTENCY_CONFLICT", status: 409 });
+		await sleep(50);
+		prepared.resolve();
 		const [a, b] = await Promise.all([first, second]);
-		if (!a.ok || !b.ok) throw new Error("Refused");
-		expect([b.value.run.id, b.value.message.id]).toEqual([a.value.run.id, a.value.message.id]);
-		await settled(stub, a.value.run.id);
-		// Stored: the stored message and run, as they are now.
-		const third = await stub.postMessage(CALLER, { content, attachments: [] }, "retry-1");
-		expect(third.ok && [third.value.run.id, third.value.message.id, third.value.run.status]).toEqual([a.value.run.id, a.value.message.id, "completed"]);
-		expect(fakes.workspace.begun.length).toBe(1);
-		const head = await stub.getConversation(CALLER);
-		expect([head?.messages.filter((item) => item.role === "user").length, head?.runs.length]).toEqual([1, 1]);
-		// Another key is another message.
-		const next = await stub.postMessage(CALLER, { content, attachments: [] }, "retry-2");
-		expect(next.ok && next.value.run.id).not.toBe(a.value.run.id);
-		if (next.ok) await settled(stub, next.value.run.id);
+		expect(a).toMatchObject({ outcome: "accepted" });
+		expect(b).toEqual(a);
+		expect(measured).toBe(1);
+		await settled(stub, start.run);
+		// Stored: the same answer, and nothing runs again.
+		expect(await commands.startRun(start)).toEqual(a);
+		expect(await runCount(stub)).toBe(1);
+		expect(fakes.contexts).toHaveLength(1);
 	});
 
-	test("a refused start forgets its key, so the message may be sent again with it", async () => {
-		const { stub, fakes } = await conversation();
-		fakes.workspace.answer = () => ({ ok: false, refusal: { code: "NOT_FOUND", detail: "Not found." } });
-		expect(await stub.postMessage(CALLER, { content: "Hi", attachments: [] }, "k")).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: "Not found." } });
-		fakes.workspace.answer = (input) => ({ ok: true, value: { snapshot: fakes.workspace.snapshot(input), uploads: [] } });
-		const again = await stub.postMessage(CALLER, { content: "Hi", attachments: [] }, "k");
-		expect(again.ok).toBe(true);
-		if (again.ok) await settled(stub, again.value.run.id);
-	});
-
-	test("another user's conversation and runs are not found", async () => {
-		const { stub } = await conversation();
-		const runId = await posted(stub, "Mine");
-		const other: Caller = { userId: OTHER, role: "member" };
-		expect(await stub.getConversation(other)).toBeNull();
-		expect(await stub.getRun(other, runId)).toBeNull();
-		expect(await stub.cancelRun(other, runId)).toBeNull();
-		expect(await stub.getRunEvents(other, runId, { after: 0, upTo: 10, limit: 10 })).toBeNull();
-		expect(await stub.postMessage(other, { content: "x", attachments: [] })).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: "Not found." } });
-		await settled(stub, runId);
-	});
-
-	test("the title is the first message cut to 80 UTF-16 units, never splitting an emoji", async () => {
-		const { stub } = await conversation();
-		const runId = await posted(stub, `${"x".repeat(78)}😀😀`);
-		expect((await stub.getConversation(CALLER))?.title).toBe(`${"x".repeat(78)}😀`);
-		await settled(stub, runId);
-		const second = await posted(stub, "Another");
-		expect((await stub.getConversation(CALLER))?.title).toBe(`${"x".repeat(78)}😀`);
-		await settled(stub, second);
-		const { stub: other } = await conversation();
-		const split = await posted(other, `${"x".repeat(79)}😀`);
-		expect((await other.getConversation(CALLER))?.title).toBe("x".repeat(79));
-		await settled(other, split);
-	});
-
-	test("a cancel during beginRun leaves a tombstone, and the run is stored cancelled", async () => {
-		const { stub, fakes } = await conversation();
-		let release = () => {};
-		fakes.workspace.hold = new Promise<void>((resolve) => (release = resolve));
-		const outcome = post(stub, "Revoke me");
-		await until(async () => fakes.workspace.begun.length, (n) => n === 1);
-		const runId = fakes.workspace.begun[0]?.runId as RunId;
-		expect(await stub.cancel(runId, "permissions_changed", 7)).toEqual({ runId, state: "tombstoned" });
-		release();
-		const result = await outcome;
-		expect(result.ok).toBe(true);
-		if (!result.ok) return;
-		expect(result.value.run).toMatchObject({ status: "cancelled", errorMessage: "Stopped because permissions changed." });
-		expect(statuses(result.value.run.events)).toEqual([{ status: "queued" }, { status: "cancelled", message: "Stopped because permissions changed." }]);
-		await until(async () => fakes.workspace.released, (released) => released.length > 0);
-		expect(fakes.workspace.released).toEqual([[runId, "cancelled"]]);
-		expect(fakes.workspace.activated).toEqual([]);
-		expect(await stub.cancel(runId, "permissions_changed", 7)).toEqual({ runId, state: "ended" });
-	});
-
-	test.each([
-		[{ state: "revoked", reason: "agent_connections_changed" } as Registration, "cancelled", "Stopped because permissions changed."],
-		[{ state: "expired" } as Registration, "failed", "The agent could not finish this run. Try again."],
-		[{ state: "ended" } as Registration, "cancelled", "Stopped."],
-	])("activation answering %o ends the run", async (registration, status, message) => {
-		const { stub, fakes } = await conversation();
-		fakes.workspace.registration = () => registration;
-		const runId = await posted(stub, "Hi");
-		const run = await settled(stub, runId);
-		expect([run.status, run.errorMessage]).toEqual([status, message]);
-		expect(fakes.contexts).toEqual([]);
-	});
-
-	test("an activation that failed is sent again by the watch alarm", async () => {
-		const { stub, fakes } = await conversation();
-		let failing = true;
-		fakes.workspace.registration = () => {
-			if (failing) throw new Error("lost answer");
-			return { state: "active" };
-		};
-		const runId = await posted(stub, "Hi");
-		await until(async () => fakes.workspace.activated.length, (n) => n === 1);
-		expect((await runOf(stub, runId)).status).toBe("queued");
-		failing = false;
-		await due(stub, `watch:${runId}`);
-		expect((await settled(stub, runId)).status).toBe("completed");
-		expect(fakes.workspace.activated.length).toBe(2);
+	test("another organization's or workspace's cancel is refused, and the run goes on until its own scope's", async () => {
+		const hold = Promise.withResolvers<void>();
+		const { start, stub, fakes } = await started(WAIT, waiting(hold.promise));
+		await until(() => fakes.invocations.length, (n) => n === 1);
+		for (const other of [
+			{ ...start.scope, organization: uuid7() },
+			{ ...start.scope, workspace: uuid7() },
+		]) {
+			expect(await refusalOf(commands.cancelRun({ scope: other, conversation: start.conversation, run: start.run, reason: "cancelled" }))).toMatchObject({ code: "SCOPE_MISMATCH", status: 409 });
+		}
+		expect(await row(stub, start.run)).toMatchObject({ status: "running", revoked: 0 });
+		expect(await cancelOf(start, "cancelled")).toEqual({ state: "cancelled" });
+		hold.resolve();
+		expect((await settled(stub, start.run)).status).toBe("cancelled");
 	});
 });
 
 describe("stopping a run", () => {
-	test("the user's cancel is idempotent and says Stopped.", async () => {
+	test("a cancel is idempotent and says Stopped., and a call that finishes after it is not recorded", async () => {
 		const hold = Promise.withResolvers<void>();
-		const { stub, fakes } = await conversation({
-			declarations: [declaration("fake_wait", true)],
-			invoke: async (request) => {
-				await hold.promise;
-				return allowed(request, { items: [], count: 0 });
-			},
-		});
-		const runId = await posted(stub, scripted({ turns: [{ tools: [{ name: "fake_wait", arguments: {} }] }] }));
-		await until(async () => fakes.invocations.length, (n) => n === 1);
-		const cancelled = await stub.cancelRun(CALLER, runId);
-		expect(cancelled).toMatchObject({ status: "cancelled", errorMessage: "Stopped." });
-		expect(await stub.cancelRun(CALLER, runId)).toEqual(cancelled);
+		const { start, stub, fakes } = await started(WAIT, waiting(hold.promise));
+		await until(() => fakes.invocations.length, (n) => n === 1);
+		expect(await cancelOf(start, "cancelled")).toEqual({ state: "cancelled" });
+		expect(await runOf(stub, start.run)).toMatchObject({ status: "cancelled", errorMessage: "Stopped." });
+		expect(await cancelOf(start, "cancelled")).toEqual({ state: "cancelled" });
 		hold.resolve();
-		const events = await eventsOf(stub, runId);
+		const events = await eventsOf(stub, start.run);
 		expect(statuses(events).at(-1)).toEqual({ status: "cancelled", message: "Stopped." });
 		// The call finished after the run ended: it is not recorded.
 		await sleep(50);
-		expect((await eventsOf(stub, runId)).filter((event) => event.type === "tool_call")).toEqual([]);
-		const stored = await row(stub, runId);
+		expect((await eventsOf(stub, start.run)).filter((event) => event.type === "tool_call")).toEqual([]);
+		const stored = await row(stub, start.run);
 		expect(stored.error_code).toBe("cancelled");
 	});
 
@@ -502,71 +426,39 @@ describe("stopping a run", () => {
 		["permissions_changed", "permissions_changed", "Stopped because permissions changed."],
 		["emergency_stop", "emergency_stop", "Stopped."],
 		["cancelled", "cancelled", "Stopped."],
-	] as [CancelReason, string, string][])("a cancel from the outbox for %s stops the run with its code", async (reason, code, message) => {
+	] as [CancelReason, string, string][])("Laravel's cancel for %s stops the run with its code", async (reason, code, text) => {
 		const hold = Promise.withResolvers<void>();
-		const { stub, fakes } = await conversation({
-			declarations: [declaration("fake_wait", true)],
-			invoke: async (request) => {
-				await hold.promise;
-				return allowed(request, { items: [], count: 0 });
-			},
-		});
-		const runId = await posted(stub, scripted({ turns: [{ tools: [{ name: "fake_wait", arguments: {} }] }] }));
-		await until(async () => fakes.invocations.length, (n) => n === 1);
-		expect(await stub.cancel(runId, reason, 3)).toEqual({ runId, state: "stopping" });
-		const stored = await row(stub, runId);
-		expect([stored.status, stored.error_code, stored.error_message, stored.revoked]).toEqual(["cancelled", code, message, 1]);
+		const { start, stub, fakes } = await started(WAIT, waiting(hold.promise));
+		await until(() => fakes.invocations.length, (n) => n === 1);
+		expect(await cancelOf(start, reason)).toEqual({ state: "cancelled" });
+		const stored = await row(stub, start.run);
+		expect([stored.status, stored.error_code, stored.error_message, stored.revoked]).toEqual(["cancelled", code, text, 1]);
 		hold.resolve();
-		expect(await stub.cancel(runId, reason, 3)).toEqual({ runId, state: "ended" });
+		expect(await cancelOf(start, reason)).toEqual({ state: "cancelled" });
 	});
 
 	test("a run past its deadline times out on its alarm", async () => {
 		const hold = Promise.withResolvers<void>();
-		const { stub, fakes } = await conversation({
-			declarations: [declaration("fake_wait", true)],
-			invoke: async (request) => {
-				await hold.promise;
-				return allowed(request, { items: [], count: 0 });
-			},
-		});
-		fakes.workspace.deadline = Date.now() + 1500;
-		const runId = await posted(stub, scripted({ turns: [{ tools: [{ name: "fake_wait", arguments: {} }] }] }));
-		await until(async () => fakes.invocations.length, (n) => n === 1);
+		const { start, stub, fakes } = conversation(waiting(hold.promise), { message: message(WAIT) });
+		await stub.faultPlan([], { runTimeoutMs: 1500 });
+		await accepted(start);
+		await until(() => fakes.invocations.length, (n) => n === 1);
 		await sleep(1600);
 		// Expired counts as inactive before it is marked: fenced events are refused.
 		await runDurableObjectAlarm(stub);
-		const run = await settled(stub, runId);
+		const run = await settled(stub, start.run);
 		expect([run.status, run.errorMessage]).toEqual(["timed_out", "The run took too long."]);
 		hold.resolve();
 	});
 });
 
 describe("events", () => {
-	test("pages of events by seq, up to a seq, at most a limit", async () => {
-		const { stub } = await conversation();
-		const runId = await posted(stub, scripted({ chunkChars: 1, turns: [{ text: "abcdefghij" }] }));
-		await settled(stub, runId);
-		const all = await eventsOf(stub, runId);
-		expect(all.length).toBeGreaterThan(5);
-		const page = await stub.getRunEvents(CALLER, runId, { after: 2, upTo: 5, limit: 2 });
-		expect(page?.map((event) => event.seq)).toEqual([3, 4]);
-		expect(await stub.getRunEvents(CALLER, runId, { after: 4, upTo: 5, limit: 1000 })).toEqual([all[4]]);
-		await expect(stub.getRunEvents(CALLER, runId, { after: -1, upTo: 5, limit: 2 })).rejects.toThrow();
-	});
-
 	test("the stream sends the backlog, then live events, then end", async () => {
 		const hold = Promise.withResolvers<void>();
-		const { id, stub, fakes } = await conversation({
-			declarations: [declaration("fake_wait", true)],
-			invoke: async (request) => {
-				await hold.promise;
-				return allowed(request, { items: [], count: 0 });
-			},
-		});
-		const runId = await posted(stub, scripted({ turns: [{ tools: [{ name: "fake_wait", arguments: { key: "a" } }] }, { text: "Finished." }] }));
-		await until(async () => fakes.invocations.length, (n) => n === 1);
+		const { start, stub, fakes } = await started(scripted({ turns: [{ tools: [{ name: "fake_wait", arguments: { key: "a" } }] }, { text: "Finished." }] }), waiting(hold.promise));
+		await until(() => fakes.invocations.length, (n) => n === 1);
 		const frames: string[] = [];
-		const response = await stub.fetch(`http://conversation/stream?run=${runId}&after=1&user=${USER}`, { headers: { Upgrade: "websocket" } });
+		const response = await stub.fetch(`http://conversation/stream?run=${start.run}&after=1&organization=${start.scope.organization}`, { headers: { Upgrade: "websocket" } });
 		expect(response.status).toBe(101);
 		const socket = response.webSocket as WebSocket;
 		const closed = new Promise<number>((resolve) => socket.addEventListener("close", (event) => resolve(event.code)));
@@ -574,16 +466,15 @@ describe("events", () => {
 			frames.push(String(event.data));
 		});
 		socket.accept();
-		await until(async () => frames.length, (n) => n >= 3);
+		await until(() => frames.length, (n) => n >= 3);
 		hold.resolve();
 		expect(await closed).toBe(1000);
 		const parsed = frames.map((frame) => JSON.parse(frame) as RunEvent | { type: "end" });
 		expect(parsed.at(-1)).toEqual({ type: "end" });
 		const seqs = parsed.flatMap((frame) => ("seq" in frame ? [frame.seq] : []));
 		// Every event after `after`, once, in order.
-		const all = await eventsOf(stub, runId);
+		const all = await eventsOf(stub, start.run);
 		expect(seqs).toEqual(all.filter((event) => event.seq > 1).map((event) => event.seq));
-		expect(id).toBeTruthy();
 	});
 
 	test("a socket another instance accepted is never written to, nor ended short of what it missed: it is told to reconnect", async () => {
@@ -591,15 +482,15 @@ describe("events", () => {
 		// second RunStream over the same object: what the platform gives an instance that inherits sockets
 		// (they outlive the instance that accepted them), with nothing in memory about them.
 		for (const variant of ["its start", "the run's next event and end"] as const) {
-			const { stub, fakes } = await conversation({ declarations: [declaration("fake_wait", true)], invoke: () => new Promise<ToolCallOutcome>(() => {}) });
-			const runId = await posted(stub, scripted({ turns: [{ tools: [{ name: "fake_wait", arguments: {} }] }] }));
-			await until(async () => fakes.invocations.length, (n) => n === 1);
+			const { start, stub, fakes } = await started(WAIT, { declarations: [declaration("fake_wait", true)], invoke: () => new Promise<ToolCallOutcome>(() => {}) });
+			const runId = start.run;
+			await until(() => fakes.invocations.length, (n) => n === 1);
 			const seqs: number[] = [];
 			const closes: number[] = [];
 			let ended = false;
-			// A client following the run as the Worker's relay does: from its last event again after a 1013.
+			// A client following the run as the stream's relay does: from its last event again after a 1013.
 			for (let reconnects = 0; reconnects < 3; reconnects++) {
-				const response = await stub.fetch(`http://conversation/stream?run=${runId}&after=${seqs.at(-1) ?? 0}&user=${USER}`, { headers: { Upgrade: "websocket" } });
+				const response = await stub.fetch(`http://conversation/stream?run=${runId}&after=${seqs.at(-1) ?? 0}&organization=${start.scope.organization}`, { headers: { Upgrade: "websocket" } });
 				const socket = response.webSocket as WebSocket;
 				const closed = new Promise<number>((resolve) => socket.addEventListener("close", (event) => resolve(event.code)));
 				socket.addEventListener("message", (event) => {
@@ -610,7 +501,7 @@ describe("events", () => {
 				socket.accept();
 				if (reconnects === 0) {
 					const before = (await row(stub, runId)).event_seq as number;
-					await until(async () => seqs.length, (n) => n === before);
+					await until(() => seqs.length, (n) => n === before);
 					await runInDurableObject(stub, (_instance, state) => {
 						// Committed by an instance that died before sending them; the run is over by then.
 						const append = (type: string, data: Json, status?: string) => {
@@ -621,13 +512,13 @@ describe("events", () => {
 						};
 						append("phase", { text: "Missed one" });
 						append("phase", { text: "Missed two" });
-						const next = new RunStream(state, () => new RunStore(state.storage));
+						const nextStream = new RunStream(state, () => new RunStore(state.storage));
 						if (variant === "its start") {
 							append("status", { status: "completed" }, "completed");
-							next.resetInherited();
+							nextStream.resetInherited();
 						} else {
-							next.broadcast(runId, append("status", { status: "completed" }, "completed"));
-							next.end(runId);
+							nextStream.broadcast(runId, append("status", { status: "completed" }, "completed"));
+							nextStream.end(runId);
 						}
 					});
 				}
@@ -641,14 +532,13 @@ describe("events", () => {
 		}
 	});
 
-	test("a stream for an ended run replays and ends at once; another user's is not found", async () => {
-		const { stub } = await conversation();
-		const runId = await posted(stub, "Hi");
-		await settled(stub, runId);
-		const all = await eventsOf(stub, runId);
-		const refused = await stub.fetch(`http://conversation/stream?run=${runId}&after=0&user=${OTHER}`, { headers: { Upgrade: "websocket" } });
+	test("a stream for an ended run replays and ends at once; another organization's is not found", async () => {
+		const { start, stub } = await started("Hi");
+		await settled(stub, start.run);
+		const all = await eventsOf(stub, start.run);
+		const refused = await stub.fetch(`http://conversation/stream?run=${start.run}&after=0&organization=${uuid7()}`, { headers: { Upgrade: "websocket" } });
 		expect(refused.status).toBe(404);
-		const response = await stub.fetch(`http://conversation/stream?run=${runId}&after=${all.length - 2}&user=${USER}`, { headers: { Upgrade: "websocket" } });
+		const response = await stub.fetch(`http://conversation/stream?run=${start.run}&after=${all.length - 2}&organization=${start.scope.organization}`, { headers: { Upgrade: "websocket" } });
 		const socket = response.webSocket as WebSocket;
 		const frames: string[] = [];
 		const closed = new Promise<void>((resolve) => socket.addEventListener("close", () => resolve()));
@@ -663,14 +553,14 @@ describe("events", () => {
 
 describe("tools", () => {
 	test("calls go through the executor, are recorded from its outcome, and the model sees the result's JSON", async () => {
-		const { stub, fakes } = await conversation({
+		const { start, stub, fakes } = await started(scripted({ turns: [{ tools: [{ name: "fake_read", arguments: { key: "a" } }] }, { tools: [{ name: "fake_write", arguments: { key: "b" } }] }, { text: "Done reading." }] }), {
 			declarations: [declaration("fake_read", true), declaration("fake_write", false)],
 			invoke: async (request) =>
 				request.name === "fake_read"
 					? allowed(request, { items: [{ title: "Ünïcode" }], count: 1 })
 					: { ok: false, error: { code: "POLICY_DENIED", message: "This resource or action is not available under the current permissions." }, event: { tool: request.name, label: "Fake: write", arguments: {}, decision: "denied", code: "POLICY_DENIED", message: "This resource or action is not available under the current permissions." } },
 		});
-		const runId = await posted(stub, scripted({ turns: [{ tools: [{ name: "fake_read", arguments: { key: "a" } }] }, { tools: [{ name: "fake_write", arguments: { key: "b" } }] }, { text: "Done reading." }] }));
+		const runId = start.run;
 		const run = await settled(stub, runId);
 		expect(run.status).toBe("completed");
 		expect(fakes.invocations.map((request) => [request.name, request.arguments, request.fence])).toEqual([
@@ -680,8 +570,8 @@ describe("tools", () => {
 		const calls = (await eventsOf(stub, runId)).filter((event) => event.type === "tool_call").map((event) => event.data);
 		expect(calls.map((call) => (call as { decision: string }).decision)).toEqual(["allowed", "denied"]);
 		// The tool results as the model saw them: the result's JSON, and the error's message.
-		const results = (fakes.contexts.at(-1)?.messages ?? []).filter((message) => message.role === "toolResult");
-		expect(results.map((message) => [message.content, message.isError])).toEqual([
+		const results = (fakes.contexts.at(-1)?.messages ?? []).filter((item) => item.role === "toolResult");
+		expect(results.map((item) => [item.content, item.isError])).toEqual([
 			[[{ type: "text", text: '{"items":[{"title":"Ünïcode"}],"count":1}' }], false],
 			[[{ type: "text", text: "This resource or action is not available under the current permissions." }], true],
 		]);
@@ -694,37 +584,48 @@ describe("tools", () => {
 		// a schema that refuses the misread key (required, additionalProperties: false) pi refuses the call
 		// before the tool can read the model's text again. This schema lets the call through to the tool.
 		const first = "minerva_escaped_key_probe";
-		const { stub, fakes } = await conversation({ declarations: [{ ...declaration("fake_read", true), inputSchema: { type: "object" } }] });
 		// "\\" parsed after a first key makes V8 return "\\" for a later "\n" in that place (lib/json.ts), so the
 		// fake's provider-side parse (pi-ai's parseStreamingJson) and pi's own reads misread the arguments.
 		const text = `{"${first}":1,"\\n":2}`;
 		JSON.parse(`{"${first}":0,"\\\\":1}`);
 		expect(Object.keys(JSON.parse(text))).toEqual([first, "\\"]);
-		const runId = await posted(stub, scripted({ turns: [{ tools: [{ name: "fake_read", arguments: {} }], rawArguments: { "0": text } }] }));
-		await settled(stub, runId);
+		const { start, stub, fakes } = await started(scripted({ turns: [{ tools: [{ name: "fake_read", arguments: {} }], rawArguments: { "0": text } }] }), {
+			declarations: [{ ...declaration("fake_read", true), inputSchema: { type: "object" } }],
+		});
+		await settled(stub, start.run);
 		expect(fakes.invocations.map((request) => request.arguments)).toEqual([{ [first]: 1, "\n": 2 }]);
 	});
 
 	test("a call that ends RUN_ENDED is not recorded", async () => {
-		const { stub } = await conversation({
+		const { start, stub, fakes } = await started(scripted({ turns: [{ tools: [{ name: "fake_read", arguments: {} }] }] }), {
 			declarations: [declaration("fake_read", true)],
 			invoke: async () => ({ ok: false, error: { code: "RUN_ENDED", message: "This run is no longer active." }, event: null }),
 		});
-		const runId = await posted(stub, scripted({ turns: [{ tools: [{ name: "fake_read", arguments: {} }] }] }));
-		await settled(stub, runId);
-		expect((await eventsOf(stub, runId)).filter((event) => event.type === "tool_call")).toEqual([]);
+		expect((await settled(stub, start.run)).status).toBe("completed");
+		expect(fakes.invocations.map((request) => request.name)).toEqual(["fake_read"]);
+		expect((await eventsOf(stub, start.run)).filter((event) => event.type === "tool_call")).toEqual([]);
 	});
 });
 
 describe("the model", () => {
-	test("a later run replays the earlier messages, not this run's own, as text", async () => {
-		const { stub, fakes } = await conversation();
-		const first = await posted(stub, "First question");
-		await settled(stub, first);
-		const second = await posted(stub, "Second question");
-		await settled(stub, second);
+	test("a run replays the history Laravel sent as text, not its own message, then its message, under the agent's instructions and the folder's", async () => {
+		const [earlier, run] = [uuid7(), uuid7()];
+		const { start, stub, fakes } = conversation(
+			{},
+			{
+				run,
+				message: message("Second question"),
+				history: [
+					{ id: uuid7(), role: "user", content: "First question", attachments: [], run: earlier, createdAt: "2026-10-14T10:00:00+00:00", changes: null },
+					{ id: uuid7(), role: "assistant", content: "Done.", attachments: [], run: earlier, createdAt: "2026-10-14T10:00:05+00:00", changes: null },
+					{ id: uuid7(), role: "user", content: "Second question", attachments: [], run, createdAt: "2026-10-14T10:01:00+00:00", changes: null },
+				],
+			},
+		);
+		await accepted(start);
+		await settled(stub, start.run);
 		const context = fakes.contexts.at(-1) as TranscriptContext;
-		const turns = context.messages.filter((message) => message.role !== "system").map((message) => [message.role, message.role === "assistant" ? message.content : (message as { content: unknown }).content]);
+		const turns = context.messages.filter((item) => item.role !== "system").map((item) => [item.role, item.role === "assistant" ? item.content : (item as { content: unknown }).content]);
 		expect(turns).toEqual([
 			["user", "First question"],
 			["assistant", [{ type: "text", text: "Done." }]],
@@ -732,27 +633,24 @@ describe("the model", () => {
 		]);
 		// pi adds the instructions as a positional system section; providers that take no mid-conversation
 		// system messages fold it into the leading one.
-		const system = context.messages.filter((message) => message.role === "system");
+		const system = context.messages.filter((item) => item.role === "system");
 		// With the local tools, the folder's paragraph follows the agent's instructions after a blank line.
-		expect(JSON.stringify(system)).toContain(JSON.stringify(`<instructions>\nYou are a test agent.\n\n${FOLDER_INSTRUCTIONS}\n</instructions>`).slice(1, -1));
+		expect(JSON.stringify(system)).toContain(JSON.stringify(`\n\n${start.agent.instructions}\n\n${FOLDER_INSTRUCTIONS}\n</instructions>`).slice(1, -1));
 	});
 
-	test("a provider's error text never reaches the run, and the run fails", async () => {
-		const { stub, fakes } = await conversation({ model: { script: () => ({ turns: [{ error: { message: "secret org-1234 quota" } }] }) } });
-		const runId = await posted(stub, "Hi");
-		const run = await settled(stub, runId);
+	test("a provider's error text never reaches the run or Laravel, and the run fails", async () => {
+		const { start, stub, fakes } = await started("Hi", { model: { script: () => ({ turns: [{ error: { message: "secret org-1234 quota" } }] }) } });
+		const run = await settled(stub, start.run);
 		expect([run.status, run.errorMessage]).toEqual(["failed", "The agent could not finish this run. Try again."]);
-		const stored = await runInDurableObject(stub, (_instance, state) => {
-			const tables = state.storage.sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\'").toArray();
-			return tables.map(({ name }) => JSON.stringify(state.storage.sql.exec(`SELECT * FROM "${name}"`).toArray())).join("\n");
-		});
+		const stored = await storedText(stub);
 		expect(stored).not.toContain("org-1234");
 		expect(stored).toContain("The model provider reported an error.");
+		expect(JSON.stringify(await delivered(start))).not.toContain("org-1234");
 		expect(fakes.contexts.length).toBe(1);
 		expect(PROVIDER_ERROR).toBe("The model provider reported an error.");
 	});
 
-	test("a failure's text, which createAI also copies into its diagnostics, is nowhere in storage, the run's events or the logs", async () => {
+	test("a failure's text, which createAI also copies into its diagnostics, is nowhere in storage, the run's events, its facts or the logs", async () => {
 		const secret = "SYNTHETIC_SECRET";
 		const route = (provider: ModelRoute["provider"]): ModelRoute => ({ provider, name: provider === "workers-ai" ? "@cf/zai-org/glm-5.3-flash" : "gpt-test", gateway: "acme", api: "responses", cap: 1000, reasoningEffort: "", reasoningSummary: "" });
 		// AI Gateway's universal endpoint answering a 401 that echoes the key, and Workers AI throwing such text.
@@ -777,19 +675,16 @@ describe("the model", () => {
 		);
 		try {
 			for (const provider of ["openai", "workers-ai"] as const) {
-				const { stub } = await conversation({ upstream: upstreamOf(route(provider), binding) });
-				const runId = await posted(stub, "Hi");
-				const run = await settled(stub, runId);
+				const { start, stub } = await started("Hi", { upstream: upstreamOf(route(provider), binding) });
+				const run = await settled(stub, start.run);
 				expect([run.status, run.errorMessage]).toEqual(["failed", "The agent could not finish this run. Try again."]);
-				const stored = await runInDurableObject(stub, (_instance, state) => {
-					const tables = state.storage.sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\'").toArray();
-					return tables.map(({ name }) => `${name}: ${JSON.stringify(state.storage.sql.exec(`SELECT * FROM "${name}"`).toArray())}`).join("\n");
-				});
+				const stored = await storedText(stub);
 				// pi's own tables are there, with the failed call in its records.
 				expect(stored).toMatch(/^pi_entries: \[\{/m);
 				expect(stored).toContain("The model provider reported an error.");
 				expect(stored).not.toContain(secret);
-				expect(JSON.stringify(await eventsOf(stub, runId))).not.toContain(secret);
+				expect(JSON.stringify(await eventsOf(stub, start.run))).not.toContain(secret);
+				expect(JSON.stringify(await delivered(start))).not.toContain(secret);
 			}
 		} finally {
 			for (const spy of spies) spy.mockRestore();
@@ -800,23 +695,21 @@ describe("the model", () => {
 });
 
 describe("restarts through the attempt gate", () => {
-	/** A stub after `abortAllDurableObjects`, which breaks the stubs made before it. */
-	const fresh = (id: string): Stub => conversationObject(env, WORKSPACE, id);
-
 	test("a read interrupted by the object's death runs again as attempt 2, and the run completes", async () => {
 		let executions = 0;
 		const never = new Promise<ToolCallOutcome>(() => {});
-		const { id, stub, fakes } = await conversation({
+		const { start, fakes } = await started(scripted({ turns: [{ text: "Looking.", tools: [{ name: "fake_read", arguments: { key: "a" } }] }, { text: "Found it." }] }), {
 			declarations: [declaration("fake_read", true)],
 			invoke: async (request) => (++executions === 1 ? never : allowed(request, { items: [], count: 0 })),
 		});
-		const runId = await posted(stub, scripted({ turns: [{ text: "Looking.", tools: [{ name: "fake_read", arguments: { key: "a" } }] }, { text: "Found it." }] }));
-		await until(async () => fakes.invocations.length, (n) => n === 1);
+		const runId = start.run;
+		await until(() => fakes.invocations.length, (n) => n === 1);
 		await abortAllDurableObjects();
 		// Any event opens pi again, and the gate counts the restart before pi does anything.
-		const run = await settled(fresh(id), runId, 15_000);
+		await wake(start);
+		const run = await settled(objectOf(start), runId, 15_000);
 		expect(run.status).toBe("completed");
-		const events = await eventsOf(fresh(id), runId);
+		const events = await eventsOf(objectOf(start), runId);
 		expect(statuses(events)).toEqual([
 			{ status: "queued" },
 			{ status: "provisioning" },
@@ -829,32 +722,30 @@ describe("restarts through the attempt gate", () => {
 		expect(phases).toContain("Resuming the agent");
 		expect(fakes.invocations.map((request) => request.fence.attempt)).toEqual([1, 2]);
 		expect(fakes.ledger.uncertain).toEqual([runId]);
-		expect((await row(fresh(id), runId)).attempt).toBe(2);
-		expect((await fresh(id).getConversation(CALLER))?.messages.at(-1)?.content).toBe("Found it.");
+		expect((await row(objectOf(start), runId)).attempt).toBe(2);
+		expect(events.filter((event) => event.type === "message").map((event) => (event.data as { content: string }).content)).toEqual(["Found it."]);
+		expect((await delivered(start)).at(-1)?.data).toMatchObject({ status: "completed", message: { content: "Found it." } });
 	});
 
 	test("the third death fails the run with worker_exited, and pi runs nothing afterwards", async () => {
 		const never = new Promise<ToolCallOutcome>(() => {});
-		const { id, stub, fakes } = await conversation({ declarations: [declaration("fake_read", true)], invoke: async () => never });
-		const runId = await posted(stub, scripted({ turns: [{ tools: [{ name: "fake_read", arguments: {} }] }] }));
+		const { start, fakes } = await started(scripted({ turns: [{ tools: [{ name: "fake_read", arguments: {} }] }] }), { declarations: [declaration("fake_read", true)], invoke: async () => never });
+		const runId = start.run;
 		for (const attempt of [1, 2, 3]) {
-			await until(async () => fakes.invocations.length, (n) => n === attempt, 15_000);
+			await until(() => fakes.invocations.length, (n) => n === attempt, 15_000);
 			await abortAllDurableObjects();
-			await fresh(id).getRun(CALLER, runId);
+			await wake(start);
 		}
-		const run = await settled(fresh(id), runId, 15_000);
+		const stub = objectOf(start);
+		const run = await settled(stub, runId, 15_000);
 		expect([run.status, run.errorMessage]).toEqual(["failed", "The worker stopped unexpectedly."]);
-		const stored = await row(fresh(id), runId);
+		const stored = await row(stub, runId);
 		expect([stored.attempt, stored.error_code]).toEqual([3, "worker_exited"]);
 		await sleep(300);
 		expect(fakes.invocations.length).toBe(3);
-		const live = await runInDurableObject(fresh(id), (_instance, state) =>
-			state.storage.sql.exec("SELECT count(*) AS n FROM pi_tasks WHERE status <> 'terminal'").one().n,
-		);
+		const live = await runInDurableObject(stub, (_instance, state) => state.storage.sql.exec("SELECT count(*) AS n FROM pi_tasks WHERE status <> 'terminal'").one().n);
 		expect(live).toBe(0);
-		const attempts = await runInDurableObject(fresh(id), (_instance, state) =>
-			state.storage.sql.exec("SELECT attempt, ended FROM attempts WHERE run_id = ? ORDER BY attempt", runId).toArray(),
-		);
+		const attempts = await runInDurableObject(stub, (_instance, state) => state.storage.sql.exec("SELECT attempt, ended FROM attempts WHERE run_id = ? ORDER BY attempt", runId).toArray());
 		expect(attempts).toEqual([
 			{ attempt: 1, ended: "restarted" },
 			{ attempt: 2, ended: "restarted" },
@@ -863,38 +754,54 @@ describe("restarts through the attempt gate", () => {
 	});
 
 	test("an idle object that wakes between turns is no restart", async () => {
-		const { id, stub } = await conversation();
-		const first = await posted(stub, "One");
-		await settled(stub, first);
+		const { start: first, stub } = await started("One");
+		await settled(stub, first.run);
 		await abortAllDurableObjects();
-		const second = await posted(fresh(id), "Two");
-		await settled(fresh(id), second);
-		for (const runId of [first, second]) {
-			expect(statuses(await eventsOf(fresh(id), runId)).some((data) => "attempt" in data)).toBe(false);
-			expect((await row(fresh(id), runId)).attempt).toBe(1);
+		const second = next(first, { message: message("Two") });
+		await accepted(second);
+		await settled(objectOf(first), second.run);
+		for (const runId of [first.run, second.run]) {
+			expect(statuses(await eventsOf(objectOf(first), runId)).some((data) => "attempt" in data)).toBe(false);
+			expect((await row(objectOf(first), runId)).attempt).toBe(1);
 		}
 	});
 
-	test("a queued run is no restart: the start protocol activates it when the object comes back", async () => {
-		const { id, stub, fakes } = await conversation();
-		const answered = Promise.withResolvers<Registration>();
-		fakes.workspace.registration = () => answered.promise;
-		const runId = await posted(stub, "Hi");
-		await until(async () => fakes.workspace.activated.length, (n) => n === 1);
-		await abortAllDurableObjects();
-		fakes.workspace.registration = () => ({ state: "active" });
-		const run = await settled(fresh(id), runId, 15_000);
-		expect(run.status).toBe("completed");
-		expect(statuses(await eventsOf(fresh(id), runId)).some((data) => "attempt" in data)).toBe(false);
-		expect(fakes.workspace.activated.length).toBe(2);
-		answered.resolve({ state: "active" });
+	test("a reset right after the start's transaction is no restart: the start sent again runs its turn once, as attempt 1", async () => {
+		// The object is reset once the start's transaction has committed, before the activation it deferred.
+		const { start, fakes } = conversation(
+			{
+				folder: (context) => ({
+					commitAttachments: (runId, prepared) => {
+						queueMicrotask(() => context.ctx.abort("fault: start:stored"));
+						return emptyFolder(context).commitAttachments(runId, prepared);
+					},
+				}),
+			},
+			{ message: message("Hi") },
+		);
+		expect((await refusalOf(commands.startRun(start))).status).toBeGreaterThanOrEqual(500);
+		// The run and its answer were not yet written out (the output gate): the reset took them together.
+		const left = await runInDurableObject(objectOf(start), (_instance, state) => ({
+			runs: state.storage.sql.exec("SELECT count(*) AS n FROM runs").one().n,
+			answers: state.storage.sql.exec("SELECT count(*) AS n FROM internal_answers").one().n,
+		}));
+		expect(left).toEqual({ runs: 0, answers: 0 });
+		expect(fakes.contexts).toHaveLength(0);
+		FAKES.set(start.conversation, { ...fakes, folder: () => ({}) });
+		expect(await commands.startRun(start)).toMatchObject({ outcome: "accepted" });
+		const stub = objectOf(start);
+		expect((await settled(stub, start.run, 15_000)).status).toBe("completed");
+		expect(statuses(await eventsOf(stub, start.run))).toEqual([{ status: "queued" }, { status: "provisioning" }, { status: "running" }, { status: "completed" }]);
+		expect((await row(stub, start.run)).attempt).toBe(1);
+		expect(await runCount(stub)).toBe(1);
+		expect(fakesOf(start.conversation).contexts).toHaveLength(1);
 	});
 });
 
 describe("the run's records", () => {
 	test("an attempt's events are appended only while it is current; refused ones take no seq", async () => {
-		const { stub } = await conversation();
-		const runId = await posted(stub, "Hi");
+		const { start, stub } = await started("Hi");
+		const runId = start.run;
 		await settled(stub, runId);
 		await runInDurableObject(stub, (_instance, state) => {
 			const store = new RunStore(state.storage);
@@ -914,16 +821,16 @@ describe("the run's records", () => {
 			expect(store.isActive(runId)).toBe(false);
 			expect(store.countToolCall({ runId, attempt: 2 })).toBe(false);
 			const phases = state.storage.sql.exec<{ data: string }>("SELECT data FROM run_events WHERE run_id = ? AND type = 'phase' ORDER BY seq", runId).toArray();
-			expect(phases.map((row) => JSON.parse(row.data).text).filter((text: string) => text.length === 1)).toEqual(["a", "c", "f"]);
-			const seqs = state.storage.sql.exec<{ seq: number }>("SELECT seq FROM run_events WHERE run_id = ? ORDER BY seq", runId).toArray().map((row) => row.seq);
+			expect(phases.map((item) => JSON.parse(item.data).text).filter((text: string) => text.length === 1)).toEqual(["a", "c", "f"]);
+			const seqs = state.storage.sql.exec<{ seq: number }>("SELECT seq FROM run_events WHERE run_id = ? ORDER BY seq", runId).toArray().map((item) => item.seq);
 			expect(seqs).toEqual(seqs.map((_, index) => index + 1));
 			expect(state.storage.sql.exec("SELECT event_seq FROM runs WHERE id = ?", runId).one().event_seq).toBe(seqs.length);
 		});
 	});
 
 	test("changes made inside pi's open transaction are announced only once it commits, and never if it rolls back", async () => {
-		const { stub } = await conversation();
-		const runId = await posted(stub, "Hi");
+		const { start, stub } = await started("Hi");
+		const runId = start.run;
 		await settled(stub, runId);
 		await runInDurableObject(stub, async (_instance, state) => {
 			const store = new RunStore(state.storage);
@@ -956,20 +863,9 @@ describe("the run's records", () => {
 		});
 	});
 
-	test("a Workspace conversation's runs write no facts: only Laravel's are delivered", async () => {
-		const { stub } = await conversation();
-		const runId = await posted(stub, "Hi");
-		await settled(stub, runId);
-		const counts = await runInDurableObject(stub, (_instance, state) => ({
-			facts: state.storage.sql.exec("SELECT count(*) AS n FROM facts").one().n,
-			delivery: state.storage.sql.exec("SELECT count(*) AS n FROM fact_delivery").one().n,
-		}));
-		expect(counts).toEqual({ facts: 0, delivery: 0 });
-	});
-
 	test("a write claimed while pi's transaction is open is not taken back by its rollback, nor is its settlement", async () => {
-		const { stub } = await conversation();
-		const runId = await posted(stub, "Hi");
+		const { start, stub } = await started("Hi");
+		const runId = start.run;
 		await settled(stub, runId);
 		await runInDurableObject(stub, async (_instance, state) => {
 			const store = new RunStore(state.storage);
@@ -1015,38 +911,9 @@ describe("the run's records", () => {
 		});
 	});
 
-	test("a revocation's cancel that arrives while pi's transaction is open is acknowledged only once it is kept", async () => {
-		const hold = Promise.withResolvers<void>();
-		const { stub, fakes } = await conversation({
-			declarations: [declaration("fake_wait", true)],
-			invoke: async (request) => {
-				await hold.promise;
-				return allowed(request, { items: [], count: 0 });
-			},
-		});
-		const runId = await posted(stub, scripted({ turns: [{ tools: [{ name: "fake_wait", arguments: {} }] }] }));
-		await until(async () => fakes.invocations.length, (n) => n === 1);
-		const stored = await runInDurableObject(stub, async (instance, state) => {
-			let ack: Promise<CancelAck> | null = null;
-			await state.storage
-				.transaction(async () => {
-					await Promise.resolve();
-					ack = instance.cancel(runId, "permissions_changed", 7);
-					await Promise.resolve();
-					throw new Error("rolled back");
-				})
-				.catch(() => {});
-			expect(await (ack as unknown as Promise<CancelAck>)).toEqual({ runId, state: "stopping" });
-			return state.storage.sql.exec("SELECT status, revoked, error_code FROM runs WHERE id = ?", runId).one();
-		});
-		expect(stored).toEqual({ status: "cancelled", revoked: 1, error_code: "permissions_changed" });
-		hold.resolve();
-		expect((await settled(stub, runId)).status).toBe("cancelled");
-	});
-
 	test("a replaced attempt can neither fail nor complete the run", async () => {
-		const { stub } = await conversation();
-		const runId = await posted(stub, "Hi");
+		const { start, stub } = await started("Hi");
+		const runId = start.run;
 		await settled(stub, runId);
 		await runInDurableObject(stub, (_instance, state) => {
 			const store = new RunStore(state.storage);
@@ -1063,7 +930,7 @@ describe("the run's records", () => {
 
 	test("tool calls are counted, never limited, and only for the current attempt", async () => {
 		const gate = Promise.withResolvers<void>();
-		const { stub, fakes } = await conversation({
+		const { start, stub, fakes } = await started(scripted({ turns: [{ tools: [{ name: "fake_read", arguments: { key: "a" } }, { name: "fake_read", arguments: { key: "b" } }] }, { tools: [{ name: "fake_read", arguments: {} }] }] }), {
 			declarations: [declaration("fake_read", true)],
 			invoke: async (request, run) => {
 				await gate.promise;
@@ -1071,42 +938,50 @@ describe("the run's records", () => {
 				return allowed(request, { items: [], count: 0 });
 			},
 		});
-		const runId = await posted(stub, scripted({ turns: [{ tools: [{ name: "fake_read", arguments: { key: "a" } }, { name: "fake_read", arguments: { key: "b" } }] }, { tools: [{ name: "fake_read", arguments: {} }] }] }));
-		await until(async () => fakes.invocations.length, (n) => n === 2);
-		await runInDurableObject(stub, (_instance, state) => state.storage.sql.exec("UPDATE runs SET tool_calls = 1000 WHERE id = ?", runId));
+		await until(() => fakes.invocations.length, (n) => n === 2);
+		await runInDurableObject(stub, (_instance, state) => state.storage.sql.exec("UPDATE runs SET tool_calls = 1000 WHERE id = ?", start.run));
 		gate.resolve();
-		await settled(stub, runId);
-		expect((await row(stub, runId)).tool_calls).toBe(1003);
+		await settled(stub, start.run);
+		expect((await row(stub, start.run)).tool_calls).toBe(1003);
 	});
 
-	test("a lease is for the call's attempt: refused before the Workspace is asked when it is not current", async () => {
-		const leases: string[] = [];
-		const { stub, fakes } = await conversation({
-			declarations: [declaration("fake_read", true)],
-			invoke: async (request, run) => {
-				const current = await run.credentials.lease(request.fence, "conn-1");
-				const stale = await run.credentials.lease({ ...request.fence, attempt: request.fence.attempt + 1 }, "conn-1");
-				leases.push(JSON.stringify(current), JSON.stringify(stale));
-				return allowed(request, { items: [], count: 0 });
+	test("a lease is for the call's attempt: Laravel lends the current one's, and is never asked for another's", async () => {
+		const connection = uuid7();
+		const leases: unknown[] = [];
+		const { start, stub } = conversation(
+			{
+				declarations: [declaration("fake_read", true)],
+				invoke: async (request, run) => {
+					leases.push(await run.credentials.lease(request.fence, connection));
+					leases.push(await run.credentials.lease({ ...request.fence, attempt: request.fence.attempt + 1 }, connection));
+					return allowed(request, { items: [], count: 0 });
+				},
 			},
-		});
-		const asked: string[] = [];
-		fakes.workspace.lease = async () => {
-			asked.push("lease");
-			return { refused: "CONNECTION_UNAUTHORIZED" as const, message: "The connection expired. Reconnect it in Minerva." };
-		};
-		const runId = await posted(stub, scripted({ turns: [{ tools: [{ name: "fake_read", arguments: {} }] }] }));
-		await settled(stub, runId);
+			{
+				message: message(scripted({ turns: [{ tools: [{ name: "fake_read", arguments: {} }] }] })),
+				authority: { connections: [notesConnection(connection)], layers: notesLayers(connection) },
+			},
+		);
+		fake.connections.set(connection, notesLease());
+		await accepted(start);
+		await settled(stub, start.run);
 		expect(leases).toEqual([
-			JSON.stringify({ refused: "CONNECTION_UNAUTHORIZED", message: "The connection expired. Reconnect it in Minerva." }),
-			JSON.stringify({ refused: "RUN_ENDED", message: "This run is no longer active." }),
+			expect.objectContaining({ connectionId: connection, generation: 1, payload: { kind: "oauth2", access_token: "notes-access-0", refresh_token: null, scopes: ["notes"] } }),
+			{ refused: "RUN_ENDED", message: "This run is no longer active." },
 		]);
-		expect(asked).toEqual(["lease"]);
+		expect(fake.calls.filter((call) => call.operation === "leaseToken" && call.run === start.run)).toHaveLength(1);
 	});
 
 	test("a dispatched write schedules the lost-write sweep", async () => {
 		let swept = 0;
-		const { stub, fakes } = await conversation({
+		const ledger = new FakeLedger();
+		ledger.dispatchWrite = (() => ({ kind: "dispatched", deadline: 1 })) as never;
+		ledger.sweepLostWrites = () => {
+			swept++;
+			return { uncertain: [], nextAt: null };
+		};
+		const { start, stub } = await started(scripted({ turns: [{ tools: [{ name: "fake_write", arguments: {} }] }] }), {
+			ledger,
 			declarations: [declaration("fake_write", false)],
 			invoke: async (request, run) => {
 				const dispatched = await run.run.dispatchWrite(request.fence, "key-1");
@@ -1114,43 +989,32 @@ describe("the run's records", () => {
 				return allowed(request, { items: [], count: 0 });
 			},
 		});
-		fakes.ledger.dispatchWrite = (() => ({ kind: "dispatched", deadline: 1 })) as never;
-		fakes.ledger.sweepLostWrites = () => {
-			swept++;
-			return { uncertain: [], nextAt: null };
-		};
-		const runId = await posted(stub, scripted({ turns: [{ tools: [{ name: "fake_write", arguments: {} }] }] }));
-		await settled(stub, runId);
+		await settled(stub, start.run);
 		const jobs = await runInDurableObject(stub, (_instance, state) => state.storage.sql.exec("SELECT id, fn FROM cf_agents_jobs").toArray());
 		expect(jobs).toContainEqual({ id: "sweep", fn: "sweep" });
-		// The run's own clean-up rearms the alarm; let it finish first.
-		await until(async () => fakes.workspace.released.length, (n) => n === 1);
+		// The run's own clean-up and its facts' delivery rearm the alarm; let them finish first.
+		await delivered(start);
 		await due(stub, "sweep");
 		// The alarm may already be running on its own when the test asks for it.
-		await until(async () => swept, (n) => n === 1);
+		await until(() => swept, (n) => n === 1);
 	});
 
-	test("deleting the conversation stops its run and leaves nothing", async () => {
+	test("deleting the conversation stops its run inside a tool call, and pi runs nothing afterwards", async () => {
 		const hold = Promise.withResolvers<void>();
-		const { id, stub, fakes } = await conversation({
-			declarations: [declaration("fake_wait", true)],
-			invoke: async (request) => {
-				await hold.promise;
-				return allowed(request, { items: [], count: 0 });
-			},
-		});
-		await posted(stub, scripted({ turns: [{ tools: [{ name: "fake_wait", arguments: {} }] }] }));
-		await until(async () => fakes.invocations.length, (n) => n === 1);
-		await stub.destroy().catch(() => {});
+		const { start, stub, fakes } = await started(WAIT, waiting(hold.promise));
+		await until(() => fakes.invocations.length, (n) => n === 1);
+		expect(await commands.deleteConversation({ scope: start.scope, conversation: start.conversation })).toEqual({ outcome: "deleted" });
+		const stored = await row(stub, start.run);
+		expect([stored.status, stored.error_code, stored.revoked]).toEqual(["cancelled", "conversation_deleted", 1]);
+		const entered = (await stub.faultView(start.run, 0, 0)).internals.entered;
 		hold.resolve();
-		// The Agent's teardown resets the object after deleting its storage; a later call reaches a new one.
 		await sleep(50);
-		const after = await until(
-			async () => conversationObject(env, WORKSPACE, id).getConversation(CALLER).then((head) => ({ head }), () => null),
-			(answer) => answer !== null,
-		);
-		expect(after).toEqual({ head: null });
-		expect(await conversationObject(env, WORKSPACE, id).about()).toMatchObject({ kind: "conversation" });
+		expect((await eventsOf(stub, start.run)).filter((event) => event.type === "tool_call")).toEqual([]);
+		expect((await stub.faultView(start.run, 0, 0)).internals.entered).toEqual(entered);
+		expect(entered).toEqual({ model: 1, tool: 1 });
+		const live = await runInDurableObject(stub, (_instance, state) => state.storage.sql.exec("SELECT count(*) AS n FROM pi_tasks WHERE status <> 'terminal'").one().n);
+		expect(live).toBe(0);
+		expect(fakes.invocations).toHaveLength(1);
+		expect(await stub.about()).toMatchObject({ kind: "conversation" });
 	});
 });
-
