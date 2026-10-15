@@ -10,6 +10,8 @@ import { ProviderHTTP, type ProviderIo, type ProviderRequest, defaultForbidden, 
 import { isDict, type Json, parseJson, parseJsonBytes } from "../../lib/json.ts";
 
 export const API_URL = "https://api.github.com";
+/** GitHub's API refuses a request without a User-Agent (403), and Workers' fetch sends none of its own. */
+export const USER_AGENT = "Minerva (+https://github.com/minervacomputing/harness)";
 /** The largest file GitHub returns inline, and room for its base64 encoding in the JSON around it. */
 export const MAX_INLINE_FILE = 1024 * 1024;
 export const MAX_CONTENTS_RESPONSE = 2 * 1024 * 1024;
@@ -203,6 +205,7 @@ export class GitHubClient implements ProviderClient {
 				Authorization: `Bearer ${accessToken}`,
 				Accept: "application/vnd.github+json",
 				"X-GitHub-Api-Version": "2022-11-28",
+				"User-Agent": USER_AGENT,
 			},
 			classify,
 		});

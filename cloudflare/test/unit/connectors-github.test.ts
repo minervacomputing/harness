@@ -4,7 +4,7 @@
 
 import { describe, expect, test } from "vitest";
 import { CONNECTORS } from "../../src/connectors/catalog.ts";
-import { API_URL, Entry, Issue, Pull, Repository, forbidden, nextPage } from "../../src/connectors/github/client.ts";
+import { API_URL, Entry, Issue, Pull, Repository, forbidden, nextPage, USER_AGENT } from "../../src/connectors/github/client.ts";
 import {
 	type GitHubOptions,
 	REPOSITORY,
@@ -232,6 +232,7 @@ describe("the connector and its settings page", () => {
 		expect(github.last().headers.get("authorization")).toBe("Bearer token");
 		expect(github.last().headers.get("accept")).toBe("application/vnd.github+json");
 		expect(github.last().headers.get("x-github-api-version")).toBe("2022-11-28");
+		expect(github.last().headers.get("user-agent")).toBe(USER_AGENT);
 		const page = (cursor: string | null) => gh.discover(client, REPOSITORY, { query: null, cursor });
 		const first = await page(null);
 		expect(first.items.map((found) => [found.id, found.name])).toEqual([
