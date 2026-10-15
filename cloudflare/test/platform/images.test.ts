@@ -1,37 +1,36 @@
-// Images in local workerd: a file the user attached is copied into the folder by the real start protocol, the
-// agent opens it with pi's `read` in the conversation's container (test/platform/sandbox-memory.ts), and the
-// model gets it as an image block when it takes images, or pi-ai's placeholder when it does not. An image over
-// the model's limits is shrunk by the Images binding, which local workerd emulates.
+// Images in local workerd: a file the user attached, staged by Laravel under `uploads/<workspace>/` in the EU bucket, is
+// copied into the folder by Laravel's start (startRun through the internal mount, with the fake Laravel), the agent opens
+// it with pi's `read` in the conversation's container (test/platform/sandbox-memory.ts), and the model gets it as an image
+// block when it takes images, or pi-ai's placeholder when it does not. An image over the model's limits is shrunk by the
+// Images binding, which local workerd emulates.
 
 import type { ImageContent, TranscriptContext } from "@earendil-works/pi-ai";
+import type { RunEvent } from "@minerva/contract";
 import { env } from "cloudflare:workers";
-import { afterEach, beforeAll, describe, expect, test } from "vitest";
-import { conversationObject, filesBucket, workspaceObject } from "../../src/addressing.ts";
-import type { RunEvent } from "../../src/conversation/events.ts";
+import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { filesBucket } from "../../src/addressing.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
 import type { RunHead } from "../../src/conversation/store.ts";
-import type { Conversation, Workspace } from "../../src/faults/index.ts";
-import { faultConversationPorts, faultWorkspacePorts } from "../../src/faults/ports.ts";
-import { setUpWorkspace } from "../../src/faults/routes.ts";
-import { receiveUpload, type UploadRecorder } from "../../src/files/uploads.ts";
+import { FakeLaravel } from "../../src/faults/laravel.ts";
+import { faultConversationPorts } from "../../src/faults/ports.ts";
 import { base64 } from "../../src/lib/bytes.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { fakeUpstream, type FakeTurn } from "../../src/model/fake.ts";
 import { TOOL_IMAGE_PLACEHOLDER } from "../../src/model/policy.ts";
 import { IMAGE_MAX_BYTES } from "../../src/model/provider.ts";
-import type { Caller, RunId, WorkspaceRef } from "../../src/shared/rpc.ts";
-import { WORKSPACE_PORTS } from "../../src/workspace/workspace.ts";
+import { commands, held, objectOf, scope, signedAssertions, startOf, viewOf } from "./internal-support.ts";
 import { MemorySandbox } from "./sandbox-memory.ts";
 
-const USER = "0199a000-0000-7000-8000-00000000a1e5";
-const CALLER: Caller = { userId: USER, role: "owner" };
+signedAssertions();
+
 const SANDBOXES = new Map<string, MemorySandbox>();
 /** The model's requests, by conversation. */
 const CONTEXTS = new Map<string, TranscriptContext[]>();
 /** The conversations whose model takes text only. */
 const TEXT_ONLY = new Set<string>();
 
-type ConversationStub = DurableObjectStub<Conversation>;
+let fake: FakeLaravel;
+let uninstall: () => void;
 
 beforeAll(() => {
 	PORTS.factory = () => ({
@@ -43,11 +42,16 @@ beforeAll(() => {
 				onCall: (_call, context) => CONTEXTS.get(conversationId)?.push(context),
 			}),
 	});
-	WORKSPACE_PORTS.factory = (deps, ctx, workerEnv) => faultWorkspacePorts(deps, ctx, workerEnv);
+});
+
+beforeEach(() => {
+	fake = new FakeLaravel("test-laravel-token");
+	uninstall = fake.install({ withToken: true });
 });
 
 afterEach(() => {
 	for (const sandbox of SANDBOXES.values()) sandbox.release();
+	uninstall();
 });
 
 const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
@@ -89,58 +93,41 @@ async function png(width: number, height: number, noise = false): Promise<Uint8A
 	return new Uint8Array(await new Blob(parts).arrayBuffer());
 }
 
-async function world(options: { textOnly?: boolean } = {}) {
-	const ref: WorkspaceRef = { id: uuid7(), jurisdiction: null };
-	const { agentId } = await setUpWorkspace(env, ref, USER);
-	const ws = () => workspaceObject(env, ref) as unknown as DurableObjectStub<Workspace>;
-	const created = await ws().createConversation(CALLER, agentId);
-	if (!created.ok) throw new Error(created.refusal.detail);
-	const conversationId = created.value.id;
-	SANDBOXES.set(conversationId, new MemorySandbox(() => filesBucket(env, ref)));
-	CONTEXTS.set(conversationId, []);
-	if (options.textOnly) TEXT_ONLY.add(conversationId);
-	const conversation = () => conversationObject(env, ref, conversationId) as unknown as ConversationStub;
-	const recorder: UploadRecorder = {
-		reserveUpload: (caller, upload) => ws().reserveUpload(caller, upload),
-		completeUpload: (caller, id, stored) => ws().completeUpload(caller, id, stored),
-		abandonUpload: (caller, id) => ws().abandonUpload(caller, id),
-	};
-	return {
-		get conversation() {
-			return conversation();
-		},
-		contexts: CONTEXTS.get(conversationId) as TranscriptContext[],
-		async upload(name: string, data: Uint8Array): Promise<string> {
-			const outcome = await receiveUpload(recorder, filesBucket(env, ref), CALLER, { name, size: data.length, body: new Response(data).body as ReadableStream<Uint8Array> });
-			if (!outcome.ok) throw new Error(outcome.refusal.detail);
-			return outcome.value.id;
-		},
-	};
+function world(options: { textOnly?: boolean } = {}) {
+	const within = scope();
+	const conversation = uuid7();
+	SANDBOXES.set(conversation, new MemorySandbox(() => filesBucket(env, { id: within.workspace, jurisdiction: "eu" })));
+	CONTEXTS.set(conversation, []);
+	if (options.textOnly) TEXT_ONLY.add(conversation);
+	return { within, conversation, contexts: CONTEXTS.get(conversation) as TranscriptContext[] };
 }
 
-type World = Awaited<ReturnType<typeof world>>;
+type World = ReturnType<typeof world>;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function settled(w: World, runId: RunId): Promise<RunHead> {
+/** Stages `data` as Laravel's signed PUT does, starts a run that `read`s it, and waits for the run to end. */
+async function attachAndRead(w: World, name: string, data: Uint8Array): Promise<{ run: RunHead; events: RunEvent[] }> {
+	const upload = `uploads/${w.within.workspace}/${uuid7()}`;
+	await env.FILES_EU.put(upload, data);
+	const turns: FakeTurn[] = [{ tools: [{ name: "read", arguments: { path: name } }] }, { text: "A picture." }];
+	const start = held(
+		fake,
+		startOf(w.within, {
+			conversation: w.conversation,
+			message: { id: uuid7(), content: JSON.stringify({ fake: { turns } }), attachments: [{ upload, name, size: data.length, mediaType: "image/png" }] },
+		}),
+	);
+	const answer = await commands.startRun(start);
+	if (answer.outcome !== "accepted") throw new Error(`Refused: ${answer.code} ${answer.message}`);
+	const stub = objectOf(start);
 	const started = Date.now();
 	for (;;) {
-		const run = (await w.conversation.getRun(CALLER, runId)) as RunHead | null;
-		if (run && !["queued", "provisioning", "running"].includes(run.status)) return run;
-		if (Date.now() - started > 15_000) throw new Error(`Timed out waiting; last: ${JSON.stringify(run)}`);
+		const view = await viewOf(stub, start.run);
+		if (view.head && !["queued", "provisioning", "running"].includes(view.head.status)) return { run: view.head, events: view.events };
+		if (Date.now() - started > 15_000) throw new Error(`Timed out waiting; last: ${JSON.stringify(view.head)}`);
 		await sleep(25);
 	}
-}
-
-/** Posts `turns` for the fake with `name` attached, and waits for the run to end. */
-async function attachAndRead(w: World, name: string, data: Uint8Array): Promise<{ run: RunHead; events: RunEvent[] }> {
-	const id = await w.upload(name, data);
-	const turns: FakeTurn[] = [{ tools: [{ name: "read", arguments: { path: name } }] }, { text: "A picture." }];
-	const posted = await w.conversation.postMessage(CALLER, { content: JSON.stringify({ fake: { turns } }), attachments: [id] });
-	if (!posted.ok) throw new Error(posted.refusal.detail);
-	const run = await settled(w, posted.value.run.id);
-	const events = (await w.conversation.getRunEvents(CALLER, run.id, { after: 0, upTo: 1_000_000, limit: 1000 })) ?? [];
-	return { run, events };
 }
 
 /** What the model got back from `read`: the content of the last tool result it was sent. */
@@ -159,7 +146,7 @@ function cards(events: RunEvent[]) {
 
 describe("an attached image", () => {
 	test("read by the agent, reaches a model that takes images as an image block", async () => {
-		const w = await world();
+		const w = world();
 		const image = await png(64, 48);
 		const { run, events } = await attachAndRead(w, "photo.png", image);
 		expect(run.status).toBe("completed");
@@ -170,7 +157,7 @@ describe("an attached image", () => {
 	});
 
 	test("a model that takes text only gets pi-ai's placeholder instead", async () => {
-		const w = await world({ textOnly: true });
+		const w = world({ textOnly: true });
 		const { run } = await attachAndRead(w, "photo.png", await png(64, 48));
 		expect(run.status).toBe("completed");
 		const content = readResult(w).content;
@@ -179,7 +166,7 @@ describe("an attached image", () => {
 	});
 
 	test("one as large as the model takes is kept in the transcript, and the turn goes on", async () => {
-		const w = await world();
+		const w = world();
 		// About 1.2 MB, 1.6 MB of base64.
 		const image = await png(540, 540, true);
 		expect(4 * Math.ceil(image.length / 3)).toBeGreaterThan(IMAGE_MAX_BYTES * 0.9);
@@ -189,7 +176,7 @@ describe("an attached image", () => {
 	});
 
 	test("one larger than the model takes is shrunk by Cloudflare Images to fit", async () => {
-		const w = await world();
+		const w = world();
 		// About 5.8 MB.
 		const { run, events } = await attachAndRead(w, "huge.png", await png(1200, 1200, true));
 		expect(run.status).toBe("completed");

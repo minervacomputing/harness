@@ -223,6 +223,7 @@ describe("startRun", () => {
 			[[file(staged), file(staged)], "ATTACHED_TWICE", "A file is attached twice."],
 			[[file(`uploads/${uuid7()}/elsewhere`)], "ATTACHMENT_UNAVAILABLE", UNAVAILABLE],
 			[[file(`uploads/${within.workspace}/${uuid7()}`)], "ATTACHMENT_UNAVAILABLE", UNAVAILABLE],
+			[[file(staged), file(`uploads/${within.workspace}/${uuid7()}`)], "ATTACHMENT_UNAVAILABLE", UNAVAILABLE],
 			[[file(staged, 6)], "ATTACHMENT_UNAVAILABLE", UNAVAILABLE],
 		];
 		const empty = startOf(within, { message: { id: uuid7(), content: "  \n", attachments: [] } });
@@ -231,9 +232,14 @@ describe("startRun", () => {
 			const start = startOf(within, { message: { id: uuid7(), content: "", attachments } });
 			expect(await commands.startRun(start), code).toEqual({ outcome: "refused", code, message });
 			expect(await commands.startRun(start), code).toEqual({ outcome: "refused", code, message });
+			expect(await runRow(start), code).toBeNull();
+			expect((await env.FILES_EU.list({ prefix: `blobs/${within.workspace}/${start.conversation}/` })).objects, code).toEqual([]);
+			// A refused start leaves its staged upload where it was, and the conversation free: a file staged again attaches.
+			expect(await env.FILES_EU.head(staged), code).not.toBeNull();
+			const again = next(start, { message: { id: uuid7(), content: "", attachments: [file(await stage(within.workspace, "hello"))] } });
+			expect(await commands.startRun(again), code).toMatchObject({ outcome: "accepted", attachments: [{ path: "notes.txt", size: 5 }] });
+			await settled(again);
 		}
-		// A refused start leaves the conversation free, and its staged upload where it was.
-		expect(await env.FILES_EU.head(staged)).not.toBeNull();
 	});
 
 	test("copies attachments it measured itself into the folder, under their cleaned names, and deletes the staged objects", async () => {
