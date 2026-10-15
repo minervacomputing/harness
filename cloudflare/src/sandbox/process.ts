@@ -17,6 +17,8 @@ export interface Machine {
 	live?(): boolean;
 	/** A wrapped process the agent cgroup did not admit: the container is in doubt. */
 	admissionFailed?(): Promise<void>;
+	/** A call that cannot throw found the container unusable: the incarnation is over. */
+	lost?(): Promise<void>;
 	/**
 	 * Resolves when a wrapped process may start (not while strays are being killed), with what to call once
 	 * it is in the agent cgroup or will never be: a kill waits for every process between the two.
@@ -31,12 +33,38 @@ export function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** An exec in the incarnation's container; ContainerGone when the incarnation is over or the exec cannot start. */
+/** How long an exec may take to answer before the container counts as gone. */
+const SPAWN_MS = 60_000;
+/** How long a root process killed at its deadline has to exit and end its output before the container counts as gone. */
+const KILL_GRACE_MS = 5000;
+
+/**
+ * `work`, or ContainerGone after `ms`: a container call that never answers cannot hold its caller, nor the
+ * Sandbox's lifecycle queue behind it. What an exec does if it answers later dies with the container, which
+ * the Sandbox destroys on ContainerGone.
+ */
+export function within<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const late = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => reject(new ContainerGone(message)), ms);
+	});
+	return Promise.race([work, late]).finally(() => clearTimeout(timer));
+}
+
+/** An exec in the incarnation's container; ContainerGone when the incarnation is over or the exec cannot start or does not answer. */
 export async function spawn(machine: Machine, argv: string[], options: ContainerExecOptions): Promise<ExecProcess> {
 	if (machine.live && !machine.live()) throw new ContainerGone("The incarnation is over.");
+	let exec: Promise<ExecProcess> | undefined;
 	try {
-		return await machine.container.exec(argv, options);
+		exec = machine.container.exec(argv, options);
+		return await within(exec, SPAWN_MS, "The container did not answer an exec.");
 	} catch (error) {
+		// A process that answers after this is never read: its end, with the container, raises nothing.
+		void exec?.then(
+			(proc) => proc.exitCode.catch(() => undefined),
+			() => undefined,
+		);
+		if (error instanceof ContainerGone) throw error;
 		throw new ContainerGone(error instanceof Error ? error.message : String(error));
 	}
 }
@@ -63,21 +91,31 @@ function stopper(proc: ExecProcess, controller: AbortController): () => void {
 	};
 }
 
-/** A root process with its output collected (each stream up to `maxOutput` bytes), killed after `timeoutMs`. */
+/**
+ * A root process with its output collected (each stream up to `maxOutput` bytes), killed after `timeoutMs`,
+ * counted from before the exec. ContainerGone when it has not ended KILL_GRACE_MS after that: an exec that
+ * never answers, or a kill that ends neither the process nor its output.
+ */
 export async function runRoot(machine: Machine, argv: string[], options: { timeoutMs: number; maxOutput?: number }): Promise<RootResult> {
 	const controller = new AbortController();
-	const proc = await spawn(machine, argv, { stdout: "pipe", stderr: "pipe", signal: controller.signal });
-	const stop = stopper(proc, controller);
+	let stop: (() => void) | null = null;
 	let timedOut = false;
 	const timer = setTimeout(() => {
 		timedOut = true;
-		stop();
+		stop?.();
 	}, options.timeoutMs);
-	try {
+	const run = async (): Promise<RootResult> => {
+		const proc = await spawn(machine, argv, { stdout: "pipe", stderr: "pipe", signal: controller.signal });
+		stop = stopper(proc, controller);
+		// An exec that answered after the deadline is killed, once `stopper` saw whether it already exited.
+		if (timedOut) setTimeout(stop, 0);
 		const max = options.maxOutput ?? 1024 * 1024;
 		const [stdout, stderr, exitCode] = await Promise.all([drain(proc.stdout, max), drain(proc.stderr, max), proc.exitCode.catch(() => 137)]);
 		const decoder = new TextDecoder();
 		return { exitCode, stdout: decoder.decode(stdout), stderr: decoder.decode(stderr), timedOut };
+	};
+	try {
+		return await within(run(), options.timeoutMs + KILL_GRACE_MS, "The container did not end a root process.");
 	} finally {
 		clearTimeout(timer);
 	}
@@ -144,8 +182,13 @@ export function helperEnvironment(): { [name: string]: string } {
 	return { PATH: COMMAND_PATH, HOME, TMPDIR: TMP, LANG: "C.UTF-8" };
 }
 
-/** Kills a process group, as root: the wrapped command's pid leads it, so every process it did not move out of it dies. */
+/**
+ * Kills a process group, as root: the wrapped command's pid leads it, so every process it did not move out of
+ * it dies. A container that cannot run the kill is lost: only its destroy still stops the group.
+ */
 export async function killGroup(machine: Machine, pid: number): Promise<void> {
 	if (!Number.isSafeInteger(pid) || pid <= 1) return;
-	await runRoot(machine, ["/bin/bash", "-c", 'kill -KILL -- "-$0" 2>/dev/null; kill -KILL -- "$0" 2>/dev/null; exit 0', String(pid)], { timeoutMs: 10_000 }).catch(() => undefined);
+	await runRoot(machine, ["/bin/bash", "-c", 'kill -KILL -- "-$0" 2>/dev/null; kill -KILL -- "$0" 2>/dev/null; exit 0', String(pid)], { timeoutMs: 10_000 }).catch((error: unknown) =>
+		error instanceof ContainerGone ? machine.lost?.() : undefined,
+	);
 }
