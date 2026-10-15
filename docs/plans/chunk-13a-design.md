@@ -127,3 +127,9 @@ opencode reviewed this design at `cd33bae`. Where an amendment and the body disa
 6. **Production builds are proved not to get the faults defaults.** Unit 3's config test also asserts that modes `production`, `test` and offline parse without `FAULTS_DEFAULTS` (the internal settings stay off unless a vars file sets them), beside the positive faults case.
 
 The two open questions are settled: `chat.test.ts` stays whole for 13b after its relay cases are copied, and `deployed.test.ts`'s 404 rewrite lands in 13b. Both follow the chunk's own text ("Until then they stay") and lose no coverage.
+
+## Notes for 13b, found while building 13a
+
+- `contract.test.ts`'s body-reader cases test `internal/handler.ts`, which stays, through the public contract and `ERRORS`. Port them to the internal contract before `contract/src/public/` goes.
+- `connectors-stripe.test.ts` and `connectors-web.test.ts` are kept suites with Workspace-bound cases (`saveKey` through `WorkspaceCore`, `kindsOut` and `harness` from `workspace/`). Trim those cases; keep the files.
+- `pnpm typecheck` chains its tsconfig projects with `&&`, so a deletion check runs each project on its own to see every error.
