@@ -6,7 +6,6 @@ import { env } from "cloudflare:workers";
 import type { TranscriptContext } from "@earendil-works/pi-ai";
 import type { StartRun } from "@minerva/contract/internal";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
-import { conversationObject } from "../../src/addressing.ts";
 import { connectorRegistry } from "../../src/connectors/index.ts";
 import type { Conversation } from "../../src/conversation/conversation.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
@@ -15,7 +14,7 @@ import { catalogOf } from "../../src/internal/catalog.ts";
 import { inputDigest } from "../../src/internal/start.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { type FakeScript, fakeUpstream } from "../../src/model/fake.ts";
-import { commands, refusalOf, scope, signedAssertions, startOf } from "./internal-support.ts";
+import { commands, objectOf, refusalOf, scope, signedAssertions, startOf } from "./internal-support.ts";
 
 signedAssertions();
 
@@ -51,10 +50,6 @@ const scripted = (script: FakeScript) => JSON.stringify({ fake: script });
 
 /** An answer that streams for about ten seconds, so the run stays running until it is cancelled. */
 const SLOW = scripted({ turns: [{ text: "a".repeat(160) }], chunkChars: 8, delayMs: 500 });
-
-function objectOf(start: Pick<StartRun, "scope" | "conversation">): DurableObjectStub<Conversation> {
-	return conversationObject(env, { id: start.scope.workspace, jurisdiction: "eu" }, start.conversation);
-}
 
 interface RunRow {
 	status: string;

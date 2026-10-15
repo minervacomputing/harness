@@ -7,8 +7,6 @@ import { env } from "cloudflare:workers";
 import type { Fact, StartRun } from "@minerva/contract/internal";
 import { SignJWT } from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
-import { conversationObject } from "../../src/addressing.ts";
-import type { Conversation } from "../../src/conversation/conversation.ts";
 import { BACKLOG_MESSAGE, FACT_DELIVERY } from "../../src/conversation/facts.ts";
 import { EXPIRED, MIN_LEASE_MS, UNAVAILABLE, laravelCredentials } from "../../src/conversation/laravel-runs.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
@@ -22,7 +20,7 @@ import { type FakeScript, fakeUpstream } from "../../src/model/fake.ts";
 import { openSocket } from "../../src/stream/relay.ts";
 import { STREAM_AUDIENCE, STREAM_PURPOSE } from "../../src/stream/token.ts";
 import { FakeLaravel } from "../../src/faults/laravel.ts";
-import { ORIGIN, commands, refusalOf, scope, signedAssertions, startOf } from "./internal-support.ts";
+import { ORIGIN, commands, held, objectOf, refusalOf, scope, signedAssertions, startOf } from "./internal-support.ts";
 
 signedAssertions();
 
@@ -61,17 +59,6 @@ async function until<T>(read: () => Promise<T> | T, done: (value: T) => boolean,
 
 /** An answer that streams for about ten seconds, so the run stays running until it is cancelled. */
 const SLOW = JSON.stringify({ fake: { turns: [{ text: "a".repeat(160) }], chunkChars: 8, delayMs: 500 } satisfies FakeScript });
-
-function objectOf(start: Pick<StartRun, "scope" | "conversation">): DurableObjectStub<Conversation> {
-	return conversationObject(env, { id: start.scope.workspace, jurisdiction: "eu" }, start.conversation);
-}
-
-/** A start Laravel holds: its run and conversation are known to the fake, as Laravel registers them before it sends one. */
-function held(start: StartRun): StartRun {
-	fake.conversations.set(start.conversation, start.scope);
-	fake.runs.set(start.run, { scope: start.scope, conversation: start.conversation, active: true, authorized: [] });
-	return start;
-}
 
 async function runStatus(start: StartRun): Promise<string | null> {
 	return runInDurableObject(objectOf(start), (_instance, state) => {
@@ -113,7 +100,7 @@ const deliveries = () => fake.calls.filter((call) => call.operation === "deliver
 
 describe("facts", () => {
 	test("a run's facts reach Laravel in order, each once, ending with run.finished", async () => {
-		const start = held(startOf(scope()));
+		const start = held(fake, startOf(scope()));
 		await commands.startRun(start);
 		expect(await settled(start)).toBe("completed");
 		const facts = await delivered(start);
@@ -139,7 +126,7 @@ describe("facts", () => {
 
 	test("a delivery Laravel fails is tried again after a backoff, and loses nothing", async () => {
 		fake.failDeliveries = 2;
-		const start = held(startOf(scope()));
+		const start = held(fake, startOf(scope()));
 		await commands.startRun(start);
 		await settled(start);
 		const facts = await delivered(start);
@@ -149,12 +136,12 @@ describe("facts", () => {
 	});
 
 	test("a gap sends again from Laravel's watermark, as after Laravel was restored from a backup", async () => {
-		const first = held(startOf(scope()));
+		const first = held(fake, startOf(scope()));
 		await commands.startRun(first);
 		await settled(first);
 		const before = await delivered(first);
 		fake.restore(first.conversation, 1);
-		const second = held(startOf(first.scope, { conversation: first.conversation }));
+		const second = held(fake, startOf(first.scope, { conversation: first.conversation }));
 		await commands.startRun(second);
 		await settled(second);
 		const facts = await delivered(second);
@@ -163,7 +150,7 @@ describe("facts", () => {
 	});
 
 	test("a conflict stops the delivery for the operator, retried hourly", async () => {
-		const first = held(startOf(scope()));
+		const first = held(fake, startOf(scope()));
 		await commands.startRun(first);
 		await settled(first);
 		await delivered(first);
@@ -172,7 +159,7 @@ describe("facts", () => {
 			state.storage.sql.exec("UPDATE facts SET fact = json_set(fact, '$.data.attempt', 2) WHERE seq = 1");
 			state.storage.sql.exec("UPDATE fact_delivery SET acknowledged = 0");
 		});
-		const second = held(startOf(first.scope, { conversation: first.conversation }));
+		const second = held(fake, startOf(first.scope, { conversation: first.conversation }));
 		await commands.startRun(second);
 		await settled(second);
 		const delivery = await until(
@@ -186,10 +173,10 @@ describe("facts", () => {
 	test("a backlog past its bound refuses a start until Laravel catches up", async () => {
 		FACT_DELIVERY.backlog = 1;
 		fake.failDeliveries = 1_000_000;
-		const first = held(startOf(scope()));
+		const first = held(fake, startOf(scope()));
 		await commands.startRun(first);
 		await settled(first);
-		const second = held(startOf(first.scope, { conversation: first.conversation }));
+		const second = held(fake, startOf(first.scope, { conversation: first.conversation }));
 		expect(await commands.startRun(second)).toEqual({ outcome: "refused", code: "FACTS_BACKLOG", message: BACKLOG_MESSAGE });
 		fake.failDeliveries = 0;
 		await delivered(first);
@@ -197,7 +184,7 @@ describe("facts", () => {
 			() => deliveryOf(first),
 			(row) => row.acknowledged === row.written,
 		);
-		const third = held(startOf(first.scope, { conversation: first.conversation }));
+		const third = held(fake, startOf(first.scope, { conversation: first.conversation }));
 		expect(await commands.startRun(third)).toMatchObject({ outcome: "accepted" });
 		await settled(third);
 	});
@@ -205,7 +192,7 @@ describe("facts", () => {
 
 describe("replayFacts", () => {
 	test("pages through the conversation's facts, as delivered", async () => {
-		const start = held(startOf(scope()));
+		const start = held(fake, startOf(scope()));
 		await commands.startRun(start);
 		await settled(start);
 		const facts = await delivered(start);
@@ -216,7 +203,7 @@ describe("replayFacts", () => {
 	});
 
 	test("refuses a conversation it does not know, or under another scope", async () => {
-		const start = held(startOf(scope()));
+		const start = held(fake, startOf(scope()));
 		await commands.startRun(start);
 		await settled(start);
 		expect(await refusalOf(commands.replayFacts({ scope: start.scope, conversation: uuid7(), after: 0, limit: 10 }))).toMatchObject({ code: "NOT_FOUND", status: 404 });
@@ -371,7 +358,7 @@ describe("Laravel's run stream", () => {
 	}
 
 	test("streams a run's events with a token, and ends with the run", async () => {
-		const start = held(startOf(scope()));
+		const start = held(fake, startOf(scope()));
 		await commands.startRun(start);
 		await settled(start);
 		const response = await get({ Authorization: `Bearer ${await token(start)}` });
@@ -390,7 +377,7 @@ describe("Laravel's run stream", () => {
 	});
 
 	test("closes at the token's expiry, without the end, so the browser resumes with a new token", async () => {
-		const start = held(startOf(scope(), { message: { id: uuid7(), content: SLOW, attachments: [] } }));
+		const start = held(fake, startOf(scope(), { message: { id: uuid7(), content: SLOW, attachments: [] } }));
 		await commands.startRun(start);
 		const exp = Math.floor(Date.now() / 1000) + 2;
 		const response = await get({ Authorization: `Bearer ${await token(start, { exp })}` });
@@ -404,7 +391,7 @@ describe("Laravel's run stream", () => {
 	});
 
 	test("a token that does not verify is 401, readable from Laravel's pages; another organization's is 404", async () => {
-		const start = held(startOf(scope()));
+		const start = held(fake, startOf(scope()));
 		await commands.startRun(start);
 		await settled(start);
 		for (const authorization of [undefined, "Bearer nonsense", `Basic ${await token(start)}`]) {
@@ -444,7 +431,7 @@ describe("Laravel's run stream", () => {
 	});
 
 	test("the object lets an organization read its own conversation's runs, never a user's", async () => {
-		const start = held(startOf(scope()));
+		const start = held(fake, startOf(scope()));
 		await commands.startRun(start);
 		await settled(start);
 		const stub = objectOf(start);

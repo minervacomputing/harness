@@ -5,12 +5,13 @@
 // (routes.ts). It is deployed only as a test instance; the production build's entry is src/index.ts, which imports nothing
 // from here (a unit test checks it), so none of this is in production.
 
+import type { RunEvent } from "@minerva/contract";
 import { createLocalJWKSet } from "jose";
 import worker from "../index.ts";
 import { CONNECTOR_SOURCE, servedConnectors } from "../connectors/index.ts";
 import { Conversation as BaseConversation } from "../conversation/conversation.ts";
 import { defaultPorts, PORTS } from "../conversation/ports.ts";
-import { RunStore } from "../conversation/store.ts";
+import { PAGE_LIMIT, type RunHead, RunStore } from "../conversation/store.ts";
 import { SCRIPT_TIMEOUT_MS } from "../scripts/limits.ts";
 import { SCRIPT_CLOCK } from "../scripts/run.ts";
 import type { RunId } from "../shared/rpc.ts";
@@ -57,6 +58,17 @@ export interface RunInternals {
 	entered: { model: number; tool: number };
 }
 
+/**
+ * A run as a test reads it: its head (null before it is stored), its internals, the points that fired, and one page of its
+ * events, bounded as RunStore's pages are, so no answer nears Workers RPC's limit.
+ */
+export interface RunView {
+	head: RunHead | null;
+	events: RunEvent[];
+	internals: RunInternals;
+	fired: Fired[];
+}
+
 /** The Conversation with a fault plan and a view of its tables for the tests. */
 export class Conversation extends BaseConversation {
 	constructor(ctx: DurableObjectState, env: Env) {
@@ -73,10 +85,11 @@ export class Conversation extends BaseConversation {
 		SCRIPT_CLOCK.timeoutMs = ms ?? SCRIPT_TIMEOUT_MS;
 	}
 
-	faultPlan(faults: Fault[], config: { model?: string | null } = {}): void {
+	faultPlan(faults: Fault[], config: { model?: string | null; runTimeoutMs?: number | null } = {}): void {
 		const plan = planOf(this.ctx);
 		plan.set(faults);
 		if (config.model !== undefined) plan.setConfig("model", config.model);
+		if (config.runTimeoutMs !== undefined) plan.setConfig("run_timeout_ms", config.runTimeoutMs === null ? null : String(config.runTimeoutMs));
 	}
 
 	faultFired(): Fired[] {
@@ -109,6 +122,18 @@ export class Conversation extends BaseConversation {
 	/** The object's scheduled host jobs (the Agents SDK's queue), by id. */
 	faultJobs(): { id: string; fn: string }[] {
 		return this.ctx.storage.sql.exec<{ id: string; fn: string }>("SELECT id, fn FROM cf_agents_jobs ORDER BY id").toArray();
+	}
+
+	/**
+	 * The run with its events after `after`, up to `upTo`: the head's `eventSeq` when null. A reader passes the `eventSeq` of
+	 * its first page to the next ones, so the pages it joins end where that head did.
+	 */
+	faultView(runId: RunId, after = 0, upTo: number | null = null): RunView {
+		const store = new RunStore(this.ctx.storage);
+		const row = store.run(runId);
+		const head = row ? store.runHead(row) : null;
+		const events = head ? store.events(runId, { after, upTo: upTo ?? head.eventSeq, limit: PAGE_LIMIT }) : [];
+		return { head, events, internals: this.faultRun(runId), fired: this.faultFired() };
 	}
 
 	faultRun(runId: RunId): RunInternals {

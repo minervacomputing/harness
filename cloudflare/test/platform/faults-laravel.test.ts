@@ -6,16 +6,15 @@ import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { Fact, StartRun } from "@minerva/contract/internal";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { conversationObject } from "../../src/addressing.ts";
 import { FACT_DELIVERY } from "../../src/conversation/facts.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
-import { FOLDER, NOTES } from "../../src/faults/connector.ts";
 import type { FakeConnection } from "../../src/faults/laravel.ts";
 import { faultConversationPorts, providerOf } from "../../src/faults/ports.ts";
+import { heldRun, notesLease } from "../../src/faults/world.ts";
 import { LaravelUnreachable, laravelClient } from "../../src/laravel/client.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import type { FakeScript } from "../../src/model/fake.ts";
-import { commands, scope, signedAssertions, startOf } from "./internal-support.ts";
+import { commands, notesStart, objectOf, scope, signedAssertions } from "./internal-support.ts";
 
 signedAssertions();
 
@@ -45,25 +44,15 @@ async function until<T>(read: () => Promise<T>, done: (value: T) => boolean, tim
 
 const LIST = { fake: { turns: [{ tools: [{ name: "notes_list_notes", arguments: { folder: "inbox" } }] }, { text: "Listed." }] } } satisfies { fake: FakeScript };
 
-/** A Laravel run that lists the inbox through a Notes connection Laravel holds with `connection`, in a fresh workspace. */
-async function notesRun(connection: Omit<FakeConnection, "kind" | "scopes" | "generation" | "expiresAt">) {
+/** A Laravel run that lists the inbox through a Notes connection Laravel lends as `notesLease()` changed by `lease`, in a fresh workspace. */
+async function notesRun(lease: Partial<FakeConnection> = {}) {
 	const within = scope();
 	const provider = providerOf(env, within.workspace);
 	await provider.reset();
 	const connectionId = uuid7();
-	await provider.laravelConnection(connectionId, { kind: "oauth2", scopes: ["notes"], generation: 1, expiresAt: new Date(Date.now() + 3_600_000).toISOString(), ...connection });
-	const start = startOf(within, {
-		message: { id: uuid7(), content: JSON.stringify(LIST), attachments: [] },
-		authority: {
-			connections: [{ id: connectionId, provider: NOTES, owner: "42", status: "active", createdAt: new Date().toISOString(), scopes: ["notes"], revision: 1 }],
-			layers: {
-				ceiling: null,
-				user: { restricted: true, revision: 1, grants: [{ connection: connectionId, kind: FOLDER, resource: "*", name: "", actions: ["read", "create"], effect: "allow" }] },
-				agent: null,
-			},
-		},
-	});
-	await provider.laravelHold(start.run, { scope: within, conversation: start.conversation, active: true, authorized: [connectionId] });
+	await provider.laravelConnection(connectionId, { ...notesLease(), ...lease });
+	const start = notesStart(within, connectionId, { message: { id: uuid7(), content: JSON.stringify(LIST), attachments: [] } });
+	await provider.laravelHold(start.run, heldRun(start));
 	return { provider, start, connectionId };
 }
 
@@ -77,9 +66,8 @@ function finished(start: StartRun) {
 
 /** The engine's delivery once Laravel's acknowledgement of everything written has reached it. */
 function acknowledged(start: StartRun) {
-	const object = conversationObject(env, { id: start.scope.workspace, jurisdiction: "eu" }, start.conversation);
 	return until(
-		() => runInDurableObject(object, (_instance, state) => state.storage.sql.exec<{ written: number; acknowledged: number; stopped: string | null }>("SELECT written, acknowledged, stopped FROM fact_delivery").one()),
+		() => runInDurableObject(objectOf(start), (_instance, state) => state.storage.sql.exec<{ written: number; acknowledged: number; stopped: string | null }>("SELECT written, acknowledged, stopped FROM fact_delivery").one()),
 		(delivery) => delivery.acknowledged === delivery.written,
 	);
 }
@@ -96,7 +84,7 @@ const inOrder = (facts: Fact[]) => facts.map((fact) => fact.seq);
 const counted = (facts: Fact[]) => facts.map((_fact, index) => index + 1);
 
 test("a run leases its connection from the hosted fake and delivers its facts there", async () => {
-	const { provider, start, connectionId } = await notesRun({ secret: "notes-access-0", status: "active" });
+	const { provider, start, connectionId } = await notesRun();
 	expect(await commands.startRun(start)).toMatchObject({ outcome: "accepted", authorized: [connectionId] });
 	const state = await finished(start);
 	expect(inOrder(state.facts)).toEqual(counted(state.facts));
@@ -112,7 +100,7 @@ test("a run leases its connection from the hosted fake and delivers its facts th
 });
 
 test("what the fake wrote before its object was reset, and before it answered, is what the engine's retries find", async () => {
-	const { provider, start, connectionId } = await notesRun({ secret: "notes-access-0", status: "active" });
+	const { provider, start, connectionId } = await notesRun();
 	await provider.faultPlan([
 		{ point: "laravel:leaseToken", mode: "abort" },
 		{ point: "laravel:deliverFacts", mode: "abort" },
@@ -132,7 +120,7 @@ test("what the fake wrote before its object was reset, and before it answered, i
 });
 
 test("a delivery the reset cut short before its answer is held, and its repeat is acknowledged as the same facts", async () => {
-	const { provider, start } = await notesRun({ secret: "notes-access-0", status: "active" });
+	const { provider, start } = await notesRun();
 	await provider.faultPlan([{ point: "laravel:deliverFacts", mode: "abort" }]);
 	const facts: Fact[] = [
 		{ seq: 1, run: start.run, type: "run.status", at: new Date().toISOString(), data: { status: "provisioning", attempt: 1 } },
@@ -149,7 +137,7 @@ test("a delivery the reset cut short before its answer is held, and its repeat i
 
 test("a report the fake marked before its object was reset stays marked", async () => {
 	// The provider refuses the lent secret, so the run reports the connection; the reset loses only the report's answer.
-	const { provider, start, connectionId } = await notesRun({ secret: "a-revoked-token", status: "active" });
+	const { provider, start, connectionId } = await notesRun({ secret: "a-revoked-token" });
 	await provider.faultPlan([{ point: "laravel:reportUnauthorized", mode: "abort" }]);
 	await commands.startRun(start);
 	const state = await finished(start);

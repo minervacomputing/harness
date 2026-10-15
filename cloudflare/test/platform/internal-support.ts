@@ -1,7 +1,8 @@
 // What the internal API's platform tests share: Laravel's calls behind an Access assertion they sign themselves, with the
-// key set the Worker checks it against (vitest.platform.config.ts turns the internal API on with this issuer).
+// key set the Worker checks it against (vitest.platform.config.ts turns the internal API on with this issuer); the starts
+// they send, a Notes world's among them (src/faults/world.ts); and the run's object and its view.
 
-import { exports } from "cloudflare:workers";
+import { env, exports } from "cloudflare:workers";
 import { type Scope, type StartRun, engine } from "@minerva/contract/internal";
 import { ORPCError, createORPCClient } from "@orpc/client";
 import type { ContractRouterClient } from "@orpc/contract";
@@ -9,6 +10,10 @@ import type { JsonifiedClient } from "@orpc/openapi-client";
 import { OpenAPILink } from "@orpc/openapi-client/fetch";
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
 import { afterAll, beforeAll } from "vitest";
+import { conversationObject } from "../../src/addressing.ts";
+import type { Conversation, RunView } from "../../src/faults/index.ts";
+import type { FakeLaravel } from "../../src/faults/laravel.ts";
+import { heldRun, notesConnection, notesLayers } from "../../src/faults/world.ts";
 import { ACCESS_KEYS, ASSERTION_HEADER } from "../../src/internal/access.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 
@@ -73,6 +78,40 @@ export function startOf(within: Scope, change: Partial<StartRun> = {}): StartRun
 		authority: { connections: [], layers: { ceiling: null, user: { restricted: true, revision: 1, grants: [] }, agent: null } },
 		...change,
 	};
+}
+
+/**
+ * A start in a Notes world: the agent has the Notes connection `connectionId`, which the user may use in every folder, to
+ * read and create, unless `change` says otherwise. Laravel lends it once the fake has `notesLease()` for it.
+ */
+export function notesStart(within: Scope, connectionId: string, change: Partial<StartRun> = {}): StartRun {
+	return startOf(within, { authority: { connections: [notesConnection(connectionId)], layers: notesLayers(connectionId) }, ...change });
+}
+
+/** A start Laravel holds: its run and conversation are known to the fake, as Laravel registers them before it sends one. */
+export function held(fake: FakeLaravel, start: StartRun): StartRun {
+	fake.conversations.set(start.conversation, start.scope);
+	fake.runs.set(start.run, heldRun(start));
+	return start;
+}
+
+/** The conversation's object, where Laravel's conversations live: in the EU. */
+export function objectOf(start: Pick<StartRun, "scope" | "conversation">): DurableObjectStub<Conversation> {
+	return conversationObject(env, { id: start.scope.workspace, jurisdiction: "eu" }, start.conversation) as unknown as DurableObjectStub<Conversation>;
+}
+
+/** The run's view (`faultView`) with every event up to its head's `eventSeq`, read a page at a time. */
+export async function viewOf(stub: DurableObjectStub<Conversation>, runId: string): Promise<RunView> {
+	const first = await stub.faultView(runId);
+	if (first.head === null) return first;
+	const upTo = first.head.eventSeq;
+	const events = [...first.events];
+	while ((events.at(-1)?.seq ?? 0) < upTo) {
+		const page = await stub.faultView(runId, events.at(-1)?.seq ?? 0, upTo);
+		if (!page.events.length) break;
+		events.push(...page.events);
+	}
+	return { ...first, events };
 }
 
 export async function refusalOf(promise: Promise<unknown>): Promise<{ code: string; status: number; data: unknown }> {

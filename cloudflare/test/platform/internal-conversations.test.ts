@@ -7,8 +7,6 @@ import { env } from "cloudflare:workers";
 import type { StartRun } from "@minerva/contract/internal";
 import { SignJWT } from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
-import { conversationObject } from "../../src/addressing.ts";
-import type { Conversation } from "../../src/conversation/conversation.ts";
 import { FACT_DELIVERY } from "../../src/conversation/facts.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
 import { createApp } from "../../src/http/router.ts";
@@ -17,7 +15,7 @@ import { uuid7 } from "../../src/lib/random.ts";
 import { fakeUpstream } from "../../src/model/fake.ts";
 import { STREAM_AUDIENCE, STREAM_PURPOSE } from "../../src/stream/token.ts";
 import { FakeLaravel } from "../../src/faults/laravel.ts";
-import { ORIGIN, commands, refusalOf, scope, signedAssertions, startOf } from "./internal-support.ts";
+import { ORIGIN, commands, held, objectOf, refusalOf, scope, signedAssertions, startOf } from "./internal-support.ts";
 
 signedAssertions();
 
@@ -54,17 +52,6 @@ async function until<T>(read: () => Promise<T> | T, done: (value: T) => boolean,
 
 /** An answer that streams for about ten seconds, so the run stays running until it is stopped. */
 const SLOW = JSON.stringify({ fake: { turns: [{ text: "a".repeat(160) }], chunkChars: 8, delayMs: 500 } });
-
-function objectOf(start: Pick<StartRun, "scope" | "conversation">): DurableObjectStub<Conversation> {
-	return conversationObject(env, { id: start.scope.workspace, jurisdiction: "eu" }, start.conversation);
-}
-
-/** A start Laravel holds: its run and conversation are known to the fake, as Laravel registers them before it sends one. */
-function held(start: StartRun): StartRun {
-	fake.conversations.set(start.conversation, start.scope);
-	fake.runs.set(start.run, { scope: start.scope, conversation: start.conversation, active: true, authorized: [] });
-	return start;
-}
 
 interface RunRow {
 	status: string;
@@ -111,7 +98,7 @@ const deletedAt = (conversation: string) => env.DB.prepare("SELECT deleted_at FR
 async function withFile(): Promise<{ start: StartRun; version: string }> {
 	const within = scope();
 	const staged = await stage(within.workspace, "hello");
-	const start = held(startOf(within, { message: { id: uuid7(), content: "Read this", attachments: [{ upload: staged, name: "report.txt", size: 5, mediaType: "text/plain" }] } }));
+	const start = held(fake, startOf(within, { message: { id: uuid7(), content: "Read this", attachments: [{ upload: staged, name: "report.txt", size: 5, mediaType: "text/plain" }] } }));
 	await commands.startRun(start);
 	await settled(start);
 	const folder = await commands.folder({ scope: start.scope, conversation: start.conversation, version: null });
@@ -167,7 +154,7 @@ describe("resolveDownload", () => {
 			{ upload: report, name: "report.txt", size: 5, mediaType: "text/plain" },
 			{ upload: empty, name: "empty.txt", size: 0, mediaType: "text/plain" },
 		];
-		const start = held(startOf(within, { message: { id: uuid7(), content: "Read these", attachments } }));
+		const start = held(fake, startOf(within, { message: { id: uuid7(), content: "Read these", attachments } }));
 		await commands.startRun(start);
 		await settled(start);
 		const read = { scope: start.scope, conversation: start.conversation, version: null };
@@ -200,7 +187,7 @@ describe("deleteConversation", () => {
 
 	test("stops the active run, refuses the next start, the reads and the stream, and still delivers the run's facts", async () => {
 		const { start: earlier, version } = await withFile();
-		const start = held(startOf(earlier.scope, { conversation: earlier.conversation, message: { id: uuid7(), content: SLOW, attachments: [] } }));
+		const start = held(fake, startOf(earlier.scope, { conversation: earlier.conversation, message: { id: uuid7(), content: SLOW, attachments: [] } }));
 		await commands.startRun(start);
 		await until(() => runRow(start), (row) => row?.status === "running");
 		const live = await stream(start);
@@ -216,7 +203,7 @@ describe("deleteConversation", () => {
 		expect(again.status).toBe(404);
 		await again.body?.cancel();
 
-		const after = held(startOf(start.scope, { conversation: start.conversation }));
+		const after = held(fake, startOf(start.scope, { conversation: start.conversation }));
 		expect(await commands.startRun(after)).toEqual({ outcome: "refused", code: "CONVERSATION_DELETED", message: "This conversation was deleted." });
 		expect(await refusalOf(commands.folder({ scope: start.scope, conversation: start.conversation, version }))).toMatchObject({ code: "NOT_FOUND" });
 		expect(await refusalOf(commands.resolveDownload({ scope: start.scope, conversation: start.conversation, version, path: "report.txt" }))).toMatchObject({ code: "NOT_FOUND" });
@@ -243,7 +230,7 @@ describe("deleteConversation", () => {
 	});
 
 	test("deletes a conversation no command named before, whose start then arrives too late", async () => {
-		const start = held(startOf(scope()));
+		const start = held(fake, startOf(scope()));
 		expect(await commands.deleteConversation({ scope: start.scope, conversation: start.conversation })).toEqual({ outcome: "deleted" });
 		const row = await env.DB.prepare("SELECT organization_id, workspace_id, deleted_at FROM recovery_conversations WHERE id = ?").bind(start.conversation).first();
 		expect(row).toEqual({ organization_id: start.scope.organization, workspace_id: start.scope.workspace, deleted_at: expect.any(Number) });
@@ -255,7 +242,7 @@ describe("deleteConversation", () => {
 		const { start } = await withFile();
 		const accepted = await commands.startRun(start);
 		await env.DB.prepare("UPDATE recovery_conversations SET deleted_at = ? WHERE id = ?").bind(Date.now(), start.conversation).run();
-		const after = held(startOf(start.scope, { conversation: start.conversation }));
+		const after = held(fake, startOf(start.scope, { conversation: start.conversation }));
 		expect(await commands.startRun(after)).toEqual({ outcome: "refused", code: "CONVERSATION_DELETED", message: "This conversation was deleted." });
 		const marked = await runInDurableObject(objectOf(start), (_instance, state) => state.storage.sql.exec<{ deleted_at: number | null }>("SELECT deleted_at FROM conversation").one());
 		expect(marked.deleted_at).toEqual(expect.any(Number));
@@ -278,7 +265,7 @@ describe("deleteConversation", () => {
 	});
 
 	test("in another organization's or workspace's scope changes nothing", async () => {
-		const start = held(startOf(scope()));
+		const start = held(fake, startOf(scope()));
 		await commands.startRun(start);
 		await settled(start);
 		for (const other of [
@@ -288,7 +275,7 @@ describe("deleteConversation", () => {
 			expect(await refusalOf(commands.deleteConversation({ scope: other, conversation: start.conversation }))).toMatchObject({ code: "SCOPE_MISMATCH", status: 409 });
 		}
 		expect((await deletedAt(start.conversation))?.deleted_at).toBeNull();
-		const next = held(startOf(start.scope, { conversation: start.conversation }));
+		const next = held(fake, startOf(start.scope, { conversation: start.conversation }));
 		expect(await commands.startRun(next)).toMatchObject({ outcome: "accepted" });
 		await settled(next);
 	});

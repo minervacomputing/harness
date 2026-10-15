@@ -1,7 +1,8 @@
-// The test build's driver (src/faults/): POST /api/faults/<op> with a JSON body, for the account tests.
+// The test build's driver (src/faults/): POST /api/faults/<op> with a JSON body, for the account tests, and Laravel's
+// commands at /api/faults/internal/<path>, any method, served as /internal/<path> is past its Access check.
 // It answers only a request with `X-Minerva-Faults-Token: <faultsToken(MINERVA_SECRET_KEY)>`; any other request
-// is passed on to the Worker, which answers 404 as for a path with no route. It calls the objects through
-// addressing.ts as the API does, as a fixed test user, against the fake provider only. Operations
+// is passed on to the Worker, which answers as it would without the driver (404, or 403 for a POST from another
+// origin). It calls the objects through addressing.ts as the API does, as a fixed test user, against the fake provider only. Operations
 // under `sandbox/` drive a Sandbox object of their own (lab.ts). `emails` and `emails-clear` read and empty
 // the mailbox the build's emails go to (mailbox.ts); `download` serves a signed download link as the
 // download origin (files-worker/) would, from the test Worker's own buckets, for the platform tests (the
@@ -16,9 +17,10 @@ import type { GrantChange } from "../gateway/grants.ts";
 import { timingSafeEqual } from "../lib/hash.ts";
 import { serveDownload } from "../files/download.ts";
 import { receiveUpload } from "../files/uploads.ts";
+import { serveInternal } from "../internal/mount.ts";
 import { type Json, parseJson } from "../lib/json.ts";
 import type { Caller, WorkspaceRef } from "../shared/rpc.ts";
-import { FOLDER, NOTES, NOTES_CLIENT, NOTES_TOKEN_URL } from "./connector.ts";
+import { NOTES_CLIENT, NOTES_TOKEN_URL } from "./connector.ts";
 import type { Conversation, Workspace } from "./index.ts";
 import { SandboxLab } from "./lab.ts";
 import { mailboxOf } from "./mailbox.ts";
@@ -26,8 +28,11 @@ import type { Fault } from "./plan.ts";
 import type { FaultSandbox } from "./sandbox.ts";
 import { providerOf } from "./ports.ts";
 import { FAULTS_HEADER, faultsToken } from "./token.ts";
+import { FOLDER, NOTES } from "./world.ts";
 
 const PREFIX = "/api/faults/";
+/** Laravel's commands, as the internal API serves them past its Access check (src/internal/mount.ts). */
+const INTERNAL = `${PREFIX}internal/`;
 
 interface Body {
 	workspace: WorkspaceRef;
@@ -217,8 +222,17 @@ async function operation(op: string, body: Body, env: Env, exports: Cloudflare.E
 /** The driver's answer, or null for a request that is not the driver's (the Worker answers it). */
 export async function faultRoutes(request: Request, env: Env, ctx: ExecutionContext): Promise<Response | null> {
 	const url = new URL(request.url);
-	if (!url.pathname.startsWith(PREFIX) || request.method !== "POST") return null;
+	if (!url.pathname.startsWith(PREFIX)) return null;
 	if (!timingSafeEqual(request.headers.get(FAULTS_HEADER) ?? "", await faultsToken(env.MINERVA_SECRET_KEY))) return null;
+	if (url.pathname.startsWith(INTERNAL)) {
+		url.pathname = `/internal/${url.pathname.slice(INTERNAL.length)}`;
+		try {
+			return await serveInternal(new Request(url, request), env, "faults");
+		} catch (error) {
+			return answer(500, { detail: error instanceof Error ? error.message : String(error) });
+		}
+	}
+	if (request.method !== "POST") return null;
 	let body: Body;
 	try {
 		body = parseJson(await request.text()) as unknown as Body;

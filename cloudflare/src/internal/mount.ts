@@ -45,6 +45,16 @@ async function answer(request: Request, env: Env): Promise<Response> {
 		return accessUnavailable();
 	}
 	if (client === null) return unauthorized();
+	return serveInternal(request, env, client);
+}
+
+/**
+ * Steps 1, 3 and 4 for a request whose `client` is already known: Access's check (step 2) is the caller's. The test build's
+ * driver (src/faults/routes.ts) calls it behind its own token.
+ */
+export async function serveInternal(request: Request, env: Env, client: string): Promise<Response> {
+	const internal = settings(env).internal;
+	if (internal === null) return noRoute();
 	if (declaredOver(request, MAX_INTERNAL_BODY)) return errorAnswer(TOO_LARGE.code, TOO_LARGE.detail);
 	const { matched, response } = await handler.handle(request, { context: { request, env, environment: internal.environment, client } });
 	return matched ? response : noRoute();

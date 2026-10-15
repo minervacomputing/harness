@@ -639,7 +639,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		this.#connectors ??= await connectorRegistry();
 		const compiled =
 			refusal === null && this.#store.preparation(runId) === null
-				? await prepareStart(this.#connectors, command, { now: this.#store.now(), runTimeoutMs: config.runTimeoutMs })
+				? await prepareStart(this.#connectors, command, { now: this.#store.now(), runTimeoutMs: this.#ports.runTimeoutMs(this.#portsContext() as PortsContext) })
 				: null;
 		const first = await this.#store.outside(() =>
 			this.#store.write((): StartRunResult | Preparation => {

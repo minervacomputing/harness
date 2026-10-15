@@ -6,6 +6,7 @@
 // run in the Worker's isolate.
 
 import { sandboxObject, workspaceObject } from "../addressing.ts";
+import { settings } from "../config.ts";
 
 import { conversationFolder } from "../files/folder.ts";
 import type { CheckpointOutcome, CheckpointScan, DownloadTarget, FolderUsage } from "../files/store.ts";
@@ -141,6 +142,8 @@ export interface ConversationPorts {
 	fetch(context: PortsContext): typeof fetch;
 	/** The conversation's Sandbox Durable Object (src/sandbox/), a new stub each time; the platform tests give a fake. */
 	sandbox(context: PortsContext): SandboxPort;
+	/** The deadline a Laravel run starts with, in ms from its start; null for none. The setting, unless the test build's plan sets one. */
+	runTimeoutMs(context: PortsContext): number | null;
 	/**
 	 * The test build's fault points in the attempt gate (src/faults/); production has none. `decided`: a
 	 * decision is made, before its transaction. `committed`: after its transaction and the sync.
@@ -262,6 +265,7 @@ export const defaultPorts: ConversationPorts = {
 	upstream: (route, { env }) => upstreamOf(route, (env as { AI?: Ai }).AI),
 	fetch: () => (input, init) => fetch(input, init),
 	sandbox: ({ env, ctx, workspace, conversationId }) => sandboxObject(env, ctx.exports, workspace, conversationId) as unknown as SandboxPort,
+	runTimeoutMs: ({ env }) => settings(env).runTimeoutMs,
 };
 
 /** The ports every Conversation object uses; tests replace `factory`. */

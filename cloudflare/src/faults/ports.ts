@@ -25,7 +25,8 @@
 //
 // Each model call and tool execution pi starts is counted per run (`FaultPlan.entered`).
 //
-// A workspace whose plan sets `run_timeout_ms` starts its runs with that deadline.
+// A conversation whose plan sets `run_timeout_ms` starts Laravel's runs with that deadline, a workspace whose plan sets it
+// its own runs.
 // A conversation whose plan sets `model` to `workers-ai` gets Workers AI instead of the fake model. Never
 // part of the production Worker.
 
@@ -37,10 +38,11 @@ import type { ReplaceablePorts } from "../workspace/workspace.ts";
 import { fakeUpstream } from "../model/fake.ts";
 import { upstreamOf } from "../model/route.ts";
 import { parseJson } from "../lib/json.ts";
-import { NOTES, NOTES_CLIENT } from "./connector.ts";
+import { NOTES_CLIENT } from "./connector.ts";
 import { type FaultPlan, planOf } from "./plan.ts";
 import type { FaultProvider } from "./provider.ts";
 import { LARAVEL_HOST } from "./settings.ts";
+import { NOTES } from "./world.ts";
 
 /** Every request to a `*.fake.invalid` host goes to the workspace's FaultProvider; nothing else is allowed. */
 export const FAKE_HOST_SUFFIX = ".fake.invalid";
@@ -176,6 +178,10 @@ export function faultConversationPorts(base: ConversationPorts): ConversationPor
 				.at(name, name === "local:released" ? { tool: detail, detail: detail ?? "" } : { detail: detail ?? "" }, ["abort", "oom", "throw", "hold", "note"])
 				.then(() => {}),
 		entered: (context, kind, runId) => planOf(context.ctx).enter(runId, kind),
+		runTimeoutMs: (context) => {
+			const configured = planOf(context.ctx).config("run_timeout_ms");
+			return configured === null ? base.runTimeoutMs(context) : Number(configured);
+		},
 		upstream: (route, context) => {
 			const plan = planOf(context.ctx);
 			if (plan.config("model") === "workers-ai") return upstreamOf({ ...route, provider: "workers-ai" }, (context.env as { AI?: Ai }).AI);
