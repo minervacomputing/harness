@@ -1,4 +1,4 @@
-// Connectors, connections and access (contract/src/connections.ts). The Workspace Durable Object holds
+// Connectors, connections and access (contract/src/public/connections.ts). The Workspace Durable Object holds
 // connections and grants and their rules (`#usable`, who may change a shared connection, saving credentials,
 // grant plans and the revocation they cause); the procedures here check the input, make the provider calls
 // (providers.ts) and answer. OAuth flows are flows.ts's, their clients oauth-clients.ts's.

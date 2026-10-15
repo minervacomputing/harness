@@ -1,4 +1,4 @@
-// Agents (contract/src/agents.ts), over the Workspace Durable Object, which holds the rules: who may edit
+// Agents (contract/src/public/agents.ts), over the Workspace Durable Object, which holds the rules: who may edit
 // (`#editable`), which connections may be added (`#chosenConnections`), the full replace, the revocation of
 // the agent's runs when its connection set changes, and the last agent kept.
 

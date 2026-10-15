@@ -12,7 +12,7 @@ import type { ToolCallOutcome } from "./executor.ts";
 import type { Registry } from "./registry.ts";
 import { type ToolRef, toolLabel } from "./tools.ts";
 
-// The `tool_call` event's payload is the contract's (contract/src/conversations.ts), as the chat reads it.
+// The `tool_call` event's payload is the contract's (contract/src/shapes.ts), as the chat reads it.
 export type { ToolCallAllowed, ToolCallEventData, ToolCallRefused } from "@minerva/contract";
 
 /**

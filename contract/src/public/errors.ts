@@ -3,7 +3,7 @@
 // the client an undeclared error came from something else (a proxy, a crash before our code answered).
 
 import { z } from 'zod'
-import { REFUSALS, type RefusalCode } from './refusals.ts'
+import { REFUSALS, type RefusalCode } from '../refusals.ts'
 
 /** One problem with the input: where (the field's path) and what. */
 const Issue = z.object({ path: z.array(z.union([z.string(), z.number()])), message: z.string(), code: z.string() })

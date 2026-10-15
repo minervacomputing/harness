@@ -1,7 +1,7 @@
 import { oc, type } from '@orpc/contract'
 import { z } from 'zod'
+import { uuid } from '../ids.ts'
 import { ERRORS } from './errors.ts'
-import { uuid } from './ids.ts'
 
 /** A workspace the user belongs to, with their role in it. */
 export const Workspace = z.object({

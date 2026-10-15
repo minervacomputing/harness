@@ -1,4 +1,4 @@
-// Conversations, messages, runs, uploads and a conversation's files (contract/src/conversations.ts), over the
+// Conversations, messages, runs, uploads and a conversation's files (contract/src/public/conversations.ts), over the
 // Workspace Durable Object (the index of conversations, the run registry, uploads) and each Conversation
 // Durable Object (messages, runs, events, the folder). The conversation or run in the URL is checked against
 // the workspace's own index before its object is addressed: an id from another workspace, another user's, or

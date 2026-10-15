@@ -1,7 +1,8 @@
 import { oc, type } from '@orpc/contract'
 import { z } from 'zod'
+import { uuid } from '../ids.ts'
+import { MAX_ACCESS_CHANGES } from '../shapes.ts'
 import { ERRORS } from './errors.ts'
-import { uuid } from './ids.ts'
 
 // Connectors, connections and the access each member chooses on them. No answer carries a credential: an API
 // key goes in (`connectKey`, `replaceKey`) and never comes back, and tokens never leave the Worker. The reads
@@ -105,9 +106,6 @@ export type Resource = z.infer<typeof Resource>
 /** A page of resources; `nextCursor` asks for the next one, null on the last. */
 export const ResourcePage = z.object({ items: z.array(Resource), nextCursor: z.string().nullable() })
 export type ResourcePage = z.infer<typeof ResourcePage>
-
-/** The resources one save may change. */
-export const MAX_ACCESS_CHANGES = 100
 
 /** An action id: any string (an unknown one is refused with the connector's words). */
 const ActionId = z.string()

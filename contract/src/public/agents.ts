@@ -1,7 +1,7 @@
 import { oc, type } from '@orpc/contract'
 import { z } from 'zod'
+import { uuid } from '../ids.ts'
 import { ERRORS } from './errors.ts'
-import { uuid } from './ids.ts'
 
 /** An agent as a member sees it; `canEdit` says whether they may change or delete it. */
 export const Agent = z.object({

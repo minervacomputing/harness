@@ -1,4 +1,4 @@
-// The procedures outside a workspace (contract/src/accounts.ts): who is signed in, their first password, the
+// The procedures outside a workspace (contract/src/public/accounts.ts): who is signed in, their first password, the
 // first-run setup and the instance's administration (accounts/instance.ts). The mount (api/orpc.ts) refuses a visitor everywhere but
 // the setup's status, and a caller who is not an instance admin under /api/instance, before the body is read.
 // Every change an admin makes requires the role again in its own statement, so a role removed a moment ago

@@ -3,7 +3,7 @@
 // streams them from the engine.
 
 import { z } from 'zod'
-import type { Attachment, FolderChanges, FolderWarnings, LocalToolEventData } from '../conversations.ts'
+import type { Attachment, FolderChanges, FolderWarnings, LocalToolEventData } from '../shapes.ts'
 import { Id, Seq, Time } from './common.ts'
 
 /** A file a message attached, as added to the folder. */

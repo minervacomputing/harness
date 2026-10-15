@@ -3,7 +3,7 @@
 
 import { oc } from '@orpc/contract'
 import { z } from 'zod'
-import { Folder } from '../conversations.ts'
+import { Folder } from '../shapes.ts'
 import { Catalog, CatalogVersion } from './catalog.ts'
 import { Environment, INTERNAL_ERRORS, INTERNAL_PREFIX, Id, Provider, Refused, Scope, Time, UserId } from './common.ts'
 import { AttachedFile, Fact, FolderChangesSchema, MAX_FACTS } from './facts.ts'

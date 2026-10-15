@@ -6,7 +6,7 @@
 import type { RunEvent, RunStatus, StatusEventData } from "@minerva/contract";
 import { sliceText } from "../lib/text.ts";
 
-// The payloads are the contract's (contract/src/conversations.ts), as the chat reads them.
+// The payloads are the contract's (contract/src/shapes.ts), as the chat reads them.
 export type {
 	DeltaEventData,
 	LocalToolEventData,
