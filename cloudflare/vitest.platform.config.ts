@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
+import { FAULTS_SETTINGS } from "./src/faults/settings.ts";
 
 // Platform tests: the Worker from cloudflare.config.ts in local workerd (Miniflare), with its Durable
 // Objects, D1 and R2 simulated locally. Remote bindings stay off, so nothing reaches the account.
@@ -11,13 +12,14 @@ process.env.MINERVA_SECRET_KEY ??= "test-secret-key-for-local-platform-tests-onl
 process.env.MINERVA_ENCRYPTION_KEYS ??= "v1:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
 process.env.MINERVA_DOWNLOAD_KEY ??= "test-download-key-for-local-platform-tests-only";
 process.env.MINERVA_SETUP_KEY ??= "test-setup-key-for-local-platform-tests-only";
-// The internal API (test/platform/internal.test.ts signs its own Access assertions) and the fake Laravel's origin. Its
-// token is the test's own: a secret's value comes from .dev.vars where that file exists, so the tests do not rely on one.
+// The internal API (test/platform/internal.test.ts signs its own Access assertions) and the fake Laravel's origin, the one
+// the test build hosts (src/faults/laravel.ts); the in-memory fakes the tests install answer any. Its token is the test's
+// own: a secret's value comes from .dev.vars where that file exists, so the tests do not rely on one.
 process.env.MINERVA_ENVIRONMENT ??= "test";
 process.env.MINERVA_ACCESS_ISSUER ??= "https://test.cloudflareaccess.example";
 process.env.MINERVA_ACCESS_AUDIENCE ??= "test-audience";
 process.env.MINERVA_ACCESS_CLIENTS ??= "laravel-old.access,laravel.access";
-process.env.MINERVA_LARAVEL_URL ??= "https://laravel.example";
+process.env.MINERVA_LARAVEL_URL ??= FAULTS_SETTINGS.MINERVA_LARAVEL_URL;
 
 export default defineConfig(async () => {
 	const migrations = await readD1Migrations("migrations");

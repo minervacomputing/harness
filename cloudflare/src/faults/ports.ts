@@ -36,9 +36,11 @@ import type { WorkspaceDeps } from "../workspace/core.ts";
 import type { ReplaceablePorts } from "../workspace/workspace.ts";
 import { fakeUpstream } from "../model/fake.ts";
 import { upstreamOf } from "../model/route.ts";
+import { parseJson } from "../lib/json.ts";
 import { NOTES, NOTES_CLIENT } from "./connector.ts";
 import { type FaultPlan, planOf } from "./plan.ts";
 import type { FaultProvider } from "./provider.ts";
+import { LARAVEL_HOST } from "./settings.ts";
 
 /** Every request to a `*.fake.invalid` host goes to the workspace's FaultProvider; nothing else is allowed. */
 export const FAKE_HOST_SUFFIX = ".fake.invalid";
@@ -66,6 +68,21 @@ export function providerFetch(env: Env, scope: string): typeof fetch {
 			signal.addEventListener("abort", abort, { once: true });
 			answer.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
 		});
+	};
+}
+
+/**
+ * The network of the test build's client of Laravel: the fake Laravel of the workspace the request's scope names, hosted by its
+ * FaultProvider (laravel.ts), and nothing else.
+ */
+export function laravelFetch(env: Env): typeof fetch {
+	return async (input, init) => {
+		const request = new Request(input as RequestInfo, init as RequestInit);
+		if (new URL(request.url).hostname !== LARAVEL_HOST) throw new TypeError(`The test build reaches Laravel only at ${LARAVEL_HOST}.`);
+		const body = parseJson(await request.clone().text()) as { scope?: { workspace?: unknown } };
+		const workspace = body.scope?.workspace;
+		if (typeof workspace !== "string") return Response.json({ defined: false, code: "BAD_REQUEST", status: 400, message: "The request names no workspace." }, { status: 400 });
+		return providerFetch(env, workspace)(request);
 	};
 }
 

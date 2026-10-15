@@ -13,7 +13,7 @@ import { createApp } from "../../src/http/router.ts";
 import { ACCESS_KEYS, ASSERTION_HEADER } from "../../src/internal/access.ts";
 import { LARAVEL_NETWORK, LaravelUnreachable, laravelClient, retryable } from "../../src/laravel/client.ts";
 import { uuid7 } from "../../src/lib/random.ts";
-import { FakeLaravel } from "./fake-laravel.ts";
+import { FakeLaravel } from "../../src/faults/laravel.ts";
 import { ORIGIN, assertion, call, commands, refusalOf, scope, signedAssertions, startOf } from "./internal-support.ts";
 
 signedAssertions();

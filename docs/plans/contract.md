@@ -226,7 +226,7 @@ A connector that departs from these rules gets a field then.
 
 Chunk 7 is its first real caller.
 
-**The fake Laravel.** `test/platform/fake-laravel.ts` implements the `laravel` contract with oRPC, over state the test sets. Platform tests route `LARAVEL_NETWORK` to it, so the engine's real client reaches it in-process. It does what Laravel will do:
+**The fake Laravel.** `cloudflare/src/faults/laravel.ts` implements the `laravel` contract with oRPC, over state the test sets. Platform tests route `LARAVEL_NETWORK` to it, so the engine's real client reaches it in-process. It does what Laravel will do:
 - **Leases.** It answers from runs and connections the test registers, with the refusals above.
 - **Unauthorized connections.** It marks them only when the generation matches.
 - **Facts.** It applies them in order per conversation. A repeat is applied once, a repeat that differs is `FACT_CONFLICT`, and a gap is `FACT_GAP`.

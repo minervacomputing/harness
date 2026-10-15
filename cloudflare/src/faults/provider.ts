@@ -9,10 +9,19 @@
 // the code it would redirect with, bound to the client, the redirect URI and the PKCE challenge it was
 // given; the token endpoint redeems a code once, for the client and redirect URI it was issued to, with
 // the verifier of its challenge, and the tokens it issues belong to the account that consented (`/me`).
+//
+// It also hosts the workspace's fake Laravel (laravel.ts), at LARAVEL_HOST, in tables of its own; its requests are not in the
+// Notes request log. Its points, `laravel:<operation>` (`leaseToken`, `reportUnauthorized`, `deliverFacts`), fire once the
+// operation has written its rows, before its answer leaves (`abort` or `note`).
 
 import { DurableObject } from "cloudflare:workers";
+import { laravel } from "@minerva/contract/internal";
+import { settings } from "../config.ts";
 import { type Json, parseJson } from "../lib/json.ts";
 import { NOTES_CLIENT } from "./connector.ts";
+import { type FakeConnection, type FakeRun, LARAVEL_SCHEMA, LARAVEL_TABLES, type LaravelView, SqlLaravel, hostedToken } from "./laravel.ts";
+import { type Fault, type Fired, planOf } from "./plan.ts";
+import { LARAVEL_HOST } from "./settings.ts";
 
 export interface ProviderSetup {
 	folders?: { id: string; name: string; notes?: string[] }[];
@@ -69,10 +78,16 @@ function json(status: number, body: Json): Response {
 	return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
+/** The Laravel operation a path is, by the contract's paths. */
+const OPERATIONS = new Map<string | undefined, string>(Object.entries(laravel).map(([name, procedure]) => [procedure["~orpc"].route.path, name]));
+
 export class FaultProvider extends DurableObject<Env> {
+	readonly #laravel: SqlLaravel;
+
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
-		ctx.storage.sql.exec(SCHEMA);
+		ctx.storage.sql.exec(SCHEMA + LARAVEL_SCHEMA);
+		this.#laravel = new SqlLaravel(ctx.storage, { token: hostedToken(env), environment: settings(env).internal?.environment ?? "" });
 	}
 
 	#sql(): SqlStorage {
@@ -83,11 +98,12 @@ export class FaultProvider extends DurableObject<Env> {
 		return this.#sql().exec<{ value: string }>("SELECT value FROM settings WHERE key = ?", key).toArray()[0]?.value ?? null;
 	}
 
-	/** Starts over: folders and their notes, the connection's tokens, delays; the request log is cleared. */
+	/** Starts over: folders and their notes, the connection's tokens, delays; the request log, the fake Laravel and the plan are cleared. */
 	reset(setup: ProviderSetup = {}): void {
 		const sql = this.#sql();
+		planOf(this.ctx).set([]);
 		this.ctx.storage.transactionSync(() => {
-			for (const table of ["folders", "notes", "tokens", "requests", "settings", "codes", "owners"]) sql.exec(`DELETE FROM ${table}`);
+			for (const table of ["folders", "notes", "tokens", "requests", "settings", "codes", "owners", ...LARAVEL_TABLES]) sql.exec(`DELETE FROM ${table}`);
 			for (const folder of setup.folders ?? DEFAULT_FOLDERS) {
 				sql.exec("INSERT INTO folders (id, name) VALUES (?, ?)", folder.id, folder.name);
 				for (const title of folder.notes ?? []) sql.exec("INSERT INTO notes (folder, title) VALUES (?, ?)", folder.id, title);
@@ -142,8 +158,36 @@ export class FaultProvider extends DurableObject<Env> {
 		};
 	}
 
+	/** The fake Laravel holds the run, and the run's conversation. */
+	laravelHold(id: string, run: FakeRun): void {
+		this.#laravel.hold(id, run);
+	}
+
+	laravelConnection(id: string, connection: FakeConnection): void {
+		this.#laravel.setConnection(id, connection);
+	}
+
+	laravelState(conversation: string): LaravelView {
+		return this.#laravel.view(conversation);
+	}
+
+	/** The fake Laravel answers the next `deliveries` deliveries 503. */
+	laravelFail(deliveries: number): void {
+		this.#laravel.failDeliveries(deliveries);
+	}
+
+	/** Replaces the plan of this object's points. */
+	faultPlan(faults: Fault[]): void {
+		planOf(this.ctx).set(faults);
+	}
+
+	faultFired(): Fired[] {
+		return planOf(this.ctx).fired();
+	}
+
 	async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
+		if (url.hostname === LARAVEL_HOST) return this.#answerLaravel(request, url);
 		const at = Date.now();
 		const key = `${request.method} ${url.pathname}`;
 		const delays = parseJson(this.#setting("delays") ?? "{}") as { [prefix: string]: number };
@@ -155,6 +199,13 @@ export class FaultProvider extends DurableObject<Env> {
 		if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
 		const response = await this.#answer(request, url);
 		this.#sql().exec("UPDATE requests SET status = ? WHERE seq = ?", response.status, seq);
+		return response;
+	}
+
+	async #answerLaravel(request: Request, url: URL): Promise<Response> {
+		const response = await this.#laravel.fetch(request);
+		const operation = OPERATIONS.get(url.pathname);
+		if (operation !== undefined) await planOf(this.ctx).at(`laravel:${operation}`, { detail: String(response.status) }, ["abort", "note"]);
 		return response;
 	}
 

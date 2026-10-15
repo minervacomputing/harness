@@ -3,12 +3,13 @@ import * as faultsEntrypoint from "./src/faults/index.ts" with { type: "cf-worke
 import * as entrypoint from "./src/index.ts" with { type: "cf-worker" };
 import { parseFrom } from "./src/accounts/emails.ts";
 import { checkBuild, connectorClientSecrets, parse, type SettingsEnv } from "./src/config.ts";
+import { buildSettings } from "./scripts/build-settings.ts";
 import { type Instance, LOCAL_INSTANCES, type Names, SANDBOX_IMAGE_REFERENCE, chooseInstance, instanceForMode, instanceVars, namesOf, readInstanceEnv } from "./scripts/instance.ts";
 import { instanceOrigins } from "./scripts/origins.ts";
 
 // Plain settings are text bindings, read when the Worker is built and checked then with src/config.ts's
 // parser, so a malformed value fails the build. Development and tests read the environment, with the
-// defaults below. A deployed build (mode production or faults) reads its instance's vars.env alone
+// defaults of scripts/build-settings.ts. A deployed build (mode production or faults) reads its instance's vars.env alone
 // (scripts/instance.ts, The instance directory, outside the checkout): the shell's MINERVA_* are ignored there
 // (a shell may hold another deployment's), the file must exist, and MINERVA_DEBUG must be off. Both origins must be the
 // instance's own Workers on workers.dev, `https://<name>.<subdomain>.workers.dev` and
@@ -84,44 +85,6 @@ const build = (globalThis as unknown as { process: BuildProcess }).process;
 /** The id of the dev server's local D1 database in mode `offline`: nothing in an account. */
 const OFFLINE_D1_ID = "00000000-0000-4000-8000-00000000d1d1";
 
-/** The settings with a default. MINERVA_MODEL_GATEWAY is not one: the build sets it to the instance's name. */
-const DEFAULTS: Omit<SettingsEnv, "MINERVA_MODEL_GATEWAY"> = {
-	MINERVA_SITE_URL: "http://localhost:5173",
-	MINERVA_DOWNLOAD_ORIGIN: "http://localhost:8788",
-	MINERVA_DEBUG: "false",
-	MINERVA_SIGNUP_OPEN: "true",
-	MINERVA_EMAIL_FROM: "Minerva <noreply@localhost>",
-	MINERVA_RUN_TIMEOUT_SECONDS: "",
-	MINERVA_MODEL_PROVIDER: "workers-ai",
-	MINERVA_MODEL_NAME: "@cf/zai-org/glm-5.3-flash",
-	MINERVA_MODEL_API: "chat",
-	MINERVA_MODEL_MAX_OUTPUT_TOKENS: "8192",
-	MINERVA_MODEL_REASONING_EFFORT: "",
-	MINERVA_MODEL_REASONING_SUMMARY: "",
-	MINERVA_FILES_FOLDER_BYTES: "268435456",
-	MINERVA_FILES_FOLDER_ENTRIES: "10000",
-	MINERVA_FILES_RUN_UPLOAD_BYTES: "",
-	MINERVA_FILES_WORKSPACE_BYTES: "",
-	MINERVA_FILES_UPLOAD_BYTES: "52428800",
-	MINERVA_FILES_MESSAGE_ATTACHMENTS: "10",
-	MINERVA_ENVIRONMENT: "",
-	MINERVA_ACCESS_ISSUER: "",
-	MINERVA_ACCESS_AUDIENCE: "",
-	MINERVA_ACCESS_CLIENTS: "",
-	MINERVA_LARAVEL_URL: "",
-};
-
-/**
- * What the dev server's mode `offline` sets besides DEFAULTS, unless the shell sets it: debug on (emails are
- * written to the log, cookies work over http), the fake model (the test build's entry has it), and a
- * fake model name for the settings parser.
- */
-const OFFLINE_DEFAULTS: Partial<Omit<SettingsEnv, "MINERVA_MODEL_GATEWAY">> = {
-	MINERVA_DEBUG: "true",
-	MINERVA_MODEL_PROVIDER: "fake",
-	MINERVA_MODEL_NAME: "fake-1",
-};
-
 /**
  * The connector clients the operator configured, declared so the deploy uploads them (src/config.ts
  * `connectorClientSecrets`): read by name from the deployed build's instance's secrets.env (a missing file
@@ -148,9 +111,7 @@ function settingsFor(target: Target): SettingsEnv {
 	// The gateway is the instance's own, whatever the shell says; a vars file that sets it stops the build
 	// (`instanceVars`), since it would send the model's requests through another gateway.
 	const source: Record<string, string | undefined> = target.instance ? instanceVars(target.instance) : build.env;
-	const defaults = target.offline ? { ...DEFAULTS, ...OFFLINE_DEFAULTS } : DEFAULTS;
-	const settings = Object.fromEntries(Object.entries(defaults).map(([name, fallback]) => [name, source[name] ?? fallback]));
-	const values = { ...settings, MINERVA_MODEL_GATEWAY: target.names.gateway } as unknown as SettingsEnv;
+	const values = buildSettings({ deployed: target.instance !== null, faults: target.faults, offline: target.offline }, source, target.names.gateway);
 	const parsed = parse(values);
 	checkBuild(parsed, { deployed: target.instance !== null, testBuild: target.faults });
 	if (target.instance) {

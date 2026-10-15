@@ -21,7 +21,7 @@ import { uuid7 } from "../../src/lib/random.ts";
 import { type FakeScript, fakeUpstream } from "../../src/model/fake.ts";
 import { openSocket } from "../../src/stream/relay.ts";
 import { STREAM_AUDIENCE, STREAM_PURPOSE } from "../../src/stream/token.ts";
-import { FakeLaravel } from "./fake-laravel.ts";
+import { FakeLaravel } from "../../src/faults/laravel.ts";
 import { ORIGIN, commands, refusalOf, scope, signedAssertions, startOf } from "./internal-support.ts";
 
 signedAssertions();
@@ -285,6 +285,22 @@ describe("leases", () => {
 		expect(logged.join("\n")).not.toContain("SECRET_MARKER");
 	});
 
+	test("a held lease reads the run once it is let go, not when it arrived", async () => {
+		const run = uuid7();
+		const { credentials, connection } = port(run);
+		fake.connections.set(connection, { kind: "api_key", secret: "a key", scopes: null, generation: 1, expiresAt: null, status: "active" });
+		const release = fake.holdLeases(run);
+		const lease = credentials.lease({ runId: run, attempt: 1 }, connection);
+		// Only the run's own calls: the earlier tests' objects may still be delivering facts.
+		await until(
+			() => fake.calls.filter((call) => call.run === run),
+			(calls) => calls.length === 1,
+		);
+		fake.runs.get(run)!.active = false;
+		release();
+		expect(await lease).toEqual({ refused: "RUN_ENDED", message: RUN_ENDED_MESSAGE });
+	});
+
 	test("a fence that is no longer current is refused without asking", async () => {
 		const run = uuid7();
 		const { credentials, connection } = port(run, () => false);
@@ -320,7 +336,7 @@ describe("leases", () => {
 describe("Laravel's run stream", () => {
 	const KEY = new Uint8Array(32).fill(7);
 	const streamEnv = { ...env, MINERVA_STREAM_KEYS: `s1:${base64url(KEY, { pad: false })}` } as Env;
-	const LARAVEL = "https://laravel.example";
+	const LARAVEL = env.MINERVA_LARAVEL_URL;
 
 	function token(start: StartRun, change: { org?: string; exp?: number } = {}): Promise<string> {
 		const now = Math.floor(Date.now() / 1000);

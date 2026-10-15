@@ -16,7 +16,7 @@ import { base64url } from "../../src/lib/bytes.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { fakeUpstream } from "../../src/model/fake.ts";
 import { STREAM_AUDIENCE, STREAM_PURPOSE } from "../../src/stream/token.ts";
-import { FakeLaravel } from "./fake-laravel.ts";
+import { FakeLaravel } from "../../src/faults/laravel.ts";
 import { ORIGIN, commands, refusalOf, scope, signedAssertions, startOf } from "./internal-support.ts";
 
 signedAssertions();

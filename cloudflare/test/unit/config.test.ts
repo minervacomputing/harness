@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { type SettingsBuild, buildSettings } from "../../scripts/build-settings.ts";
 import { OAUTH_APPS, checkBuild, clientSecretNames, connectorClientSecrets, parse, settings } from "../../src/config.ts";
 import { connectorRegistry } from "../../src/connectors/index.ts";
 import { settingsEnv } from "./settings.ts";
@@ -89,4 +90,30 @@ test("Laravel's origin is optional, and https in a deployed build", () => {
 	const plain = parse(settingsEnv({ MINERVA_LARAVEL_URL: "http://localhost:8000" }));
 	expect(() => checkBuild(plain, { deployed: false, testBuild: false })).not.toThrow();
 	expect(() => checkBuild(plain, { deployed: true, testBuild: false })).toThrow("MINERVA_LARAVEL_URL must be an https origin in a deployed build's vars file.");
+});
+
+test("a deployed test build has the internal API and its fake Laravel unless its vars file says otherwise; no other build does", () => {
+	const parsed = (build: SettingsBuild, source: Record<string, string> = {}) => parse(buildSettings(build, source, "acme"));
+	const faults = { deployed: true, faults: true, offline: false };
+	expect(parsed(faults).internal).toEqual({ environment: "faults", access: { issuer: "https://faults.cloudflareaccess.example", audience: "faults", clients: ["faults"] } });
+	expect(parsed(faults).laravelUrl).toBe("https://laravel.fake.invalid");
+	const vars = {
+		MINERVA_ENVIRONMENT: "staging",
+		MINERVA_ACCESS_ISSUER: "https://team.cloudflareaccess.example",
+		MINERVA_ACCESS_AUDIENCE: "aud-tag",
+		MINERVA_ACCESS_CLIENTS: "laravel.access",
+		MINERVA_LARAVEL_URL: "https://app.minerva.example",
+	};
+	expect(parsed(faults, vars).internal).toEqual({ environment: "staging", access: { issuer: "https://team.cloudflareaccess.example", audience: "aud-tag", clients: ["laravel.access"] } });
+	expect(parsed(faults, vars).laravelUrl).toBe("https://app.minerva.example");
+	const others = {
+		production: { deployed: true, faults: false, offline: false },
+		test: { deployed: false, faults: true, offline: false },
+		offline: { deployed: false, faults: true, offline: true },
+		standalone: { deployed: false, faults: false, offline: false },
+	};
+	for (const [mode, build] of Object.entries(others)) {
+		expect({ mode, internal: parsed(build).internal, laravelUrl: parsed(build).laravelUrl }).toEqual({ mode, internal: null, laravelUrl: null });
+	}
+	expect(parsed(others.production, vars).internal?.environment).toBe("staging");
 });

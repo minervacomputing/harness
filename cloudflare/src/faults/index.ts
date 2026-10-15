@@ -1,10 +1,11 @@
-// The test build's Worker (cloudflare.config.ts, modes `faults` and `test`): the same Worker as
-// src/index.ts, plus the fake Notes connector and its provider (connector.ts, provider.ts), fault points in
-// the Conversation's and the Workspace's ports (ports.ts, plan.ts), a mailbox that keeps the emails it
-// would send (mailbox.ts), and a token-gated driver at /api/faults/ for the account tests (routes.ts). It is
-// deployed only as a test instance; the production build's entry is src/index.ts, which imports nothing from
-// here (a unit test checks it), so none of this is in production.
+// The test build's Worker (cloudflare.config.ts, modes `faults` and `test`): the same Worker as src/index.ts, plus the fake
+// Notes connector and its provider (connector.ts, provider.ts), which also hosts the fake Laravel the engine calls
+// (laravel.ts, settings.ts), fault points in the Conversation's and the Workspace's ports (ports.ts, plan.ts), a mailbox
+// that keeps the emails it would send (mailbox.ts), and a token-gated driver at /api/faults/ for the account tests
+// (routes.ts). It is deployed only as a test instance; the production build's entry is src/index.ts, which imports nothing
+// from here (a unit test checks it), so none of this is in production.
 
+import { createLocalJWKSet } from "jose";
 import worker from "../index.ts";
 import { CONNECTOR_SOURCE, servedConnectors } from "../connectors/index.ts";
 import { Conversation as BaseConversation } from "../conversation/conversation.ts";
@@ -16,12 +17,16 @@ import type { RunId } from "../shared/rpc.ts";
 import { Workspace as BaseWorkspace, WORKSPACE_PORTS } from "../workspace/workspace.ts";
 import { FLOW_CLIENTS } from "../api/oauth-clients.ts";
 import { MAIL_TRANSPORT } from "../accounts/emails.ts";
+import { ACCESS_KEYS } from "../internal/access.ts";
 import { PROVIDER_NETWORK } from "../internal/providers.ts";
+import { LARAVEL_NETWORK } from "../laravel/client.ts";
 import { notesConnector } from "./connector.ts";
+import { hostedToken } from "./laravel.ts";
 import { captureEmail } from "./mailbox.ts";
 import { type Fault, type Fired, planOf } from "./plan.ts";
-import { executorContextOf, faultConversationPorts, faultFlowClients, faultWorkspacePorts, providerFetch } from "./ports.ts";
+import { executorContextOf, faultConversationPorts, faultFlowClients, faultWorkspacePorts, laravelFetch, providerFetch } from "./ports.ts";
 import { faultRoutes } from "./routes.ts";
+import { FAULTS_SETTINGS } from "./settings.ts";
 
 CONNECTOR_SOURCE.connectors = async () => [...(await servedConnectors()), notesConnector()];
 PORTS.factory = () => faultConversationPorts(defaultPorts);
@@ -33,6 +38,12 @@ const flowClients = FLOW_CLIENTS.of;
 FLOW_CLIENTS.of = (env) => faultFlowClients(flowClients(env));
 // Emails go to the mailbox the driver reads, never out (the build has no Email Sending binding).
 MAIL_TRANSPORT.send = captureEmail;
+// The default Access issuer is a placeholder (settings.ts): its keys are never fetched, so every assertion is refused.
+const accessKeys = ACCESS_KEYS.of;
+ACCESS_KEYS.of = (issuer) => (issuer === FAULTS_SETTINGS.MINERVA_ACCESS_ISSUER ? createLocalJWKSet({ keys: [] }) : accessKeys(issuer));
+// Laravel is the fake each workspace's FaultProvider hosts (laravel.ts), reached with a token it checks.
+LARAVEL_NETWORK.fetch = laravelFetch;
+LARAVEL_NETWORK.token = hostedToken;
 
 /** What a test reads of a run besides its API view: attempts, the ledger and pi's executions. */
 export interface RunInternals {
