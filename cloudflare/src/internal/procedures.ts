@@ -5,7 +5,7 @@ import { engine } from "@minerva/contract/internal";
 import { implement } from "@orpc/server";
 import { connectorRegistry } from "../connectors/index.ts";
 import { catalogOf } from "./catalog.ts";
-import { describeAccount } from "./connections.ts";
+import { checkGrantEdit, describeAccount, listResources } from "./connections.ts";
 import { internalRefusal } from "./errors.ts";
 import { cancelRun, replayFacts, startRun } from "./runs.ts";
 
@@ -49,8 +49,8 @@ export const internalRouter = internal.router({
 	cancelRun: internal.cancelRun.use(inEnvironment).handler(({ context, input }) => cancelRun(context.env, input)),
 	replayFacts: internal.replayFacts.use(inEnvironment).handler(({ context, input }) => replayFacts(context.env, input)),
 	describeAccount: internal.describeAccount.use(inEnvironment).handler(({ context, input }) => describeAccount(context.env, input)),
-	listResources: internal.listResources.use(inEnvironment).handler(notYet(11)),
-	checkGrantEdit: internal.checkGrantEdit.use(inEnvironment).handler(notYet(11)),
+	listResources: internal.listResources.use(inEnvironment).handler(({ context, input }) => listResources(context.env, input)),
+	checkGrantEdit: internal.checkGrantEdit.use(inEnvironment).handler(({ context, input }) => checkGrantEdit(context.env, input)),
 	folder: internal.folder.use(inEnvironment).handler(notYet(12)),
 	resolveDownload: internal.resolveDownload.use(inEnvironment).handler(notYet(12)),
 	deleteConversation: internal.deleteConversation.use(inEnvironment).handler(notYet(12)),

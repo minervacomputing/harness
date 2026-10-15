@@ -26,6 +26,7 @@ export const GrantInput = z.object({
   actions: z.array(z.string().min(1).max(64)).max(20),
   effect: z.enum(['allow', 'deny']),
 })
+export type GrantInput = z.infer<typeof GrantInput>
 
 /** One layer as Laravel stores it, with the revision `checkGrantEdit` and the acceptance hold to. */
 export const LayerInput = z.object({
@@ -142,6 +143,30 @@ const ResourcePage = z.object({
   next: z.string().nullable(),
 })
 
+/** `listResources`: a page of a kind's resources, matching `query`, or inside `parent` for a browsable kind. */
+export const ListResources = SettingsCall.extend({
+  kind: z.string().min(1).max(64),
+  query: z.string().max(100).nullable(),
+  parent: z.string().min(1).max(200).nullable(),
+  cursor: z.string().max(1000).nullable(),
+})
+export type ListResources = z.infer<typeof ListResources>
+export const ListResourcesResult = z.discriminatedUnion('outcome', [ResourcePage, Refused])
+export type ListResourcesResult = z.infer<typeof ListResourcesResult>
+
+/** `checkGrantEdit`: an edit of one layer's grants on one connection; an empty `actions` removes the grant. */
+export const CheckGrantEdit = SettingsCall.extend({
+  layer: LayerInput.extend({ level: z.enum(['ceiling', 'user', 'agent']), subject: z.string().max(64).nullable() }),
+  changes: z.array(z.object({ kind: z.string().min(1).max(64), id: z.string().min(1).max(200), actions: z.array(z.string()).max(10) })).min(1).max(100),
+})
+export type CheckGrantEdit = z.infer<typeof CheckGrantEdit>
+export const CheckGrantEditResult = z.discriminatedUnion('outcome', [
+  z.object({ outcome: z.literal('valid'), grants: z.array(GrantInput) }),
+  z.object({ outcome: z.literal('invalid'), message: z.string() }),
+  Refused,
+])
+export type CheckGrantEditResult = z.infer<typeof CheckGrantEditResult>
+
 /** `replayFacts`: the conversation's facts after `after`, at most `limit`. */
 export const ReplayFacts = InConversation.extend({ after: z.int().min(0), limit: z.int().min(1).max(MAX_FACTS) })
 export type ReplayFacts = z.infer<typeof ReplayFacts>
@@ -177,34 +202,16 @@ export const engine = {
   /** A page of the account's resources of a kind: matching `query`, or inside `parent` for a browsable kind [11]. */
   listResources: internal
     .route({ method: 'POST', path: at('/connections/resources') })
-    .input(
-      SettingsCall.extend({
-        kind: z.string().min(1).max(64),
-        query: z.string().max(100).nullable(),
-        parent: z.string().min(1).max(200).nullable(),
-        cursor: z.string().max(1000).nullable(),
-      }),
-    )
-    .output(z.discriminatedUnion('outcome', [ResourcePage, Refused])),
+    .input(ListResources)
+    .output(ListResourcesResult),
   /**
    * Checks an edit of one layer's grants on one connection, and answers the grants after it, new ones named by the provider [11].
    * Laravel commits them only while the layer's revision is unchanged.
    */
   checkGrantEdit: internal
     .route({ method: 'POST', path: at('/connections/check-grants') })
-    .input(
-      SettingsCall.extend({
-        layer: LayerInput.extend({ level: z.enum(['ceiling', 'user', 'agent']), subject: z.string().max(64).nullable() }),
-        changes: z.array(z.object({ kind: z.string().min(1).max(64), id: z.string().min(1).max(200), actions: z.array(z.string()).max(10) })).min(1).max(100),
-      }),
-    )
-    .output(
-      z.discriminatedUnion('outcome', [
-        z.object({ outcome: z.literal('valid'), grants: z.array(GrantInput) }),
-        z.object({ outcome: z.literal('invalid'), message: z.string() }),
-        Refused,
-      ]),
-    ),
+    .input(CheckGrantEdit)
+    .output(CheckGrantEditResult),
   /** The folder at a version, the current one without [12]. */
   folder: internal
     .route({ method: 'POST', path: at('/conversations/folder') })
