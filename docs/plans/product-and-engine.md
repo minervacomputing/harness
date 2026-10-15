@@ -1,6 +1,6 @@
 # Plan: Laravel is the product, Cloudflare is the engine
 
-Status: design, 2026-10-14; chunks 0 to 7 are done (1b without the staging engine, which moves to chunk 8; 3 with its staging checks waiting on mail and the providers' clients). It replaces self-hosting-and-cloud.md and the "Instance and control plane" section of cloudflare.md (both removed; see git history; cloudflare.md's design is now [ARCHITECTURE.md](../../ARCHITECTURE.md)), whose instance model (everything a company needs in one Cloudflare deployment) and whose later revision (Laravel for identity, the runtime keeping connections and conversations) are both given up. What still holds from them is written out here. opencode reviewed the first draft in a fresh session; its findings are folded in, except that production, which holds only the operator's test data, is still reset.
+Status: design, 2026-10-14; chunks 0 to 8 are done (1b's staging engine deployed by hand in chunk 8; 3 with its staging checks waiting on mail and the providers' clients); chunk 9 is under way. It replaces self-hosting-and-cloud.md and the "Instance and control plane" section of cloudflare.md (both removed; see git history; cloudflare.md's design is now [ARCHITECTURE.md](../../ARCHITECTURE.md)), whose instance model (everything a company needs in one Cloudflare deployment) and whose later revision (Laravel for identity, the runtime keeping connections and conversations) are both given up. What still holds from them is written out here. opencode reviewed the first draft in a fresh session; its findings are folded in, except that production, which holds only the operator's test data, is still reset.
 
 ## Why
 
@@ -125,6 +125,8 @@ The plan is built in chunks of about one session each, in order. A chunk starts 
    - Facts applied into a minimal transcript, and `leaseToken` served from a connection stored by hand.
    - Tests against a real Postgres: a start racing a revocation, a lost start answer, a lost acknowledgement, a refresh racing a lease.
    - Done when a turn on staging runs from Laravel through the engine and back.
+
+   Done 2026-10-15 in `minervacomputing/app` (its `docs/plans/turn.md`), as 8a and 8b. The run registry with its start in one transaction under the user's and the workspace's locks, the start and cancel jobs with the cancel outbox and a sweep, the engine's facts applied in order into a minimal transcript, `leaseToken` and `reportUnauthorized` from a connection stored by hand, requests from the engine validated against `laravel-v1.json`, and strict revocation that waits for the engine when a member is removed, leaves or deletes their account. The race tests against Postgres found a deadlock between a start and a removal, avoided by locking organizations, workspaces and conversations `FOR NO KEY UPDATE`. On staging, a turn through the engine `minerva-cf-staging` (deployed by hand, behind Access) called the Web connector's `web_read_page`, and its facts reached Laravel. Not yet proven there: a lease of a real secret.
 
 **The product on Laravel**
 

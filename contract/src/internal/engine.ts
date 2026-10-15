@@ -124,6 +124,15 @@ const Credential = z.object({ kind: z.enum(['oauth2', 'api_key', 'builtin']), se
 
 const SettingsCall = z.object({ scope: Scope, connection: z.object({ id: Id, provider: Provider }), credential: Credential })
 
+/** `describeAccount`: the account behind a credential Laravel holds. */
+export const DescribeAccount = SettingsCall
+export type DescribeAccount = z.infer<typeof DescribeAccount>
+export const DescribeAccountResult = z.discriminatedUnion('outcome', [
+  z.object({ outcome: z.literal('described'), account: z.object({ id: z.string(), label: z.string(), tenant: z.string().nullable() }) }),
+  Refused,
+])
+export type DescribeAccountResult = z.infer<typeof DescribeAccountResult>
+
 // A settings call's refusals: `CREDENTIAL_REFUSED` (the provider refused the credential, so Laravel marks the connection),
 // `PROVIDER_FAILED`, and for what the user sent, `INVALID_RESOURCE_ID` and `INVALID_CURSOR`.
 
@@ -163,13 +172,8 @@ export const engine = {
   /** The account behind a credential: its id, label and tenant where the connector knows one [9]. */
   describeAccount: internal
     .route({ method: 'POST', path: at('/connections/account') })
-    .input(SettingsCall)
-    .output(
-      z.discriminatedUnion('outcome', [
-        z.object({ outcome: z.literal('described'), account: z.object({ id: z.string(), label: z.string(), tenant: z.string().nullable() }) }),
-        Refused,
-      ]),
-    ),
+    .input(DescribeAccount)
+    .output(DescribeAccountResult),
   /** A page of the account's resources of a kind: matching `query`, or inside `parent` for a browsable kind [11]. */
   listResources: internal
     .route({ method: 'POST', path: at('/connections/resources') })
