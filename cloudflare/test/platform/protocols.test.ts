@@ -1,88 +1,109 @@
-// The protocols end to end in local workerd (ARCHITECTURE.md: Testing, fault injection): the real Workspace and
-// Conversation objects over RPC, the executor with its ledger and page tokens in the Conversation's SQLite,
-// credentials leased from the Workspace and refreshed against the fake provider, the fake Notes connector
-// (src/faults/), and the deterministic fake model. Faults come from the test build's points (src/faults/
-// ports.ts) and from the platform's own resets (`ctx.abort()`, abortAllDurableObjects).
+// The protocols end to end in local workerd (ARCHITECTURE.md: Testing, fault injection), as Laravel's commands reach them
+// (startRun and cancelRun through the internal mount): the real Conversation object in the EU, the executor with its ledger
+// and page tokens in its SQLite, credentials leased from the fake Laravel (src/faults/laravel.ts), the fake Notes connector
+// (src/faults/), and the deterministic fake model. Faults come from the test build's points (src/faults/ports.ts) and from
+// the platform's own resets (`ctx.abort()`, abortAllDurableObjects).
 
-import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { abortAllDurableObjects, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { beforeAll, describe, expect, test } from "vitest";
-import { conversationObject, workspaceObject } from "../../src/addressing.ts";
+import type { RunEvent } from "@minerva/contract";
+import type { Scope, StartRun } from "@minerva/contract/internal";
+import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { conversationObject } from "../../src/addressing.ts";
 import { CONNECTORS } from "../../src/connectors/catalog.ts";
 import { CONNECTOR_SOURCE } from "../../src/connectors/index.ts";
-import { type RunEvent, START_FAILED } from "../../src/conversation/events.ts";
+import { BUSY_MESSAGE } from "../../src/conversation/conversation.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
 import type { RunHead } from "../../src/conversation/store.ts";
-import { NOTES_CLIENT, NOTES_TOKEN_URL, notesConnector } from "../../src/faults/connector.ts";
-import type { Conversation, Workspace } from "../../src/faults/index.ts";
+import { notesConnector } from "../../src/faults/connector.ts";
+import type { Conversation } from "../../src/faults/index.ts";
+import { FakeLaravel } from "../../src/faults/laravel.ts";
 import type { Fault } from "../../src/faults/plan.ts";
-import { faultConversationPorts, faultWorkspacePorts, NOT_FAKE, providerFetch, providerOf } from "../../src/faults/ports.ts";
-import { setUpWorkspace } from "../../src/faults/routes.ts";
-import { EncryptionKeys, credentialBinding } from "../../src/lib/encryption.ts";
+import { faultConversationPorts, NOT_FAKE, providerFetch, providerOf } from "../../src/faults/ports.ts";
+import { FOLDER, notesConnection, notesLayers, notesLease } from "../../src/faults/world.ts";
 import { uuid7 } from "../../src/lib/random.ts";
-import type { FakeTurn } from "../../src/model/fake.ts";
-import type { Caller, RunId, WorkspaceRef } from "../../src/shared/rpc.ts";
-import { WORKSPACE_PORTS } from "../../src/workspace/workspace.ts";
+import type { FakeScript, FakeTurn } from "../../src/model/fake.ts";
+import type { RunId } from "../../src/shared/rpc.ts";
+import { commands, held, notesStart, objectOf, refusalOf, scope, signedAssertions, viewOf } from "./internal-support.ts";
 
-const USER = "0199a000-0000-7000-8000-0000000e2e01";
-const CALLER: Caller = { userId: USER, role: "owner" };
+signedAssertions();
+
 const LIST = "notes_list_notes";
 const SAVE = "notes_save_note";
 
-type ConversationStub = DurableObjectStub<Conversation>;
-type WorkspaceStub = DurableObjectStub<Workspace>;
+type Stub = DurableObjectStub<Conversation>;
 
-/** A workspace with a Notes connection and a conversation. A stub breaks once its object was reset, so each use gets a new one. */
+/** A workspace whose fake provider is seeded, a Notes connection Laravel lends, and a conversation. A stub breaks once its object was reset, so each use gets a new one. */
 interface World {
-	ref: WorkspaceRef;
-	readonly ws: WorkspaceStub;
-	readonly conversation: ConversationStub;
-	conversationId: string;
+	within: Scope;
+	conversation: string;
 	connectionId: string;
-	agentId: string;
+	readonly stub: Stub;
 }
+
+let fake: FakeLaravel;
+let uninstall: () => void;
 
 beforeAll(() => {
 	// The test build's wiring, as src/faults/index.ts sets it (another test file may have replaced it).
 	CONNECTOR_SOURCE.connectors = () => [...CONNECTORS, notesConnector()];
 	PORTS.factory = () => faultConversationPorts(defaultPorts);
-	WORKSPACE_PORTS.factory = (deps, ctx, workerEnv) => faultWorkspacePorts(deps, ctx, workerEnv);
 });
 
-async function world(
-	options: { faults?: Fault[]; workspaceFaults?: Fault[]; expired?: boolean; delays?: { [prefix: string]: number }; jurisdiction?: "eu" | null } = {},
-): Promise<World> {
-	const ref: WorkspaceRef = { id: uuid7(), jurisdiction: options.jurisdiction ?? null };
-	const { connectionId, agentId } = await setUpWorkspace(env, ref, USER, options);
-	const ws = () => workspaceObject(env, ref) as unknown as WorkspaceStub;
-	if (options.workspaceFaults) await ws().faultPlan(options.workspaceFaults);
-	const created = await ws().createConversation(CALLER, agentId);
-	if (!created.ok) throw new Error(created.refusal.detail);
-	const conversationId = created.value.id;
-	const conversation = () => conversationObject(env, ref, conversationId) as unknown as ConversationStub;
-	if (options.faults) await conversation().faultPlan(options.faults);
+beforeEach(() => {
+	fake = new FakeLaravel("test-laravel-token");
+	uninstall = fake.install({ withToken: true });
+});
+
+afterEach(() => {
+	uninstall();
+});
+
+async function world(options: { faults?: Fault[]; delays?: { [prefix: string]: number }; runTimeoutMs?: number } = {}): Promise<World> {
+	const within = scope();
+	const conversation = uuid7();
+	const connectionId = uuid7();
+	await providerOf(env, within.workspace).reset({ delays: options.delays ?? {} });
+	fake.connections.set(connectionId, notesLease());
+	const stub = () => objectOf({ scope: within, conversation });
+	if (options.faults || options.runTimeoutMs !== undefined) await stub().faultPlan(options.faults ?? [], options.runTimeoutMs === undefined ? {} : { runTimeoutMs: options.runTimeoutMs });
 	return {
-		ref,
-		get ws() {
-			return ws();
-		},
-		get conversation() {
-			return conversation();
-		},
-		conversationId,
+		within,
+		conversation,
 		connectionId,
-		agentId,
+		get stub() {
+			return stub();
+		},
 	};
 }
 
-function script(turns: FakeTurn[]): string {
-	return JSON.stringify({ fake: { turns } });
+function script(turns: FakeTurn[], options: Omit<FakeScript, "turns"> = {}): string {
+	return JSON.stringify({ fake: { turns, ...options } });
 }
 
-async function post(w: World, turns: FakeTurn[]): Promise<RunId> {
-	const outcome = await w.conversation.postMessage(CALLER, { content: script(turns), attachments: [] });
-	if (!outcome.ok) throw new Error(`Refused: ${outcome.refusal.code} ${outcome.refusal.detail}`);
-	return outcome.value.run.id;
+/** A start of a run in the world's conversation, which Laravel holds; not sent. */
+function startIn(w: World, content: string, change: Partial<StartRun> = {}): StartRun {
+	return held(fake, notesStart(w.within, w.connectionId, { conversation: w.conversation, message: { id: uuid7(), content, attachments: [] }, ...change }));
+}
+
+/** Sends a start whose model answers with `turns`; its run's id once it is accepted. */
+async function post(w: World, turns: FakeTurn[], change: Partial<StartRun> = {}): Promise<RunId> {
+	const start = startIn(w, script(turns), change);
+	const answer = await commands.startRun(start);
+	if (answer.outcome !== "accepted") throw new Error(`Refused: ${answer.code} ${answer.message}`);
+	return start.run;
+}
+
+function cancelOf(w: World, runId: RunId) {
+	return commands.cancelRun({ scope: w.within, conversation: w.conversation, run: runId, reason: "permissions_changed" });
+}
+
+/**
+ * One of Laravel's commands, which reads nothing, so an object a fault reset starts again and runs its gate and recovery
+ * (`faultView` alone does not wake it).
+ */
+function wake(w: World): Promise<unknown> {
+	return commands.replayFacts({ scope: w.within, conversation: w.conversation, after: 1_000_000_000, limit: 1 });
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -104,12 +125,24 @@ async function until<T>(read: () => Promise<T>, done: (value: T) => boolean, tim
 
 const ACTIVE = ["queued", "provisioning", "running"];
 
+async function runOf(w: World, runId: RunId): Promise<RunHead | null> {
+	return (await w.stub.faultView(runId, 0, 0)).head;
+}
+
 async function settled(w: World, runId: RunId, timeout?: number): Promise<RunHead> {
-	return until(async () => (await w.conversation.getRun(CALLER, runId)) as RunHead, (run) => !ACTIVE.includes(run.status), timeout);
+	const run = await until(
+		async () => {
+			await wake(w);
+			return runOf(w, runId);
+		},
+		(head) => head !== null && !ACTIVE.includes(head.status),
+		timeout,
+	);
+	return run as RunHead;
 }
 
 async function eventsOf(w: World, runId: RunId): Promise<RunEvent[]> {
-	return (await w.conversation.getRunEvents(CALLER, runId, { after: 0, upTo: 1_000_000, limit: 1000 })) ?? [];
+	return (await viewOf(w.stub, runId)).events;
 }
 
 function statuses(events: RunEvent[]) {
@@ -130,24 +163,18 @@ async function times(read: () => Promise<{ point: string }[]>, point: string): P
 	return (await read()).filter((entry) => entry.point === point).length;
 }
 
-/** Whether a promise has settled by now, without waiting for it. */
-async function settledYet(promise: Promise<unknown>): Promise<boolean> {
-	let done = false;
-	void promise.then(
-		() => (done = true),
-		() => (done = true),
-	);
-	await sleep(0);
-	return done;
+function leases(runId: RunId): number {
+	return fake.calls.filter((call) => call.operation === "leaseToken" && call.run === runId).length;
 }
 
 /**
- * The platform's refusal of a value or a row over 2 MB ("string or blob too big"), which local workerd does
- * not enforce, for the start's tables: rows of `runs` and `run_snapshots`.
+ * The platform's refusal of a value or a row over 2 MB ("string or blob too big"), which local workerd does not enforce,
+ * for the start's tables: rows of `internal_starts`, `runs` and `run_snapshots`.
  */
-async function enforceValueLimit(stub: ConversationStub): Promise<void> {
+async function enforceValueLimit(stub: Stub): Promise<void> {
 	await runInDurableObject(stub, (_instance, state) => {
 		for (const [table, column] of [
+			["internal_starts", "text"],
 			["runs", "snapshot"],
 			["run_snapshots", "text"],
 		]) {
@@ -158,27 +185,17 @@ async function enforceValueLimit(stub: ConversationStub): Promise<void> {
 	});
 }
 
-/** Makes a Lifecycle job of the Conversation due now and runs its alarm. */
-async function due(stub: ConversationStub, job: string): Promise<void> {
-	await runInDurableObject(stub, async (_instance, state) => {
-		state.storage.sql.exec("UPDATE cf_agents_jobs SET time = 0 WHERE id = ?", job);
-		await state.storage.setAlarm(Date.now());
-	});
-	await runDurableObjectAlarm(stub);
-}
-
 async function provider(w: World) {
-	return providerOf(env, w.ref.id).state();
+	return providerOf(env, w.within.workspace).state();
 }
 
 const STOPPED_PERMISSIONS = "Stopped because permissions changed.";
-const READ_ONLY = [{ kind: "folder", id: "*", actions: ["read"] }];
 const LIST_INBOX: FakeTurn = { tools: [{ name: LIST, arguments: { folder: "inbox" } }] };
 const save = (title: string): FakeTurn => ({ tools: [{ name: SAVE, arguments: { folder: "inbox", title } }] });
 const SEEDED = ["Buy milk", "Call Ada", "Old note"];
 
 describe("the wiring", () => {
-	test("a read and a write through the executor, the ledger and a lease from the Workspace", async () => {
+	test("a read and a write through the executor, the ledger and a lease from Laravel", async () => {
 		const w = await world();
 		const runId = await post(w, [LIST_INBOX, save("From the test"), { text: "Saved." }]);
 		const run = await settled(w, runId);
@@ -191,56 +208,37 @@ describe("the wiring", () => {
 		]);
 		expect(calls[1]).not.toHaveProperty("repeat");
 		expect((await provider(w)).notes.map((note) => note.title)).toEqual([...SEEDED, "From the test"]);
-		const internals = await w.conversation.faultRun(runId);
+		// Each call leased the connection from Laravel, which lent the fake provider's token.
+		expect(leases(runId)).toBe(2);
+		expect((await provider(w)).requests.map((request) => request.token)).toEqual(["notes-access-0", "notes-access-0"]);
+		const internals = await w.stub.faultRun(runId);
 		expect(internals.writes).toEqual([expect.objectContaining({ status: "succeeded", attempt: 1 })]);
 		expect(internals.run).toMatchObject({ tool_calls: 2, writes_uncertain: 0 });
 	});
 
-	test("an EU workspace's objects reach each other in its jurisdiction (addressing.ts)", async () => {
-		const w = await world({ jurisdiction: "eu" });
+	test("a Laravel conversation's object is in the EU: its run acts there, and the unqualified object is another, empty one", async () => {
+		const w = await world();
 		const runId = await post(w, [LIST_INBOX, { text: "Done." }]);
 		expect((await settled(w, runId)).status).toBe("completed");
 		expect(toolCalls(await eventsOf(w, runId))).toEqual([expect.objectContaining({ tool: LIST, decision: "allowed" })]);
-		// Locally an EU object is named `eu:<id>` (no jurisdictions in workerd): the plain one is another, empty object.
-		expect(await w.ws.about()).toMatchObject({ name: `eu:${w.ref.id}` });
-		const plain = workspaceObject(env, { id: w.ref.id, jurisdiction: null });
-		expect(await plain.listAgents(CALLER)).toEqual([]);
-		expect(await conversationObject(env, { id: w.ref.id, jurisdiction: null }, w.conversationId).getRun(CALLER, runId)).toBeNull();
+		// Locally an EU object is named `eu:<id>` (no jurisdictions in workerd, addressing.ts).
+		expect(await runInDurableObject(w.stub, (_instance, state) => state.id.name)).toBe(`eu:${w.conversation}`);
+		const plain = conversationObject(env, { id: w.within.workspace, jurisdiction: null }, w.conversation) as unknown as Stub;
+		expect((await plain.faultView(runId)).head).toBeNull();
 	});
 });
 
-describe("start and revocation", () => {
-	test("a grant change before the run exists is in its snapshot: the write is denied", async () => {
+describe("authority and revocation", () => {
+	test("the layers a start carries decide its tools: a read-only grant offers no write", async () => {
 		const w = await world();
-		const changed = await w.ws.applyGrantChanges(CALLER, w.connectionId, READ_ONLY, {});
-		expect(changed.ok && changed.value.revocation).toBe("acknowledged");
-		const runId = await post(w, [save("Not allowed"), { text: "Done." }]);
+		const readOnly = notesLayers(w.connectionId, [{ kind: FOLDER, resource: "*", name: "", actions: ["read"], effect: "allow" }]);
+		const runId = await post(w, [save("Not allowed"), { text: "Done." }], { authority: { connections: [notesConnection(w.connectionId)], layers: readOnly } });
 		expect((await settled(w, runId)).status).toBe("completed");
 		// The write is not offered at all (gateway/tools.ts): pi answers the model's call itself.
-		expect((await w.conversation.faultRun(runId)).tools).toEqual([LIST]);
+		const internals = await w.stub.faultRun(runId);
+		expect(internals.tools).toEqual([LIST]);
+		expect(internals.run).toMatchObject({ revoked: 0 });
 		expect(toolCalls(await eventsOf(w, runId))).toEqual([]);
-		expect((await provider(w)).requests).toEqual([]);
-	});
-
-	test("a revocation between beginRun and the start's transaction leaves a tombstone: the run is stored cancelled", async () => {
-		const w = await world({ faults: [{ point: "start:copy", mode: "hold" }, { point: "activate:before", mode: "note", times: 10 }] });
-		const posting = w.conversation.postMessage(CALLER, { content: script([LIST_INBOX, { text: "Done." }]), attachments: [] });
-		await reached(() => w.conversation.faultFired(), "start:copy");
-		// The Workspace registered the run; the Conversation has only its marker.
-		const changed = await w.ws.applyGrantChanges(CALLER, w.connectionId, READ_ONLY, {});
-		expect(changed.ok && changed.value.revocation).toBe("acknowledged");
-		await w.conversation.faultRelease("start:copy");
-		const outcome = await posting;
-		if (!outcome.ok) throw new Error(outcome.refusal.detail);
-		// The start's own transaction stored it cancelled, from the tombstone: never queued for activation.
-		expect(outcome.value.run).toMatchObject({ status: "cancelled", errorMessage: STOPPED_PERMISSIONS });
-		expect(statuses(outcome.value.run.events)).toEqual([{ status: "queued" }, { status: "cancelled", message: STOPPED_PERMISSIONS }]);
-		const run = await settled(w, outcome.value.run.id);
-		expect(run).toMatchObject({ status: "cancelled", errorMessage: STOPPED_PERMISSIONS });
-		const internals = await w.conversation.faultRun(run.id);
-		expect(internals.run).toMatchObject({ error_code: "permissions_changed", revoked: 1, activated: 0 });
-		await sleep(200);
-		expect(await times(() => w.conversation.faultFired(), "activate:before")).toBe(0);
 		expect((await provider(w)).requests).toEqual([]);
 	});
 
@@ -248,18 +246,17 @@ describe("start and revocation", () => {
 		const w = await world({ delays: { "GET /folders/inbox/notes": 1500 } });
 		const runId = await post(w, [LIST_INBOX, LIST_INBOX, { text: "Done." }]);
 		await until(() => provider(w), (state) => state.requests.length > 0);
-		const changed = await w.ws.applyGrantChanges(CALLER, w.connectionId, READ_ONLY, {});
+		expect(await cancelOf(w, runId)).toEqual({ state: "cancelled" });
 		const answered = Date.now();
-		expect(changed.ok && changed.value.revocation).toBe("acknowledged");
-		// The browser is told only after the run's local flag is set and the run is stopped.
-		const run = (await w.conversation.getRun(CALLER, runId)) as RunHead;
-		expect(run).toMatchObject({ status: "cancelled", errorMessage: STOPPED_PERMISSIONS });
+		// Laravel is answered only once the run is stopped.
+		expect(await runOf(w, runId)).toMatchObject({ status: "cancelled", errorMessage: STOPPED_PERMISSIONS });
 		await sleep(2000);
 		const requests = (await provider(w)).requests;
 		expect(requests).toHaveLength(1);
 		expect(requests.every((request) => request.at < answered)).toBe(true);
 		// The read's answer came back to a run that had ended: no tool_call event.
 		expect(toolCalls(await eventsOf(w, runId))).toEqual([]);
+		expect((await w.stub.faultRun(runId)).run).toMatchObject({ revoked: 1, error_code: "permissions_changed" });
 	});
 
 	test("a revocation while a write is in flight: it completes, and its call's next request is never sent", async () => {
@@ -267,169 +264,38 @@ describe("start and revocation", () => {
 		// file_note saves, then reads the note back: two requests of one call.
 		const runId = await post(w, [{ tools: [{ name: "notes_file_note", arguments: { folder: "inbox", title: "Filed" } }] }, { text: "Done." }]);
 		await until(() => provider(w), (state) => state.requests.length > 0);
-		const changed = await w.ws.applyGrantChanges(CALLER, w.connectionId, READ_ONLY, {});
+		expect(await cancelOf(w, runId)).toEqual({ state: "cancelled" });
 		const answered = Date.now();
-		expect(changed.ok && changed.value.revocation).toBe("acknowledged");
 		await sleep(2500);
-		// The write was sent before the change and completes ("no further effects", not rollback); the read
+		// The write was sent before the cancel and completes ("no further effects", not rollback); the read
 		// that would follow it is refused before it is sent, though the call goes on to settle its write.
 		const state = await provider(w);
 		expect(state.requests.map((request) => `${request.method} ${request.path}`)).toEqual(["POST /folders/inbox/notes"]);
 		expect(state.requests.every((request) => request.at < answered)).toBe(true);
 		expect(state.notes.map((note) => note.title)).toEqual([...SEEDED, "Filed"]);
-		const internals = await w.conversation.faultRun(runId);
+		const internals = await w.stub.faultRun(runId);
 		expect(internals.writes).toEqual([expect.objectContaining({ status: "succeeded" })]);
 		expect(toolCalls(await eventsOf(w, runId))).toEqual([]);
-	});
-
-	test("the change answers only once the cancel is acknowledged, and the run is stopped by then", async () => {
-		const w = await world({ delays: { "GET /folders/inbox/notes": 4000 }, workspaceFaults: [{ point: "cancel:before", mode: "hold" }] });
-		const runId = await post(w, [LIST_INBOX, { text: "Done." }]);
-		await until(() => provider(w), (state) => state.requests.length > 0);
-		const changing = w.ws.applyGrantChanges(CALLER, w.connectionId, READ_ONLY, {});
-		await reached(() => w.ws.faultFired(), "cancel:before");
-		await sleep(300);
-		// Committed, but the cancel is held on its way: no answer yet, and the run still acts.
-		expect(await settledYet(changing)).toBe(false);
-		expect((await w.conversation.faultRun(runId)).run).toMatchObject({ status: "running", revoked: 0 });
-		await w.ws.faultRelease("cancel:before");
-		const changed = await changing;
-		expect(changed.ok && changed.value.revocation).toBe("acknowledged");
-		expect((await w.conversation.faultRun(runId)).run).toMatchObject({ status: "cancelled", revoked: 1 });
-	});
-
-	test("a crash between storing the run and its activation: the restarted object activates it, attempt 1", async () => {
-		const w = await world({ faults: [{ point: "activate:before", mode: "abort" }] });
-		const runId = await post(w, [{ text: "Done." }]);
-		const run = await settled(w, runId);
-		expect(run.status).toBe("completed");
-		expect(statuses(await eventsOf(w, runId))).toEqual([{ status: "queued" }, { status: "provisioning" }, { status: "running" }, { status: "completed" }]);
-		expect((await w.conversation.faultRun(runId)).attempts).toEqual([{ attempt: 1, ended: "completed" }]);
-	});
-
-	test("a lost activation answer: the watch sends it again, and the Workspace answers the same", async () => {
-		const w = await world({ faults: [{ point: "activate:lost", mode: "lose" }] });
-		const runId = await post(w, [{ text: "Done." }]);
-		await reached(() => w.conversation.faultFired(), "activate:lost");
-		expect(((await w.conversation.getRun(CALLER, runId)) as RunHead).status).toBe("queued");
-		await due(w.conversation, `watch:${runId}`);
-		expect((await settled(w, runId)).status).toBe("completed");
-	});
-
-	test("a crash after the grant commit: the outbox delivers the cancel from the next instance", async () => {
-		const w = await world({ delays: { "GET /folders/inbox/notes": 1000 }, workspaceFaults: [{ point: "cancel:before", mode: "abort" }] });
-		const runId = await post(w, [LIST_INBOX, LIST_INBOX, LIST_INBOX, { text: "Done." }]);
-		await until(() => provider(w), (state) => state.requests.length > 0);
-		await expect(w.ws.applyGrantChanges(CALLER, w.connectionId, READ_ONLY, {})).rejects.toThrow();
-		// The change was saved in the transaction that wrote the cancel.
-		const access = await w.ws.getAccess(CALLER, w.connectionId);
-		expect(access.ok && access.value.grants.map((grant) => grant.actions)).toEqual([["read"]]);
-		await until(async () => {
-			await runDurableObjectAlarm(w.ws).catch(() => false);
-			return (await w.conversation.getRun(CALLER, runId)) as RunHead;
-		}, (run) => run.status === "cancelled");
-		expect(((await w.conversation.getRun(CALLER, runId)) as RunHead).errorMessage).toBe(STOPPED_PERMISSIONS);
-	});
-
-	test("a lost cancel acknowledgement: delivered again within the barrier, and the change answers acknowledged", async () => {
-		const w = await world({ delays: { "GET /folders/inbox/notes": 1000 }, workspaceFaults: [{ point: "cancel:lost", mode: "lose" }] });
-		const runId = await post(w, [LIST_INBOX, { text: "Done." }]);
-		await until(() => provider(w), (state) => state.requests.length > 0);
-		const changed = await w.ws.applyGrantChanges(CALLER, w.connectionId, READ_ONLY, {});
-		expect(changed.ok && changed.value.revocation).toBe("acknowledged");
-		expect((await w.ws.faultFired()).map((entry) => entry.point)).toEqual(["cancel:lost"]);
-		expect(((await w.conversation.getRun(CALLER, runId)) as RunHead)).toMatchObject({ status: "cancelled", errorMessage: STOPPED_PERMISSIONS });
-	});
-
-});
-
-/**
- * A start concurrent with a revocation (ARCHITECTURE.md: Testing), each interleaving forced with a held point: the
- * change lands before beginRun (in the snapshot), between beginRun and the start's transaction (a
- * tombstone, above), between the transaction and activation (the cancel finds the stored run), or while the
- * Workspace's cancel is still on its way (activation answers revoked). None writes under the old grants.
- */
-describe("a start concurrent with a revocation", () => {
-	/** Posts a message whose model writes, and waits until its start is held at `hold`. */
-	async function race(w: World, hold: string) {
-		const posting = w.conversation.postMessage(CALLER, { content: script([save("Raced"), { text: "Done." }]), attachments: [] });
-		await reached(() => w.conversation.faultFired(), hold);
-		// In an object, so the post is not awaited here.
-		return { posting };
-	}
-
-	test("before beginRun: the snapshot has the change, and the write is not offered", async () => {
-		const w = await world({ faults: [{ point: "start:begin", mode: "hold" }] });
-		const { posting } = await race(w, "start:begin");
-		const changed = await w.ws.applyGrantChanges(CALLER, w.connectionId, READ_ONLY, {});
-		expect(changed.ok && changed.value.revocation).toBe("acknowledged");
-		await w.conversation.faultRelease("start:begin");
-		const posted = await posting;
-		if (!posted.ok) throw new Error(posted.refusal.detail);
-		expect((await settled(w, posted.value.run.id)).status).toBe("completed");
-		const internals = await w.conversation.faultRun(posted.value.run.id);
-		expect(internals.tools).toEqual([LIST]);
-		expect(internals.run).toMatchObject({ revoked: 0 });
-		expect((await provider(w)).requests).toEqual([]);
-	});
-
-	test("after the start's transaction, before activation: the cancel stops the stored run", async () => {
-		const w = await world({ faults: [{ point: "activate:before", mode: "hold" }] });
-		const posted = await (await race(w, "activate:before")).posting;
-		if (!posted.ok) throw new Error(posted.refusal.detail);
-		expect(posted.value.run.status).toBe("queued");
-		const changed = await w.ws.applyGrantChanges(CALLER, w.connectionId, READ_ONLY, {});
-		expect(changed.ok && changed.value.revocation).toBe("acknowledged");
-		expect((await w.conversation.faultRun(posted.value.run.id)).run).toMatchObject({ status: "cancelled", revoked: 1, error_code: "permissions_changed" });
-		await w.conversation.faultRelease("activate:before");
-		await sleep(200);
-		expect(statuses(await eventsOf(w, posted.value.run.id))).toEqual([{ status: "queued" }, { status: "cancelled", message: STOPPED_PERMISSIONS }]);
-		expect((await provider(w)).requests).toEqual([]);
-	});
-
-	test("while the cancel is on its way: activation answers revoked, and the run never starts", async () => {
-		const w = await world({ faults: [{ point: "activate:before", mode: "hold" }], workspaceFaults: [{ point: "cancel:before", mode: "hold" }] });
-		const posted = await (await race(w, "activate:before")).posting;
-		if (!posted.ok) throw new Error(posted.refusal.detail);
-		const changing = w.ws.applyGrantChanges(CALLER, w.connectionId, READ_ONLY, {});
-		await reached(() => w.ws.faultFired(), "cancel:before");
-		// The registry has the run revoked; the Conversation has not heard yet, and asks to activate it.
-		await w.conversation.faultRelease("activate:before");
-		const stopped = await until(async () => (await w.conversation.faultRun(posted.value.run.id)).run, (run) => run?.status === "cancelled");
-		expect(stopped).toMatchObject({ revoked: 1, error_code: "permissions_changed", activated: 1 });
-		expect(statuses(await eventsOf(w, posted.value.run.id))).toEqual([{ status: "queued" }, { status: "cancelled", message: STOPPED_PERMISSIONS }]);
-		await w.ws.faultRelease("cancel:before");
-		const changed = await changing;
-		expect(changed.ok && changed.value.revocation).toBe("acknowledged");
-		expect((await provider(w)).requests).toEqual([]);
 	});
 });
 
 describe("starts the store refuses", () => {
 	test("a snapshot past the 2 MB a value may have is kept in parts, and the run starts", async () => {
 		const w = await world();
-		await enforceValueLimit(w.conversation);
-		// Four more Notes connections with 500 grants each (the limit) on ids of 195 code points (the limit is
-		// 200): about 2.5 MB of snapshot, while no API limit is broken.
-		const now = Math.floor(Date.now() / 1000);
-		for (let c = 0; c < 4; c++) {
-			const saved = await w.ws.saveConnection(CALLER, {
-				provider: "notes",
-				account: { id: `notes-account-extra-${c}`, label: `Extra ${c}` },
-				credentials: { kind: "oauth2", access_token: `x-${c}`, refresh_token: `y-${c}`, scopes: ["notes"], expires_at: now + 3600, client_id: NOTES_CLIENT.clientId, token_url: NOTES_TOKEN_URL },
-				connectionId: null,
-			});
-			if (!saved.ok) throw new Error(saved.refusal.detail);
-			for (let batch = 0; batch < 5; batch++) {
-				const changes = Array.from({ length: 100 }, (_, i) => ({ kind: "folder", id: `${"界".repeat(190)}-${batch}-${i}`, actions: ["read", "create"] }));
-				const granted = await w.ws.applyGrantChanges(CALLER, saved.value.id, changes, {});
-				if (!granted.ok) throw new Error(granted.refusal.detail);
+		await enforceValueLimit(w.stub);
+		// Four more Notes connections, another user's (so they offer this run no tools), with 500 grants each on ids and names
+		// of 190 code points (the limits are 500, 200 and 300): about 2.5 MB of snapshot, while no limit of the contract is broken.
+		const extra = Array.from({ length: 4 }, () => ({ ...notesConnection(uuid7()), owner: "7" }));
+		const layers = notesLayers(w.connectionId);
+		for (const [c, connection] of extra.entries()) {
+			for (let i = 0; i < 500; i++) {
+				layers.user?.grants.push({ connection: connection.id, kind: FOLDER, resource: `${"界".repeat(190)}-${c}-${i}`, name: "界".repeat(190), actions: ["read", "create"], effect: "allow" });
 			}
 		}
-		const runId = await post(w, [LIST_INBOX, { text: "Done." }]);
+		const runId = await post(w, [LIST_INBOX, { text: "Done." }], { authority: { connections: [notesConnection(w.connectionId), ...extra], layers } });
 		expect((await settled(w, runId, 20_000)).status).toBe("completed");
 		expect(toolCalls(await eventsOf(w, runId))).toEqual([expect.objectContaining({ tool: LIST, decision: "allowed", count: 2 })]);
-		const stored = await runInDurableObject(w.conversation, (_instance, state) => ({
+		const stored = await runInDurableObject(w.stub, (_instance, state) => ({
 			column: state.storage.sql.exec<{ bytes: number }>("SELECT length(CAST(snapshot AS BLOB)) AS bytes FROM runs WHERE id = ?", runId).one().bytes,
 			parts: state.storage.sql.exec<{ bytes: number }>("SELECT length(CAST(text AS BLOB)) AS bytes FROM run_snapshots WHERE run_id = ? ORDER BY part", runId).toArray().map((row) => row.bytes),
 		}));
@@ -439,73 +305,31 @@ describe("starts the store refuses", () => {
 		expect(Math.max(...stored.parts)).toBeLessThan(2 * 1024 * 1024);
 	}, 120_000);
 
-	test("a start whose transaction is refused answers 503, leaves nothing behind and releases its registration", async () => {
+	test("a start whose transaction the store refuses is an error, not a refusal: only its preparation is kept, and sent again once the store takes it, it runs", async () => {
 		const w = await world();
-		const reserved = await w.ws.reserveUpload(CALLER, { name: "a.txt", size: 10 });
-		if (!reserved.ok) throw new Error(reserved.refusal.detail);
-		const completed = await w.ws.completeUpload(CALLER, reserved.value.id, { sha256: "a".repeat(64) as never, size: 10, mediaType: "text/plain" });
-		if (!completed.ok) throw new Error(completed.refusal.detail);
 		// Every run row is refused, as the platform refuses one over 2 MB, every time the start is sent.
-		await runInDurableObject(w.conversation, (_instance, state) => {
+		await runInDurableObject(w.stub, (_instance, state) => {
 			state.storage.sql.exec("CREATE TRIGGER refuse_runs BEFORE INSERT ON runs BEGIN SELECT RAISE(ABORT, 'string or blob too big'); END");
 		});
-		// The refused start here is one without attachments.
-		const first = await w.conversation.postMessage(CALLER, { content: script([{ text: "Hi." }]), attachments: [] });
-		expect(first).toEqual({ ok: false, refusal: { code: "START_FAILED", detail: START_FAILED } });
-		const inside = await runInDurableObject(w.conversation, (_instance, state) => ({
-			starts: state.storage.sql.exec("SELECT run_id FROM starts").toArray().length,
+		const start = startIn(w, script([{ text: "Hi." }]));
+		// A stored refusal would be final (docs/plans/start-and-cancel.md, Errors are not refusals): Laravel sends it again.
+		expect((await refusalOf(commands.startRun(start))).status).toBeGreaterThanOrEqual(500);
+		expect((await refusalOf(commands.startRun(start))).status).toBeGreaterThanOrEqual(500);
+		const inside = await runInDurableObject(w.stub, (_instance, state) => ({
+			prepared: state.storage.sql.exec("SELECT DISTINCT run_id FROM internal_starts").toArray(),
+			answers: state.storage.sql.exec("SELECT run_id FROM internal_answers").toArray().length,
 			runs: state.storage.sql.exec("SELECT id FROM runs").toArray().length,
+			events: state.storage.sql.exec("SELECT seq FROM run_events").toArray().length,
 		}));
-		expect(inside).toEqual({ starts: 0, runs: 0 });
-		// The Workspace hears it: the registration ends, so no reservation is held for ten minutes.
-		const registry = await until(
-			() => runInDurableObject(w.ws, (_instance, state) => state.storage.sql.exec<{ state: string; end_status: string | null }>("SELECT state, end_status FROM runs").toArray()),
-			(rows) => rows.length === 1 && rows[0]?.state === "ended",
-		);
-		expect(registry).toEqual([{ state: "ended", end_status: "refused" }]);
-		// The conversation is not held busy: the next message is refused the same way, then accepted.
-		expect(await w.conversation.postMessage(CALLER, { content: script([{ text: "Again." }]), attachments: [] })).toEqual(first);
-		await runInDurableObject(w.conversation, (_instance, state) => {
+		expect(inside).toEqual({ prepared: [{ run_id: start.run }], answers: 0, runs: 0, events: 0 });
+		// The start Laravel still holds keeps the conversation for its run.
+		expect(await commands.startRun(startIn(w, script([{ text: "Other." }])))).toEqual({ outcome: "refused", code: "CONVERSATION_BUSY", message: BUSY_MESSAGE });
+		await runInDurableObject(w.stub, (_instance, state) => {
 			state.storage.sql.exec("DROP TRIGGER refuse_runs");
 		});
-		const runId = await post(w, [{ text: "Accepted." }]);
-		expect((await settled(w, runId)).status).toBe("completed");
-	});
-
-	test("a resumed start refused as revoked releases its registration and its uploads", async () => {
-		const w = await world({ faults: [{ point: "start:copy", mode: "hold" }] });
-		const reserved = await w.ws.reserveUpload(CALLER, { name: "a.txt", size: 10 });
-		if (!reserved.ok) throw new Error(reserved.refusal.detail);
-		const completed = await w.ws.completeUpload(CALLER, reserved.value.id, { sha256: "a".repeat(64) as never, size: 10, mediaType: "text/plain" });
-		if (!completed.ok) throw new Error(completed.refusal.detail);
-		const posting = w.conversation.postMessage(CALLER, { content: "With a file.", attachments: [reserved.value.id] }).catch(() => null);
-		await reached(() => w.conversation.faultFired(), "start:copy");
-		const changed = await w.ws.applyGrantChanges(CALLER, w.connectionId, READ_ONLY, {});
-		expect(changed.ok && changed.value.revocation).toBe("acknowledged");
-		// The Conversation dies while its start waits between beginRun and the transaction; its next instance
-		// sends beginRun again, which the Workspace refuses, as it revoked the run meanwhile.
-		await abortAllDurableObjects();
-		await posting;
-		await until(
-			async () => {
-				await w.conversation.getConversation(CALLER);
-				return runInDurableObject(w.conversation, (_instance, state) => state.storage.sql.exec("SELECT run_id FROM starts").toArray().length);
-			},
-			(count) => count === 0,
-		);
-		const registry = await until(
-			() =>
-				runInDurableObject(w.ws, (_instance, state) => ({
-					runs: state.storage.sql.exec<{ state: string; revoked: string | null }>("SELECT state, revoked FROM runs").toArray(),
-					uploads: state.storage.sql.exec<{ run_id: string | null }>("SELECT run_id FROM uploads WHERE id = ?", reserved.value.id).toArray(),
-				})),
-			(state) => state.runs[0]?.state === "ended",
-		);
-		expect(registry).toEqual({ runs: [{ state: "ended", revoked: "permissions_changed" }], uploads: [{ run_id: null }] });
-		expect((await w.conversation.getConversation(CALLER))?.runs).toEqual([]);
-		// The file can be attached again at once, not only after the ten-minute expiry.
-		const again = await w.ws.beginRun({ runId: uuid7(), conversationId: w.conversationId, userId: USER, agentId: w.agentId, uploadIds: [reserved.value.id], folder: { bytes: 0, entries: 0 } });
-		expect(again.ok).toBe(true);
+		expect(await commands.startRun(start)).toMatchObject({ outcome: "accepted" });
+		expect((await settled(w, start.run)).status).toBe("completed");
+		expect(statuses(await eventsOf(w, start.run))).toEqual([{ status: "queued" }, { status: "provisioning" }, { status: "running" }, { status: "completed" }]);
 	});
 });
 
@@ -535,7 +359,7 @@ describe("attempts", () => {
 		const events = await eventsOf(w, runId);
 		expect(restarts(events)).toEqual([2]);
 		expect(reads((await provider(w)).requests)).toBe(2);
-		const internals = await w.conversation.faultRun(runId);
+		const internals = await w.stub.faultRun(runId);
 		expect(internals.executions).toEqual([{ call_id: expect.any(String), executions: 2 }]);
 		expect(internals.attempts).toEqual([
 			{ attempt: 1, ended: "restarted" },
@@ -561,7 +385,7 @@ describe("attempts", () => {
 		expect(calls).toEqual([expect.objectContaining({ tool: SAVE, decision: "allowed" }), expect.objectContaining({ tool: SAVE, decision: "allowed", repeat: true })]);
 		expect(calls[0]).not.toHaveProperty("repeat");
 		expect((calls[1] as { write?: string }).write).toBe((calls[0] as { write?: string }).write);
-		expect((await w.conversation.faultRun(runId)).writes).toEqual([expect.objectContaining({ status: "succeeded", attempt: 1 })]);
+		expect((await w.stub.faultRun(runId)).writes).toEqual([expect.objectContaining({ status: "succeeded", attempt: 1 })]);
 	});
 
 	test("a crash during the model stream: the next attempt asks the model again", async () => {
@@ -575,7 +399,7 @@ describe("attempts", () => {
 		// The message names the call that wrote it: the new attempt's, which streamed last.
 		const last = events.findLast((event) => event.type === "text_delta");
 		expect(last?.data).toMatchObject({ text: expect.any(String), call: expect.stringMatching(/^[0-9a-f]{8}$/) });
-		expect(events.at(-2)?.data).toMatchObject({ call: last?.data.call });
+		expect(events.at(-2)?.data).toMatchObject({ call: (last?.data as { call?: string } | undefined)?.call });
 	});
 
 	test("resets until the cap: the third attempt's death ends the run as worker_exited, and pi runs nothing after", async () => {
@@ -585,13 +409,13 @@ describe("attempts", () => {
 		expect(run).toMatchObject({ status: "failed", errorMessage: "The worker stopped unexpectedly." });
 		const events = await eventsOf(w, runId);
 		expect(restarts(events)).toEqual([2, 3]);
-		expect((await w.conversation.faultRun(runId)).run).toMatchObject({ attempt: 3, error_code: "worker_exited" });
+		expect((await w.stub.faultRun(runId)).run).toMatchObject({ attempt: 3, error_code: "worker_exited" });
 		await sleep(500);
-		await w.conversation.getRun(CALLER, runId);
+		await wake(w);
 		expect(reads((await provider(w)).requests)).toBe(3);
 		// The gate stopped pi's live task before pi resumed: one model call (attempt 1's) and one execution of
 		// the read per attempt, none after the decision, not even one the refusals would answer.
-		expect((await w.conversation.faultRun(runId)).entered).toEqual({ model: 1, tool: 3 });
+		expect((await w.stub.faultRun(runId)).entered).toEqual({ model: 1, tool: 3 });
 	});
 
 	test("a crash right after the gate, every time and with nothing synced, still advances the attempts to the cap", async () => {
@@ -602,7 +426,7 @@ describe("attempts", () => {
 		const run = await settled(w, runId, 20_000);
 		expect(run).toMatchObject({ status: "failed", errorMessage: "The worker stopped unexpectedly." });
 		expect(restarts(await eventsOf(w, runId))).toEqual([2, 3]);
-		expect((await w.conversation.faultRun(runId)).run).toMatchObject({ attempt: 3, error_code: "worker_exited" });
+		expect((await w.stub.faultRun(runId)).run).toMatchObject({ attempt: 3, error_code: "worker_exited" });
 		// Only attempt 1 reached the tool: attempts 2 and 3 died before pi resumed.
 		expect(reads((await provider(w)).requests)).toBe(1);
 	});
@@ -612,9 +436,9 @@ describe("attempts", () => {
 		const runId = await post(w, [LIST_INBOX, { text: "Two notes." }]);
 		const run = await settled(w, runId);
 		expect(run.status).toBe("completed");
-		expect(await times(() => w.conversation.faultFired(), "gate:decided")).toBe(1);
+		expect(await times(() => w.stub.faultFired(), "gate:decided")).toBe(1);
 		expect(restarts(await eventsOf(w, runId))).toEqual([2]);
-		expect((await w.conversation.faultRun(runId)).attempts).toEqual([
+		expect((await w.stub.faultRun(runId)).attempts).toEqual([
 			{ attempt: 1, ended: "restarted" },
 			{ attempt: 2, ended: "completed" },
 		]);
@@ -622,28 +446,32 @@ describe("attempts", () => {
 	});
 
 	test("a run whose deadline passed while the object was away ends timed_out at the gate, with no new attempt", async () => {
-		const w = await world({ faults: [{ point: "tool:before", mode: "hold", tool: LIST }, { point: "tool:after", mode: "abort", tool: LIST }] });
-		await w.ws.faultPlan([], { runTimeoutMs: 3000 });
+		const w = await world({ faults: [{ point: "tool:before", mode: "hold", tool: LIST }, { point: "gate:decided", mode: "note" }], runTimeoutMs: 3000 });
 		const runId = await post(w, [LIST_INBOX, { text: "Never." }]);
-		await reached(() => w.conversation.faultFired(), "tool:before");
+		await reached(() => w.stub.faultFired(), "tool:before");
 		// pi's wake job runs in an alarm, and the platform retries an alarm whose invocation a reset cut before it re-armed,
-		// about 2 s later: that would wake the object before its deadline, and its gate would end the run as worker_exited.
-		// The reset comes once the alarm waits for the deadline, the first job due, so nothing wakes the object before it.
+		// about 2 s later; a fact the run writes makes the alarm due at once, for its delivery. Either would wake the object
+		// before its deadline, and its gate would end the run as worker_exited. The reset comes while the read is held, before
+		// it records anything, once the alarm waits for the deadline, the first job due, so nothing wakes the object before it.
 		const alarm = () =>
-			runInDurableObject(w.conversation, async (_instance, state) => ({
+			runInDurableObject(w.stub, async (_instance, state) => ({
 				deadline: state.storage.sql.exec<{ deadline: number }>("SELECT deadline FROM runs WHERE id = ?", runId).one().deadline,
 				alarm: await state.storage.getAlarm(),
 			}));
 		const { deadline } = await until(alarm, (now) => now.alarm === now.deadline);
-		await w.conversation.faultRelease("tool:before");
+		await abortAllDurableObjects();
 		// No call to the conversation until then: it would wake it before its deadline.
 		await sleep(Math.max(0, deadline + 1000 - Date.now()));
 		const run = await settled(w, runId);
 		expect(run).toMatchObject({ status: "timed_out", errorMessage: "The run took too long." });
 		expect(restarts(await eventsOf(w, runId))).toEqual([]);
-		const internals = await w.conversation.faultRun(runId);
+		const internals = await w.stub.faultRun(runId);
 		expect(internals.run).toMatchObject({ attempt: 1, error_code: "timed_out" });
 		expect(internals.attempts).toEqual([{ attempt: 1, ended: "failed" }]);
+		// The gate decided it, before pi resumed: attempt 1's model call and its held read, and nothing after.
+		expect((await w.stub.faultFired()).filter((entry) => entry.point === "gate:decided").map((entry) => entry.detail)).toEqual(["timed_out"]);
+		expect(internals.entered).toEqual({ model: 1, tool: 1 });
+		expect(reads((await provider(w)).requests)).toBe(0);
 	});
 
 	test("an eviction between turns is no restart", async () => {
@@ -654,31 +482,32 @@ describe("attempts", () => {
 		const second = await post(w, [LIST_INBOX, { text: "Two." }]);
 		expect((await settled(w, second)).status).toBe("completed");
 		expect(restarts(await eventsOf(w, second))).toEqual([]);
-		expect((await w.conversation.faultRun(second)).attempts).toEqual([{ attempt: 1, ended: "completed" }]);
+		expect(toolCalls(await eventsOf(w, second))).toEqual([expect.objectContaining({ tool: LIST, decision: "allowed" })]);
+		expect((await w.stub.faultRun(second)).attempts).toEqual([{ attempt: 1, ended: "completed" }]);
 	});
 
 	test("a late call from a replaced attempt is refused by the object's own ports: its write, its count, its lease and its appends", async () => {
-		const w = await world({ faults: [{ point: "tool:after", mode: "abort", tool: LIST }, { point: "lease:before", mode: "note", times: 100 }] });
+		const w = await world({ faults: [{ point: "tool:after", mode: "abort", tool: LIST }] });
 		const runId = await post(w, [LIST_INBOX, { text: "Done." }]);
 		expect((await settled(w, runId)).status).toBe("completed");
-		const asked = await times(() => w.conversation.faultFired(), "lease:before");
+		const asked = leases(runId);
 		const set = (status: string) =>
-			runInDurableObject(w.conversation, (_instance, state) => {
+			runInDurableObject(w.stub, (_instance, state) => {
 				state.storage.sql.exec("UPDATE runs SET status = ? WHERE id = ?", status, runId);
 			});
 		// As the run was while attempt 2 acted, the attempt that died calls in late, through the RunStatePort and
 		// CredentialPort this object built for the run's executor.
 		await set("running");
 		try {
-			const late = await w.conversation.faultLateCall(runId, 1, w.connectionId);
+			const late = await w.stub.faultLateCall(runId, 1, w.connectionId);
 			expect(late).toEqual({
 				dispatch: { kind: "refused", code: "RUN_ENDED", message: "This run is no longer active." },
 				counted: false,
 				lease: { refused: "RUN_ENDED", message: "This run is no longer active." },
 			});
-			// Refused here: the Workspace, which knows runs but not attempts, was not even asked.
-			expect(await times(() => w.conversation.faultFired(), "lease:before")).toBe(asked);
-			await runInDurableObject(w.conversation, async (_instance, state) => {
+			// Refused here: Laravel, which knows runs but not which attempt is current, was not even asked.
+			expect(leases(runId)).toBe(asked);
+			await runInDurableObject(w.stub, async (_instance, state) => {
 				const { RunStore } = await import("../../src/conversation/store.ts");
 				const store = new RunStore(state.storage);
 				expect(store.isCurrent({ runId, attempt: 2 })).toBe(true);
@@ -687,27 +516,28 @@ describe("attempts", () => {
 		} finally {
 			await set("completed");
 		}
-		expect((await w.conversation.faultRun(runId)).run).toMatchObject({ tool_calls: 2 });
+		expect((await w.stub.faultRun(runId)).run).toMatchObject({ tool_calls: 2 });
 	});
 
-	test("an attempt replaced while its lease was being given gets no lease: the Workspace knows runs, not attempts", async () => {
-		// The run's own read takes the first lease; the hold catches the next one, the test's.
-		const w = await world({ delays: { "GET /folders/inbox/notes": 3000 }, faults: [{ point: "lease:before", mode: "note" }, { point: "lease:before", mode: "hold" }] });
+	test("an attempt replaced while its lease was being given gets no lease: Laravel knows runs, not attempts", async () => {
+		const w = await world({ delays: { "GET /folders/inbox/notes": 3000 } });
 		const runId = await post(w, [LIST_INBOX, { text: "Done." }]);
+		// The run's own read has its lease once the provider has its request; Laravel holds the next one, the test's.
 		await until(() => provider(w), (state) => state.requests.length > 0);
-		const leasing = w.conversation.faultLease(runId, 1, w.connectionId);
-		await until(() => w.conversation.faultFired(), (fired) => fired.filter((entry) => entry.point === "lease:before").length === 2);
+		const release = fake.holdLeases(runId);
+		const leasing = w.stub.faultLease(runId, 1, w.connectionId);
+		await until(async () => leases(runId), (n) => n === 2);
 		const attempt = (value: number) =>
-			runInDurableObject(w.conversation, (_instance, state) => {
+			runInDurableObject(w.stub, (_instance, state) => {
 				state.storage.sql.exec("UPDATE runs SET attempt = ? WHERE id = ?", value, runId);
 			});
-		// Attempt 2 takes over while the Workspace is asked; the Workspace still lends to the run.
+		// Attempt 2 takes over while Laravel is asked; Laravel still lends to the run.
 		await attempt(2);
-		await w.conversation.faultRelease("lease:before");
+		release();
 		const lease = await leasing;
 		await attempt(1);
 		expect(lease).toEqual({ refused: "RUN_ENDED", message: "This run is no longer active." });
-		expect(await w.conversation.faultLease(runId, 1, w.connectionId)).toMatchObject({ connectionId: w.connectionId });
+		expect(await w.stub.faultLease(runId, 1, w.connectionId)).toMatchObject({ connectionId: w.connectionId });
 		expect((await settled(w, runId)).status).toBe("completed");
 	});
 });
@@ -723,7 +553,7 @@ describe("writes", () => {
 			expect.objectContaining({ decision: "denied", code: "WRITE_UNCERTAIN", message: "This write has an unknown outcome. Check the provider before retrying." }),
 		]);
 		expect((await provider(w)).notes.map((note) => note.title)).toEqual([...SEEDED, "First"]);
-		const internals = await w.conversation.faultRun(runId);
+		const internals = await w.stub.faultRun(runId);
 		expect(internals.writes).toEqual([expect.objectContaining({ status: "uncertain" })]);
 		expect(internals.run).toMatchObject({ writes_uncertain: 1 });
 	});
@@ -736,7 +566,7 @@ describe("writes", () => {
 		expect(restarts(events)).toEqual([2]);
 		expect(toolCalls(events)).toEqual([expect.objectContaining({ decision: "denied", code: "WRITE_UNCERTAIN", message: "This write has an unknown outcome. Check the provider before retrying." })]);
 		expect((await provider(w)).requests.filter((request) => request.method === "POST")).toEqual([]);
-		expect((await w.conversation.faultRun(runId)).writes).toEqual([expect.objectContaining({ status: "uncertain", attempt: 1 })]);
+		expect((await w.stub.faultRun(runId)).writes).toEqual([expect.objectContaining({ status: "uncertain", attempt: 1 })]);
 	});
 
 	test("a crash while dispatched, after the provider applied it: uncertain at the gate, and the retry under a new call id is refused", async () => {
@@ -747,81 +577,23 @@ describe("writes", () => {
 		expect(restarts(events)).toEqual([2]);
 		expect(toolCalls(events)).toEqual([expect.objectContaining({ decision: "denied", code: "WRITE_UNCERTAIN" })]);
 		expect((await provider(w)).notes.map((note) => note.title)).toEqual([...SEEDED, "Applied once"]);
-		expect((await w.conversation.faultRun(runId)).run).toMatchObject({ writes_uncertain: 1 });
+		expect((await w.stub.faultRun(runId)).run).toMatchObject({ writes_uncertain: 1 });
 	});
 
 	test("a write with under 2 s to the run's deadline is not sent, and the run times out", async () => {
-		const w = await world();
-		await w.ws.faultPlan([], { runTimeoutMs: 4000 });
+		const w = await world({ runTimeoutMs: 4000 });
 		// The tool call's arguments stream slowly, so the write is asked for about 3 s into the run, and the
 		// answer after it streams past the deadline.
 		const turns = [save("Too late"), { text: "An answer that keeps streaming until well after the run's deadline has passed." }];
-		const content = JSON.stringify({ fake: { turns, chunkChars: 4, delayMs: 300 } });
-		const outcome = await w.conversation.postMessage(CALLER, { content, attachments: [] });
-		if (!outcome.ok) throw new Error(outcome.refusal.detail);
-		const runId = outcome.value.run.id;
-		const run = await settled(w, runId, 15_000);
+		const start = startIn(w, script(turns, { chunkChars: 4, delayMs: 300 }));
+		expect(await commands.startRun(start)).toMatchObject({ outcome: "accepted" });
+		const run = await settled(w, start.run, 15_000);
 		expect(run).toMatchObject({ status: "timed_out", errorMessage: "The run took too long." });
-		expect(toolCalls(await eventsOf(w, runId))).toEqual([
+		expect(toolCalls(await eventsOf(w, start.run))).toEqual([
 			expect.objectContaining({ decision: "error", code: "TIMED_OUT", message: "The write was not sent because its time ran out." }),
 		]);
 		expect((await provider(w)).requests.filter((request) => request.method === "POST")).toEqual([]);
 		// Not sent, so not applied: forgotten.
-		expect((await w.conversation.faultRun(runId)).writes).toEqual([]);
-	});
-});
-
-describe("refresh", () => {
-	test("a crash during a rotating refresh: one refresh with the stored token after the restart, refused, so Needs reconnecting", async () => {
-		const w = await world({ expired: true, workspaceFaults: [{ point: "refresh:answered", mode: "abort" }] });
-		const runId = await post(w, [LIST_INBOX, LIST_INBOX, { text: "Done." }]);
-		expect((await settled(w, runId)).status).toBe("completed");
-		expect(toolCalls(await eventsOf(w, runId))).toEqual([
-			expect.objectContaining({ decision: "error", code: "FAILED" }),
-			expect.objectContaining({ decision: "error", code: "CONNECTION_UNAUTHORIZED", message: "The connection expired. Reconnect it in Minerva." }),
-		]);
-		const state = await provider(w);
-		expect(state.requests.filter((request) => request.path === "/token").map((request) => request.status)).toEqual([200, 400]);
-		expect(state.rotations).toBe(1);
-		// No read used the connection while its refresh was uncertain.
-		expect(reads(state.requests)).toBe(0);
-		expect(await w.ws.faultConnection(w.connectionId)).toMatchObject({ status: "error", refresh_state: "fresh" });
-	});
-
-	test("a crash before the provider heard: the stored token still works, once", async () => {
-		const w = await world({ expired: true, workspaceFaults: [{ point: "refresh:before", mode: "abort" }] });
-		const runId = await post(w, [LIST_INBOX, LIST_INBOX, { text: "Done." }]);
-		expect((await settled(w, runId)).status).toBe("completed");
-		expect(toolCalls(await eventsOf(w, runId)).map((call) => call.decision)).toEqual(["error", "allowed"]);
-		const state = await provider(w);
-		expect(state.requests.filter((request) => request.path === "/token").map((request) => request.status)).toEqual([200]);
-		expect(state.requests.find((request) => request.method === "GET")?.token).toBe("notes-access-1");
-		expect(await w.ws.faultConnection(w.connectionId)).toMatchObject({ status: "active", generation: 2, refresh_state: "fresh" });
-	});
-
-	test("a reconnect during a refresh: it waits for the refresh in flight, then its credentials replace the refreshed ones", async () => {
-		const w = await world({ expired: true, workspaceFaults: [{ point: "refresh:answered", mode: "hold" }] });
-		const runId = await post(w, [LIST_INBOX, { text: "Done." }]);
-		await reached(() => w.ws.faultFired(), "refresh:answered");
-		await providerOf(env, w.ref.id).issue("reconnected-access", "reconnected-refresh");
-		const now = Math.floor(Date.now() / 1000);
-		const reconnecting = w.ws.saveConnection(CALLER, {
-			provider: "notes",
-			account: { id: "notes-account-1", label: "Notes account" },
-			credentials: { kind: "oauth2", access_token: "reconnected-access", refresh_token: "reconnected-refresh", scopes: ["notes"], expires_at: now + 3600, client_id: "notes-client" },
-			connectionId: w.connectionId,
-		});
-		await sleep(200);
-		await w.ws.faultRelease("refresh:answered");
-		expect((await reconnecting).ok).toBe(true);
-		expect((await settled(w, runId)).status).toBe("completed");
-		expect(toolCalls(await eventsOf(w, runId)).map((call) => call.decision)).toEqual(["allowed"]);
-		// The refresh stored generation 2, then the reconnect generation 3, whose tokens are lent from now on.
-		expect(await w.ws.faultConnection(w.connectionId)).toMatchObject({ status: "active", generation: 3, refresh_state: "fresh" });
-		const lease = await w.ws.lease(w.connectionId, { settings: CALLER });
-		if ("refused" in lease) throw new Error(lease.message);
-		const keys = await EncryptionKeys.parse(env.MINERVA_ENCRYPTION_KEYS);
-		expect(await keys.decrypt(credentialBinding(w.ref.id, w.connectionId), lease.sealed)).toMatchObject({ access_token: "reconnected-access", refresh_token: "reconnected-refresh" });
-		expect((await provider(w)).requests.filter((request) => request.path === "/token")).toHaveLength(1);
+		expect((await w.stub.faultRun(start.run)).writes).toEqual([]);
 	});
 });
