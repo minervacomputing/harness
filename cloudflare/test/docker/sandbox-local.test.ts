@@ -394,6 +394,23 @@ describe.skipIf(!READY)("strays and limits", () => {
 	});
 });
 
+describe.skipIf(!READY)("a sandbox in a container started as workerd starts one locally", () => {
+	// workerd gives the container SYS_ADMIN but its own cgroup namespace, mounted read-only, whose root holds
+	// the container's processes: the hardening has to make room for the agent cgroup itself.
+	test("hardening and verification hold the cgroup's limits", async () => {
+		const made = track(rig("workerd"));
+		const fence = await ready(made);
+		expect(made.core.status().state).toBe("verified");
+		expect(made.container.shell(`cat ${made.container.cgroup}/pids.max ${made.container.cgroup}/memory.max`).stdout.split("\n")).toEqual([
+			"256",
+			String(1024 * MiB + 8 * MiB + 256 * MiB),
+			"",
+		]);
+		const ran = await run(made.core, fence, "cat /proc/self/cgroup");
+		expect(ran.stdout).toBe("0::/agent\n");
+	}, 120_000);
+});
+
 describe.skipIf(!READY)("the Sandbox's fault rows", () => {
 	/** A container whose hardening script fails at `step`, as if that step's command had. */
 	function failingAt(container: DockerContainer, step: string): ContainerPort {

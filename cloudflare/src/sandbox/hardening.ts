@@ -50,6 +50,19 @@ const HARDEN = [
 	"step home_dirs",
 	'install -d -o "$uid" -g "$gid" -m 0755 "$home" "$mpl"',
 	"step cgroup",
+	// On the platform the parent is the VM's root cgroup. In a local container (workerd's, under Docker) it is
+	// the container's own cgroup, mounted read-only and holding its processes, which cgroup v2 forbids from
+	// giving children controllers: remount it, move its processes to a leaf, then enable pids and memory.
+	'parent="${cgroup%/*}"',
+	'[ -w "$parent/cgroup.procs" ] || mount -o remount,rw "$parent"',
+	'if ! echo "+pids +memory" > "$parent/cgroup.subtree_control" 2>/dev/null; then',
+	'  mkdir -p "$parent/init"',
+	"  for attempt in 1 2 3 4 5; do",
+	'    while read -r pid; do echo "$pid" > "$parent/init/cgroup.procs" 2>/dev/null || true; done < "$parent/cgroup.procs"',
+	'    echo "+pids +memory" > "$parent/cgroup.subtree_control" 2>/dev/null && break',
+	"  done",
+	'  echo "+pids +memory" > "$parent/cgroup.subtree_control"',
+	"fi",
 	'mkdir "$cgroup"',
 	'echo "$pids" > "$cgroup/pids.max"',
 	'echo "$memory" > "$cgroup/memory.max"',

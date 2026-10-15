@@ -5,9 +5,10 @@
 // user, session leaders with no parent, have only the environment they are given, and an aborted exec kills
 // its process (exit 137).
 //
-// The container is privileged (the hardening mounts and remounts) and shares the Docker host's cgroup tree,
-// since Docker's own cgroup cannot hold a child with controllers while its processes live in it; the agent
-// cgroup is a unique one under the host's root and is removed when the container is.
+// By default the container is privileged (the hardening mounts and remounts) and shares the Docker host's
+// cgroup tree, so the agent cgroup is a unique one under the host's root, removed when the container is.
+// `runtime: "workerd"` starts it instead as the offline dev server's workerd does: SYS_ADMIN, /dev/fuse and
+// AppArmor unconfined, in its own read-only cgroup namespace, with the agent cgroup at its usual path.
 //
 // Node's modules come through `process.getBuiltinModule`: the unit tests are type-checked with the Worker's
 // runtime types, which lack Node's.
@@ -16,7 +17,7 @@ import { LOCAL_SANDBOX_IMAGE } from "../../scripts/instance.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { migrate, type Sql, sqliteSql } from "../../src/lib/sql.ts";
 import type { ExecRequest } from "../../src/sandbox/commands.ts";
-import { commandEnvironment, sandboxSpec, type SandboxSpec, WORKSPACE } from "../../src/sandbox/constants.ts";
+import { AGENT_CGROUP, commandEnvironment, sandboxSpec, type SandboxSpec, WORKSPACE } from "../../src/sandbox/constants.ts";
 import { SandboxCore, type SandboxFence } from "../../src/sandbox/core.ts";
 import type { Delivered } from "../../src/sandbox/output.ts";
 import { type BucketPort, CHECK_MISMATCH, type ContainerPort, type SandboxPorts } from "../../src/sandbox/ports.ts";
@@ -113,22 +114,31 @@ export function dockerReady(image = LOCAL_IMAGE): boolean {
 
 let counter = 0;
 
+/** How `docker run` starts the container: as the Docker tests always have, or as workerd does locally. */
+export type DockerRuntime = "privileged" | "workerd";
+const RUN_FLAGS: Record<DockerRuntime, string[]> = {
+	privileged: ["--privileged", "--cgroupns=host"],
+	workerd: ["--cap-add", "SYS_ADMIN", "--device", "/dev/fuse", "--security-opt", "apparmor:unconfined", "--cgroupns=private"],
+};
+
 export class DockerContainer implements ContainerPort {
 	readonly name: string;
 	/** The agent cgroup, under the Docker host's root. */
 	readonly cgroup: string;
 	readonly #image: string;
+	readonly #runtime: DockerRuntime;
 	#running = false;
 	#execs = 0;
 	/** Set to make the next destroys fail, as a lost `destroy()` would. */
 	failDestroys = 0;
 	readonly started: { labels: { [name: string]: string } }[] = [];
 
-	constructor(image = LOCAL_IMAGE) {
+	constructor(image = LOCAL_IMAGE, runtime: DockerRuntime = "privileged") {
 		const id = `${Date.now().toString(36)}${(++counter).toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
 		this.name = `minerva-sbx-test-${id}`;
-		this.cgroup = `/sys/fs/cgroup/minerva-sbx-test-${id}`;
+		this.cgroup = runtime === "workerd" ? AGENT_CGROUP : `/sys/fs/cgroup/minerva-sbx-test-${id}`;
 		this.#image = image;
+		this.#runtime = runtime;
 	}
 
 	get running(): boolean {
@@ -138,7 +148,7 @@ export class DockerContainer implements ContainerPort {
 	start(options: { enableInternet: false; instance: "standard-1"; labels: { [name: string]: string } }): void {
 		this.started.push({ labels: options.labels });
 		docker(["rm", "-f", this.name]);
-		const result = docker(["run", "-d", "--name", this.name, "--privileged", "--cgroupns=host", "--network", "none", this.#image]);
+		const result = docker(["run", "-d", "--name", this.name, ...RUN_FLAGS[this.#runtime], "--network", "none", this.#image]);
 		if (result.status !== 0) throw new Error(`docker run failed: ${decoder.decode(result.stderr)}`);
 		this.#running = true;
 	}
@@ -305,10 +315,10 @@ export interface Rig {
 	ports(container?: ContainerPort): SandboxPorts;
 }
 
-export function rig(): Rig {
+export function rig(runtime: DockerRuntime = "privileged"): Rig {
 	const sql = sqliteSql(openDatabase());
 	migrate(sql, SANDBOX_MIGRATIONS, Date.now());
-	const container = new DockerContainer();
+	const container = new DockerContainer(LOCAL_IMAGE, runtime);
 	const bucket = new MemoryBucket();
 	const logs: string[] = [];
 	const ports = (port: ContainerPort = container): SandboxPorts => ({

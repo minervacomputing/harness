@@ -1,12 +1,12 @@
 // Drives one journey through the engine's own frontend in headless Chrome, as a seeded user, and keeps the
-// evidence (screenshots, a log, downloaded files) in .verify/<time>-<journey>/ at the repository's root.
+// evidence (screenshots and a log) in .verify/<time>-<journey>/ at the repository's root.
 //
 //   node .claude/skills/verify/scripts/journey.ts <journey> [origin]
 //
 // Journeys: signin, agent, chat, files. The origin defaults to http://localhost:5173 (the frontend's dev server).
 // Exits 0 when the journey's end state was observed, 1 otherwise; the last log line says which.
 
-import { mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -152,16 +152,17 @@ const steps: Record<Journey, (page: Page, workspaceId: string) => Promise<void>>
 		log(`run ${run.id} ${run.status} ${run.errorMessage}`);
 		await shot(page, "turn");
 		if (run.status !== "completed") throw new Error(`The run ended ${run.status}`);
+		await page.getByText(/^printf .written by verify/).first().click();
+		await page.getByText(content, { exact: true }).first().waitFor();
+		log(`the tool's output shows: ${content}`);
+		const bytes = new TextEncoder().encode(`${content}\n`).length;
 		await page.getByRole("button", { name: "Files", exact: true }).click();
-		const link = page.getByRole("link", { name: /^verify\.txt \d+ B$/ });
-		await link.waitFor();
+		const panel = page.getByRole("complementary", { name: "Files" });
+		await panel.getByText("verify.txt", { exact: true }).waitFor();
+		await panel.getByText(`${bytes} B`, { exact: true }).waitFor();
 		await shot(page, "files-panel");
-		const [download] = await Promise.all([page.waitForEvent("download"), link.click()]);
-		const saved = join(evidence, "verify.txt");
-		await download.saveAs(saved);
-		const body = readFileSync(saved, "utf8");
-		log(`downloaded verify.txt: ${JSON.stringify(body)}`);
-		if (body !== `${content}\n`) throw new Error("The downloaded file is not what the turn wrote");
+		log(`the Files panel lists verify.txt at ${bytes} B, the bytes the turn wrote`);
+		// The download origin (files-worker/) does not run offline, so the link is not followed here.
 	},
 };
 
