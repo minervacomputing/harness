@@ -45,7 +45,7 @@ The instance's directory exists only in GitHub's secrets, which cannot be read b
    cf r2 buckets create --name minerva-cf-ci-files-eu --cf-r2-jurisdiction eu
    cf r2 buckets lifecycle update minerva-cf-ci-files --rules @r2-lifecycle.json --force
    cf r2 buckets lifecycle update minerva-cf-ci-files-eu --cf-r2-jurisdiction eu --rules @r2-lifecycle.json --force
-   cf ai-gateway gateways create --id minerva-cf-ci --collect-logs=false --cache-ttl 0 --cache-invalidate-on-update=false --rate-limiting-interval 0 --rate-limiting-limit 0 --rate-limiting-technique fixed
+   cf ai-gateway gateways create --id minerva-cf-ci --collect-logs=false --authentication --cache-ttl 0 --cache-invalidate-on-update=false --rate-limiting-interval 0 --rate-limiting-limit 0 --rate-limiting-technique fixed
    ```
 
    The container application `minerva-cf-ci-sandbox` is created by the first deploy.

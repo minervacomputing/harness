@@ -159,7 +159,7 @@ cf r2 buckets create --name minerva-cf-files --location-hint weur
 cf r2 buckets create --name minerva-cf-files-eu --cf-r2-jurisdiction eu
 cf r2 buckets lifecycle update minerva-cf-files --rules @r2-lifecycle.json --force
 cf r2 buckets lifecycle update minerva-cf-files-eu --cf-r2-jurisdiction eu --rules @r2-lifecycle.json --force
-cf ai-gateway gateways create --id minerva-cf --collect-logs=false --cache-ttl 0 --cache-invalidate-on-update=false --rate-limiting-interval 0 --rate-limiting-limit 0 --rate-limiting-technique fixed
+cf ai-gateway gateways create --id minerva-cf --collect-logs=false --authentication --cache-ttl 0 --cache-invalidate-on-update=false --rate-limiting-interval 0 --rate-limiting-limit 0 --rate-limiting-technique fixed
 ```
 
 The lifecycle rules delete `uploads/` objects a day after they were written (a message copies its attachments into the conversation's own blobs first) and `static/` objects 30 days after. `static/` is where the Worker keeps the earlier builds' hashed frontend files, so a page opened before a deploy still finds its chunks; a bucket created before that rule existed needs the `lifecycle update` command above run again (`pnpm run deploy` stops while either rule is missing from either bucket). Then write the instance's `vars.env` (Setup, above) and deploy.
@@ -210,7 +210,7 @@ cf r2 buckets create --name minerva-cf-test-files --location-hint weur
 cf r2 buckets create --name minerva-cf-test-files-eu --cf-r2-jurisdiction eu
 cf r2 buckets lifecycle update minerva-cf-test-files --rules @r2-lifecycle.json --force
 cf r2 buckets lifecycle update minerva-cf-test-files-eu --cf-r2-jurisdiction eu --rules @r2-lifecycle.json --force
-cf ai-gateway gateways create --id minerva-cf-test --collect-logs=false --cache-ttl 0 --cache-invalidate-on-update=false --rate-limiting-interval 0 --rate-limiting-limit 0 --rate-limiting-technique fixed
+cf ai-gateway gateways create --id minerva-cf-test --collect-logs=false --authentication --cache-ttl 0 --cache-invalidate-on-update=false --rate-limiting-interval 0 --rate-limiting-limit 0 --rate-limiting-technique fixed
 ```
 
 ```sh

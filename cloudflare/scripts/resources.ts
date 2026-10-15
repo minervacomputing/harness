@@ -62,9 +62,11 @@ for (const bucket of BUCKETS) {
 	if (problems.length) fail(problems.join("\n"));
 }
 
-const gateway = cf(["ai-gateway", "gateways", "get", GATEWAY]) as { collect_logs?: boolean } | null;
+const gateway = cf(["ai-gateway", "gateways", "get", GATEWAY]) as { collect_logs?: boolean; authentication?: boolean } | null;
 if (!gateway) fail(`No AI Gateway named ${GATEWAY}.`);
 if (gateway.collect_logs !== false) fail(`AI Gateway ${GATEWAY} must not log prompts (collect_logs false).`);
+// The gateway uses the provider keys it stores (OpenAI, Anthropic) only when authenticated; the binding needs no token.
+if (gateway.authentication !== true) fail(`AI Gateway ${GATEWAY} must be authenticated (authentication true), or it never uses its stored provider keys.`);
 console.log("D1, R2 and AI Gateway are in place.");
 if (process.argv.includes("--check")) process.exit(0);
 
