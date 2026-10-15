@@ -35,3 +35,6 @@ __pycache__/
 .venv/
 .ruff_cache/
 .pytest_cache/
+
+# Evidence from the verify skill's journeys (.claude/skills/verify)
+/.verify/
