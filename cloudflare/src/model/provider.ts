@@ -49,7 +49,7 @@ import {
 import { parseJson } from "../lib/json.ts";
 import { tokenHex } from "../lib/random.ts";
 import type { AttemptFence } from "../shared/rpc.ts";
-import { forcePayload, isCompaction, outputCap, refusal } from "./policy.ts";
+import { forcePayload, forModel, isCompaction, outputCap, refusal } from "./policy.ts";
 import { CONTEXT_WINDOW, type ModelRoute, QUIET_MS, type Upstream } from "./route.ts";
 import { DeltaBuffer, errorClass, failureSummary, PROVIDER_ERROR, reportedUsage, type Segment, screened, screenedEvent, TEXT_FLUSH_MS } from "./tap.ts";
 
@@ -109,8 +109,20 @@ export interface ModelUsage {
 	reasoning: number;
 }
 
-/** The model pi sees: `minerva/default`, text only, with CONTEXT_WINDOW and the route's cap. */
-export function minervaModel(route: ModelRoute): Model<Api> {
+/**
+ * The largest image, in bytes of base64, the model is given. pi keeps a tool's result in one transcript row, and
+ * a Durable Object's SQLite row holds at most 2 MB (local workerd does not enforce it): a larger image would fail
+ * the storage write, and with it the conversation's pi Session.
+ */
+export const IMAGE_MAX_BYTES = 1536 * 1024;
+/** The largest image, in pixels a side, the model is given: pi's default. */
+const IMAGE_MAX_SIDE = 2000;
+
+/**
+ * The model pi sees: `minerva/default`, with CONTEXT_WINDOW and the route's cap, taking images when the
+ * upstream does (`input`, the upstream model's), within IMAGE_MAX_BYTES.
+ */
+export function minervaModel(route: ModelRoute, input: Model<Api>["input"] = ["text"]): Model<Api> {
 	return {
 		id: MODEL_ALIAS,
 		name: MODEL_ALIAS,
@@ -119,7 +131,8 @@ export function minervaModel(route: ModelRoute): Model<Api> {
 		baseUrl: "",
 		// The route adds reasoning settings itself, so pi sends none.
 		reasoning: false,
-		input: ["text"],
+		input,
+		inputLimits: { images: { resize: { maxWidth: IMAGE_MAX_SIDE, maxHeight: IMAGE_MAX_SIDE, maxBytes: IMAGE_MAX_BYTES } } },
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: CONTEXT_WINDOW,
 		maxTokens: route.cap,
@@ -152,11 +165,17 @@ export function minervaProvider(options: WrapperOptions): Provider {
 	const stream = (_model: Model<Api>, context: TranscriptContext, streamOptions?: SimpleStreamOptions) =>
 		wrapped(context, streamOptions, cached);
 	const route = options.route();
+	let input: Model<Api>["input"] | undefined;
+	try {
+		input = cached.upstream(route).model.input;
+	} catch {
+		// The model is not available; each call says so.
+	}
 	return createProvider({
 		id: MINERVA_PROVIDER,
 		name: "Minerva",
 		auth: { apiKey: { name: "Minerva", resolve: async () => ({ auth: {} }) } },
-		models: [minervaModel(route)],
+		models: [minervaModel(route, input)],
 		api: { stream, streamSimple: stream },
 	});
 }
@@ -285,7 +304,7 @@ function wrapped(context: TranscriptContext, streamOptions: SimpleStreamOptions 
 				status = undefined;
 				readsWhole = false;
 				timeQuiet();
-				const events = upstream.provider.streamSimple(upstream.model, context, request(summary));
+				const events = upstream.provider.streamSimple(upstream.model, forModel(context, upstream.model), request(summary));
 				return { events, iterator: events[Symbol.asyncIterator]() };
 			};
 			let summary = asksSummary(route) && !REASONING_SUMMARY.refused;

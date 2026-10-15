@@ -90,11 +90,11 @@ describe("registration", () => {
 describe("what the model sees", () => {
 	test("a result is its JSON; an error is its message", () => {
 		expect(render(ALLOWED)).toEqual({
-			content: [{ type: "text", text: '{"items":[{"id":"1","content":"Café ☕"}],"count":1,"next_cursor":"tok"}' }],
+			output: [{ type: "text", text: '{"items":[{"id":"1","content":"Café ☕"}],"count":1,"next_cursor":"tok"}' }],
 			isError: false,
 		});
 		const denied: ToolCallOutcome = { ok: false, error: { code: "POLICY_DENIED", message: "This resource or action is not available under the current permissions." }, event: null };
-		expect(render(denied)).toEqual({ content: [{ type: "text", text: "This resource or action is not available under the current permissions." }], isError: true });
+		expect(render(denied)).toEqual({ output: [{ type: "text", text: "This resource or action is not available under the current permissions." }], isError: true });
 	});
 
 	test("a call runs through the host, with phases around it", async () => {
@@ -109,7 +109,7 @@ describe("what the model sees", () => {
 	test("a call of a run that is no longer current is answered RUN_ENDED and never sent", async () => {
 		const recorded = host({ current: () => null });
 		const result = await connectorTool(declaration(), recorded.host).execute({} as never, api(), BG);
-		expect(result).toEqual({ content: [{ type: "text", text: RUN_ENDED_MESSAGE }], isError: true });
+		expect(result).toEqual({ output: [{ type: "text", text: RUN_ENDED_MESSAGE }], isError: true });
 		expect(recorded.calls).toEqual([]);
 	});
 
@@ -122,7 +122,7 @@ describe("what the model sees", () => {
 			const recorded = host({ executions: () => executions });
 			const result = await connectorTool(declaration(), recorded.host).execute({} as never, api(), BG);
 			expect(recorded.calls.length > 0).toBe(runs);
-			if (!runs) expect(result).toEqual({ content: [{ type: "text", text: REPLAY_REFUSED }], isError: true });
+			if (!runs) expect(result).toEqual({ output: [{ type: "text", text: REPLAY_REFUSED }], isError: true });
 		}
 		// A write is never replayed by pi, so it is never counted.
 		let counted = 0;
@@ -134,7 +134,7 @@ describe("what the model sees", () => {
 	test("a call still waiting at the deadline gives up with RUN_ENDED", async () => {
 		const recorded = host({ current: () => ({ fence: FENCE, deadline: Date.now() + 20 }) }, () => new Promise(() => {}));
 		const result = await connectorTool(declaration(), recorded.host).execute({} as never, api(), BG);
-		expect(result).toEqual({ content: [{ type: "text", text: RUN_ENDED_MESSAGE }], isError: true });
+		expect(result).toEqual({ output: [{ type: "text", text: RUN_ENDED_MESSAGE }], isError: true });
 	});
 
 	test("a call whose turn is aborted stops waiting", async () => {

@@ -1,8 +1,9 @@
 // What a model request may carry. The request is built by pi-ai from our own transcript, so
 // these hold by construction; the wrapper still enforces them, as defence in depth now that the loop is
-// trusted code: the instance's model, an output cap, `store: false`, text input only and function tools only.
+// trusted code: the instance's model, an output cap, `store: false`, text and image input only, images only to a
+// model that takes them, and function tools only.
 
-import type { Message, TranscriptContext } from "@earendil-works/pi-ai";
+import type { Api, Message, Model, TranscriptContext } from "@earendil-works/pi-ai";
 import type { ModelRoute } from "./route.ts";
 
 /** The output cap a request gets: the requested positive integer up to the instance's cap, else the cap. */
@@ -14,7 +15,7 @@ export function outputCap(requested: unknown, cap: number): number {
 /** Why a request is refused before anything is sent (nothing is counted), or null. */
 export function refusal(context: TranscriptContext): string | null {
 	for (const message of context.messages) {
-		if (!textOnly(message)) return "Only text can be sent to the model.";
+		if (!textOrImages(message)) return "Only text and images can be sent to the model.";
 		if (message.role === "system") {
 			for (const tool of message.toolsAdded ?? []) {
 				// A grammar makes OpenAI send a custom tool rather than a function tool.
@@ -25,15 +26,39 @@ export function refusal(context: TranscriptContext): string | null {
 	return null;
 }
 
-function textOnly(message: Message): boolean {
+function textOrImages(message: Message): boolean {
 	if (message.role === "user" || message.role === "toolResult") {
-		return typeof message.content === "string" || message.content.every((part) => part.type === "text");
+		return typeof message.content === "string" || message.content.every((part) => part.type === "text" || part.type === "image");
 	}
 	return true;
 }
 
+/** pi-ai's placeholders for an image a model cannot take (api/transform-messages.js). */
+export const IMAGE_PLACEHOLDER = "(image omitted: model does not support images)";
+export const TOOL_IMAGE_PLACEHOLDER = "(tool image omitted: model does not support images)";
+
 /**
- * The compaction prompt pi-durable 1.1.0 sends (harness/compaction.js, not exported): its summary is not an
+ * The context as `model` may see it: unchanged when it takes images, else each image a placeholder. pi-ai's
+ * converters do the same, but not every upstream converts through them (the fake does not).
+ */
+export function forModel(context: TranscriptContext, model: Model<Api>): TranscriptContext {
+	if (model.input.includes("image")) return context;
+	return {
+		...context,
+		messages: context.messages.map((message) => {
+			if (message.role === "user" && typeof message.content !== "string") {
+				return { ...message, content: message.content.map((part) => (part.type === "image" ? { type: "text" as const, text: IMAGE_PLACEHOLDER } : part)) };
+			}
+			if (message.role === "toolResult") {
+				return { ...message, content: message.content.map((part) => (part.type === "image" ? { type: "text" as const, text: TOOL_IMAGE_PLACEHOLDER } : part)) };
+			}
+			return message;
+		}),
+	};
+}
+
+/**
+ * The compaction prompt pi-durable 1.2.0 sends (harness/compaction.js, not exported): its summary is not an
  * answer, so its text is not published as deltas. test/unit/model-provider.test.ts checks that
  * the installed pi-durable still sends it.
  */

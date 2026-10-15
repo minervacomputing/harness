@@ -109,6 +109,7 @@ function api(env: ExecutionEnv | undefined, outputs: string[] = []): ToolExecuti
 		output(chunk: string | Uint8Array) {
 			outputs.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
 		},
+		retainedOutput: () => ({ text: outputs.join(""), truncated: false }),
 		diagnostic() {},
 	} as unknown as ToolExecutionApi;
 }
@@ -354,7 +355,7 @@ describe("gated", () => {
 		const controller = new AbortController();
 		const tool = gated(
 			f.calls,
-			fakeTool(async () => ({ content: [] })),
+			fakeTool(async () => ({ output: [] })),
 		);
 		const call = tool.execute({ command: "x" }, api(undefined), contextOf(controller.signal));
 		await tick();
@@ -422,7 +423,7 @@ describe("gated", () => {
 		const call = tool.execute({ command: "x" }, api(undefined), context);
 		await tick();
 		vi.advanceTimersByTime(1000);
-		result.resolve({ content: [{ type: "text", text: "done" }] });
+		result.resolve({ output: [{ type: "text", text: "done" }] });
 		await tick();
 		killing.resolve();
 		await call;
@@ -453,7 +454,7 @@ describe("gated", () => {
 		).execute({ command: "next" }, api(undefined), context);
 		await tick();
 		expect(started).toBe(false);
-		slow.resolve({ content: [] });
+		slow.resolve({ output: [] });
 		killing.resolve();
 		await next;
 		expect(started).toBe(true);
@@ -472,7 +473,7 @@ describe("gated", () => {
 		await tick();
 		vi.advanceTimersByTime(1000);
 		const next = f.calls.admit(undefined, false);
-		slow.resolve({ content: [] });
+		slow.resolve({ output: [] });
 		killing.reject(new LocalToolStuck("Processes left by commands could not be stopped."));
 		await expect(next).rejects.toBeInstanceOf(LocalToolStuck);
 		await expect(call).rejects.toBeInstanceOf(LocalToolStuck);
@@ -490,7 +491,7 @@ describe("localTools", () => {
 		await tools.edit?.execute({ path: "notes.txt", edits: [{ oldText: "3", newText: "4" }] }, api(env), context);
 		expect(fs.readFileSync(`${root}/notes.txt`, "utf8")).toBe("apples 4\n");
 		const read = await tools.read?.execute({ path: "notes.txt" }, api(env), context);
-		expect(JSON.stringify(read?.content)).toMatch(/apples 4/);
+		expect(JSON.stringify(read?.output)).toMatch(/apples 4/);
 		expect(f.events.map((event) => [event.tool, event.summary, event.ok])).toEqual([
 			["write", "notes.txt", true],
 			["edit", "notes.txt", true],

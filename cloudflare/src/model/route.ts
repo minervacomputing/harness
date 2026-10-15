@@ -7,6 +7,7 @@
 // same binding, with the provider key the gateway holds (no key lives in the Worker).
 
 import type { Api, Model, Provider, SimpleStreamOptions } from "@earendil-works/pi-ai";
+import { OPENAI_MODELS } from "@earendil-works/pi-ai/providers/openai.models";
 import { createAI, type WorkersAIModelId } from "agents/models/pi-ai";
 import type { Settings } from "../config.ts";
 
@@ -50,6 +51,7 @@ export interface Upstream {
 	options: Partial<SimpleStreamOptions> & { [key: string]: unknown };
 }
 
+const IMAGE_INPUT: Model<Api>["input"] = ["text", "image"];
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const WORKERS_AI_EFFORTS = new Set(["low", "medium", "high"]);
 const THINKING_LEVELS = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
@@ -78,7 +80,9 @@ export function upstreamOf(route: ModelRoute, binding: Ai | undefined): Upstream
 	const common = {
 		id: route.name,
 		name: route.name,
-		input: ["text" as const],
+		// Every Claude model takes images; OpenAI's take what pi-ai's catalog says, and one it does not know is taken to
+		// be as recent as the catalog's newest, which all take them. Workers AI models are looked up by createAI.
+		input: route.provider === "openai" ? ((OPENAI_MODELS as { [id: string]: Model<Api> | undefined })[route.name]?.input ?? IMAGE_INPUT) : IMAGE_INPUT,
 		cost: ZERO_COST,
 		reasoning,
 		contextWindow: CONTEXT_WINDOW,

@@ -134,7 +134,7 @@ export async function render(result: ScriptResult, save: (writes: ScriptResult["
 	const bounded = bound(pieces, TOOL_RESULT_LIMITS.maxBytes);
 	const texts = bounded.texts.length ? bounded.texts : [NOTHING];
 	return {
-		content: texts.map((text) => ({ type: "text" as const, text })),
+		output: texts.map((text) => ({ type: "text" as const, text })),
 		isError: !result.ok,
 		...(bounded.diagnostic ? { diagnostics: [bounded.diagnostic] } : {}),
 	};
@@ -154,7 +154,7 @@ export function scriptTool(listed: readonly ToolDeclaration[], host: ScriptToolH
 		outputLimits: TOOL_RESULT_LIMITS,
 		async execute(args: unknown, api: ToolExecutionApi, context): Promise<ToolExecutionResult> {
 			const run = host.current(api.conversationId);
-			if (run === null) return { content: [{ type: "text", text: RUN_ENDED_MESSAGE }], isError: true };
+			if (run === null) return { output: [{ type: "text", text: RUN_ENDED_MESSAGE }], isError: true };
 			const { fence } = run;
 			const code = String((args as { code?: unknown } | null)?.code ?? "");
 			const store = await loadStore(api, context);

@@ -14,7 +14,7 @@
 // against the real container in Docker.
 
 import type { ToolExecutionApi, ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
-import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
+import { createBashTool, createEditTool, createReadTool, createWriteTool, type ImageProcessor } from "@earendil-works/pi-durable/tools";
 import type { FolderLimit } from "../files/limits.ts";
 import { commandEnvironment } from "../sandbox/constants.ts";
 import { EXCERPT_CHARS, head, type LocalToolEventData, storable, SUMMARY_CHARS, tail } from "./events.ts";
@@ -309,10 +309,18 @@ export interface LocalTool {
 type Outcome = { ok: true; result: ToolExecutionResult } | { ok: false; error: unknown };
 
 function resultText(outcome: Outcome, output: string): string {
-	const content = outcome.ok ? outcome.result.content : undefined;
+	const content = outcome.ok ? outcome.result.output : undefined;
 	const text = content ? content.map((block) => (block.type === "text" ? block.text : `[${block.type}]`)).join("\n") : output;
-	if (outcome.ok) return text;
-	const message = outcome.error instanceof Error ? outcome.error.message : String(outcome.error);
+	// A failed command is an error result whose diagnostic says how it exited.
+	const message = outcome.ok
+		? (outcome.result.diagnostics ?? [])
+				.filter((diagnostic) => diagnostic.severity === "error")
+				.map((diagnostic) => diagnostic.message)
+				.join("\n")
+		: outcome.error instanceof Error
+			? outcome.error.message
+			: String(outcome.error);
+	if (!message) return text;
 	return text ? `${text}\n\n${message}` : message;
 }
 
@@ -388,6 +396,8 @@ export interface LocalToolOptions {
 	/** When the turn must end, in milliseconds since the epoch; null for none. */
 	deadline: number | null;
 	now?: () => number;
+	/** Prepares the images `read` returns; without one, only images already within the model's limits are read. */
+	images?: ImageProcessor;
 }
 
 /** The four local tools in their fixed order, as pi makes them with our changes. */
@@ -404,7 +414,7 @@ export function localToolSpecs(options: LocalToolOptions): LocalTool[] {
 	});
 	const parameters = bash.parameters as unknown as { properties: { [name: string]: object } };
 	return [
-		{ name: "read", tool: { ...createReadTool(), replay: "safe" } as unknown as ToolRegistration, changes: false, summary: path, plan: files },
+		{ name: "read", tool: { ...createReadTool({ images: options.images }), replay: "safe" } as unknown as ToolRegistration, changes: false, summary: path, plan: files },
 		{ name: "write", tool: createWriteTool() as unknown as ToolRegistration, changes: true, summary: path, plan: files },
 		{ name: "edit", tool: createEditTool() as unknown as ToolRegistration, changes: true, summary: path, plan: files },
 		{

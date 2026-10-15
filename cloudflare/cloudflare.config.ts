@@ -217,6 +217,9 @@ export default defineConfig(({ mode }) => {
 				// Workers AI has no local simulation: in local dev it is the account's, and the tests leave it off.
 				// Mode offline has none at all: it runs the fake model and needs no account.
 				...(target.offline ? {} : { AI: bindings.ai({ dev: { remote: true } }) }),
+				// Prepares the images `read` gives the model (src/conversation/images.ts); without it, only images
+				// already within the model's limits are read.
+				...(target.offline ? {} : { IMAGES: bindings.images({ dev: { remote: true } }) }),
 				LOADER: bindings.workerLoader(),
 				WORKSPACE: bindings.durableObject({ worker: target.names.app, exportName: "Workspace" }),
 				CONVERSATION: bindings.durableObject({ worker: target.names.app, exportName: "Conversation" }),

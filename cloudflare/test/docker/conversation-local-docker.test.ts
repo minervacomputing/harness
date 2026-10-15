@@ -117,17 +117,18 @@ function rig(settings: Partial<World["settings"]> = {}): Rig {
 					env,
 					outputWindow: undefined,
 					output: (chunk: string | Uint8Array) => outputs.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk)),
+					retainedOutput: () => ({ text: outputs.join(""), truncated: false }),
 					diagnostic: () => {},
 				} as unknown as ToolExecutionApi;
 				const result = await runGated(local.calls, spec, args, api, context);
-				return result.content ? result : { ...result, content: [{ type: "text", text: outputs.join("") }] };
+				return result.output ? result : { ...result, output: [{ type: "text", text: outputs.join("") }] };
 			};
 		},
 	};
 	return made;
 }
 
-const textOf = (result: ToolExecutionResult) => (result.content ?? []).map((block) => (block.type === "text" ? block.text : "")).join("");
+const textOf = (result: ToolExecutionResult) => (result.output ?? []).map((block) => (block.type === "text" ? block.text : "")).join("");
 
 describe.skipIf(!READY)("the checkpoint barrier with the container", { timeout: 180_000 }, () => {
 	test("write, edit and read go through the container; two checkpoints, then the final one; the turn publishes the file", async () => {
@@ -232,8 +233,9 @@ describe.skipIf(!READY)("the checkpoint barrier with the container", { timeout: 
 	test("a command that fills the folder gets ENOSPC at its size: the folder can never be saved over its limit", async () => {
 		const made = rig({ folderBytes: 1024 * 1024 });
 		const local = made.local(made.world.run());
-		await expect(made.tool(local, "bash")({ command: "head -c 2000000 /dev/zero > fill" })).rejects.toThrow(/exited with code 1/);
-		expect(made.events.at(-1)?.excerpt).toMatch(/No space left on device/);
+		const filled = await made.tool(local, "bash")({ command: "head -c 2000000 /dev/zero > fill" });
+		expect(filled.isError).toBe(true);
+		expect(made.events.at(-1)?.excerpt).toMatch(/No space left on device[\s\S]*exited with code 1/);
 		expect(made.failures).toEqual([]);
 	});
 

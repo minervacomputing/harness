@@ -342,7 +342,7 @@ describe.skipIf(!READY)("commands", () => {
 		const writes: number[] = [];
 		for (let i = 0; i < 10; i++) writes.push(await timed(async () => getOrThrow(await env.writeFile(`w/${i}.txt`, `file ${i}\n`, NONE))));
 		const result = await read.execute({ path: "/tmp/big.txt", offset: 1_000_000, limit: 1 }, api, NONE);
-		expect(JSON.stringify(result.content)).toContain("a line of fifty bytes");
+		expect(JSON.stringify(result.output)).toContain("a line of fifty bytes");
 		console.log(`timings (ms): read small median ${median(small)} of ${small.join(" ")}; read 50 MB ${big.join(" ")}, from line 1,000,000 ${bigTail}; writeFile small median ${median(writes)} of ${writes.join(" ")}`);
 		made.container.shell("rm -rf /tmp/big.txt /workspace/small.txt /workspace/w");
 	});

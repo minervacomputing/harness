@@ -3,11 +3,11 @@
 // reasoning-summary retry, metering of refused calls and read timeout go through createAI itself, over a
 // fake AI binding that answers as AI Gateway's universal endpoint and OpenAI's Responses API do.
 
-import { type AssistantMessage, type AssistantMessageEvent, createModels, isContextOverflow, type Message, type Models, type SimpleStreamOptions } from "@earendil-works/pi-ai";
+import { type AssistantMessage, type AssistantMessageEvent, createModels, type TranscriptContext, isContextOverflow, type Message, type Models, type SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, test } from "vitest";
 import { type FakeOptions, type FakeScript, fakeUpstream } from "../../src/model/fake.ts";
-import { COMPACTION_PROMPT_START } from "../../src/model/policy.ts";
-import { callOf, minervaModel, minervaProvider, type ModelHost, type ModelUsage, REASONING_SUMMARY, RUN_ENDED_TEXT, SUMMARY_REFUSED_HINT } from "../../src/model/provider.ts";
+import { COMPACTION_PROMPT_START, IMAGE_PLACEHOLDER, TOOL_IMAGE_PLACEHOLDER } from "../../src/model/policy.ts";
+import { callOf, IMAGE_MAX_BYTES, MINERVA_PROVIDER, MODEL_ALIAS, minervaModel, minervaProvider, type ModelHost, type ModelUsage, REASONING_SUMMARY, RUN_ENDED_TEXT, SUMMARY_REFUSED_HINT } from "../../src/model/provider.ts";
 import { type ModelRoute, upstreamOf } from "../../src/model/route.ts";
 import { CONTEXT_OVERFLOW, PROVIDER_ERROR, type Segment } from "../../src/model/tap.ts";
 import type { AttemptFence } from "../../src/shared/rpc.ts";
@@ -101,10 +101,11 @@ describe("refused calls count nothing", () => {
 		expect([host.counts, options.length, host.usage.length]).toEqual([0, 0, 0]);
 	});
 
-	test("a request with an image is refused before it is counted", async () => {
+	test("a request with anything but text and images is refused before it is counted", async () => {
 		const { host, models, options } = setup();
-		const message = await ask(models, [{ role: "user", content: [{ type: "image", data: "x", mimeType: "image/png" }], timestamp: 1 }]);
-		expect(message.errorMessage).toBe("Only text can be sent to the model.");
+		const audio = { type: "audio", data: "x", mimeType: "audio/wav" } as unknown as { type: "text"; text: string };
+		const message = await ask(models, [{ role: "user", content: [audio], timestamp: 1 }]);
+		expect(message.errorMessage).toBe("Only text and images can be sent to the model.");
 		expect([host.counts, options.length]).toEqual([0, 0]);
 	});
 
@@ -470,5 +471,45 @@ describe("over AI Gateway (createAI)", () => {
 		expect(host.logs.join("\n")).toContain("did not answer within");
 		// The provider never answered: counted, neither metered nor unmetered.
 		expect([host.counts, host.usage]).toEqual([1, []]);
+	});
+});
+
+describe("images", () => {
+	const IMAGE = { type: "image" as const, data: "iVBORw0KGgo=", mimeType: "image/png" };
+
+	function withImages(): Message[] {
+		const script = JSON.stringify({ fake: { turns: [{ text: "A dot." }] } });
+		return [
+			{ role: "user", content: [{ type: "text", text: script }, IMAGE], timestamp: 1 },
+			{ role: "assistant", content: [{ type: "toolCall", id: "c1", name: "read", arguments: { path: "dot.png" } }], api: "fake", provider: "fake", model: "fake", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "toolUse", timestamp: 2 },
+			{ role: "toolResult", toolCallId: "c1", toolName: "read", content: [IMAGE], isError: false, timestamp: 3 },
+		];
+	}
+
+	test("the model pi sees takes images when the upstream does, at most IMAGE_MAX_BYTES of them", () => {
+		expect(setup({ input: ["text", "image"] }).models.getModel(MINERVA_PROVIDER, MODEL_ALIAS)).toMatchObject({
+			input: ["text", "image"],
+			inputLimits: { images: { resize: { maxWidth: 2000, maxHeight: 2000, maxBytes: IMAGE_MAX_BYTES } } },
+		});
+		expect(setup({ input: ["text"] }).models.getModel(MINERVA_PROVIDER, MODEL_ALIAS)?.input).toEqual(["text"]);
+		expect(IMAGE_MAX_BYTES).toBeLessThan(2_000_000);
+	});
+
+	test("an upstream that takes images gets them as they are", async () => {
+		const sent: TranscriptContext[] = [];
+		const { models } = setup({ input: ["text", "image"], onCall: (_call, context) => sent.push(context) });
+		const message = await ask(models, withImages());
+		expect(message.stopReason).toBe("stop");
+		expect(sent[0]?.messages).toEqual(withImages());
+	});
+
+	test("an upstream that takes text only gets pi-ai's placeholders instead", async () => {
+		const sent: TranscriptContext[] = [];
+		const { models } = setup({ input: ["text"], onCall: (_call, context) => sent.push(context) });
+		const message = await ask(models, withImages());
+		expect(message.stopReason).toBe("stop");
+		const [user, , result] = sent[0]?.messages ?? [];
+		expect(user?.content).toEqual([expect.objectContaining({ type: "text" }), { type: "text", text: IMAGE_PLACEHOLDER }]);
+		expect(result?.content).toEqual([{ type: "text", text: TOOL_IMAGE_PLACEHOLDER }]);
 	});
 });

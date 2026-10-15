@@ -36,6 +36,17 @@ describe("routes", () => {
 		expect(upstreamOf({ ...base, provider: "anthropic", name: "claude-test" }, BINDING).model).toMatchObject({ api: "anthropic-messages", provider: "anthropic" });
 	});
 
+	test("a model takes images as its catalog says: Workers AI and OpenAI by pi-ai's, every Claude model, an unknown GPT model", () => {
+		const route = routeOf(parse(settingsEnv()));
+		const input = (changes: Partial<ModelRoute>) => upstreamOf({ ...route, ...changes }, BINDING).model.input;
+		expect(input({})).toEqual(["text", "image"]);
+		expect(input({ name: "@cf/deepseek-ai/deepseek-v4-flash-0731" })).toEqual(["text"]);
+		expect(input({ provider: "openai", name: "gpt-5-mini" })).toEqual(["text", "image"]);
+		expect(input({ provider: "openai", name: "o3-mini" })).toEqual(["text"]);
+		expect(input({ provider: "openai", name: "gpt-unreleased" })).toEqual(["text", "image"]);
+		expect(input({ provider: "anthropic", name: "claude-test" })).toEqual(["text", "image"]);
+	});
+
 	test("the fake is not a route: only the test build and the tests have it", () => {
 		expect(() => upstreamOf({ ...routeOf(parse(settingsEnv())), provider: "fake" }, BINDING)).toThrow("The fake model runs only in the test build.");
 		expect(fakeUpstream().model.provider).toBe(FAKE_PROVIDER);

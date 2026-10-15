@@ -111,6 +111,7 @@ What mode `offline` is, against a deployed Worker:
 | Email | Written to the dev server's log (`MINERVA_DEBUG=true`): a sign-in code or verification link is in the terminal | The Email Sending binding |
 | D1, R2, Durable Objects | Local simulations under `.cloudflare/state`, in a database and buckets named `minerva-dev…` | The account's |
 | Sandbox | The container when Docker runs (the first start builds the image from `container/`); otherwise the Sandbox object has no container, a warning says so at start, and a tool that needs it fails (`This Worker has no container.`) | `<name>-sandbox` |
+| Images | No Images binding: `read` gives the model only images already within its limits and refuses larger ones | The Images binding, which shrinks larger ones (`src/conversation/images.ts`) |
 | Settings | `src/config.ts` defaults for localhost, which the shell's `MINERVA_*` override | The instance's `vars.env` only |
 
 Mode `offline` exists only for this server: `vite.config.ts` marks the process (`MINERVA_DEV_OFFLINE`) when it serves, and `cloudflare.config.ts` refuses the mode without the mark, so `cf build`, `cf deploy` and `vite build` in it stop with an error. Nothing in `src/` reads the mark.

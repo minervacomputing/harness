@@ -56,12 +56,12 @@ export interface ToolHost {
 
 /** What the model sees of an outcome. */
 export function render(outcome: ToolCallOutcome): ToolExecutionResult {
-	if (outcome.ok) return { content: [{ type: "text", text: JSON.stringify(outcome.result) }], isError: false };
-	return { content: [{ type: "text", text: outcome.error.message }], isError: true };
+	if (outcome.ok) return { output: [{ type: "text", text: JSON.stringify(outcome.result) }], isError: false };
+	return { output: [{ type: "text", text: outcome.error.message }], isError: true };
 }
 
 function refused(text: string): ToolExecutionResult {
-	return { content: [{ type: "text", text }], isError: true };
+	return { output: [{ type: "text", text }], isError: true };
 }
 
 /** The tool's JSON Schema as pi validates it: an object, with `properties`. */

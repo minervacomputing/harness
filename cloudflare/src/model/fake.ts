@@ -75,12 +75,14 @@ export interface FakeOptions {
 	 * how often a turn has failed is counted by the host. Default: always.
 	 */
 	fails?: (call: FakeCall) => boolean;
+	/** What the model takes: text and images by default, as the default model does. */
+	input?: Model<Api>["input"];
 }
 
 const FINAL: FakeTurn = { text: "Done." };
 export const DEFAULT_SCRIPT: FakeScript = { turns: [FINAL] };
 
-export function fakeModel(): Model<Api> {
+export function fakeModel(input: Model<Api>["input"] = ["text", "image"]): Model<Api> {
 	return {
 		id: FAKE_MODEL_ID,
 		name: "Fake",
@@ -88,7 +90,7 @@ export function fakeModel(): Model<Api> {
 		provider: FAKE_PROVIDER,
 		baseUrl: "http://fake.invalid",
 		reasoning: false,
-		input: ["text"],
+		input,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: 128_000,
 		maxTokens: 16_384,
@@ -97,7 +99,7 @@ export function fakeModel(): Model<Api> {
 
 /** The fake as the wrapper's upstream (model/route.ts `Upstream`), for the test build and the tests. */
 export function fakeUpstream(options: FakeOptions = {}): Upstream {
-	return { provider: fakeProvider(options), model: fakeModel(), options: {} };
+	return { provider: fakeProvider(options), model: fakeModel(options.input), options: {} };
 }
 
 export function fakeProvider(options: FakeOptions = {}): Provider {
@@ -107,7 +109,7 @@ export function fakeProvider(options: FakeOptions = {}): Provider {
 		id: FAKE_PROVIDER,
 		name: "Fake",
 		auth: { apiKey: { name: "Fake", resolve: async () => ({ auth: {} }) } },
-		models: [fakeModel()],
+		models: [fakeModel(options.input)],
 		api: { stream, streamSimple: stream },
 	});
 }

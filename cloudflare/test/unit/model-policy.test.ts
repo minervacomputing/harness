@@ -60,13 +60,13 @@ describe("payloads", () => {
 });
 
 describe("requests", () => {
-	test("only text: an image in a message or a tool result is refused before anything is sent", () => {
+	test("only text and images: an image in a message or a tool result is sent, anything else refused before anything is sent", () => {
 		const image = { type: "image" as const, data: "x", mimeType: "image/png" };
-		expect(refusal(context([{ role: "user", content: [image], timestamp: 1 }]))).toBe("Only text can be sent to the model.");
-		expect(refusal(context([{ role: "toolResult", toolCallId: "c", toolName: "t", content: [image], isError: false, timestamp: 1 } as Message]))).toBe(
-			"Only text can be sent to the model.",
-		);
+		expect(refusal(context([{ role: "user", content: [image], timestamp: 1 }]))).toBeNull();
+		expect(refusal(context([{ role: "toolResult", toolCallId: "c", toolName: "t", content: [image], isError: false, timestamp: 1 } as Message]))).toBeNull();
 		expect(refusal(context([{ role: "user", content: "Hi", timestamp: 1 }]))).toBeNull();
+		const audio = { type: "audio", data: "x", mimeType: "audio/wav" } as unknown as typeof image;
+		expect(refusal(context([{ role: "user", content: [audio], timestamp: 1 }]))).toBe("Only text and images can be sent to the model.");
 	});
 
 	test("only function tools: a grammar tool is refused", () => {

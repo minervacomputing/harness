@@ -1,7 +1,7 @@
 // What a script's result shows the model when it is long. `run_script` declares
 // results of up to 1 MiB with no line limit and the head kept, so pi keeps the first 1 MiB of the result's
 // text (its text items joined with "") and notes what it dropped: "Output truncated to its beginning: <L>
-// lines, <B> bytes dropped" (pi-durable 1.1.0 harness/output.ts `boundOutput`, harness/tool.ts
+// lines, <B> bytes dropped" (pi-durable 1.2.0 harness/output.ts `boundOutput`, harness/tool.ts
 // `boundContent` and `truncated`).
 //
 // The conversation holds only the head of a long output or value and the size of the rest (scripts/limits.ts HEAD_CHARS),

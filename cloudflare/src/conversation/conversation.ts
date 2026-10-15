@@ -78,6 +78,7 @@ import {
 } from "./events.ts";
 import { decideGate, type PiWork, classifyWork } from "./gate.ts";
 import { HISTORY_LIMIT, historyOf, promptOf, recentHistory, sessionInstructions } from "./history.ts";
+import { cloudflareImages } from "./images.ts";
 import { FolderOverLimit, LOCAL_TOOLS, type LocalTool, type LocalToolEvent, localToolSpecs, runGated, SandboxRefused } from "./local.ts";
 import { FactDelivery } from "./delivery.ts";
 import { BACKLOG_MESSAGE, FACT_DELIVERY } from "./facts.ts";
@@ -950,6 +951,13 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		registry.install(this.#extension(active && ACTING.has(active.status) ? active : null));
 		const pi = await Harness.open(storage, { models, registry, settings: PI_SETTINGS, onReport: (error) => this.#log("pi reported", error) }, context);
 		pi.subscribeCommits((publication) => this.#onPiCommit(publication));
+		// A storage error fails pi's Session for good, and the Agents SDK keeps the harness it opened: the object is
+		// reset, so the next instance opens pi again and recovers its work as after any restart.
+		void pi.closed.then((end) => {
+			if (end.reason !== "failed") return;
+			this.#log("pi's session failed", end.error);
+			this.#reset("pi's session failed after a storage error.", true);
+		});
 		await this.#stopEnded(pi, context);
 		return pi;
 	}
@@ -1279,7 +1287,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			listed = [];
 		}
 		// read, write, edit and bash in the run's container, after the connector tools and `run_script`.
-		const locals = localToolSpecs({ deadline: run.deadline }).map((local) => this.#localTool(local, host));
+		const images = (this.env as { IMAGES?: ImagesBinding }).IMAGES;
+		const locals = localToolSpecs({ deadline: run.deadline, images: images && cloudflareImages(images) }).map((local) => this.#localTool(local, host));
 		const tools = modelTools<ToolDeclaration, ToolRegistration>(
 			listed,
 			locals,

@@ -65,12 +65,28 @@ describe("the description", () => {
 		const other: ToolDeclaration = { ...declaration("other"), outputSchema: { type: "object", properties: { x: { type: "string" } } } };
 		expect(scriptDeclarations([...TOOLS, other])).toBe(
 			[
-				"type Result = { count: number; items: Array<{ [key: string]: unknown; }>; };",
+				"type Result = {",
+				"  // @integer",
+				"  count: number;",
+				"  items: Array<{ [key: string]: unknown; }>;",
+				"};",
 				"",
 				"declare const tools: {",
-				"  github_list_issues(args: { cursor?: string; n?: number; }): Promise<Result>;",
-				"  todoist_add_task(args: { cursor?: string; n?: number; }): Promise<Result>;",
-				"  other(args: { cursor?: string; n?: number; }): Promise<{ x?: string; }>;",
+				"  github_list_issues(args: {",
+				"  cursor?: string;",
+				"  // @integer",
+				"  n?: number;",
+				"}): Promise<Result>;",
+				"  todoist_add_task(args: {",
+				"  cursor?: string;",
+				"  // @integer",
+				"  n?: number;",
+				"}): Promise<Result>;",
+				"  other(args: {",
+				"  cursor?: string;",
+				"  // @integer",
+				"  n?: number;",
+				"}): Promise<{ x?: string; }>;",
 				"};",
 			].join("\n"),
 		);
@@ -99,7 +115,7 @@ function result(fields: Partial<ScriptResult>): ScriptResult {
 
 const texts = async (r: ScriptResult, unkept?: string) => {
 	const rendered = await render(r, async () => unkept);
-	return { texts: (rendered.content ?? []).map((item) => (item.type === "text" ? item.text : "")), isError: rendered.isError, diagnostics: rendered.diagnostics };
+	return { texts: (rendered.output ?? []).map((item) => (item.type === "text" ? item.text : "")), isError: rendered.isError, diagnostics: rendered.diagnostics };
 };
 
 describe("what the model sees", () => {
