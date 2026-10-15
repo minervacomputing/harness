@@ -54,7 +54,7 @@ import { isReset, type ScriptsClient } from "../scripts/run.ts";
 import type { ScriptsApi } from "../scripts/scripts.ts";
 import { scriptTool } from "../scripts/tool.ts";
 import type { Folder, Message, NewMessage, Run } from "@minerva/contract";
-import type { CancelRun, CancelRunResult, Fact, ReplayFacts, StartRun, StartRunResult } from "@minerva/contract/internal";
+import type { CancelRun, CancelRunResult, DeleteConversation, DeleteConversationResult, Fact, ReadFolder, ReplayFacts, ResolveDownload, StartRun, StartRunResult } from "@minerva/contract/internal";
 import { type Preparation, type StartRefusal, UNAVAILABLE, messageRefusal, prepareStart, promptOf as internalPrompt, startRefusal } from "../internal/start.ts";
 import { type AttemptFence, type Caller, type Outcome, type Refusal, type RunId, type VersionId, type WorkspaceRef, refuse } from "../shared/rpc.ts";
 import { START_FAILED } from "../workspace/core.ts";
@@ -90,6 +90,7 @@ import { KEY_REUSED, START_KEY, START_KEY_TTL_MS, messageDigest } from "./start-
 import {
 	type ConversationHead,
 	type ConversationInit,
+	type ConversationRow,
 	type EventPage,
 	type RunHead,
 	type RunRow,
@@ -196,6 +197,20 @@ export interface ConversationApi {
 	 * transactions; the recovery index is raised to the page's last before it answers. Never binds the conversation.
 	 */
 	replayInternal(command: ReplayFacts, workspace: WorkspaceRef): Promise<InternalAnswer<{ facts: Fact[]; more: boolean }>>;
+	/**
+	 * Laravel's `folder` (the app's docs/plans/conversations.md, 12a): the folder at a version, the current one for null; null
+	 * when the conversation is deleted or has no such version. Never binds the conversation.
+	 */
+	folderInternal(command: ReadFolder, workspace: WorkspaceRef): Promise<InternalAnswer<Folder | null>>;
+	/** Laravel's `resolveDownload`: a file of a version, with the object it is stored in; null as for `folderInternal`, or no such file. */
+	downloadInternal(command: ResolveDownload, workspace: WorkspaceRef): Promise<InternalAnswer<DownloadTarget | null>>;
+	/**
+	 * Laravel's `deleteConversation`, once the Worker has marked it in the recovery index: the conversation marked deleted, so
+	 * its starts and reads are refused, and its active run cancelled, in one write outside pi's transactions; then its streams
+	 * closed, pi stopped and its sandbox and scripts destroyed. Its folder and facts stay: the facts are still delivered, and
+	 * chunk 15's retention removes the rest. Binds a conversation that no command named before, already deleted.
+	 */
+	deleteInternal(command: DeleteConversation, workspace: WorkspaceRef): Promise<InternalAnswer<DeleteConversationResult>>;
 }
 
 /** What a Laravel command answers: its outcome, or that the conversation is bound to another scope. */
@@ -543,8 +558,70 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		return { ok: true, value: { facts: page.facts.map((fact) => parseJson(fact.json) as unknown as Fact), more: page.more } };
 	}
 
+	folderInternal(command: ReadFolder, workspace: WorkspaceRef): Promise<InternalAnswer<Folder | null>> {
+		return this.#readInternal(command, workspace, (folder) => folder.list(command.version));
+	}
+
+	downloadInternal(command: ResolveDownload, workspace: WorkspaceRef): Promise<InternalAnswer<DownloadTarget | null>> {
+		return this.#readInternal(command, workspace, (folder) => folder.resolve(command.version, command.path));
+	}
+
+	/**
+	 * A read of a Laravel conversation's folder: the binding, the deletion and the read in one synchronous step outside pi's
+	 * transactions, so an answer never describes a change that could still roll back. Null for an unbound or deleted
+	 * conversation.
+	 */
+	#readInternal<T>(command: ReadFolder | ResolveDownload, workspace: WorkspaceRef, read: (folder: FolderPort) => T | null): Promise<InternalAnswer<T | null>> {
+		return this.#store.outside(() => {
+			const conversation = this.#scoped(command, workspace);
+			if (conversation === false) return SCOPE_MISMATCH;
+			if (conversation === null || conversation.deleted_at !== null) return { ok: true as const, value: null };
+			const folder = this.#folder();
+			return { ok: true as const, value: folder === null ? null : read(folder) };
+		});
+	}
+
+	async deleteInternal(command: DeleteConversation, workspace: WorkspaceRef): Promise<InternalAnswer<DeleteConversationResult>> {
+		if (!(await this.#bindInternal(command, workspace))) return SCOPE_MISMATCH;
+		await this.lifecycle.start();
+		const latest = await this.#store.outside(() => {
+			const active = this.#store.activeRun();
+			this.#store.write(() => {
+				this.#store.markDeleted();
+				// A start in flight finds the conversation deleted in its final transaction; one whose try was lost is answered
+				// here, so its preparation goes too.
+				for (const runId of this.#store.preparedRuns()) if (!this.#store.answer(runId)) this.#answerRefused(runId, deletedRefusal());
+				if (active) {
+					this.#store.revoke(active.id);
+					this.#store.finish(active.id, endFor("conversation_deleted"));
+				}
+			});
+			return this.#store.runs().at(-1) ?? null;
+		});
+		this.#stream.closeAll();
+		// Every step again on each try, and a failure fails the deletion, which Laravel sends again until it is answered. Only the
+		// latest run can still have pi's work: each earlier one ended before the next started.
+		if (latest) await this.#stopPi(latest.id);
+		await this.#destroyScripts();
+		const sandbox = this.#sandbox();
+		await destroyRunSandbox(sandbox, null, "The conversation was deleted.");
+		if ((await sandbox.status()).cleanupPending) throw new Error("The conversation's sandbox is still being destroyed.");
+		return { ok: true, value: { outcome: "deleted" } };
+	}
+
+	/** The conversation if it is bound to the command's organization and the index's workspace; null if unbound, false if bound to others. */
+	#scoped(command: { conversation: string; scope: { organization: string } }, workspace: WorkspaceRef): ConversationRow | null | false {
+		const conversation = this.#store.conversation();
+		if (conversation === null) return null;
+		const ours =
+			conversation.id === command.conversation &&
+			conversation.organization_id === command.scope.organization &&
+			conversation.workspace_id === workspace.id;
+		return ours ? conversation : false;
+	}
+
 	/** The conversation bound to the command's organization and the index's workspace, on first use; false for others. */
-	#bindInternal(command: StartRun | CancelRun, workspace: WorkspaceRef): Promise<boolean> {
+	#bindInternal(command: StartRun | CancelRun | DeleteConversation, workspace: WorkspaceRef): Promise<boolean> {
 		const binding = { conversationId: command.conversation, organization: command.scope.organization, workspace, createdAt: this.#store.now() };
 		return this.#store.outside(() => this.#store.bind(binding));
 	}

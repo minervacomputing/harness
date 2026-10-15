@@ -23,12 +23,14 @@ export interface RunBinding {
 }
 
 /** The binding held, with the conversation's workspace as its objects are addressed; or why the command is refused. */
-export type Bound = { ok: true; workspace: WorkspaceRef } | { ok: false; code: "SCOPE_MISMATCH" | "IDEMPOTENCY_CONFLICT"; message: string };
+/** `deleted`: the conversation was deleted (`deleteConversation`), which only its object's answer may still replay. */
+export type Bound = { ok: true; workspace: WorkspaceRef; deleted: boolean } | { ok: false; code: "SCOPE_MISMATCH" | "IDEMPOTENCY_CONFLICT"; message: string };
 
 interface ConversationRow {
 	organization_id: string;
 	workspace_id: string;
 	jurisdiction: string | null;
+	deleted_at: number | null;
 }
 
 interface RunRow {
@@ -64,7 +66,7 @@ export async function bindRun(db: D1Database, binding: RunBinding): Promise<Boun
 				AND EXISTS (SELECT 1 FROM recovery_conversations WHERE id = ?3 AND organization_id = ?4 AND workspace_id = ?5)`,
 			)
 			.bind(digest, run, conversation, scope.organization, scope.workspace),
-		db.prepare("SELECT organization_id, workspace_id, jurisdiction FROM recovery_conversations WHERE id = ?1").bind(conversation),
+		db.prepare("SELECT organization_id, workspace_id, jurisdiction, deleted_at FROM recovery_conversations WHERE id = ?1").bind(conversation),
 		db.prepare("SELECT conversation_id, input_digest FROM recovery_runs WHERE id = ?1").bind(run),
 	]);
 	const bound = results[3]?.results[0] as ConversationRow | undefined;
@@ -78,20 +80,53 @@ export async function bindRun(db: D1Database, binding: RunBinding): Promise<Boun
 	if (digest !== null && named.input_digest !== digest) {
 		return { ok: false, code: "IDEMPOTENCY_CONFLICT", message: "This run was started with a different input." };
 	}
-	return { ok: true, workspace: { id: scope.workspace, jurisdiction: bound.jurisdiction === "eu" ? "eu" : null } };
+	return { ok: true, workspace: { id: scope.workspace, jurisdiction: bound.jurisdiction === "eu" ? "eu" : null }, deleted: bound.deleted_at !== null };
 }
 
 /** A Laravel conversation as the index binds it, or null for one no command has named. */
 export interface IndexedConversation {
 	organization: string;
 	workspace: WorkspaceRef;
+	/** Whether `deleteConversation` has deleted it, which is never undone. */
+	deleted: boolean;
 }
 
-/** The conversation's binding, read without writing (`replayFacts`, the stream). */
+function indexed(row: ConversationRow): IndexedConversation {
+	return { organization: row.organization_id, workspace: { id: row.workspace_id, jurisdiction: row.jurisdiction === "eu" ? "eu" : null }, deleted: row.deleted_at !== null };
+}
+
+/** The conversation's binding, read without writing (`replayFacts`, `folder`, `resolveDownload`, the stream). */
 export async function conversationOf(db: D1Database, conversation: string): Promise<IndexedConversation | null> {
-	const row = await db.prepare("SELECT organization_id, workspace_id, jurisdiction FROM recovery_conversations WHERE id = ?1").bind(conversation).first<ConversationRow>();
-	if (row === null) return null;
-	return { organization: row.organization_id, workspace: { id: row.workspace_id, jurisdiction: row.jurisdiction === "eu" ? "eu" : null } };
+	const row = await db
+		.prepare("SELECT organization_id, workspace_id, jurisdiction, deleted_at FROM recovery_conversations WHERE id = ?1")
+		.bind(conversation)
+		.first<ConversationRow>();
+	return row === null ? null : indexed(row);
+}
+
+/**
+ * `deleteConversation`'s mark (the app's docs/plans/conversations.md, 12a): the conversation bound to the scope if no command
+ * named it before, so a start that arrives later finds it deleted, then deleted unless it was, only through the row bound to
+ * that scope; in one batch, read back. A conversation bound to another organization or workspace changes nothing.
+ */
+export async function deleteIndexed(db: D1Database, deletion: { scope: Scope; conversation: string; now: number }): Promise<{ ok: true; conversation: IndexedConversation } | { ok: false }> {
+	const { scope, conversation, now } = deletion;
+	const results = await db.batch([
+		db
+			.prepare(
+				`INSERT INTO recovery_conversations (id, organization_id, workspace_id, jurisdiction, created_at) VALUES (?1, ?2, ?3, ?4, ?5)
+				ON CONFLICT (id) DO NOTHING`,
+			)
+			.bind(conversation, scope.organization, scope.workspace, INTERNAL_JURISDICTION, now),
+		db
+			.prepare("UPDATE recovery_conversations SET deleted_at = coalesce(deleted_at, ?1) WHERE id = ?2 AND organization_id = ?3 AND workspace_id = ?4")
+			.bind(now, conversation, scope.organization, scope.workspace),
+		db.prepare("SELECT organization_id, workspace_id, jurisdiction, deleted_at FROM recovery_conversations WHERE id = ?1").bind(conversation),
+	]);
+	const row = results[2]?.results[0] as ConversationRow | undefined;
+	if (row === undefined) throw new Error("A conversation's row is read back in the batch that inserts it.");
+	if (row.organization_id !== scope.organization || row.workspace_id !== scope.workspace) return { ok: false };
+	return { ok: true, conversation: indexed(row) };
 }
 
 /**

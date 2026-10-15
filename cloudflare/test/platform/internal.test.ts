@@ -32,8 +32,8 @@ describe("the commands", () => {
 	});
 
 	test("a command declared before its chunk is 501 in the contract's shape", async () => {
-		const deletion = commands.deleteConversation({ scope: SCOPE, conversation: uuid7() });
-		expect(await refusalOf(deletion)).toMatchObject({ code: "NOT_IMPLEMENTED", status: 501 });
+		const admission = commands.admission({ environment: SCOPE.environment, open: false, revision: 1, reason: "Stop." });
+		expect(await refusalOf(admission)).toMatchObject({ code: "NOT_IMPLEMENTED", status: 501 });
 	});
 
 	test("a command for another environment is refused", async () => {

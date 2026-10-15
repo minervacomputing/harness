@@ -4,7 +4,7 @@
 // unless the internal API's settings, MINERVA_LARAVEL_URL and MINERVA_STREAM_KEYS are all set.
 //
 // A token that does not verify is 401 `UNAUTHORIZED`, and nothing says why: the browser asks Laravel for a new one. A
-// conversation the recovery index does not bind to the token's organization, or an object that does not hold the run for
+// conversation the recovery index does not bind to the token's organization or marks deleted, or an object that does not hold the run for
 // that organization, is 404. The events are relayed as the public stream's are (stream/relay.ts), and the response closes
 // hard at the token's `exp`; the browser resumes from its last event with a new token, so a member Laravel removed loses the
 // stream within one token's life.
@@ -74,7 +74,7 @@ async function stream(request: Request, env: Env, config: NonNullable<ReturnType
 	const grant = token === null ? null : await verifyStreamToken(token, config.keys, config.environment);
 	if (grant === null) return unauthorized();
 	const indexed = await conversationOf(env.DB, grant.conversation);
-	if (indexed === null || indexed.organization !== grant.organization) return noRoute();
+	if (indexed === null || indexed.organization !== grant.organization || indexed.deleted) return noRoute();
 	const stub = conversationObject(env, indexed.workspace, grant.conversation);
 	const reader = { organization: grant.organization };
 	const after = streamCursor(request);

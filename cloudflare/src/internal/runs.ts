@@ -16,19 +16,25 @@ function answered<T>(answer: InternalAnswer<T>): T {
 }
 
 /** The run bound in the index, or the index's refusal; the workspace as the index addresses it. */
-async function bound(env: Env, command: StartRun | CancelRun, digest: string | null): Promise<WorkspaceRef> {
+async function bound(env: Env, command: StartRun | CancelRun, digest: string | null): Promise<{ workspace: WorkspaceRef; deleted: boolean }> {
 	const binding = await bindRun(env.DB, { scope: command.scope, conversation: command.conversation, run: command.run, digest, now: Date.now() });
 	if (!binding.ok) throw internalRefusal(binding.code, binding.message);
-	return binding.workspace;
+	return binding;
 }
 
+/**
+ * A conversation the index has deleted is deleted in its object first, which finishes a deletion that stopped between the
+ * two: the start is then refused there, or its stored answer replayed.
+ */
 export async function startRun(env: Env, command: StartRun): Promise<StartRunResult> {
-	const workspace = await bound(env, command, await inputDigest(command));
-	return answered(await conversationObject(env, workspace, command.conversation).startInternal(command, workspace));
+	const { workspace, deleted } = await bound(env, command, await inputDigest(command));
+	const conversation = conversationObject(env, workspace, command.conversation);
+	if (deleted) answered(await conversation.deleteInternal({ scope: command.scope, conversation: command.conversation }, workspace));
+	return answered(await conversation.startInternal(command, workspace));
 }
 
 export async function cancelRun(env: Env, command: CancelRun): Promise<CancelRunResult> {
-	const workspace = await bound(env, command, null);
+	const { workspace } = await bound(env, command, null);
 	return answered(await conversationObject(env, workspace, command.conversation).cancelInternal(command, workspace));
 }
 

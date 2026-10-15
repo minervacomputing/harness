@@ -891,6 +891,11 @@ export class RunStore {
 		this.#sql.exec("DELETE FROM internal_starts WHERE run_id = ?", runId);
 	}
 
+	/** The runs whose start is prepared and not yet answered. */
+	preparedRuns(): RunId[] {
+		return this.#sql.exec<{ run_id: RunId }>("SELECT DISTINCT run_id FROM internal_starts").toArray().map((row) => row.run_id);
+	}
+
 	/** Whether another run's start is prepared and not yet answered: the conversation is busy for any other. */
 	preparedOther(runId: RunId): boolean {
 		return this.#sql.exec("SELECT 1 FROM internal_starts WHERE run_id != ? LIMIT 1", runId).toArray().length > 0;

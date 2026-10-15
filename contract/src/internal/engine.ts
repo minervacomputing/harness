@@ -174,6 +174,24 @@ export type ReplayFacts = z.infer<typeof ReplayFacts>
 const internal = oc.errors(INTERNAL_ERRORS)
 const at = (path: string) => `${INTERNAL_PREFIX}${path}` as const
 
+/** `folder`: a version of the conversation's folder; null for its current one. */
+export const ReadFolder = InConversation.extend({ version: Id.nullable() })
+export type ReadFolder = z.infer<typeof ReadFolder>
+
+/** `resolveDownload`: a file of a version, exactly by path. */
+export const ResolveDownload = InConversation.extend({ version: Id.nullable(), path: z.string().min(1).max(4096) })
+export type ResolveDownload = z.infer<typeof ResolveDownload>
+export const ResolveDownloadResult = z.discriminatedUnion('outcome', [
+  z.object({ outcome: z.literal('found'), key: z.string(), size: z.int().min(0), sha256: z.string(), mediaType: z.string() }),
+  z.object({ outcome: z.literal('missing') }),
+])
+export type ResolveDownloadResult = z.infer<typeof ResolveDownloadResult>
+
+export const DeleteConversation = InConversation
+export type DeleteConversation = z.infer<typeof DeleteConversation>
+export const DeleteConversationResult = z.object({ outcome: z.literal('deleted') })
+export type DeleteConversationResult = z.infer<typeof DeleteConversationResult>
+
 export const engine = {
   /** The connectors this engine serves [5]. */
   catalog: internal.route({ method: 'GET', path: at('/catalog') }).output(Catalog),
@@ -215,23 +233,18 @@ export const engine = {
   /** The folder at a version, the current one without [12]. */
   folder: internal
     .route({ method: 'POST', path: at('/conversations/folder') })
-    .input(InConversation.extend({ version: Id.nullable() }))
+    .input(ReadFolder)
     .output(Folder),
   /** A file of a version: the R2 key Laravel signs a download for, never one it derives from a path [12]. */
   resolveDownload: internal
     .route({ method: 'POST', path: at('/conversations/download') })
-    .input(InConversation.extend({ version: Id.nullable(), path: z.string().min(1).max(4096) }))
-    .output(
-      z.discriminatedUnion('outcome', [
-        z.object({ outcome: z.literal('found'), key: z.string(), size: z.int().min(0), sha256: z.string(), mediaType: z.string() }),
-        z.object({ outcome: z.literal('missing') }),
-      ]),
-    ),
+    .input(ResolveDownload)
+    .output(ResolveDownloadResult),
   /** Tombstones the conversation, refuses its starts and writes, cancels its run and cleans up; answers once durable [12]. */
   deleteConversation: internal
     .route({ method: 'POST', path: at('/conversations/delete') })
-    .input(InConversation)
-    .output(z.object({ outcome: z.literal('deleted') })),
+    .input(DeleteConversation)
+    .output(DeleteConversationResult),
   /** The emergency stop: whether new runs may start. The highest revision wins [14]. */
   admission: internal
     .route({ method: 'POST', path: at('/admission') })

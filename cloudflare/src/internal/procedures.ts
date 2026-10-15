@@ -6,6 +6,7 @@ import { implement } from "@orpc/server";
 import { connectorRegistry } from "../connectors/index.ts";
 import { catalogOf } from "./catalog.ts";
 import { checkGrantEdit, describeAccount, listResources } from "./connections.ts";
+import { deleteConversation, readFolder, resolveDownload } from "./conversations.ts";
 import { internalRefusal } from "./errors.ts";
 import { cancelRun, replayFacts, startRun } from "./runs.ts";
 
@@ -51,8 +52,8 @@ export const internalRouter = internal.router({
 	describeAccount: internal.describeAccount.use(inEnvironment).handler(({ context, input }) => describeAccount(context.env, input)),
 	listResources: internal.listResources.use(inEnvironment).handler(({ context, input }) => listResources(context.env, input)),
 	checkGrantEdit: internal.checkGrantEdit.use(inEnvironment).handler(({ context, input }) => checkGrantEdit(context.env, input)),
-	folder: internal.folder.use(inEnvironment).handler(notYet(12)),
-	resolveDownload: internal.resolveDownload.use(inEnvironment).handler(notYet(12)),
-	deleteConversation: internal.deleteConversation.use(inEnvironment).handler(notYet(12)),
+	folder: internal.folder.use(inEnvironment).handler(({ context, input }) => readFolder(context.env, input)),
+	resolveDownload: internal.resolveDownload.use(inEnvironment).handler(({ context, input }) => resolveDownload(context.env, input)),
+	deleteConversation: internal.deleteConversation.use(inEnvironment).handler(({ context, input }) => deleteConversation(context.env, input)),
 	admission: internal.admission.use(inEnvironment).handler(notYet(14)),
 });
