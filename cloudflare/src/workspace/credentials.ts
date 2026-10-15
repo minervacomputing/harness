@@ -18,8 +18,6 @@ export const TOKEN_BODY_LIMIT = 1 << 20;
 /** Legacy Todoist tokens report a 10-year expiry; anything beyond a year is treated as non-expiring. */
 export const MAX_EXPIRES_IN = 365 * 24 * 3600;
 
-export const EXPIRED = "The connection expired. Reconnect it in Minerva.";
-
 export type OAuth2 = Extract<Auth, { type: "oauth2" }>;
 
 function own(payload: JsonObject, key: string): Json | undefined {

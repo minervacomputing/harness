@@ -3,10 +3,9 @@
 // messages.
 
 import { describe, expect, test } from "vitest";
-import { folderLimitMessage, mib, uploadTooLarge } from "../../src/files/limits.ts";
+import { folderLimitMessage, mib, overFolder, uploadTooLarge } from "../../src/files/limits.ts";
 import { cleanName, numbered, sniff, uploadName } from "../../src/files/names.ts";
 import { checkUploadRequest } from "../../src/files/uploads.ts";
-import { overFolder } from "../../src/workspace/limits.ts";
 
 const encoder = new TextEncoder();
 

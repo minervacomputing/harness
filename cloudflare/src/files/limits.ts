@@ -1,12 +1,11 @@
 // The constants and messages of agent files. The limits that are settings come from config.ts
 // (`Settings.files`); the rest are constants.
 
-import { NO_LONGER_AVAILABLE, NO_ROOM, sizeText } from "../workspace/limits.ts";
-
 /** The four limits a folder can hit; the same strings everywhere. */
 export type FolderLimit = "folder_bytes" | "folder_entries" | "run_uploads" | "workspace";
 
-export { NO_LONGER_AVAILABLE, NO_ROOM, sizeText };
+export const NO_ROOM = "This workspace has no room for more files.";
+export const NO_LONGER_AVAILABLE = "An attached file is no longer available. Remove it and attach it again.";
 
 /** UTF-8 bytes of a relative path, and of one of its names. */
 export const MAX_PATH_BYTES = 1024;
@@ -54,6 +53,20 @@ export function pages(size: number): number {
 	return Math.ceil(size / PAGE_BYTES) * PAGE_BYTES;
 }
 
+// Made on first use: a number format built at module load costs the Worker's startup (cloudflare/README.md, Startup).
+let size: Intl.NumberFormat | undefined;
+
+/** A size for a message: in GB from a GiB, else in MB, binary units either way ("256 MB", "1.5 GB"). */
+export function sizeText(bytes: number): string {
+	size ??= new Intl.NumberFormat("en-US", { maximumSignificantDigits: 6, useGrouping: false });
+	return bytes >= 2 ** 30 ? `${size.format(bytes / 2 ** 30)} GB` : `${size.format(bytes / 2 ** 20)} MB`;
+}
+
+/** A count with thousands separators ("10,000"). */
+export function thousands(n: number): string {
+	return n.toLocaleString("en-US");
+}
+
 /** Whole MiB from one MiB, else bytes. */
 export function mib(bytes: number): string {
 	return bytes >= 2 ** 20 ? `${Math.round(bytes / 2 ** 20)} MiB` : `${bytes} bytes`;
@@ -80,6 +93,12 @@ export function folderLimitMessage(limit: FolderLimit, limits: FolderLimits): st
 		default:
 			return "The workspace has used all of its storage for files.";
 	}
+}
+
+/** The 413 of an attachment that would pass a folder limit. */
+export function overFolder(limit: "folder_entries" | "folder_bytes", folderEntries: number, folderBytes: number): string {
+	if (limit === "folder_entries") return `These files would put more than ${thousands(folderEntries)} files and folders in this conversation's folder.`;
+	return `These files would make this conversation's folder larger than ${sizeText(folderBytes)}.`;
 }
 
 /** The 413 of a body over the upload limit. */

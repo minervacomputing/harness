@@ -6,7 +6,8 @@
 import { describe, expect, test } from "vitest";
 import { SAFETY_INSTRUCTIONS } from "../../src/gateway/tools.ts";
 import { splitParts } from "../../src/lib/text.ts";
-import { NOT_FOUND, START_FAILED, START_TTL_MS } from "../../src/workspace/core.ts";
+import { START_FAILED } from "../../src/conversation/events.ts";
+import { NOT_FOUND, START_TTL_MS } from "../../src/workspace/core.ts";
 import type { RefusalCode } from "../../src/shared/rpc.ts";
 import {
 	ADA,

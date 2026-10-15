@@ -11,7 +11,6 @@ import type { CredentialPort, HeldLease } from "../gateway/executor.ts";
 import { RUN_ENDED_MESSAGE } from "../gateway/ledger.ts";
 import { failureOf, laravelClient, retryable } from "../laravel/client.ts";
 import type { AttemptFence } from "../shared/rpc.ts";
-import { EXPIRED } from "../workspace/credentials.ts";
 import type { WorkspaceClient } from "./ports.ts";
 import type { RunSnapshot } from "./store.ts";
 
@@ -23,6 +22,8 @@ export const laravelRuns: WorkspaceClient = {
 	lease: () => Promise.reject(new Error("A Laravel run's credentials are leased from Laravel (laravelCredentials).")),
 	markUnauthorized: () => Promise.reject(new Error("A Laravel run's refused credentials are reported to Laravel (laravelCredentials).")),
 };
+
+export const EXPIRED = "The connection expired. Reconnect it in Minerva.";
 
 /** What reaches the model when Laravel cannot lend a credential: never Laravel's own message. */
 export const UNAVAILABLE = "This connection is not available to the agent right now. Try again.";

@@ -18,6 +18,7 @@ import {
 	repositoriesCursor,
 	repositoryRecord,
 } from "../../src/connectors/github/connector.ts";
+import { EXPIRED } from "../../src/conversation/laravel-runs.ts";
 import { type Connector, OperationError, type ProviderClient } from "../../src/gateway/connector.ts";
 import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
@@ -28,7 +29,7 @@ import { EncryptionKeys } from "../../src/lib/encryption.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
 import { percentDecode } from "../../src/lib/text.ts";
 import { WorkspaceCore } from "../../src/workspace/core.ts";
-import { EXPIRED, type OAuth2, answerJson, tokenBody, tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
+import { type OAuth2, answerJson, tokenBody, tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
 import { oauthClients } from "../../src/workspace/env.ts";
 import { connectionOut } from "../../src/workspace/out.ts";
 import { Scenario, jsonResponse, userGrants } from "./executor-fakes.ts";

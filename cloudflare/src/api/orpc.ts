@@ -12,7 +12,7 @@
 //      setup's status), an instance admin (everything under `instance`, read from D1: 403
 //      `INSTANCE_ADMINS_ONLY`), and by default any signed-in user (401);
 // 3. oRPC matches the method and path (404), then reads the body with http/body.ts's `readJson` (415, 413,
-//    400). The interceptor below replaces oRPC's own reader, which takes forms and any content type and
+//    400). internal/handler.ts's interceptor replaces oRPC's own reader, which takes forms and any content type and
 //    parses with JSON.parse (lib/json.ts has why that is wrong);
 // 4. middleware checks that the procedure is called by whom the mount admitted (procedures.ts `signedIn`,
 //    `instanceAdmin`, and `inWorkspace`, for which the input's workspace is also the path's);
@@ -22,22 +22,20 @@
 // Better Auth set while reading the session go on every answer the mount gives: success, refusal and 401.
 
 import { REFUSALS } from "@minerva/contract";
-import { OpenAPIHandler } from "@orpc/openapi/fetch";
 import { StandardOpenAPIMatcher } from "@orpc/openapi/standard";
-import { type AnyRouter, ORPCError, ValidationError } from "@orpc/server";
 import { type CurrentSession, currentSession, withSessionCookies } from "../accounts/auth.ts";
 import { ADMINS_ONLY, isInstanceAdmin } from "../accounts/instance.ts";
-import { MAX_JSON_BODY, UNPARSEABLE, readJson } from "../http/body.ts";
-import { HttpError, SERVER_ERROR, errorAnswer, noRoute, serverError, unauthorized } from "../http/errors.ts";
+import { MAX_JSON_BODY } from "../http/body.ts";
+import { HttpError, errorAnswer, noRoute, serverError, unauthorized } from "../http/errors.ts";
 import { UUID } from "../http/paths.ts";
 import type { App } from "../http/router.ts";
-import type { Json } from "../lib/json.ts";
+import { contractHandler } from "../internal/handler.ts";
 import { instanceProcedures, meProcedure, passwordProcedures, setupProcedures } from "./accounts.ts";
 import { agentProcedures } from "./agents.ts";
 import { connectionProcedures, connectorProcedures } from "./connections.ts";
 import { conversationProcedures, runProcedures, uploadProcedures } from "./conversations.ts";
 import { member } from "./members.ts";
-import { type ApiContext, api, refusal } from "./procedures.ts";
+import { type ApiContext, api } from "./procedures.ts";
 
 const router = api.router({
 	me: meProcedure,
@@ -52,95 +50,8 @@ const router = api.router({
 	uploads: uploadProcedures,
 });
 
-/**
- * The request's JSON body, undefined without one; a body `readJson` refuses, or that breaks off, is thrown as a refusal.
- * A browser sends a POST without a body (the link's, for a procedure whose input is all in the path) with
- * `Content-Length: 0` and no type, which arrives with an empty body: that is no body too.
- */
-async function jsonBody(request: Request, limit: number): Promise<Json | undefined> {
-	if (request.body === null || (!request.headers.has("Content-Type") && request.headers.get("Content-Length")?.trim() === "0")) return undefined;
-	let read: Awaited<ReturnType<typeof readJson>>;
-	try {
-		read = await readJson(request, limit);
-	} catch {
-		read = { ok: false, refusal: UNPARSEABLE };
-	}
-	if (!read.ok) throw refusal(read.refusal.code, read.refusal.detail);
-	return read.value;
-}
-
-/**
- * A refusal our code made (procedures.ts `refusal`, `invalidInput` below): declared, with one of the API's codes. oRPC
- * would mark any error whose code and status match the error map as declared, so this is checked before it does.
- */
-function ours(error: unknown, codes: Codes): boolean {
-	return error instanceof ORPCError && error.defined && Object.hasOwn(codes, error.code) && !(error.cause instanceof ValidationError);
-}
-
-/** Anything not ours (a crash, an output that failed its schema, a failure of oRPC's own) is logged and answers 500. */
-function crashed(error: unknown): ORPCError<string, unknown> {
-	console.error("Unhandled error in a contract route", error);
-	return refusal("INTERNAL_SERVER_ERROR", SERVER_ERROR);
-}
-
-/** zod's issues as the contract's 422: each issue's path and message, and the first one as the message. */
-function invalidInput(error: ValidationError): ORPCError<"VALIDATION_FAILED", unknown> {
-	const issues = error.issues.map((issue) => ({
-		path: (issue.path ?? []).map((part) => {
-			const key = typeof part === "object" ? part.key : part;
-			return typeof key === "number" ? key : String(key);
-		}),
-		message: issue.message,
-		// zod's issues carry their kind; Standard Schema's need not.
-		code: String((issue as { code?: unknown }).code ?? "invalid"),
-	}));
-	const first = issues[0];
-	const field = first?.path.at(-1);
-	const message = first === undefined ? "Invalid input." : field === undefined ? first.message : `${field}: ${first.message}`;
-	return new ORPCError("VALIDATION_FAILED", { defined: true, status: REFUSALS.VALIDATION_FAILED, message, data: { issues } });
-}
-
-/** An API's refusal codes with their statuses: the public contract's `REFUSALS`, or the internal API's. */
-type Codes = Readonly<Record<string, number>>;
-
-/**
- * oRPC's handler for a contract's router, with our body reader and our errors: the public API's by default, or another API's
- * codes and body cap (the internal API, internal/mount.ts). Both have the codes this module answers with itself, with the
- * same statuses: the body reader's, `VALIDATION_FAILED` and `INTERNAL_SERVER_ERROR`.
- */
-export function contractHandler<Context extends { request: Request } = ApiContext>(
-	procedures: AnyRouter,
-	{ codes = REFUSALS, maxBody = MAX_JSON_BODY }: { codes?: Codes; maxBody?: number } = {},
-): OpenAPIHandler<Context> {
-	return new OpenAPIHandler(procedures, {
-		interceptors: [
-			// Around matching, decoding and the call. oRPC calls `request.body()` to decode the input; ours answers
-			// instead of oRPC's reader. What decoding throws that is not ours would answer in oRPC's own shape.
-			async (options) => {
-				let body: Promise<Json | undefined> | null = null;
-				try {
-					return await options.next({ ...options, request: { ...options.request, body: () => (body ??= jsonBody(options.context.request, maxBody)) } });
-				} catch (error) {
-					throw ours(error, codes) ? error : crashed(error);
-				}
-			},
-		],
-		// Around the procedure, before oRPC compares its errors with the error map.
-		clientInterceptors: [
-			async ({ next }) => {
-				try {
-					return await next();
-				} catch (error) {
-					if (error instanceof ORPCError && error.code === "BAD_REQUEST" && error.cause instanceof ValidationError) throw invalidInput(error.cause);
-					throw ours(error, codes) ? error : crashed(error);
-				}
-			},
-		],
-	});
-}
-
 /** The contract's routes, as the mount serves them. */
-export const handler = contractHandler(router);
+export const handler = contractHandler<ApiContext>(router, { codes: REFUSALS, maxBody: MAX_JSON_BODY });
 
 /** A path in a workspace, with the workspace's segment as sent. */
 const IN_WORKSPACE = /^\/api\/workspaces\/([^/]+)(?:\/|$)/;

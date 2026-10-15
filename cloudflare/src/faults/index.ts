@@ -16,7 +16,7 @@ import type { RunId } from "../shared/rpc.ts";
 import { Workspace as BaseWorkspace, WORKSPACE_PORTS } from "../workspace/workspace.ts";
 import { FLOW_CLIENTS } from "../api/oauth-clients.ts";
 import { MAIL_TRANSPORT } from "../accounts/emails.ts";
-import { PROVIDER_NETWORK } from "../api/providers.ts";
+import { PROVIDER_NETWORK } from "../internal/providers.ts";
 import { notesConnector } from "./connector.ts";
 import { captureEmail } from "./mailbox.ts";
 import { type Fault, type Fired, planOf } from "./plan.ts";
@@ -26,7 +26,7 @@ import { faultRoutes } from "./routes.ts";
 CONNECTOR_SOURCE.connectors = async () => [...(await servedConnectors()), notesConnector()];
 PORTS.factory = () => faultConversationPorts(defaultPorts);
 WORKSPACE_PORTS.factory = (deps, ctx, env) => faultWorkspacePorts(deps, ctx, env);
-// The settings pages' provider calls (src/api/providers.ts) reach the fake provider too, and nothing else.
+// The settings calls' provider requests (src/internal/providers.ts) reach the fake provider too, and nothing else.
 PROVIDER_NETWORK.fetch = (env, workspace) => providerFetch(env, workspace.id);
 // Notes is listed and connects through OAuth with its fake provider's client (src/api/flows.ts).
 const flowClients = FLOW_CLIENTS.of;

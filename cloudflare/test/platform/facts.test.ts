@@ -10,7 +10,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest
 import { conversationObject } from "../../src/addressing.ts";
 import type { Conversation } from "../../src/conversation/conversation.ts";
 import { BACKLOG_MESSAGE, FACT_DELIVERY } from "../../src/conversation/facts.ts";
-import { MIN_LEASE_MS, UNAVAILABLE, laravelCredentials } from "../../src/conversation/laravel-runs.ts";
+import { EXPIRED, MIN_LEASE_MS, UNAVAILABLE, laravelCredentials } from "../../src/conversation/laravel-runs.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
 import type { RunSnapshot } from "../../src/conversation/store.ts";
 import { RUN_ENDED_MESSAGE } from "../../src/gateway/ledger.ts";
@@ -21,7 +21,6 @@ import { uuid7 } from "../../src/lib/random.ts";
 import { type FakeScript, fakeUpstream } from "../../src/model/fake.ts";
 import { openSocket } from "../../src/stream/relay.ts";
 import { STREAM_AUDIENCE, STREAM_PURPOSE } from "../../src/stream/token.ts";
-import { EXPIRED } from "../../src/workspace/credentials.ts";
 import { FakeLaravel } from "./fake-laravel.ts";
 import { ORIGIN, commands, refusalOf, scope, signedAssertions, startOf } from "./internal-support.ts";
 

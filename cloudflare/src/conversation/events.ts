@@ -92,6 +92,7 @@ export const TIMED_OUT: RunEnd = { status: "timed_out", code: "timed_out", messa
 export const WORKER_EXITED: RunEnd = { status: "failed", code: "worker_exited", message: "The worker stopped unexpectedly." };
 export const WORKER_FAILED: RunEnd = { status: "failed", code: "worker_failed", message: "The agent could not finish this run. Try again." };
 export const START_EXPIRED: RunEnd = { status: "failed", code: "start_expired", message: "The agent could not finish this run. Try again." };
+export const START_FAILED = "The agent could not finish this run. Try again.";
 
 /** How a cancel from outside the object ends its run (ARCHITECTURE.md: Strict revocation). */
 export function endFor(reason: CancelReason): RunEnd {

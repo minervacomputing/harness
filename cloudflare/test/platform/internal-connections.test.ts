@@ -2,7 +2,7 @@
 // through `PROVIDER_NETWORK`.
 
 import { afterEach, describe, expect, test } from "vitest";
-import { PROVIDER_NETWORK } from "../../src/api/providers.ts";
+import { PROVIDER_NETWORK } from "../../src/internal/providers.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { commands, refusalOf, scope, signedAssertions } from "./internal-support.ts";
 

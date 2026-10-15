@@ -11,7 +11,7 @@ import { internalRefusal } from "./errors.ts";
 import { cancelRun, replayFacts, startRun } from "./runs.ts";
 
 export interface InternalContext {
-	/** The request as it arrived. Its body is read only by api/orpc.ts's reader. */
+	/** The request as it arrived. Its body is read only by handler.ts's reader. */
 	request: Request;
 	env: Env;
 	/** The environment this engine serves (MINERVA_ENVIRONMENT). */

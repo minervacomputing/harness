@@ -14,18 +14,17 @@ import {
 	type ListResourcesResult,
 } from "@minerva/contract/internal";
 import { ORPCError } from "@orpc/server";
-import { PROVIDER_NETWORK, providerAccount } from "../api/providers.ts";
 import { connectorRegistry } from "../connectors/index.ts";
 import { storable } from "../conversation/events.ts";
 import { ACCOUNT_KIND, type Connector, type DiscoveryPage, OperationError, type ProviderClient, kindOf } from "../gateway/connector.ts";
 import { unauthorized } from "../gateway/executor.ts";
 import { type GrantChange, type GrantRow, InvalidGrants, checkChanges, planGrantChanges, resourceKey } from "../gateway/grants.ts";
-import { CallIo } from "../gateway/http.ts";
 import { ANY } from "../gateway/policy.ts";
 import { compareText } from "../lib/arrays.ts";
 import { sliceText } from "../lib/text.ts";
 import type { WorkspaceRef } from "../shared/rpc.ts";
 import { internalRefusal } from "./errors.ts";
+import { providerAccount, withProvider } from "./providers.ts";
 
 /** A grant's name as Laravel stores it (contract `GrantInput.name`), in JSON Postgres takes. */
 const NAME_MAX = 300;
@@ -82,16 +81,8 @@ function refusalOf(error: OperationError, browsing = false): { outcome: "refused
 }
 
 /** Runs `run` with a client holding the command's credential, for this call only. */
-async function withCredential<T>(env: Env, command: SettingsCall, connector: Connector, run: (client: ProviderClient) => Promise<T>): Promise<T> {
-	const workspace = workspaceOf(command);
-	const io = new CallIo({ fetch: PROVIDER_NETWORK.fetch(env, workspace), now: () => performance.now(), admits: () => true });
-	const client = connector.client(command.credential.secret, io);
-	try {
-		return await run(client);
-	} finally {
-		io.close();
-		await client.close();
-	}
+function withCredential<T>(env: Env, command: SettingsCall, connector: Connector, run: (client: ProviderClient) => Promise<T>): Promise<T> {
+	return withProvider(env, workspaceOf(command), connector, command.credential.secret, run);
 }
 
 /** A name from the provider as a grant keeps it. */

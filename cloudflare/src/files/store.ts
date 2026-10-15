@@ -25,7 +25,6 @@ import { splitParts, VALUE_PART } from "../lib/text.ts";
 import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan } from "../sandbox/folder.ts";
 import type { Attachment, Folder, FolderChanges } from "@minerva/contract";
 import { type AttemptFence, type ConversationId, type EpochMs, type Outcome, type RunId, type Sha256, type VersionId, type WorkspaceId, refuse } from "../shared/rpc.ts";
-import { overFolder } from "../workspace/limits.ts";
 import {
 	BLOB_GONE,
 	CONFLICT,
@@ -37,6 +36,7 @@ import {
 	SECOND_DELETION_MS,
 	STALE,
 	folderBytes,
+	overFolder,
 	quotaRefusal,
 	unreadableMessage,
 } from "./limits.ts";

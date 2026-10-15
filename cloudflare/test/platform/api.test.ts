@@ -7,7 +7,7 @@ import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, test } from "vitest";
 import { type WorkspaceRow, ensureInitialized, workspaceOwner } from "../../src/accounts/provision.ts";
 import { workspaceObject } from "../../src/addressing.ts";
-import { PROVIDER_NETWORK } from "../../src/api/providers.ts";
+import { PROVIDER_NETWORK } from "../../src/internal/providers.ts";
 import { STILL_STOPPING } from "../../src/api/members.ts";
 import { checkStopped } from "../../src/api/procedures.ts";
 import { uuid7 } from "../../src/lib/random.ts";

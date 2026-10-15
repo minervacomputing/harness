@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { workspaceObject } from "../../src/addressing.ts";
 import { EXPIRED_FLOW } from "../../src/api/flows.ts";
 import { FLOW_CLIENTS } from "../../src/api/oauth-clients.ts";
-import { PROVIDER_NETWORK } from "../../src/api/providers.ts";
+import { PROVIDER_NETWORK } from "../../src/internal/providers.ts";
 import { providerOf } from "../../src/faults/ports.ts";
 import { NOTES_ACCOUNT } from "../../src/faults/provider.ts";
 import { uuid7 } from "../../src/lib/random.ts";

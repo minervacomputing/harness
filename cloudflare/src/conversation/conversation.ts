@@ -57,7 +57,6 @@ import type { Folder, Message, NewMessage, Run } from "@minerva/contract";
 import type { CancelRun, CancelRunResult, DeleteConversation, DeleteConversationResult, Fact, ReadFolder, ReplayFacts, ResolveDownload, StartRun, StartRunResult } from "@minerva/contract/internal";
 import { type Preparation, type StartRefusal, UNAVAILABLE, messageRefusal, prepareStart, promptOf as internalPrompt, startRefusal } from "../internal/start.ts";
 import { type AttemptFence, type Caller, type Outcome, type Refusal, type RunId, type VersionId, type WorkspaceRef, refuse } from "../shared/rpc.ts";
-import { START_FAILED } from "../workspace/core.ts";
 import {
 	ACTING,
 	ACTIVE,
@@ -71,6 +70,7 @@ import {
 	type RunEnd,
 	type RunEvent,
 	START_EXPIRED,
+	START_FAILED,
 	statusEvent,
 	TIMED_OUT,
 	WORKER_EXITED,

@@ -10,7 +10,7 @@ import { beforeAll, describe, expect, test } from "vitest";
 import { conversationObject, workspaceObject } from "../../src/addressing.ts";
 import { CONNECTORS } from "../../src/connectors/catalog.ts";
 import { CONNECTOR_SOURCE } from "../../src/connectors/index.ts";
-import type { RunEvent } from "../../src/conversation/events.ts";
+import { type RunEvent, START_FAILED } from "../../src/conversation/events.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
 import type { RunHead } from "../../src/conversation/store.ts";
 import { NOTES_CLIENT, NOTES_TOKEN_URL, notesConnector } from "../../src/faults/connector.ts";
@@ -22,7 +22,6 @@ import { EncryptionKeys, credentialBinding } from "../../src/lib/encryption.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import type { FakeTurn } from "../../src/model/fake.ts";
 import type { Caller, RunId, WorkspaceRef } from "../../src/shared/rpc.ts";
-import { START_FAILED } from "../../src/workspace/core.ts";
 import { WORKSPACE_PORTS } from "../../src/workspace/workspace.ts";
 
 const USER = "0199a000-0000-7000-8000-0000000e2e01";

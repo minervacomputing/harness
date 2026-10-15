@@ -22,13 +22,13 @@ import { connectorRegistry } from "../connectors/index.ts";
 import { type Connector, type CredentialPayload, OperationError } from "../gateway/connector.ts";
 import { HttpError, errorAnswer } from "../http/errors.ts";
 import type { App } from "../http/router.ts";
+import { PROVIDER_NETWORK, providerAccount } from "../internal/providers.ts";
 import { timingSafeEqual } from "../lib/hash.ts";
 import type { WorkspaceRef } from "../shared/rpc.ts";
 import { TOKEN_TIMEOUT_MS, answerJson, boundedBody, issuingClient, tokenBody, tokenPayload, tokenRequest } from "../workspace/credentials.ts";
 import { isAdmin } from "../workspace/out.ts";
 import { type Member, member, param } from "./members.ts";
 import { FLOW_CLIENTS, clientCredentials, oauthOf } from "./oauth-clients.ts";
-import { PROVIDER_NETWORK, providerAccount } from "./providers.ts";
 
 /** A user-facing failure while connecting an account: 503 when starting, `?error=` on the callback. */
 export class ConnectionFlowError extends Error {

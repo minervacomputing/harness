@@ -2,7 +2,8 @@
 
 import { describe, expect, test } from "vitest";
 import { MIGRATIONS } from "../../src/workspace/schema.ts";
-import { overFolder, pages, sizeText, thousands, tooManyAttachments } from "../../src/workspace/limits.ts";
+import { overFolder, pages, sizeText, thousands } from "../../src/files/limits.ts";
+import { tooManyAttachments } from "../../src/workspace/limits.ts";
 import { migrate } from "../../src/lib/sql.ts";
 import { database, nodeSql } from "./workspace-support.ts";
 

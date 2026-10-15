@@ -9,8 +9,9 @@
 // first (compare-and-set on the credential generation).
 
 import type { CancelAck } from "../conversation/conversation.ts";
-import type { CancelReason } from "../conversation/events.ts";
-import type { FolderLimit } from "../files/limits.ts";
+import { type CancelReason, START_FAILED } from "../conversation/events.ts";
+import { EXPIRED } from "../conversation/laravel-runs.ts";
+import { type FolderLimit, NO_LONGER_AVAILABLE, NO_ROOM, overFolder, pages } from "../files/limits.ts";
 import type { ReservedUpload } from "../files/uploads.ts";
 import { ACCOUNT_KIND, type CredentialPayload } from "../gateway/connector.ts";
 import type { SealedLease } from "../gateway/executor.ts";
@@ -37,11 +38,9 @@ import type {
 	WorkspaceRef,
 } from "../shared/rpc.ts";
 import { refuse } from "../shared/rpc.ts";
-import { EXPIRED, asPayload, expiresAtOf, keepRefreshToken, needsRefresh, planRefresh, type RefreshResult, scopesOf } from "./credentials.ts";
+import { asPayload, expiresAtOf, keepRefreshToken, needsRefresh, planRefresh, type RefreshResult, scopesOf } from "./credentials.ts";
 import {
 	ATTACHED_TWICE,
-	NO_LONGER_AVAILABLE,
-	NO_ROOM,
 	PENDING_UPLOAD_LIFETIME_MS,
 	PENDING_UPLOADS,
 	TOO_MANY_UPLOADS,
@@ -49,8 +48,6 @@ import {
 	UPLOAD_LIFETIME_MS,
 	UPLOADING_TOO_MANY,
 	UPLOADS_IN_FLIGHT,
-	overFolder,
-	pages,
 	tooManyAttachments,
 } from "./limits.ts";
 import { type AgentView, type ConnectionView, accessOut, agentOut, connectionOut, conversationOut, isAdmin } from "./out.ts";
@@ -303,7 +300,6 @@ export const CANNOT_CHANGE = "You cannot change this agent.";
 export const KEEP_ONE_AGENT = "Keep at least one agent.";
 export const UNKNOWN_PROVIDER = "Unknown provider.";
 export const ALREADY_CONNECTED = "This account is already connected by someone else in this workspace.";
-export const START_FAILED = "The agent could not finish this run. Try again.";
 
 export const DEFAULT_AGENT = { name: "Assistant", instructions: "You are a helpful, concise assistant.", modelAlias: "default" } as const;
 

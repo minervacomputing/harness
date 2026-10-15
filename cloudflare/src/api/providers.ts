@@ -7,20 +7,11 @@
 
 import { type Account, type Connector, type CredentialPayload, OperationError, type ProviderClient } from "../gateway/connector.ts";
 import { secretOf, unauthorized } from "../gateway/executor.ts";
-import { CallIo } from "../gateway/http.ts";
+import { providerAccount, withProvider } from "../internal/providers.ts";
 import { EncryptionKeys, credentialBinding } from "../lib/encryption.ts";
 import type { WorkspaceRef } from "../shared/rpc.ts";
 import type { Member } from "./members.ts";
 import { refusal } from "./procedures.ts";
-
-/**
- * The network provider calls go out on: the Worker's `fetch`. The test build (src/faults/) replaces it with
- * its fake provider and nothing else, so a Worker its token-gated driver controls cannot reach a real one;
- * platform tests replace it with a fake of the provider they talk to.
- */
-export const PROVIDER_NETWORK: { fetch: (env: Env, workspace: WorkspaceRef) => typeof fetch } = {
-	fetch: () => (input, init) => fetch(input, init),
-};
 
 let ring: { source: string; keys: Promise<EncryptionKeys> } | null = null;
 
@@ -29,28 +20,6 @@ export function encryptionKeys(env: Env): Promise<EncryptionKeys> {
 	const source = env.MINERVA_ENCRYPTION_KEYS;
 	if (ring === null || ring.source !== source) ring = { source, keys: EncryptionKeys.parse(source) };
 	return ring.keys;
-}
-
-async function call<Client extends ProviderClient, T>(
-	env: Env,
-	workspace: WorkspaceRef,
-	connector: Connector<Client>,
-	secret: string,
-	run: (client: Client) => Promise<T>,
-): Promise<T> {
-	const io = new CallIo({ fetch: PROVIDER_NETWORK.fetch(env, workspace), now: () => performance.now(), admits: () => true });
-	const client = connector.client(secret, io);
-	try {
-		return await run(client);
-	} finally {
-		io.close();
-		await client.close();
-	}
-}
-
-/** The account behind a secret (a key, or an OAuth access token); a provider's refusal is its OperationError. */
-export function providerAccount(env: Env, workspace: WorkspaceRef, connector: Connector, secret: string): Promise<Account> {
-	return call(env, workspace, connector, secret, (client) => connector.account(client));
 }
 
 /** Failures of what the member sent (an id that cannot name anything, a page token that is not ours), not of the provider. */
@@ -81,7 +50,7 @@ export async function withConnection<T>(env: Env, member: Member, connector: Con
 	const binding = credentialBinding(member.workspace.id, connectionId);
 	const payload = (await (await encryptionKeys(env)).decrypt(binding, lease.sealed)) as unknown as CredentialPayload;
 	try {
-		return await call(env, member.workspace, connector, secretOf(payload), run);
+		return await withProvider(env, member.workspace, connector, secretOf(payload), run);
 	} catch (error) {
 		if (unauthorized(error)) {
 			try {

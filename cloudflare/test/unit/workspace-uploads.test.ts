@@ -4,8 +4,9 @@
 // checked after every crash point: they are derived from the rows, so a crash can never leave them wrong.
 
 import { describe, expect, test } from "vitest";
+import { NO_ROOM } from "../../src/files/limits.ts";
 import { NOT_FOUND } from "../../src/workspace/core.ts";
-import { NO_ROOM, PENDING_UPLOAD_LIFETIME_MS, TOO_MANY_UPLOADS, UPLOAD_LIFETIME_MS, UPLOADING_TOO_MANY } from "../../src/workspace/limits.ts";
+import { PENDING_UPLOAD_LIFETIME_MS, TOO_MANY_UPLOADS, UPLOAD_LIFETIME_MS, UPLOADING_TOO_MANY } from "../../src/workspace/limits.ts";
 import { ADA, GRACE, USER, WORKSPACE, begin, conversation, harness, type Harness } from "./workspace-support.ts";
 
 async function reserve(h: Harness, size: number, caller = ADA, name = "notes.txt") {

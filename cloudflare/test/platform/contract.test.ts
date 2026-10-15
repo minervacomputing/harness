@@ -9,7 +9,7 @@
 
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { ERRORS, RUN_EVENT_TYPES, contract } from "@minerva/contract";
+import { ERRORS, REFUSALS, RUN_EVENT_TYPES, contract } from "@minerva/contract";
 import { createORPCClient } from "@orpc/client";
 import { type ContractRouterClient, oc, type } from "@orpc/contract";
 import type { JsonifiedClient } from "@orpc/openapi-client";
@@ -18,14 +18,15 @@ import { ORPCError, implement } from "@orpc/server";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
 import { conversationObject } from "../../src/addressing.ts";
-import { contractHandler } from "../../src/api/orpc.ts";
 import type { ApiContext } from "../../src/api/procedures.ts";
-import { PROVIDER_NETWORK } from "../../src/api/providers.ts";
 import { CONNECTORS } from "../../src/connectors/catalog.ts";
 import { CONNECTOR_SOURCE } from "../../src/connectors/index.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
 import { notesConnector } from "../../src/faults/connector.ts";
 import { faultConversationPorts, faultWorkspacePorts } from "../../src/faults/ports.ts";
+import { MAX_JSON_BODY } from "../../src/http/body.ts";
+import { contractHandler } from "../../src/internal/handler.ts";
+import { PROVIDER_NETWORK } from "../../src/internal/providers.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { WORKSPACE_PORTS } from "../../src/workspace/workspace.ts";
 import { type Answer, Browser, ORIGIN, SESSION_COOKIE, contractError, installEmailLog, signedIn } from "./accounts-helpers.ts";
@@ -96,7 +97,7 @@ const testContract = {
 		.output(type<never>()),
 };
 const testApi = implement(testContract).$context<ApiContext>();
-const testHandler = contractHandler(
+const testHandler = contractHandler<ApiContext>(
 	testApi.router({
 		keys: testApi.keys.handler(({ input }) => Object.keys(input)),
 		stamped: testApi.stamped.handler(({ input }) => ({ key: input.headers["idempotency-key"], note: input.body.note })),
@@ -107,6 +108,7 @@ const testHandler = contractHandler(
 			throw new ORPCError("toString", { status: 500, message: "a secret" });
 		}),
 	}),
+	{ codes: REFUSALS, maxBody: MAX_JSON_BODY },
 );
 const testClient: JsonifiedClient<ContractRouterClient<typeof testContract>> = createORPCClient(
 	new OpenAPILink(testContract, {

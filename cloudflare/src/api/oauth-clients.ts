@@ -13,7 +13,8 @@ import { configuredClient, oauthClients } from "../workspace/env.ts";
 import type { ClientCredentials, OAuthClients } from "../workspace/ports.ts";
 import { ConnectionFlowError } from "./flows.ts";
 import { oauthClientBinding } from "../lib/encryption.ts";
-import { PROVIDER_NETWORK, encryptionKeys } from "./providers.ts";
+import { PROVIDER_NETWORK } from "../internal/providers.ts";
+import { encryptionKeys } from "./providers.ts";
 
 /** Where the flows' clients come from: the Worker's secrets and D1. The test build adds its fake provider's client (src/faults/). */
 export const FLOW_CLIENTS: { of: (env: Env) => OAuthClients } = {

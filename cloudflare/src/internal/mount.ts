@@ -1,5 +1,5 @@
 // The internal API's routes (docs/plans/contract.md): the commands Laravel sends, under /internal/v1/, served by oRPC's
-// OpenAPIHandler with the public API's body reader and error shape (api/orpc.ts `contractHandler`), but its own codes and
+// OpenAPIHandler with the public API's body reader and error shape (handler.ts `contractHandler`), but its own codes and
 // body cap. A request reaches a command in this order, each step refusing before the next runs:
 //
 // 1. without the internal settings (config.ts `internal`), every /internal/ path is 404, as if nothing were here;
@@ -13,12 +13,12 @@
 // nothing here logs one.
 
 import { INTERNAL_REFUSALS, MAX_INTERNAL_BODY } from "@minerva/contract/internal";
-import { contractHandler } from "../api/orpc.ts";
 import { settings } from "../config.ts";
 import { TOO_LARGE, declaredOver } from "../http/body.ts";
 import { errorAnswer, json, noRoute, serverError, unauthorized } from "../http/errors.ts";
 import type { App } from "../http/router.ts";
 import { AccessUnavailable, accessClient } from "./access.ts";
+import { contractHandler } from "./handler.ts";
 import { type InternalContext, internalRouter } from "./procedures.ts";
 
 const handler = contractHandler<InternalContext>(internalRouter, { codes: INTERNAL_REFUSALS, maxBody: MAX_INTERNAL_BODY });
