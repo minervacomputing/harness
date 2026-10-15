@@ -35,6 +35,7 @@ import {
 	LIST_INBOX,
 	later,
 	local,
+	outcome,
 	post,
 	provider,
 	reads,
@@ -59,7 +60,7 @@ describe.concurrent("attempts on the platform", () => {
 		const w = await world({ faults: [{ point: "tool:after", mode: "abort", tool: LIST }] });
 		const runId = await post(w, script([LIST_INBOX, { text: "Two notes." }]));
 		const view = await settled(w, runId);
-		expect(view.head?.status).toBe("completed");
+		expect(view.head?.status, outcome(view)).toBe("completed");
 		expect(restarts(view.events)).toEqual([2]);
 		expect(reads(await provider(w))).toBe(2);
 		expect(view.internals.executions.map((row) => row.executions)).toEqual([2]);
@@ -70,7 +71,7 @@ describe.concurrent("attempts on the platform", () => {
 		const w = await world({ faults: [{ point: "tool:after", mode: "abort", tool: SAVE }] });
 		const runId = await post(w, script([save("Once only"), save("Once only"), { text: "Saved once." }]));
 		const view = await settled(w, runId);
-		expect(view.head?.status).toBe("completed");
+		expect(view.head?.status, outcome(view)).toBe("completed");
 		expect(restarts(view.events)).toEqual([2]);
 		expect((await provider(w)).notes.map((note) => note.title)).toEqual([...SEEDED, "Once only"]);
 		expect(toolCalls(view.events)).toEqual([expect.objectContaining({ tool: SAVE, decision: "allowed" }), expect.objectContaining({ tool: SAVE, decision: "allowed", repeat: true })]);
@@ -113,7 +114,7 @@ describe.concurrent("attempts on the platform", () => {
 		const w = await world({ faults: [{ point: "provider:write:applied", mode: "abort" }] });
 		const runId = await post(w, script([save("Applied once"), save("Applied once"), { text: "Done." }]));
 		const view = await settled(w, runId);
-		expect(view.head?.status).toBe("completed");
+		expect(view.head?.status, outcome(view)).toBe("completed");
 		expect(restarts(view.events)).toEqual([2]);
 		expect(toolCalls(view.events)).toEqual([expect.objectContaining({ code: "WRITE_UNCERTAIN", message: "This write has an unknown outcome. Check the provider before retrying." })]);
 		expect((await provider(w)).notes.map((note) => note.title)).toEqual([...SEEDED, "Applied once"]);
@@ -135,7 +136,7 @@ describe.concurrent("attempts on the platform", () => {
 		const w = await world({ delays: { "GET /folders/inbox/notes": 75_000 } });
 		const runId = await post(w, script([LIST_INBOX, { text: "Two notes." }]));
 		const view = await settled(w, runId);
-		expect(view.head?.status).toBe("completed");
+		expect(view.head?.status, outcome(view)).toBe("completed");
 		expect(restarts(view.events)).toEqual([]);
 		expect(view.internals.attempts).toEqual([{ attempt: 1, ended: "completed" }]);
 		expect(reads(await provider(w))).toBe(1);
@@ -146,7 +147,7 @@ describe.concurrent("attempts on the platform", () => {
 		const w = await world({ expired: true, workspaceFaults: [{ point: "refresh:answered", mode: "abort" }] });
 		const runId = await post(w, script([LIST_INBOX, LIST_INBOX, { text: "Done." }]));
 		const view = await settled(w, runId);
-		expect(view.head?.status).toBe("completed");
+		expect(view.head?.status, outcome(view)).toBe("completed");
 		expect(toolCalls(view.events)).toEqual([
 			expect.objectContaining({ decision: "error", code: "FAILED" }),
 			expect.objectContaining({ decision: "error", code: "CONNECTION_UNAUTHORIZED", message: "The connection expired. Reconnect it in Minerva." }),
@@ -161,7 +162,7 @@ describe.concurrent("attempts on the platform", () => {
 		const w = await world({ model: "workers-ai" });
 		const runId = await post(w, "Use the notes_list_notes tool to list the notes in the folder inbox, then tell me how many there are.");
 		const view = await settled(w, runId, 180_000);
-		expect(view.head?.status).toBe("completed");
+		expect(view.head?.status, outcome(view)).toBe("completed");
 		expect(toolCalls(view.events)).toContainEqual(expect.objectContaining({ tool: LIST, decision: "allowed", count: 2 }));
 		const answer = view.events.find((event) => event.type === "message");
 		expect(String(answer?.data.content ?? "")).not.toBe("");
@@ -184,7 +185,7 @@ describe.concurrent("the local tools in the container", () => {
 		);
 		const view = await settled(w, runId);
 		const head = view.head;
-		expect(head?.status).toBe("completed");
+		expect(head?.status, outcome(view)).toBe("completed");
 		expect(cards(view.events)).toEqual([
 			{ tool: "write", summary: "notes.txt", ok: true, excerpt: "Successfully wrote to notes.txt" },
 			{ tool: "edit", summary: "notes.txt", ok: true, excerpt: "Successfully replaced 1 block(s) in notes.txt." },
@@ -217,7 +218,7 @@ describe.concurrent("the local tools in the container", () => {
 		);
 		const view = await settled(w, runId);
 		const head = view.head;
-		expect(head?.status).toBe("completed");
+		expect(head?.status, outcome(view)).toBe("completed");
 		expect(cards(view.events).map((card) => [card.ok, card.excerpt])).toEqual([
 			[true, "started\n"],
 			[true, "still\n"],
@@ -241,7 +242,7 @@ describe.concurrent("the local tools in the container", () => {
 		const runId = await post(w, script([sh("wc -c big*.bin | tail -n 1; head -c 1 big3.bin; echo"), { text: "Counted." }]), ids);
 		const postedMs = Date.now() - posting;
 		const view = await settled(w, runId);
-		expect(view.head?.status).toBe("completed");
+		expect(view.head?.status, outcome(view)).toBe("completed");
 		expect(cards(view.events)).toEqual([{ tool: "bash", summary: expect.stringContaining("wc -c"), ok: true, excerpt: "262144000 total\nd\n" }]);
 		const folder = await driver<{ versionId: string; files: { path: string }[] }>("files", base(w));
 		expect(folder.files.map((file) => file.path).sort()).toEqual(["big0.bin", "big1.bin", "big2.bin", "big3.bin", "big4.bin"]);
@@ -252,7 +253,7 @@ describe.concurrent("the local tools in the container", () => {
 		test(`a crash at ${point}: the next attempt starts from the last checkpoint`, async () => {
 			const w = await world({ faults: [{ point, mode: "abort" }] });
 			const view = await settled(w, await post(w, script([sh("echo a > a.txt"), sh("cat a.txt"), { text: "Done." }])));
-			expect(view.head?.status).toBe("completed");
+			expect(view.head?.status, outcome(view)).toBe("completed");
 			expect(restarts(view.events)).toEqual([2]);
 			// Uploaded but not recorded: the file is not in the checkpoint attempt 2 starts from.
 			expect(cards(view.events).find((card) => card.summary === "cat a.txt")?.ok).toBe(point !== "checkpoint:uploaded");

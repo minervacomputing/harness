@@ -107,7 +107,21 @@ export interface Reply {
 	text: string;
 }
 
+/**
+ * One request. A request sent on a kept-alive socket the other end had just closed fails with ECONNRESET
+ * before the Worker sees it (an account run's `post` did, 2026-10-15), so that one is sent again on a new
+ * socket, as Node's documentation advises (`request.reusedSocket`); any other failure is the caller's.
+ */
 export function fetchDeployed(url: string, init: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number } = {}): Promise<Reply> {
+	return send(url, init).catch((error: unknown) => {
+		if (error instanceof StaleSocket) return send(url, init);
+		throw error;
+	});
+}
+
+class StaleSocket extends Error {}
+
+function send(url: string, init: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number }): Promise<Reply> {
 	return new Promise((resolve, reject) => {
 		const req = request(url, { method: init.method ?? "GET", headers: init.headers, lookup: lookup as never, timeout: init.timeoutMs }, (res) => {
 			const chunks: Buffer[] = [];
@@ -121,7 +135,7 @@ export function fetchDeployed(url: string, init: { method?: string; headers?: Re
 			});
 		});
 		req.on("timeout", () => req.destroy(Object.assign(new Error(`No answer from ${url}`), { code: "ETIMEDOUT" })));
-		req.on("error", reject);
+		req.on("error", (error: NodeJS.ErrnoException) => reject(req.reusedSocket && error.code === "ECONNRESET" ? new StaleSocket(error.message, { cause: error }) : error));
 		req.end(init.body);
 	});
 }

@@ -11,7 +11,7 @@
 
 import { writeFileSync } from "node:fs";
 import { afterAll, describe, expect, test } from "vitest";
-import { base, destroyed, driver, finish, type Head, LIST, type LocalCard, post, type RunEvent, type RunView, settled, type World, world } from "./driver.ts";
+import { base, destroyed, driver, finish, type Head, LIST, type LocalCard, outcome, post, type RunEvent, type RunView, settled, type World, world } from "./driver.ts";
 
 const timings: Record<string, unknown> = {};
 
@@ -29,7 +29,7 @@ const runMs = (head: Head) => Date.parse(head.finishedAt) - Date.parse(head.crea
 /** What a turn must show, whoever produced it: the order of the run's events and the published folder. */
 async function expectPublished(w: World, view: RunView, file: string) {
 	const head = view.head as Head;
-	expect(head.status).toBe("completed");
+	expect(head.status, outcome(view)).toBe("completed");
 	const seqs = view.events.map((event) => event.seq);
 	expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
 	expect(new Set(seqs).size).toBe(seqs.length);

@@ -13,7 +13,7 @@ import { appliedMigrations, migrate } from "../lib/sqlite.ts";
 import type { AttemptFence } from "../shared/rpc.ts";
 import type { ExecOutputSink, ExecRequest, ExecResult } from "./commands.ts";
 import type { SandboxSpec } from "./constants.ts";
-import { type Refused, type SandboxApi, SandboxCore, type SandboxFence, type SandboxStatus } from "./core.ts";
+import { type Lost, type Refused, type SandboxApi, SandboxCore, type SandboxFence, type SandboxStatus } from "./core.ts";
 import type { FsRequest, FsResponse } from "./files.ts";
 import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan, HydrateResult } from "./folder.ts";
 import type { HardeningReport, VerificationReport } from "./hardening.ts";
@@ -79,11 +79,11 @@ export class Sandbox extends DurableObject<Env> implements SandboxApi {
 		return this.core.start(fence, spec);
 	}
 
-	async harden(fence: SandboxFence): Promise<HardeningReport | Refused> {
+	async harden(fence: SandboxFence): Promise<HardeningReport | Refused | Lost> {
 		return this.core.harden(fence);
 	}
 
-	async verify(fence: SandboxFence): Promise<VerificationReport | Refused> {
+	async verify(fence: SandboxFence): Promise<VerificationReport | Refused | Lost> {
 		return this.core.verify(fence);
 	}
 

@@ -12,7 +12,7 @@
 // Run with `pnpm test:faults` after `pnpm run deploy:test`; never against production.
 
 import { afterAll, describe, expect, test } from "vitest";
-import { cards, finish, LIST, LIST_INBOX, later, post, provider, reads, restarts, script, settled, sh, world } from "./driver.ts";
+import { cards, finish, LIST, LIST_INBOX, later, outcome, post, provider, reads, restarts, script, settled, sh, world } from "./driver.ts";
 
 afterAll(finish, 300_000);
 
@@ -21,7 +21,7 @@ describe("memory-limit resets", () => {
 		const w = await world({ faults: [{ point: "tool:after", mode: "oom", tool: LIST }] });
 		const runId = await post(w, script([LIST_INBOX, { text: "Recovered." }]));
 		const view = await settled(w, runId);
-		expect(view.head?.status).toBe("completed");
+		expect(view.head?.status, outcome(view)).toBe("completed");
 		expect(restarts(view.events)).toEqual([2]);
 		expect(reads(await provider(w))).toBe(2);
 		console.info(`memory reset: ${view.seconds} s`);
@@ -30,7 +30,7 @@ describe("memory-limit resets", () => {
 	test("during a checkpoint: the next attempt starts from the last checkpoint, in a new container", async () => {
 		const w = await world({ faults: [{ point: "checkpoint:scanned", mode: "oom" }] });
 		const view = await settled(w, await post(w, script([sh("echo a > a.txt"), sh("cat a.txt"), { text: "Done." }])));
-		expect(view.head?.status).toBe("completed");
+		expect(view.head?.status, outcome(view)).toBe("completed");
 		expect(restarts(view.events)).toEqual([2]);
 		// The reset came before the checkpoint was recorded: attempt 2's container starts without the file.
 		expect(cards(view.events).find((card) => card.summary === "cat a.txt")?.ok).toBe(false);

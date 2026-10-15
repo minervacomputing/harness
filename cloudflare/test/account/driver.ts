@@ -237,6 +237,12 @@ export async function finish(): Promise<void> {
 	if (failures.length) throw new Error(failures.join("\n"));
 }
 
+/** What a failed status check reports of the run: why it ended, its attempts, and the faults that fired. */
+export function outcome(view: RunView): string {
+	const { head, internals, fired } = view;
+	return JSON.stringify({ status: head?.status, errorMessage: head?.errorMessage, run: internals.run, attempts: internals.attempts, fired });
+}
+
 export function restarts(events: RunEvent[]): number[] {
 	return events.filter((event) => event.type === "status" && typeof event.data.attempt === "number").map((event) => event.data.attempt as number);
 }

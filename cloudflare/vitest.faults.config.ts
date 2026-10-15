@@ -18,6 +18,9 @@ export default defineConfig({
 				extends: true,
 				test: {
 					name: "account",
+					// Before the first group: until the deployed image starts containers promptly (test/account/warm.ts).
+					// Here, not at the root: each project would run the root's again.
+					globalSetup: ["test/account/warm.ts"],
 					include: ["test/account/faults.test.ts", "test/account/sandbox.test.ts", "test/account/sandbox-faults.test.ts", "test/account/turns.test.ts"],
 					sequence: { groupOrder: 1 },
 				},

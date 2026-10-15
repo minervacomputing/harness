@@ -85,6 +85,8 @@ class ScriptedContainer implements ContainerPort {
 	failDestroys = 0;
 	ready = true;
 	failHardeningAt: string | null = null;
+	/** How many hardening execs from now never answer. */
+	hangHardenings = 0;
 	/** What a wrapped command answers: its stdout (after the wrapper's byte) and exit, or a failed admission. */
 	command: { stdout: string; exitCode: number; admitted: boolean } = { stdout: "", exitCode: 0, admitted: true };
 	lostOnExec = false;
@@ -118,6 +120,10 @@ class ScriptedContainer implements ContainerPort {
 		if (argv[0] === "/bin/true") return process("", this.ready ? 0 : 1);
 		if (argv[0] === "/bin/bash" && script.includes("step readonly_root")) {
 			this.log.push("harden");
+			if (this.hangHardenings > 0) {
+				this.hangHardenings--;
+				return await new Promise<never>(() => {});
+			}
 			const [size, inodes, tmp, pids, memory] = argv.slice(3).map(Number) as number[];
 			this.#spec = { ...SPEC, folderBytes: size as number, folderEntries: (inodes as number) - 1, tmpBytes: tmp as number, pidsMax: pids as number, memoryBytes: memory as number };
 			const steps = ["workspace", "tmp", "home_dirs", "cgroup", "readonly_root"];
@@ -313,6 +319,28 @@ describe("the lifecycle", () => {
 		expect(made.container.running).toBe(false);
 	});
 
+	test("a container that stops answering its hardening is replaced once, then the start fails", async () => {
+		vi.useFakeTimers();
+		try {
+			const made = rig();
+			made.container.hangHardenings = 1;
+			const replaced = await outwait(prepareSandbox(made.core, { runId: uuid7(), attempt: 1 }, SPEC));
+			expect(replaced).toMatchObject({ ok: true });
+			expect(made.container.starts).toBe(2);
+			expect(made.container.log).toEqual(["harden", "destroy", "harden", "verify"]);
+			expect(made.core.status()).toMatchObject({ state: "verified" });
+
+			made.container.hangHardenings = 2;
+			const given = await outwait(prepareSandbox(made.core, { runId: uuid7(), attempt: 1 }, SPEC));
+			expect(given).toEqual({ ok: false, stage: "start", message: "The container did not answer its hardening." });
+			expect(made.container.starts).toBe(4);
+			expect(made.container.running).toBe(false);
+			expect(made.core.status()).toMatchObject({ state: "none", cleanupPending: false });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	test("a failed hardening step destroys the container", async () => {
 		const made = rig();
 		made.container.failHardeningAt = "cgroup";
@@ -453,7 +481,7 @@ describe("calls", () => {
 			const verifying = made.core.verify(fence);
 			// Queued behind the verification.
 			const destroying = made.core.destroy(fence, "The run ended.");
-			expect(await outwait(verifying)).toMatchObject({ ok: false });
+			expect(await outwait(verifying)).toEqual({ lost: "The container did not answer its verification." });
 			expect(made.container.running).toBe(false);
 			expect(made.core.status()).toMatchObject({ state: "none", incarnation: null, cleanupPending: false });
 			expect(await destroying).toMatchObject({ refused: "stale" });

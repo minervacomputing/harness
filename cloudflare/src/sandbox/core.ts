@@ -59,14 +59,21 @@ export interface SandboxStatus {
 export type Refused = { refused: "stale" | "not_verified" | "busy"; message: string };
 
 /**
+ * A hardening or verification whose exec never answered (ContainerGone): it says nothing of the container
+ * but that it stopped answering. The container is destroyed, and a caller treats it as one that did not
+ * start, not as one that failed its hardening or checks.
+ */
+export type Lost = { lost: string };
+
+/**
  * The Sandbox Durable Object's RPC surface. A refusal for a fence that is not current is `{refused:
  * "stale"}`; before verification, `{refused: "not_verified"}`.
  */
 export interface SandboxApi {
 	/** Destroys any container left from an earlier incarnation first, then starts one for this attempt. */
 	start(fence: AttemptFence, spec: SandboxSpec): Promise<{ incarnation: string } | Refused | { failed: string }>;
-	harden(fence: SandboxFence): Promise<HardeningReport | Refused>;
-	verify(fence: SandboxFence): Promise<VerificationReport | Refused>;
+	harden(fence: SandboxFence): Promise<HardeningReport | Refused | Lost>;
+	verify(fence: SandboxFence): Promise<VerificationReport | Refused | Lost>;
 	exec(fence: SandboxFence, request: ExecRequest, sink: ExecOutputSink | null): Promise<ExecResult | Refused>;
 	/** Kills one command's processes; idempotent. */
 	cancel(fence: SandboxFence, execId: string): Promise<void>;
@@ -391,7 +398,7 @@ export class SandboxCore {
 		}
 	}
 
-	harden(fence: SandboxFence): Promise<HardeningReport | Refused> {
+	harden(fence: SandboxFence): Promise<HardeningReport | Refused | Lost> {
 		return this.#serial(async () => {
 			if (!this.#owns(fence)) return STALE;
 			const state = this.#state;
@@ -403,7 +410,11 @@ export class SandboxCore {
 				const result = await runRoot(machine, hardeningArgv(state.spec, this.#cgroup), { timeoutMs: ROOT_MS });
 				report = result.timedOut ? { ok: false, failed: hardeningReport(1, result.stdout, result.stderr).failed, output: "The hardening timed out." } : hardeningReport(result.exitCode, result.stdout, result.stderr);
 			} catch (error) {
-				report = { ok: false, failed: "workspace", output: error instanceof ContainerGone ? "The container stopped." : String(error) };
+				if (error instanceof ContainerGone) {
+					await this.#destroyNow(`The container stopped answering its hardening: ${error.message}`);
+					return { lost: "The container did not answer its hardening." };
+				}
+				report = { ok: false, failed: "workspace", output: String(error) };
 			}
 			if (!report.ok) {
 				await this.#destroyNow(`The hardening failed at ${report.failed}.`);
@@ -414,7 +425,7 @@ export class SandboxCore {
 		});
 	}
 
-	async #verification(): Promise<VerificationReport> {
+	async #verification(): Promise<VerificationReport | Lost> {
 		const machine = this.#machine();
 		const spec = this.#state.spec;
 		if (!machine || !spec) return { ok: false, checks: [{ name: "workspace_mount", ok: false, detail: "No container." }] };
@@ -423,16 +434,21 @@ export class SandboxCore {
 			const result = await runRoot(machine, verificationArgv(this.#cgroup, probe), { timeoutMs: ROOT_MS });
 			return verificationReport(spec, this.#cgroup, result.timedOut ? -1 : result.exitCode, result.stdout);
 		} catch (error) {
-			return { ok: false, checks: [{ name: "workspace_mount", ok: false, detail: error instanceof ContainerGone ? "The container stopped." : String(error) }] };
+			if (error instanceof ContainerGone) return { lost: "The container did not answer its verification." };
+			return { ok: false, checks: [{ name: "workspace_mount", ok: false, detail: String(error) }] };
 		}
 	}
 
-	verify(fence: SandboxFence): Promise<VerificationReport | Refused> {
+	verify(fence: SandboxFence): Promise<VerificationReport | Refused | Lost> {
 		return this.#serial(async () => {
 			if (!this.#owns(fence)) return STALE;
 			const state = this.#state;
 			if (state.state !== "hardening" || !state.hardened) return NOT_VERIFIED;
 			const report = await this.#verification();
+			if ("lost" in report) {
+				await this.#destroyNow("The container stopped answering its verification.");
+				return report;
+			}
 			if (!report.ok) {
 				await this.#destroyNow(`The verification failed: ${report.checks.filter((check) => !check.ok).map((check) => check.name).join(", ")}.`);
 				return report;
@@ -448,7 +464,7 @@ export class SandboxCore {
 			if (this.#generation !== generation) return false;
 			if (!generation.reverify) return true;
 			const report = await this.#verification();
-			if (!report.ok) {
+			if ("lost" in report || !report.ok) {
 				await this.#destroyNow("The container failed its verification after the object restarted.");
 				return false;
 			}
