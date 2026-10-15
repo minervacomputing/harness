@@ -37,7 +37,7 @@ import {
 	verificationReport,
 } from "./hardening.ts";
 import type { SandboxPorts } from "./ports.ts";
-import { ContainerGone, helperEnvironment, type Machine, runRoot, sleep } from "./process.ts";
+import { ContainerGone, helperEnvironment, type Machine, runRoot, sleep, within } from "./process.ts";
 import { type FolderIndex, scan, type ScanResult } from "./scan.ts";
 import { olderThan, readState, type SandboxState, type StateRow, writeState } from "./store.ts";
 import { wrapperArgv } from "./wrapper.ts";
@@ -84,6 +84,9 @@ export interface SandboxApi {
 const READY_MS = 90_000;
 const ROOT_MS = 60_000;
 const STRAYS_GONE_MS = 5000;
+/** A destroy that has not answered after this is owed, for the alarm. */
+const DESTROY_MS = 60_000;
+const KEEP_ALIVE_MS = 10_000;
 /** How long past its lease a container may stay for work that is still running. */
 const HARD_GRACE_MS = 10 * 60_000;
 
@@ -208,6 +211,9 @@ export class SandboxCore {
 			cgroup: this.#cgroup,
 			live: () => generation.live && this.#generation === generation,
 			admissionFailed: () => this.#doubt(generation, "A process could not be admitted to the agent cgroup."),
+			lost: async () => {
+				await this.#lost(generation);
+			},
 			gate: async () => {
 				while (generation.killing) await generation.killing.catch(() => undefined);
 				// Counted in the same step that found no kill running, so a kill that starts later waits for it.
@@ -242,7 +248,7 @@ export class SandboxCore {
 		const until = this.#state.leaseUntil;
 		if (!container || until === null || !container.running) return;
 		const ms = Math.min(MAX_INACTIVITY_MS, Math.max(60_000, until - this.#ports.now() + 5 * 60_000));
-		await container.setInactivityTimeout(ms).catch((error: unknown) => this.#ports.log("sandbox inactivity timeout refused", { error: String(error) }));
+		await within(container.setInactivityTimeout(ms), KEEP_ALIVE_MS, "The container did not answer.").catch((error: unknown) => this.#ports.log("sandbox inactivity timeout refused", { error: String(error) }));
 	}
 
 	async #schedule(): Promise<void> {
@@ -267,7 +273,7 @@ export class SandboxCore {
 		let gone = true;
 		if (container) {
 			try {
-				await container.destroy(reason);
+				await within(container.destroy(reason), DESTROY_MS, "The container did not answer its destroy.");
 			} catch (error) {
 				gone = !container.running;
 				this.#ports.log("sandbox destroy failed", { error: String(error), running: container.running });

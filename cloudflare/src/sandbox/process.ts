@@ -17,6 +17,8 @@ export interface Machine {
 	live?(): boolean;
 	/** A wrapped process the agent cgroup did not admit: the container is in doubt. */
 	admissionFailed?(): Promise<void>;
+	/** A call that cannot throw found the container unusable: the incarnation is over. */
+	lost?(): Promise<void>;
 	/**
 	 * Resolves when a wrapped process may start (not while strays are being killed), with what to call once
 	 * it is in the agent cgroup or will never be: a kill waits for every process between the two.
@@ -37,11 +39,11 @@ const SPAWN_MS = 60_000;
 const KILL_GRACE_MS = 5000;
 
 /**
- * `work`, or ContainerGone after `ms`: an exec that never answers cannot hold its caller, nor the Sandbox's
- * lifecycle queue behind it. What it does if it answers later dies with the container, which the Sandbox
- * destroys on ContainerGone.
+ * `work`, or ContainerGone after `ms`: a container call that never answers cannot hold its caller, nor the
+ * Sandbox's lifecycle queue behind it. What an exec does if it answers later dies with the container, which
+ * the Sandbox destroys on ContainerGone.
  */
-function within<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
+export function within<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const late = new Promise<never>((_, reject) => {
 		timer = setTimeout(() => reject(new ContainerGone(message)), ms);
@@ -180,8 +182,13 @@ export function helperEnvironment(): { [name: string]: string } {
 	return { PATH: COMMAND_PATH, HOME, TMPDIR: TMP, LANG: "C.UTF-8" };
 }
 
-/** Kills a process group, as root: the wrapped command's pid leads it, so every process it did not move out of it dies. */
+/**
+ * Kills a process group, as root: the wrapped command's pid leads it, so every process it did not move out of
+ * it dies. A container that cannot run the kill is lost: only its destroy still stops the group.
+ */
 export async function killGroup(machine: Machine, pid: number): Promise<void> {
 	if (!Number.isSafeInteger(pid) || pid <= 1) return;
-	await runRoot(machine, ["/bin/bash", "-c", 'kill -KILL -- "-$0" 2>/dev/null; kill -KILL -- "$0" 2>/dev/null; exit 0', String(pid)], { timeoutMs: 10_000 }).catch(() => undefined);
+	await runRoot(machine, ["/bin/bash", "-c", 'kill -KILL -- "-$0" 2>/dev/null; kill -KILL -- "$0" 2>/dev/null; exit 0', String(pid)], { timeoutMs: 10_000 }).catch((error: unknown) =>
+		error instanceof ContainerGone ? machine.lost?.() : undefined,
+	);
 }
