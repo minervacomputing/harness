@@ -3,7 +3,7 @@
 // leases, a restart in each state, an admission failure and a container lost under a call. The same paths
 // against the real image are in sandbox-local.test.ts.
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { uuid7 } from "../../src/lib/random.ts";
 import { migrate, type Sql, sqliteSql } from "../../src/lib/sql.ts";
 import { DEADLINE_GRACE_MS, IDLE_MS, sandboxSpec, type SandboxSpec, WORKSPACE } from "../../src/sandbox/constants.ts";
@@ -34,6 +34,11 @@ function process(stdout: string, exitCode: number): ExecProcess {
 		kill() {},
 		resize() {},
 	};
+}
+
+/** A process that never exits and never ends its output, killed or not. */
+function hung(): ExecProcess {
+	return { ...process("", 0), stdout: new ReadableStream(), stderr: new ReadableStream(), exitCode: new Promise(() => {}) };
 }
 
 /** Facts a verification would report for `spec` in a well-hardened container. */
@@ -69,6 +74,10 @@ class ScriptedContainer implements ContainerPort {
 	/** What a wrapped command answers: its stdout (after the wrapper's byte) and exit, or a failed admission. */
 	command: { stdout: string; exitCode: number; admitted: boolean } = { stdout: "", exitCode: 0, admitted: true };
 	lostOnExec = false;
+	/** A verification whose exec never answers, or whose process never ends. */
+	hangVerification: "exec" | "process" | null = null;
+	/** A wrapped command whose exec never answers. */
+	hangCommands = false;
 	/** While set, a wrapped process joins the cgroup (and its exec answers) only once it resolves. */
 	joining: Promise<void> | null = null;
 	/** While set, a kill of strays answers only once it resolves. */
@@ -99,6 +108,8 @@ class ScriptedContainer implements ContainerPort {
 		if (argv[3] === "-c" && argv[4]?.includes("mountinfo")) {
 			this.verifications++;
 			this.log.push("verify");
+			if (this.hangVerification === "exec") return await new Promise<never>(() => {});
+			if (this.hangVerification === "process") return hung();
 			return process(facts(this.#spec ?? SPEC), 0);
 		}
 		if (script.includes("cgroup.kill")) {
@@ -111,6 +122,7 @@ class ScriptedContainer implements ContainerPort {
 		}
 		if (script.includes("cgroup.procs")) {
 			if (this.joining) await this.joining;
+			if (this.hangCommands) return await new Promise<never>(() => {});
 			this.log.push("command");
 			if (!this.command.admitted) return process("", 125);
 			return process(`\u0006${this.command.stdout}`, this.command.exitCode);
@@ -386,6 +398,48 @@ describe("calls", () => {
 		expect(await made.core.fs(fence, { op: "lstat", path: "/workspace/a" })).toEqual({ refused: "not_verified", message: "The sandbox stopped." });
 		expect(made.core.status()).toMatchObject({ state: "none" });
 		expect(await command(made, fence)).toMatchObject({ refused: "stale" });
+	});
+
+	test.each(["exec", "process"] as const)("a verification whose %s never answers fails, destroys the container and frees the lifecycle", async (hang) => {
+		vi.useFakeTimers();
+		try {
+			const made = rig();
+			const runId = uuid7();
+			const started = await made.core.start({ runId, attempt: 1 }, SPEC);
+			if (!("incarnation" in started)) throw new Error("no start");
+			const fence: SandboxFence = { runId, attempt: 1, incarnation: started.incarnation };
+			expect(await made.core.harden(fence)).toMatchObject({ ok: true });
+			made.container.hangVerification = hang;
+			const verifying = made.core.verify(fence);
+			// Queued behind the verification.
+			const destroying = made.core.destroy(fence, "The run ended.");
+			await vi.advanceTimersByTimeAsync(70_000);
+			expect(await verifying).toMatchObject({ ok: false });
+			expect(made.container.running).toBe(false);
+			expect(made.core.status()).toMatchObject({ state: "none", incarnation: null, cleanupPending: false });
+			expect(await destroying).toMatchObject({ refused: "stale" });
+			made.container.hangVerification = null;
+			const next = await ready(made, SPEC, 2, runId);
+			expect(made.core.status()).toMatchObject({ state: "verified", incarnation: next.incarnation });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	test("a command whose exec never answers ends the incarnation", async () => {
+		vi.useFakeTimers();
+		try {
+			const made = rig();
+			const fence = await ready(made);
+			made.container.hangCommands = true;
+			const running = command(made, fence);
+			await vi.advanceTimersByTimeAsync(70_000);
+			expect(await running).toEqual({ refused: "not_verified", message: "The sandbox stopped." });
+			expect(made.container.running).toBe(false);
+			expect(made.core.status()).toMatchObject({ state: "none" });
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	test("strays are killed only once every wrapped process already starting has joined the cgroup", async () => {
