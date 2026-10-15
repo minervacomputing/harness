@@ -1012,7 +1012,8 @@ describe("addresses to Teams", () => {
 		expect(redact("%25".repeat(2000))).toBe("%25".repeat(2000));
 	});
 
-	test("each letter of an address matches itself in either case, ſ for s (Unicode folds it), and İ and ı for i (which readers may take for it)", () => {
+	// Every code point in every position: some 20 million matches, about 5 s on a CI runner, so past the default timeout.
+	test("each letter of an address matches itself in either case, ſ for s (Unicode folds it), and İ and ı for i (which readers may take for it)", { timeout: 60_000 }, () => {
 		const extra: { [letter: string]: number[] } = { i: [0x130, 0x131], s: [0x17f] };
 		const wrong: string[] = [];
 		for (const address of ["msteams:", "teams.cloud.microsoft", "teams.live.com", "teams.microsoft.com", "teams.microsoftonline.cn", "teams.office.com"]) {
