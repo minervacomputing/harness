@@ -3,7 +3,7 @@ import * as faultsEntrypoint from "./src/faults/index.ts" with { type: "cf-worke
 import * as entrypoint from "./src/index.ts" with { type: "cf-worker" };
 import { parseFrom } from "./src/accounts/emails.ts";
 import { checkBuild, connectorClientSecrets, parse, type SettingsEnv } from "./src/config.ts";
-import { type Instance, LOCAL_INSTANCES, type Names, chooseInstance, instanceForMode, instanceVars, namesOf, readInstanceEnv } from "./scripts/instance.ts";
+import { type Instance, LOCAL_INSTANCES, type Names, SANDBOX_IMAGE_REFERENCE, chooseInstance, instanceForMode, instanceVars, namesOf, readInstanceEnv } from "./scripts/instance.ts";
 import { instanceOrigins } from "./scripts/origins.ts";
 
 // Plain settings are text bindings, read when the Worker is built and checked then with src/config.ts's
@@ -166,12 +166,19 @@ function settingsFor(target: Target): SettingsEnv {
  * and passes it nothing secret. Its name follows the instance's (scripts/instance.ts), so every instance has an
  * application of its own. The platform tests run in local workerd, which has no containers: there the class has
  * none, and a start says so.
+ *
+ * A deploy (scripts/deploy.ts) passes the image already in the account's registry in MINERVA_SANDBOX_IMAGE
+ * (scripts/image.ts, cloudflare/README.md: The sandbox image), so that the build skips Docker and an unchanged
+ * container/ keeps its image. Only a deployed build reads it; every other build, and a deployed one without it
+ * (a reset's, a --files-only deploy's, which upload no image), builds container/Dockerfile locally.
  */
 function sandboxContainer(target: Target) {
+	const reference = target.instance ? build.env.MINERVA_SANDBOX_IMAGE : undefined;
+	if (reference && !SANDBOX_IMAGE_REFERENCE.test(reference)) throw new Error(`MINERVA_SANDBOX_IMAGE is not a sandbox image reference (scripts/image.ts): ${reference}`);
 	return defineContainer({
 		name: target.names.container,
 		schedulingPolicy: "durable-object",
-		images: { base: { dockerfile: "./container/Dockerfile" } },
+		images: { base: reference ? { reference } : { dockerfile: "./container/Dockerfile" } },
 		observability: { enabled: true, logs: { enabled: true } },
 	});
 }

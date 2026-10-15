@@ -12,9 +12,11 @@
 //
 // A deploy takes the checkout's lock and then the instance's, and every cf command goes to the instance's account
 // (`lockOperation` and `pinAccount` in scripts/run.ts; the first deploy records the account). Everything that can
-// fail locally runs before anything on the account changes: the secrets are checked, both Workers are built, the
-// app's bundle is checked for the test build's code (scripts/bundle.ts) and its startup CPU measured locally
-// (scripts/startup.ts), and the download origin's build is checked against the app's (its name, its buckets, its
+// fail locally runs before anything on the account changes, but for the sandbox's image: once the secrets are
+// checked, a full deploy makes sure the account's container registry holds the image of container/ as it is
+// (scripts/image.ts), pushing it when it is missing; the registry is shared by the account's instances and
+// addressed by content, so a push changes no instance. Then both Workers are built, the app's bundle is checked
+// for the test build's code (scripts/bundle.ts) and its startup CPU measured locally (scripts/startup.ts), and the download origin's build is checked against the app's (its name, its buckets, its
 // origin). Then, still reading only: the origins must be on the account's own workers.dev subdomain
 // (scripts/account.ts), and the instance on the account must be the one its directory describes
 // (scripts/identity.ts: D1's identity row, else the live app's bindings, else an empty D1); with --files-only, the
@@ -31,7 +33,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkOnAccount, liveVersion } from "./account.ts";
-import { buildAccount, buildDigest, fileDigest, filesBuildProblems, liveAppProblems, readBuild } from "./builds.ts";
+import { buildAccount, buildDigest, builtImage, fileDigest, filesBuildProblems, liveAppProblems, readBuild } from "./builds.ts";
+import { ensureImage } from "./image.ts";
 import { type Instance, checkFile, chooseInstance, parseInstanceArgs, readInstanceEnv } from "./instance.ts";
 import { readDeployed, writeDeployed } from "./instance-files.ts";
 import { instanceOrigins, labOrigin } from "./origins.ts";
@@ -150,6 +153,16 @@ try {
 		if (fileDigest(SECRETS) !== secrets) throw new CommandFailed(`${SECRETS} changed during the deploy: run it again.`);
 	};
 
+	// The sandbox's image, in the account's registry (scripts/image.ts): pushed only when container/ changed, and
+	// passed to the app's build by its digest. A push changes no instance: nothing runs the image until a deploy
+	// names it.
+	let image: string | undefined;
+	if (!FILES_ONLY) {
+		step("The sandbox image");
+		image = await ensureImage(account);
+		process.env.MINERVA_SANDBOX_IMAGE = image;
+	}
+
 	step(`Building ${APP} and ${FILES}`);
 	// Each build's digest is taken right after it, checked again once the build is checked, and again right
 	// before its upload: only the build that was checked goes up.
@@ -167,6 +180,7 @@ try {
 		const named = buildAccount(dir);
 		if (named !== undefined && named !== account) throw new CommandFailed(`The build in ${dir} names an account other than the one this deploy is pinned to.`);
 	}
+	if (image && builtImage(ROOT, INSTANCE.names.container)?.reference !== image) throw new CommandFailed(`The build of ${APP} does not run the sandbox image ${image}.`);
 	const app = readBuild(ROOT);
 	hideOrigin(app.env?.MINERVA_SITE_URL?.value);
 	hideOrigin(app.env?.MINERVA_DOWNLOAD_ORIGIN?.value);

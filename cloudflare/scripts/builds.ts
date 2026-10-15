@@ -27,6 +27,12 @@ export function readBuild(dir: string): BuiltWorker {
 	return JSON.parse(readFileSync(join(dir, OUTPUT), "utf8")) as BuiltWorker;
 }
 
+/** The image a build gives a container application: a registry reference, or an image the build made locally. */
+export function builtImage(dir: string, container: string): { reference?: string; localReference?: string } | undefined {
+	const file = join(dir, ".cloudflare", "output", "v0", "containers", container, "container.config.json");
+	return (JSON.parse(readFileSync(file, "utf8")) as { images?: { base?: { reference?: string; localReference?: string } } }).images?.base;
+}
+
 /**
  * A digest of everything in a directory's build output, which `cf deploy --prebuilt` uploads: taken right
  * after the build, compared after the build is checked (so the digest is of the checked build) and again right

@@ -5,7 +5,7 @@
 // deploy and a reset check and change things. The account itself is never asked here (schema-check.test.ts runs
 // the identity check against a stand-in for cf).
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -13,6 +13,8 @@ import { bindingsKind } from "../../scripts/account.ts";
 import { type BuiltWorker, type LiveBinding, buildAccount, buildDigest, filesBuildProblems, liveAppProblems, ownContainer } from "../../scripts/builds.ts";
 import { namesOf } from "../../scripts/instance.ts";
 import { ARCHIVE_MAX_AGE, type LifecycleRule, lifecycleExtras, lifecycleMatches, lifecycleProblems } from "../../scripts/lifecycle.ts";
+import { imageTag } from "../../scripts/image.ts";
+import { SANDBOX_IMAGE_REFERENCE } from "../../scripts/instance.ts";
 import { hideSecrets, redact } from "../../scripts/run.ts";
 
 const RULES = JSON.parse(readFileSync(new URL("../../r2-lifecycle.json", import.meta.url), "utf8")) as LifecycleRule[];
@@ -230,6 +232,72 @@ describe("the order of the lab's deploy (scripts/deploy.ts --lab)", () => {
 		const deploy = readFileSync(new URL("../../scripts/deploy.ts", import.meta.url), "utf8");
 		const lab = deploy.slice(deploy.indexOf("function deployLab("));
 		const order = ["const origin = labOrigin(INSTANCE);", "checkOnAccount([{ origin, setting:", "checkIdentity(false);", 'run("cf", ["build"], { cwd: LAB_DIR', 'run("cf", ["deploy", "--prebuilt", "--secrets-file", INSTANCE.files.cm]'].map((marker) => lab.indexOf(marker));
+		expect(order.every((index) => index >= 0)).toBe(true);
+		expect(order).toEqual([...order].sort((a, b) => a - b));
+	});
+});
+
+describe("the sandbox image's tag (scripts/image.ts)", () => {
+	function withContext(check: (dir: string) => void) {
+		const dir = mkdtempSync(join(tmpdir(), "image-tag-"));
+		try {
+			mkdirSync(join(dir, "minerva"));
+			writeFileSync(join(dir, "Dockerfile"), "FROM scratch\n");
+			writeFileSync(join(dir, "minerva", "probe"), "#!/bin/sh\n");
+			chmodSync(join(dir, "minerva", "probe"), 0o755);
+			check(dir);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	}
+
+	test("the same context gives the same tag, in the repository the references name", () => {
+		withContext((dir) => {
+			const tag = imageTag(dir);
+			expect(tag).toMatch(/^minerva-sandbox:[0-9a-f]{24}$/);
+			expect(imageTag(dir)).toBe(tag);
+			expect(SANDBOX_IMAGE_REFERENCE.test(`${tag}@sha256:${"a".repeat(64)}`)).toBe(true);
+			expect(SANDBOX_IMAGE_REFERENCE.test(tag)).toBe(false);
+		});
+	});
+
+	test("a file's content, its executable bit, a name or an empty directory changes it", () => {
+		withContext((dir) => {
+			const tag = imageTag(dir);
+			const changes: [() => void, () => void][] = [
+				[() => writeFileSync(join(dir, "Dockerfile"), "FROM scratch\n\n"), () => writeFileSync(join(dir, "Dockerfile"), "FROM scratch\n")],
+				[() => chmodSync(join(dir, "minerva", "probe"), 0o644), () => chmodSync(join(dir, "minerva", "probe"), 0o755)],
+				[() => writeFileSync(join(dir, "minerva", "other"), ""), () => rmSync(join(dir, "minerva", "other"))],
+				[() => mkdirSync(join(dir, "empty")), () => rmSync(join(dir, "empty"), { recursive: true })],
+			];
+			for (const [change, undo] of changes) {
+				change();
+				expect(imageTag(dir)).not.toBe(tag);
+				undo();
+				expect(imageTag(dir)).toBe(tag);
+			}
+		});
+	});
+
+	test("permission bits other than the executable one do not", () => {
+		withContext((dir) => {
+			const tag = imageTag(dir);
+			chmodSync(join(dir, "Dockerfile"), 0o664);
+			chmodSync(join(dir, "minerva"), 0o775);
+			expect(imageTag(dir)).toBe(tag);
+		});
+	});
+
+	test("a symbolic link stops it", () => {
+		withContext((dir) => {
+			symlinkSync("Dockerfile", join(dir, "link"));
+			expect(() => imageTag(dir)).toThrow(/not a plain file or directory/);
+		});
+	});
+
+	test("a full deploy has the image before the app's build, which must run it", () => {
+		const deploy = readFileSync(new URL("../../scripts/deploy.ts", import.meta.url), "utf8");
+		const order = ["const account = pinAccount(", "image = await ensureImage(account);", "process.env.MINERVA_SANDBOX_IMAGE = image;", 'run("cf", ["build", "--mode", MODE], { print: false });', "builtImage(ROOT, INSTANCE.names.container)?.reference !== image", 'run("cf", ["deploy", "--prebuilt", "--secrets-file", SECRETS]'].map((marker) => deploy.indexOf(marker));
 		expect(order.every((index) => index >= 0)).toBe(true);
 		expect(order).toEqual([...order].sort((a, b) => a - b));
 	});

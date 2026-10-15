@@ -99,6 +99,13 @@ export function instanceNameProblem(name: string): string | null {
 /** The Docker tag of the sandbox image that `pnpm sandbox:image` builds for the Docker tests. */
 export const LOCAL_SANDBOX_IMAGE = "minerva-sandbox:local";
 
+/**
+ * The image a deployed build runs, which scripts/image.ts publishes in the account's registry and scripts/deploy.ts
+ * passes to cloudflare.config.ts in MINERVA_SANDBOX_IMAGE: the repository, a tag that is a digest of container/,
+ * and the digest the registry holds under it. No account and no registry host: cf adds them when it deploys.
+ */
+export const SANDBOX_IMAGE_REFERENCE = /^minerva-sandbox:[0-9a-f]{24}@sha256:[0-9a-f]{64}$/;
+
 
 // ---------------------------------------------------------------------------------------------------------
 // The instance directory (cloudflare/README.md, The instance directory):

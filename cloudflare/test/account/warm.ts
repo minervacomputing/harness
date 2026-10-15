@@ -1,8 +1,8 @@
 // The fault suites' globalSetup (vitest.faults.config.ts): waits until the deployed image starts containers
 // promptly before any test starts one. A deploy that pushes a new image only starts its rollout: for a few
 // minutes after it, starts may queue unplaced (seen on CI's test instance, 2026-10-15: of a dozen starts, two
-// were placed in the first three minutes, and the others failed the Sandbox's 90 s readiness), and CI pushes
-// a new image on every run, since its builds share no cache. So waves of prepares go through the lab until
+// were placed in the first three minutes, and the others failed the Sandbox's 90 s readiness). A deploy pushes
+// a new image when container/ changed (scripts/image.ts). So waves of prepares go through the lab until
 // one wave is prepared at once, each start (a replaced one included) within PROMPT_MS; a deploy that is still
 // not there after BUDGET_MS fails the suites here, with what the last wave answered, instead of failing a
 // dozen tests.
