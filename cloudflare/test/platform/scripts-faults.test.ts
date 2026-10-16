@@ -1,61 +1,76 @@
-// Code mode's faults end to end in local workerd, as test/platform/protocols.test.ts runs the protocols:
-// the real Workspace and Conversation objects, the executor with its ledger, the fake Notes connector and
-// its provider, the fake model, the real Scripts object, and the test build's fault points. A script's
-// store survives a crash of the conversation, a write a script was waiting for
-// when its wall clock ran out settles in the ledger and is recorded, and a crash during a script ends it
-// unreplayed.
+// Code mode's faults end to end in local workerd, as test/platform/protocols.test.ts runs the protocols: Laravel's commands
+// through the internal mount, the real Conversation object in the EU, the executor with its ledger, credentials leased from
+// the fake Laravel, the fake Notes connector and its provider, the fake model, the real Scripts object, and the test build's
+// fault points. A script's store survives a crash of the conversation, a write a script was waiting for when its wall clock
+// ran out settles in the ledger and is recorded, and a crash during a script ends it unreplayed.
 
 import { env } from "cloudflare:workers";
-import { afterEach, beforeAll, describe, expect, test } from "vitest";
-import { conversationObject, workspaceObject } from "../../src/addressing.ts";
+import type { RunEvent } from "@minerva/contract";
+import type { Fact, Scope } from "@minerva/contract/internal";
+import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { CONNECTORS } from "../../src/connectors/catalog.ts";
 import { CONNECTOR_SOURCE } from "../../src/connectors/index.ts";
-import type { RunEvent } from "../../src/conversation/events.ts";
+import { FACT_DELIVERY } from "../../src/conversation/facts.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
 import type { RunHead } from "../../src/conversation/store.ts";
 import { notesConnector } from "../../src/faults/connector.ts";
-import type { Conversation, Workspace } from "../../src/faults/index.ts";
+import type { Conversation } from "../../src/faults/index.ts";
+import { FakeLaravel } from "../../src/faults/laravel.ts";
 import type { Fault } from "../../src/faults/plan.ts";
-import { faultConversationPorts, faultWorkspacePorts, providerOf } from "../../src/faults/ports.ts";
-import { setUpWorkspace } from "../../src/faults/routes.ts";
+import { faultConversationPorts, providerOf } from "../../src/faults/ports.ts";
+import { notesLease } from "../../src/faults/world.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import type { FakeTurn } from "../../src/model/fake.ts";
 import { SCRIPT_TIMEOUT_MS } from "../../src/scripts/limits.ts";
 import { SCRIPT_CLOCK } from "../../src/scripts/run.ts";
-import type { Caller, RunId, WorkspaceRef } from "../../src/shared/rpc.ts";
-import { WORKSPACE_PORTS } from "../../src/workspace/workspace.ts";
+import type { RunId } from "../../src/shared/rpc.ts";
+import { commands, held, notesStart, objectOf, scope, signedAssertions, viewOf } from "./internal-support.ts";
 
-const USER = "0199a000-0000-7000-8000-0000000e5c01";
-const CALLER: Caller = { userId: USER, role: "owner" };
+signedAssertions();
+
 const LIST = "notes_list_notes";
 const SAVE = "notes_save_note";
+const DELIVERY = { ...FACT_DELIVERY };
+let fake: FakeLaravel;
+let uninstall: () => void;
 
 beforeAll(() => {
 	CONNECTOR_SOURCE.connectors = () => [...CONNECTORS, notesConnector()];
 	PORTS.factory = () => faultConversationPorts(defaultPorts);
-	WORKSPACE_PORTS.factory = (deps, ctx, workerEnv) => faultWorkspacePorts(deps, ctx, workerEnv);
+});
+
+beforeEach(() => {
+	fake = new FakeLaravel("test-laravel-token");
+	uninstall = fake.install({ withToken: true });
+	Object.assign(FACT_DELIVERY, { backoffMs: 20, maxBackoffMs: 200 });
 });
 
 afterEach(() => {
 	SCRIPT_CLOCK.timeoutMs = SCRIPT_TIMEOUT_MS;
+	uninstall();
+	Object.assign(FACT_DELIVERY, DELIVERY);
 });
 
+/** A workspace whose fake provider is seeded, a Notes connection Laravel lends, and a conversation. A stub breaks once its object was reset, so each use gets a new one. */
 interface World {
-	ref: WorkspaceRef;
+	within: Scope;
+	conversationId: string;
+	connectionId: string;
 	readonly conversation: DurableObjectStub<Conversation>;
 }
 
 async function world(faults: Fault[] = []): Promise<World> {
-	const ref: WorkspaceRef = { id: uuid7(), jurisdiction: null };
-	const { agentId } = await setUpWorkspace(env, ref, USER, {});
-	const ws = workspaceObject(env, ref) as unknown as DurableObjectStub<Workspace>;
-	const created = await ws.createConversation(CALLER, agentId);
-	if (!created.ok) throw new Error(created.refusal.detail);
-	const conversationId = created.value.id;
-	const conversation = () => conversationObject(env, ref, conversationId) as unknown as DurableObjectStub<Conversation>;
+	const within = scope();
+	const conversationId = uuid7();
+	const connectionId = uuid7();
+	await providerOf(env, within.workspace).reset({ delays: {} });
+	fake.connections.set(connectionId, notesLease());
+	const conversation = () => objectOf({ scope: within, conversation: conversationId });
 	if (faults.length) await conversation().faultPlan(faults);
 	return {
-		ref,
+		within,
+		conversationId,
+		connectionId,
 		get conversation() {
 			return conversation();
 		},
@@ -81,18 +96,42 @@ async function until<T>(read: () => Promise<T>, done: (value: T) => boolean, tim
 
 const script = (code: string): FakeTurn => ({ tools: [{ name: "run_script", arguments: { code } }] });
 
+/** Sends a start, which Laravel holds, whose model answers with `turns`; its run's id once it is accepted. */
 async function post(w: World, turns: FakeTurn[], pace: { delayMs?: number; chunkChars?: number } = {}): Promise<RunId> {
-	const outcome = await w.conversation.postMessage(CALLER, { content: JSON.stringify({ fake: { turns, ...pace } }), attachments: [] });
-	if (!outcome.ok) throw new Error(`Refused: ${outcome.refusal.code} ${outcome.refusal.detail}`);
-	return outcome.value.run.id;
+	const content = JSON.stringify({ fake: { turns, ...pace } });
+	const start = held(fake, notesStart(w.within, w.connectionId, { conversation: w.conversationId, message: { id: uuid7(), content, attachments: [] } }));
+	const answer = await commands.startRun(start);
+	if (answer.outcome !== "accepted") throw new Error(`Refused: ${answer.code} ${answer.message}`);
+	return start.run;
+}
+
+/** One of Laravel's commands, so an object a fault reset starts again and runs its gate and recovery. */
+function wake(w: World): Promise<unknown> {
+	return commands.replayFacts({ scope: w.within, conversation: w.conversationId, after: 1_000_000_000, limit: 1 });
 }
 
 async function settled(w: World, runId: RunId): Promise<RunHead> {
-	return until(async () => (await w.conversation.getRun(CALLER, runId)) as RunHead, (run) => !["queued", "provisioning", "running"].includes(run.status));
+	const run = await until(
+		async () => {
+			await wake(w);
+			return (await w.conversation.faultView(runId, 0, 0)).head;
+		},
+		(head) => head !== null && !["queued", "provisioning", "running"].includes(head.status),
+	);
+	return run as RunHead;
 }
 
 async function eventsOf(w: World, runId: RunId): Promise<RunEvent[]> {
-	return (await w.conversation.getRunEvents(CALLER, runId, { after: 0, upTo: 1_000_000, limit: 1000 })) ?? [];
+	return (await viewOf(w.conversation, runId)).events;
+}
+
+/** The run's end as Laravel received it. */
+async function finished(w: World, runId: RunId): Promise<Fact> {
+	const facts = await until(
+		async () => fake.facts(w.conversationId),
+		(all) => all.some((fact) => fact.type === "run.finished" && fact.run === runId),
+	);
+	return facts.find((fact) => fact.type === "run.finished" && fact.run === runId) as Fact;
 }
 
 function toolCalls(events: RunEvent[]) {
@@ -127,8 +166,7 @@ describe("code mode's faults", () => {
 		]);
 		// The read never reached the provider: the crash came before the executor's answer.
 		expect(toolCalls(events)).toEqual([]);
-		const answer = (await w.conversation.getConversation(CALLER))?.messages.at(-1);
-		expect(answer?.content).toBe("Done.");
+		expect((await finished(w, runId)).data).toMatchObject({ status: "completed", message: { content: "Done." } });
 		// What the last script returned, as the model saw it, is in pi's transcript; the store's sizes are the guest's.
 		const seen = await piToolResults(w);
 		expect(seen.at(-2)).toEqual({ text: "Tool run_script was interrupted and may have partially run", isError: true });
@@ -156,7 +194,7 @@ describe("code mode's faults", () => {
 		expect(internals.writes).toEqual([expect.objectContaining({ status: "succeeded", attempt: 1 })]);
 		expect(internals.run).toMatchObject({ writes_uncertain: 0 });
 		expect(toolCalls(await eventsOf(w, runId))).toEqual([expect.objectContaining({ tool: SAVE, decision: "allowed" })]);
-		expect((await providerOf(env, w.ref.id).state()).notes.map((note) => note.title)).toContain("Slow");
+		expect((await providerOf(env, w.within.workspace).state()).notes.map((note) => note.title)).toContain("Slow");
 		const seen = await piToolResults(w);
 		expect(seen[0]).toEqual({ text: "Script failed: Execution timed out after 300 ms", isError: true });
 		expect(seen[1]?.text).toBe("1 tool call had not finished when the script ended and was cancelled. A cancelled write may still have taken effect.");

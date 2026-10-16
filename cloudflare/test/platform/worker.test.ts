@@ -1,7 +1,7 @@
 import { type D1Migration, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { beforeEach, describe, expect, test } from "vitest";
-import { conversationObject, filesBucket, sandboxObject, scriptsObject, workspaceObject } from "../../src/addressing.ts";
+import { conversationObject, filesBucket, sandboxObject, scriptsObject } from "../../src/addressing.ts";
 import { MIGRATIONS as CONVERSATION_MIGRATIONS } from "../../src/conversation/schema.ts";
 import { SANDBOX_MIGRATIONS } from "../../src/sandbox/store.ts";
 import { MIGRATIONS as SCRIPTS_MIGRATIONS } from "../../src/scripts/schema.ts";
@@ -104,10 +104,10 @@ describe("jurisdictions", () => {
 	const eu = { id: WS, jurisdiction: "eu" as const };
 
 	test("workerd has none, so with debug on an EU object is a separate object of its own name", async () => {
-		expect(() => (env.WORKSPACE as DurableObjectNamespace).jurisdiction("eu")).toThrow(/not implemented in workerd/);
-		await runInDurableObject(workspaceObject(env, plain), (_, state) => state.storage.kv.put("mark", "plain"));
-		await runInDurableObject(workspaceObject(env, eu), (_, state) => {
-			expect(state.id.name).toBe(`eu:${WS}`);
+		expect(() => (env.CONVERSATION as DurableObjectNamespace).jurisdiction("eu")).toThrow(/not implemented in workerd/);
+		await runInDurableObject(conversationObject(env, plain, USER), (_, state) => state.storage.kv.put("mark", "plain"));
+		await runInDurableObject(conversationObject(env, eu, USER), (_, state) => {
+			expect(state.id.name).toBe(`eu:${USER}`);
 			expect(state.storage.kv.get("mark")).toBeUndefined();
 		});
 		expect(await sandboxObject(env, exports, eu, USER).about()).toMatchObject({ name: `eu:${USER}` });
@@ -125,16 +125,14 @@ describe("Durable Object stubs with SQLite", () => {
 	test("each class answers over RPC, addressed by workspace and conversation", async () => {
 		const workspace = { id: WS, jurisdiction: null };
 		const named = (kind: string, name: string, migrations: number[] = []) => ({ kind, name, jurisdiction: null, migrations });
-		// The Workspace and the Conversation apply their schema steps when they are built
-		// (src/workspace/schema.ts, src/conversation/schema.ts).
-		expect(await workspaceObject(env, workspace).about()).toEqual(named("workspace", WS, [1, 2]));
+		// The Conversation applies its schema steps when it is built (src/conversation/schema.ts).
 		expect(await conversationObject(env, workspace, USER).about()).toEqual(named("conversation", USER, CONVERSATION_MIGRATIONS.map((step) => step.id)));
 		expect(await scriptsObject(env, workspace, USER).about()).toEqual(named("scripts", USER, SCRIPTS_MIGRATIONS.map((step) => step.id)));
 		expect(await sandboxObject(env, exports, workspace, USER).about()).toEqual(named("sandbox", USER, SANDBOX_MIGRATIONS.map((step) => step.id)));
 	});
 
 	test("schema steps apply once, in order, each in a transaction", async () => {
-		const stub = workspaceObject(env, { id: "0199a000-0000-7000-8000-0000000000cc", jurisdiction: null });
+		const stub = conversationObject(env, { id: WS, jurisdiction: null }, "0199a000-0000-7000-8000-0000000000cc");
 		await runInDurableObject(stub, (_, state) => {
 			// Ids past any class's own steps, which the object applied when it started.
 			const own = appliedMigrations(state.storage);

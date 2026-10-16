@@ -1,64 +1,35 @@
-// `run_script` in the real Conversation Durable Object, in local workerd: PiHarness with the fake model
-// writing scripts, the real Scripts object and Dynamic Workers, scripted calls through the run's queue and a
-// fake executor (as test/platform/conversation.test.ts fakes it), the store kept in the run's pi
-// conversation, and the plan's Scripts faults that local workerd can show: a timeout during a write (the
-// write settles and is recorded), calls after the script returned, more than ten scripts in a row, a stop
-// of the run while a script runs. The CPU-bound guest and the busy object are on the account.
+// `run_script` in the real Conversation Durable Object, in local workerd, as Laravel's commands reach it (startRun and
+// cancelRun through the internal mount) with the fake Laravel: PiHarness with the fake model writing scripts, the real
+// Scripts object and Dynamic Workers, scripted calls through the run's queue and a fake executor (as
+// test/platform/conversation.test.ts fakes it), the store kept in the run's pi conversation, and the plan's Scripts faults
+// that local workerd can show: a timeout during a write (the write settles and is recorded), calls after the script
+// returned, more than ten scripts in a row, a stop of the run while a script runs. The CPU-bound guest and the busy object
+// are on the account.
 
-import { env } from "cloudflare:workers";
-import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import type { TranscriptContext } from "@earendil-works/pi-ai";
-import { conversationObject } from "../../src/addressing.ts";
-import type { Conversation } from "../../src/conversation/conversation.ts";
-import type { RunEvent } from "../../src/conversation/events.ts";
-import { type ConversationPorts, defaultPorts, emptyFolder, PORTS, type WorkspaceClient, type WriteLedger } from "../../src/conversation/ports.ts";
+import type { RunEvent } from "@minerva/contract";
+import type { Scope } from "@minerva/contract/internal";
+import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { FACT_DELIVERY } from "../../src/conversation/facts.ts";
+import { type ConversationPorts, defaultPorts, emptyFolder, PORTS, type WriteLedger } from "../../src/conversation/ports.ts";
 import type { RunHead } from "../../src/conversation/store.ts";
+import type { Conversation } from "../../src/faults/index.ts";
+import { FakeLaravel } from "../../src/faults/laravel.ts";
 import type { ExecutorContext, ToolCallOutcome, ToolCallRequest, ToolDeclaration } from "../../src/gateway/executor.ts";
 import type { ToolResult } from "../../src/gateway/results.ts";
-import type { StartSnapshot } from "../../src/gateway/tools.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { type FakeTurn, fakeUpstream } from "../../src/model/fake.ts";
 import { SCRIPT_TIMEOUT_MS } from "../../src/scripts/limits.ts";
 import { SCRIPT_CLOCK } from "../../src/scripts/run.ts";
-import type { Caller, RunId } from "../../src/shared/rpc.ts";
-import type { BeginRunInput, BeginRunResult, Registration } from "../../src/workspace/core.ts";
+import type { RunId } from "../../src/shared/rpc.ts";
+import { commands, held, objectOf, scope, signedAssertions, startOf, viewOf } from "./internal-support.ts";
 
-const WS = "0199a000-0000-7000-8000-00000000d0aa";
-const USER = "0199a000-0000-7000-8000-00000000d0bb";
-const AGENT = "0199a000-0000-7000-8000-00000000d0dd";
-const CALLER: Caller = { userId: USER, role: "owner" };
-const WORKSPACE = { id: WS, jurisdiction: null };
+signedAssertions();
 
-class FakeWorkspace implements WorkspaceClient {
-	snapshot(input: BeginRunInput): StartSnapshot {
-		return {
-			workspaceId: WS,
-			conversationId: input.conversationId,
-			userId: input.userId,
-			agentId: input.agentId,
-			permissions: [{ name: "ceiling", restricted: false, allows: [], denies: [] }],
-			tools: [],
-			instructions: "You are a test agent.",
-			modelAlias: "default",
-			deadline: null,
-			createdAt: Date.now(),
-			connectionIds: [],
-		};
-	}
-	async beginRun(input: BeginRunInput): Promise<BeginRunResult> {
-		return { ok: true, value: { snapshot: this.snapshot(input), uploads: [] } };
-	}
-	async activate(): Promise<Registration> {
-		return { state: "active" };
-	}
-	async release(): Promise<void> {}
-	async conversationTouched(): Promise<void> {}
-	async lease(): Promise<{ refused: "CONNECTION_UNAUTHORIZED"; message: string }> {
-		return { refused: "CONNECTION_UNAUTHORIZED", message: "The connection expired. Reconnect it in Minerva." };
-	}
-	async markUnauthorized(): Promise<void> {}
-}
+const DELIVERY = { ...FACT_DELIVERY };
+let fake: FakeLaravel;
+let uninstall: () => void;
 
 class FakeLedger implements WriteLedger {
 	knownWrite = () => null;
@@ -126,7 +97,6 @@ async function tools(request: ToolCallRequest, fakes: Fakes): Promise<ToolCallOu
 beforeAll(() => {
 	PORTS.factory = (): ConversationPorts => ({
 		...defaultPorts,
-		workspace: () => new FakeWorkspace(),
 		executor: (run, { conversationId }) => ({
 			declarations: () => fakesOf(conversationId).declarations,
 			invoke: (request) => {
@@ -141,42 +111,52 @@ beforeAll(() => {
 	});
 });
 
+beforeEach(() => {
+	fake = new FakeLaravel("test-laravel-token");
+	uninstall = fake.install({ withToken: true });
+	Object.assign(FACT_DELIVERY, { backoffMs: 20, maxBackoffMs: 200 });
+});
+
 afterEach(() => {
 	FAKES.clear();
 	SCRIPT_CLOCK.timeoutMs = SCRIPT_TIMEOUT_MS;
+	uninstall();
+	Object.assign(FACT_DELIVERY, DELIVERY);
 });
-
-async function conversation(declarations = [declaration("fake_read", true), declaration("fake_write", false)]) {
-	const id = uuid7();
-	const fakes: Fakes = { declarations, invoke: (request) => tools(request, fakes), contexts: [], invocations: [], log: [] };
-	FAKES.set(id, fakes);
-	const stub = conversationObject(env, WORKSPACE, id);
-	await stub.init({ conversationId: id, workspace: WORKSPACE, userId: USER, agentId: AGENT, createdAt: Date.now() });
-	return { id, stub, fakes };
-}
 
 type Stub = DurableObjectStub<Conversation>;
 
+/** A Laravel conversation in the EU with its fakes. */
+function conversation(declarations = [declaration("fake_read", true), declaration("fake_write", false)]) {
+	const within = scope();
+	const id = uuid7();
+	const fakes: Fakes = { declarations, invoke: (request) => tools(request, fakes), contexts: [], invocations: [], log: [] };
+	FAKES.set(id, fakes);
+	return { within, id, stub: objectOf({ scope: within, conversation: id }), fakes };
+}
+
 const script = (code: string): FakeTurn => ({ tools: [{ name: "run_script", arguments: { code } }] });
 
-async function posted(stub: Stub, turns: FakeTurn[], pace: { delayMs?: number; chunkChars?: number } = {}): Promise<RunId> {
-	const outcome = await stub.postMessage(CALLER, { content: JSON.stringify({ fake: { turns, ...pace } }), attachments: [] });
-	if (!outcome.ok) throw new Error(`Refused: ${outcome.refusal.code} ${outcome.refusal.detail}`);
-	return outcome.value.run.id;
+/** Sends a start, which Laravel holds, whose model answers with `turns`; its run's id once it is accepted. */
+async function posted(w: { within: Scope; id: string }, turns: FakeTurn[], pace: { delayMs?: number; chunkChars?: number } = {}): Promise<RunId> {
+	const start = held(fake, startOf(w.within, { conversation: w.id, message: { id: uuid7(), content: JSON.stringify({ fake: { turns, ...pace } }), attachments: [] } }));
+	const answer = await commands.startRun(start);
+	if (answer.outcome !== "accepted") throw new Error(`Refused: ${answer.code} ${answer.message}`);
+	return start.run;
 }
 
 async function settled(stub: Stub, runId: RunId, timeout = 15_000): Promise<RunHead> {
 	const started = Date.now();
 	for (;;) {
-		const run = (await stub.getRun(CALLER, runId)) as RunHead;
-		if (!["queued", "provisioning", "running"].includes(run.status)) return run;
-		if (Date.now() - started > timeout) throw new Error(`Run still ${run.status}`);
+		const run = (await stub.faultView(runId, 0, 0)).head;
+		if (run !== null && !["queued", "provisioning", "running"].includes(run.status)) return run;
+		if (Date.now() - started > timeout) throw new Error(`Run still ${run?.status}`);
 		await sleep(25);
 	}
 }
 
 async function eventsOf(stub: Stub, runId: RunId): Promise<RunEvent[]> {
-	return (await stub.getRunEvents(CALLER, runId, { after: 0, upTo: 1_000_000, limit: 1000 })) ?? [];
+	return (await viewOf(stub, runId)).events;
 }
 
 /** The tools a model request offered, from its system messages. */
@@ -196,19 +176,19 @@ function scriptResults(fakes: Fakes): { texts: string[]; isError: boolean }[] {
 
 describe("run_script in the conversation", () => {
 	test("offered after the connector tools, with its description; absent without them", async () => {
-		const { stub, fakes } = await conversation();
-		await settled(stub, await posted(stub, [{ text: "Hi." }]));
+		const { stub, fakes, ...w } = conversation();
+		await settled(stub, await posted(w, [{ text: "Hi." }]));
 		expect(offered(fakes.contexts[0]).map((tool) => tool.name)).toEqual(["fake_read", "fake_write", "run_script", "read", "write", "edit", "bash"]);
 		const runScript = offered(fakes.contexts[0]).find((tool) => tool.name === "run_script");
 		expect(runScript?.description).toMatch(/^Run JavaScript that calls the tools declared below and returns a compact result\.\n/);
-		const none = await conversation([]);
-		await settled(none.stub, await posted(none.stub, [{ text: "Hi." }]));
+		const none = conversation([]);
+		await settled(none.stub, await posted(none, [{ text: "Hi." }]));
 		expect(offered(none.fakes.contexts[0]).map((tool) => tool.name)).toEqual(["read", "write", "edit", "bash"]);
 	});
 
 	test("a script's calls go through the executor and are recorded; the model sees notes, output and value", async () => {
-		const { stub, fakes } = await conversation();
-		const runId = await posted(stub, [
+		const { stub, fakes, ...w } = conversation();
+		const runId = await posted(w, [
 			script("const r = await tools.fake_read({ key: 'a' }); await tools.fake_write({ key: 'b' }); console.log('read', r.items[0].key); return { done: true }"),
 			{ text: "Done." },
 		]);
@@ -225,8 +205,8 @@ describe("run_script in the conversation", () => {
 	});
 
 	test("store() keeps values between the scripts of a turn, saved only when a script succeeds", async () => {
-		const { stub, fakes } = await conversation();
-		const runId = await posted(stub, [
+		const { stub, fakes, ...w } = conversation();
+		const runId = await posted(w, [
 			script("store('kept', 1); store('gone', 2); return 'one'"),
 			script("store('gone', undefined); store('lost', 3); throw new Error('failed')"),
 			script("return [load('kept'), load('gone'), load('lost')]"),
@@ -237,16 +217,16 @@ describe("run_script in the conversation", () => {
 		expect(results[1]?.isError).toBe(true);
 		expect(results[2]).toEqual({ texts: ["[1,2,null]"], isError: false });
 		// The next turn's scripts start with an empty store.
-		const next = await posted(stub, [script("return load('kept') === undefined"), { text: "Done." }]);
+		const next = await posted(w, [script("return load('kept') === undefined"), { text: "Done." }]);
 		await settled(stub, next);
 		expect(scriptResults(fakes).at(-1)).toEqual({ texts: ["true"], isError: false });
 	});
 
 	test("a timeout during a write: the model hears at once, the write settles and is recorded, and the run goes on", async () => {
 		SCRIPT_CLOCK.timeoutMs = 300;
-		const { stub, fakes } = await conversation();
+		const { stub, fakes, ...w } = conversation();
 		// The model answers slowly, so the write ends while the run still runs.
-		const runId = await posted(stub, [script("text('started'); await tools.fake_write({ key: 'slow', ms: 1200 }); text('never')"), { text: "Done." }], {
+		const runId = await posted(w, [script("text('started'); await tools.fake_write({ key: 'slow', ms: 1200 }); text('never')"), { text: "Done." }], {
 			delayMs: 1500,
 			chunkChars: 500,
 		});
@@ -269,8 +249,8 @@ describe("run_script in the conversation", () => {
 	});
 
 	test("calls the script left behind never run once it returned", async () => {
-		const { stub, fakes } = await conversation();
-		const runId = await posted(stub, [script("setTimeout(() => tools.fake_read({ key: 'late' }), 100); return 'returned'"), { text: "Done." }]);
+		const { stub, fakes, ...w } = conversation();
+		const runId = await posted(w, [script("setTimeout(() => tools.fake_read({ key: 'late' }), 100); return 'returned'"), { text: "Done." }]);
 		await settled(stub, runId);
 		await sleep(400);
 		expect(scriptResults(fakes)).toEqual([{ texts: ["returned"], isError: false }]);
@@ -279,9 +259,9 @@ describe("run_script in the conversation", () => {
 
 	test("more than ten scripts in a row, each stopped by its wall clock, then one that answers", async () => {
 		SCRIPT_CLOCK.timeoutMs = 150;
-		const { stub, fakes } = await conversation();
+		const { stub, fakes, ...w } = conversation();
 		const loop = "for (;;) await new Promise((resolve) => setTimeout(resolve, 10))";
-		const runId = await posted(stub, [...Array.from({ length: 12 }, () => script(loop)), script("return 'thirteenth'"), { text: "Done." }]);
+		const runId = await posted(w, [...Array.from({ length: 12 }, () => script(loop)), script("return 'thirteenth'"), { text: "Done." }]);
 		const run = await settled(stub, runId, 30_000);
 		expect(run.status).toBe("completed");
 		const results = scriptResults(fakes);
@@ -291,10 +271,10 @@ describe("run_script in the conversation", () => {
 	});
 
 	test("stopping the run stops its script", async () => {
-		const { stub } = await conversation();
-		const runId = await posted(stub, [script("for (;;) await new Promise((resolve) => setTimeout(resolve, 10))"), { text: "Done." }]);
+		const { stub, ...w } = conversation();
+		const runId = await posted(w, [script("for (;;) await new Promise((resolve) => setTimeout(resolve, 10))"), { text: "Done." }]);
 		await sleep(500);
-		await stub.cancelRun(CALLER, runId);
+		await commands.cancelRun({ scope: w.within, conversation: w.id, run: runId, reason: "cancelled" });
 		const run = await settled(stub, runId);
 		expect(run.status).toBe("cancelled");
 	});

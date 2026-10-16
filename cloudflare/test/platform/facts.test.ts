@@ -17,10 +17,10 @@ import { LARAVEL_NETWORK } from "../../src/laravel/client.ts";
 import { base64url } from "../../src/lib/bytes.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { type FakeScript, fakeUpstream } from "../../src/model/fake.ts";
-import { openSocket } from "../../src/stream/relay.ts";
+import { STREAM_TIMING, openSocket } from "../../src/stream/relay.ts";
 import { STREAM_AUDIENCE, STREAM_PURPOSE } from "../../src/stream/token.ts";
 import { FakeLaravel } from "../../src/faults/laravel.ts";
-import { ORIGIN, commands, held, objectOf, refusalOf, scope, signedAssertions, startOf } from "./internal-support.ts";
+import { ORIGIN, commands, held, objectOf, refusalOf, scope, signedAssertions, startOf, viewOf } from "./internal-support.ts";
 
 signedAssertions();
 
@@ -357,6 +357,118 @@ describe("Laravel's run stream", () => {
 		}
 	}
 
+	const TIMING = { ...STREAM_TIMING };
+
+	afterEach(() => {
+		Object.assign(STREAM_TIMING, TIMING);
+	});
+
+	interface Frame {
+		id?: string;
+		event?: string;
+		data?: string;
+		comment?: string;
+	}
+
+	/** An SSE response read frame by frame, as EventSource parses it. */
+	class Sse {
+		readonly response: Response;
+		#reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+		readonly #decoder = new TextDecoder();
+		#buffer = "";
+		#done = false;
+		/** Why the response broke off, if it did (an aborted response), rather than ending. */
+		failure: unknown = null;
+
+		constructor(response: Response) {
+			this.response = response;
+		}
+
+		get #body(): ReadableStreamDefaultReader<Uint8Array> {
+			this.#reader ??= (this.response.body as ReadableStream<Uint8Array>).getReader();
+			return this.#reader;
+		}
+
+		/** The next frame or comment, or null once the response ended. */
+		async next(timeout = 15_000): Promise<Frame | null> {
+			const deadline = Date.now() + timeout;
+			for (;;) {
+				const split = this.#buffer.indexOf("\n\n");
+				if (split >= 0) {
+					const block = this.#buffer.slice(0, split);
+					this.#buffer = this.#buffer.slice(split + 2);
+					const frame: Frame = {};
+					for (const line of block.split("\n")) {
+						if (line.startsWith(":")) frame.comment = line.slice(1).trim();
+						else {
+							const colon = line.indexOf(":");
+							const name = line.slice(0, colon) as "id" | "event" | "data";
+							frame[name] = line.slice(colon + 1).replace(/^ /, "");
+						}
+					}
+					return frame;
+				}
+				if (this.#done) return null;
+				const left = deadline - Date.now();
+				if (left <= 0) throw new Error(`No frame within ${timeout} ms; buffered: ${this.#buffer.slice(0, 200)}`);
+				let chunk: ReadableStreamReadResult<Uint8Array> | null;
+				let timer: ReturnType<typeof setTimeout> | undefined;
+				try {
+					chunk = await Promise.race([this.#body.read(), new Promise<null>((resolve) => (timer = setTimeout(() => resolve(null), left)))]);
+				} catch (error) {
+					this.failure = error;
+					this.#done = true;
+					continue;
+				} finally {
+					clearTimeout(timer);
+				}
+				if (chunk === null) continue;
+				if (chunk.done) this.#done = true;
+				else this.#buffer += this.#decoder.decode(chunk.value, { stream: true });
+			}
+		}
+
+		/** Every frame up to the end of the response or its break (comments left out). */
+		async rest(): Promise<Frame[]> {
+			const frames: Frame[] = [];
+			for (let frame = await this.next(); frame !== null; frame = await this.next()) if (frame.comment === undefined) frames.push(frame);
+			return frames;
+		}
+
+		cancel(): Promise<void> {
+			return this.#body.cancel();
+		}
+	}
+
+	/** The run's stream with a token Laravel signed, from `lastEventId` when the browser sends one. */
+	async function sse(start: StartRun, lastEventId?: string, change: { exp?: number } = {}): Promise<Sse> {
+		const headers: Record<string, string> = { Authorization: `Bearer ${await token(start, change)}` };
+		if (lastEventId !== undefined) headers["Last-Event-ID"] = lastEventId;
+		return new Sse(await get(headers));
+	}
+
+	function eventsOf(frames: Frame[]) {
+		return frames.filter((frame) => frame.event !== "end").map((frame) => ({ seq: Number(frame.id), type: frame.event, data: JSON.parse(frame.data as string) }));
+	}
+
+	/** Adds `count` text deltas of `size` characters (1 MiB unless given) to a finished run, as a long answer would leave them. */
+	async function addEvents(start: StartRun, count: number, size = 1024 * 1024): Promise<void> {
+		const big = "x".repeat(size);
+		await runInDurableObject(objectOf(start), (_instance, state) => {
+			for (let i = 0; i < count; i++) {
+				const seq = state.storage.sql.exec<{ event_seq: number }>("UPDATE runs SET event_seq = event_seq + 1 WHERE id = ? RETURNING event_seq", start.run).one().event_seq;
+				state.storage.sql.exec("INSERT INTO run_events (run_id, seq, type, data, created_at) VALUES (?, ?, ?, ?, ?)", start.run, seq, "text_delta", JSON.stringify({ text: big, call: "0badc0de" }), Date.now());
+			}
+		});
+	}
+
+	/** A start whose fake model answers with `script`, which Laravel holds; not sent. */
+	function answering(script: FakeScript): StartRun {
+		return held(fake, startOf(scope(), { message: { id: uuid7(), content: JSON.stringify({ fake: script }), attachments: [] } }));
+	}
+
+	const eventCount = async (start: StartRun) => (await viewOf(objectOf(start), start.run)).events.length;
+
 	test("streams a run's events with a token, and ends with the run", async () => {
 		const start = held(fake, startOf(scope()));
 		await commands.startRun(start);
@@ -443,4 +555,91 @@ describe("Laravel's run stream", () => {
 		expect(await openSocket(stub, start.run, { user: start.user }, 0)).toBeNull();
 		expect(await openSocket(stub, start.run, { user: "" }, 0)).toBeNull();
 	});
+
+	test("a reconnect resumes after Last-Event-ID: no gaps, no duplicates; one not all digits counts as 0", async () => {
+		const start = answering({ chunkChars: 2, delayMs: 25, turns: [{ text: "z".repeat(160) }] });
+		await commands.startRun(start);
+		const first = await sse(start, "1");
+		const seen: Frame[] = [];
+		while (seen.length < 4) {
+			const frame = await first.next();
+			expect(frame).not.toBeNull();
+			if (frame?.event) seen.push(frame);
+		}
+		await first.cancel();
+		const rest = await (await sse(start, seen.at(-1)?.id)).rest();
+		expect(rest.at(-1)?.event).toBe("end");
+		const stored = (await viewOf(objectOf(start), start.run)).events;
+		expect(eventsOf([...seen, ...rest])).toEqual(stored.slice(1));
+		const replay = eventsOf(await (await sse(start, "x7")).rest());
+		expect(replay.map((event) => event.seq)).toEqual(stored.map((event) => event.seq));
+		const empty = eventsOf(await (await sse(start, "")).rest());
+		expect(empty.map((event) => event.seq)).toEqual(stored.map((event) => event.seq));
+	});
+
+	test("a stop during a run: the stream says the run was cancelled, Stopped., then ends; the conversation takes the next start", async () => {
+		const start = held(fake, startOf(scope(), { message: { id: uuid7(), content: SLOW, attachments: [] } }));
+		await commands.startRun(start);
+		const stream = await sse(start);
+		for (let frame = await stream.next(); frame?.event !== "text_delta"; frame = await stream.next()) expect(frame).not.toBeNull();
+		expect(await commands.cancelRun({ scope: start.scope, conversation: start.conversation, run: start.run, reason: "cancelled" })).toEqual({ state: "cancelled" });
+		const rest = await stream.rest();
+		expect(rest.at(-1)).toEqual({ event: "end", data: "{}" });
+		expect(eventsOf(rest).at(-1)).toMatchObject({ type: "status", data: { status: "cancelled", message: "Stopped." } });
+		const next = held(fake, startOf(start.scope, { conversation: start.conversation }));
+		expect(await commands.startRun(next)).toMatchObject({ outcome: "accepted" });
+		expect(await settled(next)).toBe("completed");
+	});
+
+	test("a keepalive comment after silence; the token's expiry then closes the stream cleanly, without the end", async () => {
+		STREAM_TIMING.keepaliveMs = 150;
+		const start = answering({ chunkChars: 400, delayMs: 3000, turns: [{ text: "w".repeat(400) }] });
+		await commands.startRun(start);
+		const stream = await sse(start, "1", { exp: Math.floor(Date.now() / 1000) + 2 });
+		let frame = await stream.next();
+		while (frame !== null && frame.comment === undefined) frame = await stream.next();
+		expect(frame).toEqual({ comment: "keepalive" });
+		const rest = await stream.rest();
+		expect([rest.some((item) => item.event === "end"), stream.failure]).toEqual([false, null]);
+		await commands.cancelRun({ scope: start.scope, conversation: start.conversation, run: start.run, reason: "cancelled" });
+		await settled(start);
+	});
+
+	test("a client that does not read is cut off rather than buffered for, and resumes from what it read", async () => {
+		STREAM_TIMING.bufferLimit = 64 * 1024;
+		const start = held(fake, startOf(scope()));
+		await commands.startRun(start);
+		await settled(start);
+		const before = await eventCount(start);
+		// Each frame is well under the limit; only the ones queued while the client does not read pass it.
+		const added = 40;
+		await addEvents(start, added, 16 * 1024);
+		const stream = await sse(start, "0");
+		// Two frames taken, then none for a while: what the relay queued past its limit is dropped, never what was taken.
+		const taken = [await stream.next(), await stream.next()] as Frame[];
+		await sleep(500);
+		const frames = [...taken, ...(await stream.rest())];
+		expect(frames.some((frame) => frame.event === "end")).toBe(false);
+		const read = eventsOf(frames);
+		expect(read.length).toBeGreaterThanOrEqual(2);
+		expect(read.length).toBeLessThan(before + added);
+		Object.assign(STREAM_TIMING, TIMING);
+		const resumed = await (await sse(start, String(read.at(-1)?.seq ?? 0))).rest();
+		expect(resumed.at(-1)?.event).toBe("end");
+		expect([...read, ...eventsOf(resumed)].map((event) => event.seq)).toEqual(Array.from({ length: before + added }, (_v, i) => i + 1));
+	});
+
+	test("a backlog past the object's 4 MiB per socket, and a run past 32 MiB of events, arrive whole", async () => {
+		const start = held(fake, startOf(scope()));
+		await commands.startRun(start);
+		await settled(start);
+		const before = await eventCount(start);
+		const added = 34;
+		await addEvents(start, added);
+		const frames = await (await sse(start)).rest();
+		expect(frames.at(-1)?.event).toBe("end");
+		const events = eventsOf(frames);
+		expect(events.map((event) => event.seq)).toEqual(Array.from({ length: before + added }, (_v, i) => i + 1));
+		expect(events.slice(before).map((event) => [event.type, event.data.text.length])).toEqual(Array.from({ length: added }, () => ["text_delta", 1024 * 1024]));
+	}, 60_000);
 });

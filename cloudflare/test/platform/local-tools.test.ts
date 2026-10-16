@@ -1,50 +1,58 @@
 // The local tools in the real Conversation Durable Object, in local workerd (ARCHITECTURE.md: Checkpoints, The local
-// tools): PiHarness with the fake model calling pi's read, write, edit and bash, the
-// folder's store on the object's SQLite and the local bucket, the Workspace and the fake Notes connector of
-// the test build, and a conversation's container played by test/platform/sandbox-memory.ts (local workerd
-// has no containers). Covered: results held until a checkpoint saved them and their cards after, phases,
-// the final rehash, the folder version published with the run's changes and warnings, a turn that only
-// reads, the run's container destroyed at its end, a folder over its limits (folder_limit and its message),
-// a container that fails its hardening (worker_failed) or never starts (attempts until worker_exited), and
-// crashes between a checkpoint's upload and its record, its record and the release, and the release and
-// pi's commit (the Checkpoints row of ARCHITECTURE.md's Testing table), each resumed from the last checkpoint.
+// tools), as Laravel's commands reach it (startRun, cancelRun and folder through the internal mount) with the fake Laravel:
+// PiHarness with the fake model calling pi's read, write, edit and bash, the folder's store on the object's SQLite and the
+// EU bucket, and a conversation's container played by test/platform/sandbox-memory.ts (local workerd has no containers).
+// Covered: results held until a checkpoint saved them and their cards after, phases, the final rehash, the folder version
+// published with the run's changes and warnings, a turn that only reads, the run's container destroyed at its end, a folder
+// over its limits (folder_limit and its message), a container that fails its hardening (worker_failed) or never starts
+// (attempts until worker_exited), and crashes between a checkpoint's upload and its record, its record and the release, and
+// the release and pi's commit (the Checkpoints row of ARCHITECTURE.md's Testing table), each resumed from the last
+// checkpoint.
 
 import { env } from "cloudflare:workers";
-import { afterEach, beforeAll, describe, expect, test } from "vitest";
-import { conversationObject, filesBucket, workspaceObject } from "../../src/addressing.ts";
-import { CONNECTORS } from "../../src/connectors/catalog.ts";
-import { CONNECTOR_SOURCE } from "../../src/connectors/index.ts";
-import type { RunEvent } from "../../src/conversation/events.ts";
+import type { RunEvent } from "@minerva/contract";
+import type { Fact, Scope } from "@minerva/contract/internal";
+import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { filesBucket } from "../../src/addressing.ts";
+import { FACT_DELIVERY } from "../../src/conversation/facts.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
 import type { RunHead } from "../../src/conversation/store.ts";
-import { notesConnector } from "../../src/faults/connector.ts";
-import type { Conversation, Workspace } from "../../src/faults/index.ts";
+import type { Conversation } from "../../src/faults/index.ts";
+import { FakeLaravel } from "../../src/faults/laravel.ts";
 import type { Fault } from "../../src/faults/plan.ts";
-import { faultConversationPorts, faultWorkspacePorts } from "../../src/faults/ports.ts";
-import { setUpWorkspace } from "../../src/faults/routes.ts";
+import { faultConversationPorts } from "../../src/faults/ports.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import type { FakeTurn } from "../../src/model/fake.ts";
-import type { Caller, RunId, WorkspaceRef } from "../../src/shared/rpc.ts";
-import { WORKSPACE_PORTS } from "../../src/workspace/workspace.ts";
+import type { RunId } from "../../src/shared/rpc.ts";
+import { commands, held, objectOf, scope, signedAssertions, startOf, viewOf } from "./internal-support.ts";
 import { MemorySandbox } from "./sandbox-memory.ts";
 
-const USER = "0199a000-0000-7000-8000-0000000e3e01";
-const CALLER: Caller = { userId: USER, role: "owner" };
+signedAssertions();
+
 const SANDBOXES = new Map<string, MemorySandbox>();
+const DELIVERY = { ...FACT_DELIVERY };
+let fake: FakeLaravel;
+let uninstall: () => void;
 
 type ConversationStub = DurableObjectStub<Conversation>;
 
 beforeAll(() => {
-	CONNECTOR_SOURCE.connectors = () => [...CONNECTORS, notesConnector()];
 	PORTS.factory = () => ({
 		...faultConversationPorts(defaultPorts),
 		sandbox: ({ conversationId }) => sandboxOf(conversationId),
 	});
-	WORKSPACE_PORTS.factory = (deps, ctx, workerEnv) => faultWorkspacePorts(deps, ctx, workerEnv);
+});
+
+beforeEach(() => {
+	fake = new FakeLaravel("test-laravel-token");
+	uninstall = fake.install({ withToken: true });
+	Object.assign(FACT_DELIVERY, { backoffMs: 20, maxBackoffMs: 200 });
 });
 
 afterEach(() => {
 	for (const sandbox of SANDBOXES.values()) sandbox.release();
+	uninstall();
+	Object.assign(FACT_DELIVERY, DELIVERY);
 });
 
 function sandboxOf(conversationId: string): MemorySandbox {
@@ -53,24 +61,24 @@ function sandboxOf(conversationId: string): MemorySandbox {
 	return sandbox;
 }
 
+/** A Laravel conversation in the EU and its container. A stub breaks once its object was reset, so each use gets a new one. */
 interface World {
-	ref: WorkspaceRef;
+	within: Scope;
+	conversationId: string;
 	readonly conversation: ConversationStub;
 	sandbox: MemorySandbox;
 }
 
 async function world(options: { faults?: Fault[] } = {}): Promise<World> {
-	const ref: WorkspaceRef = { id: uuid7(), jurisdiction: null };
-	const { agentId } = await setUpWorkspace(env, ref, USER);
-	const created = await (workspaceObject(env, ref) as unknown as DurableObjectStub<Workspace>).createConversation(CALLER, agentId);
-	if (!created.ok) throw new Error(created.refusal.detail);
-	const conversationId = created.value.id;
-	const sandbox = new MemorySandbox(() => filesBucket(env, ref));
+	const within = scope();
+	const conversationId = uuid7();
+	const sandbox = new MemorySandbox(() => filesBucket(env, { id: within.workspace, jurisdiction: "eu" }));
 	SANDBOXES.set(conversationId, sandbox);
-	const conversation = () => conversationObject(env, ref, conversationId) as unknown as ConversationStub;
+	const conversation = () => objectOf({ scope: within, conversation: conversationId });
 	if (options.faults) await conversation().faultPlan(options.faults);
 	return {
-		ref,
+		within,
+		conversationId,
 		get conversation() {
 			return conversation();
 		},
@@ -78,10 +86,12 @@ async function world(options: { faults?: Fault[] } = {}): Promise<World> {
 	};
 }
 
+/** Sends a start, which Laravel holds, whose model answers with `turns`; its run's id once it is accepted. */
 async function post(w: World, turns: FakeTurn[]): Promise<RunId> {
-	const outcome = await w.conversation.postMessage(CALLER, { content: JSON.stringify({ fake: { turns } }), attachments: [] });
-	if (!outcome.ok) throw new Error(`Refused: ${outcome.refusal.code} ${outcome.refusal.detail}`);
-	return outcome.value.run.id;
+	const start = held(fake, startOf(w.within, { conversation: w.conversationId, message: { id: uuid7(), content: JSON.stringify({ fake: { turns } }), attachments: [] } }));
+	const answer = await commands.startRun(start);
+	if (answer.outcome !== "accepted") throw new Error(`Refused: ${answer.code} ${answer.message}`);
+	return start.run;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -102,11 +112,32 @@ async function until<T>(read: () => Promise<T>, done: (value: T) => boolean, tim
 }
 
 async function settled(w: World, runId: RunId, timeout?: number): Promise<RunHead> {
-	return until(async () => (await w.conversation.getRun(CALLER, runId)) as RunHead, (run) => !["queued", "provisioning", "running"].includes(run.status), timeout);
+	return (await until(
+		async () => (await w.conversation.faultView(runId, 0, 0)).head,
+		(run) => run !== null && !["queued", "provisioning", "running"].includes(run.status),
+		timeout,
+	)) as RunHead;
 }
 
 async function eventsOf(w: World, runId: RunId): Promise<RunEvent[]> {
-	return (await w.conversation.getRunEvents(CALLER, runId, { after: 0, upTo: 1_000_000, limit: 1000 })) ?? [];
+	return (await viewOf(w.conversation, runId)).events;
+}
+
+/** The run's facts, once the fake Laravel holds its `run.finished`. */
+async function factsOf(w: World, runId: RunId): Promise<Fact[]> {
+	const facts = await until(
+		async () => fake.facts(w.conversationId),
+		(all) => all.some((fact) => fact.type === "run.finished" && fact.run === runId),
+	);
+	return facts.filter((fact) => fact.run === runId);
+}
+
+const localToolFacts = (facts: Fact[]) => facts.flatMap((fact) => (fact.type === "run.local_tool" ? [fact.data] : []));
+const finishedFact = (facts: Fact[]) => facts.find((fact) => fact.type === "run.finished")?.data;
+
+/** The folder's current version, as Laravel reads it. */
+function folderOf(w: World) {
+	return commands.folder({ scope: w.within, conversation: w.conversationId, version: null });
 }
 
 function cards(events: RunEvent[]) {
@@ -154,8 +185,12 @@ describe("the local tools in the conversation", () => {
 		expect(run.resultVersionId).not.toBeNull();
 		expect(run.folderChanges).toMatchObject({ added: [{ path: "notes.txt", size: 9 }], counts: { added: 1 } });
 		expect(run.folderWarnings).toEqual({ total: 0, items: [] });
-		const folder = await w.conversation.listFiles(CALLER, null);
+		const folder = await folderOf(w);
 		expect(folder).toMatchObject({ versionId: run.resultVersionId, files: [{ path: "notes.txt", size: 9 }] });
+		// Laravel hears the same cards, and the folder the turn left.
+		const facts = await factsOf(w, runId);
+		expect(localToolFacts(facts)).toEqual(cards(events));
+		expect(finishedFact(facts)).toMatchObject({ status: "completed", folder: { base: null, result: run.resultVersionId, changes: run.folderChanges, warnings: { total: 0, items: [] } } });
 		// The run's container is destroyed when it ends.
 		await until(async () => w.sandbox.log, (log) => log.some((line) => line.startsWith("destroy")));
 
@@ -169,6 +204,7 @@ describe("the local tools in the conversation", () => {
 		expect(log.filter((line) => line.startsWith("scan") || line.startsWith("checkpoint"))).toEqual([]);
 		expect(log).toContain("hydrate 1");
 		expect([second.baseVersionId, second.resultVersionId, second.folderChanges]).toEqual([run.resultVersionId, run.resultVersionId, null]);
+		expect(finishedFact(await factsOf(w, next))?.folder).toMatchObject({ base: run.resultVersionId, result: run.resultVersionId, changes: null });
 	});
 
 	test("the scan's warnings are published with the run", async () => {
@@ -178,6 +214,7 @@ describe("the local tools in the conversation", () => {
 		const run = await settled(w, runId);
 		expect(run.status).toBe("completed");
 		expect(run.folderWarnings).toEqual({ total: 2, items: [{ path: "etc", reason: "symlink" }, { path: "pipe", reason: "special" }] });
+		expect(finishedFact(await factsOf(w, runId))?.folder?.warnings).toEqual(run.folderWarnings);
 	});
 
 	test("a folder over its limits fails the turn with folder_limit and that limit's own message", async () => {
@@ -221,7 +258,7 @@ describe("the local tools in the conversation", () => {
 		const w = await world();
 		const runId = await post(w, [bash("hold"), DONE]);
 		await until(async () => w.sandbox.holding, (holding) => holding === 1);
-		await w.conversation.cancelRun(CALLER, runId);
+		await commands.cancelRun({ scope: w.within, conversation: w.conversationId, run: runId, reason: "cancelled" });
 		const run = await settled(w, runId);
 		expect(run.status).toBe("cancelled");
 		await until(async () => w.sandbox.log, (log) => log.some((line) => line.startsWith("destroy")));
