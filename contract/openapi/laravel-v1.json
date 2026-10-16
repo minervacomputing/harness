@@ -424,6 +424,144 @@
                 "manage"
               ]
             }
+          },
+          "prices": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{16}$"
+              },
+              "table": {
+                "type": "object",
+                "properties": {
+                  "routes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "input": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "cachedInput": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "cacheWrite": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "output": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "provider": {
+                          "type": "string"
+                        },
+                        "model": {
+                          "type": "string"
+                        },
+                        "above": {
+                          "type": "object",
+                          "properties": {
+                            "input": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "cachedInput": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "cacheWrite": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "output": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "inputTokens": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "input",
+                            "cachedInput",
+                            "cacheWrite",
+                            "output",
+                            "inputTokens"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "input",
+                        "cachedInput",
+                        "cacheWrite",
+                        "output",
+                        "provider",
+                        "model"
+                      ]
+                    }
+                  },
+                  "container": {
+                    "type": "object",
+                    "properties": {
+                      "instance": {
+                        "type": "string"
+                      },
+                      "perHour": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "instance",
+                      "perHour"
+                    ]
+                  },
+                  "script": {
+                    "type": "object",
+                    "properties": {
+                      "perScript": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "perHour": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "perScript",
+                      "perHour"
+                    ]
+                  }
+                },
+                "required": [
+                  "routes",
+                  "container",
+                  "script"
+                ]
+              }
+            },
+            "required": [
+              "version",
+              "table"
+            ]
           }
         },
         "required": [
@@ -777,6 +915,15 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "costMicros": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "prices": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{16}$"
                   }
                 },
                 "required": [
@@ -845,6 +992,13 @@
                         "type": "integer",
                         "minimum": 0,
                         "maximum": 9007199254740991
+                      },
+                      "costMicros": {
+                        "const": 0
+                      },
+                      "prices": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{16}$"
                       }
                     },
                     "required": [
@@ -895,6 +1049,15 @@
                         "type": "integer",
                         "minimum": 0,
                         "maximum": 9007199254740991
+                      },
+                      "costMicros": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "prices": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{16}$"
                       }
                     },
                     "required": [
@@ -1014,6 +1177,30 @@
                   },
                   "scriptEstimated": {
                     "type": "boolean"
+                  },
+                  "prices": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{16}$"
+                  },
+                  "modelMicros": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "containerMicros": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "scriptMicros": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "chargedMicros": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
                   }
                 },
                 "required": [
@@ -1075,6 +1262,9 @@
                     "type": "string"
                   },
                   "error": {
+                    "type": "string"
+                  },
+                  "code": {
                     "type": "string"
                   },
                   "message": {

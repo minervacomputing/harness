@@ -82,6 +82,8 @@ export const StartRun = InConversation.extend({
       .refine((connections) => new Set(connections.map((connection) => connection.id)).size === connections.length, 'Each connection may be named once.'),
     layers: z.object({ ceiling: LayerInput.nullable(), user: LayerInput.nullable(), agent: LayerInput.nullable() }),
   }),
+  /** What the run may spend, in µ$: the engine refuses its next model call once it has spent this. Without it, no budget. */
+  allowance: z.int().min(0).optional(),
 })
 export type StartRun = z.infer<typeof StartRun>
 

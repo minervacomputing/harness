@@ -4,6 +4,7 @@
 
 import { z } from 'zod'
 import type { Attachment, FolderChanges, FolderWarnings, LocalToolEventData } from '../shapes.ts'
+import { PricesVersion } from './catalog.ts'
 import { Id, Seq, Time } from './common.ts'
 
 /** A file a message attached, as added to the folder. */
@@ -75,6 +76,11 @@ const Call = z.string()
 /** The UTF-8 length of the request's JSON as sent; absent when the call built no request. */
 const RequestBytes = Count.optional()
 
+/** A call's charge in µ$, at the rates of the price table `prices` names; both absent when the engine priced nothing. */
+const Charge = { costMicros: Count.optional(), prices: PricesVersion.optional() }
+const together = (keys: string[]) => (data: Record<string, unknown>) => new Set(keys.map((key) => data[key] === undefined)).size === 1
+const priced = [together(['costMicros', 'prices']), { message: 'costMicros and prices come together.' }] as const
+
 /**
  * A counted model call that reported no usage. One the provider refused (a 4xx) cost nothing; every other is counted at its
  * reservation, estimated.
@@ -89,7 +95,9 @@ const UnmeteredData = z.discriminatedUnion('cause', [
     outputTokens: z.literal(0),
     estimated: z.literal(false),
     requestBytes: RequestBytes,
-  }),
+    ...Charge,
+    costMicros: z.literal(0).optional(),
+  }).refine(...priced),
   z.object({
     call: Call,
     provider: z.string(),
@@ -103,7 +111,8 @@ const UnmeteredData = z.discriminatedUnion('cause', [
     outputTokens: Count,
     estimated: z.literal(true),
     requestBytes: RequestBytes,
-  }),
+    ...Charge,
+  }).refine(...priced),
 ])
 
 const fact = <T extends string, D extends z.ZodType>(type: T, data: D) =>
@@ -149,7 +158,8 @@ export const Fact = z.discriminatedUnion('type', [
       cacheWriteTokens: Count.optional(),
       reasoningTokens: Count,
       requestBytes: RequestBytes,
-    }),
+      ...Charge,
+    }).refine(...priced),
   ),
   fact('run.unmetered', UnmeteredData),
   /**
@@ -178,7 +188,16 @@ export const Fact = z.discriminatedUnion('type', [
       scriptMs: Count,
       /** A script was ended at its clock's bound because the object instance running it was gone. */
       scriptEstimated: z.boolean(),
-    }),
+      /**
+       * What the run is charged, in µ$, all present or all absent: its calls' `costMicros`, its container time priced by the
+       * table `prices` names, its scripts' charges, and their sum.
+       */
+      prices: PricesVersion.optional(),
+      modelMicros: Count.optional(),
+      containerMicros: Count.optional(),
+      scriptMicros: Count.optional(),
+      chargedMicros: Count.optional(),
+    }).refine(together(['prices', 'modelMicros', 'containerMicros', 'scriptMicros', 'chargedMicros']), { message: "A run's charge has every field or none." }),
   ),
   /** The only terminal fact: Laravel marks a run finished from it alone, so a next start sees the whole turn. */
   fact(
@@ -187,6 +206,8 @@ export const Fact = z.discriminatedUnion('type', [
       status: z.enum(['completed', 'failed', 'cancelled', 'timed_out']),
       /** Why it ended, for users; empty when it did not fail. */
       error: z.string(),
+      /** Why it ended, for code (`budget_reached`, `folder_limit`); empty when it completed. */
+      code: z.string().optional(),
       /** The final answer; null when the run wrote none. */
       message: z.object({ id: Id, content: z.string() }).nullable(),
       /** The folder it started from and left, and what changed; null when the run had no folder. */

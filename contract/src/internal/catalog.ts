@@ -84,5 +84,33 @@ export const CatalogConnector = z.object({
 })
 export type CatalogConnector = z.infer<typeof CatalogConnector>
 
-export const Catalog = z.object({ version: CatalogVersion, connectors: z.array(CatalogConnector) })
+const Micros = z.int().min(0)
+
+/** A route's token rates, in µ$ per million tokens. */
+const TokenRates = z.object({ input: Micros, cachedInput: Micros, cacheWrite: Micros, output: Micros })
+
+/** The prices of one model route, from models.dev; `above` holds the rates for a call whose input passes `inputTokens`. */
+export const RoutePrices = TokenRates.extend({
+  provider: z.string(),
+  model: z.string(),
+  above: TokenRates.extend({ inputTokens: z.int().min(1) }).optional(),
+})
+
+/** What the engine charges, in µ$ (docs/plans/chunk-14b-design.md, The price table): model routes, and container and script time per hour. */
+export const PriceTable = z.object({
+  routes: z.array(RoutePrices),
+  container: z.object({ instance: z.string(), perHour: Micros }),
+  script: z.object({ perScript: Micros, perHour: Micros }),
+})
+export type PriceTable = z.infer<typeof PriceTable>
+
+/** 16 lowercase hex: the start of SHA-256 over the canonical JSON of a price table. Facts name the version that priced them. */
+export const PricesVersion = z.string().regex(/^[0-9a-f]{16}$/)
+
+/** The catalog's version is its connectors' alone: `prices` has its own. */
+export const Catalog = z.object({
+  version: CatalogVersion,
+  connectors: z.array(CatalogConnector),
+  prices: z.object({ version: PricesVersion, table: PriceTable }).optional(),
+})
 export type Catalog = z.infer<typeof Catalog>

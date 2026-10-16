@@ -83,6 +83,7 @@ Each is idempotent by its own ids. The engine's chunk that implements each comma
   - `authority`, the raw inputs with their revisions:
     - `connections`: the agent's, each `{id, provider, owner, status, createdAt, scopes, revision}`;
     - `layers`: `ceiling`, `user` and `agent`, each null or `{restricted, revision, grants: [{connection, kind, resource, name, actions, effect}]}`.
+  - optionally `allowance`: what the run may spend, in micro-dollars (µ$). The engine refuses the run's next model call once it has spent this, and the run fails with the code `budget_reached` (chunk-14b-design.md). Without it the run has no budget.
 
   It answers one of two outcomes:
   - `{outcome: "accepted", catalog, compiler, digest, authorized: [connection ids], attachments: [{path, size, mediaType}]}`: the catalog's and the compiler's versions, the snapshot's digest, the run's authorized set, and the message's attachments as the folder holds them, which Laravel stores on the message;
@@ -127,10 +128,10 @@ Each is idempotent by its own ids. The engine's chunk that implements each comma
 | `run.tool_call` | The public contract's `ToolCallEventData`: name, label, arguments, decision, title, count, write, repeat, code and message. Never a provider's result. The arguments are their JSON as a string, cut to 2000 characters (`truncated`), so they reach PHP exactly as written |
 | `run.local_tool` | `LocalToolEventData` |
 | `run.write` | A write's settlement: `write` (the keyed hash), `tool`, `connection`, `outcome` (`done`, `failed` or `uncertain`) and `afterCancel` |
-| `run.usage` | One model call's reported usage: `call`, `model`, `inputTokens`, `outputTokens`, `cachedTokens` (cache reads) and `reasoningTokens`; optionally `provider` (with `model`, the route that prices it), `cacheWriteTokens` and `requestBytes` (the UTF-8 length of the request's JSON). It can follow `run.finished`, when the run's end cut the call |
-| `run.unmetered` | One counted model call with no reported usage: `call`, `provider`, `model`, `cause`, `inputTokens`, `outputTokens`, `estimated`, and optionally `requestBytes`. `cause: "refused"` (a 4xx) has zero tokens and `estimated: false`; `no_usage`, `stopped`, `failed` and `lost` carry the call's reservation and `estimated: true`. Like `run.usage`, it can follow `run.finished` |
-| `run.settled` | A run's totals, once, after `run.finished` and every `run.usage` and `run.unmetered` of the run: `modelCalls` (which those facts number exactly), `refusedCalls`, `unmeteredCalls`, the reported `inputTokens`, `outputTokens`, `cachedTokens`, `cacheWriteTokens` and `reasoningTokens`, `estimatedInputTokens` and `estimatedOutputTokens`, `containers`, `containerMs` and `containerEstimated`, `scripts`, `scriptMs` and `scriptEstimated`. The barrier for accounting, as `run.finished` is for the transcript |
-| `run.finished` | `status` (`completed`, `failed`, `cancelled` or `timed_out`), `error`, `message` (`{id, content}` or null), and `folder` (`{base, result, changes, warnings}` or null). The only terminal fact. Laravel marks a run finished only from it |
+| `run.usage` | One model call's reported usage: `call`, `model`, `inputTokens`, `outputTokens`, `cachedTokens` (cache reads) and `reasoningTokens`; optionally `provider` (with `model`, the route that prices it), `cacheWriteTokens`, `requestBytes` (the UTF-8 length of the request's JSON), and `costMicros` with `prices` (the call's charge in µ$, and the version of the price table that priced it). It can follow `run.finished`, when the run's end cut the call |
+| `run.unmetered` | One counted model call with no reported usage: `call`, `provider`, `model`, `cause`, `inputTokens`, `outputTokens`, `estimated`, and optionally `requestBytes`, `costMicros` and `prices`, as on `run.usage`. `cause: "refused"` (a 4xx) has zero tokens and `estimated: false`; `no_usage`, `stopped`, `failed` and `lost` carry the call's reservation and `estimated: true`. Like `run.usage`, it can follow `run.finished` |
+| `run.settled` | A run's totals, once, after `run.finished` and every `run.usage` and `run.unmetered` of the run: `modelCalls` (which those facts number exactly), `refusedCalls`, `unmeteredCalls`, the reported `inputTokens`, `outputTokens`, `cachedTokens`, `cacheWriteTokens` and `reasoningTokens`, `estimatedInputTokens` and `estimatedOutputTokens`, `containers`, `containerMs` and `containerEstimated`, `scripts`, `scriptMs` and `scriptEstimated`; optionally, all together, the run's charge in µ$: `modelMicros` (its calls' `costMicros`), `containerMicros` (its container time, priced by the table `prices` names), `scriptMicros` and their sum `chargedMicros`. The barrier for accounting, as `run.finished` is for the transcript |
+| `run.finished` | `status` (`completed`, `failed`, `cancelled` or `timed_out`), `error`, optionally `code` (why it ended, for code: `budget_reached`, `folder_limit`, …; empty when it completed), `message` (`{id, content}` or null), and `folder` (`{base, result, changes, warnings}` or null). The only terminal fact. Laravel marks a run finished only from it |
 
 `text_delta`, `reasoning_delta` and `phase` are not facts. They are run events that the browser streams (Decisions 7).
 
@@ -172,8 +173,9 @@ A user's identity token (one with `email` and no `common_name`) fails that last 
 
 ## The catalog
 
-`GET /internal/v1/catalog` answers `{version, connectors}`.
+`GET /internal/v1/catalog` answers `{version, connectors}`, and optionally `prices`.
 - **The version** is 16 hex characters of SHA-256 over the canonical JSON of `connectors`, as the registry fingerprints operations. Laravel keeps catalogs by version, and `startRun`'s acceptance names the one it compiled against.
+- **`prices`** is `{version, table}`: the price table the engine charges by, in µ$ (chunk-14b-design.md, The price table), and its own version, 16 hex of SHA-256 over the table's canonical JSON, which the money-bearing facts name. The table is `{routes: [{provider, model, input, cachedInput, cacheWrite, output, above?}], container: {instance, perHour}, script: {perScript, perHour}}`: token rates per million tokens, `above` the rates when a call's input passes its `inputTokens`, and time rates per hour.
 - **The catalog is the engine's view:** the connectors it serves, with the operations its settings offer. A test build's catalog includes its fake connector.
 
 **Each connector:**
