@@ -248,8 +248,6 @@ describe("leases", () => {
 			scopes: ["data:read"],
 			payload: { kind: "oauth2", access_token: "an access token", refresh_token: null, scopes: ["data:read"] },
 		});
-		if (!("payload" in lease)) throw new Error("Not a lease.");
-		expect(await credentials.open(lease)).toEqual(lease.payload);
 		await credentials.markUnauthorized(connection, 4, fence);
 		expect(fake.connections.get(connection)?.status).toBe("error");
 		expect(fake.calls.at(-1)).toEqual({ operation: "reportUnauthorized", run, connection });

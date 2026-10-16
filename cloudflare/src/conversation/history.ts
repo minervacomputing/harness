@@ -1,7 +1,7 @@
 // History replay: what the model sees of a conversation's earlier turns. Only final
-// texts and file notes are replayed, from our own messages table, never pi's transcript, so pi's aborted
-// partial entries never reach the next turn (ARCHITECTURE.md: Events and the stream). Each run is a fresh pi session
-// seeded with this history when it is created; a resumed attempt keeps what its session holds.
+// texts and file notes are replayed, from the history Laravel sends with a start (internal/start.ts), never pi's
+// transcript, so pi's aborted partial entries never reach the next turn (ARCHITECTURE.md: Events and the stream). Each run is
+// a fresh pi session seeded with this history when it is created; a resumed attempt keeps what its session holds.
 
 import { sliceText } from "../lib/text.ts";
 import type { Attachment, FolderChanges } from "@minerva/contract";
@@ -83,12 +83,6 @@ export function withFiles(message: Pick<StoredMessage, "role" | "content" | "att
 		note = `[In this turn, files in your folder were ${parts.join("; ")}.]`;
 	}
 	return message.content ? `${message.content}\n\n${note}` : note;
-}
-
-/** The run's prompt: its user message with its note, or "" when there is none. */
-export function promptOf(messages: readonly StoredMessage[], runId: string): string {
-	const own = messages.find((message) => message.runId === runId && message.role === "user");
-	return own ? withFiles(own) : "";
 }
 
 /** Messages ordered as the API orders them: by (created_at, id). */

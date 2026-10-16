@@ -14,7 +14,7 @@ import { EXPIRED } from "../conversation/laravel-runs.ts";
 import { type FolderLimit, NO_LONGER_AVAILABLE, NO_ROOM, overFolder, pages } from "../files/limits.ts";
 import type { ReservedUpload } from "../files/staging.ts";
 import { ACCOUNT_KIND, type CredentialPayload } from "../gateway/connector.ts";
-import type { SealedLease } from "../gateway/executor.ts";
+import type { HeldLease } from "../gateway/executor.ts";
 import { type GrantChange, type GrantRow, InvalidGrants, type LayerRows, checkChanges, planGrantChanges, resourceKey } from "../gateway/grants.ts";
 import type { Registry } from "../gateway/registry.ts";
 import { type ConnectionInfo, type StartSnapshot, startSnapshot } from "../gateway/tools.ts";
@@ -55,6 +55,12 @@ import type { ConversationClient, Log, OAuthClients, ObjectStore, Timers, Worksp
 import { MIGRATIONS } from "./schema.ts";
 import { type SqlRow as Row, type Sql, type SqlValue, first, migrate } from "../lib/sql.ts";
 import { compareText } from "../lib/arrays.ts";
+
+/** What the Workspace Durable Object lends for one provider call (ARCHITECTURE.md: Credentials and refresh). */
+export interface SealedLease extends Omit<HeldLease, "payload"> {
+	/** Decrypted only by the caller, for this one call; never stored in pi's state, events or logs. */
+	sealed: Sealed;
+}
 
 /**
  * How a change that revokes runs was delivered (ARCHITECTURE.md: Strict revocation). `acknowledged`: every affected

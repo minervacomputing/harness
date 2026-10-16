@@ -151,17 +151,19 @@ describe("a revocation during a call", () => {
 		expect(run.events).toEqual([]);
 	});
 
-	test("while its credentials are opened: neither prepare()'s request nor execute()'s is sent", async () => {
+	test("while its credentials are leased: neither prepare()'s request nor execute()'s is sent", async () => {
 		for (const [tool, args] of [
 			["twostep_read_found", { name: "notes" }],
 			["twostep_read_both", { first: "inbox", second: "archive" }],
 		] as const) {
 			const provider = new Provider();
 			const run = await start(provider);
-			const open = run.credentials.open.bind(run.credentials);
-			run.credentials.open = async (lease) => {
+			// Revoked once the lease is given, after the port's own last check: only the executor's check stops the call.
+			const lease = run.credentials.lease.bind(run.credentials);
+			run.credentials.lease = async (fence, connectionId) => {
+				const answer = await lease(fence, connectionId);
 				run.runs.set(run.runId, { revoked: true });
-				return open(lease);
+				return answer;
 			};
 			expect(await run.call(tool, args)).toEqual(ENDED);
 			expect(provider.paths).toEqual([]);

@@ -135,6 +135,31 @@ describe("startRun", () => {
 		expect(contexts.length).toBe(calls);
 	});
 
+	test("stores its run active in the write that answers it, so no state the object keeps holds it queued", async () => {
+		const start = startOf(scope());
+		const stub = objectOf(start);
+		// The run as storage holds it after each of the object's synchronous transactions that has it.
+		const committed: { status: string; activated: number; answered: number; events: string[] }[] = [];
+		await runInDurableObject(stub, (_instance, state) => {
+			const storage = state.storage;
+			const transactionSync = storage.transactionSync.bind(storage);
+			const record = <T>(closure: () => T): T => {
+				const result = transactionSync(closure);
+				const run = storage.sql.exec<{ status: string; activated: number }>("SELECT status, activated FROM runs WHERE id = ?", start.run).toArray()[0];
+				if (run) {
+					const answered = storage.sql.exec<{ n: number }>("SELECT count(*) AS n FROM internal_answers WHERE run_id = ?", start.run).one().n;
+					const events = storage.sql.exec<{ data: string }>("SELECT data FROM run_events WHERE run_id = ? ORDER BY seq", start.run).toArray().map((event) => event.data);
+					committed.push({ ...run, answered, events });
+				}
+				return result;
+			};
+			Object.defineProperty(storage, "transactionSync", { value: record, configurable: true, writable: true });
+		});
+		expect(await commands.startRun(start)).toMatchObject({ outcome: "accepted" });
+		expect(committed[0]).toEqual({ status: "provisioning", activated: 1, answered: 1, events: ['{"status":"queued"}', '{"status":"provisioning"}'] });
+		expect(await settled(start)).toMatchObject({ status: "completed" });
+	});
+
 	test("compiles the authority it is sent: the authorized set is the connections the run's tools reach", async () => {
 		const within = scope();
 		const [mine, theirs, revoked] = [uuid7(), uuid7(), uuid7()];

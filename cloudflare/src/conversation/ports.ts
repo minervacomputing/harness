@@ -1,11 +1,10 @@
-// What the Conversation Durable Object runs against besides its own tables: the Workspace Durable Object,
-// the executor, the write ledger, the folder, the network and the model. Each is an interface here, so the
-// object is tested with fakes; `defaultPorts` wires the real ones: the Workspace over typed RPC through
-// addressing.ts (in the workspace's jurisdiction), gateway/'s executor and its ledger and page tokens in this
+// What the Conversation Durable Object runs against besides its own tables: the executor, the write ledger,
+// the folder, the network, the sandbox and the model. Each is an interface here, so the object is tested with
+// fakes; `defaultPorts` wires the real ones: gateway/'s executor and its ledger and page tokens in this
 // object's SQLite through lib/sql.ts. Tests and the test build (src/faults/) set `PORTS.factory`; the tests
 // run in the Worker's isolate.
 
-import { sandboxObject, workspaceObject } from "../addressing.ts";
+import { sandboxObject } from "../addressing.ts";
 import { settings } from "../config.ts";
 
 import { conversationFolder } from "../files/folder.ts";
@@ -23,13 +22,9 @@ import { type ModelRoute, type Upstream, upstreamOf } from "../model/route.ts";
 import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan } from "../sandbox/folder.ts";
 import type { Attachment, Folder } from "@minerva/contract";
 import { type AttemptFence, type ConversationId, type EpochMs, type Outcome, type RunId, type RunStatus, type VersionId, type WorkspaceRef, refuse } from "../shared/rpc.ts";
-import type { WorkspaceApi } from "../workspace/core.ts";
 import type { GateDecision } from "./gate.ts";
 import type { SandboxPort } from "./local-run.ts";
 import type { RunStore } from "./store.ts";
-
-/** The part of the Workspace Durable Object's RPC surface a conversation calls. */
-export type WorkspaceClient = Pick<WorkspaceApi, "beginRun" | "activate" | "release" | "conversationTouched" | "lease" | "markUnauthorized">;
 
 /**
  * The write ledger and page tokens (ARCHITECTURE.md: Writes), in this object's SQLite, built with the executor (gateway/). The object composes the executor's `RunStatePort`
@@ -131,7 +126,6 @@ export interface PortsContext {
 }
 
 export interface ConversationPorts {
-	workspace(context: PortsContext): WorkspaceClient;
 	/** One per run and instance, with the run's snapshot (gateway/executor.ts). */
 	executor(run: ExecutorContext, context: PortsContext): Executor;
 	ledger(storage: DurableObjectStorage, runs: LedgerRuns, context: PortsContext): WriteLedger;
@@ -257,8 +251,6 @@ export function runStatePort(store: RunStore, ledger: () => WriteLedger, dispatc
 }
 
 export const defaultPorts: ConversationPorts = {
-	// Typed by the Workspace class; the conversation calls only the part it needs.
-	workspace: ({ env, workspace }) => workspaceObject(env, workspace) as unknown as WorkspaceClient,
 	executor: gatewayExecutor,
 	ledger: (storage, runs) => gatewayLedger(storage, runs),
 	folder: conversationFolder,

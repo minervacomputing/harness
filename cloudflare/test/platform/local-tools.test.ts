@@ -227,9 +227,9 @@ describe("the local tools in the conversation", () => {
 		// No card: the call's result was never released; the folder stays as it was.
 		expect(cards(await eventsOf(w, runId))).toEqual([]);
 		expect(run.resultVersionId).toBeNull();
-		// The reset that keeps the result from pi cuts the end's deferred clean-up: its retries were stored with
+		// The reset that keeps the result from pi cuts the end's deferred clean-up: its retry was stored with
 		// the end, and the next start destroys the container.
-		expect((await w.conversation.faultJobs()).filter((job) => job.id === job.fn).map((job) => job.fn)).toEqual(expect.arrayContaining(["release", "sandbox"]));
+		expect((await w.conversation.faultJobs()).filter((job) => job.id === job.fn).map((job) => job.fn)).toContain("sandbox");
 		await until(async () => w.sandbox.log, (log) => log.some((line) => line.startsWith("destroy")));
 
 		const bytes = await world();

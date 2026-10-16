@@ -1,9 +1,7 @@
-// What a Laravel conversation's object answers where a Workspace conversation's asks its Workspace object
-// (docs/plans/start-and-cancel.md, Two kinds of conversation), and the credentials of its runs
-// (docs/plans/credentials-and-facts.md, Credentials). Laravel registers its runs itself and reaches the object directly with
-// `startRun` and `cancelRun`, so there is no registration to ask about: a stored run is active until a cancel ends it.
-// Laravel learns of an end and of usage from the run's facts, and lends each provider call its credential with
-// `leaseToken`, which the engine holds in memory for that call only.
+// The credentials of a Laravel run (docs/plans/credentials-and-facts.md, Credentials). Laravel registers its runs itself and
+// reaches the object directly with `startRun` and `cancelRun`, so a stored run is active until a cancel ends it. Laravel
+// learns of an end and of usage from the run's facts, and lends each provider call its credential with `leaseToken`, which
+// the engine holds in memory for that call only.
 
 import { settings } from "../config.ts";
 import type { CredentialPayload } from "../gateway/connector.ts";
@@ -11,17 +9,7 @@ import type { CredentialPort, HeldLease } from "../gateway/executor.ts";
 import { RUN_ENDED_MESSAGE } from "../gateway/ledger.ts";
 import { failureOf, laravelClient, retryable } from "../laravel/client.ts";
 import type { AttemptFence } from "../shared/rpc.ts";
-import type { WorkspaceClient } from "./ports.ts";
 import type { RunSnapshot } from "./store.ts";
-
-export const laravelRuns: WorkspaceClient = {
-	beginRun: () => Promise.reject(new Error("Laravel's runs are started by startRun, never by beginRun.")),
-	activate: async () => ({ state: "active" }),
-	release: async () => {},
-	conversationTouched: async () => {},
-	lease: () => Promise.reject(new Error("A Laravel run's credentials are leased from Laravel (laravelCredentials).")),
-	markUnauthorized: () => Promise.reject(new Error("A Laravel run's refused credentials are reported to Laravel (laravelCredentials).")),
-};
 
 export const EXPIRED = "The connection expired. Reconnect it in Minerva.";
 
@@ -126,10 +114,6 @@ export function laravelCredentials(context: LaravelCredentialsContext): Credenti
 				// The executor logs it: its code, or what failed, never a body.
 				throw new Error(`Laravel did not take the report: ${failureOf(error)}`);
 			}
-		},
-		open(lease) {
-			if ("payload" in lease) return Promise.resolve(lease.payload);
-			return Promise.reject(new Error("A Laravel run's leases hold their credential."));
 		},
 	};
 }

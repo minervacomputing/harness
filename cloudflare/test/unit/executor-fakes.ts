@@ -19,8 +19,8 @@ import {
 	defineOperation,
 } from "../../src/gateway/connector.ts";
 import {
-	type CredentialLease,
 	type CredentialPort,
+	type HeldLease,
 	type ExecutorHost,
 	type ExecutorLog,
 	type ToolCallOutcome,
@@ -461,7 +461,7 @@ export class FakeCredentials implements CredentialPort {
 		return this.connections.get(id)?.status;
 	}
 
-	async lease(fence: AttemptFence, connectionId: ConnectionId): Promise<CredentialLease | { refused: "RUN_ENDED" | "CONNECTION_UNAUTHORIZED" | "PROVIDER_UNAVAILABLE"; message: string }> {
+	async lease(fence: AttemptFence, connectionId: ConnectionId): Promise<HeldLease | { refused: "RUN_ENDED" | "CONNECTION_UNAUTHORIZED" | "PROVIDER_UNAVAILABLE"; message: string }> {
 		if (!this.#run.isCurrent(fence)) return { refused: "RUN_ENDED", message: "This run is no longer active." };
 		this.leases += 1;
 		await Promise.resolve();
@@ -469,16 +469,12 @@ export class FakeCredentials implements CredentialPort {
 		if (connection === undefined || connection.status !== "active") return { refused: "CONNECTION_UNAUTHORIZED", message: "The connection expired. Reconnect it in Minerva." };
 		if (!this.#run.isCurrent(fence)) return { refused: "RUN_ENDED", message: "This run is no longer active." };
 		const scopes = connection.payload.kind === "oauth2" ? connection.payload.scopes : null;
-		return { connectionId, provider: connection.provider, generation: connection.generation, sealed: { ciphertext: "sealed", version: "v1" }, scopes };
+		return { connectionId, provider: connection.provider, generation: connection.generation, payload: connection.payload, scopes };
 	}
 
 	async markUnauthorized(connectionId: ConnectionId, generation: number): Promise<void> {
 		const connection = this.connections.get(connectionId);
 		if (connection !== undefined && connection.status === "active" && connection.generation === generation) connection.status = "error";
-	}
-
-	async open(lease: CredentialLease): Promise<CredentialPayload> {
-		return (this.connections.get(lease.connectionId) as FakeConnection).payload;
 	}
 }
 

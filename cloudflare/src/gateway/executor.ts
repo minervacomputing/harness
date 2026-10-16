@@ -154,12 +154,6 @@ interface LeaseBase {
 	scopes: string[] | null;
 }
 
-/** What the Workspace Durable Object lends for one provider call (ARCHITECTURE.md: Credentials and refresh). */
-export interface SealedLease extends LeaseBase {
-	/** Decrypted only by the caller, for this one call; never stored in pi's state, events or logs. */
-	sealed: { ciphertext: string; version: string };
-}
-
 /**
  * What Laravel lends for one provider call of its run (`leaseToken`, docs/plans/credentials-and-facts.md): the credential
  * itself, held in memory for this one call and never stored, logged or put in an event.
@@ -168,26 +162,20 @@ export interface HeldLease extends LeaseBase {
 	payload: CredentialPayload;
 }
 
-/** A lease for one provider call; the executor reads neither its `sealed` nor its `payload`, only `open` does. */
-export type CredentialLease = SealedLease | HeldLease;
-
 export interface CredentialPort {
 	/**
-	 * For the call's attempt: refused with RUN_ENDED when the fence is not current, before the Workspace is
-	 * asked and again after it answers (it knows the run, not its attempts). Refreshes first when needed
-	 * (single-flight per connection). Also refused: CONNECTION_UNAUTHORIZED or PROVIDER_UNAVAILABLE.
+	 * For the call's attempt: refused with RUN_ENDED when the fence is not current, before Laravel is asked and
+	 * again after it answers. Also refused: CONNECTION_UNAUTHORIZED or PROVIDER_UNAVAILABLE.
 	 */
 	lease(
 		fence: AttemptFence,
 		connectionId: ConnectionId,
-	): Promise<CredentialLease | { refused: "RUN_ENDED" | "CONNECTION_UNAUTHORIZED" | "PROVIDER_UNAVAILABLE"; message: string }>;
+	): Promise<HeldLease | { refused: "RUN_ENDED" | "CONNECTION_UNAUTHORIZED" | "PROVIDER_UNAVAILABLE"; message: string }>;
 	/**
 	 * The provider rejected the token: mark the connection "Needs reconnecting" only if still active at this generation.
 	 * `fence` is the attempt the lease was taken for, whether or not it is still current.
 	 */
 	markUnauthorized(connectionId: ConnectionId, generation: number, fence: AttemptFence): Promise<void>;
-	/** The lease's credential: a sealed one decrypted with MINERVA_ENCRYPTION_KEYS, a held one as it is. */
-	open(lease: CredentialLease): Promise<CredentialPayload>;
 }
 
 /** The provider client enforces the write's deadline; this only stops a connector that ignores it. */
@@ -546,7 +534,7 @@ export class ToolExecutor implements Executor {
 	}
 
 	/** A lease for the call's attempt, checked before it is asked for and after it is given (ARCHITECTURE.md: Attempts and recovery, Fencing). */
-	async #lease(request: ToolCallRequest, connectionId: string): Promise<CredentialLease> {
+	async #lease(request: ToolCallRequest, connectionId: string): Promise<HeldLease> {
 		this.#ensureCurrent(request);
 		const lease = await this.#credentials.lease(request.fence, connectionId);
 		this.#step(request);
@@ -566,14 +554,12 @@ export class ToolExecutor implements Executor {
 	): Promise<[ToolResult, boolean]> {
 		const connector = this.#registry.get(ref.provider);
 		const lease = await this.#lease(request, ref.connection_id);
-		const payload = await this.#credentials.open(lease);
-		this.#step(request);
 		const io = new CallIo({
 			fetch: this.#fetch,
 			now: () => this.#clock.monotonic(),
 			admits: () => !request.signal?.aborted && this.#run.isCurrent(request.fence),
 		});
-		const client = connector.client(secretOf(payload), io);
+		const client = connector.client(secretOf(lease.payload), io);
 		// A cancelled call stops its requests in flight, except the one carrying its write: that one goes on,
 		// so its outcome is recorded. New requests are refused either way (`admits`).
 		const cancel = () => {

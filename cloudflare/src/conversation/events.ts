@@ -48,10 +48,7 @@ export type RunEnd =
 	| { status: "failed"; code: "worker_silent"; message: "The worker did not start." }
 	| { status: "failed"; code: "worker_exited"; message: "The worker stopped unexpectedly." }
 	| { status: "failed"; code: "worker_failed"; message: "The agent could not finish this run. Try again." }
-	/**
-	 * The run was stored, but the Workspace expired its start before `activate` reached it (ARCHITECTURE.md: Starting a
-	 * run), or Laravel gave up waiting for its start's answer and cancelled it.
-	 */
+	/** Laravel gave up waiting for its start's answer and cancelled it. */
 	| { status: "failed"; code: "start_expired"; message: "The agent could not finish this run. Try again." }
 	| { status: "failed"; code: "folder_limit"; message: string }
 	| { status: "failed"; code: "state_too_large"; message: "This run's saved state grew too large." }

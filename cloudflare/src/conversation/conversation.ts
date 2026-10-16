@@ -1,7 +1,7 @@
 // The Conversation Durable Object (`ConversationApi`; ARCHITECTURE.md: Data placement, Protocols): one per chat.
 // It extends the Agents SDK's Agent and runs pi-durable through PiHarness, one pi session per run, with the
-// `minerva` extension's tools and the model wrapper of src/model/. It owns its messages, runs, attempts and
-// run events, and the start protocol's side of the Workspace's registry. Nothing routes to it but our own
+// `minerva` extension's tools and the model wrapper of src/model/. It owns its runs, attempts, run events and
+// facts; Laravel starts and cancels its runs (docs/plans/start-and-cancel.md). Nothing routes to it but our own
 // typed RPC and the stream's WebSocket (no `routeAgentRequest`).
 //
 // Every event that opens pi (an RPC, a request, an alarm) goes through PiHarness's harness factory, where
@@ -33,18 +33,15 @@ import { settings } from "../config.ts";
 import { connectorRegistry } from "../connectors/index.ts";
 import { type FolderLimit, folderLimitMessage, type FolderLimits } from "../files/limits.ts";
 import type { DownloadTarget } from "../files/store.ts";
-import type { CredentialPayload } from "../gateway/connector.ts";
 import type { CredentialPort, Executor, ToolCallOutcome, ToolDeclaration } from "../gateway/executor.ts";
 import type { Registry as ConnectorRegistry } from "../gateway/registry.ts";
 import type { RunStatePort } from "../gateway/run-state.ts";
 import { modelTools } from "../gateway/tools.ts";
 import { type About, identity } from "../lib/about.ts";
-import { EncryptionKeys, credentialBinding } from "../lib/encryption.ts";
 import { type Json, parseJson } from "../lib/json.ts";
 import { isUuid, uuid7 } from "../lib/random.ts";
 import { raiseFactSeq } from "../internal/recovery.ts";
 import { appliedMigrations, migrate } from "../lib/sqlite.ts";
-import { sliceText } from "../lib/text.ts";
 import { callOf, MODEL_REF, MINERVA_API, MINERVA_PROVIDER, MODEL_ALIAS, minervaProvider, type ModelHost } from "../model/provider.ts";
 import { routeOf } from "../model/route.ts";
 import { sandboxSpec } from "../sandbox/constants.ts";
@@ -53,10 +50,10 @@ import { ScriptRuns, scriptToolHost } from "../scripts/host.ts";
 import { isReset, type ScriptsClient } from "../scripts/run.ts";
 import type { ScriptsApi } from "../scripts/scripts.ts";
 import { scriptTool } from "../scripts/tool.ts";
-import type { Folder, Message, NewMessage, Run } from "@minerva/contract";
+import type { Folder } from "@minerva/contract";
 import type { CancelRun, CancelRunResult, DeleteConversation, DeleteConversationResult, Fact, ReadFolder, ReplayFacts, ResolveDownload, StartRun, StartRunResult } from "@minerva/contract/internal";
 import { type Preparation, type StartRefusal, UNAVAILABLE, messageRefusal, prepareStart, promptOf as internalPrompt, startRefusal } from "../internal/start.ts";
-import { type AttemptFence, type Caller, type Outcome, type Refusal, type RunId, type VersionId, type WorkspaceRef, refuse } from "../shared/rpc.ts";
+import type { AttemptFence, Caller, RunId, VersionId, WorkspaceRef } from "../shared/rpc.ts";
 import {
 	ACTING,
 	ACTIVE,
@@ -69,25 +66,22 @@ import {
 	phaseOf,
 	type RunEnd,
 	type RunEvent,
-	START_EXPIRED,
-	START_FAILED,
 	statusEvent,
 	TIMED_OUT,
 	WORKER_EXITED,
 	WORKER_FAILED,
 } from "./events.ts";
 import { decideGate, type PiWork, classifyWork } from "./gate.ts";
-import { HISTORY_LIMIT, historyOf, promptOf, recentHistory, sessionInstructions } from "./history.ts";
+import { sessionInstructions } from "./history.ts";
 import { cloudflareImages } from "./images.ts";
 import { FolderOverLimit, LOCAL_TOOLS, type LocalTool, type LocalToolEvent, localToolSpecs, runGated, SandboxRefused } from "./local.ts";
 import { FactDelivery } from "./delivery.ts";
 import { BACKLOG_MESSAGE, FACT_DELIVERY } from "./facts.ts";
-import { laravelCredentials, laravelRuns } from "./laravel-runs.ts";
+import { laravelCredentials } from "./laravel-runs.ts";
 import { destroyRunSandbox, LocalRun } from "./local-run.ts";
-import { type ConversationPorts, type FolderPort, PORTS, type PortsContext, runStatePort, type WorkspaceClient, type WriteLedger } from "./ports.ts";
+import { type ConversationPorts, type FolderPort, PORTS, type PortsContext, runStatePort, type WriteLedger } from "./ports.ts";
 import { ToolQueue, untilAborted } from "./queue.ts";
 import { MIGRATIONS } from "./schema.ts";
-import { KEY_REUSED, START_KEY, START_KEY_TTL_MS, messageDigest } from "./start-keys.ts";
 import {
 	type ConversationHead,
 	type ConversationInit,
@@ -97,7 +91,6 @@ import {
 	type RunRow,
 	type RunSnapshot,
 	RunStore,
-	type StartRow,
 } from "./store.ts";
 import { RunStream } from "./stream.ts";
 import { connectorTool, isWrite, REPLAY_REFUSED, REPLAYS_ALLOWED, RUN_ENDED_MESSAGE, type ToolHost } from "./tools.ts";
@@ -134,26 +127,6 @@ export interface ConversationApi {
 	getConversation(caller: Caller): Promise<ConversationHead | null>;
 	/** One page of a run's events by seq; null for another user's run or an unknown one. */
 	getRunEvents(caller: Caller, runId: RunId, page: EventPage): Promise<RunEvent[] | null>;
-
-	/**
-	 * Starts a turn (ARCHITECTURE.md: Starting a run): 404, 400 "Write a message or attach a file.", 409 "Wait
-	 * for the current answer to finish, or stop it.", or the attachment refusals of `beginRun`. Every
-	 * refusal leaves nothing behind (no message, no run, uploads untouched), which the composer relies on.
-	 * Before its transaction it copies each reserved upload whose contents the conversation does not hold
-	 * yet into a blob of its own (`blobs/<ws>/<conv>/<sha256>/<random>`, recorded as loose first, `get` then
-	 * `put` with the upload's SHA-256, which R2 checks), so the folder never names an `uploads/` key: those
-	 * expire a day after they were written. An upload gone by then is "An attached file is no longer
-	 * available. Remove it and attach it again." Success stores the message, the run (`queued`, attempt 1,
-	 * event seq 1 `status: queued`) and the base version together, and sets the title from the first message
-	 * (`content[:80]`, else the attachment paths joined by ", "); then it calls `activate`.
-	 *
-	 * `key` is the client's Idempotency-Key, if it sent one (1 to 255 visible ASCII characters): the same
-	 * message sent again with it within a day answers for the run the first one started (joining the start in
-	 * flight, or the stored message and run with its first page of events), before the 409 check, so a
-	 * retried request never starts a second run; another message with the key is 422 "This
-	 * Idempotency-Key was used for a different message." A refused start forgets its key.
-	 */
-	postMessage(caller: Caller, input: Required<NewMessage>, key?: string | null): Promise<Outcome<PostedView>>;
 
 	getRun(caller: Caller, runId: RunId): Promise<RunHead | null>;
 	/** The user's stop: idempotent, a finished run stays as it was; the refreshed run. */
@@ -217,11 +190,6 @@ export interface ConversationApi {
 /** What a Laravel command answers: its outcome, or that the conversation is bound to another scope. */
 export type InternalAnswer<T> = { ok: true; value: T } | { ok: false; code: "SCOPE_MISMATCH" };
 
-export interface PostedView {
-	message: Message;
-	run: Run;
-}
-
 /** chord's background context: never cancelled, no values. */
 const BG = Object.freeze({ abortSignal: undefined, value: () => undefined, toString: () => "[Context minerva-conversation]" });
 
@@ -242,9 +210,8 @@ const PI_SETTINGS: HarnessSettings = {
 	contextRetentionMs: 0,
 };
 
-/** The answer to a second message while a run is active. */
+/** The answer to a second start while a run is active. */
 export const BUSY_MESSAGE = "Wait for the current answer to finish, or stop it.";
-export const EMPTY_MESSAGE = "Write a message or attach a file.";
 
 /** A watch job wakes the object this long after a run is stored, until pi has its input (ARCHITECTURE.md: Attempts and recovery). */
 export const WATCH_MS = 20_000;
@@ -258,7 +225,8 @@ const LOST_WRITE_GRACE_MS = 30_000;
  * call must not hold the deadline behind it. The call itself goes on; the job tries again later.
  */
 const RPC_WAIT_MS = 10_000;
-const RELEASE_RETRY_MS = 30_000;
+/** A container an ended run left is destroyed again this long after a failed try. */
+const SANDBOX_RETRY_MS = 30_000;
 const LIVE_TASKS = ["pending", "running", "waiting", "completing"] as const;
 /** The reason an attempt's object is reset when its local calls cannot go on (ARCHITECTURE.md: Checkpoints). */
 export const ATTEMPT_ENDED = "The attempt ended: ";
@@ -266,8 +234,6 @@ export const ATTEMPT_ENDED = "The attempt ended: ";
 /** The Lifecycle job that delivers a Laravel conversation's facts. */
 const FACTS_JOB = "facts";
 
-/** A conversation, or a 404: another user's conversation looks like none. */
-const NOT_FOUND = refuse("NOT_FOUND", "Not found.");
 const SCOPE_MISMATCH = { ok: false, code: "SCOPE_MISMATCH" } as const;
 
 type Job = { fn: string; payload?: unknown; job: { id: string; payload: unknown } };
@@ -285,15 +251,12 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	readonly #stream: RunStream;
 	readonly #ports: ConversationPorts;
 	#ledgerInstance: WriteLedger | null = null;
-	#keyRing: Promise<EncryptionKeys> | null = null;
 	readonly #queues = new Map<RunId, ToolQueue>();
 	readonly #executors = new Map<RunId, Executor>();
 	readonly #controllers = new Map<RunId, AbortController>();
 	readonly #running = new Map<RunId, Map<string, string>>();
 	readonly #phases = new Map<RunId, string>();
 	readonly #loops = new Map<RunId, Promise<void>>();
-	readonly #activations = new Map<RunId, Promise<void>>();
-	readonly #begins = new Map<RunId, Promise<Outcome<PostedView>>>();
 	/** A Laravel conversation's facts on their way to Laravel (delivery.ts). */
 	readonly #delivery: FactDelivery;
 	/** Laravel's starts in flight in this instance, by run: a repeat joins the one running. */
@@ -372,63 +335,6 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		return this.#store.events(runId, page);
 	}
 
-	/**
-	 * `key` is the client's Idempotency-Key, when it sent one: the same message sent again with it, within a
-	 * day, answers for the run the first one started (the start in flight joined, or the run stored), so a
-	 * retried request never starts a second run; another message with it is 422. A refused start forgets its
-	 * key, so the message may be sent again with it.
-	 */
-	async postMessage(caller: Caller, input: Required<NewMessage>, key: string | null = null): Promise<Outcome<PostedView>> {
-		const conversation = this.#owned(caller);
-		if (!conversation) return NOT_FOUND;
-		// NewMessage is validated by the Worker (20,000 characters, at most 100 UUIDs, no lone
-		// surrogate); anything else here is a bug, not a user's input.
-		if (
-			typeof input.content !== "string" ||
-			!input.content.isWellFormed() ||
-			!Array.isArray(input.attachments) ||
-			!input.attachments.every((id) => typeof id === "string" && isUuid(id)) ||
-			(key !== null && (typeof key !== "string" || !START_KEY.test(key)))
-		) {
-			throw new TypeError("The Worker validates a message before it reaches the conversation.");
-		}
-		if (input.content.trim() === "" && input.attachments.length === 0) return refuse("EMPTY_MESSAGE", EMPTY_MESSAGE);
-		const digest = key === null ? null : await messageDigest(input);
-		const runId = uuid7();
-		const decision = await this.#store.outside(() =>
-			this.#store.write((): "start" | "busy" | "reused" | { replay: RunId } => {
-				if (key !== null) {
-					const known = this.#store.startKey(key, this.#store.now() - START_KEY_TTL_MS);
-					if (known) return known.digest === digest ? { replay: known.run_id } : "reused";
-				}
-				// A start in flight counts as an active run: its message may still be stored.
-				if (this.#store.activeRun() || this.#store.starts().length) return "busy";
-				this.#store.addStart({ runId, userId: caller.userId, content: input.content, uploadIds: input.attachments, createdAt: this.#store.now() });
-				if (key !== null) this.#store.addStartKey(key, runId, digest as string);
-				return "start";
-			}),
-		);
-		if (decision === "busy") return refuse("CONVERSATION_BUSY", BUSY_MESSAGE);
-		if (decision === "reused") return refuse("IDEMPOTENCY_KEY_REUSED", KEY_REUSED);
-		if (decision !== "start") return this.#replay(decision.replay);
-		return this.#begin(runId);
-	}
-
-	/** A message sent again with its key: the start still in flight (its own answer), or the run it stored. */
-	async #replay(runId: RunId): Promise<Outcome<PostedView>> {
-		if (this.#store.start(runId)) return this.#begin(runId);
-		const run = this.#store.run(runId);
-		const message = run ? this.#store.runMessage(runId) : null;
-		if (!run || !message) return NOT_FOUND;
-		return { ok: true, value: this.#posted(message, run) };
-	}
-
-	/** The answer to a posted message: the message and its run, with the run's first page of events. */
-	#posted(message: Message, run: RunRow): PostedView {
-		const { eventSeq, ...view } = this.#store.runHead(run);
-		return { message, run: { ...view, events: this.#store.events(run.id, { after: 0, upTo: eventSeq, limit: 1000 }) } };
-	}
-
 	async cancelRun(caller: Caller, runId: RunId): Promise<RunHead | null> {
 		// Outside pi's transactions (store.ts `outside`): the answer says the run was stopped.
 		return this.#store.outside(() => {
@@ -478,7 +384,6 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			const active = this.#store.activeRun();
 			this.#store.write(() => {
 				this.#store.markDeleted();
-				for (const start of this.#store.starts()) this.#store.addTombstone(start.run_id, "cancelled", 0);
 				if (active) {
 					this.#store.revoke(active.id);
 					this.#store.finish(active.id, CANCELLED);
@@ -682,6 +587,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				};
 				this.#store.insertRun({ id: runId, snapshot, deadline: snapshot.deadline, baseVersionId, createdAt: now });
 				this.#store.append(runId, statusEvent({ status: "queued" }));
+				// Laravel registered the run before it sent the start, so it is active once stored: `provisioning` in this write.
+				this.#store.activate(runId);
 				// Pushed in this transaction (Lifecycle's queue is SQL), so a stored run always has its wake-up.
 				this.#push({ id: `watch:${runId}`, fn: "watch", time: now + WATCH_MS, payload: { runId } });
 				if (snapshot.deadline !== null) this.#push({ id: `deadline:${runId}`, fn: "deadline", time: snapshot.deadline, payload: { runId } });
@@ -698,7 +605,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			}),
 		);
 		if (answer.outcome === "accepted") {
-			this.#defer(() => this.#activate(runId));
+			this.#defer(() => this.#startLoop(runId));
 			this.#defer(() => folder.deleteStaged(command.message.attachments.map((attachment) => attachment.upload)));
 		}
 		return answer;
@@ -708,7 +615,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	#startState(runId: RunId): StartRefusal | null {
 		if (this.#store.tombstone(runId)) return startRefusal("CANCELLED", "This run was cancelled before it started.");
 		if (this.#store.conversation()?.deleted_at != null) return deletedRefusal();
-		if (this.#store.activeRun() || this.#store.preparedOther(runId) || this.#store.starts().length) return startRefusal("CONVERSATION_BUSY", BUSY_MESSAGE);
+		if (this.#store.activeRun() || this.#store.preparedOther(runId)) return startRefusal("CONVERSATION_BUSY", BUSY_MESSAGE);
 		// Facts are never dropped: past the bound, a conversation Laravel has not caught up with starts nothing new.
 		if (this.#store.backlog() > FACT_DELIVERY.backlog) return startRefusal("FACTS_BACKLOG", BACKLOG_MESSAGE);
 		return null;
@@ -728,146 +635,6 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		return this.#store.outside(() => this.#store.write(() => this.#store.answer(runId) ?? this.#answerRefused(runId, this.#startState(runId) ?? refusal)));
 	}
 
-	// The start protocol (ARCHITECTURE.md: Starting a run).
-
-	/** One start at a time per run: a resumed start and the message's own share the same `beginRun`. */
-	#begin(runId: RunId): Promise<Outcome<PostedView>> {
-		const running = this.#begins.get(runId);
-		if (running) return running;
-		const work = this.#beginOnce(runId).finally(() => this.#begins.delete(runId));
-		this.#begins.set(runId, work);
-		return work;
-	}
-
-	/** `beginRun`, the copies, then one transaction; a refusal leaves nothing behind. */
-	async #beginOnce(runId: RunId): Promise<Outcome<PostedView>> {
-		const start = this.#store.start(runId);
-		const conversation = this.#store.conversation();
-		if (!start || !conversation) return NOT_FOUND;
-		const folder = this.#folder() as FolderPort;
-		const usage = folder.usage();
-		const uploadIds = idsOf(start);
-		const workspace = this.#workspace();
-		// If anything below fails, the watch sends the start again (`beginRun` is idempotent by run id) until it
-		// is stored or refused, so a marker never holds the conversation busy.
-		await this.lifecycle.jobs.push({ id: `watch:${runId}`, fn: "watch", time: Date.now() + WATCH_MS, payload: { runId } });
-		const answer = await workspace.beginRun({
-			runId,
-			conversationId: conversation.id,
-			userId: start.user_id,
-			agentId: conversation.agent_id,
-			uploadIds,
-			folder: { bytes: usage.bytes, entries: usage.entries },
-		});
-		if (!answer.ok) {
-			// Released too: a resumed start the Workspace registered, then refused as revoked, would keep its
-			// uploads reserved until it expired. A run the Workspace never registered is not affected.
-			return this.#refuseStart(runId, answer);
-		}
-		const prepared = await folder.prepareAttachments(runId, answer.value.uploads);
-		if (!prepared.ok) return this.#refuseStart(runId, prepared);
-		const limits = settings(this.env).files;
-		let stored: string | null;
-		try {
-			// Outside pi's transactions (store.ts `outside`): the answer says the run was stored.
-			stored = await this.#store.outside(() =>
-				this.#store.write(() => {
-					const current = this.#store.conversation();
-					if (!this.#store.start(runId) || !current) return null;
-					if (current.deleted_at !== null) {
-						this.#store.deleteStart(runId);
-						this.#store.addRelease(runId);
-						return null;
-					}
-					const now = this.#store.now();
-					const { baseVersionId, attachments } = folder.commitAttachments(runId, prepared.value);
-					const snapshot: RunSnapshot = {
-						...answer.value.snapshot,
-						runId,
-						baseVersionId,
-						attachments,
-						limits: { folderBytes: limits.folderBytes, folderEntries: limits.folderEntries, runUploadBytes: limits.runUploadBytes },
-					};
-					const messageId = uuid7(now);
-					this.#store.insertMessage({ id: messageId, role: "user", content: start.content, attachments, runId, createdAt: now });
-					this.#store.insertRun({ id: runId, snapshot, deadline: snapshot.deadline, baseVersionId, createdAt: now });
-					this.#store.append(runId, statusEvent({ status: "queued" }));
-					const title = current.title ? undefined : sliceText(start.content || attachments.map((item) => item.path).join(", "), 0, 80);
-					this.#store.touch({ title });
-					this.#store.deleteStart(runId);
-					// Pushed in this transaction (Lifecycle's queue is SQL), so a stored run always has its wake-up.
-					this.#push({ id: `watch:${runId}`, fn: "watch", time: now + WATCH_MS, payload: { runId } });
-					if (snapshot.deadline !== null) this.#push({ id: `deadline:${runId}`, fn: "deadline", time: snapshot.deadline, payload: { runId } });
-					// A cancel that arrived during the awaits: stored as cancelled, as when a grant change races a start.
-					const tombstone = this.#store.tombstone(runId);
-					if (tombstone) {
-						this.#store.revoke(runId);
-						this.#store.finish(runId, endFor(tombstone.reason));
-					}
-					return messageId;
-				}),
-			);
-		} catch (error) {
-			// The store refused the start (a value or a row past the platform's limits, say). That would happen
-			// again every time the watch sent it, holding the conversation busy: it is refused now instead, and
-			// its registration released (ARCHITECTURE.md: Starting a run: a refusal leaves nothing behind).
-			this.#log("a start could not be stored", error);
-			return this.#refuseStart(runId, refuse("START_FAILED", START_FAILED));
-		}
-		if (stored === null) {
-			// Deleted meanwhile: the registration is released. A run another flow stored is left alone.
-			if (this.#store.releases().includes(runId)) this.#defer(() => this.#releaseRefused(runId));
-			return NOT_FOUND;
-		}
-		this.#touchIndex();
-		const run = this.#store.run(runId) as RunRow;
-		if (ACTIVE.has(run.status)) this.#defer(() => this.#activate(runId));
-		return { ok: true, value: this.#posted(this.#store.message(stored) as Message, run) };
-	}
-
-	/** A refused start: its marker deleted and its registration released in one write, the release retried until heard. */
-	async #refuseStart(runId: RunId, refusal: { ok: false; refusal: Refusal }): Promise<Outcome<PostedView>> {
-		await this.#store.outside(() =>
-			this.#store.write(() => {
-				this.#store.deleteStart(runId);
-				this.#store.deleteStartKeys(runId);
-				this.#store.addRelease(runId);
-			}),
-		);
-		this.#defer(() => this.#releaseRefused(runId));
-		return refusal;
-	}
-
-	/**
-	 * `activate` (ARCHITECTURE.md: Starting a run): until the Workspace answers, sent again by the watch job and whenever the object
-	 * starts. Active: the run is provisioned and its loop starts. Revoked: it stops with that reason. Expired:
-	 * it fails (`start_expired`). Ended: the Workspace no longer tracks it, so no revocation could reach it;
-	 * it stops ("Stopped.").
-	 */
-	#activate(runId: RunId): Promise<void> {
-		const running = this.#activations.get(runId);
-		if (running) return running;
-		const work = (async () => {
-			const run = this.#store.run(runId);
-			if (!run || run.activated || !ACTIVE.has(run.status)) return;
-			const answer = await this.#workspace().activate(runId);
-			if (answer.state === "active") {
-				if (await this.#store.outside(() => this.#store.activate(runId))) await this.#startLoop(runId);
-				return;
-			}
-			const end: RunEnd = answer.state === "revoked" ? endFor(answer.reason) : answer.state === "expired" ? START_EXPIRED : CANCELLED;
-			await this.#store.outside(() =>
-				this.#store.write(() => {
-					this.#store.update(runId, { activated: 1 });
-					if (answer.state === "revoked") this.#store.revoke(runId);
-					this.#store.finish(runId, end);
-				}),
-			);
-		})().finally(() => this.#activations.delete(runId));
-		this.#activations.set(runId, work);
-		return work;
-	}
-
 	/**
 	 * The loop starts: `running` (once per attempt), the run's tools installed, its pi session created with
 	 * the history replay (only here, never on resume), and its prompt submitted once, as `run:<id>`.
@@ -877,7 +644,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		if (running) return running;
 		const work = (async () => {
 			const run = this.#store.run(runId);
-			if (!run || !ACTING.has(run.status) || !run.activated) return;
+			if (!run || !ACTING.has(run.status)) return;
 			const fence = { runId, attempt: run.attempt };
 			if (!this.#store.isCurrent(fence)) return;
 			// Outside pi's transactions (store.ts `outside`): its `run.status` fact must not roll back.
@@ -885,19 +652,18 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			this.#phase(fence, this.#restarted.has(runId) ? "Resuming the agent" : "Starting the agent");
 			this.#installTools(run);
 			let session = run.session;
-			// A Laravel run's turn came with its start; a Workspace run's is read from the object's messages.
-			const snapshot = this.#store.snapshot(run);
+			// The turn came with its start, its history selected and clipped (internal/start.ts).
+			const { instructions, turn } = this.#store.snapshot(run);
 			if (session === null) {
 				const pi = await this.harness.pi();
-				const history = snapshot.turn?.history ?? recentHistory(historyOf(this.#store.storedMessages(runId, HISTORY_LIMIT), runId));
 				let providerSession: string | null = null;
 				const created = await pi.createConversation(
 					{
 						ownership: { kind: "ownerless" },
-						agent: { model: { ...MODEL_REF }, instructions: sessionInstructions(snapshot.instructions, LOCAL_TOOLS) },
+						agent: { model: { ...MODEL_REF }, instructions: sessionInstructions(instructions, LOCAL_TOOLS) },
 						init: async (tx: Tx, id: PiConversationId) => {
 							providerSession = (await tx.doc(ProviderDoc, id)).sessionId;
-							await replay(tx, id, history);
+							await replay(tx, id, turn.history);
 						},
 					},
 					BG,
@@ -907,22 +673,25 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			if (session === null || !this.#store.isCurrent(fence)) return;
 			this.#prepareLocal(run);
 			this.#showPhase(fence);
-			const prompt = snapshot.turn?.prompt ?? promptOf(this.#store.storedMessages(runId, HISTORY_LIMIT), runId);
-			await this.harness.submit(prompt, { session, operationId: `run:${runId}` });
+			await this.harness.submit(turn.prompt, { session, operationId: `run:${runId}` });
 		})().finally(() => this.#loops.delete(runId));
 		this.#loops.set(runId, work);
 		return work;
 	}
 
-	/** After a restart of the object: the starts in flight, activations not answered, releases not heard, containers left. */
+	/**
+	 * After a restart of the object: containers left, a run left `queued`, facts not delivered. A start stores its run
+	 * active, so only the previous version left runs `queued` (it activated them after the start's write, and a reset could
+	 * lose that); the gate has already ended one of a conversation with no organization. Such a run is activated here, and
+	 * its loop started.
+	 */
 	async #recover(): Promise<void> {
 		const again = await this.#cleanSandbox();
 		if (again) this.#push({ id: "sandbox", fn: "sandbox", time: again.rescheduleAt });
-		for (const start of this.#store.starts()) await this.#begin(start.run_id).catch((error: unknown) => this.#log("a start could not resume", error));
 		const run = this.#store.activeRun();
-		if (run && !run.activated) await this.#activate(run.id).catch((error: unknown) => this.#log("activation failed", error));
-		for (const ended of this.#store.unreleased()) await this.#release(ended);
-		for (const runId of this.#store.releases()) await this.#releaseRefused(runId);
+		if (run?.status === "queued" && (await this.#store.outside(() => this.#store.activate(run.id)))) {
+			await this.#startLoop(run.id).catch((error: unknown) => this.#log("the loop could not start", error));
+		}
 		await this.#delivery.deliver();
 	}
 
@@ -963,16 +732,18 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * First in the factory, once per instance: a restart is pi opening in a new instance while an activated
-	 * `provisioning` or `running` run has unsettled pi work. The decision is one transaction, with the dead
-	 * instance's dispatched writes marked uncertain in it, then synced before pi opens, so a crash right
-	 * after cannot lose the count. Nothing here waits on anything outside this object.
+	 * First in the factory, once per instance: a restart is pi opening in a new instance while a `provisioning` or
+	 * `running` run has unsettled pi work. A conversation with no organization (one the Workspace made) runs nothing: its
+	 * active run ends `cancelled` here, before pi opens, and `#stopEnded` aborts what pi held for it. The decision is one
+	 * transaction, with the dead instance's dispatched writes marked uncertain in it, then synced before pi opens, so a
+	 * crash right after cannot lose the count. Nothing here waits on anything outside this object.
 	 */
 	async #gate(storage: SqliteStorage): Promise<void> {
 		const run = this.#store.activeRun();
-		const acting = run !== null && run.activated === 1 && ACTING.has(run.status);
+		const acting = run !== null && ACTING.has(run.status);
 		const work = acting ? await piWork(storage, run) : null;
-		const decision = decideGate(run ? { status: run.status, attempt: run.attempt, activated: run.activated === 1, deadline: run.deadline } : null, work, Date.now());
+		const inert = this.#store.conversation()?.organization_id === null;
+		const decision = decideGate(run ? { status: run.status, attempt: run.attempt, deadline: run.deadline, inert } : null, work, Date.now());
 		if (decision.kind === "none" || run === null) return;
 		// The test build's fault points (ConversationPorts.gate); production has none, and awaits nothing here.
 		const point = this.#ports.gate;
@@ -982,7 +753,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		await this.#store.outside(() =>
 			this.#store.write(() => {
 				if (acting) this.#ledger().markDispatchedUncertain(run.id);
-				if (decision.kind === "timed_out") this.#store.finish(run.id, TIMED_OUT);
+				if (decision.kind === "cancelled") this.#store.finish(run.id, CANCELLED);
+				else if (decision.kind === "timed_out") this.#store.finish(run.id, TIMED_OUT);
 				else if (decision.kind === "worker_exited") this.#store.finish(run.id, WORKER_EXITED);
 				else this.#store.restart(run.id, decision.attempt);
 			}),
@@ -1017,7 +789,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	/** After the factory and pi's resume: the attempt runs, a lost submit is sent again, a settled run is reconciled. */
 	override async onStart(): Promise<void> {
 		const run = this.#store.activeRun();
-		if (run && run.activated === 1 && ACTING.has(run.status) && this.#piStorage) {
+		if (run && ACTING.has(run.status) && this.#piStorage) {
 			const work = await piWork(this.#piStorage, run);
 			if (work === "settled") this.#defer(() => this.#reconcile(run.id).catch((error: unknown) => this.#settleLater(run.id, error)));
 			else if (work === "not_submitted") this.#defer(() => this.#startLoop(run.id));
@@ -1035,13 +807,15 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		this.#defer(() => this.#recover());
 	}
 
-	/** Lifecycle jobs of the host: the start watch, the deadline, the lost-write sweep, pending releases. */
+	/**
+	 * Lifecycle jobs of the host: the start watch, the deadline, the lost-write sweep, the folder's sweep, a container left,
+	 * the facts' delivery. A `release` job the previous version left meets the Agents SDK's default, which drops it.
+	 */
 	override _onHostJob(fn: string, context: Parameters<Agent<Env>["_onHostJob"]>[1]) {
 		const runId = runOfPayload((context as unknown as Job).job.payload);
 		if (fn === "watch" && runId) return this.#watch(runId);
 		if (fn === "deadline" && runId) return this.#deadline(runId);
 		if (fn === "sweep") return this.#sweep();
-		if (fn === "release") return this.#retryReleases();
 		if (fn === "files") return this.#folder()?.sweep() ?? Promise.resolve(undefined);
 		if (fn === "sandbox") return this.#cleanSandbox();
 		if (fn === FACTS_JOB) return this.#factsJob();
@@ -1049,21 +823,14 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * The start's wake-up, until pi has the run's input: a start whose `beginRun` failed is sent again, an
-	 * activation not answered is sent again, and an activated run pi has no submission for is submitted.
+	 * The start's wake-up, until pi has the run's input: a run the previous version left `queued` is activated (#recover),
+	 * and an acting run pi has no submission for is submitted.
 	 */
 	async #watch(runId: RunId): Promise<{ rescheduleAt: number } | undefined> {
 		const again = { rescheduleAt: Date.now() + WATCH_MS };
-		if (this.#store.start(runId)) {
-			await within(this.#begin(runId), RPC_WAIT_MS).catch((error: unknown) => this.#log("a start could not resume", error));
-			if (this.#store.start(runId)) return again;
-		}
 		const run = this.#store.run(runId);
 		if (!run || !ACTIVE.has(run.status)) return undefined;
-		if (!run.activated) {
-			await within(this.#activate(runId), RPC_WAIT_MS).catch((error: unknown) => this.#log("activation failed", error));
-			if (!this.#store.run(runId)?.activated) return again;
-		}
+		if (run.status === "queued") await this.#store.outside(() => this.#store.activate(runId));
 		const work = async (): Promise<PiWork | null> => {
 			const now = this.#store.run(runId);
 			return now !== null && ACTING.has(now.status) && this.#piStorage !== null ? piWork(this.#piStorage, now) : null;
@@ -1102,12 +869,6 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			const { nextAt } = this.#store.write(() => this.#ledger().sweepLostWrites(Date.now()));
 			return nextAt === null ? undefined : { rescheduleAt: nextAt };
 		});
-	}
-
-	async #retryReleases(): Promise<{ rescheduleAt: number } | undefined> {
-		for (const run of this.#store.unreleased()) await this.#release(run);
-		for (const runId of this.#store.releases()) await this.#releaseRefused(runId);
-		return this.#store.unreleased().length || this.#store.releases().length ? { rescheduleAt: Date.now() + RELEASE_RETRY_MS } : undefined;
 	}
 
 	// pi's side of a run.
@@ -1168,7 +929,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * `complete`: the assistant message, the `message` event and `completed`, in one transaction and
+	 * `complete`: the `message` event and `completed`, with the answer in its `run.finished` fact, in one transaction and
 	 * in that order, only while the attempt is current. An empty answer, or one past what a WorkerEvent could
 	 * carry, fails the run instead. Outside pi's transactions (store.ts `outside`), as every end.
 	 */
@@ -1181,11 +942,9 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		await this.#store.outside(() =>
 			this.#store.write(() => {
 				if (!this.#store.isCurrent(fence)) return;
-				const now = this.#store.now();
-				const id = uuid7(now);
-				this.#store.insertMessage({ id, role: "assistant", content: text, attachments: [], runId: fence.runId, createdAt: now });
+				const id = uuid7(this.#store.now());
 				this.#store.append(fence.runId, { type: "message", data: { id, content: text, ...(call === undefined ? {} : { call }) } });
-				this.#store.finish(fence.runId, COMPLETED, { attempt: fence.attempt });
+				this.#store.finish(fence.runId, COMPLETED, { attempt: fence.attempt, answer: { id, content: text } });
 			}),
 		);
 	}
@@ -1202,7 +961,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		);
 	}
 
-	/** After a run ended, outside its transaction: its calls cut, its stream ended, pi stopped, the Workspace told. */
+	/** After a run ended, outside its transaction: its calls cut, its stream ended, pi stopped, its container destroyed. */
 	#afterFinish(runId: RunId): void {
 		this.#controllers.get(runId)?.abort(new Error(RUN_ENDED_MESSAGE));
 		this.#controllers.delete(runId);
@@ -1219,9 +978,6 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		this.#defer(async () => {
 			await this.lifecycle.jobs.cancel(`watch:${runId}`);
 			await this.lifecycle.jobs.cancel(`deadline:${runId}`);
-			const run = this.#store.run(runId);
-			if (run) await this.#release(run);
-			this.#touchIndex();
 			await this.#stopPi(runId);
 		});
 		// Its container, whichever attempt or instance started it (a later run's is never touched); a destroy
@@ -1231,7 +987,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				await destroyRunSandbox(this.#sandbox(), runId, "The run ended.");
 			} catch (error) {
 				this.#log("the run's sandbox could not be destroyed", error);
-				this.#push({ id: "sandbox", fn: "sandbox", time: Date.now() + RELEASE_RETRY_MS });
+				this.#push({ id: "sandbox", fn: "sandbox", time: Date.now() + SANDBOX_RETRY_MS });
 			}
 		});
 	}
@@ -1243,28 +999,6 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		const pi = await this.harness.pi();
 		const conversation = await pi.conversation(Number(run.session) as PiConversationId, BG);
 		await conversation?.abort(BG, { background: true });
-	}
-
-	async #release(run: RunRow): Promise<void> {
-		if (run.released || ACTIVE.has(run.status)) return;
-		try {
-			await within(this.#workspace().release(run.id, run.status), RPC_WAIT_MS);
-			this.#store.update(run.id, { released: 1 });
-		} catch (error) {
-			this.#log("the Workspace did not hear that a run ended", error);
-			this.#push({ id: "release", fn: "release", time: Date.now() + RELEASE_RETRY_MS });
-		}
-	}
-
-	/** A start refused after `beginRun`: its registration and reservations are released, retried until heard. */
-	async #releaseRefused(runId: RunId): Promise<void> {
-		try {
-			await within(this.#workspace().release(runId, "refused"), RPC_WAIT_MS);
-			this.#store.deleteRelease(runId);
-		} catch (error) {
-			this.#log("the Workspace did not hear that a start was refused", error);
-			this.#push({ id: "release", fn: "release", time: Date.now() + RELEASE_RETRY_MS });
-		}
 	}
 
 	// Tools, the executor and the model.
@@ -1432,12 +1166,9 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				.outside(() =>
 					this.#store.write(() => {
 						if (!this.#store.isCurrent(fence) || !this.#store.finish(fence.runId, end, { attempt: fence.attempt })) return false;
-						// The end's clean-up (#afterFinish: its container destroyed, the Workspace told) is deferred, and
-						// the reset below cuts it: its retries are stored with the end, so the next start finishes it.
-						const at = Date.now() + RELEASE_RETRY_MS;
-						for (const fn of ["sandbox", "release"]) {
-							this.lifecycle.jobs.push({ id: fn, fn, time: at }).catch((failure: unknown) => this.#log(`the job ${fn} was not scheduled`, failure));
-						}
+						// The end's clean-up (#afterFinish: its container destroyed) is deferred, and the reset below cuts
+						// it: its retry is stored with the end, so the next start finishes it.
+						this.#push({ id: "sandbox", fn: "sandbox", time: Date.now() + SANDBOX_RETRY_MS });
 						return true;
 					}),
 				)
@@ -1480,7 +1211,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			return undefined;
 		} catch (error) {
 			this.#log("a sandbox left by an ended run could not be destroyed", error);
-			return { rescheduleAt: Date.now() + RELEASE_RETRY_MS };
+			return { rescheduleAt: Date.now() + SANDBOX_RETRY_MS };
 		}
 	}
 
@@ -1536,34 +1267,21 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * A lease is for the call's attempt: checked before the Workspace, or Laravel, is asked and again after. A Laravel run's
-	 * credentials come from `leaseToken` and are held in memory for the one call (laravel-runs.ts).
+	 * A lease is for the call's attempt: checked before Laravel is asked and again after. The credential comes from
+	 * `leaseToken` and is held in memory for the one call (laravel-runs.ts).
 	 */
 	#credentials(snapshot: RunSnapshot): CredentialPort {
 		const context = this.#portsContext() as PortsContext;
-		if (context.organization !== null) {
-			return laravelCredentials({
-				env: this.env,
-				scope: { organization: context.organization, workspace: context.workspace.id },
-				conversation: context.conversationId,
-				snapshot,
-				isCurrent: (fence) => this.#store.isCurrent(fence),
-				log: (message, error) => this.#log(message, error, true),
-			});
-		}
-		const ended = { refused: "RUN_ENDED" as const, message: RUN_ENDED_MESSAGE };
-		return {
-			lease: async (fence, connectionId) => {
-				if (!this.#store.isCurrent(fence)) return ended;
-				const lease = await this.#workspace().lease(connectionId, { run: fence.runId, userId: snapshot.userId });
-				if (!this.#store.isCurrent(fence)) return ended;
-				return lease;
-			},
-			markUnauthorized: (connectionId, generation) => this.#workspace().markUnauthorized(connectionId, generation),
-			// Bound to the run's workspace and the leased connection: a lease of another row does not decrypt.
-			open: async (lease) =>
-				"payload" in lease ? lease.payload : ((await (await this.#keys()).decrypt(credentialBinding(snapshot.workspaceId, lease.connectionId), lease.sealed)) as unknown as CredentialPayload),
-		};
+		// The gate ends a run of a conversation with no organization before pi opens, so none of its tools is built.
+		if (context.organization === null) throw new Error("A conversation with no organization runs nothing.");
+		return laravelCredentials({
+			env: this.env,
+			scope: { organization: context.organization, workspace: context.workspace.id },
+			conversation: context.conversationId,
+			snapshot,
+			isCurrent: (fence) => this.#store.isCurrent(fence),
+			log: (message, error) => this.#log(message, error, true),
+		});
 	}
 
 	#toolHost(): ToolHost {
@@ -1738,12 +1456,6 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		if (this.#ports.entered) this.#ports.entered(this.#portsContext() as PortsContext, kind, runId);
 	}
 
-	/** The registry the conversation's runs answer to: its Workspace object, or for a Laravel conversation, none (laravel-runs.ts). */
-	#workspace(): WorkspaceClient {
-		const context = this.#portsContext() as PortsContext;
-		return context.organization === null ? this.#ports.workspace(context) : laravelRuns;
-	}
-
 	#folderInstance: FolderPort | null = null;
 
 	#folder(): FolderPort | null {
@@ -1791,17 +1503,6 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				this.#push({ id: "files", fn: "files", time });
 			},
 		};
-	}
-
-	#keys(): Promise<EncryptionKeys> {
-		this.#keyRing ??= EncryptionKeys.parse(this.env.MINERVA_ENCRYPTION_KEYS);
-		return this.#keyRing;
-	}
-
-	#touchIndex(): void {
-		const conversation = this.#store.conversation();
-		if (!conversation) return;
-		this.#defer(() => this.#workspace().conversationTouched(conversation.id, { title: conversation.title, updatedAt: conversation.updated_at }));
 	}
 
 	#owned(caller: Caller) {
@@ -1892,12 +1593,6 @@ function within<T>(promise: Promise<T>, ms: number): Promise<T> {
 		const timer = setTimeout(() => reject(new Error(`No answer within ${ms} ms.`)), ms);
 		promise.then(resolve, reject).finally(() => clearTimeout(timer));
 	});
-}
-
-/** The uploads a start marker names. */
-function idsOf(start: StartRow): string[] {
-	const parsed = parseJson(start.upload_ids);
-	return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
 }
 
 function deletedRefusal(): StartRefusal {

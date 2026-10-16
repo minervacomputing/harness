@@ -4,7 +4,7 @@
 
 import { describe, expect, test } from "vitest";
 import { EXPIRED } from "../../src/conversation/laravel-runs.ts";
-import type { SealedLease as CredentialLease } from "../../src/gateway/executor.ts";
+import type { SealedLease as CredentialLease } from "../../src/workspace/core.ts";
 import type { JsonObject } from "../../src/lib/json.ts";
 import { RUN_ENDED } from "../../src/workspace/core.ts";
 import { type OAuth2, keepRefreshToken, parseScopes, tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";

@@ -12,6 +12,9 @@ interface Migration {
 }
 
 export const MIGRATIONS: Migration[] = [
+	// Unused since chunk 13b: `messages`, `starts`, `releases`, and `runs.released`; `runs.activated` is only still written
+	// (store.ts `activate`). They stay while the previous version may run beside this one or after a rollback, and its code
+	// writes them (chunk-13b-design.md, The Conversation keeps its tables and columns).
 	{
 		id: 1,
 		sql: `
@@ -148,8 +151,8 @@ CREATE TABLE run_snapshots (
 	{ id: 4, sql: FOLDER_SCHEMA },
 	// The revision of the folder's last byte report (files/store.ts `#report`).
 	{ id: 5, sql: FOLDER_REPORT_SCHEMA },
-	// A client's key for a message it may send again (`postMessage`, Idempotency-Key): the run it started,
-	// and a digest of the message, kept a day. Written with the start's marker; deleted with a refused start.
+	// A client's key for a message it may send again (the previous version's `postMessage`, Idempotency-Key): the run it
+	// started, and a digest of the message, kept a day. Unused since chunk 13b, and kept as migration 1's tables are.
 	{
 		id: 6,
 		sql: `

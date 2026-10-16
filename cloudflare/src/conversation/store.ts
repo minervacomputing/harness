@@ -1,5 +1,5 @@
-// The Conversation Durable Object's records: the conversation, its messages, runs, attempts and run events,
-// and the start protocol's markers and tombstones, over the object's SQLite. Every method is synchronous:
+// The Conversation Durable Object's records: the conversation, its runs, attempts, run events and facts, and
+// Laravel's starts and tombstones, over the object's SQLite. Every method is synchronous:
 // the checks the executor and the model wrapper make (`isCurrent`, `isActive`) and the appends they ask for
 // read and write SQLite with no await in between, which is what makes the revocation, dispatch and fencing
 // checks atomic (ARCHITECTURE.md: Strict revocation, Attempts and recovery).
@@ -39,7 +39,7 @@ import {
 	statusEvent,
 	terminalStatus,
 } from "./events.ts";
-import type { Replayed, StoredMessage } from "./history.ts";
+import type { Replayed } from "./history.ts";
 
 export interface ConversationInit {
 	conversationId: ConversationId;
@@ -66,10 +66,10 @@ export interface RunSnapshot extends StartSnapshot {
 	attachments: Attachment[];
 	limits: { folderBytes: number; folderEntries: number; runUploadBytes: number };
 	/**
-	 * A Laravel run's turn as its start sent it (docs/plans/start-and-cancel.md): the history its pi session is seeded
-	 * with, selected and clipped, and its prompt. A Workspace run reads both from the object's messages instead.
+	 * The run's turn as its start sent it (docs/plans/start-and-cancel.md): the history its pi session is seeded with,
+	 * selected and clipped, and its prompt.
 	 */
-	turn?: { history: Replayed[]; prompt: string };
+	turn: { history: Replayed[]; prompt: string };
 }
 
 /**
@@ -152,15 +152,6 @@ interface MessageRow {
 	[key: string]: SqlStorageValue;
 }
 
-export interface StartRow {
-	run_id: string;
-	user_id: string;
-	content: string;
-	upload_ids: string;
-	created_at: number;
-	[key: string]: SqlStorageValue;
-}
-
 export interface TombstoneRow {
 	run_id: string;
 	reason: CancelReason;
@@ -218,6 +209,8 @@ export interface FinishOptions {
 	fromStatus?: RunStatus;
 	/** How the attempt ended, for its record. */
 	attemptEnded?: "completed" | "restarted" | "failed" | "cancelled";
+	/** A completed run's answer, for its `run.finished` fact. */
+	answer?: { id: string; content: string };
 }
 
 /** What `finish` asks the folder, inside its transaction. */
@@ -444,9 +437,8 @@ export class RunStore {
 		return { id: row.workspace_id, jurisdiction: row.jurisdiction === "eu" ? "eu" : null };
 	}
 
-	touch(change: { title?: string; folderVersionId?: VersionId | null }): void {
+	touch(change: { folderVersionId?: VersionId | null }): void {
 		const now = this.now();
-		if (change.title !== undefined) this.#sql.exec("UPDATE conversation SET title = ? WHERE singleton = 1", change.title);
 		if (change.folderVersionId !== undefined) this.#sql.exec("UPDATE conversation SET folder_version_id = ? WHERE singleton = 1", change.folderVersionId);
 		this.#sql.exec("UPDATE conversation SET updated_at = ? WHERE singleton = 1", now);
 	}
@@ -455,61 +447,13 @@ export class RunStore {
 		this.#sql.exec("UPDATE conversation SET deleted_at = coalesce(deleted_at, ?) WHERE singleton = 1", this.now());
 	}
 
-	// Messages.
-
-	insertMessage(message: { id: string; role: "user" | "assistant"; content: string; attachments: Attachment[]; runId: RunId | null; createdAt: EpochMs }): void {
-		this.#sql.exec(
-			"INSERT INTO messages (id, role, content, attachments, run_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-			message.id,
-			message.role,
-			message.content,
-			JSON.stringify(message.attachments),
-			message.runId,
-			message.createdAt,
-		);
-	}
+	// Messages, which only the previous version wrote.
 
 	messages(): Message[] {
 		return this.#sql
 			.exec<MessageRow>("SELECT * FROM messages ORDER BY created_at, id")
 			.toArray()
 			.map((row) => messageOut(row));
-	}
-
-	/** The user message that started a run. */
-	runMessage(runId: RunId): Message | null {
-		const row = this.#sql.exec<MessageRow>("SELECT * FROM messages WHERE run_id = ? AND role = 'user' ORDER BY created_at, id LIMIT 1", runId).toArray()[0];
-		return row ? messageOut(row) : null;
-	}
-
-	message(id: string): Message | null {
-		const row = this.#sql.exec<MessageRow>("SELECT * FROM messages WHERE id = ?", id).toArray()[0];
-		return row ? messageOut(row) : null;
-	}
-
-	/**
-	 * What history replay reads for a run (history.ts): its own user message and the newest `limit` others,
-	 * with each assistant message's folder changes; not the whole conversation.
-	 */
-	storedMessages(runId: RunId, limit: number): StoredMessage[] {
-		const select = "SELECT m.*, r.folder_changes AS folder_changes FROM messages m LEFT JOIN runs r ON r.id = m.run_id";
-		const own = this.#sql.exec<MessageRow & { folder_changes: string | null }>(`${select} WHERE m.run_id = ? AND m.role = 'user'`, runId).toArray();
-		const others = this.#sql
-			.exec<MessageRow & { folder_changes: string | null }>(
-				`${select} WHERE NOT (m.run_id IS ? AND m.role = 'user') ORDER BY m.created_at DESC, m.id DESC LIMIT ?`,
-				runId,
-				limit,
-			)
-			.toArray();
-		return [...own, ...others].map((row) => ({
-			id: row.id,
-			role: row.role,
-			content: row.content,
-			attachments: parseJson(row.attachments) as unknown as Attachment[],
-			runId: row.run_id,
-			createdAt: row.created_at,
-			changes: row.role === "assistant" && row.folder_changes ? (parseJson(row.folder_changes) as unknown as FolderChanges) : null,
-		}));
 	}
 
 	// Runs.
@@ -561,11 +505,6 @@ export class RunStore {
 		return this.#sql.exec<RunRow>(`SELECT ${RUN_COLUMNS} FROM runs ORDER BY created_at, id`).toArray();
 	}
 
-	/** Terminal runs whose end the Workspace has not heard yet. */
-	unreleased(): RunRow[] {
-		return this.#sql.exec<RunRow>(`SELECT ${RUN_COLUMNS} FROM runs WHERE released = 0 AND status NOT IN ${ACTIVE_SQL}`).toArray();
-	}
-
 	snapshot(run: Pick<RunRow, "id">): RunSnapshot {
 		const whole = this.#sql.exec<{ snapshot: string }>("SELECT snapshot FROM runs WHERE id = ?", run.id).toArray()[0]?.snapshot ?? "";
 		if (whole !== "") return parseJson(whole) as unknown as RunSnapshot;
@@ -594,7 +533,7 @@ export class RunStore {
 		return (run.status === "provisioning" || run.status === "running") && run.revoked === 0 && (run.deadline === null || run.deadline > this.now());
 	}
 
-	update(runId: RunId, fields: Partial<Pick<RunRow, "session" | "provider_session" | "activated" | "released" | "checkpoint_version_id" | "uploaded_bytes">>): void {
+	update(runId: RunId, fields: Partial<Pick<RunRow, "session" | "provider_session" | "checkpoint_version_id" | "uploaded_bytes">>): void {
 		const entries = Object.entries(fields).filter(([, value]) => value !== undefined);
 		if (!entries.length) return;
 		this.#sql.exec(`UPDATE runs SET ${entries.map(([key]) => `${key} = ?`).join(", ")} WHERE id = ?`, ...entries.map(([, value]) => value), runId);
@@ -615,14 +554,14 @@ export class RunStore {
 		this.#sql.exec("UPDATE runs SET writes_uncertain = 1 WHERE id = ?", runId);
 	}
 
-	/** queued → provisioning, with `{status: "provisioning"}` (no attempt): the Workspace activated the run. */
+	/**
+	 * queued → provisioning, with `{status: "provisioning"}` (no attempt). `activated` is still set: the previous version's
+	 * code runs only an activated run, and may run beside this one or after a rollback (chunk-13b-design.md).
+	 */
 	activate(runId: RunId): boolean {
 		return this.write(() => {
 			const changed = this.#sql.exec("UPDATE runs SET activated = 1, status = 'provisioning' WHERE id = ? AND status = 'queued' RETURNING id", runId).toArray();
-			if (!changed.length) {
-				this.#sql.exec("UPDATE runs SET activated = 1 WHERE id = ?", runId);
-				return false;
-			}
+			if (!changed.length) return false;
 			this.append(runId, statusEvent({ status: "provisioning" }));
 			return true;
 		});
@@ -684,7 +623,7 @@ export class RunStore {
 			this.#sql.exec("UPDATE attempts SET ended_at = ?, ended = ? WHERE run_id = ? AND attempt = ? AND ended_at IS NULL", now, ended, runId, row.attempt);
 			this.touch({ folderVersionId: published.resultVersionId });
 			this.append(runId, statusEvent(terminalStatus(end)));
-			this.#finishedFact(row, end, published.resultVersionId);
+			this.#finishedFact(row, end, published.resultVersionId, options.answer ?? null);
 			this.#ended.push(runId);
 			return true;
 		});
@@ -817,62 +756,6 @@ export class RunStore {
 		}
 	}
 
-	// The start protocol (ARCHITECTURE.md: Starting a run).
-
-	addStart(start: { runId: RunId; userId: UserId; content: string; uploadIds: string[]; createdAt: EpochMs }): void {
-		this.#sql.exec(
-			"INSERT INTO starts (run_id, user_id, content, upload_ids, created_at) VALUES (?, ?, ?, ?, ?)",
-			start.runId,
-			start.userId,
-			start.content,
-			JSON.stringify(start.uploadIds),
-			start.createdAt,
-		);
-	}
-
-	starts(): StartRow[] {
-		return this.#sql.exec<StartRow>("SELECT * FROM starts ORDER BY created_at").toArray();
-	}
-
-	start(runId: RunId): StartRow | null {
-		return this.#sql.exec<StartRow>("SELECT * FROM starts WHERE run_id = ?", runId).toArray()[0] ?? null;
-	}
-
-	deleteStart(runId: RunId): void {
-		this.#sql.exec("DELETE FROM starts WHERE run_id = ?", runId);
-	}
-
-	/** A client's key for a start (`postMessage`): the run it named, if it is younger than `since`. */
-	startKey(key: string, since: EpochMs): { run_id: string; digest: string } | null {
-		this.#sql.exec("DELETE FROM start_keys WHERE created_at < ?", since);
-		return this.#sql.exec<{ run_id: string; digest: string }>("SELECT run_id, digest FROM start_keys WHERE key = ?", key).toArray()[0] ?? null;
-	}
-
-	addStartKey(key: string, runId: RunId, digest: string): void {
-		this.#sql.exec("INSERT INTO start_keys (key, run_id, digest, created_at) VALUES (?, ?, ?, ?)", key, runId, digest, this.now());
-	}
-
-	/** A refused start's key: the same message may be sent again with it. */
-	deleteStartKeys(runId: RunId): void {
-		this.#sql.exec("DELETE FROM start_keys WHERE run_id = ?", runId);
-	}
-
-	/** A start refused after `beginRun` registered it: the Workspace must hear of it, until it has. */
-	addRelease(runId: RunId): void {
-		this.#sql.exec("INSERT INTO releases (run_id, status, created_at) VALUES (?, 'refused', ?) ON CONFLICT DO NOTHING", runId, this.now());
-	}
-
-	releases(): RunId[] {
-		return this.#sql
-			.exec<{ run_id: string }>("SELECT run_id FROM releases ORDER BY created_at")
-			.toArray()
-			.map((row) => row.run_id);
-	}
-
-	deleteRelease(runId: RunId): void {
-		this.#sql.exec("DELETE FROM releases WHERE run_id = ?", runId);
-	}
-
 	// A Laravel start's preparation and answer (docs/plans/start-and-cancel.md, startRun).
 
 	/** The start's preparation, kept from its first try until it is answered; in parts, like a run's snapshot. */
@@ -965,10 +848,9 @@ export class RunStore {
 		});
 	}
 
-	/** The run's terminal fact, in `finish`'s transaction: its status, error, final message and folder. */
-	#finishedFact(row: RunRow, end: RunEnd, resultVersionId: VersionId | null): void {
+	/** The run's terminal fact, in `finish`'s transaction: its status, error, answer and folder. */
+	#finishedFact(row: RunRow, end: RunEnd, resultVersionId: VersionId | null, answer: { id: string; content: string } | null): void {
 		if (!this.#writesFacts()) return;
-		const answer = this.#sql.exec<{ id: string; content: string }>("SELECT id, content FROM messages WHERE run_id = ? AND role = 'assistant' ORDER BY created_at DESC, id DESC LIMIT 1", row.id).toArray()[0];
 		const current = this.#sql.exec<Pick<RunRow, "folder_changes" | "folder_warnings">>("SELECT folder_changes, folder_warnings FROM runs WHERE id = ?", row.id).one();
 		const folder =
 			row.base_version_id === null && resultVersionId === null
@@ -982,7 +864,7 @@ export class RunStore {
 		const data = {
 			status: end.status,
 			error: end.status === "completed" ? "" : sliceText(end.message, 0, ERROR_MESSAGE_CHARS),
-			message: answer === undefined ? null : { id: answer.id, content: answer.content },
+			message: answer,
 			folder,
 		};
 		this.#fact(row.id, { type: "run.finished", data });

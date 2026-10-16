@@ -9,7 +9,7 @@ import type { RunEvent } from "@minerva/contract";
 import type { CancelReason, Fact, StartRun, StartRunResult } from "@minerva/contract/internal";
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { BUSY_MESSAGE } from "../../src/conversation/conversation.ts";
-import { CANCELLED, WORKER_FAILED } from "../../src/conversation/events.ts";
+import { CANCELLED, statusEvent, WORKER_FAILED } from "../../src/conversation/events.ts";
 import { FACT_DELIVERY } from "../../src/conversation/facts.ts";
 import { FOLDER_INSTRUCTIONS } from "../../src/conversation/history.ts";
 import { type RunHead, RunStore } from "../../src/conversation/store.ts";
@@ -273,6 +273,33 @@ function waiting(hold: Promise<void>): Partial<Fakes> {
 const WAIT = scripted({ turns: [{ tools: [{ name: "fake_wait", arguments: {} }] }] });
 
 const BUSY = { outcome: "refused", code: "CONVERSATION_BUSY", message: BUSY_MESSAGE };
+
+/**
+ * What the previous version could leave (chunk-13b-design.md, amendment 2): `left`'s run stored `queued` and never
+ * activated, with no deadline and its start answered `accepted`, after `ended`'s run; with its watch job when `watched`.
+ */
+async function leftQueued(stub: Stub, ended: StartRun, left: StartRun, watched: boolean): Promise<void> {
+	await runInDurableObject(stub, async (instance: Conversation, state) => {
+		const store = new RunStore(state.storage);
+		const snapshot = store.snapshot({ id: ended.run });
+		const answer = store.answer(ended.run) as StartRunResult;
+		store.write(() => {
+			const turn = { history: [], prompt: left.message.content };
+			store.insertRun({ id: left.run, snapshot: { ...snapshot, runId: left.run, deadline: null, turn }, deadline: null, baseVersionId: snapshot.baseVersionId, createdAt: Date.now() });
+			store.append(left.run, statusEvent({ status: "queued" }));
+			store.addAnswer(left.run, answer);
+		});
+		if (watched) await instance.lifecycle.jobs.push({ id: `watch:${left.run}`, fn: "watch", time: Date.now() + 60_000, payload: { runId: left.run } });
+	});
+}
+
+/** The run `leftQueued` stored ran its turn once it was activated. */
+async function ranFromQueued(stub: Stub, left: StartRun, fakes: Fakes): Promise<void> {
+	expect((await settled(stub, left.run, 15_000)).status).toBe("completed");
+	expect(statuses(await eventsOf(stub, left.run))).toEqual([{ status: "queued" }, { status: "provisioning" }, { status: "running" }, { status: "completed" }]);
+	expect((await row(stub, left.run)).activated).toBe(1);
+	expect(JSON.stringify(fakes.contexts.at(-1))).toContain(left.message.content);
+}
 
 describe("starting a run", () => {
 	test("a start runs one turn, which answers and ends completed, and its end reaches Laravel with the answer", async () => {
@@ -795,6 +822,78 @@ describe("restarts through the attempt gate", () => {
 		expect((await row(stub, start.run)).attempt).toBe(1);
 		expect(await runCount(stub)).toBe(1);
 		expect(fakesOf(start.conversation).contexts).toHaveLength(1);
+	});
+});
+
+describe("conversations the previous version left", () => {
+	test("a run left queued is activated when the object starts again, and its turn runs", async () => {
+		const { start: first, stub, fakes } = await started("One");
+		await settled(stub, first.run);
+		const left = next(first, { message: message("Two, left queued") });
+		await leftQueued(stub, first, left, false);
+		await abortAllDurableObjects();
+		await wake(first);
+		await ranFromQueued(objectOf(first), left, fakes);
+	});
+
+	test("a run left queued is activated by its watch, and its turn runs", async () => {
+		const { start: first, stub, fakes } = await started("One");
+		await settled(stub, first.run);
+		const left = next(first, { message: message("Two, watched") });
+		await leftQueued(stub, first, left, true);
+		await due(stub, `watch:${left.run}`);
+		await ranFromQueued(stub, left, fakes);
+	});
+
+	test("a run left queued, activated by recovery and its watch at once, runs its turn once", async () => {
+		const { start: first, stub, fakes } = await started("One");
+		await settled(stub, first.run);
+		const left = next(first, { message: message("Two, from both") });
+		await leftQueued(stub, first, left, true);
+		await abortAllDurableObjects();
+		await Promise.all([wake(first), due(objectOf(first), `watch:${left.run}`)]);
+		await ranFromQueued(objectOf(first), left, fakes);
+		expect(fakes.contexts.filter((context) => JSON.stringify(context).includes(left.message.content))).toHaveLength(1);
+	});
+
+	test("a run left queued and then cancelled stays cancelled when the object starts again", async () => {
+		const { start: first, stub, fakes } = await started("One");
+		await settled(stub, first.run);
+		const left = next(first, { message: message("Two, cancelled") });
+		await leftQueued(stub, first, left, true);
+		expect(await cancelOf(left, "cancelled")).toEqual({ state: "cancelled" });
+		await abortAllDurableObjects();
+		await wake(first);
+		await due(objectOf(first), `watch:${left.run}`);
+		await sleep(300);
+		expect(statuses(await eventsOf(objectOf(first), left.run))).toEqual([{ status: "queued" }, { status: "cancelled", message: "Stopped." }]);
+		expect(JSON.stringify(fakes.contexts)).not.toContain(left.message.content);
+	});
+
+	test("one with no organization ends its run cancelled when the object starts again, and pi runs none of its work", async () => {
+		const never = new Promise<ToolCallOutcome>(() => {});
+		const { start, stub, fakes } = await started(scripted({ turns: [{ tools: [{ name: "fake_read", arguments: {} }] }] }), {
+			declarations: [declaration("fake_read", true)],
+			invoke: async () => never,
+		});
+		await until(() => fakes.invocations.length, (n) => n === 1);
+		// As the Workspace made its conversations: no organization.
+		await runInDurableObject(stub, (_instance, state) => void state.storage.sql.exec("UPDATE conversation SET organization_id = NULL"));
+		const before = (await stub.faultView(start.run, 0, 0)).internals.entered;
+		expect(before).toEqual({ model: 1, tool: 1 });
+		await abortAllDurableObjects();
+		// Laravel's commands no longer reach it, but any event opens pi, and the gate runs first.
+		expect(await refusalOf(wake(start))).toMatchObject({ code: "SCOPE_MISMATCH" });
+		const restarted = objectOf(start);
+		const run = await settled(restarted, start.run);
+		expect([run.status, run.errorMessage]).toEqual(["cancelled", CANCELLED.message]);
+		const live = () => runInDurableObject(restarted, (_instance, state) => state.storage.sql.exec("SELECT count(*) AS n FROM pi_tasks WHERE status <> 'terminal'").one().n);
+		await until(live, (n) => n === 0);
+		await sleep(300);
+		const view = await restarted.faultView(start.run, 0, 0);
+		expect(view.internals.entered).toEqual(before);
+		expect(view.internals.attempts).toEqual([{ attempt: 1, ended: "cancelled" }]);
+		expect(fakes.invocations).toHaveLength(1);
 	});
 });
 

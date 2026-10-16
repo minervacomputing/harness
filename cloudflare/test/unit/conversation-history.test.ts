@@ -9,7 +9,6 @@ import {
 	historyOf,
 	MESSAGE_LIMIT,
 	notePaths,
-	promptOf,
 	recentHistory,
 	sessionInstructions,
 	type StoredMessage,
@@ -77,13 +76,7 @@ describe("file notes", () => {
 	});
 });
 
-describe("prompt and history", () => {
-	test("the prompt is this run's user message with its note, else empty", () => {
-		const messages = [message({ role: "user", content: "", attachments: [attachment("a.txt")], runId: RUN })];
-		expect(promptOf(messages, RUN)).toBe("[The user attached a.txt to this message, in your folder.]");
-		expect(promptOf([], RUN)).toBe("");
-	});
-
+describe("history", () => {
 	test("the newest 20 messages but this run's own question, oldest first, failed runs' questions included", () => {
 		const messages: StoredMessage[] = [];
 		for (let i = 0; i < 30; i++) messages.push(message({ role: i % 3 === 2 ? "assistant" : "user", content: `m${i}` }, i));

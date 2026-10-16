@@ -7,7 +7,7 @@ import { classifyWork, decideGate, type GateRun, MAX_ATTEMPTS, RESTART_MIN_REMAI
 const NOW = 1_800_000_000_000;
 
 function run(fields: Partial<GateRun> = {}): GateRun {
-	return { status: "running", attempt: 1, activated: true, deadline: null, ...fields };
+	return { status: "running", attempt: 1, deadline: null, inert: false, ...fields };
 }
 
 describe("what pi holds for a run", () => {
@@ -26,7 +26,7 @@ describe("what pi holds for a run", () => {
 });
 
 describe("the gate's decision", () => {
-	test("an activated acting run with unsettled pi work gets a new attempt, its deadline untouched", () => {
+	test("an acting run with unsettled pi work gets a new attempt, its deadline untouched", () => {
 		expect(decideGate(run(), "in_progress", NOW)).toEqual({ kind: "restart", attempt: 2 });
 		expect(decideGate(run({ status: "provisioning", attempt: 2 }), "in_progress", NOW)).toEqual({ kind: "restart", attempt: 3 });
 		expect(decideGate(run({ deadline: NOW + RESTART_MIN_REMAINING_MS }), "in_progress", NOW)).toEqual({ kind: "restart", attempt: 2 });
@@ -42,18 +42,25 @@ describe("the gate's decision", () => {
 		expect(decideGate(run({ deadline: NOW }), "in_progress", NOW)).toEqual({ kind: "timed_out" });
 		expect(decideGate(run({ deadline: NOW - 1, attempt: 3 }), "in_progress", NOW)).toEqual({ kind: "timed_out" });
 		// Also a queued run, and one pi never had: an expired run is inactive whatever its state.
-		expect(decideGate(run({ status: "queued", activated: false, deadline: NOW - 1 }), null, NOW)).toEqual({ kind: "timed_out" });
+		expect(decideGate(run({ status: "queued", deadline: NOW - 1 }), null, NOW)).toEqual({ kind: "timed_out" });
 	});
 
-	test("no restart: no active run, a queued one, one not activated, or one pi has settled or never had", () => {
+	test("no restart: no active run, a queued one, or one pi has settled or never had", () => {
 		expect(decideGate(null, null, NOW)).toEqual({ kind: "none" });
 		expect(decideGate(run({ status: "completed" }), "in_progress", NOW)).toEqual({ kind: "none" });
-		expect(decideGate(run({ status: "queued", activated: false }), null, NOW)).toEqual({ kind: "none" });
-		expect(decideGate(run({ status: "queued", activated: true }), "in_progress", NOW)).toEqual({ kind: "none" });
-		expect(decideGate(run({ activated: false }), "in_progress", NOW)).toEqual({ kind: "none" });
+		expect(decideGate(run({ status: "queued" }), null, NOW)).toEqual({ kind: "none" });
+		expect(decideGate(run({ status: "queued" }), "in_progress", NOW)).toEqual({ kind: "none" });
 		expect(decideGate(run(), "settled", NOW)).toEqual({ kind: "none" });
 		expect(decideGate(run(), "not_submitted", NOW)).toEqual({ kind: "none" });
 		expect(decideGate(run({ attempt: 3 }), "settled", NOW)).toEqual({ kind: "none" });
+	});
+
+	test("a conversation with no organization ends its active run cancelled, first, whatever pi holds", () => {
+		expect(decideGate(run({ inert: true }), "in_progress", NOW)).toEqual({ kind: "cancelled" });
+		expect(decideGate(run({ inert: true, status: "queued" }), null, NOW)).toEqual({ kind: "cancelled" });
+		expect(decideGate(run({ inert: true, deadline: NOW - 1, attempt: 3 }), "settled", NOW)).toEqual({ kind: "cancelled" });
+		expect(decideGate(run({ inert: true, status: "cancelled" }), "in_progress", NOW)).toEqual({ kind: "none" });
+		expect(decideGate(null, null, NOW)).toEqual({ kind: "none" });
 	});
 
 	test("a run without a deadline is restarted, and keeps none", () => {

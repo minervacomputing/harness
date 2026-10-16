@@ -9,10 +9,7 @@
 // - `provider:write:applied`: a write the provider applied, before its response reaches the executor
 //   (`lose` drops the response as a lost connection would; `abort` crashes while it is dispatched);
 // - `model:delta`: before a delta of the fake model's stream (filters `step`, `delta`);
-// - `start:begin`: before `beginRun` is asked;
-// - `start:copy`: between `beginRun`'s answer and the start's transaction (where the copies happen);
-// - `activate:before`, `activate:lost`: around the activation (`lose` drops the Workspace's answer);
-// - `lease:before`: before the Workspace is asked for a credential lease;
+// - `start:copy`: before a start copies its attachments into the folder, ahead of its transaction;
 // - `gate:decided`, `gate:committed`: in the attempt gate, once it decided to end or restart a run, before
 //   its transaction, and after the transaction and its sync (detail: the decision);
 // - `local:prepared`: an attempt's container started, hardened, verified and hydrated;
@@ -30,7 +27,7 @@
 // A conversation whose plan sets `model` to `workers-ai` gets Workers AI instead of the fake model. Never
 // part of the production Worker.
 
-import type { ConversationPorts, PortsContext, WorkspaceClient } from "../conversation/ports.ts";
+import type { ConversationPorts, PortsContext } from "../conversation/ports.ts";
 import type { ExecutorContext } from "../gateway/executor.ts";
 import type { ConversationClient, OAuthClients } from "../workspace/ports.ts";
 import type { WorkspaceDeps } from "../workspace/core.ts";
@@ -136,30 +133,6 @@ export function faultConversationPorts(base: ConversationPorts): ConversationPor
 					return outcome;
 				},
 			};
-		},
-		workspace: (context) => {
-			const inner = base.workspace(context);
-			const plan = planOf(context.ctx);
-			const client: WorkspaceClient = {
-				async beginRun(input) {
-					await plan.at("start:begin");
-					return inner.beginRun(input);
-				},
-				async activate(runId) {
-					await plan.at("activate:before");
-					const answer = await inner.activate(runId);
-					if ((await plan.at("activate:lost")) === "lose") throw LOST();
-					return answer;
-				},
-				release: (runId, status) => inner.release(runId, status),
-				conversationTouched: (conversationId, change) => inner.conversationTouched(conversationId, change),
-				async lease(connectionId, purpose) {
-					await plan.at("lease:before");
-					return inner.lease(connectionId, purpose);
-				},
-				markUnauthorized: (connectionId, generation) => inner.markUnauthorized(connectionId, generation),
-			};
-			return client;
 		},
 		folder: (context) => {
 			const inner = base.folder(context);
