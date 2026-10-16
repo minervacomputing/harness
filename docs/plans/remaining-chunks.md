@@ -46,7 +46,7 @@ The contract changes only additively from here (AGENTS.md, Frontend). A new inpu
 
 - [ ] Chunks 14 and 15 done.
 - [ ] Isolation tests with real foreign rows. Today's `IsolationTest.php` uses random ids for connections and uploads, and its before-and-after snapshot leaves out connections, conversations, messages and uploads. Seed two organizations, then have a member of A name B's real connection, upload, file, conversation and run ids on every route, and snapshot all of those tables. Each answer is 404 and nothing changes.
-- [ ] Before open sign-up, on top. Starting a run (`conversations.store`, `conversations.message`) gets a rate limit per user and per organization, since it has none today. The cost per turn is measured (open question 7).
+- [ ] Before open sign-up, on top. Starting a run (`conversations.store`, `conversations.message`) gets a rate limit per user and per organization, since it has none today. The cost per turn is measured (open question 7). A removed upload stays counted among its user's waiting uploads until its PUT's URL has expired, so a member cannot write staged objects past that limit (chunk-14d-design.md, owner question 6).
 
 ## Free the kept engine from the old paths (chunk 13a)
 
@@ -300,37 +300,35 @@ The stop is Laravel's alone, with no engine change (owner, 2026-10-16). The desi
 
 **Depends on.** Chunk 14b.
 
-The folder already reports its absolute byte total with a revision before each growth write and after its sweep (`files/store.ts`, the `ByteCounter` port), and already enforces a per-run cap of four times the folder's size. For Laravel's conversations the counter is `UNCOUNTED` and always answers yes (`files/folder.ts`).
+The engine reports a conversation's stored bytes at the end of each run, and Laravel sums them per organization and refuses uploads and turns over its limit, with no engine check (owner, 2026-10-16). The limit is an allowance for live conversations' files, not a hard bound: it can be passed by about two folders for each run in flight plus the uploads in flight. The design, what it does not cover and the units are in [chunk-14d-design.md](chunk-14d-design.md).
 
 **Build.**
 
-- [ ] Contract. `StartRun` gains an optional byte allowance. The engine deploys first.
-- [ ] Laravel reserves an upload's bytes against the organization's storage when it presigns the PUT (`Uploads.php`), since the bytes reach R2 before any start. A start moves those bytes into the run's reservation rather than counting them twice, under the organization's lock from 14b. Uploads keep their per-file, per-message and per-user limits.
-- [ ] Count what the folder counts. Retained versions, loose blobs during a copy, and sizes rounded to the folder's pages (`files/limits.ts`). Write the rule into the design before building.
-- [ ] Replace `UNCOUNTED` for Laravel's conversations with a counter that enforces the run's allowance before each write.
-- [ ] Report a conversation's retained bytes with a fact that has no run, since a sweep or a deletion happens outside one. Every fact names a run today (`contract/src/internal/facts.ts`), so this is a new envelope or a nullable run. Laravel deploys first.
-- [ ] Laravel settles the organization's storage from the latest revision it applied, never from a sum of changes.
+- [x] The rule (owner, 2026-10-16): report at the end of each run, refuse in Laravel. No reservation per upload, no byte allowance on `StartRun`, no counter enforced in the engine (`UNCOUNTED` stays), and no fact without a run. The plan's version is in Appendix B.
+- [ ] Contract. `run.finished` gains an optional `storedBytes`: the sum over the conversation's `stored` blobs of each size rounded up to whole pages (`files/limits.ts`), read in `finish`'s transaction after `publish`. Loose and doomed blobs are left out. Laravel deploys first.
+- [ ] The engine. `publish` returns the number, and `run.finished` carries it; a sum that throws leaves the field out, and the run still ends.
+- [ ] Laravel. `conversations.stored_bytes` from each `run.finished` that has the field (facts are applied in order, so the latest wins); an organization's storage is the sum over its conversations not deleted, against `organizations.storage_limit_bytes` or the default. `Runs::start`, after the conversation's lock, and `Uploads::reserve` refuse at or over the limit with a message the chat shows. `minerva:storage` shows and sets the limit. The per-folder, per-file, per-message and per-user limits stay.
 
 **You see.**
 
-- [ ] An upload that would pass the organization's storage is refused with a message, and deleting files lowers the settled total after the next sweep.
+- [ ] Over its organization's limit, a turn and an upload are refused with the storage message; deleting a conversation lowers the organization's storage at once. A turn that deletes a file leaves the number unchanged, since the earlier version keeps it.
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Platform tests for a checkpoint refused at the allowance, and two storage facts applied out of order (the higher revision wins).
+- [ ] Engine unit tests for the number (distinct contents once, pages, unnamed and loose blobs left out, a deleted file still counted) and a platform test of `run.finished`'s `storedBytes`. Pest tests for both refusals, the number applied from facts (absent keeps the last, zero replaces it), a deleted conversation not counted, and `minerva:storage`.
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
 - [ ] Regression against `main`. `test:faults` passes.
-- [ ] On staging, a script that writes past the allowance fails with the folder's full error, and the settled total matches the folder's listing.
+- [ ] On staging, a turn that writes a file of 10,485,760 bytes reports exactly that; with the limit reached, a turn and an upload are refused with the message; deleting the conversation lowers the total at once (chunk-14d-design.md, Live checks).
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. Checkpoint time for 500 files. Rule. Within 5% of `main`'s. More fails.
+- [ ] Metric. The checkpoint does not change, so the plan's checkpoint metric is not run. Instead, `publish`'s added time over 20,000 stored blobs (a Node benchmark), and the time the sum adds to `Runs::start` and `Uploads::reserve` for an organization of 10,000 conversations. Rule. Within 5 ms of the base's, at p95 for the engine and at the median for Laravel. More fails.
 
 **Review.**
 
-- [ ] opencode reviewed the design and the diff.
+- [ ] opencode reviewed the design and the diff. The design on 2026-10-17 (chunk-14d-design.md, Amendments after opencode's review).
 
 ## Retain and delete in the engine (chunk 15a)
 
@@ -545,6 +543,7 @@ Laravel already stores the account's tenant (`connections.account_tenant`, from 
 - **A reservation per call bounded by the request's UTF-8 bytes** (14b's first recommendation). Rejected by the owner (2026-10-16).
 - **Counting tokens exactly with the route's tokenizer before each call** (14b). Possible only where the tokenizer and the server's template are published, and a provider's own count is a round trip per call.
 - **Reserving each run's allowance against the organization's budget under a lock** (14b). It would make an organization's limit nearly hard, but the owner chose the simpler rule; it remains the next step if one is wanted.
+- **Reserving storage and enforcing a byte allowance in the engine** (14d's first plan). Laravel reserves an upload's bytes against the organization at presign under a lock and moves them into a byte allowance on `StartRun`; the engine replaces `UNCOUNTED` with a counter that refuses a write past it, and reports the folder's bytes after each sweep by a new fact that names no run. A nearly hard limit, at the cost of a new fact envelope, a lock, a reservation table and checks on the checkpoint path. Rejected by the owner (2026-10-16) for a number on `run.finished` and Laravel's refusals (chunk-14d-design.md).
 - **Usage only as sums on the run row.** Stripe's meters need an id per record, and a deletion cascades the run away.
 
 ## Appendix C. Risks
