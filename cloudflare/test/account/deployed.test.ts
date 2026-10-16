@@ -74,20 +74,45 @@ describe(`inside ${NAMES.app} (/api/probe)`, () => {
 		}
 	});
 
-	test("every Durable Object class answers, in the EU jurisdiction too; D1 has every migration; JSON keys", async () => {
-		// Right after a deploy (or a reset) the first probe builds six objects in fresh namespaces, which has
-		// taken longer than the 5 s Node's agent waits by default.
-		const reply = await fetchDeployed(`${site}/api/probe`, { headers: { [PROBE_HEADER]: await probeToken(instanceSecret(INSTANCE, "MINERVA_SECRET_KEY")) }, timeoutMs: 25_000 });
-		expect(reply.status).toBe(200);
-		const body = JSON.parse(reply.text) as {
-			objects: Record<string, unknown>;
-			d1Migrations: string[];
-			json: { native: number[]; parseJson: number[] };
+	test("every Durable Object class answers, in the EU jurisdiction too; D1 has every migration; JSON keys", { timeout: 120_000 }, async () => {
+		const expected = Object.fromEntries(
+			Object.entries({ conversation: CONVERSATION_MIGRATIONS, scripts: SCRIPTS_MIGRATIONS, sandbox: SANDBOX_MIGRATIONS }).map(([kind, steps]) => [kind, steps.map((step) => step.id)]),
+		);
+		// `cf deploy` returns before every location serves the new version: right after it, an object can still be
+		// built by the previous one and answer that build's schema steps, a strict prefix of these (seen in CI, a
+		// probe 30 ms after the deploy). Only an answer that is this build's or the previous one's for every object,
+		// and the previous one's for some, is asked again, for about a minute; any other is checked.
+		const previousBuild = (objects: Record<string, unknown>) => {
+			const answers = Object.entries(expected).flatMap(([kind, migrations]) =>
+				([null, "eu"] as const).map((jurisdiction) => {
+					const answer = objects[`${kind}:${jurisdiction ?? "default"}`] as { kind?: string; name?: string; jurisdiction?: string | null; migrations?: unknown } | undefined;
+					const answered = Array.isArray(answer?.migrations) ? (answer.migrations as unknown[]) : undefined;
+					const prefix = answer?.kind === kind && answer.name === NIL && answer.jurisdiction === jurisdiction && answered !== undefined && answered.length <= migrations.length && answered.every((id, index) => id === migrations[index]);
+					return { prefix, older: prefix && answered.length < migrations.length };
+				}),
+			);
+			return answers.every((answer) => answer.prefix) && answers.some((answer) => answer.older);
 		};
-		for (const kind of ["conversation", "scripts", "sandbox"]) {
+		const token = await probeToken(instanceSecret(INSTANCE, "MINERVA_SECRET_KEY"));
+		const ask = async () => {
+			// Right after a deploy (or a reset) the first probe builds six objects in fresh namespaces, which has
+			// taken longer than the 5 s Node's agent waits by default.
+			const reply = await fetchDeployed(`${site}/api/probe`, { headers: { [PROBE_HEADER]: token }, timeoutMs: 25_000 });
+			expect(reply.status).toBe(200);
+			return JSON.parse(reply.text) as {
+				objects: Record<string, unknown>;
+				d1Migrations: string[];
+				json: { native: number[]; parseJson: number[] };
+			};
+		};
+		const deadline = Date.now() + 60_000;
+		let body = await ask();
+		while (previousBuild(body.objects) && Date.now() < deadline) {
+			await new Promise((resolve) => setTimeout(resolve, 5_000));
+			body = await ask();
+		}
+		for (const [kind, migrations] of Object.entries(expected)) {
 			// Each object applies its schema steps when it is built (src/conversation/schema.ts, src/sandbox/schema.ts).
-			const steps = ({ conversation: CONVERSATION_MIGRATIONS, scripts: SCRIPTS_MIGRATIONS, sandbox: SANDBOX_MIGRATIONS } as { [kind: string]: { id: number }[] })[kind] ?? [];
-			const migrations = steps.map((step) => step.id);
 			expect(body.objects[`${kind}:default`], kind).toEqual({ kind, name: NIL, jurisdiction: null, migrations });
 			// The Sandbox is reached through ctx.exports (addressing.ts); its jurisdiction works there too.
 			expect(body.objects[`${kind}:eu`], kind).toEqual({ kind, name: NIL, jurisdiction: "eu", migrations });
