@@ -222,18 +222,18 @@ A budget is only as good as the usage it settles from. Today a model call's usag
 
 **Depends on.** Chunk 14a.
 
-**Decide first.** Settle each by a prototype on the test instance, and record the result in Appendix A.
+**Decide first.** Settle each by a prototype on the test instance, and record the result in Appendix A. The design is [chunk-14b-design.md](chunk-14b-design.md).
 
 - [x] The allowance's unit is money (owner, 2026-10-15), in micro-dollars, with a price table per route in the engine (which owns the routes), published in the catalog so Laravel shows the same prices. Tokens were rejected because models price them differently and containers and scripts are billed by time. The product may show it as credits later.
-- [ ] The reservation per call. A budget is a hard limit only if each reservation is a true upper bound, so an estimate plus an observed margin does not qualify. The window's worst case, about 136,000 tokens (a 128,000 window and an 8,192 output cap), is a bound but makes small allowances useless. The recommendation is a bound from the actual request, its UTF-8 bytes for text (a token covers at least one byte in the tokenizers the routes use, which the prototype checks for each route) plus each image's documented token cost, and the call's output cap. Check that bound against reported usage across chunk 14a's ten turns. If it never holds for a route, the owner chooses between the window's worst case and an approved overspend bounded per run.
+- [x] The rule (owner, 2026-10-16): stop when spent, with no reservation per call. Before each model call the engine compares what the run has spent so far (its settled calls at the price table's rates, its container and script time so far) with its allowance, and ends the run when it is used up. A budget is therefore not a hard limit: a run can pass its allowance by what is in flight when it crosses it, and an organization its limit by that much for each run going at once (chunk-14b-design.md, Overspend). The alternatives are in Appendix B.
 
 **Build.**
 
 - [ ] Contract. `StartRun` gains an optional `allowance` (the unit chosen above). The engine deploys first.
-- [ ] Laravel. A budget per organization and a reservation per run, taken in `Runs::start`'s transaction. `Runs::start` locks the workspace and only reads the organization today, so starts in two workspaces of one organization could overshoot together. Lock the organization's budget row too, and add it to `turn.md`'s lock order. A start over budget is refused before it is registered, with a message the chat shows.
-- [ ] The engine admits each model call against the allowance between `host.begin` and `host.counted` in `model/provider.ts`, reserving the call's amount and settling it from the reported usage. A call that would pass the allowance is refused, and the run ends with a new terminal reason the chat shows ("This conversation reached its budget").
-- [ ] Container and script time draw on the same allowance at a rate per second from the price table.
-- [ ] Laravel releases the rest of a reservation only from `run.settled` (14a), never from `run.finished` or a terminal status alone.
+- [ ] Laravel. A limit per organization, and its spend, the sum of its runs' settled charges. A start is refused before it is registered when the spend has reached the limit, with a message the chat shows; otherwise it passes what is left as the run's allowance. No new lock: under this rule a lock would not bound more, since spend changes only when a run settles (chunk-14b-design.md, Laravel).
+- [ ] The engine checks each model call at its record (14a's admission point, `recordModelCall`): when what the run has spent so far has reached its allowance, the call is refused, and the run ends with a new terminal reason the chat shows ("This conversation reached its budget"). Each call is charged from its reported usage, a refused one nothing, an unmetered one the tokens 14a records for it.
+- [ ] Container and script time draw on the same allowance at a rate from the price table, counted so far at each check and settled from 14a's spans and script records.
+- [ ] Laravel adds a run's spend only from `run.settled` (14a), never from `run.finished` or a terminal status alone.
 
 **You see.**
 
@@ -241,13 +241,13 @@ A budget is only as good as the usage it settles from. Today a model call's usag
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Engine unit tests for admission at, under and over the allowance, and for an unmetered call settled at its worst case. Run `pnpm test:unit`.
-- [ ] Laravel's tests against a real Postgres start two runs concurrently, in different workspaces of one organization, whose reservations together pass the budget. One is refused.
+- [ ] Engine unit tests for admission at, under and over the allowance, and for an unmetered call charged at the tokens 14a records for it. Run `pnpm test:unit`.
+- [ ] Laravel's tests against a real Postgres start two runs concurrently, in different workspaces of one organization. Both are admitted with the same allowance (the overshoot the rule allows), and a start after their settled spend reached the limit is refused.
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
 - [ ] Regression against `main`. `test:faults` passes with a large allowance.
-- [ ] On staging, a run with an allowance below one turn's cost stops at the budget, and its reservation is released after `run.settled`.
+- [ ] On staging, a run with an allowance below one turn's cost stops at the budget, and its spend is added to the organization's after `run.settled`.
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
@@ -527,14 +527,18 @@ Laravel already stores the account's tenant (`connections.account_tenant`, from 
 
 - **Read in the code on 2026-10-15**, for this plan. The engine's old paths and what the internal path borrows from them. Its usage, admission, storage and retention. The app's run registry, facts, deletion, uploads, tenants and isolation tests.
 - **opencode's review of the draft**, 2026-10-15, each finding checked against the code before folding in. 13b deleted what `deploy.ts` and `reset.ts` still build from, and 13c missed `FaultMailbox`. 14a recorded a call only after its answer, so an eviction mid-call left nothing to settle, and released budgets on `run.finished`, which also starts the next turn (now `run.settled`). 14b's estimate plus a margin was no bound, and its lock was the workspace's, not the organization's. 14c had no lock to order a start against the stop, and an unsafe cache. 14d left uploads outside the organization's storage until a start. 15c could not rebuild a conversation created after the restore point, and assumed backups that are not turned on. The deletion diagnosis missed that a soft-deleted conversation still applies facts. 17 gave the policy to starts only, not to the grant editor.
-- **Unproven.** The per-call bound for each route (14b), the cost per turn (14a), pi's table growth (15a), the bucket lock (15c), and whether the faults build can host a fake Laravel (13a).
+- **The budget's rule** (14b), 2026-10-16. A prototype of a per-call bound from the request's bytes read Workers AI's `glm-5.3-flash` template and tokenizer configuration and found a bound per term, subject to calibration; OpenAI's and Anthropic's formats are unpublished, so no byte bound holds there. Staging's first ten calls had 4.47 to 4.50 request bytes per reported input token. The owner then chose to stop when spent, with no per-call bound (chunk-14b-design.md).
+- **Unproven.** The cost per turn (14a), pi's table growth (15a), the bucket lock (15c), and whether the faults build can host a fake Laravel (13a).
 
 ## Appendix B. Alternatives rejected
 
 - **Deleting the old paths in one chunk.** `test:faults` reaches every real-platform turn through the Workspace object, so deleting it first would leave the engine with no end-to-end check on the account.
 - **Resetting `minerva-cf-staging` with production.** It holds Laravel's staging conversations. A tombstone deploy retires the class without losing them.
 - **The engine finding active runs for the emergency stop.** `recovery_runs` has no status, and Laravel's registry already knows every run that is starting or running.
-- **Reserving each model call at its full worst case.** About 136,000 tokens a call makes any allowance small enough to matter useless.
+- **Reserving each model call at its full worst case.** About 136,000 tokens a call makes any allowance small enough to matter useless; at the models' real windows, about $0.16 a call on production's and $2 on staging's.
+- **A reservation per call bounded by the request's UTF-8 bytes** (14b's first recommendation). Rejected by the owner (2026-10-16).
+- **Counting tokens exactly with the route's tokenizer before each call** (14b). Possible only where the tokenizer and the server's template are published, and a provider's own count is a round trip per call.
+- **Reserving each run's allowance against the organization's budget under a lock** (14b). It would make an organization's limit nearly hard, but the owner chose the simpler rule; it remains the next step if one is wanted.
 - **Usage only as sums on the run row.** Stripe's meters need an id per record, and a deletion cascades the run away.
 
 ## Appendix C. Risks
