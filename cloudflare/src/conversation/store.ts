@@ -154,7 +154,7 @@ interface CallRecordRow {
 	request_bytes: number | null;
 	created_at: number;
 	outcome: CallSettlement["outcome"] | null;
-	cause: "no_usage" | "stopped" | "failed" | "lost" | null;
+	cause: Extract<CallSettlement, { outcome: "unmetered" }>["cause"] | null;
 	input_tokens: number | null;
 	output_tokens: number | null;
 	cached_tokens: number | null;
@@ -280,7 +280,7 @@ export class RunStore {
 	/** Resolved, and cleared, when the last asynchronous transaction settles (`outside`). */
 	#drained: PromiseWithResolvers<void> | null = null;
 	readonly now: () => EpochMs;
-	/** This object instance: the calls it records are its own to settle. */
+	/** This object instance: the calls it records are its own to settle (`settleLost`), and its stream's sockets are tagged with it. */
 	readonly instance = crypto.randomUUID();
 
 	constructor(storage: DurableObjectStorage, now: () => EpochMs = Date.now) {
@@ -680,6 +680,19 @@ export class RunStore {
 			if (settlement.outcome === "reported") this.#sql.exec("UPDATE runs SET input_tokens = input_tokens + ?, output_tokens = output_tokens + ? WHERE id = ?", tokens.input, tokens.output, runId);
 			else if (settlement.outcome === "unmetered") this.#sql.exec("UPDATE runs SET unmetered_model_calls = unmetered_model_calls + 1 WHERE id = ?", runId);
 			this.#fact(runId, callFact(record, settlement, tokens));
+		});
+	}
+
+	/**
+	 * The restart rule: every call record another instance left open settles unmetered, cause `lost`, at its reservation.
+	 * That instance is gone (a Durable Object has one live instance, and a reset ends the old one's work), so nothing else
+	 * would settle it; this instance's own records are its streams' to settle. Answers how many it settled.
+	 */
+	settleLost(): number {
+		return this.write(() => {
+			const open = this.#sql.exec<{ run_id: RunId; call: string }>("SELECT run_id, call FROM call_records WHERE outcome IS NULL AND instance != ?", this.instance).toArray();
+			for (const { run_id, call } of open) this.settleModelCall(run_id, call, { outcome: "unmetered", cause: "lost", requestBytes: null });
+			return open.length;
 		});
 	}
 

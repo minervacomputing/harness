@@ -287,6 +287,39 @@ describe("model call settlements", () => {
 		// refused record counted nothing.
 		expect(after.counts).toEqual({ records: 2, model_calls: 2, unmetered_model_calls: 1 });
 	});
+
+	test("the restart rule settles every call another instance left open as lost, once, and none of its own", async () => {
+		const start = held(fake, startOf(scope(), { message: { id: uuid7(), content: SLOW, attachments: [] } }));
+		await commands.startRun(start);
+		await until(() => runStatus(start), (status) => status === "running");
+		const fence = { runId: start.run, attempt: 1 };
+		const request = { provider, model: "fake-1", reserved: { input: 10, output: 5 } };
+		// Two instances' records, as far as the rule can tell: `mine` stands for the instance that recovers.
+		let mine: RunStore | undefined;
+		const [gone, own] = await runInDurableObject(objectOf(start), (_instance, state) => {
+			mine = new RunStore(state.storage);
+			return [new RunStore(state.storage).recordModelCall(fence, request), mine.recordModelCall(fence, request)];
+		});
+		await commands.cancelRun({ scope: start.scope, conversation: start.conversation, run: start.run, reason: "cancelled" });
+		const open = () => runInDurableObject(objectOf(start), (_instance, state) => state.storage.sql.exec<{ call: string }>("SELECT call FROM call_records WHERE outcome IS NULL ORDER BY call").toArray().map((row) => row.call));
+		await until(open, (calls) => calls.length === 2);
+		const after = await runInDurableObject(objectOf(start), (_instance, state) => {
+			const sql = state.storage.sql;
+			const before = sql.exec<{ count: number }>("SELECT count(*) AS count FROM facts").one().count;
+			const settled = [mine?.settleLost(), mine?.settleLost()];
+			return {
+				settled,
+				written: sql.exec<{ fact: string }>("SELECT fact FROM facts WHERE seq > ? ORDER BY seq", before).toArray().map((row) => JSON.parse(row.fact) as Fact),
+				records: sql.exec("SELECT call, outcome, cause, input_tokens, output_tokens, request_bytes FROM call_records WHERE run_id = ? AND call IN (?, ?) ORDER BY call = ?", start.run, gone, own, own).toArray(),
+			};
+		});
+		expect(after.settled).toEqual([1, 0]);
+		expect(after.written.map((fact) => [fact.type, fact.data])).toEqual([["run.unmetered", { call: gone, provider, model: "fake-1", cause: "lost", inputTokens: 10, outputTokens: 5, estimated: true }]]);
+		expect(after.records).toEqual([
+			{ call: gone, outcome: "unmetered", cause: "lost", input_tokens: 10, output_tokens: 5, request_bytes: null },
+			{ call: own, outcome: null, cause: null, input_tokens: null, output_tokens: null, request_bytes: null },
+		]);
+	});
 });
 
 describe("replayFacts", () => {

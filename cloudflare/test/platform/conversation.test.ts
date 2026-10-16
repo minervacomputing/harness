@@ -539,7 +539,8 @@ describe("events", () => {
 						};
 						append("phase", { text: "Missed one" });
 						append("phase", { text: "Missed two" });
-						const nextStream = new RunStream(state, () => new RunStore(state.storage));
+						const nextStore = new RunStore(state.storage);
+						const nextStream = new RunStream(state, () => nextStore, nextStore.instance);
 						if (variant === "its start") {
 							append("status", { status: "completed" }, "completed");
 							nextStream.resetInherited();

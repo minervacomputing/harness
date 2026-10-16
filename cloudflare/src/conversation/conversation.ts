@@ -217,7 +217,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		migrate(ctx.storage, MIGRATIONS);
 		this.#store = new RunStore(ctx.storage);
 		this.#store.watchTransactions();
-		this.#stream = new RunStream(ctx, () => this.#store);
+		this.#stream = new RunStream(ctx, () => this.#store, this.#store.instance);
 		this.#ports = PORTS.factory(env);
 		this.#store.listen(
 			{
@@ -531,12 +531,14 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * After a restart of the object: containers left, a run left `queued`, facts not delivered. A start stores its run
+	 * After a restart of the object: model calls an earlier instance left open, containers left, a run left `queued`, facts
+	 * not delivered. The calls settle as `lost` (store.ts `settleLost`), outside pi's transactions. A start stores its run
 	 * active, so only the previous version left runs `queued` (it activated them after the start's write, and a reset could
 	 * lose that); the gate has already ended one of a conversation with no organization. Such a run is activated here, and
 	 * its loop started.
 	 */
 	async #recover(): Promise<void> {
+		await this.#store.outside(() => this.#store.settleLost());
 		const again = await this.#cleanSandbox();
 		if (again) this.#push({ id: "sandbox", fn: "sandbox", time: again.rescheduleAt });
 		const run = this.#store.activeRun();
@@ -1270,7 +1272,11 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				return { fence, signal: this.#controller(run.id).signal };
 			},
 			// Outside pi's transactions (store.ts `outside`): a call that was sent, and its cost, do not roll back.
-			record: (fence, request) => store.outside(() => store.recordModelCall(fence, request)),
+			record: async (fence, request) => {
+				const call = await store.outside(() => store.recordModelCall(fence, request));
+				if (call !== null) await this.#untilHeard("a recorded model call could not be sent", () => this.#point("model:recorded", call));
+				return call;
+			},
 			current: (fence) => store.isCurrent(fence),
 			deltas: (fence, call, segments) => {
 				store.write(() => {
@@ -1281,18 +1287,28 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				// A key without an escape parses right with JSON.parse; only text with a backslash is kept.
 				if (text.includes("\\")) store.saveArgumentText(fence.runId, callId, text);
 			},
-			settle: async (fence, call, settlement) => {
-				try {
+			settle: (fence, call, settlement) =>
+				this.#untilHeard("a model call could not be settled", async () => {
+					await this.#point("model:settle", call);
 					await store.outside(() => store.settleModelCall(fence.runId, call, settlement));
-				} catch (error) {
-					// pi never hears an answer whose settlement was not written; the next instance settles the call.
-					this.#log("a model call could not be settled", error);
-					this.#reset("A model call could not be settled.", true);
-					throw error;
-				}
-			},
+					await this.#point("model:settled", call);
+				}),
 			log: (message) => this.#log(message),
 		};
+	}
+
+	/**
+	 * A step between a model call's record and pi hearing its answer. One that throws resets the object: pi never hears the
+	 * answer, and the next instance settles the call as `lost` if it is still open (store.ts `settleLost`).
+	 */
+	async #untilHeard(failure: string, step: () => Promise<void>): Promise<void> {
+		try {
+			await step();
+		} catch (error) {
+			this.#log(failure, error);
+			this.#reset(`${failure}.`, true);
+			throw error;
+		}
 	}
 
 	// Phases: emitted only when they change, fenced by the attempt.

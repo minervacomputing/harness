@@ -1,6 +1,6 @@
 # Chunk 14a design: make usage exact
 
-Status is accepted, as of 2026-10-16: the owner accepted the four owner questions with their defaults (Owner questions, below). It settles the choices that chunk 14a of [remaining-chunks.md](remaining-chunks.md) leaves open, splits the work into units one fresh agent each can finish, and lists the steps that wait for the owner. Line numbers are at `c4e0be7` (harness) and `9b9ab74` (`minervacomputing/app`, "the app" below). Units 1 to 3 are implemented; the probe's baseline (Perf probe and rule) is not yet measured.
+Status is accepted, as of 2026-10-16: the owner accepted the four owner questions with their defaults (Owner questions, below). It settles the choices that chunk 14a of [remaining-chunks.md](remaining-chunks.md) leaves open, splits the work into units one fresh agent each can finish, and lists the steps that wait for the owner. Line numbers are at `c4e0be7` (harness) and `9b9ab74` (`minervacomputing/app`, "the app" below). Units 1 to 5 are implemented, and the probe's baseline was measured at unit 3's commit (unit 9 records it under Perf probe and rule).
 
 ## What the code does today
 

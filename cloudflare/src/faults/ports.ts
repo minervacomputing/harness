@@ -7,6 +7,9 @@
 // - `provider:write:applied`: a write the provider applied, before its response reaches the executor
 //   (`lose` drops the response as a lost connection would; `abort` crashes while it is dispatched);
 // - `model:delta`: before a delta of the fake model's stream (filters `step`, `delta`);
+// - `model:recorded`: a model call recorded, before its request is sent; `model:settle`: the upstream's terminal event
+//   held, before the call's settlement; `model:settled`: the call settled, before pi hears its answer (detail: the call's
+//   id). A `throw` at any of them resets the object, as a failed settlement does;
 // - `start:copy`: before a start copies its attachments into the folder, ahead of its transaction;
 // - `gate:decided`, `gate:committed`: in the attempt gate, once it decided to end or restart a run, before
 //   its transaction, and after the transaction and its sync (detail: the decision);

@@ -14,8 +14,8 @@
 //
 // Only the instance that accepted a socket knows it sent every event committed since: hibernatable sockets
 // outlive their instance, and one that died may have committed events it never sent. Each socket is tagged
-// with the instance that accepted it; a later instance never writes to one it inherited, not a frame and not
-// `end`, but closes it with 1013 the first time it would (and every one when it starts), so the client
+// with the instance that accepted it (the store's `instance`); a later instance never writes to one it inherited, not a
+// frame and not `end`, but closes it with 1013 the first time it would (and every one when it starts), so the client
 // reconnects from its Last-Event-ID and gets the backlog, then `end`, from the new socket.
 
 import type { LifecycleCapability } from "agents/lifecycle";
@@ -84,11 +84,12 @@ export class RunStream implements Pick<LifecycleCapability, "claims"> {
 	readonly #ctx: DurableObjectState;
 	readonly #store: () => RunStore;
 	/** This instance's tag on the sockets it accepts: only those were sent every event since. */
-	readonly #instance = `${INSTANCE_TAG}${crypto.randomUUID()}`;
+	readonly #instance: string;
 
-	constructor(ctx: DurableObjectState, store: () => RunStore) {
+	constructor(ctx: DurableObjectState, store: () => RunStore, instance: string) {
 		this.#ctx = ctx;
 		this.#store = store;
+		this.#instance = `${INSTANCE_TAG}${instance}`;
 	}
 
 	/** Every upgrade is ours: the stream's, or a 404, so the Agent's own WebSockets never accept a socket here. */

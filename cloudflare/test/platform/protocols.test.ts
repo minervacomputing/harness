@@ -395,6 +395,35 @@ function reads(requests: { method: string; path: string }[]): number {
 	return requests.filter((request) => request.method === "GET" && request.path === "/folders/inbox/notes").length;
 }
 
+/**
+ * The run's model call records in the order they were made, its settlement facts (type, call, cause or input tokens,
+ * estimated), and its sums beside the records' own.
+ */
+function callsOf(w: World, runId: RunId) {
+	return runInDurableObject(w.stub, (_instance, state) => {
+		const sql = state.storage.sql;
+		const records = sql
+			.exec<{ call: string; attempt: number; outcome: string | null; cause: string | null }>("SELECT call, attempt, outcome, cause FROM call_records WHERE run_id = ? ORDER BY attempt, created_at", runId)
+			.toArray();
+		const settlements = sql
+			.exec<{ fact: string }>("SELECT fact FROM facts WHERE run_id = ? ORDER BY seq", runId)
+			.toArray()
+			.map((row) => JSON.parse(row.fact) as { type: string; data: { call: string; cause?: string; inputTokens: number; estimated?: boolean } })
+			.filter((fact) => fact.type === "run.usage" || fact.type === "run.unmetered")
+			.map(({ type, data }) => [type, type === "run.usage" ? { call: data.call, inputTokens: data.inputTokens } : { call: data.call, cause: data.cause, estimated: data.estimated }]);
+		const sums = sql
+			.exec(
+				`SELECT model_calls, (SELECT count(*) FROM call_records WHERE run_id = ?1) AS records,
+					input_tokens, (SELECT coalesce(sum(input_tokens), 0) FROM call_records WHERE run_id = ?1 AND outcome = 'reported') AS reported_input,
+					unmetered_model_calls, (SELECT count(*) FROM call_records WHERE run_id = ?1 AND outcome = 'unmetered') AS unmetered
+				FROM runs WHERE id = ?1`,
+				runId,
+			)
+			.one();
+		return { records, settlements, sums };
+	});
+}
+
 describe("attempts", () => {
 	test("a crash in a safe tool: the read runs again in attempt 2, under the same call", async () => {
 		const w = await world({ faults: [{ point: "tool:after", mode: "abort", tool: LIST }] });
@@ -445,6 +474,92 @@ describe("attempts", () => {
 		const last = events.findLast((event) => event.type === "text_delta");
 		expect(last?.data).toMatchObject({ text: expect.any(String), call: expect.stringMatching(/^[0-9a-f]{8}$/) });
 		expect(events.at(-2)?.data).toMatchObject({ call: (last?.data as { call?: string } | undefined)?.call });
+	});
+
+	describe("a reset between a model call's record and pi hearing its answer", () => {
+		const TURN: FakeTurn = { text: "Settled once.", usage: { input: 11, output: 4 } };
+
+		test.each([
+			["model:recorded", "abort"],
+			["model:settle", "abort"],
+			["model:settle", "throw"],
+		] as const)("at %s (%s): the next instance settles the open call as lost, and attempt 2's call is a new one", async (point, mode) => {
+			const w = await world({ faults: [{ point, mode }] });
+			const runId = await post(w, [TURN]);
+			expect((await settled(w, runId)).status).toBe("completed");
+			const events = await eventsOf(w, runId);
+			expect(restarts(events)).toEqual([2]);
+			const { records, settlements, sums } = await until(() => callsOf(w, runId), (calls) => calls.records.every((record) => record.outcome !== null));
+			const [lost, next] = records.map((record) => record.call);
+			expect(records).toEqual([
+				{ call: lost, attempt: 1, outcome: "unmetered", cause: "lost" },
+				{ call: next, attempt: 2, outcome: "reported", cause: null },
+			]);
+			expect(next).not.toBe(lost);
+			expect(settlements).toEqual([
+				["run.unmetered", { call: lost, cause: "lost", estimated: true }],
+				["run.usage", { call: next, inputTokens: 11 }],
+			]);
+			expect(sums).toEqual({ model_calls: 2, records: 2, input_tokens: 11, reported_input: 11, unmetered_model_calls: 1, unmetered: 1 });
+			// pi heard only attempt 2's answer.
+			expect(events.filter((event) => event.type === "message").map((event) => (event.data as { call?: string }).call)).toEqual([next]);
+			expect((await w.stub.faultFired()).map((entry) => [entry.point, entry.mode, entry.detail])).toEqual([[point, mode, lost]]);
+		});
+
+		test("at model:settled with nothing synced: whatever survived the crash settles once, and the sums follow the records", async () => {
+			// The crash may lose the settlement, or the record too: the fake sends nothing the output gate would hold for it, and
+			// in local workerd the record is lost with the rest.
+			const w = await world({ faults: [{ point: "model:settled", mode: "abort", unsynced: true }] });
+			const runId = await post(w, [TURN]);
+			expect((await settled(w, runId)).status).toBe("completed");
+			expect(restarts(await eventsOf(w, runId))).toEqual([2]);
+			const { records, settlements, sums } = await until(() => callsOf(w, runId), (calls) => calls.records.every((record) => record.outcome !== null));
+			const next = records.at(-1);
+			expect(next).toMatchObject({ attempt: 2, outcome: "reported" });
+			expect(records.length === 1 || records[0]?.outcome === "reported" || records[0]?.cause === "lost").toBe(true);
+			expect(new Set(records.map((record) => record.call)).size).toBe(records.length);
+			expect(settlements.map(([, data]) => (data as { call: string }).call)).toEqual(records.map((record) => record.call));
+			expect(sums.model_calls).toBe(sums.records);
+			expect(sums.input_tokens).toBe(sums.reported_input);
+			expect(sums.unmetered_model_calls).toBe(sums.unmetered);
+		});
+
+		test("a call held at model:settle when its run is cancelled settles as lost after the object resets", async () => {
+			const w = await world({ faults: [{ point: "model:settle", mode: "hold" }] });
+			const runId = await post(w, [TURN]);
+			await reached(() => w.stub.faultFired(), "model:settle");
+			await cancelOf(w, runId);
+			expect((await settled(w, runId)).status).toBe("cancelled");
+			expect((await callsOf(w, runId)).records).toEqual([expect.objectContaining({ attempt: 1, outcome: null })]);
+			await abortAllDurableObjects();
+			await wake(w);
+			const { records, settlements, sums } = await until(() => callsOf(w, runId), (calls) => calls.records.every((record) => record.outcome !== null));
+			const [lost] = records.map((record) => record.call);
+			expect(records).toEqual([{ call: lost, attempt: 1, outcome: "unmetered", cause: "lost" }]);
+			expect(settlements).toEqual([["run.unmetered", { call: lost, cause: "lost", estimated: true }]]);
+			expect(sums).toEqual({ model_calls: 1, records: 1, input_tokens: 0, reported_input: 0, unmetered_model_calls: 1, unmetered: 1 });
+		});
+
+		test("at model:settled (abort): the call stays settled once as reported, and pi asks again under a new id", async () => {
+			const w = await world({ faults: [{ point: "model:settled", mode: "abort" }] });
+			const runId = await post(w, [TURN]);
+			expect((await settled(w, runId)).status).toBe("completed");
+			expect(restarts(await eventsOf(w, runId))).toEqual([2]);
+			// The next instance's restart rule ran, and left the settled call as it was.
+			await wake(w);
+			const { records, settlements, sums } = await callsOf(w, runId);
+			const [first, next] = records.map((record) => record.call);
+			expect(records).toEqual([
+				{ call: first, attempt: 1, outcome: "reported", cause: null },
+				{ call: next, attempt: 2, outcome: "reported", cause: null },
+			]);
+			expect(next).not.toBe(first);
+			expect(settlements).toEqual([
+				["run.usage", { call: first, inputTokens: 11 }],
+				["run.usage", { call: next, inputTokens: 11 }],
+			]);
+			expect(sums).toEqual({ model_calls: 2, records: 2, input_tokens: 22, reported_input: 22, unmetered_model_calls: 0, unmetered: 0 });
+		});
 	});
 
 	test("resets until the cap: the third attempt's death ends the run as worker_exited, and pi runs nothing after", async () => {
