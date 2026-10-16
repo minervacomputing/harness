@@ -115,7 +115,7 @@ No new fact type and no new required input, and Laravel ignores the new fields u
 
 **The limit.** `organizations.budget_micros`, nullable; null means the default from config (`minerva.budget.limit_micros`, from `MINERVA_BUDGET_LIMIT_MICROS`). `php artisan minerva:budget {organization} {--limit=}` sets it until chunk 16. It has no period: billing brings periods.
 
-**Spend is added from `run.settled`.** `run_settlements` gains `charged_micros` (nullable) and `prices`; `usage_records` gains `cost_micros` and `prices`. The organization's spend is `SUM(run_settlements.charged_micros)` over its rows, which the `(organization_id, at)` index covers. No counter, no release: a settlement row is inserted once (`Facts::account`), live, soft-deleted or gone alike, so spend counts every settled run once and cannot leak. A run the engine never accepted has no settlement and spent nothing.
+**Spend is added from `run.settled`.** `run_settlements` gains `charged_micros` (nullable) and `prices`; `usage_records` gains `cost_micros` and `prices`. The organization's spend is `SUM(run_settlements.charged_micros)` over its rows settled in the current UTC month (owner question 2), which the `(organization_id, at)` index covers. No counter, no release: a settlement row is inserted once (`Facts::account`), live, soft-deleted or gone alike, so spend counts every settled run once and cannot leak. A run the engine never accepted has no settlement and spent nothing.
 
 The engine deploys first, so the app's staging and production acknowledge money-bearing facts before they have the columns: those facts are applied and their money dropped. Each accounting row keeps its fact's canonical text (`fact`), so the app's migration fills `charged_micros`, `cost_micros` and `prices` from it, and so does `php artisan minerva:usage --backfill`, idempotently, for facts applied between the migration and the code that reads them. Rows whose fact has no money (runs settled before the engine's deploy) stay null and count as nothing: they ran with no allowance.
 
@@ -187,7 +187,7 @@ Head minus baseline at p95 is +34.95 ms in the first pair and +2 ms in the secon
 - **Unmetered calls are charged by rule.** 23,296 µ$ on production may be far above or below what the provider billed.
 - **A rollback of the engine** to a build without budgets, while the app sends allowances, lets runs spend without a check; their settlements then count at their allowance. Roll back the app first.
 - **`container_since` overcounts** a container that died unnoticed, which can stop a run early. The settlement uses the spans.
-- **Lifetime limits** block an organization once spent until the operator raises it, by design until chunk 16.
+- **Monthly limits** block an organization that has spent its month's limit until the 1st (UTC) or until the operator raises it, by design until chunk 16. A run counts in the month it settles, so one started late in a month can land in the next.
 - **Spend is a sum.** It reads every settlement of the organization at each start; at 14b's volumes that is cheap. Chunk 16 can keep a rolled-up total if it is not.
 
 ## Owner questions
@@ -195,7 +195,7 @@ Head minus baseline at p95 is +34.95 ms in the first pair and +2 ms in the secon
 Answered by the owner on 2026-10-16.
 
 1. **The prices.** List prices with no included allowances. The model's are read from models.dev at deploy for every provider (The price table); container and script time are in code from Cloudflare's pricing pages. The proposal had been a table in code, confirmed by the owner against each provider's page.
-2. **The default limit.** Accepted: $5 (5,000,000 µ$) per organization for its lifetime, from config, changed with `minerva:budget`. A run is given everything left.
+2. **The default limit.** $5 (5,000,000 µ$) per organization per calendar month in UTC, from config, changed with `minerva:budget` (the owner chose monthly over the proposed lifetime limit). Spend is the sum of the settlements whose `at` falls in the current month. A run is given what is left of the month.
 3. **A cap per run.** Accepted: none (a run gets what is left). The alternative, `min(what is left, a cap)`, stays available if an organization's overshoot matters.
 4. **The perf rule's measure.** Accepted: 14a's probe at p95 measures the admission's added time; if the baselines are too noisy to resolve 5 ms, a benchmark of the check's change in Node instead.
 
