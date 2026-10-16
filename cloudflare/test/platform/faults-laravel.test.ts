@@ -8,7 +8,7 @@ import type { Fact, StartRun } from "@minerva/contract/internal";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { FACT_DELIVERY } from "../../src/conversation/facts.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
-import type { FakeConnection } from "../../src/faults/laravel.ts";
+import type { FakeConnection, LaravelView } from "../../src/faults/laravel.ts";
 import { faultConversationPorts, providerOf } from "../../src/faults/ports.ts";
 import { heldRun, notesLease } from "../../src/faults/world.ts";
 import { LaravelUnreachable, laravelClient } from "../../src/laravel/client.ts";
@@ -56,10 +56,17 @@ async function notesRun(lease: Partial<FakeConnection> = {}) {
 	return { provider, start, connectionId };
 }
 
-/** The fake's view of the conversation once it holds the run's `run.finished`, through a new stub: a reset breaks the old ones. */
+/** The fake's view of the conversation once it holds the run's `run.finished`, through a new stub: a reset breaks the old ones,
+ * and a read the reset cuts short fails with the fault's reason, so it counts as nothing held yet. */
 function finished(start: StartRun) {
 	return until(
-		() => providerOf(env, start.scope.workspace).laravelState(start.conversation),
+		() =>
+			providerOf(env, start.scope.workspace)
+				.laravelState(start.conversation)
+				.catch((error: unknown): LaravelView => {
+					if (error instanceof Error && error.message.startsWith("fault: ")) return { facts: [], calls: [], connections: {} };
+					throw error;
+				}),
 		(state) => state.facts.some((fact) => fact.type === "run.finished" && fact.run === start.run),
 	);
 }
