@@ -88,3 +88,64 @@ opencode (`plan` agent) reviewed this design against `a5cbd05`. Each finding bel
 6. **The sanitizing case is ported too.** `contract.test.ts:379` ("only our refusals pass as declared") tests `internal/handler.ts`'s error mapping, which stays. Unit 2 ports it beside the body-reader cases, through the same test contract with a `failing` procedure.
 7. **The stream is probed at `/stream/v1`.** The run is in the token, and a suffixed path is `NOT_FOUND` (`src/stream/route.ts:1`). Unit 9 records `GET /stream/v1` with no token and with a malformed one, each with an `Origin` of `MINERVA_LARAVEL_URL`'s value read from the instance's `vars.env` and not printed, and compares status, body and CORS headers before and after. The authenticated stream is `test:faults`'s run-stream cases, which 13a moved onto Laravel's commands.
 8. **Startup must not grow.** remaining-chunks.md says neither metric grows. The head's median of five interleaved runs must not be above `main`'s median. If it is, five more pairs run; a head median still above `main`'s is a regression that the unit explains and fixes before the box is ticked, not a noise allowance.
+
+## Verification
+
+Unit 9 ran on `minerva-cf-test` and on one local machine on 2026-10-16, at `9e49e8f` for the head and `a5cbd05` for `main`. `main` was built from a detached worktree of its own with its own `pnpm install`. After each `deploy:test`, the probes and suites waited until ten requests in a row, each on a new connection and two seconds apart, got the deployed side's answer from `GET /api/health`, which is 200 at `main` and 404 at the head. Both waits took 21 s, and every one of their requests already got the deployed side's answer. The turn on Laravel's staging did not run.
+
+**Probes.** Each request below went to the test instance without credentials, once after the deploy of `main` and once after the deploy of the head. The comparison covers the status, the body and every response header except the edge's per-request ones (`date`, `cf-ray`, `server`, `alt-svc`, `nel`, `report-to`, `server-timing`, `cf-cache-status`). A row marked same matched in all three.
+
+| Request | `main` | Head | |
+|---|---|---|---|
+| `GET /` | 200, the SPA shell | 404 `NOT_FOUND` | changed by design |
+| `GET /w/<id>/chat` | 200, the SPA shell | 404 `NOT_FOUND` | changed by design |
+| `GET /assets/index.js` | 404, plain text `Not Found` | 404 `NOT_FOUND` | changed by design |
+| `GET /api/health` | 200 `{"ok":true}` | 404 `NOT_FOUND` | changed by design |
+| `GET /api/workspaces` | 404 `NOT_FOUND` | 404 `NOT_FOUND` | same |
+| `POST /api/auth/sign-in/email` from another site | 400 `VALIDATION_ERROR` | 404 `NOT_FOUND` | changed by design |
+| `POST /api/no-such-route` | 404 `NOT_FOUND` | 404 `NOT_FOUND` | same |
+| `GET /api/probe`, no token and a wrong one | 404 `NOT_FOUND` | 404 `NOT_FOUND` | same |
+| `GET /api/faults/internal/v1/catalog`, no token | 404 `NOT_FOUND` | 404 `NOT_FOUND` | same |
+| `GET /internal/v1/catalog`, no assertion and a malformed one | 401 `UNAUTHORIZED` | 401 `UNAUTHORIZED` | same |
+| `POST /internal/v1/runs/start`, no assertion | 401 `UNAUTHORIZED` | 401 `UNAUTHORIZED` | same |
+| `GET /stream/v1`, five cases | 404 `NOT_FOUND` | 404 `NOT_FOUND` | same |
+| `OPTIONS /stream/v1`, a preflight from Laravel's origin | 404 `NOT_FOUND` | 404 `NOT_FOUND` | same |
+| `GET /stream/v1/<id>` | 404 `NOT_FOUND` | 404 `NOT_FOUND` | same |
+
+The five `GET /stream/v1` cases are no token, a malformed bearer token and a `Basic` header, each with `MINERVA_LARAVEL_URL`'s origin, then no token with another origin and with none. Every 404 and 401 at the head carries the security headers and `cache-control: no-store`. At `main`, the SPA shell and the asset 404 carried the security headers too, so the only header changes on the changed rows are `content-type`, `cache-control` and `content-length`.
+
+The test instance has no `MINERVA_STREAM_KEYS` in its `secrets.env`, so its run stream is off and answers 404 on both sides. The same stream requests therefore also ran against `pnpm dev:offline` at each commit, on one port in turn, with the internal API on (placeholder settings in the shell, `MINERVA_LARAVEL_URL` of `https://laravel.example`) and a throwaway stream key appended to that checkout's `.dev.vars` for the run. Both sides gave the same status, body, `Access-Control-Allow-Origin` and `Vary` on every case. The five requests without a valid token answer 401 `UNAUTHORIZED` with `Vary: Origin`, and `Access-Control-Allow-Origin` names Laravel's origin only when the request came from it. The suffixed path answers 404 `NOT_FOUND`. In the dev server, Vite's own CORS middleware answers `OPTIONS` before the Worker sees it, on both sides, so the Worker's preflight was not compared locally. No account suite reads `/stream/v1`. The authenticated stream is covered by the platform suite's `facts.test.ts`, which ran green in every unit's checks.
+
+**Regression.** `test:deployed` passed all 6 cases in each of 3 runs at the head (7.2 to 10.3 s). `main`'s suite has 11 cases. Units 1 to 3 merged and dropped these:
+
+- "/api/health answers with the security headers" and "an unsafe request from another site, or from nowhere, is refused before any route" became "the web API's former paths are 404 NOT_FOUND with the security headers".
+- "/ and client routes serve the SPA shell with the asset headers", "a missing asset is a 404 nothing caches, not the app shell" and "hashed assets are immutable" became "/, a former client route and a former asset are 404 NOT_FOUND with the security headers".
+- "are off for both Workers" became "are off for the app".
+- "no version of the download Worker answers at its preview origin" and the download Worker's "answers 404 until downloads are built, as a sandboxed response" went with the download Worker.
+- "a missing API route is 404 NOT_FOUND" and the probe's two cases are unchanged.
+
+`test:faults` has the same 32 cases as at 13a's head, by file and full name. It ran three times at the head after the waits above. Runs 2 and 3 passed all 32. Run 1 failed one case, turns.test.ts's "with Workers AI (@cf/zai-org/glm-5.3-flash): the protocol, not the words", with `The run did not end` after the case's 150 s per attempt, at event 34 of the run. The cause is the model's latency, not 13b. The Worker's logs in Workers Observability show the run's container ready 0.5 s after the start, then one Sandbox call that lasted 95.7 s and ended when the first command ran. In a healthy run of the same task, taken right after with a script that logs each event's time, that call lasted 13.0 s and ended when the first model call returned with the bash call. That puts the first model call at about 96 s, inferred from those timings, since the instance's AI Gateway kept no log entries. The command, the script and the Notes tool then all ran within 1.3 s, and the fact and lease requests to the fake Laravel succeeded. No tool call or fact request followed before the case gave up 53 s later, so the run was waiting on its third model call (inferred). That healthy run took 22.7 s from start to `completed` with 3 model calls. 13a's verification saw the same case take 88 s and 123 s.
+
+**Perf.** Startup CPU (`pnpm startup`, the best of three in each run) and the bytes of the production build's files under `.cloudflare/output/v0/workers/default/bundle/` ran in five pairs, `main` then head, in one session. The load average was 2.1 to 3.1 on 12 cores throughout.
+
+| Pair | `main` startup (ms) | Head startup (ms) | `main` bundle (bytes, files) | Head bundle (bytes, files) |
+|---|---|---|---|---|
+| 1 | 83 | 66 | 9,650,500, 19 | 7,034,323, 12 |
+| 2 | 84 | 66 | 9,650,500, 19 | 7,034,323, 12 |
+| 3 | 83 | 65 | 9,650,500, 19 | 7,034,323, 12 |
+| 4 | 84 | 66 | 9,650,500, 19 | 7,034,323, 12 |
+| 5 | 83 | 65 | 9,650,500, 19 | 7,034,323, 12 |
+
+The head's startup median is 66 ms (65 to 66) against `main`'s 83 ms (83 to 84), 20% less. The two ranges do not overlap. The bundle falls by 2,616,177 bytes (27%), and both sides built the same bytes in every run. Both metrics fall, so the box passes. Startup CPU is the evaluation of the bundle's modules in a local workerd, and it fell with the code 13b deleted from the bundle; no profile was taken, since neither number grew. The test build that `deploy:test` checks measured 108 to 113 ms at `main` (9.3 MiB, in two attempts). The first ran at a load average of 6 and failed `main`'s own 110 ms check at 113 ms, and the retry passed at 108 ms. The head's test build measured 69 to 72 ms (6.8 MiB).
+
+For reference against 13a's numbers, and not a gate, `test:faults`'s wall time at the head, measured as 13a did (warm is the point at which warm.ts reported prompt starts, and suite is the total minus warm):
+
+| Run | Cases | Total (s) | Warm (s) | Suite (s) |
+|---|---|---|---|---|
+| 1 | 1 failed (Workers AI) | 284.9 | 15.2 | 269.7 |
+| 2 | 32 passed | 212.9 | 14.6 | 198.3 |
+| 3 | 32 passed | 301.6 | 14.5 | 287.1 |
+
+13a's medians were 226.6 s total and 214.1 s suite at its head, and 191.4 s and 180.3 s at its base. Run 2 is within 13a's head range. Run 1 is long because turns.test.ts waited out its 150 s deadline. Run 3 is long for two cases. faults.test.ts's Workers AI smoke run took 107.0 s, and resets.test.ts's "repeated in a tool: the third attempt's reset ends the run as worker_exited" took 68.7 s against 8.1 s in run 2, which put the resets group at 122 s against 61 s. The extra 60 s matches three resets that each waited for the Conversation's 20 s watch, the delay 13a's verification recorded on the internal path. That is inferred from the durations; the run was not traced.
+
+**The staging turn** has not run. It needs the owner's choice of instance (open question 1), and it stays unchecked.
