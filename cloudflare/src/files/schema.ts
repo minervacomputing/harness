@@ -11,7 +11,7 @@
  *   hour later; `stored`: named by a version or uploaded by a run, one per contents; `doomed`: to delete,
  *   then deleted once more a day after the first deletion (`deletions`), for a write still in flight.
  * - `folder_grants`: contents a run uploaded, which it may read and name until it ends (RunBlob).
- * - `folder_counter`: the byte total last reported to the Workspace.
+ * - `folder_counter`: the byte total last reported to the byte counter.
  */
 export const FOLDER_SCHEMA = `
 CREATE TABLE folder_versions (
@@ -73,7 +73,7 @@ BEGIN SELECT RAISE(ABORT, 'A blob''s identity cannot change.'); END;
 `;
 
 /**
- * `folder_report`: the revision of the last byte report sent to the Workspace, one above the one before,
+ * `folder_report`: the revision of the last byte report sent to the byte counter, one above the one before,
  * written before the report leaves, so a report a reset instance sent is always older than the next one's.
  */
 export const FOLDER_REPORT_SCHEMA = `

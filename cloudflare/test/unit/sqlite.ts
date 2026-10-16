@@ -1,5 +1,5 @@
 // Real SQLite for unit tests: node:sqlite through lib/sql.ts's adapter, for the ledger, page tokens and the
-// Workspace's core. The module is loaded with `process.getBuiltinModule`, since the unit tests are
+// folder. The module is loaded with `process.getBuiltinModule`, since the unit tests are
 // type-checked with the Worker's runtime types, which lack Node's.
 
 import { LEDGER_NOTES_SCHEMA, LEDGER_SCHEMA } from "../../src/gateway/ledger.ts";

@@ -75,7 +75,7 @@ async function measure(bucket: Pick<Bucket, "get">, key: string, declared: numbe
 
 /**
  * The staged uploads as uploads the folder copies, their names cleaned, in the start's order; null when any is not
- * there as declared. Each gets an id of its own: it has no row in a Workspace.
+ * there as declared. Each gets an id of its own.
  */
 export async function measureStaged(bucket: Pick<Bucket, "get">, staged: readonly StagedUpload[], uploadBytes: number): Promise<ReservedUpload[] | null> {
 	const measured: (Measured | null)[] = new Array(staged.length).fill(null);

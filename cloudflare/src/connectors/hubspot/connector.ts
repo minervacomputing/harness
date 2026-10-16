@@ -10,7 +10,7 @@
 //
 // The APIs are pinned to a date version (client.ts VERSION). Every scope is requested on connecting, since
 // HubSpot refuses an install whose scopes differ from the app's required ones. Token responses list the
-// granted scopes as `scopes`, which the generic token parsing reads (workspace/credentials.ts parseScopes).
+// granted scopes as `scopes`; Laravel makes the token requests, from the catalog's OAuth descriptor.
 //
 // This module assembles the connector. The operations are in reads.ts and writes.ts; what they share is in
 // scope.ts, the HTTP client in client.ts and the response models in models.ts.

@@ -1,5 +1,5 @@
 // Calls to a provider made in the Worker with a credential held for the one call: the settings calls Laravel sends
-// (connections.ts) and the connection settings of the public API (api/providers.ts, api/flows.ts).
+// (connections.ts).
 
 import type { Account, Connector, ProviderClient } from "../gateway/connector.ts";
 import { CallIo } from "../gateway/http.ts";

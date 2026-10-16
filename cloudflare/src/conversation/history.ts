@@ -7,7 +7,7 @@ import { sliceText } from "../lib/text.ts";
 import type { Attachment, FolderChanges } from "@minerva/contract";
 
 /** Earlier messages the gateway hands the loop. */
-export const HISTORY_LIMIT = 20;
+const HISTORY_LIMIT = 20;
 /** Paths a file note names before "and N more". */
 export const NOTE_PATHS = 20;
 /** Each replayed message is clipped to this many characters, the suffix added. */

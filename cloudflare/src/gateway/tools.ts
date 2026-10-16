@@ -1,6 +1,6 @@
 // What a run starts with: its tools, their labels and its instructions, with the rule for how many tools the model sees.
-// Pure functions: the Workspace Durable Object's `beginRun` calls `startSnapshot` in
-// the same synchronous step that registers the run (ARCHITECTURE.md: Starting a run).
+// Pure functions: internal/start.ts compiles Laravel's start into the run's snapshot with `startSnapshot`
+// (ARCHITECTURE.md: Starting a run).
 
 import { runStartLabel } from "../lib/dates.ts";
 import type { AgentId, ConnectionId, ConversationId, EpochMs, UserId, WorkspaceId } from "../shared/rpc.ts";
@@ -24,10 +24,7 @@ export interface ToolRef {
 	contract: string;
 }
 
-/**
- * What the Workspace Durable Object's `beginRun` computes, in one synchronous step with registering the
- * run as active, so a grant change processed afterwards revokes it (ARCHITECTURE.md: Starting a run).
- */
+/** What a run starts with, as `startSnapshot` compiles it from Laravel's start (internal/start.ts). */
 export interface StartSnapshot {
 	workspaceId: WorkspaceId;
 	conversationId: ConversationId;
@@ -77,7 +74,7 @@ export interface ConnectionInfo {
 	scopes: string[] | null;
 }
 
-export function usableBy(connection: ConnectionInfo, userId: UserId): boolean {
+function usableBy(connection: ConnectionInfo, userId: UserId): boolean {
 	return connection.status === "active" && (connection.ownerId === null || connection.ownerId === userId);
 }
 

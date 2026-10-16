@@ -61,7 +61,6 @@ const Fields = z.object({
 
 export const IssueModel = z.object({ id: z.string(), key: z.string(), fields: Fields.prefault({}) });
 export type Issue = z.output<typeof IssueModel>;
-export type IssueStatus = NonNullable<Issue["fields"]["status"]>;
 
 export const CommentModel = z.object({
 	id: z.string(),

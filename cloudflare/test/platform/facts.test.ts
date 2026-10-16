@@ -540,7 +540,7 @@ describe("Laravel's run stream", () => {
 		}
 	});
 
-	test("the object lets an organization read its own conversation's runs, never a user's", async () => {
+	test("the object lets an organization read its own conversation's runs, never another's", async () => {
 		const start = held(fake, startOf(scope()));
 		await commands.startRun(start);
 		await settled(start);
@@ -550,8 +550,6 @@ describe("Laravel's run stream", () => {
 		socket?.accept();
 		socket?.close(1000);
 		expect(await openSocket(stub, start.run, { organization: uuid7() }, 0)).toBeNull();
-		expect(await openSocket(stub, start.run, { user: start.user }, 0)).toBeNull();
-		expect(await openSocket(stub, start.run, { user: "" }, 0)).toBeNull();
 	});
 
 	test("a reconnect resumes after Last-Event-ID: no gaps, no duplicates; one not all digits counts as 0", async () => {

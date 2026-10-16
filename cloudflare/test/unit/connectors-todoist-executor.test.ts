@@ -183,8 +183,8 @@ describe("the executor with the Todoist connector", () => {
 	});
 
 	test("a revoked run's calls end", async () => {
-		// Which runs a grant change revokes is the Workspace's; the executor's part is that a revoked run
-		// starts nothing.
+		// Which runs a grant change revokes is Laravel's; the executor's part is that a revoked run starts
+		// nothing.
 		const todoist = new FakeTodoist();
 		const run = await start(todoist, { work: ["read"] });
 		run.runs.set(run.runId, { revoked: true });

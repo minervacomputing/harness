@@ -619,7 +619,7 @@ describe("the registry, refusals and limits", () => {
 		// The same declaration means the same tools in every deploy of a version.
 		const again = await Registry.create([hubspotConnector()]);
 		for (const [name, fingerprint] of Object.entries(fingerprints)) expect(again.contract("hubspot", name)).toBe(fingerprint);
-		// Registered in the registry the Workspace and the executor share.
+		// Registered in the registry the internal API and the executor share.
 		expect(CONNECTORS.map((item) => item.slug)).toContain("hubspot");
 		const shared = await connectorRegistry();
 		for (const [name, fingerprint] of Object.entries(fingerprints)) expect(shared.contract("hubspot", name)).toBe(fingerprint);

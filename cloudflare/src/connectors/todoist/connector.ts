@@ -9,10 +9,9 @@
 // - Discovery lists Todoist's own pages, or, with a search, every project (at most 20 pages), whose names
 //   are matched ignoring case (`toLowerCase`).
 //
-// The registration request, the token exchange and the refresh are the generic OAuth flow's
-// (workspace/credentials.ts; the authorize and registration steps come with the API); this declares their
-// endpoints, its one scope and the defaults it relies on (form-encoded token requests with the client in
-// the body, PKCE).
+// The registration request, the token exchange and the refresh are Laravel's generic OAuth flow, read from the
+// catalog (internal/catalog.ts); this declares their endpoints, its one scope and the defaults it relies on
+// (form-encoded token requests with the client in the body, PKCE).
 
 import { z } from "zod";
 import {

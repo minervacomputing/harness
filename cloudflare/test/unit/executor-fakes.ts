@@ -436,7 +436,7 @@ export interface FakeConnection {
 	payload: CredentialPayload;
 }
 
-/** The Workspace Durable Object's credentials, fenced as the contract says. */
+/** The credentials Laravel lends, fenced as the contract says. */
 export class FakeCredentials implements CredentialPort {
 	readonly connections = new Map<ConnectionId, FakeConnection>();
 	leases = 0;

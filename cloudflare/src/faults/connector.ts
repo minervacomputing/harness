@@ -14,7 +14,7 @@ import { FOLDER, NOTES } from "./world.ts";
 
 /** The provider's origin: any `*.fake.invalid` request of the test build goes to its FaultProvider. */
 export const NOTES_ORIGIN = "https://notes.fake.invalid";
-export const NOTES_TOKEN_URL = `${NOTES_ORIGIN}/token`;
+const NOTES_TOKEN_URL = `${NOTES_ORIGIN}/token`;
 
 const Id = () => z.string().trim().min(1).max(40).regex(/^[a-z0-9-]+$/);
 const ListNotes = z.strictObject({ folder: Id() });

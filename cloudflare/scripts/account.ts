@@ -1,5 +1,5 @@
-// What the scripts read of an instance on its account, changing nothing: whether a Worker exists, the version
-// serving all of a Worker's traffic and its bindings, which build those bindings are (`bindingsKind`), and the
+// What the scripts read of an instance on its account, changing nothing: whether a Worker exists, the bindings of
+// the version serving all of a Worker's traffic, which build those bindings are (`bindingsKind`), and the
 // account's workers.dev subdomain, which the instance's origins are on (`accountSubdomain`, `checkOnAccount`). Every
 // cf call goes through scripts/run.ts, so one that fails throws: nothing here reads a failure as "absent". Ids and the
 // subdomain are hidden from everything run.ts prints, and no message here names them.
@@ -23,14 +23,14 @@ export function workerExists(name: string): boolean {
 	return found.some((worker) => worker.script_name === name);
 }
 
-/** The version of the Worker `name` serving all of its traffic, and its bindings; a Worker served otherwise throws. */
-export function liveVersion(name: string): { version: string; env: Record<string, LiveBinding> | undefined } {
+/** The bindings of the version of the Worker `name` serving all of its traffic; a Worker served otherwise throws. */
+export function liveBindings(name: string): Record<string, LiveBinding> | undefined {
 	const { deployments = [] } = cfJson<{ deployments?: { versions?: { version_id: string; percentage: number }[] }[] }>(["workers", "deployments", "list", "--worker", name]);
 	const versions = deployments[0]?.versions ?? [];
 	const version = versions[0];
 	if (versions.length !== 1 || !version || version.percentage !== 100) throw new CommandFailed(`${name} is not deployed as one version serving all traffic.`);
 	hide(version.version_id);
-	return { version: version.version_id, env: cfJson<{ env?: Record<string, LiveBinding> }>(["workers", "versions", "get", version.version_id, "--worker-id", name]).env };
+	return cfJson<{ env?: Record<string, LiveBinding> }>(["workers", "versions", "get", version.version_id, "--worker-id", name]).env;
 }
 
 /**

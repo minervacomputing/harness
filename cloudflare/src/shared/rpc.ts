@@ -1,6 +1,6 @@
-// The shapes every Durable Object's RPC and the Worker share: ids, the workspace a call is addressed to,
-// the verified caller, the attempt fence, a run's status and refusals with their codes. Types that belong to one object or module live with
-// it; only what crosses between all of them is here.
+// The shapes every Durable Object's RPC and the Worker share: ids, the workspace a call is addressed to, the attempt
+// fence, a run's status and refusals with their codes. Types that belong to one object or module live with it; only what
+// crosses between all of them is here.
 //
 // A Durable Object method's argument and return types must be structured-cloneable and must not contain
 // `unknown` (Workers' RPC types turn an object with an `unknown` field into `never`). Use lib/json.ts's
@@ -29,18 +29,6 @@ export type Sha256 = string;
 export interface WorkspaceRef {
 	id: WorkspaceId;
 	jurisdiction: "eu" | null;
-}
-
-export type Role = "owner" | "admin" | "member";
-
-/**
- * Who is asking, as the Worker verified it from the session and D1's memberships. A Durable
- * Object never takes a user from the client; it takes this, and still checks ownership of what it holds
- * (another user's conversation, run or upload is "not found").
- */
-export interface Caller {
-	userId: UserId;
-	role: Role;
 }
 
 /**

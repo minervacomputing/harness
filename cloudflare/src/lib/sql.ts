@@ -1,4 +1,4 @@
-// The SQL every Durable Object's logic runs on (the Workspace's core, the write ledger and page tokens):
+// The SQL every Durable Object's logic runs on (the folder, the write ledger and page tokens):
 // one statement at a time with bindings and its rows, schema scripts, and synchronous transactions. Two
 // adapters: a Durable Object's `ctx.storage.sql` with `transactionSync`, and node:sqlite's `DatabaseSync`
 // for unit tests, so the same code is tested on real SQLite. Everything is synchronous on purpose: in a

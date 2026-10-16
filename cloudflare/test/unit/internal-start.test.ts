@@ -1,5 +1,5 @@
 // A Laravel start before anything is stored (src/internal/start.ts): the message's own refusals, the compile from the
-// command's raw authority (the same snapshot the Workspace's starts compile from their rows), the history and the prompt.
+// command's raw authority (gateway/tools.ts `startSnapshot`), the history and the prompt.
 
 import type { StartRun } from "@minerva/contract/internal";
 import { beforeAll, describe, expect, test } from "vitest";
@@ -60,7 +60,7 @@ function command(change: Partial<StartRun> = {}): StartRun {
 }
 
 describe("the compile", () => {
-	test("is the Workspace's compile over the command's raw authority", async () => {
+	test("is startSnapshot over the command's raw authority", async () => {
 		const prepared = await prepareStart(registry, command(), { now: NOW, runTimeoutMs: 600_000 });
 		const grant = { subject: "42", resourceName: "Every folder", effect: "allow" as const };
 		const expected = startSnapshot(registry, {

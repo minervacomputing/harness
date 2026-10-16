@@ -8,7 +8,7 @@ import { sandboxObject } from "../addressing.ts";
 import { settings } from "../config.ts";
 
 import { conversationFolder } from "../files/folder.ts";
-import type { CheckpointOutcome, CheckpointScan, DownloadTarget, FolderUsage } from "../files/store.ts";
+import type { CheckpointOutcome, CheckpointScan, DownloadTarget } from "../files/store.ts";
 import type { StagedUpload } from "../files/staging.ts";
 import type { ReservedUpload } from "../files/staging.ts";
 import { systemClock } from "../gateway/clock.ts";
@@ -69,8 +69,6 @@ const OUTCOMES: Record<Settlement["effect"], WriteOutcome> = { applied: "done", 
  * hydrates from `hydratePlan` and saves with `checkpoint`; `sweep` is the `files` Lifecycle job.
  */
 export interface FolderPort {
-	/** The folder a new run would start from, for `beginRun`'s limit checks. */
-	usage(): FolderUsage;
 	/**
 	 * Laravel's staged uploads, measured into uploads `prepareAttachments` copies (files/staging.ts); null when any is
 	 * missing or not as declared.
@@ -156,7 +154,6 @@ export interface ConversationPorts {
 
 /** No files: the folder stays as it is, and a message with attachments is refused (for tests of the rest). */
 export const emptyFolder = (context: PortsContext): FolderPort => ({
-	usage: () => ({ versionId: context.folderVersionId(), bytes: 0, entries: 0, rootNames: [] }),
 	measureStaged: async (staged) => (staged.length ? null : []),
 	deleteStaged: async () => {},
 	prepareAttachments: async (_runId, uploads) =>

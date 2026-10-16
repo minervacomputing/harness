@@ -10,7 +10,6 @@ import {
 	type GrantRow,
 	InvalidGrants,
 	MAX_GRANTS_PER_CONNECTION,
-	allowedActions,
 	checkChanges,
 	effectivePolicy,
 	enforceable,
@@ -185,16 +184,4 @@ describe("the policy a run starts with", () => {
 		expect(denied.permitsAny(CONNECTION, LABEL, "read")).toBe(false);
 		expect(denied.permitsAny(CONNECTION, FOLDER, "read")).toBe(true);
 	});
-});
-
-test("allowed actions: one user's or every user's allow grants on the connection", () => {
-	const rows = [
-		grant(FOLDER, "inbox", ["read"]),
-		grant(FOLDER, "archive", ["create", "read"], { subject: "someone-else" }),
-		grant(FOLDER, "secret", ["read", "create"], { effect: "deny" }),
-		grant(LABEL, "red", ["read"], { connectionId: "other" }),
-		grant(FOLDER, "x", ["create"], { layer: "agent", subject: "agent" }),
-	];
-	expect(allowedActions(rows, CONNECTION, USER)).toEqual(new Set(["read"]));
-	expect(allowedActions(rows, CONNECTION, null)).toEqual(new Set(["read", "create"]));
 });

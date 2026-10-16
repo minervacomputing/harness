@@ -8,7 +8,6 @@ import type { Json } from "../../../../src/lib/json.ts";
 
 export const KEY = `rk_test_${"a".repeat(24)}`;
 export const LIVE_KEY = `rk_live_${"b".repeat(24)}`;
-export const OTHER_KEY = `rk_test_${"c".repeat(24)}`;
 export const SECRET = "SECRET merger";
 export const ADA = "cus_ada";
 export const GRACE = "cus_grace";
@@ -65,7 +64,6 @@ export class FakeStripe {
 	accounts = new Map<string, string>([
 		[KEY, "acct_1"],
 		[LIVE_KEY, "acct_1"],
-		[OTHER_KEY, "acct_2"],
 	]);
 	customers: { [id: string]: StripeObject } = {
 		[ADA]: { id: ADA, name: "Ada Lovelace", email: "ada@example.com", currency: "usd", balance: 0 },

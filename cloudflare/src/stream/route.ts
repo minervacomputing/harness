@@ -4,9 +4,9 @@
 // unless the internal API's settings, MINERVA_LARAVEL_URL and MINERVA_STREAM_KEYS are all set.
 //
 // A token that does not verify is 401 `UNAUTHORIZED`, and nothing says why: the browser asks Laravel for a new one. A
-// conversation the recovery index does not bind to the token's organization or marks deleted, or an object that does not hold the run for
-// that organization, is 404. The events are relayed as the public stream's are (stream/relay.ts), and the response closes
-// hard at the token's `exp`; the browser resumes from its last event with a new token, so a member Laravel removed loses the
+// conversation the recovery index does not bind to the token's organization or marks deleted, or an object that does not
+// hold the run for that organization, is 404. The events are relayed by stream/relay.ts, and the response closes hard at
+// the token's `exp`; the browser resumes from its last event with a new token, so a member Laravel removed loses the
 // stream within one token's life.
 //
 // CORS answers Laravel's origin alone, with `Vary: Origin`, on every answer (the 401 included, so the browser can read it),
@@ -81,7 +81,7 @@ async function stream(request: Request, env: Env, config: NonNullable<ReturnType
 	const socket = await openSocket(stub, grant.run, reader, after);
 	if (socket === null) return noRoute();
 	// Nothing to recheck while it runs: the token's end closes it.
-	const relay = new Relay(after, (cursor) => openSocket(stub, grant.run, reader, cursor), async () => true, grant.expiresAt);
+	const relay = new Relay(after, (cursor) => openSocket(stub, grant.run, reader, cursor), grant.expiresAt);
 	relay.attach(socket);
 	return new Response(relay.readable, {
 		status: 200,

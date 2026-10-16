@@ -1,15 +1,15 @@
-// Layers and grants, the pure parts: the policy a run
-// starts with, built from the Workspace Durable Object's rows, and the checks and plan of a grant edit.
-// Storing the rows, bumping the layer's version and revoking runs are the Workspace's (workspace/core.ts).
+// Layers and grants, the pure parts: the policy a run starts with, built from the layers Laravel's start names
+// (internal/start.ts), and the checks and plan of a grant edit (internal/connections.ts `checkGrantEdit`). Laravel
+// stores the layers.
 
 import { MAX_ACCESS_CHANGES } from "@minerva/contract";
-import type { ConnectionId, UserId } from "../shared/rpc.ts";
+import type { ConnectionId } from "../shared/rpc.ts";
 import { ACCOUNT_KIND, type Connector, actionOf, kindOf, requiresOf } from "./connector.ts";
 import { ANY, Layer, type LayerName, Policy } from "./policy.ts";
 import type { Registry } from "./registry.ts";
 import { compareText } from "../lib/arrays.ts";
 
-/** A grant row in the Workspace Durable Object. */
+/** A grant of a layer. */
 export interface GrantRow {
 	layer: "ceiling" | "user" | "agent";
 	/** The user of a user layer, the agent of an agent layer. */
@@ -25,7 +25,7 @@ export interface GrantRow {
 	effect: "allow" | "deny";
 }
 
-/** One change of `PATCH …/access` (≤100 per request; empty actions remove the grant). */
+/** One change of a grant edit (≤100 per edit; empty actions remove the grant). */
 export interface GrantChange {
 	kind: string;
 	id: string;
@@ -43,7 +43,7 @@ export const DEFAULT_RESTRICTED: { readonly [level in Level]: boolean } = { ceil
 export const MAX_CHANGES = MAX_ACCESS_CHANGES;
 export const MAX_GRANTS_PER_CONNECTION = 500;
 
-/** A grant edit the connector cannot enforce; the API answers 422 with its message. */
+/** A grant edit the connector cannot enforce; `checkGrantEdit` answers `invalid` with its message. */
 export class InvalidGrants extends Error {
 	constructor(message: string) {
 		super(message);
@@ -51,7 +51,7 @@ export class InvalidGrants extends Error {
 	}
 }
 
-/** One layer as the Workspace stores it: whether it is restricted, and its grants. */
+/** One layer: whether it is restricted, and its grants. */
 export interface LayerRows {
 	restricted: boolean;
 	grants: readonly GrantRow[];
@@ -95,19 +95,6 @@ export function effectivePolicy(layers: RunLayers, registry: Registry, providerO
 		toLayer("user", "user", layers.user, registry, providerOf),
 		toLayer("agent", "agent", layers.agent, registry, providerOf),
 	]);
-}
-
-/** The allow grants users set on the connection: one user's, or with null, every user's. */
-export function userGrants(grants: readonly GrantRow[], connectionId: ConnectionId, userId: UserId | null): GrantRow[] {
-	return grants
-		.filter((grant) => grant.layer === "user" && grant.connectionId === connectionId && grant.effect === "allow")
-		.filter((grant) => userId === null || grant.subject === userId)
-		.sort((a, b) => compareText(a.kind, b.kind) || compareText(a.resourceId, b.resourceId));
-}
-
-/** Every action the user (or, with null, any user) allows on some resource of the connection. */
-export function allowedActions(grants: readonly GrantRow[], connectionId: ConnectionId, userId: UserId | null): Set<string> {
-	return new Set(userGrants(grants, connectionId, userId).flatMap((grant) => grant.actions));
 }
 
 function label(connector: Connector, actionId: string): string {

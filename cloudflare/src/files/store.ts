@@ -1,7 +1,7 @@
 // A conversation's folder in its Durable Object (ARCHITECTURE.md: Starting a run, Checkpoints, Files): versions with their lineage, the blobs they name by hash, what each run may read,
 // the attachments a message adds at the start of its run, checkpoints, publishing at a run's end, the
 // listing and downloads, and the sweep that deletes objects nothing names. The logic is over lib/sql.ts, so
-// it runs on a Durable Object's SQLite and, in the unit tests, on node:sqlite; R2 and the Workspace are
+// it runs on a Durable Object's SQLite and, in the unit tests, on node:sqlite; R2 and the byte counter are
 // ports (objects.ts, `ByteCounter`).
 //
 // Blobs belong to the conversation (option A): `blobs/<ws>/<conv>/<sha256>/<random>`, one stored
@@ -9,9 +9,9 @@
 // object never races a later write of the same contents (files risk 24). Every object is recorded before
 // it is written (a `loose` row, due an hour later) and claimed in the transaction that names it; the sweep
 // deletes what was never claimed, and what a run left unnamed when it ended, twice, a day apart. The
-// conversation's byte total, everything recorded and not yet deleted, is reported to the Workspace as an
+// conversation's byte total, everything recorded and not yet deleted, is reported to the byte counter as an
 // absolute number before any new object is written and after the sweep deleted some, one report at a time,
-// so the Workspace never counts less than the bucket holds, whatever crashes in between.
+// so the counter never counts less than the bucket holds, whatever crashes in between.
 //
 // Every change someone acts on (a claim, a checkpoint, warnings, a charge) is made outside pi's open
 // transactions (`outside`, conversation/store.ts), in one synchronous transaction with its checks.
@@ -63,7 +63,7 @@ import { type Bucket, blobKey, conversationPrefix, deletePrefix } from "./object
 import { sha256HexSync } from "./sha256.ts";
 import type { ReservedUpload } from "./staging.ts";
 
-/** A file a signed download link may name (ARCHITECTURE.md: Files, Downloads). */
+/** A file of a version, which Laravel signs a download for (ARCHITECTURE.md: Files, Downloads). */
 export interface DownloadTarget {
 	versionId: VersionId;
 	path: string;
@@ -79,16 +79,6 @@ export interface DownloadTarget {
  * may change when a checkpoint is published.
  */
 export type VersionKind = "base" | "checkpoint" | "turn";
-
-/** A conversation's folder as a new run sees it: its current version and how full it is. */
-export interface FolderUsage {
-	versionId: VersionId | null;
-	/** In pages, as the store counts it. */
-	bytes: number;
-	entries: number;
-	/** First path segments of every file and directory at the root: what attachment names are numbered against. */
-	rootNames: string[];
-}
 
 /**
  * What a checkpoint takes (ARCHITECTURE.md: Checkpoints): the scan's report as the container
@@ -403,14 +393,6 @@ export class FolderStore {
 		return this.#insertVersion({ kind, parentId, runId, attempt: options.attempt ?? null, entries: storedEntries(manifest, sizes) });
 	}
 
-	/** The folder a new run would start from, for `beginRun`'s limit checks. */
-	usage(): FolderUsage {
-		const versionId = this.#deps.conversation()?.folderVersionId ?? null;
-		const row = versionId === null ? null : this.version(versionId);
-		if (row === null) return { versionId: null, bytes: 0, entries: 0, rootNames: [] };
-		return { versionId, bytes: row.size, entries: row.entry_count, rootNames: [...rootNames(this.entries(row.id))].sort() };
-	}
-
 	// Blobs and the byte total.
 
 	#random(): string {
@@ -521,17 +503,17 @@ export class FolderStore {
 		return row?.n ?? 0;
 	}
 
-	/** The total the Workspace last accepted, or null before the first report. */
+	/** The total the byte counter last accepted, or null before the first report. */
 	reported(): number | null {
 		return first<{ reported: number }>(this.#sql, "SELECT reported FROM folder_counter WHERE singleton = 1")?.reported ?? null;
 	}
 
 	/**
-	 * Tells the Workspace the total now; false when it refuses the growth (the workspace's quota). Absolute,
+	 * Tells the byte counter the total now; false when it refuses the growth (the workspace's quota). Absolute,
 	 * so a repeat is harmless, and one at a time, so a report of a smaller total never lands after a larger
 	 * one that was sent later. Whatever changed while it was on its way is reported straight after. Across
 	 * instances, each report names a revision one above the last one sent, written before it leaves (the
-	 * output gate holds it until then): the Workspace ignores a report no newer than one it has seen, so one
+	 * output gate holds it until then): the counter ignores a report no newer than one it has seen, so one
 	 * a reset instance had already sent cannot land after the next instance's and undo it.
 	 */
 	#report(): Promise<boolean> {

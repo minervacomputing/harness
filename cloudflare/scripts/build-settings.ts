@@ -30,8 +30,8 @@ const DEFAULTS: Defaults = {
 };
 
 /**
- * What the dev server's mode `offline` sets besides DEFAULTS, unless the shell sets it: debug on (emails are
- * written to the log, cookies work over http), the fake model (the test build's entry has it), and a
+ * What the dev server's mode `offline` sets besides DEFAULTS, unless the shell sets it: debug on (addressing.ts
+ * stands in for the jurisdictions local workerd lacks), the fake model (the test build's entry has it), and a
  * fake model name for the settings parser.
  */
 const OFFLINE_DEFAULTS: Partial<Defaults> = {

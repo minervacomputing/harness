@@ -131,7 +131,7 @@ async function newNames(
 	for (const change of changes) {
 		if (change.actions.length === 0) continue;
 		const key = resourceKey(change.kind, change.id);
-		// A grant on every resource has no name, as the Workspace stores it: the editor names it by its kind.
+		// A grant on every resource has no name: the editor names it by its kind.
 		if (change.id === ANY || stored.has(key)) continue;
 		if (change.kind === ACCOUNT_KIND) {
 			account = true;
@@ -155,10 +155,10 @@ async function newNames(
 }
 
 /**
- * Checks an edit of a layer's allow grants on one connection (api/connections.ts `changeAccess` and the Workspace's
- * `applyGrantChanges`, without storing anything) and answers the layer's grants after it: every other grant kept in place
- * and order, this connection's allow grants after them, sorted. Resources and accounts newly allowed are named by the
- * provider, so only what the account can see is allowed; `*`, what is already allowed, and removals never call it.
+ * Checks an edit of a layer's allow grants on one connection, without storing anything (Laravel stores the answer), and
+ * answers the layer's grants after it: every other grant kept in place and order, this connection's allow grants after
+ * them, sorted. Resources and accounts newly allowed are named by the provider, so only what the account can see is
+ * allowed; `*`, what is already allowed, and removals never call it.
  */
 export async function checkGrantEdit(env: Env, command: CheckGrantEdit): Promise<CheckGrantEditResult> {
 	const connector = await connectorFor(command);

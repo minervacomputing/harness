@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL) 
 `;
 
 /** The account the fake provider's token belongs to (`/me`). */
-export const NOTES_ACCOUNT = { id: "notes-account-1", name: "Notes account" };
+const NOTES_ACCOUNT = { id: "notes-account-1", name: "Notes account" };
 
 const DEFAULT_FOLDERS = [
 	{ id: "inbox", name: "Inbox", notes: ["Buy milk", "Call Ada"] },

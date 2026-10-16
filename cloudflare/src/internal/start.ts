@@ -1,8 +1,7 @@
 // What a Laravel start becomes before anything is stored (docs/plans/start-and-cancel.md, startRun): the checks of the
-// message alone, and the preparation, which compiles the run's snapshot from the command's raw authority with the
-// compiler the Workspace's starts use (gateway/tools.ts `startSnapshot`) and selects its history with history.ts. Pure,
-// but for hashing: the Conversation object stores the preparation once and every later try of the start uses it, so a
-// run compiles once.
+// message alone, and the preparation, which compiles the run's snapshot from the command's raw authority
+// (gateway/tools.ts `startSnapshot`) and selects its history with history.ts. Pure, but for hashing: the Conversation
+// object stores the preparation once and every later try of the start uses it, so a run compiles once.
 
 import type { StartRun, StartRunResult } from "@minerva/contract/internal";
 import type { Attachment } from "@minerva/contract";

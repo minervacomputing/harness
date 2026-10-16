@@ -90,7 +90,7 @@ import { connectorTool, isWrite, REPLAY_REFUSED, REPLAYS_ALLOWED, RUN_ENDED_MESS
  * jurisdiction. Authoritative for its runs and attempts, run events, facts, the write ledger, page tokens, folder versions,
  * the run's checkpoint, the script store, and pi's `pi_*` tables.
  */
-export interface ConversationApi {
+interface ConversationApi {
 	/**
 	 * Laravel's `startRun` (docs/plans/start-and-cancel.md), once the Worker has bound the conversation and the run in the
 	 * recovery index; `workspace` is where the index addresses it. Binds the conversation on first use, and answers a

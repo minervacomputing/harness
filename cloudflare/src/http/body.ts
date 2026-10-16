@@ -1,21 +1,18 @@
 // JSON request bodies. Every one is read with `readJson`, as the contract's routes do (internal/handler.ts `jsonBody`),
 // never with `c.req.json()`: `Content-Type: application/json` (parameters such as `; charset=utf-8` allowed), at most
-// 2.5 MB or the caller's limit, declared or streamed, strict UTF-8, then lib/json.ts's `parseJson`, which the runtime's
+// the caller's limit, declared or streamed, strict UTF-8, then lib/json.ts's `parseJson`, which the runtime's
 // JSON.parse cannot replace (see there; test/unit/sources.test.ts checks it).
 
 import { concatAll } from "../lib/bytes.ts";
 import { type Json, parseJsonBytes } from "../lib/json.ts";
 import type { Outcome, Refusal } from "../shared/rpc.ts";
 
-/** The largest JSON request body, in bytes. */
-export const MAX_JSON_BODY = 2_621_440;
-
 export const NOT_JSON: Refusal = { code: "UNSUPPORTED_MEDIA_TYPE", detail: "Send the body as application/json." };
 export const TOO_LARGE: Refusal = { code: "PAYLOAD_TOO_LARGE", detail: "The request is too large." };
 export const UNPARSEABLE: Refusal = { code: "INVALID_JSON", detail: "The body is not valid JSON." };
 
-/** The body's JSON value, undefined for an empty body, or why it is refused (above). The internal API reads up to its own cap. */
-export async function readJson(request: Request, limit = MAX_JSON_BODY): Promise<Outcome<Json | undefined>> {
+/** The body's JSON value, undefined for an empty body, or why it is refused (above): at most `limit` bytes. */
+export async function readJson(request: Request, limit: number): Promise<Outcome<Json | undefined>> {
 	const type = request.headers.get("Content-Type");
 	if (type === null || type.split(";")[0]!.trim().toLowerCase() !== "application/json") return { ok: false, refusal: NOT_JSON };
 	const bytes = await readBytes(request, limit);

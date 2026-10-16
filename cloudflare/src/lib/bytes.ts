@@ -27,13 +27,6 @@ export function hex(bytes: Uint8Array): string {
 	return out;
 }
 
-export function fromHex(text: string): Uint8Array {
-	if (text.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(text)) throw new TypeError("Not hex.");
-	const bytes = new Uint8Array(text.length / 2);
-	for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(text.slice(i * 2, i * 2 + 2), 16);
-	return bytes;
-}
-
 /** Standard base64 with `=` padding. */
 export function base64(bytes: Uint8Array): string {
 	let binary = "";

@@ -1,4 +1,4 @@
-// Helpers for the files tests: an in-memory R2 bucket with fault hooks, a Workspace byte
+// Helpers for the files tests: an in-memory R2 bucket with fault hooks, a byte
 // counter, and a conversation's folder over node:sqlite with the Conversation's own schema, its runs and a
 // `finish` that publishes as conversation/store.ts does.
 
@@ -109,7 +109,7 @@ export class MemoryBucket implements Bucket {
 	}
 }
 
-/** The Workspace's `setConversationBytes`: absolute totals, growth refused past `limit`; `fail` throws. */
+/** A byte counter's `setConversationBytes`: absolute totals, growth refused past `limit`; `fail` throws. */
 export class Counter implements ByteCounter {
 	value: number | null = null;
 	limit: number | null = null;
@@ -120,7 +120,7 @@ export class Counter implements ByteCounter {
 	async setConversationBytes(_conversationId: string, total: number, revision: number) {
 		this.calls.push(total);
 		this.revisions.push(revision);
-		if (this.fail) throw new Error("The Workspace did not answer.");
+		if (this.fail) throw new Error("The counter did not answer.");
 		if (this.limit !== null && total > (this.value ?? 0) && total > this.limit) return { ok: false as const, limit: "workspace" as const };
 		this.value = total;
 		return { ok: true as const };
@@ -310,7 +310,7 @@ export class World {
 		return { sha256, key };
 	}
 
-	/** An upload in the Workspace's part of the bucket, reserved for a start. */
+	/** An upload staged in the bucket, reserved for a start. */
 	async upload(name: string, data: string | Uint8Array, mediaType = "text/plain"): Promise<ReservedUpload> {
 		const content = bytes(data);
 		const id = `0199a000-0000-7000-8000-${(++this.#random).toString(16).padStart(12, "0")}`;
@@ -337,7 +337,7 @@ export class World {
 		return this.store.sweep();
 	}
 
-	/** The Workspace never counts less than the conversation's objects hold, whatever crashed. */
+	/** The counter never counts less than the conversation's objects hold, whatever crashed. */
 	countsEnough(): boolean {
 		return (this.counter.value ?? 0) >= this.bucket.bytes(`blobs/${WORKSPACE}/${CONVERSATION}/`);
 	}

@@ -48,7 +48,6 @@ export function folderStore(context: PortsContext): FolderStore {
 export function conversationFolder(context: PortsContext): FolderPort {
 	const folder = folderStore(context);
 	return {
-		usage: () => folder.usage(),
 		measureStaged: (staged, uploadBytes) => measureStaged(FOLDER_PORTS.bucket(context), staged, uploadBytes),
 		async deleteStaged(keys) {
 			if (keys.length) await FOLDER_PORTS.bucket(context).delete([...keys]);

@@ -27,7 +27,7 @@ async function readAll(relay: Relay): Promise<string> {
 
 describe("a relay with a grant", () => {
 	test("before its expiry, relays the run to its end", async () => {
-		const relay = new Relay(0, async () => null, async () => true, Date.now() + 5000);
+		const relay = new Relay(0, async () => null, Date.now() + 5000);
 		const socket = new Socket();
 		relay.attach(socket as unknown as WebSocket);
 		socket.frame({ type: "delta", seq: 1, data: { text: "Hi" } });
@@ -36,7 +36,7 @@ describe("a relay with a grant", () => {
 	});
 
 	test("drops what the client has not taken when it expires, also after the run's end", async () => {
-		const relay = new Relay(0, async () => null, async () => true, Date.now() + 50);
+		const relay = new Relay(0, async () => null, Date.now() + 50);
 		const socket = new Socket();
 		relay.attach(socket as unknown as WebSocket);
 		socket.frame({ type: "delta", seq: 1, data: { text: "not yet taken" } });
@@ -46,7 +46,7 @@ describe("a relay with a grant", () => {
 	});
 
 	test("an expired grant relays nothing", async () => {
-		const relay = new Relay(0, async () => null, async () => true, Date.now() - 1);
+		const relay = new Relay(0, async () => null, Date.now() - 1);
 		const socket = new Socket();
 		relay.attach(socket as unknown as WebSocket);
 		socket.frame({ type: "delta", seq: 1, data: { text: "late" } });

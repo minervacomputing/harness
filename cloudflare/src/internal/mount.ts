@@ -1,6 +1,6 @@
 // The internal API's routes (docs/plans/contract.md): the commands Laravel sends, under /internal/v1/, served by oRPC's
-// OpenAPIHandler with the public API's body reader and error shape (handler.ts `contractHandler`), but its own codes and
-// body cap. A request reaches a command in this order, each step refusing before the next runs:
+// OpenAPIHandler with our body reader and error shape (handler.ts `contractHandler`), its own codes and body cap. A
+// request reaches a command in this order, each step refusing before the next runs:
 //
 // 1. without the internal settings (config.ts `internal`), every /internal/ path is 404, as if nothing were here;
 // 2. the Access assertion (access.ts): 401 `UNAUTHORIZED` without a valid one, and nothing says why; 503 when Access's keys

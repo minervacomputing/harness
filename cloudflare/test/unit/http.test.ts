@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { MAX_JSON_BODY, readJson } from "../../src/http/body.ts";
+import { readJson } from "../../src/http/body.ts";
 import { errorAnswer, noRoute, unauthorized } from "../../src/http/errors.ts";
 import { DEFAULT_CSP, withSecurityHeaders } from "../../src/http/headers.ts";
 import { createApp } from "../../src/http/router.ts";
@@ -45,32 +45,33 @@ describe("security headers", () => {
 });
 
 describe("JSON bodies", () => {
+	const LIMIT = 4096;
 	const request = (body: BodyInit, headers: Record<string, string> = { "Content-Type": "application/json" }) => new Request(`${SITE}/api/x`, { method: "POST", body, headers });
 
 	test("parses JSON sent as application/json, with or without parameters; an empty body is undefined", async () => {
-		expect(await readJson(request('{"a":1}'))).toEqual({ ok: true, value: { a: 1 } });
-		expect(await readJson(request('{"a":1}', { "Content-Type": "Application/JSON ; charset=utf-8" }))).toEqual({ ok: true, value: { a: 1 } });
-		expect(await readJson(request(""))).toEqual({ ok: true, value: undefined });
+		expect(await readJson(request('{"a":1}'), LIMIT)).toEqual({ ok: true, value: { a: 1 } });
+		expect(await readJson(request('{"a":1}', { "Content-Type": "Application/JSON ; charset=utf-8" }), LIMIT)).toEqual({ ok: true, value: { a: 1 } });
+		expect(await readJson(request(""), LIMIT)).toEqual({ ok: true, value: undefined });
 	});
 
 	test("refuses every other type with 415", async () => {
 		for (const type of [null, "text/plain", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x", "application/problem+json", "application/jsonx", "application/json, text/plain"]) {
-			const read = await readJson(request('{"a":1}', type === null ? {} : { "Content-Type": type }));
+			const read = await readJson(request('{"a":1}', type === null ? {} : { "Content-Type": type }), LIMIT);
 			expect(read, String(type)).toEqual({ ok: false, refusal: { code: "UNSUPPORTED_MEDIA_TYPE", detail: "Send the body as application/json." } });
 		}
 	});
 
 	test("refuses what does not parse, or is not UTF-8, with 400", async () => {
 		for (const body of ["{nope", new Uint8Array([0x7b, 0x22, 0xff, 0x22, 0x3a, 0x31, 0x7d])]) {
-			expect(await readJson(request(body))).toEqual({ ok: false, refusal: { code: "INVALID_JSON", detail: "The body is not valid JSON." } });
+			expect(await readJson(request(body), LIMIT)).toEqual({ ok: false, refusal: { code: "INVALID_JSON", detail: "The body is not valid JSON." } });
 		}
 	});
 
-	test("refuses a declared or streamed body over 2.5 MB with 413", async () => {
+	test("refuses a declared or streamed body over the limit with 413", async () => {
 		const tooLarge = { ok: false, refusal: { code: "PAYLOAD_TOO_LARGE", detail: "The request is too large." } };
-		expect(await readJson(request("{}", { "Content-Type": "application/json", "Content-Length": String(MAX_JSON_BODY + 1) }))).toEqual(tooLarge);
-		expect(await readJson(request(`"${"x".repeat(MAX_JSON_BODY)}"`))).toEqual(tooLarge);
-		expect(await readJson(request(`"${"x".repeat(MAX_JSON_BODY - 2)}"`))).toMatchObject({ ok: true });
+		expect(await readJson(request("{}", { "Content-Type": "application/json", "Content-Length": String(LIMIT + 1) }), LIMIT)).toEqual(tooLarge);
+		expect(await readJson(request(`"${"x".repeat(LIMIT)}"`), LIMIT)).toEqual(tooLarge);
+		expect(await readJson(request(`"${"x".repeat(LIMIT - 2)}"`), LIMIT)).toMatchObject({ ok: true });
 	});
 });
 

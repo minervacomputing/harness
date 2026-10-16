@@ -18,7 +18,7 @@ export function errorAnswer(code: RefusalCode, message: string, headers?: Header
 	return json(REFUSALS[code], { defined: true, code, status: REFUSALS[code], message }, headers);
 }
 
-/** Not signed in, or not a member of the workspace in the URL (never 403 or 404 there). */
+/** No valid credential: Access's assertion, or a stream token. Nothing says why. */
 export function unauthorized(): Response {
 	return errorAnswer("UNAUTHORIZED", "Unauthorized");
 }

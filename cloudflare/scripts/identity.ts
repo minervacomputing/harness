@@ -22,7 +22,7 @@
 // 2 when the check could not run. The database's id is never printed.
 
 import { readFileSync } from "node:fs";
-import { bindingsKind, liveVersion, workerExists } from "./account.ts";
+import { bindingsKind, liveBindings, workerExists } from "./account.ts";
 import { type Instance, chooseInstance, parseInstanceArgs } from "./instance.ts";
 import { ROOT, cfJson, hide, lockOperationUnlessParentHolds, pinAccount, redact, run } from "./run.ts";
 import { readOnly, rowsFrom } from "./schema.ts";
@@ -121,7 +121,7 @@ try {
 		}
 		console.log(`${NAME} is ${kind(INSTANCE.test)}, as its identity row in D1 says.`);
 	} else {
-		const app = workerExists(APP) ? bindingsKind(liveVersion(APP).env) : "none";
+		const app = workerExists(APP) ? bindingsKind(liveBindings(APP)) : "none";
 		if (app === "unknown") stop(`${APP}'s live version has the bindings of neither the test build nor the production build, and D1 has no identity row: which instance this is cannot be told. Nothing was changed.`);
 		if (app === "test" || app === "production") {
 			if ((app === "test") !== INSTANCE.test) stop(`${APP} serves ${build(app === "test")}, but ${INSTANCE.files.instance} describes ${kind(INSTANCE.test)}, and D1 has no identity row to say otherwise. Nothing was changed.`);

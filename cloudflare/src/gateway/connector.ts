@@ -262,7 +262,7 @@ export interface OperationErrorShape {
 	message: string;
 }
 
-/** A connection's credentials, decrypted: what the Workspace stores encrypted and lends for one call. */
+/** A connection's credentials: what Laravel lends for one call. */
 export type CredentialPayload =
 	| {
 			kind: "oauth2";

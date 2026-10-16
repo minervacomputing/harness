@@ -113,11 +113,6 @@ export function pinAccount(dirs: string[], modes: string[], instance: Instance, 
 	return account;
 }
 
-/** An env file's values as cf reads them (dotenv's rules: quotes, comments, multiline values). */
-export function readEnv(file: string): Record<string, string> {
-	return parseEnv(readFileSync(file, "utf8")) as Record<string, string>;
-}
-
 /**
  * The values of an env file's text, both as dotenv reads them (cf) and as each line's raw remainder
  * (scripts/secrets.ts reads `KEY=value` lines), empty ones left out.

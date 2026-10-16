@@ -1,6 +1,6 @@
 // The permission model's data and its pure evaluation. No storage, so it
-// is cheap to test exhaustively. The Workspace Durable Object builds a run's policy at start (grants.ts)
-// and offers tools with `permitsAny` (tools.ts); the executor checks every call with `permits`.
+// is cheap to test exhaustively. A run's start builds its policy (grants.ts) and offers tools with
+// `permitsAny` (tools.ts); the executor checks every call with `permits`.
 
 import { compareText } from "../lib/arrays.ts";
 import type { ConnectionId } from "../shared/rpc.ts";

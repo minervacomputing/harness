@@ -1,7 +1,7 @@
 // A conversation's folder in its Durable Object (src/files/store.ts) over node:sqlite with the
 // Conversation's own schema and an in-memory bucket: versions, checkpoints and what a run may read,
 // publish at every end and the next run's start, attachments at a run's start, the sweep and loose
-// objects, and the Workspace's byte count after every crash point (ARCHITECTURE.md: Files).
+// objects, and the byte count after every crash point (ARCHITECTURE.md: Files).
 //
 // In the Durable Object a run uploads only within a checkpoint: the Sandbox writes each file whose
 // contents the run may not read under a key recorded first, so "an upload" below is a checkpoint's.
@@ -1091,7 +1091,7 @@ describe("the sweep", () => {
 	});
 });
 
-// The Workspace's byte count (ARCHITECTURE.md: Files): never less than the conversation's objects
+// The byte count (ARCHITECTURE.md: Files): never less than the conversation's objects
 // hold, at every point a crash can leave it, and right again once the sweep has run.
 
 describe("the byte count after a crash", () => {
@@ -1150,7 +1150,7 @@ describe("the byte count after a crash", () => {
 		expect(w.counter.value).toBe(10);
 		w.counter.fail = true;
 		await w.sweepAt(w.now);
-		// Deleted, but the Workspace did not hear: it counts more than there is, never less.
+		// Deleted, but the counter did not hear: it counts more than there is, never less.
 		expect(w.bucket.bytes(PREFIX)).toBe(5);
 		expect(w.counter.value).toBe(10);
 		w.counter.fail = false;

@@ -856,8 +856,3 @@ export class RunStore {
 		};
 	}
 }
-
-/** For tests and logs. */
-export function eventData(event: RunEvent): Json {
-	return event.data as unknown as Json;
-}

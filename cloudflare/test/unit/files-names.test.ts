@@ -3,7 +3,7 @@
 
 import { describe, expect, test } from "vitest";
 import { folderLimitMessage, mib, overFolder, pages, sizeText, thousands } from "../../src/files/limits.ts";
-import { cleanName, numbered, sniff, uploadName } from "../../src/files/names.ts";
+import { cleanName, numbered, sniff } from "../../src/files/names.ts";
 
 const encoder = new TextEncoder();
 
@@ -82,33 +82,6 @@ describe("names and types", () => {
 
 	test("UTF-8 cut inside a character is still text", () => {
 		expect(sniff(encoder.encode("zażółć").slice(0, -1), "a.txt")).toBe("text/plain");
-	});
-});
-
-describe("the upload's name", () => {
-	test.each([
-		["name=report.pdf", "report.pdf"],
-		["name=Q3+report.pdf", "Q3 report.pdf"],
-		["name=Q3%20report.pdf", "Q3 report.pdf"],
-		["name=%E2%82%AC.txt", "\u20ac.txt"],
-		["%6Eame=a", "a"],
-		["name=a=b", "a=b"],
-		["name=&name=a", "a"],
-		["a=1&name=x&b=2", "x"],
-		["&&name=a&&", "a"],
-		["name=%00", "\0"],
-		// Exactly one non-empty name, with escapes that are UTF-8.
-		["name=a&name=b", null],
-		["name=", null],
-		["name", null],
-		["", null],
-		["other=1", null],
-		["name=%E2%82.txt", null],
-		["name=%ff", null],
-		["name=a%", null],
-		["name=%zz", null],
-	])("%j", (query, name) => {
-		expect(uploadName(query)).toBe(name);
 	});
 });
 

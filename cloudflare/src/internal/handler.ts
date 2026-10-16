@@ -1,5 +1,5 @@
-// oRPC's handler for a contract's router, with our body reader and our error shape: the public API's (api/orpc.ts) and the
-// internal API's (internal/mount.ts), each with its own codes and body cap.
+// oRPC's handler for a contract's router, with our body reader and our error shape; the internal API's (internal/mount.ts)
+// names its own codes and body cap.
 
 import { OpenAPIHandler } from "@orpc/openapi/fetch";
 import { type AnyRouter, ORPCError, ValidationError } from "@orpc/server";

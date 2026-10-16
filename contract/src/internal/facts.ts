@@ -70,7 +70,7 @@ const LocalToolData = z.object({ tool: z.enum(['read', 'write', 'edit', 'bash'])
 const fact = <T extends string, D extends z.ZodType>(type: T, data: D) =>
   z.object({ seq: Seq, run: Id, at: Time, type: z.literal(type), data })
 
-/** The schemas mirror the public contract's types while both exist (chunk 13 removes those); the compiler checks they agree. */
+/** The schemas mirror the engine's shapes (shapes.ts); the compiler checks they agree. */
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
 true satisfies Same<z.infer<typeof AttachedFile>, Attachment>
 true satisfies Same<z.infer<typeof FolderChangesSchema>, FolderChanges>

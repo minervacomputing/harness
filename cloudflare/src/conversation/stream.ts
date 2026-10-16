@@ -1,6 +1,6 @@
-// The event stream's Durable Object side (ARCHITECTURE.md: Events and the stream). The Worker checks the session and
-// the run's owner, then opens a hibernatable WebSocket here with `after`; the Worker's SSE relay writes each
-// frame as `id`, `event`, `data`.
+// The event stream's Durable Object side (ARCHITECTURE.md: Events and the stream). The Worker checks the stream token
+// (stream/route.ts), then opens a hibernatable WebSocket here with `after` and the token's organization; the Worker's
+// SSE relay writes each frame as `id`, `event`, `data`.
 //
 // The backlog after `after` is sent and the socket subscribed in one synchronous step, so no event falls
 // between them: the socket is accepted (and so reached by every later broadcast) in the same turn that
@@ -46,17 +46,10 @@ function notFound(): Response {
 	return new Response(JSON.stringify({ detail: "Not found" }), { status: 404, headers: { "Content-Type": "application/json" } });
 }
 
-/**
- * The reader the Worker names, in one of two modes that never mix: `user`, the public stream's signed-in owner of a
- * Workspace conversation, or `organization`, a stream token's for a Laravel conversation. A Laravel conversation has no
- * user, and a Workspace conversation no organization, so neither reads the other's.
- */
-function readerAllowed(params: URLSearchParams, conversation: { user_id: string; organization_id: string | null }): boolean {
-	const user = params.get("user");
+/** The reader the Worker names: a stream token's organization, which must be the conversation's. */
+function readerAllowed(params: URLSearchParams, conversation: { organization_id: string | null }): boolean {
 	const organization = params.get("organization");
-	if (user !== null && organization === null) return conversation.organization_id === null && user !== "" && conversation.user_id === user;
-	if (organization !== null && user === null) return conversation.organization_id !== null && organization !== "" && conversation.organization_id === organization;
-	return false;
+	return organization !== null && organization !== "" && conversation.organization_id === organization;
 }
 
 /** Sends a frame unless the socket is over its limit, in which case it is dropped. */

@@ -211,7 +211,7 @@ function ended(): OperationError {
 }
 
 /** The secret a connector's client is built with: the OAuth access token, the API key, or "" for a built-in service. */
-export function secretOf(payload: CredentialPayload): string {
+function secretOf(payload: CredentialPayload): string {
 	if (payload.kind === "api_key") return payload.key;
 	if (payload.kind === "builtin") return "";
 	// OAuth, and legacy rows without a kind, which are read as OAuth.

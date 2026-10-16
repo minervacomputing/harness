@@ -1,18 +1,7 @@
-// The shapes the engine and its clients share: conversations, messages, runs and their events, folders, uploads, and how
-// many resources one access change may name. The public API's routes (public/) and the internal API (internal/) build on them.
+// The shapes the engine and its clients share: runs and their events, folders, and how many resources one access change
+// may name. The internal API (internal/) builds on them.
 
 import { z } from 'zod'
-import { uuid } from './ids.ts'
-
-/** A conversation as the sidebar lists it; `updatedAt` moves with each message and the title. */
-export const ConversationSummary = z.object({
-  id: z.string(),
-  agentId: z.string(),
-  /** The first message's first 80 characters (else its attachments' names); empty before it. */
-  title: z.string(),
-  updatedAt: z.string(),
-})
-export type ConversationSummary = z.infer<typeof ConversationSummary>
 
 /** A file a message attached, as added to the folder: its final name at the root. */
 export type Attachment = { path: string; size: number; mediaType: string }
@@ -32,8 +21,6 @@ export type FolderWarnings = { items: { path: string; reason: string }[]; total:
 
 export type RunStatus = 'queued' | 'provisioning' | 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out'
 
-export const RUN_EVENT_TYPES = ['status', 'phase', 'text_delta', 'reasoning_delta', 'tool_call', 'local_tool', 'message'] as const
-
 /** One of a run's events, in order by `seq` from 1. The Worker writes them (cloudflare/src/conversation/events.ts). */
 export type RunEvent =
   | { seq: number; type: 'status'; data: StatusEventData }
@@ -49,7 +36,7 @@ export type RunEventType = RunEvent['type']
 type TerminalStatus = Exclude<RunStatus, 'queued' | 'provisioning' | 'running'>
 
 /**
- * `status`. The frontend relies on its order:
+ * `status`. The chat relies on its order:
  * - `queued` is always seq 1, when the message is posted;
  * - the first `provisioning` has no `attempt`;
  * - a restart marker carries `attempt` (n ≥ 2) and makes the chat drop the text and reasoning streamed before it:
@@ -149,29 +136,6 @@ export type Run = {
   events: RunEvent[]
 }
 
-export type Message = {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  attachments: Attachment[]
-  /** The run the message started (a user's) or that wrote it (an assistant's). */
-  runId: string | null
-  createdAt: string
-}
-
-/** A conversation with every message and run, each run with all its events. */
-export type Conversation = ConversationSummary & { messages: Message[]; runs: Run[] }
-
-/** A message as sent: its text (20,000 UTF-16 units at most, and text: no lone surrogate) and the uploads it attaches. */
-export const NewMessage = z.object({
-  content: z
-    .string()
-    .max(20_000)
-    .refine(text => !/\p{Surrogate}/u.test(text), 'Invalid string: lone surrogate'),
-  attachments: z.array(uuid()).max(100).default([]),
-})
-export type NewMessage = z.input<typeof NewMessage>
-
 /** A version of a conversation's folder: its files and its directories (empty ones included). */
 export const Folder = z.object({
   /** Null before the folder has any version. */
@@ -180,9 +144,6 @@ export const Folder = z.object({
   dirs: z.array(z.string()),
 })
 export type Folder = z.infer<typeof Folder>
-
-/** An upload as recorded: the cleaned name, and the type sniffed from its first bytes (for display only). */
-export type Upload = { id: string; name: string; size: number; mediaType: string }
 
 /** The resources one save may change. */
 export const MAX_ACCESS_CHANGES = 100

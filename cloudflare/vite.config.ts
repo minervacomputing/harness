@@ -9,10 +9,10 @@ import { defineConfig, type Plugin } from "vite";
 
 /**
  * The plugin (2.0.0-beta) adds every file cloudflare.config.ts imports to the dev server's deny list, so
- * that the config is not served to a browser. Two of them, src/config.ts (the settings parser) and
- * src/accounts/emails.ts, are Worker code too, and the Worker's module runner then fails to load them
- * ("Failed to load url /src/config.ts"). The Worker's sources are not secrets: this lets the dev server load
- * everything under src/ and keeps every other denial (.dev.vars, .env, the config itself, .git).
+ * that the config is not served to a browser. One of them, src/config.ts (the settings parser), is Worker
+ * code too, and the Worker's module runner then fails to load it ("Failed to load url /src/config.ts"). The
+ * Worker's sources are not secrets: this lets the dev server load everything under src/ and keeps every other
+ * denial (.dev.vars, .env, the config itself, .git).
  */
 function workerSources(): Plugin {
 	return {

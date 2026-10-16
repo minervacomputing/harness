@@ -18,9 +18,8 @@
 // which.
 //
 // GitHub's token endpoint answers form-encoded unless asked for JSON, and reports refusals as HTTP 200 with
-// an `error` field. Token requests (workspace/credentials.ts) therefore ask for JSON; a refused refresh
-// (`bad_refresh_token`) marks the connection for reconnecting, while other refusals, such as a misconfigured
-// client, leave it unchanged.
+// an `error` field. Token requests are Laravel's, from this connector's OAuth descriptor in the catalog
+// (internal/catalog.ts).
 
 import { z } from "zod";
 import {

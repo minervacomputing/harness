@@ -127,29 +127,3 @@ function isText(head: Uint8Array): boolean {
 	}
 	return false;
 }
-
-/**
- * The upload's name from its query string: exactly one non-empty `name`, else null (the request is refused
- * with "Name the file with ?name=."). `+` is a space; a percent escape that is not UTF-8, or a `%` without
- * two hex digits, refuses the whole query.
- */
-export function uploadName(query: string): string | null {
-	const names: string[] = [];
-	for (const pair of query.split("&")) {
-		const equals = pair.indexOf("=");
-		const key = formDecoded(equals < 0 ? pair : pair.slice(0, equals));
-		const value = formDecoded(equals < 0 ? "" : pair.slice(equals + 1));
-		if (key === null || value === null) return null;
-		if (key === "name" && value !== "") names.push(value);
-	}
-	return names.length === 1 ? (names[0] as string) : null;
-}
-
-/** A form-encoded key or value decoded, or null when its escapes are malformed or not UTF-8. */
-function formDecoded(text: string): string | null {
-	try {
-		return decodeURIComponent(text.replaceAll("+", " "));
-	} catch {
-		return null;
-	}
-}
