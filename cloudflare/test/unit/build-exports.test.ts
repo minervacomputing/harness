@@ -1,7 +1,6 @@
 // What each build of cloudflare.config.ts exports: its Durable Object classes, live or deleted, against the classes its
-// entry's code exports. A build for an instance carries tombstones for the classes 13c retires (Workspace, and on the
-// test build FaultMailbox), with no code and no binding for them, so its deploy deletes their namespaces and the
-// deploy's stray guard passes; the platform tests' and the dev server's builds have neither class
+// entry's code exports. No build exports Workspace or FaultMailbox, live or deleted: 13c retired them, so an instance's
+// namespace of either is a stray, which stops the deploy until a tombstone's deploy has deleted it
 // (docs/plans/chunk-13c-design.md). Each build is a real `cf build` in a temporary checkout of symbolic links, so the
 // checkout's own .cloudflare/output/ is left alone; no build reaches an account.
 
@@ -87,18 +86,20 @@ function classes({ config }: Built) {
 
 const namespaces = (...names: string[]) => names.map((name) => ({ class: name }));
 
-test("a production instance's build retires Workspace, with no code and no binding, and its namespace is no stray", { timeout: 60_000 }, () => {
+test("a production instance's build has no Workspace, and a Workspace namespace is a stray", { timeout: 60_000 }, () => {
 	const built = build("production", "acme");
-	expect(classes(built)).toEqual({ live: ["Conversation", "Sandbox", "Scripts"], deleted: ["Workspace"], bound: ["Conversation", "Scripts"] });
+	expect(classes(built)).toEqual({ live: ["Conversation", "Sandbox", "Scripts"], deleted: [], bound: ["Conversation", "Scripts"] });
 	expect(built.code.sort()).toEqual(["Conversation", "Sandbox", "Scripts"]);
-	expect(strayClasses(namespaces("Conversation", "Scripts", "Sandbox", "Workspace"), built.config)).toEqual([]);
+	expect(strayClasses(namespaces("Conversation", "Scripts", "Sandbox", "Workspace"), built.config)).toEqual(["Workspace"]);
+	expect(strayClasses(namespaces("Conversation", "Scripts", "Sandbox"), built.config)).toEqual([]);
 });
 
-test("a test instance's build retires Workspace and FaultMailbox likewise", { timeout: 60_000 }, () => {
+test("a test instance's build has neither Workspace nor FaultMailbox, and their namespaces are strays", { timeout: 60_000 }, () => {
 	const built = build("faults", "acme-test");
-	expect(classes(built)).toEqual({ live: ["Conversation", "FaultProvider", "Sandbox", "Scripts"], deleted: ["FaultMailbox", "Workspace"], bound: ["Conversation", "FaultProvider", "Scripts"] });
+	expect(classes(built)).toEqual({ live: ["Conversation", "FaultProvider", "Sandbox", "Scripts"], deleted: [], bound: ["Conversation", "FaultProvider", "Scripts"] });
 	expect(built.code.sort()).toEqual(["Conversation", "FaultProvider", "Sandbox", "Scripts"]);
-	expect(strayClasses(namespaces("Conversation", "Scripts", "Sandbox", "FaultProvider", "Workspace", "FaultMailbox"), built.config)).toEqual([]);
+	expect(strayClasses(namespaces("Conversation", "Scripts", "Sandbox", "FaultProvider", "Workspace", "FaultMailbox"), built.config)).toEqual(["FaultMailbox", "Workspace"]);
+	expect(strayClasses(namespaces("Conversation", "Scripts", "Sandbox", "FaultProvider"), built.config)).toEqual([]);
 });
 
 test("the platform tests' and the dev server's builds have neither class, live or deleted", { timeout: 60_000 }, () => {

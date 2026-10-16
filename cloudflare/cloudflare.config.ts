@@ -209,11 +209,6 @@ export default defineConfig(({ mode }) => {
 				Scripts: exports.durableObject({ storage: "sqlite" }),
 				Sandbox: container ? exports.durableObject({ storage: "sqlite", container }) : exports.durableObject({ storage: "sqlite" }),
 				...(target.faults ? { FaultProvider: exports.durableObject({ storage: "sqlite" }) } : {}),
-				// Tombstones: an instance's deploy deletes the retired classes' namespaces with every object's storage, which
-				// cannot be undone (docs/plans/chunk-13c-design.md). Local state never had them, and cf's local simulation
-				// refuses to delete a class it does not have.
-				...(target.instance ? { Workspace: exports.durableObject({ state: "deleted" }) } : {}),
-				...(target.instance && target.faults ? { FaultMailbox: exports.durableObject({ state: "deleted" }) } : {}),
 			},
 		},
 	};
