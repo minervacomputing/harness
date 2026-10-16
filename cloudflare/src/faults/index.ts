@@ -132,7 +132,6 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 export { FaultProvider } from "./provider.ts";
-export { FaultMailbox, Workspace } from "../retired.ts";
 // The Sandbox with the fault seams of the Sandbox row of ARCHITECTURE.md's Testing table (sandbox.ts), under production's export name.
 export { FaultSandbox as Sandbox } from "./sandbox.ts";
 export { Scripts } from "../scripts/scripts.ts";
