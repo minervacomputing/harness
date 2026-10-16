@@ -28,7 +28,7 @@ try {
 		.filter(([, value]) => value.trim() === "")
 		.map(([name]) => name);
 	if (missing.length) throw new Error(`Not set: ${missing.join(", ")} (the ci-instance environment's secrets).`);
-	for (const line of maskCommands(await ciMaskValues({ account, secrets, vars }))) console.log(line);
+	for (const line of maskCommands(await ciMaskValues({ account, secrets }))) console.log(line);
 
 	const own = process.env.MINERVA_INSTANCES_DIR;
 	if (!own || !isAbsolute(own)) throw new Error("MINERVA_INSTANCES_DIR must be set to an absolute path.");

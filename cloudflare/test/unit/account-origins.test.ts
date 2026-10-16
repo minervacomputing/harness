@@ -16,9 +16,9 @@ const SUB = "acct7q";
 /** A test instance and a production one, as a fixture: nothing here names ours. */
 const TEST = namesOf("acme-test");
 const TEST_APP = TEST.app;
-const TEST_FILES = TEST.download;
+const TEST_LAB = TEST.lab;
 const APP = `https://${TEST_APP}.${SUB}.workers.dev`;
-const FILES = `https://${TEST_FILES}.${SUB}.workers.dev`;
+const LAB = `https://${TEST_LAB}.${SUB}.workers.dev`;
 
 function refusal(run: () => unknown): string {
 	try {
@@ -33,14 +33,14 @@ describe("the test instance's origins", () => {
 	test("the test Workers' workers.dev origins are accepted, as origins", () => {
 		expect(instanceOrigin(APP, TEST_APP, "SETTING")).toBe(APP);
 		expect(instanceOrigin(`${APP}/`, TEST_APP, "SETTING")).toBe(APP);
-		expect(instanceOrigin(` ${FILES}\n`, TEST_FILES, "SETTING")).toBe(FILES);
+		expect(instanceOrigin(` ${LAB}\n`, TEST_LAB, "SETTING")).toBe(LAB);
 		expect(instanceOrigin(APP.toUpperCase().replace("HTTPS", "https"), TEST_APP, "SETTING")).toBe(APP);
 	});
 
 	test.each([
 		["production's app", `https://acme.${SUB}.workers.dev`, TEST_APP],
-		["production's download origin", `https://acme-files.${SUB}.workers.dev`, TEST_FILES],
-		["the app where the download origin belongs", APP, TEST_FILES],
+		["another instance's lab", `https://acme-cm.${SUB}.workers.dev`, TEST_LAB],
+		["the app where the lab belongs", APP, TEST_LAB],
 		["a longer name", `https://acme-test-2.${SUB}.workers.dev`, TEST_APP],
 		["the name lower in the host", `https://www.acme-test.${SUB}.workers.dev`, TEST_APP],
 		["the name on another domain", `https://acme-test.${SUB}.example`, TEST_APP],

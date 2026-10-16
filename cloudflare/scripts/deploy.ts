@@ -25,9 +25,8 @@
 // then does the account change: the identity row is written when it is missing, the resources are checked and D1's
 // migrations applied (scripts/resources.ts), the deployed schema is compared with the migrations
 // (scripts/schema-check.ts), and the checked build is uploaded with that file as its secrets (a build or a secrets
-// file that changed since its check stops the deploy). Last, what 13b retired is deleted (scripts/retirement.ts): the
-// app Worker's retired secrets, by name, and the download Worker. The lab's deploy checks the identity and its own
-// origin the same way.
+// file that changed since its check stops the deploy). The lab's deploy checks the identity and its own origin the
+// same way.
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -37,7 +36,6 @@ import { appBuildProblems, buildAccount, buildDigest, builtImage, declaredSecret
 import { ensureImage } from "./image.ts";
 import { type Instance, checkFile, chooseInstance, parseInstanceArgs, readInstanceEnv } from "./instance.ts";
 import { labOrigin } from "./origins.ts";
-import { deleteRetiredSecrets, deleteWorker } from "./retirement.ts";
 import { CommandFailed, ROOT, hideOrigin, hideSecrets, lockOperation, pinAccount, run } from "./run.ts";
 
 const USAGE = "Usage: deploy.ts [--instance <name>] [--test | --lab]";
@@ -59,7 +57,7 @@ try {
 const LAB = FLAGS.includes("--lab");
 const TEST = INSTANCE.test;
 const MODE = TEST ? "faults" : "production";
-const { app: APP, lab: LAB_NAME, download: DOWNLOAD } = INSTANCE.names;
+const { app: APP, lab: LAB_NAME } = INSTANCE.names;
 const SECRETS = INSTANCE.files.secrets;
 const LAB_DIR = join(ROOT, "test", "account", "scripts-worker");
 // Every command run below (cf build, the checks) chooses this instance.
@@ -186,9 +184,6 @@ try {
 	if (fileDigest(upload) !== uploadDigest) throw new CommandFailed(`${upload} changed during the deploy: run it again.`);
 	run("cf", ["deploy", "--prebuilt", "--secrets-file", upload], { print: true });
 	removeSecrets();
-	step(`Deleting what 13b retired: ${APP}'s retired secrets and the Worker ${DOWNLOAD}`);
-	deleteRetiredSecrets(APP, app);
-	deleteWorker(DOWNLOAD);
 	console.log(`\nDeployed ${APP}.`);
 } catch (error) {
 	removeSecrets();

@@ -72,7 +72,6 @@ describe("where the instances are", () => {
 		expect(statSync(instance.files.instance).mode & 0o777).toBe(0o600);
 		expect(JSON.parse(readFileSync(instance.files.instance, "utf8"))).toEqual({ name: "acme", test: false });
 		expect(instance).toMatchObject({ name: "acme", test: false, account: null, dir: join(root, "acme") });
-		expect(instance.names.download).toBe("acme-files");
 		expect(make("acme-test", true).test).toBe(true);
 		expect(refusal(() => make("acme"))).toBe(`${join(root, "acme")} already exists.`);
 		expect(refusal(() => make("acme-files"))).toMatch(/cannot end in -files/);
@@ -336,6 +335,117 @@ describe("an instance's secrets (scripts/secrets.ts)", () => {
 		expect(secrets(["generate", "--test"]).text).toContain("to acme-test's secrets.env");
 		expect(secrets(["generate"]).text).toContain("a production instance is never chosen by default");
 		expect(existsSync(join(root, "acme", "secrets.env"))).toBe(false);
+	});
+});
+
+describe("pruning an instance's directory (scripts/instances.ts prune)", () => {
+	const prune = (name: string) => {
+		const result = spawnSync(process.execPath, [`${SCRIPTS}instances.ts`, "prune", name], { encoding: "utf8", env: { ...process.env, MINERVA_INSTANCE: undefined, ...env } as NodeJS.ProcessEnv });
+		return { status: result.status, out: result.stdout, err: result.stderr };
+	};
+	const SECRETS = [
+		"# Secrets of the instance acme (cloudflare/). Never commit or print them.",
+		`MINERVA_SECRET_KEY="secret-key-${SUB}"`,
+		`MINERVA_ENCRYPTION_KEYS="v1:encryption-${SUB}"`,
+		`export MINERVA_DOWNLOAD_KEY=download-${SUB}`,
+		`MINERVA_SETUP_KEY='setup-${SUB}'`,
+		"",
+		"# Optional: model keys (uploaded once declared), Laravel's token and connector clients (set both names of an app):",
+		"# MINERVA_MODEL_API_KEY=",
+		`MINERVA_LARAVEL_TOKEN="1|laravel-${SUB}"`,
+		"# MINERVA_GITHUB_CLIENT_ID=",
+		"#MINERVA_GITHUB_CLIENT_SECRET=",
+		`MINERVA_SLACK_CLIENT_ID=slack-${SUB}`,
+		"# MINERVA_SLACK_CLIENT_ID=",
+		"",
+		`export MINERVA_STREAM_KEYS='k1:stream-${SUB}'`,
+		"",
+	].join("\n");
+	const VARS = [
+		"# Settings of acme. Gitignored: it names the deployed origins.",
+		`MINERVA_SITE_URL=https://acme.${SUB}.workers.dev`,
+		`MINERVA_DOWNLOAD_ORIGIN=https://acme-files.${SUB}.workers.dev`,
+		"MINERVA_SIGNUP_OPEN=false",
+		'MINERVA_EMAIL_FROM="Minerva <noreply@minerva.example>"',
+		"MINERVA_MODEL_NAME=@cf/zai-org/glm-5.3-flash",
+		"MINERVA_LARAVEL_URL=https://app.minerva.example",
+		"",
+	].join("\n");
+
+	test("drops every line of a name nothing reads, set or commented out, and deployed.json, printing names only; a second run changes nothing", () => {
+		const instance = make("acme");
+		put("acme", "secrets.env", SECRETS);
+		put("acme", "vars.env", VARS);
+		put("acme", "deployed.json", `{"origin": "https://acme.${SUB}.workers.dev"}`);
+		expect(prune("acme")).toEqual({
+			status: 0,
+			out: [
+				`Dropped from ${instance.files.secrets}: MINERVA_DOWNLOAD_KEY, MINERVA_ENCRYPTION_KEYS, MINERVA_SETUP_KEY, MINERVA_SLACK_CLIENT_ID; commented out, MINERVA_GITHUB_CLIENT_ID, MINERVA_GITHUB_CLIENT_SECRET.`,
+				`Dropped from ${instance.files.vars}: MINERVA_DOWNLOAD_ORIGIN, MINERVA_EMAIL_FROM, MINERVA_SIGNUP_OPEN, MINERVA_SITE_URL.`,
+				`Removed ${join(instance.dir, "deployed.json")}.`,
+				"",
+			].join("\n"),
+			err: "",
+		});
+		const secrets = [
+			"# Secrets of the instance acme (cloudflare/). Never commit or print them.",
+			`MINERVA_SECRET_KEY="secret-key-${SUB}"`,
+			"",
+			"# Optional: model keys (uploaded once declared), Laravel's token and connector clients (set both names of an app):",
+			"# MINERVA_MODEL_API_KEY=",
+			`MINERVA_LARAVEL_TOKEN="1|laravel-${SUB}"`,
+			"",
+			`export MINERVA_STREAM_KEYS='k1:stream-${SUB}'`,
+			"",
+		].join("\n");
+		const vars = ["# Settings of acme. Gitignored: it names the deployed origins.", "MINERVA_MODEL_NAME=@cf/zai-org/glm-5.3-flash", "MINERVA_LARAVEL_URL=https://app.minerva.example", ""].join("\n");
+		expect(readFileSync(instance.files.secrets, "utf8")).toBe(secrets);
+		expect(readFileSync(instance.files.vars, "utf8")).toBe(vars);
+		for (const file of [instance.files.secrets, instance.files.vars]) expect(statSync(file).mode & 0o777).toBe(0o600);
+		expect(readdirSync(instance.dir).sort()).toEqual(["instance.json", "secrets.env", "vars.env"]);
+
+		expect(prune("acme")).toEqual({ status: 0, out: "acme's directory has nothing to prune.\n", err: "" });
+		expect(readFileSync(instance.files.secrets, "utf8")).toBe(secrets);
+		expect(readFileSync(instance.files.vars, "utf8")).toBe(vars);
+	});
+
+	test("a value across lines, a name given twice, or one the parser reads otherwise, stops it before either file is written, unprinted", () => {
+		const instance = make("acme");
+		put("acme", "secrets.env", SECRETS);
+		for (const broken of [
+			// Dropping the first line of each would leave the rest of the value, kept or named as a setting.
+			`MINERVA_SIGNUP_OPEN="false\nstill-${SUB}"\n`,
+			`MINERVA_SITE_URL="https://acme.${SUB}.workers.dev\nMINERVA_MODEL_NAME=${SUB}"\n`,
+			`MINERVA_SITE_URL="https://acme.${SUB}.workers.dev\nFRAGMENT_${SUB}=tail"\n`,
+			`MINERVA_EMAIL_FROM="Minerva\n# ${SUB}\nTAIL=end"\nMINERVA_MODEL_NAME=fake-1\n`,
+			// A name given twice: the first is not what cf reads, and may hide a value across lines.
+			`MINERVA_MODEL_NAME=first-${SUB}\nMINERVA_SIGNUP_OPEN=false\nMINERVA_MODEL_NAME=second\n`,
+			`MINERVA_SITE_URL="first\nFRAGMENT_${SUB}=tail"\nMINERVA_SITE_URL='"first'\nFRAGMENT_${SUB}=tail"\n`,
+			// The parser's name for it is not the one it seems to have.
+			`export\tMINERVA_SITE_URL="first\n# ${SUB}"\n`,
+			`export\tMINERVA_MODEL_NAME=${SUB}\n`,
+			`\v# MINERVA_SITE_URL="first\nFRAGMENT_${SUB}=tail"\n\v# MINERVA_SITE_URL=last\n`,
+			`\uFEFF# MINERVA_SITE_URL=${SUB}\n`,
+			`MINERVA_SIGNUP_OPEN=false\n# a comment\n # old-site=${SUB}\n`,
+			// Without the dropped line, the parser would read the comment as a value that takes in the setting.
+			`#\nMINERVA_SIGNUP_OPEN=false\n\t# MINERVA_DEBUG="\nMINERVA_DEBUG=false\n# "\n`,
+		]) {
+			put("acme", "vars.env", broken);
+			expect(prune("acme"), broken).toEqual({ status: 1, out: "", err: `${instance.files.vars} has a line that does not read on its own (a value across lines, say): edit it by hand.\n` });
+			expect(readFileSync(instance.files.secrets, "utf8")).toBe(SECRETS);
+			expect(readFileSync(instance.files.vars, "utf8")).toBe(broken);
+		}
+	});
+
+	test("another command's lock stops it, and it takes only an instance's name", () => {
+		const instance = make("acme");
+		put("acme", "secrets.env", SECRETS);
+		holdAs("acme");
+		expect(prune("acme")).toEqual({ status: 1, out: "", err: `Another command holds ${instance.files.lock} (process ${process.pid}): wait for it to finish.\n` });
+		expect(readFileSync(instance.files.secrets, "utf8")).toBe(SECRETS);
+		rmSync(instance.files.lock);
+		expect(prune("acme-other")).toEqual({ status: 1, out: "", err: `There is no instance acme-other in ${root}.\n` });
+		expect(prune("--test").status).toBe(2);
 	});
 });
 

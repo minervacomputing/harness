@@ -61,7 +61,6 @@ describe("the names an instance owns", () => {
 			app: "acme",
 			d1: "acme",
 			gateway: "acme",
-			download: "acme-files",
 			bucket: "acme-files",
 			bucketEu: "acme-files-eu",
 			container: "acme-sandbox",
@@ -76,10 +75,10 @@ describe("the names an instance owns", () => {
 	});
 
 	test("two instances share no name of a kind, so one cannot reach the other's resources", () => {
-		// The rules exist for this: acme-files would own the download Worker of acme, and acme-eu's buckets would
-		// otherwise run into acme's. Each kind of resource has a namespace of its own.
+		// The rules exist for this: acme-files would own the bucket of acme, and acme-eu's buckets would otherwise
+		// run into acme's. Each kind of resource has a namespace of its own.
 		const instances = ["acme", "acme-eu", "acme-test", "acme-test-2", "acme-x", "files", "eu", "cm", "sandbox", "acme-files-2", "test", "acme2"];
-		const kinds = [["app", "d1", "gateway"], ["download", "lab"], ["bucket", "bucketEu"], ["container"]] as const;
+		const kinds = [["app", "d1", "gateway"], ["lab"], ["bucket", "bucketEu"], ["container"]] as const;
 		for (const kind of kinds) {
 			const owners = new Map<string, string>();
 			for (const name of instances) {
@@ -94,10 +93,10 @@ describe("the names an instance owns", () => {
 		}
 	});
 
-	test("the Worker kinds do not collide either: the app, the download Worker and the lab", () => {
+	test("the Worker kinds do not collide either: the app and the lab", () => {
 		const workers = new Map<string, string>();
 		for (const name of ["acme", "acme-eu", "acme-test", "files", "cm"]) {
-			for (const worker of [namesOf(name).app, namesOf(name).download, namesOf(name).lab]) {
+			for (const worker of [namesOf(name).app, namesOf(name).lab]) {
 				expect(workers.has(worker), `${worker} of ${name} is also ${workers.get(worker)}'s`).toBe(false);
 				workers.set(worker, name);
 			}

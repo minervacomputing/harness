@@ -29,6 +29,9 @@ const DEFAULTS: Defaults = {
 	MINERVA_LARAVEL_URL: "",
 };
 
+/** Every setting a vars file can set. */
+export const SETTING_NAMES: readonly string[] = Object.keys(DEFAULTS);
+
 /**
  * What the dev server's mode `offline` sets besides DEFAULTS, unless the shell sets it: debug on (addressing.ts
  * stands in for the jurisdictions local workerd lacks), the fake model (the test build's entry has it), and a

@@ -433,8 +433,7 @@ if (args[0] === "auth" && args[1] === "whoami") {
 		expect(scripts["deploy:test"]).toBe("node scripts/deploy.ts --test");
 		// scripts/deploy.ts: the locks (the checkout's, then the instance's) and the account, everything local, the
 		// account's subdomain, the stray namespaces and the identity (read-only), then the first change on the account (the
-		// identity row, written by the identity check once it has passed), the migrations, the upload, and last the deletion
-		// of what 13b retired.
+		// identity row, written by the identity check once it has passed), the migrations and the upload.
 		const deploy = readFileSync(new URL("../../scripts/deploy.ts", import.meta.url), "utf8");
 		expect(deploy).toContain('run(process.execPath, ["scripts/identity.ts", ...(record ? ["--record"] : [])], { print: true });');
 		const order = [
@@ -451,8 +450,6 @@ if (args[0] === "auth" && args[1] === "whoami") {
 			'run(process.execPath, ["scripts/resources.ts"]',
 			'"scripts/schema-check.ts"',
 			'run("cf", ["deploy", "--prebuilt", "--secrets-file", upload]',
-			"deleteRetiredSecrets(APP, app);",
-			"deleteWorker(DOWNLOAD);",
 		].map((call) => deploy.indexOf(call));
 		expect(order.every((index) => index > 0)).toBe(true);
 		expect(order).toEqual([...order].sort((a, b) => a - b));
@@ -635,7 +632,7 @@ if (command === "auth whoami") {
 			[["--instance", "acme"], TEST_BUILD, 1, "acme serves the test build, but"],
 			[["--instance", "acme-test"], PRODUCTION_BUILD, 1, "acme-test serves the production build, but"],
 		] as const) {
-			account = { workers: ["acme", "acme-files", "acme-test", "acme-test-files"], env };
+			account = { workers: ["acme", "acme-test"], env };
 			const result = identity([...flags]);
 			expect(result.status, text).toBe(status);
 			expect(result.out + result.err, text).toContain(text);
@@ -668,8 +665,8 @@ if (command === "auth whoami") {
 	test("with no row and no app (no Worker, or only the quiesced Worker of a reset), it passes only when D1 has no tables", () => {
 		// Workers whose names contain the app's are not the app.
 		for (const [workers, env, what] of [
-			[["acme-files", "acme-test"], PRODUCTION_BUILD, "no Worker"],
-			[["acme", "acme-files"], QUIESCED, "only the quiesced Worker of a reset"],
+			[["acme-test", "acme-test-cm"], PRODUCTION_BUILD, "no Worker"],
+			[["acme", "acme-test"], QUIESCED, "only the quiesced Worker of a reset"],
 		] as const) {
 			account = { workers: [...workers], env };
 			const fresh = identity(["--instance", "acme"]);
@@ -734,7 +731,7 @@ if (command === "auth whoami") {
 	test("a reset that stops after quiescing finds the row on its next run, and a finished one passes as fresh", () => {
 		// An instance deployed before the row existed: tables, and the production build serving.
 		migrate(false);
-		account = { workers: ["acme", "acme-files"], env: PRODUCTION_BUILD };
+		account = { workers: ["acme"], env: PRODUCTION_BUILD };
 		const reset = identity(["--instance", "acme", "--production", "--record"]);
 		expect(reset.status).toBe(0);
 		expect(reset.out).toContain("as its live app's bindings say");

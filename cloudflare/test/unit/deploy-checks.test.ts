@@ -2,7 +2,7 @@
 // changes: the lifecycle rules a files bucket needs (scripts/lifecycle.ts), the app's build against the instance's names
 // (scripts/builds.ts), which fails closed when a test build would reach production or the other way round,
 // which build a live app's bindings are (scripts/account.ts, for the identity check), the namespaces a build would
-// strand and the secrets a deploy deletes (scripts/builds.ts, scripts/retirement.ts), and the order in which a deploy
+// strand and the secrets it uploads (scripts/builds.ts), and the order in which a deploy
 // and a reset check and change things. The account itself is never asked here (schema-check.test.ts runs
 // the identity check against a stand-in for cf).
 
@@ -15,7 +15,6 @@ import { type BuiltWorker, type LiveBinding, appBuildProblems, buildAccount, bui
 import { namesOf } from "../../scripts/instance.ts";
 import { ARCHIVE_MAX_AGE, type LifecycleRule, lifecycleExtras, lifecycleMatches, lifecycleProblems } from "../../scripts/lifecycle.ts";
 import { imageTag } from "../../scripts/image.ts";
-import { undeclaredSecrets } from "../../scripts/retirement.ts";
 import { SANDBOX_IMAGE_REFERENCE } from "../../scripts/instance.ts";
 import { hideSecrets, redact } from "../../scripts/run.ts";
 
@@ -135,40 +134,17 @@ describe("the namespaces a build would strand (strayClasses), which stop a deplo
 	});
 });
 
-describe("the secrets a deploy deletes from the app Worker (undeclaredSecrets)", () => {
-	const app: BuiltWorker = {
-		name: "acme",
-		env: {
-			MINERVA_SECRET_KEY: { type: "secret" },
-			MINERVA_STREAM_KEYS: { type: "secret" },
-			MINERVA_ACCESS_CLIENTS: { type: "plain_text", value: "client.access" },
-			MINERVA_GITHUB_CLIENT_ID: { type: "plain_text", value: "not a secret" },
-		},
-	};
-
+describe("the secrets a deploy uploads (declaredSecrets)", () => {
 	test("the build declares only its secret bindings", () => {
+		const app: BuiltWorker = {
+			name: "acme",
+			env: {
+				MINERVA_SECRET_KEY: { type: "secret" },
+				MINERVA_STREAM_KEYS: { type: "secret" },
+				MINERVA_ACCESS_CLIENTS: { type: "plain_text", value: "client.access" },
+			},
+		};
 		expect(declaredSecrets(app)).toEqual(["MINERVA_SECRET_KEY", "MINERVA_STREAM_KEYS"]);
-	});
-
-	test("a declared secret stays, the retired ones go, and any other undeclared one is only named", () => {
-		// A Worker that was quiesced by a reset and deployed again keeps every secret it ever had.
-		const onWorker = ["MINERVA_SECRET_KEY", "MINERVA_STREAM_KEYS", "MINERVA_LARAVEL_TOKEN", "MINERVA_SETUP_KEY", "MINERVA_ENCRYPTION_KEYS", "MINERVA_DOWNLOAD_KEY", "MINERVA_SLACK_CLIENT_SECRET", "MINERVA_GOOGLE_DRIVE_CLIENT_ID", "MINERVA_MODEL_API_KEY", "SOMEONE_ELSES"];
-		expect(undeclaredSecrets(onWorker, app)).toEqual({
-			retired: ["MINERVA_DOWNLOAD_KEY", "MINERVA_ENCRYPTION_KEYS", "MINERVA_GOOGLE_DRIVE_CLIENT_ID", "MINERVA_SETUP_KEY", "MINERVA_SLACK_CLIENT_SECRET"],
-			other: ["MINERVA_LARAVEL_TOKEN", "MINERVA_MODEL_API_KEY", "SOMEONE_ELSES"],
-		});
-	});
-
-	test("a retired name the build declares again stays", () => {
-		const declaring: BuiltWorker = { env: { MINERVA_SETUP_KEY: { type: "secret" }, MINERVA_GITHUB_CLIENT_SECRET: { type: "secret" } } };
-		expect(undeclaredSecrets(["MINERVA_SETUP_KEY", "MINERVA_GITHUB_CLIENT_SECRET", "MINERVA_GITHUB_CLIENT_ID"], declaring)).toEqual({ retired: ["MINERVA_GITHUB_CLIENT_ID"], other: [] });
-	});
-
-	test("names that only resemble a client pair are not retired", () => {
-		expect(undeclaredSecrets(["MINERVA_ACCESS_CLIENTS", "MINERVA_CLIENT_ID", "MINERVA_GITHUB_CLIENT_IDS", "OTHER_GITHUB_CLIENT_ID"], app)).toEqual({
-			retired: [],
-			other: ["MINERVA_ACCESS_CLIENTS", "MINERVA_CLIENT_ID", "MINERVA_GITHUB_CLIENT_IDS", "OTHER_GITHUB_CLIENT_ID"],
-		});
 	});
 });
 

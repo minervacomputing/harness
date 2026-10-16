@@ -1,42 +1,32 @@
 // What CI's instance masks in the public Actions log (scripts/masks.ts, docs/plans/ci-account-suites.md): every
-// value of its secrets and settings that a log could show, as GitHub's `::add-mask::` commands.
+// value of its secrets that a log could show, as GitHub's `::add-mask::` commands.
 
 import { describe, expect, test } from "vitest";
 import { ciMaskValues, maskCommands } from "../../scripts/masks.ts";
-import { workersDevOrigin } from "../../scripts/origins.ts";
 import { faultsToken } from "../../src/faults/token.ts";
 
 const SECRET_KEY = "s3cr3t-key-of-forty-characters-0123456789";
-const SECRETS = [`MINERVA_SECRET_KEY=${SECRET_KEY}`, 'MINERVA_ENCRYPTION_KEYS="v1:fernet-key-0123456789abcdef"', "export MINERVA_SETUP_KEY='setup-key-0123456789'", "SHORT=yes", ""].join("\n");
-const VARS = ["MINERVA_SITE_URL=https://ci.acme-sub.workers.dev", "MINERVA_DOWNLOAD_ORIGIN=https://ci-files.acme-sub.workers.dev/", "MINERVA_MODEL_PROVIDER=fake", ""].join("\n");
+const SECRETS = [`MINERVA_SECRET_KEY=${SECRET_KEY}`, 'MINERVA_LARAVEL_TOKEN="1|laravel-token-0123456789abcdef"', "export MINERVA_STREAM_KEYS='k1:stream-key-0123456789'", "MINERVA_MODEL_API_KEY=model-key-0123456789 # a comment", "SHORT=yes", ""].join("\n");
 
 describe("the values CI masks", () => {
-	test("the account, each secret in both readings, the fault token, the origins, their hosts and the subdomain", async () => {
-		const values = await ciMaskValues({ account: " 0123456789abcdef0123456789abcdef\n", secrets: SECRETS, vars: VARS });
-		expect(values).toEqual(
-			expect.arrayContaining([
+	test("the account, each secret in both readings and the fault token, and nothing shorter than 8 characters", async () => {
+		const values = await ciMaskValues({ account: " 0123456789abcdef0123456789abcdef\n", secrets: SECRETS });
+		// Each once, in no particular order (dotenv's parser gives its own).
+		expect(values.toSorted()).toEqual(
+			[
 				"0123456789abcdef0123456789abcdef",
 				SECRET_KEY,
-				"v1:fernet-key-0123456789abcdef",
-				"setup-key-0123456789",
+				"1|laravel-token-0123456789abcdef",
+				"k1:stream-key-0123456789",
+				"model-key-0123456789",
+				"model-key-0123456789 # a comment",
 				await faultsToken(SECRET_KEY),
-				"https://ci.acme-sub.workers.dev",
-				"ci.acme-sub.workers.dev",
-				"https://ci-files.acme-sub.workers.dev/",
-				"https://ci-files.acme-sub.workers.dev",
-				"ci-files.acme-sub.workers.dev",
-				"acme-sub",
-			]),
+			].toSorted(),
 		);
-		// While CI's vars file names the app's origin, the one the suites derive from the account is masked whole.
-		expect(values).toContain(workersDevOrigin("ci", "acme-sub"));
-		expect(values).not.toContain("yes");
-		expect(values).not.toContain("fake");
-		expect(new Set(values).size).toBe(values.length);
 	});
 
-	test("settings that are not origins add nothing", async () => {
-		expect(await ciMaskValues({ account: "id", secrets: "", vars: "MINERVA_SITE_URL=not a url\n" })).toEqual(["id"]);
+	test("no secrets, and no secret key, leave the account alone", async () => {
+		expect(await ciMaskValues({ account: "id", secrets: "" })).toEqual(["id"]);
 	});
 });
 

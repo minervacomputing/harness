@@ -17,7 +17,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
-import { type Instance, chooseInstance, parseInstanceArgs, readInstanceText } from "./instance.ts";
+import { INSTANCE_SECRETS, type Instance, chooseInstance, parseInstanceArgs, readInstanceText } from "./instance.ts";
 import { writeInstanceFile } from "./instance-files.ts";
 import { lockInstance } from "./run.ts";
 
@@ -42,20 +42,10 @@ const NAME = INSTANCE ? `${INSTANCE.name}'s secrets.env` : ".dev.vars";
 /** The command that generates the missing secrets. */
 const GENERATE = INSTANCE ? `pnpm secrets --instance ${INSTANCE.name}` : "pnpm secrets:offline";
 
-const REQUIRED: Record<string, () => string> = {
+const REQUIRED: Record<(typeof INSTANCE_SECRETS.required)[number], () => string> = {
 	// Signs and keys our own values: 50 random bytes in URL-safe base64.
 	MINERVA_SECRET_KEY: () => urlsafe(50),
 };
-
-// Model keys are uploaded once the steps that use them declare them in cloudflare.config.ts.
-// MINERVA_LARAVEL_TOKEN, the Sanctum token Laravel issues for this engine (`php artisan minerva:engine-token`), and
-// MINERVA_STREAM_KEYS, the stream tokens' keys Laravel holds too, are declared and uploaded once set.
-const PLACEHOLDERS = [
-	"MINERVA_MODEL_API_KEY",
-	"MINERVA_BRAVE_SEARCH_API_KEY",
-	"MINERVA_LARAVEL_TOKEN",
-	"MINERVA_STREAM_KEYS",
-];
 
 function urlsafe(bytes: number): string {
 	return randomBytes(bytes).toString("base64url");
@@ -90,14 +80,14 @@ function write(path: string, lines: string[]): void {
 function generate(): void {
 	if (INSTANCE) lockInstance(INSTANCE);
 	const values = parse(readFile() ?? "");
-	const added = Object.keys(REQUIRED).filter((name) => !values.get(name));
-	for (const name of added) values.set(name, (REQUIRED[name] as () => string)());
+	const added = INSTANCE_SECRETS.required.filter((name) => !values.get(name));
+	for (const name of added) values.set(name, REQUIRED[name]());
 	const lines = [
 		`# Secrets of ${INSTANCE ? `the instance ${INSTANCE.name}` : "the local dev server (pnpm dev:offline)"} (cloudflare/). Never commit or print them.`,
 		...[...values].map(([name, value]) => line(name, value)),
 		"",
 		"# Optional: model keys (uploaded once declared), Laravel's token and the stream keys:",
-		...PLACEHOLDERS.filter((name) => !values.has(name)).map((name) => `# ${name}=`),
+		...INSTANCE_SECRETS.optional.filter((name) => !values.has(name)).map((name) => `# ${name}=`),
 	];
 	if (INSTANCE) writeInstanceFile(INSTANCE, "secrets", `${lines.join("\n")}\n`);
 	else write(FILE, lines);
@@ -115,11 +105,11 @@ function check(): void {
 		process.exit(1);
 	}
 	const values = parse(text);
-	const missing = Object.keys(REQUIRED).filter((name) => !values.get(name));
-	for (const name of Object.keys(REQUIRED)) console.log(`${name}: ${values.get(name) ? "set" : "missing"}`);
+	const missing = INSTANCE_SECRETS.required.filter((name) => !values.get(name));
+	for (const name of INSTANCE_SECRETS.required) console.log(`${name}: ${values.get(name) ? "set" : "missing"}`);
 	// A value `subset` or `generate` could not write back stops a deploy here, before anything on the account changes.
 	try {
-		for (const name of Object.keys(REQUIRED)) line(name, values.get(name) ?? "");
+		for (const name of INSTANCE_SECRETS.required) line(name, values.get(name) ?? "");
 	} catch (error) {
 		console.error((error as Error).message);
 		process.exit(1);

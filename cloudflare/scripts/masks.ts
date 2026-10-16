@@ -12,28 +12,19 @@ export interface CiValues {
 	account: string;
 	/** The text of the instance's secrets.env. */
 	secrets: string;
-	/** The text of the instance's vars.env. */
-	vars: string;
 }
 
 /**
- * Every value to mask: the account id; each secret, in both of `envValues`'s readings; the fault driver's token
- * that the suites derive from MINERVA_SECRET_KEY and send; and the two origins, their hosts and the workers.dev
- * subdomain. Shorter secrets than 8 characters are none of ours and would only mask unrelated output.
+ * Every value to mask: the account id; each secret, in both of `envValues`'s readings; and the fault driver's token
+ * that the suites derive from MINERVA_SECRET_KEY and send. Shorter secrets than 8 characters are none of ours and
+ * would only mask unrelated output. The workers.dev subdomain is masked where a step derives it (scripts/account.ts,
+ * `accountSubdomain`).
  */
 export async function ciMaskValues(values: CiValues): Promise<string[]> {
 	const found = [values.account.trim()];
 	found.push(...envValues(values.secrets).filter((value) => value.length >= 8));
 	const secretKey = (parseEnv(values.secrets) as Record<string, string>).MINERVA_SECRET_KEY;
 	if (secretKey) found.push(await faultsToken(secretKey));
-	const vars = parseEnv(values.vars) as Record<string, string>;
-	for (const origin of [vars.MINERVA_SITE_URL, vars.MINERVA_DOWNLOAD_ORIGIN]) {
-		const url = URL.parse(origin ?? "");
-		if (!url) continue;
-		found.push(origin as string, url.origin, url.hostname);
-		const labels = url.hostname.split(".");
-		if (labels.length >= 4 && url.hostname.endsWith(".workers.dev")) found.push(labels[labels.length - 3] as string);
-	}
 	return [...new Set(found.filter((value) => value !== ""))];
 }
 

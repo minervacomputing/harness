@@ -14,7 +14,7 @@ export const MAX_NAME_LENGTH = 54;
 
 /**
  * What the derivation appends to a name. A name may not end in one, or the instance `acme-files` would own the
- * download Worker of the instance `acme`.
+ * bucket of the instance `acme`.
  */
 export const RESERVED_SUFFIXES = ["-files", "-files-eu", "-sandbox", "-cm"] as const;
 
@@ -52,8 +52,6 @@ export interface Names {
 	d1: string;
 	/** The AI Gateway, which `MINERVA_MODEL_GATEWAY` names in the build. */
 	gateway: string;
-	/** The download origin's Worker. */
-	download: string;
 	/** The default bucket. */
 	bucket: string;
 	/** The bucket in R2's EU jurisdiction. */
@@ -72,7 +70,6 @@ export function namesOf(name: string): Names {
 		app: name,
 		d1: name,
 		gateway: name,
-		download: `${name}-files`,
 		bucket: `${name}-files`,
 		bucketEu: `${name}-files-eu`,
 		container: `${name}-sandbox`,
@@ -133,6 +130,17 @@ export const INSTANCE_FILES = {
 } as const;
 
 export type InstanceFile = keyof typeof INSTANCE_FILES;
+
+/**
+ * The secrets a secrets.env holds: `required`, which scripts/secrets.ts generates, and `optional`, which it lists
+ * commented out until set. Model keys are uploaded once the steps that use them declare them in cloudflare.config.ts;
+ * MINERVA_LARAVEL_TOKEN, the Sanctum token Laravel issues for this engine (`php artisan minerva:engine-token`), and
+ * MINERVA_STREAM_KEYS, the stream tokens' keys Laravel holds too, are declared and uploaded once set.
+ */
+export const INSTANCE_SECRETS = {
+	required: ["MINERVA_SECRET_KEY"],
+	optional: ["MINERVA_MODEL_API_KEY", "MINERVA_BRAVE_SEARCH_API_KEY", "MINERVA_LARAVEL_TOKEN", "MINERVA_STREAM_KEYS"],
+} as const;
 
 /** An instance: its name, its kind, its account once recorded, and its directory. */
 export interface Instance {
