@@ -5,6 +5,7 @@ import type { ToolCallOutcome, ToolDeclaration } from "../gateway/executor.ts";
 import type { Json } from "../lib/json.ts";
 import type { AttemptFence, EpochMs, RunId } from "../shared/rpc.ts";
 import { ScriptLane, type ScriptsClient } from "./run.ts";
+import type { ScriptFence } from "./scripts.ts";
 import { ScriptCalls } from "./session.ts";
 import { targetsOf } from "./target.ts";
 import type { ScriptToolHost } from "./tool.ts";
@@ -34,6 +35,8 @@ export interface ScriptHostDeps {
 	/** A call through the run's queue and the executor; `drop` is checked only before it is sent. */
 	invoke(fence: AttemptFence, declaration: ToolDeclaration, args: Json | undefined, drop: AbortSignal): Promise<ToolCallOutcome>;
 	scripts(): ScriptsClient;
+	record(script: ScriptFence, timeoutMs: number): Promise<boolean>;
+	end(script: ScriptFence): Promise<void>;
 	waitUntil(promise: Promise<unknown>): void;
 	started(runId: RunId, callId: string, name: string): void;
 	ended(runId: RunId, callId: string): void;
@@ -48,6 +51,8 @@ export function scriptToolHost(deps: ScriptHostDeps): ScriptToolHost {
 		calls: (runId) => deps.runs.calls(runId),
 		port: (fence) => ({ invoke: (declaration, args, drop) => deps.invoke(fence, declaration, args, drop) }),
 		scripts: () => deps.scripts(),
+		record: (script, timeoutMs) => deps.record(script, timeoutMs),
+		end: (script) => deps.end(script),
 		lane: deps.runs.lane,
 		targets: (session) => targetsOf(session),
 		waitUntil: (promise) => deps.waitUntil(promise),

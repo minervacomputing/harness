@@ -27,6 +27,7 @@ import { scriptDescription } from "./description.ts";
 import { CANCELLED_NOTE, NOTHING, SCRIPT_TOOL, STORE_BYTES, STORE_TOO_LARGE, STORE_UNCONVERTIBLE } from "./limits.ts";
 import { type ScriptText, bound, sizeOf } from "./output.ts";
 import { executeScript, type ScriptLane, type ScriptResult, type ScriptsClient, scriptCpuMs, scriptTimeoutMs } from "./run.ts";
+import type { ScriptFence } from "./scripts.ts";
 import type { ScriptCallPort, ScriptCalls, ScriptSession } from "./session.ts";
 import type { ScriptControl, ScriptTools } from "./target.ts";
 
@@ -47,6 +48,12 @@ export const SCRIPT_STORE = defineDoc<{ entries: [string, string][] }>({
 export interface ScriptToolHost {
 	/** The run a pi session belongs to and its current attempt, when that attempt can still act; `signal` is the run's end. */
 	current(session: number): { fence: AttemptFence; deadline: EpochMs | null; signal: AbortSignal } | null;
+	/**
+	 * Records a script about to run, with its clock, if the attempt can still act (false: the run ended, nothing recorded).
+	 * Its time is wall time from here until `end` is called, once the script answered or was stopped.
+	 */
+	record(script: ScriptFence, timeoutMs: number): Promise<boolean>;
+	end(script: ScriptFence): Promise<void>;
 	/** The run's scripted calls across its scripts, in this instance. */
 	calls(runId: RunId): ScriptCalls;
 	/** Scripted calls of the attempt through the run's queue and the executor. */
@@ -158,25 +165,34 @@ export function scriptTool(listed: readonly ToolDeclaration[], host: ScriptToolH
 			const { fence } = run;
 			const code = String((args as { code?: unknown } | null)?.code ?? "");
 			const store = await loadStore(api, context);
-			host.started(fence.runId, api.callId, SCRIPT_TOOL);
+			// The run may have ended while the store loaded: the record's fence check is the last before the script runs.
+			const script = { ...fence, scriptId: uuid7() };
+			const timeoutMs = scriptTimeoutMs(run.deadline);
+			if (!(await host.record(script, timeoutMs))) return { output: [{ type: "text", text: RUN_ENDED_MESSAGE }], isError: true };
 			try {
-				const timeoutMs = scriptTimeoutMs(run.deadline);
-				const result = await executeScript({
-					fence: { ...fence, scriptId: uuid7() },
-					code,
-					tools,
-					store,
-					timeoutMs,
-					cpuMs: scriptCpuMs(timeoutMs),
-					signal: context.abortSignal ? AbortSignal.any([context.abortSignal, run.signal]) : run.signal,
-					calls: host.calls(fence.runId),
-					port: host.port(fence),
-					scripts: () => host.scripts(),
-					lane: host.lane,
-					targets: (session) => host.targets(session),
-					waitUntil: (promise) => host.waitUntil(promise),
-					onSession: host.onSession ? (session) => host.onSession?.(session) : undefined,
-				});
+				let result: ScriptResult;
+				// Ended whatever happens once recorded: a record open in a live instance is a script still running.
+				try {
+					host.started(fence.runId, api.callId, SCRIPT_TOOL);
+					result = await executeScript({
+						fence: script,
+						code,
+						tools,
+						store,
+						timeoutMs,
+						cpuMs: scriptCpuMs(timeoutMs),
+						signal: context.abortSignal ? AbortSignal.any([context.abortSignal, run.signal]) : run.signal,
+						calls: host.calls(fence.runId),
+						port: host.port(fence),
+						scripts: () => host.scripts(),
+						lane: host.lane,
+						targets: (session) => host.targets(session),
+						waitUntil: (promise) => host.waitUntil(promise),
+						onSession: host.onSession ? (session) => host.onSession?.(session) : undefined,
+					});
+				} finally {
+					await host.end(script);
+				}
 				return await render(result, (writes) => saveStore(api, writes, context));
 			} finally {
 				host.ended(fence.runId, api.callId);

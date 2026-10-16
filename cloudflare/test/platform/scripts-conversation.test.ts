@@ -6,6 +6,7 @@
 // returned, more than ten scripts in a row, a stop of the run while a script runs. The CPU-bound guest and the busy object
 // are on the account.
 
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import type { TranscriptContext } from "@earendil-works/pi-ai";
 import type { RunEvent } from "@minerva/contract";
 import type { Scope } from "@minerva/contract/internal";
@@ -159,6 +160,38 @@ async function eventsOf(stub: Stub, runId: RunId): Promise<RunEvent[]> {
 	return (await viewOf(stub, runId)).events;
 }
 
+type ScriptRecord = {
+	started_at: number;
+	ended_at: number | null;
+	timeout_ms: number;
+	estimated: number;
+};
+
+function endOf(record: ScriptRecord): number {
+	if (record.ended_at === null) throw new Error("The script's record is still open.");
+	return record.ended_at;
+}
+
+/** The run's script records, in the order they started, and when the run was created and finished. */
+function recordsOf(stub: Stub, runId: RunId) {
+	return runInDurableObject(stub, (_instance, state) => ({
+		run: state.storage.sql.exec<{ created_at: number; finished_at: number | null }>("SELECT created_at, finished_at FROM runs WHERE id = ?", runId).one(),
+		records: state.storage.sql
+			.exec<ScriptRecord>("SELECT started_at, ended_at, timeout_ms, estimated FROM script_records WHERE run_id = ? ORDER BY started_at", runId)
+			.toArray(),
+	}));
+}
+
+async function until<T>(read: () => Promise<T>, done: (value: T) => boolean, timeout = 8000): Promise<T> {
+	const started = Date.now();
+	for (;;) {
+		const value = await read();
+		if (done(value)) return value;
+		if (Date.now() - started > timeout) throw new Error(`Timed out waiting; last: ${JSON.stringify(value)}`);
+		await sleep(20);
+	}
+}
+
 /** The tools a model request offered, from its system messages. */
 function offered(context: TranscriptContext | undefined): { name: string; description: string }[] {
 	return (context?.messages ?? []).flatMap((message) => (message.role === "system" ? (message.toolsAdded ?? []) : []));
@@ -270,6 +303,40 @@ describe("run_script in the conversation", () => {
 		expect(results.length).toBe(13);
 		for (const result of results.slice(0, 12)) expect(result).toEqual({ texts: ["Script failed: Execution timed out after 500 ms"], isError: true });
 		expect(results[12]).toEqual({ texts: ["thirteenth"], isError: false });
+		// Each recorded before its clock started and ended when it answered.
+		const { records } = await recordsOf(stub, runId);
+		expect(records.length).toBe(13);
+		for (const record of records.slice(0, 12)) expect(endOf(record) - record.started_at).toBeGreaterThanOrEqual(500);
+		expect(records.every((record) => record.estimated === 0)).toBe(true);
+	});
+
+	test("a script's record spans its run, from before it ran to its answer", async () => {
+		const { stub, ...w } = conversation();
+		const runId = await posted(w, [script("await new Promise((resolve) => setTimeout(resolve, 300)); return 'slept'"), { text: "Done." }]);
+		expect((await settled(stub, runId)).status).toBe("completed");
+		const { run, records } = await recordsOf(stub, runId);
+		expect(records).toEqual([{ timeout_ms: SCRIPT_TIMEOUT_MS, estimated: 0, started_at: expect.any(Number), ended_at: expect.any(Number) }]);
+		const [record] = records as [ScriptRecord];
+		expect(endOf(record) - record.started_at).toBeGreaterThanOrEqual(300);
+		expect(record.started_at).toBeGreaterThanOrEqual(run.created_at);
+		expect(endOf(record)).toBeLessThanOrEqual(run.finished_at as number);
+	});
+
+	test("an object reset during a script: the next instance ends its record when it starts, by its clock's bound, estimated", async () => {
+		const { stub, ...w } = conversation();
+		const runId = await posted(w, [script("await new Promise((resolve) => setTimeout(resolve, 60_000))"), { text: "Done." }]);
+		await until(() => recordsOf(stub, runId), ({ records }) => records.length === 1);
+		const reset = Date.now();
+		await runInDurableObject(stub, (_instance, state) => state.abort("fault: reset")).catch(() => {});
+		// The next instance starts at its next alarm; this one is due now.
+		const again = objectOf({ scope: w.within, conversation: w.id });
+		await runDurableObjectAlarm(again);
+		expect((await settled(again, runId)).status).toBe("completed");
+		const { records } = await recordsOf(again, runId);
+		expect(records).toEqual([{ timeout_ms: SCRIPT_TIMEOUT_MS, estimated: 1, started_at: expect.any(Number), ended_at: expect.any(Number) }]);
+		const [record] = records as [ScriptRecord];
+		expect(endOf(record)).toBeGreaterThanOrEqual(reset);
+		expect(endOf(record)).toBeLessThan(record.started_at + SCRIPT_TIMEOUT_MS);
 	});
 
 	test("stopping the run stops its script", async () => {
@@ -279,5 +346,8 @@ describe("run_script in the conversation", () => {
 		await commands.cancelRun({ scope: w.within, conversation: w.id, run: runId, reason: "cancelled" });
 		const run = await settled(stub, runId);
 		expect(run.status).toBe("cancelled");
+		// The stopped script's end may follow the run's.
+		const { records } = await until(() => recordsOf(stub, runId), (now) => now.records.every((record) => record.ended_at !== null));
+		expect(records).toEqual([{ timeout_ms: SCRIPT_TIMEOUT_MS, estimated: 0, started_at: expect.any(Number), ended_at: expect.any(Number) }]);
 	});
 });

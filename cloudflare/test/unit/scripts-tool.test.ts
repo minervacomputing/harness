@@ -4,11 +4,13 @@
 
 import { describe, expect, test } from "vitest";
 import type { ToolDeclaration } from "../../src/gateway/executor.ts";
+import { RUN_ENDED_MESSAGE } from "../../src/gateway/ledger.ts";
 import { scriptDeclarations, scriptDescription } from "../../src/scripts/description.ts";
 import { HEAD_CHARS } from "../../src/scripts/limits.ts";
 import { piece } from "../../src/scripts/output.ts";
 import type { ScriptResult } from "../../src/scripts/run.ts";
 import { loadStore, render, saveStore, SCRIPT_STORE, scriptTool, type ScriptToolHost } from "../../src/scripts/tool.ts";
+import type { AttemptFence } from "../../src/shared/rpc.ts";
 import { declaration } from "./scripts-support.ts";
 
 /** The description pi-codemode's host gives, lines before the declarations. */
@@ -210,5 +212,57 @@ describe("the store", () => {
 		const exact = JSON.stringify("x".repeat(1024 * 1024 - 8));
 		expect(await saveStore(a as never, { set: [["k", exact]], delete: [] }, a.context)).toBeUndefined();
 		expect(new TextEncoder().encode(JSON.stringify({ k: JSON.parse(exact) })).length).toBe(1024 * 1024);
+	});
+});
+
+describe("the script's record", () => {
+	const fence = { runId: "run-1", attempt: 1 } as AttemptFence;
+
+	/** A host whose run can act until `record` answers; it logs what the tool asked of it. */
+	function host(recorded: boolean, started: () => void = () => {}) {
+		const log: string[] = [];
+		const tool = scriptTool(TOOLS, {
+			current: () => ({ fence, deadline: null, signal: new AbortController().signal }),
+			record: async (script, timeoutMs) => {
+				log.push(`record ${script.runId}/${script.attempt} ${timeoutMs} ms`);
+				return recorded;
+			},
+			end: async (script) => {
+				log.push(`end ${script.runId}/${script.attempt}`);
+			},
+			started: () => {
+				log.push("started");
+				started();
+			},
+			ended: () => log.push("ended"),
+			// The parts a script that reaches the Scripts object would use.
+			calls: () => ({}) as never,
+			port: () => ({}) as never,
+			scripts: () => {
+				throw new Error("No script may run.");
+			},
+		} as Partial<ScriptToolHost> as ScriptToolHost);
+		return { log, run: (code: string) => tool.execute({ code }, { ...api(), callId: "call-1" } as never, {} as never) };
+	}
+
+	test("a run that ended while the store loaded: nothing is recorded or run, and the model hears that the run ended", async () => {
+		const { log, run } = host(false);
+		expect(await run("return 1")).toEqual({ output: [{ type: "text", text: RUN_ENDED_MESSAGE }], isError: true });
+		expect(log).toEqual(["record run-1/1 120000 ms"]);
+	});
+
+	test("recorded with the script's clock before it runs, ended once it answered, before the model hears", async () => {
+		const { log, run } = host(true);
+		// A syntax error answers without reaching the Scripts object.
+		expect((await run("return (")).isError).toBe(true);
+		expect(log).toEqual(["record run-1/1 120000 ms", "started", "end run-1/1", "ended"]);
+	});
+
+	test("ended also when what follows the record throws", async () => {
+		const { log, run } = host(true, () => {
+			throw new Error("The phase could not be shown.");
+		});
+		await expect(run("return 1")).rejects.toThrow("The phase could not be shown.");
+		expect(log).toEqual(["record run-1/1 120000 ms", "started", "end run-1/1", "ended"]);
 	});
 });

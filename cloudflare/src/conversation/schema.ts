@@ -242,4 +242,22 @@ CREATE TABLE call_records (
 CREATE INDEX call_records_open ON call_records (instance) WHERE outcome IS NULL;
 `,
 	},
+	// Each script `run_script` ran (docs/plans/chunk-14a-design.md, Decisions): recorded before it runs by the instance that
+	// runs it, ended when it answers. One a gone instance left open ends at its clock's bound, `estimated`.
+	{
+		id: 10,
+		sql: `
+CREATE TABLE script_records (
+	script_id TEXT PRIMARY KEY,
+	run_id TEXT NOT NULL,
+	instance TEXT NOT NULL,
+	started_at INTEGER NOT NULL,
+	timeout_ms INTEGER NOT NULL,
+	ended_at INTEGER,
+	estimated INTEGER NOT NULL DEFAULT 0 CHECK (estimated IN (0, 1))
+) STRICT;
+CREATE INDEX script_records_run ON script_records (run_id);
+CREATE INDEX script_records_open ON script_records (instance) WHERE ended_at IS NULL;
+`,
+	},
 ];

@@ -288,17 +288,25 @@ describe("model call settlements", () => {
 		expect(after.counts).toEqual({ records: 2, model_calls: 2, unmetered_model_calls: 1 });
 	});
 
-	test("the restart rule settles every call another instance left open as lost, once, and none of its own", async () => {
+	test("the restart rule settles every call and script another instance left open, once, and none of its own", async () => {
 		const start = held(fake, startOf(scope(), { message: { id: uuid7(), content: SLOW, attachments: [] } }));
 		await commands.startRun(start);
 		await until(() => runStatus(start), (status) => status === "running");
 		const fence = { runId: start.run, attempt: 1 };
 		const request = { provider, model: "fake-1", reserved: { input: 10, output: 5 } };
-		// Two instances' records, as far as the rule can tell: `mine` stands for the instance that recovers.
+		const script = (scriptId: string) => ({ ...fence, scriptId });
+		// Two instances' records, as far as the rule can tell: `mine` stands for the instance that recovers. Of the gone
+		// instance's scripts, one started long enough ago that its clock ran out.
 		let mine: RunStore | undefined;
+		const recorded = Date.now();
+		let clock = recorded;
 		const [gone, own] = await runInDurableObject(objectOf(start), (_instance, state) => {
-			mine = new RunStore(state.storage);
-			return [new RunStore(state.storage).recordModelCall(fence, request), mine.recordModelCall(fence, request)];
+			mine = new RunStore(state.storage, () => clock);
+			const other = new RunStore(state.storage);
+			new RunStore(state.storage, () => recorded - 5_000).recordScript(script("expired"), 1_000);
+			other.recordScript(script("cut"), 60_000);
+			mine.recordScript(script("own"), 60_000);
+			return [other.recordModelCall(fence, request), mine.recordModelCall(fence, request)];
 		});
 		await commands.cancelRun({ scope: start.scope, conversation: start.conversation, run: start.run, reason: "cancelled" });
 		const open = () => runInDurableObject(objectOf(start), (_instance, state) => state.storage.sql.exec<{ call: string }>("SELECT call FROM call_records WHERE outcome IS NULL ORDER BY call").toArray().map((row) => row.call));
@@ -306,14 +314,35 @@ describe("model call settlements", () => {
 		const after = await runInDurableObject(objectOf(start), (_instance, state) => {
 			const sql = state.storage.sql;
 			const before = sql.exec<{ count: number }>("SELECT count(*) AS count FROM facts").one().count;
+			const settledAt = (clock = Date.now());
 			const settled = [mine?.settleLost(), mine?.settleLost()];
+			// An end that comes after the rule ended a record changes nothing.
+			mine?.endScript("expired", settledAt);
+			// The run ended: a script it would start now is refused, and nothing is recorded.
+			const refused = mine?.recordScript(script("late"), 60_000);
 			return {
 				settled,
+				refused,
 				written: sql.exec<{ fact: string }>("SELECT fact FROM facts WHERE seq > ? ORDER BY seq", before).toArray().map((row) => JSON.parse(row.fact) as Fact),
 				records: sql.exec("SELECT call, outcome, cause, input_tokens, output_tokens, request_bytes FROM call_records WHERE run_id = ? AND call IN (?, ?) ORDER BY call = ?", start.run, gone, own, own).toArray(),
+				scripts: sql
+					.exec<{ script_id: string; started_at: number; ended_at: number | null; estimated: number }>(
+						"SELECT script_id, started_at, ended_at, estimated FROM script_records WHERE run_id = ? ORDER BY script_id",
+						start.run,
+					)
+					.toArray()
+					.map(({ script_id, started_at, ended_at, estimated }) => ({ script_id, lasted: ended_at === null ? null : ended_at - started_at, endedAt: ended_at, estimated })),
+				settledAt,
 			};
 		});
-		expect(after.settled).toEqual([1, 0]);
+		expect(after.settled).toEqual([3, 0]);
+		expect(after.refused).toBe(false);
+		// Ended at their clock's bound, or when the rule ran if that came first; this instance's own stays open.
+		expect(after.scripts).toEqual([
+			{ script_id: "cut", lasted: expect.any(Number), endedAt: after.settledAt, estimated: 1 },
+			{ script_id: "expired", lasted: 1_000, endedAt: recorded - 4_000, estimated: 1 },
+			{ script_id: "own", lasted: null, endedAt: null, estimated: 0 },
+		]);
 		expect(after.written.map((fact) => [fact.type, fact.data])).toEqual([["run.unmetered", { call: gone, provider, model: "fake-1", cause: "lost", inputTokens: 10, outputTokens: 5, estimated: true }]]);
 		expect(after.records).toEqual([
 			{ call: gone, outcome: "unmetered", cause: "lost", input_tokens: 10, output_tokens: 5, request_bytes: null },

@@ -531,11 +531,11 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * After a restart of the object: model calls an earlier instance left open, containers left, a run left `queued`, facts
-	 * not delivered. The calls settle as `lost` (store.ts `settleLost`), outside pi's transactions. A start stores its run
-	 * active, so only the previous version left runs `queued` (it activated them after the start's write, and a reset could
-	 * lose that); the gate has already ended one of a conversation with no organization. Such a run is activated here, and
-	 * its loop started.
+	 * After a restart of the object: model calls and scripts an earlier instance left open, containers left, a run left
+	 * `queued`, facts not delivered. The calls settle as `lost` and the scripts end at their bound (store.ts `settleLost`),
+	 * outside pi's transactions. A start stores its run active, so only the previous version left runs `queued` (it
+	 * activated them after the start's write, and a reset could lose that); the gate has already ended one of a
+	 * conversation with no organization. Such a run is activated here, and its loop started.
 	 */
 	async #recover(): Promise<void> {
 		await this.#store.outside(() => this.#store.settleLost());
@@ -1085,6 +1085,13 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				if (!conversation) throw new Error("A run's conversation is stored.");
 				return scriptsObject(this.env, this.#store.workspaceRef(conversation), conversation.id) as unknown as ScriptsClient;
 			},
+			// Outside pi's transactions (store.ts `outside`), as a model call's record and settlement.
+			record: (script, timeoutMs) => this.#store.outside(() => this.#store.recordScript(script, timeoutMs)),
+			end: (script) => {
+				// When it answered, not when pi's transaction let the end through.
+				const answered = this.#store.now();
+				return this.#untilHeard("a script's record could not be ended", () => this.#store.outside(() => this.#store.endScript(script.scriptId, answered)));
+			},
 			waitUntil: (promise) => this.ctx.waitUntil(promise.catch((error: unknown) => this.#log("a script's reset failed", error))),
 			started: (runId, callId, name) => host.started(runId, callId, name),
 			ended: (runId, callId) => host.ended(runId, callId),
@@ -1298,8 +1305,9 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * A step between a model call's record and pi hearing its answer. One that throws resets the object: pi never hears the
-	 * answer, and the next instance settles the call as `lost` if it is still open (store.ts `settleLost`).
+	 * A step between a model call's or a script's record and pi hearing its answer. One that throws resets the object: pi
+	 * never hears the answer, and the next instance settles the record as lost if it is still open (store.ts `settleLost`).
+	 * So a record open in a live instance always belongs to a call or a script still under way.
 	 */
 	async #untilHeard(failure: string, step: () => Promise<void>): Promise<void> {
 		try {

@@ -10,11 +10,11 @@
 // pi commits with the storage's asynchronous `transaction()` on the same connection, and a statement of ours
 // that runs while one is open joins it and rolls back with it (`watchTransactions`). A change that someone
 // acts on once it is made must therefore never run inside one: a write's claim or settlement, a model call's
-// record or settlement, a revocation, a cancel, a start, a run's end, the attempt gate's decision, a call's
-// `tool_call` event, the replay cap's count. Those go through `outside`, which waits until no such transaction is
-// open and then makes the change with no await between that check and the change, so it commits on its own. What
-// only shows progress (text and reasoning deltas, phases) may still run inside pi's transaction; rolled back with
-// it, it was never announced either.
+// record or settlement, a script's record and its end, a revocation, a cancel, a start, a run's end, the attempt
+// gate's decision, a call's `tool_call` event, the replay cap's count. Those go through `outside`, which waits until no
+// such transaction is open and then makes the change with no await between that check and the change, so it commits on
+// its own. What only shows progress (text and reasoning deltas, phases) may still run inside pi's transaction; rolled
+// back with it, it was never announced either.
 
 import type { StartSnapshot } from "../gateway/tools.ts";
 import type { Preparation } from "../internal/start.ts";
@@ -26,6 +26,7 @@ import type { Fact, StartRunResult } from "@minerva/contract/internal";
 import type { SettledWrite } from "../gateway/ledger.ts";
 import type { CallRequest, CallSettlement } from "../model/provider.ts";
 import type { Tokens } from "../model/tap.ts";
+import type { ScriptFence } from "../scripts/scripts.ts";
 import { tokenHex } from "../lib/random.ts";
 import { utf8 } from "../lib/bytes.ts";
 import { FACT_PAGE_BYTES, type NewFact, callFact, toolCallFact } from "./facts.ts";
@@ -684,15 +685,45 @@ export class RunStore {
 	}
 
 	/**
-	 * The restart rule: every call record another instance left open settles unmetered, cause `lost`, at its reservation.
-	 * That instance is gone (a Durable Object has one live instance, and a reset ends the old one's work), so nothing else
-	 * would settle it; this instance's own records are its streams' to settle. Answers how many it settled.
+	 * Records a script about to run, in one change with the fence check: false, with nothing recorded, when the attempt can
+	 * no longer act. `timeoutMs` is its clock, the bound of a record its instance never ends. Made outside pi's transactions.
+	 */
+	recordScript(script: ScriptFence, timeoutMs: number): boolean {
+		return this.write(() => {
+			if (!this.isCurrent(script)) return false;
+			this.#sql.exec(
+				"INSERT INTO script_records (script_id, run_id, instance, started_at, timeout_ms) VALUES (?, ?, ?, ?, ?)",
+				script.scriptId,
+				script.runId,
+				this.instance,
+				this.now(),
+				timeoutMs,
+			);
+			return true;
+		});
+	}
+
+	/** Ends a script's record at `at`, when it answered, once. Not fenced: the script ran whichever way the run went. */
+	endScript(scriptId: string, at: EpochMs): void {
+		this.#sql.exec("UPDATE script_records SET ended_at = ? WHERE script_id = ? AND ended_at IS NULL", at, scriptId);
+	}
+
+	/**
+	 * The restart rule: every call record another instance left open settles unmetered, cause `lost`, at its reservation,
+	 * and every script record it left open ends at its clock's bound, or now if that is sooner, `estimated`. That instance
+	 * is gone (a Durable Object has one live instance, and a reset ends the old one's work), so nothing else would settle
+	 * them; this instance's own records are its streams' and scripts' to settle. Answers how many records it settled.
 	 */
 	settleLost(): number {
 		return this.write(() => {
 			const open = this.#sql.exec<{ run_id: RunId; call: string }>("SELECT run_id, call FROM call_records WHERE outcome IS NULL AND instance != ?", this.instance).toArray();
 			for (const { run_id, call } of open) this.settleModelCall(run_id, call, { outcome: "unmetered", cause: "lost", requestBytes: null });
-			return open.length;
+			const ended = this.#sql.exec(
+				"UPDATE script_records SET ended_at = min(?, started_at + timeout_ms), estimated = 1 WHERE ended_at IS NULL AND instance != ? RETURNING script_id",
+				this.now(),
+				this.instance,
+			).toArray().length;
+			return open.length + ended;
 		});
 	}
 
