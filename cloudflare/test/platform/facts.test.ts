@@ -362,7 +362,7 @@ describe("replayFacts", () => {
 		const start = held(fake, startOf(scope()));
 		await commands.startRun(start);
 		await settled(start);
-		const facts = await delivered(start);
+		const facts = await delivered(start, "run.settled");
 		const named = { scope: start.scope, conversation: start.conversation };
 		expect(await commands.replayFacts({ ...named, after: 0, limit: 500 })).toEqual({ conversation: start.conversation, facts, more: false });
 		expect(await commands.replayFacts({ ...named, after: 1, limit: 1 })).toEqual({ conversation: start.conversation, facts: [facts[1]], more: true });

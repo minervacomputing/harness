@@ -319,7 +319,7 @@ describe("starting a run", () => {
 		expect(events.filter((event) => event.type === "text_delta").map((event) => (event.data as { text: string }).text).join("")).toBe("Done.");
 		expect(ended.eventSeq).toBe(events.length);
 		const facts = await delivered(start);
-		expect(facts.at(-1)?.data).toMatchObject({ status: "completed", error: "", message: { id: (answer?.data as { id: string }).id, content: "Done." } });
+		expect(facts.find((fact) => fact.type === "run.finished")?.data).toMatchObject({ status: "completed", error: "", message: { id: (answer?.data as { id: string }).id, content: "Done." } });
 		const stored = await row(stub, start.run);
 		expect([stored.model_calls, stored.unmetered_model_calls]).toEqual([1, 0]);
 		expect(stored.input_tokens).toBeGreaterThan(0);
