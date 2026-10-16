@@ -257,7 +257,7 @@ Built 2026-10-16 (`55bcd78` to `98d4f15` in the engine, then `8ad74ee`, `9f9929a
 
 **Review.**
 
-- [ ] opencode reviewed the design and the diff. The design twice (chunk-14b-design.md, Amendments after opencode's review) and unit 3's diff (As built (unit 3)) are recorded; units 1, 2 and 4's diff reviews are not recorded here yet. Unit 5 changed docs only and had none.
+- [x] opencode reviewed the design and the diff. The design twice (chunk-14b-design.md, Amendments after opencode's review) and the diffs of units 1 to 4, each finding checked before it was fixed or set aside: unit 1, money fields sent in part and a refused call with a cost (both refused by the schema now); unit 2, none that held (the deployed fault build already runs the fake route); unit 3, a resumed attempt admitted before a gone instance's call was charged (fixed, As built (unit 3)); unit 4, `minerva:usage` not comparing calls' costs with `modelMicros` and passing partial money (both fixed). Unit 5 changed docs only and had none.
 
 ## Add the emergency stop (chunk 14c)
 
