@@ -178,43 +178,45 @@ Done 2026-10-16 (`85618f6` to `7e91275`). The design, its amendments and the ver
 
 ## Make usage exact (chunk 14a)
 
+Built 2026-10-16 (`1494b29` to `4b81bdd` in the engine, then these docs; `4f1d034` and `858f785` in the app). The design, its amendments and what each unit built are in [chunk-14a-design.md](chunk-14a-design.md). test:faults went from 32 cases to 33 (a crash mid-stream) and passed at `4b81bdd` on `minerva-cf-test`, and the perf probe found no cost it could resolve. The live boxes that need staging wait for the engine's deploy to `minerva-cf-staging` and the owner's turns; production gets the app first, then the engine, with the owner's approval.
+
 **Depends on.** Chunk 13c.
 
 A budget is only as good as the usage it settles from. Today a model call's usage is written through `ctx.waitUntil` outside any transaction (`conversation.ts`, `settled`), so an eviction can lose it and a `run.usage` fact can land after `run.finished`. A call with no reported usage writes no fact (`settleModelCall` only counts it in `unmetered_model_calls`), and a call the provider refused is counted but never settled. Nothing tells Laravel that every call of a run has settled.
 
 **Build.**
 
-- [ ] Record each model call durably before it is sent, outside pi's transactions. The record holds a call id made before the send (today `tokenHex(4)` is made after `host.counted` in `model/provider.ts`, and counting updates only an aggregate), the route, and the amount 14b reserves for it. An eviction during the provider's answer then leaves a record that names the call.
-- [ ] Settle that record before the call's `done` reaches pi (today `done` is forwarded before `host.settled`). Every recorded call ends as reported usage, refused before an answer, or unmetered. On restart, records left unsettled are settled as unmetered.
-- [ ] Add the fact for an unmetered call (credentials-and-facts.md defers it here). It carries the call's reserved amount, marked as an estimate.
-- [ ] Each `run.usage` fact carries the call id and the route, so Laravel can store one usage record per call (chunk 16 needs the id for Stripe's meters).
-- [ ] Add a fact `run.settled`, written once every recorded call has settled and the run's container is destroyed or its lease has lapsed. It carries the run's totals. Those are the model calls, the container seconds (from the Sandbox's `startedAt` to its destroy, or to its lease's end when a destroy failed), and the script wall time (`scripts/run.ts`). `run.finished` stays what lets the next turn start (`contract/src/internal/facts.ts`), so the transcript never waits on accounting.
-- [ ] Laravel stores one usage record per call, keyed by the fact's call id, instead of only the sums on `runs`. Records live in a table of their own that a conversation's or an organization's deletion does not cascade to.
-- [ ] Laravel applies usage and write settlements for a deleted conversation into those records, in order and with the same conflict check as other facts. Today a soft-deleted conversation still reaches `Facts::apply` (`Conversation::locked` does not look at `deleted_at`), and once its rows are gone `Facts::tombstoned` acknowledges and drops every fact. Branch on `deleted_at` instead. Transcript facts are dropped, accounting facts are kept.
-- [ ] Contract. The new fields are optional. Laravel deploys first.
+- [x] Record each model call durably before it is sent, outside pi's transactions. The record holds a call id made before the send (today `tokenHex(4)` is made after `host.counted` in `model/provider.ts`, and counting updates only an aggregate), the route, and the amount 14b reserves for it. An eviction during the provider's answer then leaves a record that names the call. `fb9edd2`: Conversation migration 9 (`call_records`), written through `outside` in one change with the fence check and `model_calls`.
+- [x] Settle that record before the call's `done` reaches pi (today `done` is forwarded before `host.settled`). Every recorded call ends as reported usage, refused before an answer, or unmetered. On restart, records left unsettled are settled as unmetered. `fb9edd2` holds the terminal event until the settlement commits; `353d08b` settles records a gone instance left open as `unmetered`, cause `lost`.
+- [x] Add the fact for an unmetered call (credentials-and-facts.md defers it here). It carries the call's reserved amount, marked as an estimate. `run.unmetered` (`1494b29`, written from `fb9edd2`); a 4xx refusal carries zero tokens, not estimated.
+- [x] Each `run.usage` fact carries the call id and the route, so Laravel can store one usage record per call (chunk 16 needs the id for Stripe's meters). `1494b29`: `provider` beside `model`, with `cacheWriteTokens` and `requestBytes`.
+- [x] Add a fact `run.settled`, written once every recorded call has settled and the run's container is destroyed or its lease has lapsed. It carries the run's totals. Those are the model calls, the container seconds (from the Sandbox's `startedAt` to its destroy, or to its lease's end when a destroy failed), and the script wall time (`scripts/run.ts`). `run.finished` stays what lets the next turn start (`contract/src/internal/facts.ts`), so the transcript never waits on accounting. `48b8dc7` (the Sandbox's container spans and `seal`), `c92d0ce` (script records), `ece7d51` (the settlement job). Container time is charged per span to the earlier of its destroy and its lease plus 10 minutes, estimated when a span is open, found stopped or past that cutoff (chunk-14a-design.md, amendment 7).
+- [x] Laravel stores one usage record per call, keyed by the fact's call id, instead of only the sums on `runs`. Records live in a table of their own that a conversation's or an organization's deletion does not cascade to. The app's `858f785`: `usage_records`, `run_settlements` and `write_records`, with no foreign keys, and `minerva:usage`.
+- [x] Laravel applies usage and write settlements for a deleted conversation into those records, in order and with the same conflict check as other facts. Today a soft-deleted conversation still reaches `Facts::apply` (`Conversation::locked` does not look at `deleted_at`), and once its rows are gone `Facts::tombstoned` acknowledges and drops every fact. Branch on `deleted_at` instead. Transcript facts are dropped, accounting facts are kept. The app's `858f785`: one table in `Facts` by conversation state, and `deleted_conversations.facts_held` as a gone conversation's watermark.
+- [x] Contract. The new fields are optional. Laravel deploys first. `1494b29` adds them; the app's staging took them (`4f1d034`, `858f785`, deployed by CI) before any engine that writes them reached staging.
 
 **You see.**
 
-- [ ] A turn's usage records in Laravel add up to the run's totals on `run.settled`, and a turn killed mid-stream still has one record per counted call.
+- [ ] A turn's usage records in Laravel add up to the run's totals on `run.settled`, and a turn killed mid-stream still has one record per counted call. The fake Laravel shows both on `minerva-cf-test` (`4b81bdd`); Laravel's own records wait for the staging deploy and the owner's turns.
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Platform tests evict the object between a call's answer and its settlement, refuse a call at the provider, and end a stream with no usage. Each gives exactly one settlement. Run `pnpm test:platform`.
-- [ ] Laravel's tests apply a usage fact for a deleted conversation and for a deleted organization. The record is kept.
+- [x] Platform tests evict the object between a call's answer and its settlement, refuse a call at the provider, and end a stream with no usage. Each gives exactly one settlement. Run `pnpm test:platform`. `facts.test.ts` (`fb9edd2`: a 4xx, a 502, an answer with no usage), `protocols.test.ts` (`353d08b`: an abort at `model:recorded`, `model:settle` and `model:settled`, and a throw at `model:settle`) and `settled.test.ts` (`ece7d51`).
+- [x] Laravel's tests apply a usage fact for a deleted conversation and for a deleted organization. The record is kept. The app's `858f785` (`FactsTest.php`, `DeletionTest.php`).
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Regression against `main`. `test:faults` passes.
-- [ ] A fault test kills the object mid-stream. Laravel's staging shows one record per counted call and totals that match `run.settled`.
-- [ ] Measure ten typical turns on staging (chat only, one connector call, a script, a file upload). Record tokens, container seconds and the cost per turn at the model's list price here. This answers open question 7.
+- [x] Regression against `main`. `test:faults` passes. 33 cases at `4b81bdd` on `minerva-cf-test`.
+- [ ] A fault test kills the object mid-stream. Laravel's staging shows one record per counted call and totals that match `run.settled`. The fault half passed on `minerva-cf-test` against the fake Laravel (`4b81bdd`): an abort at `model:delta` gave one `run.unmetered` (`lost`) for the cut call, a `run.usage` for every other counted call, and a `run.settled` that sums them, with container time above zero. A fault cannot be injected on staging, so its half is the stopped turn of the ten below, and it waits for the engine's staging deploy and the owner's turns.
+- [ ] Measure ten typical turns on staging (chat only, one connector call, a script, a file upload). Record tokens, container seconds and the cost per turn at the model's list price here. This answers open question 7. Waits for the engine's staging deploy and the owner's turns (chunk-14a-design.md, Live checks); the owner chose list prices without the plan's included allowances.
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. Time from a model call's last token to the next pi step, and from `host.begin` to the request leaving. Rule. Each within 10 ms of `main`'s at the median. More fails, since a durable write now sits on both paths.
+- [x] Metric. Time from a model call's last token to the next pi step, and from `host.begin` to the request leaving. Rule. Each within 10 ms of `main`'s at the median. More fails, since a durable write now sits on both paths. Measured with the proxies the owner accepted (chunk-14a-design.md, amendment 13): M1, a call's terminal event to the next request's first answer, and M2, `host.begin` to its own request's first answer, since a request's departure cannot be timed inside the object. On `minerva-cf-test`, unit 3's `b84f253` and `ece7d51` interleaved twice, 100 samples a run: medians 26 and 32 ms, then 39 and 34 ms, so head minus baseline is +6 and −5 ms, within the rule. M1 and M2 were equal in every sample. The calibration, 1 MiB written before each request, put M2's median 37.5 ms above its control, so the probe sees a durable write; the two baseline runs differ by 13 ms, so it cannot resolve a cost much under 10 ms.
 
 **Review.**
 
-- [ ] opencode reviewed the design and the diff.
+- [x] opencode reviewed the design and the diff: the design before unit 1, and the diffs of units 1 to 8, each finding checked before it was fixed or set aside. Units 9 and 10 changed no engine code and had none (the owner's rule since 2026-10-16: a diff review only for large or risky changes).
 
 ## Give each run a budget (chunk 14b)
 

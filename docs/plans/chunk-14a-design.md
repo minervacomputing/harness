@@ -1,6 +1,6 @@
 # Chunk 14a design: make usage exact
 
-Status is accepted, as of 2026-10-16: the owner accepted the four owner questions with their defaults (Owner questions, below). It settles the choices that chunk 14a of [remaining-chunks.md](remaining-chunks.md) leaves open, splits the work into units one fresh agent each can finish, and lists the steps that wait for the owner. Line numbers are at `c4e0be7` (harness) and `9b9ab74` (`minervacomputing/app`, "the app" below). Units 1 to 9 are implemented: the fault suite's mid-stream case passes on `minerva-cf-test`, and the perf probe meets its rule (Perf probe and rule, As built (unit 9)).
+Status is accepted, as of 2026-10-16: the owner accepted the four owner questions with their defaults (Owner questions, below). It settles the choices that chunk 14a of [remaining-chunks.md](remaining-chunks.md) leaves open, splits the work into units one fresh agent each can finish, and lists the steps that wait for the owner. Line numbers are at `c4e0be7` (harness) and `9b9ab74` (`minervacomputing/app`, "the app" below). Units 1 to 10 are implemented: the fault suite's mid-stream case passes on `minerva-cf-test`, the perf probe meets its rule (Perf probe and rule, As built (unit 9)), and ARCHITECTURE.md, credentials-and-facts.md and remaining-chunks.md describe what was built. The live checks remain (Live checks): the engine's deploy to `minerva-cf-staging`, the ten turns and `minerva:usage` on staging, the cost per turn, and the production deploys.
 
 ## What the code does today
 
