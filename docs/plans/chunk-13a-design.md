@@ -134,3 +134,59 @@ The two open questions are settled: `chat.test.ts` stays whole for 13b after its
 - `connectors-stripe.test.ts` and `connectors-web.test.ts` are kept suites with Workspace-bound cases (`saveKey` through `WorkspaceCore`, `kindsOut` and `harness` from `workspace/`). Trim those cases; keep the files.
 - `pnpm typecheck` chains its tsconfig projects with `&&`, so a deletion check runs each project on its own to see every error.
 - A Laravel start activates with no I/O, so its activation commits with the run's own write: a stored run that was never activated cannot exist on the internal path (units 5 and 6 showed it under resets). Once the Workspace goes, the Conversation's activation step, `#recover`'s `!run.activated` branch and the watch's activation retry are dead. Delete them in 13b rather than test them through a new fault point.
+
+## Verification
+
+Unit 10 ran on `minerva-cf-test` on 2026-10-16, at `4f436aa` for the head and `ee2f1e4` for `main`.
+
+**Case counts.** `test:faults` has 33 cases at `main` and 32 at the head. The dropped case is faults.test.ts's "a crash during a rotating refresh: one refresh with the stored token after, refused, so Needs reconnecting". It tested the Workspace's refresh, and Laravel refreshes a credential before it lends it. `test:deployed` has 11 cases on both.
+
+**Regression.** `test:deployed` ran 15 times at the head. Runs 1 to 7 and 11 to 15 passed all 11 cases. Runs 8, 9 and 10, one after another, each failed one case: "answers 404 until downloads are built, as a sandboxed response" of the download Worker, with `ETIMEDOUT` after 17 to 20 s. The cause is DNS on the machine that ran the suite, not the engine. At that time `dig` got SERVFAIL for the download Worker's host from the local resolver, and sometimes from 1.1.1.1, while the zone's authoritative servers answered it. `fetchDeployed` sets no timeout of its own for that request, so each attempt has Node's default 5 s socket timeout, which also covers the lookup. All three attempts timed out before a connection was made. At the same time, curl could not resolve the host, and a probe with a 30 s timeout per attempt took 92 s and then 64 s to reach it. A DNS log taken every 15 s for the next 70 minutes recorded SERVFAIL only at 03:04 and 03:05, right after those runs, and runs 11 to 15 passed.
+
+`test:faults` passed all 32 cases at the head in 5 runs: one regression run after a deploy of the head (236.1 s) and runs a, c, d and e of the timing below. Two head runs failed, and neither failure comes from 13a:
+
+- Run 1 of the first timing attempt failed 7 cases, with errors such as `The RPC receiver does not implement the method "laravelConnection"`. It started as soon as the head's deploy returned, when some requests still reached `main`'s version. Every later run waits after its deploy until ten requests in a row, each on a new connection, get the deployed side's answer from `/api/faults/internal/v1/catalog` (200 at the head, 404 at `main`). One wait after a deploy of `main` still got a 200 on its first request.
+- Run b failed 6 cases of sandbox.test.ts. The lab's `prepare` got 500 `internal error; reference = …` from the platform, and the cases that depend on it had no fence. 13a changes neither sandbox.test.ts, the lab nor `src/sandbox/`. The failure did not occur again in the later head runs.
+
+`main` failed one case in run e: "a crash at local:released: the next attempt starts from the last checkpoint" ended as `worker_failed`.
+
+**Negative.** The authority in `post` (test/account/driver.ts) was changed to `{ connections: [], layers: notesLayers(w.connectionId) }`, so the run starts without the Notes connection. Then turns.test.ts ran against the deployed head, and both cases failed because the required tool was never called:
+
+```
+FAIL  turns.test.ts > ... > with the fake model
+AssertionError: expected [] to deep equally contain ObjectContaining{…}
+  "data": ObjectContaining { "count": 2, "decision": "allowed" }
++ Received: []
+ ❯ expectPublished test/account/turns.test.ts:41:19   expect(scripted).toContainEqual(...)
+
+FAIL  turns.test.ts > ... > with Workers AI (@cf/zai-org/glm-5.3-flash): the protocol, not the words
+Error: @cf/zai-org/glm-5.3-flash did not call bash and run_script in two attempts, so the protocol was not exercised;
+each attempt called: [{"seconds":124.928,"status":"completed","tools":["bash","read"]},{"seconds":20.028,"status":"completed","tools":["bash"]}]
+```
+
+An empty `layers` value is refused by the contract's validation (`layers: Invalid input`) before any run starts, so the check removed only the connection. The edit was reverted with `git checkout`, and `git status` was clean afterwards.
+
+**Perf.** The metric is the wall time of `pnpm test:faults`. Five pairs ran alternately, `main` then head. Before each run, `deploy:test` ran and the wait for the deployed version finished, both outside the timing. Warm is the point at which warm.ts reported that the image starts containers promptly. Suite is the total minus warm.
+
+| Run | Side | Cases | Total (s) | Warm (s) | Suite (s) |
+|---|---|---|---|---|---|
+| a | main | 33 passed | 192.3 | 10.3 | 182.0 |
+| a | head | 32 passed | 228.6 | 14.1 | 214.5 |
+| b | main | 33 passed | 190.3 | 9.8 | 180.5 |
+| b | head | 6 failed (sandbox lab) | 204.4 | 11.6 | 192.8 |
+| c | main | 33 passed | 257.9 | 80.4 | 177.6 |
+| c | head | 32 passed | 204.9 | 9.6 | 195.3 |
+| d | main | 33 passed | 190.6 | 10.5 | 180.1 |
+| d | head | 32 passed | 248.6 | 10.8 | 237.9 |
+| e | main | 1 failed | 207.8 | 10.6 | 197.2 |
+| e | head | 32 passed | 224.6 | 10.9 | 213.7 |
+
+The medians below use the four runs of each side that passed. `main`: total 191.4 s, warm 10.4 s, suite 180.3 s, with suite times from 177.6 to 182.0 s. Head: total 226.6 s, warm 10.8 s, suite 214.1 s, with suite times from 195.3 to 237.9 s. The ratio of the head's median to `main`'s is 1.18 for the total and 1.19 for the suite. With all five runs of each side, the ratios are 1.17 and 1.18. The head is slower by more than the spread between runs: in suite time, every passing head run took longer than every passing `main` run. It is still within 20%, so the box passes, but the margin is small. Warm takes about 10 s on both sides because container/ is the same at both commits and no new image is pushed. The 80 s in `main`'s run c was a slow rollout after the deploy, which warm.ts waited out.
+
+What limits the number, from vitest's per-test durations in each run:
+
+- The first group (faults, sandbox, sandbox-faults, turns) ends when its slowest case does. On both sides that is at least "a long tool across PiHarness's heartbeats is no restart" at 78 to 81 s, which lasts that long by design. The group ran longer in some runs because of other cases: the Workers AI turn took 88 s (main a) and 123 s (head d), five 50 MiB attachments took 104 s (head a, where the run itself took 87 s) and 105 s (main e), and a crash at checkpoint:uploaded took 96 s (head e).
+- The resets group runs after the first group, one case at a time. It took 36 to 44 s at `main` and 56 to 63 s at the head in every run, and it accounts for most of the steady difference. In "during a checkpoint", the run takes 22 s at the head and 6 s at `main`. Polling one such run on the head every 500 ms showed the reset at 2.5 s and attempt 2 starting at 20.5 s, so the run is recovered by the Conversation's 20 s watch (`WATCH_MS`). In "right after the gate", the head also waits about 11 s for `run.finished` to reach the fake Laravel, a check `main` does not make.
+- On both sides, about 50 s of each run fall outside the cases' own spans: vitest's start, imports, and the files' afterAll drains, which wait until every container is gone.
+
+A follow-up to consider: on the internal path, a run that a memory-limit reset interrupts waits for the 20 s watch before it restarts. At `main` the restart came within a few seconds.
