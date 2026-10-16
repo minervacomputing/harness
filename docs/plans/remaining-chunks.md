@@ -398,22 +398,23 @@ Today the engine prunes only `start_keys`, answered `internal_starts`, and folde
 
 **Build.**
 
-- [ ] The restriction log. Before Laravel commits a change that reduces access, or a deletion, it appends a restriction (a removal or a layer's quarantine, by stable ids) to a log in R2 with a bucket lock. A restore applies every restriction logged after its point. Prove the bucket lock refuses an overwrite and a delete on the account first.
 - [ ] Backups first. Laravel Cloud's clusters keep no point-in-time backups yet (the app's AGENTS.md). Turn them on for staging for the rehearsal, and for production before the gate. Their retention is the restore window.
-- [ ] The recovery listing. Laravel sends its restored watermark per conversation in pages, and the engine answers the conversations whose `fact_seq` is above it, deleted ones included. The engine also lists the conversations of Laravel's organizations that Laravel does not name, since a conversation created after the restore point is missing from the restored database entirely. Add an index on `fact_seq` and on the organization if the listing needs them.
-- [ ] Rebuild what the restore lost. Laravel refuses a fact whose run it does not hold (`Facts.php`), and the recovery index stores only a run's id, conversation, digest and time. Define how Laravel imports a conversation and its runs from replayed facts (each run marked recovered, its user and agent from the facts or the index), and add to the facts or the index whatever that import needs.
-- [ ] Replay. Laravel calls `replayFacts` for each listed conversation and applies the pages. A conversation whose floor is above Laravel's watermark is reported to the operator, not silently skipped.
-- [ ] The object quarantine. The operator sets it in the recovery index before restoring a Durable Object. The attempt gate in `conversation.ts`, which runs before `Harness.open`, checks it. Every restored run ends as uncertain with its writes marked possibly done. A test sends an alarm right after the restore, before the repair.
+- [ ] The key. Production's `MINERVA_CREDENTIALS_KEY` is backed up outside Laravel Cloud, as staging's is under Arm the program, since a restored database is useless without it. Record where (not the value).
+- [ ] The restriction log, for what only Laravel holds. Before Laravel commits a removal of a member or a role, or a connection's revocation or quarantine, it appends a restriction (by stable ids) to an append-only log in R2: one object per restriction, under a key never reused, in a bucket with a lock so the log survives what it guards against. A restore applies every restriction logged after its point. Each only removes access, so one whose change never committed is harmless, and their order does not matter. Conversation deletions are not logged: the engine's recovery index keeps `deleted_at`, and the listing below answers them.
+- [ ] The recovery listing. Laravel sends its restored watermark per conversation in pages, and the engine answers the conversations whose `fact_seq` is above it, deleted ones included, so Laravel deletes again a conversation the restore brought back. It also answers the conversations of Laravel's organizations that Laravel does not name (created after the restore point), from `recovery_conversations`. Add an index on `fact_seq` and on the organization if the listing needs them.
+- [ ] Replay. Laravel calls `replayFacts` for each listed conversation it holds and applies the pages. A conversation whose floor is above Laravel's watermark is reported to the operator, not silently skipped.
+- [ ] Usage of what the restore lost. A conversation created after the restore point is not rebuilt: its transcript is lost, as any restore loses what came after its point (Appendix B). Its usage is not: Laravel replays its facts and records only the accounted ones (`run.usage`, `run.unmetered`, `run.settled`, `run.write`) against the organization and workspace the listing names, with no run row and no user, since `Facts.php` today refuses a fact whose run it does not hold. The design says where those records live.
+- [ ] Durable Objects are not rolled back. A broken Conversation object is repaired forward or its conversation deleted, never restored to an earlier point (Appendix B). The runbook says so.
 - [ ] Credentials. A restore marks every OAuth connection with a refresh token `refresh_uncertain` (the state exists, nothing sets it).
-- [ ] A runbook in the app's docs that orders the steps. Close admission, restore, apply the restrictions, mark credentials, replay, reconcile usage, reopen admission.
+- [ ] A runbook in the app's docs that orders the steps. Close admission, restore, apply the restrictions, mark credentials, list, delete again, replay, record the lost conversations' usage, reconcile usage, reopen admission.
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Engine platform tests for the listing and for the quarantine's alarm. Laravel's tests apply restrictions logged after a point to a restored database.
+- [ ] Engine platform tests for the listing, deleted and unnamed conversations included. Laravel's tests apply restrictions logged after a point to a restored database, delete again a conversation the listing answers as deleted, and record the usage of a conversation it does not hold.
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Rehearse on staging. Run turns, remove a member, delete a conversation and start a new one, then restore Laravel's database to before all three and follow the runbook. The member stays removed, the conversation stays deleted, the new conversation and its runs are rebuilt, every fact after the point is applied once, and no run resumes during the restore.
+- [ ] Rehearse on staging. Run turns, remove a member, delete a conversation and start a new one, then restore Laravel's database to before all three and follow the runbook. The member stays removed, the conversation stays deleted, the new conversation's usage is recorded (its transcript is gone), every fact after the point is applied once, and no run resumes during the restore.
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
@@ -544,6 +545,9 @@ Laravel already stores the account's tenant (`connections.account_tenant`, from 
 - **Counting tokens exactly with the route's tokenizer before each call** (14b). Possible only where the tokenizer and the server's template are published, and a provider's own count is a round trip per call.
 - **Reserving each run's allowance against the organization's budget under a lock** (14b). It would make an organization's limit nearly hard, but the owner chose the simpler rule; it remains the next step if one is wanted.
 - **Reserving storage and enforcing a byte allowance in the engine** (14d's first plan). Laravel reserves an upload's bytes against the organization at presign under a lock and moves them into a byte allowance on `StartRun`; the engine replaces `UNCOUNTED` with a counter that refuses a write past it, and reports the folder's bytes after each sweep by a new fact that names no run. A nearly hard limit, at the cost of a new fact envelope, a lock, a reservation table and checks on the checkpoint path. Rejected by the owner (2026-10-16) for a number on `run.finished` and Laravel's refusals (chunk-14d-design.md).
+- **Rebuilding a conversation created after the restore point** (15c, trimmed 2026-10-16). Laravel would import the conversation and its runs from replayed facts, each run marked recovered, which needs the user and agent added to the facts or the recovery index. Any restore loses what came after its point, and the money is kept by recording the usage alone. It is the next step if a real restore shows the lost transcripts matter.
+- **A quarantine for restoring a Durable Object** (15c, trimmed 2026-10-16). The operator would set it in the recovery index before rolling an object back, the attempt gate would check it before `Harness.open`, and every restored run would end as uncertain. Not rolling objects back at all needs none of it. This supersedes product-and-engine.md's rule for restoring an object to repair it.
+- **Logging conversation deletions as restrictions** (15c). The engine already refuses a deleted conversation and keeps `deleted_at` past the restore window, so the listing answers them.
 - **Usage only as sums on the run row.** Stripe's meters need an id per record, and a deletion cascades the run away.
 
 ## Appendix C. Risks
@@ -552,7 +556,7 @@ Laravel already stores the account's tenant (`connections.account_tenant`, from 
 - **The tombstone deploy on staging** is the first time a Durable Object class is retired on an instance that is not reset (13c).
 - **Settling usage on the stream's path** adds a durable write per model call (14a). Its perf box watches it.
 - **pi's tables cannot be deleted** with pi-durable 1.2.0 (15a). If deleting rows by hand proves unsafe, they grow until pi-durable adds a call.
-- **Recovery needs facts the engine keeps** (15c). Rebuilding a conversation created after the restore point depends on what the facts and the recovery index record about its runs.
+- **A restore loses the conversations created after its point** (15c). Their usage is recorded, their transcripts are not rebuilt (Appendix B). Recording that usage depends on the engine keeping their facts until Laravel acknowledges them.
 - **A restore older than the facts' floor** cannot be reconciled from the engine (15c). The restore window and the retention of facts must be set together.
 
 ## Appendix D. Links and reading list
