@@ -224,7 +224,7 @@ A budget is only as good as the usage it settles from. Today a model call's usag
 
 **Decide first.** Settle each by a prototype on the test instance, and record the result in Appendix A. The design is [chunk-14b-design.md](chunk-14b-design.md).
 
-- [x] The allowance's unit is money (owner, 2026-10-15), in micro-dollars, with a price table per route in the engine (which owns the routes), published in the catalog so Laravel shows the same prices. Tokens were rejected because models price them differently and containers and scripts are billed by time. The product may show it as credits later.
+- [x] The allowance's unit is money (owner, 2026-10-15), in micro-dollars, with a price table per route in the engine (which owns the routes), published in the catalog so Laravel shows the same prices. Tokens were rejected because models price them differently and containers and scripts are billed by time. The product may show it as credits later. The model's prices are read from models.dev at deploy, for every provider, and container and script time are in code (owner, 2026-10-16; chunk-14b-design.md, The price table).
 - [x] The rule (owner, 2026-10-16): stop when spent, with no reservation per call. Before each model call the engine compares what the run has spent so far (its settled calls at the price table's rates, its container and script time so far) with its allowance, and ends the run when it is used up. A budget is therefore not a hard limit: a run can pass its allowance by what is in flight when it crosses it, and an organization its limit by that much for each run going at once (chunk-14b-design.md, Overspend). The alternatives are in Appendix B.
 
 **Build.**

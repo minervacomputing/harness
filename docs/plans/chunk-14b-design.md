@@ -1,6 +1,6 @@
 # Chunk 14b design: give each run a budget
 
-Status is proposed, as of 2026-10-16. It settles the choices that chunk 14b of [remaining-chunks.md](remaining-chunks.md) leaves open, with the rule the owner chose on 2026-10-16, splits the work into units one fresh agent each can finish, and lists what waits for the owner. Line numbers are at `0c7ffd7` (harness) and `858f785` (`minervacomputing/app`, "the app" below). Nothing is implemented yet.
+Status is accepted, as of 2026-10-16: the owner answered the owner questions (Owner questions, below), and chose that model prices are read from models.dev at deploy (The price table). It settles the choices that chunk 14b of [remaining-chunks.md](remaining-chunks.md) leaves open, with the rule the owner chose on 2026-10-16, splits the work into units one fresh agent each can finish, and lists what waits for the owner. Line numbers are at `0c7ffd7` (harness) and `858f785` (`minervacomputing/app`, "the app" below). Nothing is implemented yet.
 
 ## The owner's choice: stop when spent
 
@@ -34,27 +34,30 @@ Rejected for the per-call rule, recorded in Appendix B of remaining-chunks.md:
 
 ### The price table
 
-**It lives in the engine, in code**, `cloudflare/src/budget/prices.ts`: one entry per route (provider and model), one for container time and one for script time. Money is integer micro-dollars (µ$). Token rates are µ$ per million tokens, time rates µ$ per hour.
+**The model's prices come from models.dev at deploy (owner, 2026-10-16); the rest is in code.** Money is integer micro-dollars (µ$). Token rates are µ$ per million tokens, time rates µ$ per hour.
 
 ```ts
-type RoutePrices = { provider: string; model: string; input: number; cachedInput: number; cacheWrite: number; output: number };
+type RoutePrices = { provider: string; model: string; input: number; cachedInput: number; cacheWrite: number; output: number; above?: { inputTokens: number; input: number; cachedInput: number; cacheWrite: number; output: number } };
 type PriceTable = { routes: RoutePrices[]; container: { instance: "standard-1"; perHour: number }; script: { perScript: number; perHour: number } };
 ```
 
-The values (owner question 1) are list prices without included allowances, as the owner chose for 14a's cost per turn:
+- **The route's prices.** The deploy (`scripts/`, beside `buildSettings`) fetches `https://models.dev/api.json` and reads the configured model under its provider (`workers-ai` is models.dev's `cloudflare-workers-ai`, `openai` is `openai`, `anthropic` is `anthropic`): `cost.input`, `cost.cache_read`, `cost.cache_write` and `cost.output` in dollars per million tokens, and a `tiers` entry of type `context` as `above` (the rates when a call's input passes `size` tokens). A missing `cache_read` or `cache_write` is charged at `input`. The deploy prints the prices it read and refuses to deploy when models.dev cannot be read or the model has no `cost`. The build receives them as a text binding the deploy sets, as it sets `MINERVA_MODEL_GATEWAY`, and `config.ts` parses them; it is not a setting an instance's `vars.env` holds. One source and one code path for every provider; models.dev is MIT-licensed. On 2026-10-16 its values matched Cloudflare's model list for `glm-5.3-flash` and OpenAI's pricing page for `gpt-6.1-sol` exactly.
+- **Container and script time** stay in code, `cloudflare/src/budget/prices.ts`, from Cloudflare's pricing pages, since no catalog lists them.
+
+The values are list prices without included allowances, as the owner chose for 14a's cost per turn:
 
 | Item | Price | Source |
 |---|---|---|
-| Workers AI `glm-5.3-flash` | input $0.15, cached input $0.03, output $0.50 per million tokens | Cloudflare's model page, read 2026-10-16 |
-| OpenAI `gpt-6.1-sol` | input $2.00, output $10.00 per million; no cached or cache-write rate found | A third-party listing only; the owner confirms from OpenAI's page |
+| Workers AI `glm-5.3-flash` (production) | input $0.15, cached input $0.03, output $0.50 per million tokens; no cache-write rate (charged at input) | models.dev, read 2026-10-16; equal to Cloudflare's model list |
+| OpenAI `gpt-6.1-sol` (staging) | input $2.00, cached input $0.10, cache write $2.50, output $10.00 per million; above 272,000 input tokens $4.00, $0.20, $5.00, $15.00 | models.dev, read 2026-10-16; equal to OpenAI's pricing page (standard tier) |
 | Container `standard-1` | 74,016 µ$ an hour: ½ vCPU at $0.000020 per vCPU-second (billed on active use, so this is its ceiling), 4 GiB at $0.0000025 per GiB-second, 8 GB at $0.00000007 per GB-second | Cloudflare's Containers pricing |
 | Script | 2,000 µ$ a script (a Dynamic Worker is $0.002 per unique Worker a day, and each `load` is unique) and 72,000 µ$ an hour of wall time ($0.02 per million CPU-ms, which wall time bounds) | Cloudflare's Dynamic Workers pricing |
-| `fake` (test build only) | 1 µ$ per token in and out, 3,600,000 µ$ an hour for each kind of time | Readable tests |
+| `fake` (test build only) | 1 µ$ per token in and out, 3,600,000 µ$ an hour for each kind of time | In code, for readable tests; the test build adds it beside the configured route |
 
 **Rules.**
 
 - **Rounding.** Each charge is rounded up once, when it is made, and never again: a call's `ceil((uncached × input + cacheReads × cachedInput + cacheWrites × cacheWrite + output × output) / 1e6)`, with uncached input the reported input less cache reads and writes, and reasoning inside output; a script's `ceil((perScript × 3.6e6 + ms × perHour) / 3.6e6)`; the run's container time once, at `run.settled`. Totals are sums of these. Rounding each category of a call apart would make its charge depend on how a report is split.
-- **Every route is priced.** A build refuses a route with no entry, as a deployed build refuses `MINERVA_DEBUG` (`config.ts`). Entries are added, never removed, so a call recorded under a route the instance has since left still finds its prices.
+- **Every call is priced.** A deployed build refuses to start without its route's prices, as it refuses `MINERVA_DEBUG` (`config.ts`). Each call record keeps the rates and the version it was admitted under, and its settlement charges from those, so a deploy that changes the model or its prices mid-run never leaves a call without a price.
 - **Versions.** The table's version is 16 hex of SHA-256 over its canonical JSON, as the catalog's is. A charge is computed when its call or script settles, or, for container time, when the run does, with the table the build has then, and is never recomputed. Each call's fact names its version (`prices`), a script record keeps its own, and `run.settled`'s `prices` is the version that priced its container time. A deploy that changes prices mid-run charges the run's later settlements at the new prices; Laravel stores the amounts, so a later change rewrites nothing.
 - **Published.** The catalog gains an optional `prices: {version, table}`, beside its connectors; the catalog's version stays the hash of its connectors alone. Laravel's client drops what it does not map (`app/Engine/EngineClient.php:72`), and in 14b it reads no prices; chunk 16 does when it shows them.
 
@@ -138,7 +141,7 @@ If the owner wants an organization's limit nearer a hard one later, the next ste
 One fresh agent each, in this order. A unit is done when its checks pass, opencode has reviewed its diff when it is large or risky, and it is committed to `main` of its repository. Engine checks: `pnpm typecheck`, `pnpm test:unit` and `pnpm test:platform` in `cloudflare/`, and `pnpm typecheck` and `pnpm openapi:check` in `contract/` when it changes. App checks: `composer test`, `pnpm run check`, `pnpm run types:check`, `pnpm test`.
 
 1. **Contract (harness).** The fields of the contract table; `pnpm --dir contract openapi`; `docs/plans/contract.md`'s fact list. The engine writes none of them yet.
-2. **Prices and charges (harness).** `src/budget/prices.ts` (the table, its version, the build's refusal, the catalog's `prices`); migration 12 whole; `cost_micros`, `prices` and `spent` written with each call's settlement and each script's end; `costMicros` and `prices` on `run.usage` and `run.unmetered`; the money fields of `run.settled`. Unit tests: rounding once per charge (two 1 ms scripts are charged 2 × 2,001 µ$), a reported, refused and unmetered call each charged by rule, a priceless route refused at build, `spent` equal to the records' sums after every change, a run with calls under two price versions. Platform test: `run.settled`'s `chargedMicros` equals its calls', scripts' and container's charges.
+2. **Prices and charges (harness).** The deploy's read of models.dev and the binding it sets (a unit test parses a saved excerpt of `api.json`, including a `context` tier and a model without `cache_write`; no test reaches the network); `src/budget/prices.ts` (container and script time, the table's version, the build's refusal, the catalog's `prices`); the rates and version on each call record; migration 12 whole; `cost_micros`, `prices` and `spent` written with each call's settlement and each script's end; `costMicros` and `prices` on `run.usage` and `run.unmetered`; the money fields of `run.settled`. Unit tests: rounding once per charge (two 1 ms scripts are charged 2 × 2,001 µ$), a reported, refused and unmetered call each charged by rule, a priceless route refused at build, `spent` equal to the records' sums after every change, a run with calls under two price versions. Platform test: `run.settled`'s `chargedMicros` equals its calls', scripts' and container's charges.
 3. **Admission and the budget's end (harness).** `allowance` from `StartRun`; `container_since`; the check in `recordModelCall`; `BUDGET_REACHED` and `run.finished`'s `code`. Unit tests: admission under, at and over the allowance; a refused admission ends the run once and records nothing; open scripts (with `perScript`) and `container_since` counted; no allowance admits everything. Platform test: a run with a small allowance on the fake route, whose script asks for several calls, ends `failed`, `budget_reached`, with the message, at the first call after spent reached it; another whose crossing call is its last completes, over budget. A case in `test/account/faults.test.ts` doing the first on `minerva-cf-test`; the fake Laravel sends a large allowance with every other start; `pnpm run deploy:test`, `pnpm test:faults`; the perf runs below.
 4. **Budgets (app).** `composer contract:sync`; one migration (`organizations.budget_micros`, `runs.allowance_micros`, `runs.error_code`, `cost_micros` and `prices` on `usage_records`, `charged_micros` and `prices` on `run_settlements`); `minerva:budget`; the check and the allowance in `Runs::start`; the new columns from facts, with the fail-closed rule; the backfill from each row's `fact`, in the migration and as `minerva:usage --backfill`; `minerva:usage` also checks each run's `chargedMicros` against its calls' `costMicros` plus its container and script charges; `turn.md` (Tables, a Budgets section). Pest tests: a start at or over the limit is refused with its message and registers nothing; a start under it sends `limit − spend`; spend counts a settlement once, also for a soft-deleted and a gone conversation; a settlement without `chargedMicros` counts at the allowance; two starts in different workspaces of one organization, run concurrently against Postgres in separate processes with committed fixtures, are both admitted with the same allowance (the documented overshoot), and a third after both settled past the limit is refused; a settlement committed between a start's read of spend and its commit leaves the start registered with the earlier remainder; the backfill fills a row applied without money from its `fact`.
 5. **Docs (harness).** ARCHITECTURE.md (Model: admission; Facts: the money fields), credentials-and-facts.md, remaining-chunks.md's 14b boxes with their evidence.
@@ -174,10 +177,12 @@ Units 1 to 3 deploy to `minerva-cf-staging` before unit 4 reaches the app's stag
 
 ## Owner questions
 
-1. **The prices.** Default: the table above, list prices with no included allowances, confirmed by the owner against each provider's page before unit 2, OpenAI's especially (only a third-party listing was found, and no cached or cache-write rate).
-2. **The default limit.** Default: $5 (5,000,000 µ$) per organization for its lifetime, from config, changed with `minerva:budget`. A run is given everything left.
-3. **A cap per run.** Default: none, as the owner's rule says (a run gets what is left). The alternative gives a run `min(what is left, a cap)`, which bounds an organization's overshoot by the cap times its runs going at once.
-4. **The perf rule's measure.** Default: accept 14a's probe at p95 as the measure of the admission's added time, since the check runs inside a change already made and adds no I/O; if the baselines are too noisy to resolve 5 ms, accept a benchmark of the check's change in Node instead.
+Answered by the owner on 2026-10-16.
+
+1. **The prices.** List prices with no included allowances. The model's are read from models.dev at deploy for every provider (The price table); container and script time are in code from Cloudflare's pricing pages. The proposal had been a table in code, confirmed by the owner against each provider's page.
+2. **The default limit.** Accepted: $5 (5,000,000 µ$) per organization for its lifetime, from config, changed with `minerva:budget`. A run is given everything left.
+3. **A cap per run.** Accepted: none (a run gets what is left). The alternative, `min(what is left, a cap)`, stays available if an organization's overshoot matters.
+4. **The perf rule's measure.** Accepted: 14a's probe at p95 measures the admission's added time; if the baselines are too noisy to resolve 5 ms, a benchmark of the check's change in Node instead.
 
 ## Changes to remaining-chunks.md
 
@@ -191,7 +196,7 @@ opencode (`plan` agent) reviewed the first draft, which reserved each call at a 
 2. **The GLM template's `tojson` expands nested argument values, and calibration is evidence, not proof (accepted, moot).** Both were against the byte bound, which the owner rejected.
 3. **Container windows needed identified grants, the first lease, and every Sandbox step (accepted, moot).** The windows are gone; container time is counted from `container_since`, which can only overcount.
 4. **Script time clamped to its clock bounds the charge, not the consumption (accepted).** Script and container charges are stated as Minerva's charging rules (What a call and a run are charged); the clamp is dropped.
-5. **Pinning a price table without pinning the route (accepted).** Prices are no longer pinned per run: each charge uses the build's table when it settles, by the call's recorded route, every fact names the version, and entries are never removed.
+5. **Pinning a price table without pinning the route (accepted).** Prices are no longer pinned per run: each call record keeps the rates and version it was admitted under and is charged from them, and every fact names the version.
 6. **A settlement without money fails open (accepted).** Laravel counts it at the run's allowance and reports it (Laravel, Spend).
 7. **Facts can precede the acceptance, and gone runs had no release path (moot).** Nothing depends on the acceptance's order or releases a reservation now: spend is a sum of settlement rows.
 8. **The lock order was not proved globally (moot).** 14b adds no lock.
@@ -217,4 +222,4 @@ A second review, of this design after the owner's choice, on 2026-10-16:
 
 ## Verification
 
-This document was checked against the code at the commits above, by reading each file and line cited. The Workers AI model page and Cloudflare's Containers and Dynamic Workers pricing were read on 2026-10-16; the OpenAI prices come from a third-party listing and are marked so.
+This document was checked against the code at the commits above, by reading each file and line cited. Cloudflare's model list, models.dev's `api.json`, OpenAI's pricing page and Cloudflare's Containers and Dynamic Workers pricing were read on 2026-10-16.
