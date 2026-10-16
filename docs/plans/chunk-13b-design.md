@@ -64,7 +64,7 @@ Each unit is one commit after opencode reviews its diff. Each ends green, in `cl
 
 ## Open questions for the owner
 
-1. The staging turn. The box asks for a separate instance, which costs steps (a) to (f), each an account or Laravel Cloud change. 13b keeps the class exports, so deploying the head to `minerva-cf-staging` itself changes no namespace and needs one approval. Is that acceptable in place of `minerva-cf-13b`? The default is `minerva-cf-13b`, as the box says.
+1. ~~The staging turn~~ Answered 2026-10-16 (owner): deploy the head to `minerva-cf-staging`. The box asks for a separate instance, which costs steps (a) to (f), each an account or Laravel Cloud change. 13b keeps the class exports, so deploying the head to `minerva-cf-staging` itself changes no namespace and needs one approval. Is that acceptable in place of `minerva-cf-13b`? The default is `minerva-cf-13b`, as the box says.
 2. `design/logo/` writes into `frontend/`, and the app's `docs/design.md` says it is regenerated here. 13b leaves `design/` as it is. Move it to the app, or to `../branding`, and in which chunk?
 
 ## Notes for 13c
@@ -148,4 +148,4 @@ For reference against 13a's numbers, and not a gate, `test:faults`'s wall time a
 
 13a's medians were 226.6 s total and 214.1 s suite at its head, and 191.4 s and 180.3 s at its base. Run 2 is within 13a's head range. Run 1 is long because turns.test.ts waited out its 150 s deadline. Run 3 is long for two cases. faults.test.ts's Workers AI smoke run took 107.0 s, and resets.test.ts's "repeated in a tool: the third attempt's reset ends the run as worker_exited" took 68.7 s against 8.1 s in run 2, which put the resets group at 122 s against 61 s. The extra 60 s matches three resets that each waited for the Conversation's 20 s watch, the delay 13a's verification recorded on the internal path. That is inferred from the durations; the run was not traced.
 
-**The staging turn** has not run. It needs the owner's choice of instance (open question 1), and it stays unchecked.
+**The staging turn** passed on 2026-10-16. The owner chose open question 1's cheaper path: the head (`ca02c53`) was deployed to `minerva-cf-staging` itself with `pnpm run deploy --instance minerva-cf-staging`. The owner then ran a new chat on Laravel's staging whose agent called a connector and answered, and opened an older staging conversation, which listed its folder and downloaded a file. The staging Worker's error and warning events for the three hours around it (Workers Observability) hold only sandbox timings and the scripts runtime's `RESET_REASON`, which staging also logged on earlier days, before this deploy.
