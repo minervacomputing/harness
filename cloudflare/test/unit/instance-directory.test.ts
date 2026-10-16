@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { LOCAL_INSTANCES, chooseInstance, instanceForMode, instanceVars, instancesDir, leftoverProblem, listInstances, parseInstanceArgs, readInstance } from "../../scripts/instance.ts";
-import { createInstance, readDeployed, recordAccount, writeDeployed, writeInstanceFile } from "../../scripts/instance-files.ts";
+import { createInstance, recordAccount, writeInstanceFile } from "../../scripts/instance-files.ts";
 import { labOrigin, originsOf } from "../../scripts/origins.ts";
 
 const SCRIPTS = new URL("../../scripts/", import.meta.url).pathname;
@@ -237,7 +237,7 @@ describe("choosing an instance", () => {
 	test("--instance is read from a script's arguments", () => {
 		expect(parseInstanceArgs(["--test", "--instance", "acme", "--yes"])).toEqual({ flag: "acme", rest: ["--test", "--yes"] });
 		expect(parseInstanceArgs(["--instance=acme"])).toEqual({ flag: "acme", rest: [] });
-		expect(parseInstanceArgs(["--files-only"])).toEqual({ flag: undefined, rest: ["--files-only"] });
+		expect(parseInstanceArgs(["--lab"])).toEqual({ flag: undefined, rest: ["--lab"] });
 		expect(refusal(() => parseInstanceArgs(["--instance"]))).toBe("--instance needs a name.");
 		expect(refusal(() => parseInstanceArgs(["--instance", "--test"]))).toBe("--instance needs a name.");
 		expect(refusal(() => parseInstanceArgs(["--instance=", "acme"]))).toBe("--instance needs a name.");
@@ -323,6 +323,13 @@ describe("an instance's secrets (scripts/secrets.ts)", () => {
 		const out = join(base, "subset.env");
 		expect(secrets(["subset", out, "MINERVA_DOWNLOAD_KEY", "--instance", "acme"]).status).toBe(0);
 		expect(readFileSync(out, "utf8")).toBe(`MINERVA_DOWNLOAD_KEY="${KEY}"\n`);
+		expect(statSync(out).mode & 0o777).toBe(0o600);
+		// An optional secret's value is refused as a required one's is, unprinted.
+		put("acme", "secrets.env", `${readFileSync(instance.files.secrets, "utf8")}MINERVA_LARAVEL_TOKEN='${KEY}"x'\n`);
+		const optional = secrets(["subset", out, "MINERVA_DOWNLOAD_KEY", "MINERVA_LARAVEL_TOKEN", "--instance", "acme"]);
+		expect(optional.status).toBe(1);
+		expect(optional.text).toContain("MINERVA_LARAVEL_TOKEN in acme's secrets.env has a quote, a backslash or a line break");
+		expect(optional.text).not.toContain(SUB);
 		put("acme", "secrets.env", generated.replace(/^MINERVA_DOWNLOAD_KEY=.*$/m, `MINERVA_DOWNLOAD_KEY='${KEY}"x'`));
 		const refused = secrets(["check", "--instance", "acme"]);
 		expect(refused.status).toBe(1);
@@ -380,22 +387,6 @@ describe("writing to an instance's directory", () => {
 		}
 		expect(readFileSync(instance.files.vars, "utf8")).toBe("A=0\n");
 		expect(readdirSync(instance.dir).sort()).toEqual(["instance.json", "lock", "vars.env"]);
-	});
-
-	test("deployed.json: none is no record; one that does not parse, or is not a record, stops the command", () => {
-		const instance = make("acme");
-		expect(readDeployed(instance)).toBeNull();
-		holdAs("acme");
-		const record = { version: "11111111-2222-4333-8444-555555555555", key: "a".repeat(64) };
-		writeDeployed(instance, record);
-		expect(readDeployed(instance)).toEqual(record);
-		expect(statSync(instance.files.deployed).mode & 0o777).toBe(0o600);
-		for (const text of ["", "{", "null", "[]", JSON.stringify({ version: record.version }), JSON.stringify({ ...record, key: "short" }), JSON.stringify({ ...record, app: "acme" }), JSON.stringify({ [instance.name]: record })]) {
-			put("acme", "deployed.json", text);
-			expect(refusal(() => readDeployed(instance)), text).toMatch(/is not (JSON|a deploy's record): remove it/);
-		}
-		chmodSync(instance.files.deployed, 0o644);
-		expect(refusal(() => readDeployed(instance))).toMatch(/must be its owner's alone/);
 	});
 
 	test("the account is recorded once, as an account id", () => {
@@ -609,7 +600,7 @@ console.log("held");`,
 	test("every command that changes an instance takes both, in that order, before it pins the account; generating secrets takes the instance's", () => {
 		const source = (file: string) => readFileSync(join(SCRIPTS, file), "utf8");
 		expect(source("run.ts")).toContain("return [CHECKOUT_LOCK, instance.files.lock];");
-		expect(source("resources.ts")).toMatch(/if \(!rest\.includes\("--check"\)\) lockOperationUnlessParentHolds\(instance\);\n\tpinAccount\(/);
+		expect(source("resources.ts")).toMatch(/\n\tlockOperationUnlessParentHolds\(instance\);\n\tpinAccount\(/);
 		for (const file of ["deploy.ts", "reset.ts"]) {
 			const text = source(file);
 			expect(text.indexOf("lockOperation(INSTANCE);"), file).toBeGreaterThan(0);

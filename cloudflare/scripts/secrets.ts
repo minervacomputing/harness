@@ -5,8 +5,8 @@
 //
 //   node scripts/secrets.ts generate [--instance <name> | --test | --offline]  adds any missing required secret, keeping the others
 //   node scripts/secrets.ts check [--instance <name> | --test | --offline]     says which required secrets are set
-//   node scripts/secrets.ts subset OUT NAME…                                 writes only these secrets to OUT, for the download Worker
-//                                                                            (owner-only; the caller removes it, scripts/deploy.ts does)
+//   node scripts/secrets.ts subset OUT NAME…                                 writes only these secrets to OUT, those the app's build
+//                                                                            declares (owner-only; scripts/deploy.ts removes it)
 //
 // The instance comes from scripts/instance.ts (`chooseInstance`): --instance, then MINERVA_INSTANCE (scripts/deploy.ts
 // sets it), then with --test the only test instance. Generating takes the instance's lock (scripts/run.ts) and
@@ -91,7 +91,7 @@ function readFile(): string | null {
 	return existsSync(FILE) ? readFileSync(FILE, "utf8") : null;
 }
 
-/** An owner-only file outside an instance's directory: .dev.vars, or the download Worker's subset. */
+/** An owner-only file outside an instance's directory: .dev.vars, or a deploy's subset. */
 function write(path: string, lines: string[]): void {
 	mkdirSync(dirname(path), { recursive: true });
 	// The mode applies only to a new file, so an existing one is narrowed first, before the secrets go in.
@@ -130,8 +130,7 @@ async function check(): Promise<void> {
 	const values = parse(text);
 	const missing = Object.keys(REQUIRED).filter((name) => !values.get(name));
 	for (const name of Object.keys(REQUIRED)) console.log(`${name}: ${values.get(name) ? "set" : "missing"}`);
-	// A value `subset` (the download Worker's key) or `generate` could not write back stops a deploy here, before
-	// anything on the account changes, rather than after the app's upload.
+	// A value `subset` or `generate` could not write back stops a deploy here, before anything on the account changes.
 	try {
 		for (const name of Object.keys(REQUIRED)) line(name, values.get(name) ?? "");
 	} catch (error) {
@@ -168,6 +167,10 @@ async function check(): Promise<void> {
 	if (missing.length) process.exit(1);
 }
 
+/**
+ * Writes these secrets to `out` as `NAME="value"` lines. A value with a quote, a backslash or a line break stops it
+ * (`line`): Node's parser and cf's dotenv read such a value differently, so a copy could upload another value.
+ */
 function subset(out: string, names: string[]): void {
 	const values = parse(readFile() ?? "");
 	const missing = names.filter((name) => !values.get(name));

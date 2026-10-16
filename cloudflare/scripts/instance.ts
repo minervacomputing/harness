@@ -1,10 +1,10 @@
 // Instances: an instance is a name plus a directory that belongs to its operator.
 // Every resource it owns is named from the name by `namesOf`, and the directory (`instancesDir`) holds what the
-// operator keeps for it: whether it is a test instance, its account, its secrets and settings, its last deploy.
+// operator keeps for it: whether it is a test instance, its account, its secrets and settings.
 // The Worker configs, the scripts and the account suites choose an instance here (`chooseInstance`,
 // `instanceForMode`) and take every name from it; nothing else builds a name or reads the directory's files.
 //
-// The Worker configs (cloudflare.config.ts, files-worker/, reset-worker/, the lab's) import this module and are
+// The Worker configs (cloudflare.config.ts, reset-worker/, the lab's) import this module and are
 // type-checked with the Worker's types, which lack Node's, so it has no import: it reaches Node's modules
 // through `process.getBuiltinModule`, as the configs do. Writing to the directory (scripts/instance-files.ts)
 // and its lock (scripts/run.ts) are the scripts' alone.
@@ -114,8 +114,7 @@ export const SANDBOX_IMAGE_REFERENCE = /^minerva-sandbox:[0-9a-f]{24}@sha256:[0-
 //     instance.json   {"name": "<name>", "test": false, "account": "<account id>"}: the account is recorded by the
 //                     first command that pins one for the instance (scripts/run.ts, pinAccount)
 //     secrets.env     the Workers' secrets (scripts/secrets.ts)
-//     vars.env        the app's and the download origin's settings
-//     deployed.json   the last deploy of the app, for a later --files-only (scripts/instance-files.ts)
+//     vars.env        the app's settings
 //     cm.env          code mode's lab: its driver token (test instances only)
 //     cm.vars.env     code mode's lab: its origin
 //     lock            held by any command that writes here or changes the instance's account (scripts/run.ts)
@@ -128,7 +127,6 @@ export const INSTANCE_FILES = {
 	instance: "instance.json",
 	secrets: "secrets.env",
 	vars: "vars.env",
-	deployed: "deployed.json",
 	cm: "cm.env",
 	cmVars: "cm.vars.env",
 	lock: "lock",

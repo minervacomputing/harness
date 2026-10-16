@@ -95,34 +95,3 @@ export function createInstance(root: string, name: string, test: boolean): Insta
 	writeAtomically(dir, INSTANCE_FILES.instance, instanceJson({ name, test, account: null }));
 	return readInstance(root, name);
 }
-
-/** What a deploy of the app records for a later --files-only: the version it made and a digest of its link key. */
-export interface DeployedRecord {
-	version: string;
-	key: string;
-}
-
-/**
- * The instance's record of its app's last deploy (deployed.json), or null when there is none. A file that does
- * not parse, or is not a record, stops the command rather than reading as none.
- */
-export function readDeployed(instance: Instance): DeployedRecord | null {
-	const text = readInstanceText(instance, "deployed");
-	if (text === null) return null;
-	let value: unknown;
-	try {
-		value = JSON.parse(text);
-	} catch {
-		throw new Error(`${instance.files.deployed} is not JSON: remove it, and deploy both Workers rather than the download origin alone.`);
-	}
-	const record = value as Partial<DeployedRecord> | null;
-	if (typeof record !== "object" || record === null || Array.isArray(record) || Object.keys(record).sort().join(",") !== "key,version" || typeof record.version !== "string" || !/^[0-9a-f]{64}$/.test(record.key ?? "")) {
-		throw new Error(`${instance.files.deployed} is not a deploy's record: remove it, and deploy both Workers rather than the download origin alone.`);
-	}
-	return { version: record.version, key: record.key as string };
-}
-
-/** Records the app's deploy, replacing the previous record. */
-export function writeDeployed(instance: Instance, record: DeployedRecord): void {
-	writeInstanceFile(instance, "deployed", `${JSON.stringify({ version: record.version, key: record.key }, null, "\t")}\n`);
-}

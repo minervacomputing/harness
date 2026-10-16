@@ -74,49 +74,20 @@ export function buildAccount(dir: string): string | undefined {
 	return named.length ? String(named[0]) : undefined;
 }
 
-/** A Worker's R2 bindings, one line each (`FILES=bucket (jurisdiction)`), sorted. */
-function buckets(worker: BuiltWorker): string[] {
-	return Object.entries(worker.env ?? {})
-		.filter(([, binding]) => binding.type === "r2")
-		.map(([variable, binding]) => `${variable}=${binding.name ?? ""}${binding.jurisdiction ? ` (${binding.jurisdiction})` : ""}`)
-		.sort();
-}
-
 /**
- * What is wrong with an instance's two builds, one line each; empty when the download origin is the
- * instance's own. It fails closed: the app must be the instance's Worker and the download origin its download
- * Worker (scripts/instance.ts), bound to exactly the app's buckets, every bucket one of the instance's, with
- * MINERVA_DOWNLOAD_KEY its only secret and the app's MINERVA_DOWNLOAD_ORIGIN. So a test build can never
- * deploy over production's download origin or read production's buckets, nor the other way round.
+ * What is wrong with an instance's app build, one line each; empty when it is the instance's own. It fails closed:
+ * the build must be the instance's Worker (scripts/instance.ts) and bind only the instance's buckets, so a test build
+ * can never deploy over production's Worker or read production's buckets, nor the other way round.
  */
-export function filesBuildProblems(app: BuiltWorker, files: BuiltWorker, instance: string): string[] {
+export function appBuildProblems(app: BuiltWorker, instance: string): string[] {
 	const expected = namesOf(instance);
 	const problems: string[] = [];
 	if (app.name !== expected.app) problems.push(`The app's build is ${app.name ?? "unnamed"}, not ${expected.app}.`);
-	if (files.name !== expected.download) problems.push(`The download origin's build is ${files.name ?? "unnamed"}, not ${expected.download}.`);
 	const own = new Set([expected.bucket, expected.bucketEu]);
-	for (const [worker, build] of [
-		["app", app],
-		["download origin", files],
-	] as const) {
-		const foreign = Object.values(build.env ?? {})
-			.filter((binding) => binding.type === "r2" && !own.has(binding.name ?? ""))
-			.map((binding) => binding.name ?? "unnamed");
-		if (foreign.length) problems.push(`The ${worker}'s build binds buckets that are not ${expected.app}'s: ${foreign.join(", ")}.`);
-	}
-	const appBuckets = buckets(app);
-	const filesBuckets = buckets(files);
-	if (filesBuckets.length === 0 || JSON.stringify(filesBuckets) !== JSON.stringify(appBuckets)) {
-		problems.push(`The download origin's buckets (${filesBuckets.join(", ") || "none"}) are not the app's (${appBuckets.join(", ") || "none"}).`);
-	}
-	const kinds = Object.values(files.env ?? {}).map((binding) => binding.type);
-	if (kinds.some((kind) => kind !== "r2" && kind !== "text" && kind !== "secret")) problems.push(`The download origin's build has bindings it should not have: ${kinds.join(", ")}.`);
-	const secrets = Object.entries(files.env ?? {})
-		.filter(([, binding]) => binding.type === "secret")
-		.map(([variable]) => variable);
-	if (JSON.stringify(secrets) !== JSON.stringify(["MINERVA_DOWNLOAD_KEY"])) problems.push(`The download origin must hold MINERVA_DOWNLOAD_KEY alone, not ${secrets.join(", ") || "nothing"}.`);
-	const origin = (worker: BuiltWorker) => worker.env?.MINERVA_DOWNLOAD_ORIGIN?.value;
-	if (typeof origin(files) !== "string" || origin(files) !== origin(app)) problems.push("The download origin's MINERVA_DOWNLOAD_ORIGIN is not the app's.");
+	const foreign = Object.values(app.env ?? {})
+		.filter((binding) => binding.type === "r2" && !own.has(binding.name ?? ""))
+		.map((binding) => binding.name ?? "unnamed");
+	if (foreign.length) problems.push(`The app's build binds buckets that are not ${expected.app}'s: ${foreign.join(", ")}.`);
 	return problems;
 }
 
@@ -128,23 +99,6 @@ export interface LiveBinding {
 	text?: string;
 	/** A Durable Object binding's class. */
 	class_name?: string;
-}
-
-/**
- * How the app actually serving (`live`, its deployed version's bindings) differs from the app's local build in
- * what the download origin shares with it, one line each: the buckets and MINERVA_DOWNLOAD_ORIGIN. A deploy of
- * the download origin alone checks it, since it compares the download origin's build with the local app build.
- */
-export function liveAppProblems(live: Record<string, LiveBinding> | undefined, app: BuiltWorker): string[] {
-	const problems: string[] = [];
-	const liveBuckets = Object.entries(live ?? {})
-		.filter(([, binding]) => binding.type === "r2_bucket")
-		.map(([variable, binding]) => `${variable}=${binding.bucket_name ?? ""}${binding.jurisdiction && binding.jurisdiction !== "default" ? ` (${binding.jurisdiction})` : ""}`)
-		.sort();
-	if (JSON.stringify(liveBuckets) !== JSON.stringify(buckets(app))) problems.push(`The deployed app binds ${liveBuckets.join(", ") || "no bucket"}, its local build ${buckets(app).join(", ") || "none"}.`);
-	const origin = live?.MINERVA_DOWNLOAD_ORIGIN;
-	if (origin?.type !== "plain_text" || origin.text !== app.env?.MINERVA_DOWNLOAD_ORIGIN?.value) problems.push("The deployed app's MINERVA_DOWNLOAD_ORIGIN is not its local build's.");
-	return problems;
 }
 
 /**

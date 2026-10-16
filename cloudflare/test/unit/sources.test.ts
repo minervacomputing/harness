@@ -26,7 +26,7 @@ function code(path: string): [line: string, number: number][] {
 test("JSON is read only through lib/json.ts's parseJson", () => {
 	// JSON.parse, Response.json() and c.req.json() can return wrong keys on this runtime (lib/json.ts).
 	const offenders: string[] = [];
-	for (const path of [...sources("src"), ...sources("files-worker/src")]) {
+	for (const path of sources("src")) {
 		if (path === join("src", "lib", "json.ts")) continue;
 		for (const [line, number] of code(path)) if (/\bJSON\.parse\(|\.json\(\)/.test(line)) offenders.push(`${path}:${number}`);
 	}
@@ -170,8 +170,7 @@ test("mode offline (the dev server without an account) is never built or deploye
 
 	// Only the vite config and the dev script set the mark.
 	const setters: string[] = [];
-	for (const path of [...sources("src"), ...sources("scripts"), "vite.config.ts", "cloudflare.config.ts", "package.json", "files-worker/package.json"]) {
-		if (!existsSync(join(ROOT, path))) continue;
+	for (const path of [...sources("src"), ...sources("scripts"), "vite.config.ts", "cloudflare.config.ts", "package.json"]) {
 		for (const [line, number] of code(path)) if (/MINERVA_DEV_OFFLINE\s*(=|:)[^=]/.test(line) || /MINERVA_DEV_OFFLINE=/.test(line)) setters.push(`${path}:${number}`);
 	}
 	expect(setters.map((setter) => setter.split(":")[0])).toEqual(["scripts/dev-offline.ts", "vite.config.ts"]);
@@ -214,7 +213,7 @@ test("no code names one of our instances: an instance is chosen by name (scripts
 	// in their directories (instance.json) and in the README only.
 	const ours = ["minerva", "cf"].join("-");
 	const roots = readdirSync(ROOT).filter((file) => /^vitest\..+\.ts$/.test(file));
-	const paths = [...["src", "scripts", "test", "files-worker", "reset-worker"].flatMap(sources), ...roots, "cloudflare.config.ts", "vite.config.ts", "package.json"];
+	const paths = [...["src", "scripts", "test", "reset-worker"].flatMap(sources), ...roots, "cloudflare.config.ts", "vite.config.ts", "package.json"];
 	const offenders = paths.filter((path) => !path.includes("node_modules") && readFileSync(join(ROOT, path), "utf8").includes(ours));
 	expect(paths.length).toBeGreaterThan(100);
 	expect(offenders).toEqual([]);

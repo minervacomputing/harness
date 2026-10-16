@@ -4,13 +4,10 @@
 // is passed on to the Worker, which answers as it would without the driver (404). Its worlds are Laravel's: the workspace
 // a body's `scope` names has the fake provider and the fake Laravel (provider.ts, laravel.ts), and its conversations are
 // in the EU, as Laravel's are. The driver sets a world up and reads it; its runs are started, cancelled and read back
-// through Laravel's commands. Operations under `sandbox/` drive a Sandbox object of their own (lab.ts). `download` serves
-// a signed download link as the download origin (files-worker/) would, from the test Worker's own buckets, for the
-// platform tests.
+// through Laravel's commands. Operations under `sandbox/` drive a Sandbox object of their own (lab.ts).
 
 import type { Scope } from "@minerva/contract/internal";
 import { conversationObject, sandboxObject } from "../addressing.ts";
-import { serveDownload } from "../files/download.ts";
 import { conversationPrefix } from "../files/objects.ts";
 import { serveInternal } from "../internal/mount.ts";
 import { stagingPrefix } from "../internal/start.ts";
@@ -156,8 +153,6 @@ export async function faultRoutes(request: Request, env: Env, ctx: ExecutionCont
 	}
 	try {
 		const op = url.pathname.slice(PREFIX.length);
-		// The download origin's answer itself, headers and body, for a GET of the link in `url`.
-		if (op === "download") return await serveDownload(new Request(String(body.url), { headers: typeof body.range === "string" ? { range: body.range } : {} }), env);
 		const result = await operation(op, body, env, ctx.exports);
 		return result === null ? answer(404, { detail: "No such operation." }) : answer(200, result);
 	} catch (error) {

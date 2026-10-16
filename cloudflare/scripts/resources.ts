@@ -4,10 +4,9 @@
 // database or bucket with default settings on deploy (no lifecycle rule, no schema, no jurisdiction), so a
 // missing one stops the deploy here. Resource ids are never printed. scripts/deploy.ts runs it for the instance it
 // deploys (MINERVA_INSTANCE; by hand, `--instance <name>`, or `--test` for the only test instance, as
-// scripts/instance.ts chooses), whose names come from scripts/instance.ts; `--check` only checks, for a deploy of
-// the download origin alone. Its cf commands go to the instance's recorded account (scripts/run.ts, pinAccount),
-// and run by hand it takes the deploy's locks before applying migrations (under scripts/deploy.ts, which holds
-// them, it does not).
+// scripts/instance.ts chooses), whose names come from scripts/instance.ts. Its cf commands go to the instance's
+// recorded account (scripts/run.ts, pinAccount), and run by hand it takes the deploy's locks before applying
+// migrations (under scripts/deploy.ts, which holds them, it does not).
 
 import { execFileSync } from "node:child_process";
 import { type Names, chooseInstance, parseInstanceArgs } from "./instance.ts";
@@ -17,10 +16,10 @@ import { ROOT, lockOperationUnlessParentHolds, pinAccount } from "./run.ts";
 let NAMES: Names;
 try {
 	const { flag, rest } = parseInstanceArgs(process.argv.slice(2));
-	const unknown = rest.filter((arg) => arg !== "--test" && arg !== "--check");
-	if (unknown.length) throw new Error(`Unknown arguments: ${unknown.join(" ")}. Usage: resources.ts [--instance <name> | --test] [--check]`);
+	const unknown = rest.filter((arg) => arg !== "--test");
+	if (unknown.length) throw new Error(`Unknown arguments: ${unknown.join(" ")}. Usage: resources.ts [--instance <name> | --test]`);
 	const instance = chooseInstance({ flag, test: rest.includes("--test") });
-	if (!rest.includes("--check")) lockOperationUnlessParentHolds(instance);
+	lockOperationUnlessParentHolds(instance);
 	pinAccount([ROOT], [], instance, { record: false });
 	NAMES = instance.names;
 } catch (error) {
@@ -68,7 +67,6 @@ if (gateway.collect_logs !== false) fail(`AI Gateway ${GATEWAY} must not log pro
 // The gateway uses the provider keys it stores (OpenAI, Anthropic) only when authenticated; the binding needs no token.
 if (gateway.authentication !== true) fail(`AI Gateway ${GATEWAY} must be authenticated (authentication true), or it never uses its stored provider keys.`);
 console.log("D1, R2 and AI Gateway are in place.");
-if (process.argv.includes("--check")) process.exit(0);
 
 // It answers with the migrations it applied, as JSON. Its output and errors name the database's id, so
 // both are captured and the id replaced before anything is printed.

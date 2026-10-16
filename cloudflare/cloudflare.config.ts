@@ -130,7 +130,7 @@ function settingsFor(target: Target): SettingsEnv {
  * A deploy (scripts/deploy.ts) passes the image already in the account's registry in MINERVA_SANDBOX_IMAGE
  * (scripts/image.ts, cloudflare/README.md: The sandbox image), so that the build skips Docker and an unchanged
  * container/ keeps its image. Only a deployed build reads it; every other build, and a deployed one without it
- * (a reset's, a --files-only deploy's, which upload no image), builds container/Dockerfile locally.
+ * (a reset's, which uploads no image), builds container/Dockerfile locally.
  */
 function sandboxContainer(target: Target) {
 	const reference = target.instance ? build.env.MINERVA_SANDBOX_IMAGE : undefined;

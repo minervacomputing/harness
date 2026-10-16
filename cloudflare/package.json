@@ -8,9 +8,9 @@
   },
   "packageManager": "pnpm@10.18.1",
   "scripts": {
-    "build": "cf build --mode standalone && cd files-worker && cf build --mode standalone",
-    "types": "cf workers types && cd files-worker && cf workers types",
-    "typecheck": "pnpm types && tsc -p tsconfig.json && tsc -p tsconfig.node.json && tsc -p files-worker/tsconfig.json",
+    "build": "cf build --mode standalone",
+    "types": "cf workers types",
+    "typecheck": "pnpm types && tsc -p tsconfig.json && tsc -p tsconfig.node.json",
     "test:unit": "vitest run --config vitest.unit.config.ts",
     "test:docker": "vitest run --config vitest.docker.config.ts",
     "test:platform": "vitest run --config vitest.platform.config.ts",
@@ -25,7 +25,6 @@
     "instances": "node scripts/instances.ts",
     "dev:offline": "node scripts/dev-offline.ts",
     "deploy": "node scripts/deploy.ts",
-    "deploy:files": "node scripts/deploy.ts --files-only",
     "deploy:cm": "node scripts/deploy.ts --lab",
     "deploy:test": "node scripts/deploy.ts --test"
   },

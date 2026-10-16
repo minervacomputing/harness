@@ -14,7 +14,7 @@ import { cf, fetchDeployed, instanceSecret, ownOrigins, suiteInstance } from "./
  */
 const INSTANCE = suiteInstance(false);
 const NAMES = INSTANCE.names;
-const { origin: SITE, downloadOrigin: DOWNLOAD } = ownOrigins(INSTANCE);
+const { origin: SITE } = ownOrigins(INSTANCE);
 
 const NIL = "00000000-0000-0000-0000-000000000000";
 
@@ -107,32 +107,9 @@ describe("preview URLs", () => {
 		subdomain: { enabled: boolean; previews_enabled: boolean };
 	}
 
-	test("are off for both Workers", () => {
-		for (const name of [NAMES.app, NAMES.download]) {
-			const info = cf<WorkerInfo>(["workers", "get", name]);
-			expect(info.subdomain.enabled, name).toBe(true);
-			expect(info.subdomain.previews_enabled, name).toBe(false);
-		}
-	});
-
-	test("no version of the download Worker answers at its preview origin", async () => {
-		const host = new URL(DOWNLOAD).host;
-		const versions = cf<{ id: string; urls?: string[] }[]>(["workers", "versions", "list", "--worker-id", NAMES.download]);
-		expect(versions.length).toBeGreaterThan(0);
-		for (const version of versions) expect(version.urls ?? []).toEqual([]);
-		// At once, 5 s a try: a preview host that never completes its TLS handshake is tried three times (fetchDeployed),
-		// which took 32 s at 10 s a try (2026-10-16), past the case's 30 s.
-		const replies = await Promise.all(versions.map((version) => fetchDeployed(`https://${version.id.slice(0, 8)}-${host}/x`, { timeoutMs: 5_000 }).catch(() => null)));
-		// Cloudflare's own page, or nothing at all: never the Worker, whose answer carries `CSP: sandbox`.
-		for (const reply of replies) expect(reply?.headers.get("content-security-policy") ?? null).not.toBe("sandbox");
-	});
-});
-
-describe(NAMES.download, () => {
-	test("answers 404 until downloads are built, as a sandboxed response", async () => {
-		const reply = await fetchDeployed(`${DOWNLOAD}/anything`);
-		expect(reply.status).toBe(404);
-		expect(JSON.parse(reply.text)).toEqual({ detail: "Not Found" });
-		expect(reply.headers.get("content-security-policy")).toBe("sandbox");
+	test("are off for the app", () => {
+		const info = cf<WorkerInfo>(["workers", "get", NAMES.app]);
+		expect(info.subdomain.enabled).toBe(true);
+		expect(info.subdomain.previews_enabled).toBe(false);
 	});
 });
