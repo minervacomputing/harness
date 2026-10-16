@@ -1,10 +1,6 @@
 import { cloudflare } from "@cloudflare/vite-plugin";
 import { defineConfig, type Plugin } from "vite";
 
-// The Worker's static assets are the frontend's production build plus public/_headers, which
-// `pnpm assets` copies into .assets/. The plugin serves them and, with no index.html at the root,
-// builds no client of its own.
-//
 // `vite` (mode development) runs the Worker with the account's Workers AI and AI Gateway as remote
 // bindings, so it needs CLOUDFLARE_API_TOKEN and a test instance, whose gateway it uses (MINERVA_INSTANCE, or the
 // only test instance: cloudflare.config.ts). `vite --mode offline` (pnpm dev:offline) needs no account: the
@@ -38,7 +34,6 @@ export default defineConfig(({ command, mode }) => {
 	if (offline && command !== "serve") throw new Error("Mode offline is the dev server's (pnpm dev:offline); it cannot be built or deployed.");
 	if (offline) process.env.MINERVA_DEV_OFFLINE = "1";
 	return {
-		publicDir: ".assets",
 		plugins: [cloudflare(offline ? { remoteBindings: false } : {}), workerSources()],
 	};
 });

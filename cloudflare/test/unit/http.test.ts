@@ -1,5 +1,4 @@
 import { describe, expect, test } from "vitest";
-import { serveAsset } from "../../src/http/assets.ts";
 import { MAX_JSON_BODY, readJson } from "../../src/http/body.ts";
 import { fromSite } from "../../src/http/csrf.ts";
 import { errorAnswer, noRoute, unauthorized } from "../../src/http/errors.ts";
@@ -168,33 +167,5 @@ describe("router", () => {
 		// The upload's own limit applies instead (50 MB): this one gets as far as its missing name.
 		const upload = await app.request(`/api/workspaces/${"0".repeat(8)}-0000-7000-8000-${"0".repeat(12)}/uploads`, { method: "POST", headers: big }, env);
 		expect([upload.status, await upload.json()]).toEqual([400, { defined: true, code: "FILE_NAME_MISSING", status: 400, message: "Name the file with ?name=." }]);
-	});
-});
-
-describe("/assets/", () => {
-	// The assets binding as the platform answers: the file, or the app shell for a miss (SPA fallback).
-	const assets = (files: Record<string, string>) =>
-		({
-			fetch: async (request: Request) => {
-				const body = files[new URL(request.url).pathname];
-				if (body === undefined) return new Response("<!doctype html>", { headers: { "Content-Type": "text/html; charset=utf-8" } });
-				return new Response(body, { headers: { "Content-Type": "text/javascript", "Cache-Control": "public, max-age=0, must-revalidate" } });
-			},
-		}) as unknown as Fetcher;
-
-	test("a file that exists is immutable, with the security headers", async () => {
-		const response = await serveAsset(new Request(`${SITE}/assets/app-1.js`), assets({ "/assets/app-1.js": "ok" }));
-		expect(response.status).toBe(200);
-		expect(await response.text()).toBe("ok");
-		expect(response.headers.get("Cache-Control")).toBe("public, max-age=31536000, immutable");
-		expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
-	});
-
-	test("a missing file is a 404 that nothing caches, not the app shell", async () => {
-		const response = await serveAsset(new Request(`${SITE}/assets/gone-2.js`), assets({}));
-		expect(response.status).toBe(404);
-		expect(response.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
-		expect(response.headers.get("Cache-Control")).toBe("no-store");
-		expect(response.headers.get("Content-Security-Policy")).toBe(DEFAULT_CSP);
 	});
 });

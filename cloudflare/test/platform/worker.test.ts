@@ -36,6 +36,15 @@ describe("the router in workerd", () => {
 		expect([response.status, await response.json()]).toEqual([404, { defined: true, code: "NOT_FOUND", status: 404, message: "Not found." }]);
 	});
 
+	test("a path outside the API is 404 NOT_FOUND with the security headers", async () => {
+		for (const path of ["/", "/w/0199a000-0000-7000-8000-000000000001/chat", "/assets/index.js"]) {
+			const response = await exports.default.fetch(`http://localhost${path}`);
+			expect([response.status, await response.json()], path).toEqual([404, { defined: true, code: "NOT_FOUND", status: 404, message: "Not found." }]);
+			expect(response.headers.get("Content-Security-Policy"), path).toBe("frame-ancestors 'none'; base-uri 'self'; object-src 'none'");
+			expect(response.headers.get("X-Frame-Options"), path).toBe("DENY");
+		}
+	});
+
 	test("every unsafe route refuses a request from another site, or from nowhere", async () => {
 		const unsafe = createApp().routes.filter((route) => ["POST", "PUT", "PATCH", "DELETE"].includes(route.method));
 		for (const route of unsafe) {

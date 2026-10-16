@@ -57,7 +57,7 @@ for (const bucket of BUCKETS) {
 	if (!found) fail(`No R2 bucket named ${bucket.name}${bucket.jurisdiction ? ` in the ${bucket.jurisdiction} jurisdiction` : ""}.`);
 	if ((found.jurisdiction ?? "default") !== (bucket.jurisdiction ?? "default")) fail(`R2 bucket ${bucket.name} is in the wrong jurisdiction.`);
 	const lifecycle = cf(["r2", "buckets", "lifecycle", "get", bucket.name, ...scope]) as { rules?: LifecycleRule[] } | null;
-	// Both buckets carry both rules (r2-lifecycle.json); only the default one holds static/ (src/http/assets.ts).
+	// Both buckets carry both rules (r2-lifecycle.json).
 	const problems = lifecycleProblems(bucket.name, lifecycle?.rules);
 	if (problems.length) fail(problems.join("\n"));
 }

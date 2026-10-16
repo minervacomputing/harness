@@ -26,7 +26,7 @@
 // compared with the migrations (scripts/schema-check.ts), and the two checked builds are uploaded, the app first (a
 // build that changed since its check stops the deploy). The download origin gets only MINERVA_DOWNLOAD_KEY, through
 // an owner-only file in a fresh temporary directory that is removed whatever happens. The lab's deploy checks the
-// identity and its own origin the same way. `pnpm assets` (the frontend) runs before this script.
+// identity and its own origin the same way.
 
 import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";

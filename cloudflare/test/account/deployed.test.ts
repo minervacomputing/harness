@@ -59,35 +59,12 @@ describe(NAMES.app, () => {
 		}
 	});
 
-	test("/ and client routes serve the SPA shell with the asset headers", async () => {
-		for (const path of ["/", "/login", "/w/0199a000-0000-7000-8000-000000000001/chat"]) {
+	test("/, a former client route and a former asset are 404 NOT_FOUND with the security headers", async () => {
+		for (const path of ["/", "/w/0199a000-0000-7000-8000-000000000001/chat", "/assets/index.js"]) {
 			const reply = await fetchDeployed(`${site}${path}`);
-			expect(reply.status, path).toBe(200);
-			expect(reply.headers.get("content-type")).toMatch(/^text\/html/);
-			expect(reply.text).toContain('<div id="root"></div>');
-			expect(reply.text).toContain(`<meta http-equiv="Content-Security-Policy" content="img-src 'self' data: blob:" />`);
+			expect([reply.status, JSON.parse(reply.text)], path).toEqual([404, { defined: true, code: "NOT_FOUND", status: 404, message: "Not found." }]);
 			expectSecurityHeaders(reply.headers);
 		}
-	});
-
-	test("a missing asset is a 404 nothing caches, not the app shell", async () => {
-		for (const mode of ["no-cors", "navigate"]) {
-			const reply = await fetchDeployed(`${site}/assets/missing-${Date.now()}.js`, { headers: { "Sec-Fetch-Mode": mode } });
-			expect(reply.status, mode).toBe(404);
-			expect(reply.headers.get("content-type")).toBe("text/plain; charset=utf-8");
-			expect(reply.headers.get("cache-control")).toBe("no-store");
-			expectSecurityHeaders(reply.headers);
-		}
-	});
-
-	test("hashed assets are immutable", async () => {
-		const shell = await fetchDeployed(`${site}/`);
-		const script = /src="(\/assets\/[^"]+\.js)"/.exec(shell.text)?.[1];
-		expect(script).toBeDefined();
-		const reply = await fetchDeployed(`${site}${script}`);
-		expect(reply.status).toBe(200);
-		expect(reply.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
-		expect(reply.headers.get("x-content-type-options")).toBe("nosniff");
 	});
 });
 

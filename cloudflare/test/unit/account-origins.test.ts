@@ -1,12 +1,10 @@
 // The check of an instance's origins (scripts/origins.ts), which the build, the deploy and the account suites make
 // before anything is sent there: only the chosen instance's own Workers on workers.dev, both on one subdomain, and
-// never a message that repeats the configured value. Also the browser walk's report of Chrome failing to start
-// (test/account/chrome.ts).
+// never a message that repeats the configured value.
 
 import { describe, expect, test } from "vitest";
 import { namesOf } from "../../scripts/instance.ts";
 import { instanceOrigin, instanceOrigins, subdomainOf } from "../../scripts/origins.ts";
-import { chromeFailure } from "../account/chrome.ts";
 
 /** A subdomain no message may contain. */
 const SUB = "acct7q";
@@ -71,15 +69,5 @@ describe("the test instance's origins", () => {
 		expect(message).not.toContain("other7q");
 		expect(refusal(() => instanceOrigins(APP, `https://acme-files.${SUB}.workers.dev`, names, TEST))).toMatch(/^DOWNLOAD /);
 		expect(refusal(() => instanceOrigins(`https://acme.${SUB}.workers.dev`, FILES, names, TEST))).toMatch(/^SITE /);
-	});
-
-	test("Chrome failing to start names neither host", () => {
-		const hosts = [`${TEST_APP}.${SUB}.workers.dev`, `${TEST_FILES}.${SUB}.workers.dev`];
-		const launcher = new Error(`browserType.launch: Chrome exited (--host-resolver-rules=MAP ${hosts[0]} 192.0.2.1,MAP ${hosts[1]} 192.0.2.2)\nCall log:\n  - ${hosts[0]}`);
-		const failure = chromeFailure(launcher, hosts);
-		expect(failure.message).toMatch(/^Google Chrome did not start .*: browserType\.launch: Chrome exited \(--host-resolver-rules=MAP <host> 192\.0\.2\.1,MAP <host> 192\.0\.2\.2\)$/);
-		expect(failure.cause).toBeUndefined();
-		for (const text of [failure.message, failure.stack ?? ""]) expect(text).not.toContain(SUB);
-		expect(chromeFailure(`not an Error, ${hosts[1]}`, hosts).message).not.toContain(SUB);
 	});
 });

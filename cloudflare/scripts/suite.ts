@@ -1,7 +1,6 @@
 // Runs an account suite against an instance (cloudflare/README.md, Checks):
 //
 //   node scripts/suite.ts faults   [--instance <name>] [vitest arguments…]   the test instance's fault suites (`pnpm test:faults`)
-//   node scripts/suite.ts browser  [--instance <name>] [vitest arguments…]   the browser walk (`pnpm test:browser`)
 //   node scripts/suite.ts cm       [--instance <name>] [vitest arguments…]   code mode's lab (`pnpm test:cm`)
 //   node scripts/suite.ts deployed --instance <name>   [vitest arguments…]   any instance, as deployed (`pnpm test:deployed`)
 //
@@ -17,7 +16,6 @@ import { ROOT, pinAccount } from "./run.ts";
 
 const SUITES: Record<string, { config: string; test: boolean }> = {
 	faults: { config: "vitest.faults.config.ts", test: true },
-	browser: { config: "vitest.browser.config.ts", test: true },
 	cm: { config: "vitest.cm.config.ts", test: true },
 	deployed: { config: "vitest.deployed.config.ts", test: false },
 };

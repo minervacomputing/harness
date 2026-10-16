@@ -10,7 +10,7 @@
 //
 // The instance comes from scripts/instance.ts (`chooseInstance`), and its kind must be the flag's, both in
 // instance.json and on the account (scripts/identity.ts): --test for a test instance, --production for any other,
-// which is never chosen by default. `pnpm assets` first. In order:
+// which is never chosen by default. In order:
 // 1. Takes the checkout's lock and the instance's, and pins every cf command to the instance's account
 //    (scripts/run.ts, lockOperation and pinAccount; a first run records the account), then builds the app and the quiesced
 //    instance (reset-worker/), locally. Every name below comes from the app's build, and each must be the
@@ -44,7 +44,7 @@
 // leaves what it did done: rerun it (a missing bucket or database is created first with README's First deploy
 // commands).
 
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { workerExists } from "./account.ts";
 import { buildAccount, buildDigest, ownContainer, readBuild } from "./builds.ts";
@@ -199,7 +199,6 @@ try {
 	// 1. The builds, locally.
 	current = "building";
 	step("Building the app and the quiesced instance (local only)");
-	if (!existsSync(join(ROOT, ".assets", "index.html"))) stop("Run `pnpm assets` first: the app's build needs the frontend in .assets/.");
 	run("cf", ["build", "--mode", MODE]);
 	run(process.execPath, ["scripts/bundle.ts"], { print: true });
 	run("cf", ["build", "--mode", `reset-${MODE}`], { cwd: RESET_DIR });

@@ -362,8 +362,8 @@ if (args[0] === "auth" && args[1] === "whoami") {
 
 	test("both deploys run it after the builds, the identity check and the resources check, before uploading anything", () => {
 		const scripts = (JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { scripts: Record<string, string> }).scripts;
-		expect(scripts.deploy).toBe("pnpm assets && node scripts/deploy.ts");
-		expect(scripts["deploy:test"]).toBe("pnpm assets && node scripts/deploy.ts --test");
+		expect(scripts.deploy).toBe("node scripts/deploy.ts");
+		expect(scripts["deploy:test"]).toBe("node scripts/deploy.ts --test");
 		// scripts/deploy.ts: the locks (the checkout's, then the instance's) and the account, everything local, the
 		// origins and the identity (read-only), then the first change on the account (the identity row, written by
 		// the identity check once it has passed), the migrations and the uploads.

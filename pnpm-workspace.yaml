@@ -1,9 +1,8 @@
-# One pnpm workspace for the Worker, the frontend and the API contract they share (one lockfile, here).
-# `pnpm install` anywhere in it installs all three.
+# One pnpm workspace for the Worker and its API contract (one lockfile, here).
+# `pnpm install` anywhere in it installs both.
 packages:
   - contract
   - cloudflare
-  - frontend
 
 # pnpm 10 reads onlyBuiltDependencies; pnpm 11 reads allowBuilds.
 onlyBuiltDependencies:

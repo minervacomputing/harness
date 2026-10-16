@@ -1,7 +1,5 @@
-// The app Worker: the API router, /assets/ and the Durable Object classes. Static assets (the
-// frontend's build) answer every other path before this runs.
+// The app Worker: the API router and the Durable Object classes.
 
-import { ASSETS_PREFIX, serveAsset } from "./http/assets.ts";
 import type { App } from "./http/router.ts";
 
 // The API router, and what only it uses, is loaded on the first request that needs it rather than at the
@@ -23,7 +21,6 @@ function api(): Promise<App> {
 
 export default {
 	async fetch(request, env, ctx) {
-		if (new URL(request.url).pathname.startsWith(ASSETS_PREFIX)) return serveAsset(request, env.ASSETS, { bucket: env.FILES, waitUntil: (promise) => ctx.waitUntil(promise) });
 		return (await api()).fetch(request, env, ctx);
 	},
 } satisfies ExportedHandler<Env>;

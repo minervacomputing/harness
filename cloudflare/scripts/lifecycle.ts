@@ -1,8 +1,8 @@
 // The R2 lifecycle rules the files buckets need (r2-lifecycle.json), as `cf r2 buckets lifecycle get` reports
 // them: `uploads/` objects expire a day after they were written (a message copies its attachments into the
-// conversation's own blobs first), and `static/`, where the Worker keeps earlier builds' hashed frontend files
-// (src/http/assets.ts), 30 days after. scripts/resources.ts checks them before a deploy, scripts/reset.ts
-// after it recreates a bucket.
+// conversation's own blobs first), and `static/`, where builds before chunk 13b kept the frontend's hashed files,
+// 30 days after; every bucket has that rule, so it stays. scripts/resources.ts checks them before a deploy,
+// scripts/reset.ts after it recreates a bucket.
 
 export const UPLOADS_RULE = "Expire unattached uploads";
 export const ARCHIVE_RULE = "Expire archived assets";

@@ -8,14 +8,12 @@
   },
   "packageManager": "pnpm@10.18.1",
   "scripts": {
-    "assets": "pnpm --dir ../frontend build && node scripts/assets.ts",
-    "build": "pnpm assets && cf build --mode standalone && cd files-worker && cf build --mode standalone",
+    "build": "cf build --mode standalone && cd files-worker && cf build --mode standalone",
     "types": "cf workers types && cd files-worker && cf workers types",
     "typecheck": "pnpm types && tsc -p tsconfig.json && tsc -p tsconfig.node.json && tsc -p files-worker/tsconfig.json",
     "test:unit": "vitest run --config vitest.unit.config.ts",
     "test:docker": "vitest run --config vitest.docker.config.ts",
     "test:platform": "vitest run --config vitest.platform.config.ts",
-    "test:browser": "node scripts/suite.ts browser",
     "test:deployed": "node scripts/suite.ts deployed",
     "test:faults": "node scripts/suite.ts faults",
     "sandbox:image": "docker build -t minerva-sandbox:local container",
@@ -28,10 +26,10 @@
     "secrets:offline": "node scripts/secrets.ts generate --offline",
     "instances": "node scripts/instances.ts",
     "dev:offline": "node scripts/dev-offline.ts",
-    "deploy": "pnpm assets && node scripts/deploy.ts",
-    "deploy:files": "pnpm assets && node scripts/deploy.ts --files-only",
+    "deploy": "node scripts/deploy.ts",
+    "deploy:files": "node scripts/deploy.ts --files-only",
     "deploy:cm": "node scripts/deploy.ts --lab",
-    "deploy:test": "pnpm assets && node scripts/deploy.ts --test"
+    "deploy:test": "node scripts/deploy.ts --test"
   },
   "dependencies": {
     "@cloudflare/sandbox": "1.0.0",

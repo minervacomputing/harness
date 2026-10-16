@@ -1,5 +1,5 @@
-// The API router. Only /api/*, /internal/* and /stream/* reach it (static assets answer everything else, http/assets.ts),
-// and every response gets the security headers. /internal/* is the internal API Laravel calls (internal/mount.ts), with
+// The router, for every request; every response gets the security headers, and a path outside /api/*, /internal/*
+// and /stream/* is 404 `NOT_FOUND`. /internal/* is the internal API Laravel calls (internal/mount.ts), with
 // its own authentication and body cap; /stream/* is Laravel's run stream (stream/route.ts), read by browsers with a stream
 // token and no cookie; the rest of this comment is about /api/*. Paths have no trailing slash; a path that matches no route, or a
 // workspace id that is not a UUID, is 404 `NOT_FOUND`.
@@ -47,9 +47,7 @@ export const OWN_SIZE_LIMIT: ReadonlySet<string> = new Set(["POST", "PUT", "PATC
 
 export function createApp(): App {
 	const app = new Hono<AppEnv>();
-	app.use("/api/*", securityHeaders);
-	app.use("/internal/*", securityHeaders);
-	app.use("/stream/*", securityHeaders);
+	app.use("*", securityHeaders);
 	app.use("/api/*", sameOrigin);
 	app.use("/api/*", bodyCap);
 

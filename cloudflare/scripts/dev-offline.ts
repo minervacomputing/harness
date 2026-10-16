@@ -3,8 +3,6 @@
 // server reads, then runs `vite --mode offline`:
 //
 //   .dev.vars          fresh secrets if there are none (`secrets.ts generate --offline`; never printed)
-//   .assets/           the Worker's assets directory, empty if the frontend was never built (the frontend's own
-//                      dev server, `pnpm --dir ../frontend dev` on :5173, serves the pages and proxies /api here)
 //   .cloudflare/state  the local D1 database, with every migration applied (`cf d1 migrations apply --local`,
 //                      which prints its result and then does not exit, so this stops it once the result is whole)
 //
@@ -12,7 +10,7 @@
 // set in the shell. Everything is under cloudflare/ and gitignored.
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -80,13 +78,12 @@ function migrate(): Promise<void> {
 }
 
 if (!existsSync(join(root, ".dev.vars"))) run("node", ["scripts/secrets.ts", "generate", "--offline"]);
-mkdirSync(join(root, ".assets"), { recursive: true });
 await migrate().catch((error: Error) => {
 	console.error(error.message);
 	process.exit(1);
 });
 
-console.log(`\nWorker on http://127.0.0.1:${PORT}; the frontend: pnpm --dir ../frontend dev (http://localhost:5173).\n`);
+console.log(`\nWorker on http://127.0.0.1:${PORT}.\n`);
 const server = spawn("pnpm", ["exec", "vite", "--mode", "offline", "--host", "127.0.0.1", "--port", PORT, "--strictPort"], { cwd: root, env, stdio: "inherit" });
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => server.kill(signal));
 server.on("exit", (code, signal) => process.exit(code ?? (signal ? 1 : 0)));

@@ -1,4 +1,3 @@
-import { fileURLToPath } from "node:url";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 import { FAULTS_SETTINGS } from "./src/faults/settings.ts";
@@ -24,8 +23,6 @@ process.env.MINERVA_LARAVEL_URL ??= FAULTS_SETTINGS.MINERVA_LARAVEL_URL;
 export default defineConfig(async () => {
 	const migrations = await readD1Migrations("migrations");
 	return {
-		// The frontend's `@/` imports, for test/platform/frontend-auth.test.ts, which runs its auth client.
-		resolve: { alias: [{ find: /^@\//, replacement: `${fileURLToPath(new URL("../frontend/src/", import.meta.url))}` }] },
 		plugins: [
 			cloudflareTest({
 				experimental: { newConfig: true },

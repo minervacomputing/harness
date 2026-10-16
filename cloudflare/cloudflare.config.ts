@@ -170,13 +170,9 @@ export default defineConfig(({ mode }) => {
 			// its own, with the bindings and secrets of its day, and versions cannot be deleted.
 			workersDev: true,
 			previewUrls: false,
-			// The frontend is served as static assets; the Worker runs first for the API and for /assets/,
-			// where a missing file must be a 404 rather than the app shell (src/http/assets.ts).
-			assets: { notFoundHandling: "single-page-application", runWorkerFirst: ["/api/*", "/assets/*", "/internal/*", "/stream/*"] },
 			// Upload names and download links travel in query strings; keep them out of the logs.
 			observability: { enabled: true, redactQueryString: true },
 			env: {
-				ASSETS: bindings.assets(),
 				// The dev server's database has an id of its own, only so that `cf d1 migrations apply --local` can name it.
 				DB: bindings.d1({ name: target.names.d1, ...(target.offline ? { id: OFFLINE_D1_ID } : {}) }),
 				// An EU workspace's files stay in a bucket in R2's EU jurisdiction (src/addressing.ts).

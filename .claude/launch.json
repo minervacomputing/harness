@@ -10,16 +10,6 @@
         "dev:offline"
       ],
       "port": 8787
-    },
-    {
-      "name": "cf-frontend",
-      "runtimeExecutable": "pnpm",
-      "runtimeArgs": [
-        "--dir",
-        "frontend",
-        "dev"
-      ],
-      "port": 5173
     }
   ]
 }

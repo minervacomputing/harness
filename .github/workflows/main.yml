@@ -1,5 +1,5 @@
-# Every push to main: the engine's and the frontend's checks, which reach no Cloudflare account, then, when the
-# push changed the engine or the app, the account suites against the CI-only test instance (job account, with the
+# Every push to main: the engine's checks, which reach no Cloudflare account, then, when the push changed the
+# engine, the account suites against the CI-only test instance (job account, with the
 # ci-instance environment's secrets; docs/plans/ci-account-suites.md). Production is deployed by hand
 # (cloudflare/README.md). Third-party actions are pinned to commits; update them deliberately.
 name: main
@@ -13,11 +13,11 @@ permissions: {}
 
 env:
   # The paths whose changes run the account suites (jobs changes and account), as an extended regex on a path.
-  ACCOUNT_PATHS: '^(cloudflare/|contract/|frontend/|\.github/workflows/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$)'
+  ACCOUNT_PATHS: '^(cloudflare/|contract/|\.github/workflows/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$)'
 
 jobs:
   check:
-    # Lint, formatting, types, unused code and the unit tests of the frontend, the contract and the engine.
+    # The types of the contract and the engine, and the engine's unit tests.
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -35,9 +35,6 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - name: Frontend (oxlint, oxfmt, tsc, knip, unit tests)
-        working-directory: frontend
-        run: pnpm check
       - name: Contract types, and its OpenAPI documents up to date
         working-directory: contract
         run: pnpm typecheck && pnpm openapi:check
@@ -49,8 +46,8 @@ jobs:
         run: pnpm test:unit
 
   platform:
-    # The Worker in local workerd: Durable Objects, D1 and R2 simulated, remote bindings off, the protocols'
-    # fault tests and the frontend's client against the Worker.
+    # The Worker in local workerd: Durable Objects, D1 and R2 simulated, remote bindings off, and the protocols'
+    # fault tests.
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -73,7 +70,7 @@ jobs:
         run: pnpm test:platform
 
   changes:
-    # Whether this push changed the engine or the app, so that the account suites run (docs/plans/ci-account-suites.md):
+    # Whether this push changed the engine, so that the account suites run (docs/plans/ci-account-suites.md):
     # a manual run always does, and so does a range that cannot be read.
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -103,7 +100,7 @@ jobs:
 
   account:
     # The account suites against the CI-only test instance (docs/plans/ci-account-suites.md): a deploy of the test
-    # build, then test:deployed, test:faults and the browser walk. The instance's directory exists only in the
+    # build, then test:deployed and test:faults. The instance's directory exists only in the
     # ci-instance environment's secrets, which only main can read. Runs queue rather than cancel: a suite stopped
     # midway leaves its containers running. Nothing is uploaded: the logs and artifacts of this repository are public.
     needs: [check, platform, changes]
@@ -140,7 +137,7 @@ jobs:
           if [ "$EVENT" = push ] && git fetch --quiet --no-tags origin main && tip=$(git rev-parse FETCH_HEAD) \
             && [ "$tip" != "$SHA" ] && git diff -z --name-only --no-renames "$SHA" "$tip" > "$RUNNER_TEMP/newer" \
             && grep -zqE "$ACCOUNT_PATHS" "$RUNNER_TEMP/newer"; then
-            echo "main has moved past this commit with changes to the engine or the app; the newer run tests them."
+            echo "main has moved past this commit with changes to the engine; the newer run tests them."
             run=false
           fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
@@ -183,12 +180,6 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm test:faults --instance "$MINERVA_INSTANCE"
-      - name: The browser walk
-        if: steps.fresh.outputs.run == 'true'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: pnpm test:browser --instance "$MINERVA_INSTANCE"
       - if: always() && steps.fresh.outputs.run == 'true'
         working-directory: .
         run: rm -rf "$RUNNER_TEMP/instances"
