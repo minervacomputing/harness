@@ -17,10 +17,10 @@ const DIR = new URL("../../migrations/", import.meta.url);
 const FILES = readdirSync(DIR).filter((file) => file.endsWith(".sql")).sort();
 const MIGRATIONS = FILES.map((name) => ({ name, sql: readFileSync(new URL(name, DIR), "utf8") }));
 
-/** A database as D1 would be after the migrations, then changed by `change`, read through the same queries. */
-function deployed(change: (db: DatabaseSync) => void = () => {}) {
+/** A database as D1 would be after `migrations`, then changed by `change`, read through the same queries. */
+function deployed(migrations: { sql: string }[], change: (db: DatabaseSync) => void = () => {}) {
 	const db = new DatabaseSync(":memory:");
-	for (const migration of MIGRATIONS) db.exec(migration.sql);
+	for (const migration of migrations) db.exec(migration.sql);
 	// What D1 adds that the migrations do not: its migrations table and its own tables.
 	db.exec("CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)");
 	db.exec("CREATE TABLE _cf_KV (key TEXT PRIMARY KEY, value BLOB) WITHOUT ROWID");
@@ -33,17 +33,77 @@ function deployed(change: (db: DatabaseSync) => void = () => {}) {
 
 const expected = expectedSchema(MIGRATIONS);
 
+/** The tables of the engine's own accounts, which 0013 drops. */
+const RETIRED = ["oauth_flows", "memberships", "invitation", "member", "instance_setup", "instance_settings", "account", "session", "twoFactor", "workspaces", "organization", "user", "verification", "rateLimit", "oauth_clients"];
+
 describe("what the migrations build", () => {
-	test("is the accounts, the workspace directory and Better Auth's tables, with their indexes", () => {
-		for (const table of ["user", "session", "account", "verification", "twoFactor", "organization", "member", "workspaces", "memberships", "oauth_flows", "oauth_clients", "instance_settings", "instance_setup", "invitation", "rateLimit"]) {
-			expect([...expected.tables.keys()], table).toContain(table);
+	test("is the recovery index and the identity's table, with the runs' index", () => {
+		expect([...expected.tables.keys()].sort()).toEqual(["instance_identity", "recovery_conversations", "recovery_runs"]);
+		expect([...expected.objects.keys()]).toEqual(["index recovery_runs_conversation"]);
+		expect(expected.constraints.get("recovery_runs")).toEqual(new Set(["primary key (id)", "foreign key (conversation_id) references recovery_conversations (id) on update no action on delete no action"]));
+		expect(expected.tables.get("recovery_conversations")?.get("deleted_at")).toEqual({ type: "INTEGER", notNull: false, default: null, primaryKey: 0 });
+	});
+
+	test("0013 drops the accounts' tables, a row in each and foreign keys on, and keeps the recovery index's and the identity's rows", () => {
+		// Statement by statement, each its own transaction, the order alone must satisfy the foreign keys. As D1 runs it, in
+		// one transaction with its row in the migrations table, the checks wait for the commit.
+		for (const transaction of [false, true]) {
+			const db = new DatabaseSync(":memory:");
+			const before = MIGRATIONS.filter((migration) => migration.name < "0013");
+			for (const migration of before) db.exec(migration.sql);
+			db.exec("CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)");
+			for (const migration of before) db.prepare("INSERT INTO d1_migrations (name) VALUES (?)").run(migration.name);
+			const workspace = "00000000-0000-4000-8000-000000000001";
+			const time = "2026-10-01T00:00:00.000Z";
+			db.exec(`
+				INSERT INTO "user" (id, name, email, "emailVerified", "createdAt", "updatedAt") VALUES ('u1', 'Ada', 'ada@example.com', 1, '${time}', '${time}');
+				INSERT INTO "organization" (id, name, slug, "createdAt", "personalOwner") VALUES ('o1', 'Ada', 'ada', '${time}', 'u1');
+				INSERT INTO workspaces (id, organization_id, kind, name, personal_owner, created_at) VALUES ('${workspace}', 'o1', 'personal', 'Ada', 'u1', 1);
+				INSERT INTO "session" (id, "expiresAt", token, "createdAt", "updatedAt", "userId") VALUES ('s1', '${time}', 'token', '${time}', '${time}', 'u1');
+				INSERT INTO account (id, "accountId", "providerId", "userId", "createdAt", "updatedAt") VALUES ('a1', 'u1', 'credential', 'u1', '${time}', '${time}');
+				INSERT INTO "twoFactor" (id, secret, "backupCodes", "userId") VALUES ('f1', 'secret', 'codes', 'u1');
+				INSERT INTO verification (id, identifier, value, "expiresAt", "createdAt", "updatedAt") VALUES ('v1', 'email', 'code', '${time}', '${time}', '${time}');
+				INSERT INTO "member" (id, "organizationId", "userId", role, "createdAt") VALUES ('m1', 'o1', 'u1', 'owner', '${time}');
+				INSERT INTO invitation (id, "organizationId", email, status, "expiresAt", "createdAt", "inviterId") VALUES ('i1', 'o1', 'grace@example.com', 'pending', '${time}', '${time}', 'u1');
+				INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('${workspace}', 'u1', 'owner', 1);
+				INSERT INTO oauth_flows (session_id, state, verifier, provider, workspace_id, client_id, issued_at, expires_at) VALUES ('s1', 'state', 'verifier', 'google', '${workspace}', 'client', 1, 2);
+				INSERT INTO oauth_clients (provider, redirect_uri, client_id, secret_ciphertext, secret_key_version, created_at) VALUES ('google', 'https://site.example/callback', 'client', 'ciphertext', 'k1', 1);
+				INSERT INTO instance_setup (id, claim, user_id, claimed_at) VALUES (1, 'claim', 'u1', 1);
+				INSERT INTO instance_settings (id, signup_open, updated_at, updated_by) VALUES (1, 0, 1, 'u1');
+				INSERT INTO "rateLimit" (id, key, count, "lastRequest") VALUES ('r1', 'ip', 1, 1);
+				INSERT INTO recovery_conversations (id, organization_id, workspace_id, jurisdiction, created_at, fact_seq, deleted_at) VALUES ('c1', 'o1', '${workspace}', 'eu', 1, 7, 5), ('c2', 'o1', '${workspace}', NULL, 2, 0, NULL);
+				INSERT INTO recovery_runs (id, conversation_id, input_digest, created_at) VALUES ('run1', 'c1', 'digest', 3), ('run2', 'c2', NULL, 4);
+				INSERT INTO instance_identity (id, name, test) VALUES (1, 'acme', 0);
+			`);
+			const all = (sql: string) => db.prepare(sql).all().map((row) => ({ ...row }));
+			expect(Object.fromEntries(RETIRED.map((table) => [table, all(`SELECT count(*) AS n FROM "${table}"`)[0]?.n]))).toEqual(Object.fromEntries(RETIRED.map((table) => [table, 1])));
+			// The rows bind: a parent dropped before its children is refused, which is why 0013 drops children first.
+			expect(() => db.exec('DROP TABLE "user"')).toThrow(/FOREIGN KEY constraint failed/);
+
+			const retire = MIGRATIONS.find((migration) => migration.name.startsWith("0013_"));
+			const recorded = `INSERT INTO d1_migrations (name) VALUES ('${retire?.name}');`;
+			db.exec(transaction ? `BEGIN; ${retire?.sql} ${recorded} COMMIT;` : `${retire?.sql} ${recorded}`);
+
+			expect(all("PRAGMA foreign_keys")).toEqual([{ foreign_keys: 1 }]);
+			expect(all("SELECT type, name FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT IN ('d1_migrations', 'sqlite_sequence') ORDER BY name")).toEqual([
+				{ type: "table", name: "instance_identity" },
+				{ type: "table", name: "recovery_conversations" },
+				{ type: "table", name: "recovery_runs" },
+				{ type: "index", name: "recovery_runs_conversation" },
+			]);
+			expect(all("SELECT * FROM recovery_conversations ORDER BY id")).toEqual([
+				{ id: "c1", organization_id: "o1", workspace_id: workspace, jurisdiction: "eu", created_at: 1, fact_seq: 7, deleted_at: 5 },
+				{ id: "c2", organization_id: "o1", workspace_id: workspace, jurisdiction: null, created_at: 2, fact_seq: 0, deleted_at: null },
+			]);
+			expect(all("SELECT * FROM recovery_runs ORDER BY id")).toEqual([
+				{ id: "run1", conversation_id: "c1", input_digest: "digest", created_at: 3 },
+				{ id: "run2", conversation_id: "c2", input_digest: null, created_at: 4 },
+			]);
+			expect(all("SELECT * FROM instance_identity")).toEqual([{ id: 1, name: "acme", test: 0 }]);
+			expect(all("PRAGMA foreign_key_check")).toEqual([]);
+			expect(all("SELECT name FROM d1_migrations ORDER BY id").map((row) => row.name)).toEqual(FILES);
+			db.close();
 		}
-		expect(expected.tables.get("session")?.get("ipAddress")).toEqual({ type: "TEXT", notNull: false, default: null, primaryKey: 0 });
-		for (const gone of ["rate_limits", "totp_steps"]) expect(expected.tables.has(gone), gone).toBe(false);
-		expect(expected.tables.get("session")?.has("credentialStamp")).toBe(false);
-		expect(expected.tables.get("user")?.get("id")?.primaryKey).toBe(1);
-		expect([...expected.objects.keys()].some((key) => key.startsWith("index "))).toBe(true);
-		for (const hidden of ["d1_migrations", "_cf_KV", "sqlite_sequence"]) expect(expected.tables.has(hidden), hidden).toBe(false);
 	});
 
 	test("does not depend on the order the files are given in", () => {
@@ -55,56 +115,64 @@ describe("what the migrations build", () => {
 	});
 });
 
+// The migrations leave no UNIQUE constraint, unique index or cascading foreign key since 0013, so the comparison is
+// checked on a schema of its own that has every kind of constraint it compares.
+const FIXTURE = [
+	{
+		name: "0001_owners.sql",
+		sql: `CREATE TABLE owners (id TEXT NOT NULL PRIMARY KEY, email TEXT NOT NULL UNIQUE, note TEXT) STRICT;
+CREATE TABLE pets (id TEXT NOT NULL PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES owners (id) ON DELETE CASCADE, name TEXT NOT NULL, born INTEGER) STRICT;
+CREATE UNIQUE INDEX pets_owner_name ON pets (owner_id, name);
+CREATE TABLE tags (tag TEXT NOT NULL, owner_id TEXT NOT NULL, PRIMARY KEY (tag, owner_id)) STRICT;`,
+	},
+];
+const fixture = expectedSchema(FIXTURE);
+/** What the comparison finds in a database built from the fixture, then changed by `change`. */
+const drift = (change: (db: DatabaseSync) => void) => compareSchemas(fixture, deployed(FIXTURE, change));
+
 describe("the comparison", () => {
 	test("passes for a database the migrations built, whatever D1 adds of its own", () => {
-		expect(compareSchemas(expected, deployed())).toEqual([]);
+		expect(compareSchemas(expected, deployed(MIGRATIONS))).toEqual([]);
+		expect(compareSchemas(fixture, deployed(FIXTURE))).toEqual([]);
 	});
 
 	test("finds a missing table, and a table no migration made", () => {
-		expect(compareSchemas(expected, deployed((db) => db.exec("DROP TABLE twoFactor")))).toContain("Table twoFactor is missing.");
-		expect(compareSchemas(expected, deployed((db) => db.exec("CREATE TABLE scratch (id TEXT)")))).toEqual(["Table scratch is not made by any migration."]);
+		expect(drift((db) => db.exec("DROP TABLE pets"))).toEqual(["Table pets is missing.", "The index pets_owner_name is missing."]);
+		expect(drift((db) => db.exec("CREATE TABLE scratch (id TEXT)"))).toEqual(["Table scratch is not made by any migration."]);
 	});
 
 	test("finds a missing column, an extra column, and a column of another shape", () => {
-		expect(compareSchemas(expected, deployed((db) => db.exec('ALTER TABLE "session" DROP COLUMN "ipAddress"')))).toEqual(["Column session.ipAddress is missing."]);
-		expect(compareSchemas(expected, deployed((db) => db.exec("ALTER TABLE workspaces ADD COLUMN scratch TEXT")))).toEqual(["Column workspaces.scratch is not made by any migration."]);
-		const changed = compareSchemas(expected, deployed((db) => db.exec('ALTER TABLE "session" RENAME COLUMN "ipAddress" TO "stamp"')));
-		expect(changed).toEqual(["Column session.ipAddress is missing.", "Column session.stamp is not made by any migration."]);
+		expect(drift((db) => db.exec("ALTER TABLE owners DROP COLUMN note"))).toEqual(["Column owners.note is missing."]);
+		expect(drift((db) => db.exec("ALTER TABLE pets ADD COLUMN scratch TEXT"))).toEqual(["Column pets.scratch is not made by any migration."]);
+		expect(drift((db) => db.exec("ALTER TABLE owners RENAME COLUMN note TO stamp"))).toEqual(["Column owners.note is missing.", "Column owners.stamp is not made by any migration."]);
 	});
 
 	test("finds a column whose type, NOT NULL, default or primary key differs", () => {
-		const table = [...expected.tables].find(([, columns]) => [...columns.values()].some((column) => column.notNull && column.default === null && column.primaryKey === 0));
-		expect(table).toBeDefined();
-		const [name, columns] = table as [string, Map<string, { type: string; notNull: boolean; default: string | null; primaryKey: number }>];
-		const [column, shape] = [...columns].find(([, candidate]) => candidate.notNull && candidate.default === null && candidate.primaryKey === 0) as [string, { type: string; notNull: boolean; default: string | null; primaryKey: number }];
-		const edit = (change: Partial<typeof shape>) => {
-			const copy = structuredClone(expected);
-			copy.tables.get(name)?.set(column, { ...shape, ...change });
-			return compareSchemas(expected, copy);
+		const shape = { type: "TEXT", notNull: true, default: null, primaryKey: 0 };
+		expect(fixture.tables.get("pets")?.get("name")).toEqual(shape);
+		const edit = (change: Partial<typeof shape> | { default: string }) => {
+			const copy = structuredClone(fixture);
+			copy.tables.get("pets")?.set("name", { ...shape, ...change });
+			return compareSchemas(fixture, copy);
 		};
-		for (const change of [{ type: shape.type === "TEXT" ? "INTEGER" : "TEXT" }, { notNull: false }, { default: "'x'" }, { primaryKey: 1 }]) {
-			const differences = edit(change);
-			expect(differences, JSON.stringify(change)).toHaveLength(1);
-			expect(differences[0], JSON.stringify(change)).toMatch(new RegExp(`^Column ${name}\\.${column} differs: the migrations make it .*; the database has .*\\.$`));
-		}
+		const made = "the migrations make it TEXT, NOT NULL, no default, not in the primary key";
+		expect(edit({ type: "INTEGER" })).toEqual([`Column pets.name differs: ${made}; the database has INTEGER, NOT NULL, no default, not in the primary key.`]);
+		expect(edit({ notNull: false })).toEqual([`Column pets.name differs: ${made}; the database has TEXT, nullable, no default, not in the primary key.`]);
+		expect(edit({ default: "'x'" })).toEqual([`Column pets.name differs: ${made}; the database has TEXT, NOT NULL, default 'x', not in the primary key.`]);
+		expect(edit({ primaryKey: 1 })).toEqual([`Column pets.name differs: ${made}; the database has TEXT, NOT NULL, no default, primary key 1.`]);
 		// The order of the columns is not drift: a table rebuilt in another order has the same columns.
-		const reordered = structuredClone(expected);
-		const first = reordered.tables.get(name) as Map<string, typeof shape>;
-		reordered.tables.set(name, new Map([...first].reverse()));
-		expect(compareSchemas(expected, reordered)).toEqual([]);
+		const reordered = structuredClone(fixture);
+		reordered.tables.set("pets", new Map([...(fixture.tables.get("pets") ?? [])].reverse()));
+		expect(compareSchemas(fixture, reordered)).toEqual([]);
 	});
 
 	test("finds a missing index, an extra one, and one that is not unique any more", () => {
-		const unique = [...expected.objects].find(([key]) => key === "index member_organization_user");
-		expect(unique, "the migrations make a unique index").toBeDefined();
-		const [key, shape] = unique as [string, { type: string; table: string; statement: string }];
-		const name = key.slice("index ".length);
-		expect(compareSchemas(expected, deployed((db) => db.exec(`DROP INDEX "${name}"`)))).toEqual([`The ${key} is missing.`]);
-		expect(compareSchemas(expected, deployed((db) => db.exec(`CREATE INDEX scratch_idx ON "${shape.table}" ("userId")`)))).toEqual(["The index scratch_idx is not made by any migration."]);
-		expect(shape.statement).toBe('create unique index member_organization_user on "member" ("organizationid", "userid")');
-		const weaker = compareSchemas(expected, deployed((db) => db.exec(`DROP INDEX "${name}"; CREATE INDEX "${name}" ON "${shape.table}" ("organizationId", "userId")`)));
-		expect(weaker).toHaveLength(1);
-		expect(weaker[0]).toMatch(new RegExp(`^The ${key} differs from the migrations'`));
+		expect(fixture.objects.get("index pets_owner_name")).toEqual({ type: "index", table: "pets", statement: "create unique index pets_owner_name on pets (owner_id, name)" });
+		expect(drift((db) => db.exec("DROP INDEX pets_owner_name"))).toEqual(["The index pets_owner_name is missing."]);
+		expect(drift((db) => db.exec("CREATE INDEX scratch_idx ON pets (born)"))).toEqual(["The index scratch_idx is not made by any migration."]);
+		expect(drift((db) => db.exec("DROP INDEX pets_owner_name; CREATE INDEX pets_owner_name ON pets (owner_id, name)"))).toEqual([
+			"The index pets_owner_name differs from the migrations' (on pets: create unique index pets_owner_name on pets (owner_id, name); the database has, on pets: create index pets_owner_name on pets (owner_id, name)).",
+		]);
 	});
 
 	test("the statement is compared without its spacing or case", () => {
@@ -112,33 +180,29 @@ describe("the comparison", () => {
 	});
 
 	test("finds a UNIQUE constraint that was removed, whatever its automatic index is called", () => {
-		const uniques = [...expected.constraints].flatMap(([table, found]) => [...found].filter((constraint) => constraint.startsWith("unique")).map((constraint) => [table, constraint] as const));
-		expect(uniques.length, "the migrations make UNIQUE constraints").toBeGreaterThan(0);
-		// user.email (Better Auth's table) must stay unique: a sign-up with a taken address depends on it.
-		expect(expected.constraints.get("user")).toContain("unique (email)");
+		expect(fixture.constraints.get("owners")).toEqual(new Set(["primary key (id)", "unique (email)"]));
 		// Rebuilt without the constraint, as a hand-made migration would do.
-		const found = compareSchemas(
-			expected,
-			deployed((db) => {
-				db.exec("PRAGMA foreign_keys = off");
-				const row = db.prepare("SELECT sql FROM sqlite_schema WHERE name = 'user'").get() as { sql: string };
-				expect(row.sql).toMatch(/UNIQUE/i);
-				db.exec(`ALTER TABLE "user" RENAME TO user_old; ${row.sql.replace(/\bUNIQUE\b/gi, "")}; INSERT INTO "user" SELECT * FROM user_old; DROP TABLE user_old`);
-			}),
-		);
-		expect(found).toContain('Table user lacks the unique (email).');
+		const found = drift((db) => db.exec("PRAGMA foreign_keys = off; CREATE TABLE owners_new (id TEXT NOT NULL PRIMARY KEY, email TEXT NOT NULL, note TEXT) STRICT; INSERT INTO owners_new SELECT * FROM owners; DROP TABLE owners; ALTER TABLE owners_new RENAME TO owners"));
+		expect(found).toEqual(["Table owners lacks the unique (email)."]);
+	});
+
+	test("finds a composite key whose columns are in another order", () => {
+		expect(fixture.constraints.get("tags")).toEqual(new Set(["primary key (tag, owner_id)"]));
+		expect(drift((db) => db.exec("DROP TABLE tags; CREATE TABLE tags (tag TEXT NOT NULL, owner_id TEXT NOT NULL, PRIMARY KEY (owner_id, tag)) STRICT"))).toEqual([
+			"Column tags.tag differs: the migrations make it TEXT, NOT NULL, no default, primary key 1; the database has TEXT, NOT NULL, no default, primary key 2.",
+			"Column tags.owner_id differs: the migrations make it TEXT, NOT NULL, no default, primary key 2; the database has TEXT, NOT NULL, no default, primary key 1.",
+			"Table tags lacks the primary key (tag, owner_id).",
+			"Table tags has a primary key (owner_id, tag) that no migration made.",
+		]);
 	});
 
 	test("finds a changed foreign key, and one removed", () => {
-		const references = [...expected.constraints].flatMap(([table, found]) => [...found].filter((constraint) => constraint.startsWith("foreign key")).map((constraint) => [table, constraint] as const));
-		expect(references.length, "the migrations make foreign keys").toBeGreaterThan(0);
-		const [table, constraint] = references.find(([, candidate]) => candidate.includes("on delete cascade")) ?? (references[0] as readonly [string, string]);
-		const changed = structuredClone(expected);
-		changed.constraints.get(table)?.delete(constraint);
-		changed.constraints.get(table)?.add(constraint.replace(/on delete [a-z ]+$/, "on delete no action"));
-		const found = compareSchemas(expected, changed);
-		expect(found).toContain(`Table ${table} lacks the ${constraint}.`);
-		expect(found).toHaveLength(2);
+		const cascade = "foreign key (owner_id) references owners (id) on update no action on delete cascade";
+		expect(fixture.constraints.get("pets")).toEqual(new Set(["primary key (id)", cascade]));
+		const changed = structuredClone(fixture);
+		changed.constraints.get("pets")?.delete(cascade);
+		changed.constraints.get("pets")?.add(cascade.replace("on delete cascade", "on delete no action"));
+		expect(compareSchemas(fixture, changed)).toEqual([`Table pets lacks the ${cascade}.`, "Table pets has a foreign key (owner_id) references owners (id) on update no action on delete no action that no migration made."]);
 	});
 
 	test("a string literal in an index is compared as written, the rest without its spacing or case", () => {
@@ -149,12 +213,15 @@ describe("the comparison", () => {
 	});
 
 	test("a view or trigger made by hand is found too", () => {
-		expect(compareSchemas(expected, deployed((db) => db.exec("CREATE VIEW scratch_view AS SELECT 1 AS one")))).toEqual(["The view scratch_view is not made by any migration."]);
+		expect(drift((db) => db.exec("CREATE VIEW scratch_view AS SELECT 1 AS one"))).toEqual(["The view scratch_view is not made by any migration."]);
 	});
 
 	test("reports every difference, not the first", () => {
-		const found = compareSchemas(expected, deployed((db) => db.exec('DROP TABLE twoFactor; CREATE TABLE scratch (id TEXT); ALTER TABLE "session" DROP COLUMN "ipAddress"')));
-		expect(found.length).toBeGreaterThanOrEqual(3);
+		expect(drift((db) => db.exec("DROP INDEX pets_owner_name; CREATE TABLE scratch (id TEXT); ALTER TABLE owners DROP COLUMN note"))).toEqual([
+			"Column owners.note is missing.",
+			"Table scratch is not made by any migration.",
+			"The index pets_owner_name is missing.",
+		]);
 	});
 });
 
@@ -329,12 +396,12 @@ if (args[0] === "auth" && args[1] === "whoami") {
 
 	test("fails on a missing column and an unapplied migration, naming both and nothing of the id", () => {
 		const result = run((db) => {
-			db.exec('ALTER TABLE "session" DROP COLUMN "ipAddress"');
+			db.exec("ALTER TABLE recovery_conversations DROP COLUMN deleted_at");
 			db.exec(`DELETE FROM d1_migrations WHERE name = '${FILES.at(-1)}'`);
 		});
 		expect(result.status).toBe(1);
 		expect(result.err).toContain(`The schema of ${PRODUCTION} is not what the migrations make:`);
-		expect(result.err).toContain("- Column session.ipAddress is missing.");
+		expect(result.err).toContain("- Column recovery_conversations.deleted_at is missing.");
 		expect(result.err).toContain(`- Migration ${FILES.at(-1)} is not applied.`);
 		expect(result.out + result.err).not.toContain(DATABASE_ID);
 	});
