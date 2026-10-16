@@ -1,20 +1,18 @@
 // The Todoist connector against scripted Todoist answers behind an injected `fetch`: the declaration and
 // its pinned fingerprints, the inputs each tool accepts, the requests each call sends, what the model sees
-// of Todoist's answers, how errors and write outcomes map, paging, discovery and describe, and the OAuth
-// requests the declaration makes. Runs through the executor are in connectors-todoist-executor.test.ts.
+// of Todoist's answers, how errors and write outcomes map, paging, discovery and describe, and its OAuth as
+// the catalog shows it. Runs through the executor are in connectors-todoist-executor.test.ts.
 
 import { describe, expect, test } from "vitest";
 import { CONNECTORS } from "../../src/connectors/catalog.ts";
 import type { TodoistClient } from "../../src/connectors/todoist/client.ts";
 import { MAX_PROJECT_PAGES, TOO_MANY_PROJECTS, todoistConnector } from "../../src/connectors/todoist/connector.ts";
-import { type Connector, OperationError, type ProviderOutput, type Requirement, binding, termsOf } from "../../src/gateway/connector.ts";
-import type { GrantRow } from "../../src/gateway/grants.ts";
+import { OperationError, type ProviderOutput, type Requirement, binding, termsOf } from "../../src/gateway/connector.ts";
 import { CallIo, settingsIo } from "../../src/gateway/http.ts";
 import { Registry, inputSchema } from "../../src/gateway/registry.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
 import type { Json } from "../../src/lib/json.ts";
-import { tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
-import { allowedOut, consentNeeded, kindsOut, requestedScopes } from "../../src/workspace/out.ts";
+import { catalogEntry } from "./catalog-support.ts";
 import { FakeTodoist, TODOIST } from "./executor-fakes.ts";
 
 const TOKEN = "test-token";
@@ -151,9 +149,9 @@ const ERRORS: [status: number, error: { code: string; message: string }][] = [
 ];
 
 describe("the declaration", () => {
-	test("one wildcard kind, projects, read and create, and OAuth with dynamic client registration", () => {
+	test("one wildcard kind, projects, read and create, and OAuth with dynamic client registration", async () => {
 		const connector = todoistConnector();
-		expect(kindsOut(connector)).toEqual([
+		expect((await catalogEntry(connector)).kinds).toEqual([
 			{ id: "project", label: "Project", actions: ["read", "create"], wildcard: true, hierarchical: false, note: null, listed: true, browsable: false },
 		]);
 		expect(connector.actions).toEqual([
@@ -538,55 +536,18 @@ describe("the settings page", () => {
 		// A grant on a project the account cannot see is refused: describe leaves it out.
 		expect(await connector.describe(settings, "project", ["work", "elsewhere"])).toEqual({ work: "Work" });
 	});
-
-	test("connections summarize what the user allows", () => {
-		const row = (resourceId: string, resourceName: string, actions: string[]): GrantRow => ({
-			layer: "user",
-			subject: "user",
-			connectionId: TODOIST,
-			kind: "project",
-			resourceId,
-			resourceName,
-			actions,
-			effect: "allow",
-		});
-		expect(allowedOut(todoistConnector(), [row("*", "", ["read"]), row("work", "Work", ["create", "read"])])).toEqual([
-			{ kind: "project", kindLabel: "Project", action: "read", actionLabel: "Read tasks", all: true, count: 1, names: ["Work"] },
-			{ kind: "project", kindLabel: "Project", action: "create", actionLabel: "Create tasks", all: false, count: 1, names: ["Work"] },
-		]);
-	});
 });
 
 describe("OAuth with the declaration's endpoints", () => {
-	const connector: Connector = todoistConnector();
-	const auth = connector.auth as Extract<Connector["auth"], { type: "oauth2" }>;
-
-	test("its one scope is requested whatever is allowed, and no consent is ever missing", () => {
-		expect(requestedScopes(connector, new Set(["read", "create"]))).toEqual(["data:read_write"]);
-		expect(consentNeeded(connector, [], new Set(["read", "create"]))).toEqual([]);
-	});
-
-	test("token requests are forms with the client first in the body", async () => {
-		const init = tokenRequest(auth, { clientId: "id", clientSecret: "secret", redirectUri: "https://minerva.example/api/oauth/todoist/callback" }, [
-			["grant_type", "authorization_code"],
-			["code", "c"],
-		]);
-		expect(init.headers).toEqual({ Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded" });
-		expect(init.body).toBe("client_id=id&client_secret=secret&grant_type=authorization_code&code=c");
-		expect(init.redirect).toBe("manual");
-	});
-
-	test("Todoist's token answers: no scopes, and the legacy ten-year expiry is no expiry", () => {
-		const now = Date.UTC(2026, 9, 11);
-		const noExpiry = { kind: "oauth2", access_token: "a", refresh_token: null, scopes: null };
-		expect(tokenPayload({ access_token: "a", token_type: "Bearer" }, now)).toEqual(noExpiry);
-		expect(tokenPayload({ access_token: "a", token_type: "Bearer", expires_in: 315_360_000 }, now)).toEqual(noExpiry);
-		expect(tokenPayload({ access_token: "a", expires_in: 3600, scope: "data:read_write" }, now)).toEqual({
-			kind: "oauth2",
-			access_token: "a",
-			refresh_token: null,
+	test("its one scope, no consent ever missing, and token requests as forms with the client in the body", async () => {
+		const entry = await catalogEntry(todoistConnector());
+		expect(entry.auth).toMatchObject({
+			tokenUrl: "https://api.todoist.com/oauth/access_token",
 			scopes: ["data:read_write"],
-			expires_at: now / 1000 + 3600,
+			clientAuth: "post",
+			tokenBody: "form",
+			registrationUrl: "https://api.todoist.com/oauth/register",
 		});
+		expect(entry.operations.map((op) => op.consent)).toEqual([null, null, null, null]);
 	});
 });

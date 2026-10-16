@@ -1,6 +1,6 @@
 // The HubSpot connector against an in-memory HubSpot CRM API behind an injected `fetch`, run through the
 // executor (test/unit/executor-fakes.ts's Scenario): grants, requests, what the model sees, refusals and
-// limits; its tokens; and the inputs each operation accepts.
+// limits; its token requests as the catalog shows them; and the inputs each operation accepts.
 
 import { describe, expect, test } from "vitest";
 import { CONNECTORS } from "../../src/connectors/catalog.ts";
@@ -16,7 +16,7 @@ import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { MAX_ALIAS_SUFFIX, MAX_TOOL_NAME, Registry } from "../../src/gateway/registry.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
-import { type OAuth2, planRefresh, tokenBody, tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
+import { catalogEntry } from "./catalog-support.ts";
 import { validated } from "./connector-runs.ts";
 import { Scenario, type ScenarioConnection, USER } from "./executor-fakes.ts";
 
@@ -357,50 +357,14 @@ describe("the client and connecting", () => {
 		await expect(connector.account(hubspot.client())).rejects.toMatchObject({ code: "PROVIDER_FAILED" });
 	});
 
-	test("HubSpot's tokens carry their scopes", async () => {
-		// The parts of the code exchange: the request to the declared token URL with the client in the form,
-		// no PKCE verifier, and the scopes HubSpot lists.
-		const oauth = hubspotConnector().auth as OAuth2;
-		expect(oauth.tokenUrl).toBe("https://api.hubspot.com/oauth/2026-09/token");
-		expect(oauth.pkce).toBe(false);
-		const creds = { clientId: "id", clientSecret: "secret", redirectUri: "https://x/cb" };
-		const request = tokenRequest(oauth, creds, [
-			["code", "c"],
-			["redirect_uri", creds.redirectUri],
-			["grant_type", "authorization_code"],
-		]);
-		const form = new URLSearchParams(request.body as string);
-		expect([...form.keys()]).toEqual(["client_id", "client_secret", "code", "redirect_uri", "grant_type"]);
-		expect(form.get("client_id")).toBe("id");
-		expect(form.get("client_secret")).toBe("secret");
-		const issued = { token_type: "bearer", access_token: "a", refresh_token: "r", expires_in: 1800, hub_id: 4242, scopes: [...SCOPES] };
-		const body = tokenBody(issued);
-		expect(body).not.toBeNull();
-		const tokens = tokenPayload(body as JsonObject, Date.UTC(2026, 9, 11));
-		expect(tokens.scopes).toEqual([...SCOPES].sort());
-		expect(tokens.expires_at).toBe(Date.UTC(2026, 9, 11) / 1000 + 1800);
-
-		// A refresh goes to the same endpoint, and keeps the scopes HubSpot lists.
-		const sent: { url: string; body: string }[] = [];
-		const plan = await planRefresh(
-			hubspotConnector(),
-			{ kind: "oauth2", access_token: "a", refresh_token: "r", scopes: [...SCOPES], client_id: "id" },
-			{
-				clients: { configured: () => ({ clientId: "id", clientSecret: "secret" }), stored: async () => null },
-				siteUrl: "https://minerva.example",
-				fetch: async (input, init) => {
-					sent.push({ url: String(input), body: String(init?.body) });
-					return json(200, { ...issued, access_token: "a2", scopes: ["oauth", "crm.objects.contacts.read"] });
-				},
-				now: () => Date.UTC(2026, 9, 11),
-				log: () => {},
-			},
-			HUBSPOT,
-		);
-		if (plan.kind !== "send") throw new Error("HubSpot's tokens refresh.");
-		const refreshed = await plan.send();
-		expect(sent).toEqual([{ url: "https://api.hubspot.com/oauth/2026-09/token", body: "client_id=id&client_secret=secret&grant_type=refresh_token&refresh_token=r" }]);
-		expect(refreshed.kind === "refreshed" && refreshed.payload.scopes).toEqual(["crm.objects.contacts.read", "oauth"]);
+	test("token requests go to the declared URL with the client in a form, without PKCE", async () => {
+		expect((await catalogEntry(hubspotConnector())).auth).toMatchObject({
+			tokenUrl: "https://api.hubspot.com/oauth/2026-09/token",
+			scopes: [...SCOPES],
+			clientAuth: "post",
+			tokenBody: "form",
+			pkce: false,
+		});
 	});
 });
 

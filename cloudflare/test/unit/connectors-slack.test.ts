@@ -15,12 +15,8 @@ import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
-import { EncryptionKeys } from "../../src/lib/encryption.ts";
-import { WorkspaceCore } from "../../src/workspace/core.ts";
-import { tokenBody, tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
-import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
+import { askedScopes, catalogEntry, uncovered } from "./catalog-support.ts";
 import { Scenario, userGrants } from "./executor-fakes.ts";
-import { ADA, FakeConversations, FakeObjects, FakeOAuth, FakeTimers, KEYS, SETTINGS, TokenEndpoint, USER, WORKSPACE, database, nodeSql, tokens } from "./workspace-support.ts";
 
 const SECRET = "SECRET plans";
 const GENERAL = "C0GENERAL1";
@@ -270,77 +266,22 @@ describe("connecting", () => {
 		expect(refused.message).toBe("Connect Slack by installing the app into one workspace; organization-wide installs are not supported.");
 	});
 
-	test("Slack tokens carry their scopes", () => {
-		// The code exchange's request and how Slack's answer is read.
-		const auth = slackConnector().auth;
-		if (auth.type !== "oauth2") throw new Error("Slack connects through OAuth.");
-		expect([auth.tokenUrl, auth.clientAuth, auth.pkce]).toEqual(["https://slack.com/api/oauth.v2.access", "basic", false]);
-		const request = tokenRequest(auth, { clientId: "id", clientSecret: "s", redirectUri: "https://minerva.example/cb" }, [
-			["grant_type", "authorization_code"],
-			["code", "c"],
-		]);
-		const headers = new Headers(request.headers);
-		expect(headers.get("authorization")).toBe(`Basic ${btoa("id:s")}`);
-		const fields = new URLSearchParams(request.body as string);
-		expect(fields.has("client_secret") || fields.has("client_id") || fields.has("code_verifier")).toBe(false);
-		const answer = tokenBody({ ok: true, access_token: "xoxb-a", token_type: "bot", scope: "channels:read,chat:write", team: { id: "T0ACME", name: "Acme" } });
-		expect(answer).not.toBeNull();
-		const tokens = tokenPayload(answer as JsonObject, Date.UTC(2026, 9, 11));
-		expect(tokens.access_token).toBe("xoxb-a");
-		expect(tokens.scopes).toEqual(["channels:read", "chat:write"]);
-		expect("expires_at" in tokens).toBe(false);
-		// Slack reports refusals with HTTP 200.
-		expect(tokenBody({ ok: false, error: "invalid_code" })).toBeNull();
+	test("token requests authenticate with HTTP Basic, without PKCE", async () => {
+		expect((await catalogEntry(slackConnector())).auth).toMatchObject({
+			authorizeUrl: "https://slack.com/oauth/v2/authorize",
+			tokenUrl: "https://slack.com/api/oauth.v2.access",
+			clientAuth: "basic",
+			tokenBody: "form",
+			pkce: false,
+		});
 	});
 
-	test("Slack scopes follow the allowed actions", () => {
-		const connector = slackConnector();
-		const auth = connector.auth;
-		if (auth.type !== "oauth2") throw new Error("Slack connects through OAuth.");
-		expect(requestedScopes(connector, new Set(["read"]))).toEqual(BASE_SCOPES);
-		const requested = requestedScopes(connector, new Set(["read", "reply"]));
-		expect(requested).toEqual([...BASE_SCOPES, "chat:write"]);
-		// The authorization URL's `scope` joins them with the separator; no PKCE challenge is sent.
-		expect(auth.authorizeUrl).toBe("https://slack.com/oauth/v2/authorize");
-		expect(requested.join(auth.scopeSeparator)).toBe(`${BASE_SCOPES.join(",")},chat:write`);
-		expect(auth.pkce).toBe(false);
-		expect(consentNeeded(connector, BASE_SCOPES, new Set(["read", "reply", "post"]))).toEqual(["reply", "post"]);
-		expect(consentNeeded(connector, [...BASE_SCOPES, "chat:write"], new Set(["read", "reply", "post"]))).toEqual([]);
-	});
-
-	test("a refused Slack refresh needs reconnecting", async () => {
-		// The Workspace's credential lease, with Slack registered.
-		const timers = new FakeTimers();
-		const oauth = new FakeOAuth();
-		oauth.clients.set("slack", { clientId: "id", clientSecret: "s" });
-		const endpoint = new TokenEndpoint();
-		const core = new WorkspaceCore({
-			sql: nodeSql(database()),
-			timers,
-			keys: await EncryptionKeys.parse(KEYS),
-			registry: await Registry.create([slackConnector()]),
-			settings: SETTINGS,
-			conversations: new FakeConversations(),
-			objects: new FakeObjects(),
-			oauth,
-			fetch: endpoint.fetch,
-			log: () => {},
-			wake: () => {},
-		});
-		await core.init({ workspace: { id: WORKSPACE, jurisdiction: null }, kind: "personal", ownerId: USER, createdAt: timers.now() });
-		const saved = await core.saveConnection(ADA, {
-			provider: "slack",
-			account: { id: "T0ACME:U0BOT", label: "Acme" },
-			credentials: { kind: "oauth2", access_token: "xoxe.xoxb-old", refresh_token: "xoxe-1-r1", scopes: [], expires_at: Math.floor(timers.now() / 1000) },
-			connectionId: null,
-		});
-		if (!saved.ok) throw new Error(saved.refusal.detail);
-		// Slack refuses with HTTP 200.
-		endpoint.responses.push(tokens({ ok: false, error: "invalid_refresh_token" }));
-		expect(await core.lease(saved.value.id, { settings: ADA })).toMatchObject({ refused: "CONNECTION_UNAUTHORIZED" });
-		expect(endpoint.sent.map((request) => [request.url, request.headers.authorization, request.fields])).toEqual([
-			["https://slack.com/api/oauth.v2.access", `Basic ${btoa("id:s")}`, { grant_type: "refresh_token", refresh_token: "xoxe-1-r1" }],
-		]);
+	test("the catalog asks for the read scopes, joined by commas, and chat:write to post or reply", async () => {
+		const entry = await catalogEntry(slackConnector());
+		expect(entry.auth).toMatchObject({ scopes: BASE_SCOPES, scopeSeparator: "," });
+		expect(askedScopes(entry)).toEqual({ post_message: ["chat:write"], reply: ["chat:write"] });
+		expect(uncovered(entry, BASE_SCOPES)).toEqual(["post_message", "reply"]);
+		expect(uncovered(entry, [...BASE_SCOPES, "chat:write"])).toEqual([]);
 	});
 });
 

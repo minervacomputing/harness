@@ -1,10 +1,9 @@
 // The Web connector against test/fixtures/connectors/web/fake.ts, which stands for what a Worker's fetch
 // reaches (Cloudflare's checks in front of public DNS and web servers, as measured): the declaration and its
 // pinned fingerprints, inputs, site names and patterns, the fetcher (requests, redirects, bodies, bounded
-// decompression, charsets), page text, search, runs through the executor, and the built-in connection's
-// settings. Then adversarial cases for what the fetcher may reach: IP literals in every spelling, names that
-// resolve to private addresses or change their answer, redirects to private addresses, and decompression
-// bombs.
+// decompression, charsets), page text, search, runs through the executor, and finding sites to allow. Then
+// adversarial cases for what the fetcher may reach: IP literals in every spelling, names that resolve to
+// private addresses or change their answer, redirects to private addresses, and decompression bombs.
 
 import { crc32, gzipSync, deflateRawSync, deflateSync } from "node:zlib";
 import { afterEach, describe, expect, test } from "vitest";
@@ -16,7 +15,7 @@ import { Inflater } from "../../src/connectors/web/inflate.ts";
 import { plain } from "../../src/connectors/web/search.ts";
 import { OperationError, binding, offered, termsOf } from "../../src/gateway/connector.ts";
 import type { ToolCallOutcome } from "../../src/gateway/executor.ts";
-import { type GrantRow, resourceKey } from "../../src/gateway/grants.ts";
+import type { GrantRow } from "../../src/gateway/grants.ts";
 import { CallIo, NotSent, settingsIo } from "../../src/gateway/http.ts";
 import { Registry, inputSchema, validate } from "../../src/gateway/registry.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
@@ -25,9 +24,8 @@ import { htmlToText } from "../../src/lib/markdown.ts";
 import { ancestors, canonicalHost, choices, name, parseUrl, registrable, validId } from "../../src/lib/sites.ts";
 import type { ConnectionId } from "../../src/shared/rpc.ts";
 import { FakeWeb, PUBLIC, type Served, privateAddress, refusalPage, stalled, trickle } from "../fixtures/connectors/web/fake.ts";
+import { catalogEntry } from "./catalog-support.ts";
 import { Scenario, userGrants } from "./executor-fakes.ts";
-import { kindsOut } from "../../src/workspace/out.ts";
-import { ADA, GRACE, accessOf, harness } from "./workspace-support.ts";
 
 const WEB: ConnectionId = "0199a000-0000-7000-8000-0000000000f1";
 const registry = await Registry.create([webConnector({ braveKey: () => "test-key" })]);
@@ -113,10 +111,10 @@ describe("the declaration", () => {
 		for (const op of served.get("web").operations) expect(served.contract("web", op.name)).toBe(registry.contract("web", op.name));
 	});
 
-	test("two kinds, builtin auth, and search offered only with a key", () => {
+	test("two kinds, builtin auth, and search offered only with a key", async () => {
 		const withoutKey = webConnector({ braveKey: () => null });
 		const withKey = webConnector({ braveKey: () => "k" });
-		expect(kindsOut(withoutKey).map((kind) => [kind.id, kind.actions, kind.wildcard, kind.hierarchical, kind.listed])).toEqual([
+		expect((await catalogEntry(withoutKey)).kinds.map((kind) => [kind.id, kind.actions, kind.wildcard, kind.hierarchical, kind.listed])).toEqual([
 			["account", ["search"], false, false, true],
 			["site", ["read"], true, true, false],
 		]);
@@ -710,27 +708,10 @@ describe("runs through the executor", () => {
 });
 
 describe("settings", () => {
-	test("the Web is added once per user and has no account to reconnect", async () => {
-		const h = await harness({ connectors: [webConnector({ braveKey: () => "test-key" })] });
-		const first = await h.core.enableBuiltin(ADA, "web");
-		const again = await h.core.enableBuiltin(ADA, "web");
-		if (!first.ok || !again.ok) throw new Error("not enabled");
-		expect(first.value.id).toBe(again.value.id);
-		expect(first.value).toMatchObject({ provider: "web", auth: "builtin", label: "Web" });
-		const theirs = await h.core.enableBuiltin(GRACE, "web");
-		expect(theirs.ok && theirs.value.id !== first.value.id).toBe(true);
-		expect(await h.core.enableBuiltin(ADA, "nope")).toMatchObject({ ok: false, refusal: { code: "UNKNOWN_PROVIDER" } });
-	});
-
-	test("sites are found by address and allowed per domain", async () => {
+	test("sites are found by address and named per domain", async () => {
 		const web = new FakeWeb();
 		const connector = webConnector({ braveKey: () => "test-key" });
-		const h = await harness({ connectors: [connector] });
-		const enabled = await h.core.enableBuiltin(ADA, "web");
-		if (!enabled.ok) throw new Error("not enabled");
-		const id = enabled.value.id;
-		const access = accessOf(await h.core.getAccess(ADA, id));
-		const site = access?.kinds.find((kind) => kind.id === "site");
+		const site = (await catalogEntry(connector)).kinds.find((kind) => kind.id === "site");
 		expect(site?.listed).toBe(false);
 		expect(site?.note).toBeTruthy();
 		const client = connector.client("", settingsIo(web.fetch));
@@ -747,23 +728,10 @@ describe("settings", () => {
 			"*.python.org",
 		]);
 		expect(await acode(Promise.resolve().then(() => connector.discover?.(client, "site", { query: "http://10.0.0.1/", cursor: null })))).toBe("INVALID_URL");
-		// The route names what is allowed with describe and refuses what it cannot name.
+		// A grant check (checkGrantEdit) names what is allowed with describe and refuses what it cannot name.
 		const refused = ["*.org", "*.github.io", "localhost", "10.0.0.1", "Python.org", "*.*.python.org"];
 		expect(await connector.describe?.(client, "site", ["*.python.org", ...refused])).toEqual({ "*.python.org": "python.org, including subdomains" });
 		expect(web.sent).toEqual([]);
-		const change = (resourceId: string, kind = "site", actions = ["read"]) =>
-			h.core.applyGrantChanges(ADA, id, [{ kind, id: resourceId, actions }], kind === "site" ? { [resourceKey(kind, resourceId)]: name(resourceId) } : {});
-		expect((await change("*.python.org")).ok).toBe(true);
-		expect(await change("*.python.org", "site", ["search"])).toMatchObject({ ok: false, refusal: { code: "INVALID_ACCESS_CHANGE" } });
-		expect((await change(id, "account", ["search"])).ok).toBe(true);
-		const grants = accessOf(await h.core.getAccess(ADA, id)).grants.map((grant) => [grant.kind, grant.id, grant.actions]);
-		expect(grants).toEqual(
-			expect.arrayContaining([
-				["site", "*.python.org", ["read"]],
-				["account", id, ["search"]],
-			]),
-		);
-		expect(grants).toHaveLength(2);
 	});
 });
 

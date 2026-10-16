@@ -1,6 +1,6 @@
 // The GitHub connector against an in-memory GitHub API behind an injected fetch, runs through the executor,
-// and the token endpoint through the Workspace's refresh. Then the connector's own rules (inputs, cursors,
-// files, 403s, records), and the registry with its fingerprints.
+// and its OAuth as the catalog shows it. Then the connector's own rules (inputs, cursors, files, 403s,
+// records), and the registry with its fingerprints.
 
 import { describe, expect, test } from "vitest";
 import { CONNECTORS } from "../../src/connectors/catalog.ts";
@@ -18,37 +18,16 @@ import {
 	repositoriesCursor,
 	repositoryRecord,
 } from "../../src/connectors/github/connector.ts";
-import { EXPIRED } from "../../src/conversation/laravel-runs.ts";
 import { type Connector, OperationError, type ProviderClient } from "../../src/gateway/connector.ts";
 import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
 import { base64, utf8 } from "../../src/lib/bytes.ts";
-import { EncryptionKeys } from "../../src/lib/encryption.ts";
-import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
+import { type Json, parseJson } from "../../src/lib/json.ts";
 import { percentDecode } from "../../src/lib/text.ts";
-import { WorkspaceCore } from "../../src/workspace/core.ts";
-import { type OAuth2, answerJson, tokenBody, tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
-import { oauthClients } from "../../src/workspace/env.ts";
-import { connectionOut } from "../../src/workspace/out.ts";
+import { catalogEntry } from "./catalog-support.ts";
 import { Scenario, jsonResponse, userGrants } from "./executor-fakes.ts";
-import {
-	ADA,
-	FakeConversations,
-	FakeOAuth,
-	binding,
-	FakeObjects,
-	FakeTimers,
-	KEYS,
-	SETTINGS,
-	TokenEndpoint,
-	USER,
-	WORKSPACE,
-	database,
-	nodeSql,
-	tokens,
-} from "./workspace-support.ts";
 
 const GITHUB = "0199a000-0000-7000-8000-0000000000a1";
 
@@ -266,17 +245,16 @@ describe("the connector and its settings page", () => {
 		expect(github.requests.slice(before)).toEqual([]);
 	});
 
-	test("the install link needs a valid slug", () => {
+	test("the install link needs a valid slug", async () => {
 		let slug: string | null = null;
 		const gh = githubConnector({ appSlug: () => slug });
 		expect(gh.manageLink?.()).toBeNull();
 		slug = "minerva-dev";
 		expect(gh.manageLink?.()).toEqual(["Choose repositories on GitHub", "https://github.com/apps/minerva-dev/installations/new"]);
 		for (slug of ["evil.com/x", "", "Minerva", " minerva-dev", "a".repeat(101)]) expect(gh.manageLink?.()).toBeNull();
-		// As the connection lists it, with the link where the user chooses repositories on GitHub.
+		// As the catalog shows it, with the link where the user chooses repositories on GitHub.
 		slug = "minerva-dev";
-		const out = connectionOut(gh as unknown as Connector, { id: GITHUB, provider: "github", ownerId: USER, label: "ada", status: "active", createdAt: 0, scopes: [] }, []);
-		expect([out.manageLabel, out.manageUrl, out.consentNeeded]).toEqual(["Choose repositories on GitHub", "https://github.com/apps/minerva-dev/installations/new", []]);
+		expect((await catalogEntry(gh)).manage).toEqual({ label: "Choose repositories on GitHub", url: "https://github.com/apps/minerva-dev/installations/new" });
 	});
 
 	test("without a slug given, the link reads MINERVA_GITHUB_APP_SLUG from the Worker's bindings", () => {
@@ -294,17 +272,16 @@ describe("the connector and its settings page", () => {
 		}
 	});
 
-	test("GitHub is offered only when configured", async () => {
-		// GitHub registers no client of its own, so it is offered once MINERVA_GITHUB_CLIENT_ID and _SECRET are
-		// set (the part of the configuration the API's connector list reads).
-		const auth = githubConnector().auth as OAuth2;
-		expect(auth.app).toBe("github");
-		expect(auth.registrationUrl ?? null).toBeNull();
-		const keys = await EncryptionKeys.parse(KEYS);
-		const clients = (env: { [name: string]: string }) => oauthClients(env as unknown as Env, keys).configured(auth.app);
-		expect(clients({})).toBeNull();
-		expect(clients({ MINERVA_GITHUB_CLIENT_ID: "", MINERVA_GITHUB_CLIENT_SECRET: "s" })).toBeNull();
-		expect(clients({ MINERVA_GITHUB_CLIENT_ID: "Iv1.x", MINERVA_GITHUB_CLIENT_SECRET: "s" })).toEqual({ clientId: "Iv1.x", clientSecret: "s" });
+	test("the catalog names GitHub's client, which registers none of its own, and its token requests", async () => {
+		expect((await catalogEntry(githubConnector())).auth).toMatchObject({
+			client: "github",
+			tokenUrl: "https://github.com/login/oauth/access_token",
+			scopes: [],
+			clientAuth: "post",
+			tokenBody: "form",
+			pkce: true,
+			registrationUrl: null,
+		});
 	});
 });
 
@@ -507,93 +484,6 @@ describe("runs", () => {
 			code: "PROVIDER_RATE_LIMITED",
 			message: "GitHub is rate limiting requests. Try again later.",
 		});
-	});
-});
-
-describe("tokens", () => {
-	test("GitHub's token responses", () => {
-		const auth = githubConnector().auth as OAuth2;
-		const creds = { clientId: "id", clientSecret: "secret", redirectUri: "https://minerva.example/api/oauth/github/callback" };
-		const init = tokenRequest(auth, creds, [
-			["code", "c"],
-			["redirect_uri", creds.redirectUri],
-			["grant_type", "authorization_code"],
-			["code_verifier", "v"],
-		]);
-		const headers = new Headers(init.headers);
-		// GitHub answers form-encoded unless asked for JSON.
-		expect([headers.get("accept"), headers.get("content-type"), init.redirect]).toEqual(["application/json", "application/x-www-form-urlencoded", "manual"]);
-		expect([...new URLSearchParams(init.body as string).keys()]).toEqual(["client_id", "client_secret", "code", "redirect_uri", "grant_type", "code_verifier"]);
-		const now = Date.UTC(2026, 9, 11, 12, 0, 0);
-		const body = tokenBody({ access_token: "a", refresh_token: "r", expires_in: 28800, scope: "" });
-		expect(body === null ? null : tokenPayload(body, now)).toEqual({ kind: "oauth2", access_token: "a", refresh_token: "r", scopes: [], expires_at: now / 1000 + 28800 });
-		// GitHub reports a refused code with HTTP 200.
-		for (const text of [JSON.stringify({ error: "bad_verification_code" }), JSON.stringify({ token_type: "bearer" }), "access_token=a&scope="]) {
-			expect(tokenBody(answerJson(utf8(text)))).toBeNull();
-		}
-	});
-
-	async function workspace() {
-		const sql = nodeSql(database());
-		const keys = await EncryptionKeys.parse(KEYS);
-		const oauth = new FakeOAuth();
-		oauth.clients.set("github", { clientId: "id", clientSecret: "secret" });
-		const endpoint = new TokenEndpoint();
-		const timers = new FakeTimers();
-		const logs: { message: string; fields: unknown }[] = [];
-		const core = new WorkspaceCore({
-			sql,
-			timers,
-			keys,
-			registry: await Registry.create([connector()]),
-			settings: SETTINGS,
-			conversations: new FakeConversations(),
-			objects: new FakeObjects(),
-			oauth,
-			fetch: endpoint.fetch,
-			log: (message, fields) => logs.push({ message, fields }),
-		});
-		await core.init({ workspace: { id: WORKSPACE, jurisdiction: null }, kind: "personal", ownerId: USER, createdAt: timers.now() });
-		// Tokens that expire now, with no scopes (the App has none).
-		const saved = await core.saveConnection(ADA, {
-			provider: "github",
-			account: { id: "42", label: "ada" },
-			credentials: { kind: "oauth2", access_token: "old", refresh_token: "r1", expires_at: Math.floor(timers.now() / 1000), scopes: [] },
-			connectionId: null,
-		});
-		if (!saved.ok) throw new Error(saved.refusal.detail);
-		const id = saved.value.id;
-		const stored = async (): Promise<JsonObject> => {
-			const row = sql.exec<{ ciphertext: string; key_version: string }>("SELECT ciphertext, key_version FROM connections WHERE id = ?", id)[0];
-			return (await keys.decrypt(binding(id), { ciphertext: row?.ciphertext as string, version: row?.key_version as string })) as JsonObject;
-		};
-		const status = () => sql.exec<{ status: string }>("SELECT status FROM connections WHERE id = ?", id)[0]?.status;
-		return { core, endpoint, keys, logs, id, stored, status };
-	}
-
-	test("a refused GitHub refresh needs reconnecting", async () => {
-		const w = await workspace();
-		w.endpoint.responses.push(tokens({ error: "bad_refresh_token" }));
-		expect(await w.core.lease(w.id, { settings: ADA })).toEqual({ refused: "CONNECTION_UNAUTHORIZED", message: EXPIRED });
-		const [sent] = w.endpoint.sent;
-		expect([sent?.url, sent?.headers.accept]).toEqual(["https://github.com/login/oauth/access_token", "application/json"]);
-		expect(sent?.fields).toEqual({ client_id: "id", client_secret: "secret", grant_type: "refresh_token", refresh_token: "r1" });
-		expect(w.status()).toBe("error");
-	});
-
-	test("a misconfigured client keeps the connection", async () => {
-		const w = await workspace();
-		w.endpoint.responses.push(tokens({ error: "incorrect_client_credentials" }));
-		expect(await w.core.lease(w.id, { settings: ADA })).toEqual({ refused: "PROVIDER_UNAVAILABLE", message: "GitHub could not refresh the connection." });
-		expect((await w.stored()).refresh_token).toBe("r1");
-		expect(w.status()).toBe("active");
-		expect(w.logs.map((log) => log.fields)).toContainEqual(expect.objectContaining({ error: "incorrect_client_credentials" }));
-		w.endpoint.responses.push(tokens({ access_token: "new", refresh_token: "r2", expires_in: 28800 }));
-		const lease = await w.core.lease(w.id, { settings: ADA });
-		if ("refused" in lease) throw new Error(lease.message);
-		expect(((await w.keys.decrypt(binding(w.id), lease.sealed)) as JsonObject).access_token).toBe("new");
-		expect((await w.stored()).refresh_token).toBe("r2");
-		expect(w.status()).toBe("active");
 	});
 });
 

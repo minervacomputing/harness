@@ -218,6 +218,29 @@ describe("checkGrantEdit", () => {
 		expect(answer).toEqual({ outcome: "valid", grants: [{ connection, kind: "account", resource: connection, name: "Web", actions: ["search"], effect: "allow" }] });
 	});
 
+	test("a Web site is named by its pattern without a request; an action sites do not have is invalid", async () => {
+		const sent: string[] = [];
+		PROVIDER_NETWORK.fetch = () => async (input) => {
+			sent.push(String(input));
+			throw new TypeError("The Web names sites without a request.");
+		};
+		const connection = uuid7();
+		const edit = (actions: string[]) =>
+			commands.checkGrantEdit({
+				scope: scope(),
+				connection: { id: connection, provider: "web" },
+				credential: { kind: "builtin", secret: "", generation: 1 },
+				layer: { level: "agent", subject: uuid7(), restricted: false, revision: 1, grants: [] },
+				changes: [{ kind: "site", id: "*.python.org", actions }],
+			});
+		expect(await edit(["read"])).toEqual({
+			outcome: "valid",
+			grants: [{ connection, kind: "site", resource: "*.python.org", name: "python.org, including subdomains", actions: ["read"], effect: "allow" }],
+		});
+		expect(await edit(["search"])).toMatchObject({ outcome: "invalid" });
+		expect(sent).toEqual([]);
+	});
+
 	test("a refused credential is CREDENTIAL_REFUSED", async () => {
 		fakeRepositories({ status: 401 });
 		expect(await checkGrantEdit(uuid7(), [], [{ kind: "repository", id: "101", actions: ["read"] }])).toMatchObject({ outcome: "refused", code: "CREDENTIAL_REFUSED" });

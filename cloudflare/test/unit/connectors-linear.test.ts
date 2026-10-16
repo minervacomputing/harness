@@ -13,9 +13,8 @@ import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import { type JsonObject, parseJson } from "../../src/lib/json.ts";
-import { type OAuth2, planRefresh, tokenBody, tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
-import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
 import { FakeLinear, ID, NAME, SECRET, STATES } from "../fixtures/connectors/linear/fake.ts";
+import { askedScopes, catalogEntry, uncovered } from "./catalog-support.ts";
 import { Scenario, userGrants } from "./executor-fakes.ts";
 
 const CONNECTION = "0199a000-0000-7000-8000-00000000001e";
@@ -103,71 +102,23 @@ describe("connecting", () => {
 		expect(names[ids[1] as string]).toBeUndefined();
 	});
 
-	test("Linear tokens carry their scopes", async () => {
-		const oauth = linear.auth as OAuth2;
-		const creds = { clientId: "id", clientSecret: "secret", redirectUri: "https://minerva.example/api/oauth/linear/callback" };
-		// The code exchange's request: the client in the body first, with PKCE's verifier.
-		const exchange = tokenRequest(oauth, creds, [
-			["code", "c"],
-			["redirect_uri", creds.redirectUri],
-			["grant_type", "authorization_code"],
-			["code_verifier", "v"],
-		]);
-		const form = new URLSearchParams(exchange.body as string);
-		expect([...form.keys()]).toEqual(["client_id", "client_secret", "code", "redirect_uri", "grant_type", "code_verifier"]);
-		expect([form.get("client_secret"), form.get("code_verifier")]).toEqual(["secret", "v"]);
-		expect((exchange.headers as { [name: string]: string })["Content-Type"]).toBe("application/x-www-form-urlencoded");
-		const now = Date.UTC(2026, 9, 12);
-		const listed = tokenPayload(tokenBody({ access_token: "a", token_type: "Bearer", scope: ["read", "write"] }) as JsonObject, now);
-		expect([listed.access_token, listed.scopes]).toEqual(["a", ["read", "write"]]);
-		const joined = tokenPayload(tokenBody({ access_token: "b", scope: "read,issues:create" }) as JsonObject, now);
-		expect(joined.scopes).toEqual(["issues:create", "read"]);
-
-		// A refresh goes to Linear's token endpoint as the operator's client, and reads comma-joined scopes.
-		const sent: { url: string; body: string }[] = [];
-		const fetch: typeof globalThis.fetch = async (input, init) => {
-			sent.push({ url: String(input), body: String(init?.body) });
-			return new Response(JSON.stringify({ access_token: "n", refresh_token: "r2", scope: "write,read", expires_in: 86_399 }), { status: 200 });
-		};
-		const tokens: JsonObject = { kind: "oauth2", access_token: "o", refresh_token: "r1", scopes: ["read"], client_id: "id" };
-		const plan = await planRefresh(
-			linear,
-			tokens,
-			{
-				clients: { configured: (app) => (app === "linear" ? { clientId: "id", clientSecret: "secret" } : null), stored: async () => null },
-				siteUrl: "https://minerva.example",
-				fetch,
-				now: () => now,
-				log: () => {},
-			},
-			CONNECTION,
-		);
-		if (plan.kind !== "send") throw new Error("No refresh to send.");
-		expect(plan.tokenUrl).toBe("https://api.linear.app/oauth/token");
-		const result = await plan.send();
-		expect(sent.map((request) => request.url)).toEqual(["https://api.linear.app/oauth/token"]);
-		expect([...new URLSearchParams(sent[0]?.body).entries()]).toEqual([
-			["client_id", "id"],
-			["client_secret", "secret"],
-			["grant_type", "refresh_token"],
-			["refresh_token", "r1"],
-		]);
-		expect(result).toMatchObject({ kind: "refreshed", payload: { access_token: "n", refresh_token: "r2", scopes: ["read", "write"], client_id: "id" } });
+	test("the catalog's OAuth: comma-joined scopes, PKCE, and token requests as forms with the client in the body", async () => {
+		expect((await catalogEntry(linear)).auth).toMatchObject({
+			authorizeUrl: "https://linear.app/oauth/authorize",
+			tokenUrl: "https://api.linear.app/oauth/token",
+			scopeSeparator: ",",
+			clientAuth: "post",
+			tokenBody: "form",
+			pkce: true,
+		});
 	});
 
-	test("Linear scopes follow the allowed actions", () => {
-		const oauth = linear.auth as OAuth2;
-		const requested = requestedScopes(linear, new Set(["read", "create", "comment"]));
-		expect(requested).toEqual(["read", "comments:create", "issues:create"]);
-		// The authorization URL joins them with Linear's separator, with PKCE (S256) and post client auth.
-		expect(oauth.authorizeUrl).toBe("https://linear.app/oauth/authorize");
-		expect(requested.join(oauth.scopeSeparator ?? " ")).toBe("read,comments:create,issues:create");
-		expect([oauth.pkce ?? true, oauth.clientAuth ?? "post", oauth.jsonBody ?? false]).toEqual([true, "post", false]);
-		expect(requestedScopes(linear, new Set(["read"]))).toEqual(["read"]);
-		expect(requestedScopes(linear, new Set(["read", "edit"]))).toContain("write");
-		const all = new Set(["read", "create", "comment", "edit"]);
-		expect(consentNeeded(linear, ["read", "write"], all)).toEqual([]);
-		expect(consentNeeded(linear, ["issues:create", "read"], all)).toEqual(["comment", "edit"]);
+	test("the catalog asks for read, and each write for its own scope or write", async () => {
+		const entry = await catalogEntry(linear);
+		expect(entry.auth).toMatchObject({ scopes: ["read"] });
+		expect(askedScopes(entry)).toEqual({ create_issue: ["issues:create"], add_comment: ["comments:create"], update_issue: ["write"] });
+		expect(uncovered(entry, ["read", "write"])).toEqual([]);
+		expect(uncovered(entry, ["issues:create", "read"])).toEqual(["add_comment", "update_issue"]);
 	});
 
 	test("the registry accepts the declaration; its fingerprints", async () => {

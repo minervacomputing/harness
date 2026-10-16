@@ -14,9 +14,9 @@ import {
 import { ZONES } from "../../src/connectors/outlook_calendar/zones.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import type { Json } from "../../src/lib/json.ts";
-import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
 import { type Received, received } from "../fixtures/connectors/microsoft/fake.ts";
 import { ceilingRow, startRun, validated } from "./connector-runs.ts";
+import { askedScopes, catalogEntry, uncovered } from "./catalog-support.ts";
 import { jsonResponse } from "./executor-fakes.ts";
 
 type JsonObject = { [key: string]: Json };
@@ -210,22 +210,23 @@ describe("connecting and discovery", () => {
 		await expect(connector.discover(graph.client(), "calendar", { query: null, cursor: null })).rejects.toMatchObject({ code: "PROVIDER_LIMIT" });
 	});
 
-	test("calendar scopes follow the allowed actions", () => {
+	test("the catalog asks for the calendar read scope, and read-write to create", async () => {
 		const connector = outlookCalendarConnector();
 		const base = ["offline_access", "User.Read", "Calendars.Read"];
-		expect(requestedScopes(connector, new Set(["read"]))).toEqual(base);
-		expect(requestedScopes(connector, new Set(["read", "create"]))).toEqual([...base, "Calendars.ReadWrite"]);
 		expect(connector.auth).toMatchObject({
 			type: "oauth2",
 			app: "microsoft",
 			authorizeUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
 			scopes: base,
 		});
-		expect(consentNeeded(connector, ["User.Read", "Calendars.Read"], new Set(["read", "create"]))).toEqual(["create"]);
+		const entry = await catalogEntry(connector);
+		expect(entry.auth).toMatchObject({ scopes: base });
+		expect(askedScopes(entry)).toEqual({ list_calendars: ["Calendars.Read"], list_events: ["Calendars.Read"], create_event: ["Calendars.ReadWrite"] });
+		expect(uncovered(entry, ["User.Read", "Calendars.Read"])).toEqual(["create_event"]);
 		// Read-write covers reading, in any of the spellings Microsoft reports.
-		expect(consentNeeded(connector, ["https://graph.microsoft.com/calendars.readwrite"], new Set(["read", "create"]))).toEqual([]);
-		expect(consentNeeded(connector, ["calendars.read"], new Set(["read"]))).toEqual([]);
-		expect(consentNeeded(connector, ["Calendars.ReadBasic"], new Set(["read"]))).toEqual(["read"]);
+		expect(uncovered(entry, ["https://graph.microsoft.com/calendars.readwrite"])).toEqual([]);
+		expect(uncovered(entry, ["calendars.read"])).toEqual(["create_event"]);
+		expect(uncovered(entry, ["Calendars.ReadBasic"])).toEqual(["list_calendars", "list_events", "create_event"]);
 	});
 
 	test("every request asks for immutable ids and carries the token", async () => {

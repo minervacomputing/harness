@@ -16,7 +16,7 @@ import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry, fingerprint } from "../../src/gateway/registry.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
-import { tokenBody, tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
+import { catalogEntry } from "./catalog-support.ts";
 import { validated } from "./connector-runs.ts";
 import { Scenario, jsonResponse, userGrants } from "./executor-fakes.ts";
 
@@ -1002,27 +1002,8 @@ describe("connecting", () => {
 		expect(await connector.describe(client, PAGE, [ID.home, ID.projects, ID.ghost, "*"])).toEqual({ [ID.home]: "Home", [ID.projects]: "Projects (database)" });
 	});
 
-	test("token requests use Basic auth and JSON", async () => {
-		// The code exchange's request for the operator's client: Basic client authentication, a JSON body, and
-		// no code_verifier since Notion has no PKCE.
-		const auth = notionConnector().auth;
-		if (auth.type !== "oauth2") throw new Error("Notion connects through OAuth");
-		expect(auth.tokenUrl).toBe("https://api.notion.com/v1/oauth/token");
-		expect(auth.pkce).toBe(false);
-		const init = tokenRequest(auth, { clientId: "id", clientSecret: "secret", redirectUri: "https://x/cb" }, [
-			["code", "c"],
-			["redirect_uri", "https://x/cb"],
-			["grant_type", "authorization_code"],
-		]);
-		const headers = new Headers(init.headers);
-		expect(parseJson(init.body as string)).toEqual({ code: "c", redirect_uri: "https://x/cb", grant_type: "authorization_code" });
-		expect(headers.get("content-type")).toBe("application/json");
-		expect(headers.get("authorization")).toBe(`Basic ${btoa("id:secret")}`);
-		expect(init.redirect).toBe("manual");
-		// Notion's answer: the tokens are kept, its own fields (bot_id) ignored, and it names no scopes.
-		const body = tokenBody({ access_token: "a", refresh_token: "r", bot_id: "b" });
-		expect(body).not.toBeNull();
-		expect(tokenPayload(body as JsonObject, 0)).toEqual({ kind: "oauth2", access_token: "a", refresh_token: "r", scopes: null });
+	test("token requests use Basic auth and JSON, without PKCE", async () => {
+		expect((await catalogEntry(notionConnector())).auth).toMatchObject({ tokenUrl: "https://api.notion.com/v1/oauth/token", clientAuth: "basic", tokenBody: "json", pkce: false });
 	});
 
 	test("the authorization asks for no scope and no PKCE", () => {

@@ -10,7 +10,7 @@ import { Issue, Project, type SentryClient, linkCursor, nextCursor } from "../..
 import { requestAddress } from "../../src/connectors/sentry/address.ts";
 import { CONCURRENCY, sentryConnector } from "../../src/connectors/sentry/connector.ts";
 import { numberOf, short } from "../../src/connectors/sentry/reads.ts";
-import { type Connector, OperationError, termsOf } from "../../src/gateway/connector.ts";
+import { OperationError, termsOf } from "../../src/gateway/connector.ts";
 import type { ToolCallOutcome } from "../../src/gateway/executor.ts";
 import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
@@ -20,9 +20,8 @@ import { utf8 } from "../../src/lib/bytes.ts";
 import type { Json } from "../../src/lib/json.ts";
 import type { z } from "zod";
 import type { ConnectionId } from "../../src/shared/rpc.ts";
-import { tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
-import { consentNeeded, kindsOut, requestedScopes } from "../../src/workspace/out.ts";
 import { FakeSentry, LEAKS, PAYROLL, SCOPES, SECRET, type SentryObject, TOKEN, WEB, event } from "../fixtures/connectors/sentry/fake.ts";
+import { catalogEntry } from "./catalog-support.ts";
 import { Scenario, userGrants } from "./executor-fakes.ts";
 
 const SENTRY: ConnectionId = "0199a000-0000-7000-8000-0000000000e1";
@@ -618,8 +617,8 @@ describe("rules", () => {
 		expect(short("\u{1f600}".repeat(30), 20)).toBe("\u{1f600}".repeat(10));
 	});
 
-	test("the kind as the settings page shows it", () => {
-		expect(kindsOut(sentryConnector())).toEqual([
+	test("the kind as the catalog shows it", async () => {
+		expect((await catalogEntry(sentryConnector())).kinds).toEqual([
 			{
 				id: "project",
 				label: "Project",
@@ -637,43 +636,13 @@ describe("rules", () => {
 // OAuth
 
 describe("OAuth with the declaration's endpoints", () => {
-	const connector: Connector = sentryConnector();
-	const auth = connector.auth as Extract<Connector["auth"], { type: "oauth2" }>;
-
-	test("the read scopes are requested, joined by spaces, and no operation waits on consent", () => {
-		expect(requestedScopes(connector, new Set(["read"]))).toEqual(SCOPES);
-		expect(auth.scopes.join(auth.scopeSeparator ?? " ")).toBe("org:read project:read event:read");
-		expect(consentNeeded(connector, [], new Set(["read"]))).toEqual([]);
-		expect(connector.operations.every((op) => termsOf(op).consent === null)).toBe(true);
+	test("the read scopes are asked for, joined by spaces, and no operation waits on consent", async () => {
+		const entry = await catalogEntry(sentryConnector());
+		expect(entry.auth).toMatchObject({ scopes: SCOPES, scopeSeparator: " " });
+		expect(entry.operations.every((op) => op.consent === null)).toBe(true);
 	});
 
-	test("token requests are forms with the client first in the body, never Basic", () => {
-		const init = tokenRequest(auth, { clientId: "id", clientSecret: "secret", redirectUri: "https://minerva.example/api/oauth/sentry/callback" }, [
-			["grant_type", "authorization_code"],
-			["code", "c"],
-			["code_verifier", "v"],
-		]);
-		expect(init.headers).toEqual({ Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded" });
-		expect(init.body).toBe("client_id=id&client_secret=secret&grant_type=authorization_code&code=c&code_verifier=v");
-	});
-
-	test("Sentry's token answer: its scopes, its refresh token and an expiry from expires_in", () => {
-		const now = Date.UTC(2026, 9, 11);
-		const body = {
-			access_token: "a",
-			refresh_token: "r",
-			expires_in: 2591999,
-			expires_at: "2026-11-10T00:00:00.000000Z",
-			token_type: "bearer",
-			scope: "org:read project:read event:read",
-			user: { id: "42", name: "Ada Lovelace", email: "ada@example.com" },
-		};
-		expect(tokenPayload(body, now)).toEqual({
-			kind: "oauth2",
-			access_token: "a",
-			refresh_token: "r",
-			scopes: ["event:read", "org:read", "project:read"],
-			expires_at: now / 1000 + 2591999,
-		});
+	test("token requests are forms with the client in the body, never Basic", async () => {
+		expect((await catalogEntry(sentryConnector())).auth).toMatchObject({ tokenUrl: "https://sentry.io/oauth/token/", clientAuth: "post", tokenBody: "form", pkce: true });
 	});
 });

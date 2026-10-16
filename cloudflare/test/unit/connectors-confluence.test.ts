@@ -8,7 +8,7 @@ import { MAX_SPACE_PAGES, searchWords } from "../../src/connectors/confluence/re
 import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
-import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
+import { askedScopes, catalogEntry, uncovered } from "./catalog-support.ts";
 import { ceilingRow, startRun } from "./connector-runs.ts";
 import { type Scenario, jsonResponse } from "./executor-fakes.ts";
 
@@ -370,13 +370,13 @@ describe("connecting and discovery", () => {
 		expect(BodyModel.safeParse({ atlas_doc_format: { value: 5 } }).success).toBe(false);
 	});
 
-	test("scopes follow the allowed actions", () => {
-		const connector = confluenceConnector();
+	test("the catalog asks for read scopes, and for a write scope per kind of write", async () => {
+		const entry = await catalogEntry(confluenceConnector());
 		const base = ["offline_access", "read:me", ...READ_SCOPES];
-		expect(requestedScopes(connector, new Set(["read"]))).toEqual(base);
-		expect(requestedScopes(connector, new Set(["read", "comment"]))).toEqual([...base, "write:comment:confluence"]);
-		expect(consentNeeded(connector, base, new Set(["read", "comment", "create"]))).toEqual(["comment", "create"]);
-		expect(consentNeeded(connector, [...base, "write:page:confluence"], new Set(["read", "create"]))).toEqual([]);
+		expect(entry.auth).toMatchObject({ scopes: base });
+		expect(askedScopes(entry)).toEqual({ add_comment: ["write:comment:confluence"], create_page: ["write:page:confluence"] });
+		expect(uncovered(entry, base)).toEqual(["add_comment", "create_page"]);
+		expect(uncovered(entry, [...base, "write:page:confluence"])).toEqual(["add_comment"]);
 	});
 });
 

@@ -17,8 +17,8 @@ import { Registry, validate } from "../../src/gateway/registry.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
 import type { ConnectionId } from "../../src/shared/rpc.ts";
-import { planRefresh } from "../../src/workspace/credentials.ts";
 import { ACME, ARCHIVED, BETA, CUSTOMER, FakeXero, INVOICE, SECRET, SUPPLIER, TOKEN, UNREACHED, contactOf, invoiceOf, jsonResponse } from "../fixtures/connectors/xero/fake.ts";
+import { catalogEntry } from "./catalog-support.ts";
 import { Scenario, userGrants } from "./executor-fakes.ts";
 
 const XERO: ConnectionId = "0199a000-0000-7000-8000-0000000000e1";
@@ -162,42 +162,8 @@ describe("connecting and discovery", () => {
 		for (const op of connector.operations.filter((item) => !item.mutates)) expect(op.consent ?? null).toBeNull();
 	});
 
-	test("a refresh authenticates with HTTP Basic and keeps the rotated token", async () => {
-		// The token request `clientAuth: "basic"` declares, through the Workspace's refresh, with a refresh token
-		// that rotates.
-		const sent: Request[] = [];
-		const fetch: typeof globalThis.fetch = async (input, init) => {
-			sent.push(new Request(input as RequestInfo, init as RequestInit));
-			return jsonResponse(200, { access_token: "new-access", refresh_token: "new-refresh", expires_in: 1800, token_type: "Bearer", scope: "openid offline_access accounting.invoices.read" });
-		};
-		const plan = await planRefresh(
-			xeroConnector(),
-			{ kind: "oauth2", access_token: "old", refresh_token: "old-refresh", scopes: SCOPES, client_id: "client-id" },
-			{
-				clients: { configured: () => ({ clientId: "client-id", clientSecret: "client-secret" }), stored: async () => null },
-				siteUrl: "https://minerva.example",
-				fetch,
-				now: () => Date.UTC(2026, 9, 11),
-				log: () => {},
-			},
-			XERO,
-		);
-		if (plan.kind !== "send") throw new Error("The refresh was not planned.");
-		expect(plan.tokenUrl).toBe("https://identity.xero.com/connect/token");
-		const result = await plan.send();
-		const request = sent[0] as Request;
-		expect(request.headers.get("authorization")).toBe(`Basic ${btoa("client-id:client-secret")}`);
-		const form = new URLSearchParams(await request.text());
-		expect([...form.keys()]).toEqual(["grant_type", "refresh_token"]);
-		expect(form.get("refresh_token")).toBe("old-refresh");
-		if (result.kind !== "refreshed") throw new Error(`The refresh failed: ${result.kind}`);
-		expect(result.payload).toMatchObject({
-			access_token: "new-access",
-			refresh_token: "new-refresh",
-			scopes: ["accounting.invoices.read", "offline_access", "openid"],
-			client_id: "client-id",
-			token_url: "https://identity.xero.com/connect/token",
-		});
+	test("token requests authenticate with HTTP Basic and send a form", async () => {
+		expect((await catalogEntry(xeroConnector())).auth).toMatchObject({ tokenUrl: "https://identity.xero.com/connect/token", clientAuth: "basic", tokenBody: "form", pkce: true });
 	});
 
 	test("errors pass on validation messages only", () => {

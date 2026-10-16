@@ -13,7 +13,7 @@ import { connectorRegistry } from "../../src/connectors/index.ts";
 import { OperationError, consentGiven } from "../../src/gateway/connector.ts";
 import { Registry, validate } from "../../src/gateway/registry.ts";
 import { type Json, parseJson } from "../../src/lib/json.ts";
-import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
+import { askedScopes, catalogEntry, uncovered } from "./catalog-support.ts";
 import { ceilingRow, operation, requestOf, settingsClient, startRun } from "./connector-runs.ts";
 import { jsonResponse } from "./executor-fakes.ts";
 
@@ -472,25 +472,30 @@ describe("connecting", () => {
 		expect(await gmailConnector().account(gmail.client())).toEqual({ id: "9", label: "Me" });
 	});
 
-	test("gmail scopes follow the allowed actions", () => {
-		const connector = gmailConnector();
+	test("the catalog asks for read access, and for send or compose access per write", async () => {
+		const entry = await catalogEntry(gmailConnector());
 		const base = ["openid", "email", READONLY_SCOPE];
-		expect(requestedScopes(connector, new Set(["read"]))).toEqual(base);
-		expect(requestedScopes(connector, new Set(["read", "send"]))).toEqual([...base, SEND_SCOPE]);
-		expect(requestedScopes(connector, new Set(["draft"]))).toEqual([...base, COMPOSE_SCOPE]);
-		expect(requestedScopes(connector, new Set(["read", "send", "draft"]))).toEqual([...base, COMPOSE_SCOPE, SEND_SCOPE]);
-		const needed = (granted: string[] | null, actions: string[]) => consentNeeded(connector, granted, new Set(actions));
-		const granted = ["openid", "email", READONLY_SCOPE];
-		const all = ["read", "send", "draft"];
-		expect(needed(granted, all)).toEqual(["send", "draft"]);
-		expect(needed([...granted, SEND_SCOPE], all)).toEqual(["draft"]);
+		expect(entry.auth).toMatchObject({ scopes: base });
+		expect(askedScopes(entry)).toEqual({
+			list_labels: [READONLY_SCOPE],
+			list_messages: [READONLY_SCOPE],
+			read_message: [READONLY_SCOPE],
+			read_thread: [READONLY_SCOPE],
+			send_message: [SEND_SCOPE],
+			reply: [READONLY_SCOPE, SEND_SCOPE],
+			create_draft: [COMPOSE_SCOPE],
+			create_reply_draft: [READONLY_SCOPE, COMPOSE_SCOPE],
+		});
+		const reads = ["list_labels", "list_messages", "read_message", "read_thread"];
+		expect(uncovered(entry, base)).toEqual(["send_message", "reply", "create_draft", "create_reply_draft"]);
+		expect(uncovered(entry, [...base, SEND_SCOPE])).toEqual(["create_draft", "create_reply_draft"]);
 		// Compose also sends; modify and full access cover everything.
-		expect(needed([...granted, COMPOSE_SCOPE], all)).toEqual([]);
-		expect(needed([MODIFY_SCOPE], all)).toEqual([]);
-		expect(needed(["https://mail.google.com/"], all)).toEqual([]);
-		expect(needed([SEND_SCOPE], ["read"])).toEqual(["read"]);
+		expect(uncovered(entry, [...base, COMPOSE_SCOPE])).toEqual([]);
+		expect(uncovered(entry, [MODIFY_SCOPE])).toEqual([]);
+		expect(uncovered(entry, [FULL_SCOPE])).toEqual([]);
+		expect(uncovered(entry, [SEND_SCOPE])).toEqual([...reads, "reply", "create_draft", "create_reply_draft"]);
 		// Unknown scopes (the provider did not say what it granted) need nothing: Google will refuse instead.
-		expect(needed(null, all)).toEqual([]);
+		expect(uncovered(entry, null)).toEqual([]);
 	});
 
 	test("Google's authorization is asked for offline access, consent and earlier grants, with read access first", () => {

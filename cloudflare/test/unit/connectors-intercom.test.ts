@@ -14,8 +14,7 @@ import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import type { JsonObject } from "../../src/lib/json.ts";
-import { type OAuth2, tokenBody, tokenPayload, tokenRequest } from "../../src/workspace/credentials.ts";
-import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
+import { catalogEntry } from "./catalog-support.ts";
 import {
 	ADA,
 	ADMIN,
@@ -123,26 +122,23 @@ describe("connecting and discovery", () => {
 	});
 
 	test("Intercom has no scopes to ask for", async () => {
-		const registry = await connectorRegistry();
-		const connector = registry.get("intercom");
-		const oauth = connector.auth as OAuth2;
-		expect([oauth.scopes, oauth.pkce]).toEqual([[], false]);
-		expect(connector.operations.every((op) => !op.consent)).toBe(true);
-		const all = new Set(["read", "note", "reply"]);
-		expect(requestedScopes(connector, all)).toEqual([]);
-		expect(consentNeeded(connector, [], all)).toEqual([]);
+		const entry = await catalogEntry((await connectorRegistry()).get("intercom"));
 		// The endpoints, and the client in the body of a form, as the default `post`.
-		expect([oauth.app, oauth.authorizeUrl, oauth.tokenUrl]).toEqual(["intercom", "https://app.intercom.com/oauth", "https://api.intercom.io/auth/eagle/token"]);
-		expect([oauth.clientAuth ?? "post", oauth.jsonBody ?? false, oauth.registrationUrl ?? null, oauth.loginHint ?? false]).toEqual(["post", false, null, false]);
-		const exchange = tokenRequest(oauth, { clientId: "id", clientSecret: "secret", redirectUri: "https://minerva.example/api/oauth/intercom/callback" }, [
-			["code", "c"],
-			["redirect_uri", "https://minerva.example/api/oauth/intercom/callback"],
-			["grant_type", "authorization_code"],
-		]);
-		expect([...new URLSearchParams(exchange.body as string).keys()]).toEqual(["client_id", "client_secret", "code", "redirect_uri", "grant_type"]);
-		// Intercom's token answer carries no scopes and no expiry: the scopes are unknown, the token lasts.
-		const body = tokenBody({ token_type: "Bearer", token: "t", access_token: "t" }) as JsonObject;
-		expect(tokenPayload(body, Date.UTC(2026, 9, 12))).toEqual({ kind: "oauth2", access_token: "t", refresh_token: null, scopes: null });
+		expect(entry.auth).toEqual({
+			type: "oauth2",
+			client: "intercom",
+			authorizeUrl: "https://app.intercom.com/oauth",
+			tokenUrl: "https://api.intercom.io/auth/eagle/token",
+			scopes: [],
+			scopeSeparator: " ",
+			authorizeParams: [],
+			loginHint: false,
+			clientAuth: "post",
+			tokenBody: "form",
+			pkce: false,
+			registrationUrl: null,
+		});
+		expect(entry.operations.every((op) => op.consent === null)).toBe(true);
 		expect([intercom.offered, intercom.manageLink, intercom.children, intercom.browsable]).toEqual([undefined, undefined, undefined, undefined]);
 	});
 

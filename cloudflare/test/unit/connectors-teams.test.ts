@@ -9,9 +9,9 @@ import { TEAMS, checkWritten, read, redact, toTeams, written } from "../../src/c
 import { settingsIo } from "../../src/gateway/http.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { TextError } from "../../src/lib/text.ts";
-import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
 import { type Received, received } from "../fixtures/connectors/microsoft/fake.ts";
 import { ceilingRow, startRun, validated } from "./connector-runs.ts";
+import { askedScopes, catalogEntry, uncovered } from "./catalog-support.ts";
 import { jsonResponse } from "./executor-fakes.ts";
 
 type JsonObject = { [key: string]: Json };
@@ -264,15 +264,18 @@ describe("connecting and discovery", () => {
 		}
 	});
 
-	test("scopes follow the allowed actions", () => {
-		const connector = teamsConnector();
-		const base = ["offline_access", "User.Read", "Team.ReadBasic.All", "Channel.ReadBasic.All"];
-		expect(requestedScopes(connector, new Set(["read"]))).toEqual([...base, "ChannelMessage.Read.All"]);
-		expect(requestedScopes(connector, new Set(["read", "reply"]))).toEqual([...base, "ChannelMessage.Read.All", "ChannelMessage.Send"]);
-		const granted = ["https://graph.microsoft.com/channelmessage.read.all", "ChannelMessage.Send"];
-		expect(consentNeeded(connector, granted, new Set(["read", "reply", "post"]))).toEqual([]);
+	test("the catalog asks for the base scopes, and each operation for its own", async () => {
+		const entry = await catalogEntry(teamsConnector());
+		expect(entry.auth).toMatchObject({ scopes: ["offline_access", "User.Read", "Team.ReadBasic.All", "Channel.ReadBasic.All"] });
 		// Replying reads the message replied to.
-		expect(consentNeeded(connector, ["ChannelMessage.Send"], new Set(["reply", "post"]))).toEqual(["reply"]);
+		expect(askedScopes(entry)).toEqual({
+			read_channel: ["ChannelMessage.Read.All"],
+			read_thread: ["ChannelMessage.Read.All"],
+			post_message: ["ChannelMessage.Send"],
+			reply: ["ChannelMessage.Send", "ChannelMessage.Read.All"],
+		});
+		expect(uncovered(entry, ["https://graph.microsoft.com/channelmessage.read.all", "ChannelMessage.Send"])).toEqual([]);
+		expect(uncovered(entry, ["ChannelMessage.Send"])).toEqual(["read_channel", "read_thread", "reply"]);
 	});
 });
 

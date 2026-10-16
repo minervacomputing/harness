@@ -14,7 +14,7 @@ import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import { utf8 } from "../../src/lib/bytes.ts";
 import type { JsonObject } from "../../src/lib/json.ts";
-import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
+import { askedScopes, catalogEntry, uncovered } from "./catalog-support.ts";
 
 const BASE = "https://graph.microsoft.com/v1.0/me/mailFolders/X/messages";
 const unusable = expect.objectContaining({ code: "PROVIDER_LIMIT", message: "Microsoft Graph returned a page link Minerva cannot use." });
@@ -173,17 +173,16 @@ describe("consent", () => {
 		expect(consentAll("A", "B")[0]).toEqual(["A", "B"]);
 	});
 
-	test("Outlook's scopes follow the allowed actions", () => {
-		const connector = outlookConnector();
-		const base = ["offline_access", "User.Read", "Mail.Read"];
-		expect(requestedScopes(connector, new Set(["read"]))).toEqual(base);
-		expect(requestedScopes(connector, new Set(["read", "send"]))).toEqual([...base, "Mail.Send"]);
-		expect(consentNeeded(connector, ["User.Read", "Mail.Read"], new Set(["read", "send"]))).toEqual(["send"]);
+	test("the catalog asks for Outlook's read scopes, and Mail.Send to send", async () => {
+		const entry = await catalogEntry(outlookConnector());
+		const reads = ["list_folders", "list_messages", "read_message"];
+		expect(entry.auth).toMatchObject({ scopes: ["offline_access", "User.Read", "Mail.Read"] });
+		expect(askedScopes(entry)).toEqual({ list_folders: ["Mail.Read"], list_messages: ["Mail.Read"], read_message: ["Mail.Read"], send_message: ["Mail.Send"], reply: ["Mail.Send"] });
+		expect(uncovered(entry, ["User.Read", "Mail.Read"])).toEqual(["send_message", "reply"]);
 		// Microsoft may report scopes with Graph's URL in front, and in lowercase.
-		const granted = ["https://graph.microsoft.com/mail.read", "https://graph.microsoft.com/Mail.Send"];
-		expect(consentNeeded(connector, granted, new Set(["read", "send"]))).toEqual([]);
-		expect(consentNeeded(connector, ["mail.readwrite", "mail.send"], new Set(["read", "send"]))).toEqual([]);
-		expect(consentNeeded(connector, ["Mail.ReadBasic"], new Set(["read"]))).toEqual(["read"]);
+		expect(uncovered(entry, ["https://graph.microsoft.com/mail.read", "https://graph.microsoft.com/Mail.Send"])).toEqual([]);
+		expect(uncovered(entry, ["mail.readwrite", "mail.send"])).toEqual([]);
+		expect(uncovered(entry, ["Mail.ReadBasic", "Mail.Send"])).toEqual(reads);
 	});
 
 	test("the OAuth declaration is the shared Entra app's, with PKCE and an account picker", () => {

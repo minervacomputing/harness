@@ -1,6 +1,6 @@
 // The Atlassian base: what counts as an address to Atlassian (hidden when read, refused when written), the
 // ADF reader and writer, sites and the JSON answers; the registry with the Jira and Confluence declarations,
-// their OAuth declaration and refresh refusal.
+// and their OAuth declaration as the catalog shows it.
 
 import { describe, expect, test } from "vitest";
 import { confluenceConnector } from "../../src/connectors/confluence/connector.ts";
@@ -16,7 +16,7 @@ import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { isPlainText } from "../../src/lib/text.ts";
-import { planRefresh } from "../../src/workspace/credentials.ts";
+import { catalogEntry } from "./catalog-support.ts";
 
 function doc(...content: Json[]): Json {
 	return { type: "doc", version: 1, content };
@@ -322,7 +322,7 @@ describe("the declarations", () => {
 		expect(served.contract("confluence", "create_page")).toBe(registry.contract("confluence", "create_page"));
 	});
 
-	test("Atlassian's OAuth: one app per connector, JSON token requests, no PKCE, audience and consent prompt", () => {
+	test("Atlassian's OAuth: one app per connector, JSON token requests, no PKCE, audience and consent prompt", async () => {
 		expect(jiraConnector().auth).toEqual({
 			type: "oauth2",
 			app: "jira",
@@ -344,31 +344,8 @@ describe("the declarations", () => {
 			expect(connector.manageLink?.()).toEqual(["Atlassian connected apps", "https://id.atlassian.com/manage-profile/apps"]);
 			expect(connector.operations.every((op) => offered(connector, op))).toBe(true);
 			expect(connector.browsable).toBeUndefined();
+			// The client goes in the JSON body of a token request.
+			expect((await catalogEntry(connector)).auth).toMatchObject({ tokenUrl: "https://auth.atlassian.com/oauth/token", clientAuth: "post", tokenBody: "json", pkce: false });
 		}
-	});
-
-	test("an expired Atlassian refresh token needs reconnecting: 403 with invalid_grant", async () => {
-		const sent: { url: string; init: RequestInit }[] = [];
-		const answer = (status: number, body: Json) => async (url: RequestInfo | URL, init?: RequestInit) => {
-			sent.push({ url: String(url), init: init ?? {} });
-			return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-		};
-		const deps = (fetch: typeof globalThis.fetch) => ({
-			clients: { configured: () => ({ clientId: "id", clientSecret: "secret" }), stored: async () => null },
-			siteUrl: "https://minerva.example",
-			fetch,
-			now: () => Date.UTC(2026, 9, 12),
-			log: () => {},
-		});
-		const tokens = { kind: "oauth2", access_token: "old", refresh_token: "r1", scopes: ["offline_access", "read:me", "read:jira-work"], expires_at: 0 };
-		const plan = await planRefresh(jiraConnector(), tokens, deps(answer(403, { error: "invalid_grant", error_description: "Unknown token." })), "c1");
-		if (plan.kind !== "send") throw new Error("A refresh was expected");
-		expect(await plan.send()).toEqual({ kind: "invalid" });
-		expect(sent[0]?.url).toBe("https://auth.atlassian.com/oauth/token");
-		expect(sent[0]?.init.body).toBe('{"client_id":"id","client_secret":"secret","grant_type":"refresh_token","refresh_token":"r1"}');
-		// Another 403 leaves the connection as it is.
-		const other = await planRefresh(jiraConnector(), tokens, deps(answer(403, { error: "forbidden" })), "c1");
-		if (other.kind !== "send") throw new Error("A refresh was expected");
-		expect(await other.send()).toMatchObject({ kind: "unavailable", message: "Jira could not refresh the connection." });
 	});
 });

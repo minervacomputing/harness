@@ -2,14 +2,13 @@
 // through the executor.
 
 import { describe, expect, test } from "vitest";
-import { consentGiven } from "../../src/gateway/connector.ts";
 import { DATE_OR_DATE_TIME_MESSAGE, DATE_TIME_MESSAGE, googleCalendarConnector, EVENTS_SCOPE, FULL_SCOPE, READ_SCOPE } from "../../src/connectors/google_calendar/connector.ts";
 import type { GoogleCalendarClient } from "../../src/connectors/google_calendar/client.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
-import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { parseJson } from "../../src/lib/json.ts";
-import { CONNECTION, ceilingRow, operation, requestOf, settingsClient, startRun, validated } from "./connector-runs.ts";
+import { askedScopes, catalogEntry, uncovered } from "./catalog-support.ts";
+import { CONNECTION, ceilingRow, requestOf, settingsClient, startRun, validated } from "./connector-runs.ts";
 import { jsonResponse } from "./executor-fakes.ts";
 
 const PRIMARY = "ada@example.com";
@@ -378,20 +377,15 @@ describe("runs through the executor", () => {
 describe("consent and scopes", () => {
 	const connector = googleCalendarConnector();
 
-	test("allowed actions the provider has not granted are reported", () => {
-		expect(consentNeeded(connector, BASE_SCOPES, new Set())).toEqual([]);
-		expect(consentNeeded(connector, BASE_SCOPES, new Set(["read", "create"]))).toEqual(["create"]);
-		expect(consentNeeded(connector, ["openid", FULL_SCOPE], new Set(["read", "create"]))).toEqual([]);
+	test("the catalog asks for read access, and creating an event for its own scope", async () => {
+		const entry = await catalogEntry(connector);
+		expect(entry.auth).toMatchObject({ scopes: BASE_SCOPES });
+		expect(askedScopes(entry)).toEqual({ list_calendars: [READ_SCOPE], list_events: [READ_SCOPE], get_event: [READ_SCOPE], create_event: [READ_SCOPE, EVENTS_SCOPE] });
+		expect(uncovered(entry, BASE_SCOPES)).toEqual(["create_event"]);
+		expect(uncovered(entry, [...BASE_SCOPES, EVENTS_SCOPE])).toEqual([]);
+		expect(uncovered(entry, ["openid", FULL_SCOPE])).toEqual([]);
 		// Unknown scopes (the provider did not say what it granted) need nothing: Google will refuse instead.
-		expect(consentNeeded(connector, null, new Set(["read", "create"]))).toEqual([]);
-	});
-
-	test("reconnecting asks only for what allowed actions lack", () => {
-		expect(requestedScopes(connector, new Set(["read"]))).toEqual(BASE_SCOPES);
-		expect(requestedScopes(connector, new Set(["read", "create"]))).toEqual([...BASE_SCOPES, EVENTS_SCOPE]);
-		// Stored scopes are not trusted: Google forgets a grant the user revoked.
-		expect(requestedScopes(connector, new Set(["create"]))).toEqual([...BASE_SCOPES, EVENTS_SCOPE]);
-		expect(consentGiven(operation(connector, "create_event").consent, [...BASE_SCOPES, EVENTS_SCOPE])).toBe(true);
+		expect(uncovered(entry, null)).toEqual([]);
 	});
 
 	test("Google's authorization asks for offline access, consent and earlier grants, with the account as login hint", () => {

@@ -10,7 +10,7 @@ import { names } from "../../src/connectors/jira/writes.ts";
 import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { type Json, type JsonObject, parseJson } from "../../src/lib/json.ts";
-import { consentNeeded, requestedScopes } from "../../src/workspace/out.ts";
+import { askedScopes, catalogEntry, uncovered } from "./catalog-support.ts";
 import { ceilingRow, startRun } from "./connector-runs.ts";
 import { type Scenario, jsonResponse } from "./executor-fakes.ts";
 
@@ -385,13 +385,13 @@ describe("connecting and discovery", () => {
 		expect(many.endsWith("t29, …")).toBe(true);
 	});
 
-	test("scopes follow the allowed actions", () => {
-		const connector = jiraConnector();
+	test("the catalog asks for read scopes, and every write needs write:jira-work", async () => {
+		const entry = await catalogEntry(jiraConnector());
 		const base = ["offline_access", "read:me", "read:jira-work"];
-		expect(requestedScopes(connector, new Set(["read"]))).toEqual(base);
-		expect(requestedScopes(connector, new Set(["read", "comment"]))).toEqual([...base, "write:jira-work"]);
-		expect(consentNeeded(connector, base, new Set(["read", "comment", "create"]))).toEqual(["comment", "create"]);
-		expect(consentNeeded(connector, [...base, "write:jira-work"], new Set(["read", "comment", "transition"]))).toEqual([]);
+		expect(entry.auth).toMatchObject({ scopes: base });
+		expect(askedScopes(entry)).toEqual({ add_comment: ["write:jira-work"], create_issue: ["write:jira-work"], transition_issue: ["write:jira-work"] });
+		expect(uncovered(entry, base)).toEqual(["add_comment", "create_issue", "transition_issue"]);
+		expect(uncovered(entry, [...base, "write:jira-work"])).toEqual([]);
 	});
 });
 
