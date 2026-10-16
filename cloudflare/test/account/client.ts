@@ -1,15 +1,15 @@
 // A small HTTPS client for the deployed Workers. Some resolvers fail on *.workers.dev now and then
 // (ENOTFOUND; 1.1.1.1 itself answers SERVFAIL at times), so a failed lookup is retried against public
 // resolvers directly, Google's first. Also the instance a suite runs against, with its secrets and settings, its
-// origins checked to be its own Workers on its account's workers.dev subdomain before anything is sent there, and
-// cf's view of its account, for the checks that need them; none of it is ever printed.
+// origins, its own Workers on its account's workers.dev subdomain, and cf's view of its account, for the checks that
+// need them; none of it is ever printed.
 
 import { lookup as systemLookup, type LookupAddress } from "node:dns";
 import { Resolver } from "node:dns/promises";
 import { request } from "node:https";
-import { checkOnAccount } from "../../scripts/account.ts";
+import { accountSubdomain, checkOnAccount } from "../../scripts/account.ts";
 import { type Instance, chooseInstance, readInstanceEnv } from "../../scripts/instance.ts";
-import { labOrigin, originsOf } from "../../scripts/origins.ts";
+import { labOrigin, workersDevOrigin } from "../../scripts/origins.ts";
 import { ROOT, cfJson, pinAccount } from "../../scripts/run.ts";
 
 /**
@@ -29,21 +29,15 @@ export function instanceSecret(instance: Instance, name: string): string {
 }
 
 /**
- * The instance's app and download origins, from its vars.env: its own Workers on one workers.dev subdomain
- * (scripts/origins.ts), which must be its account's (scripts/account.ts). Pins the suite's cf commands to that
- * account first (`pinSuite`). Nothing is sent to an origin before this.
+ * The instance's app origin: its Worker on its account's workers.dev subdomain (scripts/origins.ts, `workersDevOrigin`).
+ * Pins the suite's cf commands to that account first (`pinSuite`). Nothing is sent to an origin before this.
  */
-export function ownOrigins(instance: Instance): { origin: string; downloadOrigin: string } {
-	const origins = originsOf(instance);
+export function ownOrigin(instance: Instance): string {
 	pinSuite(instance);
-	checkOnAccount([
-		{ origin: origins.origin, setting: `MINERVA_SITE_URL in ${instance.name}'s vars.env` },
-		{ origin: origins.downloadOrigin, setting: `MINERVA_DOWNLOAD_ORIGIN in ${instance.name}'s vars.env` },
-	]);
-	return origins;
+	return workersDevOrigin(instance.names.app, accountSubdomain());
 }
 
-/** The test instance's code mode lab: its origin from its cm.vars.env, checked as `ownOrigins` checks the app's. */
+/** The test instance's code mode lab: its origin from its cm.vars.env, which must be on its account's workers.dev subdomain. */
 export function ownLabOrigin(instance: Instance): string {
 	const origin = labOrigin(instance);
 	pinSuite(instance);
@@ -51,14 +45,11 @@ export function ownLabOrigin(instance: Instance): string {
 	return origin;
 }
 
-/**
- * The test instance's app Worker: its origins (`ownOrigins`), checked before any request is sent, and its secret
- * key.
- */
-export function testWorker(): { instance: Instance; origin: string; downloadOrigin: string; secretKey: string } {
+/** The test instance's app Worker: its origin (`ownOrigin`), known before any request is sent, and its secret key. */
+export function testWorker(): { instance: Instance; origin: string; secretKey: string } {
 	const instance = suiteInstance(true);
 	if (!readInstanceEnv(instance, "vars")) throw new Error(`The test instance's settings are in ${instance.files.vars} (cloudflare/README.md, The test Worker).`);
-	return { instance, ...ownOrigins(instance), secretKey: instanceSecret(instance, "MINERVA_SECRET_KEY") };
+	return { instance, origin: ownOrigin(instance), secretKey: instanceSecret(instance, "MINERVA_SECRET_KEY") };
 }
 
 /**

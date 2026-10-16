@@ -365,7 +365,7 @@ if (args[0] === "auth" && args[1] === "whoami") {
 		expect(scripts.deploy).toBe("node scripts/deploy.ts");
 		expect(scripts["deploy:test"]).toBe("node scripts/deploy.ts --test");
 		// scripts/deploy.ts: the locks (the checkout's, then the instance's) and the account, everything local, the
-		// origins and the identity (read-only), then the first change on the account (the identity row, written by
+		// account's subdomain and the identity (read-only), then the first change on the account (the identity row, written by
 		// the identity check once it has passed), the migrations and the upload.
 		const deploy = readFileSync(new URL("../../scripts/deploy.ts", import.meta.url), "utf8");
 		expect(deploy).toContain('run(process.execPath, ["scripts/identity.ts", ...(record ? ["--record"] : [])], { print: true });');
@@ -377,8 +377,7 @@ if (args[0] === "auth" && args[1] === "whoami") {
 			'"scripts/bundle.ts"',
 			"appBuildProblems(",
 			'"scripts/secrets.ts", "subset"',
-			"const origins = instanceOrigins(",
-			"checkOnAccount([\n\t\t{ origin: origins.origin",
+			"accountSubdomain();",
 			"checkIdentity(true);",
 			'run(process.execPath, ["scripts/resources.ts"]',
 			'"scripts/schema-check.ts"',

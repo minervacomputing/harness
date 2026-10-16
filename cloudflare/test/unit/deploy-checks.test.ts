@@ -163,7 +163,7 @@ describe("the order of a reset's checks and changes (scripts/reset.ts)", () => {
 
 	test("the identity is checked before the dry run's listing, with the flag's kind; it is recorded with --yes only", () => {
 		expect(reset).toContain('run(process.execPath, ["scripts/identity.ts", "--instance", INSTANCE.name, TEST ? "--test" : "--production", ...(YES ? ["--record"] : [])], { print: true });');
-		const order = positions(['const account = pinAccount(', '"scripts/identity.ts", "--instance"', "workerExists(NAME)", '"scripts/schema-check.ts"', 'step("What the reset deletes")', "if (!YES) {"]);
+		const order = positions(['const account = pinAccount(', '"scripts/identity.ts", "--instance"', "workerExists(NAME)", "accountSubdomain();", '"scripts/schema-check.ts"', 'step("What the reset deletes")', "if (!YES) {"]);
 		for (const [marker, index] of order) expect(index, marker).toBeGreaterThan(0);
 		expect(order.map(([, index]) => index)).toEqual(order.map(([, index]) => index).sort((a, b) => a - b));
 	});

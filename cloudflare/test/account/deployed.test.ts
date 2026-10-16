@@ -4,16 +4,15 @@ import { MIGRATIONS as CONVERSATION_MIGRATIONS } from "../../src/conversation/sc
 import { MIGRATIONS as SCRIPTS_MIGRATIONS } from "../../src/scripts/schema.ts";
 import { PROBE_HEADER, probeToken } from "../../src/http/probe-token.ts";
 import { SANDBOX_MIGRATIONS } from "../../src/sandbox/schema.ts";
-import { cf, fetchDeployed, instanceSecret, ownOrigins, suiteInstance } from "./client.ts";
+import { cf, fetchDeployed, instanceSecret, ownOrigin, suiteInstance } from "./client.ts";
 
 /**
  * The instance this suite probes, of either kind, which must be named (`pnpm test:deployed --instance <name>`, or
- * MINERVA_INSTANCE): its origins from its vars.env, checked to be its own Workers on its account's workers.dev
- * subdomain before any request, and cf's commands on its account.
+ * MINERVA_INSTANCE): its app's origin on its account's workers.dev subdomain, and cf's commands on its account.
  */
 const INSTANCE = suiteInstance(false);
 const NAMES = INSTANCE.names;
-const { origin: SITE } = ownOrigins(INSTANCE);
+const SITE = ownOrigin(INSTANCE);
 
 const NIL = "00000000-0000-0000-0000-000000000000";
 

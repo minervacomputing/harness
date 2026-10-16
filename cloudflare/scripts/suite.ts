@@ -8,9 +8,11 @@
 // then MINERVA_INSTANCE, then for a test instance's suite the only test instance) goes to it in MINERVA_INSTANCE,
 // where each suite chooses it again. A test instance's suite refuses a production instance, and `deployed` needs
 // the name. The suite runs on the instance's recorded account (scripts/run.ts, pinAccount, which records none),
-// in CLOUDFLARE_ACCOUNT_ID, so that any cf command of the suite goes there.
+// in CLOUDFLARE_ACCOUNT_ID, so that any cf command of the suite goes there. In GitHub Actions the account's workers.dev
+// subdomain is masked in the log before the suite starts (scripts/account.ts, `accountSubdomain`).
 
 import { spawnSync } from "node:child_process";
+import { accountSubdomain } from "./account.ts";
 import { chooseInstance, parseInstanceArgs } from "./instance.ts";
 import { ROOT, pinAccount } from "./run.ts";
 
@@ -33,6 +35,7 @@ try {
 	rest = parsed.rest;
 	const chosen = chooseInstance({ flag: parsed.flag, test: suite.test });
 	pinAccount([ROOT], [], chosen, { record: false });
+	accountSubdomain();
 	instance = chosen.name;
 } catch (error) {
 	console.error(error instanceof Error ? error.message : String(error));

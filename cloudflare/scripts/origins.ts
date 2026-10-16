@@ -1,15 +1,11 @@
 // An instance's origins (cloudflare/README.md, Setup): only workers.dev is configured, so each origin is one of the
-// instance's own Workers there, `https://<Worker>.<subdomain>.workers.dev`, and an instance's origins share one
-// subdomain, its account's. A deployed build checks its two origins this way (cloudflare.config.ts), the account
-// suites check every origin before they send anything there, and the deploy and the suites then compare the
-// subdomain with the account's own (scripts/account.ts, `checkOnAccount`), so a vars file copied from another
-// instance, or from another account, stops them. The messages never repeat a value: it names the account's
-// subdomain.
-//
-// The Worker configs import this module and are type-checked with the Worker's types, so it imports nothing of
-// Node's (scripts/instance.ts reaches the files).
+// instance's own Workers there, `https://<Worker>.<subdomain>.workers.dev`, on its account's subdomain. The app's origin
+// is derived from the Worker's name and the account's subdomain (`workersDevOrigin`), so no setting names it. The lab's
+// is configured in its cm.vars.env: the lab's deploy and the account suites check it (`instanceOrigin`) and compare its
+// subdomain with the account's own (scripts/account.ts, `checkOnAccount`), so a file copied from another instance, or
+// from another account, stops them. The messages never repeat a value: it names the account's subdomain.
 
-import { type Instance, type Names, instanceVars, readInstanceEnv } from "./instance.ts";
+import { type Instance, readInstanceEnv } from "./instance.ts";
 
 /** `value` as an origin of the Worker `name`, or an error naming the setting (never its value). */
 export function instanceOrigin(value: string | undefined, name: string, setting: string): string {
@@ -33,19 +29,9 @@ export function subdomainOf(origin: string): string {
 	return new URL(origin).hostname.split(".")[1] ?? "";
 }
 
-/** The app's and the download origin's of the instance `names`, checked as `instanceOrigin` does and on one subdomain, or an error naming the settings. */
-export function instanceOrigins(site: string | undefined, download: string | undefined, settings: { site: string; download: string }, names: Names): { origin: string; downloadOrigin: string } {
-	const origin = instanceOrigin(site, names.app, settings.site);
-	const downloadOrigin = instanceOrigin(download, names.download, settings.download);
-	if (subdomainOf(origin) !== subdomainOf(downloadOrigin)) throw new Error(`${settings.site} and ${settings.download} are on different workers.dev subdomains: both must be the instance's.`);
-	return { origin, downloadOrigin };
-}
-
-/** The instance's app and download origins, from its vars.env, checked by `instanceOrigins`. */
-export function originsOf(instance: Instance): { origin: string; downloadOrigin: string } {
-	const vars = instanceVars(instance);
-	const where = `in ${instance.name}'s vars.env`;
-	return instanceOrigins(vars.MINERVA_SITE_URL, vars.MINERVA_DOWNLOAD_ORIGIN, { site: `MINERVA_SITE_URL ${where}`, download: `MINERVA_DOWNLOAD_ORIGIN ${where}` }, instance.names);
+/** The origin of the Worker `name` on the workers.dev subdomain `subdomain`, as `instanceOrigin` accepts it. */
+export function workersDevOrigin(name: string, subdomain: string): string {
+	return instanceOrigin(`https://${name}.${subdomain}.workers.dev`, name, `The workers.dev origin of ${name}`);
 }
 
 /** The origin of a test instance's code mode lab (`<name>-cm`), from its cm.vars.env, checked by `instanceOrigin`. */

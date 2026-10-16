@@ -46,11 +46,11 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { workerExists } from "./account.ts";
+import { accountSubdomain, workerExists } from "./account.ts";
 import { buildAccount, buildDigest, ownContainer, readBuild } from "./builds.ts";
 import { type Instance, chooseInstance, parseInstanceArgs } from "./instance.ts";
 import { type LifecycleRule, lifecycleExtras, lifecycleMatches, lifecycleProblems } from "./lifecycle.ts";
-import { CommandFailed, ROOT, cfJson, hide, hideOrigin, lockOperation, pinAccount, redact, run } from "./run.ts";
+import { CommandFailed, ROOT, cfJson, hide, lockOperation, pinAccount, redact, run } from "./run.ts";
 import { readOnly, rowsFrom } from "./schema.ts";
 
 const USAGE = "Usage: reset.ts --test [--instance <name>] [--yes] | reset.ts --instance <name> --production [--yes]";
@@ -209,8 +209,6 @@ try {
 	if (named !== undefined && named !== account) stop("The quiesced instance's build names an account other than the one this reset is pinned to.");
 	const app = readBuild(ROOT);
 	const quiet = readBuild(RESET_DIR);
-	hideOrigin(app.env?.MINERVA_SITE_URL?.value);
-	hideOrigin(app.env?.MINERVA_DOWNLOAD_ORIGIN?.value);
 
 	current = "reading the names from the build";
 	if (app.name !== NAME) stop(`The app's build is ${app.name ?? "unnamed"}, not ${NAME}.`);
@@ -251,6 +249,8 @@ try {
 	current = "checking the account";
 	step("Checking that each name is the instance's own on the account");
 	if (!workerExists(NAME)) stop(`No Worker named ${NAME} on the account.`);
+	// Hides the account's workers.dev subdomain from what follows: cf deploy names the Worker's URL, at times cut short.
+	accountSubdomain();
 
 	const database = cfJson<{ uuid: string; name: string }[]>(["d1", "list", "--name", d1Name]).find((candidate) => candidate.name === d1Name);
 	if (!database) stop(`No D1 database named ${d1Name}: create it with README's First deploy commands, then run this again.`);

@@ -111,7 +111,7 @@ export interface Operation<Input = Json> {
 export type Auth =
 	| {
 			type: "oauth2";
-			/** The operator's client: MINERVA_<APP>_CLIENT_ID and _SECRET; several connectors may share one. */
+			/** The OAuth app whose client Laravel holds; several connectors may share one. */
 			app: string;
 			authorizeUrl: string;
 			tokenUrl: string;

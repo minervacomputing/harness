@@ -9,11 +9,7 @@ type Defaults = Omit<SettingsEnv, "MINERVA_MODEL_GATEWAY">;
 
 /** The settings with a default. MINERVA_MODEL_GATEWAY is not one: the build sets it to the instance's name. */
 const DEFAULTS: Defaults = {
-	MINERVA_SITE_URL: "http://localhost:5173",
-	MINERVA_DOWNLOAD_ORIGIN: "http://localhost:8788",
 	MINERVA_DEBUG: "false",
-	MINERVA_SIGNUP_OPEN: "true",
-	MINERVA_EMAIL_FROM: "Minerva <noreply@localhost>",
 	MINERVA_RUN_TIMEOUT_SECONDS: "",
 	MINERVA_MODEL_PROVIDER: "workers-ai",
 	MINERVA_MODEL_NAME: "@cf/zai-org/glm-5.3-flash",
@@ -24,7 +20,6 @@ const DEFAULTS: Defaults = {
 	MINERVA_FILES_FOLDER_BYTES: "268435456",
 	MINERVA_FILES_FOLDER_ENTRIES: "10000",
 	MINERVA_FILES_RUN_UPLOAD_BYTES: "",
-	MINERVA_FILES_WORKSPACE_BYTES: "",
 	MINERVA_FILES_UPLOAD_BYTES: "52428800",
 	MINERVA_FILES_MESSAGE_ATTACHMENTS: "10",
 	MINERVA_ENVIRONMENT: "",

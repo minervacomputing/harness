@@ -1,20 +1,17 @@
 import { bindings, defineConfig, defineContainer, exports } from "cf/config";
 import * as faultsEntrypoint from "./src/faults/index.ts" with { type: "cf-worker" };
 import * as entrypoint from "./src/index.ts" with { type: "cf-worker" };
-import { checkBuild, connectorClientSecrets, parse, type SettingsEnv } from "./src/config.ts";
+import { checkBuild, parse, type SettingsEnv } from "./src/config.ts";
 import { buildSettings } from "./scripts/build-settings.ts";
 import { type Instance, LOCAL_INSTANCES, type Names, SANDBOX_IMAGE_REFERENCE, chooseInstance, instanceForMode, instanceVars, namesOf, readInstanceEnv } from "./scripts/instance.ts";
-import { instanceOrigins } from "./scripts/origins.ts";
 
 // Plain settings are text bindings, read when the Worker is built and checked then with src/config.ts's
 // parser, so a malformed value fails the build. Development and tests read the environment, with the
 // defaults of scripts/build-settings.ts. A deployed build (mode production or faults) reads its instance's vars.env alone
 // (scripts/instance.ts, The instance directory, outside the checkout): the shell's MINERVA_* are ignored there
-// (a shell may hold another deployment's), the file must exist, and MINERVA_DEBUG must be off. Both origins must be the
-// instance's own Workers on workers.dev, `https://<name>.<subdomain>.workers.dev` and
-// `https://<name>-files.<subdomain>.workers.dev`, on one subdomain (scripts/origins.ts), which scripts/deploy.ts
-// then compares with the account's. No build but the test build's accepts the fake model, which only its entry
-// contains. Secrets never go here: they are in the instance's secrets.env.
+// (a shell may hold another deployment's), the file must exist, and MINERVA_DEBUG must be off. A name the build does
+// not know (a setting since retired, say) is ignored. No build but the test build's accepts the fake model, which only
+// its entry contains. Secrets never go here: they are in the instance's secrets.env.
 
 // Every name comes from scripts/instance.ts: the instance a build is for (`instanceForMode`: MINERVA_INSTANCE,
 // which the deploy scripts set, or for mode faults the only test instance), and through it the Worker, the
@@ -85,23 +82,13 @@ const build = (globalThis as unknown as { process: BuildProcess }).process;
 const OFFLINE_D1_ID = "00000000-0000-4000-8000-00000000d1d1";
 
 /**
- * The connector clients the operator configured, declared so the deploy uploads them (src/config.ts
- * `connectorClientSecrets`): read by name from the deployed build's instance's secrets.env (a missing file
- * declares none; `pnpm run deploy` checks it first), or from the environment. Values are never used here.
- */
-function connectorSecrets(target: Target) {
-	const source: Record<string, string | undefined> = target.instance ? (readInstanceEnv(target.instance, "secrets") ?? {}) : build.env;
-	return Object.fromEntries(connectorClientSecrets(source).map((name) => [name, bindings.secret()]));
-}
-
-/**
- * Laravel's secrets, each declared only where it is set, as the connector clients are: an engine that does not work with
- * Laravel yet needs none. MINERVA_LARAVEL_TOKEN is the Sanctum token the engine calls Laravel with (src/laravel/client.ts);
- * MINERVA_STREAM_KEYS, the keys of the stream tokens Laravel signs (src/stream/token.ts).
+ * Laravel's secrets, each declared only where it is set: an engine that does not work with Laravel yet needs none.
+ * MINERVA_LARAVEL_TOKEN is the Sanctum token the engine calls Laravel with (src/laravel/client.ts); MINERVA_STREAM_KEYS,
+ * the keys of the stream tokens Laravel signs (src/stream/token.ts).
  */
 function laravelSecrets(target: Target) {
 	const source: Record<string, string | undefined> = target.instance ? (readInstanceEnv(target.instance, "secrets") ?? {}) : build.env;
-	// One shape whether they are set or not, as `connectorSecrets` has: a union would break the inferred Env.
+	// One shape whether they are set or not: a union would break the inferred Env.
 	const names = ["MINERVA_LARAVEL_TOKEN", "MINERVA_STREAM_KEYS"].filter((name) => source[name]?.trim());
 	return Object.fromEntries(names.map((name) => [name, bindings.secret()]));
 }
@@ -113,10 +100,6 @@ function settingsFor(target: Target): SettingsEnv {
 	const values = buildSettings({ deployed: target.instance !== null, faults: target.faults, offline: target.offline }, source, target.names.gateway);
 	const parsed = parse(values);
 	checkBuild(parsed, { deployed: target.instance !== null, testBuild: target.faults });
-	if (target.instance) {
-		const where = `in ${target.instance.files.vars}`;
-		instanceOrigins(values.MINERVA_SITE_URL, values.MINERVA_DOWNLOAD_ORIGIN, { site: `MINERVA_SITE_URL ${where}`, download: `MINERVA_DOWNLOAD_ORIGIN ${where}` }, target.names);
-	}
 	return values;
 }
 
@@ -191,11 +174,7 @@ export default defineConfig(({ mode }) => {
 				// A container class cannot be bound by its own Worker's name, so the Sandbox is reached through
 				// ctx.exports.Sandbox instead of a binding (src/addressing.ts).
 
-				MINERVA_SITE_URL: setting("MINERVA_SITE_URL"),
-				MINERVA_DOWNLOAD_ORIGIN: setting("MINERVA_DOWNLOAD_ORIGIN"),
 				MINERVA_DEBUG: setting("MINERVA_DEBUG"),
-				MINERVA_SIGNUP_OPEN: setting("MINERVA_SIGNUP_OPEN"),
-				MINERVA_EMAIL_FROM: setting("MINERVA_EMAIL_FROM"),
 				MINERVA_RUN_TIMEOUT_SECONDS: setting("MINERVA_RUN_TIMEOUT_SECONDS"),
 
 				MINERVA_MODEL_PROVIDER: setting("MINERVA_MODEL_PROVIDER"),
@@ -209,7 +188,6 @@ export default defineConfig(({ mode }) => {
 				MINERVA_FILES_FOLDER_BYTES: setting("MINERVA_FILES_FOLDER_BYTES"),
 				MINERVA_FILES_FOLDER_ENTRIES: setting("MINERVA_FILES_FOLDER_ENTRIES"),
 				MINERVA_FILES_RUN_UPLOAD_BYTES: setting("MINERVA_FILES_RUN_UPLOAD_BYTES"),
-				MINERVA_FILES_WORKSPACE_BYTES: setting("MINERVA_FILES_WORKSPACE_BYTES"),
 				MINERVA_FILES_UPLOAD_BYTES: setting("MINERVA_FILES_UPLOAD_BYTES"),
 				MINERVA_FILES_MESSAGE_ATTACHMENTS: setting("MINERVA_FILES_MESSAGE_ATTACHMENTS"),
 
@@ -220,16 +198,10 @@ export default defineConfig(({ mode }) => {
 				MINERVA_ACCESS_CLIENTS: setting("MINERVA_ACCESS_CLIENTS"),
 				MINERVA_LARAVEL_URL: setting("MINERVA_LARAVEL_URL"),
 
-				// Uploaded from the instance's secrets.env by `pnpm run deploy`. A declared secret is required, so model
-				// keys (MINERVA_MODEL_API_KEY, MINERVA_BRAVE_SEARCH_API_KEY) join this list in the steps that use
-				// them; until then they are commented-out placeholders in that file.
+				// Uploaded from the instance's secrets.env by `pnpm run deploy`, which uploads only the secrets declared here.
+				// A declared secret is required, so model keys (MINERVA_MODEL_API_KEY, MINERVA_BRAVE_SEARCH_API_KEY) join
+				// this list in the steps that use them; until then they are commented-out placeholders in that file.
 				MINERVA_SECRET_KEY: bindings.secret(),
-				MINERVA_ENCRYPTION_KEYS: bindings.secret(),
-				MINERVA_DOWNLOAD_KEY: bindings.secret(),
-				MINERVA_SETUP_KEY: bindings.secret(),
-				// Connector clients (MINERVA_<APP>_CLIENT_ID and _SECRET), only those the operator set: an unset
-				// one hides its connectors, as today.
-				...connectorSecrets(target),
 				...laravelSecrets(target),
 			},
 			exports: {

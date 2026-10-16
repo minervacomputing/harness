@@ -3,11 +3,7 @@
 // fails closed instead of running with a default.
 
 export interface SettingsEnv {
-	MINERVA_SITE_URL: string;
-	MINERVA_DOWNLOAD_ORIGIN: string;
 	MINERVA_DEBUG: string;
-	MINERVA_SIGNUP_OPEN: string;
-	MINERVA_EMAIL_FROM: string;
 	MINERVA_RUN_TIMEOUT_SECONDS: string;
 	MINERVA_MODEL_PROVIDER: string;
 	MINERVA_MODEL_NAME: string;
@@ -19,7 +15,6 @@ export interface SettingsEnv {
 	MINERVA_FILES_FOLDER_BYTES: string;
 	MINERVA_FILES_FOLDER_ENTRIES: string;
 	MINERVA_FILES_RUN_UPLOAD_BYTES: string;
-	MINERVA_FILES_WORKSPACE_BYTES: string;
 	MINERVA_FILES_UPLOAD_BYTES: string;
 	MINERVA_FILES_MESSAGE_ATTACHMENTS: string;
 	MINERVA_ENVIRONMENT: string;
@@ -33,14 +28,8 @@ export interface SettingsEnv {
 export type ModelProvider = "workers-ai" | "openai" | "anthropic" | "fake";
 
 export interface Settings {
-	/** The public origin of the app, without a trailing slash: redirects, email links, OAuth callbacks, CSRF. */
-	siteUrl: string;
-	/** The download Worker's origin, where signed links point. */
-	downloadOrigin: string;
-	/** Development mode: insecure cookies, emailed codes in the logs, detail on 404s. Never on in production. */
+	/** Development mode: a jurisdiction local workerd lacks is put in the object's name instead (addressing.ts). Never on in production. */
 	debug: boolean;
-	signupOpen: boolean;
-	emailFrom: string;
 	/** A turn's wall-clock limit, or null for none (the default). */
 	runTimeoutMs: number | null;
 	model: {
@@ -59,8 +48,6 @@ export interface Settings {
 		folderEntries: number;
 		/** Bytes a run may save; four times the folder by default. */
 		runUploadBytes: number;
-		/** The workspace's total, or null for no limit. */
-		workspaceBytes: number | null;
 		uploadBytes: number;
 		messageAttachments: number;
 	};
@@ -98,11 +85,7 @@ export function parse(env: SettingsEnv): Settings {
 	const folderBytes = count(env, "MINERVA_FILES_FOLDER_BYTES");
 	const timeout = optionalCount(env, "MINERVA_RUN_TIMEOUT_SECONDS");
 	return {
-		siteUrl: origin(env, "MINERVA_SITE_URL"),
-		downloadOrigin: origin(env, "MINERVA_DOWNLOAD_ORIGIN"),
 		debug: flag(env, "MINERVA_DEBUG"),
-		signupOpen: flag(env, "MINERVA_SIGNUP_OPEN"),
-		emailFrom: env.MINERVA_EMAIL_FROM,
 		runTimeoutMs: timeout === null ? null : timeout * 1000,
 		model: {
 			provider: oneOf(env, "MINERVA_MODEL_PROVIDER", ["workers-ai", "openai", "anthropic", "fake"] as const),
@@ -117,7 +100,6 @@ export function parse(env: SettingsEnv): Settings {
 			folderBytes,
 			folderEntries: count(env, "MINERVA_FILES_FOLDER_ENTRIES"),
 			runUploadBytes: optionalCount(env, "MINERVA_FILES_RUN_UPLOAD_BYTES") ?? 4 * folderBytes,
-			workspaceBytes: optionalCount(env, "MINERVA_FILES_WORKSPACE_BYTES"),
 			uploadBytes: count(env, "MINERVA_FILES_UPLOAD_BYTES"),
 			messageAttachments: count(env, "MINERVA_FILES_MESSAGE_ATTACHMENTS"),
 		},
@@ -145,46 +127,13 @@ function internal(env: SettingsEnv): Settings["internal"] {
 /**
  * A build's rules beyond parsing (cloudflare.config.ts). The fake model answers from the last user message,
  * so a prompt could script it: only the test build's entry has it, so any other build refuses it rather
- * than fail every model call. A deployed build also needs https origins and debug off.
+ * than fail every model call. A deployed build also needs debug off and an https MINERVA_LARAVEL_URL.
  */
 export function checkBuild(parsed: Settings, build: { deployed: boolean; testBuild: boolean }): void {
 	if (!build.testBuild && parsed.model.provider === "fake") throw new Error("MINERVA_MODEL_PROVIDER=fake is only for the test build.");
 	if (!build.deployed) return;
-	if (!parsed.siteUrl.startsWith("https://") || !parsed.downloadOrigin.startsWith("https://")) {
-		throw new Error("MINERVA_SITE_URL and MINERVA_DOWNLOAD_ORIGIN must be https origins in a deployed build's vars file.");
-	}
 	if (parsed.debug) throw new Error("MINERVA_DEBUG must be off in a deployed build.");
 	if (parsed.laravelUrl !== null && !parsed.laravelUrl.startsWith("https://")) throw new Error("MINERVA_LARAVEL_URL must be an https origin in a deployed build's vars file.");
-}
-
-/** The shortest MINERVA_SETUP_KEY that can claim setup (src/accounts/instance.ts); `pnpm secrets` generates 43 characters, and `secrets.ts check` refuses a shorter one. */
-export const MIN_SETUP_KEY_LENGTH = 32;
-
-/** The OAuth apps of the connectors (`auth.app`); several connectors may share one app's client. */
-export const OAUTH_APPS = ["todoist", "google", "github", "notion", "linear", "slack", "microsoft", "hubspot", "jira", "confluence", "intercom", "xero", "sentry"] as const;
-
-/** MINERVA_<APP>_CLIENT_ID and MINERVA_<APP>_CLIENT_SECRET. */
-export function clientSecretNames(app: string): [id: string, secret: string] {
-	const prefix = `MINERVA_${app.toUpperCase()}_CLIENT_`;
-	return [`${prefix}ID`, `${prefix}SECRET`];
-}
-
-/**
- * The connector clients a build declares as secrets (cloudflare.config.ts): both names of every app whose
- * client the operator configured, which `cf deploy` then requires and uploads. An app with neither stays
- * undeclared and its connectors are not offered (Todoist registers a client of its own); one with only half
- * a client fails the build rather than hide the connector. Only names are read, never values.
- */
-export function connectorClientSecrets(source: Readonly<Record<string, string | undefined>>): string[] {
-	const names: string[] = [];
-	for (const app of OAUTH_APPS) {
-		const [id, secret] = clientSecretNames(app);
-		const hasId = Boolean(source[id]?.trim());
-		const hasSecret = Boolean(source[secret]?.trim());
-		if (hasId !== hasSecret) throw new Error(`${hasId ? id : secret} is set but ${hasId ? secret : id} is not: set both or neither.`);
-		if (hasId) names.push(id, secret);
-	}
-	return names;
 }
 
 type Name = keyof SettingsEnv;

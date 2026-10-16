@@ -18,8 +18,8 @@
 // build's code (scripts/bundle.ts), its startup CPU measured locally (scripts/startup.ts), and the build checked to
 // be the instance's (its name and its buckets); the secrets it declares, and only those, are copied from the
 // instance's secrets.env to an owner-only file in a fresh temporary directory, removed when the deploy ends, fails
-// or is interrupted. Then, still reading only: the origins must be on the account's own workers.dev subdomain
-// (scripts/account.ts), and the instance on the account must be the one its directory describes
+// or is interrupted. Then, still reading only: the account's workers.dev subdomain is read, so that cf's output never
+// shows it (scripts/account.ts), and the instance on the account must be the one its directory describes
 // (scripts/identity.ts: D1's identity row, else the live app's bindings, else an empty D1). Only then does the
 // account change: the identity row is written when it is missing, the resources are checked and D1's migrations
 // applied (scripts/resources.ts), the deployed schema is compared with the migrations (scripts/schema-check.ts),
@@ -29,11 +29,11 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkOnAccount } from "./account.ts";
+import { accountSubdomain, checkOnAccount } from "./account.ts";
 import { appBuildProblems, buildAccount, buildDigest, builtImage, fileDigest, readBuild } from "./builds.ts";
 import { ensureImage } from "./image.ts";
 import { type Instance, checkFile, chooseInstance, parseInstanceArgs, readInstanceEnv } from "./instance.ts";
-import { instanceOrigins, labOrigin } from "./origins.ts";
+import { labOrigin } from "./origins.ts";
 import { CommandFailed, ROOT, hideOrigin, hideSecrets, lockOperation, pinAccount, run } from "./run.ts";
 
 const USAGE = "Usage: deploy.ts [--instance <name>] [--test | --lab]";
@@ -149,8 +149,6 @@ try {
 	if (named !== undefined && named !== account) throw new CommandFailed(`The build in ${ROOT} names an account other than the one this deploy is pinned to.`);
 	if (builtImage(ROOT, INSTANCE.names.container)?.reference !== image) throw new CommandFailed(`The build of ${APP} does not run the sandbox image ${image}.`);
 	const app = readBuild(ROOT);
-	hideOrigin(app.env?.MINERVA_SITE_URL?.value);
-	hideOrigin(app.env?.MINERVA_DOWNLOAD_ORIGIN?.value);
 	const problems = appBuildProblems(app, INSTANCE.name);
 	if (problems.length) throw new CommandFailed(problems.join("\n"));
 	unchanged();
@@ -166,20 +164,9 @@ try {
 	sameSecrets();
 	const uploadDigest = fileDigest(upload);
 
-	step(`Checking ${INSTANCE.name} on the account: its origins and its identity (then recording it, the first change on the account)`);
-	// The build checked that both origins are the instance's Workers on one workers.dev subdomain (cloudflare.config.ts);
-	// that subdomain must be the account's own.
-	const text = (name: string) => {
-		const value = app.env?.[name]?.value;
-		return typeof value === "string" ? value : undefined;
-	};
-	const settings = { site: `MINERVA_SITE_URL in ${INSTANCE.files.vars}`, download: `MINERVA_DOWNLOAD_ORIGIN in ${INSTANCE.files.vars}` };
-	const origins = instanceOrigins(text("MINERVA_SITE_URL"), text("MINERVA_DOWNLOAD_ORIGIN"), settings, INSTANCE.names);
-	checkOnAccount([
-		{ origin: origins.origin, setting: settings.site },
-		{ origin: origins.downloadOrigin, setting: settings.download },
-	]);
-	console.log("Both origins are the instance's Workers on the account's workers.dev subdomain.");
+	step(`Checking ${INSTANCE.name} on the account: its identity (then recording it, the first change on the account)`);
+	// Hides the account's workers.dev subdomain from what follows: cf deploy names the Worker's URL, at times cut short.
+	accountSubdomain();
 	checkIdentity(true);
 
 	// cf deploy would create a missing database or bucket with default settings when it resolves the bindings'

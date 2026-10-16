@@ -3,6 +3,7 @@
 
 import { describe, expect, test } from "vitest";
 import { ciMaskValues, maskCommands } from "../../scripts/masks.ts";
+import { workersDevOrigin } from "../../scripts/origins.ts";
 import { faultsToken } from "../../src/faults/token.ts";
 
 const SECRET_KEY = "s3cr3t-key-of-forty-characters-0123456789";
@@ -27,6 +28,8 @@ describe("the values CI masks", () => {
 				"acme-sub",
 			]),
 		);
+		// While CI's vars file names the app's origin, the one the suites derive from the account is masked whole.
+		expect(values).toContain(workersDevOrigin("ci", "acme-sub"));
 		expect(values).not.toContain("yes");
 		expect(values).not.toContain("fake");
 		expect(new Set(values).size).toBe(values.length);

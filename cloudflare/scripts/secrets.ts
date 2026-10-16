@@ -17,8 +17,6 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
-import { MIN_SETUP_KEY_LENGTH, OAUTH_APPS, clientSecretNames, connectorClientSecrets } from "../src/config.ts";
-import { EncryptionKeys } from "../src/lib/encryption.ts";
 import { type Instance, chooseInstance, parseInstanceArgs, readInstanceText } from "./instance.ts";
 import { writeInstanceFile } from "./instance-files.ts";
 import { lockInstance } from "./run.ts";
@@ -47,19 +45,9 @@ const GENERATE = INSTANCE ? `pnpm secrets --instance ${INSTANCE.name}` : "pnpm s
 const REQUIRED: Record<string, () => string> = {
 	// Signs and keys our own values: 50 random bytes in URL-safe base64.
 	MINERVA_SECRET_KEY: () => urlsafe(50),
-	// Keys for encryption at rest (src/lib/encryption.ts): `id:secret` entries, comma separated, a secret
-	// being 32 random bytes in URL-safe base64; the first encrypts. A key written before step 6b (Fernet,
-	// `v1:<44 characters ending in =>`) is still a valid secret, but data encrypted with Fernet is not read.
-	MINERVA_ENCRYPTION_KEYS: () => `v1:${urlsafe(32)}`,
-	// Signs download links; the download Worker holds it too.
-	MINERVA_DOWNLOAD_KEY: () => urlsafe(32),
-	// Makes its holder the instance's first admin, once (ARCHITECTURE.md: Configuration; POST /api/setup). The operator
-	// reads it from this file; once claimed it opens nothing.
-	MINERVA_SETUP_KEY: () => urlsafe(32),
 };
 
-// Model keys are uploaded once the steps that use them declare them in cloudflare.config.ts. A connector
-// client (both names set) is declared and uploaded as soon as it is set; unset, its connectors are hidden.
+// Model keys are uploaded once the steps that use them declare them in cloudflare.config.ts.
 // MINERVA_LARAVEL_TOKEN, the Sanctum token Laravel issues for this engine (`php artisan minerva:engine-token`), and
 // MINERVA_STREAM_KEYS, the stream tokens' keys Laravel holds too, are declared and uploaded once set.
 const PLACEHOLDERS = [
@@ -67,7 +55,6 @@ const PLACEHOLDERS = [
 	"MINERVA_BRAVE_SEARCH_API_KEY",
 	"MINERVA_LARAVEL_TOKEN",
 	"MINERVA_STREAM_KEYS",
-	...OAUTH_APPS.flatMap((app) => clientSecretNames(app)),
 ];
 
 function urlsafe(bytes: number): string {
@@ -109,7 +96,7 @@ function generate(): void {
 		`# Secrets of ${INSTANCE ? `the instance ${INSTANCE.name}` : "the local dev server (pnpm dev:offline)"} (cloudflare/). Never commit or print them.`,
 		...[...values].map(([name, value]) => line(name, value)),
 		"",
-		"# Optional: model keys (uploaded once declared), Laravel's token and connector clients (set both names of an app):",
+		"# Optional: model keys (uploaded once declared), Laravel's token and the stream keys:",
 		...PLACEHOLDERS.filter((name) => !values.has(name)).map((name) => `# ${name}=`),
 	];
 	if (INSTANCE) writeInstanceFile(INSTANCE, "secrets", `${lines.join("\n")}\n`);
@@ -117,7 +104,7 @@ function generate(): void {
 	console.log(added.length ? `Added ${added.join(", ")} to ${NAME}.` : "All required secrets were already set.");
 }
 
-async function check(): Promise<void> {
+function check(): void {
 	const text = readFile();
 	if (text === null) {
 		console.error(`${NAME} is missing: run \`${GENERATE}\`.`);
@@ -137,33 +124,6 @@ async function check(): Promise<void> {
 		console.error((error as Error).message);
 		process.exit(1);
 	}
-	// A setup key the Worker would never accept (src/accounts/instance.ts) is diagnosed, not regenerated:
-	// `generate` fills only missing values, so a short one is replaced by hand (or deleted, then generated).
-	const setupKey = values.get("MINERVA_SETUP_KEY");
-	if (setupKey && setupKey.length < MIN_SETUP_KEY_LENGTH) {
-		console.error(`MINERVA_SETUP_KEY in ${NAME} is shorter than ${MIN_SETUP_KEY_LENGTH} characters, so it could never claim setup: delete the line and run \`${GENERATE}\`.`);
-		process.exit(1);
-	}
-	// A key list the Worker would refuse (a malformed entry, a duplicate id, a short secret) stops a deploy here,
-	// with the Worker's own message, which never holds a secret.
-	const keys = values.get("MINERVA_ENCRYPTION_KEYS");
-	if (keys) {
-		try {
-			await EncryptionKeys.parse(keys);
-		} catch (error) {
-			console.error((error as Error).message);
-			process.exit(1);
-		}
-	}
-	let clients: string[] = [];
-	try {
-		clients = connectorClientSecrets(Object.fromEntries(values));
-	} catch (error) {
-		console.error((error as Error).message);
-		process.exit(1);
-	}
-	const apps = OAUTH_APPS.filter((app) => clients.includes(clientSecretNames(app)[0]));
-	console.log(`Connector clients: ${apps.length ? apps.join(", ") : "none"}`);
 	if (missing.length) process.exit(1);
 }
 
@@ -184,7 +144,7 @@ function subset(out: string, names: string[]): void {
 const [command, ...rest] = ARGS;
 try {
 	if (command === "generate") generate();
-	else if (command === "check") await check();
+	else if (command === "check") check();
 	else if (command === "subset" && rest.length >= 2) subset(rest[0] as string, rest.slice(1));
 	else {
 		console.error("Usage: secrets.ts generate | check | subset OUT NAME... [--instance <name> | --test | --offline]");

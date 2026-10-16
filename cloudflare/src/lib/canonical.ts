@@ -1,8 +1,7 @@
-// Canonical JSON for the values Minerva hashes or encrypts, which are stored formats: RFC 8785, the JSON
+// Canonical JSON for the values Minerva hashes, which are stored formats: RFC 8785, the JSON
 // Canonicalization Scheme (JCS), written by `canonicalize`. Write keys, query hashes, operation
 // fingerprints, folder-version digests, the catalog's version, and a Laravel start's input and compiled snapshot hash it
-// (`hashInput`); encrypted values (lib/encryption.ts) are it, and so is their associated data. What the model or a
-// provider reads is not this: it is `JSON.stringify`'s.
+// (`hashInput`). What the model or a provider reads is not this: it is `JSON.stringify`'s.
 //
 // The domain is what `parseJson` returns and our own plain objects: null, booleans, finite numbers,
 // well-formed strings, arrays and plain objects (prototype Object.prototype or null). Everything else throws

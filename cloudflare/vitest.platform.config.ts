@@ -5,12 +5,8 @@ import { FAULTS_SETTINGS } from "./src/faults/settings.ts";
 // Platform tests: the Worker from cloudflare.config.ts in local workerd (Miniflare), with its Durable
 // Objects, D1 and R2 simulated locally. Remote bindings stay off, so nothing reaches the account.
 process.env.MINERVA_DEBUG ??= "true";
-process.env.MINERVA_SITE_URL ??= "http://localhost";
-// Throwaway values for local runs; a deployed instance's secrets are in its secrets.env (scripts/instance.ts).
+// A throwaway value for local runs; a deployed instance's secrets are in its secrets.env (scripts/instance.ts).
 process.env.MINERVA_SECRET_KEY ??= "test-secret-key-for-local-platform-tests-only";
-process.env.MINERVA_ENCRYPTION_KEYS ??= "v1:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
-process.env.MINERVA_DOWNLOAD_KEY ??= "test-download-key-for-local-platform-tests-only";
-process.env.MINERVA_SETUP_KEY ??= "test-setup-key-for-local-platform-tests-only";
 // The internal API (test/platform/internal.test.ts signs its own Access assertions) and the fake Laravel's origin, the one
 // the test build hosts (src/faults/laravel.ts); the in-memory fakes the tests install answer any. Its token is the test's
 // own: a secret's value comes from .dev.vars where that file exists, so the tests do not rely on one.

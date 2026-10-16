@@ -1,7 +1,7 @@
 // What the scripts read of an instance on its account, changing nothing: whether a Worker exists, the version
 // serving all of a Worker's traffic and its bindings, which build those bindings are (`bindingsKind`), and the
-// account's workers.dev subdomain, which the instance's origins must be on (`checkOnAccount`). Every cf call goes
-// through scripts/run.ts, so one that fails throws: nothing here reads a failure as "absent". Ids and the
+// account's workers.dev subdomain, which the instance's origins are on (`accountSubdomain`, `checkOnAccount`). Every
+// cf call goes through scripts/run.ts, so one that fails throws: nothing here reads a failure as "absent". Ids and the
 // subdomain are hidden from everything run.ts prints, and no message here names them.
 
 import type { LiveBinding } from "./builds.ts";
@@ -51,8 +51,9 @@ export function bindingsKind(env: Record<string, LiveBinding> | undefined): "tes
 
 /**
  * The account's workers.dev subdomain, as its Workers' own URLs show it (`<Worker>.<subdomain>.workers.dev`, one
- * subdomain per account). An account with no Worker shows none, and that stops the caller: its origins cannot be
- * checked. The subdomain is hidden from all output.
+ * subdomain per account). An account with no Worker shows none, and that stops the caller: its origins are unknown.
+ * The subdomain is hidden from all output, and in GitHub Actions masked in the log from here on, since a suite prints
+ * the origins it derives from it in its errors.
  */
 export function accountSubdomain(): string {
 	const workers = cfJson<{ id?: string; name?: string; subdomain?: { url?: string } }[]>(["workers", "list", `--per-page=${PAGE}`]);
@@ -68,10 +69,14 @@ export function accountSubdomain(): string {
 		}
 		if (labels.length === 4 && labels[0] === worker.name && labels[1] && labels[2] === "workers" && labels[3] === "dev") found.add(labels[1]);
 	}
-	for (const subdomain of found) hide(subdomain);
+	for (const subdomain of found) {
+		hide(subdomain);
+		// A hostname's label, so the workflow command needs no escaping (scripts/masks.ts, maskCommands).
+		if (process.env.GITHUB_ACTIONS === "true") console.log(`::add-mask::${subdomain}`);
+	}
 	const [subdomain] = found;
 	if (found.size > 1) throw new CommandFailed("The account's Workers show more than one workers.dev subdomain.");
-	if (!subdomain) throw new CommandFailed("No Worker on the account shows its workers.dev subdomain, so the instance's origins cannot be checked against it: deploy a Worker on workers.dev first.");
+	if (!subdomain) throw new CommandFailed("No Worker on the account shows its workers.dev subdomain, so the instance's origins are unknown: deploy a Worker on workers.dev first.");
 	return subdomain;
 }
 

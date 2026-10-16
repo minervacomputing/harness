@@ -1,10 +1,15 @@
-// The check of an instance's origins (scripts/origins.ts), which the build, the deploy and the account suites make
-// before anything is sent there: only the chosen instance's own Workers on workers.dev, both on one subdomain, and
-// never a message that repeats the configured value.
+// An instance's origins (scripts/origins.ts): the app's, derived from its Worker's name and the account's workers.dev
+// subdomain, and the check of a configured one (the lab's), which the lab's deploy and the account suites make before
+// anything is sent there: only the chosen instance's own Workers on workers.dev, and never a message that repeats the
+// configured value.
 
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { namesOf } from "../../scripts/instance.ts";
-import { instanceOrigin, instanceOrigins, subdomainOf } from "../../scripts/origins.ts";
+import { instanceOrigin, subdomainOf, workersDevOrigin } from "../../scripts/origins.ts";
 
 /** A subdomain no message may contain. */
 const SUB = "acct7q";
@@ -26,10 +31,10 @@ function refusal(run: () => unknown): string {
 
 describe("the test instance's origins", () => {
 	test("the test Workers' workers.dev origins are accepted, as origins", () => {
-		expect(instanceOrigin(APP, TEST_APP, "MINERVA_SITE_URL")).toBe(APP);
-		expect(instanceOrigin(`${APP}/`, TEST_APP, "MINERVA_SITE_URL")).toBe(APP);
-		expect(instanceOrigin(` ${FILES}\n`, TEST_FILES, "MINERVA_DOWNLOAD_ORIGIN")).toBe(FILES);
-		expect(instanceOrigin(APP.toUpperCase().replace("HTTPS", "https"), TEST_APP, "MINERVA_SITE_URL")).toBe(APP);
+		expect(instanceOrigin(APP, TEST_APP, "SETTING")).toBe(APP);
+		expect(instanceOrigin(`${APP}/`, TEST_APP, "SETTING")).toBe(APP);
+		expect(instanceOrigin(` ${FILES}\n`, TEST_FILES, "SETTING")).toBe(FILES);
+		expect(instanceOrigin(APP.toUpperCase().replace("HTTPS", "https"), TEST_APP, "SETTING")).toBe(APP);
 	});
 
 	test.each([
@@ -58,16 +63,43 @@ describe("the test instance's origins", () => {
 		expect(message).not.toContain("acme-test.");
 	});
 
-	test("the two origins must be on one subdomain, the one the account's is compared with", () => {
-		const names = { site: "SITE", download: "DOWNLOAD" };
-		expect(instanceOrigins(APP, FILES, names, TEST)).toEqual({ origin: APP, downloadOrigin: FILES });
-		expect(subdomainOf(APP)).toBe(SUB);
-		expect(subdomainOf(FILES)).toBe(SUB);
-		const message = refusal(() => instanceOrigins(APP, "https://acme-test-files.other7q.workers.dev", names, TEST));
-		expect(message).toMatch(/^SITE and DOWNLOAD /);
-		expect(message).not.toContain(SUB);
-		expect(message).not.toContain("other7q");
-		expect(refusal(() => instanceOrigins(APP, `https://acme-files.${SUB}.workers.dev`, names, TEST))).toMatch(/^DOWNLOAD /);
-		expect(refusal(() => instanceOrigins(`https://acme.${SUB}.workers.dev`, FILES, names, TEST))).toMatch(/^SITE /);
+	test("the app's origin is its Worker on the account's subdomain, which it gives back", () => {
+		expect(workersDevOrigin(TEST_APP, SUB)).toBe(APP);
+		expect(subdomainOf(workersDevOrigin(TEST_APP, SUB))).toBe(SUB);
+		for (const subdomain of ["", "a.b", "a/b"]) {
+			expect(refusal(() => workersDevOrigin(TEST_APP, subdomain)), subdomain).toMatch(/^The workers\.dev origin of acme-test /);
+		}
+	});
+
+	test("the suites take the subdomain from the account's Workers, and in GitHub Actions mask it first", () => {
+		const bin = mkdtempSync(join(tmpdir(), "account-subdomain-"));
+		try {
+			const workers = [
+				{ id: "w1", name: TEST_APP, subdomain: { url: `${APP}/` } },
+				{ id: "w2", name: "other", subdomain: { url: `https://other.${SUB}.workers.dev` } },
+				{ id: "w3", name: "unrouted" },
+			];
+			writeFileSync(
+				join(bin, "cf"),
+				`#!/usr/bin/env node\nif (process.argv.slice(2, 4).join(" ") === "workers list") console.log(${JSON.stringify(JSON.stringify(workers))});\nelse process.exit(2);\n`,
+				{ mode: 0o755 },
+			);
+			const derive = (actions: string | undefined) =>
+				spawnSync(
+					process.execPath,
+					[
+						"--input-type=module",
+						"-e",
+						`import { accountSubdomain } from "${new URL("../../scripts/account.ts", import.meta.url).pathname}";
+import { workersDevOrigin } from "${new URL("../../scripts/origins.ts", import.meta.url).pathname}";
+console.log(workersDevOrigin(${JSON.stringify(TEST_APP)}, accountSubdomain()));`,
+					],
+					{ encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, GITHUB_ACTIONS: actions } as NodeJS.ProcessEnv },
+				);
+			expect(derive("true")).toMatchObject({ status: 0, stdout: `::add-mask::${SUB}\n${APP}\n` });
+			expect(derive(undefined)).toMatchObject({ status: 0, stdout: `${APP}\n` });
+		} finally {
+			rmSync(bin, { recursive: true, force: true });
+		}
 	});
 });

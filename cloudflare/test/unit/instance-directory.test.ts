@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { LOCAL_INSTANCES, chooseInstance, instanceForMode, instanceVars, instancesDir, leftoverProblem, listInstances, parseInstanceArgs, readInstance } from "../../scripts/instance.ts";
 import { createInstance, recordAccount, writeInstanceFile } from "../../scripts/instance-files.ts";
-import { labOrigin, originsOf } from "../../scripts/origins.ts";
+import { labOrigin } from "../../scripts/origins.ts";
 
 const SCRIPTS = new URL("../../scripts/", import.meta.url).pathname;
 const ACCOUNT = "0123456789abcdef0123456789abcdef";
@@ -265,27 +265,10 @@ describe("an instance's settings", () => {
 	test("vars.env must exist and cannot set the gateway, which the build derives", () => {
 		const instance = make("acme");
 		expect(refusal(() => instanceVars(instance))).toBe(`A deployed build reads its settings from ${instance.files.vars}, which is missing (cloudflare/README.md, The instance directory).`);
-		put("acme", "vars.env", `MINERVA_SITE_URL=https://acme.${SUB}.workers.dev\nMINERVA_MODEL_GATEWAY=acme-other\n`);
+		put("acme", "vars.env", "MINERVA_DEBUG=false\nMINERVA_MODEL_GATEWAY=acme-other\n");
 		expect(refusal(() => instanceVars(instance))).toBe(`MINERVA_MODEL_GATEWAY is not a setting: the build sets it to the instance's name. Remove it from ${instance.files.vars}.`);
-		put("acme", "vars.env", `MINERVA_SITE_URL=https://acme.${SUB}.workers.dev\n`);
-		expect(instanceVars(instance)).toEqual({ MINERVA_SITE_URL: `https://acme.${SUB}.workers.dev` });
-	});
-
-	test("origins that belong to another instance are refused, without repeating them", () => {
-		const instance = make("acme");
-		const vars = (site: string, download: string) => put("acme", "vars.env", `MINERVA_SITE_URL=${site}\nMINERVA_DOWNLOAD_ORIGIN=${download}\n`);
-		vars(`https://acme.${SUB}.workers.dev`, `https://acme-files.${SUB}.workers.dev`);
-		expect(originsOf(instance)).toEqual({ origin: `https://acme.${SUB}.workers.dev`, downloadOrigin: `https://acme-files.${SUB}.workers.dev` });
-		for (const [site, download, setting] of [
-			[`https://acme-test.${SUB}.workers.dev`, `https://acme-files.${SUB}.workers.dev`, "MINERVA_SITE_URL"],
-			[`https://acme.${SUB}.workers.dev`, `https://acme-test-files.${SUB}.workers.dev`, "MINERVA_DOWNLOAD_ORIGIN"],
-			[`https://acme-files.${SUB}.workers.dev`, `https://acme.${SUB}.workers.dev`, "MINERVA_SITE_URL"],
-		] as const) {
-			vars(site, download);
-			const message = refusal(() => originsOf(instance));
-			expect(message).toMatch(new RegExp(`^${setting} in acme's vars.env is not acme`));
-			expect(message).not.toContain(SUB);
-		}
+		put("acme", "vars.env", "MINERVA_DEBUG=false\n");
+		expect(instanceVars(instance)).toEqual({ MINERVA_DEBUG: "false" });
 	});
 
 	test("the lab's origin is the test instance's own lab, from its cm.vars.env", () => {
@@ -318,23 +301,33 @@ describe("an instance's secrets (scripts/secrets.ts)", () => {
 		const generated = readFileSync(instance.files.secrets, "utf8");
 		expect(secrets(["check", "--instance", "acme"]).status).toBe(0);
 		// Single quotes, as dotenv reads them: the key is the text between them.
-		put("acme", "secrets.env", generated.replace(/^MINERVA_DOWNLOAD_KEY=.*$/m, `MINERVA_DOWNLOAD_KEY='${KEY}'`));
+		put("acme", "secrets.env", generated.replace(/^MINERVA_SECRET_KEY=.*$/m, `MINERVA_SECRET_KEY='${KEY}'`));
 		expect(secrets(["check", "--instance", "acme"]).status).toBe(0);
 		const out = join(base, "subset.env");
-		expect(secrets(["subset", out, "MINERVA_DOWNLOAD_KEY", "--instance", "acme"]).status).toBe(0);
-		expect(readFileSync(out, "utf8")).toBe(`MINERVA_DOWNLOAD_KEY="${KEY}"\n`);
+		expect(secrets(["subset", out, "MINERVA_SECRET_KEY", "--instance", "acme"]).status).toBe(0);
+		expect(readFileSync(out, "utf8")).toBe(`MINERVA_SECRET_KEY="${KEY}"\n`);
 		expect(statSync(out).mode & 0o777).toBe(0o600);
 		// An optional secret's value is refused as a required one's is, unprinted.
 		put("acme", "secrets.env", `${readFileSync(instance.files.secrets, "utf8")}MINERVA_LARAVEL_TOKEN='${KEY}"x'\n`);
-		const optional = secrets(["subset", out, "MINERVA_DOWNLOAD_KEY", "MINERVA_LARAVEL_TOKEN", "--instance", "acme"]);
+		const optional = secrets(["subset", out, "MINERVA_SECRET_KEY", "MINERVA_LARAVEL_TOKEN", "--instance", "acme"]);
 		expect(optional.status).toBe(1);
 		expect(optional.text).toContain("MINERVA_LARAVEL_TOKEN in acme's secrets.env has a quote, a backslash or a line break");
 		expect(optional.text).not.toContain(SUB);
-		put("acme", "secrets.env", generated.replace(/^MINERVA_DOWNLOAD_KEY=.*$/m, `MINERVA_DOWNLOAD_KEY='${KEY}"x'`));
+		put("acme", "secrets.env", generated.replace(/^MINERVA_SECRET_KEY=.*$/m, `MINERVA_SECRET_KEY='${KEY}"x'`));
 		const refused = secrets(["check", "--instance", "acme"]);
 		expect(refused.status).toBe(1);
-		expect(refused.text).toContain("MINERVA_DOWNLOAD_KEY in acme's secrets.env has a quote, a backslash or a line break");
+		expect(refused.text).toContain("MINERVA_SECRET_KEY in acme's secrets.env has a quote, a backslash or a line break");
 		expect(refused.text).not.toContain(SUB);
+	});
+
+	test("a line no build declares, such as a retired secret, stops nothing and is never copied", () => {
+		const instance = make("acme");
+		expect(secrets(["generate", "--instance", "acme"]).status).toBe(0);
+		put("acme", "secrets.env", `${readFileSync(instance.files.secrets, "utf8")}MINERVA_ENCRYPTION_KEYS="v1:not-a-key"\nMINERVA_SETUP_KEY='short"x'\nMINERVA_GITHUB_CLIENT_ID=id\n`);
+		expect(secrets(["check", "--instance", "acme"])).toEqual({ status: 0, text: "MINERVA_SECRET_KEY: set\n" });
+		const out = join(base, "subset.env");
+		expect(secrets(["subset", out, "MINERVA_SECRET_KEY", "--instance", "acme"]).status).toBe(0);
+		expect(readFileSync(out, "utf8")).toMatch(/^MINERVA_SECRET_KEY="[\w-]{67}"\n$/);
 	});
 
 	test("a test command's secrets are the test instance's; production's are named", () => {
