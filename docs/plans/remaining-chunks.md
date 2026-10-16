@@ -69,7 +69,7 @@ The engine's internal path still borrows from the code chunk 13 deletes. This ch
 
 - [x] Port the platform suites that cover the Conversation object through the Workspace (`conversation`, `protocols`, `chat`, `files`, `images`, `local-tools`, `scripts-conversation`, `scripts-faults`) to `startInternal` with `fake-laravel.ts`. Keep every case that tests behaviour the internal path has. Delete a case only when it tests the Workspace itself, and list the deleted cases in the commit.
 - [x] Port `test:faults` (`faults.test.ts`, `resets.test.ts`, `turns.test.ts`). The end-to-end turns fail, not skip, when a required tool is not called (after-the-plan.md's Arm the program asks for this).
-- [ ] Rewrite `deployed.test.ts`'s checks that are about the SPA, assets, CSRF and the download Worker as checks that those routes answer 404 after 13b. Until then they stay. Moved to 13b, whose commit deletes the routes (chunk-13a-design.md).
+- [x] Rewrite `deployed.test.ts`'s checks that are about the SPA, assets, CSRF and the download Worker as checks that those routes answer 404 after 13b. Until then they stay. Moved to 13b, whose commits deleted the routes and rewrote these checks (chunk-13b-design.md).
 
 **You see.**
 
@@ -94,48 +94,50 @@ The engine's internal path still borrows from the code chunk 13 deletes. This ch
 
 ## Delete the old paths (chunk 13b)
 
+Done 2026-10-16 (`2ad5a52` to `cf81e8a`). The design, its amendments and the verification are in [chunk-13b-design.md](chunk-13b-design.md). Startup CPU fell from 83 to 66 ms (median of five interleaved pairs) and the bundle from 9.65 MB to 7.03 MB. test:faults kept 13a's 32 cases; test:deployed went from 11 cases to 6 by merging and dropping the old routes' checks.
+
 **Depends on.** Chunk 13a.
 
 **Files.**
 
-- [ ] Delete `cloudflare/src/accounts/`, `cloudflare/src/api/`, `cloudflare/src/workspace/`, `frontend/`, `cloudflare/files-worker/`, `src/files/download.ts`, `src/files/links.ts`, `src/http/assets.ts`, `src/http/csrf.ts` and `src/http/asset-manifest.ts`.
-- [ ] Delete the contract's public routes, split off in 13a.
-- [ ] Delete the Workspace and email parts of `src/faults/` (`mailbox.ts`, the Workspace ports).
-- [ ] Delete `test/account/browser.test.ts`, `chrome.ts`, and the platform and unit suites that test only old paths (accounts, API, OAuth, instance, Workspace, the public contract, the frontend's client, assets, mailbox, email, download links).
-- [ ] Delete the engine's verify skill under `.claude/skills/verify/` and the `cf-frontend` entry in `.claude/launch.json`. The app has its own verify skill.
-- [ ] Delete the `minerva-design` skill under `.claude/skills/`. The app's `docs/design.md` becomes the only copy of the design system, which `shell.md` asks to keep in step only until this chunk.
-- [ ] Edit `.github/workflows/main.yml`. Remove the frontend's check, `test:browser`, and `frontend/` from the path filter.
+- [x] Delete `cloudflare/src/accounts/`, `cloudflare/src/api/`, `cloudflare/src/workspace/`, `frontend/`, `cloudflare/files-worker/`, `src/files/download.ts`, `src/files/links.ts`, `src/http/assets.ts`, `src/http/csrf.ts` and `src/http/asset-manifest.ts`.
+- [x] Delete the contract's public routes, split off in 13a.
+- [x] Delete the Workspace and email parts of `src/faults/` (`mailbox.ts`, the Workspace ports).
+- [x] Delete `test/account/browser.test.ts`, `chrome.ts`, and the platform and unit suites that test only old paths (accounts, API, OAuth, instance, Workspace, the public contract, the frontend's client, assets, mailbox, email, download links).
+- [x] Delete the engine's verify skill under `.claude/skills/verify/` and the `cf-frontend` entry in `.claude/launch.json`. The app has its own verify skill.
+- [x] Delete the `minerva-design` skill under `.claude/skills/`. The app's `docs/design.md` becomes the only copy of the design system, which `shell.md` asks to keep in step only until this chunk.
+- [x] Edit `.github/workflows/main.yml`. Remove the frontend's check, `test:browser`, and `frontend/` from the path filter.
 
 **Build.**
 
-- [ ] Remove the Workspace branch from the Conversation object. `#workspace()` and its calls (`beginRun`, `activate`, release, `conversationTouched`), the lease that decrypts with `MINERVA_ENCRYPTION_KEYS`, and the Workspace-only RPCs. `WorkspaceClient` and `WorkspaceApi` in `ports.ts` collapse to Laravel's behaviour, and `laravel-runs.ts` stops pretending to be a Workspace.
-- [ ] Decide what happens to the `messages` table and `history.ts`. `history.ts` reads "our own messages table" today, while Laravel's runs send their history with `startRun`. Keep the selection and clipping rules (Decision 7) applied to the command's history, and drop the table if nothing else reads it.
-- [ ] Remove the dead connector code. `tokenRequest` and `planRefresh` in `workspace/credentials.ts`, and `consentNeeded` and `requestedScopes` in the connectors, since Laravel uses the catalog's descriptors. Keep the connectors' tool tests and drop their token-request assertions.
-- [ ] Remove the dead settings and secrets from `cloudflare.config.ts` and `src/config.ts`. `MINERVA_SITE_URL`, `MINERVA_DOWNLOAD_ORIGIN`, `MINERVA_SIGNUP_OPEN`, `MINERVA_EMAIL_FROM`, `MINERVA_FILES_WORKSPACE_BYTES`, `MINERVA_ENCRYPTION_KEYS`, `MINERVA_DOWNLOAD_KEY`, `MINERVA_SETUP_KEY`, and the `ASSETS`, `EMAIL` and `FAULT_MAILBOX` bindings.
-  - [ ] Check each `MINERVA_<APP>_CLIENT_ID` and `_SECRET` pair. The engine needs a client secret only if a kept path uses it. Laravel holds the OAuth clients now.
-- [ ] Rewrite the scripts that build what this chunk deletes before deleting their inputs. `scripts/deploy.ts` builds and checks `files-worker`, and `scripts/reset.ts` refuses to run without the frontend's assets in `.assets/`. 13c uses both.
-- [ ] Remove `better-auth` and the package scripts for the frontend, seeding and the download Worker.
+- [x] Remove the Workspace branch from the Conversation object. `#workspace()` and its calls (`beginRun`, `activate`, release, `conversationTouched`), the lease that decrypts with `MINERVA_ENCRYPTION_KEYS`, and the Workspace-only RPCs. `WorkspaceClient` and `WorkspaceApi` in `ports.ts` collapse to Laravel's behaviour, and `laravel-runs.ts` stops pretending to be a Workspace.
+- [x] Decide what happens to the `messages` table and `history.ts`. `history.ts` reads "our own messages table" today, while Laravel's runs send their history with `startRun`. Keep the selection and clipping rules (Decision 7) applied to the command's history, and drop the table if nothing else reads it.
+- [x] Remove the dead connector code. `tokenRequest` and `planRefresh` in `workspace/credentials.ts`, and `consentNeeded` and `requestedScopes` in the connectors, since Laravel uses the catalog's descriptors. Keep the connectors' tool tests and drop their token-request assertions.
+- [x] Remove the dead settings and secrets from `cloudflare.config.ts` and `src/config.ts`. `MINERVA_SITE_URL`, `MINERVA_DOWNLOAD_ORIGIN`, `MINERVA_SIGNUP_OPEN`, `MINERVA_EMAIL_FROM`, `MINERVA_FILES_WORKSPACE_BYTES`, `MINERVA_ENCRYPTION_KEYS`, `MINERVA_DOWNLOAD_KEY`, `MINERVA_SETUP_KEY`, and the `ASSETS`, `EMAIL` and `FAULT_MAILBOX` bindings.
+  - [x] Check each `MINERVA_<APP>_CLIENT_ID` and `_SECRET` pair. The engine needs a client secret only if a kept path uses it. Laravel holds the OAuth clients now.
+- [x] Rewrite the scripts that build what this chunk deletes before deleting their inputs. `scripts/deploy.ts` builds and checks `files-worker`, and `scripts/reset.ts` refuses to run without the frontend's assets in `.assets/`. 13c uses both.
+- [x] Remove `better-auth` and the package scripts for the frontend, seeding and the download Worker.
 
 **You see.**
 
-- [ ] `GET /` and `/api/*` on the test instance answer 404, `/internal/v1/*` and `/stream/v1` answer as before.
+- [x] `GET /` and `/api/*` on the test instance answer 404, `/internal/v1/*` and `/stream/v1` answer as before.
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `pnpm typecheck`, `pnpm test:unit`, `pnpm test:platform` and `pnpm startup` in `cloudflare/`. `contract/`'s checks. The workflow is green.
+- [x] `pnpm typecheck`, `pnpm test:unit`, `pnpm test:platform` and `pnpm startup` in `cloudflare/`. `contract/`'s checks. The workflow is green.
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Regression against `main`. `test:deployed` and `test:faults` pass on `minerva-cf-test` with the same cases as at 13a's head.
-- [ ] A turn on Laravel's staging through a test instance built from this head (not `minerva-cf-staging` yet, which 13c changes) calls a connector and its facts reach Laravel.
+- [x] Regression against `main`. `test:deployed` and `test:faults` pass on `minerva-cf-test` with the same cases as at 13a's head.
+- [x] A turn on Laravel's staging through a test instance built from this head (not `minerva-cf-staging` yet, which 13c changes) calls a connector and its facts reach Laravel. Run on `minerva-cf-staging` itself instead, at the owner's choice (chunk-13b-design.md, open question 1).
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. Startup CPU (`pnpm startup`) and the Worker's bundle size. Rule. Neither grows against `main`. Growth fails, since deleting code should only shrink both.
+- [x] Metric. Startup CPU (`pnpm startup`) and the Worker's bundle size. Rule. Neither grows against `main`. Growth fails, since deleting code should only shrink both.
 
 **Review.**
 
-- [ ] opencode reviewed the diff.
+- [x] opencode reviewed the diff.
 
 ## Retire the old classes and reset production (chunk 13c)
 
