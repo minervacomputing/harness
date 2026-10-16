@@ -239,7 +239,7 @@ Built 2026-10-16 (`55bcd78` to `98d4f15` in the engine, then `8ad74ee`, `9f9929a
 
 **You see.**
 
-- [ ] A run given a small allowance stops with the budget reason, and the organization's spent amount equals the run's settled usage. The engine's half passed on `minerva-cf-test` against the fake Laravel (`98d4f15`); the organization's spend waits for the staging check below.
+- [x] A run given a small allowance stops with the budget reason, and the organization's spent amount equals the run's settled usage. The engine's half passed on `minerva-cf-test` against the fake Laravel (`98d4f15`). On Laravel's staging, 2026-10-16: the chat showed "This conversation reached its budget.", and the organization's spend this month went from 17,905 to 37,661 µ$, by exactly the run's `chargedMicros` (19,756).
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
@@ -249,7 +249,7 @@ Built 2026-10-16 (`55bcd78` to `98d4f15` in the engine, then `8ad74ee`, `9f9929a
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
 - [x] Regression against `main`. `test:faults` passes with a large allowance. 34 cases at `98d4f15` on `minerva-cf-test`, the driver giving every other start 10^12 µ$, the small-allowance case among them.
-- [ ] On staging, a run with an allowance below one turn's cost stops at the budget, and its spend is added to the organization's after `run.settled`. Waits for the engine's deploy to `minerva-cf-staging` (the owner approves it, after a green `account.yml`), the app's push of `chunk-14b`, and the owner's go for a turn that spends cents (chunk-14b-design.md, Live checks).
+- [x] On staging, a run with an allowance below one turn's cost stops at the budget, and its spend is added to the organization's after `run.settled`. 2026-10-16, the engine at `d09fbf1` on `minerva-cf-staging` and the app at `ef6429f`: `minerva:budget` set the organization's limit 1,000 µ$ above its spend; a `minerva:turn` asking for a script made one call (6,979 input tokens), ran its script, and ended `failed` with "This conversation reached its budget." at its second call; `minerva:usage` checked the run `ok`, charged 19,756 µ$ (the stated overspend: the call in flight, its script and the container); the next start was refused with "Your organization has used its budget."; the limit was then put back to the default. A smoke turn before it was charged 17,905 µ$ for one call on OpenAI `gpt-6.1-sol` (mostly 6,966 cache-write tokens at $2.50 a million).
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
