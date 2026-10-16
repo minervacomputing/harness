@@ -23,7 +23,7 @@ import { VALUE_PART, sliceText, splitParts } from "../lib/text.ts";
 import { isoTime } from "../lib/dates.ts";
 import type { Attachment, FolderChanges, FolderWarnings, Run, ToolCallEventData } from "@minerva/contract";
 import type { Fact, StartRunResult } from "@minerva/contract/internal";
-import { type CallPrice, type Prices, type TokenRates, callCharge, containerTimeCharge, scriptCharge } from "../budget/prices.ts";
+import { type Prices, type TokenRates, callCharge, callPrice, containerTimeCharge, scriptCharge } from "../budget/prices.ts";
 import type { SettledWrite } from "../gateway/ledger.ts";
 import type { CallRequest, CallSettlement } from "../model/provider.ts";
 import type { Tokens } from "../model/tap.ts";
@@ -35,6 +35,7 @@ import { FACT_PAGE_BYTES, type NewFact, callFact, toolCallFact } from "./facts.t
 import type { AttemptFence, ConversationId, EpochMs, RunId, RunStatus, VersionId, WorkspaceRef } from "../shared/rpc.ts";
 import {
 	ACTIVE,
+	BUDGET_REACHED,
 	type CancelReason,
 	ERROR_MESSAGE_CHARS,
 	type NewRunEvent,
@@ -479,16 +480,17 @@ export class RunStore {
 	 * parts with the column empty. A snapshot holds every grant of the user, so it can pass the 2 MB a
 	 * string or a row may have without any API limit being broken.
 	 */
-	insertRun(run: { id: RunId; snapshot: RunSnapshot; deadline: EpochMs | null; baseVersionId: VersionId | null; createdAt: EpochMs }): void {
+	insertRun(run: { id: RunId; snapshot: RunSnapshot; deadline: EpochMs | null; baseVersionId: VersionId | null; createdAt: EpochMs; allowance: number | null }): void {
 		const parts = splitParts(JSON.stringify(run.snapshot), VALUE_PART);
 		this.#sql.exec(
-			"INSERT INTO runs (id, status, attempt, attempt_started_at, snapshot, deadline, base_version_id, created_at, metered) VALUES (?, 'queued', 1, ?, ?, ?, ?, ?, 1)",
+			"INSERT INTO runs (id, status, attempt, attempt_started_at, snapshot, deadline, base_version_id, created_at, metered, allowance) VALUES (?, 'queued', 1, ?, ?, ?, ?, ?, 1, ?)",
 			run.id,
 			run.createdAt,
 			parts.length === 1 ? (parts[0] as string) : "",
 			run.deadline,
 			run.baseVersionId,
 			run.createdAt,
+			run.allowance,
 		);
 		if (parts.length > 1) parts.forEach((text, part) => this.#sql.exec("INSERT INTO run_snapshots (run_id, part, text) VALUES (?, ?, ?)", run.id, part, text));
 		this.#sql.exec("INSERT INTO attempts (run_id, attempt, started_at) VALUES (?, 1, ?)", run.id, run.createdAt);
@@ -564,6 +566,11 @@ export class RunStore {
 	/** The revoked flag the executor checks before every provider request (ARCHITECTURE.md: Strict revocation). */
 	revoke(runId: RunId): void {
 		this.#sql.exec("UPDATE runs SET revoked = 1 WHERE id = ?", runId);
+	}
+
+	/** The run may have a container from now on, if it had none before: admission counts its time from here. */
+	containerStarting(runId: RunId): void {
+		this.#sql.exec("UPDATE runs SET container_since = ? WHERE id = ? AND container_since IS NULL", this.now(), runId);
 	}
 
 	setWritesUncertain(runId: RunId): void {
@@ -656,14 +663,20 @@ export class RunStore {
 	}
 
 	/**
-	 * Records a model call about to be sent and counts it (`model_calls`), in one change with the fence check: null, with
-	 * nothing recorded, when the attempt can no longer act. The record keeps the rates it is admitted at (`price`; null when
-	 * its route has none), which its settlement charges. Answers the call's id, 8 hex drawn again on a collision within the
-	 * run. Made outside pi's transactions, so a call that was sent stays recorded.
+	 * Records a model call about to be sent and counts it (`model_calls`), in one change with the fence check and its
+	 * admission: null, with nothing recorded, when the attempt can no longer act, or when the run's spend so far reached its
+	 * allowance, which ends the run with BUDGET_REACHED in the same change. The record keeps its route's rates in `prices`
+	 * (none when the table has no price for it), which its settlement charges. Answers the call's id, 8 hex drawn again on a
+	 * collision within the run. Made outside pi's transactions, so a call that was sent stays recorded.
 	 */
-	recordModelCall(fence: AttemptFence, request: CallRequest, price: CallPrice | null): string | null {
+	recordModelCall(fence: AttemptFence, request: CallRequest, prices: Prices): string | null {
 		return this.write(() => {
 			if (!this.isCurrent(fence)) return null;
+			if (this.#budgetReached(fence.runId, prices)) {
+				this.finish(fence.runId, BUDGET_REACHED, { attempt: fence.attempt });
+				return null;
+			}
+			const price = callPrice(prices, request.provider, request.model);
 			for (;;) {
 				const inserted = this.#sql
 					.exec<{ call: string }>(
@@ -687,6 +700,25 @@ export class RunStore {
 				return inserted.call;
 			}
 		});
+	}
+
+	/**
+	 * Whether the run's spend so far reached its allowance (docs/plans/chunk-14b-design.md, Admission at the call record):
+	 * its settled calls and ended scripts (`spent`), its open scripts and its container time until now, each at `prices`.
+	 * What a gone instance left open is settled first (the restart rule, `settleLost`), so an attempt that resumed before
+	 * the object's recovery ran sees its charge. A run Laravel gave no allowance never reaches it.
+	 */
+	#budgetReached(runId: RunId, prices: Prices): boolean {
+		const { allowance } = this.#sql.exec<Pick<RunRow, "allowance">>("SELECT allowance FROM runs WHERE id = ?", runId).one();
+		if (allowance === null) return false;
+		this.settleLost(prices);
+		const run = this.#sql.exec<Pick<RunRow, "spent" | "container_since">>("SELECT spent, container_since FROM runs WHERE id = ?", runId).one();
+		const now = this.now();
+		let total = run.spent;
+		const open = this.#sql.exec<{ started_at: number }>("SELECT started_at FROM script_records WHERE run_id = ? AND ended_at IS NULL", runId).toArray();
+		for (const { started_at } of open) total += scriptCharge(prices.table.script, Math.max(0, now - started_at));
+		if (run.container_since !== null) total += containerTimeCharge(prices.table.container, Math.max(0, now - run.container_since));
+		return total >= allowance;
 	}
 
 	/**
@@ -1065,6 +1097,7 @@ export class RunStore {
 					};
 		const data = {
 			status: end.status,
+			code: end.code,
 			error: end.status === "completed" ? "" : sliceText(end.message, 0, ERROR_MESSAGE_CHARS),
 			message: answer,
 			folder,

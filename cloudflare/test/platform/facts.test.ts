@@ -18,7 +18,7 @@ import { base64url } from "../../src/lib/bytes.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { type FakeScript, fakeUpstream } from "../../src/model/fake.ts";
 import { routeOf } from "../../src/model/route.ts";
-import { pricesOf } from "../../src/budget/prices.ts";
+import { type Prices, priceTable, pricesOf } from "../../src/budget/prices.ts";
 import { settings } from "../../src/config.ts";
 import { STREAM_TIMING, openSocket } from "../../src/stream/relay.ts";
 import { STREAM_AUDIENCE, STREAM_PURPOSE } from "../../src/stream/token.ts";
@@ -28,6 +28,8 @@ import { ORIGIN, commands, held, objectOf, refusalOf, scope, signedAssertions, s
 signedAssertions();
 
 const TOKEN = "test-laravel-token";
+/** A table with no route's prices: the calls a test records itself are not charged. */
+const UNPRICED: Prices = { version: "0000000000000000", table: priceTable(null) };
 const DELIVERY = { ...FACT_DELIVERY };
 let fake: FakeLaravel;
 let uninstall: () => void;
@@ -263,7 +265,7 @@ describe("model call settlements", () => {
 		// Recorded by a store other than the live instance's, which its run's settlement would settle as lost: the run owes none.
 		const call = await runInDurableObject(objectOf(start), (_instance, state) => {
 			state.storage.sql.exec("UPDATE runs SET metered = 0 WHERE id = ?", start.run);
-			return new RunStore(state.storage).recordModelCall(fence, request, null);
+			return new RunStore(state.storage).recordModelCall(fence, request, UNPRICED);
 		});
 		expect(call).toMatch(/^[0-9a-f]{8}$/);
 		await commands.cancelRun({ scope: start.scope, conversation: start.conversation, run: start.run, reason: "cancelled" });
@@ -277,7 +279,7 @@ describe("model call settlements", () => {
 			const before = sql.exec<{ count: number }>("SELECT count(*) AS count FROM facts").one().count;
 			store.settleModelCall(start.run, call as string, { outcome: "unmetered", cause: "stopped", requestBytes: 321 });
 			store.settleModelCall(start.run, call as string, { outcome: "reported", tokens: { input: 1, output: 1, cached: 0, cacheWrite: 0, reasoning: 0 }, requestBytes: null });
-			const refused = store.recordModelCall(fence, request, null);
+			const refused = store.recordModelCall(fence, request, UNPRICED);
 			return {
 				refused,
 				written: sql.exec<{ fact: string }>("SELECT fact FROM facts WHERE seq > ? ORDER BY seq", before).toArray().map((row) => JSON.parse(row.fact) as Fact),
@@ -315,7 +317,7 @@ describe("model call settlements", () => {
 			new RunStore(state.storage, () => recorded - 5_000).recordScript(script("expired"), 1_000);
 			other.recordScript(script("cut"), 60_000);
 			mine.recordScript(script("own"), 60_000);
-			return [other.recordModelCall(fence, request, null), mine.recordModelCall(fence, request, null)];
+			return [other.recordModelCall(fence, request, UNPRICED), mine.recordModelCall(fence, request, UNPRICED)];
 		});
 		await commands.cancelRun({ scope: start.scope, conversation: start.conversation, run: start.run, reason: "cancelled" });
 		const open = () => runInDurableObject(objectOf(start), (_instance, state) => state.storage.sql.exec<{ call: string }>("SELECT call FROM call_records WHERE outcome IS NULL ORDER BY call").toArray().map((row) => row.call));

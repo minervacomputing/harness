@@ -83,7 +83,8 @@ export interface ModelHost {
 	begin(sessionId: string | undefined): { fence: AttemptFence; signal: AbortSignal } | null;
 	/**
 	 * Records and counts a call about to be sent, in one change with the fence check, outside pi's transactions: the
-	 * call's id (8 hex, unique within its run), or null when the attempt can no longer act, with nothing recorded.
+	 * call's id (8 hex, unique within its run), or null when the attempt can no longer act, or the run's spend reached its
+	 * allowance, which ends the run, with nothing recorded.
 	 */
 	record(fence: AttemptFence, request: CallRequest): Promise<string | null>;
 	/** Whether the attempt can still act, checked again before a request is sent a second time. */

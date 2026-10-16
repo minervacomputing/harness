@@ -163,11 +163,17 @@ export async function upload(w: World, file: { name: string; text?: string; byte
 	return { upload: key, name: file.name, size, mediaType: file.bytes ? "application/octet-stream" : "text/plain" };
 }
 
+/** µ$ no test run spends: what every other start allows, so the suites run their turns both with and without admission. */
+export const LARGE_ALLOWANCE = 1_000_000_000_000;
+let starts = 0;
+
 /**
  * Sends a message as Laravel does: the fake Laravel holds the run, then `startRun` names the agent's Notes connection, which the
- * user may use in every folder, to read and create. Answers the run's id; a refusal throws.
+ * user may use in every folder, to read and create, and gives it `allowance` (µ$; none when null; by default, LARGE_ALLOWANCE
+ * with every other start). Answers the run's id; a refusal throws.
  */
-export async function post(w: World, content: string, attachments: Attachment[] = []): Promise<string> {
+export async function post(w: World, content: string, attachments: Attachment[] = [], options: { allowance?: number | null } = {}): Promise<string> {
+	const allowance = options.allowance !== undefined ? options.allowance : starts++ % 2 === 0 ? LARGE_ALLOWANCE : null;
 	const start: StartRun = {
 		scope: w.scope,
 		conversation: w.conversationId,
@@ -177,6 +183,7 @@ export async function post(w: World, content: string, attachments: Attachment[] 
 		message: { id: uuid7(), content, attachments },
 		history: [],
 		authority: { connections: [notesConnection(w.connectionId)], layers: notesLayers(w.connectionId) },
+		...(allowance === null ? {} : { allowance }),
 	};
 	await driver("hold", { ...base(w), runId: start.run, run: heldRun(start) });
 	const answer = await commands.startRun(start);

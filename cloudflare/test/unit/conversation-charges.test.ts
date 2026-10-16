@@ -4,7 +4,7 @@
 
 import type { Fact, RoutePrices } from "@minerva/contract/internal";
 import { beforeEach, expect, test } from "vitest";
-import { type Prices, callPrice, priceTable, pricesVersion } from "../../src/budget/prices.ts";
+import { type Prices, priceTable, pricesVersion } from "../../src/budget/prices.ts";
 import { MIGRATIONS } from "../../src/conversation/schema.ts";
 import { RunStore } from "../../src/conversation/store.ts";
 import { reservation } from "../../src/model/policy.ts";
@@ -55,8 +55,8 @@ function spent(): number {
 	return spent;
 }
 
-function record(price = callPrice(prices, GLM.provider, GLM.model), by = store): string {
-	const call = by.recordModelCall(FENCE, REQUEST, price);
+function record(at = prices, by = store): string {
+	const call = by.recordModelCall(FENCE, REQUEST, at);
 	if (call === null) throw new Error("The call was not recorded.");
 	return call;
 }
@@ -135,7 +135,7 @@ test("spent equals the records' charges after every change, the restart rule's i
 test("a run's calls under two price versions are each charged at their own; its container at the version it settles with", async () => {
 	const first = record();
 	const raised = await pricesFor({ ...GLM, input: 300_000, output: 1_000_000 });
-	const second = record(callPrice(raised, GLM.provider, GLM.model));
+	const second = record(raised);
 	// The first settles after the new prices came in, at the rates it was admitted under.
 	const usage = { outcome: "reported" as const, tokens: { input: 1000, output: 100, cached: 0, cacheWrite: 0, reasoning: 0 }, requestBytes: null };
 	store.settleModelCall(RUN, second, usage);
@@ -150,7 +150,7 @@ test("a run's calls under two price versions are each charged at their own; its 
 });
 
 test("a call whose route has no price is not charged, and its run's settlement carries no charge", () => {
-	const call = record(null);
+	const call = record({ version: "0000000000000000", table: priceTable(null) });
 	store.settleModelCall(RUN, call, { outcome: "reported", tokens: { input: 100, output: 10, cached: 0, cacheWrite: 0, reasoning: 0 }, requestBytes: null });
 	expect(spent()).toBe(0);
 	expect(facts("run.usage")[0]?.data).not.toHaveProperty("costMicros");

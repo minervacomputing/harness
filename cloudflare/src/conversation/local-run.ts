@@ -43,6 +43,8 @@ export interface LocalRunDeps {
 	saving(active: boolean): void;
 	/** The attempt cannot go on (local.ts's errors say how): called once; held results wait for what it returns. */
 	fail(error: Error): void | Promise<void>;
+	/** Before the Sandbox is asked for a container: the run's container time is counted from the first (store.ts `containerStarting`). */
+	containerStarting(): Promise<void>;
 	/** The test build's fault points (ConversationPorts.point); production has none. */
 	point?(name: string, detail?: string): Promise<void>;
 	log(message: string): void;
@@ -106,6 +108,7 @@ export class LocalRun {
 
 	async #prepare(): Promise<SandboxFence> {
 		if (this.#ended) throw new FolderUnavailable("The run ended.");
+		await this.#deps.containerStarting();
 		const sandbox = this.#deps.sandbox();
 		const prepared = await prepareSandbox(sandbox, this.fence, this.#deps.spec);
 		if (!prepared.ok) {

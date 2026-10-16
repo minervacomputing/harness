@@ -44,7 +44,7 @@ import { raiseFactSeq } from "../internal/recovery.ts";
 import { appliedMigrations, migrate } from "../lib/sqlite.ts";
 import { callOf, MODEL_REF, MINERVA_API, MINERVA_PROVIDER, MODEL_ALIAS, minervaProvider, type ModelHost } from "../model/provider.ts";
 import { routeOf } from "../model/route.ts";
-import { callPrice, pricesOf } from "../budget/prices.ts";
+import { pricesOf } from "../budget/prices.ts";
 import { sandboxSpec } from "../sandbox/constants.ts";
 import { containerCharge, type SealedSpans, spansOpenUntil } from "../sandbox/store.ts";
 import { outputSink } from "../sandbox/sink.ts";
@@ -442,7 +442,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 					limits: { folderBytes: config.files.folderBytes, folderEntries: config.files.folderEntries, runUploadBytes: config.files.runUploadBytes },
 					turn: { history: preparation.history, prompt: internalPrompt(command.message.content, attachments) },
 				};
-				this.#store.insertRun({ id: runId, snapshot, deadline: snapshot.deadline, baseVersionId, createdAt: now });
+				this.#store.insertRun({ id: runId, snapshot, deadline: snapshot.deadline, baseVersionId, createdAt: now, allowance: command.allowance ?? null });
 				this.#store.append(runId, statusEvent({ status: "queued" }));
 				// Laravel registered the run before it sent the start, so it is active once stored: `provisioning` in this write.
 				this.#store.activate(runId);
@@ -988,6 +988,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				this.#showPhase(fence);
 			},
 			fail: (error) => this.#localFailed(fence, error, limits),
+			containerStarting: () => this.#store.outside(() => this.#store.containerStarting(fence.runId)),
 			point: (name, detail) => this.#point(name, detail),
 			log: (message) => this.#log(message),
 		});
@@ -1331,8 +1332,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			},
 			// Outside pi's transactions (store.ts `outside`): a call that was sent, and its cost, do not roll back.
 			record: async (fence, request) => {
-				const price = callPrice(await pricesOf(this.env), request.provider, request.model);
-				const call = await store.outside(() => store.recordModelCall(fence, request, price));
+				const prices = await pricesOf(this.env);
+				const call = await store.outside(() => store.recordModelCall(fence, request, prices));
 				if (call !== null) await this.#untilHeard("a recorded model call could not be sent", () => this.#point("model:recorded", call));
 				return call;
 			},

@@ -1,6 +1,6 @@
 # Chunk 14b design: give each run a budget
 
-Status is accepted, as of 2026-10-16: the owner answered the owner questions (Owner questions, below), and chose that model prices are read from models.dev at deploy (The price table). It settles the choices that chunk 14b of [remaining-chunks.md](remaining-chunks.md) leaves open, with the rule the owner chose on 2026-10-16, splits the work into units one fresh agent each can finish, and lists what waits for the owner. Line numbers are at `0c7ffd7` (harness) and `858f785` (`minervacomputing/app`, "the app" below). Nothing is implemented yet.
+Status is accepted, as of 2026-10-16: the owner answered the owner questions (Owner questions, below), and chose that model prices are read from models.dev at deploy (The price table). It settles the choices that chunk 14b of [remaining-chunks.md](remaining-chunks.md) leaves open, with the rule the owner chose on 2026-10-16, splits the work into units one fresh agent each can finish, and lists what waits for the owner. Line numbers are at `0c7ffd7` (harness) and `858f785` (`minervacomputing/app`, "the app" below). Units 1 to 3 are implemented; the perf rule could not be judged on the probe (As built (unit 3)).
 
 ## The owner's choice: stop when spent
 
@@ -164,6 +164,19 @@ Units 1 to 3 deploy to `minerva-cf-staging` before unit 4 reaches the app's stag
 **Metric.** The admission check's added time per model call (remaining-chunks.md, chunk 14b): a read of the run's row it already reads, a sum over the run's open scripts by an index, a comparison, and nothing written unless the run ends. No round trip and no second durable write.
 
 **How it is measured.** 14a's probe (M2, `host.begin` to the request's first answer) on `minerva-cf-test`, unit 3's parent commit and unit 3 interleaved twice, each a fresh deploy, with a large allowance so every call is checked and none refused; the probe reports p95 beside the median. **Rule:** head's p95 minus the baseline's under 5 ms in both pairs. 14a found the probe's runs of the same code to differ by up to 13 ms at the median, so if a pair's baselines differ by more than 5 ms at p95, the agent stops and asks the owner (owner question 4) rather than calling it a pass.
+
+**As built (unit 3).** Admission is in `recordModelCall`'s change, after the fence check, as designed, with one addition from opencode's review of the diff: a run with an allowance first settles what a gone instance left open (`settleLost`, the restart rule), since an attempt pi resumes can reach its first call before the object's recovery has charged the previous instance's lost call. `container_since` is set through `outside` before `LocalRun.#prepare` asks for a container. `test:faults` passed on `minerva-cf-test` (34 tests, the small-allowance case among them), with the driver giving every other start an allowance of 10^12 µ$.
+
+The perf runs, 2026-10-16, each on a fresh `pnpm run deploy:test` of `minerva-cf-test`, baseline `ce1449e` (unit 2) and head (unit 3), every turn of the head's probe given 10^12 µ$; M2 over 100 samples each:
+
+| Run | Median (ms) | p95 (ms) |
+|---|---|---|
+| Baseline 1 | 37 | 113.05 |
+| Head 1 | 51 | 148 |
+| Baseline 2 | 45 | 134 |
+| Head 2 | 50 | 136 |
+
+Head minus baseline at p95 is +34.95 ms in the first pair and +2 ms in the second; the two baselines of the same code differ by 20.95 ms at p95, more than 5 ms, so by the rule the probe cannot judge the check, and the runs are reported to the owner rather than called a pass. Each turn's second call (the first measured) is the slow one in every run, its median 108 to 143 ms against 37 to 53 ms for calls 3 to 6: it runs while the attempt's container is being prepared, so the p95 of 100 samples, of which 20 are such calls, measures that overlap rather than the calls. Over calls 3 to 6 alone, p95 is 47.2, 56.05, 53.65 and 55.1 ms. As owner question 4 allows when the probe is too noisy, a benchmark in Node (node:sqlite, the store's own code, 3,600 calls each after a warm-up) timed `recordModelCall` at a median of 25.6 µs and a p95 of 35.7 µs for a run without an allowance, and 35.7 µs and 43.8 µs with one: the check adds about 10 µs a call. The samples are kept outside the repository.
 
 ## Risks
 

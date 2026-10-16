@@ -285,7 +285,7 @@ async function leftQueued(stub: Stub, ended: StartRun, left: StartRun, watched: 
 		const answer = store.answer(ended.run) as StartRunResult;
 		store.write(() => {
 			const turn = { history: [], prompt: left.message.content };
-			store.insertRun({ id: left.run, snapshot: { ...snapshot, runId: left.run, deadline: null, turn }, deadline: null, baseVersionId: snapshot.baseVersionId, createdAt: Date.now() });
+			store.insertRun({ id: left.run, snapshot: { ...snapshot, runId: left.run, deadline: null, turn }, deadline: null, baseVersionId: snapshot.baseVersionId, createdAt: Date.now(), allowance: null });
 			store.append(left.run, statusEvent({ status: "queued" }));
 			store.addAnswer(left.run, answer);
 		});

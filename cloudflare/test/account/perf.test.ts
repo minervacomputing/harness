@@ -8,6 +8,9 @@
 //   output gate's wait for them, and one round trip;
 // - M2, this call's `host.begin` to its request answered: what happens between them, and the same round trip.
 //
+// Every turn is given a large allowance, so each call's admission runs its check (docs/plans/chunk-14b-design.md, Perf probe
+// and rule) and none is refused.
+//
 // Run only with MINERVA_PERF=1, and then alone (vitest.faults.config.ts): `MINERVA_PERF=1 pnpm test:faults` after
 // `pnpm run deploy:test`. MINERVA_PERF_CALIBRATE=write writes 1 MiB of random bytes (MINERVA_PERF_CALIBRATE_BYTES) through
 // `outside` before each request, the calibration; MINERVA_PERF_CALIBRATE=cpu only generates them, its control. M2 must rise
@@ -16,7 +19,7 @@
 
 import { writeFileSync } from "node:fs";
 import { afterAll, describe, expect, test } from "vitest";
-import { finish, outcome, post, script, settled, world } from "./driver.ts";
+import { LARGE_ALLOWANCE, finish, outcome, post, script, settled, world } from "./driver.ts";
 
 const TURNS = 20;
 const CALLS = 6;
@@ -36,7 +39,7 @@ function summary(samples: readonly number[]) {
 	const sorted = [...samples].sort((a, b) => a - b);
 	const q1 = quantile(sorted, 0.25);
 	const q3 = quantile(sorted, 0.75);
-	return { n: sorted.length, median: quantile(sorted, 0.5), q1, q3, iqr: q3 - q1, min: sorted[0], max: sorted.at(-1) };
+	return { n: sorted.length, median: quantile(sorted, 0.5), p95: quantile(sorted, 0.95), q1, q3, iqr: q3 - q1, min: sorted[0], max: sorted.at(-1) };
 }
 
 afterAll(finish, 300_000);
@@ -50,7 +53,7 @@ describe("perf probe", () => {
 			const m1: number[] = [];
 			const m2: number[] = [];
 			for (let turn = 0; turn < TURNS; turn++) {
-				const view = await settled(w, await post(w, prompt), 120_000);
+				const view = await settled(w, await post(w, prompt, [], { allowance: LARGE_ALLOWANCE }), 120_000);
 				expect(view.head?.status, outcome(view)).toBe("completed");
 				expect(view.internals.attempts, outcome(view)).toHaveLength(1);
 				expect(view.internals.entered.model, outcome(view)).toBe(CALLS);

@@ -8,7 +8,7 @@ import { env, exports } from "cloudflare:workers";
 import type { Fact, StartRun } from "@minerva/contract/internal";
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { sandboxObject } from "../../src/addressing.ts";
-import { callPrice, pricesOf } from "../../src/budget/prices.ts";
+import { pricesOf } from "../../src/budget/prices.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
 import { RunStore } from "../../src/conversation/store.ts";
 import { FakeLaravel } from "../../src/faults/laravel.ts";
@@ -154,7 +154,7 @@ describe("run.settled", () => {
 		await runInDurableObject(objectOf(start), (_instance, state) => {
 			const store = new RunStore(state.storage, () => at);
 			const settle = (settlement: Parameters<RunStore["settleModelCall"]>[2]) =>
-				store.settleModelCall(start.run, store.recordModelCall(fence, request, callPrice(prices, request.provider, request.model)) as string, settlement);
+				store.settleModelCall(start.run, store.recordModelCall(fence, request, prices) as string, settlement);
 			settle({ outcome: "reported", tokens: { input: 7, output: 3, cached: 2, cacheWrite: 1, reasoning: 4 }, requestBytes: null });
 			settle({ outcome: "unmetered", cause: "stopped", requestBytes: null });
 			settle({ outcome: "refused", requestBytes: null });
@@ -324,5 +324,39 @@ describe("run.settled", () => {
 		expect((await objectOf(first).faultJobs()).map((job) => job.id)).not.toContain(`settle:${first.run}`);
 		const row = await runInDurableObject(objectOf(first), (_instance, state) => state.storage.sql.exec("SELECT metered, settled_at FROM runs WHERE id = ?", first.run).one());
 		expect(row).toEqual({ metered: 0, settled_at: null });
+	});
+});
+
+describe("a run's budget", () => {
+	const ALLOWANCE = 500_000;
+	const MESSAGE = "This conversation reached its budget.";
+	/** A call that asks for a tool pi answers at once with an error, reporting `input` tokens: `input` µ$ on the fake route. */
+	const step = (input: number) => ({ tools: [{ name: "no_such_tool", arguments: {} }], usage: { input, output: 0 } });
+	const scripted = (turns: FakeScript["turns"]) => JSON.stringify({ fake: { turns } satisfies FakeScript });
+
+	/** A run given ALLOWANCE, once settled: its `run.finished`, its `run.settled` and how many calls it recorded. */
+	async function budgeted(content: string) {
+		const start = held(fake, startOf(scope(), { message: { id: uuid7(), content, attachments: [] }, allowance: ALLOWANCE }));
+		await commands.startRun(start);
+		const facts = await factsUntil(start, "run.settled");
+		const calls = await runInDurableObject(objectOf(start), (_instance, state) => state.storage.sql.exec<{ count: number }>("SELECT count(*) AS count FROM call_records WHERE run_id = ?", start.run).one().count);
+		return { finished: ofRun(start, facts, "run.finished")[0], settled: ofRun(start, facts, "run.settled")[0], calls };
+	}
+
+	test("ends the run failed with budget_reached at the first call after spent reached its allowance", async () => {
+		// The second call's million tokens pass the allowance; the third is refused at its admission, and nothing follows.
+		const { finished, settled, calls } = await budgeted(scripted([step(10), step(1_000_000), step(10), { text: "Done." }]));
+		expect(finished?.data).toMatchObject({ status: "failed", code: "budget_reached", error: MESSAGE, message: null });
+		expect(calls).toBe(2);
+		expect(settled?.data).toMatchObject({ modelCalls: 2, modelMicros: 1_000_010 });
+		expect((settled?.data as { chargedMicros: number }).chargedMicros).toBeGreaterThan(ALLOWANCE);
+	});
+
+	test("lets a run whose crossing call is its last complete, over budget", async () => {
+		const { finished, settled, calls } = await budgeted(scripted([step(10), { text: "Done.", usage: { input: 1_000_000, output: 0 } }]));
+		expect(finished?.data).toMatchObject({ status: "completed", code: "", error: "" });
+		expect(calls).toBe(2);
+		expect(settled?.data).toMatchObject({ modelCalls: 2, modelMicros: 1_000_010 });
+		expect((settled?.data as { chargedMicros: number }).chargedMicros).toBeGreaterThan(ALLOWANCE);
 	});
 });

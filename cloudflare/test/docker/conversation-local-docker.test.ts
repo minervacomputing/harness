@@ -97,6 +97,7 @@ function rig(settings: Partial<World["settings"]> = {}): Rig {
 				spec: sandboxSpec(WS, CONVERSATION, { folderBytes: world.settings.folderBytes, folderEntries: world.settings.folderEntries }, null),
 				deadline: null,
 				sandbox: () => core as unknown as SandboxPort,
+				containerStarting: async () => {},
 				folder: world.store,
 				sink: (output: (chunk: Delivered) => void) => ({ output }),
 				report: (event) => made.events.push(event),

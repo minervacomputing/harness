@@ -51,6 +51,8 @@ export type RunEnd =
 	/** Laravel gave up waiting for its start's answer and cancelled it. */
 	| { status: "failed"; code: "start_expired"; message: "The agent could not finish this run. Try again." }
 	| { status: "failed"; code: "folder_limit"; message: string }
+	/** Its spend reached the allowance Laravel gave it, at a model call's admission (store.ts `recordModelCall`). */
+	| { status: "failed"; code: "budget_reached"; message: "This conversation reached its budget." }
 	| { status: "failed"; code: "state_too_large"; message: "This run's saved state grew too large." }
 	| { status: "failed"; code: "state_unreadable"; message: "This run's saved state could not be read." };
 
@@ -88,6 +90,7 @@ export const TIMED_OUT: RunEnd = { status: "timed_out", code: "timed_out", messa
 export const WORKER_EXITED: RunEnd = { status: "failed", code: "worker_exited", message: "The worker stopped unexpectedly." };
 export const WORKER_FAILED: RunEnd = { status: "failed", code: "worker_failed", message: "The agent could not finish this run. Try again." };
 export const START_EXPIRED: RunEnd = { status: "failed", code: "start_expired", message: "The agent could not finish this run. Try again." };
+export const BUDGET_REACHED: RunEnd = { status: "failed", code: "budget_reached", message: "This conversation reached its budget." };
 
 /** How a cancel from outside the object ends its run (ARCHITECTURE.md: Strict revocation). */
 export function endFor(reason: CancelReason): RunEnd {

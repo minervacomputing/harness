@@ -13,6 +13,7 @@
 // - a revocation during a run: Laravel's cancel, answered once the run has stopped;
 // - a crash while a write is dispatched, after the provider applied it;
 // - a crash mid-stream: every counted model call settles once, and run.settled sums them, their charges and the container's time;
+// - a run's budget: the first model call after its spend reached its allowance ends it, failed with budget_reached;
 // - one smoke run with Workers AI and the fake connector's tool;
 // - the local tools in the conversation's real container (ARCHITECTURE.md: Checkpoints; the Checkpoints and Files
 //   rows): write, edit, Python through bash and read, published with the run and hydrated into the next
@@ -189,6 +190,24 @@ describe.concurrent("attempts on the platform", () => {
 		expect(totals?.containerMs).toBeGreaterThan(0);
 		expect(facts.at(-1)?.type).toBe("run.settled");
 		console.info(`a crash mid-stream: ${view.seconds} s, ${calls.length} calls; ${JSON.stringify(totals)}`);
+	});
+
+	test("a small allowance: the first call after spent reached it ends the run, failed with budget_reached, and records nothing", async () => {
+		// 1 µ$ a token on the fake route and 1 µ$ a millisecond of container time (src/faults/prices.ts): the second call's
+		// million tokens pass the allowance, which the container's time before it cannot reach.
+		const allowance = 500_000;
+		const w = await world();
+		const step = (input: number) => ({ tools: [{ name: "no_such_tool", arguments: {} }], usage: { input, output: 0 } });
+		const runId = await post(w, script([step(10), step(1_000_000), step(10), { text: "Done." }]), [], { allowance });
+		const view = await settled(w, runId);
+		expect(view.head?.status, outcome(view)).toBe("failed");
+		expect(view.head?.errorMessage).toBe("This conversation reached its budget.");
+		expect(view.internals.run).toMatchObject({ error_code: "budget_reached", model_calls: 2, allowance });
+		expect(await finished(w, runId)).toMatchObject({ data: { status: "failed", code: "budget_reached", error: "This conversation reached its budget." } });
+		const totals = (await delivered(w, runId)).flatMap((fact) => (fact.run === runId && fact.type === "run.settled" ? [fact.data] : []))[0];
+		expect(totals).toMatchObject({ modelCalls: 2, modelMicros: 1_000_010 });
+		expect(Number(totals?.chargedMicros)).toBeGreaterThan(allowance);
+		console.info(`a small allowance: ${view.seconds} s; ${JSON.stringify(totals)}`);
 	});
 
 	test("a long tool across PiHarness's heartbeats is no restart", async () => {
