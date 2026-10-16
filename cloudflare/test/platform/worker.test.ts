@@ -1,13 +1,11 @@
 import { type D1Migration, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
-import { beforeEach, describe, expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { conversationObject, filesBucket, sandboxObject, scriptsObject } from "../../src/addressing.ts";
 import { MIGRATIONS as CONVERSATION_MIGRATIONS } from "../../src/conversation/schema.ts";
 import { SANDBOX_MIGRATIONS } from "../../src/sandbox/store.ts";
 import { MIGRATIONS as SCRIPTS_MIGRATIONS } from "../../src/scripts/schema.ts";
 import { PROBE_HEADER, probeToken } from "../../src/http/probe-token.ts";
-import { AUTH_ROUTE } from "../../src/accounts/routes.ts";
-import { createApp } from "../../src/http/router.ts";
 import { DraftInvoice, body, jsonBody } from "../../src/connectors/xero/writes.ts";
 import { hex } from "../../src/lib/bytes.ts";
 import { digest, hmac } from "../../src/lib/hash.ts";
@@ -23,17 +21,18 @@ async function retiredToken(salt: string, value: string, secretKey: string): Pro
 }
 
 describe("the router in workerd", () => {
-	test("health answers with the security headers", async () => {
-		const response = await exports.default.fetch("http://localhost/api/health");
-		expect(response.status).toBe(200);
-		expect(await response.json()).toEqual({ ok: true });
-		expect(response.headers.get("Content-Security-Policy")).toBe("frame-ancestors 'none'; base-uri 'self'; object-src 'none'");
-		expect(response.headers.get("Cache-Control")).toBe("no-store");
-	});
-
-	test("an unknown API path is 404 NOT_FOUND", async () => {
-		const response = await exports.default.fetch("http://localhost/api/workspaces", { method: "POST", headers: { Origin: "http://localhost" } });
-		expect([response.status, await response.json()]).toEqual([404, { defined: true, code: "NOT_FOUND", status: 404, message: "Not found." }]);
+	test("the web API's former paths are 404 NOT_FOUND with the security headers", async () => {
+		const requests = [
+			new Request("http://localhost/api/health"),
+			new Request("http://localhost/api/workspaces", { method: "POST", headers: { Origin: "http://localhost" } }),
+			new Request("http://localhost/api/auth/sign-in/email", { method: "POST", headers: { Origin: "https://evil.example", "Content-Type": "application/json" }, body: "{}" }),
+		];
+		for (const request of requests) {
+			const response = await exports.default.fetch(request);
+			expect([response.status, await response.json()], request.url).toEqual([404, { defined: true, code: "NOT_FOUND", status: 404, message: "Not found." }]);
+			expect(response.headers.get("Content-Security-Policy"), request.url).toBe("frame-ancestors 'none'; base-uri 'self'; object-src 'none'");
+			expect(response.headers.get("Cache-Control"), request.url).toBe("no-store");
+		}
 	});
 
 	test("a path outside the API is 404 NOT_FOUND with the security headers", async () => {
@@ -42,20 +41,6 @@ describe("the router in workerd", () => {
 			expect([response.status, await response.json()], path).toEqual([404, { defined: true, code: "NOT_FOUND", status: 404, message: "Not found." }]);
 			expect(response.headers.get("Content-Security-Policy"), path).toBe("frame-ancestors 'none'; base-uri 'self'; object-src 'none'");
 			expect(response.headers.get("X-Frame-Options"), path).toBe("DENY");
-		}
-	});
-
-	test("every unsafe route refuses a request from another site, or from nowhere", async () => {
-		const unsafe = createApp().routes.filter((route) => ["POST", "PUT", "PATCH", "DELETE"].includes(route.method));
-		for (const route of unsafe) {
-			// Better Auth's own route checks origins itself (test/platform/accounts.test.ts, CSRF).
-			if (route.path === AUTH_ROUTE) continue;
-			// Each parameter gets a valid id; regex parameters are all UUIDs (router.ts).
-			const path = route.path.replace(/:[a-z]+(\{(?:[^{}]|\{[^{}]*\})*\})?/gi, "0199a000-0000-7000-8000-000000000001");
-			for (const headers of [{}, { Origin: "https://evil.example" }] as Record<string, string>[]) {
-				const response = await exports.default.fetch(`http://localhost${path}`, { method: route.method, headers });
-				expect([response.status, await response.json()], `${route.method} ${route.path}`).toEqual([403, { defined: true, code: "CROSS_SITE", status: 403, message: "Cross-site request refused." }]);
-			}
 		}
 	});
 
@@ -158,61 +143,5 @@ describe("Durable Object stubs with SQLite", () => {
 			expect(state.storage.sql.exec("SELECT count(*) AS n FROM sqlite_master WHERE name = 'u'").one().n).toBe(0);
 			expect(appliedMigrations(state.storage)).toEqual([...own, 9001, 9002]);
 		});
-	});
-});
-
-describe("D1 enforces the accounts schema's rules", () => {
-	const ORG = "0199a000-0000-7000-8000-0000000000c1";
-	const SESSION = "0199a000-0000-7000-8000-0000000000c2";
-	const NOW = "2026-10-12T00:00:00.000Z";
-
-	// Storage lasts for the whole file, so each test starts from empty tables.
-	beforeEach(async () => {
-		await env.DB.batch(
-			["oauth_flows", "memberships", "workspaces", "member", "organization", "session", "user", "oauth_clients"].map((table) =>
-				env.DB.prepare(`DELETE FROM "${table}"`),
-			),
-		);
-	});
-
-	async function seed() {
-		await env.DB.batch([
-			env.DB.prepare(`INSERT INTO "user" (id, name, email, "emailVerified", "createdAt", "updatedAt") VALUES (?, '', 'ada@example.com', 1, ?, ?)`).bind(USER, NOW, NOW),
-			env.DB.prepare(`INSERT INTO organization (id, name, slug, "createdAt", "personalOwner") VALUES (?, 'Personal', ?, ?, ?)`).bind(ORG, ORG, NOW, USER),
-			env.DB.prepare("INSERT INTO workspaces (id, organization_id, kind, name, personal_owner, created_at) VALUES (?, ?, 'personal', 'Personal', ?, ?)").bind(WS, ORG, USER, 1),
-			env.DB.prepare("INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES (?, ?, 'owner', ?)").bind(WS, USER, 1),
-			env.DB.prepare(`INSERT INTO session (id, "expiresAt", token, "createdAt", "updatedAt", "userId") VALUES (?, ?, 't', ?, ?, ?)`).bind(SESSION, NOW, NOW, NOW, USER),
-		]);
-	}
-
-	test("workspaces are personal iff owned, one per owner; their owner and organization cannot be deleted under them", async () => {
-		await seed();
-		await expect(
-			env.DB.prepare("INSERT INTO workspaces (id, organization_id, kind, name, created_at) VALUES ('0199a000-0000-7000-8000-0000000000dd', ?, 'personal', 'P', 1)").bind(ORG).run(),
-		).rejects.toThrow(/CHECK/);
-		await expect(
-			env.DB.prepare("INSERT INTO workspaces (id, organization_id, kind, name, personal_owner, created_at) VALUES ('0199a000-0000-7000-8000-0000000000dd', ?, 'personal', 'P', ?, 1)")
-				.bind(ORG, USER)
-				.run(),
-		).rejects.toThrow(/UNIQUE/);
-		// Its Durable Object and files need deleting first (ARCHITECTURE.md: Files, Deletion); a cascade would lose them.
-		await expect(env.DB.prepare(`DELETE FROM "user" WHERE id = ?`).bind(USER).run()).rejects.toThrow(/FOREIGN KEY/);
-		await expect(env.DB.prepare("DELETE FROM organization WHERE id = ?").bind(ORG).run()).rejects.toThrow(/FOREIGN KEY/);
-		await env.DB.prepare("DELETE FROM workspaces WHERE id = ?").bind(WS).run();
-		expect((await env.DB.prepare("SELECT count(*) AS n FROM memberships").first())?.n).toBe(0);
-	});
-
-	test("an OAuth flow is popped once, and ends with its session", async () => {
-		await seed();
-		const insert = env.DB.prepare(
-			"INSERT INTO oauth_flows (session_id, state, verifier, provider, workspace_id, client_id, issued_at, expires_at) VALUES (?, 's', 'v', 'todoist', ?, 'c', 1, 600001)",
-		).bind(SESSION, WS);
-		await insert.run();
-		const pop = env.DB.prepare("DELETE FROM oauth_flows WHERE session_id = ? RETURNING state").bind(SESSION);
-		expect((await pop.all()).results).toEqual([{ state: "s" }]);
-		expect((await pop.all()).results).toEqual([]);
-		await insert.run();
-		await env.DB.prepare("DELETE FROM session WHERE id = ?").bind(SESSION).run();
-		expect((await env.DB.prepare("SELECT count(*) AS n FROM oauth_flows").first())?.n).toBe(0);
 	});
 });

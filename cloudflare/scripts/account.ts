@@ -34,19 +34,19 @@ export function liveVersion(name: string): { version: string; env: Record<string
 }
 
 /**
- * Which build a version's bindings are: the test build binds FAULT_PROVIDER and FAULT_MAILBOX as Durable Objects
- * and has no EMAIL; the production build has EMAIL (Email Sending) and neither of those; the quiesced instance of a
- * reset (reset-worker/) binds nothing of its own, but keeps the app's secrets, which every version of a Worker
- * inherits, so it has secrets alone (or nothing). Any other shape is unknown.
+ * Which build a version's bindings are: both builds bind CONVERSATION as a Durable Object, and the test build binds
+ * FAULT_PROVIDER as one too, which the production build does not bind at all. EMAIL and FAULT_MAILBOX, which builds before
+ * 13b also bound, do not count, so those builds are recognised too. The quiesced instance of a reset (reset-worker/) binds
+ * nothing of its own, but keeps the app's secrets, which every version of a Worker inherits, so it has secrets alone (or
+ * nothing). Any other shape is unknown.
  */
 export function bindingsKind(env: Record<string, LiveBinding> | undefined): "test" | "production" | "quiesced" | "unknown" {
 	const bindings = env ?? {};
 	if (Object.values(bindings).every((binding) => binding.type === "secret_text")) return "quiesced";
 	const object = (name: string) => bindings[name]?.type === "durable_object_namespace";
-	const has = (name: string) => Object.hasOwn(bindings, name);
-	if (object("FAULT_PROVIDER") && object("FAULT_MAILBOX") && !has("EMAIL")) return "test";
-	if (bindings.EMAIL?.type === "send_email" && !has("FAULT_PROVIDER") && !has("FAULT_MAILBOX")) return "production";
-	return "unknown";
+	if (!object("CONVERSATION")) return "unknown";
+	if (object("FAULT_PROVIDER")) return "test";
+	return Object.hasOwn(bindings, "FAULT_PROVIDER") ? "unknown" : "production";
 }
 
 /**

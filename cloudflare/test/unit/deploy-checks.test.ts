@@ -172,13 +172,23 @@ describe("what a reset accepts as the instance's own", () => {
 
 describe("which build a live app is, from its bindings (the identity check without a row)", () => {
 	const object = (className: string): LiveBinding => ({ type: "durable_object_namespace", class_name: className });
-	const APP: Record<string, LiveBinding> = { DB: { type: "d1" }, WORKSPACE: object("Workspace"), FILES: { type: "r2_bucket", bucket_name: "acme-files" }, MINERVA_SITE_URL: { type: "plain_text", text: ORIGIN } };
-	const PRODUCTION = { ...APP, EMAIL: { type: "send_email" } };
-	const TEST = { ...APP, FAULT_PROVIDER: object("FaultProvider"), FAULT_MAILBOX: object("FaultMailbox") };
+	const APP: Record<string, LiveBinding> = {
+		DB: { type: "d1" },
+		CONVERSATION: object("Conversation"),
+		FILES: { type: "r2_bucket", bucket_name: "acme-files" },
+		MINERVA_SITE_URL: { type: "plain_text", text: ORIGIN },
+	};
+	const PRODUCTION = APP;
+	const TEST = { ...APP, FAULT_PROVIDER: object("FaultProvider") };
 
-	test("the test build binds both fault objects and has no EMAIL; the production build has EMAIL and neither", () => {
+	test("both builds bind the Conversation; the test build binds FaultProvider too, the production build not at all", () => {
 		expect(bindingsKind(TEST)).toBe("test");
 		expect(bindingsKind(PRODUCTION)).toBe("production");
+	});
+
+	test("a build from before 13b, with the mailbox or Email Sending, is recognised too", () => {
+		expect(bindingsKind({ ...TEST, FAULT_MAILBOX: object("FaultMailbox") })).toBe("test");
+		expect(bindingsKind({ ...PRODUCTION, EMAIL: { type: "send_email" } })).toBe("production");
 	});
 
 	test("the quiesced instance of a reset has the app's secrets alone, which its versions inherit, or nothing", () => {
@@ -190,19 +200,17 @@ describe("which build a live app is, from its bindings (the identity check witho
 		expect(bindingsKind({ MINERVA_SECRET_KEY: secret, DB: { type: "d1" } })).toBe("unknown");
 	});
 
-	test("any other shape is unknown: a mix of both, one fault object, a binding of another type, neither", () => {
-		const { FAULT_MAILBOX: _mailbox, ...oneFault } = TEST;
+	test("any other shape is unknown: FaultProvider of another type, no Conversation object, neither", () => {
+		const { CONVERSATION: _conversation, ...noConversation } = APP;
 		for (const env of [
-			{ ...TEST, EMAIL: { type: "send_email" } },
-			{ ...PRODUCTION, FAULT_PROVIDER: object("FaultProvider") },
-			{ ...PRODUCTION, FAULT_MAILBOX: { type: "plain_text", text: "x" } },
-			oneFault,
-			{ ...TEST, FAULT_PROVIDER: { type: "service" } },
-			{ ...APP, EMAIL: { type: "plain_text", text: "noreply@example.com" } },
-			APP,
-			{ ASSETS: { type: "assets" } },
+			{ ...noConversation, FAULT_PROVIDER: object("FaultProvider") },
+			{ ...PRODUCTION, FAULT_PROVIDER: { type: "service" } },
+			{ ...PRODUCTION, FAULT_PROVIDER: { type: "plain_text", text: "x" } },
+			{ ...APP, CONVERSATION: { type: "service" } },
+			noConversation,
+			{ ...noConversation, EMAIL: { type: "send_email" } },
 		]) {
-			expect(bindingsKind(env), JSON.stringify(Object.keys(env))).toBe("unknown");
+			expect(bindingsKind(env), JSON.stringify(env)).toBe("unknown");
 		}
 	});
 });

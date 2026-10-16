@@ -200,14 +200,6 @@ const fakeClients: OAuthClients = {
 	stored: async () => null,
 };
 
-/** The OAuth flows' clients in the test build: the fake provider's for its app, the Worker's for the others (src/api/oauth-clients.ts). */
-export function faultFlowClients(base: OAuthClients): OAuthClients {
-	return {
-		configured: (app) => (app === NOTES ? { ...NOTES_CLIENT } : base.configured(app)),
-		stored: (app, uri) => base.stored(app, uri),
-	};
-}
-
 /** The Workspace's ports in the test build. */
 export function faultWorkspacePorts(deps: WorkspaceDeps, ctx: DurableObjectState, env: Env): ReplaceablePorts {
 	const plan = planOf(ctx);

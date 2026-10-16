@@ -1,9 +1,6 @@
-// The API's refusals, with the code's status (shared/rpc.ts REFUSALS), in the contract's error shape,
-// `{"defined": true, "code": …, "status": …, "message": …}` (`errorAnswer`): every route of the contract
-// (api/orpc.ts), the routes beside it whose paths it names (the upload, downloads, the run stream, the OAuth
-// callback), our reader in front of Better Auth, and what the router answers before or instead of a route
-// (CSRF, the declared body cap, no such route, a crash). Better Auth answers /api/auth in its own format,
-// `{code, message}`. Every JSON response is `no-store`.
+// The engine's refusals, with the code's status (shared/rpc.ts REFUSALS), in the contract's error shape,
+// `{"defined": true, "code": …, "status": …, "message": …}` (`errorAnswer`): what the router answers before or instead of a
+// route (no such route, a crash), the internal API's mount and Laravel's run stream. Every JSON response is `no-store`.
 
 import { REFUSALS, type RefusalCode } from "../shared/rpc.ts";
 
@@ -26,11 +23,6 @@ export function unauthorized(): Response {
 	return errorAnswer("UNAUTHORIZED", "Unauthorized");
 }
 
-/** An unsafe request that did not come from the site's pages (http/csrf.ts). */
-export function crossSite(): Response {
-	return errorAnswer("CROSS_SITE", "Cross-site request refused.");
-}
-
 /** No route answers this method and path. */
 export function noRoute(): Response {
 	return errorAnswer("NOT_FOUND", "Not found.");
@@ -41,15 +33,4 @@ export const SERVER_ERROR = "Something went wrong on the server.";
 
 export function serverError(): Response {
 	return errorAnswer("INTERNAL_SERVER_ERROR", SERVER_ERROR);
-}
-
-/** Thrown to answer a request early with a ready response. */
-export class HttpError extends Error {
-	readonly response: Response;
-
-	constructor(response: Response) {
-		super(`HTTP ${response.status}`);
-		this.name = "HttpError";
-		this.response = response;
-	}
 }

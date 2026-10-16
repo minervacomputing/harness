@@ -4,13 +4,12 @@
 
 import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
-import { SETUP_KEY_HEADER } from "../../src/accounts/instance.ts";
 import { FAULTS_HEADER, faultsToken } from "../../src/faults/token.ts";
 import { PROBE_HEADER, probeToken } from "../../src/http/probe-token.ts";
 import { parseJson } from "../../src/lib/json.ts";
 
 test("every header carrying a secret has a name Workers Logs blank", () => {
-	for (const header of [PROBE_HEADER, FAULTS_HEADER, SETUP_KEY_HEADER]) expect(header).toMatch(/-(Token|Key)$/);
+	for (const header of [PROBE_HEADER, FAULTS_HEADER]) expect(header).toMatch(/-(Token|Key)$/);
 	expect(PROBE_HEADER).toBe("X-Minerva-Probe-Token");
 	expect(FAULTS_HEADER).toBe("X-Minerva-Faults-Token");
 });

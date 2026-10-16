@@ -35,12 +35,18 @@ function expectSecurityHeaders(headers: Headers) {
 describe(NAMES.app, () => {
 	const site = SITE;
 
-	test("/api/health answers with the security headers", async () => {
-		const reply = await fetchDeployed(`${site}/api/health`);
-		expect(reply.status).toBe(200);
-		expect(JSON.parse(reply.text)).toEqual({ ok: true });
-		expectSecurityHeaders(reply.headers);
-		expect(reply.headers.get("cache-control")).toBe("no-store");
+	test("the web API's former paths are 404 NOT_FOUND with the security headers", async () => {
+		const requests: [string, Parameters<typeof fetchDeployed>[1]][] = [
+			["/api/health", {}],
+			["/api/workspaces", {}],
+			["/api/auth/sign-in/email", { method: "POST", headers: { origin: "https://evil.example", "content-type": "application/json" }, body: "{}" }],
+		];
+		for (const [path, init] of requests) {
+			const reply = await fetchDeployed(`${site}${path}`, init);
+			expect([reply.status, JSON.parse(reply.text)], path).toEqual([404, { defined: true, code: "NOT_FOUND", status: 404, message: "Not found." }]);
+			expectSecurityHeaders(reply.headers);
+			expect(reply.headers.get("cache-control"), path).toBe("no-store");
+		}
 	});
 
 	test("a missing API route is 404 NOT_FOUND", async () => {
@@ -48,15 +54,6 @@ describe(NAMES.app, () => {
 		expect(reply.status).toBe(404);
 		expect(JSON.parse(reply.text)).toEqual({ defined: true, code: "NOT_FOUND", status: 404, message: "Not found." });
 		expectSecurityHeaders(reply.headers);
-	});
-
-	test("an unsafe request from another site, or from nowhere, is refused before any route", async () => {
-		for (const headers of [{}, { origin: "https://evil.example" }] as Record<string, string>[]) {
-			const reply = await fetchDeployed(`${site}/api/no-such-route`, { method: "POST", headers });
-			expect(reply.status).toBe(403);
-			expect(JSON.parse(reply.text)).toEqual({ defined: true, code: "CROSS_SITE", status: 403, message: "Cross-site request refused." });
-			expectSecurityHeaders(reply.headers);
-		}
 	});
 
 	test("/, a former client route and a former asset are 404 NOT_FOUND with the security headers", async () => {

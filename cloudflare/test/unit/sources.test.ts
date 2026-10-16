@@ -141,7 +141,7 @@ function evaluatedWith(entry: string): Set<string> {
 
 test("the connectors and the API router are loaded on first use, not at startup", () => {
 	// Cloudflare refuses a Worker whose startup takes too much CPU (cloudflare/README.md, Startup): the connectors'
-	// modules and the router (with Better Auth and the contract's procedures) are imported dynamically.
+	// modules and the router (with the internal API's procedures) are imported dynamically.
 	const catalog = join("src", "connectors", "catalog.ts");
 	const router = join("src", "http", "router.ts");
 	const production = evaluatedWith(join("src", "index.ts"));

@@ -1,11 +1,12 @@
 // The test build's Worker (cloudflare.config.ts, modes `faults` and `test`): the same Worker as src/index.ts, plus the fake
 // Notes connector and its provider (connector.ts, provider.ts), which also hosts the fake Laravel the engine calls
-// (laravel.ts, settings.ts), fault points in the Conversation's and the Workspace's ports (ports.ts, plan.ts), a mailbox
-// that keeps the emails it would send (mailbox.ts), and a token-gated driver at /api/faults/ for the account tests
-// (routes.ts). It is deployed only as a test instance; the production build's entry is src/index.ts, which imports nothing
-// from here (a unit test checks it), so none of this is in production.
+// (laravel.ts, settings.ts), fault points in the Conversation's and the Workspace's ports (ports.ts, plan.ts), and a
+// token-gated driver at /api/faults/ for the account tests (routes.ts). It is deployed only as a test instance; the
+// production build's entry is src/index.ts, which imports nothing from here (a unit test checks it), so none of this is in
+// production.
 
 import type { RunEvent } from "@minerva/contract";
+import { DurableObject } from "cloudflare:workers";
 import { createLocalJWKSet } from "jose";
 import worker from "../index.ts";
 import { CONNECTOR_SOURCE, servedConnectors } from "../connectors/index.ts";
@@ -14,16 +15,13 @@ import { defaultPorts, PORTS } from "../conversation/ports.ts";
 import { PAGE_LIMIT, type RunHead, RunStore } from "../conversation/store.ts";
 import type { RunId } from "../shared/rpc.ts";
 import { Workspace as BaseWorkspace, WORKSPACE_PORTS } from "../workspace/workspace.ts";
-import { FLOW_CLIENTS } from "../api/oauth-clients.ts";
-import { MAIL_TRANSPORT } from "../accounts/emails.ts";
 import { ACCESS_KEYS } from "../internal/access.ts";
 import { PROVIDER_NETWORK } from "../internal/providers.ts";
 import { LARAVEL_NETWORK } from "../laravel/client.ts";
 import { notesConnector } from "./connector.ts";
 import { hostedToken } from "./laravel.ts";
-import { captureEmail } from "./mailbox.ts";
 import { type Fault, type Fired, planOf } from "./plan.ts";
-import { executorContextOf, faultConversationPorts, faultFlowClients, faultWorkspacePorts, laravelFetch, providerFetch } from "./ports.ts";
+import { executorContextOf, faultConversationPorts, faultWorkspacePorts, laravelFetch, providerFetch } from "./ports.ts";
 import { faultRoutes } from "./routes.ts";
 import { FAULTS_SETTINGS } from "./settings.ts";
 
@@ -32,11 +30,6 @@ PORTS.factory = () => faultConversationPorts(defaultPorts);
 WORKSPACE_PORTS.factory = (deps, ctx, env) => faultWorkspacePorts(deps, ctx, env);
 // The settings calls' provider requests (src/internal/providers.ts) reach the fake provider too, and nothing else.
 PROVIDER_NETWORK.fetch = (env, workspace) => providerFetch(env, workspace.id);
-// Notes is listed and connects through OAuth with its fake provider's client (src/api/flows.ts).
-const flowClients = FLOW_CLIENTS.of;
-FLOW_CLIENTS.of = (env) => faultFlowClients(flowClients(env));
-// Emails go to the mailbox the driver reads, never out (the build has no Email Sending binding).
-MAIL_TRANSPORT.send = captureEmail;
 // The default Access issuer is a placeholder (settings.ts): its keys are never fetched, so every assertion is refused.
 const accessKeys = ACCESS_KEYS.of;
 ACCESS_KEYS.of = (issuer) => (issuer === FAULTS_SETTINGS.MINERVA_ACCESS_ISSUER ? createLocalJWKSet({ keys: [] }) : accessKeys(issuer));
@@ -159,7 +152,8 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 export { FaultProvider } from "./provider.ts";
-export { FaultMailbox } from "./mailbox.ts";
+/** Retired: kept exported, with no binding, until 13c deletes the class (docs/plans/chunk-13b-design.md). */
+export class FaultMailbox extends DurableObject {}
 // The Sandbox with the fault seams of the Sandbox row of ARCHITECTURE.md's Testing table (sandbox.ts), under production's export name.
 export { FaultSandbox as Sandbox } from "./sandbox.ts";
 export { Scripts } from "../scripts/scripts.ts";

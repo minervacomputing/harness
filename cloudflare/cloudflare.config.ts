@@ -1,7 +1,6 @@
 import { bindings, defineConfig, defineContainer, exports } from "cf/config";
 import * as faultsEntrypoint from "./src/faults/index.ts" with { type: "cf-worker" };
 import * as entrypoint from "./src/index.ts" with { type: "cf-worker" };
-import { parseFrom } from "./src/accounts/emails.ts";
 import { checkBuild, connectorClientSecrets, parse, type SettingsEnv } from "./src/config.ts";
 import { buildSettings } from "./scripts/build-settings.ts";
 import { type Instance, LOCAL_INSTANCES, type Names, SANDBOX_IMAGE_REFERENCE, chooseInstance, instanceForMode, instanceVars, namesOf, readInstanceEnv } from "./scripts/instance.ts";
@@ -188,16 +187,8 @@ export default defineConfig(({ mode }) => {
 				WORKSPACE: bindings.durableObject({ worker: target.names.app, exportName: "Workspace" }),
 				CONVERSATION: bindings.durableObject({ worker: target.names.app, exportName: "Conversation" }),
 				SCRIPTS: bindings.durableObject({ worker: target.names.app, exportName: "Scripts" }),
-				// The test build's fake provider (src/faults/provider.ts) and the mailbox that keeps its emails (mailbox.ts).
-				...(target.faults
-					? {
-							FAULT_PROVIDER: bindings.durableObject({ worker: target.names.app, exportName: "FaultProvider" }),
-							FAULT_MAILBOX: bindings.durableObject({ worker: target.names.app, exportName: "FaultMailbox" }),
-						}
-					: {}),
-				// Sign-up and sign-in codes (src/accounts/emails.ts), sent from MINERVA_EMAIL_FROM's address only. The
-				// test build has none: its emails go to its mailbox, or to the log in the platform tests (debug on).
-				...(target.faults ? {} : { EMAIL: bindings.sendEmail({ allowedSenderAddresses: [parseFrom(values.MINERVA_EMAIL_FROM).email] }) }),
+				// The test build's fake provider (src/faults/provider.ts).
+				...(target.faults ? { FAULT_PROVIDER: bindings.durableObject({ worker: target.names.app, exportName: "FaultProvider" }) } : {}),
 				// A container class cannot be bound by its own Worker's name, so the Sandbox is reached through
 				// ctx.exports.Sandbox instead of a binding (src/addressing.ts).
 
@@ -232,8 +223,7 @@ export default defineConfig(({ mode }) => {
 
 				// Uploaded from the instance's secrets.env by `pnpm run deploy`. A declared secret is required, so model
 				// keys (MINERVA_MODEL_API_KEY, MINERVA_BRAVE_SEARCH_API_KEY) join this list in the steps that use
-				// them; until then they are commented-out placeholders in that file. MINERVA_SETUP_KEY claims the
-				// instance's first admin, once (src/accounts/instance.ts).
+				// them; until then they are commented-out placeholders in that file.
 				MINERVA_SECRET_KEY: bindings.secret(),
 				MINERVA_ENCRYPTION_KEYS: bindings.secret(),
 				MINERVA_DOWNLOAD_KEY: bindings.secret(),
@@ -248,6 +238,7 @@ export default defineConfig(({ mode }) => {
 				Conversation: exports.durableObject({ storage: "sqlite" }),
 				Scripts: exports.durableObject({ storage: "sqlite" }),
 				Sandbox: container ? exports.durableObject({ storage: "sqlite", container }) : exports.durableObject({ storage: "sqlite" }),
+				// FaultMailbox is retired: exported with no binding until 13c deletes the class.
 				...(target.faults ? { FaultProvider: exports.durableObject({ storage: "sqlite" }), FaultMailbox: exports.durableObject({ storage: "sqlite" }) } : {}),
 			},
 		},

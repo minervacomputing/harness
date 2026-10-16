@@ -3,14 +3,20 @@
 // (contract/scenarios/facts.json). vitest.platform.config.ts turns the internal API on with the test's issuer.
 
 import { env, exports } from "cloudflare:workers";
-import { Catalog, type Fact, INTERNAL_PREFIX } from "@minerva/contract/internal";
-import { ORPCError } from "@orpc/client";
+import { Catalog, type Fact, INTERNAL_ERRORS, INTERNAL_PREFIX, INTERNAL_REFUSALS, MAX_INTERNAL_BODY } from "@minerva/contract/internal";
+import { ORPCError, createORPCClient } from "@orpc/client";
+import { type ContractRouterClient, oc, type } from "@orpc/contract";
+import type { JsonifiedClient } from "@orpc/openapi-client";
+import { OpenAPILink } from "@orpc/openapi-client/fetch";
+import { implement } from "@orpc/server";
 import { errors } from "jose";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
+import { z } from "zod";
 import scenarios from "../../../contract/scenarios/facts.json";
 import { SECURITY_HEADERS } from "../../src/http/headers.ts";
 import { createApp } from "../../src/http/router.ts";
 import { ACCESS_KEYS, ASSERTION_HEADER } from "../../src/internal/access.ts";
+import { contractHandler } from "../../src/internal/handler.ts";
 import { LARAVEL_NETWORK, LaravelUnreachable, laravelClient, retryable } from "../../src/laravel/client.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { FakeLaravel } from "../../src/faults/laravel.ts";
@@ -70,6 +76,124 @@ describe("the commands", () => {
 			expect(response.status, path).toBe(404);
 			expect(await response.json()).toMatchObject({ code: "NOT_FOUND" });
 		}
+	});
+});
+
+/** A refusal as the commands answer it. */
+function refusal(code: keyof typeof INTERNAL_REFUSALS, message: string): { defined: true; code: string; status: number; message: string } {
+	return { defined: true, code, status: INTERNAL_REFUSALS[code], message };
+}
+
+// A test-only contract, served by the commands' handler factory (internal/handler.ts) with their codes and body cap.
+const testContract = {
+	keys: oc
+		.errors(INTERNAL_ERRORS)
+		.route({ method: "POST", path: "/test/keys" })
+		.input(z.record(z.string(), z.number()))
+		.output(type<string[]>()),
+	optional: oc
+		.errors(INTERNAL_ERRORS)
+		.route({ method: "POST", path: "/test/optional" })
+		.input(z.object({}).optional())
+		.output(type<string>()),
+	failing: oc
+		.errors(INTERNAL_ERRORS)
+		.route({ method: "POST", path: "/test/failing" })
+		.input(z.object({ how: z.enum(["crash", "undeclared", "foreign"]) }))
+		.output(type<never>()),
+};
+const testApi = implement(testContract).$context<{ request: Request }>();
+const testHandler = contractHandler<{ request: Request }>(
+	testApi.router({
+		keys: testApi.keys.handler(({ input }) => Object.keys(input)),
+		optional: testApi.optional.handler(({ input }) => (input === undefined ? "none" : "a body")),
+		failing: testApi.failing.handler(({ input }) => {
+			if (input.how === "crash") throw new Error("a secret in a crash");
+			// Codes and statuses of the error map, but not made by `refusal`: oRPC alone would mark them declared.
+			if (input.how === "undeclared") throw new ORPCError("INTERNAL_SERVER_ERROR", { status: 500, message: "a secret", data: { secret: 1 } });
+			throw new ORPCError("toString", { status: 500, message: "a secret" });
+		}),
+	}),
+	{ codes: INTERNAL_REFUSALS, maxBody: MAX_INTERNAL_BODY },
+);
+
+async function testCall(request: Request): Promise<Response> {
+	const { matched, response } = await testHandler.handle(request, { context: { request } });
+	return matched ? response : new Response(null, { status: 404 });
+}
+
+const testClient: JsonifiedClient<ContractRouterClient<typeof testContract>> = createORPCClient(new OpenAPILink(testContract, { url: ORIGIN, fetch: testCall }));
+
+/** JSON whitespace one MB over the commands' cap, streamed without a declared length. */
+function overCap(): ReadableStream<Uint8Array> {
+	const chunk = new TextEncoder().encode(" ".repeat(1024 * 1024));
+	let sent = 0;
+	return new ReadableStream<Uint8Array>({
+		pull(controller) {
+			if (sent++ <= MAX_INTERNAL_BODY / chunk.length) controller.enqueue(chunk);
+			else controller.close();
+		},
+	});
+}
+
+describe("the body reader", () => {
+	test("an escaped key reads right after the runtime has seen a lone backslash as a key", async () => {
+		// The runtime's JSON.parse, once it has read "\\" as a key, reads a later "\n" in the same place as "\\" (lib/json.ts).
+		const shape = `probe${crypto.randomUUID().replaceAll("-", "")}`;
+		JSON.parse(`{"${shape}":0,"\\\\":1}`);
+		expect(Object.keys(JSON.parse(`{"${shape}":0,"\\n":1}`))[1]).toBe("\\");
+		const request = new Request(`${ORIGIN}/test/keys`, { method: "POST", headers: { "Content-Type": "application/json" }, body: `{"${shape}":0,"\\n":1}` });
+		expect(await (await testCall(request)).json()).toEqual([shape, "\n"]);
+		// Through the typed client, which writes the key with JSON.stringify.
+		expect(await testClient.keys({ [shape]: 0, "\n": 1 })).toEqual([shape, "\n"]);
+	});
+
+	test("a body that breaks off is refused as unreadable, in the contract's shape", async () => {
+		const body = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(new TextEncoder().encode('{"a":'));
+				controller.error(new TypeError("connection lost"));
+			},
+		});
+		const request = new Request(`${ORIGIN}/test/keys`, { method: "POST", headers: { "Content-Type": "application/json" }, body, duplex: "half" } as RequestInit);
+		const response = await testCall(request);
+		expect([response.status, await response.json()]).toEqual([400, refusal("INVALID_JSON", "The body is not valid JSON.")]);
+	});
+
+	test("a POST without a body, as a browser sends one (Content-Length: 0, no type), is no body; an empty body with a type is read", async () => {
+		const send = async (headers: Record<string, string>, body: string) => {
+			// Bytes, so the Request adds no type of its own.
+			const response = await testCall(new Request(`${ORIGIN}/test/optional`, { method: "POST", headers, body: new TextEncoder().encode(body) }));
+			return [response.status, await response.json()];
+		};
+		expect(await send({ "Content-Length": "0" }, "")).toEqual([200, "none"]);
+		expect(await send({ "Content-Type": "application/json" }, "")).toEqual([200, "none"]);
+		expect(await send({ "Content-Type": "application/json" }, "{}")).toEqual([200, "a body"]);
+		// Without a type, a body that is not empty is still refused.
+		expect(await send({}, "{}")).toEqual([415, refusal("UNSUPPORTED_MEDIA_TYPE", "Send the body as application/json.")]);
+	});
+
+	test("only our refusals pass as declared: a crash or an error we did not make is a 500 that says nothing", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			for (const how of ["crash", "undeclared", "foreign"] as const) {
+				const failed = await testClient.failing({ how }).catch((error: unknown) => error);
+				expect([how, failed]).toMatchObject([how, { defined: true, code: "INTERNAL_SERVER_ERROR", status: 500, message: "Something went wrong on the server." }]);
+				expect((failed as ORPCError<string, unknown>).data).toBeUndefined();
+			}
+		} finally {
+			vi.restoreAllMocks();
+		}
+	});
+
+	test("a form body is 415, not read as input", async () => {
+		const response = await call(`${INTERNAL_PREFIX}/runs/start`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "user=42" });
+		expect([response.status, await response.json()]).toEqual([415, refusal("UNSUPPORTED_MEDIA_TYPE", "Send the body as application/json.")]);
+	});
+
+	test("a streamed body over the cap is 413 without a declared length", async () => {
+		const response = await call(`${INTERNAL_PREFIX}/runs/start`, { method: "POST", headers: { "Content-Type": "application/json" }, body: overCap(), duplex: "half" } as RequestInit);
+		expect([response.status, await response.json()]).toEqual([413, refusal("PAYLOAD_TOO_LARGE", "The request is too large.")]);
 	});
 });
 

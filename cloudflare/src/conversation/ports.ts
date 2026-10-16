@@ -11,7 +11,7 @@ import { settings } from "../config.ts";
 import { conversationFolder } from "../files/folder.ts";
 import type { CheckpointOutcome, CheckpointScan, DownloadTarget, FolderUsage } from "../files/store.ts";
 import type { StagedUpload } from "../files/staging.ts";
-import type { ReservedUpload } from "../files/uploads.ts";
+import type { ReservedUpload } from "../files/staging.ts";
 import { systemClock } from "../gateway/clock.ts";
 import { type Executor, type ExecutorContext, createExecutor } from "../gateway/executor.ts";
 import { type DispatchResult, RUN_ENDED_MESSAGE, type SettledWrite, type Settlement, type WriteNote, WriteLedger as GatewayLedger } from "../gateway/ledger.ts";

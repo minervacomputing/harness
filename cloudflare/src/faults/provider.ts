@@ -5,10 +5,8 @@
 // can hold its answers to a path for a while, to keep a request in flight. Reached only through the test
 // build's network port (ports.ts), never from outside the Worker.
 //
-// Its authorization server: `authorize` stands for the user consenting on its page and returns
-// the code it would redirect with, bound to the client, the redirect URI and the PKCE challenge it was
-// given; the token endpoint redeems a code once, for the client and redirect URI it was issued to, with
-// the verifier of its challenge, and the tokens it issues belong to the account that consented (`/me`).
+// Its token endpoint redeems a code once, for the client and redirect URI it was issued to, with the verifier of its
+// challenge, and the tokens it issues belong to the account that consented (`/me`).
 //
 // It also hosts the workspace's fake Laravel (laravel.ts), at LARAVEL_HOST, in tables of its own; its requests are not in the
 // Notes request log. Its points, `laravel:<operation>` (`leaseToken`, `reportUnauthorized`, `deliverFacts`), fire once the
@@ -62,13 +60,6 @@ CREATE TABLE IF NOT EXISTS owners (token TEXT PRIMARY KEY, account_id TEXT NOT N
 /** The account the fake provider's tokens belong to unless a consent named another. */
 export const NOTES_ACCOUNT = { id: "notes-account-1", name: "Notes account" };
 
-/** What the provider's consent page would redirect back with. */
-export interface Consent {
-	code: string;
-	state: string | null;
-	redirectUri: string;
-}
-
 const DEFAULT_FOLDERS = [
 	{ id: "inbox", name: "Inbox", notes: ["Buy milk", "Call Ada"] },
 	{ id: "archive", name: "Archive", notes: ["Old note"] },
@@ -117,31 +108,6 @@ export class FaultProvider extends DurableObject<Env> {
 	/** Tokens a reconnect brings: valid from now on, as a provider's new grant would be. */
 	issue(access: string, refresh: string): void {
 		this.#sql().exec("INSERT OR REPLACE INTO tokens (value, kind, valid) VALUES (?, 'access', 1), (?, 'refresh', 1)", access, refresh);
-	}
-
-	/**
-	 * The user consents on the provider's page for the authorization request `url` (the authorize URL the
-	 * API answered), as `account`: a code bound to its client, redirect URI and PKCE challenge.
-	 */
-	authorize(url: string, account: { id: string; name: string } = NOTES_ACCOUNT): Consent {
-		const params = new URL(url).searchParams;
-		const clientId = params.get("client_id");
-		const redirectUri = params.get("redirect_uri");
-		if (clientId !== NOTES_CLIENT.clientId || params.get("response_type") !== "code" || !redirectUri) throw new Error("Not an authorization request for the Notes client.");
-		const method = params.get("code_challenge_method");
-		if (method !== null && method !== "S256") throw new Error("Only S256 challenges.");
-		const code = `notes-code-${crypto.randomUUID()}`;
-		this.#sql().exec(
-			"INSERT INTO codes (code, client_id, redirect_uri, challenge, scope, account_id, account_name, used) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
-			code,
-			clientId,
-			redirectUri,
-			params.get("code_challenge"),
-			params.get("scope") ?? "",
-			account.id,
-			account.name,
-		);
-		return { code, state: params.get("state"), redirectUri };
 	}
 
 	setDelays(delays: { [prefix: string]: number }): void {

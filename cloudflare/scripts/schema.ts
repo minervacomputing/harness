@@ -1,7 +1,6 @@
 // The deployed D1 database's schema against what the code expects (scripts/schema-check.ts runs it before
-// `cf deploy`). Better Auth's own check is off (`validateSchema: false`, src/accounts/auth-options.ts), and
-// nothing else notices a table or column that migrations/ never made, or one that is missing, until a request
-// fails on it. What the code expects is what migrations/ builds: the files are run, in order, on an empty
+// `cf deploy`). Nothing else notices a table or column that migrations/ never made, or one that is missing, until a
+// request fails on it. What the code expects is what migrations/ builds: the files are run, in order, on an empty
 // SQLite database, and the same read-only queries are asked of it and of D1.
 //
 // Compared: tables, their columns (name, declared type, NOT NULL, default, primary-key position; not the order),

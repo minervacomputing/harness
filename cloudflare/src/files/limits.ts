@@ -101,30 +101,6 @@ export function overFolder(limit: "folder_entries" | "folder_bytes", folderEntri
 	return `These files would make this conversation's folder larger than ${sizeText(folderBytes)}.`;
 }
 
-/** The 413 of a body over the upload limit. */
-export function uploadTooLarge(uploadBytes: number): string {
-	return `A file can be at most ${sizeText(uploadBytes)}.`;
-}
-
-// Uploads, in the order the checks run.
-export const USE_POST = "Use POST.";
-export const SEND_LENGTH = "Send a Content-Length.";
-export const INVALID_LENGTH = "Invalid Content-Length.";
-export const NAME_THE_FILE = "Name the file with ?name=.";
-export const TOO_SLOW = "The file took too long to arrive.";
-export const BODY_LONGER = "The body is longer than its Content-Length.";
-export const BODY_SHORTER = "The body is shorter than its Content-Length.";
-
-/** An upload's body still arriving 15 minutes after its start is refused. */
-export const UPLOAD_DEADLINE_MS = 15 * 60 * 1000;
-
-/**
- * After that deadline the upload waits this long for its write to R2 to settle before it is abandoned: a
- * write that ends after the Workspace has deleted the object would put it back. A body that has stopped
- * never settles, so the wait is short.
- */
-export const UPLOAD_SETTLE_MS = 5_000;
-
 // Checkpoints: `CheckpointRefused`'s messages.
 export const STALE = "This attempt is no longer the run's current one.";
 export const CONFLICT = "The parent is not the run's last checkpoint.";

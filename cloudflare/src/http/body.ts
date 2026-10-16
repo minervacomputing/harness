@@ -1,8 +1,7 @@
-// JSON request bodies. Every one is read with `readJson`, the contract's routes (internal/handler.ts `jsonBody`) and
-// Better Auth's (accounts/auth.ts) alike, never with `c.req.json()`: `Content-Type: application/json`
-// (parameters such as `; charset=utf-8` allowed), at most 2.5 MB declared or streamed, strict UTF-8, then
-// lib/json.ts's `parseJson`, which the runtime's JSON.parse cannot replace (see there;
-// test/unit/sources.test.ts checks it). Uploads are raw bodies and do not come through here.
+// JSON request bodies. Every one is read with `readJson`, as the contract's routes do (internal/handler.ts `jsonBody`),
+// never with `c.req.json()`: `Content-Type: application/json` (parameters such as `; charset=utf-8` allowed), at most
+// 2.5 MB or the caller's limit, declared or streamed, strict UTF-8, then lib/json.ts's `parseJson`, which the runtime's
+// JSON.parse cannot replace (see there; test/unit/sources.test.ts checks it).
 
 import { concatAll } from "../lib/bytes.ts";
 import { type Json, parseJsonBytes } from "../lib/json.ts";

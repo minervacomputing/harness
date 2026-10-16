@@ -61,7 +61,7 @@ import {
 import { numbered } from "./names.ts";
 import { type Bucket, blobKey, conversationPrefix, deletePrefix } from "./objects.ts";
 import { sha256HexSync } from "./sha256.ts";
-import type { ReservedUpload } from "./uploads.ts";
+import type { ReservedUpload } from "./staging.ts";
 
 /** A file a signed download link may name (ARCHITECTURE.md: Files, Downloads). */
 export interface DownloadTarget {

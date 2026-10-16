@@ -1,20 +1,14 @@
 // The test build's driver (src/faults/): POST /api/faults/<op> with a JSON body, for the account tests, and Laravel's
 // commands at /api/faults/internal/<path>, any method, served as /internal/<path> is past its Access check.
 // It answers only a request with `X-Minerva-Faults-Token: <faultsToken(MINERVA_SECRET_KEY)>`; any other request
-// is passed on to the Worker, which answers as it would without the driver (404, or 403 for a POST from another
-// origin). Its worlds are Laravel's: the workspace a body's `scope` names has the fake provider and the fake Laravel
-// (provider.ts, laravel.ts), and its conversations are in the EU, as Laravel's are. The driver sets a world up and reads
-// it; its runs are started, cancelled and read back through Laravel's commands. Operations under `sandbox/` drive a
-// Sandbox object of their own (lab.ts). The browser walk's operations name an API `workspace` instead, or nothing:
-// `emails` and `emails-clear` read and empty the mailbox the build's emails go to (mailbox.ts); `download` serves a
-// signed download link as the download origin (files-worker/) would, from the test Worker's own buckets, for the platform
-// tests (the browser walk downloads through the test instance's deployed download origin). `setup-reopen` deletes the
-// instance's setup claim (not the admins it made), so each browser walk claims the first-run setup through its page.
-// `password-hash` hashes one password with Better Auth's hasher and does nothing else, so the request's CPU time is the
-// hash's: how a password's cost is measured on the edge.
+// is passed on to the Worker, which answers as it would without the driver (404). Its worlds are Laravel's: the workspace
+// a body's `scope` names has the fake provider and the fake Laravel (provider.ts, laravel.ts), and its conversations are
+// in the EU, as Laravel's are. The driver sets a world up and reads it; its runs are started, cancelled and read back
+// through Laravel's commands. Operations under `sandbox/` drive a Sandbox object of their own (lab.ts). `download` serves
+// a signed download link as the download origin (files-worker/) would, from the test Worker's own buckets, for the
+// platform tests.
 
 import type { Scope } from "@minerva/contract/internal";
-import { hashPassword } from "better-auth/crypto";
 import { conversationObject, sandboxObject } from "../addressing.ts";
 import { serveDownload } from "../files/download.ts";
 import { conversationPrefix } from "../files/objects.ts";
@@ -27,7 +21,6 @@ import type { WorkspaceRef } from "../shared/rpc.ts";
 import type { Conversation } from "./index.ts";
 import type { FakeRun } from "./laravel.ts";
 import { SandboxLab } from "./lab.ts";
-import { mailboxOf } from "./mailbox.ts";
 import type { Fault } from "./plan.ts";
 import { providerOf } from "./ports.ts";
 import type { FaultSandbox } from "./sandbox.ts";
@@ -81,38 +74,6 @@ async function stage(bucket: R2Bucket, workspace: string, body: Body): Promise<{
 	await source.pipeTo(sized.writable);
 	await storing;
 	return { upload, size: filler };
-}
-
-/** Deletes the setup claim, so the next claim through `/setup` succeeds; the admins it made stay admins. */
-async function reopenSetup(db: D1Database): Promise<unknown> {
-	const deleted = await db.prepare("DELETE FROM instance_setup WHERE id = 1").run();
-	return { reopened: (deleted.meta.changes ?? 0) > 0 };
-}
-
-/** One hash with Better Auth's hasher (or none, `rounds` 0, for the request's own cost), and the clocks around it. */
-async function timePasswordHash(body: Body): Promise<unknown> {
-	const rounds = body.rounds === 0 ? 0 : 1;
-	const wall = Date.now();
-	const perf = performance.now();
-	if (rounds) await hashPassword("a password for the measurement");
-	return { rounds, dateMs: Date.now() - wall, perfMs: performance.now() - perf };
-}
-
-/** The browser walk's operations on a workspace the API made. */
-async function apiOperation(op: string, body: Body, env: Env): Promise<unknown> {
-	const ref = body.workspace as unknown as WorkspaceRef;
-	switch (op) {
-		case "conversation-model":
-			// A conversation made through the API (the browser walk) gets Workers AI (`workers-ai`) or the fake
-			// model (null). Set it before the conversation's first run: its object keeps the model it first called.
-			await conversationOf(env, ref, String(body.conversationId)).faultPlan([], { model: (body.model ?? null) as string | null });
-			return { ok: true };
-		case "provider-authorize":
-			// The user consents on the fake provider's page for an authorize URL the API answered (provider.ts).
-			return providerOf(env, ref.id).authorize(String(body.url), (body.account ?? undefined) as { id: string; name: string } | undefined);
-		default:
-			return null;
-	}
 }
 
 /** The operations on a Laravel world: the workspace `scope` names, and its conversation `conversationId`. */
@@ -169,12 +130,7 @@ async function laravelOperation(op: string, body: Body, env: Env, exports: Cloud
 
 async function operation(op: string, body: Body, env: Env, exports: Cloudflare.Exports): Promise<unknown> {
 	if (op.startsWith("sandbox/")) return new SandboxLab(env, exports).run(op.slice("sandbox/".length), body);
-	if (op === "emails") return { emails: await mailboxOf(env).list(typeof body.to === "string" ? body.to : null) };
-	if (op === "emails-clear") return { cleared: await mailboxOf(env).clear(typeof body.to === "string" ? body.to : null) };
-	if (op === "setup-reopen") return reopenSetup(env.DB);
-	if (op === "password-hash") return timePasswordHash(body);
 	if (body.scope !== undefined) return laravelOperation(op, body, env, exports);
-	if (body.workspace !== undefined) return apiOperation(op, body, env);
 	return null;
 }
 

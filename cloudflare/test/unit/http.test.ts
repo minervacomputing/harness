@@ -1,42 +1,11 @@
 import { describe, expect, test } from "vitest";
 import { MAX_JSON_BODY, readJson } from "../../src/http/body.ts";
-import { fromSite } from "../../src/http/csrf.ts";
 import { errorAnswer, noRoute, unauthorized } from "../../src/http/errors.ts";
 import { DEFAULT_CSP, withSecurityHeaders } from "../../src/http/headers.ts";
-import { OWN_SIZE_LIMIT, UPLOAD_ROUTE, createApp } from "../../src/http/router.ts";
+import { createApp } from "../../src/http/router.ts";
 import { settingsEnv } from "./settings.ts";
 
 const SITE = "https://minerva.example";
-
-function post(headers: Record<string, string>, url = `${SITE}/api/x`, method = "POST"): Request {
-	return new Request(url, { method, headers });
-}
-
-describe("CSRF", () => {
-	test("safe methods pass", () => {
-		for (const method of ["GET", "HEAD", "OPTIONS"]) expect(fromSite(post({ Origin: "https://evil.example" }, undefined, method), SITE), method).toBe(true);
-	});
-
-	test("an Origin must be the site's exactly, whatever Sec-Fetch-Site says", () => {
-		expect(fromSite(post({ Origin: SITE }), SITE)).toBe(true);
-		expect(fromSite(post({ Origin: SITE, "Sec-Fetch-Site": "cross-site" }), SITE)).toBe(true);
-		for (const origin of ["null", "https://evil.example", "https://app.minerva.example", "http://minerva.example", "https://minerva.example:8443", `${SITE}/`, "", "https://MINERVA.example"]) {
-			expect(fromSite(post({ Origin: origin, "Sec-Fetch-Site": "same-origin" }), SITE), origin).toBe(false);
-		}
-		// The request's own origin is not the site's: only MINERVA_SITE_URL counts.
-		expect(fromSite(post({ Origin: "https://other.example" }, "https://other.example/api/x"), SITE)).toBe(false);
-	});
-
-	test("without Origin, Sec-Fetch-Site must be same-origin; with neither, refused", () => {
-		expect(fromSite(post({ "Sec-Fetch-Site": "same-origin" }), SITE)).toBe(true);
-		for (const site of ["same-site", "cross-site", "none", "Same-Origin"]) expect(fromSite(post({ "Sec-Fetch-Site": site }), SITE), site).toBe(false);
-		expect(fromSite(post({}), SITE)).toBe(false);
-		expect(fromSite(post({ Referer: `${SITE}/w/x/chat` }), SITE)).toBe(false);
-		expect(fromSite(post({}, undefined, "PATCH"), SITE)).toBe(false);
-		// Same origin as another hostname of the Worker is not the site's.
-		expect(fromSite(post({ "Sec-Fetch-Site": "same-origin" }, "https://minerva.workers.example/api/x"), SITE)).toBe(false);
-	});
-});
 
 describe("error shapes", () => {
 	test("a refusal is the contract's: declared, its code with the code's status, and a sentence", async () => {
@@ -106,66 +75,14 @@ describe("JSON bodies", () => {
 });
 
 describe("router", () => {
-	// Debug is off here, so the accounts routes need a mailer (src/accounts/emails.ts: checkMailer).
-	const env = { ...settingsEnv(), EMAIL: { send: async () => ({ messageId: "m" }) } } as unknown as Env;
-	const site = { Origin: SITE };
-
-	test("health", async () => {
-		const response = await createApp().request("/api/health", {}, env);
-		expect(response.status).toBe(200);
-		expect(await response.json()).toEqual({ ok: true });
-		expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
-	});
+	const env = settingsEnv() as unknown as Env;
 
 	test("a missing route is 404 NOT_FOUND, with the security headers", async () => {
 		for (const path of ["/api/nope", "/api/me/", "/api/workspaces/not-a-uuid/agents", "/api/csrf"]) {
-			const response = await createApp().request(path, { method: "POST", headers: site }, env);
+			const response = await createApp().request(path, { method: "POST", headers: { Origin: SITE } }, env);
 			expect(response.status).toBe(404);
 			expect(await response.json()).toEqual({ defined: true, code: "NOT_FOUND", status: 404, message: "Not found." });
 			expect(response.headers.get("Content-Security-Policy")).toBe(DEFAULT_CSP);
 		}
-	});
-
-	test("every unsafe request fails closed from another site, before any route runs, matched or not", async () => {
-		const app = createApp();
-		const ran: string[] = [];
-		app.post("/api/route", () => (ran.push("route"), unauthorized()));
-		// Only POSTs under /api/auth/ are exempt (Better Auth's route answers them all), not every method there.
-		app.delete("/api/auth/session", () => (ran.push("auth"), unauthorized()));
-		app.use("/api/mounted/*", async () => (ran.push("mounted"), unauthorized()));
-		const crossSite = { defined: true, code: "CROSS_SITE", status: 403, message: "Cross-site request refused." };
-		for (const [method, path] of [["POST", "/api/route"], ["DELETE", "/api/auth/session"], ["POST", "/api/mounted/x"], ["POST", "/api/nope"], ["PUT", "/api/health"]]) {
-			const response = await app.request(path!, { method, headers: { Origin: "https://evil.example" } }, env);
-			expect([method, path, response.status, await response.json()]).toEqual([method, path, 403, crossSite]);
-			expect(response.headers.get("Content-Security-Policy")).toBe(DEFAULT_CSP);
-		}
-		expect(ran).toEqual([]);
-		expect((await app.request("/api/route", { method: "POST", headers: site }, env)).status).toBe(401);
-		expect((await app.request("/api/mounted/x", { method: "POST", headers: site }, env)).status).toBe(401);
-		// The upload is checked first too; then its own checks: here the missing Content-Length, and 405 for its other methods.
-		const uploads = `/api/workspaces/${"0".repeat(8)}-0000-7000-8000-${"0".repeat(12)}/uploads`;
-		expect((await app.request(uploads, { method: "POST" }, env)).status).toBe(403);
-		const upload = await app.request(uploads, { method: "POST", headers: site }, env);
-		expect([upload.status, await upload.json()]).toEqual([411, { defined: true, code: "LENGTH_REQUIRED", status: 411, message: "Send a Content-Length." }]);
-		for (const method of ["PUT", "PATCH", "DELETE"]) {
-			const other = await app.request(uploads, { method, headers: site }, env);
-			expect([method, other.status, await other.json()]).toEqual([method, 405, { defined: true, code: "METHOD_NOT_ALLOWED", status: 405, message: "Use POST." }]);
-		}
-		expect(ran).toEqual(["route", "mounted"]);
-		expect([...OWN_SIZE_LIMIT]).toEqual(["POST", "PUT", "PATCH", "DELETE"].map((method) => `${method} ${UPLOAD_ROUTE}`));
-	});
-
-	test("a declared body over 2.5 MB is 413 everywhere but the upload", async () => {
-		const app = createApp();
-		app.post("/api/route", () => unauthorized());
-		const big = { ...site, "Content-Length": String(MAX_JSON_BODY + 1) };
-		for (const path of ["/api/route", "/api/nope"]) {
-			const response = await app.request(path, { method: "POST", headers: big }, env);
-			expect(response.status, path).toBe(413);
-			expect(await response.json()).toEqual({ defined: true, code: "PAYLOAD_TOO_LARGE", status: 413, message: "The request is too large." });
-		}
-		// The upload's own limit applies instead (50 MB): this one gets as far as its missing name.
-		const upload = await app.request(`/api/workspaces/${"0".repeat(8)}-0000-7000-8000-${"0".repeat(12)}/uploads`, { method: "POST", headers: big }, env);
-		expect([upload.status, await upload.json()]).toEqual([400, { defined: true, code: "FILE_NAME_MISSING", status: 400, message: "Name the file with ?name=." }]);
 	});
 });

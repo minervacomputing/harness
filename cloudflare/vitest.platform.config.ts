@@ -29,8 +29,6 @@ export default defineConfig(async () => {
 				remoteBindings: false,
 				miniflare: {
 					bindings: { TEST_MIGRATIONS: migrations },
-					// Empty databases the schema tests migrate themselves (test/platform/accounts-schema.test.ts).
-					d1Databases: ["UPGRADE_DB", "UPGRADE_TWO_FACTOR_DB", "UPGRADE_PLAIN_DB", "UPGRADE_VERIFICATION_DB"],
 					// cloudflare.config.ts binds the Worker's own classes by its name; the tests run it under
 					// another name, so the bindings name the classes alone.
 					durableObjects: {
@@ -39,14 +37,13 @@ export default defineConfig(async () => {
 						SCRIPTS: { className: "Scripts", useSQLite: true },
 						// Mode `test` builds the test Worker's entry (src/faults/index.ts), with its fake provider.
 						FAULT_PROVIDER: { className: "FaultProvider", useSQLite: true },
-						FAULT_MAILBOX: { className: "FaultMailbox", useSQLite: true },
 					},
 				},
 			}),
 		],
 		test: {
 			include: ["test/platform/**/*.test.ts"],
-			// The Worker hashes passwords and runs whole turns in these tests: a test that takes 2 s on a laptop takes
+			// The Worker runs whole turns in these tests: a test that takes 2 s on a laptop takes
 			// over 5 s on CI's two cores, so the default timeout is too short.
 			testTimeout: 30_000,
 			setupFiles: ["test/platform/setup.ts"],

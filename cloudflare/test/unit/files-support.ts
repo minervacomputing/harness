@@ -4,7 +4,7 @@
 
 import { MIGRATIONS } from "../../src/conversation/schema.ts";
 import type { FileMode, FolderWarnings } from "../../src/files/manifest.ts";
-import type { ReservedUpload } from "../../src/files/uploads.ts";
+import type { ReservedUpload } from "../../src/files/staging.ts";
 import type { CheckpointUploadPlan, CheckpointUploadResult } from "../../src/sandbox/folder.ts";
 import { CHECK_MISMATCH } from "../../src/sandbox/ports.ts";
 import type { Bucket, StoredObject } from "../../src/files/objects.ts";

@@ -1,6 +1,5 @@
 // The Stripe connector: money, the client's error names, the key check, discovery and naming, and runs
 // through the executor against FakeStripe behind an injected `fetch` (test/fixtures/connectors/stripe/fake.ts).
-// Connecting with a key goes through the Workspace's saveConnection after the connector's account().
 
 import { describe, expect, test } from "vitest";
 import { CONNECTORS } from "../../src/connectors/catalog.ts";
@@ -15,30 +14,11 @@ import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry, validate } from "../../src/gateway/registry.ts";
 import { fromUtf8 } from "../../src/lib/bytes.ts";
-import { EncryptionKeys } from "../../src/lib/encryption.ts";
 import type { Json } from "../../src/lib/json.ts";
-import type { Connection } from "@minerva/contract";
-import type { Caller, ConnectionId, Outcome } from "../../src/shared/rpc.ts";
-import { WorkspaceCore } from "../../src/workspace/core.ts";
-import { ADA, EVE, FakeStripe, GONE, GRACE, KEY, LIVE_KEY, OTHER_KEY, SECRET } from "../fixtures/connectors/stripe/fake.ts";
+import type { ConnectionId } from "../../src/shared/rpc.ts";
+import { ADA, EVE, FakeStripe, GONE, GRACE, KEY, LIVE_KEY, SECRET } from "../fixtures/connectors/stripe/fake.ts";
 import { validated } from "./connector-runs.ts";
 import { Scenario, userGrants } from "./executor-fakes.ts";
-import {
-	ADA as OWNER,
-	FakeConversations,
-	FakeObjects,
-	FakeOAuth,
-	FakeTimers,
-	KEYS,
-	SETTINGS,
-	TokenEndpoint,
-	WORKSPACE,
-	USER as OWNER_ID,
-	credentials,
-	database,
-	nodeSql,
-	type Harness,
-} from "./workspace-support.ts";
 
 const STRIPE: ConnectionId = "0199a000-0000-7000-8000-0000000000d1";
 const registry = await Registry.create([stripeConnector()]);
@@ -620,96 +600,6 @@ describe("credits", () => {
 		// "5.00" is another write: the key is over the normalized fields.
 		await run.ok("stripe_credit_customer", credit(ADA, "5.00"));
 		expect(stripe.writes).toHaveLength(2);
-	});
-});
-
-// Connecting with a key
-
-/** The Workspace's core over node:sqlite with only the Stripe connector. */
-async function workspace(): Promise<Pick<Harness, "core" | "sql" | "keys">> {
-	const db = database();
-	const sql = nodeSql(db);
-	const keys = await EncryptionKeys.parse(KEYS);
-	const timers = new FakeTimers();
-	const core = new WorkspaceCore({
-		sql,
-		timers,
-		keys,
-		registry,
-		settings: SETTINGS,
-		conversations: new FakeConversations(),
-		objects: new FakeObjects(),
-		oauth: new FakeOAuth(),
-		fetch: new TokenEndpoint().fetch,
-		log: () => {},
-	});
-	await core.init({ workspace: { id: WORKSPACE, jurisdiction: null }, kind: "personal", ownerId: OWNER_ID, createdAt: timers.now() });
-	return { core, sql, keys };
-}
-
-/**
- * Saving a key as the key routes do: the account from the connector with the new key (its errors are the
- * 422's detail), then the Workspace's save.
- */
-async function saveKey(core: WorkspaceCore, stripe: FakeStripe, caller: Caller, key: string, connectionId: ConnectionId | null = null): Promise<Outcome<Connection>> {
-	const connector = registry.get("stripe");
-	if (connector.auth.type !== "api_key") return { ok: false, refusal: { code: "WRONG_CONNECTION_METHOD", detail: "This provider does not connect with a key." } };
-	const client = connector.client(key, settingsIo(stripe.fetch));
-	let account: { id: string; label: string };
-	try {
-		account = await connector.account(client);
-	} catch (error) {
-		if (error instanceof OperationError) return { ok: false, refusal: { code: "KEY_REFUSED", detail: error.message } };
-		throw error;
-	} finally {
-		await client.close();
-	}
-	return core.saveConnection(caller, { provider: "stripe", account, credentials: { kind: "api_key", key }, connectionId });
-}
-
-describe("connecting with a key", () => {
-	test("keys connect and are never returned", async () => {
-		const stripe = new FakeStripe();
-		const auth = registry.get("stripe").auth;
-		expect(auth.type).toBe("api_key");
-		if (auth.type !== "api_key") return;
-		expect(auth.label).toBe("Restricted API key");
-		expect(auth.hint).toContain("rk_live_");
-
-		const { core, sql, keys } = await workspace();
-		const refused = await saveKey(core, stripe, OWNER, `sk_live_${"s".repeat(24)}`);
-		expect(refused.ok).toBe(false);
-		expect(JSON.stringify(refused)).not.toContain("sk_live_");
-		const tooLong = await saveKey(core, stripe, OWNER, `rk_test_${"x".repeat(600)}`);
-		expect(tooLong.ok).toBe(false);
-		expect(JSON.stringify(tooLong)).not.toContain("x".repeat(50));
-
-		const created = await saveKey(core, stripe, OWNER, KEY);
-		if (!created.ok) throw new Error(created.refusal.detail);
-		expect([created.value.label, created.value.auth]).toEqual(["Acme (test mode)", "api_key"]);
-		expect(JSON.stringify(created)).not.toContain(KEY);
-		const live = await saveKey(core, stripe, OWNER, LIVE_KEY);
-		if (!live.ok) throw new Error(live.refusal.detail);
-		expect(live.value.id).not.toBe(created.value.id);
-		const row = sql.exec<{ external_account_id: string }>("SELECT external_account_id FROM connections WHERE id = ?", created.value.id)[0];
-		expect(row?.external_account_id).toBe("acct_1:test");
-		const h = { sql, keys } as Harness;
-		expect(await credentials(h, created.value.id)).toEqual({ kind: "api_key", key: KEY });
-
-		const other = await saveKey(core, stripe, OWNER, OTHER_KEY, created.value.id);
-		expect(other.ok).toBe(false);
-		if (!other.ok) expect(other.refusal).toEqual({ code: "DIFFERENT_ACCOUNT", detail: "This key is for a different Stripe account. Use a key for Acme (test mode)." });
-		expect((await saveKey(core, stripe, OWNER, LIVE_KEY, created.value.id)).ok).toBe(false);
-		const renewed = `rk_test_${"d".repeat(24)}`;
-		stripe.accounts.set(renewed, "acct_1");
-		sql.exec("UPDATE connections SET status = 'error' WHERE id = ?", created.value.id);
-		const replaced = await saveKey(core, stripe, OWNER, renewed, created.value.id);
-		if (!replaced.ok) throw new Error(replaced.refusal.detail);
-		expect(replaced.value.status).toBe("active");
-		expect(JSON.stringify(replaced)).not.toContain(renewed);
-		expect((await credentials(h, created.value.id)).key).toBe(renewed);
-		// The connection shows where its keys are managed.
-		expect([replaced.value.manageLabel, replaced.value.manageUrl]).toEqual(["Manage keys in Stripe", "https://dashboard.stripe.com/apikeys"]);
 	});
 });
 

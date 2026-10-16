@@ -433,8 +433,8 @@ if (command === "auth whoami") {
 	/** The live version's bindings, as `cf workers versions get` answers them, of each build. */
 	const object = (className: string) => ({ type: "durable_object_namespace", class_name: className, namespace_id: "n" });
 	const APP = { DB: { type: "d1" }, WORKSPACE: object("Workspace"), CONVERSATION: object("Conversation"), MINERVA_SITE_URL: { type: "plain_text", text: "https://site.example" } };
-	const PRODUCTION_BUILD = { ...APP, EMAIL: { type: "send_email" } };
-	const TEST_BUILD = { ...APP, FAULT_PROVIDER: object("FaultProvider"), FAULT_MAILBOX: object("FaultMailbox") };
+	const PRODUCTION_BUILD = APP;
+	const TEST_BUILD = { ...APP, FAULT_PROVIDER: object("FaultProvider") };
 	// What the account shows of the quiesced Worker: it binds nothing of its own, and keeps the app's secrets.
 	const QUIESCED = { MINERVA_SECRET_KEY: { type: "secret_text" }, MINERVA_SETUP_KEY: { type: "secret_text" } };
 
@@ -583,7 +583,8 @@ if (command === "auth whoami") {
 
 	test("bindings of neither build, or an app not served by one version, stop", () => {
 		migrate(false);
-		for (const env of [{ ...PRODUCTION_BUILD, FAULT_PROVIDER: object("FaultProvider") }, { ...TEST_BUILD, EMAIL: { type: "send_email" } }, APP, { ...TEST_BUILD, FAULT_MAILBOX: { type: "d1" } }]) {
+		const { CONVERSATION: _conversation, ...noConversation } = APP;
+		for (const env of [{ ...noConversation, FAULT_PROVIDER: object("FaultProvider") }, noConversation, { ...TEST_BUILD, FAULT_PROVIDER: { type: "d1" } }, { ...APP, CONVERSATION: { type: "d1" } }]) {
 			account = { workers: ["acme"], env };
 			const result = identity(["--instance", "acme"]);
 			expect(result.status).toBe(1);

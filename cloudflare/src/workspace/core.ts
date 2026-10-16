@@ -12,7 +12,7 @@ import type { CancelAck } from "../conversation/conversation.ts";
 import { type CancelReason, START_FAILED } from "../conversation/events.ts";
 import { EXPIRED } from "../conversation/laravel-runs.ts";
 import { type FolderLimit, NO_LONGER_AVAILABLE, NO_ROOM, overFolder, pages } from "../files/limits.ts";
-import type { ReservedUpload } from "../files/uploads.ts";
+import type { ReservedUpload } from "../files/staging.ts";
 import { ACCOUNT_KIND, type CredentialPayload } from "../gateway/connector.ts";
 import type { SealedLease } from "../gateway/executor.ts";
 import { type GrantChange, type GrantRow, InvalidGrants, type LayerRows, checkChanges, planGrantChanges, resourceKey } from "../gateway/grants.ts";

@@ -1,11 +1,9 @@
 // Names, types and messages of agent files: cleaned and numbered names, sniffed media types, sizes in
-// words, the upload's `?name=`, the request checks made before an upload's body, and the folder-limit
-// messages.
+// words, the upload's `?name=`, and the folder-limit messages.
 
 import { describe, expect, test } from "vitest";
-import { folderLimitMessage, mib, overFolder, uploadTooLarge } from "../../src/files/limits.ts";
+import { folderLimitMessage, mib, overFolder } from "../../src/files/limits.ts";
 import { cleanName, numbered, sniff, uploadName } from "../../src/files/names.ts";
-import { checkUploadRequest } from "../../src/files/uploads.ts";
 
 const encoder = new TextEncoder();
 
@@ -128,32 +126,6 @@ describe("messages", () => {
 	test("attachments over a folder limit are refused with a thousands separator", () => {
 		expect(overFolder("folder_entries", 10_000, limits.folderBytes)).toBe("These files would put more than 10,000 files and folders in this conversation's folder.");
 		expect(overFolder("folder_bytes", 10_000, limits.folderBytes)).toBe("These files would make this conversation's folder larger than 256 MB.");
-		expect(uploadTooLarge(52_428_800)).toBe("A file can be at most 50 MB.");
 		expect([mib(2 ** 20), mib(2 ** 30), mib(1.5 * 2 ** 20), mib(2 ** 20 - 1), mib(0)]).toEqual(["1 MiB", "1024 MiB", "2 MiB", "1048575 bytes", "0 bytes"]);
-	});
-});
-
-describe("an upload's request, before its body", () => {
-	const url = "https://minerva.example/api/workspaces/0199a000-0000-7000-8000-000000000001/uploads";
-	const request = (init: { method?: string; length?: string | null; query?: string }) => {
-		const headers = new Headers();
-		if (init.length !== null) headers.set("content-length", init.length ?? "5");
-		return { method: init.method ?? "POST", headers, url: `${url}${init.query ?? "?name=..%2FQ3%20report.pdf"}` };
-	};
-
-	test("POST, one Content-Length of digits at most the limit, then exactly one name, cleaned", () => {
-		expect(checkUploadRequest(request({}), 10)).toEqual({ ok: true, value: { size: 5, name: "Q3 report.pdf" } });
-		expect(checkUploadRequest(request({ method: "PUT", length: null, query: "" }), 10)).toEqual({ ok: false, refusal: { code: "METHOD_NOT_ALLOWED", detail: "Use POST." } });
-		expect(checkUploadRequest(request({ length: null, query: "" }), 10)).toEqual({ ok: false, refusal: { code: "LENGTH_REQUIRED", detail: "Send a Content-Length." } });
-		// The runtime strips a header value's surrounding whitespace.
-		for (const length of ["-5", "", "5, 5", "0x5", "5.0", "+5"]) {
-			expect(checkUploadRequest(request({ length, query: "" }), 10)).toEqual({ ok: false, refusal: { code: "INVALID_CONTENT_LENGTH", detail: "Invalid Content-Length." } });
-		}
-		expect(checkUploadRequest(request({ length: "11", query: "" }), 10)).toEqual({ ok: false, refusal: { code: "FILE_TOO_LARGE", detail: "A file can be at most 0.00000953674 MB." } });
-		expect(checkUploadRequest(request({ length: "52428801", query: "" }), 52_428_800)).toEqual({ ok: false, refusal: { code: "FILE_TOO_LARGE", detail: "A file can be at most 50 MB." } });
-		for (const query of ["", "?name=", "?name=a&name=b", "?other=1", "?name=%ff"]) {
-			expect(checkUploadRequest(request({ query }), 10)).toEqual({ ok: false, refusal: { code: "FILE_NAME_MISSING", detail: "Name the file with ?name=." } });
-		}
-		expect(checkUploadRequest(request({ length: "0", query: "?name=.." }), 10)).toEqual({ ok: true, value: { size: 0, name: "file" } });
 	});
 });

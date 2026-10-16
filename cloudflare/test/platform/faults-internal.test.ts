@@ -77,12 +77,12 @@ test("without the faults token, or with another, the forwarded internal API is n
 		const response = await exports.default.fetch(new Request(`${ORIGIN}/api/faults/internal/v1/catalog`, { headers }));
 		expect(response.status).toBe(404);
 	}
-	// The Worker's API refuses a POST without its own origin before it looks for a route.
+	// A start without the token is the Worker's 404, and starts nothing.
 	const start = await hostedStart({ turns: [{ text: "Never." }] });
 	const response = await exports.default.fetch(
 		new Request(`${ORIGIN}/api/faults/internal/v1/runs/start`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(start) }),
 	);
-	expect(response.status).toBe(403);
+	expect(response.status).toBe(404);
 	expect(await objectOf(start).faultView(start.run)).toMatchObject({ head: null, events: [] });
 });
 

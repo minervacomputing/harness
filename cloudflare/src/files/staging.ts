@@ -1,16 +1,31 @@
 // Laravel's staged uploads (docs/plans/start-and-cancel.md, The attachments): objects the browser put under
 // `uploads/<workspace>/` in the conversation's bucket with a URL Laravel signed, which a start names. Nothing about one is
 // trusted: its size is read before its bytes, then its bytes are counted and hashed, and its media type is sniffed from
-// its head, as the upload route does with a body it receives (uploads.ts). The folder then copies it like any reserved
-// upload, put with this SHA-256, which R2 checks, so an object replaced after it was measured fails the copy.
+// its head. The folder then copies it as a reserved upload, put with this SHA-256, which R2 checks, so an object replaced
+// after it was measured fails the copy.
 
 import { hex } from "../lib/bytes.ts";
 import { uuid7 } from "../lib/random.ts";
-import type { Sha256 } from "../shared/rpc.ts";
+import type { Sha256, UploadId } from "../shared/rpc.ts";
 import { SNIFF_BYTES } from "./limits.ts";
 import { cleanName, sniff } from "./names.ts";
 import type { Bucket } from "./objects.ts";
-import type { ReservedUpload } from "./uploads.ts";
+
+/**
+ * A measured upload a run start reserved. The Conversation Durable Object copies its object into a blob of its own before
+ * the start's transaction (ARCHITECTURE.md: Starting a run) and adds that to the folder: `uploads/` objects are deleted
+ * by the bucket's lifecycle rule a day after they were written, attached or not, so nothing may keep naming one.
+ */
+export interface ReservedUpload {
+	id: UploadId;
+	/** The cleaned name; numbered against the folder's root names when added. */
+	name: string;
+	size: number;
+	mediaType: string;
+	sha256: Sha256;
+	/** Its staging key in R2. */
+	key: string;
+}
 
 /** An attachment as a start names it: the staging key, the file's name and its declared size. */
 export interface StagedUpload {
