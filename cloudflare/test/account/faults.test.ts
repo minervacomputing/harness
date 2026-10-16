@@ -1,7 +1,8 @@
 // Fault tests on the account, for what only the platform shows (ARCHITECTURE.md: Testing): the test
 // instance, built from the same code with the fake Notes connector, its provider object, fault points and a
-// token-gated driver (src/faults/, driver.ts). Each test makes its own workspace and
-// conversation, and they all run at once. One row per mechanism the platform could change; the cases of the
+// token-gated driver (src/faults/, driver.ts), with the runs started and cancelled by Laravel's commands and
+// leased from the fake Laravel, which must get the end of each run a crash interrupted. Each test makes its own
+// workspace and conversation, in the EU as Laravel's are, and they all run at once. One row per mechanism the platform could change; the cases of the
 // executor's and the ledger's logic around them run in local workerd (test/platform/protocols.test.ts):
 //
 // - ctx.abort() in a safe tool (the read runs again) and in an unsafe tool (the write is never replayed);
@@ -9,9 +10,8 @@
 // - a crash right after the attempt gate, every time and with nothing synced: the gate's own sync still
 //   advances the attempts to the cap;
 // - a long tool across PiHarness's heartbeats, which is no restart;
-// - a revocation during a run, across the Workspace and the Conversation;
+// - a revocation during a run: Laravel's cancel, answered once the run has stopped;
 // - a crash while a write is dispatched, after the provider applied it;
-// - a crash of the Workspace during a rotating refresh;
 // - one smoke run with Workers AI and the fake connector's tool;
 // - the local tools in the conversation's real container (ARCHITECTURE.md: Checkpoints; the Checkpoints and Files
 //   rows): write, edit, Python through bash and read, published with the run and hydrated into the next
@@ -24,13 +24,13 @@
 
 import { afterAll, describe, expect, test } from "vitest";
 import {
-	base,
+	cancel,
 	cards,
-	connection,
+	delivered,
 	destroyed,
-	driver,
+	file,
 	finish,
-	grants,
+	folder,
 	LIST,
 	LIST_INBOX,
 	later,
@@ -61,6 +61,7 @@ describe.concurrent("attempts on the platform", () => {
 		const runId = await post(w, script([LIST_INBOX, { text: "Two notes." }]));
 		const view = await settled(w, runId);
 		expect(view.head?.status, outcome(view)).toBe("completed");
+		expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "completed" } });
 		expect(restarts(view.events)).toEqual([2]);
 		expect(reads(await provider(w))).toBe(2);
 		expect(view.internals.executions.map((row) => row.executions)).toEqual([2]);
@@ -72,6 +73,7 @@ describe.concurrent("attempts on the platform", () => {
 		const runId = await post(w, script([save("Once only"), save("Once only"), { text: "Saved once." }]));
 		const view = await settled(w, runId);
 		expect(view.head?.status, outcome(view)).toBe("completed");
+		expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "completed" } });
 		expect(restarts(view.events)).toEqual([2]);
 		expect((await provider(w)).notes.map((note) => note.title)).toEqual([...SEEDED, "Once only"]);
 		expect(toolCalls(view.events)).toEqual([expect.objectContaining({ tool: SAVE, decision: "allowed" }), expect.objectContaining({ tool: SAVE, decision: "allowed", repeat: true })]);
@@ -83,6 +85,7 @@ describe.concurrent("attempts on the platform", () => {
 		const runId = await post(w, script([LIST_INBOX, { text: "Never." }]));
 		const view = await settled(w, runId);
 		expect(view.head).toMatchObject({ status: "failed", errorMessage: "The worker stopped unexpectedly." });
+		expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "failed", error: "The worker stopped unexpectedly." } });
 		expect(restarts(view.events)).toEqual([2, 3]);
 		expect(view.internals.run).toMatchObject({ attempt: 3, error_code: "worker_exited" });
 		expect(reads(await provider(w))).toBe(3);
@@ -98,16 +101,19 @@ describe.concurrent("attempts on the platform", () => {
 			if (Date.now() - started > 60_000) throw new Error("The read never reached the provider.");
 			await sleep(250);
 		}
-		const changed = await grants(w, [{ kind: "folder", id: "*", actions: ["read"] }]);
-		expect(changed).toMatchObject({ ok: true, revocation: "acknowledged" });
+		const sent = Date.now();
+		expect(await cancel(w, runId, "permissions_changed")).toEqual({ state: "cancelled" });
+		const answeredMs = Date.now() - sent;
+		const atAnswer = (await provider(w)).requests;
+		expect(atAnswer).toHaveLength(1);
 		const view = await run(w, runId);
 		expect(view.head).toMatchObject({ status: "cancelled", errorMessage: "Stopped because permissions changed." });
 		await sleep(8000);
-		const requests = (await provider(w)).requests;
-		expect(requests).toHaveLength(1);
-		expect(requests.every((request) => request.at < changed.answered)).toBe(true);
+		// The held read answers 4 s after it arrived; had the run gone on, its second read would be here by now.
+		expect((await provider(w)).requests.map((request) => request.seq)).toEqual(atAnswer.map((request) => request.seq));
 		expect(toolCalls((await run(w, runId)).events)).toEqual([]);
-		console.info(`revocation answered in ${changed.answered - changed.started} ms`);
+		expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "cancelled", error: "Stopped because permissions changed." } });
+		console.info(`revocation answered in ${answeredMs} ms`);
 	});
 
 	test("a crash while a write is dispatched, after the provider applied it: uncertain at the gate", async () => {
@@ -115,6 +121,7 @@ describe.concurrent("attempts on the platform", () => {
 		const runId = await post(w, script([save("Applied once"), save("Applied once"), { text: "Done." }]));
 		const view = await settled(w, runId);
 		expect(view.head?.status, outcome(view)).toBe("completed");
+		expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "completed" } });
 		expect(restarts(view.events)).toEqual([2]);
 		expect(toolCalls(view.events)).toEqual([expect.objectContaining({ code: "WRITE_UNCERTAIN", message: "This write has an unknown outcome. Check the provider before retrying." })]);
 		expect((await provider(w)).notes.map((note) => note.title)).toEqual([...SEEDED, "Applied once"]);
@@ -125,6 +132,7 @@ describe.concurrent("attempts on the platform", () => {
 		const runId = await post(w, script([LIST_INBOX, { text: "Never." }]));
 		const view = await settled(w, runId);
 		expect(view.head).toMatchObject({ status: "failed", errorMessage: "The worker stopped unexpectedly." });
+		expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "failed", error: "The worker stopped unexpectedly." } });
 		expect(restarts(view.events)).toEqual([2, 3]);
 		expect(view.internals.run).toMatchObject({ attempt: 3, error_code: "worker_exited" });
 		expect(reads(await provider(w))).toBe(1);
@@ -141,21 +149,6 @@ describe.concurrent("attempts on the platform", () => {
 		expect(view.internals.attempts).toEqual([{ attempt: 1, ended: "completed" }]);
 		expect(reads(await provider(w))).toBe(1);
 		console.info(`long tool: ${view.seconds} s`);
-	});
-
-	test("a crash during a rotating refresh: one refresh with the stored token after, refused, so Needs reconnecting", async () => {
-		const w = await world({ expired: true, workspaceFaults: [{ point: "refresh:answered", mode: "abort" }] });
-		const runId = await post(w, script([LIST_INBOX, LIST_INBOX, { text: "Done." }]));
-		const view = await settled(w, runId);
-		expect(view.head?.status, outcome(view)).toBe("completed");
-		expect(toolCalls(view.events)).toEqual([
-			expect.objectContaining({ decision: "error", code: "FAILED" }),
-			expect.objectContaining({ decision: "error", code: "CONNECTION_UNAUTHORIZED", message: "The connection expired. Reconnect it in Minerva." }),
-		]);
-		const state = await provider(w);
-		expect(state.requests.filter((request) => request.path === "/token").map((request) => request.status)).toEqual([200, 400]);
-		expect(reads(state)).toBe(0);
-		expect((await connection(w)).stored).toMatchObject({ status: "error", refresh_state: "fresh" });
 	});
 
 	test("Workers AI: a smoke run with @cf/zai-org/glm-5.3-flash and the fake connector's read", async () => {
@@ -193,10 +186,8 @@ describe.concurrent("the local tools in the container", () => {
 			{ tool: "read", summary: "py.txt", ok: true, excerpt: "from python\n" },
 		]);
 		expect(head?.folderChanges?.added?.map((file) => file.path).sort()).toEqual(["notes.txt", "py.txt"]);
-		const folder = await driver<{ versionId: string; files: { path: string }[] }>("files", base(w));
-		expect(folder.versionId).toBe(head?.resultVersionId);
-		const file = await driver<{ text: string | null }>("file", { ...base(w), path: "py.txt" });
-		expect(file.text).toBe("from python\n");
+		expect((await folder(w)).versionId).toBe(head?.resultVersionId);
+		expect((await file(w, "py.txt")).text).toBe("from python\n");
 		const destroyMs = await destroyed(w);
 		console.info(`local tools: ${view.seconds} s for the turn, container gone ${destroyMs} ms after`);
 
@@ -232,28 +223,29 @@ describe.concurrent("the local tools in the container", () => {
 		const w = await world();
 		const started = Date.now();
 		// One byte value each ('a' to 'e'), so the five contents differ.
-		// At most UPLOADS_IN_FLIGHT at once, as the workspace allows a user.
-		const ids: string[] = [];
+		// Three at once, then two, as a browser's uploads go.
+		const attachments = [];
 		for (const batch of [[0, 1, 2], [3, 4]]) {
-			ids.push(...(await Promise.all(batch.map((i) => upload(w, { name: `big${i}.bin`, bytes: 50 * MiB, fill: 97 + i })))));
+			attachments.push(...(await Promise.all(batch.map((i) => upload(w, { name: `big${i}.bin`, bytes: 50 * MiB, fill: 97 + i })))));
 		}
 		const uploadedMs = Date.now() - started;
 		const posting = Date.now();
-		const runId = await post(w, script([sh("wc -c big*.bin | tail -n 1; head -c 1 big3.bin; echo"), { text: "Counted." }]), ids);
+		const runId = await post(w, script([sh("wc -c big*.bin | tail -n 1; head -c 1 big3.bin; echo"), { text: "Counted." }]), attachments);
 		const postedMs = Date.now() - posting;
 		const view = await settled(w, runId);
 		expect(view.head?.status, outcome(view)).toBe("completed");
 		expect(cards(view.events)).toEqual([{ tool: "bash", summary: expect.stringContaining("wc -c"), ok: true, excerpt: "262144000 total\nd\n" }]);
-		const folder = await driver<{ versionId: string; files: { path: string }[] }>("files", base(w));
-		expect(folder.files.map((file) => file.path).sort()).toEqual(["big0.bin", "big1.bin", "big2.bin", "big3.bin", "big4.bin"]);
-		console.info(`five attachments of 50 MiB: uploads ${uploadedMs} ms, post (the copies) ${postedMs} ms, the run ${view.seconds} s`);
+		expect((await folder(w)).files.map((item) => [item.path, item.size]).sort()).toEqual(["big0.bin", "big1.bin", "big2.bin", "big3.bin", "big4.bin"].map((path) => [path, 50 * MiB]));
+		console.info(`five attachments of 50 MiB: staging ${uploadedMs} ms, the start (the copies) ${postedMs} ms, the run ${view.seconds} s`);
 	});
 
 	for (const point of ["checkpoint:uploaded", "checkpoint:recorded", "local:released"]) {
 		test(`a crash at ${point}: the next attempt starts from the last checkpoint`, async () => {
 			const w = await world({ faults: [{ point, mode: "abort" }] });
-			const view = await settled(w, await post(w, script([sh("echo a > a.txt"), sh("cat a.txt"), { text: "Done." }])));
+			const runId = await post(w, script([sh("echo a > a.txt"), sh("cat a.txt"), { text: "Done." }]));
+			const view = await settled(w, runId);
 			expect(view.head?.status, outcome(view)).toBe("completed");
+			expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "completed" } });
 			expect(restarts(view.events)).toEqual([2]);
 			// Uploaded but not recorded: the file is not in the checkpoint attempt 2 starts from.
 			expect(cards(view.events).find((card) => card.summary === "cat a.txt")?.ok).toBe(point !== "checkpoint:uploaded");

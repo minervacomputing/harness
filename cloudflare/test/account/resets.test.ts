@@ -1,7 +1,8 @@
 // Memory-limit resets on the account (ARCHITECTURE.md: Testing): faults that allocate until the isolate passes its memory
 // limit and is reset, which local workerd cannot do, through the test instance's driver
 // (driver.ts). A reset takes every object of its isolate with it, so these run one at a time, and only after
-// every other file of `pnpm test:faults` has finished (vitest.faults.config.ts):
+// every other file of `pnpm test:faults` has finished (vitest.faults.config.ts). The fake Laravel the run leases from and
+// delivers its facts to is a FaultProvider, which a reset may take too; each run's end must still reach it:
 //
 // - in a tool: the run recovers in a new attempt;
 // - during a checkpoint: the next attempt starts from the last checkpoint, in a new container;
@@ -12,7 +13,7 @@
 // Run with `pnpm test:faults` after `pnpm run deploy:test`; never against production.
 
 import { afterAll, describe, expect, test } from "vitest";
-import { cards, finish, LIST, LIST_INBOX, later, outcome, post, provider, reads, restarts, script, settled, sh, world } from "./driver.ts";
+import { cards, delivered, finish, LIST, LIST_INBOX, later, outcome, post, provider, reads, restarts, script, settled, sh, world } from "./driver.ts";
 
 afterAll(finish, 300_000);
 
@@ -22,6 +23,7 @@ describe("memory-limit resets", () => {
 		const runId = await post(w, script([LIST_INBOX, { text: "Recovered." }]));
 		const view = await settled(w, runId);
 		expect(view.head?.status, outcome(view)).toBe("completed");
+		expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "completed" } });
 		expect(restarts(view.events)).toEqual([2]);
 		expect(reads(await provider(w))).toBe(2);
 		console.info(`memory reset: ${view.seconds} s`);
@@ -29,8 +31,10 @@ describe("memory-limit resets", () => {
 
 	test("during a checkpoint: the next attempt starts from the last checkpoint, in a new container", async () => {
 		const w = await world({ faults: [{ point: "checkpoint:scanned", mode: "oom" }] });
-		const view = await settled(w, await post(w, script([sh("echo a > a.txt"), sh("cat a.txt"), { text: "Done." }])));
+		const runId = await post(w, script([sh("echo a > a.txt"), sh("cat a.txt"), { text: "Done." }]));
+		const view = await settled(w, runId);
 		expect(view.head?.status, outcome(view)).toBe("completed");
+		expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "completed" } });
 		expect(restarts(view.events)).toEqual([2]);
 		// The reset came before the checkpoint was recorded: attempt 2's container starts without the file.
 		expect(cards(view.events).find((card) => card.summary === "cat a.txt")?.ok).toBe(false);
@@ -44,6 +48,7 @@ describe("memory-limit resets", () => {
 		const runId = await post(w, script([LIST_INBOX, { text: "Never." }]));
 		const view = await settled(w, runId);
 		expect(view.head).toMatchObject({ status: "failed", errorMessage: "The worker stopped unexpectedly." });
+		expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "failed", error: "The worker stopped unexpectedly." } });
 		expect(restarts(view.events)).toEqual([2, 3]);
 		expect(view.internals.run).toMatchObject({ attempt: 3, error_code: "worker_exited" });
 		expect(reads(await provider(w))).toBe(1);
@@ -55,6 +60,7 @@ describe("memory-limit resets", () => {
 		const runId = await post(w, script([LIST_INBOX, { text: "Never." }]));
 		const view = await settled(w, runId);
 		expect(view.head).toMatchObject({ status: "failed", errorMessage: "The worker stopped unexpectedly." });
+		expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "failed", error: "The worker stopped unexpectedly." } });
 		expect(restarts(view.events)).toEqual([2, 3]);
 		expect(view.internals.run).toMatchObject({ attempt: 3, error_code: "worker_exited" });
 		expect(reads(await provider(w))).toBe(3);

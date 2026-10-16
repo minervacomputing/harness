@@ -1,17 +1,18 @@
 // End-to-end turns on the test instance (ARCHITECTURE.md: Testing, Account tests), through
 // the real Conversation Durable Object, its container, the Scripts Durable Object and the Workers' R2 store:
 // the agent writes a file with Python through bash, runs a script (`run_script`) that calls the fake Notes
-// connector's tool, and the conversation's folder version, published with the run, contains the file. One turn
-// is scripted with the fake model; one is the same task given to Workers AI (@cf/zai-org/glm-5.3-flash),
-// which may not call the tools: it asserts the protocol (the version, the file, the events in order), never
-// the model's words, and is skipped with a message when the model does not call the tools after one retry.
+// connector's tool, and the conversation's folder version, published with the run, contains the file; the fake
+// Laravel the run leased from gets the run's facts, ending with `run.finished`. One turn is scripted with the fake
+// model; one is the same task given to Workers AI (@cf/zai-org/glm-5.3-flash): it asserts the protocol (the version,
+// the file, the events in order, the facts), never the model's words, and fails with what each attempt called when the
+// model has not called the tools in two attempts.
 //
-// The two turns run at once, through the driver of driver.ts. Run with `pnpm test:faults` after
-// `pnpm run deploy:test`. Timings are written to MINERVA_TURN_TIMINGS when set.
+// The two turns run at once, started by Laravel's commands through the driver of driver.ts. Run with
+// `pnpm test:faults` after `pnpm run deploy:test`. Timings are written to MINERVA_TURN_TIMINGS when set.
 
 import { writeFileSync } from "node:fs";
 import { afterAll, describe, expect, test } from "vitest";
-import { base, destroyed, driver, finish, type Head, LIST, type LocalCard, outcome, post, type RunEvent, type RunView, settled, type World, world } from "./driver.ts";
+import { delivered, destroyed, file, finish, folder, type Head, LIST, type LocalCard, outcome, post, type RunEvent, type RunView, settled, type World, world } from "./driver.ts";
 
 const timings: Record<string, unknown> = {};
 
@@ -26,8 +27,8 @@ afterAll(finish, 300_000);
 /** The run's duration from its own timestamps, without the polling's. */
 const runMs = (head: Head) => Date.parse(head.finishedAt) - Date.parse(head.createdAt);
 
-/** What a turn must show, whoever produced it: the order of the run's events and the published folder. */
-async function expectPublished(w: World, view: RunView, file: string) {
+/** What a turn must show, whoever produced it: the order of the run's events, the published folder and the facts Laravel got. */
+async function expectPublished(w: World, view: RunView, path: string) {
 	const head = view.head as Head;
 	expect(head.status, outcome(view)).toBe("completed");
 	const seqs = view.events.map((event) => event.seq);
@@ -49,12 +50,17 @@ async function expectPublished(w: World, view: RunView, file: string) {
 	expect(view.events.at(-1)).toMatchObject({ type: "status", data: { status: "completed" } });
 	// The version was published with the run, and holds the file.
 	expect(head.resultVersionId).toBeTruthy();
-	expect(head.folderChanges?.added?.map((item) => item.path)).toContain(file);
-	const folder = await driver<{ versionId: string; files: { path: string; size: number }[] }>("files", base(w));
-	expect(folder.versionId).toBe(head.resultVersionId);
-	expect(folder.files.map((item) => item.path)).toContain(file);
-	const read = await driver<{ text: string | null }>("file", { ...base(w), path: file });
+	expect(head.folderChanges?.added?.map((item) => item.path)).toContain(path);
+	const published = await folder(w);
+	expect(published.versionId).toBe(head.resultVersionId);
+	expect(published.files.map((item) => item.path)).toContain(path);
+	const read = await file(w, path);
 	expect(read.text).toMatch(/\S/);
+	// Laravel got the turn: its facts end with the run's end, naming the version and the answer.
+	const facts = await delivered(w, head.id);
+	expect(facts.at(-1)).toMatchObject({ run: head.id, type: "run.finished", data: { status: "completed", error: "", message: { content: answer.at(-1)?.data.content }, folder: { result: head.resultVersionId } } });
+	const calls = view.events.filter((event) => event.type === "tool_call");
+	expect(facts.filter((fact) => fact.type === "run.tool_call").map((fact) => fact.data)).toEqual(calls.map((event) => expect.objectContaining({ tool: event.data.tool, decision: event.data.decision })));
 	return { local, scripted, phase: phase as RunEvent, text: read.text as string };
 }
 
@@ -93,14 +99,14 @@ describe.concurrent("an end-to-end turn: Python through bash, a script calling a
 		record("fake model turn", { postMs, runMs: runMs(view.head as Head), goneCheckMs: destroyMs, events: view.events.length });
 	});
 
-	test("with Workers AI (@cf/zai-org/glm-5.3-flash): the protocol, not the words", async (ctx) => {
+	test("with Workers AI (@cf/zai-org/glm-5.3-flash): the protocol, not the words", async () => {
 		const attempts: { seconds: number; status: string | undefined; error: string | undefined; tools: string[] }[] = [];
 		for (let attempt = 1; attempt <= 2; attempt++) {
 			const w = await world({ model: "workers-ai" });
 			const runId = await post(w, TASK);
 			const view = await settled(w, runId, 150_000);
 			// The model called the tools when a command that is Python writing report.txt succeeded, a script ran and the
-			// connector's tool answered through it. Only that decides a retry or the skip; from then on everything is asserted.
+			// connector's tool answered through it. Only that decides a retry or the failure; from then on everything is asserted.
 			const bash = view.events.filter((event) => {
 				const card = event.data as unknown as LocalCard;
 				return event.type === "local_tool" && card.tool === "bash" && card.ok && /python/i.test(card.summary) && card.summary.includes("report.txt");
@@ -116,6 +122,6 @@ describe.concurrent("an end-to-end turn: Python through bash, a script calling a
 			return;
 		}
 		record("Workers AI turn, tools not called", attempts);
-		ctx.skip(`@cf/zai-org/glm-5.3-flash did not call bash and run_script in two attempts (${JSON.stringify(attempts)}); the protocol was not exercised.`);
+		throw new Error(`@cf/zai-org/glm-5.3-flash did not call bash and run_script in two attempts, so the protocol was not exercised; each attempt called: ${JSON.stringify(attempts)}`);
 	}, 480_000);
 });

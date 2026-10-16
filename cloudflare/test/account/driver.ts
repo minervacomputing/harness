@@ -1,6 +1,9 @@
-// The test Worker's fault driver (src/faults/routes.ts: `POST /api/faults/<op>` behind its token), shared by
-// the account suites that run turns on the test instance: faults.test.ts, resets.test.ts and turns.test.ts.
-// Each world is a workspace of its own, with the fake Notes connection and an agent.
+// The test Worker's fault driver (src/faults/routes.ts), shared by the account suites that run turns on the test instance:
+// faults.test.ts, resets.test.ts and turns.test.ts. Each world is a Laravel workspace of its own (`scope`), with the fake
+// Notes provider and the fake Laravel its FaultProvider hosts, and a conversation in the EU, as Laravel's are. The driver
+// sets the world up and reads it (`POST /api/faults/<op>`); the runs go through Laravel's own commands, oRPC's client of the
+// contract's `engine` at /api/faults/internal/, which the test Worker serves behind its token as /internal/ is served
+// behind Access. A run is held by the fake Laravel before its start, as Laravel holds a run before it sends one.
 //
 // Every world and run made here is remembered, so each file can `drain()` in its afterAll: stop the runs still
 // going and wait until every conversation's container is gone. The memory-limit resets (resets.test.ts) take
@@ -8,13 +11,21 @@
 // (vitest.faults.config.ts): by then those files' results are in, and a reset can only cut short what a
 // failed test left behind.
 
-import { expect } from "vitest";
+import { type CancelReason, type CancelRunResult, type Fact, type Scope, type StartRun, engine } from "@minerva/contract/internal";
+import { createORPCClient } from "@orpc/client";
+import type { ContractRouterClient } from "@orpc/contract";
+import type { JsonifiedClient } from "@orpc/openapi-client";
+import { OpenAPILink } from "@orpc/openapi-client/fetch";
+import { FAULTS_SETTINGS } from "../../src/faults/settings.ts";
 import { FAULTS_HEADER, faultsToken } from "../../src/faults/token.ts";
+import { heldRun, notesConnection, notesLayers } from "../../src/faults/world.ts";
 import { fetchDeployed, testWorker } from "./client.ts";
 
 const worker = testWorker();
 const token = await faultsToken(worker.secretKey);
-const USER = "0199a000-0000-7000-8000-0000000fa017";
+/** The run's user, as Laravel names one: its integer key. */
+const USER = "1017";
+const AGENT = "0199a000-0000-7000-8000-00000000a6e7";
 const ACTIVE = ["queued", "provisioning", "running"];
 
 export const LIST = "notes_list_notes";
@@ -67,18 +78,27 @@ export interface ProviderState {
 	rotations: number;
 }
 
+/** What the world's fake Laravel holds of its conversation (src/faults/laravel.ts, `LaravelView`). */
+export interface LaravelState {
+	facts: Fact[];
+	calls: { operation: string; run?: string; connection?: string }[];
+	/** Without their secrets. */
+	connections: { [id: string]: { kind: string; status: string; generation: number } };
+}
+
 export interface World {
-	workspace: { id: string; jurisdiction: null };
+	scope: Scope;
 	conversationId: string;
 	connectionId: string;
 }
 
+export type Attachment = StartRun["message"]["attachments"][number];
 export type Turn = { text?: string; tools?: { name: string; arguments: { [key: string]: unknown } }[] };
 export type LocalCard = { tool: string; summary: string; ok: boolean; excerpt: string };
 
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** A UUIDv7 for a workspace of its own. */
+/** A UUIDv7, for the ids Laravel makes. */
 function uuid7(): string {
 	const bytes = crypto.getRandomValues(new Uint8Array(16));
 	const now = BigInt(Date.now());
@@ -100,38 +120,67 @@ export async function driver<T>(op: string, body: { [key: string]: unknown }): P
 	return JSON.parse(reply.text) as T;
 }
 
+/** Laravel's commands, as oRPC's client of the contract sends them, to the test Worker's driver with its token. */
+export const commands: JsonifiedClient<ContractRouterClient<typeof engine>> = createORPCClient(
+	new OpenAPILink(engine, {
+		url: `${worker.origin}/api/faults`,
+		fetch: async (request) => {
+			const headers = Object.fromEntries(request.headers);
+			const reply = await fetchDeployed(request.url, { method: request.method, headers: { ...headers, [FAULTS_HEADER]: token }, body: await request.text(), timeoutMs: 120_000 });
+			return new Response(reply.text === "" ? null : reply.text, { status: reply.status, headers: reply.headers });
+		},
+	}),
+);
+
 const worlds = new Set<World>();
 const runs: { w: World; runId: string }[] = [];
 
-/** A workspace with the fake Notes connection, an agent and a conversation, with the faults asked for. */
-export async function world(options: { faults?: Fault[]; workspaceFaults?: Fault[]; expired?: boolean; delays?: { [prefix: string]: number }; model?: string } = {}): Promise<World> {
-	const workspace = { id: uuid7(), jurisdiction: null };
-	const owner = { workspace, userId: USER };
-	const { connectionId, agentId } = await driver<{ connectionId: string; agentId: string }>("setup", { ...owner, expired: options.expired === true, delays: options.delays ?? {} });
-	if (options.workspaceFaults) await driver("workspace-faults", { ...owner, faults: options.workspaceFaults });
-	const { conversationId } = await driver<{ conversationId: string }>("conversation", { ...owner, agentId, faults: options.faults ?? [], model: options.model ?? null });
-	const made = { workspace, conversationId, connectionId };
+/** A workspace with the fake Notes connection Laravel holds, and a conversation with the faults asked for. */
+export async function world(options: { faults?: Fault[]; delays?: { [prefix: string]: number }; model?: string } = {}): Promise<World> {
+	const scope: Scope = { environment: FAULTS_SETTINGS.MINERVA_ENVIRONMENT, organization: uuid7(), workspace: uuid7() };
+	const { connectionId } = await driver<{ connectionId: string }>("setup", { scope, delays: options.delays ?? {} });
+	const conversationId = uuid7();
+	await driver("conversation", { scope, conversationId, faults: options.faults ?? [], model: options.model ?? null });
+	const made = { scope, conversationId, connectionId };
 	worlds.add(made);
 	return made;
 }
 
-export function base(w: World) {
-	return { workspace: w.workspace, userId: USER, conversationId: w.conversationId };
+function base(w: World) {
+	return { scope: w.scope, conversationId: w.conversationId };
 }
 
-/** Uploads a file to the world's workspace, for a message to attach. */
-export async function upload(w: World, file: { name: string; text?: string; bytes?: number; fill?: number }): Promise<string> {
-	const answer = await driver<{ ok: boolean; value?: { id: string } }>("upload", { workspace: w.workspace, userId: USER, ...file });
-	if (!answer.ok || !answer.value) throw new Error(`Upload refused: ${JSON.stringify(answer)}`);
-	return answer.value.id;
+/** Stages a file as Laravel's signed upload does, and answers it as a start attaches it. */
+export async function upload(w: World, file: { name: string; text?: string; bytes?: number; fill?: number }): Promise<Attachment> {
+	const { upload: key, size } = await driver<{ upload: string; size: number }>("stage", { scope: w.scope, text: file.text, bytes: file.bytes, fill: file.fill });
+	return { upload: key, name: file.name, size, mediaType: file.bytes ? "application/octet-stream" : "text/plain" };
 }
 
-/** Posts a message and answers its run's id. */
-export async function post(w: World, content: string, attachments?: string[]): Promise<string> {
-	const outcome = await driver<{ ok: boolean; value?: { run: { id: string } }; refusal?: { detail: string } }>("post", { ...base(w), content, ...(attachments ? { attachments } : {}) });
-	if (!outcome.ok || !outcome.value) throw new Error(`Refused: ${outcome.refusal?.detail ?? JSON.stringify(outcome)}`);
-	runs.push({ w, runId: outcome.value.run.id });
-	return outcome.value.run.id;
+/**
+ * Sends a message as Laravel does: the fake Laravel holds the run, then `startRun` names the agent's Notes connection, which the
+ * user may use in every folder, to read and create. Answers the run's id; a refusal throws.
+ */
+export async function post(w: World, content: string, attachments: Attachment[] = []): Promise<string> {
+	const start: StartRun = {
+		scope: w.scope,
+		conversation: w.conversationId,
+		run: uuid7(),
+		user: USER,
+		agent: { id: AGENT, instructions: "You are a test agent. Use the tools when asked.", model: "default" },
+		message: { id: uuid7(), content, attachments },
+		history: [],
+		authority: { connections: [notesConnection(w.connectionId)], layers: notesLayers(w.connectionId) },
+	};
+	await driver("hold", { ...base(w), runId: start.run, run: heldRun(start) });
+	const answer = await commands.startRun(start);
+	if (answer.outcome !== "accepted") throw new Error(`Refused: ${answer.code} ${answer.message}`);
+	runs.push({ w, runId: start.run });
+	return start.run;
+}
+
+/** Laravel's cancel of the run: the user's stop (`cancelled`) or a revocation (`permissions_changed`, among others). */
+export function cancel(w: World, runId: string, reason: CancelReason): Promise<CancelRunResult> {
+	return commands.cancelRun({ scope: w.scope, conversation: w.conversationId, run: runId, reason });
 }
 
 /** The fake model's script for a message. */
@@ -139,8 +188,18 @@ export function script(turns: Turn[], extra: { chunkChars?: number; delayMs?: nu
 	return JSON.stringify({ fake: { turns, ...extra } });
 }
 
+/** The run with every event up to its head's `eventSeq` when first read, a page at a time. */
 export async function run(w: World, runId: string): Promise<RunView> {
-	return driver<RunView>("run", { ...base(w), runId });
+	const first = await driver<RunView>("run", { ...base(w), runId });
+	if (first.head === null) return first;
+	const upTo = first.head.eventSeq;
+	const events = [...first.events];
+	while ((events.at(-1)?.seq ?? 0) < upTo) {
+		const page = await driver<RunView>("run", { ...base(w), runId, after: events.at(-1)?.seq ?? 0, upTo });
+		if (!page.events.length) break;
+		events.push(...page.events);
+	}
+	return { ...first, events };
 }
 
 /**
@@ -165,15 +224,35 @@ export async function settled(w: World, runId: string, timeoutMs = 300_000): Pro
 }
 
 export async function provider(w: World): Promise<ProviderState> {
-	return driver<ProviderState>("provider", { workspace: w.workspace, userId: USER });
+	return driver<ProviderState>("provider", { scope: w.scope });
 }
 
-export async function grants(w: World, changes: unknown[]) {
-	return driver<{ ok: boolean; revocation: string; answered: number; started: number }>("grants", { workspace: w.workspace, userId: USER, connectionId: w.connectionId, changes });
+/** What the world's fake Laravel holds of its conversation: the facts it applied, its calls, its connections. */
+export async function laravel(w: World): Promise<LaravelState> {
+	return driver<LaravelState>("laravel", base(w));
 }
 
-export async function connection(w: World) {
-	return driver<{ stored: { status: string; refresh_state: string } }>("connection", { workspace: w.workspace, userId: USER, connectionId: w.connectionId });
+/** The conversation's facts once the run's `run.finished` has reached the fake Laravel, which the engine delivers after the run ends. */
+export async function delivered(w: World, runId: string, timeoutMs = 60_000): Promise<Fact[]> {
+	const started = Date.now();
+	for (;;) {
+		const { facts } = await laravel(w);
+		if (facts.some((fact) => fact.run === runId && fact.type === "run.finished")) return facts;
+		if (Date.now() - started > timeoutMs) throw new Error(`The run's run.finished never reached Laravel; its facts: ${JSON.stringify(facts.map((fact) => [fact.seq, fact.type]))}`);
+		await sleep(1000);
+	}
+}
+
+/** The conversation's current folder, as Laravel reads it. */
+export function folder(w: World) {
+	return commands.folder({ scope: w.scope, conversation: w.conversationId, version: null });
+}
+
+/** A file of the current folder as a download reads it: the object `resolveDownload` names, the first 4,000 characters of it. */
+export async function file(w: World, path: string): Promise<{ size: number | null; text: string | null }> {
+	const resolved = await commands.resolveDownload({ scope: w.scope, conversation: w.conversationId, version: null, path });
+	if (resolved.outcome !== "found") throw new Error(`${path} is not in the folder.`);
+	return driver("object", { ...base(w), key: resolved.key });
 }
 
 /** Waits until the conversation's container is gone (the run's end destroys it); how long that took. */
@@ -196,7 +275,7 @@ async function drain(): Promise<string[]> {
 	const stopped = await Promise.allSettled(
 		runs.map(async ({ w, runId }) => {
 			const view = await run(w, runId).catch(() => null);
-			if (!view?.head || ACTIVE.includes(view.head.status)) await driver("cancel", { ...base(w), runId }).catch(() => null);
+			if (!view?.head || ACTIVE.includes(view.head.status)) await cancel(w, runId, "cancelled").catch(() => null);
 			await settled(w, runId, 120_000);
 		}),
 	);

@@ -12,8 +12,6 @@ import { CONNECTOR_SOURCE, servedConnectors } from "../connectors/index.ts";
 import { Conversation as BaseConversation } from "../conversation/conversation.ts";
 import { defaultPorts, PORTS } from "../conversation/ports.ts";
 import { PAGE_LIMIT, type RunHead, RunStore } from "../conversation/store.ts";
-import { SCRIPT_TIMEOUT_MS } from "../scripts/limits.ts";
-import { SCRIPT_CLOCK } from "../scripts/run.ts";
 import type { RunId } from "../shared/rpc.ts";
 import { Workspace as BaseWorkspace, WORKSPACE_PORTS } from "../workspace/workspace.ts";
 import { FLOW_CLIENTS } from "../api/oauth-clients.ts";
@@ -71,20 +69,6 @@ export interface RunView {
 
 /** The Conversation with a fault plan and a view of its tables for the tests. */
 export class Conversation extends BaseConversation {
-	constructor(ctx: DurableObjectState, env: Env) {
-		super(ctx, env);
-		// A shorter wall clock for scripts, kept in the plan so an instance that restarts keeps it. It is the
-		// isolate's: the account tests that set it run one at a time and set it back.
-		const clock = planOf(ctx).config("script_clock_ms");
-		if (clock !== null) SCRIPT_CLOCK.timeoutMs = Number(clock);
-	}
-
-	/** Sets (or, with null, restores) the scripts' wall clock (scripts/run.ts SCRIPT_CLOCK) in this object's isolate. */
-	faultScriptClock(ms: number | null): void {
-		planOf(this.ctx).setConfig("script_clock_ms", ms === null ? null : String(ms));
-		SCRIPT_CLOCK.timeoutMs = ms ?? SCRIPT_TIMEOUT_MS;
-	}
-
 	faultPlan(faults: Fault[], config: { model?: string | null; runTimeoutMs?: number | null } = {}): void {
 		const plan = planOf(this.ctx);
 		plan.set(faults);
@@ -151,7 +135,7 @@ export class Conversation extends BaseConversation {
 	}
 }
 
-/** The Workspace with a fault plan and a view of its connections for the tests. */
+/** The Workspace with a fault plan for the tests. */
 export class Workspace extends BaseWorkspace {
 	faultPlan(faults: Fault[], config: { runTimeoutMs?: number | null } = {}): void {
 		const plan = planOf(this.ctx);
@@ -165,14 +149,6 @@ export class Workspace extends BaseWorkspace {
 
 	faultRelease(point: string): void {
 		planOf(this.ctx).release(point);
-	}
-
-	faultConnection(connectionId: string): { status: string; generation: number; refresh_state: string } | null {
-		return (
-			this.ctx.storage.sql
-				.exec<{ status: string; generation: number; refresh_state: string }>("SELECT status, generation, refresh_state FROM connections WHERE id = ?", connectionId)
-				.toArray()[0] ?? null
-		);
 	}
 }
 
