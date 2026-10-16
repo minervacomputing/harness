@@ -46,8 +46,8 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { accountSubdomain, workerExists } from "./account.ts";
-import { buildAccount, buildDigest, ownContainer, readBuild } from "./builds.ts";
+import { accountSubdomain, ownNamespaces, workerExists } from "./account.ts";
+import { buildAccount, buildDigest, ownContainer, readBuild, strayClasses } from "./builds.ts";
 import { type Instance, chooseInstance, parseInstanceArgs } from "./instance.ts";
 import { type LifecycleRule, lifecycleExtras, lifecycleMatches, lifecycleProblems } from "./lifecycle.ts";
 import { CommandFailed, ROOT, cfJson, hide, lockOperation, pinAccount, redact, run } from "./run.ts";
@@ -93,12 +93,6 @@ interface Bucket {
 	jurisdiction: string | null;
 	location?: string;
 	storageClass?: string;
-}
-interface Namespace {
-	id: string;
-	name: string;
-	script: string;
-	class: string;
 }
 interface ContainerApp {
 	id: string;
@@ -168,13 +162,6 @@ function bucketExtras(bucket: Bucket): string[] {
 	const locks = cfJson<{ rules?: unknown[] }>(["r2", "buckets", "locks", "get", bucket.name, ...scope(bucket)]);
 	if ((locks.rules ?? []).length) extras.push("object locks");
 	return extras;
-}
-
-function ownNamespaces(): Namespace[] {
-	const namespaces = cfJson<Namespace[]>(["durable-objects", "namespaces", "list", "--per-page", "1000"]);
-	if (namespaces.length >= 1000) stop("The account has 1,000 Durable Object namespaces or more, more than one page: list them by hand.");
-	for (const namespace of namespaces) hide(namespace.id);
-	return namespaces.filter((namespace) => namespace.script === NAME);
 }
 
 function containerApps(namespaceIds: Set<string>, names: Set<string>): ContainerApp[] {
@@ -266,9 +253,9 @@ try {
 		if (extras.length) stop(`R2 bucket ${bucket.name} has settings its recreation would lose: ${extras.join(", ")}. Reset it by hand.`);
 	}
 
-	const namespaces = ownNamespaces();
-	const strays = namespaces.filter((namespace) => !classes.includes(namespace.class));
-	if (strays.length) stop(`${NAME} has Durable Object namespaces of classes its build does not export (${strays.map((namespace) => namespace.class).join(", ")}): no tombstone would retire them.`);
+	const namespaces = ownNamespaces(NAME);
+	const strays = strayClasses(namespaces, app);
+	if (strays.length) stop(`${NAME} has Durable Object namespaces of classes its build does not export (${strays.join(", ")}): no tombstone would retire them.`);
 	const apps = containerApps(new Set(namespaces.map((namespace) => namespace.id)), containers);
 	const strayApps = apps.filter((containerApp) => !containers.has(containerApp.name));
 	if (strayApps.length) stop(`Container applications that are not ${NAME}'s are linked to its namespaces: ${strayApps.map((containerApp) => containerApp.name).join(", ")}.`);
@@ -310,10 +297,10 @@ try {
 	step(`Quiescing ${NAME}: deploying reset-worker/, which answers 503 and retires ${classes.join(", ")}`);
 	if (buildDigest(RESET_DIR) !== quietDigest) stop("The quiesced instance's build changed after it was checked: run this again.");
 	run("cf", ["deploy", "--prebuilt", "--no-provision"], { cwd: RESET_DIR, print: true });
-	let left = ownNamespaces();
+	let left = ownNamespaces(NAME);
 	for (let wait = 0; left.length && wait < 24; wait++) {
 		await sleep(5000);
-		left = ownNamespaces();
+		left = ownNamespaces(NAME);
 	}
 	if (left.length) stop(`${NAME} still has the namespaces of ${left.map((namespace) => namespace.class).join(", ")} after two minutes: run this again.`);
 	console.log(`${NAME} has no Durable Object namespace left: every object of ${classes.join(", ")} is deleted.`);

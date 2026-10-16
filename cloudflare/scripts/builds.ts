@@ -91,6 +91,26 @@ export function appBuildProblems(app: BuiltWorker, instance: string): string[] {
 	return problems;
 }
 
+/** The secrets a build declares, which a deploy uploads from the instance's secrets.env. */
+export function declaredSecrets(app: BuiltWorker): string[] {
+	return Object.entries(app.env ?? {})
+		.filter(([, binding]) => binding.type === "secret")
+		.map(([name]) => name);
+}
+
+/**
+ * The classes of a Worker's Durable Object namespaces that its build exports neither live nor deleted: no tombstone
+ * would retire them, and a deploy would strand their objects. A deploy and a reset stop on any.
+ */
+export function strayClasses(namespaces: { class: string }[], app: BuiltWorker): string[] {
+	const exported = new Set(
+		Object.entries(app.exports ?? {})
+			.filter(([, entry]) => entry.type === "durable-object")
+			.map(([name]) => name),
+	);
+	return [...new Set(namespaces.map((namespace) => namespace.class).filter((name) => !exported.has(name)))].sort();
+}
+
 /** A binding of a deployed version, as `cf workers versions get` answers it. */
 export interface LiveBinding {
 	type?: string;

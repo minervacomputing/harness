@@ -1,8 +1,8 @@
-// What the scripts read of an instance on its account, changing nothing: whether a Worker exists, the bindings of
-// the version serving all of a Worker's traffic, which build those bindings are (`bindingsKind`), and the
-// account's workers.dev subdomain, which the instance's origins are on (`accountSubdomain`, `checkOnAccount`). Every
-// cf call goes through scripts/run.ts, so one that fails throws: nothing here reads a failure as "absent". Ids and the
-// subdomain are hidden from everything run.ts prints, and no message here names them.
+// What the scripts read of an instance on its account, changing nothing: whether a Worker exists, a Worker's Durable
+// Object namespaces, the bindings of the version serving all of a Worker's traffic, which build those bindings are
+// (`bindingsKind`), and the account's workers.dev subdomain, which the instance's origins are on (`accountSubdomain`,
+// `checkOnAccount`). Every cf call goes through scripts/run.ts, so one that fails throws: nothing here reads a failure
+// as "absent". Ids and the subdomain are hidden from everything run.ts prints, and no message here names them.
 
 import type { LiveBinding } from "./builds.ts";
 import { subdomainOf } from "./origins.ts";
@@ -21,6 +21,22 @@ export function workerExists(name: string): boolean {
 	for (const worker of found) hide(worker.id);
 	if (found.length >= PAGE) throw new CommandFailed(`${PAGE} Workers or more have names containing ${name}, more than one page: look for it by hand.`);
 	return found.some((worker) => worker.script_name === name);
+}
+
+interface Namespace {
+	id: string;
+	name: string;
+	script: string;
+	class: string;
+}
+
+/** The Durable Object namespaces of the Worker `name`, from one listing of the account's; a full page stops. */
+export function ownNamespaces(name: string): Namespace[] {
+	const namespaces = cfJson<Namespace[]>(["durable-objects", "namespaces", "list", "--per-page", "1000"]);
+	if (!Array.isArray(namespaces)) throw new CommandFailed("`cf durable-objects namespaces list` did not answer a list.");
+	if (namespaces.length >= 1000) throw new CommandFailed("The account has 1,000 Durable Object namespaces or more, more than one page: list them by hand.");
+	for (const namespace of namespaces) hide(namespace.id);
+	return namespaces.filter((namespace) => namespace.script === name);
 }
 
 /** The bindings of the version of the Worker `name` serving all of its traffic; a Worker served otherwise throws. */

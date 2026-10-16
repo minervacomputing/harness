@@ -19,21 +19,25 @@
 // be the instance's (its name and its buckets); the secrets it declares, and only those, are copied from the
 // instance's secrets.env to an owner-only file in a fresh temporary directory, removed when the deploy ends, fails
 // or is interrupted. Then, still reading only: the account's workers.dev subdomain is read, so that cf's output never
-// shows it (scripts/account.ts), and the instance on the account must be the one its directory describes
-// (scripts/identity.ts: D1's identity row, else the live app's bindings, else an empty D1). Only then does the
-// account change: the identity row is written when it is missing, the resources are checked and D1's migrations
-// applied (scripts/resources.ts), the deployed schema is compared with the migrations (scripts/schema-check.ts),
-// and the checked build is uploaded with that file as its secrets (a build or a secrets file that changed since
-// its check stops the deploy). The lab's deploy checks the identity and its own origin the same way.
+// shows it (scripts/account.ts), the app Worker must have no Durable Object namespace of a class the build exports
+// neither live nor deleted (`strayClasses` in scripts/builds.ts), and the instance on the account must be the one its
+// directory describes (scripts/identity.ts: D1's identity row, else the live app's bindings, else an empty D1). Only
+// then does the account change: the identity row is written when it is missing, the resources are checked and D1's
+// migrations applied (scripts/resources.ts), the deployed schema is compared with the migrations
+// (scripts/schema-check.ts), and the checked build is uploaded with that file as its secrets (a build or a secrets
+// file that changed since its check stops the deploy). Last, what 13b retired is deleted (scripts/retirement.ts): the
+// app Worker's retired secrets, by name, and the download Worker. The lab's deploy checks the identity and its own
+// origin the same way.
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { accountSubdomain, checkOnAccount } from "./account.ts";
-import { appBuildProblems, buildAccount, buildDigest, builtImage, fileDigest, readBuild } from "./builds.ts";
+import { accountSubdomain, checkOnAccount, ownNamespaces } from "./account.ts";
+import { appBuildProblems, buildAccount, buildDigest, builtImage, declaredSecrets, fileDigest, readBuild, strayClasses } from "./builds.ts";
 import { ensureImage } from "./image.ts";
 import { type Instance, checkFile, chooseInstance, parseInstanceArgs, readInstanceEnv } from "./instance.ts";
 import { labOrigin } from "./origins.ts";
+import { deleteRetiredSecrets, deleteWorker } from "./retirement.ts";
 import { CommandFailed, ROOT, hideOrigin, hideSecrets, lockOperation, pinAccount, run } from "./run.ts";
 
 const USAGE = "Usage: deploy.ts [--instance <name>] [--test | --lab]";
@@ -55,7 +59,7 @@ try {
 const LAB = FLAGS.includes("--lab");
 const TEST = INSTANCE.test;
 const MODE = TEST ? "faults" : "production";
-const { app: APP, lab: LAB_NAME } = INSTANCE.names;
+const { app: APP, lab: LAB_NAME, download: DOWNLOAD } = INSTANCE.names;
 const SECRETS = INSTANCE.files.secrets;
 const LAB_DIR = join(ROOT, "test", "account", "scripts-worker");
 // Every command run below (cf build, the checks) chooses this instance.
@@ -155,18 +159,18 @@ try {
 	console.log(`The build is ${INSTANCE.name}'s (${TEST ? "the test build" : "the production build"}), with its own buckets.`);
 	// Only the secrets the build declares go up: a line of secrets.env it does not declare (a retired secret, say)
 	// never reaches cf.
-	const declared = Object.entries(app.env ?? {})
-		.filter(([, binding]) => binding.type === "secret")
-		.map(([name]) => name);
+	const declared = declaredSecrets(app);
 	secretsDir = mkdtempSync(join(tmpdir(), "minerva-secrets-"));
 	const upload = join(secretsDir, "secrets.env");
 	run(process.execPath, ["scripts/secrets.ts", "subset", upload, ...declared], { print: true });
 	sameSecrets();
 	const uploadDigest = fileDigest(upload);
 
-	step(`Checking ${INSTANCE.name} on the account: its identity (then recording it, the first change on the account)`);
+	step(`Checking ${INSTANCE.name} on the account: its namespaces and its identity (then recording it, the first change on the account)`);
 	// Hides the account's workers.dev subdomain from what follows: cf deploy names the Worker's URL, at times cut short.
 	accountSubdomain();
+	const strays = strayClasses(ownNamespaces(APP), app);
+	if (strays.length) throw new CommandFailed(`${APP} has Durable Object namespaces of classes its build exports neither live nor deleted (${strays.join(", ")}): the deploy would strand their objects. Deploy a build that retires them first.`);
 	checkIdentity(true);
 
 	// cf deploy would create a missing database or bucket with default settings when it resolves the bindings'
@@ -182,6 +186,9 @@ try {
 	if (fileDigest(upload) !== uploadDigest) throw new CommandFailed(`${upload} changed during the deploy: run it again.`);
 	run("cf", ["deploy", "--prebuilt", "--secrets-file", upload], { print: true });
 	removeSecrets();
+	step(`Deleting what 13b retired: ${APP}'s retired secrets and the Worker ${DOWNLOAD}`);
+	deleteRetiredSecrets(APP, app);
+	deleteWorker(DOWNLOAD);
 	console.log(`\nDeployed ${APP}.`);
 } catch (error) {
 	removeSecrets();
