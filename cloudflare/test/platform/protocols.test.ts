@@ -19,7 +19,7 @@ import { notesConnector } from "../../src/faults/connector.ts";
 import type { Conversation } from "../../src/faults/index.ts";
 import { FakeLaravel } from "../../src/faults/laravel.ts";
 import type { Fault } from "../../src/faults/plan.ts";
-import { faultConversationPorts, NOT_FAKE, providerFetch, providerOf } from "../../src/faults/ports.ts";
+import { type Calibration, faultConversationPorts, modelScope, NOT_FAKE, providerFetch, providerOf } from "../../src/faults/ports.ts";
 import { FOLDER, notesConnection, notesLayers, notesLease } from "../../src/faults/world.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import type { FakeScript, FakeTurn } from "../../src/model/fake.ts";
@@ -59,14 +59,17 @@ afterEach(() => {
 	uninstall();
 });
 
-async function world(options: { faults?: Fault[]; delays?: { [prefix: string]: number }; runTimeoutMs?: number } = {}): Promise<World> {
+async function world(
+	options: { faults?: Fault[]; delays?: { [prefix: string]: number }; runTimeoutMs?: number; model?: string; calibrate?: Calibration } = {},
+): Promise<World> {
 	const within = scope();
 	const conversation = uuid7();
 	const connectionId = uuid7();
 	await providerOf(env, within.workspace).reset({ delays: options.delays ?? {} });
 	fake.connections.set(connectionId, notesLease());
 	const stub = () => objectOf({ scope: within, conversation });
-	if (options.faults || options.runTimeoutMs !== undefined) await stub().faultPlan(options.faults ?? [], options.runTimeoutMs === undefined ? {} : { runTimeoutMs: options.runTimeoutMs });
+	const { faults, runTimeoutMs, model, calibrate } = options;
+	if (faults || runTimeoutMs !== undefined || model !== undefined || calibrate !== undefined) await stub().faultPlan(faults ?? [], { runTimeoutMs, model, calibrate });
 	return {
 		within,
 		conversation,
@@ -338,6 +341,48 @@ describe("the test build's network", () => {
 		const send = providerFetch(env, uuid7());
 		await expect(send("https://api.todoist.com/api/v1/projects")).rejects.toThrow(NOT_FAKE);
 		await expect(send("https://notes.fake.invalid.example/folders")).rejects.toThrow(NOT_FAKE);
+	});
+
+	// The perf probe's model (test/account/perf.test.ts): five calls of a tool that does not exist, which pi answers at once.
+	const PROBE_TURNS: FakeTurn[] = [...Array.from({ length: 5 }, () => ({ tools: [{ name: "no_such_tool", arguments: {} }] })), { text: "Done." }];
+
+	test("the fake-remote model sends one request before each answer, and each call is marked in order", async () => {
+		const w = await world({ model: "fake-remote" });
+		// Its own responder holds each answer 50 ms, so a call whose request was not sent and awaited would show less.
+		await providerOf(env, modelScope(w.within.workspace)).reset({ delays: { "POST /v1/messages": 50 } });
+		const runId = await post(w, PROBE_TURNS);
+		expect((await settled(w, runId)).status).toBe("completed");
+		const internals = await w.stub.faultRun(runId);
+		expect(internals.entered.model).toBe(6);
+		expect(internals.run).toMatchObject({ model_calls: 6 });
+		expect(internals.marks).toHaveLength(6);
+		for (const [i, marks] of internals.marks.entries()) {
+			const { begin, answered, last } = marks;
+			expect(answered, `call ${i + 1}`).not.toBeNull();
+			expect(last, `call ${i + 1}`).not.toBeNull();
+			expect((answered as number) - begin).toBeGreaterThanOrEqual(50);
+			expect(answered).toBeLessThanOrEqual(last as number);
+			if (i > 0) expect(internals.marks[i - 1]?.last).toBeLessThanOrEqual(begin);
+		}
+		// Neither provider records them.
+		expect((await provider(w)).requests).toEqual([]);
+		expect((await providerOf(env, modelScope(w.within.workspace)).state()).requests).toEqual([]);
+		expect(await runInDurableObject(w.stub, (_instance, state) => state.storage.sql.exec("SELECT 1 FROM fault_ballast").toArray().length)).toBe(0);
+	});
+
+	const ballastOf = (w: World) =>
+		runInDurableObject(w.stub, (_instance, state) => state.storage.sql.exec<{ bytes: number; writes: number }>("SELECT length(data) AS bytes, writes FROM fault_ballast").toArray());
+
+	test("calibrated, each fake-remote call writes its bytes before its request; its control writes none", async () => {
+		const written = await world({ model: "fake-remote", calibrate: { bytes: 1 << 20, write: true } });
+		const control = await world({ model: "fake-remote", calibrate: { bytes: 1 << 20, write: false } });
+		for (const w of [written, control]) {
+			const runId = await post(w, PROBE_TURNS);
+			expect((await settled(w, runId)).status).toBe("completed");
+			expect((await w.stub.faultRun(runId)).marks.filter((marks) => marks.answered !== null)).toHaveLength(6);
+		}
+		expect(await ballastOf(written)).toEqual([{ bytes: 1 << 20, writes: 6 }]);
+		expect(await ballastOf(control)).toEqual([]);
 	});
 });
 

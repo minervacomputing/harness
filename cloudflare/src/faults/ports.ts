@@ -20,15 +20,22 @@
 // A conversation whose plan sets `run_timeout_ms` starts Laravel's runs with that deadline.
 // A conversation whose plan sets `model` to `workers-ai` gets Workers AI instead of the fake model. Never
 // part of the production Worker.
+//
+// `model` set to `fake-remote` gets the fake model with one request to FAKE_MODEL_HOST before each answer (the perf probe,
+// docs/plans/chunk-14a-design.md), so each call sends a real outbound message, which the output gate holds until the object's
+// writes are durable. Each call of a run is marked in memory (`CallMarks`, read with `faultView`), on the object's clock,
+// which moves only when I/O completes. `calibrate` ({bytes, write}) writes that many random bytes through `outside` before
+// each such request, as a record written before the send would, to show that the marks see a write; with `write` false it
+// only generates them, the control for that CPU.
 
 import type { ConversationPorts, PortsContext } from "../conversation/ports.ts";
 import type { ExecutorContext } from "../gateway/executor.ts";
-import { fakeUpstream } from "../model/fake.ts";
-import { upstreamOf } from "../model/route.ts";
+import { type FakeCall, type FakeOptions, fakeUpstream } from "../model/fake.ts";
+import { type Upstream, upstreamOf } from "../model/route.ts";
 import { parseJson } from "../lib/json.ts";
 import { type FaultPlan, planOf } from "./plan.ts";
 import type { FaultProvider } from "./provider.ts";
-import { LARAVEL_HOST } from "./settings.ts";
+import { FAKE_MODEL_HOST, LARAVEL_HOST } from "./settings.ts";
 
 /** Every request to a `*.fake.invalid` host goes to the workspace's FaultProvider; nothing else is allowed. */
 export const FAKE_HOST_SUFFIX = ".fake.invalid";
@@ -102,6 +109,68 @@ export function executorContextOf(ctx: DurableObjectState, runId: string): Execu
 	return executorContexts.get(ctx)?.get(runId) ?? null;
 }
 
+/** One model call's marks, in Date.now() milliseconds; null until reached. */
+export interface CallMarks {
+	/** The wrapper's `host.begin` (ConversationPorts.entered). */
+	begin: number;
+	/** `fake-remote`'s request answered. */
+	answered: number | null;
+	/** The upstream's terminal event. */
+	last: number | null;
+}
+
+/** Each run's model calls in the order they began, per object; lost with the instance. */
+const callMarks = new WeakMap<DurableObjectState, Map<string, CallMarks[]>>();
+
+export function marksOf(ctx: DurableObjectState, runId: string): CallMarks[] {
+	let runs = callMarks.get(ctx);
+	if (!runs) callMarks.set(ctx, (runs = new Map()));
+	let marks = runs.get(runId);
+	if (!marks) runs.set(runId, (marks = []));
+	return marks;
+}
+
+/** The FaultProvider that answers a workspace's `fake-remote` requests: not the one hosting its Notes and fake Laravel. */
+export function modelScope(workspace: string): string {
+	return `${workspace}:model`;
+}
+
+/** The perf probe's calibration (`FaultPlan.ballast`), as a conversation's plan sets it. */
+export interface Calibration {
+	bytes: number;
+	write: boolean;
+}
+
+/** The fake model, sending one request to FAKE_MODEL_HOST before each answer and marking the call. */
+function fakeRemote(context: PortsContext, plan: FaultPlan, onDelta: FakeOptions["onDelta"]): Upstream {
+	const send = providerFetch(context.env, modelScope(context.workspace.id));
+	// Taken when the call starts, before its request: a stream that ends late marks its own call, never a later one.
+	const marksByCall = new WeakMap<FakeCall, CallMarks>();
+	return fakeUpstream({
+		onCall: (call, _context, options) => {
+			const run = options?.sessionId ? context.store.runByProviderSession(options.sessionId) : null;
+			const marks = run ? marksOf(context.ctx, run.id).at(-1) : undefined;
+			if (marks) marksByCall.set(call, marks);
+		},
+		onDelta,
+		request: async (call, options) => {
+			const calibration = plan.config("calibrate");
+			if (calibration !== null) {
+				const { bytes, write } = parseJson(calibration) as unknown as Calibration;
+				await context.store.outside(() => plan.ballast(bytes, write));
+			}
+			const response = await send(`https://${FAKE_MODEL_HOST}/v1/messages`, { method: "POST", body: JSON.stringify({ step: call.step }), signal: options?.signal ?? null });
+			await response.arrayBuffer();
+			const marks = marksByCall.get(call);
+			if (marks) marks.answered = Date.now();
+		},
+		onEnd: (call) => {
+			const marks = marksByCall.get(call);
+			if (marks) marks.last = Date.now();
+		},
+	});
+}
+
 /** The Conversation's ports in the test build, around the ones it would use. */
 export function faultConversationPorts(base: ConversationPorts): ConversationPorts {
 	return {
@@ -139,19 +208,22 @@ export function faultConversationPorts(base: ConversationPorts): ConversationPor
 			planOf(context.ctx)
 				.at(name, name === "local:released" ? { tool: detail, detail: detail ?? "" } : { detail: detail ?? "" }, ["abort", "oom", "throw", "hold", "note"])
 				.then(() => {}),
-		entered: (context, kind, runId) => planOf(context.ctx).enter(runId, kind),
+		entered: (context, kind, runId) => {
+			if (kind === "model") marksOf(context.ctx, runId).push({ begin: Date.now(), answered: null, last: null });
+			planOf(context.ctx).enter(runId, kind);
+		},
 		runTimeoutMs: (context) => {
 			const configured = planOf(context.ctx).config("run_timeout_ms");
 			return configured === null ? base.runTimeoutMs(context) : Number(configured);
 		},
 		upstream: (route, context) => {
 			const plan = planOf(context.ctx);
-			if (plan.config("model") === "workers-ai") return upstreamOf({ ...route, provider: "workers-ai" }, (context.env as { AI?: Ai }).AI);
-			return fakeUpstream({
-				onDelta: async (call, index) => {
-					await plan.at("model:delta", { step: call.step, delta: index });
-				},
-			});
+			const model = plan.config("model");
+			if (model === "workers-ai") return upstreamOf({ ...route, provider: "workers-ai" }, (context.env as { AI?: Ai }).AI);
+			const onDelta: FakeOptions["onDelta"] = async (call, index) => {
+				await plan.at("model:delta", { step: call.step, delta: index });
+			};
+			return model === "fake-remote" ? fakeRemote(context, plan, onDelta) : fakeUpstream({ onDelta });
 		},
 	};
 }

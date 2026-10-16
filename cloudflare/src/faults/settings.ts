@@ -12,3 +12,6 @@ export const FAULTS_SETTINGS = {
 
 /** The host of the fake Laravel: requests to it go to the FaultProvider of the workspace they name. */
 export const LARAVEL_HOST = new URL(FAULTS_SETTINGS.MINERVA_LARAVEL_URL).hostname;
+
+/** The host the `fake-remote` model's requests go to (ports.ts): the FaultProvider of their workspace answers them. */
+export const FAKE_MODEL_HOST = "model.fake.invalid";

@@ -5,7 +5,7 @@ import { defineConfig } from "vitest/config";
 // token-gated /api/faults/ (src/faults/routes.ts), and its sandbox lab (src/faults/lab.ts) with the real
 // container. Two groups, one after the other: first every file but the memory-limit resets, at once, with
 // their tests at once within them; then resets.test.ts alone, since a memory-limit reset takes every object of
-// its isolate with it.
+// its isolate with it. With MINERVA_PERF=1, only the perf probe (perf.test.ts), so no other turn shares its numbers.
 export default defineConfig({
 	test: {
 		environment: "node",
@@ -13,7 +13,7 @@ export default defineConfig({
 		hookTimeout: 240_000,
 		// Per file: every concurrent test of a file starts at once (vitest's default is 5).
 		maxConcurrency: 16,
-		projects: [
+		projects: process.env.MINERVA_PERF === "1" ? [{ extends: true, test: { name: "perf", include: ["test/account/perf.test.ts"] } }] : [
 			{
 				extends: true,
 				test: {

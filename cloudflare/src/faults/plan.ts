@@ -72,6 +72,11 @@ CREATE TABLE IF NOT EXISTS fault_config (
 	key TEXT PRIMARY KEY,
 	value TEXT NOT NULL
 ) STRICT;
+CREATE TABLE IF NOT EXISTS fault_ballast (
+	id INTEGER PRIMARY KEY,
+	data BLOB NOT NULL,
+	writes INTEGER NOT NULL
+) STRICT;
 CREATE TABLE IF NOT EXISTS fault_entered (
 	run_id TEXT NOT NULL,
 	kind TEXT NOT NULL,
@@ -156,6 +161,16 @@ export class FaultPlan {
 	entered(runId: string): { model: number; tool: number } {
 		const rows = this.#sql().exec<{ kind: "model" | "tool"; count: number }>("SELECT kind, count FROM fault_entered WHERE run_id = ?", runId).toArray();
 		return { model: rows.find((row) => row.kind === "model")?.count ?? 0, tool: rows.find((row) => row.kind === "tool")?.count ?? 0 };
+	}
+
+	/**
+	 * The perf probe's calibration: `bytes` of random data written over the last ballast, so each write is a new one, or with
+	 * `write` false only generated, the control that costs the same CPU and writes nothing.
+	 */
+	ballast(bytes: number, write: boolean): void {
+		const sql = this.#sql();
+		if (!write) sql.exec("SELECT length(randomblob(?))", bytes).toArray();
+		else sql.exec("INSERT INTO fault_ballast (id, data, writes) VALUES (1, randomblob(?), 1) ON CONFLICT (id) DO UPDATE SET data = excluded.data, writes = writes + 1", bytes);
 	}
 
 	/** Lets every object waiting at `point` go on, and every later arrival pass. */

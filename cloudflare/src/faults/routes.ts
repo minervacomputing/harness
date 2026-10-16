@@ -19,7 +19,7 @@ import type { Conversation } from "./index.ts";
 import type { FakeRun } from "./laravel.ts";
 import { SandboxLab } from "./lab.ts";
 import type { Fault } from "./plan.ts";
-import { providerOf } from "./ports.ts";
+import { type Calibration, providerOf } from "./ports.ts";
 import type { FaultSandbox } from "./sandbox.ts";
 import { FAULTS_HEADER, faultsToken } from "./token.ts";
 import { notesLease } from "./world.ts";
@@ -88,10 +88,12 @@ async function laravelOperation(op: string, body: Body, env: Env, exports: Cloud
 			return { connectionId };
 		}
 		case "conversation":
-			// Before the conversation's first start: its faults, its model (`workers-ai`, or null for the fake) and its deadline.
+			// Before the conversation's first start: its faults, its model (`workers-ai`, `fake-remote`, or null for the fake), its
+			// deadline and the perf probe's calibration (ports.ts).
 			await conversationOf(env, euRef(scope), conversationId).faultPlan((body.faults ?? []) as unknown as Fault[], {
 				model: (body.model ?? null) as string | null,
 				runTimeoutMs: (body.runTimeoutMs ?? null) as number | null,
+				calibrate: (body.calibrate ?? null) as unknown as Calibration | null,
 			});
 			return { ok: true };
 		case "hold":

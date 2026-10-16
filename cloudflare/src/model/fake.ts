@@ -68,8 +68,12 @@ export interface FakeOptions {
 	script?: (context: TranscriptContext) => FakeScript;
 	/** Called when a request starts, before the first event. */
 	onCall?: (call: FakeCall, context: TranscriptContext, options: SimpleStreamOptions | undefined) => void;
+	/** Awaited after `onCall`, before the first event, where a provider's request would go out; may throw. */
+	request?: (call: FakeCall, options: SimpleStreamOptions | undefined) => Promise<void>;
 	/** Called before each delta; may throw or never settle, to inject faults. */
 	onDelta?: (call: FakeCall, index: number) => void | Promise<void>;
+	/** Called as the terminal event (`done` or `error`) is pushed. */
+	onEnd?: (call: FakeCall) => void;
 	/**
 	 * Whether this call fails, for a turn with `error`: pi keeps failed responses out of the transcript, so
 	 * how often a turn has failed is counted by the host. Default: always.
@@ -178,12 +182,15 @@ function respond(model: Model<Api>, context: TranscriptContext, streamOptions: S
 	};
 	const end = (stopReason: "stop" | "toolUse" | "error" | "aborted", errorMessage?: string) => {
 		const final: AssistantMessage = { ...message, content: [...message.content], stopReason, ...(errorMessage ? { errorMessage } : {}) };
+		options.onEnd?.(call);
 		if (stopReason === "error" || stopReason === "aborted") out.push({ type: "error", reason: stopReason, error: final });
 		else out.push({ type: "done", reason: stopReason, message: final });
 		out.end(final);
 	};
 	queueMicrotask(async () => {
 		try {
+			signal?.throwIfAborted();
+			await options.request?.(call, streamOptions);
 			signal?.throwIfAborted();
 			out.push({ type: "start", partial: { ...message } });
 			if (failing) return end("error", turn.error?.message);

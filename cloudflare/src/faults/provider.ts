@@ -3,6 +3,9 @@
 // access token it was set up with, and can hold its answers to a path for a while, to keep a request in flight. Reached only
 // through the test build's network port (ports.ts), never from outside the Worker.
 //
+// An object of its own per workspace (ports.ts, `modelScope`) answers the `fake-remote` model's requests, at FAKE_MODEL_HOST:
+// an empty 204 after its delay, recording nothing, so their round trip waits on no write and no fake Laravel traffic.
+//
 // It also hosts the workspace's fake Laravel (laravel.ts), at LARAVEL_HOST, in tables of its own; its requests are not in the
 // Notes request log. Its points, `laravel:<operation>` (`leaseToken`, `reportUnauthorized`, `deliverFacts`), fire once the
 // operation has written its rows, before its answer leaves (`abort` or `note`).
@@ -13,7 +16,7 @@ import { settings } from "../config.ts";
 import { type Json, parseJson } from "../lib/json.ts";
 import { type FakeConnection, type FakeRun, LARAVEL_SCHEMA, LARAVEL_TABLES, type LaravelView, SqlLaravel, hostedToken } from "./laravel.ts";
 import { type Fault, type Fired, planOf } from "./plan.ts";
-import { LARAVEL_HOST } from "./settings.ts";
+import { FAKE_MODEL_HOST, LARAVEL_HOST } from "./settings.ts";
 
 export interface ProviderSetup {
 	folders?: { id: string; name: string; notes?: string[] }[];
@@ -135,10 +138,14 @@ export class FaultProvider extends DurableObject<Env> {
 	async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
 		if (url.hostname === LARAVEL_HOST) return this.#answerLaravel(request, url);
-		const at = Date.now();
 		const key = `${request.method} ${url.pathname}`;
 		const delays = parseJson(this.#setting("delays") ?? "{}") as { [prefix: string]: number };
 		const delay = Object.entries(delays).find(([prefix]) => key.startsWith(prefix))?.[1] ?? 0;
+		if (url.hostname === FAKE_MODEL_HOST) {
+			if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+			return new Response(null, { status: 204 });
+		}
+		const at = Date.now();
 		const token = (request.headers.get("authorization") ?? "").replace(/^Bearer /, "");
 		const seq = this.#sql()
 			.exec<{ seq: number }>("INSERT INTO requests (at, method, path, token, status) VALUES (?, ?, ?, ?, 0) RETURNING seq", at, request.method, url.pathname, token)

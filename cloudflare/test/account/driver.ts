@@ -1,5 +1,5 @@
 // The test Worker's fault driver (src/faults/routes.ts), shared by the account suites that run turns on the test instance:
-// faults.test.ts, resets.test.ts and turns.test.ts. Each world is a Laravel workspace of its own (`scope`), with the fake
+// faults.test.ts, resets.test.ts, turns.test.ts and perf.test.ts. Each world is a Laravel workspace of its own (`scope`), with the fake
 // Notes provider and the fake Laravel its FaultProvider hosts, and a conversation in the EU, as Laravel's are. The driver
 // sets the world up and reads it (`POST /api/faults/<op>`); the runs go through Laravel's own commands, oRPC's client of the
 // contract's `engine` at /api/faults/internal/, which the test Worker serves behind its token as /internal/ is served
@@ -68,6 +68,9 @@ export interface RunView {
 		attempts: { attempt: number; ended: string | null }[];
 		writes: { key: string; status: string; attempt: number }[];
 		executions: { call_id: string; executions: number }[];
+		entered: { model: number; tool: number };
+		/** Each model call's marks, in the object's Date.now() milliseconds (src/faults/ports.ts, `CallMarks`). */
+		marks: { begin: number; answered: number | null; last: number | null }[];
 	};
 	fired: { point: string; mode: string; at: number }[];
 }
@@ -134,12 +137,17 @@ export const commands: JsonifiedClient<ContractRouterClient<typeof engine>> = cr
 const worlds = new Set<World>();
 const runs: { w: World; runId: string }[] = [];
 
-/** A workspace with the fake Notes connection Laravel holds, and a conversation with the faults asked for. */
-export async function world(options: { faults?: Fault[]; delays?: { [prefix: string]: number }; model?: string } = {}): Promise<World> {
+/**
+ * A workspace with the fake Notes connection Laravel holds, and a conversation with the faults asked for, its model
+ * (`workers-ai`, `fake-remote`, or the fake by default) and the perf probe's calibration (src/faults/ports.ts).
+ */
+export async function world(
+	options: { faults?: Fault[]; delays?: { [prefix: string]: number }; model?: string; calibrate?: { bytes: number; write: boolean } } = {},
+): Promise<World> {
 	const scope: Scope = { environment: FAULTS_SETTINGS.MINERVA_ENVIRONMENT, organization: uuid7(), workspace: uuid7() };
 	const { connectionId } = await driver<{ connectionId: string }>("setup", { scope, delays: options.delays ?? {} });
 	const conversationId = uuid7();
-	await driver("conversation", { scope, conversationId, faults: options.faults ?? [], model: options.model ?? null });
+	await driver("conversation", { scope, conversationId, faults: options.faults ?? [], model: options.model ?? null, calibrate: options.calibrate ?? null });
 	const made = { scope, conversationId, connectionId };
 	worlds.add(made);
 	return made;

@@ -19,7 +19,7 @@ import { LARAVEL_NETWORK } from "../laravel/client.ts";
 import { notesConnector } from "./connector.ts";
 import { hostedToken } from "./laravel.ts";
 import { type Fault, type Fired, planOf } from "./plan.ts";
-import { executorContextOf, faultConversationPorts, laravelFetch, providerFetch } from "./ports.ts";
+import { type CallMarks, type Calibration, executorContextOf, faultConversationPorts, laravelFetch, marksOf, providerFetch } from "./ports.ts";
 import { faultRoutes } from "./routes.ts";
 import { FAULTS_SETTINGS } from "./settings.ts";
 
@@ -44,6 +44,8 @@ export interface RunInternals {
 	tools: string[];
 	/** The model calls and tool executions pi started for the run, counted before any check. */
 	entered: { model: number; tool: number };
+	/** Each model call's marks, as this instance took them (ports.ts, `CallMarks`). */
+	marks: CallMarks[];
 }
 
 /**
@@ -59,10 +61,11 @@ export interface RunView {
 
 /** The Conversation with a fault plan and a view of its tables for the tests. */
 export class Conversation extends BaseConversation {
-	faultPlan(faults: Fault[], config: { model?: string | null; runTimeoutMs?: number | null } = {}): void {
+	faultPlan(faults: Fault[], config: { model?: string | null; runTimeoutMs?: number | null; calibrate?: Calibration | null } = {}): void {
 		const plan = planOf(this.ctx);
 		plan.set(faults);
 		if (config.model !== undefined) plan.setConfig("model", config.model);
+		if (config.calibrate !== undefined) plan.setConfig("calibrate", config.calibrate === null ? null : JSON.stringify(config.calibrate));
 		if (config.runTimeoutMs !== undefined) plan.setConfig("run_timeout_ms", config.runTimeoutMs === null ? null : String(config.runTimeoutMs));
 	}
 
@@ -117,6 +120,7 @@ export class Conversation extends BaseConversation {
 		return {
 			tools,
 			entered: planOf(this.ctx).entered(runId),
+			marks: marksOf(this.ctx, runId),
 			run: sql.exec("SELECT id, status, attempt, error_code, error_message, revoked, activated, writes_uncertain, tool_calls, model_calls FROM runs WHERE id = ?", runId).toArray()[0] ?? null,
 			attempts: sql.exec<{ attempt: number; ended: string | null }>("SELECT attempt, ended FROM attempts WHERE run_id = ? ORDER BY attempt", runId).toArray(),
 			writes: sql.exec<{ key: string; status: string; attempt: number }>("SELECT key, status, attempt FROM run_writes WHERE run_id = ? ORDER BY dispatched_at", runId).toArray(),
