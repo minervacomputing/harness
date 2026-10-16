@@ -1,6 +1,6 @@
 # Chunk 14a design: make usage exact
 
-Status is accepted, as of 2026-10-16: the owner accepted the four owner questions with their defaults (Owner questions, below). It settles the choices that chunk 14a of [remaining-chunks.md](remaining-chunks.md) leaves open, splits the work into units one fresh agent each can finish, and lists the steps that wait for the owner. Line numbers are at `c4e0be7` (harness) and `9b9ab74` (`minervacomputing/app`, "the app" below). Units 1 to 8 are implemented, and the probe's baseline was measured at unit 3's commit (unit 9 records it under Perf probe and rule).
+Status is accepted, as of 2026-10-16: the owner accepted the four owner questions with their defaults (Owner questions, below). It settles the choices that chunk 14a of [remaining-chunks.md](remaining-chunks.md) leaves open, splits the work into units one fresh agent each can finish, and lists the steps that wait for the owner. Line numbers are at `c4e0be7` (harness) and `9b9ab74` (`minervacomputing/app`, "the app" below). Units 1 to 9 are implemented: the fault suite's mid-stream case passes on `minerva-cf-test`, and the perf probe meets its rule (Perf probe and rule, As built (unit 9)).
 
 ## What the code does today
 
@@ -185,6 +185,8 @@ Units 4 to 8 change only the harness and need nothing from the app until they ar
 
 A fault cannot be injected on staging, whose engine is no faults build. The chunk's "a fault test kills the object mid-stream" therefore runs on `minerva-cf-test` against the fake Laravel (unit 9), and staging's mid-stream case is the stopped turn, which may settle either way on the real model.
 
+Unit 9 ran it there: `abort` at `model:delta` (step 1, delta 3) gives one `unmetered` (`lost`) settlement for the cut call and a `run.usage` for every other counted call, and `run.settled` sums them, with container time above zero. The suites now wait for each run's `run.settled` rather than its `run.finished`. That can take minutes: the seal waits behind the Sandbox's lifecycle steps in flight (a start up to 90 s, a destroy up to 60 s), and the job asks again 40 s after a seal it gave up on. After the memory resets of `resets.test.ts` the Sandbox's calls took 60 s, and `run.settled` came 80 s after `run.finished`.
+
 ## Perf probe and rule
 
 **Metrics.** M1, a model call's last token (the upstream's terminal event) to the first answer of the next call's request: pi's step, the settlement, the next record, and one round trip. M2, `host.begin` to the first answer of that call's request: the record and one round trip. Per call, calls 2 to 6 of each turn.
@@ -196,6 +198,17 @@ A fault cannot be injected on staging, whose engine is no faults build. The chun
 **Procedure.** The baseline is unit 3's commit. Deploy it (`pnpm run deploy:test`), then run the probe three times: plain (`MINERVA_PERF=1 MINERVA_PERF_OUT=<file> pnpm test:faults`), then with `MINERVA_PERF_CALIBRATE=cpu`, then with `MINERVA_PERF_CALIBRATE=write`. The calibration passes when the write run's M2 median exceeds the control's by more than the plain run's interquartile range. After unit 8: unit 3's commit, then head, then unit 3's commit, then head, each a fresh `pnpm run deploy:test` and one plain probe run of 20 turns (100 samples per metric per run). Report each run's median and interquartile range, and the head-minus-baseline difference of medians.
 
 **Rule.** For each metric, head's median is within 10 ms of the baseline's, in both pairs. More fails.
+
+**As built (unit 9).** All runs on `minerva-cf-test`, 2026-10-16, 20 turns and 100 samples per metric each. The calibration ran on one deploy of unit 3's commit (`b84f253`): plain M1 and M2 median 26 ms (q1 24, q3 39.25, IQR 15.25, min 20, max 311); the control (`cpu`) median 25 ms (IQR 5.25); the write of 1 MiB median 62.5 ms (IQR 47). The write's median exceeds the control's by 37.5 ms, more than the plain IQR, so the calibration passes: a durable write before the send shows in the probe. Then the interleaved runs, each on a fresh `pnpm run deploy:test`, head being `ece7d51` (unit 8):
+
+| Run | Median (ms) | q1 | q3 | IQR | Min | Max |
+|---|---|---|---|---|---|---|
+| Baseline 1 | 26 | 25 | 29.25 | 4.25 | 21 | 337 |
+| Head 1 | 32 | 29 | 36 | 7 | 24 | 127 |
+| Baseline 2 | 39 | 37 | 47 | 10 | 33 | 287 |
+| Head 2 | 34 | 32 | 40 | 8 | 29 | 226 |
+
+M1 and M2 were equal in every sample of every run, so one row serves both: the object's clock does not move between a call's terminal event and the next call's `host.begin`, since no I/O completes between them, and everything between them, the settlement and the next record included, shows only as the output gate's wait inside the request's round trip. Head minus baseline is +6 ms in the first pair and −5 ms in the second, within 10 ms in both, so the rule passes. The two baseline runs of the same code differ by 13 ms, more than either pair's difference, so the probe shows no measurable cost of the record and the settlement; it could not resolve one much under 10 ms.
 
 ## Risks
 

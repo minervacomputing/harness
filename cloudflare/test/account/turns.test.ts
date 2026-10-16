@@ -12,7 +12,7 @@
 
 import { writeFileSync } from "node:fs";
 import { afterAll, describe, expect, test } from "vitest";
-import { delivered, destroyed, file, finish, folder, type Head, LIST, type LocalCard, modelDeadline, outcome, post, type RunEvent, type RunView, settled, type World, world } from "./driver.ts";
+import { delivered, destroyed, file, finish, finished, folder, type Head, LIST, type LocalCard, modelDeadline, outcome, post, type RunEvent, type RunView, settled, type World, world } from "./driver.ts";
 
 const timings: Record<string, unknown> = {};
 
@@ -56,9 +56,9 @@ async function expectPublished(w: World, view: RunView, path: string) {
 	expect(published.files.map((item) => item.path)).toContain(path);
 	const read = await file(w, path);
 	expect(read.text).toMatch(/\S/);
-	// Laravel got the turn: its facts end with the run's end, naming the version and the answer.
+	// Laravel got the turn: the run's end, followed only by its accounting, names the version and the answer.
 	const facts = await delivered(w, head.id);
-	expect(facts.at(-1)).toMatchObject({ run: head.id, type: "run.finished", data: { status: "completed", error: "", message: { content: answer.at(-1)?.data.content }, folder: { result: head.resultVersionId } } });
+	expect(await finished(w, head.id)).toMatchObject({ run: head.id, type: "run.finished", data: { status: "completed", error: "", message: { content: answer.at(-1)?.data.content }, folder: { result: head.resultVersionId } } });
 	const calls = view.events.filter((event) => event.type === "tool_call");
 	expect(facts.filter((fact) => fact.type === "run.tool_call").map((fact) => fact.data)).toEqual(calls.map((event) => expect.objectContaining({ tool: event.data.tool, decision: event.data.decision })));
 	return { local, scripted, phase: phase as RunEvent, text: read.text as string };

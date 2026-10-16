@@ -12,6 +12,7 @@
 // - a long tool across PiHarness's heartbeats, which is no restart;
 // - a revocation during a run: Laravel's cancel, answered once the run has stopped;
 // - a crash while a write is dispatched, after the provider applied it;
+// - a crash mid-stream: every counted model call settles once, and run.settled sums them and the container's time;
 // - one smoke run with Workers AI and the fake connector's tool;
 // - the local tools in the conversation's real container (ARCHITECTURE.md: Checkpoints; the Checkpoints and Files
 //   rows): write, edit, Python through bash and read, published with the run and hydrated into the next
@@ -30,6 +31,7 @@ import {
 	destroyed,
 	file,
 	finish,
+	finished,
 	folder,
 	LIST,
 	LIST_INBOX,
@@ -62,7 +64,7 @@ describe.concurrent("attempts on the platform", () => {
 		const runId = await post(w, script([LIST_INBOX, { text: "Two notes." }]));
 		const view = await settled(w, runId);
 		expect(view.head?.status, outcome(view)).toBe("completed");
-		expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "completed" } });
+		expect(await finished(w, runId)).toMatchObject({ run: runId, type: "run.finished", data: { status: "completed" } });
 		expect(restarts(view.events)).toEqual([2]);
 		expect(reads(await provider(w))).toBe(2);
 		expect(view.internals.executions.map((row) => row.executions)).toEqual([2]);
@@ -74,7 +76,7 @@ describe.concurrent("attempts on the platform", () => {
 		const runId = await post(w, script([save("Once only"), save("Once only"), { text: "Saved once." }]));
 		const view = await settled(w, runId);
 		expect(view.head?.status, outcome(view)).toBe("completed");
-		expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "completed" } });
+		expect(await finished(w, runId)).toMatchObject({ run: runId, type: "run.finished", data: { status: "completed" } });
 		expect(restarts(view.events)).toEqual([2]);
 		expect((await provider(w)).notes.map((note) => note.title)).toEqual([...SEEDED, "Once only"]);
 		expect(toolCalls(view.events)).toEqual([expect.objectContaining({ tool: SAVE, decision: "allowed" }), expect.objectContaining({ tool: SAVE, decision: "allowed", repeat: true })]);
@@ -86,7 +88,7 @@ describe.concurrent("attempts on the platform", () => {
 		const runId = await post(w, script([LIST_INBOX, { text: "Never." }]));
 		const view = await settled(w, runId);
 		expect(view.head).toMatchObject({ status: "failed", errorMessage: "The worker stopped unexpectedly." });
-		expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "failed", error: "The worker stopped unexpectedly." } });
+		expect(await finished(w, runId)).toMatchObject({ run: runId, type: "run.finished", data: { status: "failed", error: "The worker stopped unexpectedly." } });
 		expect(restarts(view.events)).toEqual([2, 3]);
 		expect(view.internals.run).toMatchObject({ attempt: 3, error_code: "worker_exited" });
 		expect(reads(await provider(w))).toBe(3);
@@ -113,7 +115,7 @@ describe.concurrent("attempts on the platform", () => {
 		// The held read answers 4 s after it arrived; had the run gone on, its second read would be here by now.
 		expect((await provider(w)).requests.map((request) => request.seq)).toEqual(atAnswer.map((request) => request.seq));
 		expect(toolCalls((await run(w, runId)).events)).toEqual([]);
-		expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "cancelled", error: "Stopped because permissions changed." } });
+		expect(await finished(w, runId)).toMatchObject({ run: runId, type: "run.finished", data: { status: "cancelled", error: "Stopped because permissions changed." } });
 		console.info(`revocation answered in ${answeredMs} ms`);
 	});
 
@@ -122,7 +124,7 @@ describe.concurrent("attempts on the platform", () => {
 		const runId = await post(w, script([save("Applied once"), save("Applied once"), { text: "Done." }]));
 		const view = await settled(w, runId);
 		expect(view.head?.status, outcome(view)).toBe("completed");
-		expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "completed" } });
+		expect(await finished(w, runId)).toMatchObject({ run: runId, type: "run.finished", data: { status: "completed" } });
 		expect(restarts(view.events)).toEqual([2]);
 		expect(toolCalls(view.events)).toEqual([expect.objectContaining({ code: "WRITE_UNCERTAIN", message: "This write has an unknown outcome. Check the provider before retrying." })]);
 		expect((await provider(w)).notes.map((note) => note.title)).toEqual([...SEEDED, "Applied once"]);
@@ -133,11 +135,51 @@ describe.concurrent("attempts on the platform", () => {
 		const runId = await post(w, script([LIST_INBOX, { text: "Never." }]));
 		const view = await settled(w, runId);
 		expect(view.head).toMatchObject({ status: "failed", errorMessage: "The worker stopped unexpectedly." });
-		expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "failed", error: "The worker stopped unexpectedly." } });
+		expect(await finished(w, runId)).toMatchObject({ run: runId, type: "run.finished", data: { status: "failed", error: "The worker stopped unexpectedly." } });
 		expect(restarts(view.events)).toEqual([2, 3]);
 		expect(view.internals.run).toMatchObject({ attempt: 3, error_code: "worker_exited" });
 		expect(reads(await provider(w))).toBe(1);
 		console.info(`gate abort: ${view.seconds} s`);
+	});
+
+	test("ctx.abort() mid-stream: one settlement per counted call, and run.settled's totals are their sums", async () => {
+		const w = await world({ faults: [{ point: "model:delta", mode: "abort", step: 1, delta: 3 }] });
+		const runId = await post(w, script([sh("echo ran"), { text: "A sentence long enough for several deltas." }]));
+		const view = await settled(w, runId);
+		expect(view.head?.status, outcome(view)).toBe("completed");
+		expect(restarts(view.events)).toEqual([2]);
+		const facts = (await delivered(w, runId)).filter((fact) => fact.run === runId);
+		const usage = facts.flatMap((fact) => (fact.type === "run.usage" ? [fact.data] : []));
+		const unmetered = facts.flatMap((fact) => (fact.type === "run.unmetered" ? [fact.data] : []));
+		const calls = [...usage, ...unmetered].map((data) => data.call);
+		expect(calls).toHaveLength(Number(view.internals.run?.model_calls));
+		expect(new Set(calls).size).toBe(calls.length);
+		// The call the crash cut is settled by the next instance; the fake reports usage for every other.
+		expect(unmetered.map((data) => [data.cause, data.estimated])).toEqual([["lost", true]]);
+		const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
+		const totals = facts.find((fact) => fact.type === "run.settled")?.data;
+		expect(totals).toEqual({
+			modelCalls: calls.length,
+			refusedCalls: 0,
+			unmeteredCalls: 1,
+			inputTokens: sum(usage.map((data) => data.inputTokens)),
+			outputTokens: sum(usage.map((data) => data.outputTokens)),
+			cachedTokens: sum(usage.map((data) => data.cachedTokens)),
+			cacheWriteTokens: sum(usage.map((data) => data.cacheWriteTokens ?? 0)),
+			reasoningTokens: sum(usage.map((data) => data.reasoningTokens)),
+			estimatedInputTokens: sum(unmetered.map((data) => data.inputTokens)),
+			estimatedOutputTokens: sum(unmetered.map((data) => data.outputTokens)),
+			containers: expect.any(Number),
+			containerMs: expect.any(Number),
+			containerEstimated: false,
+			scripts: 0,
+			scriptMs: 0,
+			scriptEstimated: false,
+		});
+		expect(totals?.containers).toBeGreaterThan(0);
+		expect(totals?.containerMs).toBeGreaterThan(0);
+		expect(facts.at(-1)?.type).toBe("run.settled");
+		console.info(`a crash mid-stream: ${view.seconds} s, ${calls.length} calls; ${JSON.stringify(totals)}`);
 	});
 
 	test("a long tool across PiHarness's heartbeats is no restart", async () => {
@@ -247,7 +289,7 @@ describe.concurrent("the local tools in the container", () => {
 			const runId = await post(w, script([sh("echo a > a.txt"), sh("cat a.txt"), { text: "Done." }]));
 			const view = await settled(w, runId);
 			expect(view.head?.status, outcome(view)).toBe("completed");
-			expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "completed" } });
+			expect(await finished(w, runId)).toMatchObject({ run: runId, type: "run.finished", data: { status: "completed" } });
 			expect(restarts(view.events)).toEqual([2]);
 			// Uploaded but not recorded: the file is not in the checkpoint attempt 2 starts from.
 			expect(cards(view.events).find((card) => card.summary === "cat a.txt")?.ok).toBe(point !== "checkpoint:uploaded");

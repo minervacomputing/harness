@@ -13,7 +13,7 @@
 // Run with `pnpm test:faults` after `pnpm run deploy:test`; never against production.
 
 import { afterAll, describe, expect, test } from "vitest";
-import { cards, delivered, finish, LIST, LIST_INBOX, later, outcome, post, provider, reads, restarts, script, settled, sh, world } from "./driver.ts";
+import { cards, finish, finished, LIST, LIST_INBOX, later, outcome, post, provider, reads, restarts, script, settled, sh, world } from "./driver.ts";
 
 afterAll(finish, 300_000);
 
@@ -23,7 +23,7 @@ describe("memory-limit resets", () => {
 		const runId = await post(w, script([LIST_INBOX, { text: "Recovered." }]));
 		const view = await settled(w, runId);
 		expect(view.head?.status, outcome(view)).toBe("completed");
-		expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "completed" } });
+		expect(await finished(w, runId)).toMatchObject({ run: runId, type: "run.finished", data: { status: "completed" } });
 		expect(restarts(view.events)).toEqual([2]);
 		expect(reads(await provider(w))).toBe(2);
 		console.info(`memory reset: ${view.seconds} s`);
@@ -34,7 +34,7 @@ describe("memory-limit resets", () => {
 		const runId = await post(w, script([sh("echo a > a.txt"), sh("cat a.txt"), { text: "Done." }]));
 		const view = await settled(w, runId);
 		expect(view.head?.status, outcome(view)).toBe("completed");
-		expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "completed" } });
+		expect(await finished(w, runId)).toMatchObject({ run: runId, type: "run.finished", data: { status: "completed" } });
 		expect(restarts(view.events)).toEqual([2]);
 		// The reset came before the checkpoint was recorded: attempt 2's container starts without the file.
 		expect(cards(view.events).find((card) => card.summary === "cat a.txt")?.ok).toBe(false);
@@ -48,7 +48,7 @@ describe("memory-limit resets", () => {
 		const runId = await post(w, script([LIST_INBOX, { text: "Never." }]));
 		const view = await settled(w, runId);
 		expect(view.head).toMatchObject({ status: "failed", errorMessage: "The worker stopped unexpectedly." });
-		expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "failed", error: "The worker stopped unexpectedly." } });
+		expect(await finished(w, runId)).toMatchObject({ run: runId, type: "run.finished", data: { status: "failed", error: "The worker stopped unexpectedly." } });
 		expect(restarts(view.events)).toEqual([2, 3]);
 		expect(view.internals.run).toMatchObject({ attempt: 3, error_code: "worker_exited" });
 		expect(reads(await provider(w))).toBe(1);
@@ -60,7 +60,7 @@ describe("memory-limit resets", () => {
 		const runId = await post(w, script([LIST_INBOX, { text: "Never." }]));
 		const view = await settled(w, runId);
 		expect(view.head).toMatchObject({ status: "failed", errorMessage: "The worker stopped unexpectedly." });
-		expect((await delivered(w, runId)).at(-1)).toMatchObject({ run: runId, type: "run.finished", data: { status: "failed", error: "The worker stopped unexpectedly." } });
+		expect(await finished(w, runId)).toMatchObject({ run: runId, type: "run.finished", data: { status: "failed", error: "The worker stopped unexpectedly." } });
 		expect(restarts(view.events)).toEqual([2, 3]);
 		expect(view.internals.run).toMatchObject({ attempt: 3, error_code: "worker_exited" });
 		expect(reads(await provider(w))).toBe(3);

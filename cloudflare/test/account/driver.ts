@@ -248,15 +248,33 @@ export async function laravel(w: World): Promise<LaravelState> {
 	return driver<LaravelState>("laravel", base(w));
 }
 
-/** The conversation's facts once the run's `run.finished` has reached the fake Laravel, which the engine delivers after the run ends. */
-export async function delivered(w: World, runId: string, timeoutMs = 60_000): Promise<Fact[]> {
+/**
+ * The conversation's facts once the run's `run.settled` has reached the fake Laravel: the engine writes it after the run's
+ * `run.finished` and every settlement of its calls, so it is the run's last fact. It waits for the run's seal, which the
+ * Sandbox serves after any lifecycle step in flight: a container's start (READY_MS, 90 s) and destroy (DESTROY_MS, 60 s),
+ * with the settlement job asking again 40 s after a seal it gave up on (src/sandbox/core.ts, src/conversation/conversation.ts).
+ * Seen on the test instance after memory resets: the Sandbox's calls in flight took 60 s, and run.settled came 80 s after
+ * run.finished.
+ */
+export async function delivered(w: World, runId: string, timeoutMs = 240_000): Promise<Fact[]> {
 	const started = Date.now();
 	for (;;) {
 		const { facts } = await laravel(w);
-		if (facts.some((fact) => fact.run === runId && fact.type === "run.finished")) return facts;
-		if (Date.now() - started > timeoutMs) throw new Error(`The run's run.finished never reached Laravel; its facts: ${JSON.stringify(facts.map((fact) => [fact.seq, fact.type]))}`);
+		if (facts.some((fact) => fact.run === runId && fact.type === "run.settled")) return facts;
+		if (Date.now() - started > timeoutMs) throw new Error(`The run's run.settled never reached Laravel; its facts: ${JSON.stringify(facts.map((fact) => [fact.seq, fact.type]))}`);
 		await sleep(1000);
 	}
+}
+
+const ACCOUNTING: readonly string[] = ["run.usage", "run.unmetered", "run.settled"];
+
+/** The run's `run.finished`, once delivered; only the accounting of the run's calls may follow it. */
+export async function finished(w: World, runId: string): Promise<Fact | undefined> {
+	const facts = (await delivered(w, runId)).filter((fact) => fact.run === runId);
+	const at = facts.findIndex((fact) => fact.type === "run.finished");
+	const after = facts.slice(at + 1).filter((fact) => !ACCOUNTING.includes(fact.type));
+	if (after.length) throw new Error(`Facts after the run's run.finished: ${JSON.stringify(after.map((fact) => [fact.seq, fact.type]))}`);
+	return facts[at];
 }
 
 /** The conversation's current folder, as Laravel reads it. */
