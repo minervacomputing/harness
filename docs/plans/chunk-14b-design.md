@@ -178,6 +178,8 @@ The perf runs, 2026-10-16, each on a fresh `pnpm run deploy:test` of `minerva-cf
 
 Head minus baseline at p95 is +34.95 ms in the first pair and +2 ms in the second; the two baselines of the same code differ by 20.95 ms at p95, more than 5 ms, so by the rule the probe cannot judge the check, and the runs are reported to the owner rather than called a pass. Each turn's second call (the first measured) is the slow one in every run, its median 108 to 143 ms against 37 to 53 ms for calls 3 to 6: it runs while the attempt's container is being prepared, so the p95 of 100 samples, of which 20 are such calls, measures that overlap rather than the calls. Over calls 3 to 6 alone, p95 is 47.2, 56.05, 53.65 and 55.1 ms. As owner question 4 allows when the probe is too noisy, a benchmark in Node (node:sqlite, the store's own code, 3,600 calls each after a warm-up) timed `recordModelCall` at a median of 25.6 µs and a p95 of 35.7 µs for a run without an allowance, and 35.7 µs and 43.8 µs with one: the check adds about 10 µs a call. The samples are kept outside the repository.
 
+**The rule is met by the measure the owner accepted for this case** (Owner questions, 4: when the probe's baselines are too noisy to resolve 5 ms, a benchmark of the check's change in Node). `recordModelCall` over node:sqlite, 3,600 calls after a warm-up: median 25.6 µs and p95 35.7 µs without an allowance, 35.7 µs and 43.8 µs with one. The check adds about 10 µs a call at the median and 8 µs at p95, under the 5 ms rule by more than two orders of magnitude.
+
 ## Risks
 
 - **A budget is not a hard limit** (Overspend). The overspend per run is bounded by what is in flight; per organization, by the runs going at once.
