@@ -11,14 +11,18 @@
 // container it had verified is verified again before its next use; one it had not is destroyed at once.
 // Commands and file operations run side by side; hydration, scans and checkpoints need the folder to
 // themselves and are refused (`busy`) while anything else runs, as the Conversation's barrier expects.
+//
+// Each incarnation keeps a span (store.ts), closed with how it ended. Sealing a run, once it is over, refuses
+// its later starts, destroys its container and answers its spans: the run's container time.
 
-import type { AttemptFence, EpochMs } from "../shared/rpc.ts";
+import type { AttemptFence, EpochMs, RunId } from "../shared/rpc.ts";
 import { type ExecOutputSink, type ExecRequest, type ExecResult, type RunningCommand, runCommand } from "./commands.ts";
 import {
 	AGENT_CGROUP,
 	CLEANUP_RETRY_MS,
 	DEADLINE_GRACE_MS,
 	FILE_OPERATION_SECONDS,
+	HARD_GRACE_MS,
 	IDLE_MS,
 	INSTANCE,
 	MAX_INACTIVITY_MS,
@@ -39,7 +43,7 @@ import {
 import type { SandboxPorts } from "./ports.ts";
 import { ContainerGone, helperEnvironment, type Machine, runRoot, sleep, within } from "./process.ts";
 import { type FolderIndex, scan, type ScanResult } from "./scan.ts";
-import { olderThan, readState, type SandboxState, type StateRow, writeState } from "./store.ts";
+import { isSealed, olderThan, readSpans, readState, type SandboxState, type SealedSpans, sealRun, type SpanEnd, type StateRow, writeState } from "./store.ts";
 import { wrapperArgv } from "./wrapper.ts";
 
 /** A container incarnation, from `start`; every later call carries it. */
@@ -85,6 +89,12 @@ export interface SandboxApi {
 	killStrays(fence: SandboxFence): Promise<{ ok: true } | { ok: false; message: string } | Refused>;
 	/** Destroys this incarnation's container; refused for any other incarnation. */
 	destroy(fence: SandboxFence, reason: string): Promise<{ destroyed: boolean } | Refused>;
+	/**
+	 * For a run that is over: refuses its later starts, destroys its container if it still has one, and answers
+	 * its spans. Ordered after any lifecycle step in flight. Idempotent; a span still open (a destroy that
+	 * failed, owed to the alarm) closes once the alarm's destroy succeeds.
+	 */
+	seal(runId: RunId): Promise<SealedSpans>;
 	status(): Promise<SandboxStatus>;
 }
 
@@ -94,13 +104,12 @@ const STRAYS_GONE_MS = 5000;
 /** A destroy that has not answered after this is owed, for the alarm. */
 const DESTROY_MS = 60_000;
 const KEEP_ALIVE_MS = 10_000;
-/** How long past its lease a container may stay for work that is still running. */
-const HARD_GRACE_MS = 10 * 60_000;
 
 const STALE: Refused = { refused: "stale", message: "This sandbox belongs to another incarnation, run or attempt." };
 const NOT_VERIFIED: Refused = { refused: "not_verified", message: "The sandbox is not ready." };
 const STOPPED: Refused = { refused: "not_verified", message: "The sandbox stopped." };
 const BUSY: Refused = { refused: "busy", message: "The sandbox is saving or loading the folder." };
+const SEALED: Refused = { refused: "stale", message: "This run has ended." };
 
 function positiveInteger(value: unknown): boolean {
 	return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
@@ -229,9 +238,14 @@ export class SandboxCore {
 		};
 	}
 
-	#write(state: StateRow): void {
-		writeState(this.#ports.sql, state, this.#ports.now());
+	/** `ended` says how the incarnation went away, when this write clears it. */
+	#write(state: StateRow, ended: SpanEnd | null = null): void {
+		writeState(this.#ports.sql, state, this.#ports.now(), ended);
 		this.#state = state;
+	}
+
+	#gone(): StateRow {
+		return { ...this.#state, state: "none", incarnation: null, hardened: false, cleanupPending: false, cleanupReason: null, leaseUntil: null };
 	}
 
 	/** Lifecycle steps run one at a time; commands and file operations do not wait for each other. */
@@ -277,18 +291,17 @@ export class SandboxCore {
 		const container = this.#ports.container;
 		this.#write({ ...this.#state, state: "destroying", cleanupPending: true, cleanupReason: reason.slice(0, 500) });
 		this.#forget();
-		let gone = true;
+		let ended: SpanEnd | null = "destroyed";
 		if (container) {
 			try {
 				await within(container.destroy(reason), DESTROY_MS, "The container did not answer its destroy.");
 			} catch (error) {
-				gone = !container.running;
+				ended = container.running ? null : "gone";
 				this.#ports.log("sandbox destroy failed", { error: String(error), running: container.running });
 			}
 		}
-		if (gone) {
-			this.#write({ ...this.#state, state: "none", incarnation: null, hardened: false, cleanupPending: false, cleanupReason: null, leaseUntil: null });
-		}
+		const gone = ended !== null;
+		if (gone) this.#write(this.#gone(), ended);
 		await this.#schedule();
 		this.#ports.log("sandbox destroyed", { reason: reason.slice(0, 200), gone });
 		return gone;
@@ -318,7 +331,7 @@ export class SandboxCore {
 					return;
 				}
 			} else if (state.state !== "none") {
-				this.#write({ ...state, state: "none", incarnation: null, hardened: false, cleanupPending: false, cleanupReason: null, leaseUntil: null });
+				this.#write(this.#gone(), "gone");
 			}
 			await this.#schedule();
 		});
@@ -338,6 +351,7 @@ export class SandboxCore {
 
 	start(fence: AttemptFence, spec: SandboxSpec): Promise<{ incarnation: string } | Refused | { failed: string }> {
 		return this.#serial(async () => {
+			if (isSealed(this.#ports.sql, fence.runId)) return SEALED;
 			const container = this.#ports.container;
 			if (!container) return { failed: "This Worker has no container." };
 			if (olderThan(fence, this.#state)) return STALE;
@@ -527,7 +541,7 @@ export class SandboxCore {
 			if (container?.running) await this.#destroyNow("A call found the container unusable.");
 			else {
 				this.#forget();
-				this.#write({ ...this.#state, state: "none", incarnation: null, hardened: false, cleanupPending: false, cleanupReason: null, leaseUntil: null });
+				this.#write(this.#gone(), "gone");
 				await this.#schedule();
 			}
 		});
@@ -654,6 +668,14 @@ export class SandboxCore {
 		return this.#serial(async () => {
 			if (!this.#owns(fence)) return STALE;
 			return { destroyed: await this.#destroyNow(reason) };
+		});
+	}
+
+	seal(runId: RunId): Promise<SealedSpans> {
+		return this.#serial(async () => {
+			sealRun(this.#ports.sql, runId, this.#ports.now());
+			if (this.#state.runId === runId && this.#state.state !== "none") await this.#destroyNow("The run has ended.");
+			return readSpans(this.#ports.sql, runId);
 		});
 	}
 

@@ -11,7 +11,7 @@ import { createEnvConformance } from "@earendil-works/pi-durable/testing";
 import { createReadTool } from "@earendil-works/pi-durable/tools";
 import { afterAll, assert, beforeAll, describe, expect, test } from "vitest";
 import { uuid7 } from "../../src/lib/random.ts";
-import { commandEnvironment, WORKSPACE } from "../../src/sandbox/constants.ts";
+import { commandEnvironment, IDLE_MS, WORKSPACE } from "../../src/sandbox/constants.ts";
 import { SandboxCore, type SandboxFence } from "../../src/sandbox/core.ts";
 import { SandboxExecutionEnv } from "../../src/sandbox/env.ts";
 import type { Delivered } from "../../src/sandbox/output.ts";
@@ -501,6 +501,19 @@ describe.skipIf(!READY)("the Sandbox's fault rows", () => {
 		await restarted.recover();
 		expect(restarted.status()).toMatchObject({ state: "none", incarnation: null });
 		expect(made.container.running).toBe(false);
+	});
+
+	test("a seal destroys the run's container, answers its one span and refuses the run's later starts", { timeout: 60_000 }, async () => {
+		const made = track(rig());
+		const fence = await ready(made);
+		const { startedAt } = made.core.status();
+		expect((await run(made.core, fence, "echo hi")).stdout).toBe("hi\n");
+		const sealed = await made.core.seal(fence.runId);
+		expect(sealed).toEqual({ since: 0, spans: [{ startedAt, leaseUntil: (startedAt ?? 0) + IDLE_MS, endedAt: expect.any(Number), ended: "destroyed" }] });
+		expect(sealed.spans[0]?.endedAt).toBeGreaterThan(startedAt ?? Infinity);
+		expect(made.container.running).toBe(false);
+		expect(await made.core.start({ runId: fence.runId, attempt: 2 }, spec())).toEqual({ refused: "stale", message: "This run has ended." });
+		expect(made.container.started).toHaveLength(1);
 	});
 
 	test("fences: an older attempt cannot start, and another incarnation's calls are refused", { timeout: 60_000 }, async () => {

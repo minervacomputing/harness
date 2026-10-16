@@ -10,7 +10,7 @@ import { type About, identity } from "../lib/about.ts";
 import { uuid7 } from "../lib/random.ts";
 import { durableSql } from "../lib/sql.ts";
 import { appliedMigrations, migrate } from "../lib/sqlite.ts";
-import type { AttemptFence } from "../shared/rpc.ts";
+import type { AttemptFence, RunId } from "../shared/rpc.ts";
 import type { ExecOutputSink, ExecRequest, ExecResult } from "./commands.ts";
 import type { SandboxSpec } from "./constants.ts";
 import { type Lost, type Refused, type SandboxApi, SandboxCore, type SandboxFence, type SandboxStatus } from "./core.ts";
@@ -19,7 +19,7 @@ import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan, Hydrate
 import type { HardeningReport, VerificationReport } from "./hardening.ts";
 import { type ContainerPort, r2Bucket, type SandboxPorts } from "./ports.ts";
 import type { ScanResult } from "./scan.ts";
-import { SANDBOX_MIGRATIONS } from "./store.ts";
+import { SANDBOX_MIGRATIONS, type SealedSpans } from "./store.ts";
 
 /** The ports of a Sandbox object: its container (with the image it was given), storage, alarm and buckets. */
 export function objectPorts(ctx: DurableObjectState, env: Env, overrides: Partial<SandboxPorts> = {}): SandboxPorts {
@@ -117,6 +117,10 @@ export class Sandbox extends DurableObject<Env> implements SandboxApi {
 
 	async destroy(fence: SandboxFence, reason: string): Promise<{ destroyed: boolean } | Refused> {
 		return this.core.destroy(fence, reason);
+	}
+
+	async seal(runId: RunId): Promise<SealedSpans> {
+		return this.core.seal(runId);
 	}
 
 	async status(): Promise<SandboxStatus> {

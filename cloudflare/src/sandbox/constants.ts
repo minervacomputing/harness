@@ -81,6 +81,8 @@ export const KILL_AFTER_SECONDS = 5;
 export const IDLE_MS = 60 * 60 * 1000;
 /** How long past its run's deadline a container is kept, for the run's last checkpoint. */
 export const DEADLINE_GRACE_MS = 2 * 60 * 1000;
+/** How long past its lease a container may stay for work that is still running; container time is charged to no later. */
+export const HARD_GRACE_MS = 10 * 60_000;
 /** The platform refuses an inactivity timeout above 6 hours. */
 export const MAX_INACTIVITY_MS = 6 * 60 * 60 * 1000;
 /** How soon a failed destroy is tried again. */

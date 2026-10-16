@@ -1,7 +1,7 @@
 // The Sandbox's lifecycle (src/sandbox/core.ts) over a scripted container and node:sqlite, without Docker:
 // the states and what each admits, fences, a failed start, hardening and destroy, the alarm's retries and
-// leases, a restart in each state, an admission failure and a container lost under a call. The same paths
-// against the real image are in sandbox-local.test.ts.
+// leases, a restart in each state, an admission failure and a container lost under a call, and each
+// incarnation's span and a run's seal. The same paths against the real image are in sandbox-local.test.ts.
 
 import { describe, expect, test, vi } from "vitest";
 import { uuid7 } from "../../src/lib/random.ts";
@@ -10,7 +10,7 @@ import { DEADLINE_GRACE_MS, IDLE_MS, sandboxSpec, type SandboxSpec, WORKSPACE } 
 import { SandboxCore, type SandboxFence } from "../../src/sandbox/core.ts";
 import type { ContainerPort, SandboxPorts } from "../../src/sandbox/ports.ts";
 import { prepareSandbox } from "../../src/sandbox/session.ts";
-import { readState, SANDBOX_MIGRATIONS } from "../../src/sandbox/store.ts";
+import { containerCharge, readSpans, readState, SANDBOX_MIGRATIONS } from "../../src/sandbox/store.ts";
 import { openDatabase } from "./sqlite.ts";
 
 const CGROUP = "/sys/fs/cgroup/agent";
@@ -689,5 +689,173 @@ describe("calls", () => {
 		await made.core.cancel(fence, "same");
 		expect(await first).toEqual({ ok: false, code: "aborted", message: "aborted" });
 		expect(killed).toEqual(["42"]);
+	});
+});
+
+describe("spans and seals", () => {
+	const T0 = 1_800_000_000_000;
+	const MINUTE = 60_000;
+
+	test("a span opens at the start, follows the lease, and closes destroyed when the destroy answers", async () => {
+		const made = rig();
+		const fence = await ready(made);
+		made.clock.now += 10 * MINUTE;
+		expect(await command(made, fence)).toEqual({ ok: true, exitCode: 0 });
+		made.clock.now += MINUTE;
+		expect(await made.core.destroy(fence, "turn over")).toEqual({ destroyed: true });
+		expect(readSpans(made.sql, fence.runId)).toEqual({ since: 0, spans: [{ startedAt: T0, leaseUntil: T0 + 10 * MINUTE + IDLE_MS, endedAt: T0 + 11 * MINUTE, ended: "destroyed" }] });
+	});
+
+	test("a destroy that fails keeps the span open until the alarm's destroy answers", async () => {
+		const made = rig();
+		const fence = await ready(made);
+		made.container.failDestroys = 1;
+		made.clock.now += MINUTE;
+		expect(await made.core.destroy(fence, "turn over")).toEqual({ destroyed: false });
+		expect(readSpans(made.sql, fence.runId).spans).toEqual([{ startedAt: T0, leaseUntil: T0 + IDLE_MS, endedAt: null, ended: null }]);
+		made.clock.now += MINUTE;
+		await made.core.alarm();
+		expect(readSpans(made.sql, fence.runId).spans).toEqual([{ startedAt: T0, leaseUntil: T0 + IDLE_MS, endedAt: T0 + 2 * MINUTE, ended: "destroyed" }]);
+	});
+
+	test("a container found stopped ends its span as gone, when the object noticed", async () => {
+		const failedDestroy = rig();
+		const destroyed = await ready(failedDestroy);
+		failedDestroy.container.failDestroys = 1;
+		failedDestroy.container.running = false;
+		failedDestroy.clock.now += MINUTE;
+		expect(await failedDestroy.core.destroy(destroyed, "turn over")).toEqual({ destroyed: true });
+
+		const restarted = rig();
+		const recovered = await ready(restarted);
+		restarted.container.running = false;
+		restarted.clock.now += MINUTE;
+		await restarted.restart();
+
+		const unusable = rig();
+		const used = await ready(unusable);
+		unusable.container.running = false;
+		unusable.clock.now += MINUTE;
+		expect(await unusable.core.fs(used, { op: "lstat", path: "/workspace/a" })).toEqual({ refused: "not_verified", message: "The sandbox stopped." });
+
+		for (const [made, fence] of [[failedDestroy, destroyed], [restarted, recovered], [unusable, used]] as const) {
+			expect(readSpans(made.sql, fence.runId).spans).toEqual([{ startedAt: T0, leaseUntil: T0 + IDLE_MS, endedAt: T0 + MINUTE, ended: "gone" }]);
+		}
+	});
+
+	test("a start that replaces another run's container closes that run's span and opens its own", async () => {
+		const made = rig();
+		const first = await ready(made);
+		made.clock.now += MINUTE;
+		const second = await ready(made);
+		expect(readSpans(made.sql, first.runId).spans).toEqual([{ startedAt: T0, leaseUntil: T0 + IDLE_MS, endedAt: T0 + MINUTE, ended: "destroyed" }]);
+		expect(readSpans(made.sql, second.runId).spans).toEqual([{ startedAt: T0 + MINUTE, leaseUntil: T0 + MINUTE + IDLE_MS, endedAt: null, ended: null }]);
+	});
+
+	test("a seal destroys the run's container, refuses its later starts, and answers the same spans again", async () => {
+		const made = rig();
+		const fence = await ready(made);
+		made.clock.now += MINUTE;
+		const sealed = { since: 0, spans: [{ startedAt: T0, leaseUntil: T0 + IDLE_MS, endedAt: T0 + MINUTE, ended: "destroyed" }] };
+		expect(await made.core.seal(fence.runId)).toEqual(sealed);
+		expect(made.container.running).toBe(false);
+		expect(made.core.status()).toMatchObject({ state: "none", incarnation: null });
+		expect(await made.core.start({ runId: fence.runId, attempt: 2 }, SPEC)).toEqual({ refused: "stale", message: "This run has ended." });
+		expect(made.container.starts).toBe(1);
+		made.clock.now += MINUTE;
+		expect(await made.core.seal(fence.runId)).toEqual(sealed);
+		await made.restart();
+		expect(await made.core.start({ runId: fence.runId, attempt: 3 }, SPEC)).toEqual({ refused: "stale", message: "This run has ended." });
+		// Sealing it again, once another run has the container, leaves that container alone.
+		const next = await ready(made);
+		expect(await made.core.seal(fence.runId)).toEqual(sealed);
+		expect(made.core.status()).toMatchObject({ state: "verified", incarnation: next.incarnation });
+		expect(made.container.running).toBe(true);
+	});
+
+	test("a seal whose destroy fails answers the span open, and closes it once the alarm's destroy answers", async () => {
+		const made = rig();
+		const fence = await ready(made);
+		made.container.failDestroys = 1;
+		expect(await made.core.seal(fence.runId)).toEqual({ since: 0, spans: [{ startedAt: T0, leaseUntil: T0 + IDLE_MS, endedAt: null, ended: null }] });
+		made.clock.now += MINUTE;
+		await made.core.alarm();
+		expect(await made.core.seal(fence.runId)).toEqual({ since: 0, spans: [{ startedAt: T0, leaseUntil: T0 + IDLE_MS, endedAt: T0 + MINUTE, ended: "destroyed" }] });
+	});
+
+	test("a seal waits for a start in flight, then destroys what it started; a start queued behind it starts nothing", async () => {
+		const made = rig();
+		const runId = uuid7();
+		let release: () => void = () => {};
+		const held = new Promise<void>((resolve) => (release = resolve));
+		const original = made.container.exec.bind(made.container);
+		made.container.exec = async (argv) => {
+			if (argv[0] === "/bin/true") await held;
+			return original(argv);
+		};
+		const starting = made.core.start({ runId, attempt: 1 }, SPEC);
+		const sealing = made.core.seal(runId);
+		const retrying = made.core.start({ runId, attempt: 2 }, SPEC);
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		made.clock.now += MINUTE;
+		release();
+		const started = await starting;
+		if (!("incarnation" in started)) throw new Error("no start");
+		expect(await sealing).toEqual({ since: 0, spans: [{ startedAt: T0, leaseUntil: T0 + IDLE_MS, endedAt: T0 + MINUTE, ended: "destroyed" }] });
+		expect(await retrying).toEqual({ refused: "stale", message: "This run has ended." });
+		expect(made.container.starts).toBe(1);
+		expect(made.container.running).toBe(false);
+		expect(await made.core.harden({ runId, attempt: 1, incarnation: started.incarnation })).toMatchObject({ refused: "stale" });
+	});
+
+	test("a run sealed between a start that did not come up and its retry gets no second container", async () => {
+		vi.useFakeTimers();
+		try {
+			const made = rig();
+			const runId = uuid7();
+			made.container.hangHardenings = 1;
+			let starts = 0;
+			let sealed: unknown = null;
+			const sealing = {
+
+				start: async (fence: { runId: string; attempt: number }, spec: SandboxSpec) => {
+					if (++starts === 2) sealed = await made.core.seal(runId);
+					return made.core.start(fence, spec);
+				},
+				harden: (fence: SandboxFence) => made.core.harden(fence),
+				verify: (fence: SandboxFence) => made.core.verify(fence),
+				destroy: (fence: SandboxFence, reason: string) => made.core.destroy(fence, reason),
+			};
+			expect(await outwait(prepareSandbox(sealing, { runId, attempt: 1 }, SPEC))).toEqual({ ok: false, stage: "start", message: "This run has ended." });
+			expect(made.container.starts).toBe(1);
+			expect(sealed).toEqual({ since: 0, spans: [{ startedAt: T0, leaseUntil: T0 + IDLE_MS, endedAt: T0, ended: "destroyed" }] });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	test("an object that kept its state before spans keeps them since its last write then; a new one since always", async () => {
+		const made = rig();
+		expect(readSpans(made.sql, uuid7())).toEqual({ since: 0, spans: [] });
+
+		// An older version's container, running when the object takes the new code: it has no span.
+		const sql = sqliteSql(openDatabase());
+		migrate(sql, SANDBOX_MIGRATIONS.slice(0, 1), 0);
+		const legacy = uuid7(T0 - MINUTE);
+		sql.exec(
+			"INSERT INTO sandbox_state (id, state, incarnation, run_id, attempt, hardened, started_at, lease_until, updated_at) VALUES (1, 'in_use', 'old', ?, 1, 1, ?, ?, ?)",
+			legacy,
+			T0 - MINUTE,
+			T0 + IDLE_MS,
+			T0,
+		);
+		migrate(sql, SANDBOX_MIGRATIONS, T0 + MINUTE);
+		made.container.running = false;
+		const core = new SandboxCore({ ...made.ports(), sql });
+		await core.recover();
+		const sealed = await core.seal(legacy);
+		expect(sealed).toEqual({ since: T0, spans: [] });
+		expect(containerCharge(sealed, T0 - MINUTE)).toEqual({ containers: 0, containerMs: 0, containerEstimated: true });
+		expect(containerCharge(sealed, T0 + 1)).toEqual({ containers: 0, containerMs: 0, containerEstimated: false });
 	});
 });

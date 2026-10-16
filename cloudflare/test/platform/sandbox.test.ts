@@ -1,6 +1,6 @@
 // The Sandbox Durable Object in local workerd, which has no containers: its schema on the object's SQLite,
-// its RPC surface and refusals, its alarm, and the lifecycle (src/sandbox/core.ts) over the object's own
-// storage with a scripted container. The real container is tested locally in Docker
+// its RPC surface and refusals, its alarm, the lifecycle (src/sandbox/core.ts) over the object's own
+// storage with a scripted container, and a run's span read back through the object's seal. The real container is tested locally in Docker
 // (test/docker/sandbox-local.test.ts) and on the account (test/account/sandbox.test.ts, sandbox-faults.test.ts).
 
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
@@ -11,7 +11,7 @@ import { uuid7 } from "../../src/lib/random.ts";
 import { durableSql } from "../../src/lib/sql.ts";
 import { sandboxSpec, WORKSPACE } from "../../src/sandbox/constants.ts";
 import { SandboxCore, type SandboxFence } from "../../src/sandbox/core.ts";
-import { CHECK_MISMATCH, r2Bucket } from "../../src/sandbox/ports.ts";
+import { CHECK_MISMATCH, r2Bucket, type SandboxPorts } from "../../src/sandbox/ports.ts";
 import { OutputSink } from "../../src/sandbox/sink.ts";
 import { readState, writeState } from "../../src/sandbox/store.ts";
 import { prepareSandbox } from "../../src/sandbox/session.ts";
@@ -25,10 +25,26 @@ function sandbox(name = uuid7()) {
 	return sandboxObject(env, exports, WS, name);
 }
 
+/** Ports over the object's own storage with a scripted container, in place of the object's. */
+function scripted(storage: DurableObjectStorage, container: ScriptedContainer, alarms: (number | null)[], now: () => number = Date.now): SandboxPorts {
+	return {
+		container,
+		sql: durableSql(storage),
+		bucket: () => ({ get: async () => null, put: async () => {}, check: async () => {} }),
+		now,
+		id: () => uuid7(),
+		alarm: async (at) => {
+			alarms.push(at);
+		},
+		background: () => {},
+		log: () => {},
+	};
+}
+
 describe("the Sandbox object", () => {
 	test("its schema, its status, and a start without a container", async () => {
 		const stub = sandbox();
-		expect(await stub.about()).toMatchObject({ kind: "sandbox", migrations: [1] });
+		expect(await stub.about()).toMatchObject({ kind: "sandbox", migrations: [1, 2] });
 		expect(await stub.status()).toEqual({ state: "none", incarnation: null, runId: null, attempt: null, cleanupPending: false, startedAt: null });
 		expect(await stub.start({ runId: uuid7(), attempt: 1 }, SPEC)).toEqual({ failed: "This Worker has no container." });
 	});
@@ -50,7 +66,7 @@ describe("the Sandbox object", () => {
 		const stub = sandbox();
 		await runInDurableObject(stub, async (_instance, state) => {
 			const sql = durableSql(state.storage);
-			writeState(sql, { ...readState(sql), state: "destroying", incarnation: "old", runId: uuid7(), attempt: 1, cleanupPending: true, cleanupReason: "owed" }, Date.now());
+			writeState(sql, { ...readState(sql), state: "destroying", incarnation: "old", runId: uuid7(), attempt: 1, startedAt: Date.now(), leaseUntil: Date.now() + 60_000, cleanupPending: true, cleanupReason: "owed" }, Date.now());
 			await state.storage.setAlarm(Date.now() + 60_000);
 		});
 		expect(await runDurableObjectAlarm(stub)).toBe(true);
@@ -62,18 +78,7 @@ describe("the Sandbox object", () => {
 		await runInDurableObject(stub, async (_instance, state) => {
 			const container = new ScriptedContainer(SPEC);
 			const alarms: (number | null)[] = [];
-			const ports = () => ({
-				container,
-				sql: durableSql(state.storage),
-				bucket: () => ({ get: async () => null, put: async () => {}, check: async () => {} }),
-				now: () => Date.now(),
-				id: () => uuid7(),
-				alarm: async (at: number | null) => {
-					alarms.push(at);
-				},
-				background: () => {},
-				log: () => {},
-			});
+			const ports = () => scripted(state.storage, container, alarms);
 			const core = new SandboxCore(ports());
 			const prepared = await prepareSandbox(core, { runId: uuid7(), attempt: 1 }, SPEC);
 			if (!prepared.ok) throw new Error(prepared.message);
@@ -91,6 +96,28 @@ describe("the Sandbox object", () => {
 			expect(readState(durableSql(state.storage))).toMatchObject({ state: "none", incarnation: null });
 			expect(alarms.at(-1)).toBeNull();
 		});
+	});
+});
+
+describe("a run's container time", () => {
+	test("a run's container leaves one span after the run's end, which the object's seal answers; the run starts nothing after", async () => {
+		const stub = sandbox();
+		const runId = uuid7();
+		const clock = { now: 1_800_000_000_000 };
+		await runInDurableObject(stub, async (_instance, state) => {
+			const core = new SandboxCore(scripted(state.storage, new ScriptedContainer(SPEC), [], () => clock.now));
+			const prepared = await prepareSandbox(core, { runId, attempt: 1 }, SPEC);
+			if (!prepared.ok) throw new Error(prepared.message);
+			clock.now += 5000;
+			expect(await core.exec(prepared.fence, { execId: "a", command: "echo hi", cwd: WORKSPACE, env: {}, timeoutSeconds: 5 }, null)).toEqual({ ok: true, exitCode: 0 });
+			clock.now += 5000;
+			expect(await core.destroy(prepared.fence, "The run ended.")).toEqual({ destroyed: true });
+		});
+		const spans = { since: 0, spans: [{ startedAt: 1_800_000_000_000, leaseUntil: 1_800_003_600_000, endedAt: 1_800_000_010_000, ended: "destroyed" }] };
+		expect(await stub.seal(runId)).toEqual(spans);
+		expect(await stub.start({ runId, attempt: 2 }, SPEC)).toEqual({ refused: "stale", message: "This run has ended." });
+		expect(await stub.seal(runId)).toEqual(spans);
+		expect(await stub.seal(uuid7())).toEqual({ since: 0, spans: [] });
 	});
 });
 
