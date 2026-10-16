@@ -10,13 +10,15 @@ import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest
 import { BACKLOG_MESSAGE, FACT_DELIVERY } from "../../src/conversation/facts.ts";
 import { EXPIRED, MIN_LEASE_MS, UNAVAILABLE, laravelCredentials } from "../../src/conversation/laravel-runs.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
-import type { RunSnapshot } from "../../src/conversation/store.ts";
+import { RunStore, type RunSnapshot } from "../../src/conversation/store.ts";
 import { RUN_ENDED_MESSAGE } from "../../src/gateway/ledger.ts";
 import { createApp } from "../../src/http/router.ts";
 import { LARAVEL_NETWORK } from "../../src/laravel/client.ts";
 import { base64url } from "../../src/lib/bytes.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { type FakeScript, fakeUpstream } from "../../src/model/fake.ts";
+import { routeOf } from "../../src/model/route.ts";
+import { settings } from "../../src/config.ts";
 import { STREAM_TIMING, openSocket } from "../../src/stream/relay.ts";
 import { STREAM_AUDIENCE, STREAM_PURPOSE } from "../../src/stream/token.ts";
 import { FakeLaravel } from "../../src/faults/laravel.ts";
@@ -187,6 +189,103 @@ describe("facts", () => {
 		const third = held(fake, startOf(first.scope, { conversation: first.conversation }));
 		expect(await commands.startRun(third)).toMatchObject({ outcome: "accepted" });
 		await settled(third);
+	});
+});
+
+describe("model call settlements", () => {
+	interface Settled {
+		facts: Fact[];
+		records: { call: string; outcome: string; cause: string | null; input_tokens: number; output_tokens: number }[];
+		run: { model_calls: number; input_tokens: number; output_tokens: number; unmetered_model_calls: number };
+	}
+
+	/** A run whose one model call answers `turn`, once it ended: its settlement facts, its call records and its sums. */
+	async function oneCall(turn: FakeScript["turns"][number]): Promise<Settled> {
+		const start = held(fake, startOf(scope(), { message: { id: uuid7(), content: JSON.stringify({ fake: { turns: [turn] } }), attachments: [] } }));
+		await commands.startRun(start);
+		await settled(start);
+		const facts = (await delivered(start)).filter((fact) => fact.type === "run.usage" || fact.type === "run.unmetered");
+		return runInDurableObject(objectOf(start), (_instance, state) => ({
+			facts,
+			records: state.storage.sql.exec<Settled["records"][number]>("SELECT call, outcome, cause, input_tokens, output_tokens FROM call_records WHERE run_id = ?", start.run).toArray(),
+			run: state.storage.sql.exec<Settled["run"]>("SELECT model_calls, input_tokens, output_tokens, unmetered_model_calls FROM runs WHERE id = ?", start.run).one(),
+		}));
+	}
+
+	const { provider, cap } = routeOf(settings(env));
+
+	test("a reported call gives one run.usage, with its route and tokens, and adds them to the run's sums", async () => {
+		const { facts, records, run } = await oneCall({ text: "Hi", usage: { input: 7, output: 3 } });
+		const call = records[0]?.call;
+		expect(call).toMatch(/^[0-9a-f]{8}$/);
+		expect(facts.map((fact) => [fact.type, fact.data])).toEqual([
+			["run.usage", { call, provider, model: "fake-1", inputTokens: 7, outputTokens: 3, cachedTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }],
+		]);
+		expect(records).toEqual([{ call, outcome: "reported", cause: null, input_tokens: 7, output_tokens: 3 }]);
+		expect(run).toEqual({ model_calls: 1, input_tokens: 7, output_tokens: 3, unmetered_model_calls: 0 });
+	});
+
+	test("an answer without usage gives one run.unmetered at the call's reservation, estimated", async () => {
+		const { facts, records, run } = await oneCall({ text: "Hi", usage: null });
+		const call = records[0]?.call;
+		expect(facts.map((fact) => [fact.type, fact.data])).toEqual([
+			["run.unmetered", { call, provider, model: "fake-1", cause: "no_usage", inputTokens: 128_000, outputTokens: cap, estimated: true }],
+		]);
+		expect(records).toEqual([{ call, outcome: "unmetered", cause: "no_usage", input_tokens: 128_000, output_tokens: cap }]);
+		expect(run).toEqual({ model_calls: 1, input_tokens: 0, output_tokens: 0, unmetered_model_calls: 1 });
+	});
+
+	test("a refused call (a 4xx) gives one run.unmetered at no tokens, not estimated; a 502 one at its reservation", async () => {
+		const refusal = await oneCall({ refused: { status: 429 } });
+		const call = refusal.records[0]?.call;
+		expect(refusal.facts.map((fact) => [fact.type, fact.data])).toEqual([
+			["run.unmetered", { call, provider, model: "fake-1", cause: "refused", inputTokens: 0, outputTokens: 0, estimated: false }],
+		]);
+		expect(refusal.records).toEqual([{ call, outcome: "refused", cause: null, input_tokens: 0, output_tokens: 0 }]);
+		expect(refusal.run).toEqual({ model_calls: 1, input_tokens: 0, output_tokens: 0, unmetered_model_calls: 0 });
+
+		const failure = await oneCall({ refused: { status: 502 } });
+		expect(failure.facts.map((fact) => [fact.type, fact.data])).toEqual([
+			["run.unmetered", { call: failure.records[0]?.call, provider, model: "fake-1", cause: "failed", inputTokens: 128_000, outputTokens: cap, estimated: true }],
+		]);
+		expect(failure.run).toEqual({ model_calls: 1, input_tokens: 0, output_tokens: 0, unmetered_model_calls: 1 });
+	});
+
+	test("a call settles once, also after its run ended; a record for an attempt that cannot act is refused and counts nothing", async () => {
+		const start = held(fake, startOf(scope(), { message: { id: uuid7(), content: SLOW, attachments: [] } }));
+		await commands.startRun(start);
+		await until(() => runStatus(start), (status) => status === "running");
+		const fence = { runId: start.run, attempt: 1 };
+		const request = { provider, model: "fake-1", reserved: { input: 10, output: 5 } };
+		const call = await runInDurableObject(objectOf(start), (_instance, state) => new RunStore(state.storage).recordModelCall(fence, request));
+		expect(call).toMatch(/^[0-9a-f]{8}$/);
+		await commands.cancelRun({ scope: start.scope, conversation: start.conversation, run: start.run, reason: "cancelled" });
+		await delivered(start);
+		// pi's own call, cut by the cancel, settles on its own; only the one recorded here stays open.
+		const open = () => runInDurableObject(objectOf(start), (_instance, state) => state.storage.sql.exec<{ call: string }>("SELECT call FROM call_records WHERE outcome IS NULL").toArray().map((row) => row.call));
+		await until(open, (calls) => calls.length === 1 && calls[0] === call);
+		const after = await runInDurableObject(objectOf(start), (_instance, state) => {
+			const store = new RunStore(state.storage);
+			const sql = state.storage.sql;
+			const before = sql.exec<{ count: number }>("SELECT count(*) AS count FROM facts").one().count;
+			store.settleModelCall(start.run, call as string, { outcome: "unmetered", cause: "stopped", requestBytes: 321 });
+			store.settleModelCall(start.run, call as string, { outcome: "reported", tokens: { input: 1, output: 1, cached: 0, cacheWrite: 0, reasoning: 0 }, requestBytes: null });
+			const refused = store.recordModelCall(fence, request);
+			return {
+				refused,
+				written: sql.exec<{ fact: string }>("SELECT fact FROM facts WHERE seq > ? ORDER BY seq", before).toArray().map((row) => JSON.parse(row.fact) as Fact),
+				record: sql.exec("SELECT outcome, cause, input_tokens, output_tokens, request_bytes FROM call_records WHERE run_id = ? AND call = ?", start.run, call).one(),
+				counts: sql.exec("SELECT (SELECT count(*) FROM call_records WHERE run_id = ?1) AS records, model_calls, unmetered_model_calls FROM runs WHERE id = ?1", start.run).one(),
+			};
+		});
+		expect(after.refused).toBeNull();
+		expect(after.written.map((fact) => [fact.type, fact.data])).toEqual([
+			["run.unmetered", { call, provider, model: "fake-1", cause: "stopped", inputTokens: 10, outputTokens: 5, estimated: true, requestBytes: 321 }],
+		]);
+		expect(after.record).toEqual({ outcome: "unmetered", cause: "stopped", input_tokens: 10, output_tokens: 5, request_bytes: 321 });
+		// pi's call (its answer had started, and the fake reports usage on a cut stream) and the one recorded here; the
+		// refused record counted nothing.
+		expect(after.counts).toEqual({ records: 2, model_calls: 2, unmetered_model_calls: 1 });
 	});
 });
 

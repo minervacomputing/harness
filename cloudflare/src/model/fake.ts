@@ -44,6 +44,8 @@ export interface FakeTurn {
 	rawArguments?: { [index: string]: string };
 	/** Fail this response with this provider error text; see `FakeOptions.fails`. */
 	error?: { message: string; times?: number };
+	/** Refuse the request with this HTTP status, as a provider's error answer: no stream, and no usage. */
+	refused?: { status: number };
 	/** Report this usage instead of about four characters a token; `null` reports none. */
 	usage?: { input: number; output: number } | null;
 }
@@ -192,6 +194,10 @@ function respond(model: Model<Api>, context: TranscriptContext, streamOptions: S
 			signal?.throwIfAborted();
 			await options.request?.(call, streamOptions);
 			signal?.throwIfAborted();
+			if (turn.refused) {
+				await streamOptions?.onResponse?.({ status: turn.refused.status, headers: { "content-type": "application/json" } }, model);
+				return end("error", `The provider refused the request with status ${turn.refused.status}.`);
+			}
 			out.push({ type: "start", partial: { ...message } });
 			if (failing) return end("error", turn.error?.message);
 			if (turn.thinking) {

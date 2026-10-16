@@ -9,12 +9,12 @@
 //
 // pi commits with the storage's asynchronous `transaction()` on the same connection, and a statement of ours
 // that runs while one is open joins it and rolls back with it (`watchTransactions`). A change that someone
-// acts on once it is made must therefore never run inside one: a write's claim or settlement, a revocation, a
-// cancel, a start, a run's end, the attempt gate's decision, a call's `tool_call` event, the replay cap's
-// count. Those go through `outside`, which waits until no such transaction is open and then makes the change
-// with no await between that check and the change, so it commits on its own. What only shows progress (text
-// and reasoning deltas, phases, usage counts) may still run inside pi's transaction; rolled back with it, it
-// was never announced either.
+// acts on once it is made must therefore never run inside one: a write's claim or settlement, a model call's
+// record or settlement, a revocation, a cancel, a start, a run's end, the attempt gate's decision, a call's
+// `tool_call` event, the replay cap's count. Those go through `outside`, which waits until no such transaction is
+// open and then makes the change with no await between that check and the change, so it commits on its own. What
+// only shows progress (text and reasoning deltas, phases) may still run inside pi's transaction; rolled back with
+// it, it was never announced either.
 
 import type { StartSnapshot } from "../gateway/tools.ts";
 import type { Preparation } from "../internal/start.ts";
@@ -24,9 +24,11 @@ import { isoTime } from "../lib/dates.ts";
 import type { Attachment, FolderChanges, FolderWarnings, Run, ToolCallEventData } from "@minerva/contract";
 import type { Fact, StartRunResult } from "@minerva/contract/internal";
 import type { SettledWrite } from "../gateway/ledger.ts";
-import type { ModelUsage } from "../model/provider.ts";
+import type { CallRequest, CallSettlement } from "../model/provider.ts";
+import type { Tokens } from "../model/tap.ts";
+import { tokenHex } from "../lib/random.ts";
 import { utf8 } from "../lib/bytes.ts";
-import { FACT_PAGE_BYTES, type NewFact, toolCallFact } from "./facts.ts";
+import { FACT_PAGE_BYTES, type NewFact, callFact, toolCallFact } from "./facts.ts";
 import type { AttemptFence, ConversationId, EpochMs, RunId, RunStatus, VersionId, WorkspaceRef } from "../shared/rpc.ts";
 import {
 	ACTIVE,
@@ -139,6 +141,41 @@ export interface TombstoneRow {
 	[key: string]: SqlStorageValue;
 }
 
+/** A counted model call (migration 9): open until `outcome` is set, once. */
+interface CallRecordRow {
+	run_id: string;
+	call: string;
+	attempt: number;
+	instance: string;
+	provider: string;
+	model: string;
+	reserved_input: number;
+	reserved_output: number;
+	request_bytes: number | null;
+	created_at: number;
+	outcome: CallSettlement["outcome"] | null;
+	cause: "no_usage" | "stopped" | "failed" | "lost" | null;
+	input_tokens: number | null;
+	output_tokens: number | null;
+	cached_tokens: number | null;
+	cache_write_tokens: number | null;
+	reasoning_tokens: number | null;
+	settled_at: number | null;
+	[key: string]: SqlStorageValue;
+}
+
+/** The tokens a settled call is counted at: as reported, none when refused, its reservation when unmetered. */
+function settledTokens(record: Pick<CallRecordRow, "reserved_input" | "reserved_output">, settlement: CallSettlement): Tokens {
+	switch (settlement.outcome) {
+		case "reported":
+			return settlement.tokens;
+		case "refused":
+			return { input: 0, output: 0, cached: 0, cacheWrite: 0, reasoning: 0 };
+		case "unmetered":
+			return { input: record.reserved_input, output: record.reserved_output, cached: 0, cacheWrite: 0, reasoning: 0 };
+	}
+}
+
 /** Which check an append passes first: none (the object's own events), the run being active, or the attempt being current. */
 export type AppendFence = AttemptFence | "active" | null;
 
@@ -243,6 +280,8 @@ export class RunStore {
 	/** Resolved, and cleared, when the last asynchronous transaction settles (`outside`). */
 	#drained: PromiseWithResolvers<void> | null = null;
 	readonly now: () => EpochMs;
+	/** This object instance: the calls it records are its own to settle. */
+	readonly instance = crypto.randomUUID();
 
 	constructor(storage: DurableObjectStorage, now: () => EpochMs = Date.now) {
 		this.#storage = storage;
@@ -581,23 +620,66 @@ export class RunStore {
 		return true;
 	}
 
-	countModelCall(runId: RunId): void {
-		this.#sql.exec("UPDATE runs SET model_calls = model_calls + 1 WHERE id = ?", runId);
+	/**
+	 * Records a model call about to be sent and counts it (`model_calls`), in one change with the fence check: null, with
+	 * nothing recorded, when the attempt can no longer act. Answers the call's id, 8 hex drawn again on a collision within
+	 * the run. Made outside pi's transactions, so a call that was sent stays recorded.
+	 */
+	recordModelCall(fence: AttemptFence, request: CallRequest): string | null {
+		return this.write(() => {
+			if (!this.isCurrent(fence)) return null;
+			for (;;) {
+				const inserted = this.#sql
+					.exec<{ call: string }>(
+						`INSERT INTO call_records (run_id, call, attempt, instance, provider, model, reserved_input, reserved_output, created_at)
+						VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING RETURNING call`,
+						fence.runId,
+						tokenHex(4),
+						fence.attempt,
+						this.instance,
+						request.provider,
+						request.model,
+						request.reserved.input,
+						request.reserved.output,
+						this.now(),
+					)
+					.toArray()[0];
+				if (!inserted) continue;
+				this.#sql.exec("UPDATE runs SET model_calls = model_calls + 1 WHERE id = ?", fence.runId);
+				return inserted.call;
+			}
+		});
 	}
 
 	/**
-	 * Not fenced: the last usage report of a settled call, with its `run.usage` fact, or one unmetered call (which has no fact
-	 * until chunk 14). Made outside pi's transactions: a provider call's cost does not roll back.
+	 * Settles a recorded call, once: a call already settled changes nothing and writes no fact. Not fenced: a call is
+	 * settled whichever attempt made it. The run's sums follow in the same change (`input_tokens` and `output_tokens` for a
+	 * reported call, `unmetered_model_calls` for an unmetered one), with the call's `run.usage` or `run.unmetered` fact. An
+	 * unmetered call is counted at its reservation. Made outside pi's transactions: a provider call's cost does not roll back.
 	 */
-	settleModelCall(runId: RunId, usage: ModelUsage | null): void {
+	settleModelCall(runId: RunId, call: string, settlement: CallSettlement): void {
 		this.write(() => {
-			if (usage === null) {
-				this.#sql.exec("UPDATE runs SET unmetered_model_calls = unmetered_model_calls + 1 WHERE id = ?", runId);
-				return;
-			}
-			this.#sql.exec("UPDATE runs SET input_tokens = input_tokens + ?, output_tokens = output_tokens + ? WHERE id = ?", usage.input, usage.output, runId);
-			const data = { call: usage.call, model: usage.model, inputTokens: usage.input, outputTokens: usage.output, cachedTokens: usage.cached, reasoningTokens: usage.reasoning };
-			this.#fact(runId, { type: "run.usage", data });
+			const record = this.#sql.exec<CallRecordRow>("SELECT * FROM call_records WHERE run_id = ? AND call = ? AND outcome IS NULL", runId, call).toArray()[0];
+			if (!record) return;
+			const tokens = settledTokens(record, settlement);
+			this.#sql.exec(
+				`UPDATE call_records SET outcome = ?, cause = ?, request_bytes = ?, input_tokens = ?, output_tokens = ?, cached_tokens = ?,
+					cache_write_tokens = ?, reasoning_tokens = ?, settled_at = ? WHERE run_id = ? AND call = ?`,
+				settlement.outcome,
+				settlement.outcome === "unmetered" ? settlement.cause : null,
+				settlement.requestBytes,
+				tokens.input,
+				tokens.output,
+				tokens.cached,
+				tokens.cacheWrite,
+				tokens.reasoning,
+				this.now(),
+				runId,
+				call,
+			);
+			if (settlement.outcome === "reported") this.#sql.exec("UPDATE runs SET input_tokens = input_tokens + ?, output_tokens = output_tokens + ? WHERE id = ?", tokens.input, tokens.output, runId);
+			else if (settlement.outcome === "unmetered") this.#sql.exec("UPDATE runs SET unmetered_model_calls = unmetered_model_calls + 1 WHERE id = ?", runId);
+			this.#fact(runId, callFact(record, settlement, tokens));
 		});
 	}
 

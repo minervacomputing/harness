@@ -211,4 +211,35 @@ CREATE TABLE internal_answers (
 			...LEDGER_NOTES_SCHEMA,
 		].join(";\n"),
 	},
+	// Each counted model call (docs/plans/chunk-14a-design.md, Decisions): recorded before its request by the instance that
+	// sends it, settled once (`outcome` set) before pi hears its answer. Tokens are the report's, or the reservation for an
+	// unmetered call; `request_bytes` is null for a call that built no request.
+	{
+		id: 9,
+		sql: `
+CREATE TABLE call_records (
+	run_id TEXT NOT NULL,
+	call TEXT NOT NULL,
+	attempt INTEGER NOT NULL,
+	instance TEXT NOT NULL,
+	provider TEXT NOT NULL,
+	model TEXT NOT NULL,
+	reserved_input INTEGER NOT NULL,
+	reserved_output INTEGER NOT NULL,
+	request_bytes INTEGER,
+	created_at INTEGER NOT NULL,
+	outcome TEXT CHECK (outcome IN ('reported', 'refused', 'unmetered')),
+	cause TEXT CHECK (cause IN ('no_usage', 'stopped', 'failed', 'lost')),
+	input_tokens INTEGER,
+	output_tokens INTEGER,
+	cached_tokens INTEGER,
+	cache_write_tokens INTEGER,
+	reasoning_tokens INTEGER,
+	settled_at INTEGER,
+	PRIMARY KEY (run_id, call),
+	CHECK ((outcome = 'unmetered') = (cause IS NOT NULL))
+) STRICT;
+CREATE INDEX call_records_open ON call_records (instance) WHERE outcome IS NULL;
+`,
+	},
 ];

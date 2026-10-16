@@ -120,16 +120,16 @@ describe("errors and usage", () => {
 	});
 
 	test("the last usage report counts; none makes the call unmetered", () => {
-		expect(reportedUsage(message({}).usage)).toEqual({ input: 5, output: 1, cached: 0, reasoning: 0 });
+		expect(reportedUsage(message({}).usage)).toEqual({ input: 5, output: 1, cached: 0, cacheWrite: 0, reasoning: 0 });
 		expect(reportedUsage(undefined)).toBeNull();
 		expect(reportedUsage({ ...message({}).usage, input: 0, output: 0 })).toBeNull();
 		expect(reportedUsage({ ...message({}).usage, input: 1.5 })).toBeNull();
 		expect(reportedUsage({ ...message({}).usage, input: -1 })).toBeNull();
 	});
 
-	test("the input counts cached tokens, as the provider's input_tokens does", () => {
+	test("the input counts cache reads and writes, as the provider's input_tokens does, and each is also kept apart", () => {
 		// pi-ai reports OpenAI's input_tokens 10, of them 8 cached, as input 2 and cacheRead 8.
-		expect(reportedUsage({ ...message({}).usage, input: 2, cacheRead: 8, cacheWrite: 0, output: 2 })).toEqual({ input: 10, output: 2, cached: 8, reasoning: 0 });
-		expect(reportedUsage({ ...message({}).usage, input: 0, cacheRead: 0, cacheWrite: 3, output: 0 })).toEqual({ input: 3, output: 0, cached: 0, reasoning: 0 });
+		expect(reportedUsage({ ...message({}).usage, input: 2, cacheRead: 8, cacheWrite: 0, output: 2 })).toEqual({ input: 10, output: 2, cached: 8, cacheWrite: 0, reasoning: 0 });
+		expect(reportedUsage({ ...message({}).usage, input: 0, cacheRead: 0, cacheWrite: 3, output: 0 })).toEqual({ input: 3, output: 0, cached: 0, cacheWrite: 3, reasoning: 0 });
 	});
 });

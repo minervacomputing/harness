@@ -7,7 +7,20 @@ import { type AssistantMessage, type AssistantMessageEvent, createModels, type T
 import { beforeEach, describe, expect, test } from "vitest";
 import { type FakeOptions, type FakeScript, fakeUpstream } from "../../src/model/fake.ts";
 import { COMPACTION_PROMPT_START, IMAGE_PLACEHOLDER, TOOL_IMAGE_PLACEHOLDER } from "../../src/model/policy.ts";
-import { callOf, IMAGE_MAX_BYTES, MINERVA_PROVIDER, MODEL_ALIAS, minervaModel, minervaProvider, type ModelHost, type ModelUsage, REASONING_SUMMARY, RUN_ENDED_TEXT, SUMMARY_REFUSED_HINT } from "../../src/model/provider.ts";
+import {
+	type CallRequest,
+	type CallSettlement,
+	callOf,
+	IMAGE_MAX_BYTES,
+	MINERVA_PROVIDER,
+	MODEL_ALIAS,
+	minervaModel,
+	minervaProvider,
+	type ModelHost,
+	REASONING_SUMMARY,
+	RUN_ENDED_TEXT,
+	SUMMARY_REFUSED_HINT,
+} from "../../src/model/provider.ts";
 import { type ModelRoute, upstreamOf } from "../../src/model/route.ts";
 import { CONTEXT_OVERFLOW, PROVIDER_ERROR, type Segment } from "../../src/model/tap.ts";
 import type { AttemptFence } from "../../src/shared/rpc.ts";
@@ -17,26 +30,31 @@ const ROUTE: ModelRoute = { provider: "fake", name: "fake", gateway: "acme", api
 
 class Host implements ModelHost {
 	active = true;
+	/** The run ended between `begin` and the record. */
+	ended = false;
 	controller = new AbortController();
-	counts = 0;
+	/** Each call recorded, in order; its id is its position, in 8 hex. */
+	records: CallRequest[] = [];
+	settlements: { call: string; settlement: CallSettlement }[] = [];
+	/** Awaited by each settlement before it is kept: a test may hold it or fail it. */
+	settling = async () => {};
 	published: [string, Segment[]][] = [];
 	texts: [string, string][] = [];
-	usage: ({ input: number; output: number } | null)[] = [];
-	/** Each metered call's id and model. */
-	calls: [string, string][] = [];
 	logs: string[] = [];
 	sessions: (string | undefined)[] = [];
 	begin(sessionId: string | undefined) {
 		this.sessions.push(sessionId);
 		return this.active ? { fence: FENCE, signal: this.controller.signal } : null;
 	}
+	async record(fence: AttemptFence, request: CallRequest) {
+		expect(fence).toEqual(FENCE);
+		if (this.ended) return null;
+		this.records.push(request);
+		return this.records.length.toString(16).padStart(8, "0");
+	}
 	current(fence: AttemptFence) {
 		expect(fence).toEqual(FENCE);
 		return this.active;
-	}
-	counted(fence: AttemptFence) {
-		expect(fence).toEqual(FENCE);
-		this.counts++;
 	}
 	deltas(_fence: AttemptFence, call: string, segments: Segment[]) {
 		this.published.push([call, segments]);
@@ -44,12 +62,22 @@ class Host implements ModelHost {
 	toolCallText(_fence: AttemptFence, callId: string, text: string) {
 		this.texts.push([callId, text]);
 	}
-	settled(_fence: AttemptFence, usage: ModelUsage | null) {
-		if (usage !== null) this.calls.push([usage.call, usage.model]);
-		this.usage.push(usage === null ? null : { input: usage.input, output: usage.output });
+	async settle(fence: AttemptFence, call: string, settlement: CallSettlement) {
+		expect(fence).toEqual(FENCE);
+		await this.settling();
+		this.settlements.push({ call, settlement });
 	}
 	log(message: string) {
 		this.logs.push(message);
+	}
+	get counts() {
+		return this.records.length;
+	}
+	/** Each settlement in short: a reported call's input and output, a refusal, or an unmetered call's cause. */
+	get outcomes() {
+		return this.settlements.map(({ settlement }) =>
+			settlement.outcome === "reported" ? { input: settlement.tokens.input, output: settlement.tokens.output } : settlement.outcome === "refused" ? "refused" : settlement.cause,
+		);
 	}
 }
 
@@ -98,7 +126,7 @@ describe("refused calls count nothing", () => {
 		const message = await ask(models, prompt({ turns: [{ text: "Hi" }] }));
 		expect([message.stopReason, message.errorMessage]).toEqual(["error", RUN_ENDED_TEXT]);
 		expect(RUN_ENDED_TEXT).toBe("This run has ended.");
-		expect([host.counts, options.length, host.usage.length]).toEqual([0, 0, 0]);
+		expect([host.counts, options.length, host.settlements.length]).toEqual([0, 0, 0]);
 	});
 
 	test("a request with anything but text and images is refused before it is counted", async () => {
@@ -109,6 +137,25 @@ describe("refused calls count nothing", () => {
 		expect([host.counts, options.length]).toEqual([0, 0]);
 	});
 
+	test("a run that ended before the call was recorded gets 'This run has ended.', with nothing recorded or sent", async () => {
+		const { host, models, options } = setup();
+		host.ended = true;
+		const message = await ask(models, prompt({ turns: [{ text: "Hi" }] }));
+		expect([message.stopReason, message.errorMessage]).toEqual(["error", RUN_ENDED_TEXT]);
+		expect([host.counts, options.length, host.settlements.length]).toEqual([0, 0, 0]);
+	});
+
+	test("a record that fails ends the call as an error before anything is sent", async () => {
+		const { host, models, options } = setup();
+		host.record = async () => {
+			throw new TypeError("SQLITE_FULL");
+		};
+		const message = await ask(models, prompt({ turns: [{ text: "Hi" }] }));
+		expect([message.stopReason, message.errorMessage]).toEqual(["error", PROVIDER_ERROR]);
+		expect([options.length, host.settlements.length]).toEqual([0, 0]);
+		expect(host.logs).toEqual(["A model call could not be recorded (TypeError)."]);
+	});
+
 	test("the session id names the run", async () => {
 		const { host, models } = setup();
 		await ask(models, prompt({ turns: [{ text: "Hi" }] }), { sessionId: "provider-session" });
@@ -117,28 +164,25 @@ describe("refused calls count nothing", () => {
 });
 
 describe("a call", () => {
-	test("is counted once, streams its text and reasoning under one 8-hex call id, names it in its message, and records its usage", async () => {
+	test("is recorded once with its route and reservation, streams under the record's id, names it in its message, and settles reported", async () => {
 		const { host, models } = setup();
 		const message = await ask(models, prompt({ turns: [{ thinking: "Hm", text: "Hello", usage: { input: 7, output: 3 } }] }));
 		expect(message.content.filter((block) => block.type === "text")).toEqual([{ type: "text", text: "Hello" }]);
-		expect(host.counts).toBe(1);
+		expect(host.records).toEqual([{ provider: "fake", model: "fake-1", reserved: { input: 128_000, output: 1000 } }]);
 		const segments = host.published.flatMap(([, published]) => published);
 		expect(segments.filter(([kind]) => kind === "reasoning").map(([, text]) => text).join("")).toBe("Hm");
 		expect(segments.filter(([kind]) => kind === "text").map(([, text]) => text).join("")).toBe("Hello");
-		const calls = new Set(host.published.map(([call]) => call));
-		expect(calls.size).toBe(1);
-		expect([...calls][0]).toMatch(/^[0-9a-f]{8}$/);
-		expect(callOf(message)).toBe([...calls][0]);
-		expect(host.usage).toEqual([{ input: 7, output: 3 }]);
-		// The usage names the call its deltas did, and the upstream's model.
-		expect(host.calls).toEqual([[[...calls][0], expect.any(String)]]);
+		expect(new Set(host.published.map(([call]) => call))).toEqual(new Set(["00000001"]));
+		expect(callOf(message)).toBe("00000001");
+		// The fake builds no payload, so it has no request bytes.
+		expect(host.settlements).toEqual([{ call: "00000001", settlement: { outcome: "reported", tokens: { input: 7, output: 3, cached: 0, cacheWrite: 0, reasoning: 0 }, requestBytes: null } }]);
 	});
 
 	test("each call gets its own id; there is no limit on calls", async () => {
 		const { host, models } = setup();
 		for (let i = 0; i < 3; i++) await ask(models, prompt({ turns: [{ text: `Answer ${i}` }] }));
 		expect(host.counts).toBe(3);
-		expect(new Set(host.published.map(([call]) => call)).size).toBe(3);
+		expect(host.published.map(([call]) => call)).toEqual(["00000001", "00000002", "00000003"]);
 	});
 
 	test("publishes what streamed every 0.25 s, then the rest when it settles", async () => {
@@ -150,10 +194,62 @@ describe("a call", () => {
 		expect(texts.join("")).toBe("abcdefgh");
 	});
 
-	test("a call without usage counts as unmetered", async () => {
+	test("an answer without a usage report settles unmetered, no_usage", async () => {
 		const { host, models } = setup();
 		await ask(models, prompt({ turns: [{ text: "x", usage: null }] }));
-		expect(host.usage).toEqual([null]);
+		expect(host.outcomes).toEqual(["no_usage"]);
+	});
+
+	test("a refusal (a 4xx without an answer) settles refused; another status settles unmetered, failed", async () => {
+		const { host, models } = setup();
+		const first = await ask(models, prompt({ turns: [{ refused: { status: 429 } }] }));
+		const second = await ask(models, prompt({ turns: [{ refused: { status: 502 } }] }));
+		expect([first.errorMessage, second.errorMessage]).toEqual([PROVIDER_ERROR, PROVIDER_ERROR]);
+		expect(host.outcomes).toEqual(["refused", "failed"]);
+	});
+
+	test("the terminal event reaches pi only once the call is settled", async () => {
+		const { host, models } = setup();
+		const held = Promise.withResolvers<void>();
+		host.settling = () => held.promise;
+		const stream = models.streamSimple(minervaModel(ROUTE), { messages: prompt({ turns: [{ text: "Hello" }] }) }, { sessionId: "s1" });
+		const seen: string[] = [];
+		const reading = (async () => {
+			for await (const event of stream) seen.push(event.type);
+		})();
+		let answered = false;
+		void stream.result().then(() => (answered = true));
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(seen).toEqual(["start", "text_start", "text_delta", "text_end"]);
+		expect([answered, host.settlements.length]).toEqual([false, 0]);
+		held.resolve();
+		await reading;
+		expect(seen.at(-1)).toBe("done");
+		expect([answered, host.outcomes.length]).toEqual([true, 1]);
+	});
+
+	test("a call whose last text cannot be published still settles and answers", async () => {
+		const { host, models } = setup();
+		host.deltas = () => {
+			throw new TypeError("SQLITE_FULL");
+		};
+		const message = await ask(models, prompt({ turns: [{ text: "Hello", usage: { input: 7, output: 3 } }] }));
+		expect(message.content).toEqual([{ type: "text", text: "Hello" }]);
+		expect(host.outcomes).toEqual([{ input: 7, output: 3 }]);
+		expect(host.logs).toEqual(["A model call's last text could not be published (TypeError)."]);
+	});
+
+	test("a settlement that fails holds the answer: pi never hears it", async () => {
+		const { host, models } = setup();
+		host.settling = async () => {
+			throw new TypeError("SQLITE_FULL");
+		};
+		const stream = models.streamSimple(minervaModel(ROUTE), { messages: prompt({ turns: [{ text: "Hello" }] }) }, { sessionId: "s1" });
+		let answered = false;
+		void stream.result().then(() => (answered = true));
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(answered).toBe(false);
+		expect(host.logs).toEqual(["A model call could not be settled (TypeError); its answer is held."]);
 	});
 
 	test("the output cap and the route's options reach the provider", async () => {
@@ -174,7 +270,7 @@ describe("a call", () => {
 		]);
 		expect(host.published).toEqual([]);
 		expect(host.counts).toBe(1);
-		expect(host.usage).toHaveLength(1);
+		expect(host.settlements.map(({ settlement }) => settlement.outcome)).toEqual(["reported"]);
 	});
 });
 
@@ -188,14 +284,14 @@ describe("errors and aborts", () => {
 		expect(host.counts).toBe(1);
 	});
 
-	test("the run stopping aborts the stream; the call is unmetered", async () => {
+	test("the run stopping aborts the stream; an answer that had started and reported nothing is unmetered, no_usage", async () => {
 		const { host, models } = setup({ onDelta: async (_call, index) => {
 			if (index === 2) host.controller.abort(new Error("The run ended."));
 		} });
 		// No usage report had arrived when the run stopped: no input tokens, one unmetered call.
 		const message = await ask(models, prompt({ chunkChars: 1, delayMs: 1, turns: [{ text: "abcdefgh", usage: null }] }));
 		expect(message.stopReason).toBe("aborted");
-		expect(host.usage).toEqual([null]);
+		expect(host.outcomes).toEqual(["no_usage"]);
 		expect(host.counts).toBe(1);
 	});
 });
@@ -240,6 +336,8 @@ describe("tool calls", () => {
 class FakeGateway {
 	/** What each request asked for, in order. */
 	reasoning: unknown[] = [];
+	/** Each request's payload, as the provider got it. */
+	queries: unknown[] = [];
 	signals: AbortSignal[] = [];
 	answers: ((signal: AbortSignal) => Response | Promise<Response>)[] = [];
 	readonly binding = {
@@ -248,6 +346,7 @@ class FakeGateway {
 		gateway: () => ({
 			run: async (request: { query: { reasoning?: unknown } }, options: { signal: AbortSignal }) => {
 				this.reasoning.push(request.query.reasoning);
+				this.queries.push(request.query);
 				this.signals.push(options.signal);
 				const answer = this.answers.shift();
 				if (!answer) throw new Error("No answer left.");
@@ -333,12 +432,22 @@ describe("over AI Gateway (createAI)", () => {
 		expect(host.logs).toContain(SUMMARY_REFUSED_HINT);
 		await ask();
 		expect(gateway.reasoning.slice(2)).toEqual([{ effort: "low" }]);
-		// One model call each, the retry included; the refused request was neither metered nor unmetered.
+		// One model call each, the retry included, settled with the answer the retry got.
 		expect(host.counts).toBe(2);
-		expect(host.usage).toEqual([
+		expect(host.outcomes).toEqual([
 			{ input: 5, output: 2 },
 			{ input: 5, output: 2 },
 		]);
+	});
+
+	test("a call's request bytes are the UTF-8 length of the last payload it sent, as it left", async () => {
+		const gateway = new FakeGateway();
+		gateway.answers = [SUMMARY_REFUSAL, answered("Hello")];
+		const { host, ask } = overGateway(gateway);
+		await ask();
+		const [first, last] = gateway.queries.map((query) => new TextEncoder().encode(JSON.stringify(query)).byteLength);
+		expect(host.settlements.map(({ settlement }) => settlement.requestBytes)).toEqual([last]);
+		expect(first).not.toBe(last);
 	});
 
 	test("a 400 for another reason keeps the summary: the call fails, and nothing is learned", async () => {
@@ -349,7 +458,7 @@ describe("over AI Gateway (createAI)", () => {
 		expect([message.stopReason, message.errorMessage]).toEqual(["error", PROVIDER_ERROR]);
 		expect(gateway.reasoning).toEqual([{ effort: "low", summary: "auto" }]);
 		expect(REASONING_SUMMARY.refused).toBe(false);
-		expect([host.counts, host.usage]).toEqual([1, []]);
+		expect([host.counts, host.outcomes]).toEqual([1, ["refused"]]);
 	});
 
 	test("a run that ended while the summary was refused is not asked again", async () => {
@@ -363,7 +472,8 @@ describe("over AI Gateway (createAI)", () => {
 		const message = await ask();
 		expect([message.stopReason, message.errorMessage]).toEqual(["error", RUN_ENDED_TEXT]);
 		expect(gateway.reasoning).toHaveLength(1);
-		expect([host.counts, host.usage, REASONING_SUMMARY.refused]).toEqual([1, [], false]);
+		// The one request sent was refused: the call settles as that refusal.
+		expect([host.counts, host.outcomes, REASONING_SUMMARY.refused]).toEqual([1, ["refused"], false]);
 	});
 
 	test("without a summary configured nothing is retried", async () => {
@@ -374,29 +484,29 @@ describe("over AI Gateway (createAI)", () => {
 		expect(gateway.reasoning).toEqual([{ effort: "low" }]);
 	});
 
-	test("a call the provider refused, or that never reached it, is counted but neither metered nor unmetered", async () => {
+	test("a 4xx without an answer settles refused; a 5xx, or a request that never reached the provider, unmetered, failed", async () => {
 		const gateway = new FakeGateway();
 		gateway.answers = [
+			refused(429, "Rate limit reached."),
 			refused(500, "The server had an error."),
 			() => {
 				throw new TypeError("Network connection lost.");
 			},
 		];
 		const { host, ask } = overGateway(gateway, { reasoningEffort: "" });
-		expect((await ask()).stopReason).toBe("error");
-		expect((await ask()).stopReason).toBe("error");
-		expect([host.counts, host.usage]).toEqual([2, []]);
+		for (let i = 0; i < 3; i++) expect((await ask()).stopReason).toBe("error");
+		expect([host.counts, host.outcomes]).toEqual([3, ["refused", "failed", "failed"]]);
 	});
 
-	test("an accepted answer with no body is counted unmetered", async () => {
+	test("an accepted answer with no body settles unmetered, no_usage", async () => {
 		const gateway = new FakeGateway();
 		gateway.answers = [() => new Response(null, { status: 200 })];
 		const { host, ask } = overGateway(gateway, { reasoningEffort: "" });
 		expect((await ask()).stopReason).toBe("error");
-		expect([host.counts, host.usage]).toEqual([1, [null]]);
+		expect([host.counts, host.outcomes]).toEqual([1, ["no_usage"]]);
 	});
 
-	test("a run stopped while waiting for the provider ends the wait, and the call is unmetered", async () => {
+	test("a run stopped while waiting for the provider ends the wait, and the call settles unmetered, stopped", async () => {
 		const gateway = new FakeGateway();
 		gateway.answers = [silent];
 		const { host, ask } = overGateway(gateway, { reasoningEffort: "" });
@@ -404,7 +514,7 @@ describe("over AI Gateway (createAI)", () => {
 		await new Promise((resolve) => setTimeout(resolve, 10));
 		host.controller.abort(new Error("The run ended."));
 		expect((await asked).stopReason).toBe("aborted");
-		expect([host.counts, host.usage]).toEqual([1, [null]]);
+		expect([host.counts, host.outcomes]).toEqual([1, ["stopped"]]);
 	});
 
 	test("an accepted answer that is not an event stream and never ends is timed too: an error, unmetered", async () => {
@@ -419,8 +529,8 @@ describe("over AI Gateway (createAI)", () => {
 			expect([message.stopReason, message.errorMessage]).toEqual(["error", PROVIDER_ERROR]);
 			expect(gateway.signals[0]?.aborted).toBe(true);
 			expect(host.logs.join("\n")).toContain("did not answer within");
-			// The provider accepted the request, so the call settles, without usage.
-			expect([host.counts, host.usage]).toEqual([1, [null]]);
+			// The provider accepted the request, so the call settles as an answer without usage.
+			expect([host.counts, host.outcomes]).toEqual([1, ["no_usage"]]);
 		}
 	});
 
@@ -469,8 +579,8 @@ describe("over AI Gateway (createAI)", () => {
 		expect([message.stopReason, message.errorMessage]).toEqual(["error", PROVIDER_ERROR]);
 		expect(gateway.signals[0]?.aborted).toBe(true);
 		expect(host.logs.join("\n")).toContain("did not answer within");
-		// The provider never answered: counted, neither metered nor unmetered.
-		expect([host.counts, host.usage]).toEqual([1, []]);
+		// The provider never answered, and nothing stopped the call: unmetered, failed.
+		expect([host.counts, host.outcomes]).toEqual([1, ["failed"]]);
 	});
 });
 

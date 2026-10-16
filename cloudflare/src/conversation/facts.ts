@@ -6,6 +6,8 @@
 import { type Fact, MAX_ARGUMENTS, MAX_FACTS } from "@minerva/contract/internal";
 import type { ToolCallEventData } from "@minerva/contract";
 import type { Json } from "../lib/json.ts";
+import type { CallSettlement } from "../model/provider.ts";
+import type { Tokens } from "../model/tap.ts";
 
 /** A fact before the store gives it its sequence, run and time. */
 export type NewFact = Fact extends infer F ? (F extends Fact ? { type: F["type"]; data: F["data"] } : never) : never;
@@ -45,6 +47,26 @@ export function toolCallFact(event: ToolCallEventData, args: Json | undefined): 
 	const argumentsText = cut.isWellFormed() ? cut : cut.slice(0, -1);
 	const { arguments: _shown, ...rest } = event;
 	return { type: "run.tool_call", data: { ...rest, arguments: argumentsText, truncated: argumentsText.length < text.length } };
+}
+
+/**
+ * A settled model call's fact: `run.usage` with what it reported, else `run.unmetered`, a refusal at no tokens and every
+ * other at `tokens` (its reservation), estimated. `requestBytes` only for a call that built a request.
+ */
+export function callFact(record: { call: string; provider: string; model: string }, settlement: CallSettlement, tokens: Tokens): NewFact {
+	const call = { call: record.call, provider: record.provider, model: record.model };
+	const bytes = settlement.requestBytes === null ? {} : { requestBytes: settlement.requestBytes };
+	switch (settlement.outcome) {
+		case "reported":
+			return {
+				type: "run.usage",
+				data: { ...call, inputTokens: tokens.input, outputTokens: tokens.output, cachedTokens: tokens.cached, cacheWriteTokens: tokens.cacheWrite, reasoningTokens: tokens.reasoning, ...bytes },
+			};
+		case "refused":
+			return { type: "run.unmetered", data: { ...call, cause: "refused", inputTokens: 0, outputTokens: 0, estimated: false, ...bytes } };
+		case "unmetered":
+			return { type: "run.unmetered", data: { ...call, cause: settlement.cause, inputTokens: tokens.input, outputTokens: tokens.output, estimated: true, ...bytes } };
+	}
 }
 
 /** What a delivery makes of Laravel's answer to a batch (docs/plans/credentials-and-facts.md, Delivered in order). */

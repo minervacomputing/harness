@@ -4,12 +4,21 @@
 // model that takes them, and function tools only.
 
 import type { Api, Message, Model, TranscriptContext } from "@earendil-works/pi-ai";
-import type { ModelRoute } from "./route.ts";
+import { CONTEXT_WINDOW, type ModelRoute } from "./route.ts";
 
 /** The output cap a request gets: the requested positive integer up to the instance's cap, else the cap. */
 export function outputCap(requested: unknown, cap: number): number {
 	if (typeof requested === "number" && Number.isSafeInteger(requested) && requested > 0) return Math.min(requested, cap);
 	return cap;
+}
+
+/**
+ * What a call is counted at when it settles unmetered: the context window pi is told and the call's output cap. A
+ * provisional accounting policy, not an enforced bound, until chunk 14b proves one per route (chunk-14a-design.md,
+ * amendment 5).
+ */
+export function reservation(cap: number): { input: number; output: number } {
+	return { input: CONTEXT_WINDOW, output: cap };
 }
 
 /** Why a request is refused before anything is sent (nothing is counted), or null. */

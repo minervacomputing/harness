@@ -1269,7 +1269,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				if (!store.isCurrent(fence)) return null;
 				return { fence, signal: this.#controller(run.id).signal };
 			},
-			counted: (fence) => store.countModelCall(fence.runId),
+			// Outside pi's transactions (store.ts `outside`): a call that was sent, and its cost, do not roll back.
+			record: (fence, request) => store.outside(() => store.recordModelCall(fence, request)),
 			current: (fence) => store.isCurrent(fence),
 			deltas: (fence, call, segments) => {
 				store.write(() => {
@@ -1280,9 +1281,15 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				// A key without an escape parses right with JSON.parse; only text with a backslash is kept.
 				if (text.includes("\\")) store.saveArgumentText(fence.runId, callId, text);
 			},
-			// Outside pi's transactions (store.ts `outside`): a call's cost does not roll back, so neither may its record.
-			settled: (fence, usage) => {
-				this.ctx.waitUntil(store.outside(() => store.settleModelCall(fence.runId, usage)).catch((error: unknown) => this.#log("a model call's usage could not be recorded", error)));
+			settle: async (fence, call, settlement) => {
+				try {
+					await store.outside(() => store.settleModelCall(fence.runId, call, settlement));
+				} catch (error) {
+					// pi never hears an answer whose settlement was not written; the next instance settles the call.
+					this.#log("a model call could not be settled", error);
+					this.#reset("A model call could not be settled.", true);
+					throw error;
+				}
 			},
 			log: (message) => this.#log(message),
 		};

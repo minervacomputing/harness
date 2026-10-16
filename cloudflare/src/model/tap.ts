@@ -133,20 +133,29 @@ export function failureSummary(message: AssistantMessage, status: number | undef
 	return `The model provider reported ${parts.join(", ")}.`;
 }
 
+/** A call's tokens: input with cache reads and writes, the cache reads and writes apart too, and the part of output spent reasoning. */
+export interface Tokens {
+	input: number;
+	output: number;
+	cached: number;
+	cacheWrite: number;
+	/** 0 when the provider does not say. */
+	reasoning: number;
+}
+
 /**
  * The tokens a call reported, or null when it settled without a usage report (an unmetered call).
  * The input is the provider's own count, cached tokens included, as the relay read `input_tokens` or
  * `prompt_tokens`: pi-ai reports cache reads and writes apart from `input`. pi's message always has a
  * usage, so a report of none in and none out cannot be told from no report, and counts as none.
  */
-export function reportedUsage(usage: Usage | undefined): { input: number; output: number; cached: number; reasoning: number } | null {
+export function reportedUsage(usage: Usage | undefined): Tokens | null {
 	if (!usage) return null;
 	const counts = [usage.input, usage.output, usage.cacheRead ?? 0, usage.cacheWrite ?? 0];
 	if (!counts.every((count) => Number.isSafeInteger(count) && count >= 0)) return null;
 	const input = usage.input + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
 	if (input === 0 && usage.output === 0) return null;
-	const cached = usage.cacheRead ?? 0;
 	// A subset of `output`, when the provider reports it; 0 when it does not.
 	const reasoning = Number.isSafeInteger(usage.reasoning) && (usage.reasoning as number) >= 0 && (usage.reasoning as number) <= usage.output ? (usage.reasoning as number) : 0;
-	return { input, output: usage.output, cached, reasoning };
+	return { input, output: usage.output, cached: usage.cacheRead ?? 0, cacheWrite: usage.cacheWrite ?? 0, reasoning };
 }

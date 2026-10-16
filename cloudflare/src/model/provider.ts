@@ -5,7 +5,8 @@
 // - finds the run it belongs to by pi's provider session id, and refuses it ("This run has ended.", counted
 //   nothing) unless that run's current attempt can act: the backstop to the attempt gate's stop;
 // - refuses anything but text input and function tools, before anything is counted;
-// - counts the call (`model_calls`, once per request, before the provider is asked; never limited);
+// - records the call before the provider is asked (`ModelHost.record`: once per request, fenced, counted in
+//   `model_calls`, never limited), which names it with its 8-hex id;
 // - forces the route's model, the output cap and `store: false` on the payload, and adds the route's
 //   reasoning settings;
 // - asks once more without the reasoning summary when the provider refuses it, and then never asks for one
@@ -13,10 +14,11 @@
 // - aborts the upstream request when the run stops, is revoked, passes its deadline or is replaced, and
 //   ends a call whose answer has not started within 120 s, or whose answer that is not an event stream
 //   has not been read within 120 s more, as an error;
-// - taps the stream: text and reasoning published every 0.25 s per call with the call's 8-hex id (not for
-//   a compaction's summary), tool-call argument text kept as the model sent it, and when the call settles
-//   (attempt or not) the last usage report recorded, or the call counted unmetered if it streamed without
-//   one or was stopped; a call the provider refused or that never reached it is neither;
+// - taps the stream: text and reasoning published every 0.25 s per call with the call's id (not for a
+//   compaction's summary), and tool-call argument text kept as the model sent it;
+// - settles the call (`ModelHost.settle`, attempt or not) after the upstream's terminal event and before pi
+//   gets it (`outcomeOf`): reported with its last usage report, refused at nothing for a 4xx without an
+//   answer, or unmetered at its reservation; a settlement that fails holds the answer for good;
 // - names the call in the message it finished with (`callOf`), so the run's `message` event can say which
 //   call's text the answer replaces;
 // - keeps provider text out of everything pi gets (tap.ts `screened`): a failure's text is replaced with
@@ -47,11 +49,11 @@ import {
 	type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { parseJson } from "../lib/json.ts";
-import { tokenHex } from "../lib/random.ts";
+import { utf8 } from "../lib/bytes.ts";
 import type { AttemptFence } from "../shared/rpc.ts";
-import { forcePayload, forModel, isCompaction, outputCap, refusal } from "./policy.ts";
+import { forcePayload, forModel, isCompaction, outputCap, refusal, reservation } from "./policy.ts";
 import { CONTEXT_WINDOW, type ModelRoute, QUIET_MS, type Upstream } from "./route.ts";
-import { DeltaBuffer, errorClass, failureSummary, PROVIDER_ERROR, reportedUsage, type Segment, screened, screenedEvent, TEXT_FLUSH_MS } from "./tap.ts";
+import { DeltaBuffer, errorClass, failureSummary, PROVIDER_ERROR, reportedUsage, type Segment, screened, screenedEvent, TEXT_FLUSH_MS, type Tokens } from "./tap.ts";
 
 export const MINERVA_PROVIDER = "minerva";
 export const MINERVA_API = "minerva";
@@ -79,8 +81,11 @@ export interface ModelHost {
 	 * that attempt can no longer act; null when no current attempt owns the session.
 	 */
 	begin(sessionId: string | undefined): { fence: AttemptFence; signal: AbortSignal } | null;
-	/** `model_calls += 1`, for a request that is about to be sent. */
-	counted(fence: AttemptFence): void;
+	/**
+	 * Records and counts a call about to be sent, in one change with the fence check, outside pi's transactions: the
+	 * call's id (8 hex, unique within its run), or null when the attempt can no longer act, with nothing recorded.
+	 */
+	record(fence: AttemptFence, request: CallRequest): Promise<string | null>;
 	/** Whether the attempt can still act, checked again before a request is sent a second time. */
 	current(fence: AttemptFence): boolean;
 	/** Fenced: dropped once the attempt is replaced or the run ended. */
@@ -88,25 +93,39 @@ export interface ModelHost {
 	/** A tool call's argument text, as the model sent it, when its call ends. */
 	toolCallText(fence: AttemptFence, callId: string, text: string): void;
 	/**
-	 * Not fenced: a call is metered whichever attempt made it; null counts it unmetered.
-	 * Not called for a call the provider refused or that never reached it.
+	 * Settles a recorded call once, outside pi's transactions, before pi hears its answer. Not fenced: a call is settled
+	 * whichever attempt made it. A rejection holds the answer for good: the host resets the object.
 	 */
-	settled(fence: AttemptFence, usage: ModelUsage | null): void;
+	settle(fence: AttemptFence, call: string, settlement: CallSettlement): Promise<void>;
 	/** For operators' logs only. */
 	log(message: string): void;
 }
 
-/** A metered call's usage: its id (as its deltas name it), the upstream model, and its tokens (tap.ts `reportedUsage`). */
-export interface ModelUsage {
-	call: string;
+/** What a call is recorded with before its request is sent. */
+export interface CallRequest {
+	/** The route's provider. */
+	provider: string;
+	/** The upstream model. */
 	model: string;
-	/** Input with cache reads and writes. */
-	input: number;
-	output: number;
-	/** Cache reads. */
-	cached: number;
-	/** The part of `output` spent reasoning; 0 when the provider does not say. */
-	reasoning: number;
+	/** What the call is counted at if it settles unmetered (policy.ts `reservation`). */
+	reserved: { input: number; output: number };
+}
+
+/** How a counted call ended (docs/plans/chunk-14a-design.md, Settlement states). */
+export type CallOutcome = { outcome: "reported"; tokens: Tokens } | { outcome: "refused" } | { outcome: "unmetered"; cause: "no_usage" | "stopped" | "failed" };
+
+/** A call's outcome, with the UTF-8 length of the last request it built, null when it built none. */
+export type CallSettlement = CallOutcome & { requestBytes: number | null };
+
+/**
+ * The settlement table, from what the wrapper saw: an answer (a stream, or a 200) settles with its usage report, or
+ * unmetered without one; a refusal (a 4xx and no answer) costs nothing; any other status, or none, is unmetered,
+ * `stopped` when the run or pi stopped it.
+ */
+function outcomeOf(seen: { answered: boolean; tokens: Tokens | null; status: number | undefined; stopped: boolean }): CallOutcome {
+	if (seen.answered) return seen.tokens === null ? { outcome: "unmetered", cause: "no_usage" } : { outcome: "reported", tokens: seen.tokens };
+	if (seen.status !== undefined) return seen.status >= 400 && seen.status <= 499 ? { outcome: "refused" } : { outcome: "unmetered", cause: "failed" };
+	return { outcome: "unmetered", cause: seen.stopped ? "stopped" : "failed" };
 }
 
 /**
@@ -197,12 +216,14 @@ function failed(text: string, model: Model<Api>): AssistantMessage {
 
 function refuse(text: string, model: Model<Api>): AssistantMessageEventStream {
 	const out = createAssistantMessageEventStream();
-	const message = failed(text, model);
-	queueMicrotask(() => {
-		out.push({ type: "error", reason: "error", error: message });
-		out.end(message);
-	});
+	queueMicrotask(() => endWith(out, failed(text, model)));
 	return out;
+}
+
+/** Ends a stream with an error pi gets as is. */
+function endWith(out: AssistantMessageEventStream, message: AssistantMessage): void {
+	out.push({ type: "error", reason: "error", error: message });
+	out.end(message);
 }
 
 /** Whether a request asks for a reasoning summary: the Responses API, with an effort and a summary set. */
@@ -233,9 +254,7 @@ function wrapped(context: TranscriptContext, streamOptions: SimpleStreamOptions 
 		options.host.log(`The model is not available: ${error instanceof Error ? error.message : String(error)}`);
 		return refuse("The model is not available.", self);
 	}
-	options.host.counted(fence);
 	const now = options.now ?? (() => performance.now());
-	const call = tokenHex(4);
 	const publish = !isCompaction(context);
 	/** The run's and pi's: either stopping the call counts it unmetered. */
 	const stops = [begun.signal, ...(streamOptions?.signal ? [streamOptions.signal] : [])];
@@ -246,6 +265,8 @@ function wrapped(context: TranscriptContext, streamOptions: SimpleStreamOptions 
 	const callerResponse = streamOptions?.onResponse;
 	/** The HTTP status of the request just sent, when the upstream reports one. */
 	let status: number | undefined;
+	/** The UTF-8 length of the last payload built, as it leaves; null until one is (the fake builds none). */
+	let requestBytes: number | null = null;
 	/**
 	 * Whether createAI reads the answer whole once it started: a chat-completions route (Workers AI, OpenAI's
 	 * chat) whose answer, by createAI's own test of its headers, is not an event stream. Every other answer
@@ -262,7 +283,9 @@ function wrapped(context: TranscriptContext, streamOptions: SimpleStreamOptions 
 			signal: AbortSignal.any([...stops, quiet.signal]),
 			onPayload: async (payload, model) => {
 				const changed = (await callerPayload?.(payload, model)) ?? payload;
-				return forcePayload(forced, changed, cap);
+				const leaving = forcePayload(forced, changed, cap);
+				requestBytes = utf8(JSON.stringify(leaving) ?? "").byteLength;
+				return leaving;
 			},
 			onResponse: async (response, model) => {
 				status = response.status;
@@ -276,15 +299,27 @@ function wrapped(context: TranscriptContext, streamOptions: SimpleStreamOptions 
 	const argumentText = new Map<number, string>();
 	/** Tool calls whose arguments were read again from the model's text, by call id. */
 	const reparsed = new Map<string, JsonObject>();
-	let lastFlush = now();
-	const flush = () => {
-		if (!publish) return;
-		const segments = buffer.take();
-		if (segments.length) options.host.deltas(fence, call, segments);
-	};
 	(async () => {
+		let recorded: string | null;
+		try {
+			recorded = await options.host.record(fence, { provider: route.provider, model: upstream.model.id, reserved: reservation(cap) });
+		} catch (error) {
+			options.host.log(`A model call could not be recorded (${errorClass(error) ?? "an error"}).`);
+			return endWith(out, failed(PROVIDER_ERROR, self));
+		}
+		// Not recorded and not counted, as a call `begin` refused.
+		if (recorded === null) return endWith(out, failed(RUN_ENDED_TEXT, self));
+		const call = recorded;
+		let lastFlush = now();
+		const flush = () => {
+			if (!publish) return;
+			const segments = buffer.take();
+			if (segments.length) options.host.deltas(fence, call, segments);
+		};
 		let final: AssistantMessage | undefined;
-		/** The upstream answered with a stream, so the call settles, metered or not. */
+		/** The upstream's terminal event (`done` or `error`) as pi gets it, held until the call is settled. */
+		let terminal: AssistantMessageEvent | undefined;
+		/** The upstream answered with a stream. */
 		let streamed = false;
 		/** The run could not act any more when the request was to be sent again. */
 		let runEnded = false;
@@ -312,7 +347,7 @@ function wrapped(context: TranscriptContext, streamOptions: SimpleStreamOptions 
 			let next = await nextOf(iterator);
 			if (summary && !next.done && summaryRefused(next.value, status)) {
 				// Asked once more without the summary; if that is taken, the summary was the problem.
-				// The same call: not counted again, and the refused request was neither metered nor not.
+				// The same call and record: if the run ended meanwhile, it settles as the refusal it got.
 				if (!options.host.current(fence) || stops.some((signal) => signal.aborted)) {
 					runEnded = true;
 					throw new Error(RUN_ENDED_TEXT);
@@ -358,8 +393,10 @@ function wrapped(context: TranscriptContext, streamOptions: SimpleStreamOptions 
 					event = { type: "error", reason: "error", error: { ...event.error, stopReason: "error", errorMessage: PROVIDER_ERROR } };
 				}
 				const relayedEvent = relayed(event, options.host, status);
-				// pi's result is the `done` event's message, so the call is named there.
-				out.push(relayedEvent.type === "done" ? { ...relayedEvent, message: withCall(relayedEvent.message, call) } : relayedEvent);
+				// pi's result is the terminal event's message, so the call is named there.
+				if (relayedEvent.type === "done") terminal = { ...relayedEvent, message: withCall(relayedEvent.message, call) };
+				else if (relayedEvent.type === "error") terminal = relayedEvent;
+				else out.push(relayedEvent);
 				if (now() - lastFlush > TEXT_FLUSH_MS) {
 					lastFlush = now();
 					flush();
@@ -373,20 +410,25 @@ function wrapped(context: TranscriptContext, streamOptions: SimpleStreamOptions 
 			else if (!stopped && !runEnded) options.host.log(`The model stream failed (${[errorClass(error) ?? "an error", ...(status === undefined ? [] : [`status ${status}`])].join(", ")}).`);
 			const text = runEnded ? RUN_ENDED_TEXT : stopped ? "Request was aborted" : PROVIDER_ERROR;
 			final = { ...failed(text, upstream.model), stopReason: stopped ? "aborted" : "error" };
-			out.push({ type: "error", reason: final.stopReason as "error" | "aborted", error: final });
+			terminal = { type: "error", reason: final.stopReason as "error" | "aborted", error: final };
 		} finally {
 			clearTimeout(quietTimer);
 		}
-		flush();
-		// Settled once the provider accepted the request (a 200, a stream or not: one with no body is
-		// unmetered), or when the run or pi stopped the call before any answer came; a call the provider
-		// refused, or that never reached it, is counted but neither metered nor unmetered.
-		const accepted = streamed || status === 200;
-		if (accepted) {
-			const usage = reportedUsage(final.usage);
-			options.host.settled(fence, usage === null ? null : { call, model: upstream.model.id, ...usage });
+		try {
+			flush();
+		} catch (error) {
+			// Only progress: the call settles all the same.
+			options.host.log(`A model call's last text could not be published (${errorClass(error) ?? "an error"}).`);
 		}
-		else if (!runEnded && status === undefined && stops.some((signal) => signal.aborted)) options.host.settled(fence, null);
+		const answered = streamed || status === 200;
+		const outcome = outcomeOf({ answered, tokens: answered ? reportedUsage(final.usage) : null, status, stopped: stops.some((signal) => signal.aborted) });
+		try {
+			await options.host.settle(fence, call, { ...outcome, requestBytes });
+		} catch (error) {
+			options.host.log(`A model call could not be settled (${errorClass(error) ?? "an error"}); its answer is held.`);
+			return;
+		}
+		if (terminal) out.push(terminal);
 		// "This run has ended." is ours, as for a call refused before it was counted.
 		out.end(runEnded ? final : screened(final));
 	})();
