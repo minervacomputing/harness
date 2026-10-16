@@ -2,6 +2,8 @@
 
 Status: built and live, 2026-10-14 (first green run: all four account steps). Since chunk 13c (2026-10-16) it tests the engine alone, with no frontend or browser walk, and its vars file holds no origins. Part of [product-and-engine.md](product-and-engine.md), chunk 1b. opencode reviewed the first draft; its findings are folded in below, and the ones not taken are under Accepted.
 
+**Changed 2026-10-16 (the owner's decision):** the suites left the push workflow. They run in `.github/workflows/account.yml`, nightly at 03:00 UTC when the day's commits changed the paths below, and by hand, which is due before every deploy of staging or production. `changes` and the push freshness check are gone; a nightly run checks the day's history instead. On every push they failed more often on the rollout's timing and loaded runners than on the engine. The sections below describe the push design as first built.
+
 ## Decisions (the owner's, 2026-10-14)
 
 - **A CI-only test instance, `minerva-cf-ci`.** CI never deploys or tests `minerva-cf-test`, so a manual run and a CI run cannot overwrite each other's build. The locks in `scripts/run.ts` are files on one machine and protect nothing across machines.
