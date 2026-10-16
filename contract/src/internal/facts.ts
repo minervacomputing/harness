@@ -67,6 +67,45 @@ const ToolCallData = z.discriminatedUnion('decision', [
 /** A read, write, edit or bash call in the folder that finished. */
 const LocalToolData = z.object({ tool: z.enum(['read', 'write', 'edit', 'bash']), summary: z.string(), ok: z.boolean(), excerpt: z.string() })
 
+const Count = z.int().min(0)
+
+/** 8 lowercase hex, as the call's deltas name it; unique within its run. */
+const Call = z.string()
+
+/** The UTF-8 length of the request's JSON as sent; absent when the call built no request. */
+const RequestBytes = Count.optional()
+
+/**
+ * A counted model call that reported no usage. One the provider refused (a 4xx) cost nothing; every other is counted at its
+ * reservation, estimated.
+ */
+const UnmeteredData = z.discriminatedUnion('cause', [
+  z.object({
+    call: Call,
+    provider: z.string(),
+    model: z.string(),
+    cause: z.literal('refused'),
+    inputTokens: z.literal(0),
+    outputTokens: z.literal(0),
+    estimated: z.literal(false),
+    requestBytes: RequestBytes,
+  }),
+  z.object({
+    call: Call,
+    provider: z.string(),
+    model: z.string(),
+    /**
+     * An answer with no usage report, a call stopped with no answer, one that failed with no answer, or one left open by an
+     * object instance that is gone.
+     */
+    cause: z.enum(['no_usage', 'stopped', 'failed', 'lost']),
+    inputTokens: Count,
+    outputTokens: Count,
+    estimated: z.literal(true),
+    requestBytes: RequestBytes,
+  }),
+])
+
 const fact = <T extends string, D extends z.ZodType>(type: T, data: D) =>
   z.object({ seq: Seq, run: Id, at: Time, type: z.literal(type), data })
 
@@ -93,17 +132,52 @@ export const Fact = z.discriminatedUnion('type', [
       afterCancel: z.boolean(),
     }),
   ),
-  /** One model call's usage. */
+  /** One model call's usage, as the provider reported it. */
   fact(
     'run.usage',
     z.object({
-      /** 8 lowercase hex, as the call's deltas name it. */
-      call: z.string(),
+      call: Call,
+      /** The route's provider; with `model`, what prices the call. */
+      provider: z.string().optional(),
       model: z.string(),
-      inputTokens: z.int().min(0),
-      outputTokens: z.int().min(0),
-      cachedTokens: z.int().min(0),
-      reasoningTokens: z.int().min(0),
+      /** Every input token, cache reads and writes included. */
+      inputTokens: Count,
+      outputTokens: Count,
+      /** Input tokens read from the provider's cache. */
+      cachedTokens: Count,
+      /** Input tokens written to the provider's cache. */
+      cacheWriteTokens: Count.optional(),
+      reasoningTokens: Count,
+      requestBytes: RequestBytes,
+    }),
+  ),
+  fact('run.unmetered', UnmeteredData),
+  /**
+   * A run's totals, written once after it finished and every one of its calls and scripts settled, so its sequence is above
+   * every `run.usage` and `run.unmetered` of its run. Reported tokens and estimates are kept apart.
+   */
+  fact(
+    'run.settled',
+    z.object({
+      /** Every counted call: the run's `run.usage` and `run.unmetered` facts number exactly this. */
+      modelCalls: Count,
+      refusedCalls: Count,
+      unmeteredCalls: Count,
+      inputTokens: Count,
+      outputTokens: Count,
+      cachedTokens: Count,
+      cacheWriteTokens: Count,
+      reasoningTokens: Count,
+      estimatedInputTokens: Count,
+      estimatedOutputTokens: Count,
+      containers: Count,
+      containerMs: Count,
+      /** A container's span was still open, was found stopped, or ran past its lease's cutoff. */
+      containerEstimated: z.boolean(),
+      scripts: Count,
+      scriptMs: Count,
+      /** A script was ended at its clock's bound because the object instance running it was gone. */
+      scriptEstimated: z.boolean(),
     }),
   ),
   /** The only terminal fact: Laravel marks a run finished from it alone, so a next start sees the whole turn. */

@@ -942,6 +942,935 @@
           }
         }
       ]
+    },
+    {
+      "name": "usage, unmetered and settled facts are applied, usage also after the run's end, and their repeats are acknowledged",
+      "steps": [
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:02.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 3,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:03.000Z",
+                "type": "run.usage",
+                "data": {
+                  "call": "0a1b2c3d",
+                  "model": "@cf/zai-org/glm-5.3-flash",
+                  "inputTokens": 1200,
+                  "outputTokens": 80,
+                  "cachedTokens": 0,
+                  "reasoningTokens": 12
+                }
+              },
+              {
+                "seq": 4,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:04.000Z",
+                "type": "run.unmetered",
+                "data": {
+                  "call": "2c3d4e5f",
+                  "provider": "workers-ai",
+                  "model": "@cf/zai-org/glm-5.3-flash",
+                  "cause": "refused",
+                  "inputTokens": 0,
+                  "outputTokens": 0,
+                  "estimated": false,
+                  "requestBytes": 20488
+                }
+              },
+              {
+                "seq": 5,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:05.000Z",
+                "type": "run.finished",
+                "data": {
+                  "status": "completed",
+                  "error": "",
+                  "message": {
+                    "id": "0199e000-0000-7000-8000-0000000000c1",
+                    "content": "Done."
+                  },
+                  "folder": null
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 5
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 6,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:06.000Z",
+                "type": "run.usage",
+                "data": {
+                  "call": "1b2c3d4e",
+                  "provider": "anthropic",
+                  "model": "claude-example",
+                  "inputTokens": 5400,
+                  "outputTokens": 310,
+                  "cachedTokens": 4000,
+                  "cacheWriteTokens": 1000,
+                  "reasoningTokens": 0,
+                  "requestBytes": 21873
+                }
+              },
+              {
+                "seq": 7,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:07.000Z",
+                "type": "run.unmetered",
+                "data": {
+                  "call": "3d4e5f60",
+                  "provider": "workers-ai",
+                  "model": "@cf/zai-org/glm-5.3-flash",
+                  "cause": "lost",
+                  "inputTokens": 128000,
+                  "outputTokens": 8192,
+                  "estimated": true
+                }
+              },
+              {
+                "seq": 8,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:08.000Z",
+                "type": "run.settled",
+                "data": {
+                  "modelCalls": 4,
+                  "refusedCalls": 1,
+                  "unmeteredCalls": 1,
+                  "inputTokens": 6600,
+                  "outputTokens": 390,
+                  "cachedTokens": 4000,
+                  "cacheWriteTokens": 1000,
+                  "reasoningTokens": 12,
+                  "estimatedInputTokens": 128000,
+                  "estimatedOutputTokens": 8192,
+                  "containers": 1,
+                  "containerMs": 41250,
+                  "containerEstimated": false,
+                  "scripts": 1,
+                  "scriptMs": 2300,
+                  "scriptEstimated": false
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 8
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 3,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:03.000Z",
+                "type": "run.usage",
+                "data": {
+                  "call": "0a1b2c3d",
+                  "model": "@cf/zai-org/glm-5.3-flash",
+                  "inputTokens": 1200,
+                  "outputTokens": 80,
+                  "cachedTokens": 0,
+                  "reasoningTokens": 12
+                }
+              },
+              {
+                "seq": 4,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:04.000Z",
+                "type": "run.unmetered",
+                "data": {
+                  "call": "2c3d4e5f",
+                  "provider": "workers-ai",
+                  "model": "@cf/zai-org/glm-5.3-flash",
+                  "cause": "refused",
+                  "inputTokens": 0,
+                  "outputTokens": 0,
+                  "estimated": false,
+                  "requestBytes": 20488
+                }
+              },
+              {
+                "seq": 5,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:05.000Z",
+                "type": "run.finished",
+                "data": {
+                  "status": "completed",
+                  "error": "",
+                  "message": {
+                    "id": "0199e000-0000-7000-8000-0000000000c1",
+                    "content": "Done."
+                  },
+                  "folder": null
+                }
+              },
+              {
+                "seq": 6,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:06.000Z",
+                "type": "run.usage",
+                "data": {
+                  "call": "1b2c3d4e",
+                  "provider": "anthropic",
+                  "model": "claude-example",
+                  "inputTokens": 5400,
+                  "outputTokens": 310,
+                  "cachedTokens": 4000,
+                  "cacheWriteTokens": 1000,
+                  "reasoningTokens": 0,
+                  "requestBytes": 21873
+                }
+              },
+              {
+                "seq": 7,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:07.000Z",
+                "type": "run.unmetered",
+                "data": {
+                  "call": "3d4e5f60",
+                  "provider": "workers-ai",
+                  "model": "@cf/zai-org/glm-5.3-flash",
+                  "cause": "lost",
+                  "inputTokens": 128000,
+                  "outputTokens": 8192,
+                  "estimated": true
+                }
+              },
+              {
+                "seq": 8,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:08.000Z",
+                "type": "run.settled",
+                "data": {
+                  "modelCalls": 4,
+                  "refusedCalls": 1,
+                  "unmeteredCalls": 1,
+                  "inputTokens": 6600,
+                  "outputTokens": 390,
+                  "cachedTokens": 4000,
+                  "cacheWriteTokens": 1000,
+                  "reasoningTokens": 12,
+                  "estimatedInputTokens": 128000,
+                  "estimatedOutputTokens": 8192,
+                  "containers": 1,
+                  "containerMs": 41250,
+                  "containerEstimated": false,
+                  "scripts": 1,
+                  "scriptMs": 2300,
+                  "scriptEstimated": false
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 8
+          }
+        }
+      ]
+    },
+    {
+      "name": "a repeated usage fact that differs only in its optional provider is a conflict",
+      "steps": [
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:02.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 3,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:03.000Z",
+                "type": "run.usage",
+                "data": {
+                  "call": "0a1b2c3d",
+                  "model": "@cf/zai-org/glm-5.3-flash",
+                  "inputTokens": 1200,
+                  "outputTokens": 80,
+                  "cachedTokens": 0,
+                  "reasoningTokens": 12
+                }
+              },
+              {
+                "seq": 4,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:04.000Z",
+                "type": "run.unmetered",
+                "data": {
+                  "call": "2c3d4e5f",
+                  "provider": "workers-ai",
+                  "model": "@cf/zai-org/glm-5.3-flash",
+                  "cause": "refused",
+                  "inputTokens": 0,
+                  "outputTokens": 0,
+                  "estimated": false,
+                  "requestBytes": 20488
+                }
+              },
+              {
+                "seq": 5,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:05.000Z",
+                "type": "run.finished",
+                "data": {
+                  "status": "completed",
+                  "error": "",
+                  "message": {
+                    "id": "0199e000-0000-7000-8000-0000000000c1",
+                    "content": "Done."
+                  },
+                  "folder": null
+                }
+              },
+              {
+                "seq": 6,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:06.000Z",
+                "type": "run.usage",
+                "data": {
+                  "call": "1b2c3d4e",
+                  "provider": "anthropic",
+                  "model": "claude-example",
+                  "inputTokens": 5400,
+                  "outputTokens": 310,
+                  "cachedTokens": 4000,
+                  "cacheWriteTokens": 1000,
+                  "reasoningTokens": 0,
+                  "requestBytes": 21873
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 6
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 6,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:06.000Z",
+                "type": "run.usage",
+                "data": {
+                  "call": "1b2c3d4e",
+                  "provider": "openai",
+                  "model": "claude-example",
+                  "inputTokens": 5400,
+                  "outputTokens": 310,
+                  "cachedTokens": 4000,
+                  "cacheWriteTokens": 1000,
+                  "reasoningTokens": 0,
+                  "requestBytes": 21873
+                }
+              }
+            ]
+          },
+          "answer": {
+            "error": "FACT_CONFLICT"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a repeated usage fact that differs only in its optional cacheWriteTokens is a conflict",
+      "steps": [
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:02.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 3,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:03.000Z",
+                "type": "run.usage",
+                "data": {
+                  "call": "0a1b2c3d",
+                  "model": "@cf/zai-org/glm-5.3-flash",
+                  "inputTokens": 1200,
+                  "outputTokens": 80,
+                  "cachedTokens": 0,
+                  "reasoningTokens": 12
+                }
+              },
+              {
+                "seq": 4,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:04.000Z",
+                "type": "run.unmetered",
+                "data": {
+                  "call": "2c3d4e5f",
+                  "provider": "workers-ai",
+                  "model": "@cf/zai-org/glm-5.3-flash",
+                  "cause": "refused",
+                  "inputTokens": 0,
+                  "outputTokens": 0,
+                  "estimated": false,
+                  "requestBytes": 20488
+                }
+              },
+              {
+                "seq": 5,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:05.000Z",
+                "type": "run.finished",
+                "data": {
+                  "status": "completed",
+                  "error": "",
+                  "message": {
+                    "id": "0199e000-0000-7000-8000-0000000000c1",
+                    "content": "Done."
+                  },
+                  "folder": null
+                }
+              },
+              {
+                "seq": 6,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:06.000Z",
+                "type": "run.usage",
+                "data": {
+                  "call": "1b2c3d4e",
+                  "provider": "anthropic",
+                  "model": "claude-example",
+                  "inputTokens": 5400,
+                  "outputTokens": 310,
+                  "cachedTokens": 4000,
+                  "cacheWriteTokens": 1000,
+                  "reasoningTokens": 0,
+                  "requestBytes": 21873
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 6
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 6,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:06.000Z",
+                "type": "run.usage",
+                "data": {
+                  "call": "1b2c3d4e",
+                  "provider": "anthropic",
+                  "model": "claude-example",
+                  "inputTokens": 5400,
+                  "outputTokens": 310,
+                  "cachedTokens": 4000,
+                  "cacheWriteTokens": 0,
+                  "reasoningTokens": 0,
+                  "requestBytes": 21873
+                }
+              }
+            ]
+          },
+          "answer": {
+            "error": "FACT_CONFLICT"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a repeated usage fact that differs only in its optional requestBytes is a conflict",
+      "steps": [
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:02.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 3,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:03.000Z",
+                "type": "run.usage",
+                "data": {
+                  "call": "0a1b2c3d",
+                  "model": "@cf/zai-org/glm-5.3-flash",
+                  "inputTokens": 1200,
+                  "outputTokens": 80,
+                  "cachedTokens": 0,
+                  "reasoningTokens": 12
+                }
+              },
+              {
+                "seq": 4,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:04.000Z",
+                "type": "run.unmetered",
+                "data": {
+                  "call": "2c3d4e5f",
+                  "provider": "workers-ai",
+                  "model": "@cf/zai-org/glm-5.3-flash",
+                  "cause": "refused",
+                  "inputTokens": 0,
+                  "outputTokens": 0,
+                  "estimated": false,
+                  "requestBytes": 20488
+                }
+              },
+              {
+                "seq": 5,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:05.000Z",
+                "type": "run.finished",
+                "data": {
+                  "status": "completed",
+                  "error": "",
+                  "message": {
+                    "id": "0199e000-0000-7000-8000-0000000000c1",
+                    "content": "Done."
+                  },
+                  "folder": null
+                }
+              },
+              {
+                "seq": 6,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:06.000Z",
+                "type": "run.usage",
+                "data": {
+                  "call": "1b2c3d4e",
+                  "provider": "anthropic",
+                  "model": "claude-example",
+                  "inputTokens": 5400,
+                  "outputTokens": 310,
+                  "cachedTokens": 4000,
+                  "cacheWriteTokens": 1000,
+                  "reasoningTokens": 0,
+                  "requestBytes": 21873
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 6
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 6,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:06.000Z",
+                "type": "run.usage",
+                "data": {
+                  "call": "1b2c3d4e",
+                  "provider": "anthropic",
+                  "model": "claude-example",
+                  "inputTokens": 5400,
+                  "outputTokens": 310,
+                  "cachedTokens": 4000,
+                  "cacheWriteTokens": 1000,
+                  "reasoningTokens": 0,
+                  "requestBytes": 21874
+                }
+              }
+            ]
+          },
+          "answer": {
+            "error": "FACT_CONFLICT"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a repeated unmetered fact that differs is a conflict",
+      "steps": [
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:02.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 3,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:03.000Z",
+                "type": "run.usage",
+                "data": {
+                  "call": "0a1b2c3d",
+                  "model": "@cf/zai-org/glm-5.3-flash",
+                  "inputTokens": 1200,
+                  "outputTokens": 80,
+                  "cachedTokens": 0,
+                  "reasoningTokens": 12
+                }
+              },
+              {
+                "seq": 4,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:04.000Z",
+                "type": "run.unmetered",
+                "data": {
+                  "call": "2c3d4e5f",
+                  "provider": "workers-ai",
+                  "model": "@cf/zai-org/glm-5.3-flash",
+                  "cause": "refused",
+                  "inputTokens": 0,
+                  "outputTokens": 0,
+                  "estimated": false,
+                  "requestBytes": 20488
+                }
+              },
+              {
+                "seq": 5,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:05.000Z",
+                "type": "run.finished",
+                "data": {
+                  "status": "completed",
+                  "error": "",
+                  "message": {
+                    "id": "0199e000-0000-7000-8000-0000000000c1",
+                    "content": "Done."
+                  },
+                  "folder": null
+                }
+              },
+              {
+                "seq": 6,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:06.000Z",
+                "type": "run.usage",
+                "data": {
+                  "call": "1b2c3d4e",
+                  "provider": "anthropic",
+                  "model": "claude-example",
+                  "inputTokens": 5400,
+                  "outputTokens": 310,
+                  "cachedTokens": 4000,
+                  "cacheWriteTokens": 1000,
+                  "reasoningTokens": 0,
+                  "requestBytes": 21873
+                }
+              },
+              {
+                "seq": 7,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:07.000Z",
+                "type": "run.unmetered",
+                "data": {
+                  "call": "3d4e5f60",
+                  "provider": "workers-ai",
+                  "model": "@cf/zai-org/glm-5.3-flash",
+                  "cause": "lost",
+                  "inputTokens": 128000,
+                  "outputTokens": 8192,
+                  "estimated": true
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 7
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 7,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:01:07.000Z",
+                "type": "run.unmetered",
+                "data": {
+                  "call": "3d4e5f60",
+                  "provider": "workers-ai",
+                  "model": "@cf/zai-org/glm-5.3-flash",
+                  "cause": "lost",
+                  "inputTokens": 128000,
+                  "outputTokens": 4096,
+                  "estimated": true
+                }
+              }
+            ]
+          },
+          "answer": {
+            "error": "FACT_CONFLICT"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a repeated settled fact that differs is a conflict",
+      "steps": [
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000b",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000b1",
+                "at": "2026-10-14T12:01:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000b1",
+                "at": "2026-10-14T12:01:02.000Z",
+                "type": "run.finished",
+                "data": {
+                  "status": "completed",
+                  "error": "",
+                  "message": {
+                    "id": "0199e000-0000-7000-8000-0000000000c1",
+                    "content": "Done."
+                  },
+                  "folder": null
+                }
+              },
+              {
+                "seq": 3,
+                "run": "0199e000-0000-7000-8000-0000000000b1",
+                "at": "2026-10-14T12:01:03.000Z",
+                "type": "run.settled",
+                "data": {
+                  "modelCalls": 4,
+                  "refusedCalls": 1,
+                  "unmeteredCalls": 1,
+                  "inputTokens": 6600,
+                  "outputTokens": 390,
+                  "cachedTokens": 4000,
+                  "cacheWriteTokens": 1000,
+                  "reasoningTokens": 12,
+                  "estimatedInputTokens": 128000,
+                  "estimatedOutputTokens": 8192,
+                  "containers": 1,
+                  "containerMs": 41250,
+                  "containerEstimated": false,
+                  "scripts": 1,
+                  "scriptMs": 2300,
+                  "scriptEstimated": false
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 3
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000b",
+            "facts": [
+              {
+                "seq": 3,
+                "run": "0199e000-0000-7000-8000-0000000000b1",
+                "at": "2026-10-14T12:01:03.000Z",
+                "type": "run.settled",
+                "data": {
+                  "modelCalls": 4,
+                  "refusedCalls": 1,
+                  "unmeteredCalls": 1,
+                  "inputTokens": 6600,
+                  "outputTokens": 390,
+                  "cachedTokens": 4000,
+                  "cacheWriteTokens": 1000,
+                  "reasoningTokens": 12,
+                  "estimatedInputTokens": 128000,
+                  "estimatedOutputTokens": 8192,
+                  "containers": 1,
+                  "containerMs": 41251,
+                  "containerEstimated": false,
+                  "scripts": 1,
+                  "scriptMs": 2300,
+                  "scriptEstimated": false
+                }
+              }
+            ]
+          },
+          "answer": {
+            "error": "FACT_CONFLICT"
+          }
+        }
+      ]
     }
   ]
 }

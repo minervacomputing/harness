@@ -742,6 +742,9 @@
                   "call": {
                     "type": "string"
                   },
+                  "provider": {
+                    "type": "string"
+                  },
                   "model": {
                     "type": "string"
                   },
@@ -760,7 +763,17 @@
                     "minimum": 0,
                     "maximum": 9007199254740991
                   },
+                  "cacheWriteTokens": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
                   "reasoningTokens": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "requestBytes": {
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
@@ -773,6 +786,253 @@
                   "outputTokens",
                   "cachedTokens",
                   "reasoningTokens"
+                ]
+              }
+            },
+            "required": [
+              "seq",
+              "run",
+              "at",
+              "type",
+              "data"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "seq": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "run": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "type": {
+                "const": "run.unmetered"
+              },
+              "data": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "call": {
+                        "type": "string"
+                      },
+                      "provider": {
+                        "type": "string"
+                      },
+                      "model": {
+                        "type": "string"
+                      },
+                      "cause": {
+                        "const": "refused"
+                      },
+                      "inputTokens": {
+                        "const": 0
+                      },
+                      "outputTokens": {
+                        "const": 0
+                      },
+                      "estimated": {
+                        "const": false
+                      },
+                      "requestBytes": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "call",
+                      "provider",
+                      "model",
+                      "cause",
+                      "inputTokens",
+                      "outputTokens",
+                      "estimated"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "call": {
+                        "type": "string"
+                      },
+                      "provider": {
+                        "type": "string"
+                      },
+                      "model": {
+                        "type": "string"
+                      },
+                      "cause": {
+                        "enum": [
+                          "no_usage",
+                          "stopped",
+                          "failed",
+                          "lost"
+                        ],
+                        "type": "string"
+                      },
+                      "inputTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "outputTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "estimated": {
+                        "const": true
+                      },
+                      "requestBytes": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "call",
+                      "provider",
+                      "model",
+                      "cause",
+                      "inputTokens",
+                      "outputTokens",
+                      "estimated"
+                    ]
+                  }
+                ]
+              }
+            },
+            "required": [
+              "seq",
+              "run",
+              "at",
+              "type",
+              "data"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "seq": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "run": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "type": {
+                "const": "run.settled"
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "modelCalls": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "refusedCalls": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "unmeteredCalls": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "inputTokens": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "outputTokens": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "cachedTokens": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "cacheWriteTokens": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "reasoningTokens": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "estimatedInputTokens": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "estimatedOutputTokens": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "containers": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "containerMs": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "containerEstimated": {
+                    "type": "boolean"
+                  },
+                  "scripts": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "scriptMs": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "scriptEstimated": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "modelCalls",
+                  "refusedCalls",
+                  "unmeteredCalls",
+                  "inputTokens",
+                  "outputTokens",
+                  "cachedTokens",
+                  "cacheWriteTokens",
+                  "reasoningTokens",
+                  "estimatedInputTokens",
+                  "estimatedOutputTokens",
+                  "containers",
+                  "containerMs",
+                  "containerEstimated",
+                  "scripts",
+                  "scriptMs",
+                  "scriptEstimated"
                 ]
               }
             },
