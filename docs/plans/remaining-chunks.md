@@ -220,42 +220,44 @@ A budget is only as good as the usage it settles from. Today a model call's usag
 
 ## Give each run a budget (chunk 14b)
 
+Built 2026-10-16 (`55bcd78` to `98d4f15` in the engine, then `8ad74ee`, `9f9929a` and these docs; `b5c1faa` and `ef6429f` in the app, on its `chunk-14b` branch until the engine is deployed to `minerva-cf-staging`). The design, its amendments and what each unit built are in [chunk-14b-design.md](chunk-14b-design.md). test:faults went from 33 cases to 34 (a run stopped at its budget) and passed at `98d4f15` on `minerva-cf-test`, and the perf rule is met by the Node benchmark the owner accepted. The live boxes wait for the engine's deploy to `minerva-cf-staging` (the owner approves it), then the app's push and the owner's go for a staging turn; production gets the engine first, then the app, with the owner's approval.
+
 **Depends on.** Chunk 14a.
 
 **Decide first.** Settle each by a prototype on the test instance, and record the result in Appendix A. The design is [chunk-14b-design.md](chunk-14b-design.md).
 
 - [x] The allowance's unit is money (owner, 2026-10-15), in micro-dollars, with a price table per route in the engine (which owns the routes), published in the catalog so Laravel shows the same prices. Tokens were rejected because models price them differently and containers and scripts are billed by time. The product may show it as credits later. The model's prices are read from models.dev at deploy, for every provider, and container and script time are in code (owner, 2026-10-16; chunk-14b-design.md, The price table).
-- [x] The rule (owner, 2026-10-16): stop when spent, with no reservation per call. Before each model call the engine compares what the run has spent so far (its settled calls at the price table's rates, its container and script time so far) with its allowance, and ends the run when it is used up. A budget is therefore not a hard limit: a run can pass its allowance by what is in flight when it crosses it, and an organization its limit by that much for each run going at once (chunk-14b-design.md, Overspend). The alternatives are in Appendix B.
+- [x] The rule (owner, 2026-10-16): stop when spent, with no reservation per call. Before each model call the engine compares what the run has spent so far (its settled calls at the price table's rates, its container and script time so far) with its allowance, and ends the run when it is used up. A budget is therefore not a hard limit: a run can pass its allowance by what is in flight when it crosses it, and an organization its limit by that much for each run started before earlier runs settled (chunk-14b-design.md, Overspend and The overshoot). The alternatives are in Appendix B.
 
 **Build.**
 
-- [ ] Contract. `StartRun` gains an optional `allowance` (the unit chosen above). The engine deploys first.
-- [ ] Laravel. A limit per organization, and its spend, the sum of its runs' settled charges. A start is refused before it is registered when the spend has reached the limit, with a message the chat shows; otherwise it passes what is left as the run's allowance. No new lock: under this rule a lock would not bound more, since spend changes only when a run settles (chunk-14b-design.md, Laravel).
-- [ ] The engine checks each model call at its record (14a's admission point, `recordModelCall`): when what the run has spent so far has reached its allowance, the call is refused, and the run ends with a new terminal reason the chat shows ("This conversation reached its budget"). Each call is charged from its reported usage, a refused one nothing, an unmetered one the tokens 14a records for it.
-- [ ] Container and script time draw on the same allowance at a rate from the price table, counted so far at each check and settled from 14a's spans and script records.
-- [ ] Laravel adds a run's spend only from `run.settled` (14a), never from `run.finished` or a terminal status alone.
+- [x] Contract. `StartRun` gains an optional `allowance` (the unit chosen above). The engine deploys first. `55bcd78`, with the money fields on the facts and the catalog's `prices`, all optional; the app synced it in `b5c1faa`, which stays off its main until the engine is on staging.
+- [x] Laravel. A limit per organization, and its spend, the sum of its runs' settled charges. A start is refused before it is registered when the spend has reached the limit, with a message the chat shows; otherwise it passes what is left as the run's allowance. No new lock: under this rule a lock would not bound more, since spend changes only when a run settles (chunk-14b-design.md, Laravel). The app's `ef6429f`, on its `chunk-14b` branch: a limit per calendar month in UTC (owner, 2026-10-16), $5 by default, set with `minerva:budget`; "Your organization has used its budget." at or over it.
+- [x] The engine checks each model call at its record (14a's admission point, `recordModelCall`): when what the run has spent so far has reached its allowance, the call is refused, and the run ends with a new terminal reason the chat shows ("This conversation reached its budget"). Each call is charged from its reported usage, a refused one nothing, an unmetered one the tokens 14a records for it. Charges in `ce1449e` (prices from models.dev at deploy, migration 12, money on the facts); the check and `budget_reached` in `98d4f15`, which also settles a gone instance's open records before it counts.
+- [x] Container and script time draw on the same allowance at a rate from the price table, counted so far at each check and settled from 14a's spans and script records. Rates and charges in `ce1449e`; counted so far at the check (open scripts, and container time from `container_since`, set before the Sandbox is asked for a container) in `98d4f15`.
+- [x] Laravel adds a run's spend only from `run.settled` (14a), never from `run.finished` or a terminal status alone. The app's `ef6429f`: spend is the sum of `run_settlements.charged_micros` this month; a settlement without money for a run given an allowance counts at the allowance.
 
 **You see.**
 
-- [ ] A run given a small allowance stops with the budget reason, and the organization's spent amount equals the run's settled usage.
+- [ ] A run given a small allowance stops with the budget reason, and the organization's spent amount equals the run's settled usage. The engine's half passed on `minerva-cf-test` against the fake Laravel (`98d4f15`); the organization's spend waits for the staging check below.
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Engine unit tests for admission at, under and over the allowance, and for an unmetered call charged at the tokens 14a records for it. Run `pnpm test:unit`.
-- [ ] Laravel's tests against a real Postgres start two runs concurrently, in different workspaces of one organization. Both are admitted with the same allowance (the overshoot the rule allows), and a start after their settled spend reached the limit is refused.
+- [x] Engine unit tests for admission at, under and over the allowance, and for an unmetered call charged at the tokens 14a records for it. Run `pnpm test:unit`. `conversation-admission.test.ts` (9 tests, `98d4f15`) and `conversation-charges.test.ts` (5, `ce1449e`), with `model-prices.test.ts` and `budget-prices.test.ts`; 2,713 unit tests and 329 platform tests passed at `9f9929a`.
+- [x] Laravel's tests against a real Postgres start two runs concurrently, in different workspaces of one organization. Both are admitted with the same allowance (the overshoot the rule allows), and a start after their settled spend reached the limit is refused. The app's `ef6429f`: `BudgetRacesTest.php` (2 tests, separate processes on Postgres, with a settlement committed between a start's read and its commit), and `BudgetsTest.php` (11).
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Regression against `main`. `test:faults` passes with a large allowance.
-- [ ] On staging, a run with an allowance below one turn's cost stops at the budget, and its spend is added to the organization's after `run.settled`.
+- [x] Regression against `main`. `test:faults` passes with a large allowance. 34 cases at `98d4f15` on `minerva-cf-test`, the driver giving every other start 10^12 µ$, the small-allowance case among them.
+- [ ] On staging, a run with an allowance below one turn's cost stops at the budget, and its spend is added to the organization's after `run.settled`. Waits for the engine's deploy to `minerva-cf-staging` (the owner approves it, after a green `account.yml`), the app's push of `chunk-14b`, and the owner's go for a turn that spends cents (chunk-14b-design.md, Live checks).
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. The admission check's added time per model call. Rule. Under 5 ms at p95. More fails.
+- [x] Metric. The admission check's added time per model call. Rule. Under 5 ms at p95. More fails. On `minerva-cf-test` the probe's two baselines differed by 21 ms at p95, too noisy to judge, so by the owner's answer the Node benchmark decides (`8ad74ee`): `recordModelCall` over node:sqlite, 3,600 calls, p95 35.7 µs without an allowance and 43.8 µs with one, about 10 µs a call (chunk-14b-design.md, Perf probe and rule).
 
 **Review.**
 
-- [ ] opencode reviewed the design and the diff.
+- [ ] opencode reviewed the design and the diff. The design twice (chunk-14b-design.md, Amendments after opencode's review) and unit 3's diff (As built (unit 3)) are recorded; units 1, 2 and 4's diff reviews are not recorded here yet. Unit 5 changed docs only and had none.
 
 ## Add the emergency stop (chunk 14c)
 
