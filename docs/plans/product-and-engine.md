@@ -150,6 +150,8 @@ The plan is built in chunks of about one session each, in order. A chunk starts 
     - Uploads, downloads, and conversation deletion with tombstones.
 
    Designed 2026-10-15 in `minervacomputing/app` (its `docs/plans/conversations.md`), in four parts. 12a, the engine's part, is built: `folder` and `resolveDownload` read a conversation's folder through the recovery index (a deleted conversation is not found; a blob R2 no longer holds is missing), and `deleteConversation` marks the conversation deleted in the index, then in its object, which answers any start still prepared, stops its run as `conversation_deleted`, closes its streams and destroys its scripts and sandbox; it fails while any of that is left, so Laravel sends it again. A start that finds the index deleted finishes the deletion first. Facts and replay go on; the blobs stay until retention removes them (chunk 15). 12b (chats), 12c (files) and 12d (deletion and revocations) are Laravel's. 12b is built: the chat pages, the transcript from facts, and the live stream with tokens Laravel signs, falling back to reloading facts. 12c is built: files are reserved with Laravel, which presigns a PUT with their size and type signed, put to R2 by the browser and taken by a start; the folder is listed through `folder`, and a download is a GET presigned for a minute on the key `resolveDownload` answers. 12d is built: a conversation deleted by its user is hidden at once and sent to `deleteConversation` through an outbox, its rows kept until chunk 15; an agent with chats is archived rather than deleted; a reconnect or a refresh that narrows a connection's scopes cancels the runs holding it.
+Chunks 13 to 18 are planned box by box in [remaining-chunks.md](remaining-chunks.md), which splits them into parts and wins where it is more specific.
+
 13. **The engine's old paths go.** Better Auth, D1's accounts, the Workspace object, the public API and `frontend/` leave this repository (what stays public follows open question 3). Production is reset.
 
 **Before any customer's data**
@@ -202,13 +204,13 @@ The plan is built in chunks of about one session each, in order. A chunk starts 
 
 1. The stream token's format: a JWT (`firebase/php-jwt`, maintained by Google; `jose` in the engine), or an HMAC over a fixed payload with PHP's `hash_hmac` and WebCrypto. Laravel Reverb was considered; it would need its own way to close subscriptions that are already open when a member is removed.
 2. ~~Laravel Cloud's Postgres~~ Answered 2026-10-14 (chunk 2): Serverless Postgres is Neon, Postgres 18 in `eu-central-1`; pgvector 0.8 is available and Postgres's own full-text search needs no extension; a cluster at 0.25 compute units reports `max_connections` 112 (measured; Neon reserves a few for itself), and its PgBouncer pooler (transaction mode) takes up to 10,000 clients, to be used once queue workers run. TLS is verified against Neon's own host name, since its certificate does not name the alias Laravel Cloud injects.
-3. Open source. The frontend moves into the private Laravel repository, so this public repository would hold the engine alone. Keep it public as Minerva's open harness (a trust signal for a product that holds people's accounts), or make it private. The licence follows from that.
+3. ~~Open source~~ Answered 2026-10-15 (owner): the repository stays public as Minerva's open harness. The frontend moves into the private Laravel repository, so this public repository would hold the engine alone. Keep it public as Minerva's open harness (a trust signal for a product that holds people's accounts), or make it private. The licence follows from that.
 4. The credentials key: Laravel's encrypter with a dedicated key, or an envelope with a key service.
 5. ~~The operator admin: Filament or Nova~~ Answered 2026-10-14 (chunk 3): Filament 5, free and in the same Livewire stack as the rest of Laravel's first-party tools; Nova's licence buys nothing a read-mostly operator panel needs.
 6. Where the engine's Workers, containers and models process data (ARCHITECTURE.md, open question 8), and the subprocessors to list.
 7. The cost of a typical turn, measured, to set quotas and prices.
 8. When the demo moves from Django to the hosted product.
-9. Retention periods, and the restore window (Laravel Cloud's backup retention bounds it).
+9. ~~Retention periods, and the restore window~~ Answered 2026-10-15 (owner; remaining-chunks.md, Arm the program): a restore window of 7 days; run events, run inputs and pi's session kept 30 days after the run; facts 7 days after acknowledgement; transcripts and files until deletion, and deleted conversations removed physically 7 days later; usage and audit at least a year. The budget's unit is money (chunk 14b).
 
 ## Sources
 
