@@ -279,7 +279,8 @@ describe("what may be sent to the database", () => {
 	});
 });
 
-describe("scripts/schema-check.ts, with a stand-in for cf that answers from a local SQLite file", () => {
+// These cases run the script in child Node processes, which on a loaded runner outlast vitest's 5 s default.
+describe("scripts/schema-check.ts, with a stand-in for cf that answers from a local SQLite file", { timeout: 30_000 }, () => {
 	const SCRIPT = new URL("../../scripts/schema-check.ts", import.meta.url).pathname;
 	// Two instances, in a directory of their own (scripts/instance.ts): a production one, named, and the only test one.
 	const PRODUCTION = namesOf("acme").d1;
@@ -456,7 +457,8 @@ if (args[0] === "auth" && args[1] === "whoami") {
 	});
 });
 
-describe("scripts/identity.ts, with a stand-in for cf: D1 in a local SQLite file, and the app's Worker", () => {
+// These cases run the script in child Node processes, which on a loaded runner outlast vitest's 5 s default.
+describe("scripts/identity.ts, with a stand-in for cf: D1 in a local SQLite file, and the app's Worker", { timeout: 30_000 }, () => {
 	// The scripts run from a copy of the checkout, so that the locks --record takes are the copy's, never this
 	// checkout's (where a deploy may be running).
 	const SOURCES = { scripts: new URL("../../scripts/", import.meta.url).pathname, migrations: new URL("../../migrations/", import.meta.url).pathname };
