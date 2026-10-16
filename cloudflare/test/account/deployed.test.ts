@@ -145,12 +145,12 @@ describe("preview URLs", () => {
 		const host = new URL(DOWNLOAD).host;
 		const versions = cf<{ id: string; urls?: string[] }[]>(["workers", "versions", "list", "--worker-id", NAMES.download]);
 		expect(versions.length).toBeGreaterThan(0);
-		for (const version of versions) {
-			expect(version.urls ?? []).toEqual([]);
-			const reply = await fetchDeployed(`https://${version.id.slice(0, 8)}-${host}/x`, { timeoutMs: 10_000 }).catch(() => null);
-			// Cloudflare's own page, or nothing at all: never the Worker, whose answer carries `CSP: sandbox`.
-			expect(reply?.headers.get("content-security-policy") ?? null).not.toBe("sandbox");
-		}
+		for (const version of versions) expect(version.urls ?? []).toEqual([]);
+		// At once, 5 s a try: a preview host that never completes its TLS handshake is tried three times (fetchDeployed),
+		// which took 32 s at 10 s a try (2026-10-16), past the case's 30 s.
+		const replies = await Promise.all(versions.map((version) => fetchDeployed(`https://${version.id.slice(0, 8)}-${host}/x`, { timeoutMs: 5_000 }).catch(() => null)));
+		// Cloudflare's own page, or nothing at all: never the Worker, whose answer carries `CSP: sandbox`.
+		for (const reply of replies) expect(reply?.headers.get("content-security-policy") ?? null).not.toBe("sandbox");
 	});
 });
 
