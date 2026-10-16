@@ -258,7 +258,9 @@ describe("run_script in the conversation", () => {
 	});
 
 	test("more than ten scripts in a row, each stopped by its wall clock, then one that answers", async () => {
-		SCRIPT_CLOCK.timeoutMs = 150;
+		// The scripts' object is reset after every script, so each one starts it afresh: a clock short enough for a
+		// loaded runner to outlast that start fails the thirteenth for the wrong reason.
+		SCRIPT_CLOCK.timeoutMs = 500;
 		const { stub, fakes, ...w } = conversation();
 		const loop = "for (;;) await new Promise((resolve) => setTimeout(resolve, 10))";
 		const runId = await posted(w, [...Array.from({ length: 12 }, () => script(loop)), script("return 'thirteenth'"), { text: "Done." }]);
@@ -266,7 +268,7 @@ describe("run_script in the conversation", () => {
 		expect(run.status).toBe("completed");
 		const results = scriptResults(fakes);
 		expect(results.length).toBe(13);
-		for (const result of results.slice(0, 12)) expect(result).toEqual({ texts: ["Script failed: Execution timed out after 150 ms"], isError: true });
+		for (const result of results.slice(0, 12)) expect(result).toEqual({ texts: ["Script failed: Execution timed out after 500 ms"], isError: true });
 		expect(results[12]).toEqual({ texts: ["thirteenth"], isError: false });
 	});
 
