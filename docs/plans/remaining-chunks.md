@@ -263,14 +263,17 @@ Built 2026-10-16 (`55bcd78` to `98d4f15` in the engine, then `8ad74ee`, `9f9929a
 
 **Depends on.** Chunk 14b.
 
+The stop is Laravel's alone, with no engine change (owner, 2026-10-16). The design, what it does not cover and the units are in [chunk-14c-design.md](chunk-14c-design.md).
+
 **Build.**
 
-- [ ] Laravel's admission row. One row with a revision. Every start reads it under a shared lock in `Runs::start`, and closing it takes that row exclusively, so a start and a stop are ordered as a start and a revocation are. `leaseToken` reads it too.
-- [ ] The engine answers `admission` (declared, 501 today) with a state stored in D1 with that revision, idempotent by it, and never lowered to an older one. `startRun` checks it in the Worker before `bindRun` and refuses `ADMISSION_CLOSED` (declared, raised by nothing today). The Worker reads D1 on every start. A cache in the isolate is allowed only if the perf box below fails, and then only with a lifetime the owner accepts as the stop's delay.
-- [ ] The order. Closing commits Laravel's row with a cancel entry, reason `emergency_stop` (`CancelReason::EmergencyStop` exists unused), for every starting or running run, then a queued job sends `admission` closed and the cancels. The stop answers once all are acknowledged, and past a bound it answers pending, as a revocation does. Laravel fans out the cancels because it holds the run registry, and the engine's `recovery_runs` has no status to find active runs by. Reopening sends `admission` open first and commits Laravel's row only once the engine has acknowledged it.
-- [ ] Laravel's admin (Filament) gets the stop and the reopen, behind the instance admin's checks. Each is logged with who and when.
-- [ ] While admission is closed, `leaseToken` refuses every lease.
-- [ ] Each step that can fail partway (the engine unreachable, a cancel unacknowledged) shows in Filament as pending, and the job keeps going.
+- [x] The rule (owner, 2026-10-16): a flag in Laravel that `Runs::start` and `leaseToken` read, and a stop that cancels every starting or running run through the existing cancel path. The engine keeps no admission state; `admission` and `ADMISSION_CLOSED` stay declared and unused (chunk-14c-design.md, The contract). The engine-side admission is in Appendix B.
+- [ ] Laravel's admission row. One row, first in `turn.md`'s lock order, and an append-only record of each stop and reopen with who and when, written in the change's transaction. `Runs::start` reads the row `FOR SHARE` before the user's lock and refuses a start while it is closed; the stop takes it `FOR UPDATE`, so a start and a stop are ordered as a start and a revocation are.
+- [ ] The stop. Close the row in a short transaction of its own, then request the cancel of every starting or running run, a conversation per transaction, with `CancelReason::EmergencyStop`; then send and wait for every unacknowledged cancel, whatever its reason. While the row is closed the sweep requests the cancels a stop that died partway left, and a second stop is idempotent. Reopening opens the row and sends nothing to the engine.
+- [ ] `SendStart` holds a start back while its run's cancel is unacknowledged, so a start not yet sent reaches the engine after its cancel.
+- [ ] While the row is closed, `leaseToken` refuses every lease (`RUN_NOT_ACTIVE`).
+- [ ] Laravel's admin (Filament) gets the stop and the reopen on a page of their own, behind the instance admin's checks, and `minerva:stop` does the same from the console.
+- [ ] The page and the command show what is pending (every unacknowledged cancel, runs not yet ended, conversations whose facts are stopped), while the jobs and the sweep keep sending.
 
 **You see.**
 
@@ -278,16 +281,16 @@ Built 2026-10-16 (`55bcd78` to `98d4f15` in the engine, then `8ad74ee`, `9f9929a
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Platform tests for a start racing a close, and a repeated `admission` with the same revision. Laravel's test races a start against the stop on Postgres.
+- [ ] Pest tests for a start and a lease refused while stopped, a stop that cancels every active run across organizations and waits for an orphaned cancel, a stop that failed partway finished by the sweep, `SendStart`'s hold, a repeated stop, and a reopen. Laravel's race test runs a start against the stop on Postgres in separate processes, both orders.
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Regression against `main`. `test:faults` passes with admission open.
-- [ ] The staging scenario under You see, with a write in flight when the stop lands. The write settles and is recorded.
+- [ ] Regression against `main`. The engine does not change, so `test:faults` is not run for this chunk; the app's suite passes.
+- [ ] The staging scenario under You see, with a write when the stop lands. Its fact is recorded in Laravel; the write in flight completing through a cancel is the engine's `protocols.test.ts` case (chunk-14c-design.md, Live checks).
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. Time from `startRun` to its answer. Rule. Within 20 ms of `main`'s at the median, since every start now reads the admission row. More fails.
+- [ ] Metric. The engine's start path is unchanged, so `Runs::start`'s time is measured instead, locally against Postgres, base and head interleaved. Rule. Within 20 ms of the base's at the median. More fails.
 
 **Review.**
 
@@ -536,6 +539,7 @@ Laravel already stores the account's tenant (`connections.account_tenant`, from 
 
 - **Deleting the old paths in one chunk.** `test:faults` reaches every real-platform turn through the Workspace object, so deleting it first would leave the engine with no end-to-end check on the account.
 - **Resetting `minerva-cf-staging` with production.** It holds Laravel's staging conversations. A tombstone deploy retires the class without losing them.
+- **Admission in the engine for the emergency stop** (14c's first plan). A state in D1 with Laravel's revision, read by every `startRun`, set by `admission` and refusing `ADMISSION_CLOSED`. It would refuse a start that reaches the engine after the stop instead of stopping it by its cancel, and a caller other than Laravel, at the cost of a D1 read per start, an engine deploy first and a two-phase reopen. Rejected by the owner (2026-10-16) for Laravel's stop alone (chunk-14c-design.md).
 - **The engine finding active runs for the emergency stop.** `recovery_runs` has no status, and Laravel's registry already knows every run that is starting or running.
 - **Reserving each model call at its full worst case.** About 136,000 tokens a call makes any allowance small enough to matter useless; at the models' real windows, about $0.16 a call on production's and $2 on staging's.
 - **A reservation per call bounded by the request's UTF-8 bytes** (14b's first recommendation). Rejected by the owner (2026-10-16).
