@@ -118,3 +118,42 @@ opencode (`plan` agent) reviewed this design at `4673851` with seven findings. E
 7. **Production is reset after the tombstone is proven, from a pinned checkout.** A5 moves after A7. It runs from a worktree detached at unit 2's commit, which still exports `Workspace` live, kept until A13 passes. The agent records the reset's full output and its final line before going on. If unit 4 stalls, the fallback is `pnpm run deploy --instance minerva-cf` from that same worktree, which serves production again with an empty `Workspace` namespace that a later tombstone deploy retires.
 
 Not taken: opencode's call for a pinned "retirement release" for instances that miss the tombstone. The four instances are all the instances there are, and each must show the evidence of amendment 5 before unit 4 lands. A new instance never had the classes.
+
+## Verification
+
+Unit 7 recorded this on 2026-10-16. The account steps ran that day between unit 2 (`472a0fa`) and unit 5 (`695ca11`), each after the owner's yes, and their results below are as the agents that ran them recorded them. The perf pairs ran at `7e91275` plus unit 7's comment fixes for the head, and at `604bd00`, `main` before 13c.
+
+**The test instance (A2, A6, A10).** `deploy:test` at `472a0fa` applied 0013 to `minerva-cf-test`, deleted the download Worker `minerva-cf-test-files` and the three retired secrets. The secrets went in one bulk `PATCH` with `null` values, so unit 2's one-at-a-time fallback never ran (amendment 6). `deploy:test` at `2e0df94` printed `Deleted: FaultMailbox, Workspace`, so no external binding blocked it (amendment 4). Afterwards neither class had a namespace, `test:deployed` passed 6 of 6 cases, and `test:faults` passed 32 of 32 in 5 files. These are 13b's 32 cases by file and name: 13c changed only two deadlines in the account suites (`4673851`), no case's name. `deploy:test` at `c439474` dropped the tombstones, `test:deployed` passed 6 of 6, and the reset's read-only pass (`--test`, without `--yes`) found no stray namespace.
+
+**CI (A1, A3, A7, A11, A14 to A17).** Unit 1's and unit 2's pushes applied 0013 to `minerva-cf-ci` and deleted its download Worker and retired secrets. `2e0df94` was pushed alone; run 38893827010 was green in check, platform and account, which deployed the tombstones. `c439474` followed alone; run 38895871877 was green. The owner then replaced `MINERVA_CI_VARS_ENV` with its two lines and `MINERVA_CI_SECRETS_ENV` with a fresh `MINERVA_SECRET_KEY` alone, and the `workflow_dispatch` run 38897569765 on `c439474` was green. It ran before unit 5 was pushed, as planned. CI's directory exists only in GitHub, so its check for strays is the deploy's guard, which every green account job above passed. Unit 5's run 38898735059 at `695ca11` failed in check alone: three cases of `schema-check.test.ts` that run the script timed out at vitest's 5 s default on a loaded runner, and account was skipped. `a139fba` gives those describe blocks 30 s. Its run 38899497109 was green in check, platform and account and deployed unit 5 to `minerva-cf-ci`. `chunk-13c` was rebased onto it before units 6 and 7.
+
+**Staging (A8, A12).** Before A8, `schema-check.ts` passed on `minerva-cf-staging` at 0012 (18 tables, 12 migrations), and D1 Time Travel's bookmark was recorded outside the repository (amendment 2). The deploy at `2e0df94` applied 0013 (3 tables, 13 migrations), printed `Deleted: Workspace`, and deleted the three retired secrets and the download Worker `minerva-cf-staging-files`. `test:deployed` passed 6 of 6. The digest of amendment 3 was equal before and after: the namespace ids of `Conversation`, `Scripts` and `Sandbox`, 18 rows in `recovery_conversations` and 25 in `recovery_runs`, and the identity row. The deploy at `c439474` (A12) succeeded, `test:deployed` passed 6 of 6, the digest was again equal, and the namespace listing showed exactly the build's classes.
+
+**The owner's check (A9).** At 12:40 UTC on 2026-10-16, after A12, the owner started a new chat on Laravel's staging whose agent called the GitHub connector and answered. Staging's logs in Workers Observability show the turn on `minerva-cf-staging`: `runs/start`, the sandbox, `/stream/v1` and `conversations/folder`, with no error but two lines of "The scripts of this conversation were reset." (the reset reason in `src/scripts/limits.ts`, logged on staging before 13c too). Between A8 and that chat the logs show no request from Laravel, so the owner's first report, which included an older conversation in each jurisdiction downloading a file, was this morning's turn before 13c's deploys. No older conversation was opened after 13c; the digests before and after A8 and A12 stand for them.
+
+**Production (A4, A5, A13).** The owner removed `zone` from production's `instance.json`. The reset ran from a worktree detached at `472a0fa` (amendment 7). It deleted every object of `Conversation`, `Sandbox`, `Scripts` and `Workspace`, emptied and recreated the buckets `minerva-cf-files` (115 objects) and `minerva-cf-files-eu` (empty), and recreated D1 empty. Production answered 503 until A13. `pnpm run deploy --instance minerva-cf` at `c439474` applied 0001 to 0013, the schema check found 3 tables and 13 migrations, and the deploy deleted the retired secrets and the download Worker `minerva-cf-files`. Then:
+
+- `test:deployed` passed 6 of 6.
+- The reset's read-only pass found no stray namespace, with 4 tables in D1 (the reset also counts `d1_migrations`) and no recovery rows.
+- `GET /internal/v1/catalog` answered 404 `NOT_FOUND`, as decided (open question 1's default).
+- `cf workers scripts search` found no `-files` Worker among the account's 12 Workers.
+
+After A13, unit 5's `instances.ts prune` ran on the local `minerva-cf`, `minerva-cf-staging` and `minerva-cf-test`, with backups outside the repository. Each kept `MINERVA_SECRET_KEY`. Staging also kept `MINERVA_LARAVEL_TOKEN`, `MINERVA_STREAM_KEYS` and its Laravel and Access settings.
+
+**Deviations.** Staging's read-only reset (`--production`, without `--yes`) stops at its step 2, checking the account, before its stray check: the bucket `minerva-cf-staging-files-eu` has a CORS policy that recreating it would lose. So A12's check for strays was read from the namespace listing instead. This predates 13c. A9 ran after A12 instead of after A8, and without an older conversation's download, as above. Unit 5's first CI run was red on a test timeout, fixed in `a139fba` before units 6 and 7.
+
+**Left for later.** `r2-lifecycle.json`'s `static/` rule expires the frontend's files from builds before 13b, and `scripts/lifecycle.ts` makes every deploy require it. Once the last such object has expired, 30 days after the last deploy before 13b to staging, the test instance and CI's, the rule and that check can go together.
+
+**Unit checks.** At the head with unit 7's edits: `pnpm typecheck` passes; `pnpm test:unit` has 90 files and 2642 cases, all passing; `pnpm test:platform` has 24 files and 296 cases, all passing; `pnpm startup` is below; `contract/`'s `pnpm typecheck` and `pnpm openapi:check` pass, and `contract/openapi/` is unchanged. The probe's every-migration check, in `test/platform/worker.test.ts`, passes with 0013.
+
+**Perf.** Startup CPU (`pnpm startup`, the best of three in each run) and the bytes of the files under `.cloudflare/output/v0/workers/default/bundle/` that the same build wrote ran in five pairs, `main` then head, in one session. The load average was 2.1 to 2.7 on 12 cores throughout.
+
+| Pair | `main` startup (ms) | Head startup (ms) | `main` bundle (bytes, files) | Head bundle (bytes, files) |
+|---|---|---|---|---|
+| 1 | 66 | 66 | 7,034,323, 12 | 7,034,131, 12 |
+| 2 | 66 | 66 | 7,034,323, 12 | 7,034,131, 12 |
+| 3 | 68 | 65 | 7,034,323, 12 | 7,034,131, 12 |
+| 4 | 65 | 66 | 7,034,323, 12 | 7,034,131, 12 |
+| 5 | 66 | 66 | 7,034,323, 12 | 7,034,131, 12 |
+
+Both medians are 66 ms, `main` from 65 to 68 and the head from 65 to 66. The bundle falls by 192 bytes. The only file that differs is `index.js`, and the only source that differs is `src/retired.ts`'s two class stubs and their two exports, which unit 3 deleted. Neither metric grows, so the box passes.

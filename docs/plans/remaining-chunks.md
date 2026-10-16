@@ -36,7 +36,7 @@ The contract changes only additively from here (AGENTS.md, Frontend). A new inpu
 
 ### Order and dependencies
 
-- [ ] 13a, 13b and 13c run in order.
+- [x] 13a, 13b and 13c run in order.
 - [ ] 14a after 13c. 14b after 14a. 14c and 14d after 14b, in either order.
 - [ ] 15a and 15b after 14a, beside 14b to 14d. 15c after 15a and 15b. 15d after 15c.
 - [ ] The gate (below) after 14 and 15.
@@ -141,38 +141,40 @@ Done 2026-10-16 (`2ad5a52` to `cf81e8a`). The design, its amendments and the ver
 
 ## Retire the old classes and reset production (chunk 13c)
 
+Done 2026-10-16 (`85618f6` to `7e91275`). The design, its amendments and the verification are in [chunk-13c-design.md](chunk-13c-design.md). `Workspace` was retired with a tombstone on the test, CI and staging instances, `FaultMailbox` on the test and CI instances, and both tombstones were then dropped; staging kept its conversations, files and recovery rows. Production was reset and deployed once, with 0001 to 0013. Startup CPU stayed at 66 ms (median of five interleaved pairs) and the bundle fell by 192 bytes.
+
 **Depends on.** Chunk 13b.
 
 **Build.**
 
-- [ ] Replace the `Workspace` export, and `FaultMailbox` on the builds with faults, with a deleted-class tombstone, as `reset-worker` does, and deploy it to `minerva-cf-staging`, `minerva-cf-test` and `minerva-cf-ci`. Then drop the tombstone in a second deploy. `minerva-cf-staging` holds Laravel's staging conversations and is not reset.
-- [ ] Add D1 migration `0013` that drops the account tables (`user`, `session`, `account`, `verification`, `workspaces`, `memberships`, `oauth_flows`, `oauth_clients`, `instance_setup`, `instance_settings`). Keep `instance_identity` and the `recovery_*` tables. Do not squash migrations, since staging is not reset.
-- [ ] Delete each instance's download Worker and its retired secrets with the engine's scripts, never with `cf` by hand.
-- [ ] Update CI's instance secrets (`MINERVA_CI_*_ENV`) to drop the retired settings.
-- [ ] Ask the owner, then reset production with `node scripts/reset.ts --instance minerva-cf --production --yes`. Delete `minerva-cf-files` by hand after asking, since the reset touches only the app Worker.
-- [ ] Update README.md, AGENTS.md (settings and secrets tables, Starting the app, Checks, Frontend), ARCHITECTURE.md (the Workspace object, the start and revocation sections that describe it, open questions 4 and 6 now moot), cloudflare/README.md (`files-worker`, the suites table) and docs/connectors.md (client setup lives in Laravel).
-- [ ] The README says what the public repository is now, the engine alone, since the product moved to the private app (open question 3).
+- [x] Replace the `Workspace` export, and `FaultMailbox` on the builds with faults, with a deleted-class tombstone, as `reset-worker` does, and deploy it to `minerva-cf-staging`, `minerva-cf-test` and `minerva-cf-ci`. Then drop the tombstone in a second deploy. `minerva-cf-staging` holds Laravel's staging conversations and is not reset.
+- [x] Add D1 migration `0013` that drops the account tables (`user`, `session`, `account`, `verification`, `workspaces`, `memberships`, `oauth_flows`, `oauth_clients`, `instance_setup`, `instance_settings`). Keep `instance_identity` and the `recovery_*` tables. Do not squash migrations, since staging is not reset. 0013 drops 15 tables: the ten named and `twoFactor`, `organization`, `member`, `invitation` and `rateLimit`, which 0003 made.
+- [x] Delete each instance's download Worker and its retired secrets with the engine's scripts, never with `cf` by hand. Each instance's deploy did both, and unit 5 removed that step once every instance had run it.
+- [x] Update CI's instance secrets (`MINERVA_CI_*_ENV`) to drop the retired settings.
+- [x] Ask the owner, then reset production with `node scripts/reset.ts --instance minerva-cf --production --yes`. Delete `minerva-cf-files` by hand after asking, since the reset touches only the app Worker. Production's deploy deleted it instead, as on the other instances.
+- [x] Update README.md, AGENTS.md (settings and secrets tables, Starting the app, Checks, Frontend), ARCHITECTURE.md (the Workspace object, the start and revocation sections that describe it, open questions 4 and 6 now moot), cloudflare/README.md (`files-worker`, the suites table) and docs/connectors.md (client setup lives in Laravel).
+- [x] The README says what the public repository is now, the engine alone, since the product moved to the private app (open question 3).
 
 **You see.**
 
-- [ ] `scripts/reset.ts`'s stray-namespace check passes on every instance. `GET /internal/v1/catalog` on production answers.
+- [x] `scripts/reset.ts`'s stray-namespace check passes on every instance. `GET /internal/v1/catalog` on production answers. Staging's reset stops before its stray check on a bucket's CORS policy, so its namespace listing stood in; CI's check is the deploy's guard. Production's catalog answers 404 `NOT_FOUND`, since production has no internal settings (chunk-13c-design.md, open question 1).
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] The probe's "every migration" check passes with `0013`. Run `pnpm test:platform`.
+- [x] The probe's "every migration" check passes with `0013`. Run `pnpm test:platform`.
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Regression against `main`. A turn from Laravel's staging through `minerva-cf-staging` after the tombstone deploy calls a connector, and an older staging conversation still lists its folder and downloads a file.
-- [ ] CI's account job is green on `minerva-cf-ci`.
+- [x] Regression against `main`. A turn from Laravel's staging through `minerva-cf-staging` after the tombstone deploy calls a connector, and an older staging conversation still lists its folder and downloads a file. The owner checked it after the drop's deploy (A12), so it covers both deploys: a new chat called the GitHub connector, and staging's logs show the turn with no error beyond the scripts' reset notice that predates 13c. No older conversation was downloaded after 13c; the namespace and recovery-index digests before and after A8 and A12 stand for them.
+- [x] CI's account job is green on `minerva-cf-ci`.
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] None beyond 13b's. Record that here.
+- [x] None beyond 13b's. Record that here. Startup CPU and the bundle were measured against `604bd00` and neither grew (chunk-13c-design.md, Verification).
 
 **Review.**
 
-- [ ] The owner approved the production reset and the deletions on the account.
+- [x] The owner approved the production reset and the deletions on the account.
 
 ## Make usage exact (chunk 14a)
 

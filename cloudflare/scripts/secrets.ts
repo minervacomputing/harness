@@ -1,4 +1,4 @@
-// The Workers' secrets live in each instance's secrets.env (scripts/instance.ts, The instance directory: mode 600,
+// The Worker's secrets live in each instance's secrets.env (scripts/instance.ts, The instance directory: mode 600,
 // in a directory of mode 700 outside the checkout) and are uploaded with `cf deploy --secrets-file`. The test
 // instance has its own, so its fault driver's token and its keys are not production's. The local dev server
 // (`pnpm dev:offline`) reads its own in .dev.vars here (`--offline`), gitignored. This script never prints a value.

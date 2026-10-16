@@ -146,13 +146,13 @@ export default defineConfig(({ mode }) => {
 			name: target.names.app,
 			compatibilityDate: "2026-10-06",
 			compatibilityFlags: ["nodejs_compat"],
-			// One module type for the Env cf infers: both entries export the same classes.
+			// One module type for the Env cf infers: the faults entry exports the same classes, and FaultProvider.
 			entrypoint: target.faults ? (faultsEntrypoint as unknown as typeof entrypoint) : entrypoint,
 			// workers.dev, but no preview URLs: every uploaded version would stay reachable at an origin of
 			// its own, with the bindings and secrets of its day, and versions cannot be deleted.
 			workersDev: true,
 			previewUrls: false,
-			// Upload names and download links travel in query strings; keep them out of the logs.
+			// Query strings stay out of the logs: no route reads a secret from one (the stream's token is a header), but a client may send one.
 			observability: { enabled: true, redactQueryString: true },
 			env: {
 				// The dev server's database has an id of its own, only so that `cf d1 migrations apply --local` can name it.
