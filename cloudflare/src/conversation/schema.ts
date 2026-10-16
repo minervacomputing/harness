@@ -260,4 +260,14 @@ CREATE INDEX script_records_run ON script_records (run_id);
 CREATE INDEX script_records_open ON script_records (instance) WHERE ended_at IS NULL;
 `,
 	},
+	// A run's `run.settled` (docs/plans/chunk-14a-design.md, Decisions): owed only by a run this version started (`metered`),
+	// written once (`settled_at`) after it ended and every call and script record of it settled.
+	{
+		id: 11,
+		sql: `
+ALTER TABLE runs ADD COLUMN metered INTEGER NOT NULL DEFAULT 0 CHECK (metered IN (0, 1));
+ALTER TABLE runs ADD COLUMN settled_at INTEGER;
+CREATE INDEX runs_unsettled ON runs (id) WHERE metered = 1 AND settled_at IS NULL;
+`,
+	},
 ];

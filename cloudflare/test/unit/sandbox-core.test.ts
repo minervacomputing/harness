@@ -773,11 +773,16 @@ describe("spans and seals", () => {
 		expect(made.container.running).toBe(true);
 	});
 
-	test("a seal whose destroy fails answers the span open, and closes it once the alarm's destroy answers", async () => {
+	test("a seal whose destroy fails answers the span open, leaves the owed destroy to the alarm, and closes it once that answers", async () => {
 		const made = rig();
 		const fence = await ready(made);
 		made.container.failDestroys = 1;
 		expect(await made.core.seal(fence.runId)).toEqual({ since: 0, spans: [{ startedAt: T0, leaseUntil: T0 + IDLE_MS, endedAt: null, ended: null }] });
+		// A seal while the destroy is owed answers at once and leaves it to the alarm.
+		made.container.hangDestroys = true;
+		expect(await made.core.seal(fence.runId)).toEqual({ since: 0, spans: [{ startedAt: T0, leaseUntil: T0 + IDLE_MS, endedAt: null, ended: null }] });
+		expect(made.container.log.filter((entry) => entry === "destroy")).toHaveLength(1);
+		made.container.hangDestroys = false;
 		made.clock.now += MINUTE;
 		await made.core.alarm();
 		expect(await made.core.seal(fence.runId)).toEqual({ since: 0, spans: [{ startedAt: T0, leaseUntil: T0 + IDLE_MS, endedAt: T0 + MINUTE, ended: "destroyed" }] });

@@ -1,6 +1,6 @@
 # Chunk 14a design: make usage exact
 
-Status is accepted, as of 2026-10-16: the owner accepted the four owner questions with their defaults (Owner questions, below). It settles the choices that chunk 14a of [remaining-chunks.md](remaining-chunks.md) leaves open, splits the work into units one fresh agent each can finish, and lists the steps that wait for the owner. Line numbers are at `c4e0be7` (harness) and `9b9ab74` (`minervacomputing/app`, "the app" below). Units 1 to 7 are implemented, and the probe's baseline was measured at unit 3's commit (unit 9 records it under Perf probe and rule).
+Status is accepted, as of 2026-10-16: the owner accepted the four owner questions with their defaults (Owner questions, below). It settles the choices that chunk 14a of [remaining-chunks.md](remaining-chunks.md) leaves open, splits the work into units one fresh agent each can finish, and lists the steps that wait for the owner. Line numbers are at `c4e0be7` (harness) and `9b9ab74` (`minervacomputing/app`, "the app" below). Units 1 to 8 are implemented, and the probe's baseline was measured at unit 3's commit (unit 9 records it under Perf probe and rule).
 
 ## What the code does today
 
@@ -113,6 +113,8 @@ CREATE INDEX container_spans_run ON container_spans (run_id);
 4. Outside pi's transactions, in one write: if `settled_at` is null and no record of the run is open, it computes the totals, writes the `run.settled` fact and sets `settled_at`. Otherwise it does nothing.
 
 The job is idempotent: a second run finds `settled_at` set, and a crash at any step leaves the job, which Lifecycle runs again. `#recover` pushes the job for every run with `metered = 1`, a terminal status and `settled_at` null, so a job lost with a reset is made again. A deleted conversation still settles: `deleteInternal` destroys the container (`conversation.ts:364`), which closes the span, and its facts are still delivered. A conversation with no organization writes no facts, so the job only sets `settled_at`.
+
+**As built (unit 8).** `runs.metered` and `settled_at` are migration 11, with a partial index on the runs that owe a settlement. `finish` calls the store's `settling` listener for a metered run, which pushes `settle:<run>`; `#recover` pushes it again for each run `unsettledRuns()` names, after `settleLost()`. `store.settlement(run)` says where a run stands: `none` (settled, not metered, or not ended), `open` (a call or script record of it is open) or `due`; `settleRun(run, charge)` checks it again in the write that sums the records, writes `run.settled` and sets `settled_at`. The job seals the Sandbox for every run, with a container or not, within `RPC_WAIT_MS`; a seal no longer destroys again when a destroy is already owed (the alarm retries it), so a destroy that keeps hanging cannot keep every seal past that wait. `spansOpenUntil(sealed, now)` (`sandbox/store.ts`) gives the earliest cutoff of a span still open short of it; the job asks again at the earlier of that and 30 s, then charges with `containerCharge`. The test build has two more fault points, `settle:sealed` (after the seal, before the write) and `settle:written` (after it).
 
 **The facts.** All additive; the engine writes none of them until Laravel takes them.
 

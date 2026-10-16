@@ -936,7 +936,7 @@ describe("the run's records", () => {
 			const store = new RunStore(state.storage);
 			store.watchTransactions();
 			const heard: string[] = [];
-			store.listen({ appended: (_runId, event) => heard.push(event.type), ended: () => heard.push("ended"), factWritten: () => {} }, () => ({ resultVersionId: null, changes: null }));
+			store.listen({ appended: (_runId, event) => heard.push(event.type), ended: () => heard.push("ended"), factWritten: () => {}, settling: () => {} }, () => ({ resultVersionId: null, changes: null }));
 			state.storage.sql.exec("UPDATE runs SET status = 'running' WHERE id = ?", runId);
 			const seq = () => state.storage.sql.exec("SELECT event_seq FROM runs WHERE id = ?", runId).one().event_seq;
 			const before = seq();

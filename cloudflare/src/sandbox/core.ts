@@ -92,7 +92,8 @@ export interface SandboxApi {
 	/**
 	 * For a run that is over: refuses its later starts, destroys its container if it still has one, and answers
 	 * its spans. Ordered after any lifecycle step in flight. Idempotent; a span still open (a destroy that
-	 * failed, owed to the alarm) closes once the alarm's destroy succeeds.
+	 * failed, owed to the alarm) closes once the alarm's destroy succeeds. A destroy already owed is left to the
+	 * alarm, so a destroy that keeps hanging delays a seal at most once.
 	 */
 	seal(runId: RunId): Promise<SealedSpans>;
 	status(): Promise<SandboxStatus>;
@@ -674,7 +675,8 @@ export class SandboxCore {
 	seal(runId: RunId): Promise<SealedSpans> {
 		return this.#serial(async () => {
 			sealRun(this.#ports.sql, runId, this.#ports.now());
-			if (this.#state.runId === runId && this.#state.state !== "none") await this.#destroyNow("The run has ended.");
+			const state = this.#state;
+			if (state.runId === runId && state.state !== "none" && !state.cleanupPending) await this.#destroyNow("The run has ended.");
 			return readSpans(this.#ports.sql, runId);
 		});
 	}

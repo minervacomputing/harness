@@ -26,6 +26,7 @@ import type { Fact, StartRunResult } from "@minerva/contract/internal";
 import type { SettledWrite } from "../gateway/ledger.ts";
 import type { CallRequest, CallSettlement } from "../model/provider.ts";
 import type { Tokens } from "../model/tap.ts";
+import type { ContainerCharge } from "../sandbox/store.ts";
 import type { ScriptFence } from "../scripts/scripts.ts";
 import { tokenHex } from "../lib/random.ts";
 import { utf8 } from "../lib/bytes.ts";
@@ -131,8 +132,18 @@ export interface RunRow {
 	created_at: number;
 	started_at: number | null;
 	finished_at: number | null;
+	/** 1 for a run this version started: it owes a `run.settled` once it ended. */
+	metered: number;
+	settled_at: number | null;
 	[key: string]: SqlStorageValue;
 }
+
+/**
+ * Where a run's `run.settled` stands: owed by none (settled already, started by an older version, or not ended); waiting
+ * for a call or script record of the run still open, which the instance that made it settles; or due, once its
+ * container time is known.
+ */
+export type RunSettlement = { state: "none" } | { state: "open" } | { state: "due"; createdAt: EpochMs };
 
 export interface TombstoneRow {
 	run_id: string;
@@ -177,6 +188,9 @@ function settledTokens(record: Pick<CallRecordRow, "reserved_input" | "reserved_
 	}
 }
 
+/** A run's totals, as its `run.settled` fact carries them. */
+type Settled = Extract<Fact, { type: "run.settled" }>["data"];
+
 /** Which check an append passes first: none (the object's own events), the run being active, or the attempt being current. */
 export type AppendFence = AttemptFence | "active" | null;
 
@@ -190,6 +204,8 @@ export interface StoreListeners {
 	 * later while it backs off).
 	 */
 	factWritten(at: EpochMs): void;
+	/** Inside `finish`'s transaction, for a metered run: its settlement (`settleRun`) is scheduled with its end. */
+	settling(runId: RunId): void;
 }
 
 /** The delivery of a Laravel conversation's facts (docs/plans/credentials-and-facts.md, Delivered in order). */
@@ -265,6 +281,8 @@ export const RUN_COLUMNS = [
 	"created_at",
 	"started_at",
 	"finished_at",
+	"metered",
+	"settled_at",
 ].join(", ");
 
 export class RunStore {
@@ -449,7 +467,7 @@ export class RunStore {
 	insertRun(run: { id: RunId; snapshot: RunSnapshot; deadline: EpochMs | null; baseVersionId: VersionId | null; createdAt: EpochMs }): void {
 		const parts = splitParts(JSON.stringify(run.snapshot), VALUE_PART);
 		this.#sql.exec(
-			"INSERT INTO runs (id, status, attempt, attempt_started_at, snapshot, deadline, base_version_id, created_at) VALUES (?, 'queued', 1, ?, ?, ?, ?, ?)",
+			"INSERT INTO runs (id, status, attempt, attempt_started_at, snapshot, deadline, base_version_id, created_at, metered) VALUES (?, 'queued', 1, ?, ?, ?, ?, ?, 1)",
 			run.id,
 			run.createdAt,
 			parts.length === 1 ? (parts[0] as string) : "",
@@ -607,6 +625,7 @@ export class RunStore {
 			this.touch({ folderVersionId: published.resultVersionId });
 			this.append(runId, statusEvent(terminalStatus(end)));
 			this.#finishedFact(row, end, published.resultVersionId, options.answer ?? null);
+			if (row.metered === 1) this.#listeners?.settling(runId);
 			this.#ended.push(runId);
 			return true;
 		});
@@ -724,6 +743,60 @@ export class RunStore {
 				this.instance,
 			).toArray().length;
 			return open.length + ended;
+		});
+	}
+
+	/** Where the run's `run.settled` stands (`RunSettlement`). */
+	settlement(runId: RunId): RunSettlement {
+		const run = this.#sql.exec<Pick<RunRow, "status" | "created_at">>("SELECT status, created_at FROM runs WHERE id = ? AND metered = 1 AND settled_at IS NULL", runId).toArray()[0];
+		if (!run || ACTIVE.has(run.status)) return { state: "none" };
+		const open = this.#sql
+			.exec("SELECT 1 FROM call_records WHERE run_id = ?1 AND outcome IS NULL UNION ALL SELECT 1 FROM script_records WHERE run_id = ?1 AND ended_at IS NULL LIMIT 1", runId)
+			.toArray().length;
+		return open ? { state: "open" } : { state: "due", createdAt: run.created_at };
+	}
+
+	/** The runs that owe a `run.settled` still: metered, ended, not settled. */
+	unsettledRuns(): RunId[] {
+		return this.#sql
+			.exec<{ id: RunId }>(`SELECT id FROM runs WHERE metered = 1 AND settled_at IS NULL AND status NOT IN ${ACTIVE_SQL}`)
+			.toArray()
+			.map((row) => row.id);
+	}
+
+	/**
+	 * Writes the run's `run.settled` once, when its settlement is due: the totals of its call records (reported tokens apart
+	 * from the reservations unmetered calls are counted at) and of its script records, with its container time, and
+	 * `settled_at`, in one change. False, writing nothing, otherwise. Made outside pi's transactions.
+	 */
+	settleRun(runId: RunId, containers: ContainerCharge): boolean {
+		return this.write(() => {
+			if (this.settlement(runId).state !== "due") return false;
+			const calls = this.#sql
+				.exec<Omit<Settled, keyof ContainerCharge | "scripts" | "scriptMs" | "scriptEstimated">>(
+					`SELECT count(*) AS modelCalls,
+						count(*) FILTER (WHERE outcome = 'refused') AS refusedCalls,
+						count(*) FILTER (WHERE outcome = 'unmetered') AS unmeteredCalls,
+						coalesce(sum(input_tokens) FILTER (WHERE outcome = 'reported'), 0) AS inputTokens,
+						coalesce(sum(output_tokens) FILTER (WHERE outcome = 'reported'), 0) AS outputTokens,
+						coalesce(sum(cached_tokens) FILTER (WHERE outcome = 'reported'), 0) AS cachedTokens,
+						coalesce(sum(cache_write_tokens) FILTER (WHERE outcome = 'reported'), 0) AS cacheWriteTokens,
+						coalesce(sum(reasoning_tokens) FILTER (WHERE outcome = 'reported'), 0) AS reasoningTokens,
+						coalesce(sum(input_tokens) FILTER (WHERE outcome = 'unmetered'), 0) AS estimatedInputTokens,
+						coalesce(sum(output_tokens) FILTER (WHERE outcome = 'unmetered'), 0) AS estimatedOutputTokens
+					FROM call_records WHERE run_id = ?`,
+					runId,
+				)
+				.one();
+			const scripts = this.#sql
+				.exec<{ scripts: number; scriptMs: number; scriptEstimated: number }>(
+					"SELECT count(*) AS scripts, coalesce(sum(ended_at - started_at), 0) AS scriptMs, coalesce(max(estimated), 0) AS scriptEstimated FROM script_records WHERE run_id = ?",
+					runId,
+				)
+				.one();
+			this.#sql.exec("UPDATE runs SET settled_at = ? WHERE id = ?", this.now(), runId);
+			this.#fact(runId, { type: "run.settled", data: { ...calls, ...containers, scripts: scripts.scripts, scriptMs: scripts.scriptMs, scriptEstimated: scripts.scriptEstimated === 1 } });
+			return true;
 		});
 	}
 

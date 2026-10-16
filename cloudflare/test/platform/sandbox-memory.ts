@@ -1,6 +1,7 @@
 // A stand-in for a conversation's Sandbox in local workerd, which has no containers (ConversationPorts.sandbox):
 // a folder in memory with the Sandbox's fences, hydration from and checkpoints into the workspace's bucket
-// (with the SHA-256 R2 checks), a scan that reports limits, and a tiny command language for the bash tool.
+// (with the SHA-256 R2 checks), a scan that reports limits, each start's span for a run's seal, and a tiny command
+// language for the bash tool.
 // It lives in the tests' isolate, so it survives the conversation's resets as a container would; a start
 // for a new attempt replaces the folder, as a new container does. The real container is the unit tests'
 // (Docker) and the account's.
@@ -20,7 +21,8 @@ import type { FsRequest, FsResponse } from "../../src/sandbox/files.ts";
 import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan, HydrateResult } from "../../src/sandbox/folder.ts";
 import type { ScanResult } from "../../src/sandbox/scan.ts";
 import type { HardeningReport, VerificationReport } from "../../src/sandbox/hardening.ts";
-import type { AttemptFence } from "../../src/shared/rpc.ts";
+import type { ContainerSpan, SealedSpans } from "../../src/sandbox/store.ts";
+import type { AttemptFence, RunId } from "../../src/shared/rpc.ts";
 
 const ROOT = "/workspace/";
 const STALE: Refused = { refused: "stale", message: "This sandbox belongs to another incarnation, run or attempt." };
@@ -71,6 +73,8 @@ export class MemorySandbox implements SandboxPort {
 	#spec: SandboxSpec | null = null;
 	#state: SandboxStatus["state"] = "none";
 	#startedAt: number | null = null;
+	/** Each start's span, by run: open while its folder is the one in use. */
+	readonly #spans: { runId: string; span: ContainerSpan }[] = [];
 	readonly #holds = new Map<string, (cancelled: boolean) => void>();
 	readonly #bucket: () => R2Bucket;
 
@@ -99,11 +103,13 @@ export class MemorySandbox implements SandboxPort {
 		this.release();
 		this.files.clear();
 		this.dirs.clear();
+		this.#end();
 		const incarnation = uuid7();
 		this.#fence = { ...fence, incarnation };
 		this.#spec = spec;
 		this.#state = "starting";
 		this.#startedAt = Date.now();
+		this.#spans.push({ runId: fence.runId, span: { startedAt: this.#startedAt, leaseUntil: this.#startedAt + 3_600_000, endedAt: null, ended: null } });
 		return { incarnation };
 	}
 
@@ -296,8 +302,26 @@ export class MemorySandbox implements SandboxPort {
 		if (!this.#owns(fence)) return STALE;
 		this.log.push(`destroy ${reason}`);
 		this.release();
+		this.#end();
 		this.#state = "none";
 		return { destroyed: true };
+	}
+
+	/** The run's spans, its folder destroyed first if it is the one in use. Later starts are not refused. */
+	async seal(runId: RunId): Promise<SealedSpans> {
+		this.log.push("seal");
+		if (this.#fence?.runId === runId && this.#state !== "none") {
+			this.release();
+			this.#end();
+			this.#state = "none";
+		}
+		return { since: 0, spans: this.#spans.filter((entry) => entry.runId === runId).map((entry) => entry.span) };
+	}
+
+	/** The open span, if any, ends now, destroyed. */
+	#end(): void {
+		const open = this.#spans.at(-1);
+		if (open && open.span.endedAt === null) open.span = { ...open.span, endedAt: Date.now(), ended: "destroyed" };
 	}
 
 	async status(): Promise<SandboxStatus> {

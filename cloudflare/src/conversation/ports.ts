@@ -144,11 +144,12 @@ export interface ConversationPorts {
 	/** The test build's count of what pi starts for a run: a model call or a tool's execution, before any check. */
 	entered?(context: PortsContext, kind: "model" | "tool", runId: RunId): void;
 	/**
-	 * The test build's fault points in the local tools, their checkpoints and the model calls (src/faults/); production has
-	 * none. `local:prepared` (the container ready and hydrated), `checkpoint:scanned`, `checkpoint:uploaded`
+	 * The test build's fault points in the local tools, their checkpoints, the model calls and a run's settlement
+	 * (src/faults/); production has none. `local:prepared` (the container ready and hydrated), `checkpoint:scanned`, `checkpoint:uploaded`
 	 * (the files stored, the checkpoint not yet recorded), `checkpoint:recorded` (recorded, the results not
 	 * yet released), `local:released` (a call's result released, before pi has it); `model:recorded`, `model:settle` and
-	 * `model:settled` around a model call's record and settlement.
+	 * `model:settled` around a model call's record and settlement; `settle:sealed` and `settle:written` around the write of
+	 * a run's `run.settled`.
 	 */
 	point?(context: PortsContext, name: string, detail?: string): Promise<void>;
 }

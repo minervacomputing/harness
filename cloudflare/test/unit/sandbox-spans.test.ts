@@ -1,9 +1,9 @@
 // A container incarnation's span (src/sandbox/store.ts): how each change of the Sandbox's state row opens,
-// extends or closes it, and how a run's spans are charged. The same rules through SandboxCore are in
+// extends or closes it, and how a run's spans are charged, and when. The same rules through SandboxCore are in
 // sandbox-core.test.ts.
 
 import { describe, expect, test } from "vitest";
-import { containerCharge, type ContainerSpan, EMPTY, spanChange, type SpanEnd, type StateRow } from "../../src/sandbox/store.ts";
+import { containerCharge, type ContainerSpan, EMPTY, spanChange, type SpanEnd, spansOpenUntil, type StateRow } from "../../src/sandbox/store.ts";
 
 const RUN = "0199b000-0000-7000-8000-000000000001";
 const LIVE: StateRow = { ...EMPTY, state: "starting", incarnation: "a", runId: RUN, attempt: 1, startedAt: 100, leaseUntil: 1000 };
@@ -62,5 +62,21 @@ describe("containerCharge", () => {
 		{ name: "a run created when spans began to be kept", spans: [], since: 50, charge: { containers: 0, containerMs: 0, containerEstimated: true } },
 	])("$name", ({ spans, since, charge }) => {
 		expect(containerCharge({ since, spans }, 50)).toEqual(charge);
+	});
+});
+
+describe("spansOpenUntil", () => {
+	const open = (leaseUntil: number): ContainerSpan => ({ startedAt: 100, leaseUntil, endedAt: null, ended: null });
+	const closed: ContainerSpan = { startedAt: 100, leaseUntil: 1000, endedAt: 400, ended: "destroyed" };
+
+	test.each([
+		{ name: "no container: known now", spans: [], until: null },
+		{ name: "every span ended: known now", spans: [closed, { ...closed, ended: "gone" as const }], until: null },
+		{ name: "a span open short of its cutoff: known at the cutoff", spans: [closed, open(1000)], until: 601_000 },
+		{ name: "two open: the earlier cutoff", spans: [open(2000), open(1000)], until: 601_000 },
+		{ name: "a span open past its cutoff is charged to it now", spans: [open(-600_000)], until: null },
+		{ name: "at its cutoff exactly, too", spans: [open(1000)], now: 601_000, until: null },
+	])("$name", ({ spans, now = 5000, until }) => {
+		expect(spansOpenUntil({ since: 0, spans }, now)).toBe(until);
 	});
 });

@@ -216,6 +216,19 @@ export function containerCharge(sealed: SealedSpans, runCreatedAt: EpochMs): Con
 	return { containers: sealed.spans.length, containerMs, containerEstimated };
 }
 
+/**
+ * Until when a sealed run's container time is not yet known: the earliest cutoff (lease plus HARD_GRACE_MS) of a span
+ * still open before it. Null when every span ended or is past its cutoff, to which `containerCharge` counts it.
+ */
+export function spansOpenUntil(sealed: SealedSpans, now: EpochMs): EpochMs | null {
+	let until: EpochMs | null = null;
+	for (const span of sealed.spans) {
+		const cutoff = span.leaseUntil + HARD_GRACE_MS;
+		if (span.endedAt === null && cutoff > now) until = Math.min(until ?? cutoff, cutoff);
+	}
+	return until;
+}
+
 /** Whether (runId, attempt) is older than the newest owner the object has seen: run ids are UUIDv7, in time order. */
 export function olderThan(fence: { runId: RunId; attempt: number }, state: StateRow): boolean {
 	if (state.runId === null || state.attempt === null) return false;

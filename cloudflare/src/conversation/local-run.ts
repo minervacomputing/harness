@@ -26,8 +26,8 @@ import type { AttemptFence, EpochMs, VersionId } from "../shared/rpc.ts";
 import { FolderOverLimit, FolderUnavailable, LocalCalls, type LocalToolEvent, LocalToolStuck, SandboxRefused } from "./local.ts";
 import type { FolderPort } from "./ports.ts";
 
-/** The Sandbox calls a conversation makes: an attempt's, and `status` for the clean-up at a run's end. */
-export type SandboxPort = Pick<SandboxApi, "start" | "harden" | "verify" | "exec" | "cancel" | "fs" | "hydrate" | "scan" | "checkpoint" | "killStrays" | "destroy" | "status">;
+/** The Sandbox calls a conversation makes: an attempt's, `status` for the clean-up at a run's end, and `seal` for its settlement. */
+export type SandboxPort = Pick<SandboxApi, "start" | "harden" | "verify" | "exec" | "cancel" | "fs" | "hydrate" | "scan" | "checkpoint" | "killStrays" | "destroy" | "status" | "seal">;
 
 export interface LocalRunDeps {
 	fence: AttemptFence;

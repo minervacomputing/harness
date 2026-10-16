@@ -121,5 +121,5 @@ test("a conversation's plan sets the deadline of the runs Laravel starts in it",
 		() => providerOf(env, start.scope.workspace).laravelState(start.conversation),
 		(state) => state.facts.some((fact) => fact.type === "run.finished"),
 	);
-	expect(facts.at(-1)).toMatchObject({ type: "run.finished", data: { status: "timed_out" } });
+	expect(facts.find((fact) => fact.type === "run.finished")).toMatchObject({ data: { status: "timed_out" } });
 });

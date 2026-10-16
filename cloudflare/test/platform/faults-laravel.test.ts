@@ -56,9 +56,9 @@ async function notesRun(lease: Partial<FakeConnection> = {}) {
 	return { provider, start, connectionId };
 }
 
-/** The fake's view of the conversation once it holds the run's `run.finished`, through a new stub: a reset breaks the old ones,
- * and a read the reset cuts short fails with the fault's reason, so it counts as nothing held yet. */
-function finished(start: StartRun) {
+/** The fake's view of the conversation once it holds the run's last fact, `run.settled`, through a new stub: a reset breaks the
+ * old ones, and a read the reset cuts short fails with the fault's reason, so it counts as nothing held yet. */
+function settled(start: StartRun) {
 	return until(
 		() =>
 			providerOf(env, start.scope.workspace)
@@ -67,7 +67,7 @@ function finished(start: StartRun) {
 					if (error instanceof Error && error.message.startsWith("fault: ")) return { facts: [], calls: [], connections: {} };
 					throw error;
 				}),
-		(state) => state.facts.some((fact) => fact.type === "run.finished" && fact.run === start.run),
+		(state) => state.facts.some((fact) => fact.type === "run.settled" && fact.run === start.run),
 	);
 }
 
@@ -93,9 +93,9 @@ const counted = (facts: Fact[]) => facts.map((_fact, index) => index + 1);
 test("a run leases its connection from the hosted fake and delivers its facts there", async () => {
 	const { provider, start, connectionId } = await notesRun();
 	expect(await commands.startRun(start)).toMatchObject({ outcome: "accepted", authorized: [connectionId] });
-	const state = await finished(start);
+	const state = await settled(start);
 	expect(inOrder(state.facts)).toEqual(counted(state.facts));
-	expect(state.facts.at(-1)?.data).toMatchObject({ status: "completed" });
+	expect(state.facts.at(-2)).toMatchObject({ type: "run.finished", data: { status: "completed" } });
 	expect(state.facts.find((fact) => fact.type === "run.tool_call")?.data).toMatchObject({ tool: "notes_list_notes", decision: "allowed" });
 	expect(state.calls.filter((call) => call.operation === "leaseToken")).toEqual([{ operation: "leaseToken", run: start.run, connection: connectionId }]);
 	// The provider was called with the secret the fake lent, and saw none of Laravel's requests.
@@ -113,7 +113,7 @@ test("what the fake wrote before its object was reset, and before it answered, i
 		{ point: "laravel:deliverFacts", mode: "abort" },
 	]);
 	await commands.startRun(start);
-	const state = await finished(start);
+	const state = await settled(start);
 	expect((await providerOf(env, start.scope.workspace).faultFired()).map((fired) => fired.point)).toEqual(["laravel:leaseToken", "laravel:deliverFacts"]);
 	// The lease was asked again and lent from the same registrations; the delivery the reset cut short was sent again and
 	// taken as the repeat it was, so every fact is held once, in order, and the watermark covers them all.
@@ -121,7 +121,7 @@ test("what the fake wrote before its object was reset, and before it answered, i
 	expect(await notesRequests(start)).toEqual([LISTED]);
 	expect(state.calls.filter((call) => call.operation === "deliverFacts").length).toBeGreaterThanOrEqual(2);
 	expect(inOrder(state.facts)).toEqual(counted(state.facts));
-	expect(state.facts.at(-1)?.data).toMatchObject({ status: "completed" });
+	expect(state.facts.at(-2)).toMatchObject({ type: "run.finished", data: { status: "completed" } });
 	expect(state.connections[connectionId]?.status).toBe("active");
 	expect(await acknowledged(start)).toMatchObject({ written: state.facts.length, acknowledged: state.facts.length, stopped: null });
 });
@@ -147,7 +147,7 @@ test("a report the fake marked before its object was reset stays marked", async 
 	const { provider, start, connectionId } = await notesRun({ secret: "a-revoked-token" });
 	await provider.faultPlan([{ point: "laravel:reportUnauthorized", mode: "abort" }]);
 	await commands.startRun(start);
-	const state = await finished(start);
+	const state = await settled(start);
 	expect((await providerOf(env, start.scope.workspace).faultFired()).map((fired) => fired.point)).toEqual(["laravel:reportUnauthorized"]);
 	expect(state.calls.filter((call) => call.operation === "reportUnauthorized")).toEqual([{ operation: "reportUnauthorized", run: start.run, connection: connectionId }]);
 	expect(state.connections[connectionId]?.status).toBe("error");

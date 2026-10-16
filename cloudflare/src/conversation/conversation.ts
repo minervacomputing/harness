@@ -45,6 +45,7 @@ import { appliedMigrations, migrate } from "../lib/sqlite.ts";
 import { callOf, MODEL_REF, MINERVA_API, MINERVA_PROVIDER, MODEL_ALIAS, minervaProvider, type ModelHost } from "../model/provider.ts";
 import { routeOf } from "../model/route.ts";
 import { sandboxSpec } from "../sandbox/constants.ts";
+import { containerCharge, type SealedSpans, spansOpenUntil } from "../sandbox/store.ts";
 import { outputSink } from "../sandbox/sink.ts";
 import { ScriptRuns, scriptToolHost } from "../scripts/host.ts";
 import { isReset, type ScriptsClient } from "../scripts/run.ts";
@@ -164,6 +165,8 @@ const LOST_WRITE_GRACE_MS = 30_000;
 const RPC_WAIT_MS = 10_000;
 /** A container an ended run left is destroyed again this long after a failed try. */
 const SANDBOX_RETRY_MS = 30_000;
+/** A run's settlement looks again this long after it found a call or script record of the run still open. */
+const SETTLE_OPEN_MS = 5_000;
 const LIVE_TASKS = ["pending", "running", "waiting", "completing"] as const;
 /** The reason an attempt's object is reset when its local calls cannot go on (ARCHITECTURE.md: Checkpoints). */
 export const ATTEMPT_ENDED = "The attempt ended: ";
@@ -225,6 +228,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				ended: (runId) => this.#afterFinish(runId),
 				// In the fact's transaction: the delivery's job commits with it (Lifecycle's queue is SQL).
 				factWritten: (at) => this.#push({ id: FACTS_JOB, fn: FACTS_JOB, time: at }),
+				// In the end's transaction, so a run that ended always has its settlement's job.
+				settling: (runId) => this.#pushSettle(runId),
 			},
 			(run) => this.#folder()?.publish(run.id, { baseVersionId: run.base_version_id, checkpointVersionId: run.checkpoint_version_id, status: run.status }) ?? {
 				resultVersionId: run.checkpoint_version_id ?? run.base_version_id,
@@ -531,14 +536,19 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * After a restart of the object: model calls and scripts an earlier instance left open, containers left, a run left
-	 * `queued`, facts not delivered. The calls settle as `lost` and the scripts end at their bound (store.ts `settleLost`),
-	 * outside pi's transactions. A start stores its run active, so only the previous version left runs `queued` (it
+	 * After a restart of the object: model calls and scripts an earlier instance left open, ended runs not yet settled,
+	 * containers left, a run left `queued`, facts not delivered. The calls settle as `lost` and the scripts end at their bound
+	 * (store.ts `settleLost`), outside pi's transactions, and each ended run's settlement is scheduled again, in case a reset
+	 * lost its job. A start stores its run active, so only the previous version left runs `queued` (it
 	 * activated them after the start's write, and a reset could lose that); the gate has already ended one of a
 	 * conversation with no organization. Such a run is activated here, and its loop started.
 	 */
 	async #recover(): Promise<void> {
-		await this.#store.outside(() => this.#store.settleLost());
+		const unsettled = await this.#store.outside(() => {
+			this.#store.settleLost();
+			return this.#store.unsettledRuns();
+		});
+		for (const runId of unsettled) this.#pushSettle(runId);
 		const again = await this.#cleanSandbox();
 		if (again) this.#push({ id: "sandbox", fn: "sandbox", time: again.rescheduleAt });
 		const run = this.#store.activeRun();
@@ -662,7 +672,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 
 	/**
 	 * Lifecycle jobs of the host: the start watch, the deadline, the lost-write sweep, the folder's sweep, a container left,
-	 * the facts' delivery. A `release` job the previous version left meets the Agents SDK's default, which drops it.
+	 * the facts' delivery, a run's settlement. A `release` job the previous version left meets the Agents SDK's default, which drops it.
 	 */
 	override _onHostJob(fn: string, context: Parameters<Agent<Env>["_onHostJob"]>[1]) {
 		const runId = runOfPayload((context as unknown as Job).job.payload);
@@ -672,6 +682,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		if (fn === "files") return this.#folder()?.sweep() ?? Promise.resolve(undefined);
 		if (fn === "sandbox") return this.#cleanSandbox();
 		if (fn === FACTS_JOB) return this.#factsJob();
+		if (fn === "settle" && runId) return this.#settleJob(runId);
 		return super._onHostJob(fn, context);
 	}
 
@@ -705,6 +716,40 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	async #factsJob(): Promise<{ rescheduleAt: number }> {
 		await within(this.#delivery.deliver(), RPC_WAIT_MS).catch((error: unknown) => this.#log("the facts' delivery is still running", error));
 		return { rescheduleAt: Date.now() + WATCH_MS };
+	}
+
+	/**
+	 * A run's `run.settled` (docs/plans/chunk-14a-design.md, Decisions), once it ended: the calls and scripts a gone instance
+	 * left open settled first; then, once no record of the run is open, the run sealed in its Sandbox (no container starts for
+	 * it after) and its spans read, and once none is open short of its cutoff, the totals written once. Every step is asked
+	 * again from the start, so a reset anywhere leaves the job, which runs again, or `#recover` makes it again.
+	 */
+	async #settleJob(runId: RunId): Promise<{ rescheduleAt: number } | undefined> {
+		const settlement = await this.#store.outside(() => {
+			this.#store.settleLost();
+			return this.#store.settlement(runId);
+		});
+		if (settlement.state === "none") return undefined;
+		if (settlement.state === "open") return { rescheduleAt: Date.now() + SETTLE_OPEN_MS };
+		let sealed: SealedSpans;
+		try {
+			// A Sandbox still on code without `seal` refuses the call: asked again until it is replaced.
+			sealed = await within(this.#sandbox().seal(runId), RPC_WAIT_MS);
+		} catch (error) {
+			this.#log("the run's sandbox could not be sealed", error);
+			return { rescheduleAt: Date.now() + SANDBOX_RETRY_MS };
+		}
+		const now = Date.now();
+		const open = spansOpenUntil(sealed, now);
+		if (open !== null) return { rescheduleAt: Math.min(now + SANDBOX_RETRY_MS, open) };
+		await this.#point("settle:sealed", runId);
+		await this.#store.outside(() => this.#store.settleRun(runId, containerCharge(sealed, settlement.createdAt)));
+		await this.#point("settle:written", runId);
+		return undefined;
+	}
+
+	#pushSettle(runId: RunId): void {
+		this.#push({ id: `settle:${runId}`, fn: "settle", time: Date.now(), payload: { runId } });
 	}
 
 	#deadline(runId: RunId): Promise<{ rescheduleAt: number } | undefined> {

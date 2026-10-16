@@ -90,34 +90,34 @@ function deliveryOf(start: StartRun): Promise<DeliveryRow> {
 	return runInDurableObject(objectOf(start), (_instance, state) => state.storage.sql.exec<DeliveryRow>("SELECT * FROM fact_delivery").one());
 }
 
-/** The fake's facts of the conversation once it holds the run's `run.finished`. */
-function delivered(start: StartRun): Promise<Fact[]> {
+/** The fake's facts of the conversation once it holds the run's `last` fact: its `run.finished`, or its `run.settled`. */
+function delivered(start: StartRun, last: "run.finished" | "run.settled" = "run.finished"): Promise<Fact[]> {
 	return until(
 		() => fake.facts(start.conversation),
-		(facts) => facts.some((fact) => fact.type === "run.finished" && fact.run === start.run),
+		(facts) => facts.some((fact) => fact.type === last && fact.run === start.run),
 	);
 }
 
 const deliveries = () => fake.calls.filter((call) => call.operation === "deliverFacts").length;
 
 describe("facts", () => {
-	test("a run's facts reach Laravel in order, each once, ending with run.finished", async () => {
+	test("a run's facts reach Laravel in order, each once, ending with run.finished and its totals, run.settled", async () => {
 		const start = held(fake, startOf(scope()));
 		await commands.startRun(start);
 		expect(await settled(start)).toBe("completed");
-		const facts = await delivered(start);
+		const facts = await delivered(start, "run.settled");
 		expect(facts.map((fact) => fact.seq)).toEqual(facts.map((_fact, index) => index + 1));
 		expect(facts.every((fact) => fact.run === start.run)).toBe(true);
 		const types = facts.map((fact) => fact.type);
 		expect(types[0]).toBe("run.status");
-		expect(types.at(-1)).toBe("run.finished");
+		expect(types.slice(-2)).toEqual(["run.finished", "run.settled"]);
 		expect(facts.filter((fact) => fact.type === "run.status").map((fact) => fact.data)).toEqual([
 			{ status: "provisioning", attempt: 1 },
 			{ status: "running", attempt: 1 },
 		]);
 		const usage = facts.find((fact) => fact.type === "run.usage");
 		expect(usage?.data).toMatchObject({ call: expect.stringMatching(/^[0-9a-f]{8}$/), inputTokens: expect.any(Number), outputTokens: expect.any(Number) });
-		expect(facts.at(-1)?.data).toMatchObject({ status: "completed", error: "", message: { id: expect.any(String), content: expect.any(String) } });
+		expect(facts.at(-2)?.data).toMatchObject({ status: "completed", error: "", message: { id: expect.any(String), content: expect.any(String) } });
 
 		const delivery = await deliveryOf(start);
 		expect(delivery).toMatchObject({ written: facts.length, acknowledged: facts.length, failures: 0, next_at: 0, stopped: null });
@@ -257,7 +257,11 @@ describe("model call settlements", () => {
 		await until(() => runStatus(start), (status) => status === "running");
 		const fence = { runId: start.run, attempt: 1 };
 		const request = { provider, model: "fake-1", reserved: { input: 10, output: 5 } };
-		const call = await runInDurableObject(objectOf(start), (_instance, state) => new RunStore(state.storage).recordModelCall(fence, request));
+		// Recorded by a store other than the live instance's, which its run's settlement would settle as lost: the run owes none.
+		const call = await runInDurableObject(objectOf(start), (_instance, state) => {
+			state.storage.sql.exec("UPDATE runs SET metered = 0 WHERE id = ?", start.run);
+			return new RunStore(state.storage).recordModelCall(fence, request);
+		});
 		expect(call).toMatch(/^[0-9a-f]{8}$/);
 		await commands.cancelRun({ scope: start.scope, conversation: start.conversation, run: start.run, reason: "cancelled" });
 		await delivered(start);
@@ -301,6 +305,8 @@ describe("model call settlements", () => {
 		const recorded = Date.now();
 		let clock = recorded;
 		const [gone, own] = await runInDurableObject(objectOf(start), (_instance, state) => {
+			// The live instance's own run.settled job would settle both instances' records as lost: the run owes none.
+			state.storage.sql.exec("UPDATE runs SET metered = 0 WHERE id = ?", start.run);
 			mine = new RunStore(state.storage, () => clock);
 			const other = new RunStore(state.storage);
 			new RunStore(state.storage, () => recorded - 5_000).recordScript(script("expired"), 1_000);
