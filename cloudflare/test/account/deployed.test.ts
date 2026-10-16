@@ -78,20 +78,22 @@ describe(`inside ${NAMES.app} (/api/probe)`, () => {
 		const expected = Object.fromEntries(
 			Object.entries({ conversation: CONVERSATION_MIGRATIONS, scripts: SCRIPTS_MIGRATIONS, sandbox: SANDBOX_MIGRATIONS }).map(([kind, steps]) => [kind, steps.map((step) => step.id)]),
 		);
-		// `cf deploy` returns before every location serves the new version: right after it, an object can still be
-		// built by the previous one and answer that build's schema steps, a strict prefix of these (seen in CI, a
-		// probe 30 ms after the deploy). Only an answer that is this build's or the previous one's for every object,
-		// and the previous one's for some, is asked again, for about a minute; any other is checked.
-		const previousBuild = (objects: Record<string, unknown>) => {
+		// `cf deploy` returns before the new version settles everywhere. Right after it, an object can still be built
+		// by the previous version and answer that build's schema steps, a strict prefix of these (seen in CI, a probe
+		// 30 ms after the deploy), or the runtime can fail to reach it at all with its own internal error (seen in CI
+		// too, no invocation logged). An answer whose every object is this build's, the previous one's or unreached,
+		// and some not this build's, is asked again for about a minute; any other is checked at once.
+		const settling = (objects: Record<string, unknown>) => {
 			const answers = Object.entries(expected).flatMap(([kind, migrations]) =>
 				([null, "eu"] as const).map((jurisdiction) => {
-					const answer = objects[`${kind}:${jurisdiction ?? "default"}`] as { kind?: string; name?: string; jurisdiction?: string | null; migrations?: unknown } | undefined;
+					const answer = objects[`${kind}:${jurisdiction ?? "default"}`] as { kind?: string; name?: string; jurisdiction?: string | null; migrations?: unknown; error?: unknown } | undefined;
+					if (typeof answer?.error === "string" && /^Error: internal error; reference = \w+$/.test(answer.error)) return { known: true, current: false };
 					const answered = Array.isArray(answer?.migrations) ? (answer.migrations as unknown[]) : undefined;
-					const prefix = answer?.kind === kind && answer.name === NIL && answer.jurisdiction === jurisdiction && answered !== undefined && answered.length <= migrations.length && answered.every((id, index) => id === migrations[index]);
-					return { prefix, older: prefix && answered.length < migrations.length };
+					const known = answer?.kind === kind && answer.name === NIL && answer.jurisdiction === jurisdiction && answered !== undefined && answered.length <= migrations.length && answered.every((id, index) => id === migrations[index]);
+					return { known, current: known && answered.length === migrations.length };
 				}),
 			);
-			return answers.every((answer) => answer.prefix) && answers.some((answer) => answer.older);
+			return answers.every((answer) => answer.known) && answers.some((answer) => !answer.current);
 		};
 		const token = await probeToken(instanceSecret(INSTANCE, "MINERVA_SECRET_KEY"));
 		const ask = async () => {
@@ -107,7 +109,7 @@ describe(`inside ${NAMES.app} (/api/probe)`, () => {
 		};
 		const deadline = Date.now() + 60_000;
 		let body = await ask();
-		while (previousBuild(body.objects) && Date.now() < deadline) {
+		while (settling(body.objects) && Date.now() < deadline) {
 			await new Promise((resolve) => setTimeout(resolve, 5_000));
 			body = await ask();
 		}
