@@ -431,7 +431,7 @@ if (command === "auth whoami") {
 
 	/** The live version's bindings, as `cf workers versions get` answers them, of each build. */
 	const object = (className: string) => ({ type: "durable_object_namespace", class_name: className, namespace_id: "n" });
-	const APP = { DB: { type: "d1" }, WORKSPACE: object("Workspace"), CONVERSATION: object("Conversation"), MINERVA_SITE_URL: { type: "plain_text", text: "https://site.example" } };
+	const APP = { DB: { type: "d1" }, CONVERSATION: object("Conversation"), MINERVA_SITE_URL: { type: "plain_text", text: "https://site.example" } };
 	const PRODUCTION_BUILD = APP;
 	const TEST_BUILD = { ...APP, FAULT_PROVIDER: object("FaultProvider") };
 	// What the account shows of the quiesced Worker: it binds nothing of its own, and keeps the app's secrets.

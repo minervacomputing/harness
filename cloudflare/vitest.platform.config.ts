@@ -32,7 +32,6 @@ export default defineConfig(async () => {
 					// cloudflare.config.ts binds the Worker's own classes by its name; the tests run it under
 					// another name, so the bindings name the classes alone.
 					durableObjects: {
-						WORKSPACE: { className: "Workspace", useSQLite: true },
 						CONVERSATION: { className: "Conversation", useSQLite: true },
 						SCRIPTS: { className: "Scripts", useSQLite: true },
 						// Mode `test` builds the test Worker's entry (src/faults/index.ts), with its fake provider.

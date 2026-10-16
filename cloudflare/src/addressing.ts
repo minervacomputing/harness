@@ -1,6 +1,6 @@
 // The one place that maps a workspace to its Durable Objects and its bucket (ARCHITECTURE.md: Data placement,
 // Addressing). The workspace's id and jurisdiction come from D1, never from the client: the same name with
-// and without a jurisdiction is a different, empty object. Objects are named by the workspace's or
+// and without a jurisdiction is a different, empty object. Objects are named by the
 // conversation's id and reached only by typed RPC from our own code; there are no generic routes to them.
 //
 // Local workerd has no jurisdictions (`jurisdiction()` throws "Jurisdiction restrictions are not
@@ -14,7 +14,6 @@ import type { Conversation } from "./conversation/conversation.ts";
 import type { Sandbox } from "./sandbox/sandbox.ts";
 import type { Scripts } from "./scripts/scripts.ts";
 import type { ConversationId, WorkspaceRef } from "./shared/rpc.ts";
-import type { Workspace } from "./workspace/workspace.ts";
 
 function object<T extends Rpc.DurableObjectBranded>(env: SettingsEnv, binding: unknown, workspace: WorkspaceRef, name: string): DurableObjectStub<T> {
 	// A binding to the Worker's own class is typed without its class; this is where it gets it back.
@@ -28,10 +27,6 @@ function object<T extends Rpc.DurableObjectBranded>(env: SettingsEnv, binding: u
 		return namespace.getByName(`${workspace.jurisdiction}:${name}`);
 	}
 	return qualified.getByName(name);
-}
-
-export function workspaceObject(env: Env, workspace: WorkspaceRef): DurableObjectStub<Workspace> {
-	return object<Workspace>(env, env.WORKSPACE, workspace, workspace.id);
 }
 
 export function conversationObject(env: Env, workspace: WorkspaceRef, conversation: ConversationId): DurableObjectStub<Conversation> {

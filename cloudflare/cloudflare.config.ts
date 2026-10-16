@@ -184,7 +184,6 @@ export default defineConfig(({ mode }) => {
 				// already within the model's limits are read.
 				...(target.offline ? {} : { IMAGES: bindings.images({ dev: { remote: true } }) }),
 				LOADER: bindings.workerLoader(),
-				WORKSPACE: bindings.durableObject({ worker: target.names.app, exportName: "Workspace" }),
 				CONVERSATION: bindings.durableObject({ worker: target.names.app, exportName: "Conversation" }),
 				SCRIPTS: bindings.durableObject({ worker: target.names.app, exportName: "Scripts" }),
 				// The test build's fake provider (src/faults/provider.ts).
@@ -234,11 +233,11 @@ export default defineConfig(({ mode }) => {
 				...laravelSecrets(target),
 			},
 			exports: {
+				// Workspace and FaultMailbox are retired (src/retired.ts): exported with no binding until 13c deletes the classes.
 				Workspace: exports.durableObject({ storage: "sqlite" }),
 				Conversation: exports.durableObject({ storage: "sqlite" }),
 				Scripts: exports.durableObject({ storage: "sqlite" }),
 				Sandbox: container ? exports.durableObject({ storage: "sqlite", container }) : exports.durableObject({ storage: "sqlite" }),
-				// FaultMailbox is retired: exported with no binding until 13c deletes the class.
 				...(target.faults ? { FaultProvider: exports.durableObject({ storage: "sqlite" }), FaultMailbox: exports.durableObject({ storage: "sqlite" }) } : {}),
 			},
 		},

@@ -75,7 +75,6 @@ export interface RunView {
 export interface ProviderState {
 	notes: { id: number; folder: string; title: string }[];
 	requests: { seq: number; at: number; method: string; path: string; token: string; status: number }[];
-	rotations: number;
 }
 
 /** What the world's fake Laravel holds of its conversation (src/faults/laravel.ts, `LaravelView`). */

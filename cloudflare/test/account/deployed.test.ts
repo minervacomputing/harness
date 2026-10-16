@@ -2,7 +2,6 @@ import { readdirSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import { MIGRATIONS as CONVERSATION_MIGRATIONS } from "../../src/conversation/schema.ts";
 import { MIGRATIONS as SCRIPTS_MIGRATIONS } from "../../src/scripts/schema.ts";
-import { MIGRATIONS as WORKSPACE_MIGRATIONS } from "../../src/workspace/schema.ts";
 import { PROBE_HEADER, probeToken } from "../../src/http/probe-token.ts";
 import { SANDBOX_MIGRATIONS } from "../../src/sandbox/schema.ts";
 import { cf, fetchDeployed, instanceSecret, ownOrigins, suiteInstance } from "./client.ts";
@@ -77,7 +76,7 @@ describe(`inside ${NAMES.app} (/api/probe)`, () => {
 	});
 
 	test("every Durable Object class answers, in the EU jurisdiction too; D1 has every migration; JSON keys", async () => {
-		// Right after a deploy (or a reset) the first probe builds eight objects in fresh namespaces, which has
+		// Right after a deploy (or a reset) the first probe builds six objects in fresh namespaces, which has
 		// taken longer than the 5 s Node's agent waits by default.
 		const reply = await fetchDeployed(`${site}/api/probe`, { headers: { [PROBE_HEADER]: await probeToken(instanceSecret(INSTANCE, "MINERVA_SECRET_KEY")) }, timeoutMs: 25_000 });
 		expect(reply.status).toBe(200);
@@ -86,9 +85,9 @@ describe(`inside ${NAMES.app} (/api/probe)`, () => {
 			d1Migrations: string[];
 			json: { native: number[]; parseJson: number[] };
 		};
-		for (const kind of ["workspace", "conversation", "scripts", "sandbox"]) {
+		for (const kind of ["conversation", "scripts", "sandbox"]) {
 			// Each object applies its schema steps when it is built (src/conversation/schema.ts, src/sandbox/schema.ts).
-			const steps = ({ conversation: CONVERSATION_MIGRATIONS, workspace: WORKSPACE_MIGRATIONS, scripts: SCRIPTS_MIGRATIONS, sandbox: SANDBOX_MIGRATIONS } as { [kind: string]: { id: number }[] })[kind] ?? [];
+			const steps = ({ conversation: CONVERSATION_MIGRATIONS, scripts: SCRIPTS_MIGRATIONS, sandbox: SANDBOX_MIGRATIONS } as { [kind: string]: { id: number }[] })[kind] ?? [];
 			const migrations = steps.map((step) => step.id);
 			expect(body.objects[`${kind}:default`], kind).toEqual({ kind, name: NIL, jurisdiction: null, migrations });
 			// The Sandbox is reached through ctx.exports (addressing.ts); its jurisdiction works there too.

@@ -63,10 +63,9 @@ export type RunEnd =
 export type RevocationReason = "permissions_changed" | "connection_removed" | "agent_connections_changed" | "member_removed";
 
 /**
- * Why a Conversation Durable Object is asked to stop a run from outside it, and so how the run ends:
- * `cancelled` (deleting an agent or a conversation), `conversation_deleted` and `emergency_stop` with "Stopped.", a
- * revocation reason with "Stopped because permissions changed.", each with its own code (RunEnd), and `start_expired`
- * as an expired start. The Workspace sends the first five; Laravel's `cancelRun` any of them (contract `CancelReason`).
+ * Why Laravel's `cancelRun` stops a run (contract `CancelReason`), and so how the run ends: `cancelled`,
+ * `conversation_deleted` and `emergency_stop` with "Stopped.", a revocation reason with "Stopped because permissions
+ * changed.", each with its own code (RunEnd), and `start_expired` as an expired start.
  */
 export type CancelReason = RevocationReason | "cancelled" | "conversation_deleted" | "emergency_stop" | "start_expired";
 

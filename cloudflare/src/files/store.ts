@@ -127,7 +127,7 @@ function keysOf(plan: CheckpointUploadPlan): string[] {
 	return plan.files.flatMap((file) => (file.key === null ? [] : [file.key]));
 }
 
-/** The Workspace's byte counter (workspace/core.ts `setConversationBytes`). */
+/** A byte counter the folder reports its total to: none yet (folder.ts `UNCOUNTED`), until storage is counted against allowances. */
 export interface ByteCounter {
 	setConversationBytes(conversationId: ConversationId, total: number, revision: number): Promise<{ ok: true } | { ok: false; limit: Extract<FolderLimit, "workspace"> }>;
 }

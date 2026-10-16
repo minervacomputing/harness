@@ -21,13 +21,13 @@ import type { Preparation } from "../internal/start.ts";
 import { type Json, parseJson } from "../lib/json.ts";
 import { VALUE_PART, sliceText, splitParts } from "../lib/text.ts";
 import { isoTime } from "../lib/dates.ts";
-import type { Attachment, Conversation, FolderChanges, FolderWarnings, Message, Run, ToolCallEventData } from "@minerva/contract";
+import type { Attachment, FolderChanges, FolderWarnings, Run, ToolCallEventData } from "@minerva/contract";
 import type { Fact, StartRunResult } from "@minerva/contract/internal";
 import type { SettledWrite } from "../gateway/ledger.ts";
 import type { ModelUsage } from "../model/provider.ts";
 import { utf8 } from "../lib/bytes.ts";
 import { FACT_PAGE_BYTES, type NewFact, toolCallFact } from "./facts.ts";
-import type { AgentId, AttemptFence, ConversationId, EpochMs, RunId, RunStatus, UserId, VersionId, WorkspaceRef } from "../shared/rpc.ts";
+import type { AttemptFence, ConversationId, EpochMs, RunId, RunStatus, VersionId, WorkspaceRef } from "../shared/rpc.ts";
 import {
 	ACTIVE,
 	type CancelReason,
@@ -40,14 +40,6 @@ import {
 	terminalStatus,
 } from "./events.ts";
 import type { Replayed } from "./history.ts";
-
-export interface ConversationInit {
-	conversationId: ConversationId;
-	workspace: WorkspaceRef;
-	userId: UserId;
-	agentId: AgentId;
-	createdAt: EpochMs;
-}
 
 /** A page of a run's events: seq above `after` and at most `upTo`, at most `limit` of them. */
 export interface EventPage {
@@ -73,14 +65,11 @@ export interface RunSnapshot extends StartSnapshot {
 }
 
 /**
- * A run as a Durable Object returns it: the contract's `Run` without its events. A run's events have no size bound
- * and Workers RPC refuses a result over 32 MiB, so the Worker pages through them
- * with `getRunEvents` up to `eventSeq` while it streams the response. `eventSeq` is read with the status in
- * one synchronous step, and events are append-only, so the body it assembles is consistent.
+ * A run as the test build's view returns it (src/faults/ `faultView`): the contract's `Run` without its events, which have
+ * no size bound, so a reader pages through them up to `eventSeq`. `eventSeq` is read with the status in one synchronous step,
+ * and events are append-only, so the pages it joins are consistent.
  */
 export type RunHead = Omit<Run, "events"> & { eventSeq: number };
-
-export type ConversationHead = Omit<Conversation, "runs"> & { runs: RunHead[] };
 
 /** A page of events stops at this much JSON, whatever its limit (`EventPage`). */
 export const PAGE_BYTES = 4 * 1024 * 1024;
@@ -139,16 +128,6 @@ export interface RunRow {
 	created_at: number;
 	started_at: number | null;
 	finished_at: number | null;
-	[key: string]: SqlStorageValue;
-}
-
-interface MessageRow {
-	id: string;
-	role: "user" | "assistant";
-	content: string;
-	attachments: string;
-	run_id: string | null;
-	created_at: number;
 	[key: string]: SqlStorageValue;
 }
 
@@ -378,33 +357,6 @@ export class RunStore {
 		return this.#sql.exec<ConversationRow>("SELECT * FROM conversation WHERE singleton = 1").toArray()[0] ?? null;
 	}
 
-	/** Fixes the identity once; false when another identity is already stored. */
-	init(input: ConversationInit): boolean {
-		return this.write(() => {
-			const existing = this.conversation();
-			if (existing) {
-				return (
-					existing.id === input.conversationId &&
-					existing.workspace_id === input.workspace.id &&
-					existing.jurisdiction === input.workspace.jurisdiction &&
-					existing.user_id === input.userId &&
-					existing.agent_id === input.agentId
-				);
-			}
-			this.#sql.exec(
-				"INSERT INTO conversation (singleton, id, workspace_id, jurisdiction, user_id, agent_id, created_at, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?, ?)",
-				input.conversationId,
-				input.workspace.id,
-				input.workspace.jurisdiction,
-				input.userId,
-				input.agentId,
-				input.createdAt,
-				input.createdAt,
-			);
-			return true;
-		});
-	}
-
 	/**
 	 * Binds a Laravel conversation on first use; false when the row is bound to another organization, workspace or
 	 * jurisdiction, or is a Workspace conversation. Its user and agent stay empty: each run's snapshot names its own.
@@ -445,15 +397,6 @@ export class RunStore {
 
 	markDeleted(): void {
 		this.#sql.exec("UPDATE conversation SET deleted_at = coalesce(deleted_at, ?) WHERE singleton = 1", this.now());
-	}
-
-	// Messages, which only the previous version wrote.
-
-	messages(): Message[] {
-		return this.#sql
-			.exec<MessageRow>("SELECT * FROM messages ORDER BY created_at, id")
-			.toArray()
-			.map((row) => messageOut(row));
 	}
 
 	// Runs.
@@ -896,7 +839,7 @@ export class RunStore {
 		return delivery.written - delivery.acknowledged;
 	}
 
-	// The API's shapes.
+	// The run's head, for the test build's view.
 
 	runHead(row: RunRow): RunHead {
 		return {
@@ -912,28 +855,6 @@ export class RunStore {
 			eventSeq: row.event_seq,
 		};
 	}
-
-	conversationHead(row: ConversationRow): ConversationHead {
-		return {
-			id: row.id,
-			agentId: row.agent_id,
-			title: row.title,
-			updatedAt: isoTime(row.updated_at),
-			messages: this.messages(),
-			runs: this.runs().map((run) => this.runHead(run)),
-		};
-	}
-}
-
-function messageOut(row: MessageRow): Message {
-	return {
-		id: row.id,
-		role: row.role,
-		content: row.content,
-		attachments: parseJson(row.attachments) as unknown as Attachment[],
-		runId: row.run_id,
-		createdAt: isoTime(row.created_at),
-	};
 }
 
 /** For tests and logs. */

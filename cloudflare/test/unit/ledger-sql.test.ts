@@ -1,8 +1,8 @@
 // lib/sql.ts over node:sqlite: statements with bindings, RETURNING, and transactions that roll back and
-// nest. test/platform/ledger-sql.test.ts runs the same cases on a Durable Object's storage.
+// nest, which test/platform/ledger-sql.test.ts runs on a Durable Object's storage too; and its schema steps.
 
 import { describe, expect, test } from "vitest";
-import { applySchema, sqliteSql } from "../../src/lib/sql.ts";
+import { applySchema, migrate, sqliteSql } from "../../src/lib/sql.ts";
 import { openDatabase } from "./sqlite.ts";
 
 function table() {
@@ -48,5 +48,24 @@ describe("sqliteSql", () => {
 		expect(value).toEqual(["a"]);
 		expect(sql.exec<{ k: string }>("SELECT k FROM t").map((row) => row.k)).toEqual(["a"]);
 		expect(() => sql.exec("INSERT INTO t (k, n) VALUES ('a', 3)")).toThrow(/UNIQUE/);
+	});
+});
+
+describe("migrate", () => {
+	test("applies each step once, in order, in lib/sqlite.ts's table, and a failing step leaves nothing behind", () => {
+		const sql = sqliteSql(openDatabase());
+		const steps = [
+			{ id: 2, sql: "ALTER TABLE t ADD COLUMN y TEXT" },
+			{ id: 1, sql: "CREATE TABLE t (x INTEGER); CREATE INDEX t_x ON t (x)" },
+		];
+		expect(migrate(sql, steps, 1)).toEqual([1, 2]);
+		expect(migrate(sql, steps, 2)).toEqual([]);
+		expect(sql.exec("SELECT id, applied_at FROM _migrations ORDER BY id")).toEqual([
+			{ id: 1, applied_at: 1 },
+			{ id: 2, applied_at: 1 },
+		]);
+		expect(() => migrate(sql, [...steps, { id: 3, sql: "CREATE TABLE u (a); CREATE TABLE t (b)" }], 3)).toThrow();
+		expect(sql.exec("SELECT count(*) AS n FROM sqlite_master WHERE name = 'u'")).toEqual([{ n: 0 }]);
+		expect(sql.exec("SELECT id FROM _migrations ORDER BY id")).toEqual([{ id: 1 }, { id: 2 }]);
 	});
 });

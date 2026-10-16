@@ -9,7 +9,7 @@
 // - `json`: the runtime's JSON.parse against parseJson after a lone backslash key (lib/json.ts).
 
 import type { Context } from "hono";
-import { conversationObject, sandboxObject, scriptsObject, workspaceObject } from "../addressing.ts";
+import { conversationObject, sandboxObject, scriptsObject } from "../addressing.ts";
 import { timingSafeEqual } from "../lib/hash.ts";
 import { escapedKeyCheck } from "../lib/json.ts";
 import type { WorkspaceRef } from "../shared/rpc.ts";
@@ -30,7 +30,6 @@ export async function probe(c: Context<AppEnv>): Promise<Response> {
 	for (const jurisdiction of [null, "eu"] as const) {
 		const workspace: WorkspaceRef = { id: NIL, jurisdiction };
 		const calls = {
-			workspace: () => workspaceObject(c.env, workspace).about(),
 			conversation: () => conversationObject(c.env, workspace, NIL).about(),
 			scripts: () => scriptsObject(c.env, workspace, NIL).about(),
 			sandbox: () => sandboxObject(c.env, exports, workspace, NIL).about(),

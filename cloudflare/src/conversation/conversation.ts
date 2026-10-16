@@ -53,19 +53,17 @@ import { scriptTool } from "../scripts/tool.ts";
 import type { Folder } from "@minerva/contract";
 import type { CancelRun, CancelRunResult, DeleteConversation, DeleteConversationResult, Fact, ReadFolder, ReplayFacts, ResolveDownload, StartRun, StartRunResult } from "@minerva/contract/internal";
 import { type Preparation, type StartRefusal, UNAVAILABLE, messageRefusal, prepareStart, promptOf as internalPrompt, startRefusal } from "../internal/start.ts";
-import type { AttemptFence, Caller, RunId, VersionId, WorkspaceRef } from "../shared/rpc.ts";
+import type { AttemptFence, RunId, WorkspaceRef } from "../shared/rpc.ts";
 import {
 	ACTING,
 	ACTIVE,
 	CANCELLED,
-	type CancelReason,
 	COMPLETED,
 	endFor,
 	localToolEvent,
 	phaseEvent,
 	phaseOf,
 	type RunEnd,
-	type RunEvent,
 	statusEvent,
 	TIMED_OUT,
 	WORKER_EXITED,
@@ -82,78 +80,17 @@ import { destroyRunSandbox, LocalRun } from "./local-run.ts";
 import { type ConversationPorts, type FolderPort, PORTS, type PortsContext, runStatePort, type WriteLedger } from "./ports.ts";
 import { ToolQueue, untilAborted } from "./queue.ts";
 import { MIGRATIONS } from "./schema.ts";
-import {
-	type ConversationHead,
-	type ConversationInit,
-	type ConversationRow,
-	type EventPage,
-	type RunHead,
-	type RunRow,
-	type RunSnapshot,
-	RunStore,
-} from "./store.ts";
+import { type ConversationRow, type RunRow, type RunSnapshot, RunStore } from "./store.ts";
 import { RunStream } from "./stream.ts";
 import { connectorTool, isWrite, REPLAY_REFUSED, REPLAYS_ALLOWED, RUN_ENDED_MESSAGE, type ToolHost } from "./tools.ts";
 
-/** What a Conversation Durable Object answers to a cancel from outside: the acknowledgement the Workspace's outbox waits for. */
-export interface CancelAck {
-	runId: RunId;
-	/**
-	 * `stopping`: the run's local revoked flag is set and the run is being stopped. `tombstoned`: the run is
-	 * not stored yet, so a start that is still in flight stores it as cancelled (ARCHITECTURE.md: Strict
-	 * revocation). `ended`: it had already ended.
-	 */
-	state: "stopping" | "tombstoned" | "ended";
-}
-
 /**
- * The Conversation Durable Object's RPC surface. One object per chat, named by the conversation's id, in
- * its workspace's jurisdiction. Authoritative for its owner, workspace and agent (fixed at creation),
- * messages, runs and attempts, run events, the write ledger, page tokens, folder versions, the run's
- * checkpoint, the script store, and pi's `pi_*` tables. Every method that takes a `Caller` answers "not
- * found" (null, or a 404 refusal) for a caller who is not the conversation's owner, so another user's chat
- * looks like none.
- *
- * Workers RPC refuses an argument or result over 32 MiB, and a conversation's events grow without bound,
- * so no method returns more than one run's page of events: conversations and runs come back as heads, and
- * the Worker streams the API's body (each run with all its events by seq), paging each run's events with
- * `getRunEvents` up to its head's `eventSeq`.
+ * The Conversation Durable Object's RPC surface: Laravel's commands, which the Worker forwards once it has checked the
+ * Access assertion and the recovery index. One object per chat, named by the conversation's id, in its workspace's
+ * jurisdiction. Authoritative for its runs and attempts, run events, facts, the write ledger, page tokens, folder versions,
+ * the run's checkpoint, the script store, and pi's `pi_*` tables.
  */
 export interface ConversationApi {
-	/** Fixes the owner, workspace and agent. Idempotent; refuses a different identity. */
-	init(input: ConversationInit): Promise<void>;
-
-	/** Messages by (created_at, id); runs by created_at, as heads. */
-	getConversation(caller: Caller): Promise<ConversationHead | null>;
-	/** One page of a run's events by seq; null for another user's run or an unknown one. */
-	getRunEvents(caller: Caller, runId: RunId, page: EventPage): Promise<RunEvent[] | null>;
-
-	getRun(caller: Caller, runId: RunId): Promise<RunHead | null>;
-	/** The user's stop: idempotent, a finished run stays as it was; the refreshed run. */
-	cancelRun(caller: Caller, runId: RunId): Promise<RunHead | null>;
-	/**
-	 * A cancel from the Workspace's outbox (revocation, deletion, emergency stop): sets the run's local
-	 * revoked flag synchronously and stops it with the reason's code and message (CancelReason, RunEnd), or
-	 * leaves a tombstone for a run not stored yet. Idempotent by run id. Returning is the acknowledgement.
-	 */
-	cancel(runId: RunId, reason: CancelReason, entryId: number): Promise<CancelAck>;
-
-	/**
-	 * The current folder (no version), or a non-checkpoint version of this conversation; null is 404.
-	 * `{versionId: null, files: [], dirs: []}` when there is no folder yet.
-	 */
-	listFiles(caller: Caller, versionId: VersionId | null): Promise<Folder | null>;
-	/** A file of a non-checkpoint version (or of the current folder), for a signed link; null is 404. */
-	resolveDownload(caller: Caller, versionId: VersionId | null, path: string): Promise<DownloadTarget | null>;
-
-	/**
-	 * Tombstone, cancel and wait, then delete storage and the R2 prefix (ARCHITECTURE.md: Files, Deletion). Driven by the
-	 * Workspace, which calls it again until it resolves. It overrides the Agents SDK's own `destroy()`, which
-	 * resets the object after it deletes the storage, so the caller may see the connection break once the
-	 * deletion is done: a broken call after a resolved one, or a second call that finds nothing, is done.
-	 */
-	destroy(): Promise<void>;
-
 	/**
 	 * Laravel's `startRun` (docs/plans/start-and-cancel.md), once the Worker has bound the conversation and the run in the
 	 * recovery index; `workspace` is where the index addresses it. Binds the conversation on first use, and answers a
@@ -312,92 +249,6 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 
 	// The RPC surface (ConversationApi). Async methods start the Agent's lifecycle first, which opens pi
 	// through the factory, so the gate runs before any of them.
-
-	async init(input: ConversationInit): Promise<void> {
-		if (!this.#store.init(input)) throw new Error("This conversation already has another owner, workspace or agent.");
-	}
-
-	async getConversation(caller: Caller): Promise<ConversationHead | null> {
-		const conversation = this.#owned(caller);
-		return conversation ? this.#store.conversationHead(conversation) : null;
-	}
-
-	async getRun(caller: Caller, runId: RunId): Promise<RunHead | null> {
-		const run = this.#ownedRun(caller, runId);
-		return run ? this.#store.runHead(run) : null;
-	}
-
-	async getRunEvents(caller: Caller, runId: RunId, page: EventPage): Promise<RunEvent[] | null> {
-		const run = this.#ownedRun(caller, runId);
-		if (!run) return null;
-		// The Worker sends whole numbers; anything else reads as an empty page rather than a failed call.
-		if (![page.after, page.upTo, page.limit].every((value) => Number.isSafeInteger(value) && value >= 0)) return [];
-		return this.#store.events(runId, page);
-	}
-
-	async cancelRun(caller: Caller, runId: RunId): Promise<RunHead | null> {
-		// Outside pi's transactions (store.ts `outside`): the answer says the run was stopped.
-		return this.#store.outside(() => {
-			const run = this.#ownedRun(caller, runId);
-			if (!run) return null;
-			if (ACTIVE.has(run.status)) this.#store.finish(runId, CANCELLED);
-			return this.#store.runHead(this.#store.run(runId) as RunRow);
-		});
-	}
-
-	/** The revocation's cancel (ARCHITECTURE.md: Strict revocation): acknowledged only once the flag is committed on its own. */
-	async cancel(runId: RunId, reason: CancelReason, entryId: number): Promise<CancelAck> {
-		return this.#store.outside((): CancelAck => {
-			const run = this.#store.run(runId);
-			if (run) {
-				if (!ACTIVE.has(run.status)) return { runId, state: "ended" };
-				this.#store.write(() => {
-					this.#store.revoke(runId);
-					this.#store.finish(runId, endFor(reason));
-				});
-				return { runId, state: "stopping" };
-			}
-			this.#store.write(() => this.#store.addTombstone(runId, reason, entryId));
-			return { runId, state: "tombstoned" };
-		});
-	}
-
-	async listFiles(caller: Caller, versionId: VersionId | null): Promise<Folder | null> {
-		if (!this.#owned(caller)) return null;
-		return this.#folder()?.list(versionId) ?? null;
-	}
-
-	async resolveDownload(caller: Caller, versionId: VersionId | null, path: string): Promise<DownloadTarget | null> {
-		if (!this.#owned(caller)) return null;
-		return this.#folder()?.resolve(versionId, path) ?? null;
-	}
-
-	/**
-	 * Deletes the conversation (ARCHITECTURE.md: Files, Deletion): tombstoned first, so it refuses new runs; its active
-	 * run cancelled ("Stopped.") and pi stopped; its objects in R2 deleted; then the Agent's own teardown
-	 * deletes all storage and resets the object, so the caller may see the connection break after this
-	 * resolves. The Workspace drives it, and calls it again until it returns.
-	 */
-	override async destroy(): Promise<void> {
-		await this.lifecycle.start();
-		const run = await this.#store.outside(() => {
-			const active = this.#store.activeRun();
-			this.#store.write(() => {
-				this.#store.markDeleted();
-				if (active) {
-					this.#store.revoke(active.id);
-					this.#store.finish(active.id, CANCELLED);
-				}
-			});
-			return active;
-		});
-		this.#stream.closeAll();
-		if (run) await this.#stopPi(run.id).catch((error: unknown) => this.#log("pi did not stop", error));
-		await this.#destroyScripts();
-		if (this.#store.conversation()) await destroyRunSandbox(this.#sandbox(), null, "The conversation was deleted.");
-		await this.#folder()?.deleteObjects();
-		await super.destroy();
-	}
 
 	/** The conversation's Scripts object, emptied and reset; a call the reset broke is the reset done, any other failure is tried again. */
 	async #destroyScripts(): Promise<void> {
@@ -1503,16 +1354,6 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				this.#push({ id: "files", fn: "files", time });
 			},
 		};
-	}
-
-	#owned(caller: Caller) {
-		const conversation = this.#store.conversation();
-		return conversation && conversation.deleted_at === null && conversation.user_id === caller.userId ? conversation : null;
-	}
-
-	#ownedRun(caller: Caller, runId: RunId): RunRow | null {
-		if (!this.#owned(caller) || !isUuid(runId)) return null;
-		return this.#store.run(runId);
 	}
 
 	/**

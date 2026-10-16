@@ -1,8 +1,6 @@
-// The test build's ports (src/faults/): the Conversation's and the Workspace's own ports with the fake
-// provider behind their network and fault points (plan.ts) around the steps the protocols must survive.
-// Points, by object:
+// The test build's ports (src/faults/): the Conversation's own ports with the fake provider behind their network
+// and fault points (plan.ts) around the steps the protocols must survive:
 //
-// Conversation
 // - `tool:before`, `tool:after`: around the executor's answer for a tool call (filter `tool`);
 // - `provider:write:before`: a write claimed in the ledger, before it is sent (`abort` or `throw` only:
 //   claimed, never sent);
@@ -15,31 +13,22 @@
 // - `local:prepared`: an attempt's container started, hardened, verified and hydrated;
 // - `checkpoint:scanned`, `checkpoint:uploaded`, `checkpoint:recorded`: a checkpoint's scan taken, its
 //   files stored in R2 but the checkpoint not recorded, and recorded but its held results not released;
-// - `local:released`: a local call's result released by its checkpoint, before pi has it (filter `tool`);
-// Workspace
-// - `refresh:before`, `refresh:answered`: around the token endpoint's answer (`lose` drops it);
-// - `cancel:before`, `cancel:lost`: around delivering a cancel (`lose` drops the acknowledgement).
+// - `local:released`: a local call's result released by its checkpoint, before pi has it (filter `tool`).
 //
 // Each model call and tool execution pi starts is counted per run (`FaultPlan.entered`).
 //
-// A conversation whose plan sets `run_timeout_ms` starts Laravel's runs with that deadline, a workspace whose plan sets it
-// its own runs.
+// A conversation whose plan sets `run_timeout_ms` starts Laravel's runs with that deadline.
 // A conversation whose plan sets `model` to `workers-ai` gets Workers AI instead of the fake model. Never
 // part of the production Worker.
 
 import type { ConversationPorts, PortsContext } from "../conversation/ports.ts";
 import type { ExecutorContext } from "../gateway/executor.ts";
-import type { ConversationClient, OAuthClients } from "../workspace/ports.ts";
-import type { WorkspaceDeps } from "../workspace/core.ts";
-import type { ReplaceablePorts } from "../workspace/workspace.ts";
 import { fakeUpstream } from "../model/fake.ts";
 import { upstreamOf } from "../model/route.ts";
 import { parseJson } from "../lib/json.ts";
-import { NOTES_CLIENT } from "./connector.ts";
 import { type FaultPlan, planOf } from "./plan.ts";
 import type { FaultProvider } from "./provider.ts";
 import { LARAVEL_HOST } from "./settings.ts";
-import { NOTES } from "./world.ts";
 
 /** Every request to a `*.fake.invalid` host goes to the workspace's FaultProvider; nothing else is allowed. */
 export const FAKE_HOST_SUFFIX = ".fake.invalid";
@@ -50,7 +39,7 @@ export function providerOf(env: Env, scope: string): DurableObjectStub<FaultProv
 }
 
 /**
- * The network of the test build's executor and refreshes: the fake provider, and nothing else, refused as a
+ * The network of the test build's executor: the fake provider, and nothing else, refused as a
  * blocked egress would be, so a real connector in its registry cannot reach its provider from a
  * Worker the token-gated driver controls. Models go through the AI binding, not here.
  */
@@ -163,49 +152,6 @@ export function faultConversationPorts(base: ConversationPorts): ConversationPor
 					await plan.at("model:delta", { step: call.step, delta: index });
 				},
 			});
-		},
-	};
-}
-
-/** The operator's client for the fake provider's app; no other app has one. */
-const fakeClients: OAuthClients = {
-	configured: (app) => (app === NOTES ? { ...NOTES_CLIENT } : null),
-	stored: async () => null,
-};
-
-/** The Workspace's ports in the test build. */
-export function faultWorkspacePorts(deps: WorkspaceDeps, ctx: DurableObjectState, env: Env): ReplaceablePorts {
-	const plan = planOf(ctx);
-	// The object is named by the workspace's id (an EU one `eu:<id>` in local runs, addressing.ts).
-	const scope = (ctx.id.name ?? "").replace(/^eu:/, "");
-	const send = providerFetch(env, scope);
-	const conversations: ConversationClient = {
-		init: (input) => deps.conversations.init(input),
-		async cancel(conversationId, runId, reason, entryId) {
-			await plan.at("cancel:before");
-			const ack = await deps.conversations.cancel(conversationId, runId, reason, entryId);
-			if ((await plan.at("cancel:lost")) === "lose") throw LOST();
-			return ack;
-		},
-		destroy: (conversationId) => deps.conversations.destroy(conversationId),
-	};
-	const settings = { ...deps.settings };
-	Object.defineProperty(settings, "runTimeoutMs", {
-		enumerable: true,
-		get: () => {
-			const configured = plan.config("run_timeout_ms");
-			return configured === null ? deps.settings.runTimeoutMs : Number(configured);
-		},
-	});
-	return {
-		oauth: fakeClients,
-		conversations,
-		settings,
-		fetch: async (input, init) => {
-			await plan.at("refresh:before");
-			const response = await send(input, init);
-			if ((await plan.at("refresh:answered")) === "lose") throw LOST();
-			return response;
 		},
 	};
 }

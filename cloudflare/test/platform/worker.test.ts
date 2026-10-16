@@ -62,7 +62,7 @@ describe("the router in workerd", () => {
 		expect(response.status).toBe(200);
 		const body = (await response.json()) as { objects: Record<string, { kind: string; name: string; jurisdiction: string | null }>; d1Migrations: string[] };
 		const nil = "00000000-0000-0000-0000-000000000000";
-		for (const kind of ["workspace", "conversation", "scripts", "sandbox"]) {
+		for (const kind of ["conversation", "scripts", "sandbox"]) {
 			// Locally, with debug on, an EU object is the plain namespace's `eu:<name>` (addressing.ts).
 			expect(body.objects[`${kind}:default`]).toMatchObject({ kind, name: nil, jurisdiction: null });
 			expect(body.objects[`${kind}:eu`]).toMatchObject({ kind, name: `eu:${nil}`, jurisdiction: null });

@@ -2,7 +2,7 @@
 // words, the upload's `?name=`, and the folder-limit messages.
 
 import { describe, expect, test } from "vitest";
-import { folderLimitMessage, mib, overFolder } from "../../src/files/limits.ts";
+import { folderLimitMessage, mib, overFolder, pages, sizeText, thousands } from "../../src/files/limits.ts";
 import { cleanName, numbered, sniff, uploadName } from "../../src/files/names.ts";
 
 const encoder = new TextEncoder();
@@ -113,6 +113,20 @@ describe("the upload's name", () => {
 });
 
 describe("messages", () => {
+	test("sizes in binary MB below a GiB, GB from there, up to six significant digits, and space in 4 KiB pages", () => {
+		expect(sizeText(268_435_456)).toBe("256 MB");
+		expect(sizeText(50 * 2 ** 20)).toBe("50 MB");
+		expect(sizeText(1_000_000)).toBe("0.953674 MB");
+		expect(sizeText(10)).toBe("0.00000953674 MB");
+		expect(sizeText(2 ** 30)).toBe("1 GB");
+		expect(sizeText(1.5 * 2 ** 30)).toBe("1.5 GB");
+		expect(sizeText(2 ** 40)).toBe("1024 GB");
+		expect(thousands(10_000)).toBe("10,000");
+		expect(thousands(999)).toBe("999");
+		expect(thousands(1_234_567)).toBe("1,234,567");
+		expect([pages(0), pages(1), pages(4096), pages(4097)]).toEqual([0, 4096, 4096, 8192]);
+	});
+
 	const limits = { folderBytes: 268_435_456, folderEntries: 10_000, runUploadBytes: 4 * 268_435_456 };
 
 	test("a run over a folder limit fails with the gateway's own words, the entries without a thousands separator", () => {

@@ -220,7 +220,18 @@ describe("startRun", () => {
 	test("a conversation the Workspace made is not Laravel's", async () => {
 		const within = scope();
 		const start = startOf(within);
-		await objectOf(start).init({ conversationId: start.conversation, workspace: { id: within.workspace, jurisdiction: "eu" }, userId: uuid7(), agentId: uuid7(), createdAt: Date.now() });
+		// The row as the Workspace's `init` wrote it: an owner and an agent, no organization.
+		await runInDurableObject(objectOf(start), (_instance, state) =>
+			void state.storage.sql.exec(
+				"INSERT INTO conversation (singleton, id, workspace_id, jurisdiction, user_id, agent_id, created_at, updated_at) VALUES (1, ?, ?, 'eu', ?, ?, ?, ?)",
+				start.conversation,
+				within.workspace,
+				uuid7(),
+				uuid7(),
+				Date.now(),
+				Date.now(),
+			),
+		);
 		expect(await refusalOf(commands.startRun(start))).toMatchObject({ code: "SCOPE_MISMATCH", status: 409 });
 		expect(await refusalOf(cancelOf(start))).toMatchObject({ code: "SCOPE_MISMATCH", status: 409 });
 	});

@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { OperationError } from "../../src/gateway/connector.ts";
 import { segment } from "../../src/gateway/http.ts";
 import { publicError } from "../../src/gateway/results.ts";
-import { PLAIN_TEXT, SINGLE_LINE, TextError, browserAddress, decodeCharacterReferences, decoded, percentDecode, percentEncode, plainText, singleLine, sliceText, truncate } from "../../src/lib/text.ts";
+import { PLAIN_TEXT, SINGLE_LINE, TextError, browserAddress, decodeCharacterReferences, decoded, percentDecode, percentEncode, plainText, singleLine, sliceText, splitParts, truncate } from "../../src/lib/text.ts";
 
 test("free-text validators draw one line for control characters", () => {
 	for (let code = 0; code < 0x80; code++) {
@@ -231,5 +231,11 @@ describe("cutting text", () => {
 		expect(sliceText(text, 2)).toBe("\u{1f600}b\u{1f601}");
 		// Pages cut at the same offsets join back to the text.
 		expect(sliceText(text, 0, 2) + sliceText(text, 2, 5) + sliceText(text, 5)).toBe(text);
+	});
+
+	test("splitParts cuts into parts of at most the size, never inside a pair, and none for nothing", () => {
+		expect(splitParts("ab\u{1f600}cd", 3)).toEqual(["ab", "\u{1f600}c", "d"]);
+		expect(splitParts("", 3)).toEqual([]);
+		expect(() => splitParts("x", 1)).toThrow(RangeError);
 	});
 });
