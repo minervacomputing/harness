@@ -202,6 +202,15 @@ export async function run(w: World, runId: string): Promise<RunView> {
 }
 
 /**
+ * How long to wait for a turn of a real model that makes up to `calls` model calls: 120 s a call, the longest the engine
+ * waits for a call's answer to start (model/route.ts `QUIET_MS`, which its Workers types keep out of this typecheck).
+ * A budget, not a bound: streaming and tools come on top, and Workers AI's first token alone takes most of it at times.
+ * Measured on 2026-10-16 in 20 turns of turns.test.ts: 16 took 13 to 27 s; in 4, every call waited 34 to 82 s for its
+ * first token and then streamed as fast as in the others, so those turns took 141 to 228 s.
+ */
+export const modelDeadline = (calls: number) => calls * 120_000;
+
+/**
  * Polls until the run has ended. A poll is an event that may wake an object a fault reset, and polls fail
  * while one restarts, so failures are tolerated until the deadline, which reports the last of them.
  */

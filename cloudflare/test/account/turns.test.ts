@@ -12,7 +12,7 @@
 
 import { writeFileSync } from "node:fs";
 import { afterAll, describe, expect, test } from "vitest";
-import { delivered, destroyed, file, finish, folder, type Head, LIST, type LocalCard, outcome, post, type RunEvent, type RunView, settled, type World, world } from "./driver.ts";
+import { delivered, destroyed, file, finish, folder, type Head, LIST, type LocalCard, modelDeadline, outcome, post, type RunEvent, type RunView, settled, type World, world } from "./driver.ts";
 
 const timings: Record<string, unknown> = {};
 
@@ -64,6 +64,9 @@ async function expectPublished(w: World, view: RunView, path: string) {
 	return { local, scripted, phase: phase as RunEvent, text: read.text as string };
 }
 
+/** The task takes three model calls; a model that checks its work makes a fourth. */
+const DEADLINE = modelDeadline(4);
+
 const TASK = "Do these two steps with your tools, in this order. Step 1: with the bash tool, run python3 to write a file named report.txt in the current directory that contains the line 'written by python'. Step 2: with the run_script tool, run JavaScript that calls tools.notes_list_notes({ folder: 'inbox' }) and returns how many notes it listed. Then tell me the count and the file name.";
 
 describe.concurrent("an end-to-end turn: Python through bash, a script calling a connector tool, the published folder", () => {
@@ -104,7 +107,7 @@ describe.concurrent("an end-to-end turn: Python through bash, a script calling a
 		for (let attempt = 1; attempt <= 2; attempt++) {
 			const w = await world({ model: "workers-ai" });
 			const runId = await post(w, TASK);
-			const view = await settled(w, runId, 150_000);
+			const view = await settled(w, runId, DEADLINE);
 			// The model called the tools when a command that is Python writing report.txt succeeded, a script ran and the
 			// connector's tool answered through it. Only that decides a retry or the failure; from then on everything is asserted.
 			const bash = view.events.filter((event) => {
@@ -123,5 +126,5 @@ describe.concurrent("an end-to-end turn: Python through bash, a script calling a
 		}
 		record("Workers AI turn, tools not called", attempts);
 		throw new Error(`@cf/zai-org/glm-5.3-flash did not call bash and run_script in two attempts, so the protocol was not exercised; each attempt called: ${JSON.stringify(attempts)}`);
-	}, 480_000);
+	}, 2 * DEADLINE + 120_000);
 });

@@ -35,6 +35,7 @@ import {
 	LIST_INBOX,
 	later,
 	local,
+	modelDeadline,
 	outcome,
 	post,
 	provider,
@@ -154,7 +155,8 @@ describe.concurrent("attempts on the platform", () => {
 	test("Workers AI: a smoke run with @cf/zai-org/glm-5.3-flash and the fake connector's read", async () => {
 		const w = await world({ model: "workers-ai" });
 		const runId = await post(w, "Use the notes_list_notes tool to list the notes in the folder inbox, then tell me how many there are.");
-		const view = await settled(w, runId, 180_000);
+		// Two model calls, and one more for a model that checks its work.
+		const view = await settled(w, runId, modelDeadline(3));
 		expect(view.head?.status, outcome(view)).toBe("completed");
 		expect(toolCalls(view.events)).toContainEqual(expect.objectContaining({ tool: LIST, decision: "allowed", count: 2 }));
 		const answer = view.events.find((event) => event.type === "message");
