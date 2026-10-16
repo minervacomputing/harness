@@ -2,9 +2,9 @@
 
 This page describes each connector: how to set it up, what agents can do with it, what stays hidden from them, and its known limits.
 
-Each connector needs an app registered with its provider, except Todoist (which registers its own), Stripe (each user pastes a restricted key) and the Web. Set the client id and secret (`MINERVA_<APP>_CLIENT_ID` and `MINERVA_<APP>_CLIENT_SECRET`) in the instance's `secrets.env`, where `pnpm secrets` leaves a commented placeholder for each ([cloudflare/README.md](../cloudflare/README.md), The instance directory), and deploy; a connector without them is not offered.
+Each connector needs an app registered with its provider, except Todoist (which registers its own), Stripe (each user pastes a restricted key) and the Web. The engine holds no OAuth client: the Laravel app runs the flows, and reads each client's id and secret from `MINERVA_<APP>_CLIENT_ID` and `MINERVA_<APP>_CLIENT_SECRET` in its own environment. An app is configured only while both are set.
 
-Callback URLs have the form `{site_url}/api/oauth/<connector>/callback`. Locally, `{site_url}` is `http://localhost:5173`.
+Callback URLs have the form `{app_url}/oauth/<connector>/callback`, where `{app_url}` is the Laravel app's origin.
 
 After connecting, choose under **Connections** what agents may do with each resource, then add the connection to an agent under **Agents**.
 
@@ -44,7 +44,7 @@ For Gmail and the Microsoft connectors, the provider's permission covers everyth
 Click **Connections → Connect Todoist**.
 
 - **Default:** Minerva registers its own OAuth client with Todoist on first use. There is nothing to configure.
-- **Your own app:** set `MINERVA_TODOIST_CLIENT_ID` and `MINERVA_TODOIST_CLIENT_SECRET`. The redirect URL is `http://localhost:5173/api/oauth/todoist/callback`.
+- **Your own app:** set `MINERVA_TODOIST_CLIENT_ID` and `MINERVA_TODOIST_CLIENT_SECRET`. The redirect URL is `{app_url}/oauth/todoist/callback`.
 
 After connecting, choose per project what agents may do, then add the connection to an agent under **Agents**.
 
@@ -52,7 +52,7 @@ After connecting, choose per project what agents may do, then add the connection
 
 ## Google Calendar, Drive and Gmail
 
-Create an OAuth client of type **Web application** in the Google Cloud console, enable the Google Calendar API, the Google Drive API and the Gmail API, and set `MINERVA_GOOGLE_CLIENT_ID` and `MINERVA_GOOGLE_CLIENT_SECRET`. Add the redirect URIs `http://localhost:5173/api/oauth/google_calendar/callback`, `http://localhost:5173/api/oauth/google_drive/callback` and `http://localhost:5173/api/oauth/gmail/callback`. Without the client, none of them is offered.
+Create an OAuth client of type **Web application** in the Google Cloud console, enable the Google Calendar API, the Google Drive API and the Gmail API, and set `MINERVA_GOOGLE_CLIENT_ID` and `MINERVA_GOOGLE_CLIENT_SECRET`. Add the redirect URIs `{app_url}/oauth/google_calendar/callback`, `{app_url}/oauth/google_drive/callback` and `{app_url}/oauth/gmail/callback`. Without the client, none of them is offered.
 
 Click **Connections → Connect Google Calendar** (or Drive, or Gmail), then choose per calendar, per file or folder, or per label what agents may do. Minerva asks Google only for read access at first, and for write scopes once the user allows creating.
 
@@ -80,7 +80,7 @@ Choose per label what agents may read, per address or domain whom they may send 
 
 ## GitHub
 
-Create a GitHub App at <https://github.com/settings/apps> and set `MINERVA_GITHUB_CLIENT_ID`, `MINERVA_GITHUB_CLIENT_SECRET` and `MINERVA_GITHUB_APP_SLUG` (the App's URL name, `github.com/apps/<slug>`). The callback URL is `http://localhost:5173/api/oauth/github/callback`; keep user authorization tokens expiring. Give it the repository permissions Metadata (read), Contents (read), Issues (read and write) and Pull requests (read and write). Without the client, GitHub is not offered.
+Create a GitHub App at <https://github.com/settings/apps> and set `MINERVA_GITHUB_CLIENT_ID` and `MINERVA_GITHUB_CLIENT_SECRET`. The App's URL name (`github.com/apps/<slug>`) is the engine's `MINERVA_GITHUB_APP_SLUG` ([The Web](#the-web) says why it is not set yet). The callback URL is `{app_url}/oauth/github/callback`; keep user authorization tokens expiring. Give it the repository permissions Metadata (read), Contents (read), Issues (read and write) and Pull requests (read and write). Without the client, GitHub is not offered.
 
 Click **Connections → Connect GitHub**, install the App on the repositories Minerva may see (the connection card links there), then choose per repository what agents may do.
 
@@ -90,7 +90,7 @@ Click **Connections → Connect GitHub**, install the App on the repositories Mi
 
 ## Notion
 
-Create a public integration at <https://www.notion.so/profile/integrations> and set `MINERVA_NOTION_CLIENT_ID` and `MINERVA_NOTION_CLIENT_SECRET`. The redirect URL is `http://localhost:5173/api/oauth/notion/callback`. Give it the capabilities Read content, Update content, Insert content, Read comments and Insert comments, and no user information. Without the client, Notion is not offered.
+Create a public integration at <https://www.notion.so/profile/integrations> and set `MINERVA_NOTION_CLIENT_ID` and `MINERVA_NOTION_CLIENT_SECRET`. The redirect URL is `{app_url}/oauth/notion/callback`. Give it the capabilities Read content, Update content, Insert content, Read comments and Insert comments, and no user information. Without the client, Notion is not offered.
 
 Click **Connections → Connect Notion** and choose in Notion which pages Minerva may reach. Then choose per page or database what agents may do: read, comment, create pages inside it, and edit it. Each covers the pages inside.
 
@@ -102,7 +102,7 @@ Click **Connections → Connect Notion** and choose in Notion which pages Minerv
 
 ## Linear
 
-Create an OAuth application at <https://linear.app/settings/api/applications> and set `MINERVA_LINEAR_CLIENT_ID` and `MINERVA_LINEAR_CLIENT_SECRET`. The callback URL is `http://localhost:5173/api/oauth/linear/callback`. Leave webhooks off. Without the client, Linear is not offered.
+Create an OAuth application at <https://linear.app/settings/api/applications> and set `MINERVA_LINEAR_CLIENT_ID` and `MINERVA_LINEAR_CLIENT_SECRET`. The callback URL is `{app_url}/oauth/linear/callback`. Leave webhooks off. Without the client, Linear is not offered.
 
 Click **Connections → Connect Linear**, then choose per team what agents may do: read issues, comment, create issues, and edit issues. Each covers the team's sub-teams. Minerva asks Linear only for read access at first, and for the write scopes an action needs once the user allows it.
 
@@ -114,9 +114,9 @@ Click **Connections → Connect Linear**, then choose per team what agents may d
 
 ## Slack
 
-Create an app at <https://api.slack.com/apps> (**From scratch**) in your own workspace and set `MINERVA_SLACK_CLIENT_ID` and `MINERVA_SLACK_CLIENT_SECRET` from **Basic Information**. Under **OAuth & Permissions**, add the redirect URL `{site_url}/api/oauth/slack/callback` and the bot token scopes `channels:read`, `groups:read`, `channels:history`, `groups:history`, `users:read` and `chat:write`. Leave PKCE off (Slack treats an app that uses it as a public client). Token rotation is optional. Without the client, Slack is not offered.
+Create an app at <https://api.slack.com/apps> (**From scratch**) in your own workspace and set `MINERVA_SLACK_CLIENT_ID` and `MINERVA_SLACK_CLIENT_SECRET` from **Basic Information**. Under **OAuth & Permissions**, add the redirect URL `{app_url}/oauth/slack/callback` and the bot token scopes `channels:read`, `groups:read`, `channels:history`, `groups:history`, `users:read` and `chat:write`. Leave PKCE off (Slack treats an app that uses it as a public client). Token rotation is optional. Without the client, Slack is not offered.
 
-Slack accepts only HTTPS redirect URLs, so locally the dev server needs an HTTPS tunnel (for example `cloudflared tunnel --url http://localhost:5173`). Set `MINERVA_SITE_URL` to the tunnel's address, start Vite with `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=<host>`, and open Minerva through the tunnel. Keep the app unlisted and installed only in your own workspace: Slack rate limits apps distributed outside its Marketplace much more strictly.
+Slack accepts only HTTPS redirect URLs, so a local Laravel app needs an HTTPS address, such as a tunnel's, as its `{app_url}`. Keep the app unlisted and installed only in your own workspace: Slack rate limits apps distributed outside its Marketplace much more strictly.
 
 Click **Connections → Connect Slack**, then choose per channel what agents may do: read messages, reply in threads, and post to the channel. In Slack, add the app to each channel it should reach (`/invite @<app name>`); Minerva sees no other channels. Minerva asks Slack for `chat:write` only once the user allows replying or posting.
 
@@ -128,7 +128,7 @@ Click **Connections → Connect Slack**, then choose per channel what agents may
 
 ## Outlook
 
-Register an app in the Microsoft Entra admin center (<https://entra.microsoft.com>, **App registrations → New registration**) and set `MINERVA_MICROSOFT_CLIENT_ID` (the Application (client) ID) and `MINERVA_MICROSOFT_CLIENT_SECRET` (a secret's value from **Certificates & secrets**). Choose **Accounts in any organizational directory and personal Microsoft accounts**, and add a **Web** redirect URI `{site_url}/api/oauth/outlook/callback` (for example `http://localhost:5173/api/oauth/outlook/callback`). Under **API permissions**, add the Microsoft Graph delegated permissions `offline_access`, `User.Read`, `Mail.Read` and `Mail.Send`. Some organizations let only an administrator consent to mail permissions; there, an admin must grant consent for the tenant. Without the client, Outlook is not offered.
+Register an app in the Microsoft Entra admin center (<https://entra.microsoft.com>, **App registrations → New registration**) and set `MINERVA_MICROSOFT_CLIENT_ID` (the Application (client) ID) and `MINERVA_MICROSOFT_CLIENT_SECRET` (a secret's value from **Certificates & secrets**). Choose **Accounts in any organizational directory and personal Microsoft accounts**, and add a **Web** redirect URI `{app_url}/oauth/outlook/callback` (for example `{app_url}/oauth/outlook/callback`). Under **API permissions**, add the Microsoft Graph delegated permissions `offline_access`, `User.Read`, `Mail.Read` and `Mail.Send`. Some organizations let only an administrator consent to mail permissions; there, an admin must grant consent for the tenant. Without the client, Outlook is not offered.
 
 Click **Connections → Connect Outlook**, then choose per folder what agents may read, and which addresses or domains they may send mail to. Access to a folder covers its subfolders. Minerva asks Microsoft only for read access at first, and for `Mail.Send` once the user allows sending.
 
@@ -140,7 +140,7 @@ Click **Connections → Connect Outlook**, then choose per folder what agents ma
 
 ## Outlook Calendar
 
-Outlook Calendar uses the Entra app from [Outlook](#outlook). Add a second **Web** redirect URI, `{site_url}/api/oauth/outlook_calendar/callback`, and the delegated permissions `Calendars.Read` and `Calendars.ReadWrite`.
+Outlook Calendar uses the Entra app from [Outlook](#outlook). Add a second **Web** redirect URI, `{app_url}/oauth/outlook_calendar/callback`, and the delegated permissions `Calendars.Read` and `Calendars.ReadWrite`.
 
 Click **Connections → Connect Outlook Calendar**, then choose per calendar (or for all calendars) whether agents may read events and create them. Calendars others shared with the account are listed too. Minerva asks Microsoft only for `Calendars.Read` at first, and for `Calendars.ReadWrite` once the user allows creating events.
 
@@ -150,7 +150,7 @@ Click **Connections → Connect Outlook Calendar**, then choose per calendar (or
 
 ## OneDrive and SharePoint
 
-OneDrive and SharePoint use the Entra app from [Outlook](#outlook). Add another **Web** redirect URI, `{site_url}/api/oauth/onedrive/callback`, and the delegated permissions `Files.Read.All`, `Sites.Read.All` and `Files.ReadWrite.All`.
+OneDrive and SharePoint use the Entra app from [Outlook](#outlook). Add another **Web** redirect URI, `{app_url}/oauth/onedrive/callback`, and the delegated permissions `Files.Read.All`, `Sites.Read.All` and `Files.ReadWrite.All`.
 
 Click **Connections → Connect OneDrive and SharePoint**, then choose per library, folder or file (or for everything) whether agents may read files and create them. The choices offered are the account's own OneDrive and the document libraries of the SharePoint sites it follows; searching finds folders and files anywhere the account can open, shared ones included. Access to a folder or library covers everything inside it. Minerva asks Microsoft for read access at first (`Sites.Read.All` lists followed sites), and for `Files.ReadWrite.All` once the user allows creating files.
 
@@ -160,7 +160,7 @@ Click **Connections → Connect OneDrive and SharePoint**, then choose per libra
 
 ## Microsoft Teams
 
-Microsoft Teams uses the Entra app from [Outlook](#outlook). Add another **Web** redirect URI, `{site_url}/api/oauth/teams/callback`, and the delegated permissions `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Read.All` and `ChannelMessage.Send`. `ChannelMessage.Read.All` needs a tenant administrator's consent (**Grant admin consent** on the app's **API permissions** page, in each organization whose users connect); without it, users can list teams and channels and post, but agents cannot read messages. Only work and school accounts can connect.
+Microsoft Teams uses the Entra app from [Outlook](#outlook). Add another **Web** redirect URI, `{app_url}/oauth/teams/callback`, and the delegated permissions `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Read.All` and `ChannelMessage.Send`. `ChannelMessage.Read.All` needs a tenant administrator's consent (**Grant admin consent** on the app's **API permissions** page, in each organization whose users connect); without it, users can list teams and channels and post, but agents cannot read messages. Only work and school accounts can connect.
 
 Click **Connections → Connect Microsoft Teams**, then choose per team or channel (or for everything) whether agents may read messages, reply in threads, and start threads. Access to a team covers all its channels, including private channels the account is in and channels added later. Agents post as the signed-in user. Minerva asks Microsoft for the permissions to list teams and channels at first, and for `ChannelMessage.Read.All` and `ChannelMessage.Send` once the user allows reading and writing.
 
@@ -182,7 +182,7 @@ Click **Connections → Stripe**, paste the key (it is checked with Stripe, stor
 
 ## HubSpot
 
-Create a public app on HubSpot's developer platform: with the HubSpot CLI, run `hs project create` (an app with OAuth authentication and marketplace distribution), then in `app-hsmeta.json` set `auth.redirectUrls` to `{site_url}/api/oauth/hubspot/callback` (for example `http://localhost:5173/api/oauth/hubspot/callback`) and `auth.requiredScopes` to `oauth`, `crm.objects.contacts.read`, `crm.objects.contacts.write`, `crm.objects.companies.read`, `crm.objects.deals.read` and `crm.objects.deals.write`, with no optional scopes. Run `hs project upload`, and set `MINERVA_HUBSPOT_CLIENT_ID` and `MINERVA_HUBSPOT_CLIENT_SECRET` from the app's **Auth** page. The app does not need to be listed in HubSpot's marketplace. Without the client, HubSpot is not offered.
+Create a public app on HubSpot's developer platform: with the HubSpot CLI, run `hs project create` (an app with OAuth authentication and marketplace distribution), then in `app-hsmeta.json` set `auth.redirectUrls` to `{app_url}/oauth/hubspot/callback` (for example `{app_url}/oauth/hubspot/callback`) and `auth.requiredScopes` to `oauth`, `crm.objects.contacts.read`, `crm.objects.contacts.write`, `crm.objects.companies.read`, `crm.objects.deals.read` and `crm.objects.deals.write`, with no optional scopes. Run `hs project upload`, and set `MINERVA_HUBSPOT_CLIENT_ID` and `MINERVA_HUBSPOT_CLIENT_SECRET` from the app's **Auth** page. The app does not need to be listed in HubSpot's marketplace. Without the client, HubSpot is not offered.
 
 Click **Connections → Connect HubSpot**; only a Super Admin of the HubSpot account (or a user with Marketplace Access) can install the app. Then choose what agents may do with all contacts, all companies, all deals, or the deals of one pipeline: read, create contacts and deals, edit them, and log notes. Companies are never created or edited, but notes can be logged on them. HubSpot gives the app the same access whoever installed it, so Minerva's grants are the only limit within those scopes.
 
@@ -194,7 +194,7 @@ Click **Connections → Connect HubSpot**; only a Super Admin of the HubSpot acc
 
 ## Jira
 
-Create an **OAuth 2.0 integration** in the Atlassian developer console (<https://developer.atlassian.com/console/myapps/>). Under **Permissions**, add the **User identity API** with `read:me`, and the **Jira API** with the classic scopes `read:jira-work` and `write:jira-work`. Under **Authorization**, set the callback URL to `{site_url}/api/oauth/jira/callback` (for example `http://localhost:5173/api/oauth/jira/callback`). Atlassian allows one callback URL per app, so Jira needs an app of its own. Set `MINERVA_JIRA_CLIENT_ID` and `MINERVA_JIRA_CLIENT_SECRET` from **Settings**. The app works for its developer at once; to let others connect, open **Distribution** and share it. Without the client, Jira is not offered.
+Create an **OAuth 2.0 integration** in the Atlassian developer console (<https://developer.atlassian.com/console/myapps/>). Under **Permissions**, add the **User identity API** with `read:me`, and the **Jira API** with the classic scopes `read:jira-work` and `write:jira-work`. Under **Authorization**, set the callback URL to `{app_url}/oauth/jira/callback` (for example `{app_url}/oauth/jira/callback`). Atlassian allows one callback URL per app, so Jira needs an app of its own. Set `MINERVA_JIRA_CLIENT_ID` and `MINERVA_JIRA_CLIENT_SECRET` from **Settings**. The app works for its developer at once; to let others connect, open **Distribution** and share it. Without the client, Jira is not offered.
 
 Click **Connections → Connect Jira** and pick the sites to allow on Atlassian's consent screen. Then choose per site or per project what agents may do: read issues, comment, create issues and change their status. Agents act as you: watchers are notified, and a project's automation rules may act on what they change, in that project or others.
 
@@ -206,7 +206,7 @@ Click **Connections → Connect Jira** and pick the sites to allow on Atlassian'
 
 ## Confluence
 
-Create another **OAuth 2.0 integration** in the Atlassian developer console (<https://developer.atlassian.com/console/myapps/>); Atlassian allows one callback URL per app, so Confluence cannot share Jira's. Under **Permissions**, add the **User identity API** with `read:me`, and the **Confluence API** with the granular scopes `read:space:confluence`, `read:page:confluence`, `read:comment:confluence`, `read:content-details:confluence`, `write:comment:confluence` and `write:page:confluence`. Under **Authorization**, set the callback URL to `{site_url}/api/oauth/confluence/callback`. Set `MINERVA_CONFLUENCE_CLIENT_ID` and `MINERVA_CONFLUENCE_CLIENT_SECRET` from **Settings**, and open **Distribution** to let others connect. Without the client, Confluence is not offered.
+Create another **OAuth 2.0 integration** in the Atlassian developer console (<https://developer.atlassian.com/console/myapps/>); Atlassian allows one callback URL per app, so Confluence cannot share Jira's. Under **Permissions**, add the **User identity API** with `read:me`, and the **Confluence API** with the granular scopes `read:space:confluence`, `read:page:confluence`, `read:comment:confluence`, `read:content-details:confluence`, `write:comment:confluence` and `write:page:confluence`. Under **Authorization**, set the callback URL to `{app_url}/oauth/confluence/callback`. Set `MINERVA_CONFLUENCE_CLIENT_ID` and `MINERVA_CONFLUENCE_CLIENT_SECRET` from **Settings**, and open **Distribution** to let others connect. Without the client, Confluence is not offered.
 
 Click **Connections → Connect Confluence** and pick the sites to allow on Atlassian's consent screen. Then choose per site or per space what agents may do: read pages, comment on them and create them. Agents act as you: watchers are notified, and a space's automation rules may act on what they change.
 
@@ -218,7 +218,7 @@ Click **Connections → Connect Confluence** and pick the sites to allow on Atla
 
 ## Intercom
 
-Create an app in Intercom's Developer Hub (<https://app.intercom.com/a/apps/_/developer-hub>). Under **Authentication**, turn on **Use OAuth**, add the redirect URL `{site_url}/api/oauth/intercom/callback`, and give the permissions **Read admins**, **Read conversations** and **Write conversations**. Set `MINERVA_INTERCOM_CLIENT_ID` and `MINERVA_INTERCOM_CLIENT_SECRET` from **Basic information**. The app works in its own workspace at once; other workspaces can install it only once Intercom has reviewed it. Without the client, Intercom is not offered. Intercom accepts only HTTPS redirect URLs, so locally Minerva needs an HTTPS tunnel, set up as for [Slack](#slack).
+Create an app in Intercom's Developer Hub (<https://app.intercom.com/a/apps/_/developer-hub>). Under **Authentication**, turn on **Use OAuth**, add the redirect URL `{app_url}/oauth/intercom/callback`, and give the permissions **Read admins**, **Read conversations** and **Write conversations**. Set `MINERVA_INTERCOM_CLIENT_ID` and `MINERVA_INTERCOM_CLIENT_SECRET` from **Basic information**. The app works in its own workspace at once; other workspaces can install it only once Intercom has reviewed it. Without the client, Intercom is not offered. Intercom accepts only HTTPS redirect URLs, so locally Minerva needs an HTTPS tunnel, set up as for [Slack](#slack).
 
 Click **Connections → Connect Intercom** and authorize the app for your workspace. Then choose per team inbox, or for conversations no team is assigned to, what agents may do: read conversations, add internal notes and reply to customers. Agents act as you; replies reach the customer by email or the Messenger. Conversations move between inboxes when they are reassigned, so one reassigned at the moment an agent writes can receive the write. To revoke access, remove the app from the workspace in Intercom's app settings.
 
@@ -230,7 +230,7 @@ Click **Connections → Connect Intercom** and authorize the app for your worksp
 
 ## Xero
 
-Create an app at <https://developer.xero.com/app/manage> as a **Web app** (authorization code flow), with the redirect URI `{site_url}/api/oauth/xero/callback`. Xero takes HTTPS redirect URIs, and `http://localhost` ones for testing. Set `MINERVA_XERO_CLIENT_ID` and `MINERVA_XERO_CLIENT_SECRET` from the app's **Configuration** page. Minerva asks for Xero's granular scopes: `accounting.invoices.read`, `accounting.contacts.read` and `accounting.settings.read` to read, and `accounting.invoices` once you allow drafting. Without the client, Xero is not offered.
+Create an app at <https://developer.xero.com/app/manage> as a **Web app** (authorization code flow), with the redirect URI `{app_url}/oauth/xero/callback`. Xero takes HTTPS redirect URIs, and `http://localhost` ones for testing. Set `MINERVA_XERO_CLIENT_ID` and `MINERVA_XERO_CLIENT_SECRET` from the app's **Configuration** page. Minerva asks for Xero's granular scopes: `accounting.invoices.read`, `accounting.contacts.read` and `accounting.settings.read` to read, and `accounting.invoices` once you allow drafting. Without the client, Xero is not offered.
 
 Click **Connections → Connect Xero**, sign in and pick the organisations Minerva may reach. Then choose per organisation (or for all of them, including ones added later) what agents may do: read invoices, bills and contacts, create draft sales invoices, and create draft bills. Drafts are never sent, approved or paid: a person approves them in Xero. To add an organisation, connect again and pick it; to remove one, disconnect it in Xero under **Settings → Connected apps**. Your role in each organisation still applies, and Xero refuses what it does not allow.
 
@@ -242,7 +242,7 @@ Click **Connections → Connect Xero**, sign in and pick the organisations Miner
 
 ## Sentry
 
-Create an OAuth application on sentry.io under **Settings → Account → API → Applications** (<https://sentry.io/settings/account/api/applications/>), with the redirect URI `{site_url}/api/oauth/sentry/callback`. Set `MINERVA_SENTRY_CLIENT_ID` and `MINERVA_SENTRY_CLIENT_SECRET` from the application's page. Minerva asks for `org:read`, `project:read` and `event:read`, and only reads. Only sentry.io is supported, not self-hosted Sentry. Without the client, Sentry is not offered.
+Create an OAuth application on sentry.io under **Settings → Account → API → Applications** (<https://sentry.io/settings/account/api/applications/>), with the redirect URI `{app_url}/oauth/sentry/callback`. Set `MINERVA_SENTRY_CLIENT_ID` and `MINERVA_SENTRY_CLIENT_SECRET` from the application's page. Minerva asks for `org:read`, `project:read` and `event:read`, and only reads. Only sentry.io is supported, not self-hosted Sentry. Without the client, Sentry is not offered.
 
 Click **Connections → Connect Sentry** and pick the organisation on Sentry's consent screen; a connection reaches that one organisation, so connect again for another. Then choose per project (or for all of them, including ones added later) whether agents may read its issues and events. Your team memberships still apply: Sentry shows only the projects you can see. To revoke access, remove the application under **Settings → Account → API → Authorized Applications**.
 
@@ -256,7 +256,7 @@ Click **Connections → Connect Sentry** and pick the organisation on Sentry's c
 
 Click **Connections → Add Web**, then choose which sites agents may read and whether they may search. A site is an exact host (`docs.python.org`) or a domain with its subdomains (`*.python.org`). Patterns stop at the registrable domain (per the Public Suffix List), so `*.org`, `*.co.uk` and `*.github.io` cannot be granted; only `*` allows every site. A block on a domain wins over access to a wider one. Opening an address sends whatever is in it to that site, so the sites an agent may read are also where it could carry data.
 
-Searching uses Brave Search, with `MINERVA_BRAVE_SEARCH_API_KEY` set to a key from <https://brave.com/search/api/>. Without it, agents can only read pages. The engine's build does not declare that key yet (`cloudflare.config.ts`), so a deployed engine withholds search until it does; the same holds for GitHub's `MINERVA_GITHUB_APP_SLUG`, without which GitHub's link to install the App is not shown.
+Searching uses Brave Search, with `MINERVA_BRAVE_SEARCH_API_KEY` set to a key from <https://brave.com/search/api/>. Without it, agents can only read pages. The engine's build does not declare that key yet (`cloudflare.config.ts`), so a deploy does not upload it and search stays off unless the key is already on the Worker; the same holds for GitHub's `MINERVA_GITHUB_APP_SLUG`, without which GitHub's link to install the App is not shown.
 
 **Agents can:** search the web through Brave Search (titles, addresses and snippets only) and read pages as text.
 

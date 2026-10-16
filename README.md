@@ -17,7 +17,7 @@
   <a href="LICENSE">MIT license</a>
 </p>
 
-This repository is **Minerva's open harness**: the engine that runs each agent turn, with its sandbox, its permission checks and its connectors, on Cloudflare. Minerva itself is a hosted product. **Self-hosting is not supported.**
+This repository is **Minerva's open harness**: the engine that runs each agent turn, with its sandbox, its permission checks and its connectors, on Cloudflare. It holds the engine alone. Minerva itself is a hosted product, and the product's side (accounts, organizations, connections and the app people use) is a private Laravel application that starts each turn here. **Self-hosting is not supported.**
 
 ![A support agent refunds a duplicate charge in Stripe and replies in Gmail. Its post to #general in Slack is refused, so it posts in #support instead.](docs/images/chat.png)
 
@@ -78,13 +78,13 @@ Prompt injection is not prevented, but it is contained. An email that asks the a
 | **Finance and sales** | Stripe, Xero, HubSpot |
 | **Web** | Reading sites you allow, and Brave search |
 
-Setting up each one is described in [docs/connectors.md](docs/connectors.md).
+What each one lets agents do, and what it hides from them, is in [docs/connectors.md](docs/connectors.md).
 
 ## How it is built
 
-The engine is TypeScript on Cloudflare: a Worker, a Durable Object per workspace and per conversation, D1, R2, Containers for the sandbox and Dynamic Workers for scripts. The agent loop is pi's durable harness (pi-durable); models run on Workers AI, or on OpenAI and Anthropic through an AI Gateway with prompt logging off. [ARCHITECTURE.md](ARCHITECTURE.md) describes the design, the trust model and the protocols that keep writes from being sent twice and revoked permissions from being used.
+The engine is TypeScript on Cloudflare: a Worker, three Durable Objects per conversation (the conversation, its sandbox and its scripts), D1, R2, Containers for the sandbox and Dynamic Workers for scripts. The agent loop is pi's durable harness (pi-durable); models run on Workers AI, or on OpenAI and Anthropic through an AI Gateway with prompt logging off. [ARCHITECTURE.md](ARCHITECTURE.md) describes the design, the trust model and the protocols that keep writes from being sent twice and revoked permissions from being used.
 
-Minerva is becoming two systems: a private product (accounts, organizations, connections, billing) that decides what may happen, and this engine, which does it and records what it did ([the plan](docs/plans/product-and-engine.md)).
+Minerva is two systems ([the plan](docs/plans/product-and-engine.md)): the private Laravel application holds users, organizations, connections and their credentials, grants, agents and the transcript, and decides what may happen; this engine runs the turns Laravel starts through an internal API, borrows each credential for one call, and reports what it did back as facts.
 
 ## Development
 
@@ -94,25 +94,21 @@ You need Node 24 and pnpm 10. Docker is optional (it runs the sandbox locally). 
 git clone https://github.com/minervacomputing/harness.git minerva
 cd minerva && pnpm install
 pnpm --dir cloudflare dev:offline     # the engine on http://127.0.0.1:8787, with a scripted fake model
-pnpm --dir frontend dev               # the app on http://localhost:5173
 ```
-
-Run `pnpm --dir cloudflare run seed` while both run, then sign in as `ada@example.com` with the password `password`. Emails (sign-in codes) are printed in the engine's output.
 
 | Command | What it does |
 |---|---|
-| `pnpm check` in `frontend/` | Lint, formatting, types, unused code and unit tests of the app |
 | `pnpm typecheck` in `cloudflare/` | The engine's types |
 | `pnpm test:unit` in `cloudflare/` | The engine's unit tests, in Node |
-| `pnpm test:platform` in `cloudflare/` | The Worker in local workerd, with the protocols' fault tests |
+| `pnpm test:platform` in `cloudflare/` | The Worker in local workerd, with the internal API and the protocols' fault tests |
+| `pnpm typecheck` and `pnpm openapi:check` in `contract/` | The contract's types, and its OpenAPI documents up to date |
 
 Deploying and the tests that run on Cloudflare are in [cloudflare/README.md](cloudflare/README.md).
 
 ```text
 cloudflare/  the engine: Worker, Durable Objects, sandbox image, connectors, deploy scripts
-contract/    the API's contract, shared by the engine and the app
-frontend/    React app (Vite, TanStack, assistant-ui)
-docs/        connector setup, images and plans
+contract/    the internal API's contract between Laravel and the engine, with its OpenAPI documents
+docs/        connectors, images and plans
 ```
 
 ## Status
@@ -121,7 +117,7 @@ Minerva is early. The permissions, the sandbox and the connectors work against l
 
 **Available now:** agents with their own instructions and connections, chat that shows every tool call, 20 connectors with resource-level permissions, a sealed sandbox per answer, files the agent works on with commands, and two-factor sign-in.
 
-**Next:** the hosted product with organizations and billing, then schedules and triggers, agents you can reach from Slack and Teams, asking you to allow a single action, and an audit log.
+**Next:** budgets per run and an emergency stop, deletion and retention, billing, then schedules and triggers, agents you can reach from Slack and Teams, asking you to allow a single action, and an audit log.
 
 **Later:** SSO and directory sync, a second person for high-risk actions, and dedicated deployments.
 
