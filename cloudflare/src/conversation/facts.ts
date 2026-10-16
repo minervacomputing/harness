@@ -51,21 +51,23 @@ export function toolCallFact(event: ToolCallEventData, args: Json | undefined): 
 
 /**
  * A settled model call's fact: `run.usage` with what it reported, else `run.unmetered`, a refusal at no tokens and every
- * other at `tokens` (its reservation), estimated. `requestBytes` only for a call that built a request.
+ * other at `tokens` (its reservation), estimated. `requestBytes` only for a call that built a request; `costMicros` and
+ * `prices` only for a call that was charged.
  */
-export function callFact(record: { call: string; provider: string; model: string }, settlement: CallSettlement, tokens: Tokens): NewFact {
+export function callFact(record: { call: string; provider: string; model: string }, settlement: CallSettlement, tokens: Tokens, charge: { costMicros: number; prices: string } | null): NewFact {
 	const call = { call: record.call, provider: record.provider, model: record.model };
 	const bytes = settlement.requestBytes === null ? {} : { requestBytes: settlement.requestBytes };
+	const priced = charge === null ? {} : { costMicros: charge.costMicros, prices: charge.prices };
 	switch (settlement.outcome) {
 		case "reported":
 			return {
 				type: "run.usage",
-				data: { ...call, inputTokens: tokens.input, outputTokens: tokens.output, cachedTokens: tokens.cached, cacheWriteTokens: tokens.cacheWrite, reasoningTokens: tokens.reasoning, ...bytes },
+				data: { ...call, inputTokens: tokens.input, outputTokens: tokens.output, cachedTokens: tokens.cached, cacheWriteTokens: tokens.cacheWrite, reasoningTokens: tokens.reasoning, ...bytes, ...priced },
 			};
 		case "refused":
-			return { type: "run.unmetered", data: { ...call, cause: "refused", inputTokens: 0, outputTokens: 0, estimated: false, ...bytes } };
+			return { type: "run.unmetered", data: { ...call, cause: "refused", inputTokens: 0, outputTokens: 0, estimated: false, ...bytes, ...(charge === null ? {} : { costMicros: 0, prices: charge.prices }) } };
 		case "unmetered":
-			return { type: "run.unmetered", data: { ...call, cause: settlement.cause, inputTokens: tokens.input, outputTokens: tokens.output, estimated: true, ...bytes } };
+			return { type: "run.unmetered", data: { ...call, cause: settlement.cause, inputTokens: tokens.input, outputTokens: tokens.output, estimated: true, ...bytes, ...priced } };
 	}
 }
 

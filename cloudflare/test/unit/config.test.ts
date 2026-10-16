@@ -34,16 +34,39 @@ test("settings are parsed once per environment", () => {
 	expect(settings(env)).toBe(settings(env));
 });
 
+/** What the deploy reads from models.dev for the default route (scripts/model-prices.ts). */
+const PRICES = { provider: "workers-ai", model: "@cf/zai-org/glm-5.3-flash", input: 150_000, cachedInput: 30_000, cacheWrite: 150_000, output: 500_000 };
+const PRICED = { MINERVA_MODEL_PRICES: JSON.stringify(PRICES) };
+
 test("a build refuses the fake model unless it is the test build; a deployed one needs debug off", () => {
-	const parsed = (values: Parameters<typeof settingsEnv>[0] = {}) => parse(settingsEnv(values));
+	const parsed = (values: Parameters<typeof settingsEnv>[0] = {}) => parse(settingsEnv({ ...PRICED, ...values }));
 	const deployed = { deployed: true, testBuild: false };
 	expect(() => checkBuild(parsed(), deployed)).not.toThrow();
 	expect(() => checkBuild(parsed({ MINERVA_DEBUG: "true" }), { deployed: true, testBuild: true })).toThrow("MINERVA_DEBUG must be off in a deployed build.");
 	// The fake model answers from the last user message: production would no longer use a real model.
 	for (const build of [deployed, { deployed: false, testBuild: false }]) {
-		expect(() => checkBuild(parsed({ MINERVA_MODEL_PROVIDER: "fake" }), build)).toThrow("MINERVA_MODEL_PROVIDER=fake is only for the test build.");
+		expect(() => checkBuild(parsed({ MINERVA_MODEL_PROVIDER: "fake", MINERVA_MODEL_PRICES: "" }), build)).toThrow("MINERVA_MODEL_PROVIDER=fake is only for the test build.");
 	}
-	expect(() => checkBuild(parsed({ MINERVA_MODEL_PROVIDER: "fake" }), { deployed: true, testBuild: true })).not.toThrow();
+	expect(() => checkBuild(parsed({ MINERVA_MODEL_PROVIDER: "fake", MINERVA_MODEL_PRICES: "" }), { deployed: true, testBuild: true })).not.toThrow();
+});
+
+test("a deployed build refuses a route without prices; the route's prices are parsed, and must be its own", () => {
+	const unpriced = parse(settingsEnv());
+	expect(unpriced.model.prices).toBeNull();
+	// Every call a deployed build makes is charged; the fake model's prices are in the test build's code.
+	for (const testBuild of [false, true]) {
+		expect(() => checkBuild(unpriced, { deployed: true, testBuild })).toThrow("A deployed build needs the prices of workers-ai @cf/zai-org/glm-5.3-flash, which the deploy reads from models.dev.");
+	}
+	expect(() => checkBuild(unpriced, { deployed: false, testBuild: false })).not.toThrow();
+	expect(parse(settingsEnv(PRICED)).model.prices).toEqual(PRICES);
+	const tiered = { ...PRICES, above: { inputTokens: 272_000, input: 4_000_000, cachedInput: 200_000, cacheWrite: 5_000_000, output: 15_000_000 } };
+	expect(parse(settingsEnv({ MINERVA_MODEL_PRICES: JSON.stringify(tiered) })).model.prices).toEqual(tiered);
+	expect(() => parse(settingsEnv({ MINERVA_MODEL_PRICES: JSON.stringify({ ...PRICES, model: "@cf/other" }) }))).toThrow(
+		"MINERVA_MODEL_PRICES must be the prices of workers-ai @cf/zai-org/glm-5.3-flash, not of workers-ai @cf/other.",
+	);
+	for (const malformed of ["{", JSON.stringify({ ...PRICES, input: 0.15 }), JSON.stringify({ ...PRICES, output: -1 }), "[]"]) {
+		expect(() => parse(settingsEnv({ MINERVA_MODEL_PRICES: malformed }))).toThrow("MINERVA_MODEL_PRICES must be a route's prices as JSON, or empty.");
+	}
 });
 
 test("a deployed build ignores the names it does not know, such as retired settings left in a vars file", () => {
@@ -55,8 +78,10 @@ test("a deployed build ignores the names it does not know, such as retired setti
 		MINERVA_FILES_WORKSPACE_BYTES: "-1",
 		MINERVA_RUN_TIMEOUT_SECONDS: "60",
 	};
-	const values = buildSettings({ deployed: true, faults: false, offline: false }, vars, "acme");
+	const values = buildSettings({ deployed: true, faults: false, offline: false }, { ...vars, MINERVA_MODEL_PRICES: "{}" }, "acme", PRICED.MINERVA_MODEL_PRICES);
 	expect(Object.keys(values).filter((name) => Object.hasOwn(vars, name))).toEqual(["MINERVA_RUN_TIMEOUT_SECONDS"]);
+	// The prices are the deploy's, never the source's.
+	expect(values.MINERVA_MODEL_PRICES).toBe(PRICED.MINERVA_MODEL_PRICES);
 	const parsed = parse(values);
 	expect(parsed.runTimeoutMs).toBe(60_000);
 	expect(() => checkBuild(parsed, { deployed: true, testBuild: false })).not.toThrow();

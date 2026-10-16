@@ -2,12 +2,17 @@
 // so a malformed value fails the build; in the Worker it throws on first use, so a misconfigured deploy
 // fails closed instead of running with a default.
 
+import { RoutePrices } from "@minerva/contract/internal";
+import { parseJson } from "./lib/json.ts";
+
 export interface SettingsEnv {
 	MINERVA_DEBUG: string;
 	MINERVA_RUN_TIMEOUT_SECONDS: string;
 	MINERVA_MODEL_PROVIDER: string;
 	MINERVA_MODEL_NAME: string;
 	MINERVA_MODEL_GATEWAY: string;
+	/** The route's prices, which the deploy reads from models.dev (scripts/model-prices.ts); empty when the build has none. */
+	MINERVA_MODEL_PRICES: string;
 	MINERVA_MODEL_API: string;
 	MINERVA_MODEL_MAX_OUTPUT_TOKENS: string;
 	MINERVA_MODEL_REASONING_EFFORT: string;
@@ -37,6 +42,8 @@ export interface Settings {
 		name: string;
 		/** The AI Gateway every model request goes through, with prompt logging off. */
 		gateway: string;
+		/** The route's prices from models.dev, in µ$ per million tokens; null when the build has none (budget/prices.ts). */
+		prices: RoutePrices | null;
 		api: "chat" | "responses";
 		maxOutputTokens: number;
 		/** Empty when the model does not reason or none is requested. */
@@ -84,13 +91,16 @@ export function settings(env: SettingsEnv): Settings {
 export function parse(env: SettingsEnv): Settings {
 	const folderBytes = count(env, "MINERVA_FILES_FOLDER_BYTES");
 	const timeout = optionalCount(env, "MINERVA_RUN_TIMEOUT_SECONDS");
+	const provider = oneOf(env, "MINERVA_MODEL_PROVIDER", ["workers-ai", "openai", "anthropic", "fake"] as const);
+	const name = required(env, "MINERVA_MODEL_NAME");
 	return {
 		debug: flag(env, "MINERVA_DEBUG"),
 		runTimeoutMs: timeout === null ? null : timeout * 1000,
 		model: {
-			provider: oneOf(env, "MINERVA_MODEL_PROVIDER", ["workers-ai", "openai", "anthropic", "fake"] as const),
-			name: required(env, "MINERVA_MODEL_NAME"),
+			provider,
+			name,
 			gateway: required(env, "MINERVA_MODEL_GATEWAY"),
+			prices: routePrices(env, provider, name),
 			api: oneOf(env, "MINERVA_MODEL_API", ["chat", "responses"] as const),
 			maxOutputTokens: count(env, "MINERVA_MODEL_MAX_OUTPUT_TOKENS"),
 			reasoningEffort: env.MINERVA_MODEL_REASONING_EFFORT.trim(),
@@ -106,6 +116,21 @@ export function parse(env: SettingsEnv): Settings {
 		internal: internal(env),
 		laravelUrl: env.MINERVA_LARAVEL_URL.trim() ? origin(env, "MINERVA_LARAVEL_URL") : null,
 	};
+}
+
+/** The route's prices: none when empty, else the configured route's, as the contract's catalog has them. */
+function routePrices(env: SettingsEnv, provider: string, name: string): RoutePrices | null {
+	const text = env.MINERVA_MODEL_PRICES.trim();
+	if (!text) return null;
+	let parsed: ReturnType<typeof RoutePrices.safeParse>;
+	try {
+		parsed = RoutePrices.safeParse(parseJson(text));
+	} catch {
+		throw invalid("MINERVA_MODEL_PRICES", "a route's prices as JSON, or empty");
+	}
+	if (!parsed.success) throw invalid("MINERVA_MODEL_PRICES", "a route's prices as JSON, or empty");
+	if (parsed.data.provider !== provider || parsed.data.model !== name) throw invalid("MINERVA_MODEL_PRICES", `the prices of ${provider} ${name}, not of ${parsed.data.provider} ${parsed.data.model}`);
+	return parsed.data;
 }
 
 const INTERNAL_NAMES = ["MINERVA_ENVIRONMENT", "MINERVA_ACCESS_ISSUER", "MINERVA_ACCESS_AUDIENCE", "MINERVA_ACCESS_CLIENTS"] as const;
@@ -127,13 +152,15 @@ function internal(env: SettingsEnv): Settings["internal"] {
 /**
  * A build's rules beyond parsing (cloudflare.config.ts). The fake model answers from the last user message,
  * so a prompt could script it: only the test build's entry has it, so any other build refuses it rather
- * than fail every model call. A deployed build also needs debug off and an https MINERVA_LARAVEL_URL.
+ * than fail every model call. A deployed build also needs debug off, an https MINERVA_LARAVEL_URL, and its route's prices,
+ * so that every call it makes is charged (the test build has the fake model's in code, budget/prices.ts).
  */
 export function checkBuild(parsed: Settings, build: { deployed: boolean; testBuild: boolean }): void {
 	if (!build.testBuild && parsed.model.provider === "fake") throw new Error("MINERVA_MODEL_PROVIDER=fake is only for the test build.");
 	if (!build.deployed) return;
 	if (parsed.debug) throw new Error("MINERVA_DEBUG must be off in a deployed build.");
 	if (parsed.laravelUrl !== null && !parsed.laravelUrl.startsWith("https://")) throw new Error("MINERVA_LARAVEL_URL must be an https origin in a deployed build's vars file.");
+	if (parsed.model.provider !== "fake" && parsed.model.prices === null) throw new Error(`A deployed build needs the prices of ${parsed.model.provider} ${parsed.model.name}, which the deploy reads from models.dev.`);
 }
 
 type Name = keyof SettingsEnv;

@@ -95,6 +95,7 @@ export const RoutePrices = TokenRates.extend({
   model: z.string(),
   above: TokenRates.extend({ inputTokens: z.int().min(1) }).optional(),
 })
+export type RoutePrices = z.infer<typeof RoutePrices>
 
 /** What the engine charges, in µ$ (docs/plans/chunk-14b-design.md, The price table): model routes, and container and script time per hour. */
 export const PriceTable = z.object({

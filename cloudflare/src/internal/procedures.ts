@@ -3,6 +3,7 @@
 
 import { engine } from "@minerva/contract/internal";
 import { implement } from "@orpc/server";
+import { pricesOf } from "../budget/prices.ts";
 import { connectorRegistry } from "../connectors/index.ts";
 import { catalogOf } from "./catalog.ts";
 import { checkGrantEdit, describeAccount, listResources } from "./connections.ts";
@@ -45,7 +46,7 @@ function notYet(chunk: number): () => never {
 }
 
 export const internalRouter = internal.router({
-	catalog: internal.catalog.handler(async () => catalogOf(await connectorRegistry())),
+	catalog: internal.catalog.handler(async ({ context }) => catalogOf(await connectorRegistry(), await pricesOf(context.env))),
 	startRun: internal.startRun.use(inEnvironment).handler(({ context, input }) => startRun(context.env, input)),
 	cancelRun: internal.cancelRun.use(inEnvironment).handler(({ context, input }) => cancelRun(context.env, input)),
 	replayFacts: internal.replayFacts.use(inEnvironment).handler(({ context, input }) => replayFacts(context.env, input)),

@@ -1,7 +1,9 @@
 // The catalog Laravel reads (docs/plans/contract.md, The catalog): every connector the registry serves, with its OAuth
-// descriptor, kinds, actions and operations' terms, and a version that names it. Built from the declarations alone.
+// descriptor, kinds, actions and operations' terms, and a version that names it, built from the declarations alone; and
+// the build's prices (budget/prices.ts), with their own version.
 
 import type { Catalog, CatalogAuth, CatalogConnector } from "@minerva/contract/internal";
+import type { Prices } from "../budget/prices.ts";
 import { type Auth, type Connector, offered } from "../gateway/connector.ts";
 import type { Registry } from "../gateway/registry.ts";
 import { hashInput } from "../lib/canonical.ts";
@@ -73,8 +75,11 @@ export function catalogVersion(registry: Registry): Promise<string> {
 	return version;
 }
 
-/** The catalog of the registry's connectors, in its order; its version is 16 hex of SHA-256 over their canonical JSON. */
-export async function catalogOf(registry: Registry): Promise<Catalog> {
+/**
+ * The catalog of the registry's connectors, in its order, and `prices` when given; its version is 16 hex of SHA-256 over
+ * the connectors' canonical JSON alone.
+ */
+export async function catalogOf(registry: Registry, prices?: Prices): Promise<Catalog> {
 	const connectors = registry.all().map(connectorOf);
-	return { version: (await sha256Hex(hashInput("catalog", connectors))).slice(0, 16), connectors };
+	return { version: (await sha256Hex(hashInput("catalog", connectors))).slice(0, 16), connectors, ...(prices ? { prices } : {}) };
 }

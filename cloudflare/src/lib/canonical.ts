@@ -1,6 +1,6 @@
 // Canonical JSON for the values Minerva hashes, which are stored formats: RFC 8785, the JSON
 // Canonicalization Scheme (JCS), written by `canonicalize`. Write keys, query hashes, operation
-// fingerprints, folder-version digests, the catalog's version, and a Laravel start's input and compiled snapshot hash it
+// fingerprints, folder-version digests, the catalog's and the price table's versions, and a Laravel start's input and compiled snapshot hash it
 // (`hashInput`). What the model or a provider reads is not this: it is `JSON.stringify`'s.
 //
 // The domain is what `parseJson` returns and our own plain objects: null, booleans, finite numbers,
@@ -35,7 +35,7 @@ export function canonicalJson(value: unknown, options: CanonicalOptions = {}): s
 }
 
 /** What each hash is for; the label is part of what it covers. */
-export type HashPurpose = "write-key" | "query" | "operation" | "folder-version" | "catalog" | "run-snapshot" | "start-input";
+export type HashPurpose = "write-key" | "query" | "operation" | "folder-version" | "catalog" | "prices" | "run-snapshot" | "start-input";
 
 /** The label a hash for `purpose` starts with. */
 export function hashLabel(purpose: HashPurpose): string {

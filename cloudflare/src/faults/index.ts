@@ -8,6 +8,7 @@
 import type { RunEvent } from "@minerva/contract";
 import { createLocalJWKSet } from "jose";
 import worker from "../index.ts";
+import { PRICE_SOURCE } from "../budget/prices.ts";
 import { CONNECTOR_SOURCE, servedConnectors } from "../connectors/index.ts";
 import { Conversation as BaseConversation } from "../conversation/conversation.ts";
 import { defaultPorts, PORTS } from "../conversation/ports.ts";
@@ -20,11 +21,14 @@ import { notesConnector } from "./connector.ts";
 import { hostedToken } from "./laravel.ts";
 import { type Fault, type Fired, planOf } from "./plan.ts";
 import { type CallMarks, type Calibration, executorContextOf, faultConversationPorts, laravelFetch, marksOf, providerFetch } from "./ports.ts";
+import { faultPriceTable } from "./prices.ts";
 import { faultRoutes } from "./routes.ts";
 import { FAULTS_SETTINGS } from "./settings.ts";
 
 CONNECTOR_SOURCE.connectors = async () => [...(await servedConnectors()), notesConnector()];
 PORTS.factory = () => faultConversationPorts(defaultPorts);
+// The fake model is charged too, and time at round numbers (prices.ts).
+PRICE_SOURCE.table = faultPriceTable;
 // The settings calls' provider requests (src/internal/providers.ts) reach the fake provider too, and nothing else.
 PROVIDER_NETWORK.fetch = (env, workspace) => providerFetch(env, workspace.id);
 // The default Access issuer is a placeholder (settings.ts): its keys are never fetched, so every assertion is refused.

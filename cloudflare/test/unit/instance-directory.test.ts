@@ -261,11 +261,13 @@ describe("the mode a build is in and the instance's kind", () => {
 });
 
 describe("an instance's settings", () => {
-	test("vars.env must exist and cannot set the gateway, which the build derives", () => {
+	test("vars.env must exist and cannot set the gateway, which the build derives, or the model's prices, which the deploy reads", () => {
 		const instance = make("acme");
 		expect(refusal(() => instanceVars(instance))).toBe(`A deployed build reads its settings from ${instance.files.vars}, which is missing (cloudflare/README.md, The instance directory).`);
 		put("acme", "vars.env", "MINERVA_DEBUG=false\nMINERVA_MODEL_GATEWAY=acme-other\n");
 		expect(refusal(() => instanceVars(instance))).toBe(`MINERVA_MODEL_GATEWAY is not a setting: the build sets it to the instance's name. Remove it from ${instance.files.vars}.`);
+		put("acme", "vars.env", "MINERVA_DEBUG=false\nMINERVA_MODEL_PRICES={}\n");
+		expect(refusal(() => instanceVars(instance))).toBe(`MINERVA_MODEL_PRICES is not a setting: the deploy reads the model's prices from models.dev. Remove it from ${instance.files.vars}.`);
 		put("acme", "vars.env", "MINERVA_DEBUG=false\n");
 		expect(instanceVars(instance)).toEqual({ MINERVA_DEBUG: "false" });
 	});

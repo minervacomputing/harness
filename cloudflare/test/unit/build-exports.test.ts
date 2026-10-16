@@ -15,6 +15,8 @@ import { createInstance } from "../../scripts/instance-files.ts";
 const ROOT = new URL("../../", import.meta.url).pathname;
 const CF = join(ROOT, "node_modules", ".bin", "cf");
 const IMAGE = `minerva-sandbox:${"a".repeat(24)}@sha256:${"b".repeat(64)}`;
+/** What the deploy reads from models.dev for the default route (scripts/model-prices.ts), which a deployed build needs. */
+const PRICES = JSON.stringify({ provider: "workers-ai", model: "@cf/zai-org/glm-5.3-flash", input: 150_000, cachedInput: 30_000, cacheWrite: 150_000, output: 500_000 });
 
 let base: string;
 
@@ -56,6 +58,7 @@ function build(mode: "production" | "faults" | "test" | "offline", instance?: st
 		MINERVA_INSTANCES_DIR: join(base, "instances"),
 		MINERVA_INSTANCE: instance,
 		MINERVA_SANDBOX_IMAGE: IMAGE,
+		MINERVA_MODEL_PRICES: PRICES,
 		MINERVA_DEV_OFFLINE: mode === "offline" ? "1" : undefined,
 		CLOUDFLARE_API_TOKEN: "invalid",
 		CLOUDFLARE_ACCOUNT_ID: "0".repeat(32),
@@ -92,6 +95,8 @@ test("a production instance's build has no Workspace, and a Workspace namespace 
 	expect(built.code.sort()).toEqual(["Conversation", "Sandbox", "Scripts"]);
 	expect(strayClasses(namespaces("Conversation", "Scripts", "Sandbox", "Workspace"), built.config)).toEqual(["Workspace"]);
 	expect(strayClasses(namespaces("Conversation", "Scripts", "Sandbox"), built.config)).toEqual([]);
+	// The prices the deploy read reach the build as a text binding.
+	expect(built.config.env.MINERVA_MODEL_PRICES).toEqual({ type: "text", value: PRICES });
 });
 
 test("a test instance's build has neither Workspace nor FaultMailbox, and their namespaces are strays", { timeout: 60_000 }, () => {

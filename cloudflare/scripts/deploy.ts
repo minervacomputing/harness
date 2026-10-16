@@ -11,8 +11,9 @@
 //
 // A deploy takes the checkout's lock and then the instance's, and every cf command goes to the instance's account
 // (`lockOperation` and `pinAccount` in scripts/run.ts; the first deploy records the account). Everything that can
-// fail locally runs before anything on the account changes, but for the sandbox's image: once the secrets are
-// checked, the deploy makes sure the account's container registry holds the image of container/ as it is
+// fail locally runs before anything on the account changes, but for the sandbox's image: once the secrets are checked
+// and the model's prices read from models.dev (scripts/model-prices.ts, which stops the deploy without them), the
+// deploy makes sure the account's container registry holds the image of container/ as it is
 // (scripts/image.ts), pushing it when it is missing; the registry is shared by the account's instances and
 // addressed by content, so a push changes no instance. Then the app is built, its bundle checked for the test
 // build's code (scripts/bundle.ts), its startup CPU measured locally (scripts/startup.ts), and the build checked to
@@ -35,6 +36,7 @@ import { accountSubdomain, checkOnAccount, ownNamespaces } from "./account.ts";
 import { appBuildProblems, buildAccount, buildDigest, builtImage, declaredSecrets, fileDigest, readBuild, strayClasses } from "./builds.ts";
 import { ensureImage } from "./image.ts";
 import { type Instance, checkFile, chooseInstance, parseInstanceArgs, readInstanceEnv } from "./instance.ts";
+import { instancePrices } from "./model-prices.ts";
 import { labOrigin } from "./origins.ts";
 import { CommandFailed, ROOT, hideOrigin, hideSecrets, lockOperation, pinAccount, run } from "./run.ts";
 
@@ -128,6 +130,10 @@ try {
 	const sameSecrets = () => {
 		if (fileDigest(SECRETS) !== secrets) throw new CommandFailed(`${SECRETS} changed during the deploy: run it again.`);
 	};
+
+	// The build charges every call at its route's prices, which only the deploy reads (cloudflare.config.ts).
+	step("The model's prices");
+	process.env.MINERVA_MODEL_PRICES = await instancePrices(INSTANCE);
 
 	// The sandbox's image, in the account's registry (scripts/image.ts): pushed only when container/ changed, and
 	// passed to the app's build by its digest. A push changes no instance: nothing runs the image until a deploy

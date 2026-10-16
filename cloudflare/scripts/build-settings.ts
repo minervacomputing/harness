@@ -5,9 +5,12 @@
 import type { SettingsEnv } from "../src/config.ts";
 import { FAULTS_SETTINGS } from "../src/faults/settings.ts";
 
-type Defaults = Omit<SettingsEnv, "MINERVA_MODEL_GATEWAY">;
+type Defaults = Omit<SettingsEnv, "MINERVA_MODEL_GATEWAY" | "MINERVA_MODEL_PRICES">;
 
-/** The settings with a default. MINERVA_MODEL_GATEWAY is not one: the build sets it to the instance's name. */
+/**
+ * The settings with a default. MINERVA_MODEL_GATEWAY and MINERVA_MODEL_PRICES are not settings: the build sets the first to
+ * the instance's name, and the second to the route's prices the deploy read from models.dev (scripts/model-prices.ts).
+ */
 const DEFAULTS: Defaults = {
 	MINERVA_DEBUG: "false",
 	MINERVA_RUN_TIMEOUT_SECONDS: "",
@@ -55,9 +58,9 @@ export interface SettingsBuild {
 	offline: boolean;
 }
 
-/** Every setting of the build: the source's value where it has one, else the build's default. */
-export function buildSettings(build: SettingsBuild, source: Record<string, string | undefined>, gateway: string): SettingsEnv {
+/** Every setting of the build: the source's value where it has one, else the build's default; and the gateway and prices. */
+export function buildSettings(build: SettingsBuild, source: Record<string, string | undefined>, gateway: string, prices = ""): SettingsEnv {
 	const defaults = { ...DEFAULTS, ...(build.offline ? OFFLINE_DEFAULTS : {}), ...(build.deployed && build.faults ? FAULTS_DEFAULTS : {}) };
 	const settings = Object.fromEntries(Object.entries(defaults).map(([name, fallback]) => [name, source[name] ?? fallback]));
-	return { ...settings, MINERVA_MODEL_GATEWAY: gateway } as unknown as SettingsEnv;
+	return { ...settings, MINERVA_MODEL_GATEWAY: gateway, MINERVA_MODEL_PRICES: prices } as unknown as SettingsEnv;
 }

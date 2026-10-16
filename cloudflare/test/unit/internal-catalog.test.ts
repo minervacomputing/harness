@@ -3,6 +3,7 @@
 import { Catalog } from "@minerva/contract/internal";
 import { expect, test } from "vitest";
 import { CONNECTORS } from "../../src/connectors/catalog.ts";
+import { priceTable, pricesVersion } from "../../src/budget/prices.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import { catalogOf } from "../../src/internal/catalog.ts";
 import { keyedConnector, mixedConnector } from "./fakes.ts";
@@ -51,6 +52,12 @@ test("the version names the declarations: the same ones give the same version, a
 	const renamed = mixedConnector();
 	const changed = await catalogOf(await Registry.create([{ ...renamed, name: `${renamed.name} renamed` }, keyedConnector()]));
 	expect(changed.version).not.toBe(first.version);
+	// The prices have a version of their own: the catalog's stays its connectors'.
+	const table = priceTable(null);
+	const prices = { version: await pricesVersion(table), table };
+	const priced = await catalogOf(await Registry.create([mixedConnector(), keyedConnector()]), prices);
+	expect(priced).toEqual({ ...first, prices });
+	expect(Catalog.parse(priced)).toEqual(priced);
 });
 
 test("an operation's terms are what Laravel needs to ask for scopes", async () => {

@@ -5,6 +5,9 @@ import { FAULTS_SETTINGS } from "./src/faults/settings.ts";
 // Platform tests: the Worker from cloudflare.config.ts in local workerd (Miniflare), with its Durable
 // Objects, D1 and R2 simulated locally. Remote bindings stay off, so nothing reaches the account.
 process.env.MINERVA_DEBUG ??= "true";
+// The fake model, which the test build's entry has and charges (src/faults/prices.ts), as the dev server's mode offline runs it.
+process.env.MINERVA_MODEL_PROVIDER ??= "fake";
+process.env.MINERVA_MODEL_NAME ??= "fake-1";
 // A throwaway value for local runs; a deployed instance's secrets are in its secrets.env (scripts/instance.ts).
 process.env.MINERVA_SECRET_KEY ??= "test-secret-key-for-local-platform-tests-only";
 // The internal API (test/platform/internal.test.ts signs its own Access assertions) and the fake Laravel's origin, the one

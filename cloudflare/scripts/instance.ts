@@ -456,12 +456,13 @@ export function readInstanceEnv(instance: Instance, file: "secrets" | "vars" | "
 /**
  * A deployed build's settings: the instance's vars.env, which must exist. It cannot set MINERVA_MODEL_GATEWAY,
  * which the build sets to the instance's name: a vars file that sets it would send the model's requests through
- * another gateway.
+ * another gateway; nor MINERVA_MODEL_PRICES, which the deploy reads from models.dev.
  */
 export function instanceVars(instance: Instance): Record<string, string> {
 	const vars = readInstanceEnv(instance, "vars");
 	if (!vars) throw new Error(`A deployed build reads its settings from ${instance.files.vars}, which is missing (cloudflare/README.md, The instance directory).`);
 	if (vars.MINERVA_MODEL_GATEWAY !== undefined) throw new Error(`MINERVA_MODEL_GATEWAY is not a setting: the build sets it to the instance's name. Remove it from ${instance.files.vars}.`);
+	if (vars.MINERVA_MODEL_PRICES !== undefined) throw new Error(`MINERVA_MODEL_PRICES is not a setting: the deploy reads the model's prices from models.dev. Remove it from ${instance.files.vars}.`);
 	return vars;
 }
 

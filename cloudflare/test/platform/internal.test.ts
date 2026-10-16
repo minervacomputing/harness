@@ -13,6 +13,7 @@ import { errors } from "jose";
 import { describe, expect, test, vi } from "vitest";
 import { z } from "zod";
 import scenarios from "../../../contract/scenarios/facts.json";
+import { pricesOf } from "../../src/budget/prices.ts";
 import { SECURITY_HEADERS } from "../../src/http/headers.ts";
 import { createApp } from "../../src/http/router.ts";
 import { ACCESS_KEYS, ASSERTION_HEADER } from "../../src/internal/access.ts";
@@ -20,6 +21,7 @@ import { contractHandler } from "../../src/internal/handler.ts";
 import { LARAVEL_NETWORK, LaravelUnreachable, laravelClient, retryable } from "../../src/laravel/client.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { FakeLaravel } from "../../src/faults/laravel.ts";
+import { FAKE_ROUTE_PRICES } from "../../src/faults/prices.ts";
 import { ORIGIN, assertion, call, commands, refusalOf, scope, signedAssertions, startOf } from "./internal-support.ts";
 
 signedAssertions();
@@ -32,6 +34,9 @@ describe("the commands", () => {
 		const catalog = await commands.catalog();
 		expect(Catalog.parse(catalog)).toEqual(catalog);
 		expect(catalog.connectors.some((connector) => connector.slug === "todoist" && connector.auth.type === "oauth2")).toBe(true);
+		// With the build's prices, the test build's with the fake model's; the catalog's version stays its connectors'.
+		expect(catalog.prices).toEqual(await pricesOf(env));
+		expect(catalog.prices?.table.routes).toEqual([FAKE_ROUTE_PRICES]);
 		const response = await call(`${INTERNAL_PREFIX}/catalog`);
 		for (const [name, value] of Object.entries(SECURITY_HEADERS)) expect(response.headers.get(name)).toBe(value);
 		expect(response.headers.get("Cache-Control")).toBe("no-store");

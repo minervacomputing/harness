@@ -8,6 +8,7 @@ import { env, exports } from "cloudflare:workers";
 import type { Fact, StartRun } from "@minerva/contract/internal";
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { sandboxObject } from "../../src/addressing.ts";
+import { callPrice, pricesOf } from "../../src/budget/prices.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
 import { RunStore } from "../../src/conversation/store.ts";
 import { FakeLaravel } from "../../src/faults/laravel.ts";
@@ -110,6 +111,7 @@ const ofRun = (start: StartRun, facts: Fact[], type: Fact["type"]) => facts.filt
 
 interface CallRow {
 	outcome: string;
+	cost_micros: number | null;
 	input_tokens: number;
 	output_tokens: number;
 	cached_tokens: number;
@@ -133,27 +135,31 @@ async function callSums(start: StartRun) {
 		reasoningTokens: sum("reported", "reasoning_tokens"),
 		estimatedInputTokens: sum("unmetered", "input_tokens"),
 		estimatedOutputTokens: sum("unmetered", "output_tokens"),
+		charges: rows.map((row) => row.cost_micros as number),
 	};
 }
 
 describe("run.settled", () => {
-	test("follows run.finished and every settlement fact of its run, once, with the sums of its records and spans", async () => {
+	test("follows run.finished and every settlement fact of its run, once, with the sums of its records and spans, and its charge", async () => {
 		const start = await startWith(SLOW);
 		await commands.startRun(start);
 		await until(() => runStatus(start), (status) => status === "running");
 		// Besides pi's own call: a reported, an unmetered and a refused call, and a script that took 1234 ms, recorded and settled
-		// by a store of their own; and a container that ran ten seconds.
+		// by a store of their own; and a container that ran ten seconds. The test build charges the fake model 1 µ$ a token,
+		// and time 1 µ$ a millisecond and 1,000 µ$ a script (src/faults/prices.ts).
 		const fence = { runId: start.run, attempt: 1 };
-		const request = { provider: "workers-ai", model: "fake-1", reserved: { input: 10, output: 5 } };
+		const request = { provider: "fake", model: "fake-1", reserved: { input: 10, output: 5 } };
+		const prices = await pricesOf(env);
 		const at = Date.now();
 		await runInDurableObject(objectOf(start), (_instance, state) => {
 			const store = new RunStore(state.storage, () => at);
-			const settle = (settlement: Parameters<RunStore["settleModelCall"]>[2]) => store.settleModelCall(start.run, store.recordModelCall(fence, request) as string, settlement);
+			const settle = (settlement: Parameters<RunStore["settleModelCall"]>[2]) =>
+				store.settleModelCall(start.run, store.recordModelCall(fence, request, callPrice(prices, request.provider, request.model)) as string, settlement);
 			settle({ outcome: "reported", tokens: { input: 7, output: 3, cached: 2, cacheWrite: 1, reasoning: 4 }, requestBytes: null });
 			settle({ outcome: "unmetered", cause: "stopped", requestBytes: null });
 			settle({ outcome: "refused", requestBytes: null });
 			store.recordScript({ ...fence, scriptId: "script" }, 60_000);
-			store.endScript("script", at + 1234);
+			store.endScript("script", at + 1234, prices);
 		});
 		await addSpan(start, { startedAt: at - 10_000, leaseUntil: at + 3_600_000, endedAt: at });
 		await commands.cancelRun({ scope: start.scope, conversation: start.conversation, run: start.run, reason: "cancelled" });
@@ -167,9 +173,30 @@ describe("run.settled", () => {
 		const sums = await callSums(start);
 		expect(sums).toMatchObject({ modelCalls: 4, refusedCalls: 1, unmeteredCalls: 1, estimatedInputTokens: 10, estimatedOutputTokens: 5, cachedTokens: 2, cacheWriteTokens: 1, reasoningTokens: 4 });
 		expect(calls).toHaveLength(sums.modelCalls);
-		expect(settled?.data).toEqual({ ...sums, containers: 1, containerMs: 10_000, containerEstimated: false, scripts: 1, scriptMs: 1234, scriptEstimated: false });
-		const row = await runInDurableObject(objectOf(start), (_instance, state) => state.storage.sql.exec("SELECT metered, settled_at FROM runs WHERE id = ?", start.run).one());
-		expect(row).toEqual({ metered: 1, settled_at: expect.any(Number) });
+		// Each call at 1 µ$ a token of its counted input and output (none for the refusal), as its fact says.
+		const charges = calls.map((fact) => (fact.data as { costMicros?: number }).costMicros);
+		const ascending = (a: number | undefined, b: number | undefined) => (a ?? -1) - (b ?? -1);
+		expect(charges.toSorted(ascending)).toEqual(sums.charges.toSorted(ascending));
+		const modelMicros = sums.inputTokens + sums.outputTokens + sums.estimatedInputTokens + sums.estimatedOutputTokens;
+		expect(sums.charges.reduce((total, charge) => total + charge, 0)).toBe(modelMicros);
+		const { charges: _charges, ...totals } = sums;
+		expect(settled?.data).toEqual({
+			...totals,
+			containers: 1,
+			containerMs: 10_000,
+			containerEstimated: false,
+			scripts: 1,
+			scriptMs: 1234,
+			scriptEstimated: false,
+			prices: prices.version,
+			modelMicros,
+			containerMicros: 10_000,
+			scriptMicros: 2_234,
+			chargedMicros: modelMicros + 10_000 + 2_234,
+		});
+		const row = await runInDurableObject(objectOf(start), (_instance, state) => state.storage.sql.exec("SELECT metered, settled_at, spent FROM runs WHERE id = ?", start.run).one());
+		// What was spent before the run settled: its calls and its script, not its container time.
+		expect(row).toEqual({ metered: 1, settled_at: expect.any(Number), spent: modelMicros + 2_234 });
 	});
 
 	test("waits for a call the end cut, and follows its settlement", async () => {
@@ -214,21 +241,23 @@ describe("run.settled", () => {
 		await factsUntil(start, "run.settled");
 		// The run's settlement taken back, with a script a gone instance left open, all in one step the job cannot enter.
 		const at = Date.now();
+		const prices = await pricesOf(env);
 		const steps = await runInDurableObject(objectOf(start), (_instance, state) => {
 			const store = new RunStore(state.storage, () => at + 5000);
 			const sql = state.storage.sql;
 			sql.exec("UPDATE runs SET settled_at = NULL WHERE id = ?", start.run);
 			sql.exec("INSERT INTO script_records (script_id, run_id, instance, started_at, timeout_ms) VALUES ('script', ?, 'gone', ?, 2000)", start.run, at);
 			const open = store.settlement(start.run).state;
-			const refused = store.settleRun(start.run, { containers: 0, containerMs: 0, containerEstimated: false });
-			store.settleLost();
+			const refused = store.settleRun(start.run, { containers: 0, containerMs: 0, containerEstimated: false }, prices);
+			store.settleLost(prices);
 			const due = store.settlement(start.run).state;
-			const written = store.settleRun(start.run, { containers: 0, containerMs: 0, containerEstimated: false });
+			const written = store.settleRun(start.run, { containers: 0, containerMs: 0, containerEstimated: false }, prices);
 			const fact = JSON.parse(sql.exec<{ fact: string }>("SELECT fact FROM facts ORDER BY seq DESC LIMIT 1").one().fact) as Fact;
-			return { open, refused, due, written, fact, again: store.settleRun(start.run, { containers: 0, containerMs: 0, containerEstimated: false }) };
+			return { open, refused, due, written, fact, again: store.settleRun(start.run, { containers: 0, containerMs: 0, containerEstimated: false }, prices) };
 		});
 		expect(steps).toMatchObject({ open: "open", refused: false, due: "due", written: true, again: false });
-		expect(steps.fact).toMatchObject({ type: "run.settled", data: { scripts: 1, scriptMs: 2000, scriptEstimated: true } });
+		// Charged as it ended: 1,000 µ$ and 1 µ$ a millisecond.
+		expect(steps.fact).toMatchObject({ type: "run.settled", data: { scripts: 1, scriptMs: 2000, scriptEstimated: true, scriptMicros: 3_000 } });
 	});
 
 	test("a run the conversation's deletion ended still settles", async () => {

@@ -97,7 +97,10 @@ function settingsFor(target: Target): SettingsEnv {
 	// The gateway is the instance's own, whatever the shell says; a vars file that sets it stops the build
 	// (`instanceVars`), since it would send the model's requests through another gateway.
 	const source: Record<string, string | undefined> = target.instance ? instanceVars(target.instance) : build.env;
-	const values = buildSettings({ deployed: target.instance !== null, faults: target.faults, offline: target.offline }, source, target.names.gateway);
+	// A deployed build's route prices come from the deploy (scripts/model-prices.ts), never from a vars file; no other build
+	// has any but the test build's fake model's, in its code (src/faults/prices.ts).
+	const prices = target.instance ? (build.env.MINERVA_MODEL_PRICES ?? "") : "";
+	const values = buildSettings({ deployed: target.instance !== null, faults: target.faults, offline: target.offline }, source, target.names.gateway, prices);
 	const parsed = parse(values);
 	checkBuild(parsed, { deployed: target.instance !== null, testBuild: target.faults });
 	return values;
@@ -180,6 +183,7 @@ export default defineConfig(({ mode }) => {
 				MINERVA_MODEL_PROVIDER: setting("MINERVA_MODEL_PROVIDER"),
 				MINERVA_MODEL_NAME: setting("MINERVA_MODEL_NAME"),
 				MINERVA_MODEL_GATEWAY: setting("MINERVA_MODEL_GATEWAY"),
+				MINERVA_MODEL_PRICES: setting("MINERVA_MODEL_PRICES"),
 				MINERVA_MODEL_API: setting("MINERVA_MODEL_API"),
 				MINERVA_MODEL_MAX_OUTPUT_TOKENS: setting("MINERVA_MODEL_MAX_OUTPUT_TOKENS"),
 				MINERVA_MODEL_REASONING_EFFORT: setting("MINERVA_MODEL_REASONING_EFFORT"),

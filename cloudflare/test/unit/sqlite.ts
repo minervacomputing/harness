@@ -4,7 +4,7 @@
 
 import { LEDGER_NOTES_SCHEMA, LEDGER_SCHEMA } from "../../src/gateway/ledger.ts";
 import { PAGE_TOKEN_SCHEMA } from "../../src/gateway/page-tokens.ts";
-import { type Sql, type SyncDatabase, applySchema, sqliteSql } from "../../src/lib/sql.ts";
+import { type Sql, type SqlValue, type SyncDatabase, applySchema, sqliteSql } from "../../src/lib/sql.ts";
 
 interface Database extends SyncDatabase {
 	close(): void;
@@ -36,4 +36,40 @@ export function scratchDirectory(): { path: string; done(): void } {
 	const fs = node.getBuiltinModule("node:fs");
 	const path = fs.mkdtempSync(`${node.getBuiltinModule("node:os").tmpdir()}/minerva-ledger-`);
 	return { path, done: () => fs.rmSync(path, { recursive: true, force: true }) };
+}
+
+/**
+ * A Durable Object's storage over node:sqlite, as far as the Conversation's store uses it: `sql.exec` with bindings, its
+ * cursor's `toArray` and `one`, and `transactionSync`.
+ */
+export function durableStorage(db: Database = openDatabase()): DurableObjectStorage {
+	let depth = 0;
+	const sql = {
+		exec(query: string, ...bindings: SqlStorageValue[]) {
+			const rows = db.prepare(query).all(...(bindings as SqlValue[]));
+			return {
+				toArray: () => rows,
+				one: () => {
+					if (rows.length !== 1) throw new Error(`Expected exactly one row, not ${rows.length}.`);
+					return rows[0];
+				},
+			};
+		},
+	};
+	const transactionSync = <T>(change: () => T): T => {
+		const savepoint = `s${depth++}`;
+		db.exec(`SAVEPOINT ${savepoint}`);
+		try {
+			const result = change();
+			db.exec(`RELEASE ${savepoint}`);
+			return result;
+		} catch (error) {
+			db.exec(`ROLLBACK TO ${savepoint}`);
+			db.exec(`RELEASE ${savepoint}`);
+			throw error;
+		} finally {
+			depth--;
+		}
+	};
+	return { sql, transactionSync } as unknown as DurableObjectStorage;
 }

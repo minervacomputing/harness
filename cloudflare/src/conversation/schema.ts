@@ -270,4 +270,21 @@ ALTER TABLE runs ADD COLUMN settled_at INTEGER;
 CREATE INDEX runs_unsettled ON runs (id) WHERE metered = 1 AND settled_at IS NULL;
 `,
 	},
+	// Budgets (docs/plans/chunk-14b-design.md, Admission at the call record), in µ$: a run's allowance (null when Laravel sent
+	// none), what its settled calls and ended scripts were charged (`spent`), and since when it may have had a container. A
+	// call record keeps the rates and the price table's version it was admitted at (null when its route had no price), a
+	// script record the version it was charged at; each its charge once settled. Records settled before this step have none.
+	{
+		id: 12,
+		sql: `
+ALTER TABLE runs ADD COLUMN allowance INTEGER;
+ALTER TABLE runs ADD COLUMN spent INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE runs ADD COLUMN container_since INTEGER;
+ALTER TABLE call_records ADD COLUMN rates TEXT;
+ALTER TABLE call_records ADD COLUMN prices TEXT;
+ALTER TABLE call_records ADD COLUMN cost_micros INTEGER;
+ALTER TABLE script_records ADD COLUMN prices TEXT;
+ALTER TABLE script_records ADD COLUMN cost_micros INTEGER;
+`,
+	},
 ];

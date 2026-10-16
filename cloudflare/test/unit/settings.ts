@@ -8,6 +8,7 @@ export function settingsEnv(overrides: Partial<SettingsEnv> = {}): SettingsEnv {
 		MINERVA_MODEL_PROVIDER: "workers-ai",
 		MINERVA_MODEL_NAME: "@cf/zai-org/glm-5.3-flash",
 		MINERVA_MODEL_GATEWAY: "acme",
+		MINERVA_MODEL_PRICES: "",
 		MINERVA_MODEL_API: "chat",
 		MINERVA_MODEL_MAX_OUTPUT_TOKENS: "8192",
 		MINERVA_MODEL_REASONING_EFFORT: "",

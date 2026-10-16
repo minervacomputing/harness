@@ -12,7 +12,7 @@
 // - a long tool across PiHarness's heartbeats, which is no restart;
 // - a revocation during a run: Laravel's cancel, answered once the run has stopped;
 // - a crash while a write is dispatched, after the provider applied it;
-// - a crash mid-stream: every counted model call settles once, and run.settled sums them and the container's time;
+// - a crash mid-stream: every counted model call settles once, and run.settled sums them, their charges and the container's time;
 // - one smoke run with Workers AI and the fake connector's tool;
 // - the local tools in the conversation's real container (ARCHITECTURE.md: Checkpoints; the Checkpoints and Files
 //   rows): write, edit, Python through bash and read, published with the run and hydrated into the next
@@ -157,7 +157,11 @@ describe.concurrent("attempts on the platform", () => {
 		// The call the crash cut is settled by the next instance; the fake reports usage for every other.
 		expect(unmetered.map((data) => [data.cause, data.estimated])).toEqual([["lost", true]]);
 		const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
+		// The test build charges the fake model 1 µ$ a token counted, and container time 1 µ$ a millisecond (src/faults/prices.ts).
+		const costs = [...usage, ...unmetered].map((data) => data.costMicros);
+		expect(costs).toEqual([...usage, ...unmetered].map((data) => data.inputTokens + data.outputTokens));
 		const totals = facts.find((fact) => fact.type === "run.settled")?.data;
+		const modelMicros = sum(costs.map(Number));
 		expect(totals).toEqual({
 			modelCalls: calls.length,
 			refusedCalls: 0,
@@ -175,6 +179,11 @@ describe.concurrent("attempts on the platform", () => {
 			scripts: 0,
 			scriptMs: 0,
 			scriptEstimated: false,
+			prices: expect.stringMatching(/^[0-9a-f]{16}$/),
+			modelMicros,
+			containerMicros: totals?.containerMs,
+			scriptMicros: 0,
+			chargedMicros: modelMicros + Number(totals?.containerMs),
 		});
 		expect(totals?.containers).toBeGreaterThan(0);
 		expect(totals?.containerMs).toBeGreaterThan(0);

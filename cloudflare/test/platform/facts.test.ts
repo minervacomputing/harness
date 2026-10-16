@@ -18,6 +18,7 @@ import { base64url } from "../../src/lib/bytes.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { type FakeScript, fakeUpstream } from "../../src/model/fake.ts";
 import { routeOf } from "../../src/model/route.ts";
+import { pricesOf } from "../../src/budget/prices.ts";
 import { settings } from "../../src/config.ts";
 import { STREAM_TIMING, openSocket } from "../../src/stream/relay.ts";
 import { STREAM_AUDIENCE, STREAM_PURPOSE } from "../../src/stream/token.ts";
@@ -213,13 +214,15 @@ describe("model call settlements", () => {
 	}
 
 	const { provider, cap } = routeOf(settings(env));
+	/** The test build charges the fake model 1 µ$ a token (src/faults/prices.ts). */
+	const charged = async (costMicros: number) => ({ costMicros, prices: (await pricesOf(env)).version });
 
 	test("a reported call gives one run.usage, with its route and tokens, and adds them to the run's sums", async () => {
 		const { facts, records, run } = await oneCall({ text: "Hi", usage: { input: 7, output: 3 } });
 		const call = records[0]?.call;
 		expect(call).toMatch(/^[0-9a-f]{8}$/);
 		expect(facts.map((fact) => [fact.type, fact.data])).toEqual([
-			["run.usage", { call, provider, model: "fake-1", inputTokens: 7, outputTokens: 3, cachedTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }],
+			["run.usage", { call, provider, model: "fake-1", inputTokens: 7, outputTokens: 3, cachedTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, ...(await charged(10)) }],
 		]);
 		expect(records).toEqual([{ call, outcome: "reported", cause: null, input_tokens: 7, output_tokens: 3 }]);
 		expect(run).toEqual({ model_calls: 1, input_tokens: 7, output_tokens: 3, unmetered_model_calls: 0 });
@@ -229,7 +232,7 @@ describe("model call settlements", () => {
 		const { facts, records, run } = await oneCall({ text: "Hi", usage: null });
 		const call = records[0]?.call;
 		expect(facts.map((fact) => [fact.type, fact.data])).toEqual([
-			["run.unmetered", { call, provider, model: "fake-1", cause: "no_usage", inputTokens: 128_000, outputTokens: cap, estimated: true }],
+			["run.unmetered", { call, provider, model: "fake-1", cause: "no_usage", inputTokens: 128_000, outputTokens: cap, estimated: true, ...(await charged(128_000 + cap)) }],
 		]);
 		expect(records).toEqual([{ call, outcome: "unmetered", cause: "no_usage", input_tokens: 128_000, output_tokens: cap }]);
 		expect(run).toEqual({ model_calls: 1, input_tokens: 0, output_tokens: 0, unmetered_model_calls: 1 });
@@ -239,14 +242,14 @@ describe("model call settlements", () => {
 		const refusal = await oneCall({ refused: { status: 429 } });
 		const call = refusal.records[0]?.call;
 		expect(refusal.facts.map((fact) => [fact.type, fact.data])).toEqual([
-			["run.unmetered", { call, provider, model: "fake-1", cause: "refused", inputTokens: 0, outputTokens: 0, estimated: false }],
+			["run.unmetered", { call, provider, model: "fake-1", cause: "refused", inputTokens: 0, outputTokens: 0, estimated: false, ...(await charged(0)) }],
 		]);
 		expect(refusal.records).toEqual([{ call, outcome: "refused", cause: null, input_tokens: 0, output_tokens: 0 }]);
 		expect(refusal.run).toEqual({ model_calls: 1, input_tokens: 0, output_tokens: 0, unmetered_model_calls: 0 });
 
 		const failure = await oneCall({ refused: { status: 502 } });
 		expect(failure.facts.map((fact) => [fact.type, fact.data])).toEqual([
-			["run.unmetered", { call: failure.records[0]?.call, provider, model: "fake-1", cause: "failed", inputTokens: 128_000, outputTokens: cap, estimated: true }],
+			["run.unmetered", { call: failure.records[0]?.call, provider, model: "fake-1", cause: "failed", inputTokens: 128_000, outputTokens: cap, estimated: true, ...(await charged(128_000 + cap)) }],
 		]);
 		expect(failure.run).toEqual({ model_calls: 1, input_tokens: 0, output_tokens: 0, unmetered_model_calls: 1 });
 	});
@@ -260,7 +263,7 @@ describe("model call settlements", () => {
 		// Recorded by a store other than the live instance's, which its run's settlement would settle as lost: the run owes none.
 		const call = await runInDurableObject(objectOf(start), (_instance, state) => {
 			state.storage.sql.exec("UPDATE runs SET metered = 0 WHERE id = ?", start.run);
-			return new RunStore(state.storage).recordModelCall(fence, request);
+			return new RunStore(state.storage).recordModelCall(fence, request, null);
 		});
 		expect(call).toMatch(/^[0-9a-f]{8}$/);
 		await commands.cancelRun({ scope: start.scope, conversation: start.conversation, run: start.run, reason: "cancelled" });
@@ -274,7 +277,7 @@ describe("model call settlements", () => {
 			const before = sql.exec<{ count: number }>("SELECT count(*) AS count FROM facts").one().count;
 			store.settleModelCall(start.run, call as string, { outcome: "unmetered", cause: "stopped", requestBytes: 321 });
 			store.settleModelCall(start.run, call as string, { outcome: "reported", tokens: { input: 1, output: 1, cached: 0, cacheWrite: 0, reasoning: 0 }, requestBytes: null });
-			const refused = store.recordModelCall(fence, request);
+			const refused = store.recordModelCall(fence, request, null);
 			return {
 				refused,
 				written: sql.exec<{ fact: string }>("SELECT fact FROM facts WHERE seq > ? ORDER BY seq", before).toArray().map((row) => JSON.parse(row.fact) as Fact),
@@ -312,18 +315,19 @@ describe("model call settlements", () => {
 			new RunStore(state.storage, () => recorded - 5_000).recordScript(script("expired"), 1_000);
 			other.recordScript(script("cut"), 60_000);
 			mine.recordScript(script("own"), 60_000);
-			return [other.recordModelCall(fence, request), mine.recordModelCall(fence, request)];
+			return [other.recordModelCall(fence, request, null), mine.recordModelCall(fence, request, null)];
 		});
 		await commands.cancelRun({ scope: start.scope, conversation: start.conversation, run: start.run, reason: "cancelled" });
 		const open = () => runInDurableObject(objectOf(start), (_instance, state) => state.storage.sql.exec<{ call: string }>("SELECT call FROM call_records WHERE outcome IS NULL ORDER BY call").toArray().map((row) => row.call));
 		await until(open, (calls) => calls.length === 2);
+		const prices = await pricesOf(env);
 		const after = await runInDurableObject(objectOf(start), (_instance, state) => {
 			const sql = state.storage.sql;
 			const before = sql.exec<{ count: number }>("SELECT count(*) AS count FROM facts").one().count;
 			const settledAt = (clock = Date.now());
-			const settled = [mine?.settleLost(), mine?.settleLost()];
+			const settled = [mine?.settleLost(prices), mine?.settleLost(prices)];
 			// An end that comes after the rule ended a record changes nothing.
-			mine?.endScript("expired", settledAt);
+			mine?.endScript("expired", settledAt, prices);
 			// The run ended: a script it would start now is refused, and nothing is recorded.
 			const refused = mine?.recordScript(script("late"), 60_000);
 			return {

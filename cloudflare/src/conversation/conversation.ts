@@ -44,6 +44,7 @@ import { raiseFactSeq } from "../internal/recovery.ts";
 import { appliedMigrations, migrate } from "../lib/sqlite.ts";
 import { callOf, MODEL_REF, MINERVA_API, MINERVA_PROVIDER, MODEL_ALIAS, minervaProvider, type ModelHost } from "../model/provider.ts";
 import { routeOf } from "../model/route.ts";
+import { callPrice, pricesOf } from "../budget/prices.ts";
 import { sandboxSpec } from "../sandbox/constants.ts";
 import { containerCharge, type SealedSpans, spansOpenUntil } from "../sandbox/store.ts";
 import { outputSink } from "../sandbox/sink.ts";
@@ -544,8 +545,9 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	 * conversation with no organization. Such a run is activated here, and its loop started.
 	 */
 	async #recover(): Promise<void> {
+		const prices = await pricesOf(this.env);
 		const unsettled = await this.#store.outside(() => {
-			this.#store.settleLost();
+			this.#store.settleLost(prices);
 			return this.#store.unsettledRuns();
 		});
 		for (const runId of unsettled) this.#pushSettle(runId);
@@ -725,8 +727,9 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	 * again from the start, so a reset anywhere leaves the job, which runs again, or `#recover` makes it again.
 	 */
 	async #settleJob(runId: RunId): Promise<{ rescheduleAt: number } | undefined> {
+		const prices = await pricesOf(this.env);
 		const settlement = await this.#store.outside(() => {
-			this.#store.settleLost();
+			this.#store.settleLost(prices);
 			return this.#store.settlement(runId);
 		});
 		if (settlement.state === "none") return undefined;
@@ -743,7 +746,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		const open = spansOpenUntil(sealed, now);
 		if (open !== null) return { rescheduleAt: Math.min(now + SANDBOX_RETRY_MS, open) };
 		await this.#point("settle:sealed", runId);
-		await this.#store.outside(() => this.#store.settleRun(runId, containerCharge(sealed, settlement.createdAt)));
+		await this.#store.outside(() => this.#store.settleRun(runId, containerCharge(sealed, settlement.createdAt), prices));
 		await this.#point("settle:written", runId);
 		return undefined;
 	}
@@ -1135,7 +1138,10 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			end: (script) => {
 				// When it answered, not when pi's transaction let the end through.
 				const answered = this.#store.now();
-				return this.#untilHeard("a script's record could not be ended", () => this.#store.outside(() => this.#store.endScript(script.scriptId, answered)));
+				return this.#untilHeard("a script's record could not be ended", async () => {
+					const prices = await pricesOf(this.env);
+					await this.#store.outside(() => this.#store.endScript(script.scriptId, answered, prices));
+				});
 			},
 			waitUntil: (promise) => this.ctx.waitUntil(promise.catch((error: unknown) => this.#log("a script's reset failed", error))),
 			started: (runId, callId, name) => host.started(runId, callId, name),
@@ -1325,7 +1331,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			},
 			// Outside pi's transactions (store.ts `outside`): a call that was sent, and its cost, do not roll back.
 			record: async (fence, request) => {
-				const call = await store.outside(() => store.recordModelCall(fence, request));
+				const price = callPrice(await pricesOf(this.env), request.provider, request.model);
+				const call = await store.outside(() => store.recordModelCall(fence, request, price));
 				if (call !== null) await this.#untilHeard("a recorded model call could not be sent", () => this.#point("model:recorded", call));
 				return call;
 			},

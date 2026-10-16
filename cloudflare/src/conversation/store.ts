@@ -23,6 +23,7 @@ import { VALUE_PART, sliceText, splitParts } from "../lib/text.ts";
 import { isoTime } from "../lib/dates.ts";
 import type { Attachment, FolderChanges, FolderWarnings, Run, ToolCallEventData } from "@minerva/contract";
 import type { Fact, StartRunResult } from "@minerva/contract/internal";
+import { type CallPrice, type Prices, type TokenRates, callCharge, containerTimeCharge, scriptCharge } from "../budget/prices.ts";
 import type { SettledWrite } from "../gateway/ledger.ts";
 import type { CallRequest, CallSettlement } from "../model/provider.ts";
 import type { Tokens } from "../model/tap.ts";
@@ -135,6 +136,12 @@ export interface RunRow {
 	/** 1 for a run this version started: it owes a `run.settled` once it ended. */
 	metered: number;
 	settled_at: number | null;
+	/** µ$ Laravel allows the run; null when it sent none. */
+	allowance: number | null;
+	/** µ$ its settled calls and ended scripts were charged. */
+	spent: number;
+	/** When it may first have had a container; null before. */
+	container_since: number | null;
 	[key: string]: SqlStorageValue;
 }
 
@@ -173,6 +180,11 @@ interface CallRecordRow {
 	cache_write_tokens: number | null;
 	reasoning_tokens: number | null;
 	settled_at: number | null;
+	/** The rates (`TokenRates` as JSON) and the price table's version it was admitted at; null when its route had no price. */
+	rates: string | null;
+	prices: string | null;
+	/** Its charge in µ$ once settled, at `rates`; null while open or unpriced. */
+	cost_micros: number | null;
 	[key: string]: SqlStorageValue;
 }
 
@@ -283,6 +295,9 @@ export const RUN_COLUMNS = [
 	"finished_at",
 	"metered",
 	"settled_at",
+	"allowance",
+	"spent",
+	"container_since",
 ].join(", ");
 
 export class RunStore {
@@ -642,17 +657,18 @@ export class RunStore {
 
 	/**
 	 * Records a model call about to be sent and counts it (`model_calls`), in one change with the fence check: null, with
-	 * nothing recorded, when the attempt can no longer act. Answers the call's id, 8 hex drawn again on a collision within
-	 * the run. Made outside pi's transactions, so a call that was sent stays recorded.
+	 * nothing recorded, when the attempt can no longer act. The record keeps the rates it is admitted at (`price`; null when
+	 * its route has none), which its settlement charges. Answers the call's id, 8 hex drawn again on a collision within the
+	 * run. Made outside pi's transactions, so a call that was sent stays recorded.
 	 */
-	recordModelCall(fence: AttemptFence, request: CallRequest): string | null {
+	recordModelCall(fence: AttemptFence, request: CallRequest, price: CallPrice | null): string | null {
 		return this.write(() => {
 			if (!this.isCurrent(fence)) return null;
 			for (;;) {
 				const inserted = this.#sql
 					.exec<{ call: string }>(
-						`INSERT INTO call_records (run_id, call, attempt, instance, provider, model, reserved_input, reserved_output, created_at)
-						VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING RETURNING call`,
+						`INSERT INTO call_records (run_id, call, attempt, instance, provider, model, reserved_input, reserved_output, created_at, rates, prices)
+						VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING RETURNING call`,
 						fence.runId,
 						tokenHex(4),
 						fence.attempt,
@@ -662,6 +678,8 @@ export class RunStore {
 						request.reserved.input,
 						request.reserved.output,
 						this.now(),
+						price === null ? null : JSON.stringify(price.rates),
+						price?.version ?? null,
 					)
 					.toArray()[0];
 				if (!inserted) continue;
@@ -674,17 +692,19 @@ export class RunStore {
 	/**
 	 * Settles a recorded call, once: a call already settled changes nothing and writes no fact. Not fenced: a call is
 	 * settled whichever attempt made it. The run's sums follow in the same change (`input_tokens` and `output_tokens` for a
-	 * reported call, `unmetered_model_calls` for an unmetered one), with the call's `run.usage` or `run.unmetered` fact. An
-	 * unmetered call is counted at its reservation. Made outside pi's transactions: a provider call's cost does not roll back.
+	 * reported call, `unmetered_model_calls` for an unmetered one, `spent` for a priced one), with the call's `run.usage` or
+	 * `run.unmetered` fact. An unmetered call is counted, and charged, at its reservation; a refused one is charged nothing.
+	 * Made outside pi's transactions: a provider call's cost does not roll back.
 	 */
 	settleModelCall(runId: RunId, call: string, settlement: CallSettlement): void {
 		this.write(() => {
 			const record = this.#sql.exec<CallRecordRow>("SELECT * FROM call_records WHERE run_id = ? AND call = ? AND outcome IS NULL", runId, call).toArray()[0];
 			if (!record) return;
 			const tokens = settledTokens(record, settlement);
+			const charge = record.rates === null || record.prices === null ? null : { costMicros: callCharge(parseJson(record.rates) as unknown as TokenRates, tokens), prices: record.prices };
 			this.#sql.exec(
 				`UPDATE call_records SET outcome = ?, cause = ?, request_bytes = ?, input_tokens = ?, output_tokens = ?, cached_tokens = ?,
-					cache_write_tokens = ?, reasoning_tokens = ?, settled_at = ? WHERE run_id = ? AND call = ?`,
+					cache_write_tokens = ?, reasoning_tokens = ?, settled_at = ?, cost_micros = ? WHERE run_id = ? AND call = ?`,
 				settlement.outcome,
 				settlement.outcome === "unmetered" ? settlement.cause : null,
 				settlement.requestBytes,
@@ -694,12 +714,14 @@ export class RunStore {
 				tokens.cacheWrite,
 				tokens.reasoning,
 				this.now(),
+				charge?.costMicros ?? null,
 				runId,
 				call,
 			);
 			if (settlement.outcome === "reported") this.#sql.exec("UPDATE runs SET input_tokens = input_tokens + ?, output_tokens = output_tokens + ? WHERE id = ?", tokens.input, tokens.output, runId);
 			else if (settlement.outcome === "unmetered") this.#sql.exec("UPDATE runs SET unmetered_model_calls = unmetered_model_calls + 1 WHERE id = ?", runId);
-			this.#fact(runId, callFact(record, settlement, tokens));
+			if (charge !== null) this.#sql.exec("UPDATE runs SET spent = spent + ? WHERE id = ?", charge.costMicros, runId);
+			this.#fact(runId, callFact(record, settlement, tokens, charge));
 		});
 	}
 
@@ -722,27 +744,50 @@ export class RunStore {
 		});
 	}
 
-	/** Ends a script's record at `at`, when it answered, once. Not fenced: the script ran whichever way the run went. */
-	endScript(scriptId: string, at: EpochMs): void {
-		this.#sql.exec("UPDATE script_records SET ended_at = ? WHERE script_id = ? AND ended_at IS NULL", at, scriptId);
+	/**
+	 * Ends a script's record at `at`, when it answered, once, charged at `prices` and added to its run's `spent` in the same
+	 * change. Not fenced: the script ran whichever way the run went.
+	 */
+	endScript(scriptId: string, at: EpochMs, prices: Prices): void {
+		this.write(() => {
+			const open = this.#sql.exec<{ started_at: number }>("SELECT started_at FROM script_records WHERE script_id = ? AND ended_at IS NULL", scriptId).toArray()[0];
+			if (open) this.#endScript(scriptId, open.started_at, at, prices);
+		});
+	}
+
+	/** In the caller's change: the open script ends at `at`, charged for its time since `startedAt`. */
+	#endScript(scriptId: string, startedAt: EpochMs, at: EpochMs, prices: Prices, estimated = false): void {
+		const cost = scriptCharge(prices.table.script, Math.max(0, at - startedAt));
+		const { run_id } = this.#sql
+			.exec<{ run_id: RunId }>(
+				"UPDATE script_records SET ended_at = ?, estimated = ?, prices = ?, cost_micros = ? WHERE script_id = ? RETURNING run_id",
+				at,
+				estimated ? 1 : 0,
+				prices.version,
+				cost,
+				scriptId,
+			)
+			.one();
+		this.#sql.exec("UPDATE runs SET spent = spent + ? WHERE id = ?", cost, run_id);
 	}
 
 	/**
 	 * The restart rule: every call record another instance left open settles unmetered, cause `lost`, at its reservation,
 	 * and every script record it left open ends at its clock's bound, or now if that is sooner, `estimated`. That instance
 	 * is gone (a Durable Object has one live instance, and a reset ends the old one's work), so nothing else would settle
-	 * them; this instance's own records are its streams' and scripts' to settle. Answers how many records it settled.
+	 * them; this instance's own records are its streams' and scripts' to settle. Each is charged as it settles, a script at
+	 * `prices`. Answers how many records it settled.
 	 */
-	settleLost(): number {
+	settleLost(prices: Prices): number {
 		return this.write(() => {
 			const open = this.#sql.exec<{ run_id: RunId; call: string }>("SELECT run_id, call FROM call_records WHERE outcome IS NULL AND instance != ?", this.instance).toArray();
 			for (const { run_id, call } of open) this.settleModelCall(run_id, call, { outcome: "unmetered", cause: "lost", requestBytes: null });
-			const ended = this.#sql.exec(
-				"UPDATE script_records SET ended_at = min(?, started_at + timeout_ms), estimated = 1 WHERE ended_at IS NULL AND instance != ? RETURNING script_id",
-				this.now(),
-				this.instance,
-			).toArray().length;
-			return open.length + ended;
+			const now = this.now();
+			const scripts = this.#sql
+				.exec<{ script_id: string; started_at: number; timeout_ms: number }>("SELECT script_id, started_at, timeout_ms FROM script_records WHERE ended_at IS NULL AND instance != ?", this.instance)
+				.toArray();
+			for (const script of scripts) this.#endScript(script.script_id, script.started_at, Math.min(now, script.started_at + script.timeout_ms), prices, true);
+			return open.length + scripts.length;
 		});
 	}
 
@@ -767,9 +812,10 @@ export class RunStore {
 	/**
 	 * Writes the run's `run.settled` once, when its settlement is due: the totals of its call records (reported tokens apart
 	 * from the reservations unmetered calls are counted at) and of its script records, with its container time, and
-	 * `settled_at`, in one change. False, writing nothing, otherwise. Made outside pi's transactions.
+	 * `settled_at`, in one change. When every record of the run was charged, it carries the run's charge too: its calls' and
+	 * scripts', and its container time at `prices`. False, writing nothing, otherwise. Made outside pi's transactions.
 	 */
-	settleRun(runId: RunId, containers: ContainerCharge): boolean {
+	settleRun(runId: RunId, containers: ContainerCharge, prices: Prices): boolean {
 		return this.write(() => {
 			if (this.settlement(runId).state !== "due") return false;
 			const calls = this.#sql
@@ -794,8 +840,22 @@ export class RunStore {
 					runId,
 				)
 				.one();
+			const charged = this.#sql
+				.exec<{ unpriced: number; modelMicros: number; scriptMicros: number }>(
+					`SELECT (SELECT count(*) FROM call_records WHERE run_id = ?1 AND cost_micros IS NULL)
+							+ (SELECT count(*) FROM script_records WHERE run_id = ?1 AND cost_micros IS NULL) AS unpriced,
+						(SELECT coalesce(sum(cost_micros), 0) FROM call_records WHERE run_id = ?1) AS modelMicros,
+						(SELECT coalesce(sum(cost_micros), 0) FROM script_records WHERE run_id = ?1) AS scriptMicros`,
+					runId,
+				)
+				.one();
+			const containerMicros = containerTimeCharge(prices.table.container, containers.containerMs);
+			const money =
+				charged.unpriced > 0
+					? {}
+					: { prices: prices.version, modelMicros: charged.modelMicros, containerMicros, scriptMicros: charged.scriptMicros, chargedMicros: charged.modelMicros + containerMicros + charged.scriptMicros };
 			this.#sql.exec("UPDATE runs SET settled_at = ? WHERE id = ?", this.now(), runId);
-			this.#fact(runId, { type: "run.settled", data: { ...calls, ...containers, scripts: scripts.scripts, scriptMs: scripts.scriptMs, scriptEstimated: scripts.scriptEstimated === 1 } });
+			this.#fact(runId, { type: "run.settled", data: { ...calls, ...containers, scripts: scripts.scripts, scriptMs: scripts.scriptMs, scriptEstimated: scripts.scriptEstimated === 1, ...money } });
 			return true;
 		});
 	}

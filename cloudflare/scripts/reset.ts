@@ -12,8 +12,9 @@
 // instance.json and on the account (scripts/identity.ts): --test for a test instance, --production for any other,
 // which is never chosen by default. In order:
 // 1. Takes the checkout's lock and the instance's, and pins every cf command to the instance's account
-//    (scripts/run.ts, lockOperation and pinAccount; a first run records the account), then builds the app and the quiesced
-//    instance (reset-worker/), locally. Every name below comes from the app's build, and each must be the
+//    (scripts/run.ts, lockOperation and pinAccount; a first run records the account), then builds the app (with the model's
+//    prices from models.dev, which a deployed build needs: scripts/model-prices.ts) and the quiesced instance
+//    (reset-worker/), locally. Every name below comes from the app's build, and each must be the
 //    instance's own (scripts/instance.ts: its database, its two buckets, its container), or nothing happens.
 // 2. Checks the instance's identity on the account (scripts/identity.ts: D1's identity row, else the live app's
 //    bindings, else an empty D1), which must be the flag's kind; with --yes it then writes the identity row when it
@@ -50,6 +51,7 @@ import { accountSubdomain, ownNamespaces, workerExists } from "./account.ts";
 import { buildAccount, buildDigest, ownContainer, readBuild, strayClasses } from "./builds.ts";
 import { type Instance, chooseInstance, parseInstanceArgs } from "./instance.ts";
 import { type LifecycleRule, lifecycleExtras, lifecycleMatches, lifecycleProblems } from "./lifecycle.ts";
+import { instancePrices } from "./model-prices.ts";
 import { CommandFailed, ROOT, cfJson, hide, lockOperation, pinAccount, redact, run } from "./run.ts";
 import { readOnly, rowsFrom } from "./schema.ts";
 
@@ -186,6 +188,8 @@ try {
 	// 1. The builds, locally.
 	current = "building";
 	step("Building the app and the quiesced instance (local only)");
+	// The app's build, read only for its names, is a deployed build: it needs the model's prices (scripts/model-prices.ts).
+	process.env.MINERVA_MODEL_PRICES = await instancePrices(INSTANCE);
 	run("cf", ["build", "--mode", MODE]);
 	run(process.execPath, ["scripts/bundle.ts"], { print: true });
 	run("cf", ["build", "--mode", `reset-${MODE}`], { cwd: RESET_DIR });
