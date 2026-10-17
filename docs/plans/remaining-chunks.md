@@ -316,30 +316,30 @@ The engine reports a conversation's stored bytes at the end of each run, and Lar
 **Build.**
 
 - [x] The rule (owner, 2026-10-16): report at the end of each run, refuse in Laravel. No reservation per upload, no byte allowance on `StartRun`, no counter enforced in the engine (`UNCOUNTED` stays), and no fact without a run. The plan's version is in Appendix B.
-- [ ] Contract. `run.finished` gains an optional `storedBytes`: the sum over the conversation's `stored` blobs of each size rounded up to whole pages (`files/limits.ts`), read in `finish`'s transaction after `publish`. Loose and doomed blobs are left out. Laravel deploys first.
-- [ ] The engine. `publish` returns the number, and `run.finished` carries it; a sum that throws leaves the field out, and the run still ends.
-- [ ] Laravel. `conversations.stored_bytes` from each `run.finished` that has the field (facts are applied in order, so the latest wins); an organization's storage is the sum over its conversations not deleted, against `organizations.storage_limit_bytes` or the default. `Runs::start`, after the conversation's lock, and `Uploads::reserve` refuse at or over the limit with a message the chat shows. `minerva:storage` shows and sets the limit. The per-folder, per-file, per-message and per-user limits stay.
+- [x] Contract. `run.finished` gains an optional `storedBytes`: the sum over the conversation's `stored` blobs of each size rounded up to whole pages (`files/limits.ts`), read in `finish`'s transaction after `publish`. Loose and doomed blobs are left out. Laravel deploys first. `9770d41`; the app synced it (`3dd47f1`) and reached staging (`1c522ed`) before the engine.
+- [x] The engine. `publish` returns the number, and `run.finished` carries it; a sum that throws leaves the field out, and the run still ends. `9770d41`, with conversation migration 13 (`88612a7`): a partial index on stored blobs' sizes, which the sum reads alone.
+- [x] Laravel. `conversations.stored_bytes` from each `run.finished` that has the field (facts are applied in order, so the latest wins); an organization's storage is the sum over its conversations not deleted, against `organizations.storage_limit_bytes` or the default. `Runs::start`, after the conversation's lock, and `Uploads::reserve` refuse at or over the limit with a message the chat shows. `minerva:storage` shows and sets the limit. The per-folder, per-file, per-message and per-user limits stay. The app's `1c522ed`: 5 GiB per organization by default (`MINERVA_STORAGE_LIMIT_BYTES`).
 
 **You see.**
 
-- [ ] Over its organization's limit, a turn and an upload are refused with the storage message; deleting a conversation lowers the organization's storage at once. A turn that deletes a file leaves the number unchanged, since the earlier version keeps it.
+- [x] Over its organization's limit, a turn and an upload are refused with the storage message; deleting a conversation lowers the organization's storage at once. A turn that deletes a file leaves the number unchanged, since the earlier version keeps it. On staging, 2026-10-17 (Verify, live).
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Engine unit tests for the number (distinct contents once, pages, unnamed and loose blobs left out, a deleted file still counted) and a platform test of `run.finished`'s `storedBytes`. Pest tests for both refusals, the number applied from facts (absent keeps the last, zero replaces it), a deleted conversation not counted, and `minerva:storage`.
+- [x] Engine unit tests for the number (distinct contents once, pages, unnamed and loose blobs left out, a deleted file still counted) and a platform test of `run.finished`'s `storedBytes`. Pest tests for both refusals, the number applied from facts (absent keeps the last, zero replaces it), a deleted conversation not counted, and `minerva:storage`. Engine (`9770d41`, `88612a7`): 9 unit tests in `files-store.test.ts` (one checks with EXPLAIN QUERY PLAN that the sum reads the index alone, after migrating an object from step 12), `conversation-finished.test.ts`, and platform tests in `files.test.ts` (two attachments report 12,288, a second run that adds nothing the same) and `facts.test.ts` (`storedBytes: 0`); 2,724 unit and 330 platform tests pass. App (`1c522ed`): `StorageTest.php` (11), the presign refusal in `UploadsTest.php`, `minerva:storage` in `CommandsTest.php`; 765 Pest tests pass.
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Regression against `main`. `test:faults` passes.
-- [ ] On staging, a turn that writes a file of 10,485,760 bytes reports exactly that; with the limit reached, a turn and an upload are refused with the message; deleting the conversation lowers the total at once (chunk-14d-design.md, Live checks).
+- [x] Regression against `main`. `test:faults` passes. 34 cases on `minerva-cf-test` at unit 1, and `account.yml` on `88612a7`, green on its second attempt (the first timed out starting a container in `sandbox-faults.test.ts`'s restart case, code 14d does not touch).
+- [x] On staging, a turn that writes a file of 10,485,760 bytes reports exactly that; with the limit reached, a turn and an upload are refused with the message; deleting the conversation lowers the total at once (chunk-14d-design.md, Live checks). 2026-10-17, the app at `1c522ed` and the engine at `88612a7`: a `minerva:turn` wrote `big.bin` (`head -c 10485760`), and `minerva:storage` showed the conversation and the organization at exactly 10,485,760. With `--limit=10485760`, a `minerva:turn` was refused with the storage message, and the owner's upload in the chat too. A turn in the same conversation that ran `rm big.bin` left the number at 10,485,760, as designed. The owner deleted the conversation, and the organization's storage read 0 at once; a turn was then admitted under the same limit, and `--default` put the limit back.
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. The checkpoint does not change, so the plan's checkpoint metric is not run. Instead, `publish`'s added time over 20,000 stored blobs (a Node benchmark), and the time the sum adds to `Runs::start` and `Uploads::reserve` for an organization of 10,000 conversations. Rule. Within 5 ms of the base's, at p95 for the engine and at the median for Laravel. More fails.
+- [x] Metric. The checkpoint does not change, so the plan's checkpoint metric is not run. Instead, `publish`'s added time over 20,000 stored blobs (a Node benchmark), and the time the sum adds to `Runs::start` and `Uploads::reserve` for an organization of 10,000 conversations. Rule. Within 5 ms of the base's, at p95 for the engine and at the median for Laravel. More fails. Engine: `publish` over node:sqlite, 1,000 interleaved runs each, p95 +0.29 ms at 20,000 stored blobs and +1.91 ms at 100,000 with migration 13's index (+4.47 ms and +36.2 ms without it). Laravel: 500 calls each, an organization of 10,000 conversations, local Postgres: `Runs::start` +0.76 ms and `Uploads::reserve` +0.85 ms at the median, an index-only scan.
 
 **Review.**
 
-- [ ] opencode reviewed the design and the diff. The design on 2026-10-17 (chunk-14d-design.md, Amendments after opencode's review).
+- [x] opencode reviewed the design and the diff. The design on 2026-10-17 (chunk-14d-design.md, Amendments after opencode's review). The engine's diff: no counting bug or non-additive change; a test through the real `RunStore.finish` added, and the docs now say only a run changes which blobs are stored. The app's diff: none blocking; a test of a repeated terminal fact still setting the number added. The index (one schema step) had none.
 
 ## Retain and delete in the engine (chunk 15a)
 
