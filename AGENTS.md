@@ -99,7 +99,7 @@ pnpm test:docker     # the Sandbox against the real image (needs Docker and `pnp
 pnpm startup         # the Worker's startup CPU, which Cloudflare limits
 ```
 
-`pnpm check --instance minerva-cf-test` runs what the workflow runs, `pnpm typecheck` and `pnpm openapi:check` in `contract/` included, then deploys the test build and runs the account test files the unit changed. The suites on the account (`test:deployed`, `test:faults`, `test:cm`) and which ones a change needs are in cloudflare/README.md; CI runs all but `test:cm` on its own instance nightly and on demand, so run them by hand on `minerva-cf-test` (or start `account.yml`) when a change needs them before it is deployed.
+`pnpm check --instance minerva-cf-test` runs what the workflow runs, `pnpm typecheck` and `pnpm openapi:check` in `contract/` included, then deploys the test build and runs the account test files the unit changed. The suites on the account (`test:deployed`, `test:faults`, `test:cm`) and which ones a change needs are in cloudflare/README.md; CI runs all but `test:cm` on its own instance nightly and on demand, and the full suites run there once per chunk, for its regression box and before a deploy (docs/plans/remaining-chunks.md, How to read this).
 
 ## TypeScript and the contract
 

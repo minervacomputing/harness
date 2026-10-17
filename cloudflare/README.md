@@ -221,7 +221,7 @@ cf ai-gateway gateways create --id minerva-cf-test --collect-logs=false --authen
 
 ```sh
 pnpm run deploy:test   # scripts/deploy.ts --test: the only test instance (or --instance <name>); builds mode faults (checking the bundle has the fault code) and deploys minerva-cf-test
-pnpm test:faults       # about 3 minutes: two groups, one after the other:
+pnpm test:faults       # about 6 to 7 minutes: two groups, one after the other:
                        #   first, at once, each file's tests at once:
                        #     faults.test.ts         the fault rows, the local tools in the real Conversation and its container, a crash mid-stream and its settlement, through Laravel's commands
                        #     sandbox.test.ts        the lab's main container: hardening, pi's conformance suite, the probe, commands, a folder through R2
