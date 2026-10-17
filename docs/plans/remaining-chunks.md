@@ -296,8 +296,8 @@ The stop is Laravel's alone, with no engine change (owner, 2026-10-16). The desi
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
 - [x] Regression against `main`. The engine does not change, so `test:faults` is not run for this chunk; the app's suite passes (745 at `6f97844`, above).
-- [ ] The staging scenario under You see, with a write when the stop lands. Its fact is recorded in Laravel; the write in flight completing through a cancel is the engine's `protocols.test.ts` case (chunk-14c-design.md, Live checks).
-- [ ] The page's Stop and Reopen, clicked once on staging by an instance admin (the owner, who has the two factors there).
+- [x] ~~The staging scenario under You see, with a write when the stop lands. Its fact is recorded in Laravel; the write in flight completing through a cancel is the engine's `protocols.test.ts` case (chunk-14c-design.md, Live checks).~~ Dropped by the owner, 2026-10-17: not run.
+- [x] ~~The page's Stop and Reopen, clicked once on staging by an instance admin (the owner, who has the two factors there).~~ Dropped by the owner, 2026-10-17: not run.
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
