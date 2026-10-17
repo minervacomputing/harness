@@ -51,7 +51,7 @@ It runs the test build's entry, so the fake Notes connector and the token-gated 
 
 This project does not use pull requests. Commit directly to `main` (or merge a short-lived branch into it) and push `main`.
 
-`main` is the engine. A push to `main` that changes the engine (`cloudflare/`, `contract/`, `.github/workflows/`, `package.json`, `pnpm-lock.yaml` or `pnpm-workspace.yaml`) runs `.github/workflows/main.yml`: the contract's types and OpenAPI documents, the engine's types and unit tests (job `check`) and its platform tests (job `platform`). The account suites against the CI-only test instance `minerva-cf-ci` run in `.github/workflows/account.yml`, nightly when the engine changed that day and by hand (`gh workflow run account.yml`), not on every push (cloudflare/README.md, CI's test instance). Production and staging deploy only from a commit whose engine has green runs of `main.yml` and `account.yml`, which `pnpm run deploy` checks itself (`cloudflare/scripts/ci-gate.ts`), so a commit outside the engine's paths, such as one to `docs/` or `AGENTS.md`, needs no new run. `minerva-cf-test` is the test instance that the account suites deploy. When the workflow fails, read which job and step failed. Its logs are public: never add a step that prints a secret, an account identifier or an origin.
+`main` is the engine. A push to `main` that changes the engine (`cloudflare/`, `contract/`, `.github/workflows/`, `package.json`, `pnpm-lock.yaml` or `pnpm-workspace.yaml`) runs `.github/workflows/main.yml`: the contract's types and OpenAPI documents, the engine's types and unit tests (job `check`) and its platform tests (job `platform`). The account suites against the CI-only test instance `minerva-cf-ci` run in `.github/workflows/account.yml`, nightly when the engine changed that day and by hand (`gh workflow run account.yml`), not on every push (cloudflare/README.md, CI's test instance). Production and staging deploy only from a commit whose engine has green runs of `main.yml` and `account.yml`, which `pnpm run deploy` checks itself (`cloudflare/scripts/ci-gate.ts`), so a commit outside the engine's paths, such as one to `docs/` or `AGENTS.md`, needs no new run. `minerva-cf-test` is the test instance that `pnpm check` and the account suites deploy. When the workflow fails, read which job and step failed. Its logs are public: never add a step that prints a secret, an account identifier or an origin.
 
 The public demo runs from the `demo` branch, which keeps its own copy of the Django stack, frozen until the hosted product replaces it. Never merge `main` into `demo`, and do not copy changes from `main` to `demo`. A fix the demo itself needs is committed on `demo` only, and the demo is deployed only from `demo`.
 
@@ -91,6 +91,7 @@ opencode run --agent plan --auto -f plan.md "Critique this plan: what is wrong, 
 In `cloudflare/`:
 
 ```sh
+pnpm check           # what a unit of work runs before its commit (cloudflare/README.md, Checks)
 pnpm typecheck       # cf's generated types, then tsc for the Worker and the Node scripts
 pnpm test:unit       # Vitest in Node: lib/, the executor, policy, connectors, the objects' logic, rules on the sources
 pnpm test:platform   # the Worker in local workerd: Durable Objects, D1, R2, the internal API, the protocols' fault tests
@@ -98,7 +99,7 @@ pnpm test:docker     # the Sandbox against the real image (needs Docker and `pnp
 pnpm startup         # the Worker's startup CPU, which Cloudflare limits
 ```
 
-`pnpm typecheck` and `pnpm openapi:check` in `contract/` complete what the workflow runs. The suites on the account (`test:deployed`, `test:faults`, `test:cm`) and which ones a change needs are in cloudflare/README.md; CI runs all but `test:cm` on its own instance nightly and on demand, so run them by hand on `minerva-cf-test` (or start `account.yml`) when a change needs them before it is deployed.
+`pnpm check --instance minerva-cf-test` runs what the workflow runs, `pnpm typecheck` and `pnpm openapi:check` in `contract/` included, then deploys the test build and runs the account test files the unit changed. The suites on the account (`test:deployed`, `test:faults`, `test:cm`) and which ones a change needs are in cloudflare/README.md; CI runs all but `test:cm` on its own instance nightly and on demand, so run them by hand on `minerva-cf-test` (or start `account.yml`) when a change needs them before it is deployed.
 
 ## TypeScript and the contract
 

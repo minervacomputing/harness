@@ -11,6 +11,7 @@
     "build": "cf build --mode standalone",
     "types": "cf workers types",
     "typecheck": "pnpm types && tsc -p tsconfig.json && tsc -p tsconfig.node.json",
+    "check": "node scripts/check.ts",
     "test:unit": "vitest run --config vitest.unit.config.ts",
     "test:docker": "vitest run --config vitest.docker.config.ts",
     "test:platform": "vitest run --config vitest.platform.config.ts",

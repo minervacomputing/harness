@@ -114,6 +114,7 @@ Vite's dev server loads the Worker's sources itself, so the `workerSources()` pl
 ## Checks
 
 ```sh
+pnpm check           # what a unit of work runs before its commit: scripts/check.ts, below
 pnpm typecheck       # generates cf's types, then tsc for the Worker and the Node scripts
 pnpm test:unit       # Vitest in Node, no Docker: lib/, the executor, policy, connectors against scripted provider answers, the objects' logic over SQLite, rules on the sources
 pnpm test:docker     # the Sandbox against the real image in a local container (needs Docker and the image `pnpm sandbox:image` builds; skips without them)
@@ -123,6 +124,8 @@ pnpm test:faults     # the account's fault tests, memory-limit resets, sandbox l
 pnpm test:cm         # code mode's fault rows on the account, against its lab Worker; not part of test:faults, nor of CI (below)
 pnpm startup         # builds src/index.ts and measures its startup CPU locally, in a few seconds (Startup, below)
 ```
+
+`pnpm check` (`scripts/check.ts`) runs `pnpm typecheck` and `pnpm openapi:check` in `../contract/`, then `pnpm typecheck`, `pnpm test:unit` and `pnpm test:platform` here, in that order. Then, after `pnpm run deploy:test`, it runs the account test files that differ from the merge base with `origin/main`, committed or not, on the test instance (`--instance <name>`, or the one the suites would choose). A changed `deployed.test.ts` runs `test:deployed`. `test:faults` runs the other changed test files by name, or all of its files when another file of `test/account/` changed (`driver.ts`, `client.ts`, `warm.ts`, `lab.ts`). The probes (`perf.test.ts`, `retention-measure.test.ts`, `retention-perf.test.ts`) and code mode's rows (`scripts.test.ts`, `scripts-worker/`) never run there, and it says so. It prints one line per step with its seconds, stops at the first failure, and then prints the last 80 lines of that step's output.
 
 The account suites run through `scripts/suite.ts`, which chooses the instance (`--instance <name>`, or the only test instance for the test instance's suites), pins its account, and passes both to vitest (`MINERVA_INSTANCE`, `CLOUDFLARE_ACCOUNT_ID`); other arguments go to vitest. Each suite reads that instance's `vars.env` and `secrets.env` itself, never the shell's settings.
 
