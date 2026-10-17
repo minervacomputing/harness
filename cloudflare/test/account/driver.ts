@@ -142,12 +142,19 @@ const runs: { w: World; runId: string }[] = [];
  * (`workers-ai`, `fake-remote`, or the fake by default) and the perf probe's calibration (src/faults/ports.ts).
  */
 export async function world(
-	options: { faults?: Fault[]; delays?: { [prefix: string]: number }; model?: string; calibrate?: { bytes: number; write: boolean } } = {},
+	options: { faults?: Fault[]; delays?: { [prefix: string]: number }; model?: string; calibrate?: { bytes: number; write: boolean }; retention?: Retention } = {},
 ): Promise<World> {
 	const scope: Scope = { environment: FAULTS_SETTINGS.MINERVA_ENVIRONMENT, organization: uuid7(), workspace: uuid7() };
 	const { connectionId } = await driver<{ connectionId: string }>("setup", { scope, delays: options.delays ?? {} });
 	const conversationId = uuid7();
-	await driver("conversation", { scope, conversationId, faults: options.faults ?? [], model: options.model ?? null, calibrate: options.calibrate ?? null });
+	await driver("conversation", {
+		scope,
+		conversationId,
+		faults: options.faults ?? [],
+		model: options.model ?? null,
+		calibrate: options.calibrate ?? null,
+		retention: options.retention ?? null,
+	});
 	const made = { scope, conversationId, connectionId };
 	worlds.add(made);
 	return made;
@@ -292,9 +299,42 @@ export async function finished(w: World, runId: string): Promise<Fact | undefine
 	return facts[at];
 }
 
-/** The conversation object's storage: `databaseSize`, and per table its rows and the bytes of its TEXT and BLOB columns. */
-export function storage(w: World): Promise<{ databaseSize: number; tables: { [table: string]: { rows: number; bytes: number } } }> {
+/** The conversation object's storage: `databaseSize`, per table its rows and the bytes of its TEXT and BLOB columns, and its alarm. */
+export function storage(w: World): Promise<{ databaseSize: number; tables: { [table: string]: { rows: number; bytes: number } }; alarm: number | null }> {
 	return driver("storage", base(w));
+}
+
+/** Periods of retention for one conversation, in ms, instead of the engine's (src/conversation/retention.ts, RETENTION). */
+export type Retention = Partial<{ runMs: number; factsMs: number; deletedMs: number; busyMs: number; blockedMs: number; passMs: number; rowsPerStep: number }>;
+
+/** The facts the conversation's object holds, and its delivery's watermarks (null before its first fact). */
+export function heldFacts(w: World): Promise<{ count: number; lowest: number | null; highest: number | null; delivery: { written: number; acknowledged: number; floor: number } | null }> {
+	return driver("facts", base(w));
+}
+
+/** The conversation object's scheduled host jobs, by id. */
+export function jobs(w: World): Promise<{ id: string; fn: string }[]> {
+	return driver("jobs", base(w));
+}
+
+/** The conversation's fault points that fired, in order, with the object's clock (`at`) and their detail. */
+export function fired(w: World): Promise<{ point: string; mode: string; at: number; detail: string }[]> {
+	return driver("fired", base(w));
+}
+
+/** The conversation's faults and periods replaced, and its `retain` job made due now. */
+export async function retainNow(w: World, faults: Fault[], retention: Retention): Promise<void> {
+	await driver("retain", { ...base(w), faults, retention });
+}
+
+/** The fake Laravel answers the next `deliveries` deliveries of facts 503; 0 lets them through again. */
+export async function failDeliveries(w: World, deliveries: number): Promise<void> {
+	await driver("laravel-fail", { scope: w.scope, deliveries });
+}
+
+/** How many objects the conversation has in R2, up to 1,000. */
+export async function objects(w: World): Promise<number> {
+	return (await driver<{ count: number }>("objects", base(w))).count;
 }
 
 /** A step of the scratch table beside the conversation's (src/faults/index.ts `faultScratch`); `databaseSize` after it. */
@@ -325,19 +365,28 @@ export async function destroyed(w: World, timeoutMs = 120_000): Promise<number> 
 	}
 }
 
+/** A conversation purged by its retention: no run or container of it is left to stop, so the cleanup leaves it out. */
+export function purged(w: World): void {
+	worlds.delete(w);
+	for (let index = runs.length - 1; index >= 0; index--) if (runs[index]?.w === w) runs.splice(index, 1);
+}
+
+/** How many runs the cleanup checks at once: a perf probe's thousand runs of one conversation, all at once, overload its object. */
+const DRAIN_AT_ONCE = 50;
+
 /**
  * Cleanup, each file's afterAll (`finish`): stops every run this file started that has not ended (a failed or
  * timed-out test leaves them going), waits for each to end, then until every conversation's container is
  * gone. Every one is tried; the failures are reported together.
  */
 async function drain(): Promise<string[]> {
-	const stopped = await Promise.allSettled(
-		runs.map(async ({ w, runId }) => {
-			const view = await run(w, runId).catch(() => null);
-			if (!view?.head || ACTIVE.includes(view.head.status)) await cancel(w, runId, "cancelled").catch(() => null);
-			await settled(w, runId, 120_000);
-		}),
-	);
+	const stop = async ({ w, runId }: { w: World; runId: string }) => {
+		const view = await run(w, runId).catch(() => null);
+		if (!view?.head || ACTIVE.includes(view.head.status)) await cancel(w, runId, "cancelled").catch(() => null);
+		await settled(w, runId, 120_000);
+	};
+	const stopped: PromiseSettledResult<void>[] = [];
+	for (let at = 0; at < runs.length; at += DRAIN_AT_ONCE) stopped.push(...(await Promise.allSettled(runs.slice(at, at + DRAIN_AT_ONCE).map(stop))));
 	const gone = await Promise.allSettled([...worlds].map((w) => destroyed(w)));
 	return [...stopped, ...gone].filter((outcome) => outcome.status === "rejected").map((outcome) => String(outcome.reason));
 }
