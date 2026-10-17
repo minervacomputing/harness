@@ -336,3 +336,21 @@ Choices the design left open, as built:
 - A `FACT_GAP` that does not move the watermark, and a replay that ends below `factSeq`, are unresolved as `behind`; a page for another conversation, or a listing that says more follow after no row, is an `EngineUnavailable`.
 - The replay's answer is checked whole against `engine-v1.json`, its facts decoded as objects, as the facts route checks a delivery.
 - At most one recovery is in progress (a unique partial index on `restores`). `minerva:recover` sets `completed_at` once every step it runs is done; unit 4 adds the other steps and `database.restored`.
+
+## Amendments after opencode's review of unit 2
+
+opencode (`plan` agent) reviewed unit 2's diff (`779cd2a..9d53e7d` in the app, branch `chunk-15c-2`) on 2026-10-17, twice; `git status` afterwards showed no change by it. It found no change that commits without its restriction and no data in an object beyond ids. Its findings, each checked with an HTTP fake:
+
+1. **The check proved only `probes/` (accepted).** A lock rule on `probes/` alone passed while `restrictions/` stayed writable. The probe is now written among the restrictions, `restrictions/<time>_<id>.probe`, which `list` leaves out, so the log starts at the oldest `.probe` key, not under `probes/`. The check cannot see the lock's duration; the owner reads it back with `cf r2 buckets locks get`.
+2. **Any client error passed as a lock (accepted).** A 400 or 403 for a bad signature, an HTML 403 and a 409 all passed. The check now passes only on 403 `ObjectLockedByBucketPolicy`, R2's error 10069, for both the overwrite and the delete; anything else fails and is printed.
+3. **Presigned URLs reached Nightwatch (accepted).** Its outgoing-request records kept the query (the token's key id and a signature valid for a minute). `AppServiceProvider` now drops the query of every URL that carries `X-Amz-Signature`, the files bucket's deletes included.
+4. **The password change's sessions (accepted).** The change, its event and the end of the user's other sessions are one transaction; the request's own session takes the new epoch after the commit (`SessionEpoch::keep`, which replaces `endOthers`).
+
+Choices the design left open, as built:
+
+- Every call site writes ahead, none after its commit: the password reset and change each get a transaction, and a passkey's removal replaces the package's `DeletePasskey` action in the container with one that wraps the deletion and its event. The Risks entry "Changes Fortify makes in its own controllers are logged right after their commit" no longer applies.
+- The bucket is used whenever its settings are set, in any environment; without them `local` and `testing` use the `restrictions` disk and every other environment refuses. `audit_events.at` now keeps its milliseconds, the restriction's own `at`.
+- `user.credentials_changed` carries `change`: `password_reset`, `password_changed` or `passkey_removed`, with the user as actor and subject.
+- A refused write renders as the toast (503 to JSON) and as a Filament notification; its cause goes to the log through the exception's context, never the signed URL.
+- Bucket names: `minerva-cf-staging-restrictions-eu` and `minerva-cf-restrictions-eu`, next to the instances' `-files-eu` buckets.
+- Not logged, and still coming back after a restore: a user turning off their own two factors, regenerated recovery codes, and an API key replaced by another (a reconnection that is not narrowed).
