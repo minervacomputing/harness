@@ -1,11 +1,18 @@
-# Every push to main: the engine's checks, which reach no Cloudflare account. The account suites run nightly and
-# by hand (account.yml). Production is deployed by hand (cloudflare/README.md). Third-party actions are pinned to
-# commits; update them deliberately.
+# The engine's checks, which reach no Cloudflare account, on every push to main that changes the engine and by hand. The
+# account suites run nightly and by hand (account.yml). Production is deployed by hand (cloudflare/README.md).
+# Third-party actions are pinned to commits; update them deliberately.
 name: main
 
 on:
   push:
     branches: [main]
+    paths:
+      - cloudflare/**
+      - contract/**
+      - .github/workflows/**
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
   workflow_dispatch:
 
 permissions: {}
