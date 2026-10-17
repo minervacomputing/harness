@@ -59,6 +59,11 @@ export const INTERNAL_REFUSALS = {
   FACT_CONFLICT: 409,
   /** A delivery that does not follow the last acknowledged fact; `data.acknowledged` says where to send from. */
   FACT_GAP: 409,
+  /**
+   * A replay from below the lowest fact the engine still holds, which retention has deleted; `data.floor` names that fact.
+   * Only `replayFacts` answers it.
+   */
+  FACTS_PRUNED: 410,
   INTERNAL_SERVER_ERROR: 500,
   /** An operation declared before the chunk that implements it. */
   NOT_IMPLEMENTED: 501,
@@ -77,4 +82,5 @@ export const INTERNAL_ERRORS = {
   }),
   VALIDATION_FAILED: { status: INTERNAL_REFUSALS.VALIDATION_FAILED, data: z.object({ issues: z.array(Issue) }) },
   FACT_GAP: { status: INTERNAL_REFUSALS.FACT_GAP, data: z.object({ acknowledged: z.int().min(0) }) },
+  FACTS_PRUNED: { status: INTERNAL_REFUSALS.FACTS_PRUNED, data: z.object({ floor: Seq }) },
 }

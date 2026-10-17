@@ -45,6 +45,7 @@ Readers on both sides ignore fields they do not know (zod's objects strip them, 
 - **An error is not an outcome.**
   - 401 and 403: authentication.
   - 409: the wrong environment or scope.
+  - 410 `FACTS_PRUNED`, with `data: {floor}`: a `replayFacts` from below the lowest fact the engine still holds (chunk 15a, [chunk-15a-design.md](chunk-15a-design.md)). Only `replayFacts` answers it.
   - 422 `VALIDATION_FAILED`, with the issues: a bug on the caller's side.
   - 501 `NOT_IMPLEMENTED`: an operation declared before its chunk.
   - 500 and 503: a failure. Commands are idempotent, so a queued job retries them.
@@ -92,6 +93,7 @@ Each is idempotent by its own ids. The engine's chunk that implements each comma
   A repeat with the same run id gets the same answer. It compiles once.
 - **`cancelRun`** `/runs/cancel` [6]: `scope`, `conversation`, `run` and `reason`. The reasons are today's `CancelReason`s, plus `member_removed` and `start_expired`. It answers `{state: "cancelled" | "tombstoned" | "ended"}` once the cancellation, or the tombstone of a run the engine has not received, is durable.
 - **`replayFacts`** `/conversations/facts` [7]: `scope`, `conversation`, `after` (a sequence) and `limit` (at most 500). It answers `{conversation, facts, more}`: the conversation's retained facts after that sequence, in order, in the delivery's format, so Laravel applies them through the same path.
+  - **Retention** (chunk 15a). A fact is deleted 7 days after Laravel acknowledged it, never before; the lowest sequence still held is the floor. An `after` below `floor − 1` is refused `FACTS_PRUNED` (410) with `data: {floor}` rather than answered with a page that starts later; `after ≥ floor − 1` is answered as before.
   - **Not per run, as the plan first had it (`runReport`).** A run's facts are not contiguous in its conversation, since a write that settles after a cancellation can come after the next run's facts, so recovery reads by conversation from Laravel's watermark.
   - **Finding the conversations to replay** after a restore (the recovery index listing those with facts beyond Laravel's watermarks, deleted ones included) is an operation that chunk 15 adds, additively.
 - **`describeAccount`** `/connections/account` [9]: `scope`, `connection: {id, provider}` and `credential`. It answers either `{outcome: "described", account: {id, label, tenant}}` or `{outcome: "refused", code: "CREDENTIAL_REFUSED" | "PROVIDER_FAILED", message}`.

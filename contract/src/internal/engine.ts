@@ -209,7 +209,10 @@ export const engine = {
     .route({ method: 'POST', path: at('/runs/cancel') })
     .input(CancelRun)
     .output(CancelRunResult),
-  /** The conversation's retained facts after `after`, in order, for recovery [7]. */
+  /**
+   * The conversation's retained facts after `after`, in order, for recovery [7]. An `after` below the floor less one, where
+   * the facts Laravel lacks are no longer held, is refused `FACTS_PRUNED` with the floor, the lowest sequence still held [15].
+   */
   replayFacts: internal
     .route({ method: 'POST', path: at('/conversations/facts') })
     .input(ReplayFacts)
