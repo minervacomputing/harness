@@ -101,7 +101,7 @@ export type LocalCard = { tool: string; summary: string; ok: boolean; excerpt: s
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** A UUIDv7, for the ids Laravel makes. */
-function uuid7(): string {
+export function uuid7(): string {
 	const bytes = crypto.getRandomValues(new Uint8Array(16));
 	const now = BigInt(Date.now());
 	for (let i = 0; i < 6; i++) bytes[i] = Number((now >> BigInt(8 * (5 - i))) & 0xffn);
@@ -167,12 +167,20 @@ export async function upload(w: World, file: { name: string; text?: string; byte
 export const LARGE_ALLOWANCE = 1_000_000_000_000;
 let starts = 0;
 
+export type HistoryMessage = StartRun["history"][number];
+
 /**
  * Sends a message as Laravel does: the fake Laravel holds the run, then `startRun` names the agent's Notes connection, which the
  * user may use in every folder, to read and create, and gives it `allowance` (µ$; none when null; by default, LARGE_ALLOWANCE
- * with every other start). Answers the run's id; a refusal throws.
+ * with every other start), and the conversation's earlier messages as Laravel sends them (`history`, none by default).
+ * Answers the run's id; a refusal throws.
  */
-export async function post(w: World, content: string, attachments: Attachment[] = [], options: { allowance?: number | null } = {}): Promise<string> {
+export async function post(
+	w: World,
+	content: string,
+	attachments: Attachment[] = [],
+	options: { allowance?: number | null; history?: HistoryMessage[]; message?: string } = {},
+): Promise<string> {
 	const allowance = options.allowance !== undefined ? options.allowance : starts++ % 2 === 0 ? LARGE_ALLOWANCE : null;
 	const start: StartRun = {
 		scope: w.scope,
@@ -180,8 +188,8 @@ export async function post(w: World, content: string, attachments: Attachment[] 
 		run: uuid7(),
 		user: USER,
 		agent: { id: AGENT, instructions: "You are a test agent. Use the tools when asked.", model: "default" },
-		message: { id: uuid7(), content, attachments },
-		history: [],
+		message: { id: options.message ?? uuid7(), content, attachments },
+		history: options.history ?? [],
 		authority: { connections: [notesConnection(w.connectionId)], layers: notesLayers(w.connectionId) },
 		...(allowance === null ? {} : { allowance }),
 	};
@@ -282,6 +290,16 @@ export async function finished(w: World, runId: string): Promise<Fact | undefine
 	const after = facts.slice(at + 1).filter((fact) => !ACCOUNTING.includes(fact.type));
 	if (after.length) throw new Error(`Facts after the run's run.finished: ${JSON.stringify(after.map((fact) => [fact.seq, fact.type]))}`);
 	return facts[at];
+}
+
+/** The conversation object's storage: `databaseSize`, and per table its rows and the bytes of its TEXT and BLOB columns. */
+export function storage(w: World): Promise<{ databaseSize: number; tables: { [table: string]: { rows: number; bytes: number } } }> {
+	return driver("storage", base(w));
+}
+
+/** A step of the scratch table beside the conversation's (src/faults/index.ts `faultScratch`); `databaseSize` after it. */
+export function scratch(w: World, step: "fill" | "trim" | "drop"): Promise<{ databaseSize: number }> {
+	return driver("scratch", { ...base(w), step });
 }
 
 /** The conversation's current folder, as Laravel reads it. */

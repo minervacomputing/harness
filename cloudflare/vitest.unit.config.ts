@@ -5,7 +5,7 @@ export default defineConfig({
 	// @cloudflare/sandbox imports `cloudflare:workers`, which Node does not have: it is bundled with a stub.
 	resolve: { alias: { "cloudflare:workers": new URL("./test/stubs/cloudflare-workers.ts", import.meta.url).pathname } },
 	test: {
-		server: { deps: { inline: ["@cloudflare/sandbox"] } },
+		server: { deps: { inline: ["@cloudflare/sandbox", "agents"] } },
 		include: ["test/unit/**/*.test.ts"],
 		environment: "node",
 	},

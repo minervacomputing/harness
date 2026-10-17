@@ -39,22 +39,37 @@ export function scratchDirectory(): { path: string; done(): void } {
 }
 
 /**
- * A Durable Object's storage over node:sqlite, as far as the Conversation's store uses it: `sql.exec` with bindings, its
- * cursor's `toArray` and `one`, and `transactionSync`.
+ * A Durable Object's storage over node:sqlite, as far as the Conversation's store and PiHarness's session store use it:
+ * `sql.exec` with bindings, its cursor's `toArray`, `one` and `next`, `transactionSync`, and `transaction`, which holds a
+ * transaction open across its callback's awaits (PiHarness's queue keeps every other statement out of it meanwhile).
  */
 export function durableStorage(db: Database = openDatabase()): DurableObjectStorage {
 	let depth = 0;
 	const sql = {
 		exec(query: string, ...bindings: SqlStorageValue[]) {
-			const rows = db.prepare(query).all(...(bindings as SqlValue[]));
+			const values = bindings.map((value) => (value instanceof ArrayBuffer ? new Uint8Array(value) : value));
+			const rows = db.prepare(query).all(...(values as SqlValue[]));
+			let at = 0;
 			return {
 				toArray: () => rows,
 				one: () => {
 					if (rows.length !== 1) throw new Error(`Expected exactly one row, not ${rows.length}.`);
 					return rows[0];
 				},
+				next: () => (at < rows.length ? { done: false, value: rows[at++] } : { done: true, value: undefined }),
 			};
 		},
+	};
+	const transaction = async <T>(change: () => Promise<T>): Promise<T> => {
+		db.exec("BEGIN");
+		try {
+			const result = await change();
+			db.exec("COMMIT");
+			return result;
+		} catch (error) {
+			db.exec("ROLLBACK");
+			throw error;
+		}
 	};
 	const transactionSync = <T>(change: () => T): T => {
 		const savepoint = `s${depth++}`;
@@ -71,5 +86,5 @@ export function durableStorage(db: Database = openDatabase()): DurableObjectStor
 			depth--;
 		}
 	};
-	return { sql, transactionSync } as unknown as DurableObjectStorage;
+	return { sql, transactionSync, transaction } as unknown as DurableObjectStorage;
 }

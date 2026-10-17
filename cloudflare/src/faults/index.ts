@@ -63,6 +63,12 @@ export interface RunView {
 	fired: Fired[];
 }
 
+/** An object's storage: its size, and each table's rows and the bytes of its TEXT and BLOB columns. */
+export interface StorageView {
+	databaseSize: number;
+	tables: { [table: string]: { rows: number; bytes: number } };
+}
+
 /** The Conversation with a fault plan and a view of its tables for the tests. */
 export class Conversation extends BaseConversation {
 	faultPlan(faults: Fault[], config: { model?: string | null; runTimeoutMs?: number | null; calibrate?: Calibration | null } = {}): void {
@@ -115,6 +121,42 @@ export class Conversation extends BaseConversation {
 		const head = row ? store.runHead(row) : null;
 		const events = head ? store.events(runId, { after, upTo: upTo ?? head.eventSeq, limit: PAGE_LIMIT }) : [];
 		return { head, events, internals: this.faultRun(runId), fired: this.faultFired() };
+	}
+
+	/**
+	 * The object's storage, as the retention probe reads it (docs/plans/chunk-15a-design.md, The measurement): `databaseSize`,
+	 * and per table its rows and the summed length in bytes of its TEXT and BLOB columns, by their declared types. The
+	 * platform's own `_cf_` tables cannot be read.
+	 */
+	faultStorage(): StorageView {
+		const sql = this.ctx.storage.sql;
+		const names = sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' AND substr(name, 1, 4) != '_cf_' ORDER BY name").toArray();
+		const tables: StorageView["tables"] = {};
+		for (const { name } of names) {
+			const columns = sql
+				.exec<{ name: string; type: string }>(`PRAGMA table_info("${name}")`)
+				.toArray()
+				.filter((column) => /TEXT|BLOB|CHAR|CLOB/i.test(column.type) || column.type === "");
+			const bytes = columns.length ? columns.map((column) => `total(length(CAST("${column.name}" AS BLOB)))`).join(" + ") : "0";
+			const row = sql.exec<{ rows: number; bytes: number }>(`SELECT count(*) AS rows, ${bytes} AS bytes FROM "${name}"`).one();
+			tables[name] = { rows: row.rows, bytes: row.bytes };
+		}
+		return { databaseSize: sql.databaseSize, tables };
+	}
+
+	/**
+	 * A table of the test build's own beside the conversation's, to see whether deleted rows give their pages back without
+	 * VACUUM: `fill` writes 200 rows of 100,000 random bytes, `trim` deletes nine rows in ten, `drop` drops the table.
+	 * Answers `databaseSize` after the step.
+	 */
+	faultScratch(step: "fill" | "trim" | "drop"): { databaseSize: number } {
+		const sql = this.ctx.storage.sql;
+		if (step === "fill") {
+			sql.exec("CREATE TABLE IF NOT EXISTS fault_scratch (id INTEGER PRIMARY KEY, data BLOB NOT NULL)");
+			for (let row = 0; row < 200; row++) sql.exec("INSERT INTO fault_scratch (data) VALUES (randomblob(100000))");
+		} else if (step === "trim") sql.exec("DELETE FROM fault_scratch WHERE id % 10 != 0");
+		else sql.exec("DROP TABLE IF EXISTS fault_scratch");
+		return { databaseSize: sql.databaseSize };
 	}
 
 	faultRun(runId: RunId): RunInternals {

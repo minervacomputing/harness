@@ -104,6 +104,13 @@ async function laravelOperation(op: string, body: Body, env: Env, exports: Cloud
 			return stage(env.FILES_EU, scope.workspace, body);
 		case "run":
 			return conversationOf(env, euRef(scope), conversationId).faultView(String(body.runId), Number(body.after ?? 0), (body.upTo ?? null) as number | null);
+		case "storage":
+			return conversationOf(env, euRef(scope), conversationId).faultStorage();
+		case "scratch": {
+			const step = String(body.step);
+			if (step !== "fill" && step !== "trim" && step !== "drop") return null;
+			return conversationOf(env, euRef(scope), conversationId).faultScratch(step);
+		}
 		case "laravel": {
 			// The connections without the secrets they lend.
 			const { facts, calls, connections } = await provider.laravelState(conversationId);
