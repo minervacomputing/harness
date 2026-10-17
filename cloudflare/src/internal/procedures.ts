@@ -9,6 +9,7 @@ import { catalogOf } from "./catalog.ts";
 import { checkGrantEdit, describeAccount, listResources } from "./connections.ts";
 import { deleteConversation, readFolder, resolveDownload } from "./conversations.ts";
 import { internalRefusal } from "./errors.ts";
+import { listIndexed } from "./recovery.ts";
 import { cancelRun, replayFacts, startRun } from "./runs.ts";
 
 export interface InternalContext {
@@ -23,7 +24,7 @@ export interface InternalContext {
 
 const internal = implement(engine).$context<InternalContext>();
 
-/** The environment a command names: its scope's, or its own for `admission`; undefined when it names none. */
+/** The environment a command names: its scope's, or its own for `admission` and `listConversations`; undefined when it names none. */
 function namedEnvironment(input: unknown): unknown {
 	if (typeof input !== "object" || input === null) return undefined;
 	const { scope, environment } = input as { scope?: unknown; environment?: unknown };
@@ -57,4 +58,5 @@ export const internalRouter = internal.router({
 	resolveDownload: internal.resolveDownload.use(inEnvironment).handler(({ context, input }) => resolveDownload(context.env, input)),
 	deleteConversation: internal.deleteConversation.use(inEnvironment).handler(({ context, input }) => deleteConversation(context.env, input)),
 	admission: internal.admission.use(inEnvironment).handler(notYet(14)),
+	listConversations: internal.listConversations.use(inEnvironment).handler(({ context, input }) => listIndexed(context.env.DB, input)),
 });

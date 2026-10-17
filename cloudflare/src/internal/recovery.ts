@@ -7,7 +7,8 @@
 // bound by a command whose run is bound to another conversation, and a run and its digest only through a conversation
 // bound to the command's scope, so a command naming another organization, workspace or conversation binds nothing.
 
-import type { Scope } from "@minerva/contract/internal";
+import type { ListConversations, ListConversationsResult, Scope } from "@minerva/contract/internal";
+import { isoTime } from "../lib/dates.ts";
 import type { WorkspaceRef } from "../shared/rpc.ts";
 
 /** Where Laravel's conversations are created (product-and-engine.md, Decisions 11); a row keeps the one it was created with. */
@@ -167,4 +168,28 @@ export async function markPurged(db: D1Database, mark: { conversation: string; o
 		.bind(mark.now, mark.conversation, mark.organization, mark.workspace)
 		.all();
 	return result.results.length > 0;
+}
+
+type ListedRow = Omit<ConversationRow, "jurisdiction"> & { id: string };
+
+/**
+ * `listConversations` (docs/plans/chunk-15c-design.md, The listing): every row after `after` in order of id, whatever its state,
+ * for Laravel to compare with what a restore left it. One row past the page says whether more follow.
+ */
+export async function listIndexed(db: D1Database, command: ListConversations): Promise<ListConversationsResult> {
+	const { results } = await db
+		.prepare("SELECT id, organization_id, workspace_id, fact_seq, deleted_at, purged_at FROM recovery_conversations WHERE id > ?1 ORDER BY id LIMIT ?2")
+		.bind(command.after ?? "", command.limit + 1)
+		.all<ListedRow>();
+	return {
+		conversations: results.slice(0, command.limit).map((row) => ({
+			conversation: row.id,
+			organization: row.organization_id,
+			workspace: row.workspace_id,
+			factSeq: row.fact_seq,
+			deletedAt: row.deleted_at === null ? null : isoTime(row.deleted_at),
+			purgedAt: row.purged_at === null ? null : isoTime(row.purged_at),
+		})),
+		more: results.length > command.limit,
+	};
 }
