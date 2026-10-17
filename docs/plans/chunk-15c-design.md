@@ -358,3 +358,23 @@ Choices the design left open, as built:
 ### On staging, 2026-10-17
 
 Unit 2 runs on the app's staging from `c058cec`, rebased onto 15b's unit 4, with `76b76c9`. The owner made the bucket `minerva-cf-staging-restrictions-eu` (EU), its lock rule (every object, 30 days) and lifecycle rule, both read back with `cf`, and a token with object read and write on that bucket alone; the settings are staging's variables and attached secrets. The first check failed on the status alone: R2 refused the overwrite and the delete with 409 `ObjectLockedByBucketPolicy`, and the probe read back. With the check expecting 409, ten runs passed, each with both refusals and the probe read back. A probe's write took 223 to 339 ms (median 295), a new process and connection each time, which is what a logged removal waits for. Production has no bucket or settings yet, so unit 2 is not deployed there.
+
+## Amendments after opencode's review of unit 4
+
+Unit 4 is the app's `f4e233d` and `25cd768` on the branch `chunk-15c-4`, on `76b76c9`. Its agent had opencode (`plan` agent) review its draft and fixed four findings: a closed account kept its instance admin, voiding left the sign-in providers' links, and a `created` or an `at` that is no instant passed or escaped the malformed handler. opencode then reviewed the whole diff (`76b76c9..f4e233d`) on 2026-10-17; `git status` afterwards showed no change by it. Each finding was checked in the code:
+
+1. **A copied id could hide a restriction (accepted).** The check bound a key to its object's `at` and id, but not the id to `at`. An object under an earlier time with a genuine restriction's id passed, was applied, and made the genuine one held. A UUIDv7 holds its millisecond, which `Restriction::make` takes from `at`, so an id of another time is now malformed, and a key, its time and its id name one object.
+2. **A lost conversation's runs were not owed their settlements (accepted).** `accounting` checked the runs Laravel holds and `lost_runs`, but the runs of a conversation the restore lost take the tombstone's path and are in neither. A run whose usage is recorded since a week before the point, in no `runs` or `lost_runs` row and with no settlement, now keeps the step incomplete, as a lost run does.
+3. **An object missing `organization` or `workspace` escaped as an `ErrorException` (accepted).** It aborted every pass before `--resolved` was read. Both keys are now required, and their absence is malformed.
+4. **The runbook read the earlier stop after the restore's own (accepted).** Step 2 now records a stop in force before `minerva:stop --reason="restore"` writes its event, and from Laravel Cloud's logs when the old database is gone.
+5. **Voiding lets a provider that vouches for the address sign in with no second factor (set aside).** Clearing the second factor is what voiding is for, since the restored one may be an attacker's. After it the account is as safe as its address, by a password reset or a provider that vouches for it alike. A forged credential restriction needs the bucket's credentials as well as the address.
+6. **A crash between a step's change and its counts understates `database.restored` (set aside).** The counts are a summary; each change applied is in the audit log under its restriction's id, and every step's done condition is read from the database, not the counts.
+
+Choices the design left open, as built:
+
+- A malformed or unreadable object, or one under another key than its own, keeps `restrictions` incomplete until the operator makes its change by hand and passes `--resolved=<key>`, kept in `restores.done`.
+- Organizations left without an owner or a workspace, and closed accounts, are printed on every pass but do not keep the recovery incomplete: the pages answer 503 while restoring, so they are fixed after serving.
+- Closing an account does what its deletion does but delete the row (empty organizations deleted, connections revoked, conversations marked), then removes it from the organizations it stays in, revokes its instance admin, voids its credentials and records `account.closed`. The runbook finishes the deletion with `DeleteAccount::deleteOrClose` in tinker.
+- Voiding also deletes the sign-in providers' links, records `user.credentials_changed` with `change: voided`, and computes its data rather than copying the object's.
+- A workspace's or an organization's deletion applied again is backdated to the restriction's time, the conversations it marked included, so retention keeps the original clock.
+- The earliest-point rules are checked when a recovery starts, not when one resumes; no probe in the log refuses.
