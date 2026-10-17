@@ -12,6 +12,7 @@ import { PRICE_SOURCE } from "../budget/prices.ts";
 import { CONNECTOR_SOURCE, servedConnectors } from "../connectors/index.ts";
 import { Conversation as BaseConversation } from "../conversation/conversation.ts";
 import { defaultPorts, PORTS } from "../conversation/ports.ts";
+import { RETAIN_JOB, RETENTION, type RetentionPeriods } from "../conversation/retention.ts";
 import { PAGE_LIMIT, type RunHead, RunStore } from "../conversation/store.ts";
 import type { RunId } from "../shared/rpc.ts";
 import { ACCESS_KEYS } from "../internal/access.ts";
@@ -63,20 +64,46 @@ export interface RunView {
 	fired: Fired[];
 }
 
-/** An object's storage: its size, and each table's rows and the bytes of its TEXT and BLOB columns. */
+/** An object's storage: its size, each table's rows and the bytes of its TEXT and BLOB columns, and its alarm. */
 export interface StorageView {
 	databaseSize: number;
 	tables: { [table: string]: { rows: number; bytes: number } };
+	alarm: number | null;
+}
+
+/**
+ * A plan's periods: each a finite number of milliseconds, none negative, and at least 2 rows a step, since pi's deletion takes
+ * a record with its `pi_record_ids` row and a step of 1 would delete nothing.
+ */
+function checkPeriods(periods: Partial<RetentionPeriods>): void {
+	for (const [name, value] of Object.entries(periods)) {
+		if (!(name in RETENTION) || typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new Error(`fault: retention's ${name} is not a period.`);
+	}
+	if (periods.rowsPerStep !== undefined && (!Number.isInteger(periods.rowsPerStep) || periods.rowsPerStep < 2)) throw new Error("fault: retention's rowsPerStep is a whole number, at least 2.");
 }
 
 /** The Conversation with a fault plan and a view of its tables for the tests. */
 export class Conversation extends BaseConversation {
-	faultPlan(faults: Fault[], config: { model?: string | null; runTimeoutMs?: number | null; calibrate?: Calibration | null } = {}): void {
+	faultPlan(
+		faults: Fault[],
+		config: { model?: string | null; runTimeoutMs?: number | null; calibrate?: Calibration | null; retention?: Partial<RetentionPeriods> | null } = {},
+	): void {
 		const plan = planOf(this.ctx);
 		plan.set(faults);
 		if (config.model !== undefined) plan.setConfig("model", config.model);
 		if (config.calibrate !== undefined) plan.setConfig("calibrate", config.calibrate === null ? null : JSON.stringify(config.calibrate));
 		if (config.runTimeoutMs !== undefined) plan.setConfig("run_timeout_ms", config.runTimeoutMs === null ? null : String(config.runTimeoutMs));
+		if (config.retention) checkPeriods(config.retention);
+		if (config.retention !== undefined) plan.setConfig("retention", config.retention === null ? null : JSON.stringify(config.retention));
+	}
+
+	/**
+	 * The perf probe's start of retention (docs/plans/chunk-15a-design.md, Perf probe and rule): the plan's faults and periods
+	 * replaced, and the `retain` job made due now.
+	 */
+	async faultRetainNow(faults: Fault[], retention: Partial<RetentionPeriods>): Promise<void> {
+		this.faultPlan(faults, { retention });
+		await this.lifecycle.jobs.push({ id: RETAIN_JOB, fn: RETAIN_JOB, time: Date.now() });
 	}
 
 	faultFired(): Fired[] {
@@ -112,6 +139,35 @@ export class Conversation extends BaseConversation {
 	}
 
 	/**
+	 * Appends `count` text deltas of 100 characters to an ended run's events, as a long streamed answer would leave them: the
+	 * perf probe's turn of about 10,000 events, which the stream would take about 40 minutes to write (one event per 250 ms flush).
+	 */
+	faultEvents(runId: RunId, count: number): { eventSeq: number } {
+		if (!Number.isInteger(count) || count < 1) throw new Error("fault: count is a whole number of events, at least 1.");
+		const sql = this.ctx.storage.sql;
+		this.ctx.storage.transactionSync(() => {
+			const { event_seq } = sql.exec<{ event_seq: number }>("SELECT event_seq FROM runs WHERE id = ? AND finished_at IS NOT NULL", runId).one();
+			sql.exec(
+				`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?)
+				INSERT INTO run_events (run_id, seq, type, data, created_at) SELECT ?, ? + i, 'text_delta', json_object('text', substr(hex(randomblob(50)), 1, 100), 'call', '0000abcd'), 0 FROM n`,
+				count,
+				runId,
+				event_seq,
+			);
+			sql.exec("UPDATE runs SET event_seq = event_seq + ? WHERE id = ?", count, runId);
+		});
+		return sql.exec<{ eventSeq: number }>("SELECT event_seq AS eventSeq FROM runs WHERE id = ?", runId).one();
+	}
+
+	/** The facts the object holds: how many, the lowest and the highest sequence, and the delivery's watermarks (null before any). */
+	faultFacts(): { count: number; lowest: number | null; highest: number | null; delivery: { written: number; acknowledged: number; floor: number } | null } {
+		const sql = this.ctx.storage.sql;
+		const held = sql.exec<{ count: number; lowest: number | null; highest: number | null }>("SELECT count(*) AS count, min(seq) AS lowest, max(seq) AS highest FROM facts").one();
+		const delivery = sql.exec<{ written: number; acknowledged: number; floor: number }>("SELECT written, acknowledged, floor FROM fact_delivery").toArray()[0] ?? null;
+		return { ...held, delivery };
+	}
+
+	/**
 	 * The run with its events after `after`, up to `upTo`: the head's `eventSeq` when null. A reader passes the `eventSeq` of
 	 * its first page to the next ones, so the pages it joins end where that head did.
 	 */
@@ -128,7 +184,7 @@ export class Conversation extends BaseConversation {
 	 * and per table its rows and the summed length in bytes of its TEXT and BLOB columns, by their declared types. The
 	 * platform's own `_cf_` tables cannot be read.
 	 */
-	faultStorage(): StorageView {
+	async faultStorage(): Promise<StorageView> {
 		const sql = this.ctx.storage.sql;
 		const names = sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' AND substr(name, 1, 4) != '_cf_' ORDER BY name").toArray();
 		const tables: StorageView["tables"] = {};
@@ -141,7 +197,7 @@ export class Conversation extends BaseConversation {
 			const row = sql.exec<{ rows: number; bytes: number }>(`SELECT count(*) AS rows, ${bytes} AS bytes FROM "${name}"`).one();
 			tables[name] = { rows: row.rows, bytes: row.bytes };
 		}
-		return { databaseSize: sql.databaseSize, tables };
+		return { databaseSize: sql.databaseSize, tables, alarm: await this.ctx.storage.getAlarm() };
 	}
 
 	/**
@@ -167,7 +223,7 @@ export class Conversation extends BaseConversation {
 			tools,
 			entered: planOf(this.ctx).entered(runId),
 			marks: marksOf(this.ctx, runId),
-			run: sql.exec("SELECT id, status, attempt, error_code, error_message, revoked, activated, writes_uncertain, tool_calls, model_calls, allowance FROM runs WHERE id = ?", runId).toArray()[0] ?? null,
+			run: sql.exec("SELECT id, status, attempt, error_code, error_message, revoked, activated, writes_uncertain, tool_calls, model_calls, allowance, prune FROM runs WHERE id = ?", runId).toArray()[0] ?? null,
 			attempts: sql.exec<{ attempt: number; ended: string | null }>("SELECT attempt, ended FROM attempts WHERE run_id = ? ORDER BY attempt", runId).toArray(),
 			writes: sql.exec<{ key: string; status: string; attempt: number }>("SELECT key, status, attempt FROM run_writes WHERE run_id = ? ORDER BY dispatched_at", runId).toArray(),
 			executions: sql.exec<{ call_id: string; executions: number }>("SELECT call_id, executions FROM tool_executions WHERE run_id = ? ORDER BY call_id", runId).toArray(),

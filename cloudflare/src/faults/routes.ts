@@ -8,6 +8,7 @@
 
 import type { Scope } from "@minerva/contract/internal";
 import { conversationObject, sandboxObject } from "../addressing.ts";
+import type { RetentionPeriods } from "../conversation/retention.ts";
 import { conversationPrefix } from "../files/objects.ts";
 import { serveInternal } from "../internal/mount.ts";
 import { stagingPrefix } from "../internal/start.ts";
@@ -89,13 +90,36 @@ async function laravelOperation(op: string, body: Body, env: Env, exports: Cloud
 		}
 		case "conversation":
 			// Before the conversation's first start: its faults, its model (`workers-ai`, `fake-remote`, or null for the fake), its
-			// deadline and the perf probe's calibration (ports.ts).
+			// deadline, the perf probe's calibration and its retention's periods (ports.ts).
 			await conversationOf(env, euRef(scope), conversationId).faultPlan((body.faults ?? []) as unknown as Fault[], {
 				model: (body.model ?? null) as string | null,
 				runTimeoutMs: (body.runTimeoutMs ?? null) as number | null,
 				calibrate: (body.calibrate ?? null) as unknown as Calibration | null,
+				retention: (body.retention ?? null) as unknown as Partial<RetentionPeriods> | null,
 			});
 			return { ok: true };
+		case "retain":
+			// The perf probe: the conversation's faults and periods replaced, and its `retain` job due now.
+			await conversationOf(env, euRef(scope), conversationId).faultRetainNow((body.faults ?? []) as unknown as Fault[], (body.retention ?? {}) as unknown as Partial<RetentionPeriods>);
+			return { ok: true };
+		case "events":
+			return conversationOf(env, euRef(scope), conversationId).faultEvents(String(body.runId), Number(body.count));
+		case "jobs":
+			return conversationOf(env, euRef(scope), conversationId).faultJobs();
+		case "facts":
+			return conversationOf(env, euRef(scope), conversationId).faultFacts();
+		case "fired":
+			return conversationOf(env, euRef(scope), conversationId).faultFired();
+		case "laravel-fail":
+			// The fake Laravel answers the next `deliveries` deliveries of facts 503, so what the engine writes meanwhile stays
+			// unacknowledged.
+			await provider.laravelFail(Number(body.deliveries ?? 0));
+			return { ok: true };
+		case "objects": {
+			// How many objects the conversation has in R2 (up to 1,000).
+			const listed = await env.FILES_EU.list({ prefix: conversationPrefix(scope.workspace, conversationId), limit: 1000 });
+			return { count: listed.objects.length };
+		}
 		case "hold":
 			// Laravel holds the run before it sends the start.
 			await provider.laravelHold(String(body.runId), body.run as unknown as FakeRun);

@@ -24,6 +24,7 @@ import type { Attachment, Folder } from "@minerva/contract";
 import { type AttemptFence, type ConversationId, type EpochMs, type Outcome, type RunId, type RunStatus, type VersionId, type WorkspaceRef, refuse } from "../shared/rpc.ts";
 import type { GateDecision } from "./gate.ts";
 import type { SandboxPort } from "./local-run.ts";
+import { RETENTION, type RetentionPeriods } from "./retention.ts";
 import type { Published, RunStore } from "./store.ts";
 
 /**
@@ -139,6 +140,8 @@ export interface ConversationPorts {
 	sandbox(context: PortsContext): SandboxPort;
 	/** The deadline a Laravel run starts with, in ms from its start; null for none. The setting, unless the test build's plan sets one. */
 	runTimeoutMs(context: PortsContext): number | null;
+	/** What the conversation keeps and how long (retention.ts): RETENTION, unless the test build's plan shortens it. */
+	retention(ctx: DurableObjectState): RetentionPeriods;
 	/**
 	 * The test build's fault points in the attempt gate (src/faults/); production has none. `decided`: a
 	 * decision is made, before its transaction. `committed`: after its transaction and the sync.
@@ -152,7 +155,8 @@ export interface ConversationPorts {
 	 * (the files stored, the checkpoint not yet recorded), `checkpoint:recorded` (recorded, the results not
 	 * yet released), `local:released` (a call's result released, before pi has it); `model:recorded`, `model:settle` and
 	 * `model:settled` around a model call's record and settlement; `settle:sealed` and `settle:written` around the write of
-	 * a run's `run.settled`; `retain:step` after each step of a retention pass, a purge's included; `loop:created` between a
+	 * a run's `run.settled`; `retain:step` after each step of a retention pass, a purge's included, and `retain:pass` at a
+	 * pass's start and end; `loop:created` between a
 	 * run's pi session's creation and its claim.
 	 */
 	point?(context: PortsContext, name: string, detail?: string): Promise<void>;
@@ -266,6 +270,7 @@ export const defaultPorts: ConversationPorts = {
 	fetch: () => (input, init) => fetch(input, init),
 	sandbox: ({ env, ctx, workspace, conversationId }) => sandboxObject(env, ctx.exports, workspace, conversationId) as unknown as SandboxPort,
 	runTimeoutMs: ({ env }) => settings(env).runTimeoutMs,
+	retention: () => RETENTION,
 };
 
 /** The ports every Conversation object uses; tests replace `factory`. */

@@ -13,7 +13,7 @@ const PERIODS = { ...RETENTION };
 let db: ReturnType<typeof openDatabase>;
 let now: number;
 let store: RunStore;
-let host: { scheduled: (number | null)[]; steps: string[]; fail: number; logged: string[]; pages: number; purged: string[] };
+let host: { scheduled: (number | null)[]; steps: string[]; fail: number; logged: string[]; pages: number; purged: string[]; syncMs: number };
 let retention: Retention;
 
 beforeEach(() => {
@@ -22,8 +22,9 @@ beforeEach(() => {
 	db.prepare("INSERT INTO conversation (singleton, id, workspace_id, user_id, agent_id, created_at, updated_at, organization_id) VALUES (1, 'c', 'w', '', '', 0, 0, 'o')").all();
 	now = 0;
 	store = new RunStore(durableStorage(db), () => now);
-	host = { scheduled: [], steps: [], fail: 0, logged: [], pages: 0, purged: [] };
+	host = { scheduled: [], steps: [], fail: 0, logged: [], pages: 0, purged: [], syncMs: 0 };
 	retention = new Retention(store, {
+		periods: () => RETENTION,
 		schedule: (time) => host.scheduled.push(time),
 		log: (message) => host.logged.push(message),
 		abort: () => {},
@@ -33,6 +34,11 @@ beforeEach(() => {
 				host.fail--;
 				throw new Error("the step's fault");
 			}
+		},
+		edge: async () => {},
+		// As on the platform, the clock moves only with I/O: here, the sync after each step.
+		sync: async () => {
+			now += host.syncMs;
 		},
 		purge: {
 			clean: async () => void host.purged.push("clean"),
@@ -127,6 +133,16 @@ describe("a pass", () => {
 		expect([host.steps, held(), host.scheduled]).toEqual([["facts"], [4, 5, 6, 7, 8, 9, 10], [7 * DAY]]);
 	});
 
+	test("reads its budget on the clock the sync after each step moves, so a clock still through SQL still ends it", async () => {
+		RETENTION.rowsPerStep = 2;
+		write(10);
+		store.acknowledge(10);
+		now = 7 * DAY;
+		host.syncMs = 100;
+		await retention.pass();
+		expect([host.steps, held(), host.scheduled]).toEqual([["facts", "facts", "facts"], [7, 8, 9, 10], [7 * DAY + 300]]);
+	});
+
 	test("does nothing while a run is active or a start is prepared, and comes back in an hour", async () => {
 		write(4);
 		store.acknowledge(4);
@@ -157,11 +173,11 @@ describe("a pass", () => {
 
 describe("the next time", () => {
 	test("is the earliest due item, an item a whole pass left due counts as a day from now, and none when nothing is left", () => {
-		expect(nextPass(100, [500, null, 300])).toBe(300);
-		expect(nextPass(100, [50, 2 * DAY])).toBe(100 + DAY);
-		expect(nextPass(100, [50, 400])).toBe(400);
-		expect(nextPass(100, [null])).toBeNull();
-		expect(nextPass(100, [])).toBeNull();
+		expect(nextPass(100, [500, null, 300], DAY)).toBe(300);
+		expect(nextPass(100, [50, 2 * DAY], DAY)).toBe(100 + DAY);
+		expect(nextPass(100, [50, 400], DAY)).toBe(400);
+		expect(nextPass(100, [null], DAY)).toBeNull();
+		expect(nextPass(100, [], DAY)).toBeNull();
 	});
 
 	test("after failures backs off from 30 s, doubling to an hour", () => {

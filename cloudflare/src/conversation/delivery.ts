@@ -11,7 +11,6 @@ import { raiseFactSeq } from "../internal/recovery.ts";
 import { failureOf, laravelClient } from "../laravel/client.ts";
 import { parseJson } from "../lib/json.ts";
 import { type DeliveryVerdict, FACT_DELIVERY, MAX_FACTS, MAX_GAPS, acknowledgement, backoffMs, gap } from "./facts.ts";
-import { RETENTION } from "./retention.ts";
 import type { RunStore } from "./store.ts";
 
 /** What a delivery runs against besides the store: the object's `facts` and `retain` jobs, and its log. */
@@ -19,8 +18,8 @@ export interface DeliveryHost {
 	env: Env;
 	/** Makes the `facts` job due at `time`, or removes it; synchronous, so it joins the step that decides it. */
 	schedule(time: number | null): void;
-	/** Makes the `retain` job due by `time`, moved only earlier; synchronous, as `schedule`. */
-	retain(time: number): void;
+	/** Makes the `retain` job due for what was acknowledged at `acknowledgedAt`, moved only earlier; synchronous, as `schedule`. */
+	retain(acknowledgedAt: number): void;
 	log(message: string, error?: unknown): void;
 }
 
@@ -53,8 +52,7 @@ export class FactDelivery {
 				await this.#store.outside(() =>
 					this.#store.write(() => {
 						this.#store.acknowledge(verdict.acknowledged);
-						// What it acknowledged is due for retention then.
-						this.#host.retain(this.#store.now() + RETENTION.factsMs);
+						this.#host.retain(this.#store.now());
 					}),
 				);
 				continue;

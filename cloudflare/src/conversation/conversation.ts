@@ -81,7 +81,7 @@ import { laravelCredentials } from "./laravel-runs.ts";
 import { destroyRunSandbox, LocalRun } from "./local-run.ts";
 import { type ConversationPorts, type FolderPort, PORTS, type PortsContext, runStatePort, type WriteLedger } from "./ports.ts";
 import { ToolQueue, untilAborted } from "./queue.ts";
-import { RETAIN_JOB, RETENTION, Retention } from "./retention.ts";
+import { RETAIN_JOB, Retention } from "./retention.ts";
 import { MIGRATIONS } from "./schema.ts";
 import { type ConversationRow, type RunRow, type RunSnapshot, RunStore } from "./store.ts";
 import { RunStream } from "./stream.ts";
@@ -253,10 +253,11 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				if (time === null) this.lifecycle.jobs.cancel(FACTS_JOB).catch((error: unknown) => this.#log("the facts job was not removed", error));
 				else this.#push({ id: FACTS_JOB, fn: FACTS_JOB, time });
 			},
-			retain: (time) => this.#pushBy(RETAIN_JOB, time),
+			retain: (acknowledgedAt) => this.#pushBy(RETAIN_JOB, acknowledgedAt + this.#ports.retention(this.ctx).factsMs),
 			log: (message, error) => this.#log(message, error, error !== undefined),
 		});
 		this.#retention = new Retention(this.#store, {
+			periods: () => this.#ports.retention(this.ctx),
 			schedule: (time) => {
 				if (time === null) this.lifecycle.jobs.cancel(RETAIN_JOB).catch((error: unknown) => this.#log("the retain job was not removed", error));
 				else this.#push({ id: RETAIN_JOB, fn: RETAIN_JOB, time });
@@ -264,6 +265,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			log: (message, error) => this.#log(message, error, true),
 			abort: (session) => this.#defer(() => this.#abortSession(session)),
 			stepped: (step) => this.#point("retain:step", step),
+			edge: (at) => this.#point("retain:pass", at),
+			sync: () => this.ctx.storage.sync(),
 			purge: {
 				clean: () => within(this.#cleanUp(), RPC_WAIT_MS),
 				mark: async () => {
@@ -440,7 +443,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 					this.#store.markDeleted();
 					// The purge's window, from the first deletion.
 					const deletedAt = this.#store.conversation()?.deleted_at;
-					if (deletedAt != null) this.#pushBy(RETAIN_JOB, deletedAt + RETENTION.deletedMs);
+					if (deletedAt != null) this.#pushBy(RETAIN_JOB, deletedAt + this.#ports.retention(this.ctx).deletedMs);
 				}
 				return true;
 			}),
@@ -943,7 +946,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		this.#waiting.delete(runId);
 		this.#stream.end(runId);
 		const finished = this.#store.run(runId)?.finished_at;
-		if (finished != null) this.#pushBy(RETAIN_JOB, finished + RETENTION.runMs);
+		if (finished != null) this.#pushBy(RETAIN_JOB, finished + this.#ports.retention(this.ctx).runMs);
 		this.#defer(async () => {
 			await this.lifecycle.jobs.cancel(`watch:${runId}`);
 			await this.lifecycle.jobs.cancel(`deadline:${runId}`);

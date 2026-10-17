@@ -15,6 +15,8 @@
 // - `retain:step`: after each step of a retention pass committed, before the next (detail: the step, `facts`, `runs`, `pi`
 //   or `orphan`), and after each step of a deleted conversation's purge (`clean`, `mark`, `blobs`, and `storage` between
 //   the deletion of its storage and its `destroy()`, a fault taken before the deletion and logged again after it);
+// - `retain:pass`: at a retention pass's start and end (detail: `start` or `end`; no end for a pass that destroyed the object),
+//   whose notes time a pass on the object's clock (the perf probe);
 // - `loop:created`: a run's pi session created, before the run claims it (detail: the session's id);
 // - `start:copy`: before a start copies its attachments into the folder, ahead of its transaction;
 // - `gate:decided`, `gate:committed`: in the attempt gate, once it decided to end or restart a run, before
@@ -26,7 +28,8 @@
 //
 // Each model call and tool execution pi starts is counted per run (`FaultPlan.entered`).
 //
-// A conversation whose plan sets `run_timeout_ms` starts Laravel's runs with that deadline.
+// A conversation whose plan sets `run_timeout_ms` starts Laravel's runs with that deadline, and one whose plan sets `retention`
+// keeps what it holds for those periods instead of RETENTION's (docs/plans/chunk-15a-design.md, Periods), such as minutes.
 // A conversation whose plan sets `model` to `workers-ai` gets Workers AI instead of the fake model. Never
 // part of the production Worker.
 //
@@ -38,6 +41,7 @@
 // only generates them, the control for that CPU.
 
 import type { ConversationPorts, PortsContext } from "../conversation/ports.ts";
+import type { RetentionPeriods } from "../conversation/retention.ts";
 import type { ExecutorContext } from "../gateway/executor.ts";
 import { type FakeCall, type FakeOptions, fakeUpstream } from "../model/fake.ts";
 import { type Upstream, upstreamOf } from "../model/route.ts";
@@ -225,6 +229,10 @@ export function faultConversationPorts(base: ConversationPorts): ConversationPor
 		runTimeoutMs: (context) => {
 			const configured = planOf(context.ctx).config("run_timeout_ms");
 			return configured === null ? base.runTimeoutMs(context) : Number(configured);
+		},
+		retention: (ctx) => {
+			const configured = planOf(ctx).config("retention");
+			return configured === null ? base.retention(ctx) : { ...base.retention(ctx), ...(parseJson(configured) as unknown as Partial<RetentionPeriods>) };
 		},
 		upstream: (route, context) => {
 			const plan = planOf(context.ctx);

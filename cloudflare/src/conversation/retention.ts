@@ -1,7 +1,7 @@
 // What a conversation keeps, and for how long (docs/plans/chunk-15a-design.md): one Lifecycle job, `retain`, deletes what is
 // due in passes of bounded steps on the object's alarm, and only while no run is active. A pass runs its steps in order
 // until nothing is due or its budget is spent, then schedules itself for what is left. Each step is one transaction outside
-// pi's, deletes at most RETENTION.rowsPerStep rows and records how far it got in the same transaction, so a kill rolls back
+// pi's, deletes at most `rowsPerStep` rows and records how far it got in the same transaction, so a kill rolls back
 // only the step in flight and the next pass finds what is left. Its steps, in order: the facts Laravel acknowledged long
 // enough ago (store.ts `pruneFacts`); the runs that ended long enough ago, oldest first, their own records and then their pi
 // sessions (`pruneRecords`, `prunePi`); then the pi sessions no run names (`pruneOrphan`); last, a deleted conversation's
@@ -11,7 +11,7 @@ import type { EpochMs } from "../shared/rpc.ts";
 import { PI_SCHEMA_VERSION, type PiStep } from "./pi-tables.ts";
 import type { Deletion, RunStore } from "./store.ts";
 
-/** The periods and bounds; the tests shorten them. */
+/** The periods and bounds; the tests shorten them, and the test build's plan can for one conversation (ports.ts `retention`). */
 export const RETENTION = {
 	/** A run's own records are kept this long after it ended. */
 	runMs: 30 * 24 * 60 * 60_000,
@@ -29,18 +29,20 @@ export const RETENTION = {
 	rowsPerStep: 500,
 };
 
+export type RetentionPeriods = typeof RETENTION;
+
 /** The Lifecycle job of the host that runs a pass. */
 export const RETAIN_JOB = "retain";
 
 /**
  * When the next pass is due, from the due times of what is left: the earliest, where one already past is blocked (the pass
- * that just ran over it could not delete it) and counts as RETENTION.blockedMs from now. Null when nothing is left.
+ * that just ran over it could not delete it) and counts as `blockedMs` from now. Null when nothing is left.
  */
-export function nextPass(now: EpochMs, due: readonly (EpochMs | null)[]): EpochMs | null {
+export function nextPass(now: EpochMs, due: readonly (EpochMs | null)[], blockedMs: number): EpochMs | null {
 	let next: EpochMs | null = null;
 	for (const time of due) {
 		if (time === null) continue;
-		const at = time > now ? time : now + RETENTION.blockedMs;
+		const at = time > now ? time : now + blockedMs;
 		if (next === null || at < next) next = at;
 	}
 	return next;
@@ -53,6 +55,8 @@ export function retryMs(failures: number): number {
 
 /** What a pass runs against besides the store: the object's `retain` job, its log and the test build's fault point. */
 export interface RetentionHost {
+	/** The periods and bounds, read at each step. */
+	periods(): RetentionPeriods;
 	/** Makes the `retain` job due at `time`, or removes it; synchronous, so it joins the step that decides it. */
 	schedule(time: EpochMs | null): void;
 	log(message: string, error: unknown): void;
@@ -63,6 +67,13 @@ export interface RetentionHost {
 	abort(session: number): void;
 	/** After each committed step (detail: the step); the test build's fault point `retain:step`. */
 	stepped(step: StepName): Promise<void>;
+	/**
+	 * Waits until what the step wrote is durable. It is the I/O that moves the object's clock to the time the steps took, which
+	 * the pass's budget reads: on the platform the clock stands still through SQL, and a timer moves it only by its own delay.
+	 */
+	sync(): Promise<void>;
+	/** At a pass's start and at its end, unless it destroyed the object; the test build's fault point `retain:pass`. */
+	edge(at: "start" | "end"): Promise<void>;
 	purge: Purge;
 }
 
@@ -128,13 +139,14 @@ export class Retention {
 	}
 
 	#dues(): (EpochMs | null)[] {
+		const periods = this.#host.periods();
 		const acknowledged = this.#store.oldestAcknowledgement();
 		const ended = this.#store.oldestUnpruned();
 		const deleted = this.#store.deletion()?.deletedAt ?? null;
 		return [
-			acknowledged === null ? null : acknowledged + RETENTION.factsMs,
-			ended === null ? null : ended + RETENTION.runMs,
-			deleted === null ? null : deleted + RETENTION.deletedMs,
+			acknowledged === null ? null : acknowledged + periods.factsMs,
+			ended === null ? null : ended + periods.runMs,
+			deleted === null ? null : deleted + periods.deletedMs,
 		];
 	}
 
@@ -146,22 +158,22 @@ export class Retention {
 	 */
 	async pass(): Promise<{ rescheduleAt: EpochMs } | undefined> {
 		try {
+			await this.#host.edge("start");
 			const started = this.#store.now();
 			const state: PassState = { skipped: new Set(), piPaused: false };
 			for (let steps = 0; ; steps++) {
 				const step = await this.#store.outside(() => this.#step(started, steps, state));
-				if ("next" in step) {
+				if ("next" in step || "purge" in step) {
+					const next = "next" in step ? step.next : await this.#purge(started);
 					this.#failures = 0;
-					return step.next === null ? undefined : { rescheduleAt: step.next };
-				}
-				if ("purge" in step) {
-					const next = await this.#purge(started);
-					this.#failures = 0;
+					// A purge that answers no next time destroyed the object: nothing is left to mark the end in.
+					if ("next" in step || next !== null) await this.#host.edge("end");
 					return next === null ? undefined : { rescheduleAt: next };
 				}
 				if (step.abort !== undefined) this.#host.abort(step.abort);
 				await this.#host.stepped(step.name);
-				// The object's clock moves only with I/O, and other events wait while this runs: a timer lets both happen.
+				await this.#host.sync();
+				// Other events wait while this runs: a timer lets them in.
 				await new Promise((resolve) => setTimeout(resolve, 0));
 			}
 		} catch (error) {
@@ -183,16 +195,17 @@ export class Retention {
 	 */
 	#step(started: EpochMs, steps: number, state: PassState): Step {
 		const now = this.#store.now();
+		const periods = this.#host.periods();
 		const over = (next: EpochMs | null) => {
 			this.#host.schedule(next);
 			return { next };
 		};
 		// What the orphans' step relies on too: no loop can be creating or claiming a session.
-		if (this.#store.activeRun() !== null || this.#store.preparedRuns().length > 0) return over(now + RETENTION.busyMs);
-		if (steps > 0 && now - started >= RETENTION.passMs) return over(now);
-		const limit = RETENTION.rowsPerStep;
-		if (this.#store.pruneFacts(now - RETENTION.factsMs, limit) > 0) return { name: "facts" };
-		const run = this.#store.prunableRun(now - RETENTION.runMs, [...state.skipped], !state.piPaused);
+		if (this.#store.activeRun() !== null || this.#store.preparedRuns().length > 0) return over(now + periods.busyMs);
+		if (steps > 0 && now - started >= periods.passMs) return over(now);
+		const limit = periods.rowsPerStep;
+		if (this.#store.pruneFacts(now - periods.factsMs, limit) > 0) return { name: "facts" };
+		const run = this.#store.prunableRun(now - periods.runMs, [...state.skipped], !state.piPaused);
 		if (run !== null && run.prune !== "pi") {
 			this.#store.pruneRecords(run.id, limit);
 			return { name: "runs" };
@@ -208,13 +221,13 @@ export class Retention {
 		// Never destroyed while it holds a fact Laravel lacks, which may be money (owner question 1); a pass blocked here comes
 		// back a day later.
 		if (deletion && deletion.unacknowledged > 0) this.#host.log(`a deleted conversation is kept: ${deletion.unacknowledged} facts are not acknowledged`, undefined);
-		return over(nextPass(now, this.#dues()));
+		return over(nextPass(now, this.#dues(), periods.blockedMs));
 	}
 
 	/** The conversation's deletion, once its period is over. */
 	#dueDeletion(now: EpochMs): Deletion | null {
 		const deletion = this.#store.deletion();
-		return deletion !== null && deletion.deletedAt + RETENTION.deletedMs <= now ? deletion : null;
+		return deletion !== null && deletion.deletedAt + this.#host.periods().deletedMs <= now ? deletion : null;
 	}
 
 	/**
@@ -229,7 +242,7 @@ export class Retention {
 		await this.#host.stepped("mark");
 		for (let pages = 0; ; pages++) {
 			const now = this.#store.now();
-			if (pages > 0 && now - started >= RETENTION.passMs) {
+			if (pages > 0 && now - started >= this.#host.periods().passMs) {
 				this.#host.schedule(now);
 				return now;
 			}

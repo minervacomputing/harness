@@ -499,6 +499,25 @@ describe("runs' retention", () => {
 		expect(await commands.deleteConversation({ scope: start.scope, conversation: start.conversation })).toEqual({ outcome: "deleted" });
 	});
 
+	test("the test build's plan gives one conversation periods of its own, and notes each pass's start and end", async () => {
+		const start = await next(null);
+		await objectOf(start).faultPlan([{ point: "retain:pass", mode: "note", times: 10 }], { retention: { runMs: 60_000 } });
+		const other = await next(null);
+		// Laravel acknowledges nothing, so only the runs' ends schedule the job.
+		fake.failDeliveries = 1_000_000;
+		await ran(start);
+		await ran(other);
+		const ended = async (of: StartRun) => (await sql<{ finished_at: number }>(of, "SELECT finished_at FROM runs WHERE id = ?", of.run))[0]?.finished_at ?? 0;
+		expect([await retainJob(start), await retainJob(other)]).toEqual([(await ended(start)) + 60_000, (await ended(other)) + RETENTION.runMs]);
+
+		await ageRuns(start, 60_000);
+		await retain(start);
+		expect((await runRow(start)).prune).toBe("done");
+		const edges = (await objectOf(start).faultFired()).filter((entry) => entry.point === "retain:pass");
+		expect(edges.map((entry) => entry.detail)).toEqual(["start", "end"]);
+		expect(edges[1]?.at).toBeGreaterThanOrEqual(edges[0]?.at ?? Number.POSITIVE_INFINITY);
+	});
+
 	test("a run not settled, or with a write still dispatched, is not pruned, and is looked at again a day later", async () => {
 		const start = await next(null);
 		await ran(start);
