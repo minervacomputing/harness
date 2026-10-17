@@ -86,8 +86,11 @@ export interface FolderPort {
 	publish(runId: RunId, run: { baseVersionId: VersionId | null; checkpointVersionId: VersionId | null; status: RunStatus }): Published;
 	list(versionId: VersionId | null): Folder | null;
 	resolve(versionId: VersionId | null, path: string): DownloadTarget | null;
-	/** Deletes the conversation's objects in R2 (ARCHITECTURE.md: Files, Deletion). */
-	deleteObjects(): Promise<void>;
+	/**
+	 * Deletes a page of the conversation's objects in R2, at most 1,000, recorded or not (ARCHITECTURE.md: Files, Deletion);
+	 * returns how many, 0 once none is left.
+	 */
+	deleteObjectsPage(): Promise<number>;
 	/** What a new attempt of the run hydrates: its last checkpoint, else its base version, with each file's R2 key. */
 	hydratePlan(runId: RunId): HydratePlan;
 	/**
@@ -149,10 +152,15 @@ export interface ConversationPorts {
 	 * (the files stored, the checkpoint not yet recorded), `checkpoint:recorded` (recorded, the results not
 	 * yet released), `local:released` (a call's result released, before pi has it); `model:recorded`, `model:settle` and
 	 * `model:settled` around a model call's record and settlement; `settle:sealed` and `settle:written` around the write of
-	 * a run's `run.settled`; `retain:step` after each step of a retention pass; `loop:created` between a run's pi session's
-	 * creation and its claim.
+	 * a run's `run.settled`; `retain:step` after each step of a retention pass, a purge's included; `loop:created` between a
+	 * run's pi session's creation and its claim.
 	 */
 	point?(context: PortsContext, name: string, detail?: string): Promise<void>;
+	/**
+	 * The test build's fault point for a step after the object's storage is deleted, which deletes the plan with it (a
+	 * purge's `retain:step` `storage`): the fault is taken before the deletion and fired by the function returned.
+	 */
+	arm?(context: PortsContext, name: string, detail: string): () => Promise<void>;
 }
 
 /** No files: the folder stays as it is, and a message with attachments is refused (for tests of the rest). */
@@ -167,7 +175,7 @@ export const emptyFolder = (context: PortsContext): FolderPort => ({
 	publish: (_runId, run) => ({ resultVersionId: run.checkpointVersionId ?? run.baseVersionId, changes: null }),
 	list: (versionId) => (versionId === null || versionId === context.folderVersionId() ? { versionId: context.folderVersionId(), files: [], dirs: [] } : null),
 	resolve: () => null,
-	deleteObjects: async () => {},
+	deleteObjectsPage: async () => 0,
 	hydratePlan: () => ({ versionId: context.folderVersionId(), files: [], dirs: [] }),
 	checkpoint: async () => ({ ok: false, code: "stale", message: "This attempt is no longer the run's current one." }),
 	sweep: async () => undefined,

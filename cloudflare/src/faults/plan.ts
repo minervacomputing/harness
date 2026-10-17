@@ -219,7 +219,24 @@ export class FaultPlan {
 	 */
 	async at(point: string, where: Where = {}, only?: readonly FaultMode[]): Promise<"lose" | null> {
 		const taken = this.#take(point, where, only);
-		if (taken === null) return null;
+		return taken === null ? null : this.#fire(point, taken);
+	}
+
+	/**
+	 * For a point reached after the object's storage is deleted, which deletes the plan with it: the fault due is taken now,
+	 * and fired by the function returned, which first logs it again in the storage made anew, so a test still reads it.
+	 */
+	arm(point: string, where: Where, only: readonly FaultMode[]): () => Promise<void> {
+		const taken = this.#take(point, where, only);
+		if (taken === null) return async () => {};
+		return async () => {
+			this.#ready = false;
+			if (!taken.unsynced) this.#sql().exec("INSERT INTO fault_log (point, mode, at, detail) VALUES (?, ?, ?, ?)", point, taken.mode, Date.now(), where.detail ?? "");
+			await this.#fire(point, taken);
+		};
+	}
+
+	async #fire(point: string, taken: { mode: FaultMode; unsynced: boolean }): Promise<"lose" | null> {
 		const { mode } = taken;
 		if (taken.unsynced) {
 			if (mode === "oom") exhaustMemory();

@@ -64,9 +64,9 @@ CREATE INDEX recovery_runs_conversation ON recovery_runs (conversation_id);
 - **Idempotency.** `startRun` records its input's digest on the run's row (set once, by the first start). A start whose digest differs is `IDEMPOTENCY_CONFLICT`. The answer itself is kept by the Conversation object, so a repeat gets the same answer and nothing is compiled twice.
 - **A refused command changes nothing.** Every write after the conversation's insert is conditional on the scope, in SQL: a run is inserted only through a conversation row with the named organization and workspace, and its digest is set only while it is null and the run's conversation and that conversation's scope match. So a command refused `SCOPE_MISMATCH` cannot bind a run or set a digest that a correct command would then conflict with. `SCOPE_MISMATCH` is checked before `IDEMPOTENCY_CONFLICT`.
 - **Addressing.** The object is reached through the row's jurisdiction, never the command's (addressing.ts). Laravel's conversations are created in the EU jurisdiction (`INTERNAL_JURISDICTION`, Decisions 11); a row keeps the jurisdiction it was created with.
-- **What later chunks add:** the highest fact sequence per conversation, raised before a batch is delivered (chunk 7); and deletion (chunk 12), which must keep a sentinel that refuses a delayed command, since `destroy()` deletes the object's storage and a command arriving after it would otherwise bind an empty object again.
+- **What later chunks add:** the highest fact sequence per conversation, raised before a batch is delivered (chunk 7, `0011`); the deletion's time (chunk 12, `0012`); and the purge's (chunk 15a, `0014_purged_conversations.sql`, `purged_at`), set by the object's retention before it deletes its blobs and its storage ([chunk-15a-design.md](chunk-15a-design.md), Physical deletion). `purged_at` is the sentinel that refuses a delayed command, since `destroy()` deletes the object's storage and a command arriving after it would otherwise bind an empty object again. For a purged conversation the Worker answers from the index and never reaches the object: `startRun` is refused `CONVERSATION_DELETED`, `cancelRun` answers `ended`, `deleteConversation` `deleted`, and `replayFacts` an empty page from `fact_seq` or `FACTS_PRUNED` below it. `bindRun` may still insert a new run id's row first, which is harmless.
 
-The rows are written and read back in one D1 batch, before the object is called. So no run executes without its row, and a run row exists for every run an object stored. The rows outlive the restore window, deleted conversations' included (chunk 15 decides when they go).
+The rows are written and read back in one D1 batch, before the object is called. So no run executes without its row, and a run row exists for every run an object stored. The rows are kept for good, deleted and purged conversations' included (chunk-15a-design.md, owner question 2).
 
 ## `startRun`
 
@@ -107,7 +107,7 @@ In the object, one start per run id at a time (a repeat while one is in flight i
 
 ## `cancelRun`
 
-In the Worker: the environment, the conversation's and the run's binding in the index (made here if this is the first command naming them), then the object's `cancelInternal(command)`.
+In the Worker: the environment, the conversation's and the run's binding in the index (made here if this is the first command naming them), then the object's `cancelInternal(command)`. A conversation the index has deleted is deleted in its object first, as for `startRun`, so a cancel that read the index before a purge's mark makes the object again only as a deleted conversation, which purges itself after its window; a purged one answers `ended` from the index.
 
 In the object, after the same binding check:
 

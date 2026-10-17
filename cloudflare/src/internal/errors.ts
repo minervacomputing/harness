@@ -14,8 +14,11 @@ export const MISMATCH = "This conversation belongs to another organization or wo
 /** A Conversation's answer to a Laravel command: its value, or its refusal thrown as the contract declares it. */
 export function answered<T>(answer: InternalAnswer<T>): T {
 	if (answer.ok) return answer.value;
-	if (answer.code === "FACTS_PRUNED") {
-		throw internalRefusal("FACTS_PRUNED", `This conversation's facts before ${answer.floor} are no longer kept.`, { floor: answer.floor });
-	}
+	if (answer.code === "FACTS_PRUNED") throw factsPruned(answer.floor);
 	throw internalRefusal("SCOPE_MISMATCH", MISMATCH);
+}
+
+/** A replay from below `floor` less one: the facts Laravel lacks are deleted. */
+export function factsPruned(floor: number): ORPCError<InternalRefusalCode, unknown> {
+	return internalRefusal("FACTS_PRUNED", `This conversation's facts before ${floor} are no longer kept.`, { floor });
 }

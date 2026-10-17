@@ -1,18 +1,25 @@
 // Retention in local workerd (docs/plans/chunk-15a-design.md): the `retain` job on the Conversation's alarm deletes a fact
 // only 7 days after Laravel acknowledged it, raising the floor, and a replay or a gap from below the floor is refused rather
 // than skipping what is gone (Facts and the floor); it deletes a run's own records and its pi session 30 days after the run
-// ended, keeping its row, its answer and its tombstone, and the pi sessions no run names (A run's steps, pi's tables). The
-// Conversation runs with the test build's ports (src/faults/), for the fault points `retain:step` and `loop:created`, and its
-// runs answer with the fake model.
+// ended, keeping its row, its answer and its tombstone, and the pi sessions no run names (A run's steps, pi's tables); and it
+// purges a deleted conversation 7 days after its deletion once Laravel holds every fact, after which the Worker answers its
+// commands from the recovery index (Physical deletion). The Conversation runs with the test build's ports (src/faults/), for
+// the fault points `retain:step` and `loop:created`, and its runs answer with the fake model.
 
 import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { StartRun } from "@minerva/contract/internal";
-import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { SignJWT } from "jose";
+import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { CONNECTORS } from "../../src/connectors/catalog.ts";
 import { CONNECTOR_SOURCE } from "../../src/connectors/index.ts";
 import { FACT_DELIVERY } from "../../src/conversation/facts.ts";
+import { FOLDER_PORTS } from "../../src/files/folder.ts";
+import { createApp } from "../../src/http/router.ts";
+import { base64url } from "../../src/lib/bytes.ts";
+import { STREAM_AUDIENCE, STREAM_PURPOSE } from "../../src/stream/token.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
+import { MIGRATIONS } from "../../src/conversation/schema.ts";
 import { RETAIN_JOB, RETENTION } from "../../src/conversation/retention.ts";
 import { notesConnector } from "../../src/faults/connector.ts";
 import { FakeLaravel } from "../../src/faults/laravel.ts";
@@ -21,12 +28,13 @@ import { faultConversationPorts, providerOf } from "../../src/faults/ports.ts";
 import { notesLease } from "../../src/faults/world.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import type { FakeScript, FakeTurn } from "../../src/model/fake.ts";
-import { commands, held, notesStart, objectOf, refusalOf, scope, signedAssertions, startOf } from "./internal-support.ts";
+import { ORIGIN, commands, held, notesStart, objectOf, refusalOf, scope, signedAssertions, startOf } from "./internal-support.ts";
 
 signedAssertions();
 
 const DELIVERY = { ...FACT_DELIVERY };
 const PERIODS = { ...RETENTION };
+const BUCKET = FOLDER_PORTS.bucket;
 const DAY = 24 * 60 * 60_000;
 let fake: FakeLaravel;
 let uninstall: () => void;
@@ -46,6 +54,8 @@ afterEach(() => {
 	uninstall();
 	Object.assign(FACT_DELIVERY, DELIVERY);
 	Object.assign(RETENTION, PERIODS);
+	FOLDER_PORTS.bucket = BUCKET;
+	vi.restoreAllMocks();
 });
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -631,5 +641,258 @@ describe("runs' retention", () => {
 
 		await retain(start);
 		expect([(await runRow(start)).prune, await records(start)]).toEqual(["done", NO_RECORDS]);
+	});
+});
+
+/** A start in a new conversation whose message attaches `report.txt` ("hello"), so the conversation holds a blob in R2. */
+async function filed(): Promise<StartRun> {
+	const within = scope();
+	const upload = `uploads/${within.workspace}/${uuid7()}`;
+	await env.FILES_EU.put(upload, "hello");
+	return held(fake, startOf(within, { message: { id: uuid7(), content: "Read this", attachments: [{ upload, name: "report.txt", size: 5, mediaType: "text/plain" }] } }));
+}
+
+const workspaceOf = (start: StartRun) => ({ id: start.scope.workspace, jurisdiction: "eu" as const });
+const blobs = async (start: StartRun) => (await env.FILES_EU.list({ prefix: `blobs/${start.scope.workspace}/${start.conversation}/` })).objects.length;
+const indexed = (start: StartRun) =>
+	env.DB.prepare("SELECT deleted_at, purged_at, fact_seq FROM recovery_conversations WHERE id = ?").bind(start.conversation).first<{ deleted_at: number; purged_at: number | null; fact_seq: number }>();
+const conversations = async (start: StartRun) => (await sql<{ n: number }>(start, "SELECT count(*) AS n FROM conversation"))[0]?.n;
+
+/** Makes the conversation's deletion `ms` older in its object, as if that much time had passed since. */
+async function ageDeletion(start: StartRun, ms: number): Promise<void> {
+	await sql(start, "UPDATE conversation SET deleted_at = deleted_at - ?", ms);
+}
+
+/**
+ * The tables of the object that hold rows, and how many, but the test build's own and the platform's (`_cf_`, which no query
+ * may read): what is left of the conversation.
+ */
+async function contents(stub: DurableObjectStub): Promise<{ [table: string]: number }> {
+	return runInDurableObject(stub, (_instance, state) => {
+		const sql = state.storage.sql;
+		const tables = sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'fault_%' AND name NOT LIKE '_cf_%' ORDER BY name").toArray();
+		const counts: { [table: string]: number } = {};
+		for (const { name } of tables) {
+			const n = sql.exec<{ n: number }>(`SELECT count(*) AS n FROM "${name}"`).one().n;
+			if (n > 0) counts[name] = n;
+		}
+		return counts;
+	});
+}
+
+/** What a Conversation object holds before any command reached it: the steps of its schema, which its constructor applies. */
+const EMPTY = { _migrations: MIGRATIONS.length };
+
+/** A finished conversation with a blob, every fact Laravel acknowledged pruned, deleted 7 days ago: due for its purge. */
+async function purgeable(): Promise<{ start: StartRun; written: number }> {
+	const start = await filed();
+	await ran(start);
+	const { written } = await acknowledged(start);
+	await age(start, RETENTION.factsMs);
+	await retain(start);
+	expect(await delivery(start)).toMatchObject({ written, acknowledged: written, floor: written + 1 });
+	expect(await commands.deleteConversation({ scope: start.scope, conversation: start.conversation })).toEqual({ outcome: "deleted" });
+	await ageDeletion(start, RETENTION.deletedMs);
+	return { start, written };
+}
+
+/** Runs the `retain` job until the object is gone: the destroy resets it, so the alarm's invocation fails. */
+async function purge(start: StartRun): Promise<void> {
+	await due(start).catch(() => {});
+	await until(
+		() => conversations(start),
+		(n) => n === 0,
+	);
+}
+
+const STREAM_KEY = new Uint8Array(32).fill(7);
+
+/** Laravel's run stream for the start's run, as a browser opens it with a token Laravel signed. */
+async function stream(start: StartRun): Promise<Response> {
+	const now = Math.floor(Date.now() / 1000);
+	const token = await new SignJWT({ aud: STREAM_AUDIENCE, purpose: STREAM_PURPOSE, env: "test", org: start.scope.organization, conversation: start.conversation, run: start.run })
+		.setProtectedHeader({ alg: "HS256", kid: "s1" })
+		.setIssuedAt(now)
+		.setExpirationTime(now + 300)
+		.sign(STREAM_KEY);
+	const streamEnv = { ...env, MINERVA_STREAM_KEYS: `s1:${base64url(STREAM_KEY, { pad: false })}` } as Env;
+	return createApp().fetch(new Request(`${ORIGIN}/stream/v1`, { headers: { Authorization: `Bearer ${token}` } }), streamEnv);
+}
+
+describe("a deleted conversation's purge", () => {
+	test("a deleted conversation whose facts Laravel never acknowledged is kept, and an error is logged", async () => {
+		const errors = vi.spyOn(console, "error");
+		fake.failDeliveries = 1_000_000;
+		const start = await filed();
+		await ran(start);
+		expect(await commands.deleteConversation({ scope: start.scope, conversation: start.conversation })).toEqual({ outcome: "deleted" });
+		const [{ deleted_at } = { deleted_at: 0 }] = await sql<{ deleted_at: number }>(start, "SELECT deleted_at FROM conversation");
+		expect(await retainJob(start)).toBe(deleted_at + RETENTION.deletedMs);
+		await ageDeletion(start, RETENTION.deletedMs);
+		const { written } = await delivery(start);
+		const before = Date.now();
+		await retain(start);
+
+		expect(errors.mock.calls.map(([message]) => String(message)).filter((message) => message.includes("deleted conversation"))).toEqual([
+			`conversation ${(await runInDurableObject(objectOf(start), (_instance, state) => state.id.name)) ?? ""}: a deleted conversation is kept: ${written} facts are not acknowledged`,
+		]);
+		expect([await conversations(start), await heldSeqs(start), await blobs(start), (await indexed(start))?.purged_at]).toEqual([1, range(1, written), 1, null]);
+		const job = await retainJob(start);
+		expect(job).toBeGreaterThanOrEqual(before + RETENTION.blockedMs);
+		expect(job).toBeLessThanOrEqual(Date.now() + RETENTION.blockedMs);
+	});
+
+	test("is kept 7 days after its last acknowledgement; then its storage, blobs and object go and the index marks it purged", async () => {
+		const start = await filed();
+		await ran(start);
+		const { written } = await acknowledged(start);
+		expect(await commands.deleteConversation({ scope: start.scope, conversation: start.conversation })).toEqual({ outcome: "deleted" });
+		await ageDeletion(start, RETENTION.deletedMs);
+		const before = Date.now();
+		await retain(start);
+		expect([await conversations(start), await heldSeqs(start), await blobs(start), (await indexed(start))?.purged_at]).toEqual([1, range(1, written), 1, null]);
+		// Due and blocked: looked at again a day later.
+		const job = await retainJob(start);
+		expect(job).toBeGreaterThanOrEqual(before + RETENTION.blockedMs);
+		expect(job).toBeLessThanOrEqual(Date.now() + RETENTION.blockedMs);
+
+		await age(start, RETENTION.factsMs);
+		const purging = Date.now();
+		await purge(start);
+		expect(await contents(objectOf(start))).toEqual(EMPTY);
+		expect(await blobs(start)).toBe(0);
+		const row = await indexed(start);
+		expect(row).toEqual({ deleted_at: expect.any(Number), purged_at: expect.any(Number), fact_seq: written });
+		expect(row?.purged_at).toBeGreaterThanOrEqual(purging);
+		expect(await runInDurableObject(objectOf(start), (_instance, state) => state.storage.getAlarm())).toBeNull();
+	});
+
+	test("afterwards the Worker answers every command from the index, and none reaches the object", async () => {
+		const { start, written } = await purgeable();
+		await purge(start);
+		const named = { scope: start.scope, conversation: start.conversation };
+
+		const refused = { outcome: "refused", code: "CONVERSATION_DELETED", message: "This conversation was deleted." };
+		// Its start, accepted before the deletion, is refused too: the answer went with the object.
+		expect(await commands.startRun(start)).toEqual(refused);
+		expect(await commands.startRun(held(fake, startOf(start.scope, { conversation: start.conversation })))).toEqual(refused);
+		expect(await commands.cancelRun({ ...named, run: start.run, reason: "cancelled" })).toEqual({ state: "ended" });
+		expect(await commands.cancelRun({ ...named, run: uuid7(), reason: "cancelled" })).toEqual({ state: "ended" });
+		expect(await commands.deleteConversation(named)).toEqual({ outcome: "deleted" });
+		expect(await commands.replayFacts({ ...named, after: written, limit: 500 })).toEqual({ conversation: start.conversation, facts: [], more: false });
+		expect(await refusalOf(commands.replayFacts({ ...named, after: written - 1, limit: 500 }))).toEqual({ code: "FACTS_PRUNED", status: 410, data: { floor: written + 1 } });
+		expect(await refusalOf(commands.folder({ ...named, version: null }))).toMatchObject({ code: "NOT_FOUND", status: 404 });
+		expect(await refusalOf(commands.resolveDownload({ ...named, version: null, path: "report.txt" }))).toMatchObject({ code: "NOT_FOUND", status: 404 });
+		const streamed = await stream(start);
+		expect(streamed.status).toBe(404);
+		await streamed.body?.cancel();
+		// Another scope is still refused as such.
+		expect(await refusalOf(commands.cancelRun({ ...named, scope: { ...start.scope, organization: uuid7() }, run: uuid7(), reason: "cancelled" }))).toMatchObject({ code: "SCOPE_MISMATCH" });
+
+		expect(await contents(objectOf(start))).toEqual(EMPTY);
+	});
+
+	// As the Worker sends a start or a cancel of a conversation the index read as deleted and not purged: the deletion first,
+	// then the command, which says the conversation is deleted. The purge can come before either of them.
+	test.each([
+		{ sent: "the deletion and a cancel", deletes: true, command: "cancel", answer: { state: "tombstoned" } },
+		{ sent: "a cancel, the purge having come after the deletion", deletes: false, command: "cancel", answer: { state: "tombstoned" } },
+		{
+			sent: "a start, the purge having come after the deletion",
+			deletes: false,
+			command: "start",
+			answer: { outcome: "refused", code: "CONVERSATION_DELETED", message: "This conversation was deleted." },
+		},
+	])("$sent, after the purge, make the object again only deleted, which purges itself after its window", async ({ deletes, command, answer }) => {
+		const { start } = await purgeable();
+		await purge(start);
+		const first = await indexed(start);
+		const named = { scope: start.scope, conversation: start.conversation };
+
+		if (deletes) expect(await objectOf(start).deleteInternal(named, workspaceOf(start))).toEqual({ ok: true, value: { outcome: "deleted" } });
+		const late = held(fake, startOf(start.scope, { conversation: start.conversation }));
+		const answered =
+			command === "start"
+				? await objectOf(start).startInternal(late, workspaceOf(start), true)
+				: await objectOf(start).cancelInternal({ ...named, run: late.run, reason: "cancelled" }, workspaceOf(start), true);
+		expect(answered).toEqual({ ok: true, value: answer });
+		const [{ deleted_at } = { deleted_at: 0 }] = await sql<{ deleted_at: number }>(start, "SELECT deleted_at FROM conversation");
+		expect(await retainJob(start)).toBe(deleted_at + RETENTION.deletedMs);
+		expect(await sql(start, "SELECT id FROM runs")).toEqual([]);
+
+		await ageDeletion(start, RETENTION.deletedMs);
+		await purge(start);
+		expect(await contents(objectOf(start))).toEqual(EMPTY);
+		expect([await blobs(start), await indexed(start)]).toEqual([0, first]);
+	});
+
+	test("an R2 failure past three tries keeps the job, backing off, and a later pass finishes", async () => {
+		let failing = true;
+		FOLDER_PORTS.bucket = (context) => {
+			const inner = BUCKET(context);
+			return {
+				get: (key) => inner.get(key),
+				put: (key, value, options) => inner.put(key, value, options),
+				delete: (keys) => inner.delete(keys),
+				list: (options) => (failing ? Promise.reject(new Error("R2 is unavailable.")) : inner.list(options)),
+			};
+		};
+		const { start } = await purgeable();
+		for (const backoff of [30_000, 60_000, 120_000, 240_000]) {
+			const before = Date.now();
+			await retain(start);
+			const job = await retainJob(start);
+			expect(job).toBeGreaterThanOrEqual(before + backoff);
+			expect(job).toBeLessThanOrEqual(Date.now() + backoff);
+		}
+		expect([await conversations(start), await blobs(start), (await indexed(start))?.purged_at]).toEqual([1, 1, expect.any(Number)]);
+
+		failing = false;
+		await purge(start);
+		expect(await contents(objectOf(start))).toEqual(EMPTY);
+		expect(await blobs(start)).toBe(0);
+	});
+
+	test.each([
+		{ step: "clean", notes: 0, left: { purged: false, blobs: 1, conversations: 1 } },
+		{ step: "mark", notes: 1, left: { purged: true, blobs: 1, conversations: 1 } },
+		{ step: "blobs", notes: 2, left: { purged: true, blobs: 0, conversations: 1 } },
+	])("a reset after its $step step leaves what it did, and the next alarm finishes", async ({ step, notes, left }) => {
+		const { start } = await purgeable();
+		await objectOf(start).faultPlan([...(notes > 0 ? [{ point: "retain:step", mode: "note" as const, times: notes }] : []), { point: "retain:step", mode: "abort" }]);
+
+		await due(start).catch(() => {});
+		const fired = await until(
+			() => objectOf(start).faultFired(),
+			(log) => log.some((entry) => entry.mode === "abort"),
+		);
+		expect(fired.map((entry) => entry.detail)).toEqual(["clean", "mark", "blobs"].slice(0, notes + 1));
+		expect(fired.at(-1)).toMatchObject({ detail: step, mode: "abort" });
+		expect({ purged: (await indexed(start))?.purged_at != null, blobs: await blobs(start), conversations: await conversations(start) }).toEqual(left);
+
+		await purge(start);
+		expect(await contents(objectOf(start))).toEqual(EMPTY);
+		expect([await blobs(start), (await indexed(start))?.purged_at]).toEqual([0, expect.any(Number)]);
+	});
+
+	test("a reset between the storage's deletion and the object's destroy() leaves nothing of the conversation", async () => {
+		const { start } = await purgeable();
+		await objectOf(start).faultPlan([
+			{ point: "retain:step", mode: "note", times: 3 },
+			{ point: "retain:step", mode: "abort" },
+		]);
+
+		await due(start).catch(() => {});
+		// Taken before the deletion and logged again after it, which deleted the notes logged before it.
+		const fired = await until(
+			() => objectOf(start).faultFired(),
+			(log) => log.length > 0,
+		);
+		expect(fired.map((entry) => [entry.point, entry.detail, entry.mode])).toEqual([["retain:step", "storage", "abort"]]);
+		expect([await contents(objectOf(start)), await blobs(start), (await indexed(start))?.purged_at]).toEqual([EMPTY, 0, expect.any(Number)]);
+		// An alarm left, if any, wakes an object with nothing to do.
+		await runDurableObjectAlarm(objectOf(start));
+		expect(await contents(objectOf(start))).toEqual(EMPTY);
+		expect(await runInDurableObject(objectOf(start), (_instance, state) => state.storage.getAlarm())).toBeNull();
 	});
 });

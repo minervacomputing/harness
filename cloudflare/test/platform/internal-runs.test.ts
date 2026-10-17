@@ -441,7 +441,7 @@ describe("cancelRun", () => {
 			await state.storage
 				.transaction(async () => {
 					await Promise.resolve();
-					ack = instance.cancelInternal({ scope: start.scope, conversation: start.conversation, run: start.run, reason: "cancelled" }, workspace);
+					ack = instance.cancelInternal({ scope: start.scope, conversation: start.conversation, run: start.run, reason: "cancelled" }, workspace, false);
 					await Promise.resolve();
 					throw new Error("rolled back");
 				})

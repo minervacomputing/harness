@@ -42,6 +42,7 @@ describe("what the migrations build", () => {
 		expect([...expected.objects.keys()]).toEqual(["index recovery_runs_conversation"]);
 		expect(expected.constraints.get("recovery_runs")).toEqual(new Set(["primary key (id)", "foreign key (conversation_id) references recovery_conversations (id) on update no action on delete no action"]));
 		expect(expected.tables.get("recovery_conversations")?.get("deleted_at")).toEqual({ type: "INTEGER", notNull: false, default: null, primaryKey: 0 });
+		expect(expected.tables.get("recovery_conversations")?.get("purged_at")).toEqual({ type: "INTEGER", notNull: false, default: null, primaryKey: 0 });
 	});
 
 	test("0013 drops the accounts' tables, a row in each and foreign keys on, and keeps the recovery index's and the identity's rows", () => {
@@ -101,7 +102,7 @@ describe("what the migrations build", () => {
 			]);
 			expect(all("SELECT * FROM instance_identity")).toEqual([{ id: 1, name: "acme", test: 0 }]);
 			expect(all("PRAGMA foreign_key_check")).toEqual([]);
-			expect(all("SELECT name FROM d1_migrations ORDER BY id").map((row) => row.name)).toEqual(FILES);
+			expect(all("SELECT name FROM d1_migrations ORDER BY id").map((row) => row.name)).toEqual(FILES.filter((name) => name <= (retire?.name ?? "")));
 			db.close();
 		}
 	});

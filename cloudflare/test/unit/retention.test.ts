@@ -13,7 +13,7 @@ const PERIODS = { ...RETENTION };
 let db: ReturnType<typeof openDatabase>;
 let now: number;
 let store: RunStore;
-let host: { scheduled: (number | null)[]; steps: string[]; fail: number; logged: string[] };
+let host: { scheduled: (number | null)[]; steps: string[]; fail: number; logged: string[]; pages: number; purged: string[] };
 let retention: Retention;
 
 beforeEach(() => {
@@ -22,7 +22,7 @@ beforeEach(() => {
 	db.prepare("INSERT INTO conversation (singleton, id, workspace_id, user_id, agent_id, created_at, updated_at, organization_id) VALUES (1, 'c', 'w', '', '', 0, 0, 'o')").all();
 	now = 0;
 	store = new RunStore(durableStorage(db), () => now);
-	host = { scheduled: [], steps: [], fail: 0, logged: [] };
+	host = { scheduled: [], steps: [], fail: 0, logged: [], pages: 0, purged: [] };
 	retention = new Retention(store, {
 		schedule: (time) => host.scheduled.push(time),
 		log: (message) => host.logged.push(message),
@@ -33,6 +33,15 @@ beforeEach(() => {
 				host.fail--;
 				throw new Error("the step's fault");
 			}
+		},
+		purge: {
+			clean: async () => void host.purged.push("clean"),
+			mark: async () => void host.purged.push("mark"),
+			blobs: async () => {
+				host.purged.push("blobs");
+				return host.pages-- > 0 ? 1000 : 0;
+			},
+			storage: async () => void host.purged.push("storage"),
 		},
 	});
 });
@@ -210,5 +219,59 @@ describe("a run's prune", () => {
 		]);
 		// Due and blocked: looked at again a day later.
 		expect(host.scheduled).toEqual([30 * DAY + RETENTION.blockedMs]);
+	});
+});
+
+describe("a deleted conversation's purge", () => {
+	const deleted = (at: number) => db.prepare("UPDATE conversation SET deleted_at = ?").all(at);
+
+	test("waits 7 days from the deletion, then every fact acknowledged and pruned, every run settled and no write dispatched", async () => {
+		deleted(DAY);
+		write(2);
+		db.prepare("INSERT INTO runs (id, status, attempt_started_at, snapshot, created_at, finished_at, metered) VALUES ('r', 'completed', 0, '{}', 0, 0, 1)").all();
+		db.prepare("INSERT INTO run_writes (run_id, key, status, attempt, dispatched_at, deadline_at) VALUES ('r', 'k', 'dispatched', 1, 0, 0)").all();
+		expect(retention.due()).toBe(8 * DAY);
+		now = 8 * DAY - 1;
+		await retention.pass();
+		expect([host.purged, host.logged]).toEqual([[], []]);
+
+		now = 8 * DAY;
+		await retention.pass();
+		expect([host.purged, host.logged]).toEqual([[], ["a deleted conversation is kept: 2 facts are not acknowledged"]]);
+		expect(host.scheduled.at(-1)).toBe(9 * DAY);
+		store.acknowledge(2);
+		await retention.pass();
+		expect(host.purged).toEqual([]);
+		now = 15 * DAY;
+		await retention.pass();
+		expect([held(), host.purged]).toEqual([[], []]);
+		db.prepare("UPDATE run_writes SET status = 'uncertain'").all();
+		await retention.pass();
+		expect(host.purged).toEqual([]);
+		db.prepare("UPDATE runs SET settled_at = 0").all();
+		await retention.pass();
+		expect(host.purged).toEqual(["clean", "mark", "blobs", "storage"]);
+		expect(host.logged).toEqual(["a deleted conversation is kept: 2 facts are not acknowledged"]);
+	});
+
+	test("deletes the blobs a page at a time within the pass's budget, at least one a pass, and comes back at once", async () => {
+		deleted(0);
+		now = 7 * DAY;
+		host.pages = 3;
+		RETENTION.passMs = 0;
+		expect(await retention.pass()).toEqual({ rescheduleAt: 7 * DAY });
+		expect([host.purged, host.steps]).toEqual([["clean", "mark", "blobs"], ["clean", "mark", "blobs"]]);
+		RETENTION.passMs = PERIODS.passMs;
+		host.purged = [];
+		expect(await retention.pass()).toBeUndefined();
+		expect(host.purged).toEqual(["clean", "mark", "blobs", "blobs", "blobs", "storage"]);
+	});
+
+	test("a conversation not deleted, or the Workspace's, is never purged", async () => {
+		now = 30 * DAY;
+		await retention.pass();
+		db.prepare("UPDATE conversation SET organization_id = NULL, deleted_at = 0").all();
+		await retention.pass();
+		expect([host.purged, retention.due()]).toEqual([[], null]);
 	});
 });

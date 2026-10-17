@@ -13,7 +13,8 @@
 // - `settle:sealed`: a run's settlement job sealed its Sandbox and has its spans, before it writes `run.settled`;
 //   `settle:written`: after that write, before the job ends (detail: the run's id);
 // - `retain:step`: after each step of a retention pass committed, before the next (detail: the step, `facts`, `runs`, `pi`
-//   or `orphan`);
+//   or `orphan`), and after each step of a deleted conversation's purge (`clean`, `mark`, `blobs`, and `storage` between
+//   the deletion of its storage and its `destroy()`, a fault taken before the deletion and logged again after it);
 // - `loop:created`: a run's pi session created, before the run claims it (detail: the session's id);
 // - `start:copy`: before a start copies its attachments into the folder, ahead of its transaction;
 // - `gate:decided`, `gate:committed`: in the attempt gate, once it decided to end or restart a run, before
@@ -211,6 +212,7 @@ export function faultConversationPorts(base: ConversationPorts): ConversationPor
 				},
 			};
 		},
+		arm: (context, name, detail) => planOf(context.ctx).arm(name, { detail }, ["abort", "note"]),
 		gate: (context, point, decision) => planOf(context.ctx).at(`gate:${point}`, { detail: decision }).then(() => {}),
 		point: (context, name, detail) =>
 			planOf(context.ctx)

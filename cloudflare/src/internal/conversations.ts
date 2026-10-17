@@ -52,6 +52,8 @@ export async function resolveDownload(env: Env, command: ResolveDownload): Promi
 export async function deleteConversation(env: Env, command: DeleteConversation): Promise<DeleteConversationResult> {
 	const marked = await deleteIndexed(env.DB, { scope: command.scope, conversation: command.conversation, now: Date.now() });
 	if (!marked.ok) throw internalRefusal("SCOPE_MISMATCH", MISMATCH);
-	const { workspace } = marked.conversation;
+	const { workspace, purged } = marked.conversation;
+	// Its object was destroyed after the deletion was answered (docs/plans/chunk-15a-design.md, Physical deletion).
+	if (purged) return { outcome: "deleted" };
 	return answered(await conversationObject(env, workspace, command.conversation).deleteInternal(command, workspace));
 }

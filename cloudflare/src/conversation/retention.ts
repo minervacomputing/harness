@@ -4,11 +4,12 @@
 // pi's, deletes at most RETENTION.rowsPerStep rows and records how far it got in the same transaction, so a kill rolls back
 // only the step in flight and the next pass finds what is left. Its steps, in order: the facts Laravel acknowledged long
 // enough ago (store.ts `pruneFacts`); the runs that ended long enough ago, oldest first, their own records and then their pi
-// sessions (`pruneRecords`, `prunePi`); then the pi sessions no run names (`pruneOrphan`).
+// sessions (`pruneRecords`, `prunePi`); then the pi sessions no run names (`pruneOrphan`); last, a deleted conversation's
+// purge, once nothing is left that it would lose (`deletion`): the index's mark, its blobs, then its storage and the object.
 
 import type { EpochMs } from "../shared/rpc.ts";
 import { PI_SCHEMA_VERSION, type PiStep } from "./pi-tables.ts";
-import type { RunStore } from "./store.ts";
+import type { Deletion, RunStore } from "./store.ts";
 
 /** The periods and bounds; the tests shorten them. */
 export const RETENTION = {
@@ -62,13 +63,39 @@ export interface RetentionHost {
 	abort(session: number): void;
 	/** After each committed step (detail: the step); the test build's fault point `retain:step`. */
 	stepped(step: StepName): Promise<void>;
+	purge: Purge;
 }
 
-/** A step of a pass: what it deleted from (a run's own records, a run's pi session, a session no run names). */
-export type StepName = "facts" | "runs" | "pi" | "orphan";
+/**
+ * A deleted conversation's purge (docs/plans/chunk-15a-design.md, Physical deletion), in this order. Each step is idempotent,
+ * so a pass after a failure or a kill runs them again from the first.
+ */
+export interface Purge {
+	/** `deleteInternal`'s clean-up again: the conversation's scripts and its sandbox destroyed. */
+	clean(): Promise<void>;
+	/** The recovery index's mark: from here a command that reads the index no longer reaches the object. */
+	mark(): Promise<void>;
+	/** A page of the conversation's objects in R2 deleted; how many, 0 once none is left. */
+	blobs(): Promise<number>;
+	/**
+	 * Every table deleted while the alarm still stands, then the object destroyed (the SDK's `destroy()`, which deletes the
+	 * alarm before the storage): a reset between the two leaves nothing behind. The fault point `retain:step` (`storage`)
+	 * comes between them.
+	 */
+	storage(): Promise<void>;
+}
 
-/** What a pass's step answers: a step taken, with a session to abort after it, or the pass over with the job's next time. */
-type Step = { name: StepName; abort?: number } | { next: EpochMs | null };
+/**
+ * A step of a pass: what it deleted from (a run's own records, a run's pi session, a session no run names), or the purge's
+ * step it finished: `clean`, `mark`, `blobs` after each page that deleted objects, and `storage` before the object's end.
+ */
+export type StepName = "facts" | "runs" | "pi" | "orphan" | "clean" | "mark" | "blobs" | "storage";
+
+/**
+ * What a pass's step answers: a step taken, with a session to abort after it; the purge, which ends the pass; or the pass over
+ * with the job's next time.
+ */
+type Step = { name: StepName; abort?: number } | { purge: true } | { next: EpochMs | null };
 
 /**
  * What one pass keeps in memory: the pi sessions with live work, aborted once and skipped for the rest of the pass, so they
@@ -91,8 +118,8 @@ export class Retention {
 	}
 
 	/**
-	 * When retention is next due from what is held, or null when nothing is: the earliest of the oldest acknowledgement's and
-	 * the oldest run not yet pruned's period. Read in the caller's synchronous step.
+	 * When retention is next due from what is held, or null when nothing is: the earliest of the oldest acknowledgement's, the
+	 * oldest run not yet pruned's and the deletion's period. Read in the caller's synchronous step.
 	 */
 	due(): EpochMs | null {
 		let earliest: EpochMs | null = null;
@@ -103,7 +130,12 @@ export class Retention {
 	#dues(): (EpochMs | null)[] {
 		const acknowledged = this.#store.oldestAcknowledgement();
 		const ended = this.#store.oldestUnpruned();
-		return [acknowledged === null ? null : acknowledged + RETENTION.factsMs, ended === null ? null : ended + RETENTION.runMs];
+		const deleted = this.#store.deletion()?.deletedAt ?? null;
+		return [
+			acknowledged === null ? null : acknowledged + RETENTION.factsMs,
+			ended === null ? null : ended + RETENTION.runMs,
+			deleted === null ? null : deleted + RETENTION.deletedMs,
+		];
 	}
 
 	/**
@@ -121,6 +153,11 @@ export class Retention {
 				if ("next" in step) {
 					this.#failures = 0;
 					return step.next === null ? undefined : { rescheduleAt: step.next };
+				}
+				if ("purge" in step) {
+					const next = await this.#purge(started);
+					this.#failures = 0;
+					return next === null ? undefined : { rescheduleAt: next };
 				}
 				if (step.abort !== undefined) this.#host.abort(step.abort);
 				await this.#host.stepped(step.name);
@@ -166,7 +203,50 @@ export class Retention {
 		}
 		const orphan = state.piPaused ? null : this.#store.pruneOrphan([...state.skipped], limit);
 		if (orphan !== null) return this.#piStep(orphan.step, orphan.session, "orphan", state);
+		const deletion = this.#dueDeletion(now);
+		if (deletion?.purgeable) return { purge: true };
+		// Never destroyed while it holds a fact Laravel lacks, which may be money (owner question 1); a pass blocked here comes
+		// back a day later.
+		if (deletion && deletion.unacknowledged > 0) this.#host.log(`a deleted conversation is kept: ${deletion.unacknowledged} facts are not acknowledged`, undefined);
 		return over(nextPass(now, this.#dues()));
+	}
+
+	/** The conversation's deletion, once its period is over. */
+	#dueDeletion(now: EpochMs): Deletion | null {
+		const deletion = this.#store.deletion();
+		return deletion !== null && deletion.deletedAt + RETENTION.deletedMs <= now ? deletion : null;
+	}
+
+	/**
+	 * The purge, its steps in order: the R2 prefix a page at a time, at least one a pass and then within its budget, after
+	 * which the job is due now; then the storage. The job's next time, or null once the object is gone.
+	 */
+	async #purge(started: EpochMs): Promise<EpochMs | null> {
+		const purge = this.#host.purge;
+		await purge.clean();
+		await this.#host.stepped("clean");
+		await purge.mark();
+		await this.#host.stepped("mark");
+		for (let pages = 0; ; pages++) {
+			const now = this.#store.now();
+			if (pages > 0 && now - started >= RETENTION.passMs) {
+				this.#host.schedule(now);
+				return now;
+			}
+			if ((await purge.blobs()) === 0) break;
+			await this.#host.stepped("blobs");
+		}
+		// The awaits above let commands in: what cannot be undone waits until the condition holds again.
+		const ready = await this.#store.outside(
+			() => this.#store.activeRun() === null && this.#store.preparedRuns().length === 0 && this.#dueDeletion(this.#store.now())?.purgeable === true,
+		);
+		if (!ready) {
+			const now = this.#store.now();
+			this.#host.schedule(now);
+			return now;
+		}
+		await purge.storage();
+		return null;
 	}
 
 	#piStep(step: PiStep, session: number, name: StepName, state: PassState): Step {

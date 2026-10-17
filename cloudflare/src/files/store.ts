@@ -60,7 +60,7 @@ import {
 	storedEntries,
 } from "./manifest.ts";
 import { numbered } from "./names.ts";
-import { type Bucket, blobKey, conversationPrefix, deletePrefix } from "./objects.ts";
+import { type Bucket, blobKey, conversationPrefix, deletePage } from "./objects.ts";
 import { sha256HexSync } from "./sha256.ts";
 import type { ReservedUpload } from "./staging.ts";
 
@@ -1077,9 +1077,9 @@ export class FolderStore {
 
 	// Deletion (ARCHITECTURE.md: Files, Deletion).
 
-	/** Deletes every object under the conversation's prefix, recorded or not; returns how many it found. */
-	deleteObjects(): Promise<number> {
-		return deletePrefix(this.#deps.bucket, conversationPrefix(this.#deps.workspaceId, this.#deps.conversationId));
+	/** Deletes a page of the objects under the conversation's prefix, recorded or not; returns how many, 0 once none is left. */
+	deleteObjectsPage(): Promise<number> {
+		return deletePage(this.#deps.bucket, conversationPrefix(this.#deps.workspaceId, this.#deps.conversationId));
 	}
 }
 

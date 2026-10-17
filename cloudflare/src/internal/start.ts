@@ -30,6 +30,10 @@ export function startRefusal(code: string, message: string): StartRefusal {
 	return { outcome: "refused", code, message };
 }
 
+export function deletedRefusal(): StartRefusal {
+	return startRefusal("CONVERSATION_DELETED", "This conversation was deleted.");
+}
+
 /** Where Laravel stages a workspace's uploads in the conversation's bucket: `uploads/`, which R2 expires after a day. */
 export function stagingPrefix(workspace: string): string {
 	return `uploads/${workspace}/`;

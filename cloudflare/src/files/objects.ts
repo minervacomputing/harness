@@ -24,17 +24,12 @@ export function blobKey(workspaceId: string, conversationId: string, sha256: str
 	return `${conversationPrefix(workspaceId, conversationId)}${sha256}/${random}`;
 }
 
-/** Deletes every object under the prefix, a page of 1,000 at a time; returns how many it found. */
-export async function deletePrefix(bucket: Pick<Bucket, "list" | "delete">, prefix: string): Promise<number> {
-	let deleted = 0;
-	// Listing again from the start after each page's deletion finds what a page missed and stops when empty.
-	for (let round = 0; round < 10_000; round++) {
-		const page = await bucket.list({ prefix, limit: 1000 });
-		const keys = page.objects.map((object) => object.key);
-		if (keys.length === 0) return deleted;
-		await bucket.delete(keys);
-		deleted += keys.length;
-		if (!page.truncated && keys.length < 1000) return deleted;
-	}
-	throw new Error(`The objects under ${prefix} could not all be deleted.`);
+/**
+ * Deletes a page of at most 1,000 objects under the prefix, listed from its start, so a page a call missed is found by the
+ * next; returns how many it deleted, 0 once none is left.
+ */
+export async function deletePage(bucket: Pick<Bucket, "list" | "delete">, prefix: string): Promise<number> {
+	const keys = (await bucket.list({ prefix, limit: 1000 })).objects.map((object) => object.key);
+	if (keys.length > 0) await bucket.delete(keys);
+	return keys.length;
 }

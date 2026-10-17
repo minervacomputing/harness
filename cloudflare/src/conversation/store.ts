@@ -82,6 +82,13 @@ export type RunHead = Omit<Run, "events"> & { eventSeq: number };
 export const PAGE_BYTES = 4 * 1024 * 1024;
 export const PAGE_LIMIT = 1000;
 
+/** A deleted conversation's purge, as `RunStore.deletion` reads it. */
+export interface Deletion {
+	deletedAt: EpochMs;
+	unacknowledged: number;
+	purgeable: boolean;
+}
+
 export interface ConversationRow {
 	id: string;
 	workspace_id: string;
@@ -1003,6 +1010,29 @@ export class RunStore {
 			const session = orphanPiSession(this.#sql, skipped);
 			return session === null ? null : { session, step: deletePiSession(this.#sql, session, limit) };
 		});
+	}
+
+	// A deleted conversation's purge (docs/plans/chunk-15a-design.md, Physical deletion).
+
+	/**
+	 * Where a deleted Laravel conversation's purge stands, or null for any other: when it was deleted, how many facts Laravel
+	 * has not acknowledged, and whether the purge would lose nothing: every metered run settled, no write still dispatched
+	 * (its settlement is a fact still to write), every fact acknowledged and pruned. No run active and no start prepared
+	 * is the caller's check, in the same synchronous step.
+	 */
+	deletion(): Deletion | null {
+		const conversation = this.conversation();
+		if (conversation?.organization_id == null || conversation.deleted_at === null) return null;
+		const { written, acknowledged } = this.delivery();
+		const left = this.#sql
+			.exec(
+				`SELECT 1 FROM facts
+				UNION ALL SELECT 1 FROM run_writes WHERE status = 'dispatched'
+				UNION ALL SELECT 1 FROM runs WHERE metered = 1 AND settled_at IS NULL
+				LIMIT 1`,
+			)
+			.toArray().length;
+		return { deletedAt: conversation.deleted_at, unacknowledged: written - acknowledged, purgeable: left === 0 && acknowledged === written };
 	}
 
 	/** How often pi has executed this call, this execution included (the replay cap, ARCHITECTURE.md: Attempts and recovery). */

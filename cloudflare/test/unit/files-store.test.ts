@@ -1206,14 +1206,15 @@ describe("the sweep", () => {
 		expect(w.blobRows()).toMatchObject([{ state: "stored", due_at: null }]);
 	});
 
-	test("deleting the conversation's objects deletes everything under its prefix, recorded or not", async () => {
+	test("deleting the conversation's objects deletes everything under its prefix, recorded or not, a page of 1,000 at a time", async () => {
 		const w = new World();
 		const run = w.run();
 		await saved(w.checkpoint(run, [{ path: "a", data: "hello" }]));
 		w.bucket.objects.set(`${PREFIX}${"0".repeat(64)}/stray`, new Uint8Array(1));
 		for (let i = 0; i < 1500; i++) w.bucket.objects.set(`${PREFIX}${"1".repeat(64)}/${i}`, new Uint8Array(0));
 		w.bucket.objects.set(`blobs/${WORKSPACE}/0199a000-0000-7000-8000-00000000other/x/y`, new Uint8Array(1));
-		expect(await w.store.deleteObjects()).toBe(1502);
+		const pages = [await w.store.deleteObjectsPage(), await w.store.deleteObjectsPage(), await w.store.deleteObjectsPage()];
+		expect(pages).toEqual([1000, 502, 0]);
 		expect(w.bucket.keys(PREFIX)).toEqual([]);
 		expect(w.bucket.keys()).toHaveLength(1);
 	});

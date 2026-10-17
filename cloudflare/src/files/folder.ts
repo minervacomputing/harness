@@ -60,9 +60,7 @@ export function conversationFolder(context: PortsContext): FolderPort {
 		publish: (runId, run) => folder.publish(runId, run),
 		list: (versionId) => folder.list(versionId),
 		resolve: (versionId, path) => folder.resolve(versionId, path),
-		async deleteObjects() {
-			await folder.deleteObjects();
-		},
+		deleteObjectsPage: () => folder.deleteObjectsPage(),
 		hydratePlan: (runId) => folder.hydratePlan(runId),
 		checkpoint: (fence, scan, upload) => folder.checkpoint(fence, scan, upload),
 		sweep: () => folder.sweep(),

@@ -40,7 +40,7 @@ import { modelTools } from "../gateway/tools.ts";
 import { type About, identity } from "../lib/about.ts";
 import { type Json, parseJson } from "../lib/json.ts";
 import { isUuid, uuid7 } from "../lib/random.ts";
-import { raiseFactSeq } from "../internal/recovery.ts";
+import { markPurged, raiseFactSeq } from "../internal/recovery.ts";
 import { appliedMigrations, migrate } from "../lib/sqlite.ts";
 import { callOf, MODEL_REF, MINERVA_API, MINERVA_PROVIDER, MODEL_ALIAS, minervaProvider, type ModelHost } from "../model/provider.ts";
 import { routeOf } from "../model/route.ts";
@@ -54,7 +54,7 @@ import type { ScriptsApi } from "../scripts/scripts.ts";
 import { scriptTool } from "../scripts/tool.ts";
 import type { Folder } from "@minerva/contract";
 import type { CancelRun, CancelRunResult, DeleteConversation, DeleteConversationResult, Fact, ReadFolder, ReplayFacts, ResolveDownload, StartRun, StartRunResult } from "@minerva/contract/internal";
-import { type Preparation, type StartRefusal, UNAVAILABLE, messageRefusal, prepareStart, promptOf as internalPrompt, startRefusal } from "../internal/start.ts";
+import { type Preparation, type StartRefusal, UNAVAILABLE, deletedRefusal, messageRefusal, prepareStart, promptOf as internalPrompt, startRefusal } from "../internal/start.ts";
 import type { AttemptFence, RunId, WorkspaceRef } from "../shared/rpc.ts";
 import {
 	ACTING,
@@ -98,14 +98,15 @@ interface ConversationApi {
 	 * Laravel's `startRun` (docs/plans/start-and-cancel.md), once the Worker has bound the conversation and the run in the
 	 * recovery index; `workspace` is where the index addresses it. Binds the conversation on first use, and answers a
 	 * stored answer again; otherwise prepares the start once (its snapshot compiled), copies the attachments from
-	 * staging and stores the run with its acceptance, or stores a refusal. An error stores no answer.
+	 * staging and stores the run with its acceptance, or stores a refusal. An error stores no answer. `deleted`: the index
+	 * holds the conversation deleted, which the binding records (`#bindInternal`).
 	 */
-	startInternal(command: StartRun, workspace: WorkspaceRef): Promise<InternalAnswer<StartRunResult>>;
+	startInternal(command: StartRun, workspace: WorkspaceRef, deleted: boolean): Promise<InternalAnswer<StartRunResult>>;
 	/**
 	 * Laravel's `cancelRun`: an active run revoked and ended, or a tombstone for a run not stored, which refuses its start.
-	 * Answers once the change is committed, outside pi's transactions.
+	 * Answers once the change is committed, outside pi's transactions. `deleted` as for a start.
 	 */
-	cancelInternal(command: CancelRun, workspace: WorkspaceRef): Promise<InternalAnswer<CancelRunResult>>;
+	cancelInternal(command: CancelRun, workspace: WorkspaceRef, deleted: boolean): Promise<InternalAnswer<CancelRunResult>>;
 	/**
 	 * Laravel's `replayFacts` (docs/plans/credentials-and-facts.md): the facts after `after`, in order, read outside pi's
 	 * transactions; the recovery index is raised to the page's last before it answers. An `after` below the floor less one is
@@ -123,7 +124,8 @@ interface ConversationApi {
 	 * Laravel's `deleteConversation`, once the Worker has marked it in the recovery index: the conversation marked deleted, so
 	 * its starts and reads are refused, and its active run cancelled, in one write outside pi's transactions; then its streams
 	 * closed, pi stopped and its sandbox and scripts destroyed. Its folder and facts stay: the facts are still delivered, and
-	 * chunk 15's retention removes the rest. Binds a conversation that no command named before, already deleted.
+	 * the `retain` job purges the object 7 days later, once Laravel holds every fact (retention.ts). Binds a conversation that
+	 * no command named before, already deleted.
 	 */
 	deleteInternal(command: DeleteConversation, workspace: WorkspaceRef): Promise<InternalAnswer<DeleteConversationResult>>;
 }
@@ -262,6 +264,23 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			log: (message, error) => this.#log(message, error, true),
 			abort: (session) => this.#defer(() => this.#abortSession(session)),
 			stepped: (step) => this.#point("retain:step", step),
+			purge: {
+				clean: () => within(this.#cleanUp(), RPC_WAIT_MS),
+				mark: async () => {
+					const conversation = this.#store.conversation();
+					if (conversation?.organization_id == null) throw new Error("Only a Laravel conversation is purged.");
+					const mark = { conversation: conversation.id, organization: conversation.organization_id, workspace: conversation.workspace_id, now: this.#store.now() };
+					if (!(await within(markPurged(this.env.DB, mark), RPC_WAIT_MS))) throw new Error("The recovery index does not hold the conversation as deleted.");
+				},
+				blobs: () => within((this.#folder() as FolderPort).deleteObjectsPage(), RPC_WAIT_MS),
+				storage: async () => {
+					// The plan of the test build's faults goes with the storage, so its fault is taken before.
+					const deleted = this.#armed("retain:step", "storage");
+					await this.ctx.storage.deleteAll();
+					await deleted();
+					await this.destroy();
+				},
+			},
 		});
 	}
 
@@ -286,8 +305,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 
 	// Laravel's commands (docs/plans/start-and-cancel.md).
 
-	async startInternal(command: StartRun, workspace: WorkspaceRef): Promise<InternalAnswer<StartRunResult>> {
-		if (!(await this.#bindInternal(command, workspace))) return SCOPE_MISMATCH;
+	async startInternal(command: StartRun, workspace: WorkspaceRef, deleted: boolean): Promise<InternalAnswer<StartRunResult>> {
+		if (!(await this.#bindInternal(command, workspace, deleted))) return SCOPE_MISMATCH;
 		const stored = this.#store.answer(command.run);
 		if (stored) return { ok: true, value: stored };
 		let start = this.#internalStarts.get(command.run);
@@ -298,8 +317,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		return { ok: true, value: await start };
 	}
 
-	async cancelInternal(command: CancelRun, workspace: WorkspaceRef): Promise<InternalAnswer<CancelRunResult>> {
-		if (!(await this.#bindInternal(command, workspace))) return SCOPE_MISMATCH;
+	async cancelInternal(command: CancelRun, workspace: WorkspaceRef, deleted: boolean): Promise<InternalAnswer<CancelRunResult>> {
+		if (!(await this.#bindInternal(command, workspace, deleted))) return SCOPE_MISMATCH;
 		const state = await this.#store.outside(() =>
 			this.#store.write((): CancelRunResult["state"] => {
 				const run = this.#store.run(command.run);
@@ -364,12 +383,11 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	async deleteInternal(command: DeleteConversation, workspace: WorkspaceRef): Promise<InternalAnswer<DeleteConversationResult>> {
-		if (!(await this.#bindInternal(command, workspace))) return SCOPE_MISMATCH;
+		if (!(await this.#bindInternal(command, workspace, true))) return SCOPE_MISMATCH;
 		await this.lifecycle.start();
 		const latest = await this.#store.outside(() => {
 			const active = this.#store.activeRun();
 			this.#store.write(() => {
-				this.#store.markDeleted();
 				// A start in flight finds the conversation deleted in its final transaction; one whose try was lost is answered
 				// here, so its preparation goes too.
 				for (const runId of this.#store.preparedRuns()) if (!this.#store.answer(runId)) this.#answerRefused(runId, deletedRefusal());
@@ -384,11 +402,16 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		// Every step again on each try, and a failure fails the deletion, which Laravel sends again until it is answered. Only the
 		// latest run can still have pi's work: each earlier one ended before the next started.
 		if (latest) await this.#stopPi(latest.id);
+		await this.#cleanUp();
+		return { ok: true, value: { outcome: "deleted" } };
+	}
+
+	/** A deleted conversation's scripts and sandbox destroyed; it fails while the sandbox is still being destroyed. */
+	async #cleanUp(): Promise<void> {
 		await this.#destroyScripts();
 		const sandbox = this.#sandbox();
 		await destroyRunSandbox(sandbox, null, "The conversation was deleted.");
 		if ((await sandbox.status()).cleanupPending) throw new Error("The conversation's sandbox is still being destroyed.");
-		return { ok: true, value: { outcome: "deleted" } };
 	}
 
 	/** The conversation if it is bound to the command's organization and the index's workspace; null if unbound, false if bound to others. */
@@ -402,10 +425,26 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		return ours ? conversation : false;
 	}
 
-	/** The conversation bound to the command's organization and the index's workspace, on first use; false for others. */
-	#bindInternal(command: StartRun | CancelRun | DeleteConversation, workspace: WorkspaceRef): Promise<boolean> {
+	/**
+	 * The conversation bound to the command's organization and the index's workspace, on first use; false for others.
+	 * `deleted`: the index holds it deleted, which is recorded in the same write, so an object made again after its purge, by
+	 * a command that read the index before the purge's mark, is only ever a deleted conversation, which purges itself after
+	 * its window (docs/plans/chunk-15a-design.md, Physical deletion).
+	 */
+	#bindInternal(command: StartRun | CancelRun | DeleteConversation, workspace: WorkspaceRef, deleted: boolean): Promise<boolean> {
 		const binding = { conversationId: command.conversation, organization: command.scope.organization, workspace, createdAt: this.#store.now() };
-		return this.#store.outside(() => this.#store.bind(binding));
+		return this.#store.outside(() =>
+			this.#store.write(() => {
+				if (!this.#store.bind(binding)) return false;
+				if (deleted) {
+					this.#store.markDeleted();
+					// The purge's window, from the first deletion.
+					const deletedAt = this.#store.conversation()?.deleted_at;
+					if (deletedAt != null) this.#pushBy(RETAIN_JOB, deletedAt + RETENTION.deletedMs);
+				}
+				return true;
+			}),
+		);
 	}
 
 	/**
@@ -1158,6 +1197,12 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		if (point) await point(this.#portsContext() as PortsContext, name, detail);
 	}
 
+	/** A fault point reached after the object's storage is deleted: taken now, fired by the function returned. */
+	#armed(name: string, detail: string): () => Promise<void> {
+		const arm = this.#ports.arm;
+		return arm ? arm(this.#portsContext() as PortsContext, name, detail) : async () => {};
+	}
+
 	/** `run_script`'s host (scripts/host.ts): the connector tools' run and phases, scripted calls through `#invoke`. */
 	#scriptHost(host: ToolHost) {
 		return scriptToolHost({
@@ -1557,10 +1602,6 @@ function within<T>(promise: Promise<T>, ms: number): Promise<T> {
 		const timer = setTimeout(() => reject(new Error(`No answer within ${ms} ms.`)), ms);
 		promise.then(resolve, reject).finally(() => clearTimeout(timer));
 	});
-}
-
-function deletedRefusal(): StartRefusal {
-	return startRefusal("CONVERSATION_DELETED", "This conversation was deleted.");
 }
 
 function runOfPayload(payload: unknown): RunId | null {
