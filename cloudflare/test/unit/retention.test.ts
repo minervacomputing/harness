@@ -60,7 +60,7 @@ describe("the facts' cut", () => {
 		store.acknowledge(8);
 
 		now = 7 * DAY + 1;
-		expect(await retention.pass()).toBeUndefined();
+		expect(await retention.pass()).toEqual({ rescheduleAt: 8 * DAY });
 		expect([held(), floor(), marks()]).toEqual([[4, 5, 6, 7, 8, 9, 10], 4, [{ seq: 8, at: DAY }]]);
 		expect(host.scheduled).toEqual([8 * DAY]);
 

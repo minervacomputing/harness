@@ -221,7 +221,11 @@ describe("facts' retention", () => {
 			return { start, floor: written + 1 };
 		};
 
+		// Laravel acknowledged more after the prune, then was restored to below the floor less one.
 		const lost = await pruned();
+		const kept = await next(lost.start);
+		await ran(kept);
+		const { written } = await acknowledged(kept);
 		fake.restore(lost.start.conversation, lost.floor - 2);
 		const late = await next(lost.start);
 		await ran(late);
@@ -230,24 +234,28 @@ describe("facts' retention", () => {
 			(row) => row.stopped !== null,
 		);
 		expect(stopped).toMatchObject({
-			acknowledged: lost.floor - 1,
+			acknowledged: written,
 			floor: lost.floor,
 			stopped: `Laravel lost facts up to the floor ${lost.floor}, which the engine no longer holds (FACTS_PRUNED).`,
 		});
 		expect(stopped.next_at - Date.now()).toBeGreaterThan(FACT_DELIVERY.conflictRetryMs - 60_000);
 		expect(fake.facts(lost.start.conversation).map((fact) => fact.seq)).toEqual(range(1, lost.floor - 2));
+		// What Laravel lacks and the engine still holds is no longer counted as acknowledged: retention keeps it.
+		expect(await marks(lost.start)).toEqual([]);
+		await retain(lost.start);
+		expect((await heldSeqs(lost.start)).slice(0, written - lost.floor + 1)).toEqual(range(lost.floor, written));
 
 		// Laravel acknowledged more after the prune, then was restored to the floor less one: it is sent again from the floor.
-		const kept = await pruned();
-		const more = await next(kept.start);
+		const resent = await pruned();
+		const more = await next(resent.start);
 		await ran(more);
-		expect((await acknowledged(more)).acknowledged).toBeGreaterThan(kept.floor);
-		fake.restore(kept.start.conversation, kept.floor - 1);
-		const after = await next(kept.start);
+		expect((await acknowledged(more)).acknowledged).toBeGreaterThan(resent.floor);
+		fake.restore(resent.start.conversation, resent.floor - 1);
+		const after = await next(resent.start);
 		await ran(after);
 		const done = await acknowledged(after);
-		expect(done).toMatchObject({ floor: kept.floor, stopped: null });
-		expect(fake.facts(kept.start.conversation).map((fact) => fact.seq)).toEqual(range(1, done.written));
+		expect(done).toMatchObject({ floor: resent.floor, stopped: null });
+		expect(fake.facts(resent.start.conversation).map((fact) => fact.seq)).toEqual(range(1, done.written));
 	});
 
 	test("an object migrated from step 13 marks what Laravel acknowledged as of the step, and gets its job when it wakes", async () => {

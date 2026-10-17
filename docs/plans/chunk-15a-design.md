@@ -320,3 +320,5 @@ opencode (`plan` agent) reviewed the first draft on 2026-10-17 against the check
 14. **The dedupe records are not opaque (accepted as wording).** Stored acceptances list attachments' names and paths, and runs keep folder changes; the design now says they are kept on purpose until deletion, as the files are.
 
 opencode found the acknowledgement marks and the floor sound, and did not check Laravel's side.
+
+**Unit 2's review** (opencode, 2026-10-17, on the built diff). Three findings held and are built: the gap's floor is checked again in the step that stores the watermark, since a pass can raise the floor while the delivery awaits; a `pruned` gap also deletes the marks above Laravel's watermark, so retention stops deleting the facts Laravel lacks that are still held (the acknowledgement itself stays, as above); and a pass returns the time it scheduled as its outcome too, so a schedule that failed does not drop the job.

@@ -79,21 +79,23 @@ export class Retention {
 
 	/**
 	 * One pass of the `retain` job. It schedules the job itself, in the step that decides what is left, so an acknowledgement
-	 * that moves the job earlier after that step is never undone by the pass's outcome. Never throws: a failure is logged and
-	 * the job is made due again after a backoff, which the outcome also says, should that schedule fail too.
+	 * that moves the job earlier after that step is never undone by the pass's outcome; the outcome says the same time, which
+	 * Lifecycle applies only if no schedule reached the job since, as when that schedule failed. Never throws: a failure is
+	 * logged and the job is made due again after a backoff.
 	 */
 	async pass(): Promise<{ rescheduleAt: EpochMs } | undefined> {
 		try {
 			const started = this.#store.now();
 			for (let steps = 0; ; steps++) {
 				const step = await this.#store.outside(() => this.#step(started, steps));
-				if (step === null) break;
+				if (typeof step !== "string") {
+					this.#failures = 0;
+					return step.next === null ? undefined : { rescheduleAt: step.next };
+				}
 				await this.#host.stepped(step);
 				// The object's clock moves only with I/O, and other events wait while this runs: a timer lets both happen.
 				await new Promise((resolve) => setTimeout(resolve, 0));
 			}
-			this.#failures = 0;
-			return undefined;
 		} catch (error) {
 			this.#failures++;
 			const at = this.#store.now() + retryMs(this.#failures);
@@ -108,21 +110,18 @@ export class Retention {
 	}
 
 	/**
-	 * The pass's next step, run in one synchronous stretch: its name, or null once the pass is over, the job then scheduled in
+	 * The pass's next step, run in one synchronous stretch: its name, or once the pass is over the job's next time, scheduled in
 	 * the same stretch. Nothing while a run is active or a start is prepared, so a turn never waits behind a prune.
 	 */
-	#step(started: EpochMs, steps: number): string | null {
+	#step(started: EpochMs, steps: number): string | { next: EpochMs | null } {
 		const now = this.#store.now();
-		if (this.#store.activeRun() !== null || this.#store.preparedRuns().length > 0) {
-			this.#host.schedule(now + RETENTION.busyMs);
-			return null;
-		}
-		if (steps > 0 && now - started >= RETENTION.passMs) {
-			this.#host.schedule(now);
-			return null;
-		}
+		const over = (next: EpochMs | null) => {
+			this.#host.schedule(next);
+			return { next };
+		};
+		if (this.#store.activeRun() !== null || this.#store.preparedRuns().length > 0) return over(now + RETENTION.busyMs);
+		if (steps > 0 && now - started >= RETENTION.passMs) return over(now);
 		if (this.#store.pruneFacts(now - RETENTION.factsMs, RETENTION.rowsPerStep) > 0) return "facts";
-		this.#host.schedule(nextPass(now, [this.due()]));
-		return null;
+		return over(nextPass(now, [this.due()]));
 	}
 }

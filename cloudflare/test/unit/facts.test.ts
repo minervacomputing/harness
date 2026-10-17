@@ -79,8 +79,8 @@ describe("Laravel's answers", () => {
 
 	test("a gap below the floor less one is facts the engine no longer holds; from the floor less one it is sent again", () => {
 		expect([0, 4, 5, 6, 12].map((acknowledged) => gap(acknowledged, 12, 6))).toEqual([
-			{ kind: "pruned", floor: 6 },
-			{ kind: "pruned", floor: 6 },
+			{ kind: "pruned", acknowledged: 0, floor: 6 },
+			{ kind: "pruned", acknowledged: 4, floor: 6 },
 			{ kind: "gap", acknowledged: 5 },
 			{ kind: "gap", acknowledged: 6 },
 			{ kind: "gap", acknowledged: 12 },

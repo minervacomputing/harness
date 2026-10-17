@@ -60,7 +60,18 @@ export class FactDelivery {
 				continue;
 			}
 			if (verdict.kind === "gap" && ++gaps <= MAX_GAPS) {
-				await this.#store.outside(() => this.#store.acknowledgeGap(verdict.acknowledged));
+				// Checked again in the step that stores it: retention may have raised the floor since.
+				const stopped = await this.#store.outside(() => {
+					const { written, floor } = this.#store.delivery();
+					const checked = gap(verdict.acknowledged, written, floor);
+					if (checked.kind !== "gap") {
+						this.#failed(checked);
+						return true;
+					}
+					this.#store.acknowledgeGap(checked.acknowledged);
+					return false;
+				});
+				if (stopped) return;
 				continue;
 			}
 			await this.#store.outside(() => this.#failed(verdict));
@@ -135,10 +146,13 @@ export class FactDelivery {
 
 	/**
 	 * A delivery that did not go through: backed off, or for a conflict or facts Laravel lost below the floor, left for the
-	 * operator and tried hourly, which resumes by itself once Laravel takes the batch.
+	 * operator and tried hourly, which resumes by itself once Laravel takes the batch. Below the floor, what was acknowledged
+	 * stays, so the next batch does not start at the floor; the marks above what Laravel holds go, so retention keeps the facts
+	 * it lacks that are still held.
 	 */
 	#failed(verdict: DeliveryVerdict): void {
 		const now = this.#store.now();
+		if (verdict.kind === "pruned") this.#store.forgetAcknowledgements(verdict.acknowledged);
 		if (verdict.kind === "conflict" || verdict.kind === "pruned") {
 			const reason =
 				verdict.kind === "conflict"

@@ -1078,12 +1078,17 @@ export class RunStore {
 		});
 	}
 
-	/** Laravel holds facts up to `acknowledged` and no further (it was restored): the marks above it go, since it lost them. */
+	/** Laravel holds facts up to `acknowledged` and no further (it was restored): stored, and the marks above it go. */
 	acknowledgeGap(acknowledged: number): void {
 		this.write(() => {
 			this.updateDelivery({ acknowledged });
-			this.#sql.exec("DELETE FROM fact_acknowledgements WHERE seq > ?", acknowledged);
+			this.forgetAcknowledgements(acknowledged);
 		});
+	}
+
+	/** The marks above `held` go: Laravel no longer holds what they say it acknowledged, so retention keeps those facts. */
+	forgetAcknowledgements(held: number): void {
+		this.#sql.exec("DELETE FROM fact_acknowledgements WHERE seq > ?", held);
 	}
 
 	/** The time of the oldest acknowledgement mark still kept, or null when none is. */
