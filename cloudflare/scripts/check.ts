@@ -24,29 +24,32 @@ const ACCOUNT = "test/account/";
 const PERF = ["perf.test.ts", "retention-measure.test.ts", "retention-perf.test.ts"];
 const TAIL = 80;
 
-type Check = "skip-probe" | "skip-lab" | "deployed" | "faults-file" | "faults-all";
+type Check = "skip-probe" | "skip-lab" | "deployed" | "faults-file" | "helper";
 
 function checkOf(file: string): Check {
 	const name = file.slice(ACCOUNT.length);
 	if (PERF.includes(name)) return "skip-probe";
 	if (name === "scripts.test.ts" || name.startsWith("scripts-worker/")) return "skip-lab";
 	if (name === "deployed.test.ts") return "deployed";
-	return name.endsWith(".test.ts") ? "faults-file" : "faults-all";
+	return name.endsWith(".test.ts") ? "faults-file" : "helper";
 }
 
 function changedAccountFiles(): string[] {
 	const git = (...args: string[]) => run("git", args, { cwd: REPOSITORY }).stdout.split("\n").filter(Boolean);
 	const [base] = git("merge-base", "HEAD", "origin/main");
-	const paths = new Set([...git("diff", "--name-only", base), ...git("ls-files", "--others", "--exclude-standard")]);
+	// Deleted and renamed files count, by their old names too: a helper's deletion still runs the suites.
+	const paths = new Set([...git("diff", "--name-only", "--no-renames", base), ...git("ls-files", "--others", "--exclude-standard")]);
 	return [...paths]
-		.filter((path) => path.startsWith(`cloudflare/${ACCOUNT}`) && existsSync(join(REPOSITORY, path)))
+		.filter((path) => path.startsWith(`cloudflare/${ACCOUNT}`))
 		.map((path) => path.slice("cloudflare/".length))
 		.sort();
 }
 
 function execute(step: Step): Promise<{ status: number; output: string }> {
 	return new Promise((resolve) => {
-		const child = spawn(step.command, step.args, { cwd: step.cwd, stdio: ["ignore", "pipe", "pipe"] });
+		// MINERVA_PERF=1 would make test:faults run only the probes.
+		const { MINERVA_PERF: _, ...env } = process.env;
+		const child = spawn(step.command, step.args, { cwd: step.cwd, env, stdio: ["ignore", "pipe", "pipe"] });
 		let output = "";
 		child.stdout.on("data", (chunk) => (output += chunk));
 		child.stderr.on("data", (chunk) => (output += chunk));
@@ -73,13 +76,15 @@ try {
 	const lab = changed.get("skip-lab") ?? [];
 	if (probes.length) console.log(`Not run: ${probes.join(", ")}. Run a probe by hand with MINERVA_PERF=1 (cloudflare/README.md, The test Worker).`);
 	if (lab.length) console.log(`Not run: ${lab.join(", ")}. Code mode's rows need its lab: pnpm run deploy:cm, then pnpm test:cm.`);
-	const whole = changed.has("faults-all");
-	const files = whole ? [] : (changed.get("faults-file") ?? []);
+	const exists = (file: string) => existsSync(join(ROOT, file));
+	const whole = changed.has("helper");
+	const files = whole ? [] : (changed.get("faults-file") ?? []).filter(exists);
 	const faults = whole || files.length > 0;
-	if (changed.has("deployed") || faults) {
+	const deployed = whole || (changed.get("deployed") ?? []).some(exists);
+	if (deployed || faults) {
 		const on = ["--instance", chooseInstance({ flag, test: true }).name];
 		steps.push({ name: `deploy:test ${on.join(" ")}`, command: "pnpm", args: ["run", "deploy:test", ...on], cwd: ROOT });
-		if (changed.has("deployed")) steps.push({ name: "test:deployed", command: "pnpm", args: ["test:deployed", ...on], cwd: ROOT });
+		if (deployed) steps.push({ name: "test:deployed", command: "pnpm", args: ["test:deployed", ...on], cwd: ROOT });
 		if (faults) steps.push({ name: ["test:faults", ...files].join(" "), command: "pnpm", args: ["test:faults", ...on, ...files], cwd: ROOT });
 	}
 } catch (error) {

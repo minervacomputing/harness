@@ -9,7 +9,8 @@
 // gives the build: mode `faults` for a test instance, `production` for any other. Every command run here gets
 // MINERVA_INSTANCE.
 //
-// Before anything else, a production build's deploy runs scripts/ci-gate.ts.
+// Before anything else, a production build's deploy runs scripts/ci-gate.ts, and checks again before the account
+// changes that the checkout is still the commit it passed.
 //
 // A deploy takes the checkout's lock and then the instance's, and every cf command goes to the instance's account
 // (`lockOperation` and `pinAccount` in scripts/run.ts; the first deploy records the account). Everything that can
@@ -36,7 +37,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { accountSubdomain, checkOnAccount, ownNamespaces } from "./account.ts";
 import { appBuildProblems, buildAccount, buildDigest, builtImage, declaredSecrets, fileDigest, readBuild, strayClasses } from "./builds.ts";
-import { checkWorkingTree, greenRuns } from "./ci-gate.ts";
+import { gate, stillGated } from "./ci-gate.ts";
 import { ensureImage } from "./image.ts";
 import { type Instance, checkFile, chooseInstance, parseInstanceArgs, readInstanceEnv } from "./instance.ts";
 import { instancePrices } from "./model-prices.ts";
@@ -118,10 +119,10 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
 }
 
 try {
+	let gated: string | null = null;
 	if (!TEST) {
 		step("CI's green runs on this engine");
-		checkWorkingTree();
-		for (const green of greenRuns()) console.log(`${green.workflow}: run ${green.id} on ${green.sha.slice(0, 7)}`);
+		gated = gate();
 	}
 	lockOperation(INSTANCE);
 	if (LAB) {
@@ -177,6 +178,8 @@ try {
 	run(process.execPath, ["scripts/secrets.ts", "subset", upload, ...declared], { print: true });
 	sameSecrets();
 	const uploadDigest = fileDigest(upload);
+
+	if (gated) stillGated(gated);
 
 	step(`Checking ${INSTANCE.name} on the account: its namespaces and its identity (then recording it, the first change on the account)`);
 	// Hides the account's workers.dev subdomain from what follows: cf deploy names the Worker's URL, at times cut short.
