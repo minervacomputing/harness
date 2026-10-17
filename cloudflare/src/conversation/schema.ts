@@ -289,4 +289,18 @@ ALTER TABLE script_records ADD COLUMN cost_micros INTEGER;
 	},
 	// What the folder keeps, summed at each run's end from an index of the stored blobs' sizes (files/store.ts `storedBytes`).
 	{ id: 13, sql: FOLDER_STORED_SIZE_SCHEMA },
+	// The facts' retention (docs/plans/chunk-15a-design.md, Facts and the floor): the lowest sequence still held, and when
+	// Laravel acknowledged up to a sequence. What it acknowledged before this step is marked now, so it is kept 7 days from
+	// the deploy.
+	{
+		id: 14,
+		sql: `
+ALTER TABLE fact_delivery ADD COLUMN floor INTEGER NOT NULL DEFAULT 1;
+CREATE TABLE fact_acknowledgements (
+	seq INTEGER PRIMARY KEY,
+	at INTEGER NOT NULL
+) STRICT;
+INSERT INTO fact_acknowledgements (seq, at) SELECT acknowledged, CAST(unixepoch('subsec') * 1000 AS INTEGER) FROM fact_delivery WHERE acknowledged > 0;
+`,
+	},
 ];

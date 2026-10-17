@@ -11,13 +11,16 @@ import { raiseFactSeq } from "../internal/recovery.ts";
 import { failureOf, laravelClient } from "../laravel/client.ts";
 import { parseJson } from "../lib/json.ts";
 import { type DeliveryVerdict, FACT_DELIVERY, MAX_FACTS, MAX_GAPS, acknowledgement, backoffMs, gap } from "./facts.ts";
+import { RETENTION } from "./retention.ts";
 import type { RunStore } from "./store.ts";
 
-/** What a delivery runs against besides the store: the object's `facts` job, and its log. */
+/** What a delivery runs against besides the store: the object's `facts` and `retain` jobs, and its log. */
 export interface DeliveryHost {
 	env: Env;
 	/** Makes the `facts` job due at `time`, or removes it; synchronous, so it joins the step that decides it. */
 	schedule(time: number | null): void;
+	/** Makes the `retain` job due by `time`, moved only earlier; synchronous, as `schedule`. */
+	retain(time: number): void;
 	log(message: string, error?: unknown): void;
 }
 
@@ -47,11 +50,17 @@ export class FactDelivery {
 			const verdict = await this.#send(due.conversation, due.facts, due.last);
 			if (verdict.kind === "acknowledged") {
 				gaps = 0;
-				await this.#store.outside(() => this.#store.updateDelivery({ acknowledged: verdict.acknowledged, failures: 0, next_at: 0, stopped: null }));
+				await this.#store.outside(() =>
+					this.#store.write(() => {
+						this.#store.acknowledge(verdict.acknowledged);
+						// What it acknowledged is due for retention then.
+						this.#host.retain(this.#store.now() + RETENTION.factsMs);
+					}),
+				);
 				continue;
 			}
 			if (verdict.kind === "gap" && ++gaps <= MAX_GAPS) {
-				await this.#store.outside(() => this.#store.updateDelivery({ acknowledged: verdict.acknowledged }));
+				await this.#store.outside(() => this.#store.acknowledgeGap(verdict.acknowledged));
 				continue;
 			}
 			await this.#store.outside(() => this.#failed(verdict));
@@ -115,7 +124,8 @@ export class FactDelivery {
 		} catch (error) {
 			if (error instanceof ORPCError && error.code === "FACT_GAP") {
 				const watermark = (error.data as { acknowledged?: unknown } | undefined)?.acknowledged;
-				return gap(watermark, await this.#store.outside(() => this.#store.delivery().written));
+				const { written, floor } = await this.#store.outside(() => this.#store.delivery());
+				return gap(watermark, written, floor);
 			}
 			if (error instanceof ORPCError && error.code === "FACT_CONFLICT") return { kind: "conflict" };
 			const status = error instanceof ORPCError ? error.status : null;
@@ -123,11 +133,17 @@ export class FactDelivery {
 		}
 	}
 
-	/** A delivery that did not go through: backed off, or for a conflict, left for the operator and tried hourly. */
+	/**
+	 * A delivery that did not go through: backed off, or for a conflict or facts Laravel lost below the floor, left for the
+	 * operator and tried hourly, which resumes by itself once Laravel takes the batch.
+	 */
 	#failed(verdict: DeliveryVerdict): void {
 		const now = this.#store.now();
-		if (verdict.kind === "conflict") {
-			const reason = "Laravel refused a fact that differs from the one it applied (FACT_CONFLICT).";
+		if (verdict.kind === "conflict" || verdict.kind === "pruned") {
+			const reason =
+				verdict.kind === "conflict"
+					? "Laravel refused a fact that differs from the one it applied (FACT_CONFLICT)."
+					: `Laravel lost facts up to the floor ${verdict.floor}, which the engine no longer holds (FACTS_PRUNED).`;
 			this.#host.log(`fact delivery stopped for the operator: ${reason}`, new Error(reason));
 			const at = now + FACT_DELIVERY.conflictRetryMs;
 			this.#store.updateDelivery({ stopped: reason, next_at: at });

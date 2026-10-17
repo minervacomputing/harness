@@ -4,16 +4,10 @@
 
 import type { CancelRun, CancelRunResult, Fact, ReplayFacts, StartRun, StartRunResult } from "@minerva/contract/internal";
 import { conversationObject } from "../addressing.ts";
-import type { InternalAnswer } from "../conversation/conversation.ts";
 import type { WorkspaceRef } from "../shared/rpc.ts";
-import { internalRefusal } from "./errors.ts";
+import { MISMATCH, answered, internalRefusal } from "./errors.ts";
 import { bindRun, conversationOf } from "./recovery.ts";
 import { inputDigest } from "./start.ts";
-
-function answered<T>(answer: InternalAnswer<T>): T {
-	if (!answer.ok) throw internalRefusal("SCOPE_MISMATCH", "This conversation belongs to another organization or workspace.");
-	return answer.value;
-}
 
 /** The run bound in the index, or the index's refusal; the workspace as the index addresses it. */
 async function bound(env: Env, command: StartRun | CancelRun, digest: string | null): Promise<{ workspace: WorkspaceRef; deleted: boolean }> {
@@ -40,13 +34,14 @@ export async function cancelRun(env: Env, command: CancelRun): Promise<CancelRun
 
 /**
  * `replayFacts` (docs/plans/credentials-and-facts.md): read through the index without binding anything, so an unknown
- * conversation is `NOT_FOUND` and one bound to another organization or workspace `SCOPE_MISMATCH`, as its object checks again.
+ * conversation is `NOT_FOUND` and one bound to another organization or workspace `SCOPE_MISMATCH`, as its object checks again;
+ * a page from below its floor less one is `FACTS_PRUNED`, with the floor.
  */
 export async function replayFacts(env: Env, command: ReplayFacts): Promise<{ conversation: string; facts: Fact[]; more: boolean }> {
 	const indexed = await conversationOf(env.DB, command.conversation);
 	if (indexed === null) throw internalRefusal("NOT_FOUND", "No such conversation.");
 	if (indexed.organization !== command.scope.organization || indexed.workspace.id !== command.scope.workspace) {
-		throw internalRefusal("SCOPE_MISMATCH", "This conversation belongs to another organization or workspace.");
+		throw internalRefusal("SCOPE_MISMATCH", MISMATCH);
 	}
 	const page = answered(await conversationObject(env, indexed.workspace, command.conversation).replayInternal(command, indexed.workspace));
 	return { conversation: command.conversation, ...page };

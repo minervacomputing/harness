@@ -7,19 +7,11 @@
 import type { Folder } from "@minerva/contract";
 import type { DeleteConversation, DeleteConversationResult, ReadFolder, ResolveDownload, ResolveDownloadResult, Scope } from "@minerva/contract/internal";
 import { conversationObject, filesBucket } from "../addressing.ts";
-import type { InternalAnswer } from "../conversation/conversation.ts";
 import { SNIFF_BYTES } from "../files/limits.ts";
 import { sniff } from "../files/names.ts";
 import type { WorkspaceRef } from "../shared/rpc.ts";
-import { internalRefusal } from "./errors.ts";
+import { MISMATCH, answered, internalRefusal } from "./errors.ts";
 import { conversationOf, deleteIndexed } from "./recovery.ts";
-
-const MISMATCH = "This conversation belongs to another organization or workspace.";
-
-function answered<T>(answer: InternalAnswer<T>): T {
-	if (!answer.ok) throw internalRefusal("SCOPE_MISMATCH", MISMATCH);
-	return answer.value;
-}
 
 /** The conversation's workspace as the index addresses it, for a conversation bound to the scope and not deleted. */
 async function readable(env: Env, scope: Scope, conversation: string): Promise<WorkspaceRef> {

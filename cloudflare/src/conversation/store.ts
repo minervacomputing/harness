@@ -235,6 +235,8 @@ export interface DeliveryRow {
 	next_at: number;
 	/** Why delivery waits for the operator, or null. */
 	stopped: string | null;
+	/** The lowest sequence still held: every fact below it is deleted, every one from it to `written` held. Never falls. */
+	floor: number;
 	[key: string]: SqlStorageValue;
 }
 
@@ -1063,6 +1065,49 @@ export class RunStore {
 	delivery(): DeliveryRow {
 		this.#sql.exec("INSERT INTO fact_delivery (singleton) VALUES (1) ON CONFLICT DO NOTHING");
 		return this.#sql.exec<DeliveryRow>("SELECT * FROM fact_delivery WHERE singleton = 1").one();
+	}
+
+	/**
+	 * Laravel holds every fact up to `acknowledged`, as of now: stored with the delivery's failures cleared, and marked with
+	 * its time, which the facts' retention counts from. A mark already there keeps its earlier time.
+	 */
+	acknowledge(acknowledged: number): void {
+		this.write(() => {
+			this.updateDelivery({ acknowledged, failures: 0, next_at: 0, stopped: null });
+			this.#sql.exec("INSERT INTO fact_acknowledgements (seq, at) VALUES (?, ?) ON CONFLICT DO NOTHING", acknowledged, this.now());
+		});
+	}
+
+	/** Laravel holds facts up to `acknowledged` and no further (it was restored): the marks above it go, since it lost them. */
+	acknowledgeGap(acknowledged: number): void {
+		this.write(() => {
+			this.updateDelivery({ acknowledged });
+			this.#sql.exec("DELETE FROM fact_acknowledgements WHERE seq > ?", acknowledged);
+		});
+	}
+
+	/** The time of the oldest acknowledgement mark still kept, or null when none is. */
+	oldestAcknowledgement(): EpochMs | null {
+		return this.#sql.exec<{ at: number | null }>("SELECT min(at) AS at FROM fact_acknowledgements").one().at;
+	}
+
+	/**
+	 * One step of the facts' retention (docs/plans/chunk-15a-design.md, Facts and the floor): the facts from the floor up to
+	 * the cut, at most `limit` of them, deleted in one transaction that raises the floor past them and deletes the marks
+	 * below it. The cut is the highest mark acknowledged at or before `ripe`, never above what Laravel holds, so every fact
+	 * deleted was acknowledged at or before then. Returns how far it raised the floor: 0 when nothing was due.
+	 */
+	pruneFacts(ripe: EpochMs, limit: number): number {
+		return this.write(() => {
+			const { floor, acknowledged } = this.delivery();
+			const mark = this.#sql.exec<{ seq: number | null }>("SELECT max(seq) AS seq FROM fact_acknowledgements WHERE at <= ?", ripe).one().seq;
+			const cut = Math.min(acknowledged, mark ?? 0, floor + limit - 1);
+			if (cut < floor) return 0;
+			this.#sql.exec("DELETE FROM facts WHERE seq <= ?", cut);
+			this.#sql.exec("UPDATE fact_delivery SET floor = ? WHERE singleton = 1", cut + 1);
+			this.#sql.exec("DELETE FROM fact_acknowledgements WHERE seq <= ?", cut);
+			return cut + 1 - floor;
+		});
 	}
 
 	/** Changes the delivery's state (each change its own transaction, made outside pi's by the caller). */

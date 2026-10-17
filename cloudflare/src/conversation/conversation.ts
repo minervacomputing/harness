@@ -81,6 +81,7 @@ import { laravelCredentials } from "./laravel-runs.ts";
 import { destroyRunSandbox, LocalRun } from "./local-run.ts";
 import { type ConversationPorts, type FolderPort, PORTS, type PortsContext, runStatePort, type WriteLedger } from "./ports.ts";
 import { ToolQueue, untilAborted } from "./queue.ts";
+import { RETAIN_JOB, Retention } from "./retention.ts";
 import { MIGRATIONS } from "./schema.ts";
 import { type ConversationRow, type RunRow, type RunSnapshot, RunStore } from "./store.ts";
 import { RunStream } from "./stream.ts";
@@ -107,7 +108,8 @@ interface ConversationApi {
 	cancelInternal(command: CancelRun, workspace: WorkspaceRef): Promise<InternalAnswer<CancelRunResult>>;
 	/**
 	 * Laravel's `replayFacts` (docs/plans/credentials-and-facts.md): the facts after `after`, in order, read outside pi's
-	 * transactions; the recovery index is raised to the page's last before it answers. Never binds the conversation.
+	 * transactions; the recovery index is raised to the page's last before it answers. An `after` below the floor less one is
+	 * refused with the floor, since the facts Laravel lacks are deleted. Never binds the conversation.
 	 */
 	replayInternal(command: ReplayFacts, workspace: WorkspaceRef): Promise<InternalAnswer<{ facts: Fact[]; more: boolean }>>;
 	/**
@@ -126,8 +128,11 @@ interface ConversationApi {
 	deleteInternal(command: DeleteConversation, workspace: WorkspaceRef): Promise<InternalAnswer<DeleteConversationResult>>;
 }
 
-/** What a Laravel command answers: its outcome, or that the conversation is bound to another scope. */
-export type InternalAnswer<T> = { ok: true; value: T } | { ok: false; code: "SCOPE_MISMATCH" };
+/**
+ * What a Laravel command answers: its outcome, or that the conversation is bound to another scope, or (a replay only) that
+ * the facts it asks for are deleted below `floor`.
+ */
+export type InternalAnswer<T> = { ok: true; value: T } | { ok: false; code: "SCOPE_MISMATCH" } | { ok: false; code: "FACTS_PRUNED"; floor: number };
 
 /** chord's background context: never cancelled, no values. */
 const BG = Object.freeze({ abortSignal: undefined, value: () => undefined, toString: () => "[Context minerva-conversation]" });
@@ -200,6 +205,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	readonly #loops = new Map<RunId, Promise<void>>();
 	/** A Laravel conversation's facts on their way to Laravel (delivery.ts). */
 	readonly #delivery: FactDelivery;
+	/** What the conversation stops keeping, on the `retain` job (retention.ts). */
+	readonly #retention: Retention;
 	/** Laravel's starts in flight in this instance, by run: a repeat joins the one running. */
 	readonly #internalStarts = new Map<RunId, Promise<StartRunResult>>();
 	/** Code mode: each run's scripted calls, and the lane that runs scripts after the reset of the one before. */
@@ -244,7 +251,16 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				if (time === null) this.lifecycle.jobs.cancel(FACTS_JOB).catch((error: unknown) => this.#log("the facts job was not removed", error));
 				else this.#push({ id: FACTS_JOB, fn: FACTS_JOB, time });
 			},
+			retain: (time) => this.#pushBy(RETAIN_JOB, time),
 			log: (message, error) => this.#log(message, error, error !== undefined),
+		});
+		this.#retention = new Retention(this.#store, {
+			schedule: (time) => {
+				if (time === null) this.lifecycle.jobs.cancel(RETAIN_JOB).catch((error: unknown) => this.#log("the retain job was not removed", error));
+				else this.#push({ id: RETAIN_JOB, fn: RETAIN_JOB, time });
+			},
+			log: (message, error) => this.#log(message, error, true),
+			stepped: (step) => this.#point("retain:step", step),
 		});
 	}
 
@@ -310,15 +326,17 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				conversation.organization_id !== command.scope.organization ||
 				conversation.workspace_id !== workspace.id
 			) {
-				return null;
+				return SCOPE_MISMATCH;
 			}
-			return this.#store.factPage(command.after, command.limit);
+			const { floor } = this.#store.delivery();
+			if (command.after < floor - 1) return { ok: false as const, code: "FACTS_PRUNED" as const, floor };
+			return { ok: true as const, value: this.#store.factPage(command.after, command.limit) };
 		});
-		if (page === null) return SCOPE_MISMATCH;
-		const last = page.facts.at(-1)?.seq;
+		if (!page.ok) return page;
+		const last = page.value.facts.at(-1)?.seq;
 		// Every fact sent to Laravel is at or below the index's, a replay's as a delivery's.
 		if (last !== undefined) await raiseFactSeq(this.env.DB, { conversation: command.conversation, organization: command.scope.organization, workspace: workspace.id, seq: last });
-		return { ok: true, value: { facts: page.facts.map((fact) => parseJson(fact.json) as unknown as Fact), more: page.more } };
+		return { ok: true, value: { facts: page.value.facts.map((fact) => parseJson(fact.json) as unknown as Fact), more: page.value.more } };
 	}
 
 	folderInternal(command: ReadFolder, workspace: WorkspaceRef): Promise<InternalAnswer<Folder | null>> {
@@ -551,6 +569,11 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			return this.#store.unsettledRuns();
 		});
 		for (const runId of unsettled) this.#pushSettle(runId);
+		// An object from before retention, or one whose job a reset lost, gets its job from what it holds.
+		await this.#store.outside(() => {
+			const due = this.#retention.due();
+			if (due !== null) this.#pushBy(RETAIN_JOB, due);
+		});
 		const again = await this.#cleanSandbox();
 		if (again) this.#push({ id: "sandbox", fn: "sandbox", time: again.rescheduleAt });
 		const run = this.#store.activeRun();
@@ -674,7 +697,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 
 	/**
 	 * Lifecycle jobs of the host: the start watch, the deadline, the lost-write sweep, the folder's sweep, a container left,
-	 * the facts' delivery, a run's settlement. A `release` job the previous version left meets the Agents SDK's default, which drops it.
+	 * the facts' delivery, a run's settlement, retention. A `release` job the previous version left meets the Agents SDK's default, which drops it.
 	 */
 	override _onHostJob(fn: string, context: Parameters<Agent<Env>["_onHostJob"]>[1]) {
 		const runId = runOfPayload((context as unknown as Job).job.payload);
@@ -684,6 +707,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		if (fn === "files") return this.#folder()?.sweep() ?? Promise.resolve(undefined);
 		if (fn === "sandbox") return this.#cleanSandbox();
 		if (fn === FACTS_JOB) return this.#factsJob();
+		if (fn === RETAIN_JOB) return this.#retention.pass();
 		if (fn === "settle" && runId) return this.#settleJob(runId);
 		return super._onHostJob(fn, context);
 	}
@@ -1431,12 +1455,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				return this.#connectors;
 			},
 			store: this.#store,
-			schedule: (time) => {
-				// The folder's sweep (src/files/): one job, moved only earlier.
-				const scheduled = this.lifecycle.jobs.get("files");
-				if (scheduled && scheduled.time <= time) return;
-				this.#push({ id: "files", fn: "files", time });
-			},
+			// The folder's sweep (src/files/).
+			schedule: (time) => this.#pushBy("files", time),
 		};
 	}
 
@@ -1446,6 +1466,13 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	 */
 	#push(job: { id: string; fn: string; time: number; payload?: { runId: RunId } }): void {
 		this.lifecycle.jobs.push(job).catch((error: unknown) => this.#log(`the job ${job.id} was not scheduled`, error));
+	}
+
+	/** A job of the host whose id is its function, one per object, due by `time`: moved only earlier, as `#push` makes it. */
+	#pushBy(id: string, time: number): void {
+		const scheduled = this.lifecycle.jobs.get(id);
+		if (scheduled && scheduled.time <= time) return;
+		this.#push({ id, fn: id, time });
 	}
 
 	/** Work that outlives the event that started it; failures are logged. */

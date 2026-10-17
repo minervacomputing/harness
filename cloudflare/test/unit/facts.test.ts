@@ -72,9 +72,20 @@ describe("Laravel's answers", () => {
 	});
 
 	test("a gap's watermark may be below the last acknowledgement, never above what was written", () => {
-		expect(gap(0, 12)).toEqual({ kind: "gap", acknowledged: 0 });
-		expect(gap(12, 12)).toEqual({ kind: "gap", acknowledged: 12 });
-		for (const acknowledged of [-1, 13, 1.5, "3", undefined, null]) expect(gap(acknowledged, 12), String(acknowledged)).toMatchObject({ kind: "failed", error: true });
+		expect(gap(0, 12, 1)).toEqual({ kind: "gap", acknowledged: 0 });
+		expect(gap(12, 12, 1)).toEqual({ kind: "gap", acknowledged: 12 });
+		for (const acknowledged of [-1, 13, 1.5, "3", undefined, null]) expect(gap(acknowledged, 12, 1), String(acknowledged)).toMatchObject({ kind: "failed", error: true });
+	});
+
+	test("a gap below the floor less one is facts the engine no longer holds; from the floor less one it is sent again", () => {
+		expect([0, 4, 5, 6, 12].map((acknowledged) => gap(acknowledged, 12, 6))).toEqual([
+			{ kind: "pruned", floor: 6 },
+			{ kind: "pruned", floor: 6 },
+			{ kind: "gap", acknowledged: 5 },
+			{ kind: "gap", acknowledged: 6 },
+			{ kind: "gap", acknowledged: 12 },
+		]);
+		expect(gap(13, 12, 6)).toMatchObject({ kind: "failed", error: true });
 	});
 
 	test("a failure backs off 2^n seconds, at most five minutes", () => {

@@ -79,6 +79,8 @@ export type DeliveryVerdict =
 	| { kind: "gap"; acknowledged: number }
 	/** A fact differs from the one Laravel applied: delivery waits for the operator. */
 	| { kind: "conflict" }
+	/** Laravel lacks facts below the floor, which retention deleted: delivery waits for the operator. */
+	| { kind: "pruned"; floor: number }
 	/** Anything else, retried after a backoff; `error` when it is a bug or a misconfiguration to log as one. */
 	| { kind: "failed"; reason: string; error: boolean };
 
@@ -93,10 +95,14 @@ export function acknowledgement(acknowledged: number, last: number, written: num
 	return { kind: "acknowledged", acknowledged };
 }
 
-/** A `FACT_GAP`'s watermark, which may be below what Laravel acknowledged before (it was restored), never above `written`. */
-export function gap(acknowledged: unknown, written: number): DeliveryVerdict {
+/**
+ * A `FACT_GAP`'s watermark, which may be below what Laravel acknowledged before (it was restored), never above `written`.
+ * Below `floor − 1`, Laravel lacks facts the engine no longer holds: sending from the floor would skip them in silence.
+ */
+export function gap(acknowledged: unknown, written: number, floor: number): DeliveryVerdict {
 	if (typeof acknowledged !== "number" || !Number.isSafeInteger(acknowledged) || acknowledged < 0 || acknowledged > written) {
 		return { kind: "failed", reason: `Laravel answered a gap at ${String(acknowledged)} of ${written}.`, error: true };
 	}
+	if (acknowledged < floor - 1) return { kind: "pruned", floor };
 	return { kind: "gap", acknowledged };
 }

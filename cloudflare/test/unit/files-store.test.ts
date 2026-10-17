@@ -1082,7 +1082,7 @@ describe("stored bytes", () => {
 			sql.exec("INSERT INTO folder_blobs (key, sha256, size, state, created_at, due_at) VALUES (?, ?, ?, ?, ?, ?)", key, key.repeat(64), size, state, START, state === "stored" ? null : START);
 		}
 		const before = sql.exec(query);
-		expect(migrate(sql, MIGRATIONS, START)).toEqual([13]);
+		expect(migrate(sql, MIGRATIONS.filter((step) => step.id <= 13), START)).toEqual([13]);
 		expect(plan(sql)).toEqual(plan(w.sql));
 		expect([before, sql.exec(query)]).toEqual([[{ n: 3 * PAGE }], [{ n: 3 * PAGE }]]);
 	});
