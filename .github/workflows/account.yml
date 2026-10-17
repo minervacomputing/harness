@@ -1,7 +1,8 @@
 # The account suites against the CI-only test instance minerva-cf-ci (docs/plans/ci-account-suites.md): nightly when
-# the engine changed that day, and by hand (`gh workflow run account.yml`), which is due before every deploy of
-# staging or production. Not on every push: they deploy a Worker and probe it from outside, which is slow and at
-# the mercy of the rollout. Third-party actions are pinned to commits; update them deliberately.
+# the engine changed that day, and by hand (`gh workflow run account.yml --ref main`). A deploy of staging or
+# production needs a green run on its engine (cloudflare/scripts/ci-gate.ts). Not on every push: they deploy a Worker
+# and probe it from outside, which is slow and at the mercy of the rollout. Third-party actions are pinned to commits;
+# update them deliberately.
 name: account
 
 on:

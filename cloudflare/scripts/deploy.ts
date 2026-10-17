@@ -9,6 +9,8 @@
 // gives the build: mode `faults` for a test instance, `production` for any other. Every command run here gets
 // MINERVA_INSTANCE.
 //
+// Before anything else, a production build's deploy runs scripts/ci-gate.ts.
+//
 // A deploy takes the checkout's lock and then the instance's, and every cf command goes to the instance's account
 // (`lockOperation` and `pinAccount` in scripts/run.ts; the first deploy records the account). Everything that can
 // fail locally runs before anything on the account changes, but for the sandbox's image: once the secrets are checked
@@ -34,6 +36,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { accountSubdomain, checkOnAccount, ownNamespaces } from "./account.ts";
 import { appBuildProblems, buildAccount, buildDigest, builtImage, declaredSecrets, fileDigest, readBuild, strayClasses } from "./builds.ts";
+import { checkWorkingTree, greenRuns } from "./ci-gate.ts";
 import { ensureImage } from "./image.ts";
 import { type Instance, checkFile, chooseInstance, parseInstanceArgs, readInstanceEnv } from "./instance.ts";
 import { instancePrices } from "./model-prices.ts";
@@ -115,6 +118,11 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
 }
 
 try {
+	if (!TEST) {
+		step("CI's green runs on this engine");
+		checkWorkingTree();
+		for (const green of greenRuns()) console.log(`${green.workflow}: run ${green.id} on ${green.sha.slice(0, 7)}`);
+	}
 	lockOperation(INSTANCE);
 	if (LAB) {
 		deployLab(pinAccount([LAB_DIR], ["production"], INSTANCE, { record: true }));
