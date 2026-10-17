@@ -24,7 +24,7 @@ import type { Attachment, Folder } from "@minerva/contract";
 import { type AttemptFence, type ConversationId, type EpochMs, type Outcome, type RunId, type RunStatus, type VersionId, type WorkspaceRef, refuse } from "../shared/rpc.ts";
 import type { GateDecision } from "./gate.ts";
 import type { SandboxPort } from "./local-run.ts";
-import type { RunStore } from "./store.ts";
+import type { Published, RunStore } from "./store.ts";
 
 /**
  * The write ledger and page tokens (ARCHITECTURE.md: Writes), in this object's SQLite, built with the executor (gateway/). The object composes the executor's `RunStatePort`
@@ -79,11 +79,11 @@ export interface FolderPort {
 	prepareAttachments(runId: RunId, uploads: ReservedUpload[]): Promise<Outcome<PreparedAttachments>>;
 	/** Synchronous, inside the start's transaction: the base version with the copies, claiming their loose keys. */
 	commitAttachments(runId: RunId, prepared: PreparedAttachments): { baseVersionId: VersionId | null; attachments: Attachment[] };
-	/** Inside `finish`'s transaction: the last checkpoint, else the base, becomes the folder. */
-	publish(runId: RunId, run: { baseVersionId: VersionId | null; checkpointVersionId: VersionId | null; status: RunStatus }): {
-		resultVersionId: VersionId | null;
-		changes: { [key: string]: unknown } | null;
-	};
+	/**
+	 * Inside `finish`'s transaction: the last checkpoint, else the base, becomes the folder; with the bytes the
+	 * conversation then keeps (`run.finished`'s `storedBytes`), absent when they cannot be summed.
+	 */
+	publish(runId: RunId, run: { baseVersionId: VersionId | null; checkpointVersionId: VersionId | null; status: RunStatus }): Published;
 	list(versionId: VersionId | null): Folder | null;
 	resolve(versionId: VersionId | null, path: string): DownloadTarget | null;
 	/** Deletes the conversation's objects in R2 (ARCHITECTURE.md: Files, Deletion). */

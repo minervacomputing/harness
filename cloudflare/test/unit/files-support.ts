@@ -255,16 +255,19 @@ export class World {
 		return attempt;
 	}
 
-	/** conversation/store.ts `finish`: status, the folder published, the conversation's folder set, in one transaction. */
-	finish(runId: RunId, status: "completed" | "failed" | "cancelled" | "timed_out" = "completed", options: { revoke?: boolean } = {}): void {
-		this.sql.transaction(() => {
+	/**
+	 * conversation/store.ts `finish`: status, the folder published, the conversation's folder set, in one
+	 * transaction; what `publish` returned, or null when the run had ended.
+	 */
+	finish(runId: RunId, status: "completed" | "failed" | "cancelled" | "timed_out" = "completed", options: { revoke?: boolean } = {}): ReturnType<FolderStore["publish"]> | null {
+		return this.sql.transaction(() => {
 			if (options.revoke) this.sql.exec("UPDATE runs SET revoked = 1 WHERE id = ?", runId);
 			const row = this.sql.exec<{ base_version_id: string | null; checkpoint_version_id: string | null }>(
 				"UPDATE runs SET status = ? WHERE id = ? AND status IN ('queued', 'provisioning', 'running') RETURNING base_version_id, checkpoint_version_id",
 				status,
 				runId,
 			)[0];
-			if (!row) return;
+			if (!row) return null;
 			const published = this.store.publish(runId, { baseVersionId: row.base_version_id, checkpointVersionId: row.checkpoint_version_id });
 			this.sql.exec(
 				"UPDATE runs SET result_version_id = ?, folder_changes = ? WHERE id = ?",
@@ -273,6 +276,7 @@ export class World {
 				runId,
 			);
 			this.setFolder(published.resultVersionId);
+			return published;
 		});
 	}
 

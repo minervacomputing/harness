@@ -2,7 +2,8 @@
 // deleteConversation through the internal mount) with the fake Laravel: the uploads Laravel staged under `uploads/<workspace>/`
 // in the EU bucket, measured, hashed and sniffed by the start (files/staging.ts); the folder's store on a Durable Object's own
 // SQLite; attachments copied into a conversation's blobs; and the fault rows Files (ARCHITECTURE.md: Testing): an
-// attachment's copy crashed and sent again, an R2 acknowledgement lost, a copy that lands while its conversation is deleted.
+// attachment's copy crashed and sent again, an R2 acknowledgement lost, a copy that lands while its conversation is deleted;
+// and the bytes a conversation keeps, on its runs' `run.finished`.
 
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
@@ -241,6 +242,29 @@ describe("attachments at a run's start", () => {
 		expect(await commands.startRun(again)).toMatchObject({ outcome: "accepted", attachments: [{ path: "a (2).txt", size: 4, mediaType: "text/plain" }] });
 		await settled(again);
 		expect(await blobs(first)).toHaveLength(1);
+	});
+});
+
+describe("stored bytes", () => {
+	/** The conversation's `run.finished` for this start, once the fake Laravel holds it. */
+	async function finished(start: StartRun) {
+		const facts = await until(
+			async () => fake.facts(start.conversation),
+			(facts) => facts.some((fact) => fact.type === "run.finished" && fact.run === start.run),
+		);
+		return facts.find((fact) => fact.type === "run.finished" && fact.run === start.run)?.data;
+	}
+
+	test("run.finished reports what the conversation keeps in whole pages, and a run that adds nothing reports the same", async () => {
+		const within = scope();
+		const first = attaching(within, [await staged(within.workspace, "notes.txt", "notes"), await staged(within.workspace, "data.bin", "d".repeat(5000))]);
+		await commands.startRun(first);
+		expect((await settled(first)).status).toBe("completed");
+		expect(await finished(first)).toMatchObject({ status: "completed", storedBytes: 4096 + 8192 });
+		const second = attaching(within, [], first.conversation);
+		await commands.startRun(second);
+		expect((await settled(second)).status).toBe("completed");
+		expect(await finished(second)).toMatchObject({ status: "completed", folder: { changes: null }, storedBytes: 4096 + 8192 });
 	});
 });
 

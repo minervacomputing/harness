@@ -972,6 +972,104 @@ describe("attachments", () => {
 
 // The web's view of the folder.
 
+describe("stored bytes", () => {
+	const PAGE = 4096;
+
+	test("each distinct contents the conversation keeps counts once, across turns", async () => {
+		const w = new World();
+		const first = w.run();
+		await saved(w.checkpoint(first, [
+			{ path: "a", data: "one" },
+			{ path: "b", data: "two" },
+		]));
+		expect(w.finish(first)?.storedBytes).toBe(2 * PAGE);
+		const second = w.run();
+		await saved(w.checkpoint(second, [
+			{ path: "a", data: "one" },
+			{ path: "copy of a", data: "one" },
+			{ path: "b", data: "changed" },
+		]));
+		// "two" stays in the first turn's version; "one" is stored once whatever names it.
+		expect(w.finish(second)?.storedBytes).toBe(3 * PAGE);
+		expect(w.store.storedBytes()).toBe(3 * PAGE);
+	});
+
+	test("each file is rounded up to whole pages, an empty one to none", async () => {
+		const w = new World();
+		const run = w.run();
+		await saved(w.checkpoint(run, [
+			{ path: "empty", data: "" },
+			{ path: "page", data: "x".repeat(PAGE) },
+			{ path: "page and a byte", data: "y".repeat(PAGE + 1) },
+		]));
+		expect(w.finish(run)?.storedBytes).toBe(3 * PAGE);
+	});
+
+	test("the run's unnamed uploads and loose keys are left out", async () => {
+		const w = new World();
+		const run = w.run();
+		const dropped = await saved(w.checkpoint(run, [{ path: "dropped", data: "dropped" }]));
+		await saved(w.checkpoint(run, [{ path: "kept", data: "kept" }], { parent: dropped }));
+		// A checkpoint whose object restarted mid-upload leaves its key loose for the sweep.
+		await expect(
+			w.checkpoint(run, [{ path: "kept", data: "kept" }, { path: "late", data: "late" }], {
+				upload: async () => {
+					throw new Error("The object restarted.");
+				},
+			}),
+		).rejects.toThrow("restarted");
+		expect(w.finish(run)?.storedBytes).toBe(PAGE);
+		expect(w.blobRows().map((row) => row.state).sort()).toEqual(["doomed", "loose", "stored"]);
+	});
+
+	test("a turn that deletes a file changes nothing: the earlier version keeps it", async () => {
+		const w = new World();
+		const first = w.run();
+		await saved(w.checkpoint(first, [{ path: "big.bin", data: "z".repeat(3 * PAGE) }]));
+		expect(w.finish(first)?.storedBytes).toBe(3 * PAGE);
+		const second = w.run();
+		await saved(w.checkpoint(second, [], { parent: w.folder() }));
+		expect(w.finish(second)?.storedBytes).toBe(3 * PAGE);
+	});
+
+	test.each(["cancelled", "failed"] as const)("a run %s before its first checkpoint counts its attachments", async (status) => {
+		const w = new World();
+		const run = w.run({ status: "queued" });
+		const prepared = await w.store.prepareAttachments(run, [await w.upload("notes.txt", "notes"), await w.upload("data.csv", "d".repeat(PAGE + 1))]);
+		if (!prepared.ok) throw new Error(prepared.refusal.detail);
+		// As the start's transaction does: the run starts from the base version with the copies.
+		w.sql.transaction(() => {
+			const { baseVersionId } = w.store.commitAttachments(run, prepared.value);
+			w.sql.exec("UPDATE runs SET base_version_id = ?, status = 'running' WHERE id = ?", baseVersionId, run);
+		});
+		expect(w.finish(run, status)?.storedBytes).toBe(3 * PAGE);
+	});
+
+	test("a run's unnamed blobs stay counted when its folder could not be compared or cleaned up", async () => {
+		const w = new World();
+		const run = w.run();
+		const dropped = await saved(w.checkpoint(run, [{ path: "dropped", data: "dropped" }]));
+		const last = await saved(w.checkpoint(run, [{ path: "kept", data: "kept" }], { parent: dropped }));
+		w.sql.exec("DELETE FROM folder_version_parts WHERE version_id = ?", last);
+		w.open();
+		expect(w.finish(run)?.storedBytes).toBe(2 * PAGE);
+		expect(w.logs).toEqual(["a run's folder could not be compared or cleaned up"]);
+		expect(w.blobRows().map((row) => row.state)).toEqual(["stored", "stored"]);
+	});
+
+	test("a sum that throws leaves the number out, and the run still ends", async () => {
+		const w = new World();
+		const run = w.run();
+		const version = await saved(w.checkpoint(run, [{ path: "a", data: "one" }]));
+		w.store.storedBytes = () => {
+			throw new Error("SQLITE_IOERR");
+		};
+		expect(w.finish(run)).toEqual({ resultVersionId: version, changes: expect.objectContaining({ counts: expect.objectContaining({ added: 1 }) }) });
+		expect([w.runRow(run)?.status, w.folder()]).toEqual(["completed", version]);
+		expect(w.logs).toEqual(["the conversation's stored bytes could not be summed"]);
+	});
+});
+
 describe("listing and resolving", () => {
 	test("the folder, or a version of it that is not a checkpoint; a path matched exactly", async () => {
 		const w = new World();

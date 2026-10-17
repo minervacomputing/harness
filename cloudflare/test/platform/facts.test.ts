@@ -120,7 +120,7 @@ describe("facts", () => {
 		]);
 		const usage = facts.find((fact) => fact.type === "run.usage");
 		expect(usage?.data).toMatchObject({ call: expect.stringMatching(/^[0-9a-f]{8}$/), inputTokens: expect.any(Number), outputTokens: expect.any(Number) });
-		expect(facts.at(-2)?.data).toMatchObject({ status: "completed", error: "", message: { id: expect.any(String), content: expect.any(String) } });
+		expect(facts.at(-2)?.data).toMatchObject({ status: "completed", error: "", message: { id: expect.any(String), content: expect.any(String) }, storedBytes: 0 });
 
 		const delivery = await deliveryOf(start);
 		expect(delivery).toMatchObject({ written: facts.length, acknowledged: facts.length, failures: 0, next_at: 0, stopped: null });

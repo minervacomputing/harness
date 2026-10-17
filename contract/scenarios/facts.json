@@ -717,7 +717,31 @@
                     "id": "0199e000-0000-7000-8000-0000000000c1",
                     "content": "Three tasks are due today."
                   },
-                  "folder": null
+                  "folder": {
+                    "base": null,
+                    "result": "0199e000-0000-7000-8000-0000000000f1",
+                    "changes": {
+                      "added": [
+                        {
+                          "path": "tasks.md",
+                          "size": 10000
+                        }
+                      ],
+                      "modified": [],
+                      "deleted": [],
+                      "counts": {
+                        "added": 1,
+                        "modified": 0,
+                        "deleted": 0,
+                        "dirsAdded": 0,
+                        "dirsDeleted": 0
+                      },
+                      "dirsAdded": [],
+                      "dirsDeleted": []
+                    },
+                    "warnings": null
+                  },
+                  "storedBytes": 12288
                 }
               }
             ]

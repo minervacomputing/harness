@@ -32,6 +32,7 @@ import {
 	LOOSE_GRACE_MS,
 	NO_LONGER_AVAILABLE,
 	NO_ROOM,
+	PAGE_BYTES,
 	QuotaExceeded,
 	SECOND_DELETION_MS,
 	STALE,
@@ -503,6 +504,15 @@ export class FolderStore {
 		return row?.n ?? 0;
 	}
 
+	/**
+	 * What the conversation keeps: each `stored` blob once, rounded up to whole pages as the folder's cap
+	 * counts it. Neither loose nor doomed rows, which the sweep deletes. Only a run changes which blobs are
+	 * stored, so what a run's end reads holds until the next run starts.
+	 */
+	storedBytes(): number {
+		return first<{ n: number }>(this.#sql, `SELECT coalesce(sum((size + ${PAGE_BYTES - 1}) / ${PAGE_BYTES} * ${PAGE_BYTES}), 0) AS n FROM folder_blobs WHERE state = 'stored'`)?.n ?? 0;
+	}
+
 	/** The total the byte counter last accepted, or null before the first report. */
 	reported(): number | null {
 		return first<{ reported: number }>(this.#sql, "SELECT reported FROM folder_counter WHERE singleton = 1")?.reported ?? null;
@@ -920,9 +930,13 @@ export class FolderStore {
 	 * Inside the transaction that ends the run: its last checkpoint becomes a `turn` on top of its base
 	 * version and the result, with what the turn changed; else its base version is the result, with no
 	 * changes, even if the base added attachments (files risk 9). The run's grants end, and what it stored
-	 * that neither version names is deleted.
+	 * that neither version names is deleted. Then what the conversation keeps (`storedBytes`), absent when it
+	 * cannot be read.
 	 */
-	publish(runId: RunId, run: { baseVersionId: VersionId | null; checkpointVersionId: VersionId | null }): { resultVersionId: VersionId | null; changes: FolderChanges | null } {
+	publish(
+		runId: RunId,
+		run: { baseVersionId: VersionId | null; checkpointVersionId: VersionId | null },
+	): { resultVersionId: VersionId | null; changes: FolderChanges | null; storedBytes?: number } {
 		return this.#sql.transaction(() => {
 			const resultVersionId = run.checkpointVersionId ?? run.baseVersionId;
 			let changes: FolderChanges | null = null;
@@ -946,7 +960,12 @@ export class FolderStore {
 				this.#deps.log("a run's folder could not be compared or cleaned up", error);
 			}
 			this.#sql.exec("DELETE FROM folder_grants WHERE run_id = ?", runId);
-			return { resultVersionId, changes };
+			try {
+				return { resultVersionId, changes, storedBytes: this.storedBytes() };
+			} catch (error) {
+				this.#deps.log("the conversation's stored bytes could not be summed", error);
+				return { resultVersionId, changes };
+			}
 		});
 	}
 

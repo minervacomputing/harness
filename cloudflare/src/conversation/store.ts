@@ -259,8 +259,15 @@ export interface FinishOptions {
 	answer?: { id: string; content: string };
 }
 
+/** What the folder's publishing returns: the run's result version, what changed, and what the conversation keeps. */
+export interface Published {
+	resultVersionId: VersionId | null;
+	changes: { [key: string]: unknown } | null;
+	storedBytes?: number;
+}
+
 /** What `finish` asks the folder, inside its transaction. */
-export type Publish = (run: RunRow) => { resultVersionId: VersionId | null; changes: { [key: string]: unknown } | null };
+export type Publish = (run: RunRow) => Published;
 
 const ACTIVE_SQL = "('queued', 'provisioning', 'running')";
 const ACTING_SQL = "('provisioning', 'running')";
@@ -646,7 +653,7 @@ export class RunStore {
 			this.#sql.exec("UPDATE attempts SET ended_at = ?, ended = ? WHERE run_id = ? AND attempt = ? AND ended_at IS NULL", now, ended, runId, row.attempt);
 			this.touch({ folderVersionId: published.resultVersionId });
 			this.append(runId, statusEvent(terminalStatus(end)));
-			this.#finishedFact(row, end, published.resultVersionId, options.answer ?? null);
+			this.#finishedFact(row, end, published, options.answer ?? null);
 			if (row.metered === 1) this.#listeners?.settling(runId);
 			this.#ended.push(runId);
 			return true;
@@ -1082,8 +1089,8 @@ export class RunStore {
 		});
 	}
 
-	/** The run's terminal fact, in `finish`'s transaction: its status, error, answer and folder. */
-	#finishedFact(row: RunRow, end: RunEnd, resultVersionId: VersionId | null, answer: { id: string; content: string } | null): void {
+	/** The run's terminal fact, in `finish`'s transaction: its status, error, answer, folder and what the conversation keeps. */
+	#finishedFact(row: RunRow, end: RunEnd, { resultVersionId, storedBytes }: Published, answer: { id: string; content: string } | null): void {
 		if (!this.#writesFacts()) return;
 		const current = this.#sql.exec<Pick<RunRow, "folder_changes" | "folder_warnings">>("SELECT folder_changes, folder_warnings FROM runs WHERE id = ?", row.id).one();
 		const folder =
@@ -1101,6 +1108,7 @@ export class RunStore {
 			error: end.status === "completed" ? "" : sliceText(end.message, 0, ERROR_MESSAGE_CHARS),
 			message: answer,
 			folder,
+			...(storedBytes === undefined ? {} : { storedBytes }),
 		};
 		this.#fact(row.id, { type: "run.finished", data });
 	}

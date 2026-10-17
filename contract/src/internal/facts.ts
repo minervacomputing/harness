@@ -219,6 +219,12 @@ export const Fact = z.discriminatedUnion('type', [
           warnings: FolderWarningsSchema.nullable(),
         })
         .nullable(),
+      /**
+       * The bytes the conversation's folder keeps once the run has ended: each distinct contents of every version it keeps,
+       * counted once and rounded up to whole 4 KiB pages (an empty file counts 0), what a failed clean-up left included and
+       * copies the engine is still deleting left out. It holds until the conversation's next run starts; absent when it could not be read.
+       */
+      storedBytes: Count.optional(),
     }),
   ),
 ])
