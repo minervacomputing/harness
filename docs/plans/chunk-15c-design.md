@@ -342,7 +342,7 @@ Choices the design left open, as built:
 opencode (`plan` agent) reviewed unit 2's diff (`779cd2a..9d53e7d` in the app, branch `chunk-15c-2`) on 2026-10-17, twice; `git status` afterwards showed no change by it. It found no change that commits without its restriction and no data in an object beyond ids. Its findings, each checked with an HTTP fake:
 
 1. **The check proved only `probes/` (accepted).** A lock rule on `probes/` alone passed while `restrictions/` stayed writable. The probe is now written among the restrictions, `restrictions/<time>_<id>.probe`, which `list` leaves out, so the log starts at the oldest `.probe` key, not under `probes/`. The check cannot see the lock's duration; the owner reads it back with `cf r2 buckets locks get`.
-2. **Any client error passed as a lock (accepted).** A 400 or 403 for a bad signature, an HTML 403 and a 409 all passed. The check now passes only on 403 `ObjectLockedByBucketPolicy`, R2's error 10069, for both the overwrite and the delete; anything else fails and is printed.
+2. **Any client error passed as a lock (accepted).** A 400 or 403 for a bad signature, an HTML 403 and a 409 all passed. The check now passes only on `ObjectLockedByBucketPolicy`, R2's error 10069, for both the overwrite and the delete; anything else fails and is printed. R2 answers it with 409, not the 403 first assumed, which staging's first run showed (fixed in `76b76c9`).
 3. **Presigned URLs reached Nightwatch (accepted).** Its outgoing-request records kept the query (the token's key id and a signature valid for a minute). `AppServiceProvider` now drops the query of every URL that carries `X-Amz-Signature`, the files bucket's deletes included.
 4. **The password change's sessions (accepted).** The change, its event and the end of the user's other sessions are one transaction; the request's own session takes the new epoch after the commit (`SessionEpoch::keep`, which replaces `endOthers`).
 
@@ -354,3 +354,7 @@ Choices the design left open, as built:
 - A refused write renders as the toast (503 to JSON) and as a Filament notification; its cause goes to the log through the exception's context, never the signed URL.
 - Bucket names: `minerva-cf-staging-restrictions-eu` and `minerva-cf-restrictions-eu`, next to the instances' `-files-eu` buckets.
 - Not logged, and still coming back after a restore: a user turning off their own two factors, regenerated recovery codes, and an API key replaced by another (a reconnection that is not narrowed).
+
+### On staging, 2026-10-17
+
+Unit 2 runs on the app's staging from `c058cec`, rebased onto 15b's unit 4, with `76b76c9`. The owner made the bucket `minerva-cf-staging-restrictions-eu` (EU), its lock rule (every object, 30 days) and lifecycle rule, both read back with `cf`, and a token with object read and write on that bucket alone; the settings are staging's variables and attached secrets. The first check failed on the status alone: R2 refused the overwrite and the delete with 409 `ObjectLockedByBucketPolicy`, and the probe read back. With the check expecting 409, ten runs passed, each with both refusals and the probe read back. A probe's write took 223 to 339 ms (median 295), a new process and connection each time, which is what a logged removal waits for. Production has no bucket or settings yet, so unit 2 is not deployed there.
