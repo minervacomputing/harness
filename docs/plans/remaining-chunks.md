@@ -380,28 +380,31 @@ Today the engine deletes only answered or cancelled `internal_starts` and, throu
 
 **Depends on.** Chunk 14a.
 
+Designed 2026-10-17 in `minervacomputing/app` (its `docs/plans/retention.md`, `a4ebf0e`), reviewed by opencode. The owner's questions take its defaults: owners delete a workspace (never the last), the audit log keeps ids and no names, and a deleted account's integer id stays on usage and audit records.
+
 **Build.**
 
-- [ ] Delete a deleted conversation's rows (the conversation, messages, runs, facts) after the restore window, once the engine acknowledged its deletion. Keep the usage records and write settlements under their own retention.
-- [ ] Delete an organization and a workspace on their own, by the same path. Each conversation goes through `deleteConversation`, each connection is revoked, and the usage and audit records stay. Account deletion uses it for the organizations that leave with the account, instead of cascading their runs away.
-- [ ] An audit log of changes of authority, deletions and the emergency stop, kept under its own retention. Filament reads it.
-- [ ] Delete staging uploads no run took, with their R2 objects, as the sweep does today.
+- [ ] Delete a deleted conversation's rows (the conversation, messages, runs, facts, and the uploads its runs took) 7 days after the engine acknowledged its deletion, by an hourly `minerva:retention` in transactions of at most 1,000 rows. Its tombstone stays for good, with `purged_at`. The accounting tables and the audit log are never touched.
+- [ ] Delete a workspace (owners, not the last) and a team organization (owners, instance admins in Filament or `minerva:organization:delete`) by the same path. Each conversation is marked deleted and sent to the engine through the deletions' outbox, each active run cancelled, each connection revoked, and the workspace or organization soft-deleted; an organization's memberships and invitations go at once. Its own rows go once its last conversation is purged. Account deletion uses it for the organizations that leave with the account, instead of cascading, and `personal_owner_id` no longer cascades.
+- [ ] An audit log (`audit_events`, ids and no names) of changes of authority (members, roles, invitations, connections, grants, agents, instance admins), deletions and the emergency stop, written in each change's transaction. 14c's `admission_changes` moves into it. Kept at least 1 year; nothing deletes it in 15b. Filament reads it. `AuditLog::removesAccess()` names the events 15c's restriction log covers.
+- [ ] Staged uploads no run took: the sweep deletes their rows after a day, at most 1,000 a pass, and R2's rule on `uploads/` deletes their objects (15a). Laravel deletes no object in the sweep.
+- [ ] Every foreign key has an index, checked by a test.
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Tests for an organization's deletion with a run in flight, a late usage fact after it, and the rows left after the window.
+- [ ] Tests for an organization's deletion with a run in flight, a late usage fact after it and after the purge, the rows left after the window, a tombstone's watermark that never falls, an interrupted pass, and a start and a workspace's creation racing a deletion.
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] On staging, delete an organization with two conversations and a connection. Its conversations are deleted in the engine, its runs are cancelled, and its usage records remain.
+- [ ] On staging, delete an organization with two conversations and a connection. Its conversations are deleted in the engine, its runs are cancelled, and its usage records remain; and the first scheduled passes of `minerva:retention` on staging's deleted conversations, with their times.
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. The retention job's time on 10,000 deleted conversations' rows. Rule. Under a minute, in batches that hold no lock over 1 s. More fails.
+- [ ] Metric. One pass of the retention job over 10,000 deleted conversations' rows (about 270,000) and 10 deleted organizations' configuration, beside 100,000 live conversations, locally. Rule. Under a minute, and no transaction of 1 s or more. Either failing fails.
 
 **Review.**
 
-- [ ] opencode reviewed the design and the diff.
+- [ ] opencode reviewed the design and the diff. The design on 2026-10-17 (retention.md, Amendments after opencode's review).
 
 ## Make a restore of Laravel safe (chunk 15c)
 
