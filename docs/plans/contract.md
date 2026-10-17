@@ -56,7 +56,7 @@ Readers on both sides ignore fields they do not know (zod's objects strip them, 
   - The engine keeps a digest of `startRun`'s input with its outcome, and a repeat with a different input is `IDEMPOTENCY_CONFLICT` (409).
   - A repeated `cancelRun` keeps its first reason.
   - A repeated `admission` changes nothing unless its revision is higher.
-- **Reads** (`catalog`, `folder`, `resolveDownload`, `replayFacts`) and **the settings calls** (`describeAccount`, `listResources`, `checkGrantEdit`) are not idempotent by an id. They answer what is true when they are asked.
+- **Reads** (`catalog`, `folder`, `resolveDownload`, `replayFacts`, `listConversations`) and **the settings calls** (`describeAccount`, `listResources`, `checkGrantEdit`) are not idempotent by an id. They answer what is true when they are asked.
 
 **Size.** A body may be up to 16 MB (`MAX_INTERNAL_BODY`), declared and checked as the public API's 2.5 MB is.
 - **Fields** have their own limits, but those do not bound the whole body: three layers of grants can in theory be larger.
@@ -95,7 +95,7 @@ Each is idempotent by its own ids. The engine's chunk that implements each comma
 - **`replayFacts`** `/conversations/facts` [7]: `scope`, `conversation`, `after` (a sequence) and `limit` (at most 500). It answers `{conversation, facts, more}`: the conversation's retained facts after that sequence, in order, in the delivery's format, so Laravel applies them through the same path.
   - **Retention** (chunk 15a). A fact is deleted 7 days after Laravel acknowledged it, never before; the lowest sequence still held is the floor. An `after` below `floor − 1` is refused `FACTS_PRUNED` (410) with `data: {floor}` rather than answered with a page that starts later; `after ≥ floor − 1` is answered as before.
   - **Not per run, as the plan first had it (`runReport`).** A run's facts are not contiguous in its conversation, since a write that settles after a cancellation can come after the next run's facts, so recovery reads by conversation from Laravel's watermark.
-  - **Finding the conversations to replay** after a restore (the recovery index listing those with facts beyond Laravel's watermarks, deleted ones included) is an operation that chunk 15 adds, additively.
+  - **Finding the conversations to replay** after a restore is `listConversations` (chunk 15c, below).
 - **`describeAccount`** `/connections/account` [9]: `scope`, `connection: {id, provider}` and `credential`. It answers either `{outcome: "described", account: {id, label, tenant}}` or `{outcome: "refused", code: "CREDENTIAL_REFUSED" | "PROVIDER_FAILED", message}`.
 - **`listResources`** `/connections/resources` [11]: `scope`, `connection`, `credential`, `kind`, and either `query` or `parent`, with a `cursor`. It answers `{items: [{id, name, expandable}], next}`, or a refusal as above, or `INVALID_RESOURCE_ID` and `INVALID_CURSOR` for a parent or a page token the provider cannot take. A browsable kind without a query is listed level by level; the account kind is the connection itself, named by its account. A kind the connector does not declare, or a `parent` where nothing is browsed, is `VALIDATION_FAILED`.
 - **`checkGrantEdit`** `/connections/check-grants` [11]: `scope`, `connection`, `credential`, `layer: {level, subject, revision, restricted, grants}` and `changes: [{kind, id, actions}]`, an empty `actions` removing the grant. It answers `{outcome: "valid", grants}`, the layer's grants after the edit: every grant that is not an allow on this connection kept in place and order, then this connection's allow grants sorted by kind and resource, those newly allowed named by the provider's `describe` (accounts by the account); or `{outcome: "invalid", message}`, also for a resource the account cannot see; or a refusal as above. Only resources and accounts newly allowed are asked of the provider, so an edit that only removes grants works with any credential, an empty secret included (Laravel's `docs/plans/grants.md`). The checks do not depend on the layer's level, subject or `restricted`.
@@ -103,6 +103,7 @@ Each is idempotent by its own ids. The engine's chunk that implements each comma
 - **`resolveDownload`** `/conversations/download` [12]: `scope`, `conversation`, `version` and `path`. It answers `{key, size, sha256, mediaType}`, or `{outcome: "missing"}`.
 - **`deleteConversation`** `/conversations/delete` [12]: `scope` and `conversation`. It answers once the tombstone is durable.
 - **`admission`** `/admission` [14]: `{environment, open, revision, reason}`, the emergency stop. The highest revision wins, so a repeat or a late delivery changes nothing.
+- **`listConversations`** `/recovery/conversations` [15]: `{environment, after, limit}`, `after` a conversation id or null and `limit` from 1 to 1,000. It answers `{conversations: [{conversation, organization, workspace, factSeq, deletedAt, purgedAt}], more}`: every row of the recovery index after `after`, in order of id, whatever its state, and whether more follow. `factSeq` is the highest fact sequence the engine ever sent Laravel; `deletedAt` and `purgedAt` are null until the conversation is deleted and purged. Laravel pages through it from null, each page after the last id of the one before, and compares each row with what a restore left it ([chunk-15c-design.md](chunk-15c-design.md), The listing). It names no scope, as `catalog` does not, and is a read.
 
 **Credentials in settings calls.** `describeAccount`, `listResources` and `checkGrantEdit` carry the credential in the command, `{kind, secret, generation}`. The plan had the engine lease it with `leaseToken` instead. Sending it in the command gives the same bound, since the engine sees that access token either way, and saves a round trip and a registry of pending settings calls in Laravel. When the provider refuses it, the answer says `CREDENTIAL_REFUSED`, and Laravel marks the connection itself. `leaseToken` is for runs only.
 
@@ -261,7 +262,7 @@ Also, the engine's client against the fake Laravel.
 
 ## Out of scope
 
-- The commands' behaviour (chunks 6, 7, 9, 11, 12 and 14), and recovery's listing (chunk 15).
+- The commands' behaviour (chunks 6, 7, 9, 11, 12, 14 and 15).
 - Laravel's routes for the engine's requests (chunk 8).
 - The Access application and the service token on the account. These are the owner's, asked for when a staging engine is deployed (chunk 8).
 - Local development of both sides together (chunk 8). The offline dev server has no Access, so the internal API stays off there until that chunk chooses a local way in.

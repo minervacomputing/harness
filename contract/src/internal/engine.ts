@@ -194,6 +194,22 @@ export type DeleteConversation = z.infer<typeof DeleteConversation>
 export const DeleteConversationResult = z.object({ outcome: z.literal('deleted') })
 export type DeleteConversationResult = z.infer<typeof DeleteConversationResult>
 
+/** `listConversations`: the recovery index's conversations after `after`, in order of id, at most `limit`. */
+export const ListConversations = z.object({ environment: Environment, after: Id.nullable(), limit: z.int().min(1).max(1000) })
+export type ListConversations = z.infer<typeof ListConversations>
+/** A conversation as the recovery index binds it: `factSeq` is the highest fact sequence the engine ever sent Laravel. */
+export const ListedConversation = z.object({
+  conversation: Id,
+  organization: Id,
+  workspace: Id,
+  factSeq: z.int().min(0),
+  deletedAt: Time.nullable(),
+  purgedAt: Time.nullable(),
+})
+export type ListedConversation = z.infer<typeof ListedConversation>
+export const ListConversationsResult = z.object({ conversations: z.array(ListedConversation).max(1000), more: z.boolean() })
+export type ListConversationsResult = z.infer<typeof ListConversationsResult>
+
 export const engine = {
   /** The connectors this engine serves [5]. */
   catalog: internal.route({ method: 'GET', path: at('/catalog') }).output(Catalog),
@@ -255,4 +271,12 @@ export const engine = {
     .route({ method: 'POST', path: at('/admission') })
     .input(z.object({ environment: Environment, open: z.boolean(), revision: z.int().min(1), reason: z.string().max(500) }))
     .output(z.object({ open: z.boolean(), revision: z.int().min(0) })),
+  /**
+   * Every conversation the recovery index binds, whatever its state, after `after` in order of id, for Laravel's recovery
+   * after a restore [15]. `more` says whether any follows the page.
+   */
+  listConversations: internal
+    .route({ method: 'POST', path: at('/recovery/conversations') })
+    .input(ListConversations)
+    .output(ListConversationsResult),
 }
