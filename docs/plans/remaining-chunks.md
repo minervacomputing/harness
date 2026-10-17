@@ -268,12 +268,12 @@ The stop is Laravel's alone, with no engine change (owner, 2026-10-16). The desi
 **Build.**
 
 - [x] The rule (owner, 2026-10-16): a flag in Laravel that `Runs::start` and `leaseToken` read, and a stop that cancels every starting or running run through the existing cancel path. The engine keeps no admission state; `admission` and `ADMISSION_CLOSED` stay declared and unused (chunk-14c-design.md, The contract). The engine-side admission is in Appendix B.
-- [ ] Laravel's admission row. One row, first in `turn.md`'s lock order, and an append-only record of each stop and reopen with who and when, written in the change's transaction. `Runs::start` reads the row `FOR SHARE` before the user's lock and refuses a start while it is closed; the stop takes it `FOR UPDATE`, so a start and a stop are ordered as a start and a revocation are.
-- [ ] The stop. Close the row in a short transaction of its own, then request the cancel of every starting or running run, a conversation per transaction, with `CancelReason::EmergencyStop`; then send and wait for every unacknowledged cancel, whatever its reason. While the row is closed the sweep requests the cancels a stop that died partway left, and a second stop is idempotent. Reopening opens the row and sends nothing to the engine.
-- [ ] `SendStart` holds a start back while its run's cancel is unacknowledged, so a start not yet sent reaches the engine after its cancel.
-- [ ] While the row is closed, `leaseToken` refuses every lease (`RUN_NOT_ACTIVE`).
-- [ ] Laravel's admin (Filament) gets the stop and the reopen on a page of their own, behind the instance admin's checks, and `minerva:stop` does the same from the console.
-- [ ] The page and the command show what is pending (every unacknowledged cancel, runs not yet ended, conversations whose facts are stopped), while the jobs and the sweep keep sending.
+- [x] Laravel's admission row. One row, first in `turn.md`'s lock order, and an append-only record of each stop and reopen with who and when, written in the change's transaction. `Runs::start` reads the row `FOR SHARE` before the user's lock and refuses a start while it is closed; the stop takes it `FOR UPDATE`, so a start and a stop are ordered as a start and a revocation are. In the app's `ff01764` (`App\Runs\Admission`, migration `admission` and `admission_changes`).
+- [x] The stop. Close the row in a short transaction of its own, then request the cancel of every starting or running run, a conversation per transaction, with `CancelReason::EmergencyStop`; then send and wait for every unacknowledged cancel, whatever its reason. While the row is closed the sweep requests the cancels a stop that died partway left, and a second stop is idempotent. Reopening opens the row and sends nothing to the engine. In `ff01764`.
+- [x] `SendStart` holds a start back while its run's cancel is unacknowledged, so a start not yet sent reaches the engine after its cancel. In `ff01764`, which also holds it while the row is closed and its run has no cancel yet.
+- [x] While the row is closed, `leaseToken` refuses every lease (`RUN_NOT_ACTIVE`). In `ff01764`.
+- [x] Laravel's admin (Filament) gets the stop and the reopen on a page of their own, behind the instance admin's checks, and `minerva:stop` does the same from the console. `minerva:stop` in `ff01764`; the page, `App\Filament\Pages\EmergencyStop`, in `6f97844`.
+- [x] The page and the command show what is pending (every unacknowledged cancel, runs not yet ended, conversations whose facts are stopped), while the jobs and the sweep keep sending. `Admission::pending()`, one query for both; the page refreshes every five seconds while anything is pending.
 
 **You see.**
 
@@ -281,16 +281,17 @@ The stop is Laravel's alone, with no engine change (owner, 2026-10-16). The desi
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Pest tests for a start and a lease refused while stopped, a stop that cancels every active run across organizations and waits for an orphaned cancel, a stop that failed partway finished by the sweep, `SendStart`'s hold, a repeated stop, and a reopen. Laravel's race test runs a start against the stop on Postgres in separate processes, both orders.
+- [x] Pest tests for a start and a lease refused while stopped, a stop that cancels every active run across organizations and waits for an orphaned cancel, a stop that failed partway finished by the sweep, `SendStart`'s hold, a repeated stop, and a reopen. Laravel's race test runs a start against the stop on Postgres in separate processes, both orders. `tests/Feature/Runs/EmergencyStopTest.php` (19 tests, `minerva:stop`'s output and exit codes included) and `tests/Concurrency/AdmissionRacesTest.php` (2) in `ff01764`; the page's Livewire tests (`tests/Feature/Admin/EmergencyStopPageTest.php`, 3: a non-admin's 404, Stop's required reason and its pending runs while the engine does not acknowledge, Reopen with its pending count) in `6f97844`. The app's suite passed locally against Postgres at `6f97844`: 745 Pest tests, PHPStan, Pint, and the front end's checks and 28 Vitest tests.
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Regression against `main`. The engine does not change, so `test:faults` is not run for this chunk; the app's suite passes.
+- [x] Regression against `main`. The engine does not change, so `test:faults` is not run for this chunk; the app's suite passes (745 at `6f97844`, above).
 - [ ] The staging scenario under You see, with a write when the stop lands. Its fact is recorded in Laravel; the write in flight completing through a cancel is the engine's `protocols.test.ts` case (chunk-14c-design.md, Live checks).
+- [ ] The page's Stop and Reopen, clicked once on staging by an instance admin (the owner, who has the two factors there).
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. The engine's start path is unchanged, so `Runs::start`'s time is measured instead, locally against Postgres, base and head interleaved. Rule. Within 20 ms of the base's at the median. More fails.
+- [x] Metric. The engine's start path is unchanged, so `Runs::start`'s time is measured instead, locally against Postgres, base and head interleaved. Rule. Within 20 ms of the base's at the median. More fails. 500 starts a run with `Bus::fake()`, base `ef6429f` and head `ff01764` interleaved twice: pooled medians 6.774 ms and 7.155 ms, +0.381 ms; again in the reverse order on a fresh database, 6.727 ms and 7.334 ms, +0.607 ms.
 
 **Review.**
 
