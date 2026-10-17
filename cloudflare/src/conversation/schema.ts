@@ -2,7 +2,7 @@
 // the Agents SDK under `cf_agents_`; the folder's versions and the script store add their own steps here as
 // they land (additive only, lib/sqlite.ts).
 
-import { FOLDER_REPORT_SCHEMA, FOLDER_SCHEMA } from "../files/schema.ts";
+import { FOLDER_REPORT_SCHEMA, FOLDER_SCHEMA, FOLDER_STORED_SIZE_SCHEMA } from "../files/schema.ts";
 import { LEDGER_NOTES_SCHEMA, LEDGER_SCHEMA, PAGE_TOKEN_SCHEMA } from "../gateway/schema.ts";
 
 /** lib/sqlite.ts `Migration`, written out so the account tests (Node) can read the ids without the Worker's types. */
@@ -287,4 +287,6 @@ ALTER TABLE script_records ADD COLUMN prices TEXT;
 ALTER TABLE script_records ADD COLUMN cost_micros INTEGER;
 `,
 	},
+	// What the folder keeps, summed at each run's end from an index of the stored blobs' sizes (files/store.ts `storedBytes`).
+	{ id: 13, sql: FOLDER_STORED_SIZE_SCHEMA },
 ];

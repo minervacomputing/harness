@@ -7,11 +7,14 @@
 // contents the run may not read under a key recorded first, so "an upload" below is a checkpoint's.
 
 import { describe, expect, test } from "vitest";
+import { MIGRATIONS } from "../../src/conversation/schema.ts";
 import { BLOB_GONE, CONFLICT, LOOSE_GRACE_MS, NO_LONGER_AVAILABLE, NO_ROOM, QuotaExceeded, SECOND_DELETION_MS, STALE } from "../../src/files/limits.ts";
 import { type FolderWarnings, type WireManifest, digestOf, parseManifest } from "../../src/files/manifest.ts";
 import { StaleParent, UnknownBlob } from "../../src/files/store.ts";
 import { parseJson } from "../../src/lib/json.ts";
+import { migrate, type Sql, sqliteSql } from "../../src/lib/sql.ts";
 import { CHECKSUM_MISMATCH, CONVERSATION, DAY, START, WORKSPACE, World, sandboxUpload, sha } from "./files-support.ts";
+import { openDatabase } from "./sqlite.ts";
 
 const PREFIX = `blobs/${WORKSPACE}/${CONVERSATION}/`;
 const EMPTY = { files: [], dirs: [] };
@@ -1055,6 +1058,33 @@ describe("stored bytes", () => {
 		expect(w.finish(run)?.storedBytes).toBe(2 * PAGE);
 		expect(w.logs).toEqual(["a run's folder could not be compared or cleaned up"]);
 		expect(w.blobRows().map((row) => row.state)).toEqual(["stored", "stored"]);
+	});
+
+	test("the sum reads only the stored sizes' index, which a folder from before step 13 gets with its rows", () => {
+		const queries: string[] = [];
+		const w = new World();
+		const exec = w.sql.exec;
+		w.sql.exec = (query, ...bindings) => {
+			queries.push(query);
+			return exec(query, ...bindings);
+		};
+		w.store.storedBytes();
+		w.sql.exec = exec;
+		const [query] = queries;
+		if (queries.length !== 1 || query === undefined) throw new Error(`storedBytes ran ${queries.length} statements`);
+		const plan = (sql: Sql) => sql.exec<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`).map((row) => row.detail);
+		expect(plan(w.sql)).toEqual(["SCAN folder_blobs USING COVERING INDEX folder_blobs_stored_size"]);
+
+		// An object built before step 13, with blobs: the step adds the index, and the sum is the same.
+		const sql = sqliteSql(openDatabase());
+		migrate(sql, MIGRATIONS.filter((step) => step.id < 13), START);
+		for (const [key, size, state] of [["a", 1, "stored"], ["b", PAGE + 1, "stored"], ["c", 5 * PAGE, "loose"]] as const) {
+			sql.exec("INSERT INTO folder_blobs (key, sha256, size, state, created_at, due_at) VALUES (?, ?, ?, ?, ?, ?)", key, key.repeat(64), size, state, START, state === "stored" ? null : START);
+		}
+		const before = sql.exec(query);
+		expect(migrate(sql, MIGRATIONS, START)).toEqual([13]);
+		expect(plan(sql)).toEqual(plan(w.sql));
+		expect([before, sql.exec(query)]).toEqual([[{ n: 3 * PAGE }], [{ n: 3 * PAGE }]]);
 	});
 
 	test("a sum that throws leaves the number out, and the run still ends", async () => {

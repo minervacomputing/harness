@@ -82,3 +82,11 @@ CREATE TABLE folder_report (
 	revision INTEGER NOT NULL CHECK (revision >= 1)
 ) STRICT;
 `;
+
+/**
+ * `folder_blobs_stored_size`: the stored blobs' sizes alone, so `storedBytes` sums them from the index without
+ * reading each row (chunk-14d-design.md, Perf probe and rule).
+ */
+export const FOLDER_STORED_SIZE_SCHEMA = `
+CREATE INDEX folder_blobs_stored_size ON folder_blobs (size) WHERE state = 'stored';
+`;
