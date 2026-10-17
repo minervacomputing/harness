@@ -138,7 +138,7 @@ A partial index, `runs (finished_at) WHERE finished_at IS NOT NULL AND (prune IS
 - **The root conversation** that PiHarness opens (`pi.root`, `index.js:535`) is never a run's session, so it is never touched.
 - **pi's in-memory caches are not proof by time.** On Workers pi evicts an idle document only at the end of a later commit, and a document with an observer stays pinned (`session/session.js:426` to `:500`). A deleted session's cached documents are never read again, since nothing names that session any more, so a stale entry is memory only. The proof therefore runs with the same Harness open, not only after a reopen (below).
 
-**The measurement** (unit 1). The test build's driver gains a read of an object's storage: `databaseSize`, and per table its row count and the summed length of its TEXT and BLOB columns (from `PRAGMA table_info`). An account probe (`MINERVA_PERF=1`) runs 20 turns in one conversation on `minerva-cf-test` with the fake model, each with a tool call and an answer of 2,000 characters. Each start carries the conversation's history as Laravel sends it (the latest 20 messages, within the caps), since the driver's `post()` sends none (`test/account/driver.ts:183`). It records each turn's growth per table. Expected from the code: pi's rows and `runs.snapshot` both carry the run's history (up to 120,000 characters each), so together with `run_events` they are most of a run's bytes, tens to hundreds of kilobytes a run (a guess, to be replaced by the numbers).
+**The measurement** (unit 1). The test build's driver gains a read of an object's storage: `databaseSize`, and per table its row count and the summed length of its TEXT and BLOB columns (from `PRAGMA table_info`). An account probe (`MINERVA_PERF=1`) runs 20 turns in one conversation on `minerva-cf-test` with the fake model, each with a tool call and an answer of 2,000 characters. Each start carries the conversation's history as Laravel sends it (the latest 20 messages, within the caps), since the driver's `post()` sends none (`test/account/driver.ts:183`). It records each turn's growth per table. Expected from the code: pi's rows and `runs.snapshot` both carry the run's history (up to 120,000 characters each), so together with `run_events` they are most of a run's bytes, tens to hundreds of kilobytes a run (a guess; As measured, below, replaces it).
 
 **The two outcomes.**
 
@@ -146,6 +146,33 @@ A partial index, `runs (finished_at) WHERE finished_at IS NOT NULL AND (prune IS
 - **Growth as a risk.** If any fails, unit 3 builds the `records` stage alone, and runs stop in `pi`. The growth per run (the measurement) goes into Appendix C, ARCHITECTURE.md's open question 3 stays open until pi-durable has a delete call, and chunk 15a's pi box is recorded as not met, not as done.
 
 **A local measurement already taken.** In local workerd, a Durable Object's `databaseSize` went from 20,504,576 to 2,064,384 bytes after deleting 90% of a table's 20 MB, with no VACUUM (which it refuses, as it refuses `PRAGMA auto_vacuum` and `incremental_vacuum`). So deleted pages are released, and the perf rule's "storage after" is measurable as `databaseSize`. Unit 1 checks the same on the test instance.
+
+**As measured** (unit 1, 2026-10-17, on `minerva-cf-test`). `MINERVA_PERF=1 pnpm test:faults test/account/retention-measure.test.ts`, run twice: every turn's rows and `databaseSize` were the same in both runs, and its bytes within 1 byte (15 bytes over the 20 turns, in the facts' timestamps). The fake model, 20 turns in one conversation, each a call of `notes_list_notes` and an answer of 2,000 characters, each start with the latest 20 messages of the conversation (a user message, the turn's script, is about 2,070 characters). The history reaches its cap of 20 messages, about 41,000 characters, at turn 11, so turns 11 to 20 grow alike. Bytes are the summed length of a table's TEXT and BLOB columns, read after the turn's `run.settled` reached the fake Laravel.
+
+| Table | Turn 1, no history: rows, bytes | Each of turns 11 to 20: rows, bytes | 20 turns: rows, bytes |
+|---|---|---|---|
+| `pi_entries` | 5, 14,667 | 25, 60,730 | 390, 961,240 |
+| `pi_document_revisions` | 10, 1,349 | 5, 1,189 | 105, 23,938 |
+| `pi_documents` | 10, 1,523 | 5, 790 | 105, 16,463 |
+| `pi_tasks` | 3, 898 | 3, 912 | 60, 18,184 |
+| `pi_record_ids` | 21, 151 | 35, 199 | 596, 3,482 |
+| `pi_submissions` | 1, 183 | 1, 188 | 20, 3,740 |
+| `pi_conversations` | 2, 16 | 1, 10 | 21, 202 |
+| **pi's tables** | 54, 18,789 | 75, 64,018 | 1,299, 1,027,252 |
+| `runs` | 1, 3,963 | 1, 45,824 | 20, 686,245 |
+| `run_events` | 11, 4,884 | 11, 4,884 | 220, 97,680 |
+| `facts` | 7, 4,233 | 7, 4,254 | 140, 84,939 |
+| `call_records` | 2, 382 | 2, 382 | 40, 7,640 |
+| `internal_answers` | 1, 249 | 1, 249 | 20, 4,980 |
+| `attempts`, `tool_executions` | 2, 96 | 2, 96 | 40, 1,920 |
+| **Every table** | 80, 32,706 | 99, 119,707 | 1,781, 1,910,766 |
+| `databaseSize` | 397,312 to 577,536 | 147,456 to 176,128 more a turn, median 163,840 | 397,312 to 3,174,400 |
+
+Turn 1 includes the object's first rows: pi's schema and metadata rows (in pi's total), the root conversation with its 5 documents and revisions, and `conversation` and `fact_delivery` (in every table's). The test build's `fault_entered` (2 rows, 81 bytes a turn) is left out. A run whose history is at the cap keeps about 120 kB: pi's rows are 53% of it and `runs` (the snapshot, which holds the history again) 38%, so the history is stored twice a run, once in each. `databaseSize` grows by about 1.4 times the column bytes (pages, indexes, keys). A real model's turns make more calls and write longer answers, so they would keep more entries and events (inferred, not measured): these numbers are a floor.
+
+The scratch table, in a conversation of its own: `databaseSize` was 397,312 bytes empty, 20,496,384 with 200 rows of 100,000 random bytes, 2,473,984 after deleting 180 of them, and 397,312 after dropping the table, in both runs. Deleted rows give their pages back on the platform too, without VACUUM, so `databaseSize` measures the perf rule's "storage after".
+
+**Which outcome holds: delete by session.** `test/unit/pi-tables.test.ts` runs pi-durable 1.2.0's Harness over node:sqlite on PiHarness's own session store (`openPiSessionStore`, the `pi_` tables), with pi's documents kept in memory for the default ten minutes and, again, evicted at once. Two runs' sessions are seeded with history, each run makes a tool call and answers. The first session is deleted (`src/conversation/pi-tables.ts`, `deletePiSession`, 5 rows a step) while the same Harness stays open: what remains equals the rows before less the session's (its entries, tasks, submissions, documents, their revisions and record ids, and its row), with exact counts per table. The second session then answers another turn and a third session starts and answers on that Harness, and nothing of the first comes back. Reopened from the file, the third session is deleted, a fourth answers, and a fifth, cut off mid-turn by dropping its instance without a close, resumes in the next one and answers. The second session's entries are unchanged throughout. The guards leave a session with a running model call, or pi's schema at version 2, untouched, and an orphan (a session with history no `runs.session` names) is found and drained while claimed ones and the root are not. Two deliberate breaks, `conversation_id >= ?` for entries, tasks and submissions and `document_id >= ?` for revisions, each failed the test. So unit 3 builds the pi stage and the orphan drain on these statements; its platform tests (a prune right after a run, a reset mid-turn after it, the reset at `loop:created`) are the last check before the box is met. At the history's cap a run's pi rows are 75 rows a step counts (a record and its `pi_record_ids` row are two), so one step of 500 removes a run's session.
 
 ### Physical deletion
 
