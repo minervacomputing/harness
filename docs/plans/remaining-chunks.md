@@ -287,7 +287,7 @@ The stop is Laravel's alone, with no engine change (owner, 2026-10-16). The desi
 
 **You see.**
 
-- [ ] With two turns running on staging, the stop ends both with "Stopped." and a new message is refused until reopening.
+- [x] With two turns running on staging, the stop ends both with "Stopped." and a new message is refused until reopening. On the app's staging at `6f97844`, 2026-10-17: two `minerva:turn`s each running a 120 s `sleep`, then `minerva:stop --reason=…`. Both runs ended `cancelled` with "Stopped." and `error_code = emergency_stop`, their cancels acknowledged within a second of the stop (`run_cancels`: requested 06:17:53, acknowledged 06:17:53 and 06:17:54 UTC). A third `minerva:turn` was refused with "Minerva has stopped all agents for now. Try again later."; `minerva:stop --reopen`, then a turn completed. `admission_changes` holds the stop and the reopen.
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
