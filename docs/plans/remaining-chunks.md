@@ -295,7 +295,7 @@ The stop is Laravel's alone, with no engine change (owner, 2026-10-16). The desi
 
 **Review.**
 
-- [ ] opencode reviewed the design and the diff.
+- [x] opencode reviewed the design and the diff. The design (chunk-14c-design.md, Amendments after opencode's review) and unit 1's diff, each finding checked: a queued start reaching the engine after the close (fixed: `SendStart` holds while the flag is closed and its run has no cancel), a scan overtaken by a reopen cancelling a newer run (fixed: the flag is read again under each conversation's lock), a partial stop reported as done (fixed: `minerva:stop` lists runs with no cancel and exits non-zero), reopening after a partial stop (left to the admin, now visible), and one held lock delaying later cancels (set aside: the sweep and a second stop finish them). Unit 2 added the page and docs and had none.
 
 ## Bound storage (chunk 14d)
 
