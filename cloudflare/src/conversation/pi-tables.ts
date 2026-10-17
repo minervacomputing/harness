@@ -4,7 +4,7 @@
 // call is one bounded step for the caller's `transactionSync`, made outside any transaction of pi's (store.ts `outside`):
 // it deletes at most `limit` rows and selects what it deletes in the same statements, so a step a reset rolls back is
 // simply done again. The conversation's own row goes last, so a session deleted in part is still found by its run, or as an
-// orphan. Not called by production code yet: the `retain` job's pi stage calls it (the design's unit 3).
+// orphan. The `retain` job's pi stage calls them (retention.ts).
 
 import { ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
 
@@ -113,11 +113,12 @@ export function deletePiSession(sql: SqlStorage, session: number, limit: number)
 }
 
 /**
- * The first pi conversation no run names, other than pi's root, that nothing owns: a session a reset left between its
- * creation and its claim (conversation.ts `#startLoop`), or one a later run's prune left part-deleted. Only while no run
- * is active is such a session certain to be no one's: an acting run's loop is what creates and claims sessions.
+ * The first pi conversation no run names, other than pi's root and those in `skipped`, that nothing owns: a session a reset
+ * left between its creation and its claim (conversation.ts `#startLoop`), or one a later run's prune left part-deleted.
+ * Only while no run is active is such a session certain to be no one's: an acting run's loop is what creates and claims
+ * sessions.
  */
-export function orphanPiSession(sql: SqlStorage): number | null {
+export function orphanPiSession(sql: SqlStorage, skipped: readonly number[] = []): number | null {
 	if (schemaVersion(sql) !== PI_SCHEMA_VERSION) return null;
 	return (
 		ids(
@@ -125,8 +126,10 @@ export function orphanPiSession(sql: SqlStorage): number | null {
 			`SELECT id FROM pi_conversations AS pi
 			WHERE id != ? AND owner_conversation_id IS NULL AND owner_task_id IS NULL
 				AND NOT EXISTS (SELECT 1 FROM runs WHERE runs.session = CAST(pi.id AS TEXT))
+				AND id NOT IN (SELECT value FROM json_each(?))
 			ORDER BY id LIMIT 1`,
 			ROOT_CONVERSATION_ID,
+			JSON.stringify(skipped),
 		)[0] ?? null
 	);
 }

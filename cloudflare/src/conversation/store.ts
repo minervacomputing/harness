@@ -46,6 +46,7 @@ import {
 	terminalStatus,
 } from "./events.ts";
 import type { Replayed } from "./history.ts";
+import { deletePiSession, orphanPiSession, type PiStep } from "./pi-tables.ts";
 
 /** A page of a run's events: seq above `after` and at most `upTo`, at most `limit` of them. */
 export interface EventPage {
@@ -143,8 +144,37 @@ export interface RunRow {
 	spent: number;
 	/** When it may first have had a container; null before. */
 	container_since: number | null;
+	/** Its retention state (`RunPrune`); null while its records are kept. */
+	prune: RunPrune | null;
+	/** When its prune started. */
+	pruned_at: number | null;
 	[key: string]: SqlStorageValue;
 }
+
+/**
+ * How far a run's prune went (docs/plans/chunk-15a-design.md, A run's retention state): its own records are being deleted,
+ * its snapshot already emptied; only its pi session's rows are left; nothing is left but its row.
+ */
+export type RunPrune = "records" | "pi" | "done";
+
+/** A run whose prune is due, as retention reads it. */
+export type PrunableRun = Pick<RunRow, "id" | "session" | "prune">;
+
+/**
+ * A run's own records: every table keyed or indexed by `run_id`, in the order a prune deletes them, each with the column
+ * whose order its rows go in. `run_writes` and `page_tokens` are the write ledger's and the page tokens' (gateway/).
+ */
+const RUN_RECORDS = [
+	["run_events", "seq"],
+	["run_snapshots", "part"],
+	["attempts", "attempt"],
+	["tool_executions", "call_id"],
+	["tool_arguments", "call_id"],
+	["call_records", "call"],
+	["script_records", "script_id"],
+	["run_writes", "key"],
+	["page_tokens", "token"],
+] as const;
 
 /**
  * Where a run's `run.settled` stands: owed by none (settled already, started by an older version, or not ended); waiting
@@ -308,6 +338,8 @@ export const RUN_COLUMNS = [
 	"allowance",
 	"spent",
 	"container_since",
+	"prune",
+	"pruned_at",
 ].join(", ");
 
 export class RunStore {
@@ -532,8 +564,11 @@ export class RunStore {
 		return this.#sql.exec<RunRow>(`SELECT ${RUN_COLUMNS} FROM runs ORDER BY created_at, id`).toArray();
 	}
 
+	/** Throws once the run's prune started: its inputs are deleted, and only an active run reads them. */
 	snapshot(run: Pick<RunRow, "id">): RunSnapshot {
-		const whole = this.#sql.exec<{ snapshot: string }>("SELECT snapshot FROM runs WHERE id = ?", run.id).toArray()[0]?.snapshot ?? "";
+		const row = this.#sql.exec<{ snapshot: string; prune: RunPrune | null }>("SELECT snapshot, prune FROM runs WHERE id = ?", run.id).toArray()[0];
+		if (row?.prune != null) throw new Error("The run's inputs were deleted after it ended.");
+		const whole = row?.snapshot ?? "";
 		if (whole !== "") return parseJson(whole) as unknown as RunSnapshot;
 		const parts = this.#sql.exec<{ text: string }>("SELECT text FROM run_snapshots WHERE run_id = ? ORDER BY part", run.id).toArray();
 		return parseJson(parts.map((part) => part.text).join("")) as unknown as RunSnapshot;
@@ -898,6 +933,75 @@ export class RunStore {
 			this.#sql.exec("UPDATE runs SET settled_at = ? WHERE id = ?", this.now(), runId);
 			this.#fact(runId, { type: "run.settled", data: { ...calls, ...containers, scripts: scripts.scripts, scriptMs: scripts.scriptMs, scriptEstimated: scripts.scriptEstimated === 1, ...money } });
 			return true;
+		});
+	}
+
+	// Runs' retention (docs/plans/chunk-15a-design.md, A run's steps).
+
+	/** When the oldest run that ended and is not yet pruned to its row ended, or null when there is none. */
+	oldestUnpruned(): EpochMs | null {
+		return this.#sql.exec<{ at: number | null }>("SELECT min(finished_at) AS at FROM runs WHERE finished_at IS NOT NULL AND (prune IS NULL OR prune != 'done')").one().at;
+	}
+
+	/**
+	 * The oldest run due for a step of its prune: it ended at or before `ripe`, is not done, is settled (or owes no
+	 * settlement) and has no write still dispatched, whose settlement is a fact still to write; not one whose session is in
+	 * `skipped`, nor one in its pi stage unless `pi` holds.
+	 */
+	prunableRun(ripe: EpochMs, skipped: readonly number[], pi: boolean): PrunableRun | null {
+		return (
+			this.#sql
+				.exec<PrunableRun>(
+					`SELECT id, session, prune FROM runs
+					WHERE finished_at IS NOT NULL AND (prune IS NULL OR prune != 'done') AND finished_at <= ?1
+						AND (metered = 0 OR settled_at IS NOT NULL)
+						AND NOT EXISTS (SELECT 1 FROM run_writes WHERE run_writes.run_id = runs.id AND status = 'dispatched')
+						AND (?2 = 1 OR prune IS NULL OR prune = 'records')
+						AND (session IS NULL OR CAST(session AS INTEGER) NOT IN (SELECT value FROM json_each(?3)))
+					ORDER BY finished_at LIMIT 1`,
+					ripe,
+					pi ? 1 : 0,
+					JSON.stringify(skipped),
+				)
+				.toArray()[0] ?? null
+		);
+	}
+
+	/**
+	 * One step of a run's own records' deletion, at most `limit` rows in RUN_RECORDS' order. The first empties its snapshot
+	 * and sets it `records`; the step that finds fewer than `limit` left has deleted the last, and moves it to `pi`, or
+	 * `done` when it has no pi session.
+	 */
+	pruneRecords(runId: RunId, limit: number): void {
+		this.write(() => {
+			this.#sql.exec("UPDATE runs SET prune = 'records', pruned_at = ?, snapshot = '' WHERE id = ? AND prune IS NULL", this.now(), runId);
+			let left = limit;
+			for (const [table, key] of RUN_RECORDS) {
+				if (left <= 0) break;
+				const query = `DELETE FROM ${table} WHERE run_id = ?1 AND ${key} IN (SELECT ${key} FROM ${table} WHERE run_id = ?1 ORDER BY ${key} LIMIT ?2) RETURNING 1`;
+				left -= this.#sql.exec(query, runId, left).toArray().length;
+			}
+			if (left > 0) this.#sql.exec("UPDATE runs SET prune = CASE WHEN session IS NULL THEN 'done' ELSE 'pi' END WHERE id = ? AND prune = 'records'", runId);
+		});
+	}
+
+	/** One step of the deletion of a run's pi session (pi-tables.ts); the step that finds nothing left sets the run `done`. */
+	prunePi(runId: RunId, session: number, limit: number): PiStep {
+		return this.write(() => {
+			const step = deletePiSession(this.#sql, session, limit);
+			if (step.kind === "gone") this.#sql.exec("UPDATE runs SET prune = 'done' WHERE id = ? AND prune = 'pi'", runId);
+			return step;
+		});
+	}
+
+	/**
+	 * One step of the deletion of the first pi session no run names, but those in `skipped`; null when there is none. Only
+	 * while no run is active (pi-tables.ts `orphanPiSession`), which the caller checks in the same synchronous step.
+	 */
+	pruneOrphan(skipped: readonly number[], limit: number): { session: number; step: PiStep } | null {
+		return this.write(() => {
+			const session = orphanPiSession(this.#sql, skipped);
+			return session === null ? null : { session, step: deletePiSession(this.#sql, session, limit) };
 		});
 	}
 

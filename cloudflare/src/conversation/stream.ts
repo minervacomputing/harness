@@ -106,6 +106,12 @@ export class RunStream implements Pick<LifecycleCapability, "claims"> {
 		const server = pair[1];
 		// From here to the end of the backlog nothing awaits, so no event is appended in between.
 		this.#ctx.acceptWebSocket(server, [TAG, runTag(runId), this.#instance]);
+		// A run whose prune started ended long ago, and its events may be partly deleted: nothing is sent but the end.
+		if (run.prune !== null) {
+			send(server, END_FRAME);
+			close(server, 1000, "The run ended.");
+			return new Response(null, { status: 101, webSocket: pair[0] });
+		}
 		let sent = 0;
 		let cursor = after;
 		let complete = true;

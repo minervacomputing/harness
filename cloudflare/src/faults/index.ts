@@ -161,8 +161,8 @@ export class Conversation extends BaseConversation {
 
 	faultRun(runId: RunId): RunInternals {
 		const sql = this.ctx.storage.sql;
-		const stored = sql.exec("SELECT 1 FROM runs WHERE id = ?", runId).toArray().length > 0;
-		const tools = stored ? new RunStore(this.ctx.storage).snapshot({ id: runId }).tools.map((tool) => tool.name) : [];
+		const kept = sql.exec("SELECT 1 FROM runs WHERE id = ? AND prune IS NULL", runId).toArray().length > 0;
+		const tools = kept ? new RunStore(this.ctx.storage).snapshot({ id: runId }).tools.map((tool) => tool.name) : [];
 		return {
 			tools,
 			entered: planOf(this.ctx).entered(runId),

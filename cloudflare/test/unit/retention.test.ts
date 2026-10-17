@@ -26,6 +26,7 @@ beforeEach(() => {
 	retention = new Retention(store, {
 		schedule: (time) => host.scheduled.push(time),
 		log: (message) => host.logged.push(message),
+		abort: () => {},
 		stepped: async (step) => {
 			host.steps.push(step);
 			if (host.fail > 0) {
@@ -156,5 +157,58 @@ describe("the next time", () => {
 
 	test("after failures backs off from 30 s, doubling to an hour", () => {
 		expect([1, 2, 3, 7, 8, 30].map(retryMs)).toEqual([30_000, 60_000, 120_000, 1_920_000, 3_600_000, 3_600_000]);
+	});
+});
+
+describe("a run's prune", () => {
+	/** A run that ended at `finishedAt`, owing no settlement, with `events` events. */
+	function ended(id: string, session: string | null, finishedAt: number, events: number): void {
+		db.prepare("INSERT INTO runs (id, status, attempt_started_at, snapshot, session, created_at, finished_at) VALUES (?, 'completed', 0, '{}', ?, 0, ?)").all(id, session, finishedAt);
+		for (let seq = 1; seq <= events; seq++) db.prepare("INSERT INTO run_events (run_id, seq, type, data, created_at) VALUES (?, ?, 'phase', '{}', 0)").all(id, seq);
+	}
+
+	const state = () => db.prepare("SELECT id, prune, pruned_at, snapshot FROM runs ORDER BY id").all();
+	const events = () => db.prepare("SELECT run_id, seq FROM run_events ORDER BY run_id, seq").all();
+
+	test("goes in steps of at most rowsPerStep from 30 days after the run's end; its snapshot is unreadable from its first", async () => {
+		RETENTION.rowsPerStep = 3;
+		ended("a", null, 0, 5);
+		ended("b", null, DAY, 1);
+		expect(retention.due()).toBe(30 * DAY);
+		now = 30 * DAY - 1;
+		await retention.pass();
+		expect([host.steps, host.scheduled, events().length]).toEqual([[], [30 * DAY], 6]);
+
+		now = 30 * DAY;
+		await retention.pass();
+		expect([host.steps, state(), events()]).toEqual([
+			["runs", "runs"],
+			[
+				{ id: "a", prune: "done", pruned_at: 30 * DAY, snapshot: "" },
+				{ id: "b", prune: null, pruned_at: null, snapshot: "{}" },
+			],
+			[{ run_id: "b", seq: 1 }],
+		]);
+		expect(() => store.snapshot({ id: "a" })).toThrow("The run's inputs were deleted after it ended.");
+		expect(host.scheduled).toEqual([30 * DAY, 31 * DAY]);
+		expect(retention.due()).toBe(31 * DAY);
+	});
+
+	test("waits in its pi stage while pi's schema is unknown, and the other runs' records are still deleted", async () => {
+		ended("a", "7", 0, 2);
+		ended("b", null, 0, 2);
+		now = 30 * DAY;
+		await retention.pass();
+		expect([host.steps, state(), events(), host.logged]).toEqual([
+			["runs", "pi", "runs"],
+			[
+				{ id: "a", prune: "pi", pruned_at: 30 * DAY, snapshot: "" },
+				{ id: "b", prune: "done", pruned_at: 30 * DAY, snapshot: "" },
+			],
+			[],
+			["pi's schema is version null, not 1: pi sessions are not deleted"],
+		]);
+		// Due and blocked: looked at again a day later.
+		expect(host.scheduled).toEqual([30 * DAY + RETENTION.blockedMs]);
 	});
 });

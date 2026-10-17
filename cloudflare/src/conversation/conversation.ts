@@ -81,7 +81,7 @@ import { laravelCredentials } from "./laravel-runs.ts";
 import { destroyRunSandbox, LocalRun } from "./local-run.ts";
 import { type ConversationPorts, type FolderPort, PORTS, type PortsContext, runStatePort, type WriteLedger } from "./ports.ts";
 import { ToolQueue, untilAborted } from "./queue.ts";
-import { RETAIN_JOB, Retention } from "./retention.ts";
+import { RETAIN_JOB, RETENTION, Retention } from "./retention.ts";
 import { MIGRATIONS } from "./schema.ts";
 import { type ConversationRow, type RunRow, type RunSnapshot, RunStore } from "./store.ts";
 import { RunStream } from "./stream.ts";
@@ -260,6 +260,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				else this.#push({ id: RETAIN_JOB, fn: RETAIN_JOB, time });
 			},
 			log: (message, error) => this.#log(message, error, true),
+			abort: (session) => this.#defer(() => this.#abortSession(session)),
 			stepped: (step) => this.#point("retain:step", step),
 		});
 	}
@@ -543,6 +544,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 					},
 					BG,
 				);
+				// A reset here leaves a session no run names, which retention deletes once no run is active.
+				await this.#point("loop:created", String(created.id));
 				session = await this.#store.outside(() => this.#store.claimSession(runId, String(created.id), providerSession));
 			}
 			if (session === null || !this.#store.isCurrent(fence)) return;
@@ -900,6 +903,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		this.#saving.delete(runId);
 		this.#waiting.delete(runId);
 		this.#stream.end(runId);
+		const finished = this.#store.run(runId)?.finished_at;
+		if (finished != null) this.#pushBy(RETAIN_JOB, finished + RETENTION.runMs);
 		this.#defer(async () => {
 			await this.lifecycle.jobs.cancel(`watch:${runId}`);
 			await this.lifecycle.jobs.cancel(`deadline:${runId}`);
@@ -917,12 +922,19 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		});
 	}
 
-	/** Aborts everything pi still runs for the run's session, background work included. */
+	/**
+	 * Aborts everything pi still runs for the run's session, background work included. Not once its prune started: retention
+	 * aborts what it finds live, and the session's rows may be partly deleted.
+	 */
 	async #stopPi(runId: RunId): Promise<void> {
 		const run = this.#store.run(runId);
-		if (!run || run.session === null) return;
+		if (!run || run.session === null || run.prune !== null) return;
+		await this.#abortSession(Number(run.session));
+	}
+
+	async #abortSession(session: number): Promise<void> {
 		const pi = await this.harness.pi();
-		const conversation = await pi.conversation(Number(run.session) as PiConversationId, BG);
+		const conversation = await pi.conversation(session as PiConversationId, BG);
 		await conversation?.abort(BG, { background: true });
 	}
 

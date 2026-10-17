@@ -1,20 +1,27 @@
-// The facts' retention in local workerd (docs/plans/chunk-15a-design.md, Facts and the floor): the `retain` job on the
-// Conversation's alarm deletes a fact only 7 days after Laravel acknowledged it, raising the floor; a replay or a gap from
-// below the floor is refused rather than skipping what is gone. The Conversation runs with the test build's ports
-// (src/faults/), for the fault point `retain:step`, and its runs answer with the fake model.
+// Retention in local workerd (docs/plans/chunk-15a-design.md): the `retain` job on the Conversation's alarm deletes a fact
+// only 7 days after Laravel acknowledged it, raising the floor, and a replay or a gap from below the floor is refused rather
+// than skipping what is gone (Facts and the floor); it deletes a run's own records and its pi session 30 days after the run
+// ended, keeping its row, its answer and its tombstone, and the pi sessions no run names (A run's steps, pi's tables). The
+// Conversation runs with the test build's ports (src/faults/), for the fault points `retain:step` and `loop:created`, and its
+// runs answer with the fake model.
 
 import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { env } from "cloudflare:workers";
 import type { StartRun } from "@minerva/contract/internal";
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { CONNECTORS } from "../../src/connectors/catalog.ts";
+import { CONNECTOR_SOURCE } from "../../src/connectors/index.ts";
 import { FACT_DELIVERY } from "../../src/conversation/facts.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
 import { RETAIN_JOB, RETENTION } from "../../src/conversation/retention.ts";
+import { notesConnector } from "../../src/faults/connector.ts";
 import { FakeLaravel } from "../../src/faults/laravel.ts";
 import type { Fault } from "../../src/faults/plan.ts";
-import { faultConversationPorts } from "../../src/faults/ports.ts";
+import { faultConversationPorts, providerOf } from "../../src/faults/ports.ts";
+import { notesLease } from "../../src/faults/world.ts";
 import { uuid7 } from "../../src/lib/random.ts";
-import type { FakeScript } from "../../src/model/fake.ts";
-import { commands, held, objectOf, refusalOf, scope, signedAssertions, startOf } from "./internal-support.ts";
+import type { FakeScript, FakeTurn } from "../../src/model/fake.ts";
+import { commands, held, notesStart, objectOf, refusalOf, scope, signedAssertions, startOf } from "./internal-support.ts";
 
 signedAssertions();
 
@@ -25,6 +32,7 @@ let fake: FakeLaravel;
 let uninstall: () => void;
 
 beforeAll(() => {
+	CONNECTOR_SOURCE.connectors = () => [...CONNECTORS, notesConnector()];
 	PORTS.factory = () => faultConversationPorts(defaultPorts);
 });
 
@@ -89,6 +97,8 @@ async function delivery(start: StartRun): Promise<Delivery> {
 const heldSeqs = async (start: StartRun) => (await sql<{ seq: number }>(start, "SELECT seq FROM facts ORDER BY seq")).map((row) => row.seq);
 const marks = (start: StartRun) => sql<{ seq: number; at: number }>(start, "SELECT seq, at FROM fact_acknowledgements ORDER BY seq");
 const retainJob = async (start: StartRun) => (await sql<{ time: number }>(start, "SELECT time FROM cf_agents_jobs WHERE id = ?", RETAIN_JOB))[0]?.time ?? null;
+/** When the oldest run's records are due: 30 days after it ended. */
+const runsDue = async (start: StartRun) => ((await sql<{ at: number }>(start, "SELECT min(finished_at) AS at FROM runs"))[0]?.at ?? 0) + RETENTION.runMs;
 const range = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_value, index) => from + index);
 
 /** Waits until the run's `run.settled` is written: the last fact of the run. */
@@ -159,8 +169,8 @@ describe("facts' retention", () => {
 		expect(after).toMatchObject({ acknowledged: written, floor: written + 1 });
 		expect(await heldSeqs(first)).toEqual(range(written + 1, after.written));
 		expect(await marks(first)).toEqual([]);
-		// Nothing is left that Laravel acknowledged: the job is gone until it acknowledges more.
-		expect(await retainJob(first)).toBeNull();
+		// Nothing is left that Laravel acknowledged: the job waits for the first run's records.
+		expect(await retainJob(first)).toBe(await runsDue(first));
 	});
 
 	test("an acknowledged fact is kept 7 days after its acknowledgement, not its writing; a late one moves the job earlier", async () => {
@@ -170,12 +180,9 @@ describe("facts' retention", () => {
 		await sql(start, "UPDATE facts SET created_at = 0");
 		await retain(start);
 		const { written } = await delivery(start);
-		expect([await heldSeqs(start), await retainJob(start)]).toEqual([range(1, written), null]);
+		expect([await heldSeqs(start), await retainJob(start)]).toEqual([range(1, written), await runsDue(start)]);
 
-		// Due later, as a run's prune would be.
-		await runInDurableObject(objectOf(start), (_instance, state) => {
-			state.storage.sql.exec("INSERT INTO cf_agents_jobs (id, capability, fn, time, running) VALUES (?, 'host', ?, ?, 0)", RETAIN_JOB, RETAIN_JOB, Date.now() + 30 * DAY);
-		});
+		// Due later, for the run's records.
 		const before = Date.now();
 		fake.failDeliveries = 0;
 		await acknowledged(start);
@@ -318,7 +325,7 @@ describe("facts' retention", () => {
 		expect(await heldSeqs(start)).toEqual(range(3, written));
 
 		await retain(start);
-		expect([await heldSeqs(start), await retainJob(start)]).toEqual([[], null]);
+		expect([await heldSeqs(start), await retainJob(start)]).toEqual([[], await runsDue(start)]);
 	});
 
 	test("nothing is pruned while a run is active or a start is prepared; a pass a preparation blocked comes back within the hour", async () => {
@@ -349,5 +356,280 @@ describe("facts' retention", () => {
 
 		await retain(first);
 		expect(await heldSeqs(first)).toEqual([]);
+	});
+});
+
+/** The fake model's answer: `turns`, in order. */
+const scripted = (...turns: FakeTurn[]) => JSON.stringify({ fake: { turns } satisfies FakeScript });
+
+/** A start in a new conversation with a Notes connection Laravel lends, whose fake provider is seeded. */
+async function notes(content: string): Promise<StartRun> {
+	const within = scope();
+	const connectionId = uuid7();
+	await providerOf(env, within.workspace).reset({});
+	fake.connections.set(connectionId, notesLease());
+	return held(fake, notesStart(within, connectionId, { message: { id: uuid7(), content, attachments: [] } }));
+}
+
+/** The tables of a run's own records, which its prune deletes. */
+const RECORDS = ["run_events", "run_snapshots", "attempts", "tool_executions", "tool_arguments", "call_records", "script_records", "run_writes", "page_tokens"] as const;
+
+/** How many rows of the run each of its own tables holds. */
+async function records(start: StartRun, runId = start.run): Promise<{ [table in (typeof RECORDS)[number]]: number }> {
+	const counts = await Promise.all(RECORDS.map(async (table) => [table, (await sql<{ n: number }>(start, `SELECT count(*) AS n FROM ${table} WHERE run_id = ?`, runId))[0]?.n ?? 0] as const));
+	return Object.fromEntries(counts) as { [table in (typeof RECORDS)[number]]: number };
+}
+
+const NO_RECORDS = Object.fromEntries(RECORDS.map((table) => [table, 0]));
+
+interface Pruned {
+	status: string;
+	prune: string | null;
+	snapshot: string;
+	session: string | null;
+	event_seq: number;
+}
+
+async function runRow(start: StartRun, runId = start.run): Promise<Pruned> {
+	const [row] = await sql<Pruned>(start, "SELECT status, prune, snapshot, session, event_seq FROM runs WHERE id = ?", runId);
+	if (row === undefined) throw new Error("The run has no row.");
+	return row;
+}
+
+/** What pi holds of a session: its own row, entries, tasks, submissions and the documents scoped to it. */
+async function piRows(start: StartRun, session: string | number | null): Promise<number[]> {
+	const counts = await Promise.all(
+		[
+			"SELECT count(*) AS n FROM pi_conversations WHERE id = ?",
+			"SELECT count(*) AS n FROM pi_entries WHERE conversation_id = ?",
+			"SELECT count(*) AS n FROM pi_tasks WHERE conversation_id = ?",
+			"SELECT count(*) AS n FROM pi_submissions WHERE conversation_id = ?",
+			"SELECT count(*) AS n FROM pi_documents WHERE scope_kind = 'conversation' AND owner_id = ?",
+		].map(async (query) => (await sql<{ n: number }>(start, query, Number(session)))[0]?.n ?? 0),
+	);
+	return counts;
+}
+
+/** Makes every run's end `ms` older, as if that much time had passed since it ended. */
+async function ageRuns(start: StartRun, ms: number): Promise<void> {
+	await sql(start, "UPDATE runs SET finished_at = finished_at - ? WHERE finished_at IS NOT NULL", ms);
+}
+
+/** The frames the run's stream sends from `after` until it closes, and its close code. */
+async function streamed(start: StartRun, runId: string, after: number): Promise<{ frames: unknown[]; code: number }> {
+	const response = await objectOf(start).fetch(`http://conversation/stream?run=${runId}&after=${after}&organization=${start.scope.organization}`, { headers: { Upgrade: "websocket" } });
+	const socket = response.webSocket as WebSocket;
+	const frames: unknown[] = [];
+	const closed = new Promise<number>((resolve) => socket.addEventListener("close", (event) => resolve(event.code)));
+	socket.addEventListener("message", (event) => {
+		frames.push(JSON.parse(String(event.data)));
+	});
+	socket.accept();
+	return { frames, code: await closed };
+}
+
+/** Laravel's command that reads nothing, so an object a fault reset starts again and recovers. */
+const wake = (start: StartRun) => commands.replayFacts({ scope: start.scope, conversation: start.conversation, after: 1_000_000_000, limit: 1 });
+
+/** Waits until the run's `run.settled` is written, waking the object as Laravel's commands would after a reset. */
+async function settledAfterReset(start: StartRun): Promise<void> {
+	await until(
+		async () => {
+			await wake(start);
+			return sql<{ n: number }>(start, "SELECT count(*) AS n FROM facts WHERE run_id = ? AND json_extract(fact, '$.type') = 'run.settled'", start.run);
+		},
+		([row]) => row?.n === 1,
+	);
+}
+
+const steps = async (start: StartRun) => (await objectOf(start).faultFired()).filter((entry) => entry.point === "retain:step").map((entry) => entry.detail);
+
+describe("runs' retention", () => {
+	test("a run 30 days after its end keeps its row, answer and tombstone, and nothing else of its own", async () => {
+		const start = await notes(scripted({ tools: [{ name: "notes_list_notes", arguments: { folder: "inbox" } }] }, { tools: [{ name: "notes_save_note", arguments: { folder: "inbox", title: "Kept" } }] }, { tools: [{ name: "run_script", arguments: { code: "return 1" } }] }, { text: "Done." }));
+		// Laravel acknowledges nothing, so only the run's end schedules the job.
+		fake.failDeliveries = 1_000_000;
+		const accepted = await commands.startRun(start);
+		expect(accepted.outcome).toBe("accepted");
+		await settled(start);
+		const tombstoned = uuid7();
+		expect(await commands.cancelRun({ scope: start.scope, conversation: start.conversation, run: tombstoned, reason: "cancelled" })).toEqual({ state: "tombstoned" });
+		// What the run did not make of its own, as a run with a page of results and an escaped argument would.
+		await sql(start, "INSERT INTO tool_arguments (run_id, call_id, text) VALUES (?, 'call', '{}')", start.run);
+		await sql(start, "INSERT INTO page_tokens (token, run_id, tool, query_hash, upstream_cursor, created_at) VALUES ('token', ?, 'notes_list_notes', 'hash', 'cursor', 0)", start.run);
+		const before = await runRow(start);
+		const kept = await records(start);
+		expect(Object.entries(kept).filter(([, count]) => count === 0)).toEqual([["run_snapshots", 0]]);
+		expect((await piRows(start, before.session)).every((count) => count > 0)).toBe(true);
+		const [{ finished_at } = { finished_at: 0 }] = await sql<{ finished_at: number }>(start, "SELECT finished_at FROM runs WHERE id = ?", start.run);
+		expect(await retainJob(start)).toBe(finished_at + RETENTION.runMs);
+
+		await ageRuns(start, RETENTION.runMs - 60_000);
+		await retain(start);
+		expect([await runRow(start), await records(start)]).toEqual([before, kept]);
+
+		await ageRuns(start, 60_000);
+		await retain(start);
+		expect(await runRow(start)).toEqual({ status: "completed", prune: "done", snapshot: "", session: before.session, event_seq: before.event_seq });
+		expect(await records(start)).toEqual(NO_RECORDS);
+		expect(await piRows(start, before.session)).toEqual([0, 0, 0, 0, 0]);
+		expect((await sql<{ n: number }>(start, "SELECT count(*) AS n FROM internal_answers WHERE run_id = ?", start.run))[0]?.n).toBe(1);
+		expect(await sql(start, "SELECT run_id, reason FROM tombstones")).toEqual([{ run_id: tombstoned, reason: "cancelled" }]);
+
+		// Laravel's commands sent again get their first answers.
+		expect(await commands.startRun(start)).toEqual(accepted);
+		expect(await commands.cancelRun({ scope: start.scope, conversation: start.conversation, run: start.run, reason: "cancelled" })).toEqual({ state: "ended" });
+		const repeat = held(fake, { ...start, message: { ...start.message, id: uuid7() }, run: tombstoned });
+		expect(await commands.startRun(repeat)).toMatchObject({ outcome: "refused", code: "CANCELLED" });
+		// Its stream ends at once, from its start, from inside its old events and from its last.
+		for (const after of [0, Math.floor(before.event_seq / 2), before.event_seq]) {
+			expect(await streamed(start, start.run, after)).toEqual({ frames: [{ type: "end" }], code: 1000 });
+		}
+		// A conversation whose runs are pruned is still deleted.
+		expect(await commands.deleteConversation({ scope: start.scope, conversation: start.conversation })).toEqual({ outcome: "deleted" });
+	});
+
+	test("a run not settled, or with a write still dispatched, is not pruned, and is looked at again a day later", async () => {
+		const start = await next(null);
+		await ran(start);
+		await sql(start, "UPDATE runs SET settled_at = NULL WHERE id = ?", start.run);
+		await ageRuns(start, RETENTION.runMs);
+		const before = Date.now();
+		await retain(start);
+		expect((await runRow(start)).prune).toBeNull();
+		expect((await records(start)).run_events).toBeGreaterThan(0);
+		const job = await retainJob(start);
+		expect(job).toBeGreaterThanOrEqual(before + RETENTION.blockedMs);
+		expect(job).toBeLessThanOrEqual(Date.now() + RETENTION.blockedMs);
+
+		await sql(start, "UPDATE runs SET settled_at = ? WHERE id = ?", Date.now(), start.run);
+		await sql(start, "INSERT INTO run_writes (run_id, key, status, attempt, dispatched_at, deadline_at) VALUES (?, 'k', 'dispatched', 1, 0, 0)", start.run);
+		await retain(start);
+		expect((await runRow(start)).prune).toBeNull();
+
+		await sql(start, "UPDATE run_writes SET status = 'uncertain' WHERE run_id = ?", start.run);
+		await retain(start);
+		expect([(await runRow(start)).prune, await records(start)]).toEqual(["done", NO_RECORDS]);
+	});
+
+	test("runs whose pi sessions have live work are aborted and skipped, and a later run is still pruned in the same pass", async () => {
+		RETENTION.passMs = 60_000;
+		const first = await next(null, [{ point: "retain:step", mode: "note", times: 100 }]);
+		await ran(first);
+		const blocked = [first, await next(first), await next(first)];
+		for (const start of blocked.slice(1)) await ran(start);
+		const free = await next(first);
+		await ran(free);
+		const sessions: string[] = [];
+		for (const start of blocked) {
+			const { session } = await runRow(start);
+			sessions.push(session as string);
+			// A task of the session pi has not finished, as pi's own work left after the run's end would be.
+			await sql(start, "UPDATE pi_tasks SET status = 'waiting' WHERE conversation_id = ?", Number(session));
+		}
+		await ageRuns(first, RETENTION.runMs);
+		await retain(first);
+
+		expect(await steps(first)).toEqual(["runs", "pi", "runs", "pi", "runs", "pi", "runs", "pi", "pi"]);
+		expect([(await runRow(free)).prune, await records(free), await piRows(free, (await runRow(free)).session)]).toEqual(["done", NO_RECORDS, [0, 0, 0, 0, 0]]);
+		for (const [index, start] of blocked.entries()) {
+			expect([(await runRow(start)).prune, await records(start)]).toEqual(["pi", NO_RECORDS]);
+			expect((await piRows(start, sessions[index] as string))[0]).toBe(1);
+		}
+	});
+
+	test("a run of 10,000 events takes as many steps as a bound of the step's rows needs", async () => {
+		const start = await next(null, [{ point: "retain:step", mode: "note", times: 1000 }]);
+		await ran(start);
+		await runInDurableObject(objectOf(start), (_instance, state) => {
+			const { event_seq } = state.storage.sql.exec<{ event_seq: number }>("SELECT event_seq FROM runs WHERE id = ?", start.run).one();
+			state.storage.sql.exec(
+				`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 10000)
+				INSERT INTO run_events (run_id, seq, type, data, created_at) SELECT ?, ? + i, 'text_delta', json_object('text', printf('%.200c', 'a'), 'call', '0000abcd'), 0 FROM n`,
+				start.run,
+				event_seq,
+			);
+			state.storage.sql.exec("UPDATE runs SET event_seq = event_seq + 10000 WHERE id = ?", start.run);
+		});
+		const rows = Object.values(await records(start)).reduce((sum, count) => sum + count, 0);
+		expect(rows).toBeGreaterThan(10_000);
+		await ageRuns(start, RETENTION.runMs);
+		for (let passes = 0; (await runRow(start)).prune !== "done"; passes++) {
+			expect(passes).toBeLessThan(50);
+			await retain(start);
+		}
+
+		const fired = (await objectOf(start).faultFired()).filter((entry) => entry.point === "retain:step");
+		const runs = fired.filter((entry) => entry.detail === "runs").length;
+		// Every step but the last deleted the step's 500 rows: the fewest steps a bound of 500 allows.
+		expect(runs).toBe(Math.ceil((rows + 1) / RETENTION.rowsPerStep));
+		expect(fired.filter((entry) => entry.detail === "pi").length).toBe(2);
+		expect(await records(start)).toEqual(NO_RECORDS);
+	});
+
+	test("a run pruned right after its end; the next turn, reset mid-turn, starts again and completes", async () => {
+		RETENTION.runMs = 0;
+		const first = await next(null);
+		await ran(first);
+		const { session } = await runRow(first);
+		await retain(first);
+		expect([(await runRow(first)).prune, await piRows(first, session)]).toEqual(["done", [0, 0, 0, 0, 0]]);
+
+		const text = "A sentence long enough for several deltas.";
+		const second = await next(first, [{ point: "model:delta", mode: "abort", step: 0, delta: 2 }], scripted({ text }));
+		await commands.startRun(second);
+		await settledAfterReset(second);
+		const events = await sql<{ type: string; data: string }>(second, "SELECT type, data FROM run_events WHERE run_id = ? ORDER BY seq", second.run);
+		expect(events.filter((event) => event.type === "status").map((event) => JSON.parse(event.data))).toEqual([
+			{ status: "queued" },
+			{ status: "provisioning" },
+			{ status: "running" },
+			{ status: "provisioning", attempt: 2 },
+			{ status: "running" },
+			{ status: "completed" },
+		]);
+		expect(JSON.parse(events.find((event) => event.type === "message")?.data ?? "null")).toMatchObject({ content: text });
+		expect((await objectOf(second).faultFired()).map((entry) => entry.point)).toEqual(["model:delta"]);
+
+		await retain(second);
+		expect([(await runRow(second)).prune, await records(second), await piRows(second, (await runRow(second)).session)]).toEqual(["done", NO_RECORDS, [0, 0, 0, 0, 0]]);
+	});
+
+	test("a reset between a session's creation and its claim leaves an orphan, drained once the run has ended", async () => {
+		const start = await next(null, [{ point: "loop:created", mode: "abort" }]);
+		await commands.startRun(start);
+		await settledAfterReset(start);
+		const fired = await objectOf(start).faultFired();
+		expect(fired.map((entry) => entry.point)).toEqual(["loop:created"]);
+		const orphan = (fired[0] as { detail: string }).detail;
+		const { session } = await runRow(start);
+		expect(session).not.toBe(orphan);
+		const claimed = await piRows(start, session);
+		expect((await piRows(start, orphan))[0]).toBe(1);
+
+		await retain(start);
+		expect(await piRows(start, orphan)).toEqual([0, 0, 0, 0, 0]);
+		expect([(await runRow(start)).prune, await piRows(start, session)]).toEqual([null, claimed]);
+		expect(await sql(start, "SELECT id FROM pi_conversations ORDER BY id")).toEqual([{ id: 1 }, { id: Number(session) }]);
+	});
+
+	test("a reset after a run's first step leaves what it committed; its stream ends at once, and the next alarm finishes", async () => {
+		RETENTION.rowsPerStep = 2;
+		const start = await next(null, [{ point: "retain:step", mode: "abort" }]);
+		await ran(start);
+		const before = await records(start);
+		await ageRuns(start, RETENTION.runMs);
+
+		await due(start).catch(() => {});
+		const fired = await until(
+			() => objectOf(start).faultFired(),
+			(entries) => entries.length === 1,
+		);
+		expect(fired.map((entry) => [entry.point, entry.detail])).toEqual([["retain:step", "runs"]]);
+		expect([(await runRow(start)).prune, (await runRow(start)).snapshot, await records(start)]).toEqual(["records", "", { ...before, run_events: before.run_events - 2 }]);
+		expect(await streamed(start, start.run, 0)).toEqual({ frames: [{ type: "end" }], code: 1000 });
+
+		await retain(start);
+		expect([(await runRow(start)).prune, await records(start)]).toEqual(["done", NO_RECORDS]);
 	});
 });

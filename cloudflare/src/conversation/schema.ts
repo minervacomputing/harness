@@ -303,4 +303,15 @@ CREATE TABLE fact_acknowledgements (
 INSERT INTO fact_acknowledgements (seq, at) SELECT acknowledged, CAST(unixepoch('subsec') * 1000 AS INTEGER) FROM fact_delivery WHERE acknowledged > 0;
 `,
 	},
+	// A run's retention (docs/plans/chunk-15a-design.md, A run's retention state): null while its records are kept; `records`
+	// once their deletion started (the snapshot emptied, `pruned_at` its time); `pi` once only its pi session's rows are left;
+	// `done`. The index finds the ended runs not yet done, oldest first.
+	{
+		id: 15,
+		sql: `
+ALTER TABLE runs ADD COLUMN prune TEXT CHECK (prune IS NULL OR prune IN ('records', 'pi', 'done'));
+ALTER TABLE runs ADD COLUMN pruned_at INTEGER;
+CREATE INDEX runs_unpruned ON runs (finished_at) WHERE finished_at IS NOT NULL AND (prune IS NULL OR prune != 'done');
+`,
+	},
 ];

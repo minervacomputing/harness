@@ -12,7 +12,9 @@
 //   id). A `throw` at any of them resets the object, as a failed settlement does;
 // - `settle:sealed`: a run's settlement job sealed its Sandbox and has its spans, before it writes `run.settled`;
 //   `settle:written`: after that write, before the job ends (detail: the run's id);
-// - `retain:step`: after each step of a retention pass committed, before the next (detail: the step, `facts`);
+// - `retain:step`: after each step of a retention pass committed, before the next (detail: the step, `facts`, `runs`, `pi`
+//   or `orphan`);
+// - `loop:created`: a run's pi session created, before the run claims it (detail: the session's id);
 // - `start:copy`: before a start copies its attachments into the folder, ahead of its transaction;
 // - `gate:decided`, `gate:committed`: in the attempt gate, once it decided to end or restart a run, before
 //   its transaction, and after the transaction and its sync (detail: the decision);

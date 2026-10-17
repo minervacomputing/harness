@@ -149,7 +149,8 @@ export interface ConversationPorts {
 	 * (the files stored, the checkpoint not yet recorded), `checkpoint:recorded` (recorded, the results not
 	 * yet released), `local:released` (a call's result released, before pi has it); `model:recorded`, `model:settle` and
 	 * `model:settled` around a model call's record and settlement; `settle:sealed` and `settle:written` around the write of
-	 * a run's `run.settled`; `retain:step` after each step of a retention pass.
+	 * a run's `run.settled`; `retain:step` after each step of a retention pass; `loop:created` between a run's pi session's
+	 * creation and its claim.
 	 */
 	point?(context: PortsContext, name: string, detail?: string): Promise<void>;
 }
