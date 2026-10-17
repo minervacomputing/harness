@@ -345,23 +345,23 @@ The engine reports a conversation's stored bytes at the end of each run, and Lar
 
 **Depends on.** Chunk 14a.
 
-Today the engine prunes only `start_keys`, answered `internal_starts`, and folder versions and blobs through its sweep. Facts, run events, run inputs, pi's tables, the write ledger and page tokens grow forever, and a deleted conversation keeps all of them. `destroy()` wipes an object's storage, which would also delete unacknowledged facts and the dedupe records.
+Today the engine deletes only answered or cancelled `internal_starts` and, through its sweep, loose and doomed blobs; `start_keys` has been unused since 13b. Facts, run events, run inputs, pi's tables, the write ledger and page tokens grow forever, and a deleted conversation keeps all of them. `destroy()` wipes an object's storage, which would also delete unacknowledged facts and the dedupe records. The design, its periods and clocks, and the units are in [chunk-15a-design.md](chunk-15a-design.md).
 
 **Build.**
 
-- [ ] Prune on the object's alarm, by the periods recorded under Arm the program. Run events, run inputs and snapshots, attempts and tool bookkeeping after the run's retention period. Facts only once acknowledged and older than the restore window. The write ledger and page tokens once no run that could resume needs them.
-- [ ] Record the floor (the lowest fact retained). `replayFacts` with an `after` below it is refused with a new error naming the floor, instead of a page that silently starts later. The delivery's gap path (`conversation/facts.ts`) refuses a watermark below the floor the same way. Laravel deploys first.
-- [ ] pi's tables. Measure their growth per run on the test instance first (ARCHITECTURE.md open question 3; pi-durable 1.2.0 has no delete call). Then either delete a finished run's `pi_*` rows by its session, proved safe by a test that resumes another run afterwards, or wait for pi-durable's API and record the growth as a risk.
-- [ ] Physical deletion of a deleted conversation after the restore window, and only once every fact is acknowledged. Delete its R2 prefix (`deletePrefix`), then `destroy()` the object. Its row in `recovery_conversations` stays, with `deleted_at`, so a late command is still refused.
-- [ ] Add a lifecycle rule or a sweep for staging uploads no start used, if the `uploads/` rule does not already cover Laravel's staging keys.
+- [ ] Prune on the object's alarm, by the periods recorded under Arm the program, in one Lifecycle job (`retain`) of bounded, idempotent steps, only while no run is active. 30 days after a run ended: its events, inputs and snapshot, attempts and tool bookkeeping, call and script records (once settled), write ledger and page tokens. The dedupe records of Laravel's commands (the run's row, its stored answer, its tombstone) stay until the object is destroyed. Facts 7 days after Laravel acknowledged them, never before.
+- [ ] Record the floor (the lowest fact retained, `fact_delivery.floor`). `replayFacts` with an `after` below `floor − 1` is refused with `FACTS_PRUNED` (410, `data: {floor}`), instead of a page that silently starts later. The delivery's gap path (`conversation/facts.ts`) stops on a watermark below the floor and leaves `acknowledged` as it is. Laravel deploys first.
+- [ ] pi's tables. Measure their growth per run on the test instance first, with each start carrying its history (ARCHITECTURE.md open question 3; pi-durable 1.2.0 has no delete call). Then either delete a finished run's `pi_*` rows by its session, and pi conversations no run names, proved safe by tests that keep working with the same Harness open and resume another run afterwards, or record the growth as a risk and leave this box unmet.
+- [ ] Physical deletion of a deleted conversation 7 days after its deletion, and only once every fact is acknowledged and pruned. Mark `recovery_conversations.purged_at`, delete its R2 prefix (`deletePrefix`), delete its storage (`deleteAll()`), then `destroy()` the object. Its rows in the recovery index stay, so a late command is refused by the Worker without reaching the object.
+- [ ] Staged uploads: the `uploads/` rule already covers Laravel's keys (`uploads/<workspace>/<random>` in the engine's files bucket), so no sweep. Confirm the rule on staging's bucket.
 
 **You see.**
 
-- [ ] On the test instance with the periods set to minutes, a finished conversation's run events are gone and its facts remain until acknowledged. A deleted one's blobs and object are gone after the window.
+- [ ] On the test instance with the periods set to minutes, a finished conversation's run events are gone and its facts remain until acknowledged. A deleted one's blobs and object are gone after the window, and a late start is refused.
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Platform tests. Pruning never removes an unacknowledged fact. A replay below the floor is refused. A deleted conversation with unacknowledged facts is not destroyed. A start for a destroyed conversation is refused.
+- [ ] Unit tests: the cut from the acknowledgement marks, the gap path with a floor, the next due time, and pi's deletion over node:sqlite with the Harness kept open. Platform tests. Pruning never removes an unacknowledged fact, and keeps an acknowledged one 7 days from its acknowledgement. A replay below the floor is refused through the Worker's route. A pruned run's stream ends at once. A reset between a session's creation and its claim leaves an orphan that is drained. A deleted conversation with unacknowledged facts is not destroyed. A start for a destroyed conversation is refused, and a cancel already in flight makes only a deleted object that purges itself.
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
@@ -370,11 +370,11 @@ Today the engine prunes only `start_keys`, answered `internal_starts`, and folde
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. One alarm's prune on a conversation of 1,000 runs, and the object's storage before and after. Rule. Under 1 s of wall time, and the storage after is under 10% of before. Either failing fails.
+- [ ] Metric. Each alarm's prune on a conversation of 1,000 runs with a growing history, and on one run of about 10,000 events, and the object's storage before and after. Rule. Every alarm's prune under 1 s of wall time, and the storage after is under 10% of before. Either failing fails.
 
 **Review.**
 
-- [ ] opencode reviewed the design and the diff.
+- [ ] opencode reviewed the design and the diff. The design on 2026-10-17 (chunk-15a-design.md, Amendments after opencode's review).
 
 ## Retain and delete in Laravel (chunk 15b)
 
