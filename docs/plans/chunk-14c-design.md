@@ -1,6 +1,6 @@
 # Chunk 14c design: the emergency stop
 
-Status: proposed, 2026-10-16, in the shape the owner chose that day (below). This design settles the choices that chunk 14c of [remaining-chunks.md](remaining-chunks.md) leaves open. It splits the work into units that one fresh agent each can finish, and lists what waits for the owner. opencode reviewed it, and the findings that held are folded in (Amendments after opencode's review). Line numbers are at `d09fbf1` (harness) and at `ef6429f` on the `chunk-14b` branch of `minervacomputing/app` ("the app" below), which reaches the app's main before 14c is built.
+Status: accepted, 2026-10-17 (the owner accepted every default below). Proposed 2026-10-16, in the shape the owner chose that day (below). This design settles the choices that chunk 14c of [remaining-chunks.md](remaining-chunks.md) leaves open. It splits the work into units that one fresh agent each can finish, and lists what waits for the owner. opencode reviewed it, and the findings that held are folded in (Amendments after opencode's review). Line numbers are at `d09fbf1` (harness) and at `ef6429f` on the `chunk-14b` branch of `minervacomputing/app` ("the app" below), which reaches the app's main before 14c is built.
 
 ## The owner's choice: Laravel's stop only
 
@@ -250,7 +250,7 @@ The agent cannot hold the write in flight on staging. So the staging check prove
 
 ## Owner questions
 
-Each question has a recommended default, which the agent builds unless the owner answers otherwise.
+Answered 2026-10-17: the owner accepted every default below.
 
 1. **A command beside the page.** Default: yes, `minerva:stop` with `--reopen`, because staging's live check runs through commands and the command works when `/admin` cannot be reached. The alternative is the page alone.
 2. **The message a refused start shows.** Default: "Minerva has stopped all agents for now. Try again later." Users do not see the reason the admin typed.

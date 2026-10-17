@@ -1,6 +1,6 @@
 # Chunk 14d design: bound storage
 
-Status: proposed, 2026-10-17, in the shape the owner chose on 2026-10-16 (below). This design settles the choices that chunk 14d of [remaining-chunks.md](remaining-chunks.md) leaves open. It splits the work into units that one fresh agent each can finish, and lists what waits for the owner. opencode reviewed it, and the findings that held are folded in (Amendments after opencode's review). Line numbers are at `97444cd` (harness) and at `ef6429f` on the main of `minervacomputing/app` ("the app" below).
+Status: accepted, 2026-10-17 (the owner accepted every default below). Proposed 2026-10-17, in the shape the owner chose on 2026-10-16 (below). This design settles the choices that chunk 14d of [remaining-chunks.md](remaining-chunks.md) leaves open. It splits the work into units that one fresh agent each can finish, and lists what waits for the owner. opencode reviewed it, and the findings that held are folded in (Amendments after opencode's review). Line numbers are at `97444cd` (harness) and at `ef6429f` on the main of `minervacomputing/app` ("the app" below).
 
 ## The owner's choice: report at the end of each run, refuse in Laravel
 
@@ -161,7 +161,7 @@ The brief's "deleting files lowers the total" does not hold for files deleted by
 
 ## Owner questions
 
-Each question has a recommended default, which the agent builds unless the owner answers otherwise.
+Answered 2026-10-17: the owner accepted every default below.
 
 1. **The default limit.** Default: 5 GiB per organization, set by `MINERVA_STORAGE_LIMIT_BYTES` and per organization by `minerva:storage --limit`. At R2's list price it costs about $0.08 a month to store. The alternatives are 1 GiB or 10 GiB.
 2. **A total or per month.** Default: a total. Storage is a level, not a flow, and a monthly limit would reset nothing that was stored.
