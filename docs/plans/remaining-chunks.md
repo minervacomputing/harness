@@ -410,7 +410,7 @@ Designed 2026-10-17 in `minervacomputing/app` (its `docs/plans/retention.md`, `a
 
 **Depends on.** Chunks 15a and 15b, and 14c.
 
-The design, its decisions and the units are in [chunk-15c-design.md](chunk-15c-design.md), reviewed by opencode; its owner questions take their defaults.
+The design, its decisions and the units are in [chunk-15c-design.md](chunk-15c-design.md), reviewed by opencode; its owner questions take their defaults. Unit 1 (`listConversations`, `9b8864d` to `fa9b128`) is on `minerva-cf-staging` and production since 2026-10-17, deployed with the owner's approval at `e416627`, green on `main.yml` and `account.yml`.
 
 **Build.**
 
