@@ -1,5 +1,5 @@
 // Chunk 15a's perf probe (docs/plans/chunk-15a-design.md, Perf probe and rule) on the test instance, in conversations of
-// their own: 1,000 turns of the fake model, one after another, each a tool call and an answer of 2,000 characters, each start
+// their own: TURNS turns of the fake model, one after another, each a tool call and an answer of 2,000 characters, each start
 // with the conversation's history as Laravel sends it (its latest MAX_HISTORY messages), so the history grows to its cap; one
 // large turn of 200 tool calls and a streamed answer, whose events the driver then makes 10,000 (`events`: the stream writes
 // one event a call per 250 ms flush, so 10,000 streamed events would take about 40 minutes, and a message's script holds
@@ -16,14 +16,17 @@
 //
 // Run only with MINERVA_PERF=1 (vitest.faults.config.ts), after `pnpm run deploy:test`:
 // `MINERVA_PERF=1 pnpm test:faults test/account/retention-perf.test.ts`. MINERVA_RETENTION_OUT names a file for the passes
-// and the readings.
+// and the readings. MINERVA_PERF_TURNS sets TURNS, 1,000 by default. Debug the probe with a few turns, and run 1,000 only for
+// the numbers a box records.
 
 import { writeFileSync } from "node:fs";
 import { MAX_HISTORY } from "@minerva/contract/internal";
 import { afterAll, describe, expect, test } from "vitest";
 import { type Fault, type HistoryMessage, LIST_INBOX, type World, driver, finish, fired, heldFacts, jobs, outcome, post, retainNow, script, settled, sleep, storage, uuid7, world } from "./driver.ts";
 
-const TURNS = 1_000;
+const TURNS_SETTING = process.env.MINERVA_PERF_TURNS ?? "1000";
+if (!/^[1-9][0-9]*$/.test(TURNS_SETTING)) throw new Error(`MINERVA_PERF_TURNS must be a positive integer, not "${TURNS_SETTING}".`);
+const TURNS = Number(TURNS_SETTING);
 const EVENTS = 10_000;
 const ANSWER_CHARS = 2_000;
 const RULE_PASS_MS = 1_000;
