@@ -31,7 +31,7 @@ The contract changes only additively from here (AGENTS.md, Frontend). A new inpu
   - Facts are kept 7 days after Laravel acknowledges them.
   - Transcripts and files are kept until the conversation is deleted. A deleted conversation is removed physically 7 days after its deletion, in both systems.
   - Usage records and the audit log are kept at least 1 year. Check whether invoicing or tax law needs longer before chunk 16.
-- [ ] Check that Laravel Cloud's point-in-time backups can be kept 7 days on staging's and production's plans. Record the plan and its retention here. A shorter retention shortens the window.
+- [ ] Check that Laravel Cloud's point-in-time backups can be kept 7 days on staging's and production's plans. Record the plan and its retention here. A shorter retention shortens the window. Laravel's documents allow 0 to 30 days per Serverless Postgres cluster on every plan, so 7 days fits ([data-processing.md](../data-processing.md), Backups and the restore window). Both clusters keep 0 days today (2026-10-17), so the restore window is 0 days until they are set. Left for the owner: confirm the plan in the dashboard (probably Starter), set 7 days on both clusters, and record the plan and the retention read back here.
 - [ ] Open question 7 (the cost of a typical turn) is measured in chunk 14a and answered before chunk 16.
 
 ### Order and dependencies
@@ -442,11 +442,13 @@ Designed 2026-10-17 in `minervacomputing/app` (its `docs/plans/retention.md`, `a
 
 **Depends on.** Chunk 15c.
 
-- [ ] Answer open question 6 and ARCHITECTURE.md's open question 8. Where the Workers, containers, models (Workers AI, AI Gateway, each upstream), logs, backups (Laravel Cloud's and R2's) and telemetry (Nightwatch) process data, from each vendor's documents, with links.
-- [ ] List the subprocessors.
-- [ ] Record what Minerva may promise about EU processing (Decision 11), and what blocks a stronger promise.
+- [x] Answer open question 6 and ARCHITECTURE.md's open question 8. Where the Workers, containers, models (Workers AI, AI Gateway, each upstream), logs, backups (Laravel Cloud's and R2's) and telemetry (Nightwatch) process data, from each vendor's documents, with links. `eca14bc`, [data-processing.md](../data-processing.md).
+- [x] List the subprocessors. [data-processing.md](../data-processing.md), Subprocessors: Laravel Cloud (with Neon and AWS), Cloudflare, OpenAI, Resend.
+- [x] Record what Minerva may promise about EU processing (Decision 11), and what blocks a stronger promise. [data-processing.md](../data-processing.md): EU storage of the primary data with named exceptions, not EU processing; eleven blockers.
 
 **Verify.** This chunk changes no code. Its unit, live and perf boxes do not apply. The owner reviews the document.
+
+- [ ] The owner reviewed [data-processing.md](../data-processing.md).
 
 ## Bill for usage (chunk 16)
 
