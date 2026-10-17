@@ -61,6 +61,12 @@ async function refusalOf(promise: Promise<unknown>): Promise<{ code: string; sta
 }
 
 const named = (w: World) => ({ scope: w.scope, conversation: w.conversationId });
+
+/** The id just below `id`, so a listing after it starts at `id`. */
+function below(id: string): string {
+	const hex = (BigInt(`0x${id.replaceAll("-", "")}`) - 1n).toString(16).padStart(32, "0");
+	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 const prune = async (w: World, runId: string) => (await run(w, runId)).internals.run?.prune ?? null;
 
 describe.concurrent("retention with periods of a minute", () => {
@@ -119,6 +125,7 @@ describe.concurrent("retention with periods of a minute", () => {
 		const files = await objects(w);
 		expect(files).toBeGreaterThan(0);
 
+		const deleting = Date.now();
 		expect(await commands.deleteConversation(named(w))).toEqual({ outcome: "deleted" });
 		const deletedAt = Date.now();
 		expect([await objects(w), (await storage(w)).tables.runs?.rows], "kept through its window").toEqual([files, 1]);
@@ -140,5 +147,15 @@ describe.concurrent("retention with periods of a minute", () => {
 		await expect(post(w, "Hello again")).rejects.toThrow(/^Refused: CONVERSATION_DELETED /);
 		expect(await commands.cancelRun({ ...named(w), run: runId, reason: "cancelled" })).toEqual({ state: "ended" });
 		expect(await commands.deleteConversation(named(w))).toEqual({ outcome: "deleted" });
+
+		// Laravel's recovery listing (chunk 15c) answers it purged, with every fact it was sent.
+		const listed = await commands.listConversations({ environment: w.scope.environment, after: below(w.conversationId), limit: 1 });
+		const { organization, workspace } = w.scope;
+		const factSeq = (await laravel(w)).facts.at(-1)?.seq;
+		expect(listed.conversations).toEqual([{ conversation: w.conversationId, organization, workspace, factSeq, deletedAt: expect.any(String), purgedAt: expect.any(String) }]);
+		const [entry] = listed.conversations;
+		const [deletedTime, purgedTime] = [Date.parse(entry?.deletedAt as string), Date.parse(entry?.purgedAt as string)];
+		// The Worker's clock against this machine's, a few seconds apart at most; the purge waits the window by the Worker's alone.
+		expect(deletedTime >= deleting - 5_000 && deletedTime <= deletedAt + 5_000 && purgedTime >= deletedTime + 60_000, JSON.stringify(entry)).toBe(true);
 	});
 });
