@@ -321,3 +321,18 @@ opencode (`plan` agent) reviewed the first draft on 2026-10-17 against the harne
 opencode (`plan` agent) reviewed unit 1's diff on 2026-10-17 and found nothing to fix. It tried one suspected bypass, a `listConversations` with `scope.environment` set to this engine's beside another `environment`: oRPC strips the unknown `scope` before `inEnvironment` reads the input, and the route answers 409 `WRONG_ENVIRONMENT`. `git status` afterwards showed no change by it.
 
 1. **The pages are not one snapshot (set aside).** A row inserted behind the cursor while Laravel pages is not in that pass, and a `fact_seq` raised behind it is read as it was. In restore mode a row is inserted only by a command the restored Laravel sends, a cancel or a deletion, for a conversation it holds, so it misses nothing Laravel lacks; a raised `fact_seq` comes with a delivery, which heals through `FACT_GAP` (`delivery.ts:137`), and the `conversations` step runs on every pass. A snapshot would need state in the engine, which the listing avoids.
+
+## Amendments after opencode's review of unit 3
+
+opencode (`plan` agent) reviewed unit 3's diff (`c760643..b5c594c` in the app) on 2026-10-17; `git status` afterwards showed no change by it. It found no fact applied twice, no usage lost or counted twice, no scope leak and no deletion that comes back. Its one finding:
+
+1. **A stopped delivery that held every fact passed (accepted).** The step skipped a conversation whose watermark was at its `factSeq` without looking at `facts_stopped_at`, so a conflict could complete the recovery and stay hidden. A conversation whose rows are here and whose delivery is stopped is now unresolved (`conflict`) on every pass, with a test for the watermark caught up (`779cd2a`).
+
+Choices the design left open, as built:
+
+- Deleting again requests no cancel and records no audit event: the engine's deletion cancelled the runs, the runbook's `minerva:stop` cancels what the restored database still calls active, and the step's counts (deleted again, lost, replayed) are for `database.restored`.
+- A run is recorded lost only when no `runs` row holds it, in any conversation; a run held under another conversation stays `NOT_FOUND`. `lost_runs` has no foreign key to its conversation, so the record outlives the purge, and one to `restores`.
+- A conflict found by the replay stops the conversation's delivery, as any conflict does; the operator resumes it with `minerva:facts:resume`.
+- A `FACT_GAP` that does not move the watermark, and a replay that ends below `factSeq`, are unresolved as `behind`; a page for another conversation, or a listing that says more follow after no row, is an `EngineUnavailable`.
+- The replay's answer is checked whole against `engine-v1.json`, its facts decoded as objects, as the facts route checks a delivery.
+- At most one recovery is in progress (a unique partial index on `restores`). `minerva:recover` sets `completed_at` once every step it runs is done; unit 4 adds the other steps and `database.restored`.
