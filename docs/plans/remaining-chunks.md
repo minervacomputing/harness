@@ -197,7 +197,7 @@ A budget is only as good as the usage it settles from. Today a model call's usag
 
 **You see.**
 
-- [ ] A turn's usage records in Laravel add up to the run's totals on `run.settled`, and a turn killed mid-stream still has one record per counted call. The fake Laravel shows both on `minerva-cf-test` (`4b81bdd`); Laravel's own records wait for the staging deploy and the owner's turns.
+- [x] A turn's usage records in Laravel add up to the run's totals on `run.settled`, and a turn killed mid-stream still has one record per counted call. The fake Laravel shows both on `minerva-cf-test` (`4b81bdd`). On the app's staging, 2026-10-17, `minerva:usage --since=2026-10-16T18:00:00Z` checked 18 runs, the ten turns below among them, every one `ok`: records adding up to `run.settled`, one record per counted call, and the stopped turn with one estimated `run.unmetered` record.
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
@@ -207,8 +207,18 @@ A budget is only as good as the usage it settles from. Today a model call's usag
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
 - [x] Regression against `main`. `test:faults` passes. 33 cases at `4b81bdd` on `minerva-cf-test`.
-- [ ] A fault test kills the object mid-stream. Laravel's staging shows one record per counted call and totals that match `run.settled`. The fault half passed on `minerva-cf-test` against the fake Laravel (`4b81bdd`): an abort at `model:delta` gave one `run.unmetered` (`lost`) for the cut call, a `run.usage` for every other counted call, and a `run.settled` that sums them, with container time above zero. A fault cannot be injected on staging, so its half is the stopped turn of the ten below, and it waits for the engine's staging deploy and the owner's turns.
-- [ ] Measure ten typical turns on staging (chat only, one connector call, a script, a file upload). Record tokens, container seconds and the cost per turn at the model's list price here. This answers open question 7. Waits for the engine's staging deploy and the owner's turns (chunk-14a-design.md, Live checks); the owner chose list prices without the plan's included allowances.
+- [x] A fault test kills the object mid-stream. Laravel's staging shows one record per counted call and totals that match `run.settled`. The fault half passed on `minerva-cf-test` against the fake Laravel (`4b81bdd`): an abort at `model:delta` gave one `run.unmetered` (`lost`) for the cut call, a `run.usage` for every other counted call, and a `run.settled` that sums them, with container time above zero. A fault cannot be injected on staging, so its half is the stopped turn of the ten below: one counted call with one estimated `run.unmetered` record (128,000 input and 8,192 output tokens, the route's limits) and a `run.settled` that matches it, `ok` in `minerva:usage` (2026-10-17).
+- [x] Measure ten typical turns on staging (chat only, one connector call, a script, a file upload). Record tokens, container seconds and the cost per turn at the model's list price here. This answers open question 7. Measured 2026-10-16 and 17 on the app's staging, which runs OpenAI `gpt-6.1-sol`; the dollars are at models.dev's list prices (gpt-6.1-sol $2 input, $0.10 cached, $2.50 cache write, $10 output per million tokens; `@cf/zai-org/glm-5.3-flash` $0.15, $0.03 cached, $0.50 output), and container and script time at the prices in `src/budget/prices.ts`. The GLM column prices the same tokens, as an estimate of production: GLM's tokenizer and answers differ. The charged runs (since 14b) match the computed cost to the micro-dollar.
+
+  | Turn | Calls | Input (cached, cache writes) | Output | Container, scripts | gpt-6.1-sol | GLM estimate |
+  |---|---|---|---|---|---|---|
+  | Chat ×3 | 1 | ~6,975 (0, ~6,972) | 10–63 | 2.7–3.3 s | $0.018 | $0.0011 |
+  | Script ×2 | 2 | ~14,050 (~6,980, ~7,070) | 71–131 | 6.2–6.5 s, 1 script ~1 s | $0.021–0.022 | $0.0035 |
+  | GitHub ×2 (list repositories) | 2 | ~14,240 (6,966, ~7,270) | 191–287 | 7.7–9.7 s, 0–1 script | $0.021–0.024 | $0.0016–0.0037 |
+  | Image upload ×2 (read) | 3 | 24,828 (14,075, 10,744) | 80–94 | 8.7–10.1 s | $0.029 | $0.0023 |
+  | Stopped mid-answer | 1 | 128,000 estimated | 8,192 estimated | 2.9 s | $0.338 | $0.023 |
+
+  **The cost per turn:** about $0.02 on gpt-6.1-sol and $0.002 on GLM for the nine turns that ended, $0.054 and $0.0043 with the stopped one. Containers cost under $0.0003 a turn; a script adds $0.002. Two findings: every turn writes its ~7,000-token prefix to the cache and no turn reads another conversation's (cached 0 on each turn's first call), which is most of a chat turn's cost on gpt-6.1-sol; and a stopped call is charged at the route's limits, 15 typical turns on gpt-6.1-sol, since its usage never arrives.
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
