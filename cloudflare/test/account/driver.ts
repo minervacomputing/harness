@@ -12,7 +12,7 @@
 // failed test left behind.
 
 import { type CancelReason, type CancelRunResult, type Fact, type Scope, type StartRun, engine } from "@minerva/contract/internal";
-import { createORPCClient } from "@orpc/client";
+import { ORPCError, createORPCClient } from "@orpc/client";
 import type { ContractRouterClient } from "@orpc/contract";
 import type { JsonifiedClient } from "@orpc/openapi-client";
 import { OpenAPILink } from "@orpc/openapi-client/fetch";
@@ -201,10 +201,26 @@ export async function post(
 		...(allowance === null ? {} : { allowance }),
 	};
 	await driver("hold", { ...base(w), runId: start.run, run: heldRun(start) });
-	const answer = await commands.startRun(start);
+	const answer = await sendStart(start);
 	if (answer.outcome !== "accepted") throw new Error(`Refused: ${answer.code} ${answer.message}`);
 	runs.push({ w, runId: start.run });
 	return start.run;
+}
+
+/**
+ * Laravel's SendStart: a start the engine answered 5xx is sent again after a backoff (a start is answered once, whatever the
+ * tries), as when the platform drops a connection mid-start. A third 5xx throws.
+ */
+async function sendStart(start: StartRun): Promise<Awaited<ReturnType<typeof commands.startRun>>> {
+	for (let tries = 1; ; tries++) {
+		try {
+			return await commands.startRun(start);
+		} catch (error) {
+			if (!(error instanceof ORPCError) || error.status < 500 || tries === 3) throw error;
+			console.warn(`startRun ${start.run}: ${error.status} ${error.message}; sent again`);
+			await sleep(1_000 * tries);
+		}
+	}
 }
 
 /** Laravel's cancel of the run: the user's stop (`cancelled`) or a revocation (`permissions_changed`, among others). */
