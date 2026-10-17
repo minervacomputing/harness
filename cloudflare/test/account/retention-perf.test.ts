@@ -24,7 +24,8 @@ import { MAX_HISTORY } from "@minerva/contract/internal";
 import { afterAll, describe, expect, test } from "vitest";
 import { type Fault, type HistoryMessage, LIST_INBOX, type World, driver, finish, fired, heldFacts, jobs, outcome, post, retainNow, script, settled, sleep, storage, uuid7, world } from "./driver.ts";
 
-const TURNS_SETTING = process.env.MINERVA_PERF_TURNS ?? "1000";
+const FULL_TURNS = 1_000;
+const TURNS_SETTING = process.env.MINERVA_PERF_TURNS ?? String(FULL_TURNS);
 if (!/^[1-9][0-9]*$/.test(TURNS_SETTING)) throw new Error(`MINERVA_PERF_TURNS must be a positive integer, not "${TURNS_SETTING}".`);
 const TURNS = Number(TURNS_SETTING);
 const EVENTS = 10_000;
@@ -182,7 +183,8 @@ describe("retention's perf probe", () => {
 				expect(pruned.after.tables.facts?.rows).toBe(0);
 				expect(pruned.after.tables.pi_conversations?.rows, "only pi's root conversation is left").toBe(1);
 				expect.soft(pruned.passes.filter((pass) => pass.ms >= RULE_PASS_MS).map((pass) => pass.ms)).toEqual([]);
-				expect.soft(pruned.after.databaseSize).toBeLessThan(pruned.before.databaseSize * RULE_AFTER);
+				// Below the full size, the floor every pruned conversation keeps (about 550 kB) is more than 10% of before.
+				if (TURNS === FULL_TURNS) expect.soft(pruned.after.databaseSize).toBeLessThan(pruned.before.databaseSize * RULE_AFTER);
 			}
 		},
 		4 * 60 * 60_000,
