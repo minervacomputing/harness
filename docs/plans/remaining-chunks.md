@@ -520,6 +520,8 @@ Laravel already stores the account's tenant (`connections.account_tenant`, from 
 
 **Depends on.** Chunk 12.
 
+The design is the app's `docs/plans/search.md` (`a764be2`, reviewed by opencode): a stored `tsvector` per message in Postgres's `simple` configuration with a GIN index, written by the insert itself, searched through Scout's database engine; one result per conversation from `POST /w/{workspace}/search`, scoped in the SQL by the rule the conversation page uses; six owner questions, each with its default.
+
 **Build.**
 
 - [ ] Scout with its database engine on Postgres's full-text search over messages, indexed as facts apply them.
