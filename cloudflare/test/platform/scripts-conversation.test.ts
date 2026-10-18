@@ -20,7 +20,7 @@ import type { ExecutorContext, ToolCallOutcome, ToolCallRequest, ToolDeclaration
 import type { ToolResult } from "../../src/gateway/results.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { uuid7 } from "../../src/lib/random.ts";
-import { type FakeTurn, fakeUpstream } from "../../src/model/fake.ts";
+import { type FakeCall, type FakeTurn, fakeUpstream } from "../../src/model/fake.ts";
 import { SCRIPT_TIMEOUT_MS } from "../../src/scripts/limits.ts";
 import { SCRIPT_CLOCK } from "../../src/scripts/run.ts";
 import type { RunId } from "../../src/shared/rpc.ts";
@@ -29,6 +29,7 @@ import { commands, held, objectOf, scope, signedAssertions, startOf, viewOf } fr
 signedAssertions();
 
 const DELIVERY = { ...FACT_DELIVERY };
+const CLOCK = { ...SCRIPT_CLOCK };
 let fake: FakeLaravel;
 let uninstall: () => void;
 
@@ -52,6 +53,10 @@ interface Fakes {
 	contexts: TranscriptContext[];
 	invocations: ToolCallRequest[];
 	log: string[];
+	/** Awaited by each call once it logged its start. */
+	hold?: () => Promise<void>;
+	/** Awaited by each model request before it answers. */
+	request?: (call: FakeCall) => Promise<void>;
 }
 
 const FAKES = new Map<string, Fakes>();
@@ -67,7 +72,7 @@ function declaration(name: string, readOnly: boolean): ToolDeclaration {
 		name,
 		title: name,
 		description: `${name} for tests.`,
-		inputSchema: { type: "object", properties: { key: { type: "string" }, ms: { type: "integer" } }, additionalProperties: false },
+		inputSchema: { type: "object", properties: { key: { type: "string" } }, additionalProperties: false },
 		outputSchema: { type: "object" },
 		annotations: { readOnlyHint: readOnly },
 	};
@@ -86,11 +91,11 @@ function allowed(request: ToolCallRequest, result: ToolResult): ToolCallOutcome 
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Reads answer at once; a write takes `ms`; both log what they did. */
+/** Each call logs its start, waits for the conversation's `hold`, if any, and logs its end. */
 async function tools(request: ToolCallRequest, fakes: Fakes): Promise<ToolCallOutcome> {
-	const args = (request.arguments ?? {}) as { key?: string; ms?: number };
+	const args = (request.arguments ?? {}) as { key?: string };
 	fakes.log.push(`${request.name}:start:${args.key ?? ""}`);
-	if (args.ms) await sleep(args.ms);
+	await fakes.hold?.();
 	fakes.log.push(`${request.name}:end:${args.key ?? ""}${request.signal?.aborted ? ":cut" : ""}`);
 	return allowed(request, { items: [{ key: args.key ?? null }], count: 1 });
 }
@@ -108,7 +113,11 @@ beforeAll(() => {
 		}),
 		ledger: () => new FakeLedger(),
 		folder: emptyFolder,
-		upstream: (_route, { conversationId }) => fakeUpstream({ onCall: (_call, context) => fakesOf(conversationId).contexts.push(context) }),
+		upstream: (_route, { conversationId }) =>
+			fakeUpstream({
+				onCall: (_call, context) => fakesOf(conversationId).contexts.push(context),
+				request: async (call) => fakesOf(conversationId).request?.(call),
+			}),
 	});
 });
 
@@ -120,7 +129,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	FAKES.clear();
-	SCRIPT_CLOCK.timeoutMs = SCRIPT_TIMEOUT_MS;
+	Object.assign(SCRIPT_CLOCK, CLOCK);
 	uninstall();
 	Object.assign(FACT_DELIVERY, DELIVERY);
 });
@@ -139,8 +148,8 @@ function conversation(declarations = [declaration("fake_read", true), declaratio
 const script = (code: string): FakeTurn => ({ tools: [{ name: "run_script", arguments: { code } }] });
 
 /** Sends a start, which Laravel holds, whose model answers with `turns`; its run's id once it is accepted. */
-async function posted(w: { within: Scope; id: string }, turns: FakeTurn[], pace: { delayMs?: number; chunkChars?: number } = {}): Promise<RunId> {
-	const start = held(fake, startOf(w.within, { conversation: w.id, message: { id: uuid7(), content: JSON.stringify({ fake: { turns, ...pace } }), attachments: [] } }));
+async function posted(w: { within: Scope; id: string }, turns: FakeTurn[]): Promise<RunId> {
+	const start = held(fake, startOf(w.within, { conversation: w.id, message: { id: uuid7(), content: JSON.stringify({ fake: { turns } }), attachments: [] } }));
 	const answer = await commands.startRun(start);
 	if (answer.outcome !== "accepted") throw new Error(`Refused: ${answer.code} ${answer.message}`);
 	return start.run;
@@ -258,11 +267,21 @@ describe("run_script in the conversation", () => {
 	test("a timeout during a write: the model hears at once, the write settles and is recorded, and the run goes on", async () => {
 		SCRIPT_CLOCK.timeoutMs = 300;
 		const { stub, fakes, ...w } = conversation();
-		// The model answers slowly, so the write ends while the run still runs.
-		const runId = await posted(w, [script("text('started'); await tools.fake_write({ key: 'slow', ms: 1200 }); text('never')"), { text: "Done." }], {
-			delayMs: 1500,
-			chunkChars: 500,
-		});
+		// The clock runs out only once the write started, the write ends only once the model was asked again with the
+		// script's result, and the model answers only once Laravel holds the write's record.
+		const writing = Promise.withResolvers<void>();
+		const asked = Promise.withResolvers<void>();
+		SCRIPT_CLOCK.held = writing.promise;
+		fakes.hold = () => {
+			writing.resolve();
+			return asked.promise;
+		};
+		fakes.request = async (call) => {
+			if (call.step !== 1) return;
+			asked.resolve();
+			await until(async () => fake.facts(w.id), (facts) => facts.some((fact) => fact.type === "run.tool_call"));
+		};
+		const runId = await posted(w, [script("text('started'); await tools.fake_write({ key: 'slow' }); text('never')"), { text: "Done." }]);
 		const run = await settled(stub, runId);
 		expect(run.status).toBe("completed");
 		// Not cut by the script's stop: it ended on its own, and its outcome was recorded while the run was active.

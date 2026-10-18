@@ -100,8 +100,12 @@ export function remainingMs(deadline: number | null, now = Date.now()): number {
 	return Math.max(1000, deadline - now);
 }
 
-/** The wall clock's length: 120 s. The platform tests shorten it; nothing else changes it. */
-export const SCRIPT_CLOCK = { timeoutMs: SCRIPT_TIMEOUT_MS };
+/**
+ * The wall clock's length: 120 s, run out no sooner than `held` settles. The platform tests shorten it, and hold it
+ * until their script reached a call, since under load the Scripts object's start alone can outlast a short clock;
+ * nothing else changes it.
+ */
+export const SCRIPT_CLOCK: { timeoutMs: number; held: Promise<void> } = { timeoutMs: SCRIPT_TIMEOUT_MS, held: Promise.resolve() };
 
 /** The wall clock of a script: 120 s, or less when the run's deadline is nearer. */
 export function scriptTimeoutMs(deadline: number | null, now = Date.now()): number {
@@ -177,7 +181,8 @@ export async function executeScript(options: ExecuteOptions): Promise<ScriptResu
 	if (signal?.aborted) return failed({ kind: "aborted", message: reasonOf(signal) }, null);
 	const session = new ScriptSession(options.calls, options.tools, options.port);
 	options.onSession?.(session);
-	const timer = setTimeout(() => session.stop({ kind: "timeout", message: TIMED_OUT(options.timeoutMs) }), options.timeoutMs);
+	const held = SCRIPT_CLOCK.held;
+	const timer = setTimeout(() => void held.then(() => session.stop({ kind: "timeout", message: TIMED_OUT(options.timeoutMs) })), options.timeoutMs);
 	const abort = () => session.stop({ kind: "aborted", message: reasonOf(signal as AbortSignal) });
 	signal?.addEventListener("abort", abort, { once: true });
 	const stopped = session.stopped().then((stop) => ({ stopped: stop }));
