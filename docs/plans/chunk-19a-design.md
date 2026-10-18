@@ -182,7 +182,7 @@ Against today it also marks orphaned work in the acting run's own session, such 
 
 ## Units
 
-One fresh agent each, in this order. A unit is done when its checks pass and it is committed to `main`; opencode reviews the diff of units 3 to 5. The checks are `pnpm typecheck`, `pnpm test:unit` and `pnpm test:platform` in `cloudflare/`.
+One fresh agent each, in this order. A unit is done when its checks pass and it is committed on the branch `chunk-19a`; opencode reviews the diff of units 3 to 5. The branch reaches `main` in one fast-forward push once the live and perf boxes pass, so `main` gets one CI run for the chunk. The checks are `pnpm typecheck`, `pnpm test:unit` and `pnpm test:platform` in `cloudflare/`.
 
 1. **The probe (test build).** `created_at` in `faultRun`'s select (`faults/index.ts:226`) and in `RunInternals`; S, below, in `perf.test.ts`'s summary and `MINERVA_PERF_OUT`; the run's pi tasks (id, kind, status, abort mark, `startedAt`, `endedAt`) in `RunInternals`, for F1, P3, P4 and P6. This commit is the perf baseline: `main`'s engine with the probe. Check: the three, with the platform test that marks each fake-remote call (`test/platform/protocols.test.ts:349`) also asserting the first call's `answered` after the run's `created_at`.
 2. **What pi holds, by operation.** `pi-work.ts` with `Operation` and `belongs`; `piWork` moved there from `conversation.ts:1556` and exported, reading the submission first and scanning only for a settled one; `PI_SETTINGS` moved there from `conversation.ts:151` and imported back; `classifyWork` in `gate.ts` checks the submission first, and its row `[undefined, 2, ...]` in `test/unit/conversation-gate.test.ts` becomes `not_submitted`; U1 to U3 in a new `test/unit/pi-work.test.ts`. Check: the three.
@@ -271,12 +271,6 @@ The coordinator decided the design's owner questions on 2026-10-18 as technical 
 2. **The perf rule's measure.** S, from the start's final transaction to the first model call's answer, as its median over 20 turns, baseline and head interleaved twice, p95 reported. The coordinator accepted S as the measure because the compile and the attachments' copy that it leaves out are untouched by 19a. The plan's 200 ms rule applies to it, in both pairs. This is reported to the owner as a departure from the plan's wording, which names "startRun to the first model request". S starts later than startRun and ends at the request's answer rather than its departure, which the object cannot time, as chunk 14a's M1 and M2 do (chunk-14a-design.md, amendment 13). If the two baselines differ by more than 200 ms, the owner decides.
 3. **Shared-session evidence before 19b.** U4 and U5 run the production checks and `PiStops` on one shared session in Node in 19a, and 19b's own platform tests run them in workerd, as recommended. The alternative was a test-build seam in 19a that makes a run reuse the previous run's session, which needs `runs_session` dropped and retention changed a chunk early.
 4. **Log level.** Warn for late results and the bound's reset, as recommended. They follow every cancel with a tool in flight, so error level would page an operator for normal use. The refused-admission log is cut (Amendments after the interrogation, 17).
-
-The interrogation left three questions open for the owner. Each keeps the default above until the owner answers.
-
-- **The start's bound** (question 1). When the previous run's work does not end, should the new run wait 30 s, then reset the object and start again without counting an attempt? Or should it end `worker_exited`, which the user sees as a failed turn caused by an earlier one? After these amendments the bound applies only to starts. Deletion keeps today's unbounded wait.
-- **The perf rule's measure** (question 2). May S stand in for the plan's "startRun to the first model request"? S runs from the start's final transaction to the first model call's answer, as a median over 20 turns, with baseline and head interleaved twice and at most 200 ms in both pairs. If the two baselines differ by more than 200 ms, the owner decides.
-- **Log level** (question 4, narrower now that the refused-admission log is cut). Should late results and the bound's reset log at warn and not error, given that they follow every cancel that has a tool call in flight?
 
 ## Changes to after-the-plan.md
 
