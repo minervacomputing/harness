@@ -644,7 +644,13 @@ describe("runs' retention", () => {
 
 	test("a reset after a run's first step leaves what it committed; its stream ends at once, and the next alarm finishes", async () => {
 		RETENTION.rowsPerStep = 2;
-		const start = await next(null, [{ point: "retain:step", mode: "abort" }]);
+		// The pass after the reset is held at its start until the test has read what the first one left: the platform retries
+		// the failed alarm on its own, and may do so before the reads.
+		const start = await next(null, [
+			{ point: "retain:step", mode: "abort" },
+			{ point: "retain:pass", mode: "note" },
+			{ point: "retain:pass", mode: "hold" },
+		]);
 		await ran(start);
 		const before = await records(start);
 		await ageRuns(start, RETENTION.runMs);
@@ -652,12 +658,16 @@ describe("runs' retention", () => {
 		await due(start).catch(() => {});
 		const fired = await until(
 			() => objectOf(start).faultFired(),
-			(entries) => entries.length === 1,
+			(entries) => entries.some((entry) => entry.point === "retain:step"),
 		);
-		expect(fired.map((entry) => [entry.point, entry.detail])).toEqual([["retain:step", "runs"]]);
+		expect(fired.slice(0, 2).map((entry) => [entry.point, entry.mode, entry.detail])).toEqual([
+			["retain:pass", "note", "start"],
+			["retain:step", "abort", "runs"],
+		]);
 		expect([(await runRow(start)).prune, (await runRow(start)).snapshot, await records(start)]).toEqual(["records", "", { ...before, run_events: before.run_events - 2 }]);
 		expect(await streamed(start, start.run, 0)).toEqual({ frames: [{ type: "end" }], code: 1000 });
 
+		await objectOf(start).faultRelease("retain:pass");
 		await retain(start);
 		expect([(await runRow(start)).prune, await records(start)]).toEqual(["done", NO_RECORDS]);
 	});
