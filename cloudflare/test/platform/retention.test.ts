@@ -154,12 +154,15 @@ async function due(start: StartRun): Promise<void> {
 	});
 }
 
-/** Runs a pass of the `retain` job and waits until it is over: the job then has a time of its own, or is gone. */
+/**
+ * Runs passes of the `retain` job until none is due: the job then has a time still to come, or is gone. A pass that spent its
+ * budget makes the job due at once, for the next.
+ */
 async function retain(start: StartRun): Promise<void> {
 	await due(start);
 	await until(
 		() => sql<{ time: number }>(start, "SELECT time FROM cf_agents_jobs WHERE id = ?", RETAIN_JOB),
-		(rows) => rows.length === 0 || rows[0]?.time !== 0,
+		(rows) => rows.length === 0 || (rows[0]?.time ?? 0) > Date.now(),
 	);
 }
 
@@ -500,6 +503,7 @@ describe("runs' retention", () => {
 	});
 
 	test("the test build's plan gives one conversation periods of its own, and notes each pass's start and end", async () => {
+		RETENTION.passMs = 60_000;
 		const start = await next(null);
 		await objectOf(start).faultPlan([{ point: "retain:pass", mode: "note", times: 10 }], { retention: { runMs: 60_000 } });
 		const other = await next(null);
@@ -516,6 +520,41 @@ describe("runs' retention", () => {
 		const edges = (await objectOf(start).faultFired()).filter((entry) => entry.point === "retain:pass");
 		expect(edges.map((entry) => entry.detail)).toEqual(["start", "end"]);
 		expect(edges[1]?.at).toBeGreaterThanOrEqual(edges[0]?.at ?? Number.POSITIVE_INFINITY);
+	});
+
+	test("a pass that spent its budget is followed at once by the next, which goes on from there", async () => {
+		RETENTION.passMs = 0;
+		const start = await next(null, [
+			{ point: "retain:pass", mode: "note", times: 2 },
+			{ point: "retain:pass", mode: "hold" },
+			{ point: "retain:pass", mode: "note", times: 10 },
+		]);
+		await ran(start);
+		await ageRuns(start, RETENTION.runMs);
+		const retained = retain(start);
+		await until(
+			() => objectOf(start).faultFired(),
+			(log) => log.some((entry) => entry.mode === "hold"),
+		);
+		expect((await runRow(start)).prune).toBe("pi");
+
+		await objectOf(start).faultRelease("retain:pass");
+		await retained;
+		expect([(await runRow(start)).prune, await records(start)]).toEqual(["done", NO_RECORDS]);
+		const fired = await until(
+			() => objectOf(start).faultFired(),
+			(log) => log.filter((entry) => entry.detail === "end").length === 4,
+		);
+		expect(fired.map((entry) => [entry.mode, entry.detail])).toEqual([
+			["note", "start"],
+			["note", "end"],
+			["hold", "start"],
+			["note", "end"],
+			["note", "start"],
+			["note", "end"],
+			["note", "start"],
+			["note", "end"],
+		]);
 	});
 
 	test("the job made due again while a pass runs gets no second pass beside it", async () => {
