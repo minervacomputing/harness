@@ -17,6 +17,7 @@
 import type { TSchema } from "@earendil-works/pi-ai";
 import { defineDoc, type ToolExecutionApi, type ToolExecutionResult, type ToolRegistration } from "@earendil-works/pi-durable";
 import { clip } from "../conversation/history.ts";
+import type { PiCall } from "../conversation/pi-work.ts";
 import type { ToolDeclaration } from "../gateway/executor.ts";
 import { TOOL_RESULT_LIMITS } from "../gateway/results.ts";
 import { RUN_ENDED_MESSAGE } from "../gateway/ledger.ts";
@@ -46,8 +47,8 @@ export const SCRIPT_STORE = defineDoc<{ entries: [string, string][] }>({
 
 /** What `run_script` needs from the conversation (scripts/host.ts builds it). */
 export interface ScriptToolHost {
-	/** The run a pi session belongs to and its current attempt, when that attempt can still act; `signal` is the run's end. */
-	current(session: number): { fence: AttemptFence; deadline: EpochMs | null; signal: AbortSignal } | null;
+	/** The active run's current attempt, when the call is that run's and the attempt can still act; `signal` is the run's end. */
+	current(call: PiCall): Promise<{ fence: AttemptFence; deadline: EpochMs | null; signal: AbortSignal } | null>;
 	/**
 	 * Records a script about to run, with its clock, if the attempt can still act (false: the run ended, nothing recorded).
 	 * Its time is wall time from here until `end` is called, once the script answered or was stopped.
@@ -160,7 +161,7 @@ export function scriptTool(listed: readonly ToolDeclaration[], host: ScriptToolH
 		replay: "unsafe",
 		outputLimits: TOOL_RESULT_LIMITS,
 		async execute(args: unknown, api: ToolExecutionApi, context): Promise<ToolExecutionResult> {
-			const run = host.current(api.conversationId);
+			const run = await host.current({ session: api.conversationId, task: api.taskId });
 			if (run === null) return { output: [{ type: "text", text: RUN_ENDED_MESSAGE }], isError: true };
 			const { fence } = run;
 			const code = String((args as { code?: unknown } | null)?.code ?? "");

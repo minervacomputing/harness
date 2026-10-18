@@ -147,8 +147,11 @@ export interface ConversationPorts {
 	 * decision is made, before its transaction. `committed`: after its transaction and the sync.
 	 */
 	gate?(context: PortsContext, point: "decided" | "committed", decision: GateDecision["kind"]): Promise<void>;
-	/** The test build's count of what pi starts for a run: a model call or a tool's execution, before any check. */
-	entered?(context: PortsContext, kind: "model" | "tool", runId: RunId): void;
+	/**
+	 * The test build's count of what pi starts: a model call or a tool's execution, before any check, by the session the call
+	 * names (its provider session for a model call, its pi session for a tool), which the test build attributes to a run.
+	 */
+	entered?(context: PortsContext, kind: "model" | "tool", session: string): void;
 	/**
 	 * The test build's fault points in the local tools, their checkpoints, the model calls and a run's settlement
 	 * (src/faults/); production has none. `local:prepared` (the container ready and hydrated), `checkpoint:scanned`, `checkpoint:uploaded`

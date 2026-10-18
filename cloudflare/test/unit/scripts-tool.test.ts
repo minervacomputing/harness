@@ -222,7 +222,7 @@ describe("the script's record", () => {
 	function host(recorded: boolean, started: () => void = () => {}) {
 		const log: string[] = [];
 		const tool = scriptTool(TOOLS, {
-			current: () => ({ fence, deadline: null, signal: new AbortController().signal }),
+			current: async () => ({ fence, deadline: null, signal: new AbortController().signal }),
 			record: async (script, timeoutMs) => {
 				log.push(`record ${script.runId}/${script.attempt} ${timeoutMs} ms`);
 				return recorded;

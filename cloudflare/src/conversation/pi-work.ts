@@ -1,12 +1,14 @@
 // What pi holds for a run, by its operation (docs/plans/chunk-19a-design.md, The data shape): the `run:<id>` submission
 // the run sent to its session, and the tasks pi made for that submission. The active run's operation owns its work;
-// everything else pi holds is orphaned. The settings the Conversation opens pi with are here too, since the rule rests on
-// one of them: pi makes no background work.
+// everything else pi holds is orphaned. The gate reads it here, and tool and model calls are admitted by it (Admission).
+// The settings the Conversation opens pi with are here too, since the rule rests on one of them: pi makes no background
+// work.
 
-import type { ConversationId, HarnessSettings, SubmissionId, TaskRecord } from "@earendil-works/pi-durable";
+import type { ConversationId, HarnessSettings, SubmissionId, TaskId, TaskRecord } from "@earendil-works/pi-durable";
 import type { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
+import type { AttemptFence, EpochMs } from "../shared/rpc.ts";
 import { classifyWork, type PiWork, type SubmissionStatus } from "./gate.ts";
-import type { RunRow } from "./store.ts";
+import type { RunRow, RunStore } from "./store.ts";
 
 /** chord's background context: never cancelled, no values. */
 const BG = Object.freeze({ abortSignal: undefined, value: () => undefined, toString: () => "[Context minerva-pi-work]" });
@@ -61,4 +63,46 @@ export async function piWork(storage: SqliteStorage, run: Pick<RunRow, "id" | "s
 		}
 	}
 	return classifyWork(submission?.status, own);
+}
+
+/** A tool execution as pi names it: the session it runs in and its task (`api.conversationId`, `api.taskId`). */
+export type PiCall = { session: ConversationId; task: TaskId };
+
+/** What admission reads: the store's active run and fence check, and pi's submissions once the factory opened pi. */
+export interface Admission {
+	store: Pick<RunStore, "activeRun" | "isCurrent">;
+	pi(): Pick<SqliteStorage, "submissionByRequest"> | null;
+}
+
+/** A tool's admission also counts the execution for the test build, by the session it names, before any check. */
+export interface ToolAdmission extends Admission {
+	entered(session: string): void;
+}
+
+/**
+ * The active run's current attempt, when the call is that run's: from its session, while its submission is placed, and
+ * from a task made after the submission, so work another run left in the session never acts under this run's grants. The
+ * fence is checked after pi's read, so a run that ended meanwhile is refused.
+ */
+export async function admitTool(deps: ToolAdmission, call: PiCall): Promise<{ fence: AttemptFence; deadline: EpochMs | null } | null> {
+	deps.entered(String(call.session));
+	const run = deps.store.activeRun();
+	if (run === null || run.session !== String(call.session)) return null;
+	const submission = await deps.pi()?.submissionByRequest(Number(run.session) as ConversationId, `run:${run.id}`, BG);
+	if (submission?.status !== "placed" || call.task <= submission.id) return null;
+	const fence = { runId: run.id, attempt: run.attempt };
+	return deps.store.isCurrent(fence) ? { fence, deadline: run.deadline } : null;
+}
+
+/**
+ * Whether a model call the wrapper began for `fence` may be recorded and sent: the fence's run is the active one and its
+ * submission is placed. pi gives a model call no task, so the operation's state is the rule. It is enough because a
+ * session's model calls come only from the generation holding its live run and the compactions that generation owns,
+ * and no generation but the placed operation's is left live in its session (docs/plans/chunk-19a-design.md, Admission).
+ */
+export async function admitModel(deps: Admission, fence: AttemptFence): Promise<boolean> {
+	const run = deps.store.activeRun();
+	if (run === null || run.id !== fence.runId || run.session === null) return false;
+	const submission = await deps.pi()?.submissionByRequest(Number(run.session) as ConversationId, `run:${run.id}`, BG);
+	return submission?.status === "placed" && deps.store.isCurrent(fence);
 }

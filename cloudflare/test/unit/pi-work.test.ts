@@ -1,7 +1,7 @@
-// What pi holds for a run, by its operation (src/conversation/pi-work.ts; docs/plans/chunk-19a-design.md, U1 to U3):
-// the gate's reader over pi-durable's own Harness on PiHarness's session store, opened and resumed as PiHarness does with
-// the Conversation's settings, so every submission and task it reads is one pi made. Runs share one session, as chunk 19b
-// makes every turn of a conversation do.
+// What pi holds for a run, by its operation (src/conversation/pi-work.ts; docs/plans/chunk-19a-design.md, U1 to U4):
+// the gate's reader and the admission of tool and model calls over pi-durable's own Harness on PiHarness's session store,
+// opened and resumed as PiHarness does with the Conversation's settings, so every submission and task they read is one pi
+// made. Runs share one session, as chunk 19b makes every turn of a conversation do.
 
 import { type AssistantMessage, createModels, type FauxProviderHandle, type FauxResponseFactory, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, Type } from "@earendil-works/pi-ai";
 import {
@@ -19,22 +19,34 @@ import {
 import type { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import { openPiSessionStore } from "agents/harness/pi";
 import { afterEach, describe, expect, test } from "vitest";
-import { belongs, PI_SETTINGS, piWork } from "../../src/conversation/pi-work.ts";
+import { CANCELLED } from "../../src/conversation/events.ts";
+import { admitModel, admitTool, belongs, PI_SETTINGS, type PiCall, piWork, type ToolAdmission } from "../../src/conversation/pi-work.ts";
+import { MIGRATIONS } from "../../src/conversation/schema.ts";
+import { RunStore } from "../../src/conversation/store.ts";
 import { durableStorage, openDatabase } from "./sqlite.ts";
 
 const BG = Object.freeze({ abortSignal: undefined, value: () => undefined, toString: () => "[Context pi-work test]" }) as never;
 
-/** Resolvers of the next `hold` call's start. */
-const holding: (() => void)[] = [];
+/** A `hold` call as pi named it to its tool, and what lets it answer. */
+interface Held {
+	call: PiCall;
+	release(): void;
+}
 
-/** A tool call that runs until pi aborts it, as a connector call returns on pi's abort (tools.ts). */
+/** Resolvers of the next `hold` call's start. */
+const holding: ((held: Held) => void)[] = [];
+
+/** A tool call that runs until it is released or pi aborts it, as a connector call returns on pi's abort (tools.ts). */
 const hold = defineTool({
 	name: "hold",
 	description: "Runs until it is stopped.",
 	parameters: Type.Object({}),
-	async execute(_args, _api, context) {
-		for (const resolve of holding.splice(0)) resolve();
-		await new Promise<void>((resolve) => context.abortSignal?.addEventListener("abort", () => resolve(), { once: true }));
+	async execute(_args, api, context) {
+		const stopped = Promise.withResolvers<void>();
+		const held = { call: { session: api.conversationId, task: api.taskId }, release: () => stopped.resolve() };
+		for (const resolve of holding.splice(0)) resolve(held);
+		context.abortSignal?.addEventListener("abort", () => stopped.resolve(), { once: true });
+		await stopped.promise;
 		return { output: [{ type: "text", text: "Stopped." }] };
 	},
 });
@@ -69,9 +81,9 @@ afterEach(async () => {
 	for (const harness of opened.splice(0)) await harness.close(BG).catch(() => {});
 });
 
-/** pi on a fresh Conversation storage, opened, rooted and resumed as PiHarness does, with one session for the runs. */
-async function openPi(): Promise<Pi> {
-	const storage = await openPiSessionStore(durableStorage(openDatabase()));
+/** pi on a Conversation's storage, opened, rooted and resumed as PiHarness does, with one session for the runs. */
+async function openPi(durable: DurableObjectStorage = durableStorage(openDatabase())): Promise<Pi> {
+	const storage = await openPiSessionStore(durable);
 	const faux = fauxProvider();
 	const models = createModels();
 	models.setProvider(faux.provider);
@@ -103,7 +115,7 @@ function later(message: AssistantMessage): { answer: FauxResponseFactory; open()
 }
 
 /** Resolves once the next `hold` call has started. */
-function holdStarted(): Promise<void> {
+function holdStarted(): Promise<Held> {
 	return new Promise((resolve) => holding.push(resolve));
 }
 
@@ -255,5 +267,118 @@ describe("what pi holds for a run, read by its operation", () => {
 describe("pi makes no background work", () => {
 	test("background compaction is off, which the id rule and model admission rest on", () => {
 		expect(PI_SETTINGS.compaction?.backgroundTokens).toBe(0);
+	});
+});
+
+const A = "0199a000-0000-7000-8000-00000000000a";
+const B = "0199a000-0000-7000-8000-00000000000b";
+const HOLD = fauxAssistantMessage(fauxToolCall("hold", {}), { stopReason: "toolUse" });
+
+/**
+ * pi and the Conversation's store on one storage, as the object holds them, with admission's reads built as the
+ * Conversation builds them and an entry counter. Its runs share pi's session, which chunk 19b's schema allows.
+ */
+async function admission() {
+	const db = openDatabase();
+	for (const migration of MIGRATIONS) db.exec(migration.sql);
+	db.exec("DROP INDEX runs_session");
+	db.prepare("INSERT INTO conversation (singleton, id, workspace_id, user_id, agent_id, created_at, updated_at, organization_id) VALUES (1, 'c', 'w', '', '', 0, 0, 'o')").all();
+	const storage = durableStorage(db);
+	const store = new RunStore(storage);
+	store.watchTransactions();
+	const pi = await openPi(storage);
+	const entered: string[] = [];
+	const deps: ToolAdmission = { store, pi: () => pi.storage, entered: (session) => entered.push(session) };
+	let created = 0;
+	return {
+		store,
+		pi,
+		deps,
+		entered,
+		/** A run that claimed pi's session and is running in attempt 1. */
+		start(id: string): void {
+			db.prepare("INSERT INTO runs (id, status, attempt_started_at, snapshot, created_at, metered, session) VALUES (?, 'running', 0, '{}', ?, 1, ?)").all(id, ++created, String(pi.session));
+			db.prepare("INSERT INTO attempts (run_id, attempt, started_at) VALUES (?, 1, 0)").all(id);
+		},
+		cancel: (id: string) => store.outside(() => store.finish(id, CANCELLED)),
+	};
+}
+
+describe("admission by the active run's operation", () => {
+	test("a call is admitted only for the active run while its submission is placed, a tool call only from its session and a task made after the submission", async () => {
+		const { pi, deps, entered, start, cancel } = await admission();
+		pi.faux.setResponses([HOLD, HOLD, fauxAssistantMessage(fauxText("A's answer")), HOLD, fauxAssistantMessage(fauxText("B's answer"))]);
+		const S = String(pi.session);
+		start(A);
+		const first = holdStarted();
+		await submit(pi, A, "Hold twice");
+		const a = await first;
+		expect(await admitTool(deps, a.call), "A's own task").toEqual({ fence: { runId: A, attempt: 1 }, deadline: null });
+		expect(await admitModel(deps, { runId: A, attempt: 1 }), "A's model call").toBe(true);
+
+		await cancel(A);
+		expect(await admitTool(deps, a.call), "no active run").toBeNull();
+		expect(await admitModel(deps, { runId: A, attempt: 1 }), "A ended").toBe(false);
+
+		start(B);
+		expect(await admitTool(deps, a.call), "B has no submission").toBeNull();
+		expect(await admitModel(deps, { runId: B, attempt: 1 }), "B has no submission").toBe(false);
+		const b = await submit(pi, B, "Hold once");
+		expect(b.committed).toBe("queued");
+		const second = holdStarted();
+		a.release();
+		const after = await second;
+		expect(after.call.task).toBeGreaterThan(b.submission.id);
+		expect(await admitTool(deps, after.call), "a task above B's queued submission").toBeNull();
+		expect(await admitModel(deps, { runId: B, attempt: 1 }), "B's submission queued").toBe(false);
+
+		const third = holdStarted();
+		after.release();
+		const own = await third;
+		expect((await pi.storage.submissionByRequest(pi.session, `run:${B}`, BG))?.status).toBe("placed");
+		expect(await admitTool(deps, own.call), "B's own task").toEqual({ fence: { runId: B, attempt: 1 }, deadline: null });
+		expect(await admitModel(deps, { runId: B, attempt: 1 }), "B's model call").toBe(true);
+		expect(await admitTool(deps, a.call), "A's task against B's placed submission").toBeNull();
+		expect(await admitModel(deps, { runId: A, attempt: 1 }), "A's model call while B acts").toBe(false);
+		const elsewhere = await pi.harness.createConversation({ ownership: { kind: "ownerless" } }, BG);
+		const other = { session: elsewhere.id, task: await heldTask(elsewhere, false) };
+		expect(other.task).toBeGreaterThan(b.submission.id);
+		expect(await admitTool(deps, other), "a call from another session").toBeNull();
+
+		own.release();
+		expect((await b.submission.wait(BG)).status).toBe("done");
+		expect(await admitTool(deps, own.call), "B's submission settled").toBeNull();
+		expect(await admitModel(deps, { runId: B, attempt: 1 }), "B's submission settled").toBe(false);
+		expect(entered).toEqual([S, S, S, S, S, S, String(elsewhere.id), S]);
+	});
+
+	test("a run cancelled while the check awaits pi's read is refused by the fence after it", async () => {
+		for (const check of ["tool", "model"] as const) {
+			const { store, pi, deps, start, cancel } = await admission();
+			pi.faux.setResponses([HOLD]);
+			start(B);
+			const started = holdStarted();
+			await submit(pi, B, "Hold");
+			const own = await started;
+			const cancelling: ToolAdmission = {
+				...deps,
+				pi: () => ({
+					async submissionByRequest(session, requestId, context) {
+						const submission = await pi.storage.submissionByRequest(session, requestId, context);
+						await cancel(B);
+						return submission;
+					},
+				}),
+			};
+			if (check === "tool") {
+				expect(await admitTool(deps, own.call)).toEqual({ fence: { runId: B, attempt: 1 }, deadline: null });
+				expect(await admitTool(cancelling, own.call)).toBeNull();
+			} else {
+				expect(await admitModel(deps, { runId: B, attempt: 1 })).toBe(true);
+				expect(await admitModel(cancelling, { runId: B, attempt: 1 })).toBe(false);
+			}
+			expect(store.activeRun(), check).toBeNull();
+			expect((await pi.storage.submissionByRequest(pi.session, `run:${B}`, BG))?.status, check).toBe("placed");
+		}
 	});
 });

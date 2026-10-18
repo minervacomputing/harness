@@ -553,14 +553,6 @@ export class RunStore {
 		return this.#sql.exec<RunRow>(`SELECT ${RUN_COLUMNS} FROM runs WHERE status IN ${ACTIVE_SQL} ORDER BY created_at DESC LIMIT 1`).toArray()[0] ?? null;
 	}
 
-	runBySession(session: string): RunRow | null {
-		return this.#sql.exec<RunRow>(`SELECT ${RUN_COLUMNS} FROM runs WHERE session = ?`, session).toArray()[0] ?? null;
-	}
-
-	runByProviderSession(providerSession: string): RunRow | null {
-		return this.#sql.exec<RunRow>(`SELECT ${RUN_COLUMNS} FROM runs WHERE provider_session = ?`, providerSession).toArray()[0] ?? null;
-	}
-
 	/** Every pi session a run owns, with whether the run is still active. */
 	sessions(): Map<string, boolean> {
 		const rows = this.#sql.exec<{ session: string; status: RunStatus }>("SELECT session, status FROM runs WHERE session IS NOT NULL").toArray();

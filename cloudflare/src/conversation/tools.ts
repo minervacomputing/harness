@@ -28,6 +28,7 @@ import type { ToolCallOutcome, ToolDeclaration } from "../gateway/executor.ts";
 import { TOOL_RESULT_LIMITS as GATEWAY_RESULT_LIMITS } from "../gateway/results.ts";
 import { type Json, parseJson } from "../lib/json.ts";
 import type { AttemptFence, EpochMs, RunId } from "../shared/rpc.ts";
+import type { PiCall } from "./pi-work.ts";
 import { untilAborted } from "./queue.ts";
 
 export const TOOL_RESULT_BYTES = 1024 * 1024;
@@ -41,8 +42,8 @@ export const RUN_ENDED_MESSAGE = "This run is no longer active.";
 
 /** What a tool needs from the run that makes the call. */
 export interface ToolHost {
-	/** The run a pi session belongs to and its current attempt, when that attempt can still act. */
-	current(session: number): { fence: AttemptFence; deadline: EpochMs | null } | null;
+	/** The active run's current attempt, when the call is that run's and the attempt can still act (pi-work.ts `admitTool`). */
+	current(call: PiCall): Promise<{ fence: AttemptFence; deadline: EpochMs | null } | null>;
 	/** Counts this execution of a call, this one included; the count is committed before the call runs. */
 	executions(runId: RunId, callId: string): number | Promise<number>;
 	/** The model's own argument text for a call, when the wrapper kept it. */
@@ -102,7 +103,7 @@ export function connectorTool(declaration: ToolDeclaration, host: ToolHost): Too
 		replay: write ? "unsafe" : "safe",
 		outputLimits: TOOL_RESULT_LIMITS,
 		async execute(args: unknown, api: ToolExecutionApi, context): Promise<ToolExecutionResult> {
-			const run = host.current(api.conversationId);
+			const run = await host.current({ session: api.conversationId, task: api.taskId });
 			if (run === null) return refused(RUN_ENDED_MESSAGE);
 			const { fence } = run;
 			if (!write && (await host.executions(fence.runId, api.callId)) > 1 + REPLAYS_ALLOWED) return refused(REPLAY_REFUSED);

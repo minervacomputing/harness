@@ -8,7 +8,7 @@ import { abortAllDurableObjects, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { RunEvent } from "@minerva/contract";
 import type { Scope, StartRun } from "@minerva/contract/internal";
-import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { conversationObject } from "../../src/addressing.ts";
 import { CONNECTORS } from "../../src/connectors/catalog.ts";
 import { CONNECTOR_SOURCE } from "../../src/connectors/index.ts";
@@ -279,6 +279,30 @@ describe("authority and revocation", () => {
 		const internals = await w.stub.faultRun(runId);
 		expect(internals.writes).toEqual([expect.objectContaining({ status: "succeeded" })]);
 		expect(toolCalls(await eventsOf(w, runId))).toEqual([]);
+	});
+
+	test("a write answered after its run was cancelled is logged as refused for the run that acts now, without its arguments", async () => {
+		const title = "Quarterly plan";
+		const w = await world({ faults: [{ point: "provider:write:applied", mode: "hold" }], delays: { "GET /folders/inbox/notes": 3000 } });
+		const warned = vi.spyOn(console, "warn");
+		const lines = async () => warned.mock.calls.map((args) => args.map(String).join(" "));
+		try {
+			const a = await post(w, [{ tools: [{ name: "notes_file_note", arguments: { folder: "inbox", title } }] }, { text: "Filed." }]);
+			await reached(() => w.stub.faultFired(), "provider:write:applied");
+			expect(await cancelOf(w, a)).toEqual({ state: "cancelled" });
+			const b = await post(w, [LIST_INBOX, { text: "Done." }]);
+			await until(() => provider(w), (state) => reads(state.requests) === 1);
+			await w.stub.faultRelease("provider:write:applied");
+			const line = `run ${a}'s call notes_file_note answered after the run ended; its result is refused (run ${b} acts now)`;
+			await until(lines, (logged) => logged.some((entry) => entry.includes(line)));
+			expect((await lines()).filter((entry) => entry.includes(title))).toEqual([]);
+			expect(toolCalls(await eventsOf(w, a))).toEqual([]);
+			expect((await w.stub.faultRun(a)).writes).toEqual([expect.objectContaining({ status: "succeeded" })]);
+			expect((await settled(w, b)).status).toBe("completed");
+			expect(toolCalls(await eventsOf(w, b))).toEqual([expect.objectContaining({ tool: LIST, decision: "allowed" })]);
+		} finally {
+			warned.mockRestore();
+		}
 	});
 });
 

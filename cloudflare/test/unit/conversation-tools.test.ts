@@ -3,6 +3,7 @@
 
 import { describe, expect, test } from "vitest";
 import type { ToolExecutionApi, ToolRegistration } from "@earendil-works/pi-durable";
+import type { PiCall } from "../../src/conversation/pi-work.ts";
 import { CALLS_AT_ONCE, ToolQueue, untilAborted } from "../../src/conversation/queue.ts";
 import {
 	argumentsOf,
@@ -43,14 +44,15 @@ const ALLOWED: ToolCallOutcome = {
 
 interface Recorded {
 	host: ToolHost;
+	asked: PiCall[];
 	calls: { args: Json | undefined; signal: AbortSignal | undefined }[];
 	phases: string[];
 }
 
 function host(fields: Partial<ToolHost> = {}, outcome: () => Promise<ToolCallOutcome> = async () => ALLOWED): Recorded {
-	const recorded: Recorded = { calls: [], phases: [], host: undefined as unknown as ToolHost };
+	const recorded: Recorded = { asked: [], calls: [], phases: [], host: undefined as unknown as ToolHost };
 	recorded.host = {
-		current: () => ({ fence: FENCE, deadline: null }),
+		current: async () => ({ fence: FENCE, deadline: null }),
 		executions: () => 1,
 		argumentText: () => null,
 		invoke: (_fence, _declaration, args, signal) => {
@@ -61,11 +63,16 @@ function host(fields: Partial<ToolHost> = {}, outcome: () => Promise<ToolCallOut
 		ended: (_runId, callId) => recorded.phases.push(`end ${callId}`),
 		...fields,
 	};
+	const current = recorded.host.current;
+	recorded.host.current = (call) => {
+		recorded.asked.push(call);
+		return current(call);
+	};
 	return recorded;
 }
 
 function api(callId = "call-1"): ToolExecutionApi {
-	return { conversationId: 7, callId } as unknown as ToolExecutionApi;
+	return { conversationId: 7, taskId: 12, callId } as unknown as ToolExecutionApi;
 }
 
 const BG = { abortSignal: undefined, value: () => undefined } as never;
@@ -97,17 +104,18 @@ describe("what the model sees", () => {
 		expect(render(denied)).toEqual({ output: [{ type: "text", text: "This resource or action is not available under the current permissions." }], isError: true });
 	});
 
-	test("a call runs through the host, with phases around it", async () => {
+	test("a call asks for its run by its session and task, then runs through the host, with phases around it", async () => {
 		const recorded = host();
 		const tool = connectorTool(declaration(), recorded.host);
 		const result = await tool.execute({ limit: 2 } as never, api(), BG);
 		expect(result.isError).toBe(false);
+		expect(recorded.asked).toEqual([{ session: 7, task: 12 }]);
 		expect(recorded.calls.map((call) => call.args)).toEqual([{ limit: 2 }]);
 		expect(recorded.phases).toEqual(["start call-1 todoist_list_tasks", "end call-1"]);
 	});
 
-	test("a call of a run that is no longer current is answered RUN_ENDED and never sent", async () => {
-		const recorded = host({ current: () => null });
+	test("a call the host refuses is answered RUN_ENDED and never sent", async () => {
+		const recorded = host({ current: async () => null });
 		const result = await connectorTool(declaration(), recorded.host).execute({} as never, api(), BG);
 		expect(result).toEqual({ output: [{ type: "text", text: RUN_ENDED_MESSAGE }], isError: true });
 		expect(recorded.calls).toEqual([]);
@@ -132,7 +140,7 @@ describe("what the model sees", () => {
 	});
 
 	test("a call still waiting at the deadline gives up with RUN_ENDED", async () => {
-		const recorded = host({ current: () => ({ fence: FENCE, deadline: Date.now() + 20 }) }, () => new Promise(() => {}));
+		const recorded = host({ current: async () => ({ fence: FENCE, deadline: Date.now() + 20 }) }, () => new Promise(() => {}));
 		const result = await connectorTool(declaration(), recorded.host).execute({} as never, api(), BG);
 		expect(result).toEqual({ output: [{ type: "text", text: RUN_ENDED_MESSAGE }], isError: true });
 	});

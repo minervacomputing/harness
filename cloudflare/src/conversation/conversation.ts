@@ -78,7 +78,7 @@ import { FactDelivery } from "./delivery.ts";
 import { BACKLOG_MESSAGE, FACT_DELIVERY } from "./facts.ts";
 import { laravelCredentials } from "./laravel-runs.ts";
 import { destroyRunSandbox, LocalRun } from "./local-run.ts";
-import { PI_SETTINGS, piWork } from "./pi-work.ts";
+import { type Admission, admitModel, admitTool, PI_SETTINGS, piWork, type ToolAdmission } from "./pi-work.ts";
 import { type ConversationPorts, type FolderPort, PORTS, type PortsContext, runStatePort, type WriteLedger } from "./ports.ts";
 import { ToolQueue, untilAborted } from "./queue.ts";
 import { RETAIN_JOB, Retention } from "./retention.ts";
@@ -1004,7 +1004,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		return {
 			...local.tool,
 			async execute(args, api, context) {
-				const run = host.current(api.conversationId);
+				const run = await host.current({ session: api.conversationId, task: api.taskId });
 				if (run === null) return { content: [{ type: "text", text: RUN_ENDED_MESSAGE }], isError: true };
 				const { fence } = run;
 				if (safe && (await host.executions(fence.runId, api.callId)) > 1 + REPLAYS_ALLOWED) return { content: [{ type: "text", text: REPLAY_REFUSED }], isError: true };
@@ -1015,6 +1015,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 					const env = await conversation.#waitFor(fence, attempt, context.abortSignal);
 					const result = await runGated(attempt.calls, local, args, { ...api, env }, context);
 					await conversation.#point("local:released", local.name);
+					if (!conversation.#store.isActive(fence.runId)) conversation.#lateResult(fence.runId, local.name);
 					return result;
 				} finally {
 					host.ended(fence.runId, api.callId);
@@ -1192,7 +1193,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	#scriptHost(host: ToolHost) {
 		return scriptToolHost({
 			runs: this.#scriptRuns,
-			current: (session) => host.current(session),
+			current: (call) => host.current(call),
 			runSignal: (runId) => (this.#store.isActive(runId) ? this.#controller(runId).signal : AbortSignal.abort(new Error(RUN_ENDED_MESSAGE))),
 			invoke: (fence, declaration, args, drop) => this.#invoke(fence, declaration, args, undefined, drop),
 			scripts: () => {
@@ -1263,16 +1264,16 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		});
 	}
 
+	/** What tool and model calls are admitted by (pi-work.ts): the store's runs and pi's submissions, on the factory's storage. */
+	#admission(): Admission {
+		return { store: this.#store, pi: () => this.#piStorage };
+	}
+
 	#toolHost(): ToolHost {
 		const store = this.#store;
+		const admission: ToolAdmission = { ...this.#admission(), entered: (session) => this.#entered("tool", session) };
 		return {
-			current: (session) => {
-				const run = store.runBySession(String(session));
-				if (!run) return null;
-				this.#entered("tool", run.id);
-				const fence = { runId: run.id, attempt: run.attempt };
-				return store.isCurrent(fence) ? { fence, deadline: run.deadline } : null;
-			},
+			current: (call) => admitTool(admission, call),
 			// Outside pi's transactions (store.ts `outside`): the replay cap counts what ran, so its count must not roll back.
 			executions: (runId, callId) => store.outside(() => store.countExecution(runId, callId)),
 			argumentText: (runId, callId) => store.argumentText(runId, callId),
@@ -1294,8 +1295,9 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	 * One call through the run's queue and the executor. The `tool_call` event is appended when the call
 	 * settles, whether or not its caller still waits (the executor's `settled`, so a write sent before pi
 	 * aborted the call is recorded with its real outcome), while the run is active (any attempt), never for
-	 * RUN_ENDED (the executor returns no event then). A scripted call passes `drop` instead of `signal`: the
-	 * script's end drops it while it waits for its slot, but never cuts it once sent.
+	 * RUN_ENDED (the executor returns no event then); an outcome after the run ended is logged instead (`#lateResult`).
+	 * A scripted call passes `drop` instead of `signal`: the script's end drops it while it waits for its slot, but
+	 * never cuts it once sent.
 	 */
 	#invoke(
 		fence: AttemptFence,
@@ -1315,14 +1317,21 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		// Once, outside pi's transactions (store.ts `outside`), so the record of a write that was sent cannot roll
 		// back with one of pi's. A failed append is forgotten, so it is tried again when the caller hears the outcome.
 		let recording: Promise<void> | null = null;
+		let late = false;
 		const record = (outcome: ToolCallOutcome): Promise<void> => {
 			const event = outcome.event;
-			recording ??= (event ? this.#store.outside(() => void this.#store.appendToolCall(fence.runId, event, args)) : Promise.resolve()).catch(
-				(error: unknown) => {
+			recording ??= this.#store
+				.outside(() => {
+					if (event && this.#store.appendToolCall(fence.runId, event, args)) return;
+					// Here, beside the append, so a run that ended while this waited is seen; `late` keeps one line when an append is tried again.
+					if (late || this.#store.isActive(fence.runId)) return;
+					late = true;
+					this.#lateResult(fence.runId, declaration.name);
+				})
+				.catch((error: unknown) => {
 					recording = null;
 					throw error;
-				},
-			);
+				});
 			return recording;
 		};
 		const settled = (outcome: ToolCallOutcome) => {
@@ -1352,6 +1361,13 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			);
 		this.ctx.waitUntil(call.catch(() => {}));
 		return call;
+	}
+
+	/** A call that answered after its run ended, at warn level since any cancel with a call in flight has one; no arguments or results. */
+	#lateResult(runId: RunId, tool: string): void {
+		const active = this.#store.activeRun();
+		const now = active !== null && this.#store.isActive(active.id) ? `run ${active.id} acts now` : "no run acts now";
+		this.#log(`run ${runId}'s call ${tool} answered after the run ended; its result is refused (${now})`);
 	}
 
 	/**
@@ -1388,17 +1404,19 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 
 	#modelHost(): ModelHost {
 		const store = this.#store;
+		const admission = this.#admission();
 		return {
 			begin: (sessionId) => {
-				const run = sessionId ? store.runByProviderSession(sessionId) : null;
-				if (!run) return null;
-				this.#entered("model", run.id);
+				if (sessionId) this.#entered("model", sessionId);
+				const run = store.activeRun();
+				if (!run || !sessionId || run.provider_session !== sessionId) return null;
 				const fence = { runId: run.id, attempt: run.attempt };
 				if (!store.isCurrent(fence)) return null;
 				return { fence, signal: this.#controller(run.id).signal };
 			},
 			// Outside pi's transactions (store.ts `outside`): a call that was sent, and its cost, do not roll back.
 			record: async (fence, request) => {
+				if (!(await admitModel(admission, fence))) return null;
 				const prices = await pricesOf(this.env);
 				const call = await store.outside(() => store.recordModelCall(fence, request, prices));
 				if (call !== null) await this.#untilHeard("a recorded model call could not be sent", () => this.#point("model:recorded", call));
@@ -1454,8 +1472,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 
 	// Ports.
 
-	#entered(kind: "model" | "tool", runId: RunId): void {
-		if (this.#ports.entered) this.#ports.entered(this.#portsContext() as PortsContext, kind, runId);
+	#entered(kind: "model" | "tool", session: string): void {
+		if (this.#ports.entered) this.#ports.entered(this.#portsContext() as PortsContext, kind, session);
 	}
 
 	#folderInstance: FolderPort | null = null;

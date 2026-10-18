@@ -26,7 +26,8 @@
 //   files stored in R2 but the checkpoint not recorded, and recorded but its held results not released;
 // - `local:released`: a local call's result released by its checkpoint, before pi has it (filter `tool`).
 //
-// Each model call and tool execution pi starts is counted per run (`FaultPlan.entered`).
+// Each model call and tool execution pi starts is counted per run (`FaultPlan.entered`), the run being the newest that names
+// the call's session.
 //
 // A conversation whose plan sets `run_timeout_ms` starts Laravel's runs with that deadline, and one whose plan sets `retention`
 // keeps what it holds for those periods instead of RETENTION's (docs/plans/chunk-15a-design.md, Periods), such as minutes.
@@ -154,6 +155,15 @@ export interface Calibration {
 	write: boolean;
 }
 
+/**
+ * The newest run that names a session: its provider session for a model call, its pi session for a tool. While each run has
+ * sessions of its own (chunk 19a), that is the call's own run, active or not.
+ */
+function runNaming(context: PortsContext, kind: "model" | "tool", session: string): string | null {
+	const column = kind === "model" ? "provider_session" : "session";
+	return context.ctx.storage.sql.exec<{ id: string }>(`SELECT id FROM runs WHERE ${column} = ? ORDER BY created_at DESC, id DESC LIMIT 1`, session).toArray()[0]?.id ?? null;
+}
+
 /** The fake model, sending one request to FAKE_MODEL_HOST before each answer and marking the call. */
 function fakeRemote(context: PortsContext, plan: FaultPlan, onDelta: FakeOptions["onDelta"]): Upstream {
 	const send = providerFetch(context.env, modelScope(context.workspace.id));
@@ -161,8 +171,8 @@ function fakeRemote(context: PortsContext, plan: FaultPlan, onDelta: FakeOptions
 	const marksByCall = new WeakMap<FakeCall, CallMarks>();
 	return fakeUpstream({
 		onCall: (call, _context, options) => {
-			const run = options?.sessionId ? context.store.runByProviderSession(options.sessionId) : null;
-			const marks = run ? marksOf(context.ctx, run.id).at(-1) : undefined;
+			const runId = options?.sessionId ? runNaming(context, "model", options.sessionId) : null;
+			const marks = runId ? marksOf(context.ctx, runId).at(-1) : undefined;
 			if (marks) marksByCall.set(call, marks);
 		},
 		onDelta,
@@ -222,7 +232,9 @@ export function faultConversationPorts(base: ConversationPorts): ConversationPor
 			planOf(context.ctx)
 				.at(name, name === "local:released" ? { tool: detail, detail: detail ?? "" } : { detail: detail ?? "" }, ["abort", "oom", "throw", "hold", "note"])
 				.then(() => {}),
-		entered: (context, kind, runId) => {
+		entered: (context, kind, session) => {
+			const runId = runNaming(context, kind, session);
+			if (runId === null) return;
 			if (kind === "model") marksOf(context.ctx, runId).push({ begin: Date.now(), answered: null, last: null });
 			planOf(context.ctx).enter(runId, kind);
 		},

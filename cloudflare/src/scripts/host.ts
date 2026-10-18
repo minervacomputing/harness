@@ -1,6 +1,7 @@
 // What the Conversation Durable Object keeps for code mode, and the `ScriptToolHost` it gives `run_script`
 // (scripts/tool.ts): per run, its scripted calls across its scripts (per instance); per instance, the lane that puts each script after the reset of the one before.
 
+import type { PiCall } from "../conversation/pi-work.ts";
 import type { ToolCallOutcome, ToolDeclaration } from "../gateway/executor.ts";
 import type { Json } from "../lib/json.ts";
 import type { AttemptFence, EpochMs, RunId } from "../shared/rpc.ts";
@@ -29,7 +30,7 @@ export class ScriptRuns {
 /** What the conversation lends: its connector tools' host and a few of its own parts. */
 export interface ScriptHostDeps {
 	runs: ScriptRuns;
-	current(session: number): { fence: AttemptFence; deadline: EpochMs | null } | null;
+	current(call: PiCall): Promise<{ fence: AttemptFence; deadline: EpochMs | null } | null>;
 	/** Aborted when the run ends or its deadline passes. */
 	runSignal(runId: RunId): AbortSignal;
 	/** A call through the run's queue and the executor; `drop` is checked only before it is sent. */
@@ -44,8 +45,8 @@ export interface ScriptHostDeps {
 
 export function scriptToolHost(deps: ScriptHostDeps): ScriptToolHost {
 	return {
-		current: (session) => {
-			const run = deps.current(session);
+		current: async (call) => {
+			const run = await deps.current(call);
 			return run && { ...run, signal: deps.runSignal(run.fence.runId) };
 		},
 		calls: (runId) => deps.runs.calls(runId),
