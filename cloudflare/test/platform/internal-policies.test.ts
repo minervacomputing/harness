@@ -70,6 +70,10 @@ function githubConnection(id: string, tenant: string | null = null): StartRun["a
 	return { id, provider: "github", owner: "42", status: "active", createdAt: new Date().toISOString(), scopes: [], revision: 1, tenant };
 }
 
+function calendarConnection(id: string, tenant: string | null, createdAt: string): StartRun["authority"]["connections"][number] {
+	return { id, provider: "google_calendar", owner: "42", status: "active", createdAt, scopes: null, revision: 1, tenant };
+}
+
 function policyOf(...connectors: [string, string[] | null][]): ConnectionPolicy {
 	return { revision: 3, connectors: connectors.map(([provider, tenants]) => ({ provider, tenants })) };
 }
@@ -87,6 +91,23 @@ test("a start's policy leaves out what it does not offer: the authorized set is 
 	expect(await commands.startRun(start(policyOf(["github", null], ["notes", ["acme"]])))).toMatchObject({ outcome: "accepted", authorized: [repos] });
 	expect(await commands.startRun(start(policyOf(["notes", null])))).toMatchObject({ outcome: "accepted", authorized: [notes] });
 	expect(await commands.startRun(start(policyOf()))).toMatchObject({ outcome: "accepted", authorized: [] });
+});
+
+test("a start admits a connection of a connector with a tenant per account only when the tenant Laravel sends is listed", async () => {
+	const within = scope();
+	const [ours, theirs, personal] = [uuid7(), uuid7(), uuid7()];
+	const connections = [
+		calendarConnection(ours, "example.com", "2026-10-18T09:00:00Z"),
+		calendarConnection(theirs, "other.example", "2026-10-18T09:00:01Z"),
+		calendarConnection(personal, null, "2026-10-18T09:00:02Z"),
+	];
+	const grants = connections.map(({ id }) => ({ connection: id, kind: "calendar", resource: "*", name: "", actions: ["read"], effect: "allow" as const }));
+	const start = (policy?: ConnectionPolicy) =>
+		startOf(within, { authority: { connections, layers: { ceiling: null, user: { restricted: true, revision: 1, grants }, agent: null }, ...(policy ? { policy } : {}) } });
+	expect(await commands.startRun(start())).toMatchObject({ outcome: "accepted", authorized: [ours, theirs, personal] });
+	expect(await commands.startRun(start(policyOf(["google_calendar", ["example.com"]])))).toMatchObject({ outcome: "accepted", authorized: [ours] });
+	expect(await commands.startRun(start(policyOf(["google_calendar", ["other.example", "example.com"]])))).toMatchObject({ outcome: "accepted", authorized: [ours, theirs] });
+	expect(await commands.startRun(start(policyOf(["google_calendar", null])))).toMatchObject({ outcome: "accepted", authorized: [ours, theirs, personal] });
 });
 
 test("a start's list of GitHub owners refuses a call on another owner's repository, and allows one on theirs", async () => {

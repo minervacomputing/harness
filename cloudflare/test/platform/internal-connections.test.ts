@@ -365,6 +365,43 @@ describe("under a connection policy", () => {
 		expect(seen.filter((path) => path.endsWith("/repositories"))).toEqual(["/user/installations/7/repositories", "/user/installations/8/repositories"]);
 	});
 
+	test("a connection of a connector with a tenant per account is admitted by the tenant Laravel sends with it", async () => {
+		const seen: string[] = [];
+		PROVIDER_NETWORK.fetch = () => async (input, init) => {
+			const request = new Request(input as RequestInfo, init as RequestInit);
+			const url = new URL(request.url);
+			seen.push(url.pathname);
+			if (url.origin === "https://www.googleapis.com" && url.pathname === "/calendar/v3/users/me/calendarList") {
+				return Response.json({ items: [{ id: "ada@example.com", summary: "Ada", accessRole: "owner" }] });
+			}
+			throw new TypeError(`Unexpected request ${request.method} ${request.url}`);
+		};
+		const policy = { revision: 2, connectors: [{ provider: "google_calendar", tenants: ["example.com"] }] };
+		const connection = uuid7();
+		const calendar = (tenant: string | null) => ({ id: connection, provider: "google_calendar", tenant });
+		const listed = (tenant: string | null) =>
+			commands.listResources({ scope: scope(), connection: calendar(tenant), credential, kind: "calendar", query: null, parent: null, cursor: null, policy });
+		const edited = (tenant: string | null, actions: string[]) =>
+			commands.checkGrantEdit({
+				scope: scope(),
+				connection: calendar(tenant),
+				credential,
+				layer: { level: "user", subject: "42", restricted: true, revision: 1, grants: [{ connection, kind: "calendar", resource: "*", name: "", actions: ["read"], effect: "allow" }] },
+				changes: [{ kind: "calendar", id: "*", actions }],
+				policy,
+			});
+		expect(await listed("example.com")).toEqual({ outcome: "listed", items: [{ id: "ada@example.com", name: "Ada", expandable: false }], next: null });
+		expect(await edited("example.com", ["create", "read"])).toMatchObject({ outcome: "valid", grants: [{ connection, kind: "calendar", resource: "*", actions: ["create", "read"] }] });
+		expect(seen).toEqual(["/calendar/v3/users/me/calendarList"]);
+		for (const tenant of ["other.example", null]) {
+			expect(await listed(tenant)).toEqual(NOT_ALLOWED);
+			expect(await edited(tenant, ["create", "read"])).toEqual(NOT_ALLOWED);
+			// Removals are always valid.
+			expect(await edited(tenant, [])).toEqual({ outcome: "valid", grants: [] });
+		}
+		expect(seen).toHaveLength(1);
+	});
+
 	test("checkGrantEdit refuses another owner's repository, also one transferred since it was allowed; removals stay valid", async () => {
 		const { seen, transfer } = fakeOwners();
 		const connection = uuid7();
