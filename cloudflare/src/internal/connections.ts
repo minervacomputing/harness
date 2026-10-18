@@ -20,7 +20,7 @@ import { ACCOUNT_KIND, type Connector, type DiscoveryPage, OperationError, type 
 import { unauthorized } from "../gateway/executor.ts";
 import { type GrantChange, type GrantRow, InvalidGrants, checkChanges, planGrantChanges, resourceKey } from "../gateway/grants.ts";
 import { ANY } from "../gateway/policy.ts";
-import { admission } from "../gateway/tenancy.ts";
+import { admission, inTenants } from "../gateway/tenancy.ts";
 import { compareText } from "../lib/arrays.ts";
 import { sliceText } from "../lib/text.ts";
 import type { WorkspaceRef } from "../shared/rpc.ts";
@@ -125,7 +125,7 @@ export async function listResources(env: Env, command: ListResources): Promise<L
 			return connector.children(client, command.kind, command.parent, { cursor: command.cursor });
 		});
 		const items = page.items
-			.filter((item) => item.id !== ANY && (allowed === null || (typeof item.tenant === "string" && allowed.includes(item.tenant))))
+			.filter((item) => item.id !== ANY && inTenants(allowed, item))
 			.map((item) => ({ id: item.id, name: item.name, expandable: browse && (item.expandable ?? false) }));
 		return { outcome: "listed", items, next: page.nextCursor ?? null };
 	} catch (error) {

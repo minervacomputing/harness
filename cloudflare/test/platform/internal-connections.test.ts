@@ -304,7 +304,7 @@ describe("under a connection policy", () => {
 	const owners = (...tenants: string[]) => ({ revision: 2, connectors: [{ provider: "github", tenants }] });
 	const offersOnly = (provider: string) => ({ revision: 2, connectors: [{ provider, tenants: null }] });
 
-	function list(policy: ConnectionPolicy, provider = "github") {
+	function list(policy: ConnectionPolicy, provider = "github", cursor: string | null = null) {
 		return commands.listResources({
 			scope: scope(),
 			connection: { id: uuid7(), provider, tenant: null },
@@ -312,7 +312,7 @@ describe("under a connection policy", () => {
 			kind: provider === "github" ? "repository" : "account",
 			query: null,
 			parent: null,
-			cursor: null,
+			cursor,
 			policy,
 		});
 	}
@@ -339,6 +339,30 @@ describe("under a connection policy", () => {
 		// The Web's tenancy is unknown: a list refuses it.
 		expect(await list({ revision: 2, connectors: [{ provider: "web", tenants: ["example.com"] }] }, "web")).toEqual(NOT_ALLOWED);
 		expect(seen).toEqual([]);
+	});
+
+	test("listResources keeps the page token of a page whose every item it leaves out, so the next page is reached", async () => {
+		const seen: string[] = [];
+		const installations = [
+			{ id: 7, repositories: [{ id: 103, full_name: "partner/tool", owner: { id: 777, login: "partner" }, private: false }] },
+			{ id: 8, repositories: [{ id: 101, full_name: "example/app", owner: { id: 900, login: "example" }, private: true }] },
+		];
+		PROVIDER_NETWORK.fetch = () => async (input, init) => {
+			const url = new URL(new Request(input as RequestInfo, init as RequestInit).url);
+			seen.push(url.pathname);
+			if (url.pathname === "/user/installations") return Response.json({ total_count: 2, installations: installations.map(({ id }) => ({ id })) });
+			const found = installations.find(({ id }) => url.pathname === `/user/installations/${id}/repositories`);
+			if (found) return Response.json({ total_count: found.repositories.length, repositories: found.repositories });
+			throw new TypeError(`Unexpected request ${url}`);
+		};
+		const first = await list(owners("900"));
+		expect(first).toEqual({ outcome: "listed", items: [], next: expect.any(String) });
+		expect(await list(owners("900"), "github", (first as { next: string }).next)).toEqual({
+			outcome: "listed",
+			items: [{ id: "101", name: "example/app (private)", expandable: false }],
+			next: null,
+		});
+		expect(seen.filter((path) => path.endsWith("/repositories"))).toEqual(["/user/installations/7/repositories", "/user/installations/8/repositories"]);
 	});
 
 	test("checkGrantEdit refuses another owner's repository, also one transferred since it was allowed; removals stay valid", async () => {

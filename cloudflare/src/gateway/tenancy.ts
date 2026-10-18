@@ -38,8 +38,8 @@ export function admission(policy: ConnectionPolicy | null | undefined, connector
 	}
 }
 
-/** Whether a resource is in one of `tenants`; null allows any. */
-export function inTenants(tenants: readonly string[] | null, resource: Resource): boolean {
+/** Whether a resource, or a discovery item, is in one of `tenants`; null allows any, and a list none without a tenant. */
+export function inTenants(tenants: readonly string[] | null, resource: Pick<Resource, "tenant">): boolean {
 	return tenants === null || (typeof resource.tenant === "string" && tenants.includes(resource.tenant));
 }
 

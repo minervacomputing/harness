@@ -2,7 +2,7 @@
 // per tenancy, with the fakes of executor-fakes.ts. GitHub's owners, with a transfer, are in connectors-github.test.ts.
 
 import { describe, expect, test } from "vitest";
-import { ACCOUNT_KIND, type Connector } from "../../src/gateway/connector.ts";
+import { ACCOUNT_KIND, type Connector, type DiscoveryItem } from "../../src/gateway/connector.ts";
 import { createExecutor } from "../../src/gateway/executor.ts";
 import { resource } from "../../src/gateway/policy.ts";
 import { type ConnectionPolicy, admission, inTenants } from "../../src/gateway/tenancy.ts";
@@ -66,6 +66,14 @@ describe("admission", () => {
 		expect(inTenants(["acme"], inAcme)).toBe(true);
 		expect(inTenants(["beta"], inAcme)).toBe(false);
 		expect(inTenants(["acme"], resource(MIXED, FOLDER, "inbox"))).toBe(false);
+	});
+
+	test("a discovery item is listed under a list only when it names a listed tenant", () => {
+		const item = (tenant?: string): DiscoveryItem => ({ id: "inbox", name: "Inbox", ...(tenant === undefined ? {} : { tenant }) });
+		expect(inTenants(["acme"], item("acme"))).toBe(true);
+		expect(inTenants(["acme"], item("evil"))).toBe(false);
+		expect(inTenants(["acme"], item())).toBe(false);
+		expect(inTenants(null, item())).toBe(true);
 	});
 });
 
