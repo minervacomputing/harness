@@ -174,6 +174,51 @@ describe("stopping pi's work by its run, on one session two runs share", () => {
 		expect(pi.logged).toEqual([]);
 	});
 
+	test("A's end, marking while B submits between its two reads, takes nothing of B's for an orphan, and B answers", async () => {
+		const pi = await openPi();
+		pi.faux.setResponses([call("hold"), call("hold"), fauxAssistantMessage(fauxText("B's answer"))]);
+		pi.act(A);
+		const aStarted = started();
+		const a = await submit(pi, A, "Hold");
+		await aStarted;
+
+		pi.act(B);
+		await pi.stops.settle(pi.harness);
+		expect(await status(pi, A)).toBe("unanswered");
+		const bStarted = started();
+		const submitted = Promise.withResolvers<Awaited<ReturnType<typeof submit>>>();
+		const end = new PiStops({
+			operation: async () => {
+				const op = await operationOf(pi.storage, { id: B, session: String(pi.session) });
+				submitted.resolve(await submit(pi, B, "Hold, then answer"));
+				return op;
+			},
+			log: (message) => pi.logged.push(message),
+		});
+		const { orphans, marked } = await end.mark(pi.harness);
+		expect(orphans).toEqual([]);
+		await marked;
+		const b = await submitted.promise;
+		expect(b.committed).toBe("placed");
+
+		(await bStarted).release();
+		expect((await b.submission.wait(BG)).status).toBe("done");
+		await pi.conversation.waitForIdle(BG);
+		expect(
+			await tasksOf(pi, [
+				{ run: A, submission: a.submission.id },
+				{ run: B, submission: b.submission.id },
+			]),
+		).toEqual([
+			[A, "pi.generation", "terminal", true],
+			[A, "pi.tool", "terminal", true],
+			[B, "pi.generation", "terminal", false],
+			[B, "pi.tool", "terminal", false],
+			[B, "pi.generation", "terminal", false],
+		]);
+		expect(pi.logged).toEqual([]);
+	});
+
 	test("deletion's settle waits for a held tool task an earlier stop already marked, and answers only once it is terminal", async () => {
 		const pi = await openPi();
 		pi.faux.setResponses([call("stubborn")]);
