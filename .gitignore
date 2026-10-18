@@ -6,9 +6,6 @@
 .cloudflare/
 .wrangler/
 
-# Upstream reference checkout (has its own repository)
-/deepseek-harness/
-
 # Node
 node_modules/
 .pnpm-store/
@@ -25,11 +22,8 @@ dist/
 # Local research notes
 .agents/research/
 
-# Left in a checkout by the Django stack, which only the demo branch keeps: its local files and caches, and
-# the operator's private notes (real identifiers), so none is committed from main by accident
-/data/
-/backend/
-/worker/
+# Left in a checkout by the Django stack, which only the demo branch keeps: its caches, and the operator's
+# private notes (real identifiers), so none is committed from main by accident
 /deploy/demo/private/
 __pycache__/
 .venv/
