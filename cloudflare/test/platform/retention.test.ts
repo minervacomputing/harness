@@ -8,6 +8,7 @@
 
 import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { type ConversationId, defineTask } from "@earendil-works/pi-durable";
 import type { StartRun } from "@minerva/contract/internal";
 import { SignJWT } from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
@@ -457,6 +458,29 @@ async function settledAfterReset(start: StartRun): Promise<void> {
 
 const steps = async (start: StartRun) => (await objectOf(start).faultFired()).filter((entry) => entry.point === "retain:step").map((entry) => entry.detail);
 
+const BG = Object.freeze({ abortSignal: undefined, value: () => undefined, toString: () => "[Context retention test]" }) as never;
+
+/** A task of a kind the Conversation registers no definition for: pi keeps it pending until an `abortTask` ends it as orphaned. */
+const BLOCKED = defineTask<Record<string, never>, { phase: "run" }, null>({
+	name: "test.blocked",
+	version: 1,
+	initial: () => ({ phase: "run" }),
+	phases: { async run() {} },
+	async abort() {},
+});
+
+/** A live task pi holds in the session, as pi's own work left after the run's end would be; its id. */
+function liveTask(start: StartRun, session: number): Promise<number> {
+	return runInDurableObject(objectOf(start), async (instance) => {
+		const conversation = await (await instance.harness.pi()).conversation(session as ConversationId, BG);
+		if (conversation === undefined) throw new Error(`pi has no session ${session}.`);
+		return conversation.commit((tx) => tx.createTask(BLOCKED, {}, { ownership: { kind: "conversation" } }), BG);
+	});
+}
+
+const taskStates = (start: StartRun, ids: readonly number[]) =>
+	Promise.all(ids.map(async (id) => (await sql<{ status: string; outcome: string | null }>(start, "SELECT status, json_extract(record, '$.state.outcome.status') AS outcome FROM pi_tasks WHERE id = ?", id))[0]));
+
 describe("runs' retention", () => {
 	test("a run 30 days after its end keeps its row, answer and tombstone, and nothing else of its own", async () => {
 		const start = await notes(scripted({ tools: [{ name: "notes_list_notes", arguments: { folder: "inbox" } }] }, { tools: [{ name: "notes_save_note", arguments: { folder: "inbox", title: "Kept" } }] }, { tools: [{ name: "run_script", arguments: { code: "return 1" } }] }, { text: "Done." }));
@@ -613,12 +637,13 @@ describe("runs' retention", () => {
 		const free = await next(first);
 		await ran(free);
 		const sessions: string[] = [];
+		const live: number[] = [];
 		for (const start of blocked) {
 			const { session } = await runRow(start);
 			sessions.push(session as string);
-			// A task of the session pi has not finished, as pi's own work left after the run's end would be.
-			await sql(start, "UPDATE pi_tasks SET status = 'waiting' WHERE conversation_id = ?", Number(session));
+			live.push(await liveTask(start, Number(session)));
 		}
+		expect(await taskStates(first, live)).toEqual(live.map(() => ({ status: "pending", outcome: null })));
 		await ageRuns(first, RETENTION.runMs);
 		await retain(first);
 
@@ -628,6 +653,11 @@ describe("runs' retention", () => {
 			expect([(await runRow(start)).prune, await records(start)]).toEqual(["pi", NO_RECORDS]);
 			expect((await piRows(start, sessions[index] as string))[0]).toBe(1);
 		}
+		const ended = await until(
+			() => taskStates(first, live),
+			(states) => states.every((state) => state?.status === "terminal"),
+		);
+		expect(ended).toEqual(live.map(() => ({ status: "terminal", outcome: "orphaned" })));
 	});
 
 	test("a run of 10,000 events takes as many steps as a bound of the step's rows needs", async () => {
