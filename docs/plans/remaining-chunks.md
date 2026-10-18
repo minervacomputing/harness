@@ -561,7 +561,7 @@ The design is the app's `docs/plans/search.md` (`a764be2`, reviewed by opencode)
 ## Close the program
 
 - [ ] Every box above is checked with its evidence. Open on 2026-10-18: the owner's staging checks from chunks 3 and 10 to 12 (Arm the program); the backups' plan name; 15b's live box, whose first purging pass is due from 2026-10-22; 15c's key, made when production is set up for the current app; and the boxes that wait on those two, the order of chunk 15 and of the gate, and the gate's first box.
-- [ ] product-and-engine.md's status line and ARCHITECTURE.md describe the engine as built. Brought up to date on 2026-10-18; read again when the program closes.
+- [ ] product-and-engine.md's status line and ARCHITECTURE.md describe the engine as built. Brought up to date on 2026-10-18 (`995d749`); read again when the program closes.
 
 ## Appendix A. Prototype evidence
 
