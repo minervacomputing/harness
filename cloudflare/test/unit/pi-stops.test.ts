@@ -158,7 +158,7 @@ async function tasksOf(pi: Pi, runs: { run: string; submission: number }[]) {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** What a section does once its bound passed while it waited: logged, so a test that expects none finds it. */
-const expired = (pi: Pi) => async (bound: number) => void pi.logged.push(`the bound of ${bound} ms passed`);
+const expired = (pi: Pi, section = "the section") => async (bound: number) => void pi.logged.push(`${section}'s bound of ${bound} ms passed`);
 
 /** The end signal of a run that never ends. */
 const noEnd = () => new AbortController().signal;
@@ -397,7 +397,29 @@ describe("the starts' lane, on one session two runs share", () => {
 		}, expired(pi));
 		expect(waited).toBe(false);
 		await sleep(400);
-		expect(pi.logged).toEqual(["the bound of 300 ms passed"]);
+		expect(pi.logged).toEqual(["the section's bound of 300 ms passed"]);
 		held.release();
+	});
+
+	test("a section held past its bound once its wait answered resets nothing, and one queued behind it resets once from the lane and never runs", async () => {
+		const pi = await openPi(300);
+		const answered = Promise.withResolvers<boolean>();
+		const release = Promise.withResolvers<void>();
+		const held = pi.stops.section(async (section) => {
+			answered.resolve(await section.settle(pi.harness, noEnd()));
+			await release.promise;
+		}, expired(pi, "the held section"));
+		expect(await answered.promise).toBe(true);
+		let ran = false;
+		const queued = pi.stops.section(async () => {
+			ran = true;
+		}, expired(pi, "the queued section"));
+		await expect.poll(() => pi.logged, { timeout: 2_000 }).toEqual(["the queued section's bound of 300 ms passed"]);
+
+		release.resolve();
+		await held;
+		await queued;
+		expect(ran).toBe(false);
+		expect(pi.logged).toEqual(["the queued section's bound of 300 ms passed"]);
 	});
 });
