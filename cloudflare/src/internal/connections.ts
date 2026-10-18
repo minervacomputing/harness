@@ -172,8 +172,9 @@ async function newNames(
 }
 
 /**
- * The first resource the changes allow (not `*`, not the account) whose tenant is not one of `tenants`, as the editor's
- * message, asking the provider through the connector's tenancy; null when there is none. A grant already stored is
+ * The answer to the first resource the changes allow (not `*`, not the account) whose tenant is not one of `tenants`,
+ * asking the provider through the connector's tenancy: `invalid` when the connector cannot place it, `TENANT_NOT_ALLOWED`,
+ * which Laravel words for people, when the policy does not allow it; null when there is none. A grant already stored is
  * checked too: an edit that keeps it allows it again.
  */
 async function outsideTenants(
@@ -183,7 +184,7 @@ async function outsideTenants(
 	changes: readonly GrantChange[],
 	tenants: readonly string[],
 	nameOf: (kind: string, id: string) => string,
-): Promise<string | null> {
+): Promise<CheckGrantEditResult | null> {
 	const tenancy = connector.tenancy;
 	if (tenancy.kind !== "resource") return null;
 	const wanted = new Map<string, string[]>();
@@ -197,8 +198,8 @@ async function outsideTenants(
 			const found = await tenancy.tenants(client, kind, ids);
 			for (const id of ids) {
 				const tenant = Object.hasOwn(found, id) ? found[id] : undefined;
-				if (typeof tenant !== "string") return `Choose a ${(kindOf(connector, kind)?.label ?? kind).toLowerCase()} that the connected account can see.`;
-				if (!tenants.includes(tenant)) return `Your organization does not allow the ${tenancy.label} of ${nameOf(kind, id)}.`;
+				if (typeof tenant !== "string") return { outcome: "invalid", message: `Choose a ${(kindOf(connector, kind)?.label ?? kind).toLowerCase()} that the connected account can see.` };
+				if (!tenants.includes(tenant)) return { outcome: "refused", code: "TENANT_NOT_ALLOWED", message: `Your organization does not allow the ${tenancy.label} of ${nameOf(kind, id)}.` };
 			}
 		}
 		return null;
@@ -210,8 +211,8 @@ async function outsideTenants(
  * answers the layer's grants after it: every other grant kept in place and order, this connection's allow grants after
  * them, sorted. Resources and accounts newly allowed are named by the provider, so only what the account can see is
  * allowed; `*`, what is already allowed, and removals never call it. Under a connection policy, an edit that allows
- * anything on a connection it does not admit is refused, and one allowing a resource of a tenant it does not allow is
- * invalid; removals are always valid.
+ * anything on a connection it does not admit is refused (`CONNECTION_NOT_ALLOWED`), as is one allowing a resource of a
+ * tenant it does not allow (`TENANT_NOT_ALLOWED`); removals are always valid.
  */
 export async function checkGrantEdit(env: Env, command: CheckGrantEdit): Promise<CheckGrantEditResult> {
 	const connector = await connectorFor(command);
@@ -245,7 +246,7 @@ export async function checkGrantEdit(env: Env, command: CheckGrantEdit): Promise
 		if (admitted.admitted && admitted.tenants !== null) {
 			const nameOf = (kind: string, id: string) => named.names.get(resourceKey(kind, id)) || stored.get(resourceKey(kind, id)) || id;
 			const outside = await outsideTenants(env, command, connector, changes, admitted.tenants, nameOf);
-			if (outside !== null) return { outcome: "invalid", message: outside };
+			if (outside !== null) return outside;
 		}
 		const plan = planGrantChanges(connector, current, changes, named.names);
 		const upserted = new Map(plan.upserts.map((row) => [resourceKey(row.kind, row.resourceId), row.resourceName]));

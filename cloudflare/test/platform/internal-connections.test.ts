@@ -402,21 +402,23 @@ describe("under a connection policy", () => {
 		expect(seen).toHaveLength(1);
 	});
 
-	test("checkGrantEdit refuses another owner's repository, also one transferred since it was allowed; removals stay valid", async () => {
+	test("checkGrantEdit refuses another owner's repository as TENANT_NOT_ALLOWED, also one transferred since it was allowed; removals stay valid", async () => {
 		const { seen, transfer } = fakeOwners();
 		const connection = uuid7();
 		expect(await edit(connection, [], [{ kind: "repository", id: "101", actions: ["read"] }], owners("900"))).toMatchObject({ outcome: "valid" });
 		expect(await edit(connection, [], [{ kind: "repository", id: "103", actions: ["read"] }], owners("900"))).toEqual({
-			outcome: "invalid",
+			outcome: "refused",
+			code: "TENANT_NOT_ALLOWED",
 			message: "Your organization does not allow the GitHub owner of partner/tool.",
 		});
 		// Every repository: the calls it covers are checked.
 		expect(await edit(connection, [], [{ kind: "repository", id: "*", actions: ["read"] }], owners("900"))).toMatchObject({ outcome: "valid" });
-		// example transfers its repository to partner: an edit that keeps the grant allows it again, so it is invalid.
+		// example transfers its repository to partner: an edit that keeps the grant allows it again, so it is refused.
 		transfer(101, { id: 777, login: "partner" });
 		const stored: Grant = { connection, kind: "repository", resource: "101", name: "example/app (private)", actions: ["read"], effect: "allow" };
 		expect(await edit(connection, [stored], [{ kind: "repository", id: "101", actions: ["create", "read"] }], owners("900"))).toEqual({
-			outcome: "invalid",
+			outcome: "refused",
+			code: "TENANT_NOT_ALLOWED",
 			message: "Your organization does not allow the GitHub owner of example/app (private).",
 		});
 		seen.length = 0;

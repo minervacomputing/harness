@@ -175,8 +175,9 @@ export const DescribeAccountResult = z.discriminatedUnion('outcome', [
 export type DescribeAccountResult = z.infer<typeof DescribeAccountResult>
 
 // A settings call's refusals: `CREDENTIAL_REFUSED` (the provider refused the credential, so Laravel marks the connection),
-// `PROVIDER_FAILED`, for what the user sent, `INVALID_RESOURCE_ID` and `INVALID_CURSOR`, and `CONNECTION_NOT_ALLOWED` (the
-// organization's policy does not offer the connector, or does not allow the connection's tenant).
+// `PROVIDER_FAILED`, for what the user sent, `INVALID_RESOURCE_ID` and `INVALID_CURSOR`, `CONNECTION_NOT_ALLOWED` (the
+// organization's policy does not offer the connector, or does not allow the connection's tenant), and `checkGrantEdit`'s
+// `TENANT_NOT_ALLOWED` (the policy does not allow the tenant of a resource the edit allows).
 
 const ResourcePage = z.object({
   outcome: z.literal('listed'),
