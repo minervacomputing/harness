@@ -160,7 +160,7 @@ export interface ConversationPorts {
 	 * `model:settled` around a model call's record and settlement; `settle:sealed` and `settle:written` around the write of
 	 * a run's `run.settled`; `retain:step` after each step of a retention pass, a purge's included, and `retain:pass` at a
 	 * pass's start and end; `loop:created` between a
-	 * run's pi session's creation and its claim.
+	 * run's pi session's creation and its claim; `pi:stop` at a run's end, before it marks pi's orphaned work.
 	 */
 	point?(context: PortsContext, name: string, detail?: string): Promise<void>;
 	/**

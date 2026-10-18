@@ -45,24 +45,30 @@ export function belongs(op: Operation, task: Pick<TaskRecord<unknown, unknown, u
 	return op.submission !== null && task.conversationId === op.session && !task.background && task.id > op.submission.id;
 }
 
+/** The run's operation, read through the factory's storage; null for a run that has claimed no session. */
+export async function operationOf(storage: Pick<SqliteStorage, "submissionByRequest">, run: Pick<RunRow, "id" | "session">): Promise<Operation | null> {
+	if (run.session === null) return null;
+	const session = Number(run.session) as ConversationId;
+	const submission = await storage.submissionByRequest(session, `run:${run.id}`, BG);
+	return { session, submission: submission === undefined ? null : { id: submission.id, status: submission.status } };
+}
+
 /**
  * What pi holds for a run, read through the factory's storage (the gate) or after open. The run's submission decides
  * first, so pi's tasks are read only for a settled one: the newest live non-background task of each live status. When
  * its id is not above the submission's, no task of that status is the run's, so one task per status is exact.
  */
 export async function piWork(storage: SqliteStorage, run: Pick<RunRow, "id" | "session">): Promise<PiWork> {
-	if (run.session === null) return "not_submitted";
-	const session = Number(run.session) as ConversationId;
-	const submission = await storage.submissionByRequest(session, `run:${run.id}`, BG);
+	const op = await operationOf(storage, run);
+	const submitted = op?.submission?.status;
 	let own = 0;
-	if (submission?.status === "done" || submission?.status === "unanswered") {
-		const op: Operation = { session, submission: { id: submission.id, status: submission.status } };
+	if (op !== null && (submitted === "done" || submitted === "unanswered")) {
 		for (const status of LIVE_TASKS) {
-			const { items } = await storage.scanTasks({ conversationId: session, status, background: false, order: "descending" }, 1, undefined, BG);
+			const { items } = await storage.scanTasks({ conversationId: op.session, status, background: false, order: "descending" }, 1, undefined, BG);
 			if (items.some((task) => belongs(op, task))) own += 1;
 		}
 	}
-	return classifyWork(submission?.status, own);
+	return classifyWork(submitted, own);
 }
 
 /** A tool execution as pi names it: the session it runs in and its task (`api.conversationId`, `api.taskId`). */

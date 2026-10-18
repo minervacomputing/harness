@@ -1104,6 +1104,11 @@ describe("the run's records", () => {
 		const { start, stub, fakes } = await started(WAIT, waiting(hold.promise));
 		await until(() => fakes.invocations.length, (n) => n === 1);
 		expect(await commands.deleteConversation({ scope: start.scope, conversation: start.conversation })).toEqual({ outcome: "deleted" });
+		const tasks = await runInDurableObject(stub, (_instance, state) => state.storage.sql.exec("SELECT status, abort_requested FROM pi_tasks ORDER BY id").toArray());
+		expect(tasks).toEqual([
+			{ status: "terminal", abort_requested: 1 },
+			{ status: "terminal", abort_requested: 1 },
+		]);
 		const stored = await row(stub, start.run);
 		expect([stored.status, stored.error_code, stored.revoked]).toEqual(["cancelled", "conversation_deleted", 1]);
 		const entered = (await stub.faultView(start.run, 0, 0)).internals.entered;
@@ -1112,8 +1117,6 @@ describe("the run's records", () => {
 		expect((await eventsOf(stub, start.run)).filter((event) => event.type === "tool_call")).toEqual([]);
 		expect((await stub.faultView(start.run, 0, 0)).internals.entered).toEqual(entered);
 		expect(entered).toEqual({ model: 1, tool: 1 });
-		const live = await runInDurableObject(stub, (_instance, state) => state.storage.sql.exec("SELECT count(*) AS n FROM pi_tasks WHERE status <> 'terminal'").one().n);
-		expect(live).toBe(0);
 		expect(fakes.invocations).toHaveLength(1);
 		expect(await stub.about()).toMatchObject({ kind: "conversation" });
 	});

@@ -18,6 +18,7 @@
 // - `retain:pass`: at a retention pass's start and end (detail: `start` or `end`; no end for a pass that destroyed the object),
 //   whose notes time a pass on the object's clock (the perf probe);
 // - `loop:created`: a run's pi session created, before the run claims it (detail: the session's id);
+// - `pi:stop`: a run's end, before it marks pi's orphaned work (detail: the run's id); no other stop reaches it;
 // - `start:copy`: before a start copies its attachments into the folder, ahead of its transaction;
 // - `gate:decided`, `gate:committed`: in the attempt gate, once it decided to end or restart a run, before
 //   its transaction, and after the transaction and its sync (detail: the decision);

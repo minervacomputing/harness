@@ -78,7 +78,8 @@ import { FactDelivery } from "./delivery.ts";
 import { BACKLOG_MESSAGE, FACT_DELIVERY } from "./facts.ts";
 import { laravelCredentials } from "./laravel-runs.ts";
 import { destroyRunSandbox, LocalRun } from "./local-run.ts";
-import { type Admission, admitModel, admitTool, PI_SETTINGS, piWork, type ToolAdmission } from "./pi-work.ts";
+import { PiStops } from "./pi-stops.ts";
+import { type Admission, admitModel, admitTool, operationOf, PI_SETTINGS, piWork, type ToolAdmission } from "./pi-work.ts";
 import { type ConversationPorts, type FolderPort, PORTS, type PortsContext, runStatePort, type WriteLedger } from "./ports.ts";
 import { ToolQueue, untilAborted } from "./queue.ts";
 import { RETAIN_JOB, Retention } from "./retention.ts";
@@ -123,7 +124,7 @@ interface ConversationApi {
 	/**
 	 * Laravel's `deleteConversation`, once the Worker has marked it in the recovery index: the conversation marked deleted, so
 	 * its starts and reads are refused, and its active run cancelled, in one write outside pi's transactions; then its streams
-	 * closed, pi stopped and its sandbox and scripts destroyed. Its folder and facts stay: the facts are still delivered, and
+	 * closed, pi's work ended and its sandbox and scripts destroyed. Its folder and facts stay: the facts are still delivered, and
 	 * the `retain` job purges the object 7 days later, once Laravel holds every fact (retention.ts). Binds a conversation that
 	 * no command named before, already deleted.
 	 */
@@ -201,6 +202,14 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	readonly #saving = new Set<RunId>();
 	/** Local calls waiting for their run's container to be ready ("Preparing files"), by run. */
 	readonly #waiting = new Map<RunId, number>();
+	/** pi's stops (pi-stops.ts), against the acting run's operation as the factory's storage holds it. */
+	readonly #stops = new PiStops({
+		operation: async () => {
+			const run = this.#store.activeRun();
+			return run !== null && ACTING.has(run.status) && this.#piStorage !== null ? operationOf(this.#piStorage, run) : null;
+		},
+		log: (message, error) => this.#log(message, error),
+	});
 
 	readonly harness = new PiHarness({
 		harness: ({ storage, context }) => this.#openPi(storage, context),
@@ -245,7 +254,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				else this.#push({ id: RETAIN_JOB, fn: RETAIN_JOB, time });
 			},
 			log: (message, error) => this.#log(message, error, true),
-			abort: (session) => this.#defer(() => this.#abortSession(session)),
+			abort: (session) => this.#defer(async () => this.#stops.mark(await this.harness.pi(), session)),
 			stepped: (step) => this.#point("retain:step", step),
 			edge: (at) => this.#point("retain:pass", at),
 			sync: () => this.ctx.storage.sync(),
@@ -370,7 +379,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	async deleteInternal(command: DeleteConversation, workspace: WorkspaceRef): Promise<InternalAnswer<DeleteConversationResult>> {
 		if (!(await this.#bindInternal(command, workspace, true))) return SCOPE_MISMATCH;
 		await this.lifecycle.start();
-		const latest = await this.#store.outside(() => {
+		await this.#store.outside(() => {
 			const active = this.#store.activeRun();
 			this.#store.write(() => {
 				// A start in flight finds the conversation deleted in its final transaction; one whose try was lost is answered
@@ -381,12 +390,11 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 					this.#store.finish(active.id, endFor("conversation_deleted"));
 				}
 			});
-			return this.#store.runs().at(-1) ?? null;
 		});
 		this.#stream.closeAll();
-		// Every step again on each try, and a failure fails the deletion, which Laravel sends again until it is answered. Only the
-		// latest run can still have pi's work: each earlier one ended before the next started.
-		if (latest) await this.#stopPi(latest.id);
+		// Every step again on each try, and a failure fails the deletion, which Laravel sends again until it is answered. No run
+		// acts from here, so all of pi's live work is orphaned, and the deletion waits until it has ended.
+		await this.#stops.settle(await this.harness.pi());
 		await this.#cleanUp();
 		return { ok: true, value: { outcome: "deleted" } };
 	}
@@ -642,14 +650,14 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			this.#log("pi's session failed", end.error);
 			this.#reset("pi's session failed after a storage error.", true);
 		});
-		await this.#stopEnded(pi, context);
+		await this.#stopEnded(pi);
 		return pi;
 	}
 
 	/**
 	 * First in the factory, once per instance: a restart is pi opening in a new instance while a `provisioning` or
 	 * `running` run has unsettled pi work. A conversation with no organization (one the Workspace made) runs nothing: its
-	 * active run ends `cancelled` here, before pi opens, and `#stopEnded` aborts what pi held for it. The decision is one
+	 * active run ends `cancelled` here, before pi opens, and `#stopEnded` marks what pi held for it. The decision is one
 	 * transaction, with the dead instance's dispatched writes marked uncertain in it, then synced before pi opens, so a
 	 * crash right after cannot lose the count. Nothing here waits on anything outside this object.
 	 */
@@ -680,25 +688,14 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * Before PiHarness resumes pi: every live task of a session whose run is not active (the gate's ends,
-	 * cancels and revocations while the object was away, orphaned sessions), background compactions
-	 * included, is marked with `abortTask`, and queued inputs are withdrawn with `abortSubmission`, all
-	 * started in one synchronous stretch, so the paused scheduler reserves nothing meanwhile. The abort
+	 * Before PiHarness resumes pi: every live task the acting run's operation does not own (the gate's ends, cancels and
+	 * revocations while the object was away, orphaned sessions, background tasks) is marked, in one synchronous stretch, so
+	 * the paused scheduler reserves nothing meanwhile; nothing is withdrawn. With no invocation to join yet, each mark ends
+	 * once committed. A failed one is logged and never fails the factory, which every later event would run again. The abort
 	 * handlers run once pi resumes.
 	 */
-	async #stopEnded(pi: Harness, context: Parameters<typeof Harness.open>[2]): Promise<void> {
-		const inspection = await pi.inspect(context);
-		const sessions = this.#store.sessions();
-		const ended = new Set<number>();
-		for (const task of inspection.tasks) if (sessions.get(String(task.record.conversationId)) !== true) ended.add(task.record.conversationId);
-		for (const submission of inspection.submissions) if (sessions.get(String(submission.conversationId)) !== true) ended.add(submission.conversationId);
-		if (!ended.size) return;
-		const marks: Promise<unknown>[] = [];
-		for (const task of inspection.tasks) if (ended.has(task.record.conversationId)) marks.push(pi.abortTask(task.record.id, context));
-		for (const submission of inspection.submissions) {
-			if (ended.has(submission.conversationId) && submission.status === "queued") marks.push(pi.abortSubmission(submission.id, context, submission.conversationId));
-		}
-		await Promise.all(marks);
+	async #stopEnded(pi: Harness): Promise<void> {
+		await (await this.#stops.mark(pi)).marked;
 	}
 
 	/** After the factory and pi's resume: the attempt runs, a lost submit is sent again, a settled run is reconciled. */
@@ -865,13 +862,13 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		await this.#complete(fence, answerOf(entry));
 	}
 
-	/** pi settled the run's submission while the object was away: reconcile from pi's record, stop what is left. */
+	/** pi settled the run's submission while the object was away: reconcile from pi's record, then mark what is orphaned. */
 	async #reconcile(runId: RunId): Promise<void> {
 		const run = this.#store.run(runId);
 		if (!run || run.session === null || !this.#piStorage) return;
 		const submission = await this.#piStorage.submissionByRequest(Number(run.session) as PiConversationId, `run:${runId}`, BG);
 		if (submission) await this.#settle(runId, submission, new Map());
-		await this.#stopPi(runId);
+		await this.#stops.mark(await this.harness.pi());
 	}
 
 	async #entry(run: RunRow, id: number): Promise<EntryRecord | undefined> {
@@ -913,7 +910,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		);
 	}
 
-	/** After a run ended, outside its transaction: its calls cut, its stream ended, pi stopped, its container destroyed. */
+	/** After a run ended, outside its transaction: its calls cut, its stream ended, pi's orphaned work marked, its container destroyed. */
 	#afterFinish(runId: RunId): void {
 		this.#controllers.get(runId)?.abort(new Error(RUN_ENDED_MESSAGE));
 		this.#controllers.delete(runId);
@@ -932,7 +929,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		this.#defer(async () => {
 			await this.lifecycle.jobs.cancel(`watch:${runId}`);
 			await this.lifecycle.jobs.cancel(`deadline:${runId}`);
-			await this.#stopPi(runId);
+			await this.#point("pi:stop", runId);
+			await this.#stops.mark(await this.harness.pi());
 		});
 		// Its container, whichever attempt or instance started it (a later run's is never touched); a destroy
 		// that fails, or that a reset of this object lost, is done by the `sandbox` job or the next start.
@@ -944,22 +942,6 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				this.#push({ id: "sandbox", fn: "sandbox", time: Date.now() + SANDBOX_RETRY_MS });
 			}
 		});
-	}
-
-	/**
-	 * Aborts everything pi still runs for the run's session, background work included. Not once its prune started: retention
-	 * aborts what it finds live, and the session's rows may be partly deleted.
-	 */
-	async #stopPi(runId: RunId): Promise<void> {
-		const run = this.#store.run(runId);
-		if (!run || run.session === null || run.prune !== null) return;
-		await this.#abortSession(Number(run.session));
-	}
-
-	async #abortSession(session: number): Promise<void> {
-		const pi = await this.harness.pi();
-		const conversation = await pi.conversation(session as PiConversationId, BG);
-		await conversation?.abort(BG, { background: true });
 	}
 
 	// Tools, the executor and the model.

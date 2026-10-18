@@ -304,6 +304,68 @@ describe("authority and revocation", () => {
 			warned.mockRestore();
 		}
 	});
+
+	test("a cancelled run's stop, held until the next run's read is recorded, marks nothing of the next run's", async () => {
+		const w = await world({ faults: [{ point: "pi:stop", mode: "hold" }], delays: { "GET /folders/inbox/notes": 1500 } });
+		const a = await post(w, [LIST_INBOX, { text: "Done." }]);
+		await until(() => provider(w), (state) => reads(state.requests) === 1);
+		expect(await cancelOf(w, a)).toEqual({ state: "cancelled" });
+		await reached(() => w.stub.faultFired(), "pi:stop");
+		const b = await post(w, [LIST_INBOX, { text: "Done." }]);
+		await until(
+			async () => toolCalls(await eventsOf(w, b)),
+			(calls) => calls.length === 1,
+		);
+		expect((await w.stub.faultFired()).map((entry) => [entry.point, entry.mode, entry.detail])).toEqual([["pi:stop", "hold", a]]);
+		await w.stub.faultRelease("pi:stop");
+		expect((await settled(w, b)).status).toBe("completed");
+		expect(toolCalls(await eventsOf(w, b))).toEqual([expect.objectContaining({ tool: LIST, decision: "allowed" })]);
+		const tasks = await until(
+			async () => (await w.stub.faultRun(b)).piTasks,
+			(all) => all.every((task) => task.status === "terminal"),
+		);
+		expect(tasks.map(({ kind, abortRequested }) => [kind, abortRequested])).toEqual([
+			["pi.generation", false],
+			["pi.tool", false],
+			["pi.generation", false],
+		]);
+	});
+
+	test("a reset at a cancelled run's stop: the next instance marks the run's work before pi resumes, and pi runs none of it", async () => {
+		const w = await world({
+			faults: [
+				{ point: "tool:before", mode: "hold", tool: LIST },
+				{ point: "pi:stop", mode: "abort" },
+			],
+		});
+		const a = await post(w, [LIST_INBOX, { text: "Done." }]);
+		await reached(() => w.stub.faultFired(), "tool:before");
+		expect((await w.stub.faultRun(a)).entered).toEqual({ model: 1, tool: 1 });
+		await until(
+			() => cancelOf(w, a),
+			(answer) => answer.state === "cancelled",
+		);
+		await reached(() => w.stub.faultFired(), "pi:stop");
+		const tasks = await until(
+			async () => {
+				await wake(w);
+				return (await w.stub.faultRun(a)).piTasks;
+			},
+			(all) => all.every((task) => task.status === "terminal"),
+		);
+		expect(tasks.map(({ kind, abortRequested }) => [kind, abortRequested])).toEqual([
+			["pi.generation", true],
+			["pi.tool", true],
+		]);
+		await sleep(300);
+		expect((await w.stub.faultRun(a)).entered).toEqual({ model: 1, tool: 1 });
+		expect((await w.stub.faultFired()).map((entry) => [entry.point, entry.mode, entry.detail])).toEqual([
+			["tool:before", "hold", LIST],
+			["pi:stop", "abort", a],
+		]);
+		expect((await provider(w)).requests).toEqual([]);
+		expect(await runOf(w, a)).toMatchObject({ status: "cancelled", errorMessage: STOPPED_PERMISSIONS });
+	});
 });
 
 describe("starts the store refuses", () => {

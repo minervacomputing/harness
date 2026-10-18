@@ -61,8 +61,8 @@ export interface RetentionHost {
 	schedule(time: EpochMs | null): void;
 	log(message: string, error: unknown): void;
 	/**
-	 * Starts aborting what pi still runs for the session, background work included, without waiting for it: the pass goes on
-	 * within its budget, so a slow abort never keeps it from the runs behind the session.
+	 * Starts marking every live task of the session for abort, background ones included, without waiting for them: the pass
+	 * goes on within its budget, so a slow abort never keeps it from the runs behind the session.
 	 */
 	abort(session: number): void;
 	/** After each committed step (detail: the step); the test build's fault point `retain:step`. */
