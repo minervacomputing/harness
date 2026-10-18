@@ -131,7 +131,8 @@ describe.concurrent("retention with periods of a minute", () => {
 		expect([await objects(w), (await storage(w)).tables.runs?.rows], "kept through its window").toEqual([files, 1]);
 		await until(() => objects(w), (count) => count === 0, "the conversation's files are still in R2");
 		purged(w);
-		expect(Date.now() - deletedAt).toBeGreaterThanOrEqual(60_000);
+		// From before the call: the Worker stamps the deletion somewhere within it, so the window ends at least a minute after `deleting`.
+		expect(Date.now() - deleting).toBeGreaterThanOrEqual(60_000);
 
 		// Read now, the object is made again, and the read opens pi: its schema's rows and pi's root conversation, empty, are all
 		// it holds, with no alarm.
