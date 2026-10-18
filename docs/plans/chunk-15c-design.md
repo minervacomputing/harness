@@ -378,3 +378,61 @@ Choices the design left open, as built:
 - Voiding also deletes the sign-in providers' links, records `user.credentials_changed` with `change: voided`, and computes its data rather than copying the object's.
 - A workspace's or an organization's deletion applied again is backdated to the restriction's time, the conversations it marked included, so retention keeps the original clock.
 - The earliest-point rules are checked when a recovery starts, not when one resumes; no probe in the log refuses.
+
+## The rehearsal on staging, 2026-10-18
+
+The app at `25cd768`, then `34ccb98`; the engine `minerva-cf-staging` at `e416627`. The owner set the variables, made the restores and attached them, and ran the three deploys. The rehearsal used its own accounts in a team organization of its own, so the owner's account and organization were not touched: an owner, a member and a test user with two factors, a connection, and conversations started with `minerva:turn`. The changes after the point were made in `tinker` through the actions a request calls (`Members::remove`, `AdminActions::removeTwoFactor`, `Revocations::removeConnection`, `Deletions::delete`). The held-back deletion marked its conversation and tombstone and wrote its audit event, with `tried_at` a day ahead so the sweep would not send it.
+
+**The point**, P = 05:31:00Z. Before it, three conversations with one turn each, settled. After it: two turns in C1, which existed at P (05:31:45, 05:31:55); the member's removal, the test user's two factors removed by the instance admin, and the connection's revocation, each with its restriction written (05:32:08 to 05:32:09); C2 deleted, acknowledged at once; C3 deleted and held back (05:32:10); and a new conversation, C4, with a turn (05:32:19).
+
+**The steps, with their times (UTC):**
+
+| Step | Time | What happened |
+|---|---|---|
+| 2. Close admission | 05:32:50 | No stop was in force. Nothing to cancel |
+| 3. Fence and drain | 05:36:17 to 05:40:00 | The deploy with `MINERVA_RESTORING=true` took 1 min 40 s: every request but `/up` answered 503. The drain sent C3's deletion, and the engine acknowledged it. Fence 05:40:00.108Z |
+| 4. Restore | to 05:53:56 | The restore was ready in seconds and already kept 7 days. The attach, `DB_HOST` and the deploy took 1 min 32 s. Most of the 14 minutes was handing the steps over. The restored database held exactly P: the member, two factors and connection back, C2 and C3 live, no turn after P |
+| 5. Close admission again | 05:54:30 | |
+| 6. Reconcile | 05:54:42 to 06:12:58 | The first pass (6 s): 3 restrictions applied, 4 users signed out, 5 connections marked, 50 conversations listed, C2 and C3 deleted again, C4 lost, C1 and C4 replayed. It then stopped on `minerva:usage`, which failed 33 staging runs from 2026-10-14 to 16, before settlements. Fixed in `34ccb98` and deployed (06:12:06). The second pass (4 s) found everything held and completed, with `database.restored` once |
+| 7. Serve | 06:15:56 to 06:17:32 | |
+| 8. Reopen | 06:24:40 | |
+
+**What held**, checked on the restored database before serving:
+- The member stays removed.
+- The test user's two factors and recovery codes are gone, and its password was replaced, so it signs in only after a reset.
+- The connection stays revoked.
+- C2 and C3 stay deleted, C3 through the drain.
+- C4 has no conversation or message. It has a tombstone with its organization and workspace, and its usage is recorded once with a null user.
+- C1's two turns are in `lost_runs`, and their usage and settlement are recorded once each, with their user.
+- No run was created after step 2, and no fact applied for one.
+- Every session ended.
+- `minerva:usage` checks every rehearsal run `ok`.
+
+After reopening, a turn in C1 completed at 700 input tokens, against 703 and 726 for the turns after P. So it ran on the transcript as restored.
+
+**The recovery time**, step 2 to step 8, was 51 min 50 s:
+- 18 min 10 s for the fix;
+- about 25 min handing steps to the owner and waiting between them;
+- about 7 min of machine time: three deploys of about 1.5 min each, and commands of seconds.
+
+Without the fix and the handovers, a recovery of this size takes about 10 minutes, almost all of it deploys. That is well under a day, so owner question 3's default of 6 days stands.
+
+The restriction write's time was measured on staging with unit 2 (On staging, 2026-10-17): 223 to 339 ms a write, median 295 ms.
+
+**Found by the rehearsal:**
+
+1. **`minerva:usage` failed runs from before settlements (fixed).** The recovery checks usage since a week before P. On staging, that reaches back before the engine wrote settlements, though the command's `--since` is documented as no earlier than that. `Accounting::owed` already skips a run never given an allowance, which ran on an engine from before budgets. `minerva:usage` now reads a missing settlement the same way (`34ccb98`, with a test).
+2. **A second restore came from the original cluster (recorded in the runbook).** Cloud lists a restored cluster with the id of the cluster it came from. `database-restore:create minerva-staging-restored …` resolved the name to that id and rewound the original `minerva-staging` to P2, not the restored cluster in use. The check before step 5 caught it, since the copy held none of the changes made on the restored cluster. Nothing was run on it, and staging went back to the restored cluster. The runbook now checks that the restored database is the one meant, before step 5, and says not to run `minerva:recover` on a wrong one: it would take the engine's conversations that copy does not hold as lost and delete them at the engine. How to restore a restored cluster, and how to delete only the old one, are questions for Laravel Cloud (app `5804621`).
+3. **The fence is kept to the second (set aside).** `restores.point` and `fenced_at` are `timestamp(0)`, so the fence 05:40:00.108Z is kept as 05:40:00. A rounding of under a second moves the earliest point and the restrictions' lookback by that much. Between the fence and serving, nothing writes a restriction, so the lookback misses none.
+
+**The lost old database** was not rehearsed. Its setup was made on the restored cluster, with P2 = 06:29:00Z and C7's deletion held back. But Cloud's restore could rewind only the original cluster (finding 2), so no copy of the restored cluster at P2 could be made. By the owner's reading (2026-10-18), the case is recorded from the code instead. With steps 2 and 3 skipped:
+- the restrictions are applied from the log as above;
+- a deletion the engine acknowledged (C6) is deleted again from the listing;
+- the lost conversation and turns are accounted as above;
+- C7, whose deletion only the old database's outbox held, comes back live with its transcript as of P2, which the runbook's What a restore loses now says.
+
+C7's deletion was then sent and acknowledged (06:51:57), so staging and the engine agree.
+
+**Left for the owner:**
+- delete the original cluster `minerva-staging` and the unused `minerva-staging-restored-2`, once Laravel Cloud says how to delete only those. Staging now runs on `minerva-staging-restored`, with 7 days of history from its creation (05:48:53Z);
+- ask Laravel Cloud how a restored cluster is restored again.
