@@ -235,13 +235,12 @@ function delivered(start: StartRun): Promise<Fact[]> {
 	);
 }
 
-/** Makes a Lifecycle job due now and runs the object's alarm. */
+/** Makes a Lifecycle job due now and sets the object's alarm for now, which the platform runs (retention.test.ts `due`). */
 async function due(stub: Stub, job: string): Promise<void> {
 	await runInDurableObject(stub, async (_instance, state) => {
 		state.storage.sql.exec("UPDATE cf_agents_jobs SET time = 0 WHERE id = ?", job);
 		await state.storage.setAlarm(Date.now());
 	});
-	await runDurableObjectAlarm(stub);
 }
 
 /** Usage and flags straight from the row, for what the run's head does not show. */
@@ -1095,7 +1094,6 @@ describe("the run's records", () => {
 		// The run's own clean-up and its facts' delivery rearm the alarm; let them finish first.
 		await delivered(start);
 		await due(stub, "sweep");
-		// The alarm may already be running on its own when the test asks for it.
 		await until(() => swept, (n) => n === 1);
 	});
 

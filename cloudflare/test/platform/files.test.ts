@@ -5,7 +5,7 @@
 // attachment's copy crashed and sent again, an R2 acknowledgement lost, a copy that lands while its conversation is deleted;
 // and the bytes a conversation keeps, on its runs' `run.finished`.
 
-import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { StartRun } from "@minerva/contract/internal";
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
@@ -111,8 +111,8 @@ function rows<T>(stub: Stub, query: string): Promise<T[]> {
 
 /**
  * Runs the Conversation's folder sweep as if every loose key had waited its hour, with a loose key of its own under the
- * conversation's prefix that it must delete, and waits until it has deleted each once. The alarm set for now can fire on its
- * own before `runDurableObjectAlarm`, which then returns before that sweep ends.
+ * conversation's prefix that it must delete, and waits until it has deleted each once. The platform runs the alarm set for
+ * now (retention.test.ts `due`).
  */
 async function sweepNow(start: StartRun): Promise<void> {
 	const stub = objectOf(start);
@@ -126,7 +126,6 @@ async function sweepNow(start: StartRun): Promise<void> {
 		);
 		await state.storage.setAlarm(Date.now());
 	});
-	await runDurableObjectAlarm(stub);
 	await until(
 		() => rows<{ n: number }>(stub, "SELECT count(*) AS n FROM folder_blobs WHERE state <> 'stored' AND deletions = 0"),
 		([row]) => row?.n === 0,

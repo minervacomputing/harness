@@ -138,7 +138,11 @@ async function age(start: StartRun, ms: number): Promise<void> {
 	await sql(start, "UPDATE fact_acknowledgements SET at = at - ?", ms);
 }
 
-/** Makes the `retain` job due, as if its time had come, and runs the object's alarm. */
+/**
+ * Makes the `retain` job due, as if its time had come, and sets the object's alarm for now, which the platform runs once any
+ * invocation in progress has ended. Not `runDurableObjectAlarm`: it calls the handler at once whenever an alarm is set, the
+ * deadman alarm of an invocation in progress included, and Lifecycle would run a second pass beside that invocation's.
+ */
 async function due(start: StartRun): Promise<void> {
 	await runInDurableObject(objectOf(start), async (_instance, state) => {
 		state.storage.sql.exec(
@@ -148,13 +152,9 @@ async function due(start: StartRun): Promise<void> {
 		);
 		await state.storage.setAlarm(Date.now());
 	});
-	await runDurableObjectAlarm(objectOf(start));
 }
 
-/**
- * Runs a pass of the `retain` job and waits until it is over: the job then has a time of its own, or is gone. The alarm set
- * for now can fire on its own before `runDurableObjectAlarm`, which then returns before the pass ends.
- */
+/** Runs a pass of the `retain` job and waits until it is over: the job then has a time of its own, or is gone. */
 async function retain(start: StartRun): Promise<void> {
 	await due(start);
 	await until(
@@ -516,6 +516,30 @@ describe("runs' retention", () => {
 		const edges = (await objectOf(start).faultFired()).filter((entry) => entry.point === "retain:pass");
 		expect(edges.map((entry) => entry.detail)).toEqual(["start", "end"]);
 		expect(edges[1]?.at).toBeGreaterThanOrEqual(edges[0]?.at ?? Number.POSITIVE_INFINITY);
+	});
+
+	test("the job made due again while a pass runs gets no second pass beside it", async () => {
+		const start = await next(null, [
+			{ point: "retain:pass", mode: "hold" },
+			{ point: "retain:pass", mode: "note", times: 10 },
+		]);
+		await ran(start);
+		await due(start);
+		await until(
+			() => objectOf(start).faultFired(),
+			(log) => log.length > 0,
+		);
+
+		await due(start);
+		await objectOf(start).faultRelease("retain:pass");
+		const fired = await until(
+			() => objectOf(start).faultFired(),
+			(log) => log.some((entry) => entry.detail === "end"),
+		);
+		expect(fired.map((entry) => [entry.point, entry.mode, entry.detail])).toEqual([
+			["retain:pass", "hold", "start"],
+			["retain:pass", "note", "end"],
+		]);
 	});
 
 	test("a run not settled, or with a write still dispatched, is not pruned, and is looked at again a day later", async () => {
