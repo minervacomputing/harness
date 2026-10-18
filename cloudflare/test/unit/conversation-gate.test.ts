@@ -17,9 +17,9 @@ describe("what pi holds for a run", () => {
 		["placed", 0, "in_progress"],
 		["done", 0, "settled"],
 		["unanswered", 0, "settled"],
-		// Live tasks mean work in progress, background ones included, even after the submission settled.
+		// The count is the run's own live tasks (pi-work.ts `belongs`): they keep a settled run in progress, and a run with no submission has none.
 		["done", 1, "in_progress"],
-		[undefined, 2, "in_progress"],
+		[undefined, 2, "not_submitted"],
 	] as const)("submission %s with %i live tasks is %s", (submission, live, work) => {
 		expect(classifyWork(submission, live)).toBe(work);
 	});

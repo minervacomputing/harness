@@ -12,19 +12,21 @@ export const RESTART_MIN_REMAINING_MS = 30_000;
 
 /**
  * What pi holds for a run: no input yet (`not_submitted`), work in progress (its submission queued or
- * placed, or live tasks in its session, background ones included), or a settled submission with no live
- * task left, which is reconciled from pi's record rather than restarted.
+ * placed, or settled with a live task of its own left), or a settled submission with nothing of its own
+ * left, which is reconciled from pi's record rather than restarted.
  */
 export type PiWork = "not_submitted" | "in_progress" | "settled";
 
 export type SubmissionStatus = "queued" | "placed" | "done" | "unanswered";
 
-/** Live tasks mean work in progress even when the submission settled (the reviewed classifier). */
-export function classifyWork(submission: SubmissionStatus | undefined, liveTasks: number): PiWork {
-	if (liveTasks > 0) return "in_progress";
+/**
+ * The run's submission first: without one, whatever its session holds is another run's work. `ownLive` counts the run's
+ * own live tasks (pi-work.ts `belongs`), which keep its work in progress after its submission settled.
+ */
+export function classifyWork(submission: SubmissionStatus | undefined, ownLive: number): PiWork {
+	if (submission === undefined) return "not_submitted";
 	if (submission === "queued" || submission === "placed") return "in_progress";
-	if (submission === "done" || submission === "unanswered") return "settled";
-	return "not_submitted";
+	return ownLive > 0 ? "in_progress" : "settled";
 }
 
 export interface GateRun {

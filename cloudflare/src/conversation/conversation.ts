@@ -17,7 +17,6 @@ import {
 	type EntryRecord,
 	type Extension,
 	Harness,
-	type HarnessSettings,
 	ProviderDoc,
 	type Registry,
 	type SubmissionRecord,
@@ -71,7 +70,7 @@ import {
 	WORKER_EXITED,
 	WORKER_FAILED,
 } from "./events.ts";
-import { decideGate, type PiWork, classifyWork } from "./gate.ts";
+import { decideGate, type PiWork } from "./gate.ts";
 import { sessionInstructions } from "./history.ts";
 import { cloudflareImages } from "./images.ts";
 import { FolderOverLimit, LOCAL_TOOLS, type LocalTool, type LocalToolEvent, localToolSpecs, runGated, SandboxRefused } from "./local.ts";
@@ -79,6 +78,7 @@ import { FactDelivery } from "./delivery.ts";
 import { BACKLOG_MESSAGE, FACT_DELIVERY } from "./facts.ts";
 import { laravelCredentials } from "./laravel-runs.ts";
 import { destroyRunSandbox, LocalRun } from "./local-run.ts";
+import { PI_SETTINGS, piWork } from "./pi-work.ts";
 import { type ConversationPorts, type FolderPort, PORTS, type PortsContext, runStatePort, type WriteLedger } from "./ports.ts";
 import { ToolQueue, untilAborted } from "./queue.ts";
 import { RETAIN_JOB, Retention } from "./retention.ts";
@@ -139,23 +139,6 @@ export type InternalAnswer<T> = { ok: true; value: T } | { ok: false; code: "SCO
 /** chord's background context: never cancelled, no values. */
 const BG = Object.freeze({ abortSignal: undefined, value: () => undefined, toString: () => "[Context minerva-conversation]" });
 
-/** Longer than a turn runs in practice: partial answers and tool output are not committed while they stream. */
-const NEVER_MS = 2_000_000_000;
-
-/**
- * pi's settings: a failed model call ends the turn (any retry delay pi might use
- * stays at or under 60 s, so a long wait is never mistaken for a restart); no background compaction; no
- * partial commits, so an interrupted answer is asked again; and no context kept in memory after a turn,
- * which would keep every object active, and billed, for 10 minutes (spike: PiHarness, fact 17).
- */
-const PI_SETTINGS: HarnessSettings = {
-	retry: { enabled: false, maxAgentDelayMs: 60_000 },
-	compaction: { backgroundTokens: 0 },
-	progress: { partialIntervalMs: NEVER_MS, outputIntervalMs: NEVER_MS },
-	stream: { maxRetryDelayMs: 60_000 },
-	contextRetentionMs: 0,
-};
-
 /** The answer to a second start while a run is active. */
 export const BUSY_MESSAGE = "Wait for the current answer to finish, or stop it.";
 
@@ -175,7 +158,6 @@ const RPC_WAIT_MS = 10_000;
 const SANDBOX_RETRY_MS = 30_000;
 /** A run's settlement looks again this long after it found a call or script record of the run still open. */
 const SETTLE_OPEN_MS = 5_000;
-const LIVE_TASKS = ["pending", "running", "waiting", "completing"] as const;
 /** The reason an attempt's object is reset when its local calls cannot go on (ARCHITECTURE.md: Checkpoints). */
 export const ATTEMPT_ENDED = "The attempt ended: ";
 
@@ -1550,16 +1532,6 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		const detail = error === undefined ? "" : `: ${error instanceof Error ? error.message : String(error)}`;
 		(severe ? console.error : console.warn)(`conversation ${this.ctx.id.name ?? ""}: ${message}${detail}`.slice(0, 2000));
 	}
-}
-
-/** What pi holds for a run, read through the factory's storage (the gate) or after open. */
-async function piWork(storage: SqliteStorage, run: RunRow): Promise<PiWork> {
-	if (run.session === null) return "not_submitted";
-	const id = Number(run.session) as PiConversationId;
-	const submission = await storage.submissionByRequest(id, `run:${run.id}`, BG);
-	let live = 0;
-	for (const status of LIVE_TASKS) live += (await storage.scanTasks({ conversationId: id, status }, 1, undefined, BG)).items.length;
-	return classifyWork(submission?.status, live);
 }
 
 /** The history replay, in the commit that creates the run's session: one timestamp for every entry. */
