@@ -667,9 +667,14 @@ describe("runs' retention", () => {
 		expect([(await runRow(start)).prune, (await runRow(start)).snapshot, await records(start)]).toEqual(["records", "", { ...before, run_events: before.run_events - 2 }]);
 		expect(await streamed(start, start.run, 0)).toEqual({ frames: [{ type: "end" }], code: 1000 });
 
+		// The held pass, if the alarm started one, and the one `retain` starts finish it between them, in either order.
 		await objectOf(start).faultRelease("retain:pass");
 		await retain(start);
-		expect([(await runRow(start)).prune, await records(start)]).toEqual(["done", NO_RECORDS]);
+		const finished = await until(
+			() => runRow(start),
+			(row) => row.prune === "done",
+		);
+		expect([finished.prune, await records(start)]).toEqual(["done", NO_RECORDS]);
 	});
 });
 
