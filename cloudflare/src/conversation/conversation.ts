@@ -606,16 +606,20 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * A start's section waited past the bound while its run still acts: the watch made due now and synced, so the next
-	 * instance opens at once, then the object reset, which ends the invocations that held the wait. The next instance's gate
-	 * counts no attempt for a run with no submission, its cleanup marks the orphans before pi resumes, and the start runs again.
+	 * A start's section waited past the bound while its run still acts: the watch made due now, outside pi's transactions, and
+	 * synced, so the next instance opens at once, then the object reset if the run still acts, which ends the invocations that
+	 * held the wait. A watch that could not be stored leaves the run's earlier one to open the next instance. The next
+	 * instance's gate counts no attempt for a run with no submission, its cleanup marks the orphans before pi resumes, and the
+	 * start runs again.
 	 */
 	async #startTimedOut(runId: RunId, bound: number): Promise<void> {
 		if (!this.#store.isActive(runId)) return;
 		this.#log(`run ${runId} could not start: pi's earlier work did not end within ${bound / 1000} s`);
-		await this.lifecycle.jobs.push({ id: `watch:${runId}`, fn: "watch", time: Date.now(), payload: { runId } });
-		await this.ctx.storage.sync();
-		this.#reset(`run ${runId} could not start: pi's earlier work did not end.`, true);
+		await this.#store
+			.outside(() => this.lifecycle.jobs.push({ id: `watch:${runId}`, fn: "watch", time: Date.now(), payload: { runId } }))
+			.then(() => this.ctx.storage.sync())
+			.catch((failure: unknown) => this.#log(`the job watch:${runId} could not be stored and synced`, failure));
+		this.#reset(`run ${runId} could not start: pi's earlier work did not end.`, this.#store.isActive(runId));
 	}
 
 	/**

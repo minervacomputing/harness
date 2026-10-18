@@ -5,10 +5,11 @@
 // Covered: results held until a checkpoint saved them and their cards after, phases, the final rehash, the folder version
 // published with the run's changes and warnings, a turn that only reads, the run's container destroyed at its end, a cancelled
 // run's end marking the work of a command pi's abort does not end, a deletion that waits for such a command, the next start
-// waiting for it (and its bound, and a start cancelled while it waits), a folder over its limits (folder_limit and its
-// message), a container that fails its hardening (worker_failed) or never starts (attempts until worker_exited), and crashes
-// between a checkpoint's upload and its record, its record and the release, and the release and pi's commit (the Checkpoints
-// row of ARCHITECTURE.md's Testing table), each resumed from the last checkpoint.
+// waiting for it (and its bound, a start cancelled while it waits, and one cancelled in the lane, whose bound resets
+// nothing), a folder over its limits (folder_limit and its message), a container that fails its hardening (worker_failed)
+// or never starts (attempts until worker_exited), and crashes between a checkpoint's upload and its record, its record and
+// the release, and the release and pi's commit (the Checkpoints row of ARCHITECTURE.md's Testing table), each resumed from
+// the last checkpoint.
 
 import { env } from "cloudflare:workers";
 import type { RunEvent } from "@minerva/contract";
@@ -402,6 +403,24 @@ describe("the local tools in the conversation", () => {
 				{ model: 1, tool: 1 },
 				{ model: 1, tool: 1 },
 			]);
+		});
+	});
+
+	test("a start cancelled while its section is queued resets nothing at its bound, and the section ahead of it goes on", async () => {
+		const w = await world({ faults: [{ point: "loop:created", mode: "hold" }], piSettleMs: 2000 });
+		await warnings(async (lines) => {
+			const a = await post(w, [DONE]);
+			await reached(w, "loop:created");
+			expect(await cancel(w, a)).toEqual({ state: "cancelled" });
+			const b = await post(w, [DONE]);
+			expect(await cancel(w, b)).toEqual({ state: "cancelled" });
+			await sleep(3000);
+			expect(lines().filter((line) => line.includes("could not start"))).toEqual([]);
+			const created = (await w.conversation.faultFired()).find((entry) => entry.point === "loop:created")?.detail;
+			await w.conversation.faultRelease("loop:created");
+			await until(async () => (await w.conversation.faultRun(a)).run?.session, (session) => session === created, 5000);
+			const queued = await w.conversation.faultRun(b);
+			expect([queued.run?.status, queued.run?.session, queued.entered]).toEqual(["cancelled", null, { model: 0, tool: 0 }]);
 		});
 	});
 
