@@ -40,7 +40,7 @@ The contract changes only additively from here (AGENTS.md, Frontend). A new inpu
 - [ ] 14a after 13c. 14b after 14a. 14c and 14d after 14b, in either order.
 - [ ] 15a and 15b after 14a, beside 14b to 14d. 15c after 15a and 15b. 15d after 15c.
 - [ ] The gate (below) after 14 and 15.
-- [ ] 16 after the gate and open question 7. 17 after 13c. 18 is Laravel's alone and can run any time after 12.
+- [ ] 16 after the gate; the owner allowed building it against a Stripe sandbox before the gate (2026-10-18), and open question 7 no longer gates it, since nothing is metered. 17 after 13c. 18 is Laravel's alone and can run any time after 12.
 
 ### The gate before any customer's data
 
@@ -452,36 +452,49 @@ The design, its decisions and the units are in [chunk-15c-design.md](chunk-15c-d
 
 - [x] The owner reviewed [data-processing.md](../data-processing.md). Approved as written, 2026-10-18.
 
-## Bill for usage (chunk 16)
+## Bill for seats (chunk 16)
 
-**Depends on.** The gate, and open question 7 answered.
+**Depends on.** The gate, and seats. Nothing is metered, so open question 7 no longer gates it. The owner allowed building it before the gate, against a Stripe sandbox, on 2026-10-18.
+
+Re-scoped by the owner on 2026-10-18 for a closed beta of paying pilot businesses: seats billed flat through Stripe, not metered usage. Two designs in the app carry it. `docs/plans/seats.md` (built): the operator's seats, the budget derived from them, and members limited to them. `docs/plans/billing.md` (designed, `4cab3a3`): Stripe's subscription sets the seats. Billing was reviewed on 2026-10-18 by opencode and by three reviewers (Stripe's API and Cashier, money and security, tax and invoicing), 49 findings, each recorded there. Its owner questions take their defaults; questions 7 (the invoice footer and EU buyers' VAT numbers), 11 (the pilot agreement) and 15 (production's key) are gates before production's keys are set.
 
 **Decide first.**
 
-- [ ] The owner sets plans and prices from chunk 14a's measured cost per turn.
+- [x] Plans and prices. The owner, 2026-10-18: a closed beta of paying pilot businesses; CHF 20 per seat a month, flat, with no usage billed; $10 of the engine's charges per seat a month, pooled per organization; pilots pay from day one; personal organizations keep the $5 free allowance and are never billed. Plain Stripe through Cashier (over Managed Payments, whose checkout cannot collect a buyer's VAT number, and Paddle), against a sandbox. The seller is an unincorporated Swiss sole proprietor, not registered for VAT.
 
 **Build.**
 
-- [ ] Cashier with Checkout, the Customer Portal and Stripe's webhooks, on the organization.
-- [ ] Pennant for features, and quotas as numbers that feed 14b's budgets and 14d's storage.
-- [ ] Usage into Stripe's meters from chunk 14a's records, with each record's id as the event's identifier, sent by a queued job that retries until Stripe answers.
-- [ ] Define payment failure, grace, cancellation, plan changes and late usage. Late usage after a cancellation is billed on the final invoice or written off, by the owner's rule.
+- [x] Seats on the organization, and the budget derived from them in one place (`Organization::budgetLimit()`: its own limit, else a personal organization's free allowance, else seats × `MINERVA_SEAT_ALLOWANCE_MICROS`). A team with no seats runs no turns. The app's `3b95c8d`.
+- [x] Members limited to the seats under the organization's row lock: an invitation needs a free seat (members and pending invitations take them), and an acceptance one among the members. Seats lowered remove nobody. `3b95c8d`.
+- [x] The operator sets seats with `minerva:seats` or Filament's Set seats, recorded as `organization.seats_changed`; `minerva:budget` shows the limit's source and clears its own limit with `--default`, recorded as `organization.budget_changed`. `3b95c8d`, `6637e63`.
+- [x] Members see "n of m seats taken."; owners and admins see the month's use as a share of the allowance, never money. `6637e63`, `055af56`.
+- [ ] Cashier on the organization, with Checkout for subscribing, the app for seat changes up to a ceiling of 50 seats, and Stripe's customer portal for payment methods, the billing email, billing details, invoices and cancellation.
+- [ ] Stripe's subscription sets the team's seats, through one sync under a billing mutex whose lease each commit checks, called by every trigger: the webhook, the Checkout return, Checkout, a seat change, `minerva:billing:sync` (daily, and every five minutes for subscriptions past their end), a deletion and a restore. The webhook checks Stripe's signature, failing closed, and applies Stripe's current state, never the event's.
+- [ ] Payment failure, grace and cancellation by Stripe's own retries and emails: seats kept while past due, 0 once canceled, the unpaid invoice marked uncollectible. A deleted team's open sessions are expired and its subscription canceled at once, and its row is purged only after a sync proved it closed.
+- [ ] `minerva:billing:sync` relinks customers to their organizations and reports, by mail to the instance admins, live subscriptions whose organization is gone, duplicates, clamped seats and EU customers with no valid VAT number. The restore runbook runs it before serving.
+- [ ] `minerva:billing:setup` makes the product, the price, the portal's configuration and the webhook endpoint, and can run again.
+- [ ] The owner's steps for staging (billing.md, Owner steps 1 to 7): the Stripe account and a sandbox, its settings, `STRIPE_SECRET` and `STRIPE_WEBHOOK_SECRET` on staging, and Stripe's CLI paired with the sandbox. Billing stays off on every environment until both secrets are set.
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Tests that send the same usage record twice, and replay a webhook twice. Each is counted once.
+- [x] Seats. Pest went from 1,011 to 1,058 tests: `SeatsTest.php` (37), `OrganizationSeatsTest.php` (5), and `SeatRacesTest.php` (3, separate processes on Postgres). Two acceptances for the last seat admit exactly one, as do two invitations for it, and an acceptance queued behind lowered seats is refused. With both checks removed, all three races admit both changes.
+- [ ] Billing. Pest against a Stripe fake: the same webhook twice and two in reverse order each end in Stripe's state with one seat event; a sync whose lease was taken over commits nothing; a bad signature changes nothing; seats follow each status across every page of subscriptions; a deleted team's sessions are expired and its subscription canceled through the real soft-deleted row; Checkout sends exactly its parameters; the isolation census places the new routes, and `StripeWebhookTest` proves the webhook's isolation.
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] On staging with Stripe's test mode, subscribe, run turns, and see the meter's total equal the usage records. Fail a payment and see the grace rule applied.
+- [x] Seats. Locally, the app's verify skill (`seats` journey): a new team's message refused, "1 of 2 seats taken.", the last seat invited, the next invitation refused with its message, and the use on Settings. On staging, 2026-10-18 at `623ff9b`, on a test team: `minerva:seats --set=2` and `minerva:budget` showed "20000000 (2 seats)"; the last seat was invited and the next invitation refused with "Every seat is taken. Revoke an invitation or remove a member, or ask Minerva for more seats."; the audit events were recorded. CI run 39119943906 at `eaf1dc4` passed and deployed staging.
+- [ ] Billing, on staging with the owner's sandbox (billing.md, Chunk 16 in the harness's plan, lists each step): subscribe a team with 3 seats and see 3 on return with a prorated invoice; raise to 5 and lower to 4, with lowering below the members and raising above 50 refused; a raise that needs authentication waits and is applied by the webhook once paid; a failing card goes past due with seats kept, and a cancel drops seats to 0 and refuses turns; a cancel in the portal keeps seats to the period's end; a resent event records nothing new; a subscribed team deleted while a second Checkout page is open is canceled at once and that page cannot be paid; a disabled endpoint's missed change is corrected by `minerva:billing:sync` and the endpoint enabled again by `minerva:billing:setup`; a customer naming a missing organization is reported, with a non-zero exit and the admins' mail.
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. Delay from `run.settled` to the meter event in Stripe. Rule. Under five minutes at p95. More fails.
+- [ ] Metric. The delay from a Stripe event's `created` to the `organization.seats_changed` it causes, over 20 quantity changes made on staging's sandbox with Stripe's CLI, read by `minerva:billing:delays` from the audit events; and the webhook's handling time over the same 20, from its `billing.webhook` log lines. There is no `main` to measure first, since the path is new. Rule. Under 30 seconds at p95 for the delay, and under 2 seconds at p95 for the handling. More fails. Seats add no path to measure: a start reads one more column of the organization row it already reads, and an invitation, an acceptance and an organization page count members and pending invitations with two indexed counts.
 
 **Review.**
 
-- [ ] opencode reviewed the design and the diff.
+- [x] Seats: opencode reviewed the design (10 findings: 8 accepted, 2 in part) and the code (1 finding, fixed in `055af56`).
+- [ ] Seats: an adversarial review of `236e775..eaf1dc4` (four reviewers, three skeptics a finding) confirmed 11 of 12 findings, all low or medium; their fixes are landing (the app's seats.md, Amendments after the adversarial review). Recycling a seat to make accounts, each with a personal organization's free allowance, is accepted for the closed beta as seats.md's owner question 11, to revisit before open sign-up.
+- [x] Billing's design reviewed by opencode and three reviewers on 2026-10-18 (billing.md, Amendments after review).
+- [ ] opencode reviewed billing's diff.
 
 ## Let organizations limit connections (chunk 17)
 

@@ -167,11 +167,10 @@ Chunks 13 to 18 are planned box by box in [remaining-chunks.md](remaining-chunks
 
 **Paid launch and after**
 
-16. **Billing.**
-    - Cashier with Checkout, the Customer Portal and Stripe's webhooks.
-    - Pennant for features; quotas as numbers.
-    - Usage into Stripe's meters, with each usage record's id as the event's identifier.
-    - Payment failure, grace, cancellation, plan changes and late usage, all defined.
+16. **Billing.** Re-scoped by the owner on 2026-10-18 for a closed beta of paying pilots (remaining-chunks.md, Bill for seats):
+    - Seats at a flat price per seat a month, with each seat's allowance of the engine's charges pooled per organization; no usage billed and no meters.
+    - Cashier with Checkout, the Customer Portal and Stripe's webhooks; Stripe's subscription sets the seats.
+    - Payment failure, grace and cancellation by Stripe's own retries and emails, all defined.
 17. **Connection policies.**
     - The connectors an organization offers, and the tenants it allows.
     - Each connector declares how tenancy works for it, one of:
