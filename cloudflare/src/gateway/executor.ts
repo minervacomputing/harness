@@ -56,6 +56,7 @@ import {
 	writeId,
 } from "./results.ts";
 import type { RunStatePort } from "./run-state.ts";
+import { inTenants, tenantRefused } from "./tenancy.ts";
 import type { ToolRef } from "./tools.ts";
 import { validateInput } from "./validation.ts";
 
@@ -143,6 +144,8 @@ export interface ExecutorContext {
 	fetch: typeof fetch;
 	/** The snapshot's deadline, which bounds a call's wait for one of the run's slots; null or absent for none. */
 	deadline?: EpochMs | null;
+	/** The snapshot's `tenants`: the tenants a connection policy limits a connection to; absent for none. */
+	tenants?: { [connectionId: ConnectionId]: readonly string[] };
 }
 
 interface LeaseBase {
@@ -257,7 +260,8 @@ function shapeProblem(connector: Connector, resource: Resource): string | null {
 /**
  * The records the run may see. A record on another connection, of a
  * kind the operation does not need, malformed, or of a kind without the output action (even under an
- * unrestricted policy, which would pass any action) is a connector bug: logged and dropped. `count` is
+ * unrestricted policy, which would pass any action) is a connector bug: logged and dropped. A record of a
+ * tenant outside `tenants` (null: any) is dropped as one the policy does not allow is. `count` is
  * what is left, so a page can be empty while the provider had records.
  */
 export function visibleResult(
@@ -267,6 +271,7 @@ export function visibleResult(
 	policy: Policy,
 	output: ProviderOutput,
 	log: ExecutorLog = console,
+	tenants: readonly string[] | null = null,
 ): ToolResult {
 	const terms = termsOf(op);
 	const kinds = new Set(op.needs.map(([kind]) => kind));
@@ -284,11 +289,23 @@ export function visibleResult(
 			log.error(`Connector ${ref.provider}.${op.name} returned a record with ${describe(resource)}`);
 			continue;
 		}
-		if (policy.permits(resource, terms.outputAction, requires)) items.push(record.data);
+		if (inTenants(tenants, resource) && policy.permits(resource, terms.outputAction, requires)) items.push(record.data);
 	}
 	const result: ToolResult = { items, count: items.length };
 	if (output.incomplete) result.incomplete = true;
 	return result;
+}
+
+/** The snapshot's tenants by connection; throws on a malformed map, so a run whose limits cannot be read never calls a tool. */
+function tenantsOf(snapshot: ExecutorContext["tenants"]): ReadonlyMap<ConnectionId, readonly string[]> {
+	if (snapshot === undefined) return new Map();
+	if (typeof snapshot !== "object" || snapshot === null || Array.isArray(snapshot)) throw new TypeError("The snapshot's tenants are malformed.");
+	const tenants = new Map<ConnectionId, readonly string[]>();
+	for (const [connectionId, listed] of Object.entries(snapshot)) {
+		if (!Array.isArray(listed) || !listed.every((tenant) => typeof tenant === "string" && tenant !== "")) throw new TypeError("The snapshot's tenants are malformed.");
+		tenants.set(connectionId, Object.freeze([...listed]));
+	}
+	return tenants;
 }
 
 /** Rejects with the signal's reason once it aborts; `promise`'s own later rejection is not left unhandled. */
@@ -372,6 +389,7 @@ export class ToolExecutor implements Executor {
 	readonly #tools: readonly ToolRef[];
 	readonly #refs: ReadonlyMap<string, ToolRef>;
 	readonly #policy: Policy;
+	readonly #tenants: ReadonlyMap<ConnectionId, readonly string[]>;
 	readonly #deadline: EpochMs | null;
 	readonly #registry: Registry;
 	readonly #host: ExecutorHost;
@@ -390,6 +408,7 @@ export class ToolExecutor implements Executor {
 		// Throws on a malformed snapshot, so a run whose policy cannot be read never calls a tool.
 		this.#policy = Policy.fromJson(context.permissions);
 		this.#deadline = context.deadline ?? null;
+		this.#tenants = tenantsOf(context.tenants);
 		this.#registry = host.registry;
 		this.#host = host;
 		this.#clock = host.clock ?? systemClock;
@@ -619,8 +638,9 @@ export class ToolExecutor implements Executor {
 	}
 
 	/**
-	 * Checks what prepare() says the call touches against the declaration, then against the policy
-	 *. A connector bug throws at once; denial is decided after the loop (risk 15).
+	 * Checks what prepare() says the call touches against the declaration, then against the grants' policy and the
+	 * connection policy's tenants. A connector bug throws at once; denial is decided after the loop (risk 15), the grants'
+	 * first, so the tenant's refusal names the tenant only of resources the run may otherwise use.
 	 */
 	#authorize(connector: Connector, op: Operation<never>, terms: OperationTerms, ref: ToolRef, requirements: readonly Requirement[]): void {
 		const where = `${ref.provider}.${op.name}`;
@@ -628,8 +648,10 @@ export class ToolExecutor implements Executor {
 		const declared = new Set(op.needs.map(([kind, action]) => pairKey(kind, action)));
 		const covered = new Set<string>();
 		const requires = requiresOf(connector);
+		const tenants = this.#tenants.get(ref.connection_id) ?? null;
 		let concrete = false;
 		let refused = false;
+		let outside = false;
 		for (const requirement of requirements) {
 			let pair: string;
 			let allowed: boolean;
@@ -646,6 +668,7 @@ export class ToolExecutor implements Executor {
 				pair = pairKey(resource.kind, action);
 				concrete = true;
 				allowed = this.#policy.permits(resource, action, requires);
+				outside = outside || !inTenants(tenants, resource);
 			} else if (isRequirement(requirement, "enumerate")) {
 				const { enumerate: kind, action } = requirement as { enumerate: string; action: string };
 				pair = pairKey(kind, action);
@@ -661,10 +684,11 @@ export class ToolExecutor implements Executor {
 		if (covered.size !== declared.size) throw this.#bug(where, `needs not covered: ${[...declared].filter((pair) => !covered.has(pair)).join(", ")}`);
 		if (terms.mutates && !concrete) throw this.#bug(where, "a write needs a concrete destination");
 		if (refused) throw denied();
+		if (outside) throw tenantRefused(connector);
 	}
 
 	#result(connector: Connector, op: Operation<never>, _terms: OperationTerms, ref: ToolRef, output: ProviderOutput): ToolResult {
-		return visibleResult(connector, op, ref, this.#policy, output, this.#log);
+		return visibleResult(connector, op, ref, this.#policy, output, this.#log, this.#tenants.get(ref.connection_id) ?? null);
 	}
 
 	/** The write's result, and whether an identical earlier write answered it. */

@@ -110,7 +110,7 @@ describe("startRun", () => {
 		expect(answer).toEqual({
 			outcome: "accepted",
 			catalog: (await catalogOf(await connectorRegistry())).version,
-			compiler: "1",
+			compiler: "2",
 			digest: expect.stringMatching(/^[0-9a-f]{64}$/),
 			authorized: [],
 			attachments: [],

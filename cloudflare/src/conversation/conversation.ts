@@ -1249,6 +1249,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 					credentials: this.#credentials(snapshot),
 					fetch: this.#ports.fetch(this.#portsContext() as PortsContext),
 					deadline: snapshot.deadline,
+					tenants: snapshot.tenants,
 				},
 				this.#portsContext() as PortsContext,
 			);

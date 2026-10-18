@@ -88,14 +88,14 @@ describe("the declaration", () => {
 		const fingerprints = Object.fromEntries(xeroConnector().operations.map((op) => [op.name, registry.contract("xero", op.name)]));
 		// A change here is a change of what a tool means: running runs fail its calls with OPERATION_CHANGED.
 		expect(fingerprints).toEqual({
-			list_organisations: "9005b0f2eccd570e",
-			search_contacts: "be8cf28317bf278b",
-			search_invoices: "19fc33df9deac894",
-			get_invoice: "0373e3519954cc89",
-			list_accounts: "0575e50fe99e934e",
-			list_tax_rates: "0575e50fe99e934e",
-			create_draft_invoice: "10ce1dffc230fb1a",
-			create_draft_bill: "f177b05caf11d57d",
+			list_organisations: "ca9dab3af7db1ad0",
+			search_contacts: "3453273d9de935b0",
+			search_invoices: "22484a9edaf7e16f",
+			get_invoice: "7e096a8704c6e6be",
+			list_accounts: "753db8bec1a57711",
+			list_tax_rates: "753db8bec1a57711",
+			create_draft_invoice: "23a68744d40108d4",
+			create_draft_bill: "2abbb7e8ea50aafc",
 		});
 	});
 

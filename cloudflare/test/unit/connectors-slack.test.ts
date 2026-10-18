@@ -618,11 +618,11 @@ describe("registry", () => {
 		expect(Object.values(fingerprints).every((value) => /^[0-9a-f]{16}$/.test(value))).toBe(true);
 		// Pinned: a change here means running runs fail the tool with OPERATION_CHANGED, so it must be meant.
 		expect(fingerprints).toEqual({
-			list_channels: "073b3dba6945a9e7",
-			read_channel: "281622e2b8560c6c",
-			read_thread: "69abd44c841ffc16",
-			post_message: "146ded8f64cd41e2",
-			reply: "70f271cdd3eb2059",
+			list_channels: "b94e8a6128584139",
+			read_channel: "eaa0a12a1ad5707d",
+			read_thread: "9de7f82930a22c50",
+			post_message: "c00f949bdc0bf6b3",
+			reply: "c202650fba816ecd",
 		});
 	});
 

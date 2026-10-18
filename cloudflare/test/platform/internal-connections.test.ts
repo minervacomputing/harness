@@ -1,6 +1,7 @@
 // The settings calls Laravel makes with a credential it holds (src/internal/connections.ts), against a fake GitHub reached
 // through `PROVIDER_NETWORK`.
 
+import type { ConnectionPolicy } from "@minerva/contract/internal";
 import { afterEach, describe, expect, test } from "vitest";
 import { PROVIDER_NETWORK } from "../../src/internal/providers.ts";
 import { uuid7 } from "../../src/lib/random.ts";
@@ -272,5 +273,95 @@ describe("checkGrantEdit", () => {
 	test("a refused credential is CREDENTIAL_REFUSED", async () => {
 		fakeRepositories({ status: 401 });
 		expect(await checkGrantEdit(uuid7(), [], [{ kind: "repository", id: "101", actions: ["read"] }])).toMatchObject({ outcome: "refused", code: "CREDENTIAL_REFUSED" });
+	});
+});
+
+describe("under a connection policy", () => {
+	/** A fake GitHub of one installation holding example's (900) repository 101 and partner's (777) 103. Requests are recorded. */
+	function fakeOwners(): { seen: string[]; transfer: (id: number, owner: { id: number; login: string }) => void } {
+		const seen: string[] = [];
+		const repositories = [
+			{ id: 101, full_name: "example/app", owner: { id: 900, login: "example" }, private: true },
+			{ id: 103, full_name: "partner/tool", owner: { id: 777, login: "partner" }, private: false },
+		];
+		PROVIDER_NETWORK.fetch = () => async (input, init) => {
+			const request = new Request(input as RequestInfo, init as RequestInit);
+			const url = new URL(request.url);
+			seen.push(`${request.method} ${url.pathname}`);
+			if (url.pathname === "/user/installations") return Response.json({ total_count: 1, installations: [{ id: 7 }] });
+			if (url.pathname === "/user/installations/7/repositories") return Response.json({ total_count: 2, repositories });
+			const found = repositories.find((repository) => url.pathname === `/repositories/${repository.id}`);
+			if (found) return Response.json(found);
+			throw new TypeError(`Unexpected request ${request.method} ${request.url}`);
+		};
+		const transfer = (id: number, owner: { id: number; login: string }) => {
+			const found = repositories.find((repository) => repository.id === id) as (typeof repositories)[number];
+			Object.assign(found, { owner, full_name: `${owner.login}/${found.full_name.split("/")[1]}` });
+		};
+		return { seen, transfer };
+	}
+
+	const owners = (...tenants: string[]) => ({ revision: 2, connectors: [{ provider: "github", tenants }] });
+	const offersOnly = (provider: string) => ({ revision: 2, connectors: [{ provider, tenants: null }] });
+
+	function list(policy: ConnectionPolicy, provider = "github") {
+		return commands.listResources({
+			scope: scope(),
+			connection: { id: uuid7(), provider, tenant: null },
+			credential: provider === "github" ? credential : { kind: "builtin", secret: "", generation: 1 },
+			kind: provider === "github" ? "repository" : "account",
+			query: null,
+			parent: null,
+			cursor: null,
+			policy,
+		});
+	}
+
+	function edit(connection: string, grants: Grant[], changes: { kind: string; id: string; actions: string[] }[], policy: ConnectionPolicy) {
+		return commands.checkGrantEdit({
+			scope: scope(),
+			connection: { id: connection, provider: "github", tenant: null },
+			credential,
+			layer: { level: "ceiling", subject: null, restricted: true, revision: 4, grants },
+			changes,
+			policy,
+		});
+	}
+
+	const NOT_ALLOWED = { outcome: "refused", code: "CONNECTION_NOT_ALLOWED", message: "Your organization does not allow this connection." };
+
+	test("listResources leaves out the repositories of owners it does not allow, and refuses a connector it does not offer", async () => {
+		const { seen } = fakeOwners();
+		expect(await list(owners("900"))).toEqual({ outcome: "listed", items: [{ id: "101", name: "example/app (private)", expandable: false }], next: null });
+		expect(await list(offersOnly("github"))).toMatchObject({ outcome: "listed", items: [{ id: "101" }, { id: "103" }] });
+		seen.length = 0;
+		expect(await list(offersOnly("notion"))).toEqual(NOT_ALLOWED);
+		// The Web's tenancy is unknown: a list refuses it.
+		expect(await list({ revision: 2, connectors: [{ provider: "web", tenants: ["example.com"] }] }, "web")).toEqual(NOT_ALLOWED);
+		expect(seen).toEqual([]);
+	});
+
+	test("checkGrantEdit refuses another owner's repository, also one transferred since it was allowed; removals stay valid", async () => {
+		const { seen, transfer } = fakeOwners();
+		const connection = uuid7();
+		expect(await edit(connection, [], [{ kind: "repository", id: "101", actions: ["read"] }], owners("900"))).toMatchObject({ outcome: "valid" });
+		expect(await edit(connection, [], [{ kind: "repository", id: "103", actions: ["read"] }], owners("900"))).toEqual({
+			outcome: "invalid",
+			message: "Your organization does not allow the GitHub owner of partner/tool.",
+		});
+		// Every repository: the calls it covers are checked.
+		expect(await edit(connection, [], [{ kind: "repository", id: "*", actions: ["read"] }], owners("900"))).toMatchObject({ outcome: "valid" });
+		// example transfers its repository to partner: an edit that keeps the grant allows it again, so it is invalid.
+		transfer(101, { id: 777, login: "partner" });
+		const stored: Grant = { connection, kind: "repository", resource: "101", name: "example/app (private)", actions: ["read"], effect: "allow" };
+		expect(await edit(connection, [stored], [{ kind: "repository", id: "101", actions: ["create", "read"] }], owners("900"))).toEqual({
+			outcome: "invalid",
+			message: "Your organization does not allow the GitHub owner of example/app (private).",
+		});
+		seen.length = 0;
+		expect(await edit(connection, [stored], [{ kind: "repository", id: "101", actions: [] }], owners("900"))).toEqual({ outcome: "valid", grants: [] });
+		expect(await edit(connection, [stored], [{ kind: "repository", id: "101", actions: [] }], offersOnly("notion"))).toEqual({ outcome: "valid", grants: [] });
+		expect(seen).toEqual([]);
+		expect(await edit(connection, [], [{ kind: "repository", id: "*", actions: ["read"] }], offersOnly("notion"))).toEqual(NOT_ALLOWED);
 	});
 });

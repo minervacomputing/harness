@@ -20,6 +20,7 @@ import { ACCOUNT_KIND, type Connector, type DiscoveryPage, OperationError, type 
 import { unauthorized } from "../gateway/executor.ts";
 import { type GrantChange, type GrantRow, InvalidGrants, checkChanges, planGrantChanges, resourceKey } from "../gateway/grants.ts";
 import { ANY } from "../gateway/policy.ts";
+import { admission } from "../gateway/tenancy.ts";
 import { compareText } from "../lib/arrays.ts";
 import { sliceText } from "../lib/text.ts";
 import type { WorkspaceRef } from "../shared/rpc.ts";
@@ -79,6 +80,9 @@ export async function describeAccount(env: Env, command: DescribeAccount): Promi
 	}
 }
 
+/** A connection the organization's policy does not admit (gateway/tenancy.ts); Laravel words it for people. */
+const NOT_ALLOWED = { outcome: "refused", code: "CONNECTION_NOT_ALLOWED", message: "Your organization does not allow this connection." } as const;
+
 /** A provider's failure as a settings call's refusal; `browsing` when it listed inside a parent the caller named. */
 function refusalOf(error: OperationError, browsing = false): { outcome: "refused"; code: string; message: string } {
 	if (refusedCredential(error)) return { outcome: "refused", code: "CREDENTIAL_REFUSED", message: error.message };
@@ -99,13 +103,17 @@ function grantName(name: string): string {
 
 /**
  * A page of the account's resources of a kind (api/connections.ts `resources`, without the caller's grants, which Laravel
- * holds): the account kind is the connection itself; a browsable kind without a query is listed level by level.
+ * holds): the account kind is the connection itself; a browsable kind without a query is listed level by level. Under a
+ * connection policy, a connection it does not admit is refused, and items of tenants it does not allow are left out.
  */
 export async function listResources(env: Env, command: ListResources): Promise<ListResourcesResult> {
 	const connector = await connectorFor(command);
 	if (kindOf(connector, command.kind) === null) throw invalidInput(["kind"], `${connector.name} has no resources of type ${JSON.stringify(command.kind)}.`);
 	const browse = (connector.browsable ?? []).includes(command.kind) && !command.query;
 	if (command.parent !== null && !browse) throw invalidInput(["parent"], "Only resources that nest can be browsed, and not while searching.");
+	const admitted = admission(command.policy, connector, command.connection.tenant);
+	if (!admitted.admitted) return NOT_ALLOWED;
+	const allowed = admitted.tenants;
 	try {
 		const page = await withCredential(env, command, connector, async (client): Promise<DiscoveryPage> => {
 			if (command.kind === ACCOUNT_KIND) {
@@ -116,7 +124,9 @@ export async function listResources(env: Env, command: ListResources): Promise<L
 			if (!connector.children) throw new Error(`${connector.slug} browses ${command.kind} without children()`);
 			return connector.children(client, command.kind, command.parent, { cursor: command.cursor });
 		});
-		const items = page.items.filter((item) => item.id !== ANY).map((item) => ({ id: item.id, name: item.name, expandable: browse && (item.expandable ?? false) }));
+		const items = page.items
+			.filter((item) => item.id !== ANY && (allowed === null || (typeof item.tenant === "string" && allowed.includes(item.tenant))))
+			.map((item) => ({ id: item.id, name: item.name, expandable: browse && (item.expandable ?? false) }));
 		return { outcome: "listed", items, next: page.nextCursor ?? null };
 	} catch (error) {
 		if (error instanceof OperationError) return refusalOf(error, browse && command.parent !== null);
@@ -162,15 +172,52 @@ async function newNames(
 }
 
 /**
+ * The first resource the changes allow (not `*`, not the account) whose tenant is not one of `tenants`, as the editor's
+ * message, asking the provider through the connector's tenancy; null when there is none. A grant already stored is
+ * checked too: an edit that keeps it allows it again.
+ */
+async function outsideTenants(
+	env: Env,
+	command: CheckGrantEdit,
+	connector: Connector,
+	changes: readonly GrantChange[],
+	tenants: readonly string[],
+	nameOf: (kind: string, id: string) => string,
+): Promise<string | null> {
+	const tenancy = connector.tenancy;
+	if (tenancy.kind !== "resource") return null;
+	const wanted = new Map<string, string[]>();
+	for (const change of changes) {
+		if (change.actions.length === 0 || change.id === ANY || change.kind === ACCOUNT_KIND) continue;
+		wanted.set(change.kind, [...(wanted.get(change.kind) ?? []), change.id]);
+	}
+	if (wanted.size === 0) return null;
+	return withCredential(env, command, connector, async (client) => {
+		for (const [kind, ids] of wanted) {
+			const found = await tenancy.tenants(client, kind, ids);
+			for (const id of ids) {
+				const tenant = Object.hasOwn(found, id) ? found[id] : undefined;
+				if (typeof tenant !== "string") return `Choose a ${(kindOf(connector, kind)?.label ?? kind).toLowerCase()} that the connected account can see.`;
+				if (!tenants.includes(tenant)) return `Your organization does not allow the ${tenancy.label} of ${nameOf(kind, id)}.`;
+			}
+		}
+		return null;
+	});
+}
+
+/**
  * Checks an edit of a layer's allow grants on one connection, without storing anything (Laravel stores the answer), and
  * answers the layer's grants after it: every other grant kept in place and order, this connection's allow grants after
  * them, sorted. Resources and accounts newly allowed are named by the provider, so only what the account can see is
- * allowed; `*`, what is already allowed, and removals never call it.
+ * allowed; `*`, what is already allowed, and removals never call it. Under a connection policy, an edit that allows
+ * anything on a connection it does not admit is refused, and one allowing a resource of a tenant it does not allow is
+ * invalid; removals are always valid.
  */
 export async function checkGrantEdit(env: Env, command: CheckGrantEdit): Promise<CheckGrantEditResult> {
 	const connector = await connectorFor(command);
 	const connectionId = command.connection.id;
 	const changes: GrantChange[] = command.changes.map((change) => ({ kind: change.kind, id: change.id, actions: change.actions }));
+	const admitted = admission(command.policy, connector, command.connection.tenant);
 	const isEdited = (grant: GrantInput) => grant.connection === connectionId && grant.effect === "allow";
 	// The policy unions the actions of grants on one resource, so a layer holding two keeps both in one.
 	const merged = new Map<string, GrantRow>();
@@ -192,8 +239,14 @@ export async function checkGrantEdit(env: Env, command: CheckGrantEdit): Promise
 	const stored = new Map(current.map((grant) => [resourceKey(grant.kind, grant.resourceId), grant.resourceName]));
 	try {
 		checkChanges(connector, connectionId, changes);
+		if (!admitted.admitted && changes.some((change) => change.actions.length > 0)) return NOT_ALLOWED;
 		const named = await newNames(env, command, connector, changes, stored);
 		if ("unseen" in named) return { outcome: "invalid", message: `Choose a ${named.unseen} that the connected account can see.` };
+		if (admitted.admitted && admitted.tenants !== null) {
+			const nameOf = (kind: string, id: string) => named.names.get(resourceKey(kind, id)) || stored.get(resourceKey(kind, id)) || id;
+			const outside = await outsideTenants(env, command, connector, changes, admitted.tenants, nameOf);
+			if (outside !== null) return { outcome: "invalid", message: outside };
+		}
 		const plan = planGrantChanges(connector, current, changes, named.names);
 		const upserted = new Map(plan.upserts.map((row) => [resourceKey(row.kind, row.resourceId), row.resourceName]));
 		const edited: GrantInput[] = [...plan.state.entries()]

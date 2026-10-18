@@ -102,7 +102,7 @@ describe("the declaration", () => {
 		const fingerprints = Object.fromEntries(webConnector().operations.map((op) => [op.name, registry.contract("web", op.name)]));
 		console.log("web fingerprints", fingerprints);
 		// A change here is a change of what a tool means: running runs fail its calls with OPERATION_CHANGED.
-		expect(fingerprints).toEqual({ search: "00a4f383da21caed", read_page: "abe6e7be4e1d8f5a" });
+		expect(fingerprints).toEqual({ search: "ef64b3e7dc22667f", read_page: "e6da9103cf2f456b" });
 	});
 
 	test("the Worker's registry serves it", async () => {

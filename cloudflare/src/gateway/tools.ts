@@ -8,6 +8,7 @@ import { consentGiven, nests, offered, operationOf, requiresOf } from "./connect
 import { effectivePolicy, type ProviderOf, type RunLayers } from "./grants.ts";
 import type { Policy, PolicySnapshot } from "./policy.ts";
 import type { Registry } from "./registry.ts";
+import { type ConnectionPolicy, admission } from "./tenancy.ts";
 import { compareText } from "../lib/arrays.ts";
 
 /**
@@ -45,6 +46,11 @@ export interface StartSnapshot {
 	createdAt: EpochMs;
 	/** The connections the run's tools use, in tool order, for revocation by connection. */
 	connectionIds: ConnectionId[];
+	/**
+	 * The tenants each of those connections is limited to, for a connector with a tenant per resource under a policy's
+	 * list (gateway/tenancy.ts). Absent when none is: a run started without a policy, or before connection policies.
+	 */
+	tenants?: { [connectionId: ConnectionId]: string[] };
 }
 
 export const SAFETY_INSTRUCTIONS =
@@ -57,7 +63,7 @@ export const SAFETY_INSTRUCTIONS =
  * The compiler's version, which a Laravel start's acceptance names (docs/plans/start-and-cancel.md). Raise it whenever a
  * change to grants.ts, policy.ts or this file changes what a snapshot allows or offers.
  */
-export const COMPILER_VERSION = "1";
+export const COMPILER_VERSION = "2";
 
 /** The model may be offered at most this many tools in all. */
 export const MODEL_TOOLS_MAX = 128;
@@ -72,6 +78,8 @@ export interface ConnectionInfo {
 	createdAt: EpochMs;
 	/** The scopes the current credentials carry; null when unknown (API keys, built-in services). */
 	scopes: string[] | null;
+	/** The tenant of its account, as `describeAccount` answered it; null or absent for none. */
+	tenant?: string | null;
 }
 
 function usableBy(connection: ConnectionInfo, userId: UserId): boolean {
@@ -166,16 +174,38 @@ export interface StartInput {
 	createdAt: EpochMs;
 	/** Settings' `runTimeoutMs`: the deadline is fixed at start (ARCHITECTURE.md: Starting a run); null for none. */
 	runTimeoutMs: number | null;
+	/** The organization's connection policy; absent for none. */
+	policy?: ConnectionPolicy | null;
+}
+
+/**
+ * The connections a connection policy admits, and the tenants of those it limits to some (gateway/tenancy.ts). A
+ * connection of a connector this engine does not have is kept: `toolsFor` offers it nothing.
+ */
+function admitted(registry: Registry, connections: readonly ConnectionInfo[], policy: ConnectionPolicy | null | undefined) {
+	const kept: ConnectionInfo[] = [];
+	const tenants = new Map<ConnectionId, string[]>();
+	for (const connection of connections) {
+		const connector = registry.find(connection.provider);
+		const found = connector === null ? null : admission(policy, connector, connection.tenant);
+		if (found?.admitted === false) continue;
+		kept.push(connection);
+		if (found?.tenants) tenants.set(connection.id, [...found.tenants]);
+	}
+	return { kept, tenants };
 }
 
 /**
  * Everything a run snapshots at start: the policy, the tools it is offered and their
  * contracts, the instructions with the start time, the model alias and the deadline. `connectionIds`
- * are the connections its tools use.
+ * are the connections its tools use, and `tenants` the tenants a connection policy limits them to.
  */
 export function startSnapshot(registry: Registry, input: StartInput): StartSnapshot {
 	const policy = effectivePolicy(input.layers, registry, input.providerOf);
-	const tools = toolsFor(registry, input.connections, input.userId, policy);
+	const { kept, tenants } = admitted(registry, input.connections, input.policy);
+	const tools = toolsFor(registry, kept, input.userId, policy);
+	const connectionIds = [...new Set(tools.map((tool) => tool.connection_id))];
+	const limited = connectionIds.filter((id) => tenants.has(id));
 	return {
 		workspaceId: input.workspaceId,
 		conversationId: input.conversationId,
@@ -187,6 +217,8 @@ export function startSnapshot(registry: Registry, input: StartInput): StartSnaps
 		modelAlias: input.agent.modelAlias,
 		deadline: input.runTimeoutMs === null ? null : input.createdAt + input.runTimeoutMs,
 		createdAt: input.createdAt,
-		connectionIds: [...new Set(tools.map((tool) => tool.connection_id))],
+		connectionIds,
+		// Only when some connection is limited, so a start without a policy snapshots as before.
+		...(limited.length > 0 ? { tenants: Object.fromEntries(limited.map((id) => [id, tenants.get(id) as string[]])) } : {}),
 	};
 }

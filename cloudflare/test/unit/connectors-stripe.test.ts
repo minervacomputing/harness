@@ -74,13 +74,13 @@ describe("the declaration", () => {
 		const fingerprints = Object.fromEntries(stripeConnector().operations.map((op) => [op.name, registry.contract("stripe", op.name)]));
 		// A change here is a change of what a tool means: running runs fail its calls with OPERATION_CHANGED.
 		expect(fingerprints).toEqual({
-			list_customers: "436ae17bbd4b8c70",
-			get_customer: "ae3447579e3b75a9",
-			list_payments: "982a06c4e32c266a",
-			list_invoices: "8da344413c1d1cf3",
-			list_subscriptions: "778bf4158d0c027c",
-			refund_payment: "d5c7998f4e10f721",
-			credit_customer: "9358bbf6f13f3cab",
+			list_customers: "a10967030a6a72af",
+			get_customer: "ebf9d060e3d6715f",
+			list_payments: "aa9bdea9d2b960d9",
+			list_invoices: "807f0b5e10f3750c",
+			list_subscriptions: "b85b544cb2170a58",
+			refund_payment: "74c1b502cfced832",
+			credit_customer: "35a51cf017fcbb17",
 		});
 	});
 

@@ -9,6 +9,7 @@ import { z } from "zod";
 import type { Clock } from "../../src/gateway/clock.ts";
 import {
 	ACCOUNT_KIND,
+	type Binding,
 	type Connector,
 	type CredentialPayload,
 	type Operation,
@@ -17,6 +18,7 @@ import {
 	type ProviderOutput,
 	type Requirement,
 	defineOperation,
+	inTenant,
 } from "../../src/gateway/connector.ts";
 import {
 	type CredentialPort,
@@ -28,14 +30,16 @@ import {
 	type ToolExecutor,
 	createExecutor,
 } from "../../src/gateway/executor.ts";
-import { type GrantRow, type RunLayers, effectivePolicy } from "../../src/gateway/grants.ts";
+import type { GrantRow, RunLayers } from "../../src/gateway/grants.ts";
 import { ProviderHTTP } from "../../src/gateway/http.ts";
 import { WriteLedger } from "../../src/gateway/ledger.ts";
 import { PageTokens } from "../../src/gateway/page-tokens.ts";
+import type { Resource } from "../../src/gateway/policy.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import type { ToolCallEventData } from "../../src/gateway/results.ts";
 import { LedgerRunState, type RunState, type RunStatePort, type RunTable } from "../../src/gateway/run-state.ts";
-import { type ConnectionInfo, type ToolRef, toolsFor } from "../../src/gateway/tools.ts";
+import type { ConnectionPolicy } from "../../src/gateway/tenancy.ts";
+import { type ConnectionInfo, type StartSnapshot, type ToolRef, startSnapshot } from "../../src/gateway/tools.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { parseJson } from "../../src/lib/json.ts";
 import type { Sql } from "../../src/lib/sql.ts";
@@ -44,6 +48,9 @@ import { ledgerSql } from "./sqlite.ts";
 
 export const USER = "0199a000-0000-7000-8000-0000000000aa";
 export const RUN = "0199a000-0000-7000-8000-0000000000c1";
+const WORKSPACE = "0199a000-0000-7000-8000-0000000000b1";
+const CONVERSATION = "0199a000-0000-7000-8000-0000000000b2";
+const AGENT = "0199a000-0000-7000-8000-0000000000b3";
 export const MIXED = "0199a000-0000-7000-8000-000000000001";
 export const KEYED = "0199a000-0000-7000-8000-00000000000f";
 export const TODOIST = "0199a000-0000-7000-8000-000000000007";
@@ -135,6 +142,14 @@ export class FakeServer {
 	/** A request the connector left running (mode "late-write"), and what releases it. */
 	late: Promise<unknown> | null = null;
 	lateGate = new Gate();
+	/** The tenant of each folder and label, which the mixed connector names when this is set (a tenant per resource). */
+	tenantOf: ((id: string) => string) | null = null;
+
+	/** A resource of the mixed connector, in its tenant when the server has them. */
+	resource(binding: Binding, kind: string, id: string): Resource {
+		const found = binding.resource(kind, id);
+		return this.tenantOf === null ? found : inTenant(found, this.tenantOf(id));
+	}
 
 	posts(): number {
 		return this.calls.filter(([method]) => method === "POST").length;
@@ -190,7 +205,7 @@ function mixedOperations(server: FakeServer): Operation<never>[] {
 					requirements: [{ enumerate: FOLDER, action: "read" }],
 					async execute(): Promise<ProviderOutput> {
 						const folders = await http.parsed({ method: "GET", path: "/folders" }, Folders);
-						const records = folders.map((folder) => ({ resource: binding.resource(FOLDER, folder.id), data: folder }));
+						const records = folders.map((folder) => ({ resource: server.resource(binding, FOLDER, folder.id), data: folder }));
 						if (server.mode === "foreign-record") {
 							records.push({ resource: binding.resource(LABEL, "red"), data: { id: "red", name: "Red" } });
 							records.push({ resource: { ...binding.resource(FOLDER, "inbox"), connectionId: "other" }, data: { id: "x", name: "x" } });
@@ -213,8 +228,8 @@ function mixedOperations(server: FakeServer): Operation<never>[] {
 			async prepare(binding, data): Promise<Prepared> {
 				const http = binding.client as ProviderHTTP;
 				const mode = server.mode;
-				const source: Requirement = { need: binding.resource(FOLDER, data.source), action: "read" };
-				const dest: Requirement = { need: binding.resource(FOLDER, data.dest), action: "create" };
+				const source: Requirement = { need: server.resource(binding, FOLDER, data.source), action: "read" };
+				const dest: Requirement = { need: server.resource(binding, FOLDER, data.dest), action: "create" };
 				const requirements: Requirement[] =
 					mode === "omit-source" ? [dest] : mode === "enumerate-write" ? [{ enumerate: FOLDER, action: "read" }, dest] : [source, dest];
 				if (mode === "write-in-prepare") await http.request({ method: "POST", path: "/copies", json: {} });
@@ -236,7 +251,7 @@ function mixedOperations(server: FakeServer): Operation<never>[] {
 							return { records: [] };
 						}
 						if (mode === "two-writes") await http.request({ method: "POST", path: "/copies", json: body });
-						return { records: [{ resource: binding.resource(FOLDER, data.dest), data: created as { [key: string]: Json } }] };
+						return { records: [{ resource: server.resource(binding, FOLDER, data.dest), data: created as { [key: string]: Json } }] };
 					},
 				};
 			},
@@ -254,7 +269,7 @@ function mixedOperations(server: FakeServer): Operation<never>[] {
 					requirements: [{ enumerate: LABEL, action: "read" }],
 					async execute(): Promise<ProviderOutput> {
 						const labels = await http.parsed({ method: "GET", path: "/labels" }, Folders);
-						return { records: labels.map((label) => ({ resource: binding.resource(LABEL, label.id), data: label })) };
+						return { records: labels.map((label) => ({ resource: server.resource(binding, LABEL, label.id), data: label })) };
 					},
 				};
 			},
@@ -285,7 +300,7 @@ export function mixedConnector(server: FakeServer): Connector<ProviderHTTP> {
 		},
 		async discover(http, kind) {
 			const items = (await http.json({ method: "GET", path: kind === FOLDER ? "/folders" : "/labels" })) as { id: string; name: string }[];
-			return { items };
+			return { items: items.map((item) => (server.tenantOf === null ? item : { ...item, tenant: server.tenantOf(item.id) })) };
 		},
 		async describe() {
 			return {};
@@ -515,6 +530,8 @@ export interface ScenarioConnection {
 	payload: CredentialPayload;
 	/** Defaults to the payload's scopes (null for API keys). */
 	scopes?: string[] | null;
+	/** The account's tenant, as Laravel stores it from `describeAccount`; none by default. */
+	tenant?: string | null;
 }
 
 export interface ScenarioOptions {
@@ -533,6 +550,8 @@ export interface ScenarioOptions {
 	registry?: Registry;
 	/** Changes the run's tool snapshot, as a stored snapshot from another deploy would differ. */
 	editTools?: (tools: ToolRef[]) => ToolRef[];
+	/** The organization's connection policy; none by default. */
+	policy?: ConnectionPolicy;
 }
 
 /** A run started and claimed, its executor, and what its calls recorded. */
@@ -551,6 +570,8 @@ export class Scenario {
 	readonly executor: ToolExecutor;
 	readonly runId: RunId;
 	readonly tools: string[];
+	/** The run's snapshot as `startSnapshot` compiled it, before `editTools`. */
+	readonly snapshot: StartSnapshot;
 	attempt = 1;
 
 	private constructor(registry: Registry, options: ScenarioOptions, runId: RunId) {
@@ -571,6 +592,7 @@ export class Scenario {
 			status: "active",
 			createdAt: this.clock.now() + index,
 			scopes: connection.scopes !== undefined ? connection.scopes : connection.payload.kind === "oauth2" ? connection.payload.scopes : null,
+			tenant: connection.tenant ?? null,
 		}));
 		for (const connection of options.connections) this.credentials.add(connection.id, connection.provider, connection.payload);
 		const providers = new Map(options.connections.map((connection) => [connection.id, connection.provider]));
@@ -579,8 +601,19 @@ export class Scenario {
 			user: { restricted: true, grants: options.user },
 			agent: null,
 		};
-		const policy = effectivePolicy(layers, registry, (id) => providers.get(id) ?? null);
-		const tools = (options.editTools ?? ((refs: ToolRef[]) => refs))(toolsFor(registry, infos, USER, policy));
+		this.snapshot = startSnapshot(registry, {
+			workspaceId: WORKSPACE,
+			conversationId: CONVERSATION,
+			userId: USER,
+			agent: { id: AGENT, instructions: "", modelAlias: "default" },
+			connections: infos,
+			layers,
+			providerOf: (id) => providers.get(id) ?? null,
+			createdAt: this.clock.now(),
+			runTimeoutMs: null,
+			policy: options.policy ?? null,
+		});
+		const tools = (options.editTools ?? ((refs: ToolRef[]) => refs))(this.snapshot.tools);
 		this.tools = tools.map((tool) => tool.name);
 		const host: ExecutorHost = {
 			registry,
@@ -591,7 +624,17 @@ export class Scenario {
 			...(options.concurrency === undefined ? {} : { concurrency: options.concurrency }),
 		};
 		this.executor = createExecutor(
-			{ runId, userId: USER, permissions: policy.toJson(), tools, run: this.state, credentials: this.credentials, fetch: options.fetch, deadline },
+			{
+				runId,
+				userId: USER,
+				permissions: this.snapshot.permissions,
+				tools,
+				run: this.state,
+				credentials: this.credentials,
+				fetch: options.fetch,
+				deadline,
+				...(this.snapshot.tenants ? { tenants: this.snapshot.tenants } : {}),
+			},
 			host,
 		);
 	}

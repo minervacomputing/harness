@@ -277,6 +277,8 @@ export function meaning(connector: Connector, op: Operation<never>): JsonObject 
 		paginated: terms.paginated,
 		requires,
 		kinds: declared,
+		// How a connection policy reads the operation's resources (gateway/tenancy.ts): a run snapshots its limits by it.
+		tenancy: connector.tenancy.kind,
 	};
 }
 
@@ -290,7 +292,7 @@ export async function fingerprint(connector: Connector, op: Operation<never>): P
 }
 
 /** What a registered connector cannot change: what it declares, and the slug it is found by. */
-const DECLARED = ["slug", "kinds", "actions", "auth", "operations", "browsable"] as const;
+const DECLARED = ["slug", "kinds", "actions", "auth", "tenancy", "operations", "browsable"] as const;
 
 /** Freezes an object, its own getters first replaced by what they return now, as `Object.freeze` keeps them. */
 function freezeValues(value: object): void {
@@ -302,7 +304,7 @@ function freezeValues(value: object): void {
 
 /**
  * Fixes what a connector declares: each declared property becomes an own read-only value, read once (a
- * getter too), and its kinds, actions, auth, browsable kinds and operations, with their needs and consent,
+ * getter too), and its kinds, actions, auth, tenancy, browsable kinds and operations, with their needs and consent,
  * are frozen all the way down. Not the rest of the connector, which may keep state, nor an operation's zod
  * schema.
  */
@@ -319,7 +321,7 @@ function freezeDeclaration(connector: Connector): void {
 		freezeValues(value);
 		for (const item of Object.values(value)) deep(item);
 	};
-	for (const part of [connector.kinds, connector.actions, connector.auth, connector.browsable]) deep(part);
+	for (const part of [connector.kinds, connector.actions, connector.auth, connector.tenancy, connector.browsable]) deep(part);
 	for (const op of connector.operations) {
 		deep(op.needs);
 		deep(op.consent);

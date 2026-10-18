@@ -912,14 +912,14 @@ describe("the declarations", () => {
 		// A change here is a change of what a tool means: running runs fail its calls with OPERATION_CHANGED.
 		// Bump `revision` when the meaning changed in a way the declaration does not show.
 		expect(fingerprints).toEqual({
-			"gmail.list_labels": "d30d85dd7a96ef61",
-			"gmail.list_messages": "43e2b7bfca5d5258",
-			"gmail.read_message": "21d8676f54e5a10a",
-			"gmail.read_thread": "c81ce841904ec917",
-			"gmail.send_message": "870688cee7e663ea",
-			"gmail.reply": "7cc966b1d68e1961",
-			"gmail.create_draft": "149b222a0a442e89",
-			"gmail.create_reply_draft": "b0593e8a19f3d0db",
+			"gmail.list_labels": "1fe0450a5e63a894",
+			"gmail.list_messages": "0286e81c05d3db18",
+			"gmail.read_message": "b303b67ea978f3e1",
+			"gmail.read_thread": "1c69bee713817447",
+			"gmail.send_message": "c74b7c6b9da6fb42",
+			"gmail.reply": "bccd50056b816b87",
+			"gmail.create_draft": "5815e10d814ddbf9",
+			"gmail.create_reply_draft": "dce9f6229a558126",
 		});
 	});
 

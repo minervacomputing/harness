@@ -102,6 +102,7 @@ export async function prepareStart(registry: Registry, command: StartRun, option
 		status: connection.status,
 		createdAt: Date.parse(connection.createdAt),
 		scopes: connection.scopes,
+		tenant: connection.tenant ?? null,
 	}));
 	const providers = new Map(connections.map((connection) => [connection.id, connection.provider]));
 	const { ceiling, user, agent } = command.authority.layers;
@@ -120,6 +121,7 @@ export async function prepareStart(registry: Registry, command: StartRun, option
 		providerOf: (id) => providers.get(id) ?? null,
 		createdAt: options.now,
 		runTimeoutMs: options.runTimeoutMs,
+		policy: command.authority.policy ?? null,
 	});
 	return {
 		snapshot,

@@ -525,6 +525,74 @@ function failure(run: () => unknown): [string, string] | null {
 
 const INVALID: [string, string] = ["INVALID_CURSOR", "This page token is invalid."];
 
+describe("an organization's connection policy", () => {
+	const OUTSIDE = { code: "POLICY_DENIED", message: "Your organization does not allow this GitHub owner." };
+
+	/** A run whose organization allows the repositories of `owners` (numeric ids) only. */
+	function startUnder(github: FakeGitHub, grants: { [id: string]: string[] }, owners: string[], fetch: typeof globalThis.fetch = github.fetch): Promise<Scenario> {
+		return Scenario.start({
+			connectors: [connector()],
+			connections: [{ id: GITHUB, provider: "github", payload: { kind: "oauth2", access_token: "t", refresh_token: null, scopes: [] } }],
+			user: userGrants(GITHUB, REPOSITORY, grants),
+			fetch,
+			policy: { revision: 1, connectors: [{ provider: "github", tenants: owners }] },
+		});
+	}
+
+	test("a list of owners limits calls and records to their repositories", async () => {
+		const github = new FakeGitHub();
+		const run = await startUnder(github, { "*": ["read"] }, [String(OWNERS.acme)]);
+		expect(run.snapshot.tenants).toEqual({ [GITHUB]: ["100"] });
+		expect(items(await run.ok("github_list_repositories", {})).map((found) => found.full_name)).toEqual(["acme/app", "acme/secret"]);
+		expect(items(await run.ok("github_get_repository", { repository: "acme/app" }))[0]?.full_name).toBe("acme/app");
+		for (const tool of ["github_get_repository", "github_list_issues"]) expect(await run.error(tool, { repository: "ada/notes" })).toEqual(OUTSIDE);
+		// Its old name too.
+		expect(await run.error("github_get_repository", { repository: "ada/old-notes" })).toEqual(OUTSIDE);
+		expect(github.requests.some((sent) => sent.url.pathname.startsWith("/repositories/3/"))).toBe(false);
+	});
+
+	test("a repository transferred to another owner is refused by its new name and its old one, and left out of listings", async () => {
+		const github = new FakeGitHub();
+		const run = await startUnder(github, { "1": ["read", "create"] }, [String(OWNERS.acme)]);
+		expect(items(await run.ok("github_get_repository", { repository: "acme/app" }))).toHaveLength(1);
+		// acme transfers acme/app to evil: the grant stays on the repository's id, GitHub redirects the old name to it, and
+		// the repository now names its new owner.
+		github.repos.set(1, repo(1, "evil/app"));
+		github.renamed.set("acme/app", `${API_URL}/repositories/1`);
+		for (const name of ["evil/app", "acme/app"]) {
+			expect(await run.error("github_get_repository", { repository: name })).toEqual(OUTSIDE);
+			expect(await run.error("github_create_issue", { repository: name, title: "Hello" })).toEqual(OUTSIDE);
+		}
+		expect(github.posts).toEqual([]);
+		expect(items(await run.ok("github_list_repositories", {}))).toEqual([]);
+	});
+
+	test("a repository transferred while a call reads it: the record of its new owner is dropped", async () => {
+		const github = new FakeGitHub();
+		// The transfer lands between the call's resolve (GET /repos/acme/app) and its read (GET /repositories/1).
+		const fetch: typeof globalThis.fetch = async (input, init) => {
+			const answer = await github.fetch(input, init);
+			if (new URL(new Request(input as RequestInfo, init as RequestInit).url).pathname === "/repos/acme/app") github.repos.set(1, repo(1, "evil/app"));
+			return answer;
+		};
+		const run = await startUnder(github, { "1": ["read"] }, [String(OWNERS.acme)], fetch);
+		expect((await run.ok("github_get_repository", { repository: "acme/app" })).result).toEqual({ items: [], count: 0 });
+		expect(github.requests.map((sent) => sent.url.pathname)).toEqual(["/repos/acme/app", "/repositories/1"]);
+	});
+
+	test("a user's own repositories are another owner's", async () => {
+		const github = new FakeGitHub();
+		const run = await startUnder(github, { "*": ["read"] }, [String(OWNERS.ada)]);
+		expect(items(await run.ok("github_get_repository", { repository: "ada/notes" }))[0]?.full_name).toBe("ada/notes");
+		expect(await run.error("github_get_repository", { repository: "acme/app" })).toEqual(OUTSIDE);
+		// The first page lists acme's installation, whose repositories are left out; the next is ada's.
+		const first = await run.ok("github_list_repositories", {});
+		expect(items(first)).toEqual([]);
+		const next = await run.ok("github_list_repositories", { cursor: first.result.next_cursor as string });
+		expect(items(next).map((found) => found.full_name)).toEqual(["ada/notes"]);
+	});
+});
+
 describe("the connector's rules", () => {
 	const gh = githubConnector({ appSlug: () => null });
 
@@ -703,15 +771,15 @@ describe("the registry", () => {
 	// What each tool means, as runs snapshot it. A change here stops the tool in running runs
 	// (OPERATION_CHANGED), so it is made on purpose: update these when a declaration or zod changes.
 	const FINGERPRINTS = {
-		list_repositories: "15126dda5c25df94",
-		get_repository: "2819e5401dcbfe65",
-		list_issues: "1772913a9c711556",
-		get_issue: "53512dd25c3b9b5e",
-		list_pull_requests: "1772913a9c711556",
-		get_pull_request: "53512dd25c3b9b5e",
-		read_file: "f7a743fcde5c31e9",
-		create_issue: "c600aaad2ee965f1",
-		add_comment: "5352384c953c11af",
+		list_repositories: "b0c70f11ce9793f0",
+		get_repository: "92543ad94cc4d7c3",
+		list_issues: "234bf98e672bfcbe",
+		get_issue: "0f22e4ba8a87c3e1",
+		list_pull_requests: "234bf98e672bfcbe",
+		get_pull_request: "0f22e4ba8a87c3e1",
+		read_file: "cb959599b42fa7ff",
+		create_issue: "0de269cefa60426c",
+		add_comment: "fbf140a4e5962e44",
 	};
 
 	test("accepts GitHub's declarations, and prints their fingerprints", async () => {

@@ -259,7 +259,11 @@ describe("fingerprints", () => {
 			paginated: false,
 			requires: { read: ["read"] },
 			kinds: { label: { actions: ["read"], wildcard: false, hierarchical: false } },
+			tenancy: "unknown",
 		});
+		// A connector whose tenancy changes changes what its tools mean: a run's limits were compiled by it.
+		const tenants = async () => ({});
+		expect(meaning({ ...base, tenancy: { kind: "resource", label: "Site", tenants } }, labels).tenancy).toBe("resource");
 		const copy = meaning(base, base.operations[1]!);
 		expect(copy.needs).toEqual([
 			[FOLDER, "create"],

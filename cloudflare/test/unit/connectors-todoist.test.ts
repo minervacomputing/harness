@@ -182,10 +182,10 @@ describe("the declaration", () => {
 		// A change here changes what running runs' tools mean (OPERATION_CHANGED): bump `revision` when the
 		// meaning changed in a way the declaration does not show.
 		expect(fingerprints).toEqual({
-			list_projects: "8026cbf5f0ddf383",
-			list_tasks: "e8de31e4a0c529ba",
-			get_task: "3d832520b30d6475",
-			create_task: "244c844d8ef572cd",
+			list_projects: "006c8f168a90b544",
+			list_tasks: "22863b9cf4593334",
+			get_task: "f1e84cf0ef08a9d4",
+			create_task: "1166595e0435df97",
 		});
 	});
 
