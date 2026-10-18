@@ -65,6 +65,11 @@ export interface RunInternals {
 	entered: { model: number; tool: number };
 	/** Each model call's marks, as this instance took them (ports.ts, `CallMarks`). */
 	marks: CallMarks[];
+	/**
+	 * The tasks of the run's pi session in id order, none before it has one: whether pi marked each for abort, and pi's own
+	 * `Date.now()` stamps of its first change to `running` and of its end, null until then.
+	 */
+	piTasks: { id: number; kind: string; status: string; abortRequested: boolean; startedAt: number | null; endedAt: number | null }[];
 }
 
 /**
@@ -244,11 +249,25 @@ export class Conversation extends BaseConversation {
 		const sql = this.ctx.storage.sql;
 		const kept = sql.exec("SELECT 1 FROM runs WHERE id = ? AND prune IS NULL", runId).toArray().length > 0;
 		const tools = kept ? new RunStore(this.ctx.storage).snapshot({ id: runId }).tools.map((tool) => tool.name) : [];
+		// A run without a session has no tasks, and pi's tables exist only once pi was opened. pi's `kind` column holds the kind
+		// JSON-encoded, so it is read from the record.
+		const session = sql.exec<{ session: string | null }>("SELECT session FROM runs WHERE id = ?", runId).toArray()[0]?.session ?? null;
+		const piTasks =
+			session === null
+				? []
+				: sql
+						.exec<{ id: number; kind: string; status: string; abortRequested: number; startedAt: number | null; endedAt: number | null }>(
+								"SELECT id, json_extract(record, '$.kind') AS kind, status, abort_requested AS abortRequested, json_extract(record, '$.startedAt') AS startedAt, json_extract(record, '$.endedAt') AS endedAt FROM pi_tasks WHERE conversation_id = ? ORDER BY id",
+								Number(session),
+							)
+						.toArray()
+						.map((task) => ({ ...task, abortRequested: task.abortRequested === 1 }));
 		return {
 			tools,
 			entered: planOf(this.ctx).entered(runId),
 			marks: marksOf(this.ctx, runId),
-			run: sql.exec("SELECT id, status, attempt, error_code, error_message, revoked, activated, writes_uncertain, tool_calls, model_calls, allowance, prune FROM runs WHERE id = ?", runId).toArray()[0] ?? null,
+			piTasks,
+			run: sql.exec("SELECT id, status, attempt, error_code, error_message, revoked, activated, writes_uncertain, tool_calls, model_calls, allowance, prune, created_at FROM runs WHERE id = ?", runId).toArray()[0] ?? null,
 			attempts: sql.exec<{ attempt: number; ended: string | null }>("SELECT attempt, ended FROM attempts WHERE run_id = ? ORDER BY attempt", runId).toArray(),
 			calls: sql.exec<{ attempt: number; instance: string }>("SELECT attempt, instance FROM call_records WHERE run_id = ? ORDER BY attempt, created_at", runId).toArray(),
 			writes: sql.exec<{ key: string; status: string; attempt: number }>("SELECT key, status, attempt FROM run_writes WHERE run_id = ? ORDER BY dispatched_at", runId).toArray(),

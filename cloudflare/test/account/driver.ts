@@ -73,6 +73,8 @@ export interface RunView {
 		entered: { model: number; tool: number };
 		/** Each model call's marks, in the object's Date.now() milliseconds (src/faults/ports.ts, `CallMarks`). */
 		marks: { begin: number; answered: number | null; last: number | null }[];
+		/** The tasks of the run's pi session in id order (src/faults/index.ts, `RunInternals`). */
+		piTasks: { id: number; kind: string; status: string; abortRequested: boolean; startedAt: number | null; endedAt: number | null }[];
 	};
 	fired: { point: string; mode: string; at: number }[];
 	/** The resets (`ctx.abort()`) the conversation's object asked for, as the isolate that answered saw them (src/faults/index.ts). */

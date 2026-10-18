@@ -8,6 +8,12 @@
 //   output gate's wait for them, and one round trip;
 // - M2, this call's `host.begin` to its request answered: what happens between them, and the same round trip.
 //
+// Per turn (20 samples), for chunk 19a (docs/plans/chunk-19a-design.md, Perf probe and rule):
+//
+// - S, the run's `created_at`, which the start's final transaction writes, to its first call's request answered: what the
+//   start does after it (the attempt, pi's session and submit), pi's first step, the call's admission, the output gate's
+//   wait and one round trip.
+//
 // Every turn is given a large allowance, so each call's admission runs its check (docs/plans/chunk-14b-design.md, Perf probe
 // and rule) and none is refused.
 //
@@ -46,12 +52,13 @@ afterAll(finish, 300_000);
 
 describe("perf probe", () => {
 	test(
-		`M1 and M2 over ${TURNS} turns of ${CALLS} model calls`,
+		`M1, M2 and S over ${TURNS} turns of ${CALLS} model calls`,
 		async () => {
 			const w = await world({ model: "fake-remote", ...(calibrate ? { calibrate } : {}) });
 			const prompt = script([...Array.from({ length: CALLS - 1 }, () => ({ tools: [{ name: "no_such_tool", arguments: {} }] })), { text: "Done." }]);
 			const m1: number[] = [];
 			const m2: number[] = [];
+			const s: number[] = [];
 			for (let turn = 0; turn < TURNS; turn++) {
 				const view = await settled(w, await post(w, prompt, [], { allowance: LARGE_ALLOWANCE }), 120_000);
 				expect(view.head?.status, outcome(view)).toBe("completed");
@@ -60,6 +67,10 @@ describe("perf probe", () => {
 				expect(view.internals.run?.model_calls, outcome(view)).toBe(CALLS);
 				const marks = view.internals.marks;
 				expect(marks, `turn ${turn + 1}'s marks: ${JSON.stringify(marks)}`).toHaveLength(CALLS);
+				const createdAt = view.internals.run?.created_at;
+				const first = marks[0]?.answered;
+				if (typeof createdAt !== "number" || first == null) throw new Error(`Turn ${turn + 1}'s start or first call is not marked: ${outcome(view)} ${JSON.stringify(marks)}`);
+				s.push(first - createdAt);
 				for (let call = 1; call < CALLS; call++) {
 					const { begin, answered } = marks[call] as (typeof marks)[number];
 					const previous = marks[call - 1]?.last;
@@ -68,8 +79,8 @@ describe("perf probe", () => {
 					m2.push(answered - begin);
 				}
 			}
-			const result = { calibrate, turns: TURNS, m1: summary(m1), m2: summary(m2), samples: { m1, m2 } };
-			console.info(`perf probe (calibrate ${JSON.stringify(calibrate)}): M1 ${JSON.stringify(result.m1)}; M2 ${JSON.stringify(result.m2)}`);
+			const result = { calibrate, turns: TURNS, m1: summary(m1), m2: summary(m2), s: summary(s), samples: { m1, m2, s } };
+			console.info(`perf probe (calibrate ${JSON.stringify(calibrate)}): M1 ${JSON.stringify(result.m1)}; M2 ${JSON.stringify(result.m2)}; S ${JSON.stringify(result.s)}`);
 			if (process.env.MINERVA_PERF_OUT) writeFileSync(process.env.MINERVA_PERF_OUT, `${JSON.stringify(result, null, 2)}\n`);
 		},
 		900_000,

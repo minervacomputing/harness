@@ -364,6 +364,13 @@ describe("the test build's network", () => {
 			expect(answered).toBeLessThanOrEqual(last as number);
 			if (i > 0) expect(internals.marks[i - 1]?.last).toBeLessThanOrEqual(begin);
 		}
+		// S (test/account/perf.test.ts) starts at the run's `created_at`, before its first call's held answer on the marks' clock.
+		expect((internals.marks[0]?.answered as number) - (internals.run?.created_at as number)).toBeGreaterThanOrEqual(50);
+		expect(internals.piTasks.map(({ kind, status, abortRequested }) => ({ kind, status, abortRequested }))).toEqual(Array(6).fill({ kind: "pi.generation", status: "terminal", abortRequested: false }));
+		for (const [i, task] of internals.piTasks.entries()) {
+			expect(task.startedAt, `generation ${i + 1} starts before its call, on the marks' clock`).toBeLessThanOrEqual(internals.marks[i]?.begin as number);
+			expect(task.endedAt, `generation ${i + 1} ends after its answer`).toBeGreaterThanOrEqual(internals.marks[i]?.last as number);
+		}
 		// Neither provider records them.
 		expect((await provider(w)).requests).toEqual([]);
 		expect((await providerOf(env, modelScope(w.within.workspace)).state()).requests).toEqual([]);
