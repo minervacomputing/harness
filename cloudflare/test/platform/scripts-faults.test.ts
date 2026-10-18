@@ -21,7 +21,6 @@ import { faultConversationPorts, providerOf } from "../../src/faults/ports.ts";
 import { notesLease } from "../../src/faults/world.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import type { FakeTurn } from "../../src/model/fake.ts";
-import { SCRIPT_TIMEOUT_MS } from "../../src/scripts/limits.ts";
 import { SCRIPT_CLOCK } from "../../src/scripts/run.ts";
 import type { RunId } from "../../src/shared/rpc.ts";
 import { commands, held, notesStart, objectOf, scope, signedAssertions, viewOf } from "./internal-support.ts";
@@ -31,6 +30,7 @@ signedAssertions();
 const LIST = "notes_list_notes";
 const SAVE = "notes_save_note";
 const DELIVERY = { ...FACT_DELIVERY };
+const CLOCK = { ...SCRIPT_CLOCK };
 let fake: FakeLaravel;
 let uninstall: () => void;
 
@@ -46,7 +46,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	SCRIPT_CLOCK.timeoutMs = SCRIPT_TIMEOUT_MS;
+	Object.assign(SCRIPT_CLOCK, CLOCK);
 	uninstall();
 	Object.assign(FACT_DELIVERY, DELIVERY);
 });
@@ -97,8 +97,8 @@ async function until<T>(read: () => Promise<T>, done: (value: T) => boolean, tim
 const script = (code: string): FakeTurn => ({ tools: [{ name: "run_script", arguments: { code } }] });
 
 /** Sends a start, which Laravel holds, whose model answers with `turns`; its run's id once it is accepted. */
-async function post(w: World, turns: FakeTurn[], pace: { delayMs?: number; chunkChars?: number } = {}): Promise<RunId> {
-	const content = JSON.stringify({ fake: { turns, ...pace } });
+async function post(w: World, turns: FakeTurn[]): Promise<RunId> {
+	const content = JSON.stringify({ fake: { turns } });
 	const start = held(fake, notesStart(w.within, w.connectionId, { conversation: w.conversationId, message: { id: uuid7(), content, attachments: [] } }));
 	const answer = await commands.startRun(start);
 	if (answer.outcome !== "accepted") throw new Error(`Refused: ${answer.code} ${answer.message}`);
@@ -176,18 +176,30 @@ describe("code mode's faults", () => {
 
 	test("a write the script waited for when its wall clock ran out settles in the ledger and is recorded", async () => {
 		SCRIPT_CLOCK.timeoutMs = 300;
-		const w = await world([{ point: "provider:write:applied", mode: "hold" }]);
-		const runId = await post(w, [script("await tools.notes_save_note({ folder: 'inbox', title: 'Slow' }); return 'never'"), { text: "Done." }], {
-			delayMs: 1000,
-			chunkChars: 500,
-		});
+		// The clock runs out only once the provider applied the write, the write is held there until pi has the script's
+		// result, and the model's answer to it waits until the write is recorded, so the run is still active then.
+		const w = await world([
+			{ point: "provider:write:applied", mode: "hold" },
+			{ point: "model:delta", mode: "hold", step: 1 },
+		]);
+		const applied = Promise.withResolvers<void>();
+		SCRIPT_CLOCK.held = applied.promise;
+		const runId = await post(w, [script("await tools.notes_save_note({ folder: 'inbox', title: 'Slow' }); return 'never'"), { text: "Done." }]);
 		await until(
 			() => w.conversation.faultFired(),
 			(fired) => fired.some((entry) => entry.point === "provider:write:applied"),
 		);
-		// The script's wall clock runs out while the write is held after the provider applied it.
-		await sleep(500);
+		applied.resolve();
+		await until(
+			() => piToolResults(w),
+			(seen) => seen.length > 0,
+		);
 		await w.conversation.faultRelease("provider:write:applied");
+		await until(
+			() => eventsOf(w, runId),
+			(events) => toolCalls(events).length > 0,
+		);
+		await w.conversation.faultRelease("model:delta");
 		const run = await settled(w, runId);
 		expect(run.status).toBe("completed");
 		const internals = await w.conversation.faultRun(runId);
