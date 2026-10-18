@@ -85,7 +85,9 @@ A grant is **connection + resource kind + resource + actions**, allow or deny. A
 effective = provider account ∩ workspace ceiling ∩ user layer ∩ agent layer   (deny wins)
 ```
 
-The effective permissions are compiled once when a run starts, from the layers and the agent's connections `startRun` carries, and stored with the run (`gateway/policy.ts`, `gateway/grants.ts`, `gateway/tools.ts`). A missing layer passes everything for the ceiling, allows nothing for a user until they choose, and inherits for an agent. Changing access, removing a connection or member, or changing an agent's connections makes Laravel cancel the affected active runs (Strict revocation).
+The effective permissions are compiled once when a run starts, from the layers and the agent's connections `startRun` carries, and stored with the run (`gateway/policy.ts`, `gateway/grants.ts`, `gateway/tools.ts`).
+
+An organization may also have a **connection policy** (`gateway/tenancy.ts`, [chunk 17's design](docs/plans/chunk-17-design.md)): the connectors it offers, each with the tenants it allows or any. Laravel stores it and sends it raw in `startRun`, `listResources` and `checkGrantEdit`, with each connection's tenant as `describeAccount` answered it. The compile offers tools only on the connections it admits: a connector it does not list is refused, and under a list a connection whose account is in no listed tenant is refused, as is a connector whose tenancy is unknown. For a connector with a tenant per resource the run snapshots the allowed tenants, and every resource a call touches or returns is checked against them. Without a policy nothing changes. A missing layer passes everything for the ceiling, allows nothing for a user until they choose, and inherits for an agent. Changing access, removing a connection or member, or changing an agent's connections makes Laravel cancel the affected active runs (Strict revocation).
 
 Every tool call goes through one pipeline (`gateway/executor.ts`):
 
@@ -94,7 +96,7 @@ strict argument validation
   → lease the connection's credential from Laravel for this call
   → provider consent (the connection's OAuth scopes)
   → connector resolves the real resources the call touches, checked against its declaration
-  → permission check
+  → permission check, then the connection policy's tenants
   → (writes) dispatch the write, one at a time per run
   → call the provider
   → (writes) settle: succeeded, not applied (forgotten, so it can be tried again), or uncertain
@@ -104,7 +106,8 @@ strict argument validation
 
 - **Writes.** Identical writes within a run are deduplicated. A write the provider refused outright, or that never reached it, is forgotten. One whose outcome is unknown (a timeout) is uncertain and pauses the run's further writes (Writes, below).
 - **Tokens.** If a provider rejects a connection's token, the engine reports it to Laravel (`reportUnauthorized`) with the generation of the credential it was lent, so a late report cannot mark credentials that replaced it; Laravel marks the connection **Needs reconnecting**.
-- **Changed tools.** A run snapshots a fingerprint of each tool's declaration. If a deploy changes what a tool means, active runs lose it (`OPERATION_CHANGED`) rather than use it under old grants.
+- **Changed tools.** A run snapshots a fingerprint of each tool's declaration, its connector's tenancy included. If a deploy changes what a tool means, active runs lose it (`OPERATION_CHANGED`) rather than use it under old grants.
+- **Tenants.** A call the grants allow on a resource of a tenant the policy does not allow fails with `POLICY_DENIED`, "Your organization does not allow this {label}."; a call the grants refuse gets their generic refusal, so the tenant is named only for what the run may otherwise use. Records of other tenants are dropped as records the grants hide are.
 - **No caps on work.** A turn has no limit on writes, model calls or tool calls, so an agent can work on one prompt as long as it needs; a deadline per turn is optional (`MINERVA_RUN_TIMEOUT_SECONDS`).
 
 ## Connectors
@@ -116,6 +119,7 @@ A **connector** (`src/connectors/<name>/`, the contract in `gateway/connector.ts
 - **Several kinds.** An operation may need actions on more than one kind (an Outlook reply needs Read on a folder and Send on its recipients); records scoped to a kind without the operation's output action are dropped.
 - **One write per operation.** A mutating operation sends one mutating request, only from `execute()` and only with time left. The executor judges the write by what the provider client recorded, not by what the connector returned.
 - **Provider consent.** A connection starts with the connector's base scopes only. The catalog gives Laravel each operation's scopes, and Laravel's flow asks for the scopes of every allowed action (incremental where the provider supports it). Tools whose scopes are missing are not offered; a call made after scopes shrank fails with `CONSENT_REQUIRED`.
+- **Tenancy.** Each connector declares how its resources belong to organizations, which connection policies limit: one tenant per account (Google's Workspace domain, Microsoft's Entra tenant, Slack's workspace, HubSpot's, Intercom's, Notion's, Linear's, Stripe's and Sentry's account or organization), which `account()` names; a tenant per resource (Jira's and Confluence's site, Xero's organisation, a GitHub repository's current owner by numeric id), which every resource, record and discovery item names from what the provider answered for that call; or unknown (Todoist, the Web). The executor refuses a need, and drops a record, of a connector with a tenant per resource that names none. A tenant per account limits which accounts are used, not what is shared into them.
 - **Connections** belong to a workspace in Laravel and are personal (the user's own OAuth, so the provider's permissions also apply) or shared (admin-made; not built). Tools are namespaced per connection, and the executor routes each call to a connection it chose, never one named in model arguments.
 - **OAuth apps.** The catalog gives each connector's OAuth descriptor (its client's name, endpoints, scopes, PKCE). Laravel registers the clients, runs the flows and refreshes tokens through the client that issued them; the engine holds no client. Todoist's client is registered dynamically. API-key connectors (Stripe) and built-in services (the Web) use the same contract.
 

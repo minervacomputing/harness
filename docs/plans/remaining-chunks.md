@@ -487,33 +487,34 @@ The design, its decisions and the units are in [chunk-15c-design.md](chunk-15c-d
 
 **Depends on.** Chunk 13c.
 
-Laravel already stores the account's tenant (`connections.account_tenant`, from `describeAccount`), and the engine reports none yet.
+Laravel already stores the account's tenant (`connections.account_tenant`, from `describeAccount`). The design is [chunk-17-design.md](chunk-17-design.md): 17a, the engine's half, is built on `main`; 17b, Laravel's, waits on the app's `chunk-17` branch until the engine's staging deploy, since an engine before 17a drops the policy.
 
 **Build.**
 
-- [ ] Each connector declares its tenancy in the catalog. One tenant per account (Google's `hd`, Microsoft's `tid`, Slack's team), a tenant per resource (Atlassian by each site's cloud id, GitHub by each repository's current owner, following transfers), or unknown.
-- [ ] `describeAccount` returns the tenant where the connector knows one.
+- [x] Each connector declares its tenancy in the catalog. One tenant per account (Google's `hd`, Microsoft's `tid`, Slack's team), a tenant per resource (Atlassian by each site's cloud id, GitHub by each repository's current owner, following transfers), or unknown. `2956579`: the catalog's `tenancy` (`account`, `resource` or `unknown`, with a label); Microsoft's tenant from `GET /organization`, GitHub's by the owner's numeric id, Xero by organisation; Todoist and the Web unknown.
+- [x] `describeAccount` returns the tenant where the connector knows one. `2956579`: `tenant` for a connector with one per account (none for a personal Google or Microsoft account), and `tenants`, the ones the account reaches now, for any known tenancy.
 - [ ] Laravel stores an organization's policy (the connectors it offers, the tenants it allows) and checks it at the OAuth callback.
-- [ ] The policy is a raw authority input in `startRun`, `listResources` and `checkGrantEdit`, compiled by the engine with the layers (Decision 3), so the engine checks tenants in resource discovery, in the grant editor, before each call and on the call's results. The engine deploys first.
+- [x] The policy is a raw authority input in `startRun`, `listResources` and `checkGrantEdit`, compiled by the engine with the layers (Decision 3), so the engine checks tenants in resource discovery, in the grant editor, before each call and on the call's results. The contract `f2539f7` (optional `policy` and connections' `tenant`, the refusal `CONNECTION_NOT_ALLOWED`), the compile and the checks `476e5ee` (`COMPILER_VERSION` 2; the grants' refusal before the tenant's; tenancy in every operation's fingerprint).
+- [ ] The engine deploys first. Ready at `3afa33a`; the deploy to `minerva-cf-staging` awaits the owner's approval, and 17b's merge to the app's `main` waits for it.
 - [ ] A grant edit commits only while the policy's revision is the one checked, as it does for the layer's revision (chunk 11).
 - [ ] A policy that narrows cancels the runs holding an affected connection, as a revocation does.
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Engine unit tests per tenancy kind, a GitHub repository transferred to another owner included. Run `pnpm test:unit`.
+- [x] Engine unit tests per tenancy kind, a GitHub repository transferred to another owner included. Run `pnpm test:unit`. 2,775 unit tests in 100 files pass (2,748 in 99 before 17a): `tenancy.test.ts` per kind, `connectors-github.test.ts` with a repository transferred, refused by its new and old names and for a write, and one transferred while a call reads it. Platform 367 in 28 files (362 in 27): `internal-policies.test.ts`, and the settings calls under a policy in `internal-connections.test.ts`.
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Regression against `main`. `test:faults` passes with no policy.
+- [x] Regression against `main`. `test:faults` passes with no policy. On `minerva-cf-test` at `3afa33a`: `test:faults` 36 tests in 6 files, `test:deployed` 6, and `pnpm check --instance minerva-cf-test`. A start without a policy compiles to the snapshot digest it had before 17a (`internal-runs.test.ts`).
 - [ ] On staging, an organization that allows one GitHub owner sees a repository of another owner refused in the grant editor and in a turn.
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. The tenant check's added time per connector call. Rule. Under 5 ms at p95 when no extra provider call is needed. More fails.
+- [x] Metric. The tenant check's added time per connector call. Rule. Under 5 ms at p95 when no extra provider call is needed. More fails. No measurable difference: p95 of the executor's whole `get_repository` call 0.122 ms at base and 0.121 ms under an owner list, medians of five runs per side alternating, paired deltas -0.009 to +0.009 ms (chunk-17-design.md, Results).
 
 **Review.**
 
-- [ ] opencode reviewed the design and the diff.
+- [ ] opencode reviewed the design and the diff. The design, 17 findings (chunk-17-design.md, Amendments after opencode's review), and 17a's diff, nothing to act on; 17b's diff is still to be reviewed.
 
 ## Search the transcripts (chunk 18)
 

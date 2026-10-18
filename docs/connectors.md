@@ -16,6 +16,22 @@ Each tool also needs the provider scopes behind it, and a tool whose scopes the 
 
 For Gmail and the Microsoft connectors, the provider's permission covers everything the account can reach (the whole mailbox, every calendar, file or channel), so the limits within it are Minerva's.
 
+## Connection policies
+
+An organization can limit the connectors its members connect and use, and the tenants they may reach: a Google Workspace domain, a Microsoft Entra tenant, a Slack workspace, an Atlassian site, a GitHub owner. Each connector's tenancy decides what a policy can limit:
+
+| Connector | Tenant | Checked |
+|---|---|---|
+| Gmail, Google Calendar, Google Drive | The Workspace domain (`hd`); a personal Google account has none | When a run starts and in the settings: a connection whose account is outside the allowed domains is not used |
+| Outlook, Outlook Calendar, OneDrive and SharePoint, Microsoft Teams | The Entra tenant id; a personal Microsoft account has none | As for Google |
+| Slack, HubSpot, Intercom, Notion, Linear, Stripe, Sentry | The workspace, account or organization the connection is in | As for Google |
+| Jira, Confluence | The Atlassian site (cloud id) of each project or space | On every call, result, listing and grant |
+| GitHub | The current owner of each repository, by its numeric id, following renames and transfers | On every call, result, listing and grant |
+| Xero | The organisation (tenant id) | On every call, result, listing and grant |
+| Todoist, the Web | Unknown | A policy can only offer the connector or not |
+
+Laravel also refuses to connect an account a policy does not allow (chunk 17b of the plan). For the connectors with one tenant per account, a policy limits which accounts are used, not what is shared into them from elsewhere (a file shared from another domain, a Slack Connect channel). A repository transferred to an owner the policy does not allow is refused from the next call; a call already under way when it moves finishes against it.
+
 | Connector | Kind (resource id) | Actions | Notes |
 |---|---|---|---|
 | [Todoist](#todoist) | Project | Read, Create | |

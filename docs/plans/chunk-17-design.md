@@ -1,6 +1,6 @@
 # Chunk 17 design: let organizations limit connections
 
-Status: proposed, 2026-10-18. This design settles the choices that chunk 17 of [remaining-chunks.md](remaining-chunks.md) leaves open, for both sides. It splits the chunk in two: 17a is the engine's half, built in this repository; 17b is Laravel's, built in `minervacomputing/app` ("the app" below) from this design by another agent. The engine deploys first. opencode reviewed it, and the findings that held are folded in (Amendments after opencode's review). Line numbers are at `ba4bc02` (harness) and at the app's main as read on 2026-10-18.
+Status: 17a built and checked on 2026-10-18 (Results); 17b and the engine's staging deploy are open. This design settles the choices that chunk 17 of [remaining-chunks.md](remaining-chunks.md) leaves open, for both sides. It splits the chunk in two: 17a is the engine's half, built in this repository; 17b is Laravel's, built in `minervacomputing/app` ("the app" below) from this design by another agent. The engine deploys first. opencode reviewed it, and the findings that held are folded in (Amendments after opencode's review). Line numbers are at `ba4bc02` (harness) and at the app's main as read on 2026-10-18.
 
 ## The rule in brief
 
@@ -201,7 +201,7 @@ Chunk 17's boxes stay as written; the engine's are checked with their evidence a
 
 ## Amendments after opencode's review
 
-opencode (`plan` agent) reviewed this design on 2026-10-18 with the engine's code at hand, while units 1 and 2 were in progress, and changed no files. It found 17 points; each was checked against the code before it was folded in or set aside.
+opencode (`plan` agent) reviewed this design on 2026-10-18 with the engine's code at hand, while units 1 and 2 were in progress, and changed no files. It found 17 points; each was checked against the code before it was folded in or set aside. Another agent's review wrote to the same output file for about a minute; every finding below is about this design (tenants, policies, GitHub, the editor, the compile), and none about that review's subjects (uploads, rate limits, isolation), so none was dropped.
 
 | # | Finding | Checked against | Outcome |
 |---|---|---|---|
@@ -222,3 +222,23 @@ opencode (`plan` agent) reviewed this design on 2026-10-18 with the engine's cod
 | 15 | A missing tenant must fail closed on the settings paths, and cursors survive filtered pages | `listResources`, `outsideTenants` | Holds: items without a tenant are left out, an unplaced resource is invalid, and the page token is kept; stated in Where the engine checks |
 | 16 | A tenant's refusal before the grants' is an oracle for resources the grants hide | `#authorize`; a workspace's shared connection used by another member | Folded in: the grants' refusal comes first, tested |
 | 17 | A retry must not rebuild a start with a newer policy; revisions must never be reused | The app's stored `start_body` (`Runs.php:276`) | The first holds already. Folded in: the policy row is never deleted, so its revision only grows |
+
+opencode then reviewed the diff of units 2 and 3 (`cloudflare/src`, `f2539f7..476e5ee`) against this design and the repository, and found nothing to act on: it checked that the limits survive the compile, the snapshot and the executor's construction, that a missing tenant fails closed, that the grants' refusal comes first, that discovery keeps its page token, and that GitHub reads the current owner's numeric id after a transfer. It names the transfer window and a stored account tenant's staleness as the limits this design accepts.
+
+## Results
+
+Engine (17a), on `main`:
+
+| Unit | Commit |
+|---|---|
+| 1. Contract | `f2539f7` |
+| 2. Tenancy declarations | `2956579` |
+| Design, reviewed | `6691bef` |
+| 3. The policy | `476e5ee` |
+| 4. A flaky retention test fixed, found by the regression run | `3afa33a` |
+| 5. Docs and the plan's boxes | this commit |
+
+- **Tests.** Unit 2,775 in 100 files (2,748 in 99 before 17a); platform 367 in 28 files (362 in 27). New: `test/unit/tenancy.test.ts` (the admission table, and a run under a policy per tenancy kind), GitHub's owners and transfers in `connectors-github.test.ts`, the tenants each connector names in its own tests, `test/platform/internal-policies.test.ts` (a start's `authorized` under a policy, and a turn whose call on another owner's repository is refused), and the settings calls under a policy in `internal-connections.test.ts`. With the executor's tenant check disabled, 8 of them fail.
+- **Account suites**, on `minerva-cf-test` after `deploy:test` at `3afa33a`, with no policy: `test:faults` 36 tests in 6 files passed (244 s); `test:deployed` 6 tests passed. `pnpm check --instance minerva-cf-test` passed.
+- **Perf.** The rule's probe, a Node benchmark of the executor's whole `invoke` of `get_repository` against an in-memory GitHub, 2,000 calls after 200 of warm-up, five fresh processes per side alternating base (`f2539f7`) and head (`476e5ee`, an owner list of three that admits the repository): p95 0.122 ms at base (median of 5, range 0.120 to 0.124) and 0.121 ms at head (range 0.112 to 0.129); the paired p95 deltas range from -0.009 to +0.009 ms, no measurable difference, against a rule of 5 ms. Every call returned its record with two provider requests (4,400 per run); with the owner left out of the list, every call was refused after one request, so the check runs inside the timed call. The call is bound by the executor's own work on one core (validation, the fake provider's JSON); the check is a lookup in a short list, and a real GitHub request is milliseconds.
+
