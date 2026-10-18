@@ -3,11 +3,11 @@
 // PiHarness with the fake model calling pi's read, write, edit and bash, the folder's store on the object's SQLite and the
 // EU bucket, and a conversation's container played by test/platform/sandbox-memory.ts (local workerd has no containers).
 // Covered: results held until a checkpoint saved them and their cards after, phases, the final rehash, the folder version
-// published with the run's changes and warnings, a turn that only reads, the run's container destroyed at its end, a folder
-// over its limits (folder_limit and its message), a container that fails its hardening (worker_failed) or never starts
-// (attempts until worker_exited), and crashes between a checkpoint's upload and its record, its record and the release, and
-// the release and pi's commit (the Checkpoints row of ARCHITECTURE.md's Testing table), each resumed from the last
-// checkpoint.
+// published with the run's changes and warnings, a turn that only reads, the run's container destroyed at its end, a deletion
+// that waits for a command pi's abort does not end, a folder over its limits (folder_limit and its message), a container that
+// fails its hardening (worker_failed) or never starts (attempts until worker_exited), and crashes between a checkpoint's
+// upload and its record, its record and the release, and the release and pi's commit (the Checkpoints row of
+// ARCHITECTURE.md's Testing table), each resumed from the last checkpoint.
 
 import { env } from "cloudflare:workers";
 import type { RunEvent } from "@minerva/contract";
@@ -264,6 +264,35 @@ describe("the local tools in the conversation", () => {
 		await until(async () => w.sandbox.log, (log) => log.some((line) => line.startsWith("destroy")));
 		expect(w.sandbox.holding).toBe(0);
 		expect(cards(await eventsOf(w, runId))).toEqual([]);
+	});
+
+	test("deleting the conversation answers only once a command past its checkpoint, which pi's abort does not end, has ended", async () => {
+		const w = await world({ faults: [{ point: "local:released", mode: "hold", tool: "bash" }] });
+		const runId = await post(w, [bash("echo hi"), DONE]);
+		await until(
+			async () => (await w.conversation.faultFired()).map((entry) => entry.point),
+			(points) => points.includes("local:released"),
+		);
+		let answered = false;
+		const deletion = commands.deleteConversation({ scope: w.within, conversation: w.conversationId }).finally(() => {
+			answered = true;
+		});
+		await until(
+			async () => (await w.conversation.faultRun(runId)).piTasks,
+			(tasks) => tasks.length === 2 && tasks.every((task) => task.abortRequested),
+		);
+		await sleep(1000);
+		expect(answered).toBe(false);
+		expect((await w.conversation.faultRun(runId)).piTasks.map(({ kind, status, abortRequested }) => [kind, status, abortRequested])).toEqual([
+			["pi.generation", "waiting", true],
+			["pi.tool", "running", true],
+		]);
+		await w.conversation.faultRelease("local:released");
+		expect(await deletion).toEqual({ outcome: "deleted" });
+		expect((await w.conversation.faultRun(runId)).piTasks.map(({ kind, status, abortRequested }) => [kind, status, abortRequested])).toEqual([
+			["pi.generation", "terminal", true],
+			["pi.tool", "terminal", true],
+		]);
 	});
 });
 

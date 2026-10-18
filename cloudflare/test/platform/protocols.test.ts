@@ -305,19 +305,33 @@ describe("authority and revocation", () => {
 		}
 	});
 
-	test("a cancelled run's stop, held until the next run's read is recorded, marks nothing of the next run's", async () => {
-		const w = await world({ faults: [{ point: "pi:stop", mode: "hold" }], delays: { "GET /folders/inbox/notes": 1500 } });
+	test("a cancelled run's stop, held until the next run recorded its read and is inside its next model call, marks nothing of the next run's", async () => {
+		const w = await world({
+			faults: [
+				{ point: "pi:stop", mode: "hold" },
+				{ point: "model:delta", mode: "hold", step: 1, delta: 0 },
+			],
+			delays: { "GET /folders/inbox/notes": 1500 },
+		});
 		const a = await post(w, [LIST_INBOX, { text: "Done." }]);
 		await until(() => provider(w), (state) => reads(state.requests) === 1);
 		expect(await cancelOf(w, a)).toEqual({ state: "cancelled" });
 		await reached(() => w.stub.faultFired(), "pi:stop");
 		const b = await post(w, [LIST_INBOX, { text: "Done." }]);
-		await until(
-			async () => toolCalls(await eventsOf(w, b)),
-			(calls) => calls.length === 1,
-		);
-		expect((await w.stub.faultFired()).map((entry) => [entry.point, entry.mode, entry.detail])).toEqual([["pi:stop", "hold", a]]);
+		await reached(() => w.stub.faultFired(), "model:delta");
+		expect(toolCalls(await eventsOf(w, b))).toEqual([expect.objectContaining({ tool: LIST, decision: "allowed" })]);
+		expect((await w.stub.faultFired()).map((entry) => [entry.point, entry.mode, entry.detail])).toEqual([
+			["pi:stop", "hold", a],
+			["model:delta", "hold", ""],
+		]);
 		await w.stub.faultRelease("pi:stop");
+		await sleep(500);
+		expect((await w.stub.faultRun(b)).piTasks.map(({ kind, status, abortRequested }) => [kind, status, abortRequested])).toEqual([
+			["pi.generation", "terminal", false],
+			["pi.tool", "terminal", false],
+			["pi.generation", "running", false],
+		]);
+		await w.stub.faultRelease("model:delta");
 		expect((await settled(w, b)).status).toBe("completed");
 		expect(toolCalls(await eventsOf(w, b))).toEqual([expect.objectContaining({ tool: LIST, decision: "allowed" })]);
 		const tasks = await until(
