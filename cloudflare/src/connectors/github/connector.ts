@@ -31,13 +31,16 @@ import {
 	type Prepared,
 	type ProviderOutput,
 	type ScopedRecord,
+	type Tenancy,
+	type Tenant,
 	defineOperation,
 	denied,
+	inTenant,
 } from "../../gateway/connector.ts";
 import type { Resource } from "../../gateway/policy.ts";
 import { type Json, type JsonObject, parseJson } from "../../lib/json.ts";
 import { PLAIN_TEXT, SINGLE_LINE, isPlainText, isSingleLine, truncate } from "../../lib/text.ts";
-import { type Comment, type Entry, GitHubClient, type Issue, MAX_INLINE_FILE, type Pull, type Repository } from "./client.ts";
+import { type Comment, type Entry, GitHubClient, type Installation, type Issue, MAX_INLINE_FILE, type Pull, type Repository } from "./client.ts";
 import { extend } from "../../lib/arrays.ts";
 
 export const REPOSITORY = "repository";
@@ -152,6 +155,19 @@ function clientOf(binding: Binding): GitHubClient {
 	return binding.client as GitHubClient;
 }
 
+/**
+ * A repository's tenant: its owner as GitHub answered for it in this call, by numeric id, so a transfer moves it to its new
+ * owner's tenant. Not by login: an owner that renames itself frees its old login for anyone to register.
+ */
+export function ownerOf(repository: Repository): string {
+	return String(repository.owner.id);
+}
+
+/** A repository as the resource that is authorized, in its owner's tenant. */
+function repositoryResource(binding: Binding, repository: Repository): Resource {
+	return inTenant(binding.resource(REPOSITORY, String(repository.id)), ownerOf(repository));
+}
+
 /** The repository a call names, as the resource that is authorized. Repositories the account cannot see are refused like repositories without a grant. */
 async function resolve(binding: Binding, repository: string): Promise<Resource> {
 	const [owner, name] = partition(repository);
@@ -162,7 +178,7 @@ async function resolve(binding: Binding, repository: string): Promise<Resource> 
 		if (error instanceof OperationError && error.code === "NOT_FOUND") throw denied();
 		throw error;
 	}
-	return binding.resource(REPOSITORY, String(found.id));
+	return repositoryResource(binding, found);
 }
 
 export function repositoryRecord(repository: Repository): JsonObject {
@@ -275,15 +291,61 @@ export function repositoriesCursor(cursor: string | null): [installation: number
 	return [parsed.data.installation, parsed.data.page];
 }
 
-async function installationIds(client: GitHubClient): Promise<number[]> {
-	const ids: number[] = [];
+async function installations(client: GitHubClient): Promise<Installation[]> {
+	const found: Installation[] = [];
 	for (let page = 1; page <= MAX_INSTALLATION_PAGES; page++) {
-		const found = await client.installations(page);
-		extend(ids, found.map((installation) => installation.id));
-		if (found.length < 100) return [...new Set(ids)].sort((a, b) => a - b);
+		const answered = await client.installations(page);
+		extend(found, answered);
+		if (answered.length < 100) return found;
 	}
 	throw new OperationError("PROVIDER_LIMIT", "The Minerva GitHub App has more installations than Minerva can list.");
 }
+
+async function installationIds(client: GitHubClient): Promise<number[]> {
+	return [...new Set((await installations(client)).map((installation) => installation.id))].sort((a, b) => a - b);
+}
+
+/** The owners the App is installed on for this user, as the tenants the account reaches. */
+async function installationOwners(client: GitHubClient): Promise<Tenant[]> {
+	const owners = new Map<string, Tenant>();
+	for (const { account } of await installations(client)) {
+		if (account !== null) owners.set(String(account.id), { id: String(account.id), name: account.login || String(account.id) });
+	}
+	return [...owners.values()].sort((a, b) => Number(a.id) - Number(b.id));
+}
+
+/**
+ * The repositories with these ids the account can see, at most MAX_DESCRIBE_CONCURRENCY requests at once; the first failure
+ * other than a repository the account cannot see fails it all. Ids that are not digits are never sent.
+ */
+async function repositoriesById(client: GitHubClient, ids: readonly string[]): Promise<Repository[]> {
+	const found: (Repository | null)[] = new Array(ids.length).fill(null);
+	let next = 0;
+	const worker = async (): Promise<void> => {
+		while (next < ids.length) {
+			const index = next++;
+			const repoId = ids[index] as string;
+			if (!/^\d+$/.test(repoId)) continue;
+			try {
+				found[index] = await client.repository(repoId);
+			} catch (error) {
+				if (error instanceof OperationError && (error.code === "NOT_FOUND" || error.code === "PROVIDER_FORBIDDEN")) continue;
+				throw error;
+			}
+		}
+	};
+	await Promise.all(Array.from({ length: Math.min(MAX_DESCRIBE_CONCURRENCY, ids.length) }, worker));
+	return found.filter((repository): repository is Repository => repository !== null && ids.includes(String(repository.id)));
+}
+
+/** Each repository is in its current owner's tenant. */
+export const TENANCY: Tenancy<GitHubClient> = {
+	kind: "resource",
+	label: "GitHub owner",
+	async tenants(client, _kind, ids) {
+		return Object.fromEntries((await repositoriesById(client, ids)).map((repository) => [String(repository.id), ownerOf(repository)]));
+	},
+};
 
 /**
  * One page of the repositories the App is installed on and the user can access, installation after
@@ -306,7 +368,7 @@ async function repositoriesPage(client: GitHubClient, cursor: string | null, lim
 
 /** A repository as the settings page lists it. */
 export function item(repository: Repository): DiscoveryItem {
-	return { id: String(repository.id), name: `${repository.full_name}${repository.private ? " (private)" : ""}` };
+	return { id: String(repository.id), name: `${repository.full_name}${repository.private ? " (private)" : ""}`, tenant: ownerOf(repository) };
 }
 
 // Operations.
@@ -323,7 +385,7 @@ const LIST_REPOSITORIES = defineOperation<z.output<typeof ListRepositories>>({
 			requirements: [{ enumerate: REPOSITORY, action: "read" }],
 			async execute(): Promise<ProviderOutput> {
 				const [found, following] = await repositoriesPage(clientOf(binding), data.cursor, data.limit);
-				const records = found.map((repository): ScopedRecord => ({ resource: binding.resource(REPOSITORY, String(repository.id)), data: repositoryRecord(repository) }));
+				const records = found.map((repository): ScopedRecord => ({ resource: repositoryResource(binding, repository), data: repositoryRecord(repository) }));
 				return { records, nextCursor: following };
 			},
 		};
@@ -342,7 +404,8 @@ const GET_REPOSITORY = defineOperation<z.output<typeof GetRepository>>({
 			requirements: [{ need: resource, action: "read" }],
 			async execute(): Promise<ProviderOutput> {
 				const fresh = await clientOf(binding).repository(resource.id);
-				return { records: [{ resource, data: repositoryRecord(fresh) }] };
+				// Its owner as read now: a transfer since `resolve` drops the record.
+				return { records: [{ resource: inTenant(resource, ownerOf(fresh)), data: repositoryRecord(fresh) }] };
 			},
 		};
 	},
@@ -584,6 +647,7 @@ export function githubConnector(options: GitHubOptions = {}): Connector<GitHubCl
 			{ id: "read", label: "Read code, issues and pull requests" },
 			{ id: "create", label: "Open issues and comment", requires: "read" },
 		],
+		tenancy: TENANCY,
 		// A GitHub App: what it may do is set by the App's permissions and where it is installed, not scopes.
 		auth: {
 			type: "oauth2",
@@ -617,7 +681,7 @@ export function githubConnector(options: GitHubOptions = {}): Connector<GitHubCl
 		async account(client) {
 			// The numeric id is stable; the login can change.
 			const user = await client.user();
-			return { id: String(user.id), label: user.login || "GitHub" };
+			return { id: String(user.id), label: user.login || "GitHub", tenants: await installationOwners(client) };
 		},
 		async discover(client, _kind, { query, cursor }): Promise<DiscoveryPage> {
 			if (!query) {
@@ -636,29 +700,7 @@ export function githubConnector(options: GitHubOptions = {}): Connector<GitHubCl
 			throw new OperationError("PROVIDER_LIMIT", "There are more repositories than Minerva can search.");
 		},
 		async describe(client, _kind, ids) {
-			// At most MAX_DESCRIBE_CONCURRENCY requests at once; the first failure other than a repository the
-			// account cannot see fails it all. Ids that are not digits are never sent.
-			const found: (Repository | null)[] = new Array(ids.length).fill(null);
-			let next = 0;
-			const worker = async (): Promise<void> => {
-				while (next < ids.length) {
-					const index = next++;
-					const repoId = ids[index] as string;
-					if (!/^\d+$/.test(repoId)) continue;
-					try {
-						found[index] = await client.repository(repoId);
-					} catch (error) {
-						if (error instanceof OperationError && (error.code === "NOT_FOUND" || error.code === "PROVIDER_FORBIDDEN")) continue;
-						throw error;
-					}
-				}
-			};
-			await Promise.all(Array.from({ length: Math.min(MAX_DESCRIBE_CONCURRENCY, ids.length) }, worker));
-			const names: { [id: string]: string } = {};
-			for (const repository of found) {
-				if (repository !== null && ids.includes(String(repository.id))) names[String(repository.id)] = item(repository).name;
-			}
-			return names;
+			return Object.fromEntries((await repositoriesById(client, ids)).map((repository) => [String(repository.id), item(repository).name]));
 		},
 	};
 }

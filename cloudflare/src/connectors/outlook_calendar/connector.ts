@@ -38,7 +38,7 @@ import {
 } from "../../gateway/connector.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
 import { truncate, TextError } from "../../lib/text.ts";
-import { ID, accountLabel, consent, oauth } from "../microsoft/index.ts";
+import { ID, TENANCY, accountLabel, consent, oauth } from "../microsoft/index.ts";
 import { after, objectCheck, plainTextOf, singleLineOf } from "../microsoft/inputs.ts";
 import { DAY_MICROS, formatUtc, isDate, parseDate, parseInstant, parseZonedDateTime } from "../../lib/dates.ts";
 import { type Calendar, CalendarClient, type Event, type Time } from "./client.ts";
@@ -404,6 +404,7 @@ export function outlookCalendarConnector(options: CalendarOptions = {}): Connect
 		],
 		// Reading is enough to connect; writing is asked for once the user allows an agent to write.
 		auth: oauth("Calendars.Read"),
+		tenancy: TENANCY,
 		operations: [LIST_CALENDARS, listEvents(options), CREATE_EVENT],
 
 		client(secret, io) {
@@ -412,7 +413,7 @@ export function outlookCalendarConnector(options: CalendarOptions = {}): Connect
 
 		async account(client) {
 			const user = await client.me();
-			return { id: user.id, label: accountLabel(user, "Outlook") };
+			return { id: user.id, label: accountLabel(user, "Outlook"), tenants: await client.tenants(user) };
 		},
 
 		async discover(client, _kind, { query }) {

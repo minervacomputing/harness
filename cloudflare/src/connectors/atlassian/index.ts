@@ -12,7 +12,7 @@
 // reach the model.
 
 import { z } from "zod";
-import { type Auth, OperationError, type ProviderClient, denied } from "../../gateway/connector.ts";
+import { type Auth, OperationError, type ProviderClient, type Tenancy, type Tenant, denied } from "../../gateway/connector.ts";
 import { ProviderHTTP, type ProviderIo, segment } from "../../gateway/http.ts";
 import { type Json, parseJsonBytes } from "../../lib/json.ts";
 
@@ -22,6 +22,32 @@ export const MAX_SITES = 50;
 /** Cloud ids are UUIDs; Minerva keeps them in lower case. */
 export const CLOUD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SITE_URL = /^https:\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)+$/;
+
+/** The site of a resource id: the cloud id it is, or begins with before "/"; null for any other id. */
+export function siteOf(id: string): string | null {
+	const slash = id.indexOf("/");
+	const site = slash >= 0 ? id.slice(0, slash) : id;
+	return CLOUD_ID.test(site) ? site : null;
+}
+
+/** A token reaches the sites the user picked; each project and space is in the site its id begins with. */
+export const TENANCY: Tenancy = {
+	kind: "resource",
+	label: "Atlassian site",
+	async tenants(_client, _kind, ids) {
+		const found: { [id: string]: string } = {};
+		for (const id of ids) {
+			const site = siteOf(id);
+			if (site !== null) found[id] = site;
+		}
+		return found;
+	},
+};
+
+/** The sites an account reaches, as tenants. */
+export function siteTenants(sites: readonly { id: string; label: string }[]): Tenant[] {
+	return sites.map((site) => ({ id: site.id, name: site.label }));
+}
 
 export function oauth(app: string, ...scopes: string[]): Extract<Auth, { type: "oauth2" }> {
 	return {

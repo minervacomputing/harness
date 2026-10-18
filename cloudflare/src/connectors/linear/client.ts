@@ -172,7 +172,7 @@ export type Organization = z.output<typeof Organization>;
 const Viewer = z.object({ id: z.string(), name: z.string() });
 export type Viewer = z.output<typeof Viewer>;
 
-const Me = z.object({ viewer: Viewer, organization: Organization });
+const Me = z.object({ viewer: Viewer, organization: Organization.extend({ id: z.string().min(1) }) });
 export type Me = z.output<typeof Me>;
 
 /** What a write returns: the issue it created or changed. */
@@ -328,7 +328,7 @@ export class LinearClient implements ProviderClient {
 	}
 
 	me(): Promise<Me> {
-		return this.#model(Me, "query Me { viewer { id name } organization { name urlKey } }", {});
+		return this.#model(Me, "query Me { viewer { id name } organization { id name urlKey } }", {});
 	}
 
 	organization(): Promise<Organization> {

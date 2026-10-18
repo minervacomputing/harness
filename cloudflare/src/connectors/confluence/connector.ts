@@ -31,7 +31,7 @@
 // (sites, names, where pages sit) is in `pages.ts`.
 
 import { type Connector, type DiscoveryItem, type DiscoveryPage, OperationError } from "../../gateway/connector.ts";
-import { CLOUD_ID, type Site, oauth } from "../atlassian/index.ts";
+import { CLOUD_ID, type Site, TENANCY, oauth, siteTenants } from "../atlassian/index.ts";
 import { BATCH_LIMIT, ConfluenceClient, type Space } from "./client.ts";
 import { ID, SPACE, spaceId } from "./pages.ts";
 import { GET_PAGE, LIST_SPACES, SEARCH_PAGES } from "./reads.ts";
@@ -75,6 +75,7 @@ export function confluenceConnector(): Connector<ConfluenceClient> {
 			{ id: "comment", label: "Comment on pages", requires: "read" },
 			{ id: "create", label: "Create pages", requires: "read" },
 		],
+		tenancy: TENANCY,
 		auth: oauth("confluence", "read:space:confluence", "read:page:confluence", "read:comment:confluence", "read:content-details:confluence"),
 		operations: [LIST_SPACES, SEARCH_PAGES, GET_PAGE, ADD_COMMENT, CREATE_PAGE],
 
@@ -82,9 +83,10 @@ export function confluenceConnector(): Connector<ConfluenceClient> {
 
 		async account(client) {
 			const me = await client.me();
-			if ((await client.sites()).length === 0) throw new OperationError("UNSUPPORTED_ACCOUNT", "This Atlassian account gave Minerva no Confluence site.");
+			const sites = await client.sites();
+			if (sites.length === 0) throw new OperationError("UNSUPPORTED_ACCOUNT", "This Atlassian account gave Minerva no Confluence site.");
 			const label = me.name && me.email ? `${me.name} (${me.email})` : me.name || me.email || "Confluence";
-			return { id: me.account_id, label };
+			return { id: me.account_id, label, tenants: siteTenants(sites) };
 		},
 
 		manageLink: () => ["Atlassian connected apps", "https://id.atlassian.com/manage-profile/apps"],
@@ -99,14 +101,14 @@ export function confluenceConnector(): Connector<ConfluenceClient> {
 			const folded = query ? query.toLowerCase() : null;
 			const items: DiscoveryItem[] = [];
 			if (cursor === null) {
-				for (const site of sites) if (folded === null || site.label.toLowerCase().includes(folded)) items.push({ id: site.id, name: site.label });
+				for (const site of sites) if (folded === null || site.label.toLowerCase().includes(folded)) items.push({ id: site.id, name: site.label, tenant: site.id });
 			}
 			if (sites.length === 0) return { items, nextCursor: null };
 			const site = sites[index] as Site;
 			const [spaces, after] = await client.spaces(site.id, { limit: DISCOVERY_PAGE, cursor: token });
 			for (const space of spaces) {
 				if (ID.test(space.id) && (folded === null || `${space.name || ""} ${space.key}`.toLowerCase().includes(folded))) {
-					items.push({ id: spaceId(site, space.id), name: spaceName(site, space, sites) });
+					items.push({ id: spaceId(site, space.id), name: spaceName(site, space, sites), tenant: site.id });
 				}
 			}
 			if (after !== null) return { items, nextCursor: `${index}:${after}` };

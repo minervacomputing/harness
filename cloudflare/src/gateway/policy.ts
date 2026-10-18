@@ -38,6 +38,8 @@ export interface Resource {
 	id: string;
 	within: string[];
 	partial: boolean;
+	/** Its tenant, for a connector with a tenant per resource (connector.ts `Tenancy`); grants do not read it. */
+	tenant?: string;
 }
 
 /** A grant on every resource of a kind, including ones created later. Never a real resource id. */

@@ -137,6 +137,22 @@ describe("requirements", () => {
 		expect(run.log.errors.some((line) => line.startsWith("Connector contract violation in mixed.copy_file"))).toBe(true);
 	});
 
+	test("a connector with a tenant per resource must name each resource's tenant", async () => {
+		const server = new FakeServer();
+		const tenancy = { kind: "resource" as const, label: "Fake organization", tenants: async () => ({}) };
+		const run = await Scenario.start({
+			connectors: [{ ...mixedConnector(server), tenancy }, keyedConnector(server)],
+			connections: [mixedConnection()],
+			user: userGrants(MIXED, FOLDER, { "*": ["read", "create"] }),
+			fetch: server.fetch,
+		});
+		expect(await run.error(COPY, copy())).toEqual({ code: "CONNECTOR_ERROR", message: "This operation failed because of an internal error." });
+		expect(server.posts()).toBe(0);
+		// Records without a tenant are dropped.
+		expect((await run.ok("mixed_list_folders", {})).result).toEqual({ items: [], count: 0 });
+		expect(run.log.errors.some((line) => line.startsWith("Connector contract violation in mixed.copy_file"))).toBe(true);
+	});
+
 	test("prepare cannot write", async () => {
 		// A write attempted in prepare throws; the call fails with the generic message and nothing is sent.
 		const server = withMode("write-in-prepare");

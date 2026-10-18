@@ -63,6 +63,9 @@ type Hook = (method: string, path: string, params: { [name: string]: string }) =
  * it), Sent Items and Drafts, under msgfolderroot; and a search folder outside that tree, which collects the
  * mail in Private.
  */
+/** The Entra tenant of the work account, which Graph may write in upper case. */
+const TENANT = "0c0c0c0c-0000-4000-8000-0000000000ab";
+
 class FakeGraph {
 	folders: { [id: string]: JsonObject } = {
 		[ROOT]: folderOf(ROOT, "Top of Information Store", HIDDEN_ROOT),
@@ -118,6 +121,7 @@ class FakeGraph {
 			throw new Error(path);
 		}
 		const [a, b, c, d] = parts;
+		if (a === "organization" && parts.length === 1) return jsonResponse(200, { value: [{ id: TENANT.toUpperCase(), displayName: "Contoso" }] });
 		if (a === "me" && parts.length === 1) return jsonResponse(200, this.user);
 		if (a === "me" && b === "mailFolders" && parts.length === 2) {
 			return this.#page(path, Object.values(this.folders).filter((f) => f.parentFolderId === ROOT), request.params);
@@ -355,7 +359,7 @@ describe("the connector outside a run", () => {
 		const graph = new FakeGraph();
 		const connector = outlookConnector();
 		const account = await connector.account(graph.client());
-		expect([account.id, account.label]).toEqual([graph.user.id, "me@contoso.com"]);
+		expect(account).toEqual({ id: graph.user.id, label: "me@contoso.com", tenants: [{ id: TENANT, name: "Contoso" }] });
 		let found = await connector.discover(graph.client(), "folder", { query: null, cursor: null });
 		expect(found.items.map((item) => [item.id, item.name])).toEqual([
 			[INBOX, "Inbox"],
@@ -397,6 +401,24 @@ describe("the connector outside a run", () => {
 		graph.hook = (_method, path, params) => (path === "/me" && (params.$select ?? "").includes("proxyAddresses") ? jsonResponse(400, { error: { code: "BadRequest" } }) : null);
 		const user = await graph.client().identities();
 		expect([user.mail, user.proxyAddresses]).toEqual(["me@contoso.com", []]);
+	});
+
+	test("a personal account has no tenant and costs no request for one", async () => {
+		const graph = new FakeGraph();
+		graph.user.id = "0123456789abcdef";
+		const account = await outlookConnector().account(graph.client());
+		expect(account.tenants).toEqual([]);
+		expect(graph.requests.map((request) => request.path)).toEqual(["/me"]);
+	});
+
+	test.each([
+		["no organization", []],
+		["two organizations", [{ id: TENANT, displayName: "Contoso" }, { id: "0c0c0c0c-0000-4000-8000-0000000000cd", displayName: "Other" }]],
+		["an organization that is not a tenant id", [{ id: "contoso", displayName: "Contoso" }]],
+	])("a work account's tenant is exactly one Entra tenant: %s", async (_case, value) => {
+		const graph = new FakeGraph();
+		graph.hook = (_method, path) => (path === "/organization" ? jsonResponse(200, { value }) : null);
+		await expect(outlookConnector().account(graph.client())).rejects.toMatchObject({ code: "PROVIDER_FAILED" });
 	});
 
 	test("an on-premises mailbox is named as unsupported", async () => {

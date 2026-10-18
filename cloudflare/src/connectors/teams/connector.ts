@@ -35,7 +35,7 @@ import {
 import type { Resource } from "../../gateway/policy.ts";
 import type { Json } from "../../lib/json.ts";
 import { truncate, TextError } from "../../lib/text.ts";
-import { accountLabel, consent, consentAll, oauth } from "../microsoft/index.ts";
+import { GUID, TENANCY, accountLabel, consent, consentAll, oauth } from "../microsoft/index.ts";
 import { after } from "../microsoft/inputs.ts";
 import { mapLimited } from "../microsoft/limit.ts";
 import { type Channel, type Message, type Team, TeamsClient } from "./client.ts";
@@ -59,7 +59,6 @@ export const CONCURRENCY = 8;
 const HIDDEN: ReadonlySet<string> = new Set(["NOT_FOUND", "PROVIDER_FORBIDDEN"]);
 const WRITABLE: ReadonlySet<string | null> = new Set(["standard", "private"]);
 
-const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CHANNEL_ID = /^19:[A-Za-z0-9._=+-]{1,200}@thread\.[a-z0-9]{1,20}$/;
 /** ASCII digits only. */
 const MESSAGE_ID = /^\d{1,20}$/u;
@@ -468,6 +467,7 @@ export function teamsConnector(options: { baseUrl?: string } = {}): Connector<Te
 		// Listing teams and channels is enough to connect; reading and writing messages are asked for once the
 		// user allows them.
 		auth: oauth("Team.ReadBasic.All", "Channel.ReadBasic.All"),
+		tenancy: TENANCY,
 		operations: [LIST_TEAMS, LIST_CHANNELS, READ_CHANNEL, READ_THREAD, POST_MESSAGE, REPLY],
 
 		client(secret, io) {
@@ -477,7 +477,7 @@ export function teamsConnector(options: { baseUrl?: string } = {}): Connector<Te
 		async account(client) {
 			const user = await client.me();
 			if (!GUID.test(user.id.toLowerCase())) throw new OperationError("UNSUPPORTED_ACCOUNT", "Microsoft Teams works with work and school accounts only.");
-			return { id: user.id, label: accountLabel(user, "Microsoft Teams") };
+			return { id: user.id, label: accountLabel(user, "Microsoft Teams"), tenants: await client.tenants(user) };
 		},
 
 		/** Whole teams per page, each followed by its channels, so a page never splits a team. */

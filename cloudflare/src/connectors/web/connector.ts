@@ -211,6 +211,7 @@ export function webConnector(options: WebOptions = {}): Connector<WebClient> {
 			{ id: "read", label: "Read pages" },
 		],
 		auth: { type: "builtin" },
+		tenancy: { kind: "unknown" },
 		operations: [SEARCH, READ_PAGE],
 
 		offered(op) {

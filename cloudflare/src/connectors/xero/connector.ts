@@ -21,7 +21,7 @@
 
 import { type Account, type Connector, type DiscoveryPage, OperationError } from "../../gateway/connector.ts";
 import { XeroClient } from "./client.ts";
-import { ORGANISATION, label } from "./organisations.ts";
+import { ORGANISATION, TENANCY, label } from "./organisations.ts";
 import { GET_INVOICE, LIST_ACCOUNTS, LIST_ORGANISATIONS, LIST_TAX_RATES, SEARCH_CONTACTS, SEARCH_INVOICES } from "./reads.ts";
 import { CREATE_DRAFT_BILL, CREATE_DRAFT_INVOICE } from "./writes.ts";
 
@@ -40,6 +40,7 @@ export function xeroConnector(): Connector<XeroClient> {
 			{ id: "draft_sales", label: "Create draft sales invoices", requires: "read" },
 			{ id: "draft_bills", label: "Create draft bills", requires: "read" },
 		],
+		tenancy: TENANCY,
 		auth: {
 			type: "oauth2",
 			app: "xero",
@@ -59,15 +60,16 @@ export function xeroConnector(): Connector<XeroClient> {
 		async account(client): Promise<Account> {
 			const me = await client.me();
 			if (!me.sub) throw client.unexpected();
-			if ((await client.organisations()).length === 0) throw new OperationError("UNSUPPORTED_ACCOUNT", "This Xero user connected no organisation to Minerva.");
+			const organisations = await client.organisations();
+			if (organisations.length === 0) throw new OperationError("UNSUPPORTED_ACCOUNT", "This Xero user connected no organisation to Minerva.");
 			const name = me.name || [me.given_name, me.family_name].filter((part) => part).join(" ") || null;
 			const person = name && me.email ? `${name} (${me.email})` : name || me.email || "Xero";
-			return { id: me.sub, label: person };
+			return { id: me.sub, label: person, tenants: organisations.map((organisation) => ({ id: organisation.tenantId, name: label(organisation) })) };
 		},
 		async discover(client, _kind, { query, cursor }): Promise<DiscoveryPage> {
 			if (cursor !== null) throw new OperationError("INVALID_CURSOR", "This page token is invalid.");
 			const folded = query ? query.toLowerCase() : null;
-			const items = (await client.organisations()).map((organisation) => ({ id: organisation.tenantId, name: label(organisation) }));
+			const items = (await client.organisations()).map((organisation) => ({ id: organisation.tenantId, name: label(organisation), tenant: organisation.tenantId }));
 			return { items: items.filter((item) => folded === null || item.name.toLowerCase().includes(folded)) };
 		},
 		async describe(client, _kind, ids): Promise<{ [id: string]: string }> {

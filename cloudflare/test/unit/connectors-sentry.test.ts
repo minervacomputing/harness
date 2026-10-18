@@ -112,6 +112,7 @@ describe("connecting and discovery", () => {
 		const connector = sentryConnector();
 		const account = await connector.account(clientOf(sentry));
 		expect([account.id, account.label]).toEqual(["7:42", "Ada Lovelace (ada@example.com) \u00b7 Acme"]);
+		expect(account.tenants).toEqual([{ id: "7", name: "Acme" }]);
 		sentry.user = { id: "42" };
 		expect((await connector.account(clientOf(sentry))).label).toBe("Acme");
 		sentry.user = { id: "42", name: "  \t " };

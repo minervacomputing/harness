@@ -2,7 +2,7 @@
 // calls name them, and how records show text. How they show money is in decimal.ts.
 
 import { z } from "zod";
-import { type Binding, OperationError, denied } from "../../gateway/connector.ts";
+import { type Binding, OperationError, type Tenancy, denied, inTenant } from "../../gateway/connector.ts";
 import type { Resource } from "../../gateway/policy.ts";
 import { truncate } from "../../lib/text.ts";
 import { UUID, type Connection, type XeroClient, uuid } from "./client.ts";
@@ -59,9 +59,20 @@ export function client(binding: Binding): XeroClient {
 	return binding.client as XeroClient;
 }
 
+/** Each organisation is its own tenant, keyed by its tenant id, which is its id. */
+export const TENANCY: Tenancy = {
+	kind: "resource",
+	label: "Xero organisation",
+	async tenants(_client, _kind, ids) {
+		const found: { [id: string]: string } = {};
+		for (const id of ids) if (uuid(id) === id) found[id] = id;
+		return found;
+	},
+};
+
 export function organisationResource(binding: Binding, tenant: string): Resource {
 	if (uuid(tenant) !== tenant) throw client(binding).unexpected();
-	return binding.resource(ORGANISATION, tenant);
+	return inTenant(binding.resource(ORGANISATION, tenant), tenant);
 }
 
 /**

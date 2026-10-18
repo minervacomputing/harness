@@ -123,6 +123,7 @@ export function mixedConnector(server = new FakeServer()): Connector<FakeClient>
 			{ id: "read", label: "Read" },
 			{ id: "create", label: "Create", requires: "read" },
 		],
+		tenancy: { kind: "unknown" },
 		auth: { type: "oauth2", app: "mixed", authorizeUrl: "https://mixed.example/authorize", tokenUrl: "https://mixed.example/token", scopes: ["files", "labels"] },
 		operations: mixedOperations(server),
 		client: (secret) => fakeClient(server, secret),
@@ -161,6 +162,7 @@ export function keyedConnector(server = new FakeServer()): Connector<FakeClient>
 		name: "Keyed",
 		kinds: [{ id: ACCOUNT_KIND, label: "Account", actions: ["read"] }],
 		actions: [{ id: "read", label: "Read" }],
+		tenancy: { kind: "unknown" },
 		auth: { type: "api_key", label: "API key" },
 		operations: [
 			defineOperation<z.output<typeof Whoami>>({

@@ -247,6 +247,7 @@ function shapeProblem(connector: Connector, resource: Resource): string | null {
 	if (typeof resource !== "object" || resource === null || typeof resource.id !== "string" || !Array.isArray(resource.within) || typeof resource.partial !== "boolean") {
 		return "not a resource";
 	}
+	if (connector.tenancy.kind === "resource" && (typeof resource.tenant !== "string" || resource.tenant === "")) return "no tenant";
 	if (!nests(connector, resource.kind)) return resource.within.length > 0 || resource.partial ? "ancestors on a kind that does not nest" : null;
 	const ids = [resource.id, ...resource.within];
 	if (resource.within.length > MAX_ANCESTORS || ids.includes(ANY) || new Set(ids).size !== ids.length) return "malformed ancestors";

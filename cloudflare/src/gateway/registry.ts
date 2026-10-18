@@ -231,6 +231,10 @@ export function validate(connectors: readonly Connector[]): void {
 		if ((connector.browsable ?? []).some((kindId) => !nests(connector, kindId))) {
 			throw new InvalidConnector(`${connector.slug}: only hierarchical kinds can be browsed.`);
 		}
+		const tenancy = connector.tenancy;
+		if (tenancy.kind !== "unknown" && !tenancy.label) throw new InvalidConnector(`${connector.slug}: a tenancy names its tenant.`);
+		// The account of a connector with a tenant per resource is in no one tenant, so it could not be checked.
+		if (tenancy.kind === "resource" && kindIds.includes(ACCOUNT_KIND)) throw new InvalidConnector(`${connector.slug}: a tenant per resource leaves no account kind.`);
 		for (const kind of connector.kinds) {
 			if (kind.id === ACCOUNT_KIND && (kind.wildcard || kind.hierarchical)) throw new InvalidConnector(`${connector.slug}: the account kind has one resource.`);
 			for (const actionId of kind.actions) {

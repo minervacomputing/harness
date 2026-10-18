@@ -13,7 +13,7 @@ import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import { type JsonObject, parseJson } from "../../src/lib/json.ts";
-import { FakeLinear, ID, NAME, SECRET, STATES } from "../fixtures/connectors/linear/fake.ts";
+import { FakeLinear, ID, NAME, ORGANIZATION, SECRET, STATES } from "../fixtures/connectors/linear/fake.ts";
 import { askedScopes, catalogEntry, uncovered } from "./catalog-support.ts";
 import { Scenario, userGrants } from "./executor-fakes.ts";
 
@@ -53,7 +53,7 @@ describe("connecting", () => {
 		const fake = new FakeLinear();
 		const http = client(fake);
 		const account = await linear.account(http);
-		expect([account.id, account.label]).toEqual([ID.ada, "Ada Lovelace (Acme)"]);
+		expect(account).toEqual({ id: ID.ada, label: "Ada Lovelace (Acme)", tenants: [{ id: ORGANIZATION, name: "Acme" }] });
 		let found = await linear.discover(http, TEAM, { query: null, cursor: null });
 		expect(found.items.map((item) => item.name)).toEqual(["Engineering (ENG)", "Web (WEB)", "Operations (OPS)", "Design (DES)"]);
 		found = await linear.discover(http, TEAM, { query: "ops", cursor: null });

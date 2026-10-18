@@ -28,7 +28,7 @@
 // (sites, names, where issues sit) is in `issues.ts`.
 
 import { type Connector, type DiscoveryItem, type DiscoveryPage, OperationError } from "../../gateway/connector.ts";
-import { CLOUD_ID, type Site, oauth } from "../atlassian/index.ts";
+import { CLOUD_ID, type Site, TENANCY, oauth, siteTenants } from "../atlassian/index.ts";
 import { JiraClient, type Project } from "./client.ts";
 import { ID, PROJECT, projectId, unseen } from "./issues.ts";
 import { GET_ISSUE, LIST_PROJECTS, SEARCH_ISSUES } from "./reads.ts";
@@ -87,6 +87,7 @@ export function jiraConnector(): Connector<JiraClient> {
 			{ id: "create", label: "Create issues", requires: "read" },
 			{ id: "transition", label: "Change status", requires: "read" },
 		],
+		tenancy: TENANCY,
 		auth: oauth("jira", "read:jira-work"),
 		operations: [LIST_PROJECTS, SEARCH_ISSUES, GET_ISSUE, ADD_COMMENT, CREATE_ISSUE, TRANSITION_ISSUE],
 
@@ -94,9 +95,10 @@ export function jiraConnector(): Connector<JiraClient> {
 
 		async account(client) {
 			const me = await client.me();
-			if ((await client.sites()).length === 0) throw new OperationError("UNSUPPORTED_ACCOUNT", "This Atlassian account gave Minerva no Jira site.");
+			const sites = await client.sites();
+			if (sites.length === 0) throw new OperationError("UNSUPPORTED_ACCOUNT", "This Atlassian account gave Minerva no Jira site.");
 			const label = me.name && me.email ? `${me.name} (${me.email})` : me.name || me.email || "Jira";
-			return { id: me.account_id, label };
+			return { id: me.account_id, label, tenants: siteTenants(sites) };
 		},
 
 		manageLink: () => ["Atlassian connected apps", "https://id.atlassian.com/manage-profile/apps"],
@@ -108,12 +110,12 @@ export function jiraConnector(): Connector<JiraClient> {
 			const folded = query ? query.toLowerCase() : null;
 			const items: DiscoveryItem[] = [];
 			if (cursor === null) {
-				for (const site of sites) if (folded === null || site.label.toLowerCase().includes(folded)) items.push({ id: site.id, name: site.label });
+				for (const site of sites) if (folded === null || site.label.toLowerCase().includes(folded)) items.push({ id: site.id, name: site.label, tenant: site.id });
 			}
 			if (sites.length === 0) return { items, nextCursor: null };
 			const site = sites[index] as Site;
 			const [projects, after] = await client.projects(site.id, { start, limit: DISCOVERY_PAGE, query });
-			for (const project of projects) items.push({ id: projectId(site, project.id), name: projectName(site, project, sites) });
+			for (const project of projects) items.push({ id: projectId(site, project.id), name: projectName(site, project, sites), tenant: site.id });
 			if (after !== null) return { items, nextCursor: `${index}:${after}` };
 			return { items, nextCursor: index + 1 < sites.length ? `${index + 1}:0` : null };
 		},

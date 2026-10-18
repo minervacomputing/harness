@@ -2,7 +2,7 @@
 // names, and where issues sit.
 
 import { z } from "zod";
-import { type Binding, OperationError, denied } from "../../gateway/connector.ts";
+import { type Binding, OperationError, denied, inTenant } from "../../gateway/connector.ts";
 import type { Resource } from "../../gateway/policy.ts";
 import { CLOUD_ID, type Site } from "../atlassian/index.ts";
 import type { Issue, JiraClient, Project } from "./client.ts";
@@ -56,7 +56,7 @@ export function projectId(site: Site, project: string): string {
 /** The resource of a project Jira named. A malformed id fails rather than being guessed. */
 export function projectResource(binding: Binding, site: Site, project: string | null | undefined): Resource {
 	if (project === null || project === undefined || !ID.test(project)) throw (binding.client as JiraClient).unexpected();
-	return binding.resource(PROJECT, projectId(site, project), [site.id]);
+	return inTenant(binding.resource(PROJECT, projectId(site, project), [site.id]), site.id);
 }
 
 /** The hosts of the connection's sites, whose addresses text hides as links to Atlassian. */

@@ -55,6 +55,9 @@ type Hook = (method: string, path: string, params: { [name: string]: string }) =
  * Microsoft Graph's Teams API. Engineering hosts General, Private (private) and Shared
  * (shared); Finance hosts Budget. Graph spells Engineering's id in upper case in some answers.
  */
+/** The Entra tenant of the work account, which Graph may write in upper case. */
+const TENANT = "0c0c0c0c-0000-4000-8000-0000000000ab";
+
 class FakeGraph {
 	user: JsonObject = { id: USER_ID, displayName: "Me", mail: "me@contoso.com" };
 	teams: JsonObject[] = [
@@ -138,6 +141,7 @@ class FakeGraph {
 			throw new Error(path);
 		}
 		const [a, b, c, d, e, f, g] = parts;
+		if (a === "organization" && parts.length === 1) return jsonResponse(200, { value: [{ id: TENANT.toUpperCase(), displayName: "Contoso" }] });
 		if (a === "me" && parts.length === 1) return jsonResponse(200, this.user);
 		if (a === "me" && b === "joinedTeams" && parts.length === 2) return jsonResponse(200, { value: this.teams });
 		if (a === "teams" && c === "channels" && parts.length === 3) {
@@ -202,7 +206,7 @@ describe("connecting and discovery", () => {
 		const graph = new FakeGraph();
 		const connector = teamsConnector();
 		const account = await connector.account(graph.client());
-		expect([account.id, account.label]).toEqual([USER_ID, "me@contoso.com"]);
+		expect(account).toEqual({ id: USER_ID, label: "me@contoso.com", tenants: [{ id: TENANT, name: "Contoso" }] });
 		graph.user.id = "abcdef0123456789";
 		await expect(connector.account(graph.client())).rejects.toMatchObject({ code: "UNSUPPORTED_ACCOUNT" });
 	});

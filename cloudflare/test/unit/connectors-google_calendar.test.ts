@@ -184,7 +184,7 @@ describe("the connector outside a run", () => {
 	test("the account is the OpenID subject", async () => {
 		const google = new FakeCalendar();
 		const account = await googleCalendarConnector().account(google.client());
-		expect(account).toEqual({ id: "108", label: PRIMARY });
+		expect(account).toEqual({ id: "108", label: PRIMARY, tenants: [] });
 		expect(google.requests[0]?.headers.get("authorization")).toBe("Bearer token");
 	});
 

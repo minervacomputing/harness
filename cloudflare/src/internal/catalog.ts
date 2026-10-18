@@ -60,6 +60,7 @@ function connectorOf(connector: Connector): CatalogConnector {
 			offered: offered(connector, op),
 		})),
 		manage: manage === null ? null : { label: manage[0], url: manage[1] },
+		tenancy: connector.tenancy.kind === "unknown" ? { kind: "unknown", label: null } : { kind: connector.tenancy.kind, label: connector.tenancy.label },
 	};
 }
 

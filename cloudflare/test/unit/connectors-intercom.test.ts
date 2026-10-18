@@ -62,6 +62,7 @@ describe("connecting and discovery", () => {
 		const fake = new FakeIntercom();
 		const account = await intercom.account(client(fake));
 		expect([account.id, account.label]).toEqual(["abc123:991", "Ada (ada@example.com) · Acme"]);
+		expect(account.tenants).toEqual([{ id: "abc123", name: "Acme" }]);
 		delete fake.me.app;
 		await expect(intercom.account(client(fake))).rejects.toMatchObject({ code: "PROVIDER_FAILED" });
 		fake.me = { id: "x1", app: { id_code: "abc123" } };

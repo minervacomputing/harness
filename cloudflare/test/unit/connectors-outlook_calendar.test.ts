@@ -62,6 +62,9 @@ type Hook = (method: string, path: string, params: { [name: string]: string }) =
  * calendar Grace shared, and Private. Graph also finds Work under an older id, and answers with the id it
  * lists.
  */
+/** The Entra tenant of the work account, which Graph may write in upper case. */
+const TENANT = "0c0c0c0c-0000-4000-8000-0000000000ab";
+
 class FakeGraph {
 	calendars: { [id: string]: JsonObject } = {
 		[DEFAULT]: calendarOf(DEFAULT, "Calendar", { default: true }),
@@ -138,6 +141,7 @@ class FakeGraph {
 			}
 			throw new Error(path);
 		}
+		if (a === "organization" && size === 1) return jsonResponse(200, { value: [{ id: TENANT.toUpperCase(), displayName: "Contoso" }] });
 		if (a === "me" && size === 1) return jsonResponse(200, this.user);
 		if (a === "me" && b === "calendar" && size === 2) return jsonResponse(200, this.calendars[DEFAULT] as JsonObject);
 		if (a === "me" && b === "calendars" && size === 2) return this.#page(path, Object.values(this.calendars), request.params);
@@ -184,7 +188,7 @@ describe("connecting and discovery", () => {
 		const graph = new FakeGraph();
 		const connector = outlookCalendarConnector();
 		const account = await connector.account(graph.client());
-		expect([account.id, account.label]).toEqual([USER_ID, "me@contoso.com"]);
+		expect(account).toEqual({ id: USER_ID, label: "me@contoso.com", tenants: [{ id: TENANT, name: "Contoso" }] });
 		const page = await connector.discover(graph.client(), "calendar", { query: null, cursor: null });
 		expect(page.items.map((item) => [item.id, item.name])).toEqual([
 			[DEFAULT, "Calendar"],
@@ -233,7 +237,8 @@ describe("connecting and discovery", () => {
 		const graph = new FakeGraph();
 		await outlookCalendarConnector().account(graph.client());
 		await outlookCalendarConnector().discover(graph.client(), "calendar", { query: null, cursor: null });
-		expect(graph.requests).toHaveLength(2);
+		// The user, its organization, and the calendars.
+		expect(graph.requests.map((request) => request.path)).toEqual(["/me", "/organization", "/me/calendars"]);
 		for (const request of graph.requests) {
 			expect(request.headers.get("prefer")).toContain('IdType="ImmutableId"');
 			expect(request.headers.get("authorization")).toBe("Bearer token");

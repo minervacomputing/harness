@@ -33,8 +33,12 @@ const GITHUB = "0199a000-0000-7000-8000-0000000000a1";
 
 type Data = { [key: string]: Json };
 
+/** The owners' numeric ids, which GitHub's tenants are: ada is the user, acme an organization, evil another. */
+const OWNERS: { [login: string]: number } = { ada: 42, acme: 100, evil: 666 };
+
 function repo(id: number, fullName: string, isPrivate = false): Data {
-	return { id, full_name: fullName, private: isPrivate, default_branch: "main" };
+	const login = fullName.split("/")[0] as string;
+	return { id, full_name: fullName, owner: { id: OWNERS[login] ?? 900, login }, private: isPrivate, default_branch: "main" };
 }
 
 function entry(path: string, kind = "file", content: Uint8Array | null = null, extra: Data = {}): Data {
@@ -65,6 +69,11 @@ class FakeGitHub {
 	readonly installations = new Map<number, number[]>([
 		[10, [1, 2]],
 		[11, [3]],
+	]);
+	/** The account each installation is on. */
+	readonly installedOn = new Map<number, string>([
+		[10, "acme"],
+		[11, "ada"],
 	]);
 	/** A renamed repository's Location, or null for a redirect without one. */
 	readonly renamed = new Map<string, string | null>([["ada/old-notes", `${API_URL}/repositories/3`]]);
@@ -126,7 +135,12 @@ class FakeGitHub {
 		const [first, second, third, fourth, fifth] = parts;
 		if (parts.length === 1 && first === "user") return jsonResponse(200, { id: 42, login: "ada" });
 		if (parts.length === 2 && first === "user" && second === "installations") {
-			return jsonResponse(200, { installations: [...this.installations.keys()].map((id) => ({ id })) });
+			return jsonResponse(200, {
+				installations: [...this.installations.keys()].map((id) => {
+					const login = this.installedOn.get(id) ?? "acme";
+					return { id, account: { id: OWNERS[login], login } };
+				}),
+			});
 		}
 		if (parts.length === 4 && first === "user" && second === "installations" && fourth === "repositories") {
 			const ids = this.installations.get(Number(third)) ?? [];
@@ -208,16 +222,24 @@ describe("the connector and its settings page", () => {
 		const github = new FakeGitHub();
 		const gh = githubConnector({ appSlug: () => null });
 		const client = gh.client("token", settingsIo(github.fetch));
-		expect(await gh.account(client)).toEqual({ id: "42", label: "ada" });
+		// The tenants it reaches are the owners the App is installed on, by numeric id.
+		expect(await gh.account(client)).toEqual({
+			id: "42",
+			label: "ada",
+			tenants: [
+				{ id: "42", name: "ada" },
+				{ id: "100", name: "acme" },
+			],
+		});
 		expect(github.last().headers.get("authorization")).toBe("Bearer token");
 		expect(github.last().headers.get("accept")).toBe("application/vnd.github+json");
 		expect(github.last().headers.get("x-github-api-version")).toBe("2022-11-28");
 		expect(github.last().headers.get("user-agent")).toBe(USER_AGENT);
 		const page = (cursor: string | null) => gh.discover(client, REPOSITORY, { query: null, cursor });
 		const first = await page(null);
-		expect(first.items.map((found) => [found.id, found.name])).toEqual([
-			["1", "acme/app"],
-			["2", "acme/secret (private)"],
+		expect(first.items.map((found) => [found.id, found.name, found.tenant])).toEqual([
+			["1", "acme/app", "100"],
+			["2", "acme/secret (private)", "100"],
 		]);
 		const second = await page(first.nextCursor ?? null);
 		expect(second.items.map((found) => found.name)).toEqual(["ada/notes"]);
@@ -243,6 +265,10 @@ describe("the connector and its settings page", () => {
 		const before = github.requests.length;
 		expect(await gh.describe(client, REPOSITORY, ["\u00b2", "\u0663", "", "-1", "1 "])).toEqual({});
 		expect(github.requests.slice(before)).toEqual([]);
+		// The tenants of repositories a grant edit allows: their owners' ids, as GitHub answers now.
+		const tenancy = gh.tenancy;
+		if (tenancy.kind !== "resource") throw new Error("GitHub has a tenant per repository.");
+		expect(await tenancy.tenants(client, REPOSITORY, ["3", "1", "404", "../x"])).toEqual({ "3": "42", "1": "100" });
 	});
 
 	test("the install link needs a valid slug", async () => {
@@ -650,7 +676,7 @@ describe("the connector's rules", () => {
 	});
 
 	test("records", () => {
-		const repository = Repository.parse({ id: 2, full_name: "acme/secret", private: true, open_issues_count: 4, extra: "dropped" });
+		const repository = Repository.parse({ id: 2, full_name: "acme/secret", owner: { id: 100, login: "acme" }, private: true, open_issues_count: 4, extra: "dropped" });
 		expect(repositoryRecord(repository)).toEqual({
 			id: 2,
 			full_name: "acme/secret",
@@ -663,7 +689,7 @@ describe("the connector's rules", () => {
 			pushed_at: null,
 			url: null,
 		});
-		expect(item(repository)).toEqual({ id: "2", name: "acme/secret (private)" });
+		expect(item(repository)).toEqual({ id: "2", name: "acme/secret (private)", tenant: "100" });
 		const issue = Issue.parse({ number: 2, title: "Fix", state: "open", pull_request: { url: "u" }, labels: [{ name: "bug" }], user: { login: "ada" } });
 		expect(issueRecord(issue)).toMatchObject({ number: 2, type: "pull_request", author: "ada", labels: ["bug"] });
 		expect(issueRecord(issue, { body: true })).toMatchObject({ body: null, body_truncated: false });

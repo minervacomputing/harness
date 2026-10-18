@@ -467,9 +467,9 @@ describe("connecting", () => {
 	test("an account without a name or address is called Gmail", async () => {
 		const gmail = new FakeGmail();
 		gmail.user = { sub: "9" };
-		expect(await gmailConnector().account(gmail.client())).toEqual({ id: "9", label: "Gmail" });
+		expect(await gmailConnector().account(gmail.client())).toEqual({ id: "9", label: "Gmail", tenants: [] });
 		gmail.user = { sub: "9", name: "Me" };
-		expect(await gmailConnector().account(gmail.client())).toEqual({ id: "9", label: "Me" });
+		expect(await gmailConnector().account(gmail.client())).toEqual({ id: "9", label: "Me", tenants: [] });
 	});
 
 	test("the catalog asks for read access, and for send or compose access per write", async () => {

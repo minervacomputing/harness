@@ -102,6 +102,9 @@ const text = (value: string): Uint8Array => new TextEncoder().encode(value);
  * cannot open. The SharePoint site "Sales" the account follows has the library "Documents" (Wiki/ with
  * handbook.md). With `personal`, my OneDrive is a personal account's, with a hexadecimal id.
  */
+/** The Entra tenant of the work account, which Graph may write in upper case. */
+const TENANT = "0c0c0c0c-0000-4000-8000-0000000000ab";
+
 class FakeGraph {
 	readonly me: string;
 	readonly drives: { [id: string]: JsonObject };
@@ -219,6 +222,7 @@ class FakeGraph {
 		if (request.method === "PUT") return this.#upload(request, parts);
 		const params = request.params;
 		const [a, b, c, d] = parts;
+		if (a === "organization" && parts.length === 1) return jsonResponse(200, { value: [{ id: TENANT.toUpperCase(), displayName: "Contoso" }] });
 		if (a === "me" && parts.length === 1) return jsonResponse(200, { id: USER_ID, mail: "me@contoso.com", displayName: "Me" });
 		if (a === "me" && b === "drive" && parts.length === 2) return jsonResponse(200, this.drives[this.me] as JsonObject);
 		if (a === "me" && b === "drive" && c === "root" && parts.length === 3) return jsonResponse(200, this.#view(this.mine("root-me"), params));
@@ -316,7 +320,7 @@ describe("account, discovery and names", () => {
 		const connector = onedriveConnector();
 		const client = graph.client();
 		const account = await connector.account(client);
-		expect([account.id, account.label]).toEqual([USER_ID, "me@contoso.com"]);
+		expect(account).toEqual({ id: USER_ID, label: "me@contoso.com", tenants: [{ id: TENANT, name: "Contoso" }] });
 		const page = await connector.discover(client, "item", { query: null, cursor: null });
 		expect(page.items.map((item) => [item.id, item.name])).toEqual([
 			[`${ME}:root-me`, "OneDrive"],

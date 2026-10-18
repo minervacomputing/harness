@@ -281,7 +281,15 @@ describe("connecting and discovery", () => {
 		const confluence = new FakeConfluence();
 		const connector = confluenceConnector();
 		const client = confluence.client();
-		expect(await connector.account(client)).toEqual({ id: ACCOUNT_ID, label: "Ada (ada@example.com)" });
+		expect(await connector.account(client)).toEqual({
+			id: ACCOUNT_ID,
+			label: "Ada (ada@example.com)",
+			// Its tenants are the sites it reaches, in order of cloud id.
+			tenants: [
+				{ id: ACME, name: "Acme (acme.atlassian.net)" },
+				{ id: BETA, name: "Beta (beta.atlassian.net)" },
+			],
+		});
 		expect((await client.sites()).map((site) => site.id)).toEqual([ACME, BETA]);
 		confluence.resources = confluence.resources.slice(2);
 		await expect(connector.account(confluence.client())).rejects.toMatchObject({
@@ -331,7 +339,7 @@ describe("connecting and discovery", () => {
 		confluence.oneSite();
 		confluence.acme().spaces.push(space("103", "OLD", "Old", { status: "archived" }));
 		const page = await confluenceConnector().discover(confluence.client(), "space", { query: "old", cursor: null });
-		expect(page.items).toEqual([{ id: `${ACME}/103`, name: "Old (OLD) · archived" }]);
+		expect(page.items).toEqual([{ id: `${ACME}/103`, name: "Old (OLD) · archived", tenant: ACME }]);
 	});
 
 	test("cursors are checked", () => {

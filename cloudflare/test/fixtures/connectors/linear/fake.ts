@@ -35,6 +35,8 @@ function uuidOf(n: number): string {
 export const ID: { [name: string]: string } = Object.fromEntries(
 	[...Object.keys(TEAMS), ...PEOPLE, ...COMMENTS, ...ISSUES].map((name, index) => [name, uuidOf(index + 1)]),
 );
+/** The workspace: Linear's organization, the connection's tenant. */
+export const ORGANIZATION = "0199a000-0000-7000-8000-00000000ac3e";
 export const NAME: { [id: string]: string } = Object.fromEntries(Object.entries(ID).map(([name, id]) => [id, name]));
 export const STATES: [name: string, type: string][] = [
 	["Backlog", "backlog"],
@@ -348,7 +350,7 @@ export class FakeLinear {
 	#answer(name: string, v: JsonObject): JsonObject {
 		switch (name) {
 			case "Me":
-				return { viewer: { id: ID.ada as string, name: "Ada Lovelace" }, organization: { name: "Acme", urlKey: "acme" } };
+				return { viewer: { id: ID.ada as string, name: "Ada Lovelace" }, organization: { id: ORGANIZATION, name: "Acme", urlKey: "acme" } };
 			case "Organization":
 				return { organization: { name: "Acme", urlKey: "acme" } };
 			case "Viewer":

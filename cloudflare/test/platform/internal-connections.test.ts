@@ -13,14 +13,17 @@ afterEach(() => {
 	PROVIDER_NETWORK.fetch = defaultNetwork;
 });
 
-/** GitHub's `GET /user`, answered by `answer`; the tokens it saw are recorded. */
+/** GitHub's `GET /user`, answered by `answer`, and its App's installations, on the user and on `example`; the tokens it saw are recorded. */
 function fakeGitHub(answer: () => Response): string[] {
 	const seen: string[] = [];
 	PROVIDER_NETWORK.fetch = () => async (input, init) => {
 		const request = new Request(input as RequestInfo, init as RequestInit);
-		if (request.method !== "GET" || request.url !== "https://api.github.com/user") throw new TypeError(`Unexpected request ${request.method} ${request.url}`);
 		seen.push(request.headers.get("Authorization") ?? "");
-		return answer();
+		if (request.method === "GET" && request.url === "https://api.github.com/user") return answer();
+		if (request.method === "GET" && request.url.startsWith("https://api.github.com/user/installations?")) {
+			return Response.json({ installations: [{ id: 7, account: { id: 900, login: "example" } }, { id: 8, account: { id: 583231, login: "octocat" } }] });
+		}
+		throw new TypeError(`Unexpected request ${request.method} ${request.url}`);
 	};
 	return seen;
 }
@@ -30,10 +33,35 @@ function describeAccount(provider = "github", kind: "oauth2" | "api_key" | "buil
 }
 
 describe("describeAccount", () => {
-	test("the account behind the credential: its stable id and label, and no tenant yet", async () => {
+	test("the account behind the credential: its stable id and label, and for GitHub's tenant per resource the owners it reaches", async () => {
 		const seen = fakeGitHub(() => Response.json({ id: 583231, login: "octocat" }));
-		expect(await describeAccount()).toEqual({ outcome: "described", account: { id: "583231", label: "octocat", tenant: null } });
-		expect(seen).toEqual(["Bearer gho_token"]);
+		expect(await describeAccount()).toEqual({
+			outcome: "described",
+			account: {
+				id: "583231",
+				label: "octocat",
+				tenant: null,
+				tenants: [
+					{ id: "900", name: "example" },
+					{ id: "583231", name: "octocat" },
+				],
+			},
+		});
+		expect(seen).toEqual(["Bearer gho_token", "Bearer gho_token"]);
+	});
+
+	test("a connector with a tenant per account answers it; one of unknown tenancy answers none", async () => {
+		PROVIDER_NETWORK.fetch = () => async (input, init) => {
+			const request = new Request(input as RequestInfo, init as RequestInit);
+			if (request.url === "https://openidconnect.googleapis.com/v1/userinfo") return Response.json({ sub: "108", email: "ada@example.com", hd: "Example.com" });
+			if (request.url === "https://api.todoist.com/api/v1/user") return Response.json({ id: "7", full_name: "Ada" });
+			throw new TypeError(`Unexpected request ${request.method} ${request.url}`);
+		};
+		expect(await describeAccount("google_calendar")).toEqual({
+			outcome: "described",
+			account: { id: "108", label: "ada@example.com", tenant: "example.com", tenants: [{ id: "example.com", name: "example.com" }] },
+		});
+		expect(await describeAccount("todoist")).toEqual({ outcome: "described", account: { id: "7", label: "Ada", tenant: null } });
 	});
 
 	test("a credential the provider refuses is CREDENTIAL_REFUSED; another failure PROVIDER_FAILED", async () => {
@@ -66,8 +94,8 @@ describe("describeAccount", () => {
 function fakeRepositories(options: { status?: number } = {}): string[] {
 	const seen: string[] = [];
 	const repositories = [
-		{ id: 101, full_name: "example/app", private: true },
-		{ id: 102, full_name: "example/site", private: false },
+		{ id: 101, full_name: "example/app", owner: { id: 900, login: "example" }, private: true },
+		{ id: 102, full_name: "example/site", owner: { id: 900, login: "example" }, private: false },
 	];
 	PROVIDER_NETWORK.fetch = () => async (input, init) => {
 		const request = new Request(input as RequestInfo, init as RequestInit);

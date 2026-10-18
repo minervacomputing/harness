@@ -990,7 +990,8 @@ describe("connecting", () => {
 		const notion = fakeNotion();
 		const connector = notionConnector();
 		const client = notion.client();
-		expect(await connector.account(client)).toEqual({ id: ID.workspace, label: "Acme" });
+		// The workspace is the account and its tenant.
+		expect(await connector.account(client)).toEqual({ id: ID.workspace, label: "Acme", tenants: [{ id: ID.workspace, name: "Acme" }] });
 		let found = await connector.discover(client, PAGE, { query: "launch", cursor: null });
 		expect(found.items.map((item) => [NAME.get(item.id), item.name])).toEqual([
 			["row1", "Launch"],
@@ -1454,7 +1455,7 @@ describe("declaration, paging and limits", () => {
 		await expect(notionConnector().account(notion.client())).rejects.toMatchObject({ code: "PROVIDER_FAILED", message: "Notion did not say which workspace was connected." });
 		notion.handle = () => jsonResponse(200, { object: "user", id: BOT, type: "bot", bot: { workspace_id: ID.workspace.replaceAll("-", "").toUpperCase(), workspace_name: null } });
 		// The id as Notion's own canonical form; a workspace without a name is "Notion".
-		expect(await notionConnector().account(notion.client())).toEqual({ id: ID.workspace, label: "Notion" });
+		expect(await notionConnector().account(notion.client())).toEqual({ id: ID.workspace, label: "Notion", tenants: [{ id: ID.workspace, name: "Notion" }] });
 	});
 
 	test("discovery pages with Notion's cursor, which is checked both ways", async () => {

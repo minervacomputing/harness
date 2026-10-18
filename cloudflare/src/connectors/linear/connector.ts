@@ -64,6 +64,7 @@ export const linear: Connector<LinearClient> = {
 		{ id: "create", label: "Create issues", requires: "read" },
 		{ id: "edit", label: "Edit issues", requires: "read" },
 	],
+	tenancy: { kind: "account", label: "Linear workspace" },
 	auth: {
 		type: "oauth2",
 		app: "linear",
@@ -82,7 +83,7 @@ export const linear: Connector<LinearClient> = {
 
 	async account(client) {
 		const me = await client.me();
-		return { id: me.viewer.id, label: `${me.viewer.name} (${me.organization.name})` };
+		return { id: me.viewer.id, label: `${me.viewer.name} (${me.organization.name})`, tenants: [{ id: me.organization.id, name: me.organization.name }] };
 	},
 
 	async discover(client, _kind, { query, cursor }): Promise<DiscoveryPage> {

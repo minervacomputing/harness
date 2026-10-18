@@ -72,3 +72,32 @@ test("an operation's terms are what Laravel needs to ask for scopes", async () =
 		expect(terms.offered).toBe(true);
 	}
 });
+
+test("each connector's tenancy: what a connection policy limits it by", async () => {
+	const catalog = await catalogOf(await Registry.create(CONNECTORS));
+	const tenancy = Object.fromEntries(catalog.connectors.map((entry) => [entry.slug, entry.tenancy]));
+	const account = (label: string) => ({ kind: "account", label });
+	const resource = (label: string) => ({ kind: "resource", label });
+	expect(tenancy).toEqual({
+		confluence: resource("Atlassian site"),
+		github: resource("GitHub owner"),
+		gmail: account("Google Workspace domain"),
+		google_calendar: account("Google Workspace domain"),
+		google_drive: account("Google Workspace domain"),
+		hubspot: account("HubSpot account"),
+		intercom: account("Intercom workspace"),
+		jira: resource("Atlassian site"),
+		linear: account("Linear workspace"),
+		notion: account("Notion workspace"),
+		onedrive: account("Microsoft Entra tenant"),
+		outlook: account("Microsoft Entra tenant"),
+		outlook_calendar: account("Microsoft Entra tenant"),
+		sentry: account("Sentry organization"),
+		slack: account("Slack workspace"),
+		stripe: account("Stripe account"),
+		teams: account("Microsoft Entra tenant"),
+		todoist: { kind: "unknown", label: null },
+		web: { kind: "unknown", label: null },
+		xero: resource("Xero organisation"),
+	});
+});

@@ -148,6 +148,7 @@ export function stripeConnector(): Connector<StripeClient> {
 			{ id: "refund", label: "Refund payments" },
 			{ id: "credit", label: "Credit balances" },
 		],
+		tenancy: { kind: "account", label: "Stripe account" },
 		auth: {
 			type: "api_key",
 			label: "Restricted API key",
@@ -180,7 +181,8 @@ export function stripeConnector(): Connector<StripeClient> {
 			const dashboard = found.settings ? found.settings.dashboard : null;
 			const label = (found.business_profile ? found.business_profile.name : null) || (dashboard ? dashboard.display_name : null) || found.email || found.id;
 			const mode = client.testMode ? "test" : "live";
-			return { id: `${found.id}:${mode}`, label: client.testMode ? `${label} (test mode)` : label };
+			// Test-mode and live keys of one account are one tenant.
+			return { id: `${found.id}:${mode}`, label: client.testMode ? `${label} (test mode)` : label, tenants: [{ id: found.id, name: label }] };
 		},
 
 		async discover(client, kind, { query, cursor: pageCursor }): Promise<DiscoveryPage> {

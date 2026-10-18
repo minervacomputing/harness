@@ -190,6 +190,8 @@ export function todoistConnector(): Connector<TodoistClient> {
 			{ id: "read", label: "Read tasks" },
 			{ id: "create", label: "Create tasks", requires: "read" },
 		],
+		// A project can belong to a team's workspace or to no one.
+		tenancy: { kind: "unknown" },
 		auth: {
 			type: "oauth2",
 			app: "todoist",

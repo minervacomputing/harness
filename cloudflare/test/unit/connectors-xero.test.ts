@@ -140,6 +140,10 @@ describe("connecting and discovery", () => {
 		expect(found.items.map((item) => item.id)).toEqual([ACME]);
 		expect((await raised(connector.discover(client, "organisation", { query: null, cursor: "2" }))).code).toBe("INVALID_CURSOR");
 		expect(await connector.describe(client, "organisation", [ACME, UNREACHED, "x"])).toEqual({ [ACME]: "Acme Ltd" });
+		// Each organisation is its own tenant: its id, as Xero writes it, lowercase.
+		const tenancy = connector.tenancy;
+		if (tenancy.kind !== "resource") throw new Error("Xero has a tenant per organisation.");
+		expect(await tenancy.tenants(client, "organisation", [ACME, UNREACHED, ACME.toUpperCase(), ZERO_UUID, "x"])).toEqual({ [ACME]: ACME, [UNREACHED]: UNREACHED });
 		// Read once per client.
 		expect(xero.requests.filter((request) => request.url.pathname === "/connections")).toHaveLength(1);
 

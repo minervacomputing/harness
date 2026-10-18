@@ -298,7 +298,15 @@ describe("connecting and discovery", () => {
 		const jira = new FakeJira();
 		const connector = jiraConnector();
 		const client = jira.client();
-		expect(await connector.account(client)).toEqual({ id: ACCOUNT_ID, label: "Ada (ada@example.com)" });
+		expect(await connector.account(client)).toEqual({
+			id: ACCOUNT_ID,
+			label: "Ada (ada@example.com)",
+			// Its tenants are the sites it reaches, in order of cloud id.
+			tenants: [
+				{ id: ACME, name: "Acme (acme.atlassian.net)" },
+				{ id: BETA, name: "Beta (beta.atlassian.net)" },
+			],
+		});
 		// Once each, ordered by id, in lower case, without sites that did not grant Jira.
 		expect((await client.sites()).map((site) => [site.id, site.label])).toEqual([
 			[ACME, "Acme (acme.atlassian.net)"],
@@ -339,6 +347,12 @@ describe("connecting and discovery", () => {
 		}
 		const described = await connector.describe(client, "project", [ACME, ACME.toUpperCase(), WIKI, ENG, OPS, `${ACME}/99999`, `${WIKI}/10000`, `${ACME}/ENG`]);
 		expect(described).toEqual({ [ACME]: "Acme (acme.atlassian.net)", [ENG]: "Engineering (ENG) · Acme", [OPS]: "Operations (OPS) · Beta" });
+		// A project's tenant is the site its id begins with, known without asking Jira.
+		const tenancy = connector.tenancy;
+		if (tenancy.kind !== "resource") throw new Error("Jira has a tenant per site.");
+		const before = jira.requests.length;
+		expect(await tenancy.tenants(client, "project", [ENG, OPS, ACME, ACME.toUpperCase(), "ENG", `x/${ACME}`])).toEqual({ [ENG]: ACME, [OPS]: BETA, [ACME]: ACME });
+		expect(jira.requests.length).toBe(before);
 	});
 
 	test("too many sites are refused", async () => {

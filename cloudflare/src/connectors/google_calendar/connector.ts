@@ -13,7 +13,7 @@ import {
 } from "../../gateway/connector.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
 import { sliceText } from "../../lib/text.ts";
-import { oauth } from "../google/index.ts";
+import { TENANCY, googleTenants, oauth } from "../google/index.ts";
 import { type EventTime, type GoogleCalendar, GoogleCalendarClient, type GoogleEvent, calendarName } from "./client.ts";
 import { epochMicros, isDate, isTimeZone, parseDate, parseZonedDateTime } from "../../lib/dates.ts";
 import { extend } from "../../lib/arrays.ts";
@@ -314,12 +314,13 @@ export function googleCalendarConnector(options: CalendarOptions = {}): Connecto
 		],
 		// Reading is enough to connect; writing is asked for once the user allows an agent to write.
 		auth: oauth(READ_SCOPE),
+		tenancy: TENANCY,
 		operations,
 		client: (secret, io) => new GoogleCalendarClient(secret, io, options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
 		async account(client) {
 			// The OpenID subject is stable; the email address can change.
 			const user = await client.user();
-			return { id: user.sub, label: user.email || user.name || "Google" };
+			return { id: user.sub, label: user.email || user.name || "Google", tenants: googleTenants(user) };
 		},
 		async discover(client, _kind, { query }) {
 			let calendars = await allCalendars(client, maxPages);

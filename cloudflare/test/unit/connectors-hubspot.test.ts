@@ -347,11 +347,12 @@ describe("the client and connecting", () => {
 	test("the connection is the HubSpot account", async () => {
 		const hubspot = new FakeHubSpot();
 		const connector = hubspotConnector();
-		expect(await connector.account(hubspot.client())).toEqual({ id: "4242", label: "Acme Corp (4242)" });
+		// The account is its own tenant.
+		expect(await connector.account(hubspot.client())).toEqual({ id: "4242", label: "Acme Corp (4242)", tenants: [{ id: "4242", name: "Acme Corp (4242)" }] });
 		await expect(connector.account(hubspot.client("other"))).rejects.toMatchObject({ code: "CONNECTION_UNAUTHORIZED" });
 		// Without a name, the account is named by its number.
 		hubspot.hook = (request) => (request.url.pathname.startsWith("/account-info/") ? json(200, { portalId: 7, portalName: "" }) : null);
-		expect(await connector.account(hubspot.client())).toEqual({ id: "7", label: "HubSpot 7" });
+		expect(await connector.account(hubspot.client())).toEqual({ id: "7", label: "HubSpot 7", tenants: [{ id: "7", name: "HubSpot 7" }] });
 		// A portal id sent as a string does not fit.
 		hubspot.hook = (request) => (request.url.pathname.startsWith("/account-info/") ? json(200, { portalId: "7" }) : null);
 		await expect(connector.account(hubspot.client())).rejects.toMatchObject({ code: "PROVIDER_FAILED" });

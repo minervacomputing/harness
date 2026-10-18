@@ -2,7 +2,7 @@
 // page names, and where pages sit.
 
 import { z } from "zod";
-import { type Binding, OperationError, denied } from "../../gateway/connector.ts";
+import { type Binding, OperationError, denied, inTenant } from "../../gateway/connector.ts";
 import type { Resource } from "../../gateway/policy.ts";
 import { CLOUD_ID, type Site } from "../atlassian/index.ts";
 import type { ConfluenceClient, Page, Space } from "./client.ts";
@@ -54,7 +54,7 @@ export function spaceId(site: Site, space: string): string {
 /** The resource of a space Confluence named. A malformed id fails rather than being guessed. */
 export function spaceResource(binding: Binding, site: Site, space: string | null | undefined): Resource {
 	if (space === null || space === undefined || !ID.test(space)) throw (binding.client as ConfluenceClient).unexpected();
-	return binding.resource(SPACE, spaceId(site, space), [site.id]);
+	return inTenant(binding.resource(SPACE, spaceId(site, space), [site.id]), site.id);
 }
 
 /** The hosts of the connection's sites, whose addresses text hides as links to Atlassian. */

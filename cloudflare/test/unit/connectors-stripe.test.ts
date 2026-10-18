@@ -265,6 +265,8 @@ describe("the client", () => {
 		const live = await connector.account(stripe.client(LIVE_KEY));
 		expect([testMode.id, testMode.label]).toEqual(["acct_1:test", "Acme (test mode)"]);
 		expect([live.id, live.label]).toEqual(["acct_1:live", "Acme"]);
+		// Test-mode and live keys of one account are one tenant.
+		expect([testMode.tenants, live.tenants]).toEqual([[{ id: "acct_1", name: "Acme" }], [{ id: "acct_1", name: "Acme" }]]);
 		expect(stripe.requests[0]?.headers.get("Stripe-Version")).toBe("2025-08-27.basil");
 		expect(stripe.requests[0]?.headers.get("Authorization")).toBe(`Bearer ${KEY}`);
 		expect(stripe.requests[0]?.url.href).toBe("https://api.stripe.com/v1/account");

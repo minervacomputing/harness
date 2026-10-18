@@ -79,6 +79,7 @@ export function notionConnector(options: NotionClientOptions = {}): Connector<No
 			{ id: "create", label: "Create pages", requires: "read" },
 			{ id: "edit", label: "Edit pages", requires: "read" },
 		],
+		tenancy: { kind: "account", label: "Notion workspace" },
 		auth: {
 			type: "oauth2",
 			app: "notion",
@@ -101,7 +102,8 @@ export function notionConnector(options: NotionClientOptions = {}): Connector<No
 			const me = await client.me();
 			const workspaceId = me.bot ? canonical(me.bot.workspace_id) : null;
 			if (workspaceId === null) throw new OperationError("PROVIDER_FAILED", "Notion did not say which workspace was connected.");
-			return { id: workspaceId, label: (me.bot ? me.bot.workspace_name : null) || "Notion" };
+			const label = (me.bot ? me.bot.workspace_name : null) || "Notion";
+			return { id: workspaceId, label, tenants: [{ id: workspaceId, name: label }] };
 		},
 
 		async discover(client, _kind, { query, cursor }): Promise<DiscoveryPage> {

@@ -247,6 +247,7 @@ describe("connecting", () => {
 		const connector = slackConnector();
 		const account = await connector.account(slack.client());
 		expect([account.id, account.label]).toEqual(["T0ACME:U0BOT", "minerva (Acme)"]);
+		expect(account.tenants).toEqual([{ id: "T0ACME", name: "Acme" }]);
 		let found = await connector.discover(slack.client(), "channel", { query: null, cursor: null });
 		expect(found.items.map((item) => item.name)).toEqual(["#general", "#random (app not added)", "#private", "#partner", "#old"]);
 		found = await connector.discover(slack.client(), "channel", { query: "#PRIV", cursor: null });

@@ -5,7 +5,7 @@
 // first) reads them for 403s; a 403 it does not name falls through to the default PROVIDER_FORBIDDEN.
 
 import { z } from "zod";
-import { type Auth, OperationError, type OperationErrorShape } from "../../gateway/connector.ts";
+import { type Auth, OperationError, type OperationErrorShape, type Tenancy, type Tenant } from "../../gateway/connector.ts";
 import { parseJson } from "../../lib/json.ts";
 
 export const USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo";
@@ -78,10 +78,20 @@ export function classify(provider: string, response: Response, body: string): Op
 	return response.status === 403 ? forbidden(provider, body) : null;
 }
 
-/** The OpenID userinfo: `sub` is stable, the email address can change. */
+/** The OpenID userinfo: `sub` is stable, the email address can change; `hd`, a Google Workspace account's domain. */
 export const GoogleUser = z.object({
 	sub: z.string(),
 	email: z.string().nullable().default(null),
 	name: z.string().nullable().default(null),
+	hd: z.string().nullable().default(null),
 });
 export type GoogleUser = z.output<typeof GoogleUser>;
+
+/** A Google account's tenant is its Workspace's domain; a personal account has none. */
+export const TENANCY: Tenancy = { kind: "account", label: "Google Workspace domain" };
+
+/** The account's tenant: its `hd` in lower case, as domains compare. */
+export function googleTenants(user: GoogleUser): Tenant[] {
+	const domain = user.hd ? user.hd.trim().toLowerCase() : "";
+	return domain ? [{ id: domain, name: domain }] : [];
+}

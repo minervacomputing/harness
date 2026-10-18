@@ -104,7 +104,7 @@ class FakeDrive {
 		this.requests.push(url);
 		this.hook?.(url);
 		if (this.error) return jsonResponse(this.error[0], this.error[1]);
-		if (url.host === "openidconnect.googleapis.com") return jsonResponse(200, { sub: "108", email: "ada@example.com" });
+		if (url.host === "openidconnect.googleapis.com") return jsonResponse(200, { sub: "108", email: "ada@example.com", hd: "Example.com" });
 		const params = url.searchParams;
 		const parts = url.pathname.split("/").slice(1);
 		const path = parts.join("/");
@@ -238,7 +238,7 @@ describe("the connector outside a run", () => {
 
 	test("the account is the OpenID subject", async () => {
 		const google = new FakeDrive();
-		expect(await googleDriveConnector().account(google.client())).toEqual({ id: "108", label: "ada@example.com" });
+		expect(await googleDriveConnector().account(google.client())).toEqual({ id: "108", label: "ada@example.com", tenants: [{ id: "example.com", name: "example.com" }] });
 	});
 });
 

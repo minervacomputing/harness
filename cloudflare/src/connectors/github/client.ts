@@ -64,10 +64,16 @@ const Owner = z.object({
 	login: z.string().default(""),
 });
 
+/** A repository's owner, or an installation's account: its numeric id is what tenants compare. */
+const Account = z.object({
+	id: z.int(),
+	login: z.string().default(""),
+});
+
 export const Repository = z.object({
 	id: z.int(),
 	full_name: z.string(),
-	owner: Owner.nullable().default(null),
+	owner: Account,
 	private: z.boolean().default(false),
 	description: z.string().nullable().default(null),
 	default_branch: z.string().nullable().default(null),
@@ -79,7 +85,8 @@ export const Repository = z.object({
 });
 export type Repository = z.output<typeof Repository>;
 
-const Installation = z.object({ id: z.int() });
+const Installation = z.object({ id: z.int(), account: Account.nullable().default(null) });
+export type Installation = z.output<typeof Installation>;
 const Installations = z.object({ installations: z.array(Installation).default(() => []) });
 const InstallationRepositories = z.object({ repositories: z.array(Repository).default(() => []) });
 
@@ -248,7 +255,7 @@ export class GitHubClient implements ProviderClient {
 		return this.#get(User, "/user");
 	}
 
-	async installations(page: number): Promise<{ id: number }[]> {
+	async installations(page: number): Promise<Installation[]> {
 		const found = await this.#get(Installations, "/user/installations", { per_page: 100, page });
 		return found.installations;
 	}

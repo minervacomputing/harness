@@ -134,14 +134,39 @@ export type Auth =
 	| { type: "api_key"; label: string; hint?: string | null }
 	| { type: "builtin" };
 
+/** A tenant as `describeAccount` names it (Tenancy): its id, compared exactly, and its name for people. */
+export interface Tenant {
+	id: string;
+	name: string;
+}
+
+/**
+ * How a connector's resources belong to organizations, which connection policies limit (docs/plans/chunk-17-design.md).
+ * `account`: a token reaches one tenant, which `account()` names. `resource`: a token reaches several, so every resource it
+ * resolves or returns and every item discovery lists names its `tenant`, from what the provider answered for that call, and
+ * `tenants` names those of resources a grant edit allows, leaving out any it cannot place. `unknown`: a policy can only offer
+ * the connector or not.
+ */
+export type Tenancy<Client = ProviderClient> =
+	| { kind: "account"; label: string }
+	| { kind: "resource"; label: string; tenants(client: Client, kind: string, ids: string[]): Promise<{ [id: string]: string }> }
+	| { kind: "unknown" };
+
 export interface Account {
 	id: string;
 	label: string;
+	/**
+	 * The tenants it reaches now: for a connector with a tenant per account its one tenant, or none (a personal Google account);
+	 * for one with a tenant per resource, those it can list. Absent: none.
+	 */
+	tenants?: Tenant[];
 }
 
 export interface DiscoveryItem {
 	id: string;
 	name: string;
+	/** Its tenant, for a connector with a tenant per resource. */
+	tenant?: string;
 	/** `children` may list resources inside this one. */
 	expandable?: boolean;
 }
@@ -163,6 +188,7 @@ export interface Connector<Client extends ProviderClient = ProviderClient> {
 	kinds: ResourceKind[];
 	actions: ActionSpec[];
 	auth: Auth;
+	tenancy: Tenancy<Client>;
 	/** Each declared with `defineOperation` (below), which keeps its input's type for `prepare`. */
 	operations: Operation<never>[];
 	/** Hierarchical kinds users browse as a tree with `children`; not part of the fingerprint. */
@@ -364,6 +390,11 @@ export function consentGiven(consent: Consent | null | undefined, scopes: readon
 	if (consent === null || consent === undefined || scopes === null) return true;
 	const granted = new Set(scopes);
 	return consent.some((option) => option.every((scope) => granted.has(scope)));
+}
+
+/** The resource in a tenant: how a connector with a tenant per resource names one. */
+export function inTenant(resource: Resource, tenant: string): Resource {
+	return { ...resource, tenant };
 }
 
 /** One connection as seen by one call: its id and an authenticated provider client. */

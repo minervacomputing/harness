@@ -30,7 +30,7 @@
 // consent, folder and message ids, where folders sit) is in mailbox.ts.
 
 import { type Connector, type DiscoveryItem, type DiscoveryPage, OperationError } from "../../gateway/connector.ts";
-import { ID, accountLabel, oauth } from "../microsoft/index.ts";
+import { ID, TENANCY, accountLabel, oauth } from "../microsoft/index.ts";
 import { mapLimited } from "../microsoft/limit.ts";
 import * as addresses from "../../lib/addresses.ts";
 import { type Folder, GraphClient, ordinary } from "./client.ts";
@@ -100,6 +100,7 @@ export function outlookConnector(): Connector<GraphClient> {
 		],
 		// Reading is enough to connect; sending is asked for once the user allows it.
 		auth: oauth("Mail.Read"),
+		tenancy: TENANCY,
 		operations: [LIST_FOLDERS, LIST_MESSAGES, READ_MESSAGE, SEND_MESSAGE, REPLY],
 
 		client(secret, io) {
@@ -108,7 +109,7 @@ export function outlookConnector(): Connector<GraphClient> {
 
 		async account(client) {
 			const user = await client.me();
-			return { id: user.id, label: accountLabel(user, "Outlook") };
+			return { id: user.id, label: accountLabel(user, "Outlook"), tenants: await client.tenants(user) };
 		},
 
 		async discover(client, kind, { query }): Promise<DiscoveryPage> {

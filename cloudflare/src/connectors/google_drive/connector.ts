@@ -24,7 +24,7 @@ import type { Resource } from "../../gateway/policy.ts";
 import { fromUtf8, utf8 } from "../../lib/bytes.ts";
 import { type JsonObject, parseJson } from "../../lib/json.ts";
 import { SINGLE_LINE, isSingleLine, sliceText } from "../../lib/text.ts";
-import { oauth } from "../google/index.ts";
+import { TENANCY, googleTenants, oauth } from "../google/index.ts";
 import { type DriveFile, FOLDER, GoogleDriveClient, SHORTCUT, isFolder, quoted } from "./client.ts";
 import { extend } from "../../lib/arrays.ts";
 
@@ -489,6 +489,7 @@ export function googleDriveConnector(options: DriveOptions = {}): Connector<Goog
 		],
 		// Reading is enough to connect; the scope for creating files is asked for once the user allows it.
 		auth: oauth(READ_SCOPE),
+		tenancy: TENANCY,
 		operations,
 		browsable: [FILE],
 		client: (secret, io) =>
@@ -498,7 +499,7 @@ export function googleDriveConnector(options: DriveOptions = {}): Connector<Goog
 			}),
 		async account(client) {
 			const user = await client.user();
-			return { id: user.sub, label: user.email || user.name || "Google" };
+			return { id: user.sub, label: user.email || user.name || "Google", tenants: googleTenants(user) };
 		},
 		async discover(client, _kind, { query, cursor }): Promise<DiscoveryPage> {
 			let state: { phase: string; page: string | null } | null = cursor ? readCursor(DiscoveryCursor, cursor) : null;

@@ -37,7 +37,7 @@ import {
 import type { Resource } from "../../gateway/policy.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
 import { sliceText, TextError } from "../../lib/text.ts";
-import { accountLabel, consent, oauth, pageParam } from "../microsoft/index.ts";
+import { TENANCY, accountLabel, consent, oauth, pageParam } from "../microsoft/index.ts";
 import { after, singleLineOf } from "../microsoft/inputs.ts";
 import { mapLimited } from "../microsoft/limit.ts";
 import { DriveClient, type DriveItem } from "./client.ts";
@@ -676,6 +676,7 @@ export function onedriveConnector(options: { baseUrl?: string } = {}): Connector
 		// Reading is enough to connect; writing is asked for once the user allows an agent to create files.
 		// Sites.Read.All lists the SharePoint sites the account follows, and their libraries.
 		auth: oauth("Files.Read.All", "Sites.Read.All"),
+		tenancy: TENANCY,
 		operations: [LIST_LIBRARIES, LIST_FOLDER, SEARCH_FILES, GET_FILE, READ_FILE, CREATE_FILE],
 
 		client(secret, io) {
@@ -684,7 +685,7 @@ export function onedriveConnector(options: { baseUrl?: string } = {}): Connector
 
 		async account(client) {
 			const user = await client.me();
-			return { id: user.id, label: accountLabel(user, "OneDrive") };
+			return { id: user.id, label: accountLabel(user, "OneDrive"), tenants: await client.tenants(user) };
 		},
 
 		async discover(client, _kind, { query, cursor }) {

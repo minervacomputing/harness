@@ -41,7 +41,7 @@
 // is in mailbox.ts, and MIME handling is in mime.ts.
 
 import { ACCOUNT_KIND, type Connector } from "../../gateway/connector.ts";
-import { oauth } from "../google/index.ts";
+import { TENANCY, googleTenants, oauth } from "../google/index.ts";
 import * as addresses from "../../lib/addresses.ts";
 import { GmailClient } from "./client.ts";
 import { LABEL, Labels, READONLY_SCOPE, RECIPIENT } from "./mailbox.ts";
@@ -90,12 +90,13 @@ export function gmailConnector(options: GmailOptions = {}): Connector<GmailClien
 		],
 		// Reading is enough to connect; sending and drafting are asked for once the user allows them.
 		auth: oauth(READONLY_SCOPE),
+		tenancy: TENANCY,
 		operations: [...READS, ...WRITES],
 		client: (secret, io) => new GmailClient(secret, io, options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
 		async account(client) {
 			// The OpenID subject is stable; the email address can change.
 			const user = await client.user();
-			return { id: user.sub, label: user.email || user.name || "Gmail" };
+			return { id: user.sub, label: user.email || user.name || "Gmail", tenants: googleTenants(user) };
 		},
 		async discover(client, kind, { query }) {
 			if (kind === RECIPIENT) {

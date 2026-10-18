@@ -4,7 +4,7 @@
 import { describe, expect, test } from "vitest";
 import { CONNECTORS } from "../../src/connectors/catalog.ts";
 import { connectorRegistry } from "../../src/connectors/index.ts";
-import { GoogleUser, NOT_CONFIGURED, RATE_LIMITED, TOO_LARGE, classify, oauth, reasons } from "../../src/connectors/google/index.ts";
+import { GoogleUser, NOT_CONFIGURED, RATE_LIMITED, TOO_LARGE, classify, googleTenants, oauth, reasons } from "../../src/connectors/google/index.ts";
 import { googleCalendarConnector } from "../../src/connectors/google_calendar/connector.ts";
 import { googleDriveConnector } from "../../src/connectors/google_drive/connector.ts";
 import { Registry, validate } from "../../src/gateway/registry.ts";
@@ -67,11 +67,17 @@ describe("the OAuth app", () => {
 	});
 
 	test("the userinfo ignores what it does not use, and a name or an email may be missing", () => {
-		expect(GoogleUser.parse({ sub: "108", picture: "x" })).toEqual({ sub: "108", email: null, name: null });
-		expect(GoogleUser.parse({ sub: "108", email: "ada@example.com", name: "Ada" })).toEqual({ sub: "108", email: "ada@example.com", name: "Ada" });
+		expect(GoogleUser.parse({ sub: "108", picture: "x" })).toEqual({ sub: "108", email: null, name: null, hd: null });
+		expect(GoogleUser.parse({ sub: "108", email: "ada@example.com", name: "Ada" })).toEqual({ sub: "108", email: "ada@example.com", name: "Ada", hd: null });
 		expect(GoogleUser.safeParse({ email: "ada@example.com" }).success).toBe(false);
 		expect(GoogleUser.safeParse({ sub: 108 }).success).toBe(false);
 		expect(GoogleUser.safeParse({ sub: "108", email: 1 }).success).toBe(false);
+	});
+
+	test("an account's tenant is its Workspace's domain, in lower case; a personal account has none", () => {
+		expect(googleTenants(GoogleUser.parse({ sub: "108", hd: "Example.COM" }))).toEqual([{ id: "example.com", name: "example.com" }]);
+		expect(googleTenants(GoogleUser.parse({ sub: "108", email: "ada@gmail.example" }))).toEqual([]);
+		expect(googleTenants(GoogleUser.parse({ sub: "108", hd: " " }))).toEqual([]);
 	});
 });
 

@@ -101,6 +101,15 @@ test("consent needs OAuth, and tool names are unique", () => {
 	expect(() => validate([one, two])).toThrow('"a_b_c" is declared by both a_b and a.');
 });
 
+test("a known tenancy names its tenant, and a tenant per resource leaves no account kind", () => {
+	const tenants = async () => ({});
+	expect(() => validate([{ ...mixedConnector(), tenancy: { kind: "account", label: "" } }])).toThrow("mixed: a tenancy names its tenant.");
+	expect(() => validate([{ ...mixedConnector(), tenancy: { kind: "resource", label: "", tenants } }])).toThrow("mixed: a tenancy names its tenant.");
+	expect(() => validate([{ ...mixedConnector(), tenancy: { kind: "resource", label: "Site", tenants } }])).not.toThrow();
+	expect(() => validate([{ ...keyedConnector(), tenancy: { kind: "account", label: "Workspace" } }])).not.toThrow();
+	expect(() => validate([{ ...keyedConnector(), tenancy: { kind: "resource", label: "Site", tenants } }])).toThrow("keyed: a tenant per resource leaves no account kind.");
+});
+
 describe("inputs are strict at every depth", () => {
 	const withInput = (input: z.ZodType, paginated = false) => variant({ operations: [defineOperation({ ...mixedConnector().operations[0]!, input, paginated })] });
 	const text = () => z.string().trim().min(1).max(10);

@@ -32,6 +32,7 @@ export function notesConnector(): Connector<ProviderHTTP> {
 			{ id: "read", label: "Read notes" },
 			{ id: "create", label: "Create notes", requires: "read" },
 		],
+		tenancy: { kind: "unknown" },
 		auth: {
 			type: "oauth2",
 			app: NOTES,

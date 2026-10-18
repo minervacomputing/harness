@@ -52,6 +52,7 @@ export const intercom: Connector<IntercomClient> = {
 		{ id: "note", label: "Add internal notes", requires: "read" },
 		{ id: "reply", label: "Reply to customers", requires: "read" },
 	],
+	tenancy: { kind: "account", label: "Intercom workspace" },
 	auth: {
 		type: "oauth2",
 		app: "intercom",
@@ -71,7 +72,7 @@ export const intercom: Connector<IntercomClient> = {
 		if (me.app === null || !me.app.id_code) throw client.unexpected();
 		const person = me.name && me.email ? `${me.name} (${me.email})` : me.name || me.email || "Intercom";
 		const label = me.app.name ? `${person} · ${me.app.name}` : person;
-		return { id: `${me.app.id_code}:${me.id}`, label };
+		return { id: `${me.app.id_code}:${me.id}`, label, tenants: [{ id: me.app.id_code, name: me.app.name || me.app.id_code }] };
 	},
 
 	async discover(client, _kind, { query, cursor }): Promise<DiscoveryPage> {

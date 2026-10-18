@@ -397,6 +397,7 @@ export function slackConnector(options: Partial<SlackLimits> = {}): Connector<Sl
 			{ id: "reply", label: "Reply in threads", requires: "read" },
 			{ id: "post", label: "Post to the channel", requires: "read" },
 		],
+		tenancy: { kind: "account", label: "Slack workspace" },
 		auth: {
 			type: "oauth2",
 			app: "slack",
@@ -539,7 +540,11 @@ export function slackConnector(options: Partial<SlackLimits> = {}): Connector<Sl
 			}
 			// The app's bot user, in this workspace: another app, even in the same workspace, is another account.
 			const label = identity.user ? `${identity.user} (${identity.team})` : identity.team;
-			return { id: `${identity.team_id}:${identity.user_id}`, label: label || identity.team_id };
+			return {
+				id: `${identity.team_id}:${identity.user_id}`,
+				label: label || identity.team_id,
+				tenants: [{ id: identity.team_id, name: identity.team || identity.team_id }],
+			};
 		},
 		async discover(slack, _kind, { query, cursor }): Promise<DiscoveryPage> {
 			if (!query) {

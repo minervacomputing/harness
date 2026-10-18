@@ -62,6 +62,7 @@ export function hubspotConnector(): Connector<HubSpotClient> {
 			{ id: "edit", label: "Edit contacts and deals", requires: "read" },
 			{ id: "note", label: "Log notes", requires: "read" },
 		],
+		tenancy: { kind: "account", label: "HubSpot account" },
 		auth: {
 			type: "oauth2",
 			app: "hubspot",
@@ -89,7 +90,8 @@ export function hubspotConnector(): Connector<HubSpotClient> {
 		async account(client) {
 			const found = await client.details();
 			const portal = found.portalId.toString();
-			return { id: portal, label: found.portalName ? `${found.portalName} (${portal})` : `HubSpot ${portal}` };
+			const label = found.portalName ? `${found.portalName} (${portal})` : `HubSpot ${portal}`;
+			return { id: portal, label, tenants: [{ id: portal, name: label }] };
 		},
 		async discover(client, _kind, { query }) {
 			let items = [...collectionItems(), ...(await client.pipelines()).filter((found) => !found.archived).map(pipelineItem)];

@@ -60,6 +60,7 @@ export function sentryConnector(): Connector<SentryClient> {
 			},
 		],
 		actions: [{ id: "read", label: "Read issues and events" }],
+		tenancy: { kind: "account", label: "Sentry organization" },
 		auth: {
 			type: "oauth2",
 			app: "sentry",
@@ -80,7 +81,7 @@ export function sentryConnector(): Connector<SentryClient> {
 			const organisation = organisations[0] as (typeof organisations)[number];
 			const person = short(user.name && user.email ? `${user.name} (${user.email})` : user.name || user.email);
 			const org = short(organisation.name) || organisation.slug;
-			return { id: `${organisation.id}:${user.id}`, label: person ? `${person} \u00b7 ${org}` : org };
+			return { id: `${organisation.id}:${user.id}`, label: person ? `${person} \u00b7 ${org}` : org, tenants: [{ id: organisation.id, name: org }] };
 		},
 
 		manageLink() {

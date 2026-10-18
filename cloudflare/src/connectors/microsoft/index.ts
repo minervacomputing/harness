@@ -10,7 +10,7 @@
 // error texts never reach the model.
 
 import { z } from "zod";
-import { type Auth, type Consent, OperationError, type OperationErrorShape, type ProviderClient } from "../../gateway/connector.ts";
+import { type Auth, type Consent, OperationError, type OperationErrorShape, type ProviderClient, type Tenancy, type Tenant } from "../../gateway/connector.ts";
 import { ProviderHTTP, type ProviderIo, defaultForbidden } from "../../gateway/http.ts";
 import { isDict, type Json, type JsonObject, parseJsonBytes } from "../../lib/json.ts";
 
@@ -94,6 +94,14 @@ export const User = z.object({
 	proxyAddresses: z.array(z.string()).default([]),
 });
 export type User = z.output<typeof User>;
+
+const Organization = z.object({ id: z.string(), displayName: z.string().nullable().default(null) });
+
+/** A work or school account's tenant is its Entra tenant; a personal account has none. */
+export const TENANCY: Tenancy = { kind: "account", label: "Microsoft Entra tenant" };
+
+/** Entra's object and tenant ids; a personal account's user id is not one. */
+export const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** The query parameter a cursor stands for, or INVALID_CURSOR. */
 export function pageParam(cursor: string): { [name: string]: string } {
@@ -183,6 +191,19 @@ export class Graph implements ProviderClient {
 
 	async me(): Promise<User> {
 		return this.parse(User, await this.get("/me", { params: { $select: "id,displayName,mail,userPrincipalName" } }));
+	}
+
+	/**
+	 * The account's tenant: one more request, `GET /organization`, which `User.Read` allows for a work or school account and
+	 * Graph refuses for a personal one, which has none.
+	 */
+	async tenants(user: User): Promise<Tenant[]> {
+		if (!GUID.test(user.id.toLowerCase())) return [];
+		const [found] = this.page(Organization, await this.get("/organization", { params: { $select: "id,displayName" } }));
+		const organization = found.length === 1 ? found[0] : undefined;
+		if (organization === undefined || !GUID.test(organization.id.toLowerCase())) throw this.unexpected();
+		const id = organization.id.toLowerCase();
+		return [{ id, name: organization.displayName || id }];
 	}
 }
 

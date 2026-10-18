@@ -59,12 +59,19 @@ function workspaceOf(command: SettingsCall): WorkspaceRef {
 	return { id: command.scope.workspace, jurisdiction: "eu" };
 }
 
-/** The account behind the credential. Its tenant is unknown until connection policies (product-and-engine.md, chunk 17). */
+/**
+ * The account behind the credential, with its tenant for a connector with a tenant per account, and the tenants it reaches
+ * now for any connector whose tenancy is known (docs/plans/chunk-17-design.md).
+ */
 export async function describeAccount(env: Env, command: DescribeAccount): Promise<DescribeAccountResult> {
 	const connector = await connectorFor(command);
 	try {
 		const account = await providerAccount(env, workspaceOf(command), connector, command.credential.secret);
-		return { outcome: "described", account: { id: account.id, label: account.label, tenant: null } };
+		const tenants = (account.tenants ?? []).map((tenant) => ({ id: tenant.id, name: grantName(tenant.name) }));
+		const kind = connector.tenancy.kind;
+		if (kind === "account" && tenants.length > 1) throw new Error(`${connector.slug} named ${tenants.length} tenants for one account`);
+		const tenant = kind === "account" ? (tenants[0]?.id ?? null) : null;
+		return { outcome: "described", account: { id: account.id, label: account.label, tenant, ...(kind === "unknown" ? {} : { tenants }) } };
 	} catch (error) {
 		if (!(error instanceof OperationError)) throw error;
 		if (refusedCredential(error)) return { outcome: "refused", code: "CREDENTIAL_REFUSED", message: error.message };

@@ -44,6 +44,7 @@ function twoStep(): Connector<ProviderHTTP> {
 		name: "Two step",
 		kinds: [{ id: FOLDER, label: "Folder", actions: ["read"], wildcard: true }],
 		actions: [{ id: "read", label: "Read" }],
+		tenancy: { kind: "unknown" },
 		auth: { type: "oauth2", app: "twostep", authorizeUrl: "https://twostep.example/authorize", tokenUrl: "https://twostep.example/token", scopes: ["files"] },
 		operations: [
 			defineOperation<z.output<typeof Both>>({
