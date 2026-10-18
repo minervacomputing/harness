@@ -113,6 +113,17 @@ describe("the compile", () => {
 		expect(none.digest).not.toBe(first.digest);
 	});
 
+	test("a policy that offers every connector with any tenant compiles to the snapshot and digest of a start without one", async () => {
+		const none = await prepareStart(registry, command(), { now: NOW, runTimeoutMs: null });
+		const open = command();
+		open.authority.policy = { revision: 1, connectors: [{ provider: "mixed", tenants: null }, { provider: "keyed", tenants: null }] };
+		const any = await prepareStart(registry, open, { now: NOW, runTimeoutMs: null });
+		expect(none.snapshot.tools.map((tool) => tool.name)).toEqual(["mixed_list_folders"]);
+		expect(any.snapshot).toEqual(none.snapshot);
+		expect(any.snapshot).not.toHaveProperty("tenants");
+		expect(any.digest).toBe(none.digest);
+	});
+
 	test("selects and clips the history as history.ts does, without the run's own message", async () => {
 		const long = "x".repeat(MESSAGE_LIMIT + 10);
 		const history: StartRun["history"] = [

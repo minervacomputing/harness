@@ -218,7 +218,7 @@ export function startSnapshot(registry: Registry, input: StartInput): StartSnaps
 		deadline: input.runTimeoutMs === null ? null : input.createdAt + input.runTimeoutMs,
 		createdAt: input.createdAt,
 		connectionIds,
-		// Only when some connection is limited, so a start without a policy snapshots as before.
+		// Only when some connection is limited, so a policy that limits none snapshots as no policy does.
 		...(limited.length > 0 ? { tenants: Object.fromEntries(limited.map((id) => [id, tenants.get(id) as string[]])) } : {}),
 	};
 }
