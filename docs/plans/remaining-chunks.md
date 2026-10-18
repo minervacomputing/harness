@@ -396,7 +396,7 @@ Designed 2026-10-17 in `minervacomputing/app` (its `docs/plans/retention.md`, `a
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] On staging, delete an organization with two conversations and a connection. Its conversations are deleted in the engine, its runs are cancelled, and its usage records remain; and the first scheduled passes of `minerva:retention` on staging's deleted conversations, with their times.
+- [ ] On staging, delete an organization with two conversations and a connection. Its conversations are deleted in the engine, its runs are cancelled, and its usage records remain; and the first scheduled passes of `minerva:retention` on staging's deleted conversations, with their times. The deletion, 2026-10-18, the app at `5b520ea`: an instance admin's `minerva:organization:delete` of a test organization at 07:21:52, with three live conversations, an active connection and a turn running a 120 s `sleep`. The run's cancel was acknowledged at 07:21:53, and the run ended `cancelled` (`conversation_deleted`) with its usage record and settlement. The engine acknowledged the three deletions by 07:21:59, and `listConversations` answers all eight of the organization's conversations deleted. The connection was revoked, and its 14 usage records and 14 settlements remain. The passes: hourly on staging, logged at 19:00, 21:00 and 23:00 on 2026-10-17, and at 01:00, 02:00, 04:00, 05:00 and 07:00 on 2026-10-18, each purging nothing in 0.1 to 0.4 s; hours with no pass are probably when staging, which scales to zero, was asleep. Nothing is due yet: the earliest acknowledged deletion (2026-10-15 18:17) is due on 2026-10-22, so the first pass that purges, and its time, are still to be recorded.
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
@@ -450,7 +450,7 @@ The design, its decisions and the units are in [chunk-15c-design.md](chunk-15c-d
 
 **Verify.** This chunk changes no code. Its unit, live and perf boxes do not apply. The owner reviews the document.
 
-- [ ] The owner reviewed [data-processing.md](../data-processing.md).
+- [x] The owner reviewed [data-processing.md](../data-processing.md). Approved as written, 2026-10-18.
 
 ## Bill for usage (chunk 16)
 
