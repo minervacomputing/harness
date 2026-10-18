@@ -125,6 +125,11 @@ async function heldTask(conversation: Conversation, background: boolean): Promis
 	return conversation.commit((tx) => tx.createTask(held, {}, { ownership: { kind: "conversation" }, background }), BG);
 }
 
+/** Waits until pi runs each task, so they share the status whose newest task piWork checks. */
+async function running(pi: Pi, ids: readonly TaskId[]): Promise<void> {
+	for (const id of ids) await expect.poll(async () => (await pi.storage.task(id, BG))?.state.status).toBe("running");
+}
+
 async function abort(pi: Pi, ids: readonly TaskId[]): Promise<void> {
 	for (const id of ids) await pi.harness.abortTask(id, BG);
 	for (const id of ids) await pi.harness.waitForTask(id, BG);
@@ -139,7 +144,7 @@ function run(pi: Pi, id: string): { id: string; session: string } {
 }
 
 describe("what pi holds for a run, read by its operation", () => {
-	test("the run's own submission decides: queued and placed are in progress, done and unanswered settled", async () => {
+	test("the run's own submission decides: queued and placed are in progress, done and unanswered settled while no task of its own is live", async () => {
 		const pi = await openPi();
 		const first = later(fauxAssistantMessage(fauxText("First answer")));
 		pi.faux.setResponses([first.answer, fauxAssistantMessage(fauxText("Second answer")), fauxAssistantMessage("", { stopReason: "error", errorMessage: "The upstream failed." })]);
@@ -162,9 +167,11 @@ describe("what pi holds for a run, read by its operation", () => {
 		expect((await failed.submission.wait(BG)).status).toBe("unanswered");
 		await pi.conversation.waitForIdle(BG);
 		expect(await piWork(pi.storage, run(pi, "failed"))).toBe("settled");
+		await heldTask(pi.conversation, false);
+		expect(await piWork(pi.storage, run(pi, "failed"))).toBe("in_progress");
 	});
 
-	test("a settled run with a live task of its own is in progress; a leftover background task, or one in another session, never counts", async () => {
+	test("a settled run with a live task of its own is in progress; a leftover background task, older or newer than its own, or one in another session, never counts", async () => {
 		const pi = await openPi();
 		pi.faux.setResponses([fauxAssistantMessage(fauxText("Answer"))]);
 		const answered = await submit(pi, "run-1", "Question");
@@ -177,18 +184,21 @@ describe("what pi holds for a run, read by its operation", () => {
 		expect(await piWork(pi.storage, run(pi, "run-1"))).toBe("settled");
 		const own = await heldTask(pi.conversation, false);
 		expect(await piWork(pi.storage, run(pi, "run-1"))).toBe("in_progress");
+		const newer = await heldTask(pi.conversation, true);
+		await running(pi, [own, newer]);
+		expect(await piWork(pi.storage, run(pi, "run-1"))).toBe("in_progress");
 		await abort(pi, [own]);
 		expect(await piWork(pi.storage, run(pi, "run-1"))).toBe("settled");
 
 		const op = { session: pi.session, submission: { id: answered.submission.id, status: "done" as const } };
-		for (const id of [background, elsewhere]) {
+		for (const id of [background, newer, elsewhere]) {
 			const task = await pi.storage.task(id, BG);
 			expect(task?.state.status).toBe("running");
 			expect(task !== undefined && belongs(op, task)).toBe(false);
 		}
 	});
 
-	test("a run with no submission is not submitted, whatever its session holds, and a task older than its submission is not its own", async () => {
+	test("a run with no submission is not submitted, whatever its session holds, and a task older than its submission is not its own and never hides its own", async () => {
 		const pi = await openPi();
 		const earlier = await heldTask(pi.conversation, false);
 		expect(await piWork(pi.storage, run(pi, "run-1"))).toBe("not_submitted");
@@ -201,6 +211,9 @@ describe("what pi holds for a run, read by its operation", () => {
 		expect((await answered.submission.wait(BG)).status).toBe("done");
 		expect((await pi.storage.task(earlier, BG))?.state.status).toBe("running");
 		expect(await piWork(pi.storage, run(pi, "run-1"))).toBe("settled");
+		const own = await heldTask(pi.conversation, false);
+		await running(pi, [own]);
+		expect(await piWork(pi.storage, run(pi, "run-1"))).toBe("in_progress");
 	});
 
 	test("two runs on one session: B is not submitted while A's work is live, then B's own work alone decides", async () => {
